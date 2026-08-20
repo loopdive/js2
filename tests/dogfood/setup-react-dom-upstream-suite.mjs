@@ -20,7 +20,10 @@ function sha1(buffer) {
 // `npm-compat-catalog.json`, which is react-dom's existing pin — this suite
 // reads it rather than carrying a second, independently-editable copy that
 // could drift from the one the package-entry card already uses.
-export function setupReactDomImplementation({ force = false } = {}) {
+export function setupReactDomImplementation({ force = false, build = "production" } = {}) {
+  if (build !== "production" && build !== "development") {
+    throw new Error(`[dogfood] unsupported react-dom build: ${build}`);
+  }
   const suitePin = loadReactDomUpstreamSuitePin();
   const catalog = JSON.parse(readFileSync(join(HERE, "npm-compat-catalog.json"), "utf-8"));
   const packagePin = catalog.find((entry) => entry.name === "react-dom");
@@ -43,16 +46,49 @@ export function setupReactDomImplementation({ force = false } = {}) {
 
   const root = join(HERE, ".react-dom-upstream-suite-impl");
   if (force && existsSync(root)) rmSync(root, { recursive: true, force: true });
-  const sharedPath = join(root, suitePin.implementation.sharedModule);
-  const clientPath = join(root, suitePin.implementation.clientModule);
-  if (!existsSync(sharedPath) || !existsSync(clientPath)) {
+  const suffix = `.${build}.js`;
+  const modulePath = (name) => join(root, "package", "cjs", `${name}${suffix}`);
+  const sharedPath = modulePath("react-dom");
+  const clientPath = modulePath("react-dom-client");
+  const serverPath = modulePath("react-dom-server-legacy.browser");
+  const fizzServerPath = modulePath("react-dom-server.browser");
+  const nodeFizzServerPath = modulePath("react-dom-server.node");
+  const edgeFizzServerPath = modulePath("react-dom-server.edge");
+  const moduleNames = {
+    shared: `package/cjs/react-dom.${build}.js`,
+    client: `package/cjs/react-dom-client.${build}.js`,
+    server: `package/cjs/react-dom-server-legacy.browser.${build}.js`,
+    fizzServer: `package/cjs/react-dom-server.browser.${build}.js`,
+    nodeFizzServer: `package/cjs/react-dom-server.node.${build}.js`,
+    edgeFizzServer: `package/cjs/react-dom-server.edge.${build}.js`,
+  };
+  if (
+    !existsSync(sharedPath) ||
+    !existsSync(clientPath) ||
+    !existsSync(serverPath) ||
+    !existsSync(fizzServerPath) ||
+    !existsSync(nodeFizzServerPath) ||
+    !existsSync(edgeFizzServerPath)
+  ) {
     mkdirSync(root, { recursive: true });
     execFileSync("tar", ["-xzf", tarballPath, "-C", root], { stdio: "pipe" });
   }
-  for (const path of [sharedPath, clientPath]) {
+  for (const path of [sharedPath, clientPath, serverPath, fizzServerPath, nodeFizzServerPath, edgeFizzServerPath]) {
     if (!existsSync(path)) throw new Error(`[dogfood] react-dom extraction did not produce ${path}`);
   }
-  return { root, sharedPath, clientPath, version: packagePin.version, pin: packagePin };
+  return {
+    root,
+    sharedPath,
+    clientPath,
+    serverPath,
+    fizzServerPath,
+    nodeFizzServerPath,
+    edgeFizzServerPath,
+    moduleNames,
+    build,
+    version: packagePin.version,
+    pin: packagePin,
+  };
 }
 
 // react-dom is versioned in lockstep with react in the SAME monorepo, so the

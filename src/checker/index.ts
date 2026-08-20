@@ -12,6 +12,7 @@ import { getDefaultEnvironment } from "../env.js";
 import { DTS_ENTRY_DECLS_NAME } from "./dts-entrypoint-seeds.js";
 import { buildModuleDecls } from "./node-capability-map.js";
 import { traceTs5Checker } from "./ts5-trace.js";
+import { nodeBuiltinClassStub } from "../import-resolver.js";
 
 // All Node builtin access goes through the environment adapter (#1096).
 // This module no longer probes `typeof window` / `typeof process` directly
@@ -704,6 +705,33 @@ function buildNodeEnvDts(usage: NodeEmuUsage): string | undefined {
       parts.push(lines.join("\n"));
       continue;
     }
+    // #1794/#4534 — Keep known Node class exports as real ambient classes in
+    // the synthetic graph declaration. The single-source preprocessor has
+    // always injected this shape; multi-file projects used to receive only an
+    // `export const X: any`, so a class such as jsdom's
+    // `VirtualConsole extends EventEmitter` lost its host heritage and its
+    // inherited methods. The namespace declaration is collected by codegen;
+    // the module re-export preserves the importer's checker type.
+    const builtinModuleName = mod.startsWith("node:") ? mod.slice(5) : mod;
+    const classNames = [...members].filter((name) => nodeBuiltinClassStub(builtinModuleName, name) !== null);
+    if (classNames.length > 0) {
+      const emittedStubs = new Set<string>();
+      for (const className of classNames) {
+        const stub = nodeBuiltinClassStub(builtinModuleName, className);
+        if (stub && !emittedStubs.has(stub)) {
+          parts.push(stub);
+          emittedStubs.add(stub);
+        }
+      }
+      const lines: string[] = [`declare module "${mod}" {`];
+      for (const className of classNames) {
+        lines.push(`  export const ${className}: typeof ${builtinModuleName}.${className};`);
+      }
+      lines.push(`}`);
+      parts.push(lines.join("\n"));
+      continue;
+    }
+
     // #2634 — `node:fs` (and any other capability-mapped `node:<mod>`): drive
     // the importable surface + types from the capability map
     // (`node-capability-map.ts`), which mirrors the REAL `@types/node`
@@ -923,7 +951,12 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
   // to inject and `injectNodeEnv` stays false (no empty synthetic root).
   // #2645 — `--platform node` implies emulation, so the ambient surface and the
   // capability gate share one target model (see `resolveEmulateNode`).
-  const emulateNode = resolveEmulateNode(analyzeOptions);
+  // A concrete `node:` import is itself sufficient evidence that the source
+  // needs the import-scoped Node declarations. This mirrors the single-file
+  // preprocessor's auto-detection and is especially important for multi-file
+  // CJS graphs, whose rewritten imports otherwise reach codegen without the
+  // typed extern-class stubs.
+  const emulateNode = resolveEmulateNode(analyzeOptions) || /\bnode:[A-Za-z0-9_./-]+\b/.test(source);
   const nodeEnvDtsSource = emulateNode ? buildNodeEnvDtsForSource(source, scriptKind) : undefined;
   // #2684 — the ambient `Deno` typing is injected independently of `--emulate
   // node` (Deno is its own runtime). Both synthetic surfaces share the single
@@ -1057,8 +1090,10 @@ export function analyzeMultiSource(
   // single-file path while codegen passes those modules through to the Node
   // host. Building once from the joined graph avoids duplicate ambient
   // declarations when many dependencies import the same builtin (#3654).
-  if (resolveEmulateNode(analyzeOptions)) {
-    const nodeEnvDts = buildNodeEnvDtsForSource(Array.from(normalizedFiles.values()).join("\n"), ts.ScriptKind.JS);
+  const normalizedSourceText = Array.from(normalizedFiles.values()).join("\n");
+  const emulateNode = resolveEmulateNode(analyzeOptions) || /\bnode:[A-Za-z0-9_./-]+\b/.test(normalizedSourceText);
+  if (emulateNode) {
+    const nodeEnvDts = buildNodeEnvDtsForSource(normalizedSourceText, ts.ScriptKind.JS);
     if (nodeEnvDts !== undefined) {
       normalizedFiles.set(NODE_ENV_DTS_NAME, nodeEnvDts);
     }

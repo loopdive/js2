@@ -9,6 +9,11 @@ import * as ts from "typescript";
 // runner infrastructure; the registered callback bodies remain the exact
 // upstream source. Both Node and Wasm execute this same shim.
 export const UPSTREAM_TEST_SHIM = String.raw`
+// Node exposes the process-wide host as the global binding; browser-oriented upstream
+// suites (including Redux's warning tests) use that spelling directly. Keep
+// the alias explicit in both the native and Wasm lanes instead of treating a
+// missing Node compatibility global as a package failure.
+var global = globalThis;
 const __upstreamTests = [];
 const __upstreamErrors = [];
 let __upstreamSnapshotMatcher = null;
@@ -41,6 +46,16 @@ function __upstreamSame(a, b) {
   }
   return true;
 }
+function __upstreamSubset(actual, expected) {
+  if (Object.is(actual, expected)) return true;
+  if (actual == null || expected == null || typeof expected !== "object") return false;
+  const keys = Object.keys(expected);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    if (!(key in Object(actual)) || !__upstreamSubset(actual[key], expected[key])) return false;
+  }
+  return true;
+}
 function __upstreamThrown(value) {
   try { value(); } catch (error) { return error; }
   return null;
@@ -53,6 +68,27 @@ function __upstreamThrownMatches(error, expected) {
   if (typeof expected === "string") return message.includes(expected);
   if (typeof expected === "function") return error instanceof expected || error.name === expected.name;
   return true;
+}
+function __upstreamAsyncReject(actual, expected, label) {
+  return Promise.resolve(actual).then(
+    function() { __upstreamFail(label + " expected a rejected promise"); },
+    function(error) {
+      if (!__upstreamThrownMatches(error, expected)) {
+        __upstreamFail(label + " received an unexpected error: " + (error && error.message !== undefined ? error.message : String(error)));
+      }
+    },
+  );
+}
+function __upstreamAsyncResolve(actual, matcher, expected, hasExpected, label) {
+  return Promise.resolve(actual).then(
+    function(value) {
+      const assertion = __upstreamExpect(value);
+      return hasExpected ? assertion[matcher](expected) : assertion[matcher]();
+    },
+    function(error) {
+      __upstreamFail(label + " received an unexpected rejection: " + (error && error.message !== undefined ? error.message : String(error)));
+    },
+  );
 }
 function __upstreamExpect(actual) {
   const positive = {
@@ -67,6 +103,7 @@ function __upstreamExpect(actual) {
     toHaveLength(expected) { const n = ++__upstreamAssertion; if (actual == null || actual.length !== expected) __upstreamFail("assertion " + n + " length mismatch"); },
     toContain(expected) { const n = ++__upstreamAssertion; if (actual == null || typeof actual.includes !== "function" || !actual.includes(expected)) __upstreamFail("assertion " + n + " expected contained value"); },
     toHaveProperty(expected) { const n = ++__upstreamAssertion; if (actual == null || !(expected in Object(actual))) __upstreamFail("assertion " + n + " missing property " + String(expected)); },
+    toMatchObject(expected) { const n = ++__upstreamAssertion; if (!__upstreamSubset(actual, expected)) __upstreamFail("assertion " + n + " object subset mismatch"); },
     toMatch(expected) { const n = ++__upstreamAssertion; const value = String(actual); if (expected instanceof RegExp ? !expected.test(value) : !value.includes(String(expected))) __upstreamFail("assertion " + n + " pattern mismatch"); },
     toBeCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = actual && actual.mock && actual.mock.calls; let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
     toHaveBeenCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = actual && actual.mock && actual.mock.calls; let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
@@ -85,9 +122,31 @@ function __upstreamExpect(actual) {
   positive.not = {
     toBe(expected) { const n = ++__upstreamAssertion; if (Object.is(actual, expected)) __upstreamFail("assertion " + n + " unexpected equal value"); },
     toEqual(expected) { const n = ++__upstreamAssertion; if (__upstreamSame(actual, expected)) __upstreamFail("assertion " + n + " unexpected deep equality"); },
+    toBeUndefined() { const n = ++__upstreamAssertion; if (actual === undefined) __upstreamFail("assertion " + n + " unexpectedly undefined"); },
+    toBeDefined() { const n = ++__upstreamAssertion; if (actual !== undefined) __upstreamFail("assertion " + n + " unexpectedly defined"); },
     toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
     toThrow() { const n = ++__upstreamAssertion; if (typeof actual !== "function" || __upstreamThrown(actual) !== null) __upstreamFail("assertion " + n + " unexpected throw"); },
     toThrowError() { const n = ++__upstreamAssertion; if (typeof actual !== "function" || __upstreamThrown(actual) !== null) __upstreamFail("assertion " + n + " unexpected throw"); },
+  };
+  // Vitest/Jest promise assertions are part of the upstream test contract,
+  // not optional syntax. Attach rejection handlers immediately so a rejected
+  // Request/Response promise cannot become an unhandled host error before the
+  // lifted async test awaits it.
+  positive.rejects = {
+    toThrow(expected) { return __upstreamAsyncReject(actual, expected, "rejects.toThrow"); },
+    toThrowError(expected) { return __upstreamAsyncReject(actual, expected, "rejects.toThrowError"); },
+    toThrowErrorMatchingInlineSnapshot(expected) { return __upstreamAsyncReject(actual, expected, "rejects.toThrowErrorMatchingInlineSnapshot"); },
+  };
+  positive.resolves = {
+    toBe(expected) { return __upstreamAsyncResolve(actual, "toBe", expected, true, "resolves"); },
+    toEqual(expected) { return __upstreamAsyncResolve(actual, "toEqual", expected, true, "resolves"); },
+    toStrictEqual(expected) { return __upstreamAsyncResolve(actual, "toStrictEqual", expected, true, "resolves"); },
+    toBeDefined() { return __upstreamAsyncResolve(actual, "toBeDefined", undefined, false, "resolves"); },
+    toBeNull() { return __upstreamAsyncResolve(actual, "toBeNull", undefined, false, "resolves"); },
+    toBeTruthy() { return __upstreamAsyncResolve(actual, "toBeTruthy", undefined, false, "resolves"); },
+    toBeFalsy() { return __upstreamAsyncResolve(actual, "toBeFalsy", undefined, false, "resolves"); },
+    toHaveLength(expected) { return __upstreamAsyncResolve(actual, "toHaveLength", expected, true, "resolves"); },
+    toContain(expected) { return __upstreamAsyncResolve(actual, "toContain", expected, true, "resolves"); },
   };
   return positive;
 }
@@ -124,13 +183,52 @@ function __upstreamRegister(name, body) {
 }
 function it(name, body) { __upstreamRegister(name, body); }
 function test(name, body) { __upstreamRegister(name, body); }
+function __upstreamTableRows(strings, values) {
+  const markers = [];
+  let source = "";
+  for (let index = 0; index < strings.length; index++) {
+    source += strings[index];
+    if (index < values.length) {
+      const marker = "__UPSTREAM_TABLE_VALUE_" + index + "__";
+      markers.push(marker);
+      source += marker;
+    }
+  }
+  const lines = source.split(/\r?\n/).map(function(line) { return line.trim(); }).filter(Boolean);
+  if (lines.length === 0) return [];
+  const columns = lines.shift().split("|").map(function(column) { return column.trim(); });
+  const rows = [];
+  for (let index = 0; index < lines.length; index++) {
+    if (/^[|\- ]+$/.test(lines[index])) continue;
+    const cells = lines[index].split("|").map(function(cell) { return cell.trim(); });
+    const row = {};
+    for (let column = 0; column < columns.length; column++) {
+      let value = cells[column] || "";
+      for (let marker = 0; marker < markers.length; marker++) {
+        if (value === markers[marker]) value = values[marker];
+      }
+      row[columns[column]] = value;
+    }
+    rows.push(row);
+  }
+  return rows;
+}
 function __upstreamEach(cases) {
+  const values = Array.prototype.slice.call(arguments, 1);
+  const tableRows = Array.isArray(cases) && cases.raw && values.length > 0 ? __upstreamTableRows(cases, values) : null;
   return function(name, body) {
-    const expandRows = cases.length > 0 && cases.every(function(value) { return Array.isArray(value); });
-    for (let index = 0; index < cases.length; index++) {
-      const row = expandRows ? cases[index] : [cases[index]];
-      const displayName = String(name).replace(/%s/g, function() { return String(row[0]); });
+    const sourceCases = tableRows || cases;
+    const expandRows = sourceCases.length > 0 && sourceCases.every(function(value) { return Array.isArray(value); });
+    for (let index = 0; index < sourceCases.length; index++) {
+      const sourceRow = sourceCases[index];
+      const row = expandRows ? sourceRow : [sourceRow];
+      const displayName = String(name)
+        .replace(/%s/g, function() { return String(row[0]); })
+        .replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, function(_match, key) {
+          return sourceRow && typeof sourceRow === "object" && !Array.isArray(sourceRow) && key in sourceRow ? String(sourceRow[key]) : _match;
+        });
       it(displayName, function() {
+        if (tableRows) return body(sourceRow);
         if (row.length === 0) return body();
         if (row.length === 1) return body(row[0]);
         if (row.length === 2) return body(row[0], row[1]);
@@ -142,6 +240,40 @@ function __upstreamEach(cases) {
 }
 it.each = __upstreamEach;
 test.each = __upstreamEach;
+describe.each = function(cases) {
+  return function(name, body) {
+    const expandRows = cases.length > 0 && cases.every(function(value) { return Array.isArray(value); });
+    for (let index = 0; index < cases.length; index++) {
+      const row = expandRows ? cases[index] : [cases[index]];
+      const displayName = String(name).replace(/%s/g, function() { return String(row[0]); });
+      describe(displayName, function() {
+        if (row.length === 0) return body();
+        if (row.length === 1) return body(row[0]);
+        if (row.length === 2) return body(row[0], row[1]);
+        if (row.length === 3) return body(row[0], row[1], row[2]);
+        return body(row[0], row[1], row[2], row[3]);
+      });
+    }
+  };
+};
+// Vitest's expectTypeOf is erased by TypeScript and only performs compile-time
+// checks. Keep the original calls executable without turning type assertions
+// into fake runtime coverage in either the Node or Wasm lane.
+function __upstreamTypeExpectation() {
+  const chain = {
+    toEqualTypeOf() { return chain; },
+    toMatchTypeOf() { return chain; },
+    toBeString() { return chain; },
+    toBeNumber() { return chain; },
+    toBeBoolean() { return chain; },
+    toBeArray() { return chain; },
+    toBeObject() { return chain; },
+    toBeUndefined() { return chain; },
+    toBeDefined() { return chain; },
+  };
+  return chain;
+}
+function expectTypeOf() { return __upstreamTypeExpectation(); }
 const __qunitAssert = {
   expect(_count) {},
   ok(value, message) { const n = ++__upstreamAssertion; if (!value) __upstreamFail("assertion " + n + ": " + (message || "expected truthy value") + "; got " + __upstreamValue(value)); },

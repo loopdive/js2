@@ -49,6 +49,7 @@ import {
 import { compileStringLiteral } from "./string-ops.js";
 import { ensureImportMetaObject } from "./import-meta.js";
 import { coerceType as coerceTypeImpl, pushDefaultValue } from "./type-coercion.js";
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 
 // ── Sub-module imports ─────────────────────────────────────────────────
 
@@ -615,13 +616,15 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
       { op: "struct.new", typeIdx: promiseTypeIdx },
       { op: "extern.convert_any" },
     ];
-    fctx.body.push({
-      op: "try",
-      blockType: { kind: "val", type: { kind: "externref" } },
-      body: inner,
-      catches: [{ tagIdx, body: catchExn }],
-      catchAll,
-    });
+    fctx.body.push(
+      buildTargetTaggedTry(
+        ctx,
+        { kind: "val", type: { kind: "externref" } },
+        inner,
+        [{ tagIdx, body: catchExn }],
+        catchAll,
+      ),
+    );
     releaseTempLocal(fctx, reasonLocal);
     return;
   }
@@ -642,13 +645,15 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
     { op: "call", funcIdx: getCaughtIdx },
     { op: "call", funcIdx: rejectIdx },
   ];
-  fctx.body.push({
-    op: "try",
-    blockType: { kind: "val", type: { kind: "externref" } },
-    body: inner,
-    catches: [{ tagIdx, body: catchExn }],
-    catchAll,
-  });
+  fctx.body.push(
+    buildTargetTaggedTry(
+      ctx,
+      { kind: "val", type: { kind: "externref" } },
+      inner,
+      [{ tagIdx, body: catchExn }],
+      catchAll,
+    ),
+  );
 }
 
 /**

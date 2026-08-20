@@ -1,10 +1,10 @@
 ---
 id: 4526
-title: "Redux: 3/78 — combineReducers null-deref (40 tests), dynamic-dispatch illegal cast (16), createStore dispatch illegal cast (7)"
+title: "Redux: 13/82 — combineReducers null-deref, dynamic-dispatch illegal cast, createStore dispatch illegal cast"
 status: ready
 sprint: current
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-20
 priority: high
 horizon: l
 feasibility: hard
@@ -20,20 +20,27 @@ files:
   - src/runtime.ts
 ---
 
-# Redux: three runtime clusters keep the pinned suite at 3/78
+# Redux: runtime clusters keep the pinned suite at 13/82
 
 ## Problem
 
 The pinned Redux 5.0.1 upstream suite compiles and validates **all 9 modules**
-(the #3996 `local index out of range` emit failures are gone), but only
-**3/78** admitted tests pass in Wasm (78/78 in Node; 4 harness-incompatible).
-Measured 2026-08-16 on `a9b20d4c`, reproducing the npm-compat card exactly.
+(the #3996 `local index out of range` emit failures are gone). The shared
+runner now supplies Node's `global` alias, so all **82/82 callbacks pass in
+Node** and **13/82 admitted tests pass in Wasm** with no harness-incompatible
+callbacks. Measured 2026-08-20 on the current branch; the remaining failures
+are the runtime clusters below, not unavailable test infrastructure.
 
-Per-file: `createStore.spec` 0/40 · `combineReducers.spec` 0/16 ·
+Per-file: `createStore.spec` 2/42 · `combineReducers.spec` 6/16 ·
 `bindActionCreators.spec` 0/7 · `compose.spec` 1/6 · `applyMiddleware.spec`
-1/3 · `utils/*` 1/6.
+1/5 · `utils/*` 3/6.
 
-## Measured failure buckets
+The detailed bucket inventory below is retained from the pre-global-alias
+reproduction; it needs a fresh runtime re-bucketing against the 13/82 baseline.
+The global alias change only removed harness incompatibility and did not claim
+to fix any of these compiler/runtime clusters.
+
+## Measured failure buckets (pre-global-alias snapshot)
 
 1. **40× `RuntimeError: dereferencing a null pointer`** — one stack shape
    dominates `createStore.spec` and `combineReducers.spec`:

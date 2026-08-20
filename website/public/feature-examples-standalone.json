@@ -76,7 +76,7 @@
     {
       "name": "for-in",
       "testCategories": ["language/statements/for-in"],
-      "passCount": 104,
+      "passCount": 105,
       "totalCount": 119
     },
     {
@@ -88,7 +88,7 @@
     {
       "name": "eval()",
       "testCategories": ["language/eval-code", "built-ins/eval"],
-      "passCount": 325,
+      "passCount": 334,
       "totalCount": 357
     },
     {
@@ -105,13 +105,13 @@
         "language/statements/variable",
         "language/block-scope"
       ],
-      "passCount": 536,
+      "passCount": 533,
       "totalCount": 604
     },
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 981,
+      "passCount": 976,
       "totalCount": 1177
     },
     {
@@ -144,7 +144,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 3989,
+      "passCount": 4036,
       "totalCount": 4581
     },
     {
@@ -156,13 +156,13 @@
     {
       "name": "Numbers",
       "testCategories": ["built-ins/Number", "built-ins/Math"],
-      "passCount": 620,
+      "passCount": 621,
       "totalCount": 667
     },
     {
       "name": "JSON",
       "testCategories": ["built-ins/JSON"],
-      "passCount": 89,
+      "passCount": 90,
       "totalCount": 165
     },
     {
@@ -185,7 +185,7 @@
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1600,
+      "passCount": 1598,
       "totalCount": 1896
     },
     {
@@ -197,13 +197,13 @@
     {
       "name": "Object.defineProperty (full)",
       "testCategories": ["built-ins/Object/defineProperty"],
-      "passCount": 1082,
+      "passCount": 1090,
       "totalCount": 1131
     },
     {
       "name": "Arrow functions",
       "testCategories": ["language/expressions/arrow-function", "language/expressions/async-arrow-function"],
-      "passCount": 392,
+      "passCount": 391,
       "totalCount": 440
     },
     {
@@ -251,7 +251,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 1824,
+      "passCount": 1826,
       "totalCount": 2486
     },
     {
@@ -294,7 +294,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 502,
+      "passCount": 504,
       "totalCount": 1106
     },
     {
@@ -306,7 +306,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 568,
+      "passCount": 574,
       "totalCount": 1072
     },
     {
@@ -354,7 +354,7 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2646,
+      "passCount": 2683,
       "totalCount": 3812
     },
     {
@@ -378,7 +378,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 283,
+      "passCount": 286,
       "totalCount": 1048
     },
     {
@@ -444,7 +444,7 @@
     {
       "name": "Object.fromEntries",
       "testCategories": ["built-ins/Object/fromEntries"],
-      "passCount": 6,
+      "passCount": 5,
       "totalCount": 25
     },
     {
@@ -558,7 +558,7 @@
     {
       "name": "var hoisting",
       "testCategories": ["language/statements/variable", "language/statements/var"],
-      "passCount": 162,
+      "passCount": 157,
       "totalCount": 178
     },
     {

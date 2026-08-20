@@ -5343,6 +5343,9 @@ function makeResolver(
       }
       return ctx.exnTagIdx;
     },
+    standardizedExceptions(): boolean {
+      return ctx.standalone || ctx.wasi;
+    },
     // -------------------------------------------------------------------
     // Async / Promise dispatch (#1373b Slice 1).
     //

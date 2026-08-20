@@ -461,6 +461,13 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   if (ctx.vecOverlayStateGlobalIdx !== undefined && ctx.vecOverlayStateGlobalIdx >= threshold) {
     ctx.vecOverlayStateGlobalIdx += delta;
   }
+  // (#4504) The descriptor-aware [[Set]] result channel is a module global
+  // created before some compilation paths can still lazily insert an import
+  // global. Keep the cached index aligned with the emitted global.get/set
+  // instructions so later Reflect/strict helpers do not read an adjacent slot.
+  if (ctx.externSetResultGlobalIdx !== undefined && ctx.externSetResultGlobalIdx >= threshold) {
+    ctx.externSetResultGlobalIdx += delta;
+  }
 }
 
 // ---------------------------------------------------------------------------

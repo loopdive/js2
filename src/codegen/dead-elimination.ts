@@ -76,6 +76,10 @@ function collectRefsFromBody(body: Instr[], usedFuncs: Set<number>, usedTypes: S
         for (const c of instr.catches) collectRefsFromBody(c.body, usedFuncs, usedTypes);
         if (instr.catchAll) collectRefsFromBody(instr.catchAll, usedFuncs, usedTypes);
         break;
+      case "try_table":
+        collectBlockTypeRefs(instr.blockType, usedTypes);
+        collectRefsFromBody(instr.body, usedFuncs, usedTypes);
+        break;
       default: {
         // Catch-all for instructions whose op carries type/func indices we may
         // not have enumerated above (defensive: keeps DCE conservative).

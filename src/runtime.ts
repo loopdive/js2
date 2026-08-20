@@ -83,7 +83,9 @@ import {
 } from "./runtime/standalone-timer-callback-bridge.js";
 import { installAmbientCompatibility } from "./runtime/compatibility-adapter.js";
 import { resolveCompatibilitySemanticImport } from "./runtime/compatibility-semantic-adapter.js";
-import { createClassMemberResolver } from "./runtime/class-method-host-bridge.js";
+import { createClassMemberResolver, createResolvedClassMethodInvoker } from "./runtime/class-method-host-bridge.js";
+import { resolveSubclassParent } from "./runtime/class-method-host-bridge.js";
+import { getWebHostConstructors } from "./runtime/web-host-constructors.js";
 import {
   _rerouteStringSymbolMethodPrimitive,
   _makeLegacyRegExpState,
@@ -4780,7 +4782,7 @@ function _safeGet(
     // instance — the own-C.prototype level, shadowing the fnctor parent's
     // prototype chain below.
     {
-      const v = _resolveClassMemberOnInstance(obj, key, callbackState?.getExports());
+      const v = _resolveClassMember(obj, key, callbackState?.getExports());
       if (v !== _MISS) return v;
     }
     // (#1712) fnctor instances: resolve through the constructor's vivified
@@ -5836,13 +5838,14 @@ function _marshalBridgeResult(v: any, callbackState?: { getExports: () => Record
   return _wrapForHost(v, exports);
 }
 
-const _resolveClassMemberOnInstance = createClassMemberResolver({
+const _resolveClassMember = createClassMemberResolver({
   miss: _MISS,
   canBeWeakKey: _canBeWeakKey,
-  isRegisteredInstance: (value) => _fnctorInstanceCtor.has(value as object),
+  isRegisteredInstance: (value) => _fnctorInstanceCtor.has(value as object) || _userClassTags.has(value as object),
+  getClassName: (value) => _userClassTags.get(value as object),
   marshalBridgeResult: _marshalBridgeResult,
 });
-
+const _invokeClassMethod = createResolvedClassMethodInvoker(_resolveClassMember, _MISS, _unwrapForHost);
 // (#3673) Hoisted from `_resolveHostField` — was a per-call closure on a hot
 // path (invoked for every dynamic field read that reaches the host resolver).
 // #1336 — accessor properties (Object.defineProperty(obj, k, {get})) must
@@ -6301,7 +6304,7 @@ function _resolveHostField(obj: any, key: any, exports: Record<string, Function>
   // instance — the own-C.prototype level, which must SHADOW the fnctor
   // parent's prototype chain below.
   {
-    const v = _resolveClassMemberOnInstance(obj, key, exports);
+    const v = _resolveClassMember(obj, key, exports);
     if (v !== _MISS) return v;
   }
   // (#1712) fnctor instances: resolve through the constructor's vivified
@@ -8898,7 +8901,6 @@ function _createBoundaryPromiseImport(
     toHostValue: _nativeBoundaryToHost,
   });
 }
-
 function _wrapPlatformCapabilityClosure(
   value: unknown,
   arity: number,
@@ -8908,7 +8910,6 @@ function _wrapPlatformCapabilityClosure(
   if (boundary !== "timer") return _wrapWasmClosure(value, arity, callbackState);
   return wrapStandaloneTimerCallback(value, callbackState) ?? _wrapWasmClosure(value, arity, callbackState);
 }
-
 function resolveImport(
   intent: ImportIntent,
   deps?: Record<string, any>,
@@ -9184,6 +9185,7 @@ function resolveImport(
           // __extern_method_call.
           ...(typeof URL !== "undefined" ? { URL } : {}),
           ...(typeof URLSearchParams !== "undefined" ? { URLSearchParams } : {}),
+          ...getWebHostConstructors(),
         };
         let Ctor = deps?.[intent.className] ?? builtinCtors[intent.className];
         // #1044 — Resolve via namespace path (e.g. require('http').Server)
@@ -9852,7 +9854,6 @@ function resolveImport(
           ) {
             throw new EvalError("reified host direct-eval bridge exports are unavailable on the AOT instance");
           }
-
           const bindings: DynamicCodeBinding[] = [];
           const appendLayer = (names: any, slots: any): void => {
             if (names == null || slots == null) return;
@@ -12300,6 +12301,8 @@ assert._isSameValue = isSameValue;
             return ret === wrappedObj ? obj : _unwrapForHost(ret);
           }
           if (typeof fn !== "function") {
+            const resolvedClassMethod = _invokeClassMethod(obj, method, exports, wrappedObj, wrappedArgs);
+            if (resolvedClassMethod !== _MISS) return resolvedClassMethod;
             // A struct proxy can have been materialized during the module start
             // function, before setInstance() made generated __sget_* exports
             // available. Its cached host view may therefore miss a physical
@@ -15481,8 +15484,7 @@ assert._isSameValue = isSameValue;
           if (instance == null || typeof subName !== "string" || typeof parentName !== "string") {
             return instance;
           }
-          // Look up the parent constructor — prefer host deps then globalThis.
-          const Parent: any = (deps && (deps as any)[parentName]) ?? (globalThis as any)[parentName];
+          const Parent: any = resolveSubclassParent(parentName, deps, _resolveNamespacedClass);
           if (typeof Parent !== "function") {
             // Cannot synthesize — return instance unchanged.
             return instance;
@@ -15781,13 +15783,11 @@ assert._isSameValue = isSameValue;
     // callable form with [[Construct]]. Everything else keeps the arrow bridge.
     case "callback_maker":
       return (id: number, cap: any) => {
-        // #3214 B2 reserves -1 for a reusable canonical IR closure and -2 for
-        // the checker-proven one-shot inline form. Legacy callbacks keep their
-        // non-negative `__cb_N` ids and remain on the existing dispatch path.
         if (id === -2) return _wrapVoidHostCallback(cap, callbackState, false);
         if (id === -1) return _wrapVoidHostCallback(cap, callbackState);
         const policy = ASYNC_CALLBACK_EXCEPTION_POLICY;
-        return createNativeFunctionCallbackBridge(id, cap, callbackState, policy, intent.constructible === true);
+        const constructible = intent.constructible === true;
+        return createNativeFunctionCallbackBridge(id, cap, callbackState, policy, constructible);
       };
     case "getter_callback_maker":
       return (id: number, cap: any) => {

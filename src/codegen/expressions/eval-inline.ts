@@ -1970,17 +1970,68 @@ export function emitStandaloneIndirectEvalRuntime(
   return emitRuntimeEvalResultUnwrap(ctx, fctx);
 }
 
-/** Materialize the current realm's first-class `%eval%` value for standalone.
- *
- * The provider already owns the canonical intrinsic marker and installs it on
- * the shared global object. Evaluating the tiny global Script `eval` through
- * the existing indirect-eval entry returns that exact marker, so aliases are
- * callable through `__runtime_apply_interpreted` and remain identity-equal to
- * `globalThis.eval`. This deliberately reuses the published ABI instead of
- * adding a second "get intrinsic" export.
+/** Hoist the realm's first-class `%eval%` wrapper without executing eval. */
+function ensureStandaloneIntrinsicEvalWrapper(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+): { fnName: string; funcIdx: number } | undefined {
+  const fnName = "__js2wasm_intrinsic_indirect_eval";
+  const existing = ctx.funcMap.get(fnName);
+  if (existing !== undefined) return { fnName, funcIdx: existing };
+
+  // The sequence form is load-bearing: the wrapper is an ordinary function,
+  // so a bare `eval(source)` in its body would be direct eval in the wrapper's
+  // lexical environment. `(0, eval)(source)` preserves the intrinsic value's
+  // indirect/global semantics and is intercepted by the established runtime-
+  // eval call lowering when this synthetic declaration is compiled.
+  const sf = ts.createSourceFile(
+    EVAL_SOURCE_FILENAME,
+    `function ${fnName}(source) { return (0, eval)(source); }`,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.JS,
+  );
+  if (sf.statements.length !== 1 || !ts.isFunctionDeclaration(sf.statements[0]!)) return undefined;
+  const fnDecl = sf.statements[0] as ts.FunctionDeclaration;
+
+  const savedLocalMap = fctx.localMap;
+  const savedBoxed = fctx.boxedCaptures;
+  const savedFuncCount = ctx.mod.functions.length;
+  fctx.localMap = new Map();
+  fctx.boxedCaptures = undefined;
+  try {
+    hoistFunctionDeclarations(ctx, fctx, [fnDecl]);
+  } catch {
+    if (ctx.mod.functions.length > savedFuncCount) {
+      ctx.mod.functions.length = savedFuncCount;
+      const cutoff = ctx.numImportFuncs + savedFuncCount;
+      for (const [name, idx] of ctx.funcMap) {
+        if (idx >= cutoff) ctx.funcMap.delete(name);
+      }
+    }
+    return undefined;
+  } finally {
+    fctx.localMap = savedLocalMap;
+    fctx.boxedCaptures = savedBoxed;
+  }
+
+  const funcIdx = ctx.funcMap.get(fnName);
+  return funcIdx === undefined ? undefined : { fnName, funcIdx };
+}
+
+/**
+ * Materialize the current realm's first-class `%eval%` value for standalone.
+ * Construction is pure AOT: merely storing `eval` (Deno primordials does
+ * exactly this) must not execute the runtime compiler/interpreter. Calling the
+ * resulting closure later invokes the existing indirect-eval provider seam.
  */
 export function emitStandaloneIntrinsicEvalValue(ctx: CodegenContext, fctx: FunctionContext): ValType | undefined {
-  return emitStandaloneIndirectEvalRuntime(ctx, fctx, [ts.factory.createStringLiteral("eval")]);
+  const wrapper = ensureStandaloneIntrinsicEvalWrapper(ctx, fctx);
+  if (!wrapper) return undefined;
+  const closureRef = emitFuncRefAsClosure(ctx, fctx, wrapper.fnName, wrapper.funcIdx);
+  if (!closureRef) return undefined;
+  if (closureRef.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+  return { kind: "externref" };
 }
 
 /** Materialize the current realm's callable `%Function%` intrinsic through the

@@ -23,6 +23,7 @@ export const OP = {
   catch_all: 0x19,
   drop: 0x1a,
   select: 0x1b,
+  try_table: 0x1f,
   local_get: 0x20,
   local_set: 0x21,
   local_tee: 0x22,

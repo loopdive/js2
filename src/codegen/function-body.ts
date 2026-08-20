@@ -28,6 +28,7 @@ import {
   resolveWasmType,
 } from "./index.js";
 import { ensureExnTag } from "./registry/imports.js";
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   coerceType,
@@ -155,6 +156,7 @@ export const INLINE_DISALLOWED_OPS = new Set([
   "br",
   "br_if",
   "try",
+  "try_table",
   "throw",
   "rethrow",
   "unreachable",
@@ -280,6 +282,15 @@ function assertDirectFunctionBodyAllowed(name: string): void {
 }
 
 export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclaration, func: WasmFunction): void {
+  // Captured-global lookup is scoped to the function body currently being
+  // emitted. A preceding module-init pass or sibling function may have
+  // promoted a same-named lexical binding, but reusing that name-keyed entry
+  // would route this function's object-literal methods to the wrong global.
+  // The concrete globals remain in the module; only the short-lived lookup
+  // maps are reset before this body's lowering starts.
+  ctx.capturedGlobals.clear();
+  ctx.capturedGlobalsWidened.clear();
+  ctx.capturedBoxGlobals?.clear();
   const sig = ctx.checker.getSignatureFromDeclaration(decl);
   if (!sig) {
     reportError(ctx, decl, `Cannot resolve signature for function '${func.name}'`);
@@ -787,13 +798,15 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
               { op: "local.set", index: pendingThrowLocal },
             ]
           : [];
-      fctx.body.push({
-        op: "try",
-        blockType: { kind: "empty" },
-        body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
-        catches: [{ tagIdx, body: catchBody }],
-        catchAll: catchAllBody.length > 0 ? catchAllBody : undefined,
-      });
+      fctx.body.push(
+        buildTargetTaggedTry(
+          ctx,
+          { kind: "empty" },
+          [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
+          [{ tagIdx, body: catchBody }],
+          catchAllBody.length > 0 ? catchAllBody : undefined,
+        ),
+      );
 
       // Return __create_generator or __create_async_generator depending on async flag.
       // Note: ctx.asyncFunctions excludes async generators (by design), so we check

@@ -121,7 +121,7 @@ export function makeNativeStrShared(
         processed.push(newIf);
         continue;
       }
-      if (instr.op === "block" || instr.op === "loop") {
+      if (instr.op === "block" || instr.op === "loop" || instr.op === "try_table") {
         const blockInstr = instr as any;
         const newBlock: any = { ...blockInstr };
         if (blockInstr.body) newBlock.body = wrapBodyWithFlatten(blockInstr.body, []).slice(0);

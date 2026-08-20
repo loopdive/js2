@@ -98,6 +98,7 @@ import { ensureExnTag } from "./registry/imports.js";
 import { addFuncType, getOrRegisterRefCellType, getOrRegisterVecType } from "./registry/types.js";
 import { coerceType, compileExpression, compileStatement, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 
 /**
  * Is the host-free async **drive layer** (#2895 PATH B) active for this module?
@@ -2460,15 +2461,7 @@ export function ensureAsyncResumeFunction(
         {
           op: "loop",
           blockType: { kind: "empty" },
-          body: [
-            {
-              op: "try",
-              blockType: { kind: "empty" },
-              body: chain,
-              catches: [{ tagIdx: exnTag, body: route }],
-              ...(catchAllRoute !== undefined ? { catchAll: catchAllRoute } : {}),
-            },
-          ],
+          body: [buildTargetTaggedTry(ctx, { kind: "empty" }, chain, [{ tagIdx: exnTag, body: route }], catchAllRoute)],
         },
       ],
     });
@@ -2480,17 +2473,14 @@ export function ensureAsyncResumeFunction(
         body: [{ op: "loop", blockType: { kind: "empty" }, body: chain }],
       },
     ];
-    resumeFctx.body.push({
-      op: "try",
-      blockType: { kind: "empty" },
-      body: dispatch,
-      catches: [
+    resumeFctx.body.push(
+      buildTargetTaggedTry(ctx, { kind: "empty" }, dispatch, [
         {
           tagIdx: exnTag,
           body: [{ op: "local.set", index: reasonLocal }, ...rejectTail],
         },
-      ],
-    });
+      ]),
+    );
   }
 
   resumePlaceholder.locals = resumeFctx.locals;

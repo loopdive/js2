@@ -434,6 +434,7 @@ type InstrBase =
   | { op: "memory.copy" }
   | { op: "memory.fill" }
   | { op: "try"; blockType: BlockType; body: Instr[]; catches: CatchClause[]; catchAll?: Instr[] }
+  | { op: "try_table"; blockType: BlockType; body: Instr[]; catches: TryTableCatch[] }
   | { op: "throw"; tagIdx: number }
   | { op: "rethrow"; depth: number }
   | { op: "any.convert_extern" }
@@ -568,6 +569,15 @@ export type BlockType = { kind: "empty" } | { kind: "val"; type: ValType } | { k
 export interface CatchClause {
   tagIdx: number;
   body: Instr[];
+}
+
+/** A standardized exception-handling clause attached to `try_table`. */
+export interface TryTableCatch {
+  kind: "catch" | "catch_ref" | "catch_all" | "catch_all_ref";
+  /** Present for the tagged `catch` / `catch_ref` forms. */
+  tagIdx?: number;
+  /** Relative label depth of the enclosing handler block. */
+  depth: number;
 }
 
 export interface TagDef {

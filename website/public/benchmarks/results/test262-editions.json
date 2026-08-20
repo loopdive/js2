@@ -48,9 +48,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9106,
+    "pass": 9108,
     "fail": 2492,
-    "ce": 105,
+    "ce": 103,
     "skip": 1,
     "total": 11704,
     "pct": 78,
@@ -84,8 +84,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 758,
-        "fail": 292,
+        "pass": 760,
+        "fail": 290,
         "ce": 0,
         "skip": 0,
         "total": 1050,
@@ -120,8 +120,8 @@
       },
       {
         "name": "Proxy",
-        "pass": 194,
-        "fail": 237,
+        "pass": 195,
+        "fail": 236,
         "ce": 0,
         "skip": 0,
         "total": 431,
@@ -808,8 +808,8 @@
   },
   {
     "edition": "ES2017",
-    "pass": 498,
-    "fail": 189,
+    "pass": 499,
+    "fail": 188,
     "ce": 3,
     "skip": 0,
     "total": 690,
@@ -826,17 +826,17 @@
       },
       {
         "name": "SharedArrayBuffer",
-        "pass": 128,
-        "fail": 116,
+        "pass": 129,
+        "fail": 115,
         "ce": 1,
         "skip": 0,
         "total": 245,
-        "pct": 52
+        "pct": 53
       },
       {
         "name": "Atomics",
-        "pass": 108,
-        "fail": 101,
+        "pass": 109,
+        "fail": 100,
         "ce": 0,
         "skip": 0,
         "total": 209,
@@ -844,12 +844,12 @@
       },
       {
         "name": "TypedArray",
-        "pass": 85,
-        "fail": 107,
+        "pass": 86,
+        "fail": 106,
         "ce": 0,
         "skip": 0,
         "total": 192,
-        "pct": 44
+        "pct": 45
       },
       {
         "name": "default-parameters",
@@ -862,21 +862,21 @@
       },
       {
         "name": "Symbol",
-        "pass": 36,
-        "fail": 21,
+        "pass": 37,
+        "fail": 20,
         "ce": 0,
         "skip": 0,
         "total": 57,
-        "pct": 63
+        "pct": 65
       },
       {
         "name": "ArrayBuffer",
-        "pass": 50,
-        "fail": 6,
+        "pass": 51,
+        "fail": 5,
         "ce": 0,
         "skip": 0,
         "total": 56,
-        "pct": 89
+        "pct": 91
       },
       {
         "name": "arrow-function",
@@ -889,12 +889,12 @@
       },
       {
         "name": "DataView",
-        "pass": 27,
-        "fail": 5,
+        "pass": 28,
+        "fail": 4,
         "ce": 0,
         "skip": 0,
         "total": 32,
-        "pct": 84
+        "pct": 88
       },
       {
         "name": "class",
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4234,
-    "fail": 1510,
+    "pass": 4236,
+    "fail": 1508,
     "ce": 48,
     "skip": 0,
     "total": 5792,
@@ -2276,12 +2276,12 @@
       },
       {
         "name": "resizable-arraybuffer",
-        "pass": 166,
-        "fail": 266,
+        "pass": 168,
+        "fail": 264,
         "ce": 0,
         "skip": 0,
         "total": 432,
-        "pct": 38
+        "pct": 39
       },
       {
         "name": "class-static-fields-private",
@@ -2348,12 +2348,12 @@
       },
       {
         "name": "TypedArray",
-        "pass": 93,
-        "fail": 38,
+        "pass": 95,
+        "fail": 36,
         "ce": 0,
         "skip": 0,
         "total": 131,
-        "pct": 71
+        "pct": 73
       },
       {
         "name": "object-rest",
@@ -2683,8 +2683,8 @@
   },
   {
     "edition": "ES2023",
-    "pass": 183,
-    "fail": 149,
+    "pass": 185,
+    "fail": 147,
     "ce": 2,
     "skip": 0,
     "total": 334,
@@ -2692,21 +2692,21 @@
     "features": [
       {
         "name": "change-array-by-copy",
-        "pass": 88,
-        "fail": 44,
+        "pass": 90,
+        "fail": 42,
         "ce": 0,
         "skip": 0,
         "total": 132,
-        "pct": 67
+        "pct": 68
       },
       {
         "name": "TypedArray",
-        "pass": 58,
-        "fail": 52,
+        "pass": 60,
+        "fail": 50,
         "ce": 0,
         "skip": 0,
         "total": 110,
-        "pct": 53
+        "pct": 55
       },
       {
         "name": "array-find-from-last",
@@ -2773,12 +2773,12 @@
       },
       {
         "name": "resizable-arraybuffer",
-        "pass": 4,
-        "fail": 3,
+        "pass": 5,
+        "fail": 2,
         "ce": 0,
         "skip": 0,
         "total": 7,
-        "pct": 57
+        "pct": 71
       },
       {
         "name": "arrow-function",
@@ -2856,8 +2856,8 @@
   },
   {
     "edition": "ES2024",
-    "pass": 337,
-    "fail": 195,
+    "pass": 341,
+    "fail": 191,
     "ce": 24,
     "skip": 0,
     "total": 556,
@@ -2865,12 +2865,12 @@
     "features": [
       {
         "name": "TypedArray",
-        "pass": 77,
-        "fail": 170,
+        "pass": 81,
+        "fail": 166,
         "ce": 0,
         "skip": 0,
         "total": 247,
-        "pct": 31
+        "pct": 33
       },
       {
         "name": "regexp-v-flag",
@@ -2883,21 +2883,21 @@
       },
       {
         "name": "align-detached-buffer-semantics-with-web-reality",
-        "pass": 68,
-        "fail": 90,
+        "pass": 72,
+        "fail": 86,
         "ce": 0,
         "skip": 0,
         "total": 158,
-        "pct": 43
+        "pct": 46
       },
       {
         "name": "BigInt",
-        "pass": 32,
-        "fail": 89,
+        "pass": 34,
+        "fail": 87,
         "ce": 0,
         "skip": 0,
         "total": 121,
-        "pct": 26
+        "pct": 28
       },
       {
         "name": "Atomics",
@@ -3571,21 +3571,21 @@
   },
   {
     "edition": "ES2026",
-    "pass": 147,
-    "fail": 163,
+    "pass": 148,
+    "fail": 162,
     "ce": 0,
     "skip": 0,
     "total": 310,
-    "pct": 47,
+    "pct": 48,
     "features": [
       {
         "name": "Array.fromAsync",
-        "pass": 32,
-        "fail": 63,
+        "pass": 33,
+        "fail": 62,
         "ce": 0,
         "skip": 0,
         "total": 95,
-        "pct": 34
+        "pct": 35
       },
       {
         "name": "upsert",
@@ -3753,21 +3753,21 @@
   },
   {
     "edition": "ES2027",
-    "pass": 349,
-    "fail": 534,
-    "ce": 14,
+    "pass": 351,
+    "fail": 533,
+    "ce": 13,
     "skip": 0,
     "total": 897,
     "pct": 39,
     "features": [
       {
         "name": "explicit-resource-management",
-        "pass": 246,
-        "fail": 171,
-        "ce": 13,
+        "pass": 248,
+        "fail": 170,
+        "ce": 12,
         "skip": 0,
         "total": 430,
-        "pct": 57
+        "pct": 58
       },
       {
         "name": "await-dictionary",

@@ -14,7 +14,14 @@ import { ts } from "../../ts-api.js";
 import { integrityVarKey } from "../widened-var-key.js";
 import { isSymbolType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
-import { emitArrayIteratorPrototypeSingleton } from "../array-object-proto.js";
+import {
+  emitAsyncGeneratorFunctionPrototypeSingleton,
+  emitGeneratorFunctionPrototypeSingleton,
+  emitIteratorPrototypeSingleton,
+  emitTypedArrayIntrinsicCtorObject,
+  isWiredTypedArrayViewName,
+  type NativeIteratorPrototypeKind,
+} from "../array-object-proto.js";
 import { isPristineArrayPrototypeIteratorCall } from "../array-methods.js";
 import {
   emitStandalonePromiseReject,
@@ -107,26 +114,107 @@ function unwrapReflectConstructExpr(value: ts.Expression): ts.Expression {
   return current;
 }
 
-/**
- * Deno's first core script captures `%ArrayIteratorPrototype%` through an
- * exact pristine-intrinsic expression. TypeScript names its result
- * `IterableIterator<any>` rather than `ArrayIterator<T>`, so the type-based
- * Object path cannot identify it. Compile and drop the iterator for normal
- * evaluation, then return the genuine singleton shared by ordinary array
- * iterators (#4378).
- */
-function compilePristineArrayIteratorPrototypeCapture(
+function pristineIteratorPrototypeKind(
+  fctx: FunctionContext,
+  argument: ts.Expression,
+): NativeIteratorPrototypeKind | undefined {
+  if (isPristineArrayPrototypeIteratorCall(fctx, argument)) return "Array";
+  if (!ts.isCallExpression(argument) || argument.arguments.length !== 0) return undefined;
+  const callee = argument.expression;
+  if (!ts.isElementAccessExpression(callee)) return undefined;
+  const key = callee.argumentExpression;
+  if (
+    !key ||
+    !ts.isPropertyAccessExpression(key) ||
+    !ts.isIdentifier(key.expression) ||
+    key.expression.text !== "Symbol" ||
+    key.name.text !== "iterator" ||
+    fctx.localMap.has("Symbol") ||
+    (fctx.boxedCaptures?.has("Symbol") ?? false)
+  ) {
+    return undefined;
+  }
+  const receiver = callee.expression;
+  if (
+    ts.isPropertyAccessExpression(receiver) &&
+    receiver.name.text === "prototype" &&
+    ts.isIdentifier(receiver.expression) &&
+    receiver.expression.text === "String" &&
+    !fctx.localMap.has("String") &&
+    !(fctx.boxedCaptures?.has("String") ?? false)
+  ) {
+    return "String";
+  }
+  if (
+    ts.isNewExpression(receiver) &&
+    receiver.arguments?.length === 0 &&
+    ts.isIdentifier(receiver.expression) &&
+    (receiver.expression.text === "Map" || receiver.expression.text === "Set") &&
+    !fctx.localMap.has(receiver.expression.text) &&
+    !(fctx.boxedCaptures?.has(receiver.expression.text) ?? false)
+  ) {
+    return receiver.expression.text;
+  }
+  return undefined;
+}
+
+function compilePristineIteratorPrototypeCapture(
   ctx: CodegenContext,
   fctx: FunctionContext,
   argument: ts.Expression,
 ): ValType | undefined {
-  if (!noJsHost(ctx) || !isPristineArrayPrototypeIteratorCall(fctx, argument)) return undefined;
-  const argumentType = compileExpression(ctx, fctx, argument);
-  if (argumentType) fctx.body.push({ op: "drop" });
-  const prototypeType = emitArrayIteratorPrototypeSingleton(ctx, fctx);
+  if (!noJsHost(ctx)) return undefined;
+  const kind = pristineIteratorPrototypeKind(fctx, argument);
+  if (!kind) return undefined;
+  // Every accepted form is an exact, zero-argument call on an unshadowed
+  // intrinsic receiver:
+  //
+  //   Array.prototype[Symbol.iterator]()
+  //   String.prototype[Symbol.iterator]()
+  //   new Map()[Symbol.iterator]()
+  //   new Set()[Symbol.iterator]()
+  //
+  // The temporary collection / iterator allocations are not observable, and
+  // the enclosing Reflect.getPrototypeOf immediately discards the iterator.
+  // Do not lower that dead intermediate call: apart from needless allocation,
+  // the generic dynamic-call path can require iterator instance machinery
+  // that is intentionally absent when only the intrinsic prototype is needed.
+  const prototypeType = emitIteratorPrototypeSingleton(ctx, fctx, kind);
   if (prototypeType) return prototypeType;
   fctx.body.push({ op: "ref.null.extern" });
   return { kind: "externref" };
+}
+
+/**
+ * Resolve exact intrinsic constructor/function prototype queries without
+ * sending opaque compiled closures through the ordinary `$Object` prototype
+ * reader. `Object.getPrototypeOf` already exposes these canonical standalone
+ * objects; Reflect must observe the same identities.
+ */
+function compilePristineIntrinsicPrototypeCapture(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  argument: ts.Expression,
+): ValType | undefined {
+  if (!noJsHost(ctx)) return undefined;
+  const value = unwrapReflectConstructExpr(argument);
+
+  if (
+    ts.isIdentifier(value) &&
+    !fctx.localMap.has(value.text) &&
+    !(fctx.boxedCaptures?.has(value.text) ?? false) &&
+    isWiredTypedArrayViewName(value.text)
+  ) {
+    return emitTypedArrayIntrinsicCtorObject(ctx, fctx) ?? undefined;
+  }
+
+  if (ts.isFunctionExpression(value) && value.asteriskToken !== undefined) {
+    return value.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true
+      ? (emitAsyncGeneratorFunctionPrototypeSingleton(ctx, fctx) ?? undefined)
+      : (emitGeneratorFunctionPrototypeSingleton(ctx, fctx) ?? undefined);
+  }
+
+  return undefined;
 }
 
 /**
@@ -629,12 +717,11 @@ export function compileNamespaceStaticCall(
     //   operation used by dynamic property access.
     // - Reflect.set(target, key, value) → native __reflect_set, a boolean
     //   wrapper around the supported __extern_set data-write subset.
-    // - Reflect.ownKeys(target) → native __object_keys (string own keys of
-    //   the $Object hash-map, insertion order). The native runtime tracks
-    //   only string keys; Symbol/non-enumerable keys are out of scope for the
-    //   standalone object runtime (consistent approximation across #1472
-    //   Phase B). __object_keys is in OBJECT_RUNTIME_HELPER_NAMES, so
-    //   ensureLateImport auto-routes it to the in-module native func.
+    // - Reflect.ownKeys(target) → native __getOwnPropertyNames (all own
+    //   string keys, including non-enumerable ones, in insertion order). The
+    //   native runtime does not retain symbol-keyed properties yet, but using
+    //   __object_keys here would incorrectly give Reflect enumerable-only
+    //   Object.keys semantics and hide builtin methods from reflection.
     // - Reflect.apply/construct require call/constructor machinery with no
     //   native analog in this slice. Descriptor/prototype/integrity methods
     //   stay refused until their native invariants are proven end-to-end.
@@ -809,7 +896,7 @@ export function compileNamespaceStaticCall(
         fctx.body.push({ op: "local.set", index: targetLocal });
         emitNativeReflectTargetGuard(targetLocal, "Reflect.ownKeys called on non-object");
 
-        const funcIdx = ensureLateImport(ctx, "__object_keys", [externRef], [externRef]);
+        const funcIdx = ensureLateImport(ctx, "__getOwnPropertyNames", [externRef], [externRef]);
         flushLateImportShifts(ctx, fctx);
         const boundaryOwnKeysIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_own_keys") : undefined;
         if (funcIdx !== undefined && boundaryOwnKeysIdx !== undefined) {
@@ -989,7 +1076,9 @@ export function compileNamespaceStaticCall(
           fctx.body.push({ op: "ref.null.extern" }); // unreachable after throw
           return { kind: "externref" };
         }
-        const pristineIteratorPrototype = compilePristineArrayIteratorPrototypeCapture(ctx, fctx, arg0);
+        const pristineIntrinsicPrototype = compilePristineIntrinsicPrototypeCapture(ctx, fctx, arg0);
+        if (pristineIntrinsicPrototype) return pristineIntrinsicPrototype;
+        const pristineIteratorPrototype = compilePristineIteratorPrototypeCapture(ctx, fctx, arg0);
         if (pristineIteratorPrototype) return pristineIteratorPrototype;
         const argType = compileExpression(ctx, fctx, arg0, externRef);
         if (!argType) {

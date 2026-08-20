@@ -9,7 +9,8 @@ import { compile } from "../src/index.js";
 // `#1907`/`#1888 S6-b` "built-in static property value read is not supported"
 // compile error. The standalone CALL path already backs the fixed-arity
 // `Reflect.get`/`has`/`set`/`ownKeys` with a simple externref/i32 native
-// (`__extern_get` / `__extern_has` / `__reflect_set` / `__object_keys`); this
+// (`__extern_get` / `__extern_has` / `__reflect_set` /
+// `__getOwnPropertyNames`); this
 // slice wires those SAME natives into `ensureStandaloneBuiltinStaticMethodClosure`
 // so the reified value calls identically. `JSON.stringify` as a value now works
 // too (host-free via `__json_stringify_root` — see
@@ -59,10 +60,14 @@ describe("#2933 — standalone Reflect.* static-method value reads", () => {
     );
   });
 
-  it("Reflect.ownKeys as a value returns the own keys", async () => {
+  it("Reflect.ownKeys as a value includes non-enumerable own names", async () => {
     expect(
       await runStandalone(
-        `const o: any = { a: 1, b: 2 }; const f: any = Reflect.ownKeys; const ks: any = f(o); return ks.length;`,
+        `const o: any = { visible: 1 };
+         Object.defineProperty(o, "hidden", { value: 2, enumerable: false });
+         const f: any = Reflect.ownKeys;
+         const ks: any = f(o);
+         return ks.length;`,
       ),
     ).toBe(2);
   });

@@ -1573,6 +1573,40 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       enc.byte(OP.rethrow);
       enc.u32(instr.depth);
       break;
+    case "try_table": {
+      enc.byte(OP.try_table);
+      encodeBlockType(instr.blockType, enc);
+      enc.u32(instr.catches.length);
+      for (const clause of instr.catches) {
+        switch (clause.kind) {
+          case "catch":
+            enc.byte(0x00);
+            if (clause.tagIdx === undefined) throw new Error("try_table catch is missing a tag index");
+            if (valCtx) vIdx("exception tag", clause.tagIdx, valCtx.numTags);
+            enc.u32(clause.tagIdx);
+            enc.u32(clause.depth);
+            break;
+          case "catch_ref":
+            enc.byte(0x01);
+            if (clause.tagIdx === undefined) throw new Error("try_table catch_ref is missing a tag index");
+            if (valCtx) vIdx("exception tag", clause.tagIdx, valCtx.numTags);
+            enc.u32(clause.tagIdx);
+            enc.u32(clause.depth);
+            break;
+          case "catch_all":
+            enc.byte(0x02);
+            enc.u32(clause.depth);
+            break;
+          case "catch_all_ref":
+            enc.byte(0x03);
+            enc.u32(clause.depth);
+            break;
+        }
+      }
+      for (const i of instr.body) encodeInstr(i, enc);
+      enc.byte(OP.end);
+      break;
+    }
     case "try": {
       enc.byte(OP.try);
       encodeBlockType(instr.blockType, enc);

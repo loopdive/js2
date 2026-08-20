@@ -28,7 +28,9 @@ import { bodyReferencesOwnThis } from "./helpers/body-references-own-this.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
 import { thisReceiverIsGlobalObject } from "./helpers/sloppy-this-global.js";
 import { addFuncType } from "./registry/types.js";
+import { ensureExnTag } from "./registry/imports.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
+import { buildStandardTryTable } from "../ir/try-table.js";
 
 interface NamedThisCallTarget {
   readonly trampolineFuncIdx: FuncHandle;
@@ -209,31 +211,53 @@ function ensureNamedThisCallTrampoline(
   const prevThisLocal = trampolineParams.length;
   const resultType = results[0];
   const resultLocal = resultType === undefined ? -1 : prevThisLocal + 1;
-  const exactCall = callTarget(targetFuncIdx, params.length);
+  const standardizedEh = ctx.wasi || ctx.standalone;
+  const unwindExnLocal = resultType === undefined ? prevThisLocal + 1 : resultLocal + 1;
+  const exactCall = (): Instr[] => callTarget(targetFuncIdx, params.length);
 
   // Save the ambient receiver, install `receiver`, run the exact call, restore
   // on both the normal and the unwinding exit.
-  const installAndCall = (receiver: readonly Instr[]): Instr[] => [
-    { op: "global.get", index: currentThisGlobalIdx },
-    { op: "local.set", index: prevThisLocal },
-    ...receiver,
-    { op: "global.set", index: currentThisGlobalIdx },
-    {
-      op: "try",
-      blockType: resultType === undefined ? { kind: "empty" } : { kind: "val", type: resultType },
-      body: exactCall,
-      catches: [],
-      catchAll: [
-        { op: "local.get", index: prevThisLocal },
-        { op: "global.set", index: currentThisGlobalIdx },
-        { op: "rethrow", depth: 0 },
-      ],
-    },
-    ...(resultLocal < 0 ? [] : ([{ op: "local.set", index: resultLocal }] satisfies Instr[])),
-    { op: "local.get", index: prevThisLocal },
-    { op: "global.set", index: currentThisGlobalIdx },
-    ...(resultLocal < 0 ? [] : ([{ op: "local.get", index: resultLocal }] satisfies Instr[])),
-  ];
+  const installAndCall = (receiver: readonly Instr[]): Instr[] => {
+    const blockType =
+      resultType === undefined ? ({ kind: "empty" } as const) : ({ kind: "val", type: resultType } as const);
+    const protectedCall: Instr = standardizedEh
+      ? buildStandardTryTable(blockType, exactCall(), [
+          {
+            kind: "catch",
+            tagIdx: ensureExnTag(ctx),
+            payloadType: { kind: "externref" },
+            body: [
+              { op: "local.set", index: unwindExnLocal },
+              { op: "local.get", index: prevThisLocal },
+              { op: "global.set", index: currentThisGlobalIdx },
+              { op: "local.get", index: unwindExnLocal },
+              { op: "throw", tagIdx: ensureExnTag(ctx) },
+            ],
+          },
+        ])
+      : {
+          op: "try",
+          blockType,
+          body: exactCall(),
+          catches: [],
+          catchAll: [
+            { op: "local.get", index: prevThisLocal },
+            { op: "global.set", index: currentThisGlobalIdx },
+            { op: "rethrow", depth: 0 },
+          ],
+        };
+    return [
+      { op: "global.get", index: currentThisGlobalIdx },
+      { op: "local.set", index: prevThisLocal },
+      ...receiver,
+      { op: "global.set", index: currentThisGlobalIdx },
+      protectedCall,
+      ...(resultLocal < 0 ? [] : ([{ op: "local.set", index: resultLocal }] satisfies Instr[])),
+      { op: "local.get", index: prevThisLocal },
+      { op: "global.set", index: currentThisGlobalIdx },
+      ...(resultLocal < 0 ? [] : ([{ op: "local.get", index: resultLocal }] satisfies Instr[])),
+    ];
+  };
 
   const liveCall: Instr[] = installAndCall([{ op: "local.get", index: 0 }]);
 
@@ -263,6 +287,7 @@ function ensureNamedThisCallTrampoline(
     locals: [
       { name: "__previous_this", type: { kind: "externref" } },
       ...(resultType === undefined ? [] : [{ name: "__result", type: resultType }]),
+      ...(standardizedEh ? [{ name: "__unwind_exception", type: { kind: "externref" } as const }] : []),
     ],
     body,
     exported: false,

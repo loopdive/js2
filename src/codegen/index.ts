@@ -217,7 +217,12 @@ import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
-import { hoistedVarRetypesToConcreteRef, inferArrayVecType, usageInferredLocalType } from "./statements/variables.js"; // (#2106 S1 PR-2) hoist undefined-init retype predicate; (#684) usage-based any-local f64 override
+import {
+  hoistedVarRetypesToConcreteRef,
+  inferArrayVecType,
+  inferTaViewType,
+  usageInferredLocalType,
+} from "./statements/variables.js"; // (#2106 S1 PR-2) hoist undefined-init retype predicate; (#684) usage-based any-local f64 override
 import { bindingHasMixedAssignmentCarrier } from "./analysis/mixed-assignment-carrier.js";
 import { symbolBrand } from "./symbol-field-carrier.js";
 import { ensureDynReadHelpers, ensureDynMemberGet } from "./dyn-read.js"; // (#2580 M0) / (#3053 U0)
@@ -350,6 +355,7 @@ import {
   shiftAsyncSideChannelFuncIdxs,
 } from "./async-scheduler.js";
 import { ensureUnhandledRejectionReporter } from "./unhandled-rejection.js";
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stable handles never shift
 import { profileCount, profilePhase } from "../compile-profile.js";
 import { frameSnapshotAtCompile } from "./function-body.js";
@@ -6149,24 +6155,19 @@ function addWasiStartExport(ctx: CodegenContext): void {
     const startBody: Instr[] =
       exnPrinterIdx !== undefined && ctx.wasiProcExitIdx >= 0
         ? [
-            {
-              op: "try",
-              blockType: { kind: "empty" },
-              body,
-              catches: [
-                {
-                  tagIdx: ctx.exnTagIdx,
-                  body: [
-                    // The catch pushes the thrown externref payload; render + write it.
-                    { op: "call", funcIdx: exnPrinterIdx },
-                    // An uncaught exception is a failure — exit nonzero.
-                    { op: "i32.const", value: 1 },
-                    { op: "call", funcIdx: ctx.wasiProcExitIdx },
-                    { op: "unreachable" },
-                  ],
-                },
-              ],
-            },
+            buildTargetTaggedTry(ctx, { kind: "empty" }, body, [
+              {
+                tagIdx: ctx.exnTagIdx,
+                body: [
+                  // The catch pushes the thrown externref payload; render + write it.
+                  { op: "call", funcIdx: exnPrinterIdx },
+                  // An uncaught exception is a failure — exit nonzero.
+                  { op: "i32.const", value: 1 },
+                  { op: "call", funcIdx: ctx.wasiProcExitIdx },
+                  { op: "unreachable" },
+                ],
+              },
+            ]),
           ]
         : body;
 
@@ -6668,8 +6669,81 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
       const exportName = `__class_call_${key}_vararg`;
       if (!ctx.funcMap.has(exportName)) emitMethodDispatch(key, exportName, true, -1);
     }
+    // Host-backed user subclasses use a real JS object as their receiver, so
+    // the historical ref.test dispatch above can never identify them. Publish
+    // a class-qualified direct bridge for each own method; the runtime selects
+    // it from the user-class tag before consulting the struct/fnctor surface.
+    for (const className of [...ctx.classExternrefBackedSet].sort()) {
+      for (const key of [...keys].sort()) {
+        emitExternrefClassMethodDispatch(ctx, className, key);
+      }
+    }
     emitClassMemberKindExports(ctx, dispatchTypeIdx, [...keys].sort());
   }
+}
+
+/**
+ * Emit a direct `(externref, ...externref) -> externref` bridge for one own
+ * method of an externref-backed user subclass. Such instances are host
+ * objects (for example `VirtualConsole extends EventEmitter`), therefore a
+ * `ref.test` against the synthetic WasmGC class type is necessarily false.
+ * The class-qualified export is resolved by the runtime through the instance
+ * tag installed by `__tag_user_class`.
+ */
+function emitExternrefClassMethodDispatch(ctx: CodegenContext, className: string, methodName: string): void {
+  const fullName = `${className}_${methodName}`;
+  if (!ctx.classMethodSet.has(fullName)) return;
+  const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
+  if (methodIdx === undefined) return;
+  const method = definedFuncAt(ctx, methodIdx);
+  const methodType = method ? ctx.mod.types[method.typeIdx] : undefined;
+  if (!methodType || methodType.kind !== "func" || methodType.params.length < 1) return;
+  if (!supportsHostClassBridgeParam(methodType.params[0]!)) return;
+  const params = methodType.params.slice(1);
+  // Keep the bridge conservative: an externref call boundary can pass host
+  // values directly. Numeric/ref-specific adapters remain on the existing
+  // compiler-generated call path until they have a dedicated ABI contract.
+  if (params.some((param) => !supportsHostClassBridgeParam(param))) return;
+  const exportName = `__class_call_${className}_${methodName}_${params.length}`;
+  if (ctx.funcMap.has(exportName)) return;
+
+  const typeIdx = addFuncType(
+    ctx,
+    [{ kind: "externref" }, ...params.map(() => ({ kind: "externref" as const }))],
+    [{ kind: "externref" }],
+    `$${exportName}_type`,
+  );
+  const body: Instr[] = [];
+  for (let index = 0; index < params.length + 1; index++) body.push({ op: "local.get", index });
+  body.push({ op: "call", funcIdx: methodIdx });
+  const resultType = methodType.results.length > 0 ? methodType.results[0] : undefined;
+  if (resultType === undefined) {
+    const undefinedIdx = ctx.funcMap.get("__get_undefined");
+    body.push(undefinedIdx !== undefined ? { op: "call", funcIdx: undefinedIdx } : { op: "ref.null.extern" });
+  } else if (resultType.kind === "ref" || resultType.kind === "ref_null") {
+    body.push({ op: "extern.convert_any" });
+  } else if (resultType.kind === "f64") {
+    const boxIdx = ctx.funcMap.get("__box_number");
+    if (boxIdx === undefined) return;
+    body.push({ op: "call", funcIdx: boxIdx });
+  } else if (resultType.kind === "i32") {
+    const boxIdx = ctx.funcMap.get("__box_number");
+    if (boxIdx === undefined) return;
+    body.push({ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxIdx });
+  } else if (resultType.kind === "i64") {
+    const boxIdx = ctx.funcMap.get("__box_number");
+    if (boxIdx === undefined) return;
+    body.push({ op: "f64.convert_i64_s" }, { op: "call", funcIdx: boxIdx });
+  } else if (resultType.kind === "f32") {
+    const boxIdx = ctx.funcMap.get("__box_number");
+    if (boxIdx === undefined) return;
+    body.push({ op: "f64.promote_f32" }, { op: "call", funcIdx: boxIdx });
+  }
+
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  ctx.mod.functions.push({ name: exportName, typeIdx, locals: [], body, exported: true });
+  exportFunc(ctx.mod, exportName, funcIdx);
+  ctx.funcMap.set(exportName, funcIdx);
 }
 
 /**
@@ -7773,6 +7847,16 @@ export function generateMultiModule(
       for (const sf of multiAst.sourceFiles) {
         collectExternDeclarations(ctx, sf);
       }
+      // `analyzeMultiSource` keeps the import-scoped Node emulation surface
+      // (`__js2wasm_node_env.d.ts`) in the TypeScript Program but deliberately
+      // omits it from `multiAst.sourceFiles` so it is not emitted as user code.
+      // It still carries the typed Node class stubs used by host heritage (for
+      // example `events.EventEmitter`), so collect its declarations before
+      // class discovery just like the single-file preprocessor does.
+      const nodeEnvDts = multiAst.program
+        .getSourceFiles()
+        .find((sf) => sf.fileName.endsWith("__js2wasm_node_env.d.ts"));
+      if (nodeEnvDts) collectExternDeclarations(ctx, nodeEnvDts);
     });
 
     // Multi-source projects can import every class declaration from package
@@ -10830,6 +10914,14 @@ function inferLetConstInitializerWasmType(
   initializer: ts.Expression | undefined,
 ): ValType | null {
   if (!initializer) return null;
+  // (#4376) Keep the authoritative pre-hoisted slot type in lockstep with
+  // compileVariableStatement. A buffer-backed typed array is represented by a
+  // shared-backing `$__ta_view`, not the checker-inferred plain vector. Nested
+  // functions record their capture signatures before declaration lowering, so
+  // missing this override made reifying a closure cast the real view value to
+  // an unrelated vector type and trap during Deno core bootstrap.
+  const taViewType = inferTaViewType(ctx, initializer);
+  if (taViewType !== null) return taViewType;
   const standaloneRegExpMatchArrayType = inferStandaloneRegExpMatchArrayType(ctx, initializer);
   if (standaloneRegExpMatchArrayType !== null) return standaloneRegExpMatchArrayType;
 
@@ -11049,10 +11141,23 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           decl.initializer !== undefined &&
           ts.isObjectLiteralExpression(decl.initializer) &&
           ctx.dynamicProtoLiteralNodes.has(decl.initializer);
+        // (#4376) Keep the authoritative pre-hoisted slot in lockstep with
+        // compileVariableStatement/compileObjectLiteral for a binding whose
+        // object later receives out-of-shape or runtime-keyed writes. Without
+        // this override a hoisted nested function records the capture as the
+        // literal's inferred closed struct, while the declaration correctly
+        // builds and stores an open `$Object` externref. Reifying that function
+        // then casts the externref capture back to the unrelated struct and
+        // traps (Deno's `registerErrorClass` capturing `errorConstructors`).
+        const initIsGrowableObjectLiteral =
+          decl.initializer !== undefined &&
+          ts.isObjectLiteralExpression(decl.initializer) &&
+          ctx.growableObjectLiteralVars.has(name);
         const initIsOrdinaryToPrimitiveObjectLiteral = ctx.ordinaryToPrimitiveObjectDeclarations.has(decl);
         const initForcesExternref =
           initIsAccessorLiteral ||
           initIsHostSpreadLiteral ||
+          initIsGrowableObjectLiteral ||
           initIsOrdinaryToPrimitiveObjectLiteral ||
           initIsProtoReceiverLiteral;
         if (initForcesExternref) {
@@ -11215,7 +11320,7 @@ function collectStringCalls(instrs: Instr[], strFuncIdxSet: Set<number>, found: 
       found.add(instr.funcIdx);
     }
     // Recurse into nested blocks
-    if (instr.op === "block" || instr.op === "loop") {
+    if (instr.op === "block" || instr.op === "loop" || instr.op === "try_table") {
       collectStringCalls(instr.body, strFuncIdxSet, found);
     } else if (instr.op === "if") {
       collectStringCalls(instr.then, strFuncIdxSet, found);
@@ -11240,7 +11345,7 @@ function replaceStringCalls(instrs: Instr[], cacheMap: Map<number, number>): voi
       (instrs as any)[i] = { op: "local.get", index: localIdx };
     }
     // Recurse into nested blocks
-    if (instr.op === "block" || instr.op === "loop") {
+    if (instr.op === "block" || instr.op === "loop" || instr.op === "try_table") {
       replaceStringCalls(instr.body, cacheMap);
     } else if (instr.op === "if") {
       replaceStringCalls(instr.then, cacheMap);

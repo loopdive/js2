@@ -54,6 +54,7 @@ import {
 } from "../index.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "../async-frame.js"; // (#2865) nested async-gen producer
 import { ensureExnTag, nextModuleGlobalIdx } from "../registry/imports.js";
+import { buildTargetTaggedTry } from "../../ir/try-table.js";
 import {
   addFuncType,
   getArrTypeIdxFromVec,
@@ -1098,13 +1099,15 @@ function compileNestedFunctionDeclarationInScope(
               { op: "local.set", index: pendingThrowLocal },
             ]
           : [];
-      liftedFctx.body.push({
-        op: "try",
-        blockType: { kind: "empty" },
-        body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
-        catches: [{ tagIdx, body: catchBody }],
-        catchAll: catchAllBody.length > 0 ? catchAllBody : undefined,
-      });
+      liftedFctx.body.push(
+        buildTargetTaggedTry(
+          ctx,
+          { kind: "empty" },
+          [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
+          [{ tagIdx, body: catchBody }],
+          catchAllBody.length > 0 ? catchAllBody : undefined,
+        ),
+      );
 
       // Return __create_generator or __create_async_generator depending on async flag
       const createGenName = isAsync ? "__create_async_generator" : "__create_generator";
@@ -1570,13 +1573,15 @@ function compileNestedFunctionDeclarationInScope(
               { op: "local.set", index: pendingThrowLocal },
             ]
           : [];
-      liftedFctx.body.push({
-        op: "try",
-        blockType: { kind: "empty" },
-        body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
-        catches: [{ tagIdx, body: catchBody }],
-        catchAll: catchAllBody.length > 0 ? catchAllBody : undefined,
-      });
+      liftedFctx.body.push(
+        buildTargetTaggedTry(
+          ctx,
+          { kind: "empty" },
+          [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
+          [{ tagIdx, body: catchBody }],
+          catchAllBody.length > 0 ? catchAllBody : undefined,
+        ),
+      );
 
       // Return __create_generator or __create_async_generator depending on async flag
       const createGenName = isAsync ? "__create_async_generator" : "__create_generator";
