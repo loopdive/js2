@@ -410,6 +410,39 @@ describe("#4573 standalone native Promise-delay compile-once ownership", () => {
     expect((exports.__promise_boundary_state as (value: unknown) => number)(promise)).toBe(0);
   });
 
+  it("fails closed on a proxied timer binding table without surfacing its branded getter", async () => {
+    const result = await compileDelay(EXACT_DELAY, true, "issue-4573-timer-binding-proxy.ts");
+    expectSuccess(result);
+    const scheduled: Array<() => void> = [];
+    const imports = importsWithCapturedSetTimeout(result, ((callback: () => void) => {
+      scheduled.push(callback);
+      return scheduled.length as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    const exports = instance.exports as unknown as Record<string, any>;
+
+    const descriptors = Object.getOwnPropertyDescriptors(exports);
+    const bindingDescriptor = descriptors[STANDALONE_TIMER_CALLBACK_BINDINGS_PHYSICAL_BASE];
+    expect(bindingDescriptor).toBeDefined();
+    descriptors[STANDALONE_TIMER_CALLBACK_BINDINGS_PHYSICAL_BASE] = {
+      ...bindingDescriptor!,
+      value: new Proxy(exports[STANDALONE_TIMER_CALLBACK_BINDINGS_EXPORT] as WebAssembly.Table, {}),
+    };
+    const proxiedExports = Object.create(null) as Record<string, Function>;
+    Object.defineProperties(proxiedExports, descriptors);
+
+    expect(() => imports.setExports?.(proxiedExports)).not.toThrow();
+    const promise = (exports.delay as (ms: number, value: number) => unknown)(1, 23);
+    expect(scheduled).toHaveLength(1);
+    expect(() => scheduled[0]!()).toThrow("timer callback dispatcher");
+    expect((exports.__promise_boundary_state as (value: unknown) => number)(promise)).toBe(0);
+
+    imports.setInstance?.(instance);
+    expect(() => scheduled[0]!()).not.toThrow();
+    expect((exports.__promise_boundary_state as (value: unknown) => number)(promise)).toBe(1);
+    expect((exports.__promise_boundary_value as (value: unknown) => unknown)(promise)).toBe(23);
+  });
+
   it("rejects raw and donor setExports records until branded setInstance establishes authority", async () => {
     const result = await compileDelay(EXACT_DELAY, true, "issue-4573-timer-donor-record.ts");
     expectSuccess(result);

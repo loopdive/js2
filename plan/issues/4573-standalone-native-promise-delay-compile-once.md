@@ -20,6 +20,8 @@ lane: ir-retirement-r7-standalone
 related: [1326, 1373b, 2856, 2961, 3178, 3518, 3526, 3527, 3792, 4102, 4124, 4398, 4566]
 origin: "2026-08-20 standalone-only continuation from the measured 22 IR / 15 legacy / 15 Unsupported checkpoint"
 files:
+  - plan/audit/host-import-policy-baseline.json
+  - scripts/check-host-import-policy.ts
   - scripts/ir-only-baseline.json
   - src/capability-registry.ts
   - src/codegen/closure-exports.ts
@@ -32,12 +34,17 @@ files:
   - src/ir/promise-delay-lowering.ts
   - src/runtime.ts
   - src/runtime/platform-capability-adapter.ts
+  - src/runtime/standalone-timer-callback-bridge.ts
+  - src/runtime/timer-capability-adapter.ts
   - src/timer-capability-contract.ts
   - tests/issue-4398-capability-registry.test.ts
+  - tests/issue-4399-adapter-extraction.test.ts
   - tests/issue-4573-standalone-native-promise-delay.test.ts
   - plan/log/ir-optimization-retirement-ledger.md
   - plan/issues/3527-ir-r7-ast-free-async-plan.md
+  - plan/issues/4401-ratchet-retire-implicit-js-host-semantics.md
   - plan/issues/4573-standalone-native-promise-delay-compile-once.md
+  - plan/issues/4574-standalone-native-async-family.md
 ---
 
 # #4573 — standalone native Promise-delay compile-once ownership
@@ -156,6 +163,17 @@ The replacement preserves the direct path's semantic and optimized contracts:
 - exact direct-body poison is bypassed while certified near misses, provider
   collisions, and injected registration failures prove the negative paths.
 
+The publication refactor keeps the native-first host-debt ratchets strict
+instead of raising them for this capability. Timer set/clear binding now lives
+in `runtime/timer-capability-adapter.ts`, while the authenticated one-slot
+callback authority, export-view mapping, lazy dispatch, and timer-specific
+microtask drain live in `runtime/standalone-timer-callback-bridge.ts`. The
+generic runtime remains the lifecycle coordinator rather than owning either
+implementation. Final source metrics are **17,075 / 17,100** runtime lines,
+**7,216 / 7,216** `resolveImport` lines, **15 / 15** import cases, **790 / 819**
+generic adapter lines, and **306 / 306** explicit timer-capability lines, with
+zero native-first legacy or unknown imports.
+
 The final frozen standalone A/B uses the exact delay source, explicit
 deterministic timer callbacks, and `hostBridge: "always"` in both lanes so the
 direct control is runnable. Compilation and instantiation are excluded; each
@@ -168,10 +186,12 @@ schedule/callback/Promise-settlement workload. This excludes compilation,
 instantiation, and real timer latency; it is not a whole-program speedup.
 Direct endpoint controls range from 0.899x to 0.991x, and IR remains 70.9-73.1%
 faster even against each round's faster direct endpoint, so the result is well
-outside observed noise. A post-refactor confirmation measured **1,315.98 /
-347.19 / 1,327.61 ns/op** for direct/IR/direct: **0.263x** IR/direct, or **73.7%
-less overhead**, with 0.88% direct-control drift and all 21 batches at checksum
-5,780.
+outside observed noise. A final post-integration guard repeated three fresh
+direct/IR/direct processes with 20,000 warmups and 15 batches of 20,000
+schedule-and-fire operations per lane. Median IR overhead was **375.9 ns/op**
+versus **1,868.9 ns/op** across the pooled direct endpoints: **0.201x**, or
+**79.9% less overhead**. Direct endpoint drift was 1.5-2.8%, and all 135 timed
+batches produced checksum 5,788,385.
 
 IR is also smaller than direct: **116,578 vs 118,997 raw bytes** (-2.03%),
 **52,628 vs 53,244 gzip bytes** (-1.16%), **975,500 vs 1,003,141 WAT
@@ -183,7 +203,7 @@ the authenticated timer boundary with no generic closure bridge.
 
 ## Publication validation
 
-The focused #4573, #4398, #4102, and #3520 matrix passes 45/45 tests after the
+The focused #4573, #4398, #4102, and #3520 matrix passes 46/46 tests after the
 authority/collision additions. Typecheck, Prettier, Biome, the authoritative
 23/14/14/0 standalone census, IR and codegen fallback, issue integrity, issue
 ID, oracle, verdict, adoption, dead-export, LOC/function-budget, coercion,

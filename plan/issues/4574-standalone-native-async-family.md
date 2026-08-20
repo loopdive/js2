@@ -182,7 +182,7 @@ semantic oracle.
 
 The #4574 focused suite passes **13/13**. Related async/provider coverage passes
 **39/39**, the final host async plan suite (#4124) passes **11/11**, and the
-native delay checkpoint suite (#4573) passes **11/11**. IR-only shadow
+native delay checkpoint suite (#4573) passes **12/12**. IR-only shadow
 validation is non-vacuous: the exact family bypasses a live direct-body poison,
 near misses still reach it, and post-claim failures cannot reopen legacy.
 The final integration matrix passes strict IR-only census, fallback, issue and
@@ -191,9 +191,9 @@ LOC/function, stack, harness, typecheck, formatting, and lint gates.
 
 A final fresh-process delay guard kept the #4573 hot path decisively ahead of
 its direct reference. Across three direct/IR/direct rounds, with compilation,
-instantiation, and real timer waiting excluded, median IR overhead was **356.8
-ns/op** versus **1,896.4 ns/op** for the pooled direct endpoints: **0.188x**, or
-**81.2% less overhead**. Direct endpoint drift was **3.5–7.1%**, all 135 timed
+instantiation, and real timer waiting excluded, median IR overhead was **375.9
+ns/op** versus **1,868.9 ns/op** for the pooled direct endpoints: **0.201x**, or
+**79.9% less overhead**. Direct endpoint drift was **1.5–2.8%**, all 135 timed
 batches produced checksum **5,788,385**, and both lanes retained exactly the
 timer capability import.
 

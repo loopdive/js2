@@ -193,7 +193,7 @@ runtime oracle; #4574 uses source/spec traces and existing host-plan evidence
 for correctness while retaining direct only as an artifact/optimization
 reference. Its authoritative result is **27/37 IR, 10 legacy/Unsupported, zero
 Invariants**. Focused coverage passes 13/13, related async/provider coverage
-39/39, #4124 11/11, and #4573 11/11. The tuned IR artifact is smaller than
+39/39, #4124 11/11, and #4573 12/12. The tuned IR artifact is smaller than
 direct at **125,889 vs 133,307 raw bytes**, **55,276 vs 57,037 gzip-9 bytes**,
 **1,081,058 vs 1,197,082 WAT characters**, and **346 vs 353 functions**; both import exactly one timer
 capability. Raw `main` fulfillment proves the canonical native value is
