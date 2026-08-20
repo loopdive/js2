@@ -262,6 +262,15 @@ and a second invocation evaluates it while the configured compiler path is
 the application, real Deno wrappers, and generated op manifest as that one
 ahead-of-time linked program.
 
+## Compile-time cost
+
+The compatibility analyses increase the deterministic #3437 harness traversal
+count from 111,568 to 131,133 (+17.5%). This exceeds the prior 15% ceiling, so
+the dedicated harness budget is intentionally rebanked with the repository's
+provided update command. A follow-up should consolidate the added per-file
+scans; this PR accepts the measured compile-time cost for the prototype rather
+than hiding it behind a looser percentage margin.
+
 ## Spike acceptance
 
 - [x] Preserve raw TypeScript source and use its types during js2wasm
