@@ -26,6 +26,17 @@ func-budget-allow:
   # module. Splitting this already-652-line dispatcher is a separate refactor
   # (#3399) and not something to attempt inside a conformance fix.
   - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
+coercion-sites-allow:
+  # 2026-08-20: one `__any_to_f64` call in the new src/codegen/math-value-read.ts.
+  # This is the gate seeing the fix DO the right thing: the arguments arrive as
+  # externref and run the ENGINE ToNumber pipeline
+  # (`__any_from_extern` -> `__any_to_f64`), which is exactly what the gate
+  # exists to push work towards — the same pipeline `Math.max`/`Math.min` use
+  # for their variadic fold, so an object with a `valueOf` coerces identically
+  # whether it reaches `Math.sin` by direct call or through an extracted value.
+  # There is no hand-rolled ToNumber here to route anywhere else; the counter is
+  # per-vocabulary-token and cannot tell an engine CALL from a hand-roll.
+  - src/codegen/math-value-read.ts
 related: [2933, 1907, 4163]
 origin: "2026-08-20, ES5 standalone push follow-up. Found by bucketing the residue's explicit 'not yet implemented in --target standalone' refusals."
 ---
