@@ -114,12 +114,56 @@ function __contains(actual, expected) {
   return false;
 }
 
+function __containsEqual(actual, expected) {
+  if (!Array.isArray(actual)) return false;
+  for (var i = 0; i < actual.length; i++) {
+    if (__deepEqual(actual[i], expected)) return true;
+  }
+  return false;
+}
+
+function __match(actual, expected) {
+  var value = "" + actual;
+  if (expected !== null && expected !== undefined && typeof expected.test === "function") {
+    expected.lastIndex = 0;
+    return expected.test(value);
+  }
+  return value.indexOf("" + expected) >= 0;
+}
+
+function __snapshotValue(value) {
+  if (value !== null && value !== undefined && typeof value.outerHTML === "string") return value.outerHTML;
+  if (value !== null && value !== undefined && typeof value.toJSON === "function") return value.toJSON();
+  return value;
+}
+
+function __normalizeSnapshot(value) {
+  return ("" + value).replace(/\\r\\n/g, "\\n").trim().replace(/\\n[ \\t]+/g, "\\n");
+}
+
+function __snapshotMatches(actual, expected) {
+  return __normalizeSnapshot(__snapshotValue(actual)) === __normalizeSnapshot(expected);
+}
+
+function __renderedOutput(value) {
+  if (value !== null && value !== undefined && typeof value.getChildrenAsJSX === "function") {
+    return value.getChildrenAsJSX();
+  }
+  if (value !== null && value !== undefined && typeof value.toJSON === "function") return value.toJSON();
+  return value;
+}
+
 function __mockMatchesCalls(mock, expected) {
   if (!mock || !mock.mock || !mock.mock.calls) return false;
   for (var i = 0; i < mock.mock.calls.length; i++) {
     if (__deepEqual(mock.mock.calls[i], expected)) return true;
   }
   return false;
+}
+
+function __mockMatchesNthCall(mock, index, expected) {
+  if (!mock || !mock.mock || !mock.mock.calls || index < 1 || index > mock.mock.calls.length) return false;
+  return __deepEqual(mock.mock.calls[index - 1], expected);
 }
 
 function expect(actual) {
@@ -142,6 +186,18 @@ function expect(actual) {
     },
     toContain: function (expected) {
       __assert(__contains(actual, expected), "expected value to be contained");
+    },
+    toContainEqual: function (expected) {
+      __assert(__containsEqual(actual, expected), "expected value to contain an equal item");
+    },
+    toMatch: function (expected) {
+      __assert(__match(actual, expected), "expected value to match");
+    },
+    toMatchInlineSnapshot: function (expected) {
+      __assert(__snapshotMatches(actual, expected), "expected value to match inline snapshot");
+    },
+    toMatchRenderedOutput: function (expected) {
+      __assert(__deepEqual(__renderedOutput(actual), expected), "expected rendered output to match");
     },
     toBeNull: function () {
       __assert(actual === null, "expected null");
@@ -185,6 +241,12 @@ function expect(actual) {
     toBeCalledWith: function () {
       __assert(__mockMatchesCalls(actual, Array.prototype.slice.call(arguments)), "expected mock arguments");
     },
+    toHaveBeenNthCalledWith: function (index) {
+      __assert(
+        __mockMatchesNthCall(actual, index, Array.prototype.slice.call(arguments, 1)),
+        "expected nth mock arguments"
+      );
+    },
     not: {
       toBe: function (expected) {
         __assert(!__objectIs(actual, expected), "expected not.toBe to differ");
@@ -197,6 +259,18 @@ function expect(actual) {
       },
       toContain: function (expected) {
         __assert(!__contains(actual, expected), "expected value not to be contained");
+      },
+      toContainEqual: function (expected) {
+        __assert(!__containsEqual(actual, expected), "expected value not to contain an equal item");
+      },
+      toMatch: function (expected) {
+        __assert(!__match(actual, expected), "expected value not to match");
+      },
+      toMatchInlineSnapshot: function (expected) {
+        __assert(!__snapshotMatches(actual, expected), "expected value not to match inline snapshot");
+      },
+      toMatchRenderedOutput: function (expected) {
+        __assert(!__deepEqual(__renderedOutput(actual), expected), "expected rendered output not to match");
       },
       toBeNull: function () {
         __assert(actual !== null, "expected not null");
@@ -239,6 +313,12 @@ function expect(actual) {
       },
       toBeCalledWith: function () {
         __assert(!__mockMatchesCalls(actual, Array.prototype.slice.call(arguments)), "expected different mock arguments");
+      },
+      toHaveBeenNthCalledWith: function (index) {
+        __assert(
+          !__mockMatchesNthCall(actual, index, Array.prototype.slice.call(arguments, 1)),
+          "expected different nth mock arguments"
+        );
       }
     },
     rejects: {

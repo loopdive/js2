@@ -65,6 +65,7 @@ const SUPPORTED_MATCHERS = new Set([
   "toBeDefined",
   "toBeTruthy",
   "toBeFalsy",
+  "toBeNaN",
   "toBeInstanceOf",
   "toHaveLength",
   "toHaveBeenCalled",
@@ -73,6 +74,11 @@ const SUPPORTED_MATCHERS = new Set([
   "toBeCalledTimes",
   "toHaveBeenCalledWith",
   "toBeCalledWith",
+  "toMatch",
+  "toContainEqual",
+  "toHaveBeenNthCalledWith",
+  "toMatchInlineSnapshot",
+  "toMatchRenderedOutput",
 ]);
 
 function transpileJsx(source, fileName) {
@@ -201,17 +207,44 @@ function declaredNames(node, into = new Set()) {
   return into;
 }
 
-// Any `.toSomething(` / `.resolves` / `.rejects` call the shim would have to
-// honour. Over-collecting is harmless (a supported matcher costs nothing);
-// under-collecting is not, because an unimplemented matcher would silently
-// score a test the shim never actually checked.
+// Walk the syntax tree instead of looking for every `.toSomething(` in the
+// source. React's tests quite legitimately call `value.toString()` and
+// `text.toLowerCase()` while constructing an expected value; treating those as
+// Jest matchers rejected otherwise runnable tests. A matcher is only a call
+// whose receiver is rooted at `expect(...)` (optionally through `.not`,
+// `.resolves`, or `.rejects`).
+function matcherReceiver(node) {
+  if (ts.isParenthesizedExpression(node)) return matcherReceiver(node.expression);
+  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) return node.expression.text === "expect";
+  return (
+    ts.isPropertyAccessExpression(node) &&
+    (node.name.text === "not" || node.name.text === "resolves" || node.name.text === "rejects") &&
+    matcherReceiver(node.expression)
+  );
+}
+
 function matcherRejection(text) {
-  for (const match of text.matchAll(/\.\s*([a-zA-Z][\w$]*)\s*\(/g)) {
-    const name = match[1];
-    if (!/^(to[A-Z]|resolves|rejects)/.test(name)) continue;
-    if (!SUPPORTED_MATCHERS.has(name)) return `unsupported-matcher:${name}`;
-  }
-  return null;
+  const sourceFile = ts.createSourceFile(
+    "react-upstream-matcher-check.js",
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  let rejection = null;
+  const visit = (node) => {
+    if (rejection) return;
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const name = node.expression.name.text;
+      if (/^to[A-Z]/.test(name) && matcherReceiver(node.expression.expression) && !SUPPORTED_MATCHERS.has(name)) {
+        rejection = `unsupported-matcher:${name}`;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return rejection;
 }
 
 function classifyBody(fn, text, bodyText, droppedNames, admitAll, supportedInfrastructure) {

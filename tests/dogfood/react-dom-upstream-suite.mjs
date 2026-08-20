@@ -909,6 +909,9 @@ export async function runHarness({ quiet = false } = {}) {
       "needs-test-utils",
       "needs-act",
       "needs-console-assertions",
+      // Console output is captured by the host infrastructure in both lanes;
+      // direct console assertions are runnable rather than unavailable setup.
+      "asserts-on-console",
       "needs-jest-runtime",
       "needs-dom",
       "dev-build-only",

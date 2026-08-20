@@ -25,4 +25,29 @@ describe("react upstream extractor", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("only treats calls rooted at expect as matchers", () => {
+    const root = mkdtempSync(join(tmpdir(), "js2-react-matcher-"));
+    const file = "fixture.js";
+    try {
+      writeFileSync(
+        join(root, file),
+        `describe("fixture", () => {\n` +
+          `  it("keeps ordinary string methods", () => {\n` +
+          `    const value = "abc";\n` +
+          `    expect(value.toString()).toMatch("abc");\n` +
+          `    expect(value.toLowerCase()).toBe("abc");\n` +
+          `  });\n` +
+          `  it("rejects an unsupported Jest matcher", () => {\n` +
+          `    expect("abc").toBeGreaterThan("def");\n` +
+          `  });\n` +
+          `});\n`,
+      );
+      const result = extractReactUpstreamTests({ root, testFiles: [file], admitAll: false });
+      expect(result.tests.map((test: { name: string }) => test.name)).toEqual(["keeps ordinary string methods"]);
+      expect(result.rejectionCounts["unsupported-matcher:toBeGreaterThan"]).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

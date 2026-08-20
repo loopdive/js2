@@ -191,6 +191,11 @@ export async function runHarness({
       "needs-test-utils",
       "needs-act",
       "needs-console-assertions",
+      // The native oracle captures console.error/warn, and the Wasm host
+      // exposes the same console methods. Direct console assertions are
+      // therefore test infrastructure we do provide, not a reason to reject
+      // an upstream test before it runs.
+      "asserts-on-console",
       "needs-jest-runtime",
       "needs-dom",
       "dev-build-only",

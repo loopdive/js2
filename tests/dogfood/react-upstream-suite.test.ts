@@ -80,6 +80,20 @@ describe("react upstream suite", () => {
     expect(calls[0]).toEqual([["value"]]);
   });
 
+  it("provides the Jest matchers used by the upstream React suites", () => {
+    // eslint-disable-next-line no-new-func
+    const result = new Function(`${REACT_EXPECT_SHIM}
+      expect("abc").toMatch(/b/);
+      expect([{value: 1}]).toContainEqual({value: 1});
+      const mock = jest.fn();
+      mock("first");
+      mock("second");
+      expect(mock).toHaveBeenNthCalledWith(2, "second");
+      expect("<div>ok</div>").toMatchInlineSnapshot(\`<div>ok</div>\`);
+      return true;`)();
+    expect(result).toBe(true);
+  });
+
   const heavy = process.env.DOGFOOD_REACT_UPSTREAM === "1" ? it : it.skip;
   heavy("runs React's own unit tests against compiled Wasm", { timeout: 1_800_000 }, () => {
     const out = execFileSync("npx", ["tsx", join(HERE, "react-upstream-suite.mjs"), "--json"], {
