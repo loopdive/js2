@@ -3,7 +3,7 @@ id: 3995
 title: "npm-compat: pin and adapt original upstream test suites for catalog packages"
 status: ready
 created: 2026-07-30
-updated: 2026-08-14
+updated: 2026-08-20
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -222,17 +222,17 @@ explicitly `adapter-pending`; the next slices should expand the unified runner
 in ascending harness complexity (Redux/Axios first, then jsdom/Prettier and the
 large compiler/tooling suites).
 
-## 2026-08-14 Redux complete runtime suite
+## 2026-08-20 Redux complete runtime suite
 
 Redux 5.0.1 now uses all nine original `*.spec.ts` runtime files from
 `reduxjs/redux@v5.0.1` (commit
 `50b010210df25c470386f7e39a9389a4a77b3842`). All 82 callbacks register and
-all nine generated test modules compile to valid Wasm. The synchronous Node
-oracle reproduces 78 callbacks; the four promise-returning callbacks are
-explicitly harness-incompatible until the shared runner supports async Wasm
-tests. The measured Wasm baseline is **5/78**: ten callbacks reach an assertion
-and diverge, while 63 encounter a module-level runtime trap in the larger
-`bindActionCreators`, `combineReducers`, and `createStore` files. The existing
+all nine generated test modules compile to valid Wasm. The shared runner now
+supplies the Node-compatible `global` alias used by Redux's warning tests, so
+the synchronous Node oracle reproduces all **82/82** callbacks. The measured
+Wasm baseline is **13/82**; the remaining failures are runtime/compiler
+mismatches in the existing `bindActionCreators`, `combineReducers`, and
+`createStore` paths rather than unavailable test infrastructure. The existing
 1/1 package API workload remains visible as a separate secondary result.
 
 Vitest's spy/assertion surface and the one RxJS protocol test use narrow test

@@ -135,11 +135,11 @@ describe("small npm package upstream suites", () => {
       filesSeen: 9,
       filesSelected: 9,
       testsRegistered: 82,
-      nativePassed: 78,
-      nativeFailed: 4,
+      nativePassed: 82,
+      nativeFailed: 0,
     });
     expect(report.compile).toMatchObject({ modules: 9, succeeded: 9, validated: 9 });
-    expect(report.results).toMatchObject({ scored: 78 });
+    expect(report.results).toMatchObject({ scored: 82 });
     expect(report.results.passed).toBeGreaterThanOrEqual(5);
   });
 
