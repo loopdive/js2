@@ -16,6 +16,7 @@ import {
   resolveDtsEntryDeclarations,
 } from "./checker/dts-entrypoint-seeds.js";
 import { getNullablePrimitiveInfo } from "./checker/type-mapper.js";
+import { WASI_NODE_FS_ALIAS_SENTINEL } from "./checker/node-capability-map.js";
 import { generateLinearModule, generateLinearMultiModule } from "./codegen-linear/index.js";
 import { resetCompileDepth } from "./codegen/expressions.js";
 import { resetDerivationFlagCache } from "./derivation-flags.js";
@@ -527,8 +528,14 @@ function detectNodeFsImports(source: string): Set<string> {
       const mod = stmt.moduleSpecifier.text;
       if (mod === "node:fs" || mod === "fs") {
         const clause = stmt.importClause;
+        if (clause?.isTypeOnly) continue;
         if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
           for (const spec of clause.namedBindings.elements) {
+            if (spec.isTypeOnly) continue;
+            if (spec.propertyName && spec.propertyName.text !== spec.name.text) {
+              result.add(WASI_NODE_FS_ALIAS_SENTINEL);
+              continue;
+            }
             result.add(spec.name.text);
           }
         }
