@@ -441,6 +441,18 @@ because its Phase-0 reservation reached its capture verdict too late — see the
 comment in `src/codegen/statements/nested-declarations.ts`. A future fix has to
 add binding-aware slots on top of main's design, not restore that one.
 
+## Browser infrastructure checkpoint (2026-08-20)
+
+The shared jsdom host now promotes every browser constructor used directly by
+the selected ReactDOM corpus, including `ProgressEvent`. jsdom exposed that
+constructor only as `window.ProgressEvent`, while ReactDOM's original event
+tests instantiate the global `ProgressEvent`; the missing promotion made those
+tests fail in the native oracle before they could provide compiler evidence.
+The host surface is covered by
+`tests/dogfood/react-upstream-infrastructure.test.ts`. The remaining native
+incompatible results are renderer/oracle behavior differences, not skipped
+tests caused by an unavailable browser API.
+
 ## Acceptance criteria
 
 - [x] The corpus is react-dom's own test sources at a verified commit shared
