@@ -138,9 +138,29 @@ fi
 HOST_NETWORK=$(echo "$HOST_IP" | sed "s/\.[0-9]*$/.0\/24/")
 echo "Host network detected as: $HOST_NETWORK"
 
-# Restrict ttyd (port 7681) to Tailscale CGNAT range only
-iptables -A INPUT -p tcp --dport 7681 -s 100.64.0.0/10 -j ACCEPT
-iptables -A INPUT -p tcp --dport 7681 -j DROP
+# ttyd (port 7681) is an UNAUTHENTICATED writable web terminal, so it must not
+# be broadly reachable. WHERE that gets enforced depends on the host:
+#
+#   * Native Linux Docker DNATs published ports and PRESERVES the client's
+#     source address, so the source filter below does what it says.
+#   * Docker Desktop (macOS/Windows) forwards through a userland proxy that
+#     REWRITES the source: every client arrives as one fixed proxy address
+#     (measured 2026-08-20: 172.66.144.201) whether it came from loopback, the
+#     LAN, or Tailscale. A source filter cannot discriminate there - it drops
+#     ttyd for everyone, which is exactly what happened once this script
+#     started applying again. On such a host the only layer that sees the real
+#     client is the host port BINDING, so restrict `appPort` in
+#     devcontainer.json (bind 7681 to loopback or to the Tailscale address)
+#     rather than pretending to filter here.
+#
+# Default is therefore to allow 7681 here and let the binding restrict it. Set
+# TTYD_SOURCE_FILTER=1 on a source-preserving host to filter in-container too.
+if [ "${TTYD_SOURCE_FILTER:-0}" = "1" ]; then
+    iptables -A INPUT -p tcp --dport 7681 -s 100.64.0.0/10 -j ACCEPT
+    iptables -A INPUT -p tcp --dport 7681 -j DROP
+else
+    iptables -A INPUT -p tcp --dport 7681 -j ACCEPT
+fi
 
 # Set up remaining iptables rules
 iptables -A INPUT -s "$HOST_NETWORK" -j ACCEPT
