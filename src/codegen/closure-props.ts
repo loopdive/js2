@@ -736,6 +736,42 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
             { op: "local.get", index: 1 }, // key
             { op: "call", funcIdx: externGetIdx },
           ];
+    // (#4563) The bag answer is only authoritative for a key the bag OWNS.
+    //
+    // The read below used to `return` unconditionally once the bag was non-null,
+    // so the first own property defined on ANY callable carrier — a closure or
+    // a `$__bound_fn` — permanently shadowed the §8.10.5 inherited-property
+    // fallback two lines down. Measured, standalone:
+    //
+    //     var b = foo.bind({});
+    //     Function.prototype.p1 = 12;
+    //     b.p1                                   // 12   (bag still null)
+    //     Object.defineProperty(b, "zz", {value: 1, configurable: true});
+    //     b.p1                                   // was undefined — want 12
+    //
+    // An ordinary object with a prototype keeps inheriting through the same
+    // sequence, which is what isolates this to the carrier bag rather than to
+    // the define. It is also why the bound-function `length`/`name` seed
+    // (§20.2.3.2) could not land: seeding those own properties put every bound
+    // function into this state.
+    //
+    // The discriminator has to be `hasOwn` on the bag, NOT "is the read
+    // undefined": a bag entry whose stored value IS `undefined` is a real own
+    // property and must win over the prototype, exactly as `f.prototype =
+    // undefined` already does through `protoEdgeArm` above.
+    //
+    // Without the predicate the emitted body is byte-identical to the pre-#4563
+    // one, so a module that cannot resolve it keeps today's answer.
+    const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
+    const bagOwnGuardedRead: Instr[] =
+      hasOwnIdx === undefined
+        ? [...bagRead, { op: "return" }]
+        : [
+            { op: "local.get", index: 2 }, // bag
+            { op: "local.get", index: 1 }, // key
+            { op: "call", funcIdx: hasOwnIdx },
+            { op: "if", blockType: { kind: "empty" }, then: [...bagRead, { op: "return" }] },
+          ];
     const body: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "call", funcIdx: isClosureIdx },
@@ -759,7 +795,7 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [...bagRead, { op: "return" }],
+            then: bagOwnGuardedRead,
           },
         ],
       },
