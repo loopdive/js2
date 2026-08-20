@@ -120,6 +120,8 @@ const PROTOIDX_BRAND_OFF = "__protoidx_brand_off";
 const PROTOIDX_FORIN_PUSH = "__protoidx_forin_push";
 const PROTOIDX_HAS_R = "__protoidx_has_r";
 const PROTOIDX_GET_R = "__protoidx_get_r";
+/** (#4504) Receiver-aware inherited [[Set]] descriptor decision. */
+const PROTOIDX_SET_R = "__protoidx_set_r";
 /** (#2175 P2) own-view receiver substitution: `$NativeProto` → its companion. */
 const PROTOIDX_OWN_RECV = "__protoidx_own_recv";
 
@@ -149,10 +151,21 @@ const WRAPPER_PRIMITIVE_KEY = "[[PrimitiveValue]]";
 const ENTRY_VALUE = 1;
 const ENTRY_FLAGS = 2;
 const ENTRY_GET = 4;
+const ENTRY_SET = 5;
 /** `$PropEntry.$flags` accessor bit (object-runtime.ts `FLAG_ACCESSOR`). */
 const FLAG_ACCESSOR = 0x08;
+/** `$PropEntry.$flags` writable bit (object-runtime.ts `FLAG_WRITABLE`). */
+const FLAG_WRITABLE = 0x01;
+/** `$Object.flags` frozen bit (object-runtime.ts `OBJ_FLAG_FROZEN`). */
+const OBJ_FLAG_FROZEN = 0x04;
 /** i31 abstract heap type (signed LEB -20) — small-int boxed numbers (#3673). */
 const I31_HEAP_TYPE = -20;
+
+/** Shared four-state internal [[Set]] decision ABI. */
+export const SET_DECISION_MISS = 0;
+export const SET_DECISION_ALLOW_OWN = 1;
+export const SET_DECISION_HANDLED = 2;
+export const SET_DECISION_REFUSED = 3;
 
 /**
  * Reserve the proto-property-store table global + helper stubs. Called from
@@ -232,6 +245,13 @@ export function reserveProtoIndexStore(ctx: CodegenContext): void {
   // (#4176) receiver-aware consults for the non-$Object miss chokepoints.
   reserve(PROTOIDX_HAS_R, [ext, ext], [i32], zero);
   reserve(PROTOIDX_GET_R, [ext, ext], [ext], nullExt);
+  // (#4504) `(origRecv, key, value) -> decision` over the receiver-aware
+  // native-prototype companions.  It never creates a companion while deciding.
+  // This helper is deliberately absent from descriptor-free modules so the
+  // existing proto-store function space remains byte-identical.
+  if (ctx.inheritedSetDescriptorDirty) {
+    reserve(PROTOIDX_SET_R, [ext, ext, ext], [i32], zero);
+  }
   // (#2175 P2) `recv -> recv'` for the OWN-property views: a `$NativeProto`
   // receiver becomes its brand companion, everything else passes through.
   // Reserved as a stub that RETURNS ITS ARGUMENT, so an unfilled body is an
@@ -288,6 +308,30 @@ export function protoIndexRecvGetMissInstrs(
     { op: "local.get", index: recvLocal },
     { op: "local.get", index: keyLocal },
     { op: "call", funcIdx: getRIdx },
+  ];
+}
+
+/**
+ * (#4504) Receiver-aware native-companion [[Set]] decision.
+ *
+ * The caller reaches this only after its explicit `$Object` / fnctor chain
+ * exhausted.  A live descriptor returns one of the non-MISS states immediately,
+ * so a nearer writable data descriptor cannot fall through to a farther Object
+ * companion accessor.
+ */
+export function protoIndexSetDecisionInstrs(
+  ctx: CodegenContext,
+  recvLocal: number,
+  keyLocal: number,
+  valueLocal: number,
+): Instr[] | undefined {
+  const setRIdx = ctx.funcMap.get(PROTOIDX_SET_R);
+  if (setRIdx === undefined) return undefined;
+  return [
+    { op: "local.get", index: recvLocal },
+    { op: "local.get", index: keyLocal },
+    { op: "local.get", index: valueLocal },
+    { op: "call", funcIdx: setRIdx },
   ];
 }
 
@@ -441,6 +485,7 @@ interface ProtoIndexFillDeps {
   unboxNumberIdx: number;
   numberToStringIdx: number;
   callAccessorGetIdx: number;
+  callAccessorSetIdx: number;
   tableGlobalIdx: number;
   tableArrTypeIdx: number;
 }
@@ -454,6 +499,7 @@ function resolveFillDeps(ctx: CodegenContext): ProtoIndexFillDeps | null {
   const unboxNumberIdx = ctx.funcMap.get("__unbox_number");
   const numberToStringIdx = ctx.funcMap.get("number_toString");
   const callAccessorGetIdx = ctx.funcMap.get("__call_accessor_get");
+  const callAccessorSetIdx = ctx.funcMap.get("__call_accessor_set");
   const tableGlobalIdx = ctx.protoIndexCompanionsGlobalIdx;
   const tableArrTypeIdx = ctx.protoIndexCompanionsArrTypeIdx;
   if (
@@ -463,6 +509,7 @@ function resolveFillDeps(ctx: CodegenContext): ProtoIndexFillDeps | null {
     unboxNumberIdx === undefined ||
     numberToStringIdx === undefined ||
     callAccessorGetIdx === undefined ||
+    callAccessorSetIdx === undefined ||
     tableGlobalIdx === undefined ||
     tableArrTypeIdx === undefined
   ) {
@@ -478,6 +525,7 @@ function resolveFillDeps(ctx: CodegenContext): ProtoIndexFillDeps | null {
     unboxNumberIdx,
     numberToStringIdx,
     callAccessorGetIdx,
+    callAccessorSetIdx,
     tableGlobalIdx,
     tableArrTypeIdx,
   };
@@ -504,6 +552,7 @@ export function fillProtoIndexStore(ctx: CodegenContext): void {
   fillNormKeyBody(ctx, deps);
   fillHasKBody(ctx, deps);
   fillGetKBody(ctx, deps);
+  if (ctx.inheritedSetDescriptorDirty) fillSetRBody(ctx, deps);
   fillHasFBody(ctx, deps);
   fillGetFBody(ctx, deps);
   fillBrandOffBody(ctx);
@@ -978,6 +1027,128 @@ function fillGetKBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
     { op: "ref.as_non_null" },
     { op: "struct.get", typeIdx: deps.propEntryTypeIdx, fieldIdx: ENTRY_VALUE },
     { op: "extern.convert_any" },
+  ];
+}
+
+/**
+ * `__protoidx_set_r(origRecv, key, value) -> decision`.
+ *
+ * This is the native-companion tail of #4504's ordinary descriptor walk.  The
+ * explicit `$Object` / fnctor links are owned by `__extern_set_decide`; only
+ * after they exhaust does it arrive here.  Probe the receiver brand companion
+ * first and Object's companion second, returning on the first live entry.
+ */
+function fillSetRBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
+  const fn = findFn(ctx, PROTOIDX_SET_R);
+  const brandOffIdx = ctx.funcMap.get(PROTOIDX_BRAND_OFF);
+  if (!fn || brandOffIdx === undefined) return;
+  const entryRefNull: ValType = { kind: "ref_null", typeIdx: deps.propEntryTypeIdx };
+  // params: 0=origRecv 1=key 2=value ; locals: 3=firstOff 4=c 5=e 6=setter
+  fn.locals = [
+    { name: "firstOff", type: { kind: "i32" } },
+    { name: "c", type: { kind: "externref" } },
+    { name: "e", type: entryRefNull },
+    { name: "setter", type: { kind: "externref" } },
+  ];
+  const probe = (which: Instr[]): Instr[] => [
+    ...which,
+    { op: "i32.const", value: 0 }, // lookup only: deciding must not allocate
+    { op: "call", funcIdx: deps.companionIdx },
+    { op: "local.tee", index: 4 },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 4 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: deps.objectTypeIdx },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: deps.objFindIdx },
+        { op: "local.tee", index: 5 },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 5 },
+            { op: "ref.as_non_null" },
+            { op: "struct.get", typeIdx: deps.propEntryTypeIdx, fieldIdx: ENTRY_FLAGS },
+            { op: "i32.const", value: FLAG_ACCESSOR },
+            { op: "i32.and" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: 5 },
+                { op: "ref.as_non_null" },
+                { op: "struct.get", typeIdx: deps.propEntryTypeIdx, fieldIdx: ENTRY_SET },
+                { op: "extern.convert_any" },
+                { op: "local.tee", index: 6 },
+                { op: "ref.is_null" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [{ op: "i32.const", value: SET_DECISION_REFUSED }, { op: "return" }],
+                },
+                { op: "local.get", index: 0 }, // ORIGINAL receiver
+                { op: "local.get", index: 6 },
+                { op: "local.get", index: 2 },
+                { op: "call", funcIdx: deps.callAccessorSetIdx },
+                { op: "i32.const", value: SET_DECISION_HANDLED },
+                { op: "return" },
+              ],
+            },
+            // Freeze is stored as an object-level integrity bit in this
+            // runtime rather than eagerly clearing every data entry's
+            // writable flag. It changes only data descriptors: an accessor
+            // setter above remains callable on a frozen prototype.
+            { op: "local.get", index: 4 },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: deps.objectTypeIdx },
+            { op: "struct.get", typeIdx: deps.objectTypeIdx, fieldIdx: 4 },
+            { op: "i32.const", value: OBJ_FLAG_FROZEN },
+            { op: "i32.and" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "i32.const", value: SET_DECISION_REFUSED }, { op: "return" }],
+            },
+            // A data descriptor is also terminal.  In particular, a writable
+            // one authorizes an own create and must not expose a farther
+            // companion accessor/non-writable data descriptor.
+            { op: "local.get", index: 5 },
+            { op: "ref.as_non_null" },
+            { op: "struct.get", typeIdx: deps.propEntryTypeIdx, fieldIdx: ENTRY_FLAGS },
+            { op: "i32.const", value: FLAG_WRITABLE },
+            { op: "i32.and" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "i32.const", value: SET_DECISION_ALLOW_OWN }, { op: "return" }],
+              else: [{ op: "i32.const", value: SET_DECISION_REFUSED }, { op: "return" }],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+  fn.body = [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: brandOffIdx },
+    { op: "local.set", index: 3 },
+    ...probe([{ op: "local.get", index: 3 }]),
+    { op: "local.get", index: 3 },
+    { op: "i32.const", value: OBJ_OFF },
+    { op: "i32.ne" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: probe([{ op: "i32.const", value: OBJ_OFF }]),
+    },
+    { op: "i32.const", value: SET_DECISION_MISS },
   ];
 }
 

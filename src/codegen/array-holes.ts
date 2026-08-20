@@ -65,6 +65,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
       ctx.protoNamedDirty &&
       ctx.protoMemberDirty &&
       ctx.vecAccessorDescriptorDirty &&
+      ctx.inheritedSetDescriptorDirty &&
       ctx.vecIndexDeleteDirty &&
       ctx.vecOwnKeysDirty &&
       ctx.dynamicCodeDirty
@@ -91,6 +92,9 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (!ctx.vecAccessorDescriptorDirty && isNonDataDescriptorDefine(node)) {
       ctx.vecAccessorDescriptorDirty = true;
     }
+    if (!ctx.inheritedSetDescriptorDirty && isInheritedSetDescriptorUse(node)) {
+      ctx.inheritedSetDescriptorDirty = true;
+    }
     if (!ctx.vecIndexDeleteDirty && isIndexDelete(node)) {
       ctx.vecIndexDeleteDirty = true;
     }
@@ -109,6 +113,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
       ctx.protoNamedDirty = true;
       ctx.protoMemberDirty = true;
       ctx.vecAccessorDescriptorDirty = true;
+      ctx.inheritedSetDescriptorDirty = true;
       ctx.vecIndexDeleteDirty = true;
       ctx.vecOwnKeysDirty = true;
     }
@@ -240,6 +245,88 @@ function isNonDataDescriptorDefine(node: ts.Node): boolean {
   if (method === "create" && ns === "Object") {
     // `Object.create(proto)` installs no descriptors at all.
     return node.arguments.length >= 2 && !isDataOnlyDescriptorBag(node.arguments[1]);
+  }
+  return false;
+}
+
+/**
+ * Is a descriptor literal definitely an ordinary writable data descriptor?
+ *
+ * `Object.defineProperty(o, "p", { value: 1 })` is deliberately NOT safe:
+ * an omitted `writable` defaults to false.  The inherited-set resolver can be
+ * omitted only when the pre-scan can prove both the data kind and
+ * `writable: true`; every unknown spelling pays for the resolver rather than
+ * silently treating a refusal as an own-property create.
+ */
+function isProvablyWritableDataDescriptorLiteral(node: ts.Expression | undefined): boolean {
+  if (!node || !ts.isObjectLiteralExpression(node)) return false;
+  let writableTrue = false;
+  for (const prop of node.properties) {
+    if (!ts.isPropertyAssignment(prop) || ts.isComputedPropertyName(prop.name)) return false;
+    const name = prop.name;
+    const key = ts.isIdentifier(name) ? name.text : ts.isStringLiteral(name) ? name.text : undefined;
+    if (key === undefined || !DATA_DESCRIPTOR_KEYS.has(key)) return false;
+    if (key === "writable") {
+      if (prop.initializer.kind !== ts.SyntaxKind.TrueKeyword) return false;
+      writableTrue = true;
+    }
+  }
+  return writableTrue;
+}
+
+/** Every descriptor in a Properties bag must be provably writable data. */
+function isProvablyWritableDataDescriptorBag(node: ts.Expression | undefined): boolean {
+  if (!node || !ts.isObjectLiteralExpression(node)) return false;
+  for (const prop of node.properties) {
+    if (!ts.isPropertyAssignment(prop) || !isProvablyWritableDataDescriptorLiteral(prop.initializer)) return false;
+  }
+  return true;
+}
+
+/**
+ * (#4504) Detect descriptors that can change an inherited [[Set]] outcome.
+ * Accessor declarations are included because class/object-literal accessors
+ * install prototype descriptors without passing through an Object builtin.
+ */
+function isInheritedSetDescriptorUse(node: ts.Node): boolean {
+  if (ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) return true;
+  // Stored Object builtins are lowered by the same builtin capture path as
+  // direct calls (`const dp = Object.defineProperty; dp(proto, ...)`). This
+  // pre-scan intentionally has no binding/flow state, so recognize the value
+  // reference itself as the conservative gate; a harmless uncalled capture
+  // only enables the already-reserved standalone resolver.
+  if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Object") {
+    const method = node.name.text;
+    const isDirectCallee = ts.isCallExpression(node.parent) && node.parent.expression === node;
+    if (method === "freeze") return true;
+    // Preserve the direct-call precision below: a literal
+    // `{ value: 1, writable: true }` does not need the resolver. Only a
+    // stored/captured define builtin loses that proof.
+    if (!isDirectCallee && (method === "defineProperty" || method === "defineProperties")) return true;
+  }
+  if (!ts.isCallExpression(node)) return false;
+  const callee = node.expression;
+  if (!ts.isPropertyAccessExpression(callee)) return false;
+  const method = callee.name.text;
+  // Annex B's legacy mutators install an accessor directly on their receiver.
+  // Do not try to prove that receiver is a prototype in this early syntactic
+  // scan: an unnecessary resolver is safe; a missed setter is not.
+  if (method === "__defineGetter__" || method === "__defineSetter__") return true;
+  if (!ts.isIdentifier(callee.expression)) return false;
+  const ns = callee.expression.text;
+  // `Object.freeze(proto)` turns every existing data descriptor non-writable,
+  // including one later reached through an inherited write.  This is a
+  // per-module conservative gate; proving the receiver is a prototype is not
+  // worth risking a false negative here.
+  if (ns === "Object" && method === "freeze") return true;
+  if (method === "defineProperty" && (ns === "Object" || ns === "Reflect")) {
+    return !isProvablyWritableDataDescriptorLiteral(node.arguments[2]);
+  }
+  if (method === "defineProperties" && ns === "Object") {
+    return !isProvablyWritableDataDescriptorBag(node.arguments[1]);
+  }
+  if (method === "create" && ns === "Object") {
+    return node.arguments.length >= 2 && !isProvablyWritableDataDescriptorBag(node.arguments[1]);
   }
   return false;
 }
@@ -410,6 +497,20 @@ function isProtoNamedWrite(node: ts.Node): boolean {
       ts.isIdentifier(callee.expression) &&
       (callee.expression.text === "Object" || callee.expression.text === "Reflect") &&
       (callee.name.text === "defineProperty" || callee.name.text === "defineProperties")
+    ) {
+      return true;
+    }
+  }
+  // Annex B's direct mutators are descriptor writes too.  The native
+  // prototype companion must be reserved before bodies compile so a later
+  // inherited set can see the installed accessor.  `.call`/aliases are left
+  // to the conservative inherited-set gate above; they do not have a stable
+  // structural receiver for this narrow store-reservation predicate.
+  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+    const callee = node.expression;
+    if (
+      (callee.name.text === "__defineGetter__" || callee.name.text === "__defineSetter__") &&
+      isBrandedBuiltinPrototypeExpr(callee.expression)
     ) {
       return true;
     }

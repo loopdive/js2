@@ -1375,6 +1375,19 @@ export function compileObjectDefineProperty(
   // on this bit fixes the `const o:any` accessor-get bug without regressing the
   // statically struct-typed (class-instance) accessor path.
   const receiverIsStaticStruct = structName !== undefined;
+  // #4504: `C.prototype` is an inherited-descriptor owner, never the
+  // instance's physical struct.  The historical static-struct accessor path
+  // recorded `${C}_p` in `classAccessorSet`, which later made the closed-field
+  // write ladder suppress a real own slot on `new C()`.  In descriptor-active
+  // standalone modules keep this target on the runtime prototype path instead;
+  // genuine instance-side accessors retain the compiled fast path below.
+  const prototypeDescriptorTarget =
+    ctx.standalone &&
+    ctx.inheritedSetDescriptorDirty &&
+    (() => {
+      const unwrapped = unwrapTransparentExpression(objArg);
+      return ts.isPropertyAccessExpression(unwrapped) && unwrapped.name.text === "prototype";
+    })();
 
   // Fallback 1: resolve struct name from the local variable's Wasm type.
   // This handles cases where the TS type is `any` but the local holds a struct ref.
@@ -1492,6 +1505,7 @@ export function compileObjectDefineProperty(
     propName !== undefined && fieldIdx < 0 && _isCanonicalArrayIndexString(propName);
   if (
     receiverIsStaticStruct &&
+    !prototypeDescriptorTarget &&
     (getNode || setNode) &&
     !valueExpr &&
     structName &&

@@ -142,7 +142,7 @@ const INSTANCE_PROP_GET = "__instance_prop_get";
 /** `(externref obj, externref key, externref value)` — deposit into the instance's bag. */
 const INSTANCE_PROP_SET = "__instance_prop_set";
 /** `(externref obj, externref key)` — drop a #4098 tombstone marker so a write can land. */
-const INSTANCE_FIELD_RESURRECT = "__instance_field_resurrect";
+export const INSTANCE_FIELD_RESURRECT = "__instance_field_resurrect";
 
 const CLOSURE_BAG_LOOKUP = "__closure_bag_lookup";
 const CLOSURE_BAG_ENSURE = "__closure_bag_ensure";
@@ -179,6 +179,8 @@ export function reserveInstanceProps(ctx: CodegenContext): void {
   reserve(IS_INSTANCE_EXPANDO_CARRIER, [EXT], [I32], [{ op: "i32.const", value: 0 }]);
   reserve(INSTANCE_PROP_GET, [EXT, EXT], [EXT], [{ op: "ref.null.extern" }]);
   reserve(INSTANCE_PROP_SET, [EXT, EXT, EXT], [], []);
+  // This helper predates #4504 and is part of the established standalone/WASI
+  // function space even when the inherited-set resolver is inactive.
   reserve(INSTANCE_FIELD_RESURRECT, [EXT, EXT], [], []);
 }
 
@@ -324,6 +326,9 @@ export function fillInstanceProps(ctx: CodegenContext): void {
   const createDescriptorIdx = ctx.funcMap.get("__create_descriptor");
   const objFindIdx = ctx.funcMap.get("__obj_find");
   const deletePropIdx = ctx.funcMap.get("__delete_property");
+  const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
+  const setOwnIdx = ctx.funcMap.get("__extern_set_own");
+  const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
   if (
     lookupIdx === undefined ||
     ensureIdx === undefined ||
@@ -413,23 +418,83 @@ export function fillInstanceProps(ctx: CodegenContext): void {
   ];
 
   // ── __instance_prop_set(obj, key, value) ─────────────────────────────────
-  // ENSURE is legal here: this IS a write, and it is reached only after S1's
-  // declared-field ladder missed, so a declared name can never be deposited.
+  // S1's declared-field ladder already missed.  Query the existing bag before
+  // deciding inherited descriptors; only a MISS/ALLOW can ensure and write an
+  // own bag entry.
+  const sharedSetAvailable = setDecideIdx !== undefined && setOwnIdx !== undefined && setResultGlobalIdx !== undefined;
   setFn(
     INSTANCE_PROP_SET,
-    [{ name: "__bag", type: EXT }],
-    [
-      ...requireCarrier([{ op: "return" }]),
-      { op: "local.get", index: 0 },
-      { op: "call", funcIdx: ensureIdx },
-      { op: "local.tee", index: 3 },
-      { op: "ref.is_null" },
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
-      { op: "local.get", index: 3 },
-      { op: "local.get", index: 1 },
-      { op: "local.get", index: 2 },
-      { op: "call", funcIdx: externSetIdx },
-    ],
+    sharedSetAvailable
+      ? [
+          { name: "__bag", type: EXT },
+          { name: "__decision", type: I32 },
+        ]
+      : [{ name: "__bag", type: EXT }],
+    sharedSetAvailable
+      ? [
+          ...requireCarrier([{ op: "return" }]),
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: lookupIdx },
+          { op: "local.set", index: 3 },
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 3 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: setDecideIdx! },
+          { op: "local.tee", index: 4 },
+          { op: "i32.const", value: 2 }, // SET_DECISION_HANDLED
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "i32.const", value: 1 }, { op: "global.set", index: setResultGlobalIdx! }, { op: "return" }],
+          },
+          { op: "local.get", index: 4 },
+          { op: "i32.const", value: 3 }, // SET_DECISION_REFUSED
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "i32.const", value: 2 }, { op: "global.set", index: setResultGlobalIdx! }, { op: "return" }],
+          },
+          { op: "local.get", index: 3 },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "call", funcIdx: ensureIdx },
+              { op: "local.set", index: 3 },
+            ],
+          },
+          { op: "local.get", index: 3 },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            // A missing side-bag allocation is an unadmitted
+            // representation boundary, not an OrdinarySet refusal.
+            then: [{ op: "return" }],
+          },
+          { op: "local.get", index: 3 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: setOwnIdx! },
+          { op: "global.set", index: setResultGlobalIdx! },
+        ]
+      : [
+          ...requireCarrier([{ op: "return" }]),
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: ensureIdx },
+          { op: "local.tee", index: 3 },
+          { op: "ref.is_null" },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
+          { op: "local.get", index: 3 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: externSetIdx },
+        ],
   );
 
   /** `bag = __closure_bag_lookup(obj)` into `bagLocal`, screened to `$Object`. */
