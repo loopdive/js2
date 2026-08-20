@@ -95,11 +95,12 @@ Both rows verified individually, one process per test, `target=standalone`.
 Bucketing the residue's explicit refusals turned up two more, each a distinct
 mechanism rather than this one:
 
-- **`<Boxed>.prototype.valueOf`** — `Object(true).valueOf()` throws
-  `Boolean.prototype.valueOf is not yet implemented` inside the harness, though
-  the same expression **passes** in a bare module. So it is not simply a missing
-  method; something about the harness context changes the receiver's dispatch.
-  4 rows (`Object/S9.9_A3`, `_A4`, `_A5`, `harness/deepEqual-primitives`).
+- **`<Boxed>.prototype.valueOf`** — now isolated and filed as **#4582**. It is
+  not the harness: merely mentioning `Boolean.prototype` anywhere in the module
+  switches a working `Object(true).valueOf()` onto the reflective `makeGlue`
+  path, every member of which is a refusal stub for the boxed brands. A fix was
+  attempted, measured to answer `false` instead of `true`, and **reverted** —
+  see #4582 before retrying. 4 rows.
 - **`Object.prototype.isPrototypeOf`** — 2 rows (`Object/create/15.2.3.5-3-1`,
   `-4-1`). A native `__isPrototypeOf` helper already exists and #4556
   deliberately left `Object` on it as "strictly more faithful", so this is a
