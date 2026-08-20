@@ -193,7 +193,6 @@ import {
   type PreparedIrFreeFunctionBodies,
   type PreparedIrModuleInitBody,
 } from "./ir-prepared-free-functions.js";
-import type { FallbackCounts } from "./fallback-telemetry.js";
 import { buildLeakedHostImportError, scanForLeakedHostImports } from "./host-import-allowlist.js";
 import {
   hasCertifiedStandaloneClockCapabilityProvider,
@@ -205,8 +204,8 @@ import { allocLocal, getLocalType } from "./context/locals.js";
 import type {
   ClosureInfo,
   CodegenContext,
-  CodegenError,
   CodegenOptions,
+  CodegenResult,
   ExternClassInfo,
   FunctionContext,
   OptionalParamInfo,
@@ -412,13 +411,14 @@ import {
   collectEmptyObjectWidening,
   collectObjectLiteralAssignedPropertyNames,
   collectGrowableObjectLiterals,
-  compileDeclarations,
   createUnifiedCollectorState,
   finalizeUnifiedCollector,
   functionReturnsDynamicObjectCarrier,
   preallocateModuleInitCallable,
   unifiedVisitNode,
 } from "./declarations.js";
+import { compileDeclarations } from "./audited-declarations.js";
+import { snapshotLegacyBodyAudit } from "./legacy-body-audit.js";
 import type { ModuleInitMode } from "./declarations.js";
 import { prepareModuleTdzGlobals } from "./module-global-registration.js";
 import { hoistedVarPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
@@ -4326,28 +4326,22 @@ function resolveAndRecordShapeBranding(ctx: CodegenContext): void {
   ctx.programAbiSession?.recordShapeBranding(affected);
 }
 
+export interface GeneratedCodegenModule extends CodegenResult {
+  irPostClaimErrors?: { kind: string; func: string; message: string }[];
+  irCompiledFuncs?: readonly string[];
+  programAbi?: PublishedProgramAbi;
+}
+
+export interface GeneratedModule extends GeneratedCodegenModule {
+  irFirstSkipped?: readonly string[];
+  moduleInitPlanning?: IrModuleInitPlanningEvidence;
+}
+
 export function generateModule(
   ast: TypedAST,
   options?: CodegenOptions,
   inventoryOptions: BuildIrUnitInventoryOptions = {},
-): {
-  module: WasmModule;
-  errors: CodegenError[];
-  // #2089 — silent-fallback telemetry counters (per class → per site → count).
-  fallbackCounts?: FallbackCounts;
-  // #1923 — IR post-claim demotions (only when trackIrPostClaim is set).
-  irPostClaimErrors?: { kind: string; func: string; message: string }[];
-  // #3000 — functions/class-members actually IR-emitted (genuine-emission signal).
-  irCompiledFuncs?: readonly string[];
-  // #2138 — legacy bodies skipped under IR-first (default as of #3143; undefined when disabled).
-  irFirstSkipped?: readonly string[];
-  // #3519 — typed terminal unit ledger (opt-in).
-  irOutcomes?: readonly IrObservedOutcome[];
-  // #3520 — finalized structural ABI when an IR identity inventory was requested.
-  programAbi?: PublishedProgramAbi;
-  // #3523 — source-ordered module-init plan plus direct-queue parity evidence.
-  moduleInitPlanning?: IrModuleInitPlanningEvidence;
-} {
+): GeneratedModule {
   const mod = createEmptyModule();
   const irPlanningIdentityContext =
     options?.experimentalIR || options?.trackIrOutcomes
@@ -4359,6 +4353,7 @@ export function generateModule(
     ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
     : undefined;
   const ctx = createCodegenContext(mod, ast.checker, options, programAbiSession, irPlanningIdentityContext);
+  ctx.irBodyRouteAuditSession?.registerGenerator("single", "generateModule");
   const standaloneCalendar = planSingleSourceStandaloneCalendar(ctx, ast.checker, ast.sourceFile, inventoryOptions);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan([ast.sourceFile], ctx.oracle);
   if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
@@ -5777,6 +5772,7 @@ export function generateModule(
     irCompiledFuncs: ctx.irCompiledFuncs,
     irFirstSkipped,
     irOutcomes: ctx.irOutcomes,
+    irBodyRouteAudit: snapshotLegacyBodyAudit(ctx),
     programAbi: ctx.programAbiSession?.publication,
     moduleInitPlanning,
   };
@@ -7770,23 +7766,7 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
  * All source files share the same codegen context (funcMap, structMap, etc.).
  * Only functions exported from the entry file become Wasm exports.
  */
-export function generateMultiModule(
-  multiAst: MultiTypedAST,
-  options?: CodegenOptions,
-): {
-  module: WasmModule;
-  errors: CodegenError[];
-  // #2089 — silent-fallback telemetry counters (per class → per site → count).
-  fallbackCounts?: FallbackCounts;
-  // #1923 — IR post-claim demotions (only when trackIrPostClaim is set).
-  irPostClaimErrors?: { kind: string; func: string; message: string }[];
-  // #3000 — functions/class-members actually IR-emitted (genuine-emission signal).
-  irCompiledFuncs?: readonly string[];
-  // #3519 — typed terminal unit ledger (opt-in).
-  irOutcomes?: readonly IrObservedOutcome[];
-  // #3520 — finalized structural ABI when an IR identity inventory was requested.
-  programAbi?: PublishedProgramAbi;
-} {
+export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOptions): GeneratedCodegenModule {
   const mod = createEmptyModule();
   const irPlanningIdentityContext =
     options?.experimentalIR || options?.trackIrOutcomes
@@ -7801,6 +7781,7 @@ export function generateMultiModule(
     ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
     : undefined;
   const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession, irPlanningIdentityContext);
+  ctx.irBodyRouteAuditSession?.registerGenerator("multi", "generateMultiModule");
   const standaloneCalendar = planMultiCalendar(ctx, multiAst.checker, multiAst.sourceFiles, multiAst.entryFile);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan(multiAst.sourceFiles, ctx.oracle);
   if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
@@ -8732,6 +8713,7 @@ export function generateMultiModule(
     irPostClaimErrors: ctx.irPostClaimErrors,
     irCompiledFuncs: ctx.irCompiledFuncs,
     irOutcomes: ctx.irOutcomes,
+    irBodyRouteAudit: snapshotLegacyBodyAudit(ctx),
     programAbi: ctx.programAbiSession?.publication,
   };
 }

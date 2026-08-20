@@ -18,6 +18,7 @@ import type { FallbackCounts } from "../fallback-telemetry.js";
 import type { CompileTargetProfile } from "../../target-profile.js";
 import type { IrRuntimeEvalBoundaryPlan } from "../../ir/runtime-eval-boundary-plan.js";
 import type { StandaloneCapabilityDemandState } from "./capability-state.js";
+import type * as BodyRouteAudit from "./body-route-audit.js";
 
 export interface CodegenError {
   message: string;
@@ -72,14 +73,13 @@ export interface CodegenError {
 }
 
 /** Result returned by generateModule / generateMultiModule. */
-export interface CodegenResult {
+export interface CodegenResult extends BodyRouteAudit.Result {
   module: WasmModule;
   errors: CodegenError[];
   /**
    * #2089 — silent-fallback telemetry counters captured during this codegen
-   * run (per class → per site → count). Surfaced so the gate
-   * (`scripts/check-codegen-fallbacks.ts`) can aggregate structured counts
-   * rather than parsing warning strings. Optional so existing callers that
+   * run (per class → per site → count). Surfaced for structured gate
+   * aggregation rather than warning parsing. Optional so existing callers that
    * destructure `{ module, errors }` are unaffected.
    */
   fallbackCounts?: FallbackCounts;
@@ -88,7 +88,7 @@ export interface CodegenResult {
 }
 
 /** Public options for backend code generation. */
-export interface CodegenOptions {
+export interface CodegenOptions extends BodyRouteAudit.Options {
   /** Whether to generate source positions for source map */
   sourceMap?: boolean;
   /** Fast mode: i32 default numbers */
@@ -1277,7 +1277,7 @@ export interface FunctionContext {
   typedThisLocalIdx?: number;
 }
 
-export interface CodegenContext extends StandaloneCapabilityDemandState {
+export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRouteAudit.Context {
   mod: WasmModule;
   /**
    * Immutable target/provider/interop policy resolved once at context creation.

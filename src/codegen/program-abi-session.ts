@@ -1142,14 +1142,7 @@ export class ProgramAbiSession {
     return this.drafts.get(id);
   }
 
-  /**
-   * Resolve the exact planned ABI identities for one symbolic IR reference.
-   *
-   * Dependency discovery runs before the whole-program ABI is published, so
-   * it cannot search final numeric slots. The structural reference stored on
-   * each draft is already the canonical identity contract; return every match
-   * in structural plan order so callers can fail closed on ambiguity.
-   */
+  /** Resolve every exact pre-publication ABI identity in structural plan order. */
   bindingIdsForStructuralReference(key: string): readonly IrBindingId[] {
     if (typeof key !== "string" || key.length === 0) return Object.freeze([]);
     return Object.freeze(
@@ -1166,6 +1159,10 @@ export class ProgramAbiSession {
 
   registeredDerivedUnit(id: IrUnitId): ProgramAbiDerivedUnitRecord | undefined {
     return this.derivedUnits.get(id);
+  }
+
+  derivedUnitRecords(): IterableIterator<ProgramAbiDerivedUnitRecord> {
+    return this.derivedUnits.values();
   }
 
   /**

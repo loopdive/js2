@@ -419,7 +419,6 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
     i32CoercedLocals: i32CoercedLocals.size > 0 ? i32CoercedLocals : undefined,
     i32SpecializedArrays: i32SpecializedArrays.size > 0 ? i32SpecializedArrays : undefined,
   };
-
   // A nested lexical descendant can direct-eval a name owned by this function,
   // so mark the whole ancestor chain before any parameter/default/body lowering
   // can capture those bindings through a narrower, non-canonical cell type.

@@ -13,6 +13,7 @@ import { emitObject } from "../emit/object.js";
 import { preprocessImports } from "../import-resolver.js";
 import type { CompileError, CompileOptions } from "../index.js";
 import type { Instr, ValType, WasmModule } from "../ir/types.js";
+import { resolveCompileTargetProfile } from "../target-profile.js";
 import { DOWNGRADE_DIAG_CODES } from "./import-manifest.js";
 import { hasExportModifier, pushSourceAnchoredDiagnostic } from "./validation.js";
 
@@ -244,6 +245,28 @@ export interface ObjectCompileResult {
  */
 export function compileToObjectSource(source: string, options: CompileOptions = {}): ObjectCompileResult {
   const errors: CompileError[] = [];
+
+  // The relocatable-object path predates the shared target-aware pipeline and
+  // still calls generateModule(ast) without the caller's target/codegen
+  // options. Accepting `target: "standalone"` here therefore lies: it emits a
+  // default GC/JS-host legacy-front-end object, not a standalone artifact.
+  // Fail closed until object allocation consumes the same whole-program
+  // Prepared IR transaction as executable standalone output.
+  if (resolveCompileTargetProfile(options).target === "standalone") {
+    return {
+      object: new Uint8Array(0),
+      success: false,
+      errors: [
+        {
+          message:
+            "compileToObject target 'standalone' is unavailable until relocatable object emission consumes the Prepared IR program",
+          line: 0,
+          column: 0,
+          severity: "error",
+        },
+      ],
+    };
+  }
 
   const preprocessed = preprocessImports(source);
   const processedSource = preprocessed.source;

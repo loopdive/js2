@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { compileToObject } from "../src/index.js";
 
-// Standalone object emitter (`compileToObject`, the relocatable `.o` output)
+// The relocatable WasmGC object emitter (`compileToObject`, the `.o` output)
 // threw `Object emit error: u32 out of range: -19` when a function used any/any
 // loose/strict equality (e.g. `function eq(a:any,b:any){return a==b}`).
 //
@@ -18,7 +18,7 @@ import { compileToObject } from "../src/index.js";
 // This unblocked reproduction of the #2081 standalone loose-eq work.
 
 function compileObjectOk(src: string): number {
-  const r = compileToObject(src, { fileName: "test.ts", target: "standalone" }) as {
+  const r = compileToObject(src, { fileName: "test.ts" }) as {
     success: boolean;
     object?: Uint8Array;
     errors?: { message: string }[];
