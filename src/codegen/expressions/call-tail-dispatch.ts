@@ -39,7 +39,7 @@ import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, VOID_RESULT } from "../shared.js";
 import { compileStatement, hoistFunctionDeclarations } from "../statements.js";
 import { ensureExtrasArgvGlobal, maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
-import { isStaticUndefinedArg } from "../string-ops.js";
+import { compileStringLiteral, isStaticUndefinedArg } from "../string-ops.js";
 import { isStrictFunction } from "../helpers/is-strict-function.js";
 import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
 import {
@@ -89,6 +89,17 @@ import {
   tryEmitInlineDynamicCall,
 } from "./calls.js";
 import { enterInlineIifeBindingScope, argumentsEscapesIife } from "./inline-iife-scope.js"; // (#4555)
+
+function isPristineStringPrototypeExpression(fctx: FunctionContext, expression: ts.Expression): boolean {
+  return (
+    ts.isPropertyAccessExpression(expression) &&
+    expression.name.text === "prototype" &&
+    ts.isIdentifier(expression.expression) &&
+    expression.expression.text === "String" &&
+    !fctx.localMap.has("String") &&
+    !(fctx.boxedCaptures?.has("String") ?? false)
+  );
+}
 
 /**
  * (#742 slice 5) Tail dispatch of compileCallExpression — extracted verbatim.
@@ -655,7 +666,18 @@ export function compileTailDispatch(
           // Fall through to the host bridge if the native path declined.
         }
         const importName = methodName === "@@iterator" ? "__iterator" : "__async_iterator";
-        const recvType = compileExpression(ctx, fctx, elemAccess.expression);
+        // `%String.prototype%` is the empty String value (§22.1.3). Its
+        // general first-class representation is a `$NativeProto` metadata
+        // object, which the iterator provider cannot coerce to text. Preserve
+        // the intrinsic call semantics by feeding the provider the equivalent
+        // empty native string. This exact pristine-realm shape is used by
+        // Deno to discover `%StringIteratorPrototype%` during bootstrap.
+        const recvType =
+          methodName === "@@iterator" &&
+          (ctx.standalone || ctx.wasi) &&
+          isPristineStringPrototypeExpression(fctx, elemAccess.expression)
+            ? compileStringLiteral(ctx, fctx, "")
+            : compileExpression(ctx, fctx, elemAccess.expression);
         if (recvType) {
           if (recvType.kind === "ref" || recvType.kind === "ref_null") {
             fctx.body.push({ op: "extern.convert_any" });

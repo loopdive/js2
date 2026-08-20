@@ -28,6 +28,7 @@ import {
   resolveWasmType,
 } from "./index.js";
 import { ensureExnTag } from "./registry/imports.js";
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   coerceType,
@@ -155,6 +156,7 @@ export const INLINE_DISALLOWED_OPS = new Set([
   "br",
   "br_if",
   "try",
+  "try_table",
   "throw",
   "rethrow",
   "unreachable",
@@ -787,13 +789,15 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
               { op: "local.set", index: pendingThrowLocal },
             ]
           : [];
-      fctx.body.push({
-        op: "try",
-        blockType: { kind: "empty" },
-        body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
-        catches: [{ tagIdx, body: catchBody }],
-        catchAll: catchAllBody.length > 0 ? catchAllBody : undefined,
-      });
+      fctx.body.push(
+        buildTargetTaggedTry(
+          ctx,
+          { kind: "empty" },
+          [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
+          [{ tagIdx, body: catchBody }],
+          catchAllBody.length > 0 ? catchAllBody : undefined,
+        ),
+      );
 
       // Return __create_generator or __create_async_generator depending on async flag.
       // Note: ctx.asyncFunctions excludes async generators (by design), so we check

@@ -60,6 +60,7 @@ export const BFN_ID_FIELD_IDX = 4;
  */
 export const STANDALONE_STATIC_METHOD_META: Record<string, { name: string; length: number }> = {
   "Array.isArray": { name: "isArray", length: 1 },
+  "Object.assign": { name: "assign", length: 2 },
   "Object.keys": { name: "keys", length: 1 },
   "Object.getOwnPropertyDescriptor": { name: "getOwnPropertyDescriptor", length: 2 },
   // (#2933) Fixed-arity Reflect.* namespace static-method value reads. Spec
@@ -68,6 +69,8 @@ export const STANDALONE_STATIC_METHOD_META: Record<string, { name: string; lengt
   "Reflect.has": { name: "has", length: 2 },
   "Reflect.set": { name: "set", length: 3 },
   "Reflect.ownKeys": { name: "ownKeys", length: 1 },
+  "Reflect.getOwnPropertyDescriptor": { name: "getOwnPropertyDescriptor", length: 2 },
+  "Reflect.defineProperty": { name: "defineProperty", length: 3 },
   // (#2933) JSON.stringify as a VALUE — the fixed 1-arg compact form. The value
   // closure serialises via the native `__json_stringify_root` (host-free), the
   // SAME entry the direct `JSON.stringify(o)` call path uses. Spec `.length` is

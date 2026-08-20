@@ -62,6 +62,7 @@ import {
   resolveWasmType,
 } from "./index.js";
 import { ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 import {
   compileNativeGeneratorFunction,
   emitNativeGeneratorToVec,
@@ -3510,13 +3511,15 @@ export function compileObjectLiteralForStruct(
                 { op: "local.set", index: pendingThrowLocal },
               ]
             : [];
-        methodFctx.body.push({
-          op: "try",
-          blockType: { kind: "empty" },
-          body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
-          catches: [{ tagIdx, body: catchBody }],
-          catchAll: catchAllBody.length > 0 ? catchAllBody : undefined,
-        });
+        methodFctx.body.push(
+          buildTargetTaggedTry(
+            ctx,
+            { kind: "empty" },
+            [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
+            [{ tagIdx, body: catchBody }],
+            catchAllBody.length > 0 ? catchAllBody : undefined,
+          ),
+        );
 
         // Return __create_generator or __create_async_generator depending on async flag
         const createGenName = isAsyncMethod ? "__create_async_generator" : "__create_generator";
@@ -4609,7 +4612,21 @@ export function compileArrayLiteral(
         // byte-identical (their elision keeps the element default / sNaN path).
         emitHoleSentinel(ctx, fctx);
       } else {
-        compileExpression(ctx, fctx, el, elemWasm);
+        // A heterogeneous object-literal array selects the universal
+        // externref carrier above because its closed struct shapes are not
+        // interchangeable. Keep construction in lockstep with that decision:
+        // a closed struct merely wrapped as externref is opaque to the dynamic
+        // property reads used by callback destructuring (`forEach(({x}) => …)`),
+        // so every field would read as undefined. Build data-only literals as
+        // open `$Object`s instead. The builder recursively applies the same
+        // representation to nested data literals, while accessors, methods,
+        // spreads, and computed keys retain their established lowering.
+        const objectElement = elemWasm.kind === "externref" ? unwrapObjectLiteralElement(el) : null;
+        const openObjectType =
+          objectElement !== null && staticObjectLiteralDataKeys(ctx, objectElement) !== null
+            ? compileObjectLiteralAsExternref(ctx, fctx, objectElement)
+            : null;
+        if (openObjectType === null) compileExpression(ctx, fctx, el, elemWasm);
       }
     }
     fctx.body.push({ op: "array.new_fixed", typeIdx: arrTypeIdx, length: expr.elements.length });

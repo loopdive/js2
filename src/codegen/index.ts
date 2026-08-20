@@ -221,7 +221,12 @@ import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
-import { hoistedVarRetypesToConcreteRef, inferArrayVecType, usageInferredLocalType } from "./statements/variables.js"; // (#2106 S1 PR-2) hoist undefined-init retype predicate; (#684) usage-based any-local f64 override
+import {
+  hoistedVarRetypesToConcreteRef,
+  inferArrayVecType,
+  inferTaViewType,
+  usageInferredLocalType,
+} from "./statements/variables.js"; // (#2106 S1 PR-2) hoist undefined-init retype predicate; (#684) usage-based any-local f64 override
 import { bindingHasMixedAssignmentCarrier } from "./analysis/mixed-assignment-carrier.js";
 import { symbolBrand } from "./symbol-field-carrier.js";
 import { ensureDynReadHelpers, ensureDynMemberGet } from "./dyn-read.js"; // (#2580 M0) / (#3053 U0)
@@ -354,6 +359,7 @@ import {
   shiftAsyncSideChannelFuncIdxs,
 } from "./async-scheduler.js";
 import { ensureUnhandledRejectionReporter } from "./unhandled-rejection.js";
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stable handles never shift
 import { profileCount, profilePhase } from "../compile-profile.js";
 import { frameSnapshotAtCompile } from "./function-body.js";
@@ -6224,24 +6230,19 @@ function addWasiStartExport(ctx: CodegenContext): void {
     const startBody: Instr[] =
       exnPrinterIdx !== undefined && ctx.wasiProcExitIdx >= 0
         ? [
-            {
-              op: "try",
-              blockType: { kind: "empty" },
-              body,
-              catches: [
-                {
-                  tagIdx: ctx.exnTagIdx,
-                  body: [
-                    // The catch pushes the thrown externref payload; render + write it.
-                    { op: "call", funcIdx: exnPrinterIdx },
-                    // An uncaught exception is a failure — exit nonzero.
-                    { op: "i32.const", value: 1 },
-                    { op: "call", funcIdx: ctx.wasiProcExitIdx },
-                    { op: "unreachable" },
-                  ],
-                },
-              ],
-            },
+            buildTargetTaggedTry(ctx, { kind: "empty" }, body, [
+              {
+                tagIdx: ctx.exnTagIdx,
+                body: [
+                  // The catch pushes the thrown externref payload; render + write it.
+                  { op: "call", funcIdx: exnPrinterIdx },
+                  // An uncaught exception is a failure — exit nonzero.
+                  { op: "i32.const", value: 1 },
+                  { op: "call", funcIdx: ctx.wasiProcExitIdx },
+                  { op: "unreachable" },
+                ],
+              },
+            ]),
           ]
         : body;
 
@@ -10905,6 +10906,14 @@ function inferLetConstInitializerWasmType(
   initializer: ts.Expression | undefined,
 ): ValType | null {
   if (!initializer) return null;
+  // (#4376) Keep the authoritative pre-hoisted slot type in lockstep with
+  // compileVariableStatement. A buffer-backed typed array is represented by a
+  // shared-backing `$__ta_view`, not the checker-inferred plain vector. Nested
+  // functions record their capture signatures before declaration lowering, so
+  // missing this override made reifying a closure cast the real view value to
+  // an unrelated vector type and trap during Deno core bootstrap.
+  const taViewType = inferTaViewType(ctx, initializer);
+  if (taViewType !== null) return taViewType;
   const standaloneRegExpMatchArrayType = inferStandaloneRegExpMatchArrayType(ctx, initializer);
   if (standaloneRegExpMatchArrayType !== null) return standaloneRegExpMatchArrayType;
 
@@ -11124,10 +11133,23 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           decl.initializer !== undefined &&
           ts.isObjectLiteralExpression(decl.initializer) &&
           ctx.dynamicProtoLiteralNodes.has(decl.initializer);
+        // (#4376) Keep the authoritative pre-hoisted slot in lockstep with
+        // compileVariableStatement/compileObjectLiteral for a binding whose
+        // object later receives out-of-shape or runtime-keyed writes. Without
+        // this override a hoisted nested function records the capture as the
+        // literal's inferred closed struct, while the declaration correctly
+        // builds and stores an open `$Object` externref. Reifying that function
+        // then casts the externref capture back to the unrelated struct and
+        // traps (Deno's `registerErrorClass` capturing `errorConstructors`).
+        const initIsGrowableObjectLiteral =
+          decl.initializer !== undefined &&
+          ts.isObjectLiteralExpression(decl.initializer) &&
+          ctx.growableObjectLiteralVars.has(name);
         const initIsOrdinaryToPrimitiveObjectLiteral = ctx.ordinaryToPrimitiveObjectDeclarations.has(decl);
         const initForcesExternref =
           initIsAccessorLiteral ||
           initIsHostSpreadLiteral ||
+          initIsGrowableObjectLiteral ||
           initIsOrdinaryToPrimitiveObjectLiteral ||
           initIsProtoReceiverLiteral;
         if (initForcesExternref) {
@@ -11290,7 +11312,7 @@ function collectStringCalls(instrs: Instr[], strFuncIdxSet: Set<number>, found: 
       found.add(instr.funcIdx);
     }
     // Recurse into nested blocks
-    if (instr.op === "block" || instr.op === "loop") {
+    if (instr.op === "block" || instr.op === "loop" || instr.op === "try_table") {
       collectStringCalls(instr.body, strFuncIdxSet, found);
     } else if (instr.op === "if") {
       collectStringCalls(instr.then, strFuncIdxSet, found);
@@ -11315,7 +11337,7 @@ function replaceStringCalls(instrs: Instr[], cacheMap: Map<number, number>): voi
       (instrs as any)[i] = { op: "local.get", index: localIdx };
     }
     // Recurse into nested blocks
-    if (instr.op === "block" || instr.op === "loop") {
+    if (instr.op === "block" || instr.op === "loop" || instr.op === "try_table") {
       replaceStringCalls(instr.body, cacheMap);
     } else if (instr.op === "if") {
       replaceStringCalls(instr.then, cacheMap);

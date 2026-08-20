@@ -425,6 +425,13 @@ function boxToExternref(
   // undefined map (needs a scratch local).
   fctx?: FunctionContext,
 ): Instr[] {
+  // The registry key describes the logical producer, but the backing-array
+  // element is the value that is actually on the Wasm stack here.  They can
+  // intentionally differ: Int32Array/Uint32Array use the dedicated
+  // `i32_elem` key while their storage still yields an i32.  Always prefer the
+  // physical element kind for opcode selection; using `elemKey` for that case
+  // falls through to `extern.convert_any(i32)` and invalidates the module.
+  const storageKind = srcElemType?.kind ?? elemKey;
   // (#2669) When the backing array ALREADY stores externref elements, the value
   // produced by `array.get` is already an externref and needs no conversion.
   // The vec-type-map key alone is misleading here: a `ref_*` keyed vec (a vec of
@@ -458,11 +465,11 @@ function boxToExternref(
     }
     return [{ op: "drop" }, { op: "ref.null.extern" }];
   }
-  if (elemKey === "externref") {
+  if (storageKind === "externref" || storageKind === "ref_extern") {
     // Already externref, just pass through
     return [];
   }
-  if (elemKey === "f64") {
+  if (storageKind === "f64") {
     addUnionImports(ctx);
     const boxIdx = ctx.funcMap.get("__box_number");
     if (boxIdx !== undefined) {
@@ -509,7 +516,7 @@ function boxToExternref(
     // Fallback: drop and push null
     return [{ op: "drop" }, { op: "ref.null.extern" }];
   }
-  if (elemKey === "i32") {
+  if (storageKind === "i32") {
     addUnionImports(ctx);
     const boxIdx = ctx.funcMap.get("__box_number");
     if (boxIdx !== undefined) {
@@ -517,7 +524,7 @@ function boxToExternref(
     }
     return [{ op: "drop" }, { op: "ref.null.extern" }];
   }
-  if (elemKey === "i64") {
+  if (storageKind === "i64") {
     // (#3394) An i64-carrier vec element (a `bigint`, or a heterogeneous
     // `number | bigint` tuple element stored as i64) must be BOXED before it
     // reifies as an externref — the `array.get` yields a raw i64, and falling

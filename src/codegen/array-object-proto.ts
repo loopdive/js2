@@ -76,6 +76,7 @@ import {
   emitStringProtoToStringFlat,
 } from "./string-proto-tostring.js"; // (#3992)
 import { standaloneGlobalFunctionSeedInstrs } from "./standalone-global-functions.js";
+import { emitBuiltinNamespaceObject } from "./builtin-static-globals.js";
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -2569,6 +2570,64 @@ export function emitGeneratorFunctionPrototypeSingleton(ctx: CodegenContext, fct
 }
 
 /**
+ * Native standalone `%AsyncGenerator%` (= `%AsyncGeneratorFunction.prototype%`)
+ * identity used by primordial capture. The outer object owns a stable
+ * `prototype` value representing `%AsyncGeneratorPrototype%`.
+ *
+ * Async-generator frame dispatch already lives in the async iterator runtime;
+ * exposing `next`/`return`/`throw` as first-class method closures is a separate
+ * semantic layer. Keeping the nested object distinct (rather than aliasing the
+ * synchronous generator prototype) preserves the intrinsic identities while
+ * allowing reflection/bootstrap to proceed without a JavaScript host.
+ */
+export function emitAsyncGeneratorFunctionPrototypeSingleton(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+): ValType | null {
+  ensureObjectRuntime(ctx);
+  const newObjectIdx = ctx.funcMap.get("__new_plain_object");
+  const setIdx = ctx.funcMap.get("__extern_set");
+  if (newObjectIdx === undefined || setIdx === undefined) return null;
+
+  const globalName = "__native_async_generator_function_prototype";
+  let globalIdx = ctx.builtinObjectGlobals.get(globalName);
+  if (globalIdx === undefined) {
+    globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+    ctx.mod.globals.push({
+      name: globalName,
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    ctx.builtinObjectGlobals.set(globalName, globalIdx);
+  }
+
+  const outerLocal = allocLocal(fctx, `__async_genfn_proto_${fctx.locals.length}`, { kind: "externref" });
+  const innerLocal = allocLocal(fctx, `__async_gen_proto_${fctx.locals.length}`, { kind: "externref" });
+  const initBody: Instr[] = [
+    { op: "call", funcIdx: newObjectIdx },
+    { op: "local.set", index: innerLocal },
+    { op: "call", funcIdx: newObjectIdx },
+    { op: "local.set", index: outerLocal },
+    { op: "local.get", index: outerLocal },
+  ];
+  addStringConstantGlobal(ctx, "prototype");
+  initBody.push(...stringConstantExternrefInstrs(ctx, "prototype"));
+  initBody.push(
+    { op: "local.get", index: innerLocal },
+    { op: "call", funcIdx: setIdx },
+    { op: "local.get", index: outerLocal },
+    { op: "global.set", index: globalIdx },
+  );
+
+  fctx.body.push({ op: "global.get", index: globalIdx });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
+  fctx.body.push({ op: "global.get", index: globalIdx });
+  return { kind: "externref" };
+}
+
+/**
  * (#2996) Native standalone `globalThis` value. In host/gc mode a bare
  * `globalThis` identifier read leaks the `env::__get_globalThis` host import
  * (see `compileIdentifier`), which a no-JS-host binary can't satisfy — yet the
@@ -2619,11 +2678,42 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
   ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   const objLocal = allocLocal(fctx, `__native_globalThis_obj_${fctx.locals.length}`, { kind: "externref" });
+
+  // Deno's primordials bootstrap deliberately discovers namespace objects via
+  // a computed realm-global read (`globalThis[name]`) before copying their own
+  // descriptors. The namespace carrier and the realm property must therefore
+  // be the same object; an empty or second carrier loses function identity.
+  // Build these demand-driven seeds through the canonical namespace emitter.
+  // Keep the detached body live while later seed construction can still add
+  // imports and shift defined-function indices.
+  const savedBody = fctx.body;
+  fctx.body = [];
+  ctx.liveBodies.add(savedBody);
+  for (const name of ["Array", "Object", "JSON", "Math", "Proxy", "Reflect"] as const) {
+    fctx.body.push({ op: "local.get", index: objLocal });
+    addStringConstantGlobal(ctx, name);
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
+    if (emitBuiltinNamespaceObject(ctx, fctx, name) === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    const defineIdx = ctx.funcMap.get("__defineProperty_value");
+    if (defineIdx === undefined) {
+      fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "drop" });
+      continue;
+    }
+    // Global builtin bindings: writable, non-enumerable, configurable.
+    fctx.body.push({ op: "f64.const", value: 0x05 }, { op: "call", funcIdx: defineIdx }, { op: "drop" });
+  }
+  const namespaceSeeds = fctx.body;
+  fctx.body = savedBody;
+  ctx.liveBodies.delete(savedBody);
+  ctx.liveBodies.add(namespaceSeeds);
   const functionSeeds = standaloneGlobalFunctionSeedInstrs(ctx, objLocal);
   const newObjectIdx = ctx.funcMap.get("__new_plain_object");
   const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   if (!functionSeeds || newObjectIdx === undefined || defineValueIdx === undefined || boxNumberIdx === undefined) {
+    ctx.liveBodies.delete(namespaceSeeds);
     return null;
   }
 
@@ -2648,15 +2738,18 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
     { op: "call", funcIdx: boxNumberIdx },
   ]);
   seedValue("undefined", undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }]);
+  seedValue("globalThis", [{ op: "local.get", index: objLocal }]);
 
   const initBody: Instr[] = [
     { op: "call", funcIdx: newObjectIdx },
     { op: "local.set", index: objLocal },
     ...functionSeeds,
     ...valueSeeds,
+    ...namespaceSeeds,
     { op: "local.get", index: objLocal },
     { op: "global.set", index: globalIdx },
   ];
+  ctx.liveBodies.delete(namespaceSeeds);
   fctx.body.push({ op: "global.get", index: globalIdx });
   fctx.body.push({ op: "ref.is_null" });
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
@@ -2692,12 +2785,26 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
  * returns the externref ValType, or `null` if the `$Object` runtime is
  * unavailable (caller falls through to the host-import path).
  */
-export function emitArrayIteratorPrototypeSingleton(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
+export type NativeIteratorPrototypeKind = "Array" | "Map" | "Set" | "String";
+
+/**
+ * Materialize one identity-stable intrinsic iterator prototype object.
+ *
+ * The iterator record carriers do not model [[Prototype]] yet. Keeping one
+ * singleton per iterator family nevertheless gives reflective bootstrap code
+ * a genuine object identity (rather than null) and prevents Map/Set/String
+ * iterator prototypes from collapsing onto %ArrayIteratorPrototype%.
+ */
+export function emitIteratorPrototypeSingleton(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  kind: NativeIteratorPrototypeKind,
+): ValType | null {
   ensureObjectRuntime(ctx);
   const newObjectIdx = ctx.funcMap.get("__new_plain_object");
   if (newObjectIdx === undefined) return null;
 
-  const globalName = "__native_array_iterator_prototype";
+  const globalName = `__native_${kind.toLowerCase()}_iterator_prototype`;
   let globalIdx = ctx.builtinObjectGlobals.get(globalName);
   if (globalIdx === undefined) {
     globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
@@ -2719,4 +2826,8 @@ export function emitArrayIteratorPrototypeSingleton(ctx: CodegenContext, fctx: F
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
   fctx.body.push({ op: "global.get", index: globalIdx });
   return { kind: "externref" };
+}
+
+export function emitArrayIteratorPrototypeSingleton(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
+  return emitIteratorPrototypeSingleton(ctx, fctx, "Array");
 }

@@ -768,6 +768,36 @@ export function collectGrowableObjectLiterals(
           const shape = literalShapeNames(decl.initializer);
           if (!shape) continue; // not a pure data literal → skip (externref builder would decline)
 
+          // A value nested in an object literal passed to an `any`/`unknown`
+          // callable crosses a fully dynamic JavaScript boundary. Keeping the
+          // nested value as a closed struct makes its fields invisible after
+          // the outer literal is stored in an open object. Deno's bootstrap
+          // uses this exact shape when it publishes `infra` through its
+          // any-typed captured Object.assign primordial:
+          //
+          //   ObjectAssign(globalThis, { __infra: infra })
+          //
+          // Pin the declaration itself to the open-object representation so
+          // the published value keeps both identity and reflective fields.
+          const isNestedDynamicCallArgument = (id: ts.Identifier): boolean => {
+            if (!(ctx.standalone || ctx.wasi) || id.text !== varName) return false;
+            const property = id.parent;
+            if (
+              !(
+                (ts.isShorthandPropertyAssignment(property) && property.name === id) ||
+                (ts.isPropertyAssignment(property) && property.initializer === id)
+              )
+            ) {
+              return false;
+            }
+            const literal = property.parent;
+            if (!ts.isObjectLiteralExpression(literal)) return false;
+            const call = literal.parent;
+            if (!ts.isCallExpression(call) || !call.arguments.includes(literal)) return false;
+            const calleeType = checker.getTypeAtLocation(call.expression);
+            return (calleeType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+          };
+
           // (#671 W1) A direct bare-identifier DeleteBinding in `with (varName)`
           // makes the legacy static scope fall through to runtime HasBinding /
           // DeleteBinding. That runtime path and a later `varName.p` read must
@@ -882,6 +912,9 @@ export function collectGrowableObjectLiterals(
           let poisoned = false;
 
           const visit = (node: ts.Node): void => {
+            if (ts.isIdentifier(node) && isNestedDynamicCallArgument(node)) {
+              grows = true;
+            }
             // Out-of-shape write rooted at varName.
             if (
               ts.isBinaryExpression(node) &&
@@ -956,7 +989,8 @@ export function collectGrowableObjectLiterals(
               ts.isIdentifier(node) &&
               node.text === varName &&
               isValueUseOfIdentifier(node) &&
-              !isObjectMopCallArg(node)
+              !isObjectMopCallArg(node) &&
+              !isNestedDynamicCallArgument(node)
             ) {
               if (typeRequiresStruct(checker.getContextualType(node))) {
                 poisoned = true;
@@ -1048,6 +1082,18 @@ export function collectGrowableObjectLiterals(
       }
       if (ts.isFunctionDeclaration(stmt) && stmt.body) {
         scanStatements(stmt.body.statements);
+      } else {
+        // Bootstrap sources commonly keep all realm state inside an IIFE.
+        // Apply the same object-carrier analysis inside function/arrow
+        // expressions; otherwise their declarations never reach this pass.
+        const scanNestedFunctionExpressions = (node: ts.Node): void => {
+          if ((ts.isArrowFunction(node) || ts.isFunctionExpression(node)) && ts.isBlock(node.body)) {
+            scanStatements(node.body.statements);
+            return;
+          }
+          forEachChild(node, scanNestedFunctionExpressions);
+        };
+        forEachChild(stmt, scanNestedFunctionExpressions);
       }
       if (ts.isTryStatement(stmt)) {
         scanStatements(stmt.tryBlock.statements);

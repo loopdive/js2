@@ -59,6 +59,7 @@ import { detectStringBuilders } from "./string-builder.js"; // (#2641/#1210) str
 import type { StringBuilderPresizeInfo } from "./string-builder.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { emitWasiErrorConstructor, getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
 import {
   emitStandaloneArrayConstructor, // (#2917) native `class Sub extends Array`
@@ -2748,13 +2749,15 @@ function compileClassBodiesInner(
                 { op: "local.set", index: pendingThrowLocal },
               ]
             : [];
-        fctx.body.push({
-          op: "try",
-          blockType: { kind: "empty" },
-          body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
-          catches: [{ tagIdx, body: catchBody }],
-          catchAll: catchAllBody.length > 0 ? catchAllBody : undefined,
-        });
+        fctx.body.push(
+          buildTargetTaggedTry(
+            ctx,
+            { kind: "empty" },
+            [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
+            [{ tagIdx, body: catchBody }],
+            catchAllBody.length > 0 ? catchAllBody : undefined,
+          ),
+        );
 
         // Return __create_generator or __create_async_generator depending on async flag
         const createGenName = isAsyncMethod ? "__create_async_generator" : "__create_generator";

@@ -212,7 +212,7 @@ function eliminateDeadCode(body: Instr[]): number {
       const ifInstr = instr as { op: "if"; then: Instr[]; else?: Instr[] };
       removed += eliminateDeadCode(ifInstr.then);
       if (ifInstr.else) removed += eliminateDeadCode(ifInstr.else);
-    } else if (instr.op === "block" || instr.op === "loop") {
+    } else if (instr.op === "block" || instr.op === "loop" || instr.op === "try_table") {
       const blockInstr = instr as { op: string; body: Instr[] };
       removed += eliminateDeadCode(blockInstr.body);
     } else if (instr.op === "try") {
@@ -526,7 +526,7 @@ function instrDelta(instr: Instr, types: TypeDef[], funcSigs: FuncSigInfo): numb
   }
 
   // Structured blocks: their external stack effect is determined by blockType
-  if (op === "if" || op === "block" || op === "loop" || op === "try") {
+  if (op === "if" || op === "block" || op === "loop" || op === "try" || op === "try_table") {
     const bt = (instr as any).blockType as BlockType;
     if (!bt || bt.kind === "empty") {
       // if also pops the condition (1 value)
@@ -815,7 +815,7 @@ function inferLastType(body: Instr[], types: TypeDef[], sigs: FuncSigInfo): stri
     }
 
     // Structured blocks: result is their blockType
-    if (op === "if" || op === "block" || op === "loop" || op === "try") {
+    if (op === "if" || op === "block" || op === "loop" || op === "try" || op === "try_table") {
       const bt = (instr as any).blockType as BlockType;
       if (bt?.kind === "val") {
         const t = bt.type;
@@ -1127,7 +1127,7 @@ function fixBody(
         ifInstr.else = [];
         fixups += fixBranch(ifInstr.else, expected, types, sigs, ifInstr.blockType, boxNumberIdx, unboxNumberIdx);
       }
-    } else if (instr.op === "block" || instr.op === "loop") {
+    } else if (instr.op === "block" || instr.op === "loop" || instr.op === "try_table") {
       const blockInstr = instr as { op: string; blockType: BlockType; body: Instr[] };
       fixups += fixBody(blockInstr.body, types, sigs, tags, boxNumberIdx, unboxNumberIdx);
 
@@ -1403,7 +1403,7 @@ export function inferInstrType(
     return { kind: "anyref" } as ValType;
   }
   // Compound instructions (if/block/loop/try) produce a value based on blockType
-  if (op === "if" || op === "block" || op === "loop" || op === "try") {
+  if (op === "if" || op === "block" || op === "loop" || op === "try" || op === "try_table") {
     const bt = (instr as any).blockType as BlockType | undefined;
     if (bt && bt.kind === "val") return bt.type;
     if (bt && bt.kind === "type") {
@@ -1686,7 +1686,7 @@ function fixCallArgTypesInBody(
           boxNumberIdx,
           unboxNumberIdx,
         );
-    } else if (instr.op === "block" || instr.op === "loop") {
+    } else if (instr.op === "block" || instr.op === "loop" || instr.op === "try_table") {
       const blockInstr = instr as any;
       if (blockInstr.body)
         fixups += fixCallArgTypesInBody(
@@ -1803,6 +1803,7 @@ function fixCallArgTypesInBody(
         op === "block" ||
         op === "loop" ||
         op === "try" ||
+        op === "try_table" ||
         op === "end" ||
         op === "br" ||
         op === "br_if" ||
@@ -1958,7 +1959,7 @@ function fixStructNewFieldCoercion(
         const ifInstr = instr as any;
         if (ifInstr.then) processBody(ifInstr.then);
         if (ifInstr.else) processBody(ifInstr.else);
-      } else if (instr.op === "block" || instr.op === "loop") {
+      } else if (instr.op === "block" || instr.op === "loop" || instr.op === "try_table") {
         const blockInstr = instr as any;
         if (blockInstr.body) processBody(blockInstr.body);
       } else if (instr.op === "try") {
@@ -2477,7 +2478,7 @@ function updateTypeStack(
   }
 
   // Structured blocks: external effect based on blockType
-  if (op === "if" || op === "block" || op === "loop" || op === "try") {
+  if (op === "if" || op === "block" || op === "loop" || op === "try" || op === "try_table") {
     const bt = (instr as any).blockType as BlockType | undefined;
     if (op === "if") stack.pop(); // condition
 
@@ -2752,7 +2753,7 @@ function fixLocalSetCoercion(
           boxNumberIdx,
           unboxNumberIdx,
         );
-    } else if (instr.op === "block" || instr.op === "loop") {
+    } else if (instr.op === "block" || instr.op === "loop" || instr.op === "try_table") {
       const blockInstr = instr as any;
       if (blockInstr.body)
         fixups += fixLocalSetCoercion(

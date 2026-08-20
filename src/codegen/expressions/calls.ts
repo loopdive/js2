@@ -128,6 +128,7 @@ import {
   resolveComputedKeyExpression,
   resolvePropertyNameText,
 } from "../literals.js";
+import { compileInternalCallArgument } from "./internal-call-argument.js";
 import {
   jsonGapFromStaticSpace,
   staticSpaceValue,
@@ -3798,7 +3799,12 @@ export function tryEmitInlineDynamicCall(
   // dispatch arm can marshal it independently without re-evaluating.
   const argLocals: number[] = [];
   for (let i = 0; i < arity; i++) {
-    compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "externref" });
+    // A dynamic native call is still an internal JavaScript-value boundary.
+    // In particular, Deno invokes the captured `Object.assign` primordial
+    // through this path. Materialize plain object literals as open `$Object`
+    // carriers so the selected callable can enumerate and mutate them rather
+    // than receiving an opaque boxed closed struct.
+    compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, { kind: "externref" });
     const argLocal = allocLocal(fctx, `__dyn_arg${i}_${fctx.locals.length}`, { kind: "externref" });
     fctx.body.push({ op: "local.set", index: argLocal });
     argLocals.push(argLocal);
