@@ -25,6 +25,11 @@ loc-budget-allow:
   # — +284 -> +134; the residual is call-site wiring that must live in the
   # runtime barrel at the host-import boundary.
   - src/runtime.ts
+  # 2026-08-20 honest-carrier slice: emitRuntimeDescriptorGet keeps externref
+  # in standalone (accessor results are runtime state; narrowing to the
+  # checker's f64 turned a get:undefined redefine's canonical undefined into
+  # NaN — 15.2.3.6-4-498/516/534/552 measured fail→pass).
+  - src/codegen/property-access.ts
 func-budget-allow:
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
   - src/codegen/object-ops.ts::compilePropertyIntrospection
