@@ -15,7 +15,7 @@ sprint: current
 parent: 4395
 depends_on: [4397, 4399]
 horizon: l
-related: [1524, 1932, 1934, 2094, 2879, 2961, 3526, 3681, 4035, 4382, 4573]
+related: [1524, 1932, 1934, 2094, 2879, 2961, 3526, 3681, 4035, 4382, 4573, 4576]
 ---
 # #4401 — Ratchet and retire implicit JS-host semantic fallbacks
 
@@ -169,6 +169,17 @@ Track at least:
   are tracked by a separate 306-line maximum, while the existing runtime,
   resolver, and generic-adapter ceilings remain unchanged. This keeps the
   capability visible without conflating it with implicit semantic-host debt.
+- The completed #4576 checkpoint applies the same rule to standalone DOM.
+  The exact `dom@1` provider and its authenticated native-string bridge add
+  **583** explicit-capability lines, moving that separately tracked surface
+  from **306 → 889** lines. The generic owned-adapter measure remains **790**,
+  `resolveImport` remains **7,216** lines and **15** cases, and `runtime.ts` is
+  **17,099** lines under its unchanged **17,100** ceiling. The live gate still
+  reports 33 native-first probes, 393 imports, **0 legacy-semantic**, **0
+  unknown**, and the non-vacuous compatibility control at 19 legacy imports.
+  Builtins imports exactly eight signature-checked DOM operations; none is
+  forgiven as implicit semantic-host debt. The guarded runtime benchmark records
+  parity within noise, and the final full-gate sweep is green.
 
 Still open: product/Test262/npm denominators, binary/startup/performance
 budgets, and the final default-policy evidence gate.

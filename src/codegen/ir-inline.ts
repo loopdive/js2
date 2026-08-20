@@ -175,6 +175,7 @@
 import { absoluteFuncIndex } from "../emit/resolve-layout.js";
 import type { BlockType, FuncTypeDef, Instr, LocalDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { tunedFlagEnabled, tunedFlagExplicit } from "../perf-flags.js";
+import { IR_NUMBER_TO_FIXED_FN } from "../ir/string-runtime.js";
 import { EXEC_CENSUS_PREFIX } from "./exec-census.js";
 import type { CodegenContext } from "./context/types.js";
 import { IR_NATIVE_MAP_GET_NUM_FN, IR_NATIVE_MAP_NEW_FN, IR_NATIVE_MAP_SET_NUM_FN } from "./ir-native-map.js";
@@ -361,6 +362,7 @@ export function isAdapter(name: string): boolean {
     name.startsWith("__dc_") ||
     name === "__ir_number_toString_native" ||
     name === "__ir_number_to_string" ||
+    name === IR_NUMBER_TO_FIXED_FN ||
     isNativeMapCarrierAdapter(name)
   );
 }
@@ -831,6 +833,7 @@ function planNativeMapAdapterPrecomposition(
   addressTaken: Uint8Array,
 ): { positions: Set<number>; callerOrder: number[] } {
   const positions = new Set<number>();
+  const frozenAdapterCallers = new Set<number>();
   // Report mode's primary contract is byte identity. Shadow-precomposing would
   // require a cloned module/local space; keep its statistics on the ordinary
   // one-level topology rather than mutating and attempting to restore compiler
@@ -846,9 +849,21 @@ function planNativeMapAdapterPrecomposition(
       }
     }
   }
+  if (opts.adapters && !opts.report) {
+    for (let index = 0; index < mod.functions.length; index++) {
+      // #4576 — this thunk is representation-only and therefore copied into
+      // each source call site. Do not first inline its single raw native
+      // formatter callee into the thunk itself: doing so retains a dead 7 KiB
+      // composed wrapper in addition to the five direct-shaped source calls.
+      if (mod.functions[index]!.name === IR_NUMBER_TO_FIXED_FN) frozenAdapterCallers.add(index);
+    }
+  }
   return {
     positions,
-    callerOrder: [...positions, ...Array.from(mod.functions.keys()).filter((index) => !positions.has(index))],
+    callerOrder: [
+      ...positions,
+      ...Array.from(mod.functions.keys()).filter((index) => !positions.has(index) && !frozenAdapterCallers.has(index)),
+    ],
   };
 }
 

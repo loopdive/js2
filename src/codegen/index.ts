@@ -70,6 +70,7 @@ import {
   type IrFallbackReason,
   type IrSelection,
 } from "../ir/select.js";
+import { makeIrStandaloneDomCapabilityPlan, type IrStandaloneDomCapabilityPlan } from "../ir/dom-capability.js";
 import type {
   IrHostDateGetterLoweringPlan,
   IrHostDateSnapshotLoweringPlan,
@@ -202,6 +203,7 @@ import {
 import type { FallbackCounts } from "./fallback-telemetry.js";
 import { buildLeakedHostImportError, scanForLeakedHostImports } from "./host-import-allowlist.js";
 import { isValidatedPlatformCapabilityImport } from "../capability-registry.js";
+import { isDomCapabilityImportName } from "../dom-capability-contract.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type {
@@ -438,7 +440,8 @@ import {
   standaloneConsoleSinkAvailable,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
-import { irNativeNumberToStringAvailable } from "./number-format-native.js"; // #4462
+import { emitStandaloneDomStringBoundary, publishStandaloneDomStringBoundary } from "./dom-string-boundary.js";
+import { irNativeNumberToFixedAvailable, irNativeNumberToStringAvailable } from "./number-format-native.js"; // #4462/#4576
 import { emitJsonQuoteString } from "./json-runtime.js";
 import { isSyntheticStructName, exportFunc } from "./emit-helpers.js"; // (#3272) DRY helpers
 import {
@@ -954,6 +957,8 @@ function arrayElementRequiresOpaqueStorage(node: ts.TypeNode): boolean {
   return node.kind === ts.SyntaxKind.UnknownKeyword || ts.isUnionTypeNode(node);
 }
 
+const STANDALONE_DOM_EXTERN_POSITION_CLASSES = new Set(["Document", "HTMLElement", "CSSStyleDeclaration"]);
+
 /**
  * Resolve the IR type for a function's param or return position, using
  * the AST's explicit TypeNode first (authoritative) and the TypeMap
@@ -1124,17 +1129,23 @@ function resolvePositionType(
       // Array / iterable arms so it can't shadow them, and BEFORE
       // `objectIrTypeFromTsType`, which rejects method-carrying interfaces
       // anyway.
-      if (
-        ts.isTypeReferenceNode(node) &&
-        ts.isIdentifier(node.typeName) &&
-        !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports)
-      ) {
-        const refType = ctx.checker.getTypeFromTypeNode(node);
-        if (isExternalDeclaredClass(refType, ctx.checker)) {
-          return { kind: "extern", className: refType.getSymbol()?.name ?? node.typeName.text };
+      const tsType = ctx.checker.getTypeFromTypeNode(node);
+      if (ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName)) {
+        const refType = tsType;
+        const className = refType.getSymbol()?.name ?? node.typeName.text;
+        const exactStandaloneDomPosition =
+          ctx.requiresStandaloneDomCapability === true &&
+          ctx.standalone &&
+          !ctx.wasi &&
+          !ctx.strictNoHostImports &&
+          STANDALONE_DOM_EXTERN_POSITION_CLASSES.has(className);
+        if (
+          isExternalDeclaredClass(refType, ctx.checker) &&
+          (!(ctx.standalone || ctx.wasi || ctx.strictNoHostImports) || exactStandaloneDomPosition)
+        ) {
+          return { kind: "extern", className };
         }
       }
-      const tsType = ctx.checker.getTypeFromTypeNode(node);
       const ir = objectIrTypeFromTsType(ctx, tsType);
       if (ir) return ir;
       throw new Error(`object TypeNode ${ts.SyntaxKind[node.kind]} could not be lowered to IrType.object`);
@@ -2447,6 +2458,22 @@ function resolveIrOverrideParamType(
   return resolvePositionType(effectiveIrParamTypeNode(parameter), mapped, ctx, classShapes);
 }
 
+function standaloneDomCapabilityPlan(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+): IrStandaloneDomCapabilityPlan | undefined {
+  if (
+    !ctx.standalone ||
+    ctx.wasi ||
+    !ctx.nativeStrings ||
+    ctx.targetProfile.environment !== "none" ||
+    ctx.targetProfile.semanticProviders !== "native-first"
+  ) {
+    return undefined;
+  }
+  return makeIrStandaloneDomCapabilityPlan(ctx.checker, sourceFile);
+}
+
 function planIrOverlay(
   ctx: CodegenContext,
   ast: TypedAST,
@@ -2502,6 +2529,7 @@ function planIrOverlay(
   // resolution happens.
   const irTargetProfile = projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast });
   const jsHostExterns = irTargetProfile.allowHostImports;
+  const standaloneDomCapability = standaloneDomCapabilityPlan(ctx, ast.sourceFile);
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
     supportsIrBackendTargetCapability(irTargetProfile, capability);
   const supportsHostDateSnapshots = supportsBackendCapability("host-date-snapshot");
@@ -2654,6 +2682,7 @@ function planIrOverlay(
       experimentalIR: true,
       trackFallbacks: collectFallbacks,
       jsHostExterns,
+      ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
       dynMemberReadBuildable,
       dynamicRuntimeBuildable: !ctx.fast,
       // #2952 slice 5 — for-in currently owns only the non-fast dynamic
@@ -2697,6 +2726,7 @@ function planIrOverlay(
       // selector ORs `supportsNumberToString` with the host-import capability,
       // so this only adds the native-string lanes.
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
+      supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
       supportsStandaloneConsoleSink: standaloneConsoleSinkAvailable(ctx),
       supportsHostStringArrayLiterals: jsHostExterns && !ctx.nativeStrings,
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
@@ -4426,6 +4456,7 @@ export function generateModule(
     ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
     : undefined;
   const ctx = createCodegenContext(mod, ast.checker, options, programAbiSession, irPlanningIdentityContext);
+  ctx.requiresStandaloneDomCapability = standaloneDomCapabilityPlan(ctx, ast.sourceFile) !== undefined;
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan([ast.sourceFile], ctx.oracle);
   if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
     ctx.runtimeEvalCallableBoundaryEnabled = true;
@@ -4782,6 +4813,7 @@ export function generateModule(
     if (ctx.usesStandaloneConsoleSink) {
       ensureStandaloneStdoutSink(ctx);
     }
+    emitStandaloneDomStringBoundary(ctx);
 
     // #1886 Slice B — emit the `__lin_u8_alloc` bump-allocator FUNCTION here,
     // in the same post-import-registration window as emitToUint32Helper /
@@ -5767,6 +5799,7 @@ export function generateModule(
     finalizeLeafStructTypes(ctx);
 
     emitDataStructHostBridgeManifest(ctx);
+    publishStandaloneDomStringBoundary(ctx);
 
     // (#4035) Apply the host-bridge export policy BEFORE dead elimination, so
     // the functions/types those exports pin are actually reclaimed. No-op when
@@ -5886,8 +5919,25 @@ function assertNoLeakedHostImports(ctx: CodegenContext, mod: WasmModule): void {
         isValidatedPlatformCapabilityImport(mod, index, "timers", "embedder", "none"),
     );
   };
+  const hasCertifiedStandaloneDomProvider = (module: string, name: string): boolean => {
+    if (
+      !ctx.requiresStandaloneDomCapability ||
+      ctx.targetProfile.environment !== "none" ||
+      module !== "env" ||
+      !isDomCapabilityImportName(name)
+    ) {
+      return false;
+    }
+    return mod.imports.some(
+      (entry, index) =>
+        entry.module === module &&
+        entry.name === name &&
+        isValidatedPlatformCapabilityImport(mod, index, "dom", "embedder", "none"),
+    );
+  };
   const leaks = scanForLeakedHostImports(mod.imports, ctx.linkedNamespaces).filter(
-    ({ module, name }) => !hasCertifiedStandaloneTimerProvider(module, name),
+    ({ module, name }) =>
+      !hasCertifiedStandaloneTimerProvider(module, name) && !hasCertifiedStandaloneDomProvider(module, name),
   );
   for (const leak of leaks) {
     reportErrorNoNode(ctx, buildLeakedHostImportError(leak, severity), severity);
@@ -7825,6 +7875,9 @@ export function generateMultiModule(
     ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
     : undefined;
   const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession, irPlanningIdentityContext);
+  ctx.requiresStandaloneDomCapability = multiAst.sourceFiles.some(
+    (sourceFile) => standaloneDomCapabilityPlan(ctx, sourceFile) !== undefined,
+  );
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan(multiAst.sourceFiles, ctx.oracle);
   if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
     ctx.runtimeEvalCallableBoundaryEnabled = true;
@@ -7987,6 +8040,7 @@ export function generateMultiModule(
     if (ctx.usesStandaloneConsoleSink) {
       ensureStandaloneStdoutSink(ctx);
     }
+    emitStandaloneDomStringBoundary(ctx);
 
     // Emit wrapper valueOf functions (after all imports registered, before user funcs)
     emitWrapperValueOfFunctions(ctx);
@@ -8658,6 +8712,7 @@ export function generateMultiModule(
     finalizeLeafStructTypes(ctx);
 
     emitDataStructHostBridgeManifest(ctx);
+    publishStandaloneDomStringBoundary(ctx);
 
     // (#4035) Apply the host-bridge export policy BEFORE dead elimination, so
     // the functions/types those exports pin are actually reclaimed. No-op when

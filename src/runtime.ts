@@ -74,6 +74,11 @@ import {
   createStandaloneTimerCallbackBridge,
   wrapStandaloneTimerCallback,
 } from "./runtime/standalone-timer-callback-bridge.js";
+import { requiresExactDomCapabilityAdapter } from "./dom-capability-contract.js";
+import {
+  createStandaloneDomCapabilityRuntime,
+  type DomCapabilityRoot,
+} from "./runtime/standalone-dom-string-bridge.js";
 import { installAmbientCompatibility } from "./runtime/compatibility-adapter.js";
 import { resolveCompatibilitySemanticImport } from "./runtime/compatibility-semantic-adapter.js";
 import {
@@ -3820,11 +3825,16 @@ export function buildCompiledAdapterImports(
   if (diagnostics.length > 0) {
     throw new Error(`Invalid JavaScript adapter manifest: ${diagnostics.join("; ")}`);
   }
+  const { imports, capabilities, targetProfile } = frozenManifest;
+  const explicitDomCapability = requiresExactDomCapabilityAdapter(imports, capabilities, targetProfile);
+  if (explicitDomCapability && options.domRoot === undefined) {
+    throw new Error("Explicit embedder capability 'dom' requires an authenticated domRoot");
+  }
   assertExplicitEmbedderCapabilityBindings(frozenManifest, deps);
-  return buildImports(frozenManifest.imports, deps, frozenManifest.stringPool, {
+  return buildImports(imports, deps, frozenManifest.stringPool, {
     ...options,
-    ambientCompatibility:
-      options.ambientCompatibility ?? frozenManifest.targetProfile.semanticProviders !== "native-first",
+    [DOM_CAPABILITY_AUTHORITY]: explicitDomCapability,
+    ambientCompatibility: options.ambientCompatibility ?? targetProfile.semanticProviders !== "native-first",
   });
 }
 
@@ -16312,8 +16322,10 @@ function isFastLeafHostImport(imp: ImportDescriptor): boolean {
  * `setExports(instance.exports)` remains available for legacy callback, vec,
  * closure, and string wiring.
  */
+const DOM_CAPABILITY_AUTHORITY = Symbol("validated-dom-capability");
 export interface BuildImportsOptions {
-  domRoot?: Element | ShadowRoot;
+  domRoot?: Element | ShadowRoot | DomCapabilityRoot;
+  [DOM_CAPABILITY_AUTHORITY]?: boolean;
   globalSandbox?: Record<string, any>;
   /**
    * Install compatibility-only ambient Iterator/RegExp shims. Defaults to
@@ -16391,6 +16403,9 @@ export function buildImports(
   const env: Record<string, Function> = {};
   let dataStructHostBridgeAuthority: DataStructHostBridgeAuthority | undefined;
   const timerCallbackBridge = createStandaloneTimerCallbackBridge();
+  const domCapabilityRuntime = options?.[DOM_CAPABILITY_AUTHORITY]
+    ? createStandaloneDomCapabilityRuntime(options.domRoot)
+    : undefined;
   // (#1712) Operations that NEED exports (e.g. Object.defineProperties with a
   // WasmGC-struct descriptor map — its keys/fields are only readable via the
   // __struct_field_names / __sget_* exports) but run during the module START
@@ -16406,12 +16421,15 @@ export function buildImports(
           ? (authority) => (dataStructHostBridgeAuthority ??= authority)
           : undefined,
         mayEstablishDataStructAuthority: mayEstablishInstanceAuthority,
-        recordExportView: (rawExports, finalExports) =>
-          timerCallbackBridge.recordExportView(rawExports, finalExports, mayEstablishInstanceAuthority),
+        recordExportView: (rawExports, finalExports) => {
+          timerCallbackBridge.recordExportView(rawExports, finalExports, mayEstablishInstanceAuthority);
+          domCapabilityRuntime?.recordExportView(rawExports, finalExports, mayEstablishInstanceAuthority);
+        },
       }),
   });
   const callbackState = lifecycle.callbackState;
   timerCallbackBridge.bindCallbackState(callbackState, (value, arity) => _wrapWasmClosure(value, arity, callbackState));
+  domCapabilityRuntime?.bindCallbackState(callbackState);
   let lastCaughtException: any = undefined;
   const envImportNames: string[] = [];
   let importCounts: Uint32Array | undefined;
@@ -16447,22 +16465,25 @@ export function buildImports(
     const importIndex = envImportNames.push(imp.name) - 1;
     let fn: Function;
 
-    fn = resolveImport(
-      imp.intent,
-      deps,
-      callbackState,
-      options?.globalSandbox,
-      instanceState,
-      imp.paramCount,
-      options?.dynamicCode,
-      options?.dynamicCodeEvaluator,
-      () => lastCaughtException,
-    );
+    const domBinding = domCapabilityRuntime?.bindImport(imp);
+    fn =
+      domBinding ??
+      resolveImport(
+        imp.intent,
+        deps,
+        callbackState,
+        options?.globalSandbox,
+        instanceState,
+        imp.paramCount,
+        options?.dynamicCode,
+        options?.dynamicCodeEvaluator,
+        () => lastCaughtException,
+      );
 
     // DOM containment wrapping
-    if (options?.domRoot) {
+    if (options?.domRoot && !domCapabilityRuntime) {
       if (imp.intent.type === "extern_class") {
-        fn = wrapWithContainment(fn, imp.intent, options.domRoot);
+        fn = wrapWithContainment(fn, imp.intent, options.domRoot as Element | ShadowRoot);
       }
       if (imp.intent.type === "declared_global" && imp.intent.name === "document") {
         fn = () => options.domRoot;
@@ -16608,8 +16629,11 @@ export function buildImports(
         };
       }
     }
+    domCapabilityRuntime?.recordWrappedImport(imp, domBinding, fn);
     env[imp.name] = fn;
   }
+
+  domCapabilityRuntime?.finalizeImports(env);
 
   const result: {
     env: Record<string, Function>;

@@ -270,7 +270,7 @@
       "where": "dialect",
       "declaredAt": "src/ir/dialect/js.ts:687",
       "why": "This is `%String.prototype%[@@iterator]` inlined as a statement form. The per-iteration element is a CODE POINT rendered as a one-element string — the intent field resolves to `__str_charAt_cp`, deliberately not the code-unit `string.char_at` next door. Its general sibling `forof.iter` is already in the dialect, so keeping the string specialization in core splits one protocol across the boundary.",
-      "evidence": ["src/ir/dialect/js.ts:696", "src/ir/integration.ts:4885"]
+      "evidence": ["src/ir/dialect/js.ts:696", "src/ir/integration.ts:4952"]
     },
     "forof.vec": {
       "verdict": "neutral",
@@ -468,14 +468,14 @@
       "where": "dialect",
       "declaredAt": "src/ir/dialect/js.ts:609",
       "why": "ECMAScript §22.1.3.1, twice over: the index is normalized by ToIntegerOrInfinity (§7.1.5) and an out-of-range index yields the EMPTY STRING rather than trapping. That total-function convention is the thing a non-JS producer would have to work around — Java throws, Rust panics.",
-      "evidence": ["src/ir/dialect/js.ts:607", "src/ir/string-runtime.ts:120"]
+      "evidence": ["src/ir/dialect/js.ts:607", "src/ir/string-runtime.ts:126"]
     },
     "string.char_code_at": {
       "verdict": "js",
       "where": "dialect",
       "declaredAt": "src/ir/dialect/js.ts:621",
       "why": "ECMAScript §22.1.3.2: out-of-range yields NaN. The repo even carries `utf16CharCodeAt` as the reference semantics for backend-independent evidence tests, which is a spec obligation, not a representation choice.",
-      "evidence": ["src/ir/dialect/js.ts:619", "src/ir/string-runtime.ts:128"]
+      "evidence": ["src/ir/dialect/js.ts:619", "src/ir/string-runtime.ts:134"]
     },
     "string.concat": {
       "verdict": "neutral",
@@ -578,14 +578,14 @@
       "where": "core",
       "declaredAt": "src/ir/nodes.ts:1656",
       "why": "Builds a dense vector from statically-known elements. Sparse literals are explicitly out of scope and fall back to legacy, so no hole can reach this node.",
-      "evidence": ["src/ir/from-ast.ts:4417"]
+      "evidence": ["src/ir/from-ast.ts:4446"]
     },
     "vec.set": {
       "verdict": "neutral",
       "where": "core",
       "declaredAt": "src/ir/nodes.ts:1626",
       "why": "One planned in-bounds store. Bounds and growth policy stay explicit in the surrounding IR; a holey-array store is routed to a runtime helper instead.",
-      "evidence": ["src/ir/nodes.ts:1620", "src/ir/from-ast.ts:361"]
+      "evidence": ["src/ir/nodes.ts:1620", "src/ir/from-ast.ts:363"]
     },
     "vec.set_length": {
       "verdict": "neutral",

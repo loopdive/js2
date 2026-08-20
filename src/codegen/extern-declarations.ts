@@ -1380,7 +1380,9 @@ export function collectDeclaredGlobals(
       // binding here only affects genuine bare-value uses, which fall through to
       // the native-namespace carrier (identifiers.ts:emitBuiltinNamespaceObject)
       // or the `ref.null.extern` graceful default. Host/gc mode is unchanged.
-      if (ctx.strictNoHostImports || ctx.standalone) continue;
+      const certifiedStandaloneDocument =
+        ctx.standalone && ctx.requiresStandaloneDomCapability === true && name === "document";
+      if (ctx.strictNoHostImports || (ctx.standalone && !certifiedStandaloneDocument)) continue;
       const importName = `global_${name}`;
       const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
       addImport(ctx, "env", importName, { kind: "func", typeIdx });

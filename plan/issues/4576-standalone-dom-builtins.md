@@ -1,7 +1,7 @@
 ---
 id: 4576
 title: "Standalone IR: retire Builtins through explicit subtree-DOM capability"
-status: ready
+status: done
 created: 2026-08-20
 updated: 2026-08-20
 priority: critical
@@ -17,26 +17,71 @@ depends_on: [3522, 4398, 4574]
 assignee: ttraenkler/codex
 horizon: m
 lane: ir-retirement-r8-standalone-dom-builtins
-related: [1254, 2955, 2961, 3175, 3522, 4399, 4457, 4574]
+related: [1254, 2955, 2961, 3175, 3522, 3523, 3792, 4399, 4401, 4457, 4574]
 origin: "Measured 2026-08-20 at the 27 IR / 10 legacy standalone checkpoint; Builtins is the shortest clean remaining family."
+loc-budget-allow:
+  # The implementation keeps the DOM contract, source authorization, string
+  # bridge, and provider runtime in new subsystem leaves. These are the exact
+  # existing integration seams that still grow while wiring those leaves.
+  - src/ir/from-ast.ts
+  - src/ir/integration.ts
+  - src/ir/select.ts
+  - src/codegen/index.ts
+  - src/runtime.ts
+  - src/ir/lower.ts
+  - src/codegen/context/types.ts
+  - src/codegen/extern-declarations.ts
+func-budget-allow:
+  - src/ir/from-ast.ts::lowerMethodCall
+  - src/ir/integration.ts::makeFromAstResolver
+  - src/ir/integration.ts::compileIrPathFunctions
+  - src/ir/select.ts::isPhase1Expr
+  - src/ir/from-ast.ts::lowerExpr
+  - src/ir/integration.ts::makeResolver
+  - src/ir/select.ts::isPhase1StatementListInScope
+  - src/ir/lower.ts::lowerIrFunctionBody
+  - src/ir/lower.ts::emitInstrTree
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/index.ts::planIrOverlay
+  - src/codegen/index.ts::generateModule
+  - src/runtime.ts::buildImports
 files:
+  - plan/audit/host-import-policy-baseline.json
+  - scripts/check-host-import-policy.ts
+  - scripts/ir-kind-neutrality-baseline.json
+  - scripts/ir-only-baseline.json
+  - src/adapter-manifest.ts
   - src/capability-registry.ts
+  - src/codegen/context/types.ts
+  - src/codegen/dom-string-boundary.ts
+  - src/codegen/extern-declarations.ts
+  - src/codegen/index.ts
+  - src/codegen/ir-async-frame.ts
+  - src/codegen/ir-inline.ts
+  - src/codegen/number-format-native.ts
+  - src/compiler.ts
+  - src/dom-capability-contract.ts
   - src/host-import-policy.ts
   - src/ir/capability.ts
-  - src/ir/select.ts
-  - src/ir/integration.ts
+  - src/ir/dom-capability.ts
   - src/ir/from-ast.ts
+  - src/ir/integration.ts
+  - src/ir/lower.ts
   - src/ir/number-to-string-provider.ts
-  - src/runtime/platform-capability-adapter.ts
+  - src/ir/passes/inline-small.ts
+  - src/ir/select.ts
+  - src/ir/string-runtime.ts
+  - src/runtime/dom-capability-adapter.ts
+  - src/runtime/standalone-dom-string-bridge.ts
   - src/runtime.ts
-  - src/codegen/declared-global-cache.ts
-  - tests/issue-3522-ir-builtins-retirement.test.ts
-  - tests/issue-4398-capability-registry.test.ts
-  - tests/issue-4399-adapter-extraction.test.ts
+  - tests/dom-capability-adapter.test.ts
+  - tests/ir/inline-small.test.ts
+  - tests/issue-4574-standalone-native-async-family.test.ts
+  - tests/issue-4576-ir-ascii-case-selection.test.ts
   - tests/issue-4576-standalone-dom-builtins.test.ts
-  - scripts/ir-only-baseline.json
   - plan/log/ir-optimization-retirement-ledger.md
   - plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md
+  - plan/issues/4401-ratchet-retire-implicit-js-host-semantics.md
   - plan/issues/4576-standalone-dom-builtins.md
 ---
 
@@ -148,3 +193,49 @@ admitted, nullable DOM module storage becomes the next blocker, and #3523's
 module-init/global-storage/readers/callback contract is atomic. After this
 slice, retire Calendar's final six together for **31 → 37 IR** and **6 → 0
 legacy/Unsupported**.
+
+## Checkpoint result
+
+The exact Builtins component now seals `el`, `crd`, `rw`, and `main` once
+through prepared IR in the standalone lane. The authoritative standalone
+census is **31/37 IR bodies, 6 legacy bodies, 6 typed Unsupported outcomes,
+and 0 Invariants**. `select/host-surface-unavailable` fell **4 → 2** and
+`select/call-graph-closure` fell **3 → 1**; the unchanged Calendar residue is
+exactly two host-surface, two body-shape, one call-graph, and one Date-
+constructor outcome.
+
+The standalone artifact declares exactly the eight `dom@1` imports listed in
+the capability contract. They bind only through the explicit embedder provider
+and an authenticated root; the native-string bridge fails closed for missing,
+foreign, donor, stale, or tampered authority. The focused Builtins suite is
+**14/14** after adding the JS-host control. It proves the exact
+**81-element/24-value** oracle in both IR and direct artifacts, live direct-body
+poison, conservative near misses, and capability-boundary authentication.
+
+The optimized IR artifact is no worse than the direct optimization control on
+every frozen metric: **23,955 vs 24,500 raw bytes**, **16,867 vs 17,065 gzip-9
+bytes**, **455,697 vs 465,391 compiler-WAT characters**, **49,949 vs 61,257
+function-body WAT characters**, **105 vs 136 locals**, and **105 vs 116 calls**;
+both contain **124 functions** and the same eight explicit DOM imports. The
+shape checks preserve literal CSS folding, the pairwise-plus-batched concat
+plan, immutable `includes`/`indexOf` folding, constant bitwise folding, proven-
+ASCII case helpers, and fused native number-format carrier recovery without
+generic extern or indirect-call ladders.
+
+The final frozen runtime benchmark establishes parity. Fresh-process
+direct/IR/direct medians were **88.375 / 76.750 / 72.833 us** over 5,001
+samples after 3,000 warmups. The direct endpoints drifted **17.59%**, so that
+bracket is deliberately treated as inconclusive. The paired control measured
+**96.334 vs 97.334 us**, with an IR/direct ratio of **0.991725x** and p10-p90
+**0.7051-1.4552**; the noise band does not support a speed claim. Every sample
+preserved the 81-element/24-value/216-boundary oracle and checksum `b27b8021`,
+and all source/test/harness fingerprints were identical before and after.
+
+The final publication matrix is green. Strict IR-only reports host **37/37**
+and standalone **31/37**, with **6 legacy/Unsupported** and **0 Invariants**.
+All fallback, optimization-retirement, issue/ID, oracle, adoption, allocation,
+dead-export, coercion, LOC/function, host-policy, kind-neutrality, stack,
+harness-budget, typecheck, formatting, lint, and diff-integrity gates pass. The
+host-policy census remains non-vacuous at **33 probes / 393 imports / 0
+legacy-semantic / 0 unknown**, and the optimization ledger validates at **50
+decisions / 36 IR-owned / 3 retirement-ready / 2 source-anchored**.

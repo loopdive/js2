@@ -7,8 +7,8 @@
 //   2. Unit — recursive callee is skipped.
 //   3. Unit — multi-block callee is skipped.
 //   4. Unit — `valueCount` advances past freshly-allocated inlined-value ids.
-//   5. End-to-end — `abs` (single-block ternary) called from another function:
-//      emitted WAT contains no `call $abs`; the compiled wasm still produces
+//   5. End-to-end — a single-block arithmetic helper called from another function:
+//      emitted WAT contains no `call $twice`; the compiled wasm still produces
 //      the correct results.
 //   6. End-to-end — recursive `fib` is NOT inlined at its own call sites;
 //      WAT keeps `call $fib`; runtime still correct.
@@ -30,6 +30,7 @@ import {
   verifyIrFunction,
   type IrFuncRef,
   type IrFunction,
+  type IrType,
   type IrValueId,
 } from "../../src/ir/index.js";
 import { inlineSmall } from "../../src/ir/passes/inline-small.js";
@@ -47,6 +48,7 @@ function id(n: number): IrValueId {
 
 const F64 = irVal({ kind: "f64" });
 const BOOL = irVal({ kind: "i32" });
+const REGEXP: IrType = { kind: "extern", className: "RegExp" };
 
 // A tiny single-block, non-recursive callee modelling `abs(x) = x < 0 ? -x : x`.
 // 1 param + 4 instrs + return. Well under the 10-instr limit.
@@ -135,7 +137,34 @@ function makeConstantCallee(name: string, value: number): IrFunction {
   };
 }
 
-function makeZeroArgCaller(name: string, target: IrFuncRef): IrFunction {
+function makeZeroArgCaller(name: string, target: IrFuncRef, resultType: IrType = F64): IrFunction {
+  return {
+    ...irIdentities.next(name),
+    params: [],
+    resultTypes: [resultType],
+    blocks: [
+      {
+        id: asBlockId(0),
+        blockArgs: [],
+        blockArgTypes: [],
+        instrs: [
+          {
+            kind: "call",
+            target,
+            args: [],
+            result: id(0),
+            resultType,
+          },
+        ],
+        terminator: { kind: "return", values: [id(0)] },
+      },
+    ],
+    exported: false,
+    valueCount: 1,
+  };
+}
+
+function makeImportedBoundaryCallee(name: string): IrFunction {
   return {
     ...irIdentities.next(name),
     params: [],
@@ -148,7 +177,7 @@ function makeZeroArgCaller(name: string, target: IrFuncRef): IrFunction {
         instrs: [
           {
             kind: "call",
-            target,
+            target: irImportFuncRef("host", "read_number"),
             args: [],
             result: id(0),
             resultType: F64,
@@ -159,6 +188,85 @@ function makeZeroArgCaller(name: string, target: IrFuncRef): IrFunction {
     ],
     exported: false,
     valueCount: 1,
+  };
+}
+
+function makeRegexpBoundaryCallee(name: string): IrFunction {
+  return {
+    ...irIdentities.next(name),
+    params: [],
+    resultTypes: [REGEXP],
+    blocks: [
+      {
+        id: asBlockId(0),
+        blockArgs: [],
+        blockArgTypes: [],
+        instrs: [
+          {
+            kind: "extern.regex",
+            pattern: "a+",
+            flags: "g",
+            result: id(0),
+            resultType: REGEXP,
+          },
+        ],
+        terminator: { kind: "return", values: [id(0)] },
+      },
+    ],
+    exported: false,
+    valueCount: 1,
+  };
+}
+
+/** A caller whose sole local-unit call site lives inside a nested IR buffer. */
+function makeNestedZeroArgCaller(name: string, target: IrFuncRef): IrFunction {
+  return {
+    ...irIdentities.next(name),
+    params: [],
+    resultTypes: [F64],
+    blocks: [
+      {
+        id: asBlockId(0),
+        blockArgs: [],
+        blockArgTypes: [],
+        instrs: [
+          {
+            kind: "const",
+            value: { kind: "bool", value: true },
+            result: id(0),
+            resultType: BOOL,
+          },
+          {
+            kind: "if",
+            cond: id(0),
+            then: [
+              {
+                kind: "call",
+                target,
+                args: [],
+                result: id(1),
+                resultType: F64,
+              },
+            ],
+            thenValue: id(1),
+            else: [
+              {
+                kind: "const",
+                value: { kind: "f64", value: 0 },
+                result: id(2),
+                resultType: F64,
+              },
+            ],
+            elseValue: id(2),
+            result: id(3),
+            resultType: F64,
+          },
+        ],
+        terminator: { kind: "return", values: [id(3)] },
+      },
+    ],
+    exported: false,
+    valueCount: 4,
   };
 }
 
@@ -217,6 +325,73 @@ describe("#1167b — inlineSmall (unit)", () => {
     const sel = block.instrs[3]!;
     if (sel.kind !== "select") throw new Error("expected select");
     expect(sel.whenFalse).toBe(id(0));
+  });
+
+  it("counts nested local call sites and preserves a shared imported capability boundary", () => {
+    const callee = makeImportedBoundaryCallee("host-backed");
+    const directCaller = makeZeroArgCaller("direct", irUnitFuncRef(callee));
+    const nestedCaller = makeNestedZeroArgCaller("nested", irUnitFuncRef(callee));
+    const mod = { functions: [callee, directCaller, nestedCaller] };
+
+    // The nested caller is independently non-inlinable, but its call site
+    // still counts: duplicating the imported boundary into the direct caller
+    // would turn one shared host boundary into two copies.
+    const out = inlineSmall(mod);
+    expect(out).toBe(mod);
+    expect(directCaller.blocks[0]!.instrs[0]).toMatchObject({
+      kind: "call",
+      target: { binding: { kind: "unit", unitId: callee.unitId } },
+    });
+  });
+
+  it("still inlines an imported capability boundary at its only local call site", () => {
+    const callee = makeImportedBoundaryCallee("single-host-backed");
+    const caller = makeZeroArgCaller("single-direct", irUnitFuncRef(callee));
+
+    const out = inlineSmall({ functions: [callee, caller] });
+    const newCaller = out.functions[1]!;
+    expect(newCaller).not.toBe(caller);
+    expect(newCaller.blocks[0]!.instrs).toHaveLength(1);
+    expect(newCaller.blocks[0]!.instrs[0]).toMatchObject({
+      kind: "call",
+      target: { binding: { kind: "import", module: "host", field: "read_number" } },
+    });
+    expect(verifyIrFunction(newCaller)).toEqual([]);
+  });
+
+  it("preserves a shared extern.* boundary", () => {
+    const callee = makeRegexpBoundaryCallee("regexp-boundary");
+    const left = makeZeroArgCaller("regexp-left", irUnitFuncRef(callee), REGEXP);
+    const right = makeZeroArgCaller("regexp-right", irUnitFuncRef(callee), REGEXP);
+    const mod = { functions: [callee, left, right] };
+
+    expect(inlineSmall(mod)).toBe(mod);
+  });
+
+  it("still inlines an extern.* boundary at its only local call site", () => {
+    const callee = makeRegexpBoundaryCallee("single-regexp-boundary");
+    const caller = makeZeroArgCaller("single-regexp", irUnitFuncRef(callee), REGEXP);
+
+    const out = inlineSmall({ functions: [callee, caller] });
+    const newCaller = out.functions[1]!;
+    expect(newCaller).not.toBe(caller);
+    expect(newCaller.blocks[0]!.instrs).toHaveLength(1);
+    expect(newCaller.blocks[0]!.instrs[0]!.kind).toBe("extern.regex");
+    expect(verifyIrFunction(newCaller)).toEqual([]);
+  });
+
+  it("still inlines a pure callee at multiple local call sites", () => {
+    const callee = makeConstantCallee("shared-pure", 29);
+    const left = makeZeroArgCaller("pure-left", irUnitFuncRef(callee));
+    const right = makeZeroArgCaller("pure-right", irUnitFuncRef(callee));
+
+    const out = inlineSmall({ functions: [callee, left, right] });
+    for (const newCaller of out.functions.slice(1)) {
+      expect(newCaller.blocks[0]!.instrs).toHaveLength(1);
+      expect(newCaller.blocks[0]!.instrs[0]!.kind).toBe("const");
+      expect(newCaller.blocks[0]!.instrs.some((instr) => instr.kind === "call")).toBe(false);
+      expect(verifyIrFunction(newCaller)).toEqual([]);
+    }
   });
 
   it("skips a recursive callee", () => {
@@ -504,8 +679,8 @@ function extractFuncBody(wat: string, name: string): string {
 describe("#1167b — inlineSmall (end-to-end)", () => {
   it("inlines a single-block helper: run body has no `call`", async () => {
     const source = `
-      function abs(x: number): number { return x < 0 ? -x : x; }
-      export function run(n: number): number { return abs(n); }
+      function twice(x: number): number { return x * 2; }
+      export function run(n: number): number { return twice(n); }
     `;
     const result = await compile(source, { experimentalIR: true, nativeStrings: true, emitWat: true });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
@@ -525,8 +700,8 @@ describe("#1167b — inlineSmall (end-to-end)", () => {
       },
     });
     const run = (instance.exports as Record<string, (n: number) => number>).run;
-    expect(run(3)).toBe(3);
-    expect(run(-4)).toBe(4);
+    expect(run(3)).toBe(6);
+    expect(run(-4)).toBe(-8);
     expect(run(0)).toBe(0);
   });
 

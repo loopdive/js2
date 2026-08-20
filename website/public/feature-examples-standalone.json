@@ -144,7 +144,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 3989,
+      "passCount": 3988,
       "totalCount": 4581
     },
     {
