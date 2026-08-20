@@ -89,6 +89,7 @@ export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_
 
 import { binaryOpCapability, domSurfaceCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
 import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
+import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
 import { isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-bindings.js";
@@ -515,13 +516,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * build demotion.
    */
   readonly supportsLiteralStringReplace?: boolean;
-  /**
-   * True only when the active backend can materialise a fixed array of
-   * checker-proven strings as an externref vec. The default is false: native
-   * strings and host-free lanes use a different string carrier and must stay
-   * on the legacy path instead of failing after an IR claim.
-   */
-  readonly supportsHostStringArrayLiterals?: boolean;
+  /** Backend can materialize a fixed logical-string vector. */
+  readonly supportsStringArrayLiterals?: boolean;
   /**
    * The active backend has both the JS-host eval capability and the host
    * externref string carrier needed by the exact indirect-eval import ABI.
@@ -5871,7 +5867,8 @@ function expressionTouchesScalarModuleBinding(expr: ts.Expression): boolean {
     if (touched) return;
     if (ts.isIdentifier(node)) {
       const binding = moduleBinding(node);
-      if ((binding && binding.valueKind.kind !== "extern") || moduleScalarAliasFamily(node) !== undefined) {
+      const scalarBinding = binding && !isIrModuleReferenceValueKind(binding.valueKind);
+      if (scalarBinding || moduleScalarAliasFamily(node) !== undefined) {
         touched = true;
         return;
       }
@@ -6033,7 +6030,7 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
   const binding = moduleBinding(candidate);
   if (binding?.valueKind.kind === "f64") return "f64";
   if (binding?.valueKind.kind === "i32") return "boolean";
-  if (binding?.valueKind.kind === "extern") return "extern";
+  if (binding?.valueKind.kind === "extern" || binding?.valueKind.kind === "capability-extern") return "extern";
   // A #4208 update-retyped module binding has deliberately stale checker
   // evidence: after `value--`, a Boolean/string initializer now holds a
   // Number. Do not fall through to scalarExpressionFamily and resurrect the
@@ -8433,7 +8430,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (ts.isPropertyAccessExpression(expr.expression)) {
       if (!ts.isIdentifier(expr.expression.name)) return false;
       const standaloneDomCall = standaloneDomOperation(expr);
-      if (standaloneDomCall?.kind === "member-call") {
+      if (isDirectStandaloneDomMemberCall(standaloneDomCall)) {
         // Arity, optional/computed syntax, declaration identity, and boundary
         // families were certified when the source-wide plan was built. Keep
         // ordinary Phase-1 recursion for lexical scope and argument effects.
@@ -9124,7 +9121,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (
       everyElementPrimitive &&
       primitiveFamilies.has("string") &&
-      currentSelectionOptions?.supportsHostStringArrayLiterals !== true
+      currentSelectionOptions?.supportsStringArrayLiterals !== true
     ) {
       return shapeNo("expr-arraylit-string-backend", expr);
     }

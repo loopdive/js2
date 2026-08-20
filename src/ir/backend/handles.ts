@@ -130,6 +130,12 @@ export interface IrClosureLowering {
   /** Field index for capture position `i` (0-based). Valid only for captured-subtype lowerings. */
   capFieldIdx(index: number): number;
   readonly funcTypeIdx: number;
+  /**
+   * Exact private singleton appended to certified standalone DOM callback
+   * carriers. The thunk resolves the live absolute global index so a late
+   * import-global insertion cannot stale the allocation operand.
+   */
+  readonly domCallbackAuthorityGlobalIdx?: () => number;
 }
 
 /**

@@ -354,6 +354,8 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
   // lifted function reference through emitFuncRef, captures, and any required
   // ref.cast.
   emitClosureNew(layout: IrClosureLowering, _captureCount: number, out: Instr[]): void {
+    const authorityGlobalIdx = layout.domCallbackAuthorityGlobalIdx?.();
+    if (authorityGlobalIdx !== undefined) out.push({ op: "global.get", index: authorityGlobalIdx });
     out.push({ op: "struct.new", typeIdx: layout.structTypeIdx });
   }
 

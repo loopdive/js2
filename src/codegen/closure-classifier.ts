@@ -47,7 +47,7 @@ export function collectClosureBaseWrapperTypeIdxs(ctx: CodegenContext): number[]
     // their -2 wrapper dispatches directly through __call_fn_0. Excluding a
     // root is safe only when every registered allocation under it retains the
     // one-shot bit; any ordinary allocation clears the shared base metadata.
-    if (info.hostOneShotOnly === true) continue;
+    if (info.hostOneShotOnly === true || info.domCallbackOnly === true) continue;
     const typeDef = mod.types[typeIdx];
     if (!typeDef || typeDef.kind !== "struct") continue;
     // Walk up to the root struct in the chain.

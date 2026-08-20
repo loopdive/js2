@@ -201,13 +201,17 @@ export function attachIrVecLayouts(
         signature: mapSignature(fn.closureSubtype.signature),
         captureFieldTypes: mapArray(fn.closureSubtype.captureFieldTypes, mapType),
         ...(fn.closureSubtype.hostOneShot ? { hostOneShot: true } : {}),
+        ...(fn.closureSubtype.domCallbackAuthority
+          ? { domCallbackAuthority: fn.closureSubtype.domCallbackAuthority }
+          : {}),
       }
     : undefined;
   const closureSubtypeUnchanged =
     closureSubtype === undefined ||
     (closureSubtype.signature === fn.closureSubtype?.signature &&
       closureSubtype.captureFieldTypes === fn.closureSubtype.captureFieldTypes &&
-      closureSubtype.hostOneShot === fn.closureSubtype.hostOneShot);
+      closureSubtype.hostOneShot === fn.closureSubtype.hostOneShot &&
+      closureSubtype.domCallbackAuthority === fn.closureSubtype.domCallbackAuthority);
   const mapped =
     !usesVec ||
     (params === fn.params && resultTypes === fn.resultTypes && blocks === fn.blocks && closureSubtypeUnchanged)

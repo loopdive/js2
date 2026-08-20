@@ -54,6 +54,28 @@ export function irImportFuncRef(module: string, field: string, adapterName?: str
   return funcRef(name, { kind: "import", module: checkedModule, field: checkedField });
 }
 
+/** Reference one compiler-certified platform-capability import. */
+export function irCapabilityImportFuncRef(
+  module: string,
+  field: string,
+  capabilityId: string,
+  providerId: string,
+  adapterName?: string,
+): IrFuncRef {
+  const checkedModule = requireNonEmpty(module, "capability import module");
+  const checkedField = requireNonEmpty(field, "capability import field");
+  const checkedCapability = requireNonEmpty(capabilityId, "capability import capability");
+  const checkedProvider = requireNonEmpty(providerId, "capability import provider");
+  const name = compatibilityName(adapterName, checkedField, "capability import compatibility name");
+  return funcRef(name, {
+    kind: "import",
+    module: checkedModule,
+    field: checkedField,
+    capabilityId: checkedCapability,
+    providerId: checkedProvider,
+  });
+}
+
 /** Reference a compiler runtime symbol supplied by the selected runtime. */
 export function irRuntimeFuncRef(symbol: string, adapterName?: string): IrFuncRef {
   const checkedSymbol = requireNonEmpty(symbol, "runtime symbol");
@@ -94,9 +116,16 @@ export function irCallableBindingKey(binding: IrCallableBinding): string {
     case "unit":
       return `unit|${keyPart(requireNonEmpty(binding.unitId, "callable unitId"))}`;
     case "import":
+      if ((binding.capabilityId === undefined) !== (binding.providerId === undefined)) {
+        throw new TypeError("callable import capability and provider provenance must be paired");
+      }
       return (
         `import|${keyPart(requireNonEmpty(binding.module, "callable import module"))}|` +
-        keyPart(requireNonEmpty(binding.field, "callable import field"))
+        keyPart(requireNonEmpty(binding.field, "callable import field")) +
+        (binding.capabilityId === undefined && binding.providerId === undefined
+          ? ""
+          : `|capability|${keyPart(requireNonEmpty(binding.capabilityId!, "callable import capability"))}|` +
+            keyPart(requireNonEmpty(binding.providerId!, "callable import provider")))
       );
     case "runtime":
       return `runtime|${keyPart(requireNonEmpty(binding.symbol, "callable runtime symbol"))}`;
