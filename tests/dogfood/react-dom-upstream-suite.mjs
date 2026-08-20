@@ -28,6 +28,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
 import { createRequire } from "node:module";
+import ts from "typescript";
 
 import { compile } from "../../src/index.ts";
 import { wrapExports } from "../../src/runtime.ts";
@@ -184,35 +185,43 @@ function buildImplementationSource({ reactSource, sharedSource, clientSource }) 
   ].join("\n");
 }
 
-// The legacy browser server renderer is a separate published CJS graph. Keep
-// it in its own module scope so the server lane can compile and measure the
-// original SSR tests without pulling the client renderer into the same
-// WasmGC type graph. Its only package dependencies are the pinned React and
-// react-dom shared exports, both wired to the same in-module values.
-function buildServerImplementationSource({ reactSource, sharedSource, serverSource }) {
+// The server renderers are separate published CJS graphs. Keep each in its
+// own module scope so the legacy SSR and browser Fizz tests can compile and
+// measure independently without pulling either graph into the client WasmGC
+// type graph. Their package dependencies are the pinned React and react-dom
+// shared exports, both wired to the same in-module values.
+function buildServerImplementationSource({ reactSource, sharedSource, serverSource, fizzSource = null }) {
+  const legacyServerModule = serverSource
+    ? ["function __reactDomServerModule() { var exports = {};", wireRequires(serverSource), "return exports; }"]
+    : [];
+  const legacyServerInit = serverSource ? ["__REACTDOM_SERVER__ = __reactDomServerModule();"] : [];
+  const fizzModule = fizzSource
+    ? ["function __reactDomFizzModule() { var exports = {};", wireRequires(fizzSource), "return exports; }"]
+    : [];
+  const fizzInit = fizzSource ? ["__REACTDOM_FIZZ__ = __reactDomFizzModule();"] : [];
   return [
-    "var __REACT__, __REACTDOM_SHARED__, __REACTDOM__, __REACTDOM_SERVER__, __reactDomServerInitialized = false;",
+    "var __REACT__, __REACTDOM_SHARED__, __REACTDOM__, __REACTDOM_SERVER__, __REACTDOM_FIZZ__, __reactDomServerInitialized = false;",
     "function __reactServerModule() { var exports = {};",
     reactSource,
     "return exports; }",
     "function __reactDomSharedServerModule() { var exports = {};",
     wireRequires(sharedSource),
     "return exports; }",
-    "function __reactDomServerModule() { var exports = {};",
-    wireRequires(serverSource),
-    "return exports; }",
+    ...legacyServerModule,
+    ...fizzModule,
     "function __reactDomServerEnsureInit() {",
     "if (__reactDomServerInitialized) return;",
     "__reactDomServerInitialized = true;",
     "__REACT__ = __reactServerModule();",
     "__REACTDOM_SHARED__ = __reactDomSharedServerModule();",
     "__REACTDOM__ = __REACTDOM_SHARED__;",
-    "__REACTDOM_SERVER__ = __reactDomServerModule();",
+    ...legacyServerInit,
+    ...fizzInit,
     "}",
   ].join("\n");
 }
 
-function reactDomTestSetup(prelude, testSource = prelude, { server = false } = {}) {
+function reactDomTestSetup(prelude, testSource = prelude, { server = false, fizz = false } = {}) {
   const lines = [
     `${server ? "__reactDomServerEnsureInit" : "__reactDomEnsureInit"}();`,
     `document.body.textContent = "";`,
@@ -237,6 +246,10 @@ function reactDomTestSetup(prelude, testSource = prelude, { server = false } = {
   binds("InnerReactDOM", "{ flushSync: __REACTDOM_SHARED__.flushSync }");
   binds("InnerReactDOMClient", "{ createRoot: __REACTDOM__.createRoot }");
   if (server) binds("ReactDOMServer", "__REACTDOM_SERVER__");
+  if (fizz) {
+    binds("ReactDOMFizzServer", "__REACTDOM_FIZZ__");
+    binds("ReactDOMFizzStatic", "__REACTDOM_FIZZ__");
+  }
   const actDeclaration = /\b(let|var|const)\s+act\b/.exec(prelude);
   if (actDeclaration && actDeclaration[1] === "const") {
     // Preserve an upstream const binding; the extractor's import rewrite owns
@@ -252,10 +265,46 @@ function reactDomTestSetup(prelude, testSource = prelude, { server = false } = {
   return lines.join("\n");
 }
 
+const SETUP_BINDINGS = [
+  "React",
+  "ReactDOM",
+  "ReactDOMClient",
+  "OuterReactDOMClient",
+  "InnerReactDOM",
+  "InnerReactDOMClient",
+  "ReactDOMServer",
+  "ReactDOMFizzServer",
+  "ReactDOMFizzStatic",
+  "act",
+];
+
+// A React test often assigns host globals in its beforeEach before declaring
+// the package bindings (`global.ReadableStream = ...; let React;`). Inserting
+// the setup at byte zero would then assign to a lexical binding while it is in
+// its temporal-dead-zone. Place setup after every variable declaration that
+// declares one of the bindings we provide, while preserving all other
+// prelude statements and their order.
+function setupInsertionOffset(prelude) {
+  const sourceFile = ts.createSourceFile(
+    "react-dom-upstream-prelude.js",
+    prelude,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  let offset = 0;
+  for (const statement of sourceFile.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    const text = statement.getText(sourceFile);
+    if (SETUP_BINDINGS.some((name) => new RegExp(`\\b${name}\\b`).test(text))) offset = statement.end;
+  }
+  return offset;
+}
+
 function withReactDomSetup(test, options = {}) {
-  const leadingDeclarations = /^(?:(?:let|var|const)\s+[^;\n]+;\s*)+/.exec(test.prelude)?.[0] ?? "";
   const setup = reactDomTestSetup(test.prelude, `${test.prelude}\n${test.body}`, options);
-  const prelude = `${leadingDeclarations}${setup}\n${test.prelude.slice(leadingDeclarations.length)}`;
+  const offset = setupInsertionOffset(test.prelude);
+  const prelude = `${test.prelude.slice(0, offset)}\n${setup}\n${test.prelude.slice(offset)}`;
   return { ...test, prelude };
 }
 
@@ -269,12 +318,12 @@ function buildModuleSource(implementation, tests) {
   ].join("\n");
 }
 
-function buildServerModuleSource(implementation, tests) {
+function buildServerModuleSource(implementation, tests, options = {}) {
   return [
     implementation,
     REACT_EXPECT_SHIM,
     `export function __reactDomServerInit() { __reactDomServerEnsureInit(); }`,
-    ...tests.map((test) => buildTestFunction(withReactDomSetup(test, { server: true }))),
+    ...tests.map((test) => buildTestFunction(withReactDomSetup(test, { server: true, ...options }))),
     LAST_ERROR_EXPORT,
   ].join("\n");
 }
@@ -350,12 +399,13 @@ function buildProjectFiles({ reactSource, sharedSource, clientSource, tests }) {
   };
 }
 
-function buildNativeRunners(implementation, tests, { server = false } = {}) {
+function buildNativeRunners(implementation, tests, options = {}) {
+  const { server = false } = options;
   const init = server ? "__reactDomServerEnsureInit()" : "__reactDomEnsureInit()";
   const source = [
     implementation,
     REACT_EXPECT_SHIM,
-    ...tests.map((test) => buildTestFunction(withReactDomSetup(test, { server }), { exported: false })),
+    ...tests.map((test) => buildTestFunction(withReactDomSetup(test, options), { exported: false })),
     `return { init: function () { ${init}; }, __lastError: function () { return __lastError; }, tests: { ${tests
       .map((test) => `${JSON.stringify(test.id)}: ${test.id}`)
       .join(", ")} } };`,
@@ -414,22 +464,48 @@ function withCompileTimeout(promise, timeoutMs, label) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-// Run the original server-renderer tests against the separately published
-// legacy browser bundle. This lane is intentionally independent from the
-// client project lane: ReactDOMServer's module graph is smaller, has different
-// host requirements, and can be compiled to valid Wasm even while the client
-// graph is still being hardened.
-async function runServerHarness({ log, reactSource, sharedSource, serverSource, suitePin, serverTests }) {
-  const configuredLimit = Number(process.env.DOGFOOD_REACT_DOM_SERVER_TEST_LIMIT ?? 0);
+// Run original server-renderer tests against a separately published browser
+// bundle. This lane is intentionally independent from the client project
+// lane: server graphs have different host requirements and can compile to
+// valid Wasm even while the client graph is still being hardened. The same
+// runner is used for the legacy `renderToString` graph and the browser Fizz
+// graph (`renderToReadableStream`/`prerender`).
+async function runServerHarness({
+  log,
+  reactSource,
+  sharedSource,
+  serverSource,
+  fizzSource = null,
+  suitePin,
+  serverTests,
+  lane = "legacy",
+}) {
+  const isFizz = fizzSource !== null;
+  const configuredLimit = Number(
+    process.env[isFizz ? "DOGFOOD_REACT_DOM_FIZZ_TEST_LIMIT" : "DOGFOOD_REACT_DOM_SERVER_TEST_LIMIT"] ?? 0,
+  );
   const selectedTests =
     Number.isInteger(configuredLimit) && configuredLimit > 0 ? serverTests.slice(0, configuredLimit) : serverTests;
-  const implementation = buildServerImplementationSource({ reactSource, sharedSource, serverSource });
+  const implementation = buildServerImplementationSource({
+    reactSource,
+    sharedSource,
+    // Fizz is a separate published graph. Do not concatenate the legacy
+    // renderer into it: the two lanes must be independently compilable and
+    // independently attributable in the report.
+    serverSource: isFizz ? "" : (serverSource ?? ""),
+    fizzSource,
+  });
   const testTimeoutMs = Number(process.env.DOGFOOD_REACT_DOM_TEST_TIMEOUT_MS ?? 10_000);
   const configuredCompileTimeout = Number(process.env.DOGFOOD_REACT_DOM_COMPILE_TIMEOUT_MS ?? 300_000);
   const compileTimeoutMs =
     Number.isFinite(configuredCompileTimeout) && configuredCompileTimeout > 0 ? configuredCompileTimeout : 300_000;
   const report = {
-    modules: ["package/cjs/react-dom-server-legacy.browser.production.js"],
+    lane,
+    modules: [
+      isFizz
+        ? "package/cjs/react-dom-server.browser.production.js"
+        : "package/cjs/react-dom-server-legacy.browser.production.js",
+    ],
     implementationChars: implementation.length,
     extraction: {
       upstreamTestsSeen: serverTests.length,
@@ -454,13 +530,13 @@ async function runServerHarness({ log, reactSource, sharedSource, serverSource, 
   let totalBytes = 0;
 
   const compileGroup = async (file, groupTests, depth = 0) => {
-    const moduleSource = buildServerModuleSource(implementation, groupTests);
+    const moduleSource = buildServerModuleSource(implementation, groupTests, { fizz: isFizz });
     const started = performance.now();
     let result;
     try {
       result = await withCompileTimeout(
         compile(moduleSource, {
-          fileName: "react-dom-server-legacy.browser.js",
+          fileName: isFizz ? "react-dom-server.browser.js" : "react-dom-server-legacy.browser.js",
           skipSemanticDiagnostics: true,
           experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
           sourceMap: true,
@@ -520,13 +596,13 @@ async function runServerHarness({ log, reactSource, sharedSource, serverSource, 
       firstError,
     });
     log(
-      `[dogfood]   server ${file.replace(/^.*\//, "")}: ${groupTests.length} tests, ` +
+      `[dogfood]   ${lane} ${file.replace(/^.*\//, "")}: ${groupTests.length} tests, ` +
         `${validates ? "valid" : `INVALID — ${String(firstError).slice(0, 70)}`}`,
     );
 
     nativeContextFile = file;
     const nativeResults = new Map(
-      (await runNative(implementation, groupTests, { server: true })).map((entry) => [entry.id, entry]),
+      (await runNative(implementation, groupTests, { server: true, fizz: isFizz })).map((entry) => [entry.id, entry]),
     );
     for (const test of groupTests) {
       runResults.set(test.id, {
@@ -569,7 +645,7 @@ async function runServerHarness({ log, reactSource, sharedSource, serverSource, 
       tests: [],
     };
     report.summary = {
-      headline: `0/0 executed upstream react-dom server tests pass against compiled Wasm (${selectedTests.length} selected; server lane aborted)`,
+      headline: `0/0 executed upstream react-dom ${lane} tests pass against compiled Wasm (${selectedTests.length} selected; ${lane} lane aborted)`,
       passRatePct: 0,
       upstreamTestsSeen: serverTests.length,
       admitted: serverTests.length,
@@ -655,7 +731,7 @@ async function runServerHarness({ log, reactSource, sharedSource, serverSource, 
   };
   report.summary = {
     headline:
-      `${passed}/${scored.length} executed upstream react-dom server tests pass against compiled Wasm ` +
+      `${passed}/${scored.length} executed upstream react-dom ${lane} tests pass against compiled Wasm ` +
       `(${selectedTests.length} selected; ${harnessIncompatible} need infrastructure; ${implementationInvalidTests} blocked before Wasm execution)`,
     passRatePct: scored.length ? Number(((passed / scored.length) * 100).toFixed(2)) : 0,
     upstreamTestsSeen: serverTests.length,
@@ -865,6 +941,7 @@ export async function runHarness({ quiet = false } = {}) {
   const sharedSource = readFileSync(implementationPin.sharedPath, "utf-8");
   const clientSource = readFileSync(implementationPin.clientPath, "utf-8");
   const serverSource = readFileSync(implementationPin.serverPath, "utf-8");
+  const fizzSource = readFileSync(implementationPin.fizzServerPath, "utf-8");
   const { root: suiteRoot, pin: suitePin } = setupReactDomUpstreamSuite();
 
   const implementation = buildImplementationSource({ reactSource, sharedSource, clientSource });
@@ -880,9 +957,11 @@ export async function runHarness({ quiet = false } = {}) {
         suitePin.implementation.sharedModule,
         suitePin.implementation.clientModule,
         suitePin.implementation.serverModule,
+        suitePin.implementation.fizzServerModule,
       ],
       clientModules: [suitePin.implementation.sharedModule, suitePin.implementation.clientModule],
       serverModules: [suitePin.implementation.serverModule],
+      fizzServerModules: [suitePin.implementation.fizzServerModule],
       implementationChars: implementation.length,
     },
     upstreamSuite: {
@@ -926,8 +1005,10 @@ export async function runHarness({ quiet = false } = {}) {
   // Most ReactDOM files import ReactDOMServer in their shared prelude even
   // when an individual test only exercises the client renderer. Route only a
   // body that directly calls the legacy browser renderer, and leave mixed or
-  // client-only tests in the client graph. Fizz/edge server imports are a
-  // different published graph and are not silently claimed by this lane.
+  // client-only tests in the client graph. Browser Fizz tests use a second
+  // published graph and are routed only when the whole test is server-only;
+  // node/edge Fizz tests remain outside this browser lane because they need
+  // different stream/host modules.
   const hasClientRendererCall = (body) =>
     /\b(?:ReactDOMClient|ReactDOM\.(?:render|createRoot|hydrate|flushSync)|createRoot\s*\()/.test(body);
   const serverTests = extracted.tests.filter(
@@ -936,7 +1017,16 @@ export async function runHarness({ quiet = false } = {}) {
       !hasClientRendererCall(test.body),
   );
   const serverIds = new Set(serverTests.map((test) => test.id));
-  const clientTests = extracted.tests.filter((test) => !serverIds.has(test.id));
+  const browserFizzFile = /ReactDOMFizz(?:ServerBrowser|StaticBrowser|StaticFloat)-test\.js$/;
+  const fizzTests = extracted.tests.filter(
+    (test) =>
+      !serverIds.has(test.id) &&
+      browserFizzFile.test(test.file) &&
+      /\bReactDOMFizz(?:Server|Static)\b/.test(test.body) &&
+      !hasClientRendererCall(test.body),
+  );
+  const fizzIds = new Set(fizzTests.map((test) => test.id));
+  const clientTests = extracted.tests.filter((test) => !serverIds.has(test.id) && !fizzIds.has(test.id));
   report.extraction = {
     upstreamTestsSeen: extracted.tests.length + extracted.rejected.length,
     admitted: extracted.tests.length,
@@ -945,6 +1035,7 @@ export async function runHarness({ quiet = false } = {}) {
     rejectedTests: extracted.rejected,
     clientAdmitted: clientTests.length,
     serverAdmitted: serverTests.length,
+    fizzAdmitted: fizzTests.length,
   };
   const requestedLimit = Number(process.env.DOGFOOD_REACT_DOM_TEST_LIMIT ?? 0);
   const selectedTests =
@@ -952,10 +1043,11 @@ export async function runHarness({ quiet = false } = {}) {
   report.extraction.selected = selectedTests.length;
   report.extraction.clientSelected = selectedTests.length;
   report.extraction.serverSelected = Number(process.env.DOGFOOD_REACT_DOM_SERVER_TEST_LIMIT ?? 0) || serverTests.length;
+  report.extraction.fizzSelected = Number(process.env.DOGFOOD_REACT_DOM_FIZZ_TEST_LIMIT ?? 0) || fizzTests.length;
   log(
     `[dogfood] react-dom@${implementationPin.version} upstream @ ${suitePin.tag}: ` +
       `${extracted.tests.length} of ${extracted.tests.length + extracted.rejected.length} upstream tests admitted ` +
-      `(${clientTests.length} client, ${serverTests.length} server)`,
+      `(${clientTests.length} client, ${serverTests.length} legacy server, ${fizzTests.length} browser Fizz)`,
   );
 
   // The project lane compiles the published React, shared, and client modules
@@ -980,6 +1072,7 @@ export async function runHarness({ quiet = false } = {}) {
         serverSource,
         suitePin,
         serverTests,
+        lane: "legacy server",
       });
     } catch (error) {
       result.server = {
@@ -999,7 +1092,36 @@ export async function runHarness({ quiet = false } = {}) {
         },
       };
     }
+    try {
+      result.fizz = await runServerHarness({
+        log,
+        reactSource,
+        sharedSource,
+        fizzSource,
+        suitePin,
+        serverTests: fizzTests,
+        lane: "browser Fizz",
+      });
+    } catch (error) {
+      result.fizz = {
+        summary: {
+          headline:
+            "0/0 executed upstream react-dom browser Fizz tests pass against compiled Wasm (Fizz lane failed before execution)",
+          passRatePct: 0,
+          upstreamTestsSeen: fizzTests.length,
+          admitted: fizzTests.length,
+          selected: 0,
+          scored: 0,
+          passed: 0,
+          failed: 0,
+          harnessIncompatible: 0,
+          implementationInvalidTests: fizzTests.length,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
     report.server = result.server;
+    report.fizz = result.fizz;
     mkdirSync(dirname(REPORT_PATH), { recursive: true });
     writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
     hostInfrastructure.cleanup();
@@ -1289,6 +1411,34 @@ export async function runHarness({ quiet = false } = {}) {
         failed: 0,
         harnessIncompatible: 0,
         implementationInvalidTests: serverTests.length,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+  try {
+    report.fizz = await runServerHarness({
+      log,
+      reactSource,
+      sharedSource,
+      fizzSource,
+      suitePin,
+      serverTests: fizzTests,
+      lane: "browser Fizz",
+    });
+  } catch (error) {
+    report.fizz = {
+      summary: {
+        headline:
+          "0/0 executed upstream react-dom browser Fizz tests pass against compiled Wasm (Fizz lane failed before execution)",
+        passRatePct: 0,
+        upstreamTestsSeen: fizzTests.length,
+        admitted: fizzTests.length,
+        selected: 0,
+        scored: 0,
+        passed: 0,
+        failed: 0,
+        harnessIncompatible: 0,
+        implementationInvalidTests: fizzTests.length,
         error: error instanceof Error ? error.message : String(error),
       },
     };

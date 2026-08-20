@@ -9154,6 +9154,39 @@ function resolveImport(
           // __extern_method_call.
           ...(typeof URL !== "undefined" ? { URL } : {}),
           ...(typeof URLSearchParams !== "undefined" ? { URLSearchParams } : {}),
+          // Browser/Node Web Streams and messaging constructors used by
+          // ReactDOM's browser Fizz renderer. These are host capabilities, not
+          // package substitutes: the compiled renderer still owns the stream
+          // algorithm and only crosses the boundary for the concrete host
+          // object construction.
+          ...(typeof (globalThis as any).MessageChannel === "function"
+            ? { MessageChannel: (globalThis as any).MessageChannel }
+            : {}),
+          ...(typeof (globalThis as any).MessagePort === "function"
+            ? { MessagePort: (globalThis as any).MessagePort }
+            : {}),
+          ...(typeof (globalThis as any).ReadableStream === "function"
+            ? { ReadableStream: (globalThis as any).ReadableStream }
+            : {}),
+          ...(typeof (globalThis as any).WritableStream === "function"
+            ? { WritableStream: (globalThis as any).WritableStream }
+            : {}),
+          ...(typeof (globalThis as any).TransformStream === "function"
+            ? { TransformStream: (globalThis as any).TransformStream }
+            : {}),
+          ...(typeof (globalThis as any).TextEncoder === "function"
+            ? { TextEncoder: (globalThis as any).TextEncoder }
+            : {}),
+          ...(typeof (globalThis as any).TextDecoder === "function"
+            ? { TextDecoder: (globalThis as any).TextDecoder }
+            : {}),
+          ...(typeof (globalThis as any).Headers === "function" ? { Headers: (globalThis as any).Headers } : {}),
+          ...(typeof (globalThis as any).AbortController === "function"
+            ? { AbortController: (globalThis as any).AbortController }
+            : {}),
+          ...(typeof (globalThis as any).AbortSignal === "function"
+            ? { AbortSignal: (globalThis as any).AbortSignal }
+            : {}),
         };
         let Ctor = deps?.[intent.className] ?? builtinCtors[intent.className];
         // #1044 — Resolve via namespace path (e.g. require('http').Server)

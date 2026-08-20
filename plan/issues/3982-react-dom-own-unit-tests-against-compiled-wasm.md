@@ -348,6 +348,34 @@ the compiler, not the Wasm behavior score: the client renderer still has the
 known module-export/runtime gap and the server smoke still has behavior
 failures.
 
+## Browser Fizz lane checkpoint (2026-08-20)
+
+The browser Fizz tests now have their own published implementation graph:
+`package/cjs/react-dom-server.browser.production.js`. The harness routes 60
+original upstream tests from `ReactDOMFizzServerBrowser-test.js`,
+`ReactDOMFizzStaticBrowser-test.js`, and `ReactDOMFizzStaticFloat-test.js` to
+that graph, while the 115 legacy browser-server tests remain on their own
+`react-dom-server-legacy.browser.production.js` lane. The Fizz graph no longer
+concatenates the legacy renderer, so its compile and validation result is
+independent rather than an accidental combined-server result.
+
+The host boundary now supplies the standard browser/Node constructors required
+by the published browser bundle (`MessageChannel`, `MessagePort`, Web Streams,
+`TextEncoder`/`TextDecoder`, `Headers`, and abort signals) through the existing
+generic runtime constructor mapping. This is host capability plumbing; the
+renderer algorithms remain in the compiled module. Upstream Fizz setup also
+uses `serverAct`, and inline string snapshots compare the serialized value used
+by Jest's original matcher.
+
+The bounded smoke run admitted one test in each lane. The Fizz module compiled,
+validated, and instantiated as a roughly 1.15 MB Wasm module; its native oracle
+passed, while the compiled test reached the renderer and failed with
+`Cannot access property on null or undefined`. That is a compiler/runtime
+behavior gap, not unavailable infrastructure. The full Fizz lane is now
+measurable and is persisted separately in the npm-compat report. Node/edge Fizz
+files still require their own stream, crypto, and async-hooks host graphs, and
+the client/legacy behavioral gaps remain open.
+
 ## Remaining blockers (skipped tests in `tests/issue-3982.test.ts`)
 
 36 of the 39 extracted compiler blockers are green. Three are `it.skip` with the
@@ -397,6 +425,7 @@ add binding-aware slots on top of main's design, not restore that one.
       compiler's own message when it fails.
 - [x] react-dom's published client module compiles to a valid Wasm module.
 - [x] The published browser server module has an independent valid Wasm lane.
+- [x] The published browser Fizz module has its own independent valid Wasm lane.
 - [x] The native oracle and compiled lane run under the same jsdom host setup.
 - [ ] Freeze deferred capture-cycle ABIs before compiling ordinary callers.
 - [ ] Capture a nested `async function` declaration inside an `async` parent.

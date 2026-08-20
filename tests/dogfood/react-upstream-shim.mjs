@@ -142,7 +142,10 @@ function __normalizeSnapshot(value) {
 }
 
 function __snapshotMatches(actual, expected) {
-  return __normalizeSnapshot(__snapshotValue(actual)) === __normalizeSnapshot(expected);
+  var value = __snapshotValue(actual);
+  var serialized = typeof value === "string" ? JSON.stringify(value) : value;
+  var wanted = __normalizeSnapshot(expected);
+  return __normalizeSnapshot(serialized) === wanted || __normalizeSnapshot(value) === wanted;
 }
 
 function __renderedOutput(value) {
@@ -529,6 +532,14 @@ var __js2InternalTestUtils = {
     var result = callback();
     return result && typeof result.then === "function" ? result : Promise.resolve(result);
   },
+  // ReactDOM's browser Fizz tests use serverAct rather than the client
+  // renderer's act helper. The upstream helper only needs to invoke the
+  // server callback and await its promise; routing it through
+  // react-test-renderer.act would add an unrelated renderer dependency.
+  serverAct: function (callback) {
+    var result = callback();
+    return result && typeof result.then === "function" ? result : Promise.resolve(result);
+  },
   waitForAll: function () { return Promise.resolve(); },
   waitFor: function () { return Promise.resolve(); },
   waitForPaint: function () { return Promise.resolve(); },
@@ -607,6 +618,13 @@ function __js2RequireActual(name) {
     name === "react-dom/static.edge"
   ) {
     __js2CheckReactVersion("react-dom");
+    if (
+      typeof __REACTDOM_FIZZ__ !== "undefined" &&
+      __REACTDOM_FIZZ__ !== null &&
+      (name === "react-dom/server.browser" || name === "react-dom/static" || name === "react-dom/static.browser")
+    ) {
+      return __REACTDOM_FIZZ__;
+    }
     if (typeof __REACTDOM_SERVER__ !== "undefined" && __REACTDOM_SERVER__ !== null) {
       return __REACTDOM_SERVER__;
     }

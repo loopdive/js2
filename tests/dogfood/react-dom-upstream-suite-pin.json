@@ -9,7 +9,8 @@
     "tarball": "fixtures/react-dom-19.2.6.tgz",
     "sharedModule": "package/cjs/react-dom.production.js",
     "clientModule": "package/cjs/react-dom-client.production.js",
-    "serverModule": "package/cjs/react-dom-server-legacy.browser.production.js"
+    "serverModule": "package/cjs/react-dom-server-legacy.browser.production.js",
+    "fizzServerModule": "package/cjs/react-dom-server.browser.production.js"
   },
   "_note": "Shares React's pinned tag and immutable commit — react-dom is versioned in lockstep with react in the same monorepo, so reusing the verified checkout from setup-react-upstream-suite.mjs keeps the tests and the implementation on the same commit with zero skew. The published react-dom tarball omits its tests, exactly as react's does. The client lane uses the shared entry and client renderer; the server lane uses the separately published legacy browser renderer, each in its own function scope. Server-renderer tests are run in that independent lane rather than rejected merely because the client graph cannot contain the server graph. testFiles is the ENTIRE public `packages/react-dom/src/__tests__` directory; which tests can be scored is decided at run time and reported by reason, never by hand-picking files here.",
   "testFiles": [

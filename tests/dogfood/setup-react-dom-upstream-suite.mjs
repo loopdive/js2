@@ -46,14 +46,15 @@ export function setupReactDomImplementation({ force = false } = {}) {
   const sharedPath = join(root, suitePin.implementation.sharedModule);
   const clientPath = join(root, suitePin.implementation.clientModule);
   const serverPath = join(root, suitePin.implementation.serverModule);
-  if (!existsSync(sharedPath) || !existsSync(clientPath) || !existsSync(serverPath)) {
+  const fizzServerPath = join(root, suitePin.implementation.fizzServerModule);
+  if (!existsSync(sharedPath) || !existsSync(clientPath) || !existsSync(serverPath) || !existsSync(fizzServerPath)) {
     mkdirSync(root, { recursive: true });
     execFileSync("tar", ["-xzf", tarballPath, "-C", root], { stdio: "pipe" });
   }
-  for (const path of [sharedPath, clientPath, serverPath]) {
+  for (const path of [sharedPath, clientPath, serverPath, fizzServerPath]) {
     if (!existsSync(path)) throw new Error(`[dogfood] react-dom extraction did not produce ${path}`);
   }
-  return { root, sharedPath, clientPath, serverPath, version: packagePin.version, pin: packagePin };
+  return { root, sharedPath, clientPath, serverPath, fizzServerPath, version: packagePin.version, pin: packagePin };
 }
 
 // react-dom is versioned in lockstep with react in the SAME monorepo, so the

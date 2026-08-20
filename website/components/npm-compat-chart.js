@@ -476,6 +476,21 @@ class NpmCompatChart extends HTMLElement {
           )
         : "";
 
+    const fizzTestData = pkg.tests?.fizz;
+    const fizzTests =
+      fizzTestData && fizzTestData.total != null
+        ? this._row(
+            "browser Fizz tests",
+            `<span class="mono">${fizzTestData.passed ?? 0}/${fizzTestData.total}</span>${
+              fizzTestData.passRatePct != null ? ` <span class="muted">${fizzTestData.passRatePct}%</span>` : ""
+            } <span class="tag">upstream browser Fizz suite</span>${
+              fizzTestData.upstreamTestsSeen
+                ? ` <span class="muted">${fizzTestData.selected ?? fizzTestData.admitted ?? 0} of ${fizzTestData.upstreamTestsSeen} selected</span>`
+                : ""
+            }`,
+          )
+        : "";
+
     // Perf — historical ratios stay split by input knowledge and placement;
     // full methodology lives below the dashboard.
     let perf;
@@ -530,7 +545,7 @@ class NpmCompatChart extends HTMLElement {
             ? `<span class="badge" title="The published entry module only re-exports other packages, so these badges describe the barrel — see the tests row for the real implementation.">entry is a barrel</span>`
             : ""
         }</div>
-        <div class="rows">${correctness}${tests}${serverTests}${perf}${bugs}</div>
+        <div class="rows">${correctness}${tests}${serverTests}${fizzTests}${perf}${bugs}</div>
         <a class="entry mono" href="${npmCodeUrl}" target="_blank" rel="noopener"
           title="View ${this._esc(pkg.entryFile)} in ${this._esc(pkg.name)} ${this._esc(pkg.version)} on npm">${this._esc(pkg.entryFile)}</a>
       </div>`;

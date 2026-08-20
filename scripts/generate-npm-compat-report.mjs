@@ -2435,6 +2435,29 @@ if (!perfOnly && selectedPackages.has("react-dom")) {
             : null,
           validation: reactDomSuite.server?.validation ?? null,
         },
+        // Browser Fizz is a third, independently published renderer graph.
+        // Keep its denominator separate from both the client and legacy SSR
+        // lanes: a Fizz test never ran against the client module merely
+        // because it came from the same upstream test directory.
+        fizz: {
+          passed: reactDomSuite.fizz?.results?.passed ?? null,
+          total: reactDomSuite.fizz?.results?.scored ?? null,
+          passRatePct: reactDomSuite.fizz?.summary?.passRatePct ?? null,
+          admitted: reactDomSuite.fizz?.extraction?.admitted ?? null,
+          selected: reactDomSuite.fizz?.extraction?.selected ?? null,
+          upstreamTestsSeen: reactDomSuite.fizz?.extraction?.upstreamTestsSeen ?? null,
+          harnessIncompatible: reactDomSuite.fizz?.results?.harnessIncompatible ?? null,
+          implementationInvalidTests: reactDomSuite.fizz?.results?.implementationInvalidTests ?? null,
+          compile: reactDomSuite.fizz?.compile
+            ? {
+                success: reactDomSuite.fizz.compile.success ?? false,
+                durationMs: reactDomSuite.fizz.compile.durationMs ?? null,
+                binaryBytes: reactDomSuite.fizz.compile.binaryBytes ?? null,
+                invalidBatches: reactDomSuite.fizz.compile.invalidBatches ?? null,
+              }
+            : null,
+          validation: reactDomSuite.fizz?.validation ?? null,
+        },
         sourceIssue: 3982,
       },
       perf: await perfNpmCompatPackage("react-dom", {
