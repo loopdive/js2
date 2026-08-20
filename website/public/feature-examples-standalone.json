@@ -88,7 +88,7 @@
     {
       "name": "eval()",
       "testCategories": ["language/eval-code", "built-ins/eval"],
-      "passCount": 322,
+      "passCount": 334,
       "totalCount": 357
     },
     {
@@ -144,7 +144,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 3997,
+      "passCount": 4036,
       "totalCount": 4581
     },
     {
@@ -251,7 +251,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 1824,
+      "passCount": 1826,
       "totalCount": 2486
     },
     {
@@ -294,7 +294,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 502,
+      "passCount": 504,
       "totalCount": 1106
     },
     {
@@ -354,7 +354,7 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2646,
+      "passCount": 2683,
       "totalCount": 3812
     },
     {
@@ -378,7 +378,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 283,
+      "passCount": 286,
       "totalCount": 1048
     },
     {
