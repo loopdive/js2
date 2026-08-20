@@ -48,7 +48,7 @@ describe("React upstream test infrastructure", () => {
     } finally {
       installed.cleanup();
       dom.cleanup();
-      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      if (previousNodeEnv === undefined) Reflect.deleteProperty(process.env, "NODE_ENV");
       else process.env.NODE_ENV = previousNodeEnv;
     }
     expect(globalThis.__js2ReactUpstreamInfrastructure).toBe(previous);
