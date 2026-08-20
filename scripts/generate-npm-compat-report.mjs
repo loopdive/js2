@@ -2425,7 +2425,14 @@ if (!perfOnly && selectedPackages.has("react-dom")) {
           upstreamTestsSeen: reactDomSuite.server?.extraction?.upstreamTestsSeen ?? null,
           harnessIncompatible: reactDomSuite.server?.results?.harnessIncompatible ?? null,
           implementationInvalidTests: reactDomSuite.server?.results?.implementationInvalidTests ?? null,
-          compile: reactDomSuite.server?.compile ?? null,
+          compile: reactDomSuite.server?.compile
+            ? {
+                success: reactDomSuite.server.compile.success ?? false,
+                durationMs: reactDomSuite.server.compile.durationMs ?? null,
+                binaryBytes: reactDomSuite.server.compile.binaryBytes ?? null,
+                invalidBatches: reactDomSuite.server.compile.invalidBatches ?? null,
+              }
+            : null,
           validation: reactDomSuite.server?.validation ?? null,
         },
         sourceIssue: 3982,
