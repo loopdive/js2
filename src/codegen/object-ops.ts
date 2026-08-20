@@ -4538,6 +4538,46 @@ export function compilePropertyIntrospection(
       fctx.body.push({ op: "i32.or" });
       return { kind: "i32", boolean: true };
     }
+    // (#4491) A NON-index static key on an array receiver — "4294967295"
+    // (2^32-1 is a valid NAMED property but not an array index, §6.1.7) or a
+    // named expando — is RUNTIME state: `Object.defineProperty(arr, k, …)`
+    // stores it in the #3251 companion / #3537 bag, which the static
+    // struct-field logic below cannot see (it answered a compile-time false
+    // while gOPD/`in` both found the entry). Route to the native predicate,
+    // whose vec prologue consults gOPD + bag. `length` keeps the static path:
+    // the vec gOPD arm deliberately bails for it.
+    if (
+      vecInfo !== null &&
+      keyArg &&
+      staticKey !== null &&
+      staticKey !== "length" &&
+      !_isCanonicalArrayIndexString(staticKey)
+    ) {
+      const recv = compileExpression(ctx, fctx, propAccess.expression);
+      if (recv === null) return null;
+      if (recv.kind === "ref" || recv.kind === "ref_null") {
+        fctx.body.push({ op: "extern.convert_any" });
+      } else if (recv.kind !== "externref") {
+        coerceType(ctx, fctx, recv, { kind: "externref" });
+      }
+      const keyT = compileExpression(ctx, fctx, keyArg, { kind: "externref" });
+      if (keyT && keyT.kind !== "externref") coerceType(ctx, fctx, keyT, { kind: "externref" });
+      const hopDynIdx = ensureLateImport(
+        ctx,
+        "__hasOwnProperty",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "i32" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (hopDynIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: hopDynIdx });
+        return { kind: "i32", boolean: true };
+      }
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "i32.const", value: 0 });
+      return { kind: "i32", boolean: true };
+    }
     // else fall through to the generic struct-field path (legacy behaviour).
   }
 
