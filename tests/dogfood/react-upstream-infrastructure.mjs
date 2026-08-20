@@ -380,6 +380,14 @@ export function installReactUpstreamInfrastructure({ react } = {}) {
   const { reactDom, reactDomClient, reactDomServer, reactTestRenderer } = loadCrossPackageReactModules(nativeReact);
   const propTypes = readModule("prop-types");
   const webStreams = readModule("web-streams-polyfill/ponyfill") ?? readModule("web-streams-polyfill");
+  // React's create-react-class integration tests import both the already
+  // configured public creator and the original three-argument factory. Keep
+  // both host capabilities distinct: returning the configured creator from
+  // the `/factory` entry makes the upstream call
+  // `factory(React.Component, React.isValidElement, updater)` feed the
+  // component object as the factory's first parameter and fails later as
+  // "null is not a function".
+  const createReactClassFactoryModule = readModule("create-react-class/factory");
   const createReactClass = createReactClassFactory(nativeReact);
 
   const previous = globalThis.__js2ReactUpstreamInfrastructure;
@@ -427,6 +435,7 @@ export function installReactUpstreamInfrastructure({ react } = {}) {
     reactJsxDevRuntime,
     propTypes,
     createReactClass,
+    createReactClassFactory: createReactClassFactoryModule,
     internalTestUtils: createInternalTestUtils({ reactTestRenderer, reactDom, consumeConsole }),
     webStreams,
     patchMessageChannel() {},

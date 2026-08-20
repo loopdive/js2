@@ -23,6 +23,7 @@ describe("React upstream test infrastructure", () => {
       expect(infrastructure.reactTestRenderer?.create).toBeTypeOf("function");
       expect(infrastructure.propTypes?.string).toBeTypeOf("function");
       expect(infrastructure.createReactClass).toBeTypeOf("function");
+      expect(infrastructure.createReactClassFactory).toBeTypeOf("function");
       expect(infrastructure.webStreams?.ReadableStream).toBeTypeOf("function");
       expect(infrastructure.reactNoop?.render).toBeTypeOf("function");
       expect(infrastructure.reactNoop?.createRoot).toBeTypeOf("function");

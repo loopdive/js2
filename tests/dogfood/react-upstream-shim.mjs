@@ -607,6 +607,26 @@ function __js2WrapRenderer(hostRenderer) {
   };
 }
 
+// create-react-class is a CommonJS host dependency. Returning its host
+// function directly from require() makes the subsequent indirect call
+// depend on a callable host closure surviving the Wasm boundary. Keep the
+// call itself in this shim and cross the boundary only for the spec/result;
+// this is the same explicit-capability pattern used by the DOM and noop
+// adapters above.
+function __js2CreateReactClass(spec) {
+  var creator = __js2ReactInfra().createReactClass;
+  if (typeof creator !== "function") throw new Error("create-react-class test infrastructure is unavailable");
+  try {
+    return creator(__js2PrepareReactValue(spec));
+  } catch (error) {
+    throw new Error("create-react-class host call failed: " + (error && error.message ? error.message : String(error)));
+  }
+}
+
+function __js2CreateReactClassFactory() {
+  return __js2CreateReactClass;
+}
+
 var __js2ReactDOMClient = {
   createRoot: function (container, options) {
     return __js2WrapRoot(__js2ReactInfra().reactDomClient.createRoot(container, options));
@@ -892,12 +912,12 @@ function __js2RequireActual(name) {
   if (name === "react/jsx-dev-runtime") return __js2ReactInfra().reactJsxDevRuntime;
   if (name === "internal-test-utils") return __js2InternalTestUtils;
   if (name === "prop-types") return __js2PropTypes;
-  if (name === "create-react-class") return __js2ReactInfra().createReactClass;
-  if (name === "create-react-class/factory") return function () {
-    var factory = __js2ReactInfra().createReactClass;
-    if (typeof factory !== "function") throw new Error("create-react-class test infrastructure is unavailable");
-    return factory;
-  };
+  if (name === "create-react-class") return __js2CreateReactClass;
+  if (name === "create-react-class/factory") {
+    var factory = __js2ReactInfra().createReactClassFactory;
+    if (typeof factory !== "function") throw new Error("create-react-class factory infrastructure is unavailable");
+    return __js2CreateReactClassFactory;
+  }
   if (name === "web-streams-polyfill/ponyfill/es6") return __js2ReactInfra().webStreams;
   if (name === "util") return { TextEncoder: globalThis.TextEncoder, TextDecoder: globalThis.TextDecoder };
   if (name === "shared/ReactFeatureFlags") return {
@@ -932,6 +952,11 @@ export function buildTestFunction(test, { exported = true } = {}) {
   const asyncKeyword = test.isAsync ? "async " : "";
   const keyword = exported ? `export ${asyncKeyword}function` : `${asyncKeyword}function`;
   return `${keyword} ${test.id}() {
+  // The upstream files are strict-mode CommonJS modules. Preserve that
+  // semantic boundary inside each lifted function: in sloppy mode a callback
+  // invoked with a primitive context receives a boxed String object, while
+  // Jest's strict wrapper observes the original primitive.
+  "use strict";
   try {
 ${test.prelude}
 ${test.body}

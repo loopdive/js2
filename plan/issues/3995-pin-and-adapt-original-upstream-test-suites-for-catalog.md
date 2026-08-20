@@ -40,6 +40,16 @@ func-budget-allow:
   - src/codegen/closures/arrow-phases.ts::planClosureCaptures
   - src/codegen/expressions/identifiers.ts::compileIdentifierCore
   - src/codegen/context/create-context.ts::createCodegenContext
+  # The React/ReactDOM upstream adapter exercises these existing codegen
+  # paths. Keep the PR's measured growth explicit until the post-merge
+  # baseline refresh records the new ceilings.
+  - src/codegen/class-bodies.ts::collectClassDeclaration
+  - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
+  - src/codegen/declarations.ts::compileDeclarations
+  - src/codegen/literals.ts::compileObjectLiteralForStruct
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
+  - src/codegen/index.ts::emitIteratorMethodExport
+  - src/runtime.ts::<anonymous>#89
 ---
 # npm-compat: pin and adapt original upstream test suites for catalog packages
 
@@ -484,3 +494,19 @@ Redux callback inventory runs through the same path: 82/82 admitted and
 scored, 9/9 modules compile and validate, 13 Wasm passes, 69 semantic
 failures, and zero runtime failures. The remaining Redux failures are
 compiler semantics, not unavailable runner infrastructure.
+
+## 2026-08-20 React cross-package infrastructure checkpoint
+
+The React upstream adapter now preserves each source test file's strict-mode
+boundary when lifting individual Jest callbacks. It also supplies the
+original `create-react-class/factory` module and routes the indirect factory
+call through a callable host facade that reifies only the class specification
+object. This is host/test infrastructure, not a change to React's upstream
+test bodies.
+
+On the unchanged 273-test React inventory, the full local run now executes
+272 admitted tests and scores **102/179** in Wasm (up from 92/178); the native
+oracle's infrastructure-incompatible bucket fell from 94 to 93. The
+create-react-class slice specifically moved from 0/16 to **10/16** scored
+passes. The remaining React failures are compiler/runtime behavior or
+development-build warning differences, not silently skipped infrastructure.

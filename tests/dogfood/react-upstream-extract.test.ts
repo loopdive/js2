@@ -51,6 +51,26 @@ describe("react upstream extractor", () => {
     }
   });
 
+  it("binds create-react-class through the callable host facade", () => {
+    const root = mkdtempSync(join(tmpdir(), "js2-react-class-extract-"));
+    const file = "fixture.js";
+    try {
+      writeFileSync(
+        join(root, file),
+        `let createReactClass;\n` +
+          `beforeEach(() => { createReactClass = require("create-react-class/factory")(React.Component, React.isValidElement, new React.Component().updater); });\n` +
+          `describe("fixture", () => { it("uses factory", () => { createReactClass({render() { return null; }}); }); });\n`,
+      );
+      const result = extractReactUpstreamTests({ root, testFiles: [file], admitAll: false });
+      expect(result.rejected).toHaveLength(0);
+      expect(result.tests).toHaveLength(1);
+      expect(result.tests[0].prelude).toContain("createReactClass = __js2CreateReactClass;");
+      expect(result.tests[0].prelude).not.toContain("create-react-class/factory");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("only treats calls rooted at expect as matchers", () => {
     const root = mkdtempSync(join(tmpdir(), "js2-react-matcher-"));
     const file = "fixture.js";

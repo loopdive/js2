@@ -160,6 +160,14 @@ function filterPreludeStatement(statement, sourceFile, supportedInfrastructure) 
     }
     return null;
   }
+  // The create-react-class integration suite configures its factory through
+  // a CommonJS call expression. A function returned by a host call cannot be
+  // relied on as an indirect Wasm callable, so bind the explicit shim facade
+  // that performs each create-class call on the host. The upstream test
+  // bodies and their spec objects remain unchanged.
+  if (/create-react-class\/factory/.test(text) && /\bcreateReactClass\s*=/.test(text)) {
+    return "createReactClass = __js2CreateReactClass;";
+  }
   // Destructuring assignments from React's private test utility package can
   // contain several infrastructure names at once. Keep them as a unit; the
   // generated require facade supplies the same named helpers in both lanes.
