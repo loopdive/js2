@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 8619,
-    "fail": 385,
+    "pass": 8618,
+    "fail": 386,
     "ce": 25,
     "skip": 0,
     "total": 9029,
@@ -10,12 +10,12 @@
     "features": [
       {
         "name": "caller",
-        "pass": 23,
-        "fail": 0,
+        "pass": 22,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 23,
-        "pct": 100
+        "pct": 96
       },
       {
         "name": "Reflect.construct",
@@ -48,9 +48,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 8105,
-    "fail": 3009,
-    "ce": 589,
+    "pass": 8117,
+    "fail": 3000,
+    "ce": 586,
     "skip": 1,
     "total": 11704,
     "pct": 69,
@@ -111,8 +111,8 @@
       },
       {
         "name": "arrow-function",
-        "pass": 392,
-        "fail": 40,
+        "pass": 391,
+        "fail": 41,
         "ce": 8,
         "skip": 0,
         "total": 440,
@@ -120,17 +120,17 @@
       },
       {
         "name": "Proxy",
-        "pass": 127,
-        "fail": 281,
+        "pass": 132,
+        "fail": 276,
         "ce": 23,
         "skip": 0,
         "total": 431,
-        "pct": 29
+        "pct": 31
       },
       {
         "name": "Reflect.construct",
-        "pass": 352,
-        "fail": 41,
+        "pass": 351,
+        "fail": 42,
         "ce": 22,
         "skip": 0,
         "total": 415,
@@ -147,12 +147,12 @@
       },
       {
         "name": "Reflect",
-        "pass": 131,
-        "fail": 140,
+        "pass": 135,
+        "fail": 136,
         "ce": 59,
         "skip": 0,
         "total": 330,
-        "pct": 40
+        "pct": 41
       },
       {
         "name": "Symbol.species",
@@ -273,12 +273,12 @@
       },
       {
         "name": "Reflect.set",
-        "pass": 12,
-        "fail": 15,
+        "pass": 15,
+        "fail": 12,
         "ce": 11,
         "skip": 0,
         "total": 38,
-        "pct": 32
+        "pct": 39
       },
       {
         "name": "DataView.prototype.setUint8",
@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3509,
-    "fail": 728,
+    "pass": 3508,
+    "fail": 729,
     "ce": 586,
     "skip": 0,
     "total": 4823,
@@ -1152,12 +1152,12 @@
       },
       {
         "name": "regexp-named-groups",
-        "pass": 70,
-        "fail": 18,
+        "pass": 69,
+        "fail": 19,
         "ce": 5,
         "skip": 0,
         "total": 93,
-        "pct": 75
+        "pct": 74
       },
       {
         "name": "arrow-function",
@@ -1316,8 +1316,8 @@
   },
   {
     "edition": "ES2019",
-    "pass": 63,
-    "fail": 55,
+    "pass": 62,
+    "fail": 56,
     "ce": 18,
     "skip": 0,
     "total": 136,
@@ -1343,12 +1343,12 @@
       },
       {
         "name": "Object.fromEntries",
-        "pass": 6,
-        "fail": 18,
+        "pass": 5,
+        "fail": 19,
         "ce": 1,
         "skip": 0,
         "total": 25,
-        "pct": 24
+        "pct": 20
       },
       {
         "name": "String.prototype.trimEnd",
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 3901,
-    "fail": 1322,
+    "pass": 3900,
+    "fail": 1323,
     "ce": 569,
     "skip": 0,
     "total": 5792,
@@ -2438,12 +2438,12 @@
       },
       {
         "name": "regexp-match-indices",
-        "pass": 20,
-        "fail": 7,
+        "pass": 19,
+        "fail": 8,
         "ce": 0,
         "skip": 0,
         "total": 27,
-        "pct": 74
+        "pct": 70
       },
       {
         "name": "DataView",
@@ -2573,12 +2573,12 @@
       },
       {
         "name": "regexp-named-groups",
-        "pass": 5,
-        "fail": 2,
+        "pass": 4,
+        "fail": 3,
         "ce": 0,
         "skip": 0,
         "total": 7,
-        "pct": 71
+        "pct": 57
       },
       {
         "name": "error-cause",
@@ -3753,18 +3753,18 @@
   },
   {
     "edition": "ES2027",
-    "pass": 246,
+    "pass": 247,
     "fail": 400,
-    "ce": 251,
+    "ce": 250,
     "skip": 0,
     "total": 897,
-    "pct": 27,
+    "pct": 28,
     "features": [
       {
         "name": "explicit-resource-management",
-        "pass": 213,
+        "pass": 214,
         "fail": 113,
-        "ce": 104,
+        "ce": 103,
         "skip": 0,
         "total": 430,
         "pct": 50
@@ -4268,9 +4268,9 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4124,
-    "fail": 1219,
-    "ce": 102,
+    "pass": 4128,
+    "fail": 1216,
+    "ce": 101,
     "skip": 0,
     "total": 5445,
     "pct": 76

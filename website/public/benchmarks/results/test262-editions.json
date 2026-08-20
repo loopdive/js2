@@ -49,8 +49,8 @@
   {
     "edition": "ES2015",
     "pass": 9106,
-    "fail": 2492,
-    "ce": 105,
+    "fail": 2494,
+    "ce": 103,
     "skip": 1,
     "total": 11704,
     "pct": 78,
@@ -808,8 +808,8 @@
   },
   {
     "edition": "ES2017",
-    "pass": 498,
-    "fail": 189,
+    "pass": 499,
+    "fail": 188,
     "ce": 3,
     "skip": 0,
     "total": 690,
@@ -826,17 +826,17 @@
       },
       {
         "name": "SharedArrayBuffer",
-        "pass": 128,
-        "fail": 116,
+        "pass": 129,
+        "fail": 115,
         "ce": 1,
         "skip": 0,
         "total": 245,
-        "pct": 52
+        "pct": 53
       },
       {
         "name": "Atomics",
-        "pass": 108,
-        "fail": 101,
+        "pass": 109,
+        "fail": 100,
         "ce": 0,
         "skip": 0,
         "total": 209,
@@ -844,12 +844,12 @@
       },
       {
         "name": "TypedArray",
-        "pass": 85,
-        "fail": 107,
+        "pass": 86,
+        "fail": 106,
         "ce": 0,
         "skip": 0,
         "total": 192,
-        "pct": 44
+        "pct": 45
       },
       {
         "name": "default-parameters",
@@ -862,21 +862,21 @@
       },
       {
         "name": "Symbol",
-        "pass": 36,
-        "fail": 21,
+        "pass": 37,
+        "fail": 20,
         "ce": 0,
         "skip": 0,
         "total": 57,
-        "pct": 63
+        "pct": 65
       },
       {
         "name": "ArrayBuffer",
-        "pass": 50,
-        "fail": 6,
+        "pass": 51,
+        "fail": 5,
         "ce": 0,
         "skip": 0,
         "total": 56,
-        "pct": 89
+        "pct": 91
       },
       {
         "name": "arrow-function",
@@ -889,12 +889,12 @@
       },
       {
         "name": "DataView",
-        "pass": 27,
-        "fail": 5,
+        "pass": 28,
+        "fail": 4,
         "ce": 0,
         "skip": 0,
         "total": 32,
-        "pct": 84
+        "pct": 88
       },
       {
         "name": "class",
@@ -3754,8 +3754,8 @@
   {
     "edition": "ES2027",
     "pass": 349,
-    "fail": 534,
-    "ce": 14,
+    "fail": 535,
+    "ce": 13,
     "skip": 0,
     "total": 897,
     "pct": 39,
@@ -3763,8 +3763,8 @@
       {
         "name": "explicit-resource-management",
         "pass": 246,
-        "fail": 171,
-        "ce": 13,
+        "fail": 172,
+        "ce": 12,
         "skip": 0,
         "total": 430,
         "pct": 57
