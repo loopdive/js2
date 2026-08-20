@@ -3895,6 +3895,16 @@ export interface CodegenContext {
       ctorFuncName: string;
       /** Exact leading-capture ABI used when the synthesized constructor was minted. */
       captureLayout: import("../fnctor-constructor-identity.js").FnctorCaptureLayout;
+      /**
+       * (#2071) The synthesized ctor was minted with an EXTERNREF result (its
+       * body may `return` a foreign object, so §10.2.1.3 step 13 is resolved
+       * at runtime via `emitConstructReturnSelect`). Every `new` site of this
+       * fnctor — builder and cache-hit alike — must report the externref
+       * result type; reporting the struct type against a widened ctor is a
+       * Wasm type error at the call site. Standalone/WASI only; absent/false
+       * keeps the historical `(ref $Struct)` ABI byte-identically.
+       */
+      resultIsExtern?: boolean;
     }
   >;
   /**

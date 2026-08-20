@@ -14,6 +14,9 @@ language_feature: classes
 goal: core-semantics
 related: [2018, 2026]
 origin: "2026-06-11 follow-up from #2018 fix (PR loopdive#1326): foreign-object override out of scope there"
+loc-budget-allow:
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/context/types.ts
 ---
 
 # #2071 — `constructor() { return { x: 99 } as any; }` falls back to `this`

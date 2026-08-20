@@ -1314,6 +1314,52 @@ function compileFnctorNewAsObject(ctx: CodegenContext, fctx: FunctionContext, fn
  * rule; the flush repairs the just-emitted ctor-call index if the import
  * insertion shifted defined functions).
  */
+/**
+ * (#2071) May this constructor body's `return` hand back a FOREIGN object —
+ * i.e. anything §10.2.1.3 step 13 would prefer over the freshly-created
+ * receiver? Purely syntactic and deliberately conservative: any `return`
+ * operand that is not OBVIOUSLY primitive / `this` counts, because the cost of
+ * a false positive is one widened ctor ABI (extra runtime select), while a
+ * false negative silently drops the spec override. Nested function bodies are
+ * skipped — their `return`s belong to them.
+ *
+ * Must answer identically every time it sees the same declaration: the builder
+ * uses it to mint the ctor ABI and the cache carries the answer to every later
+ * `new` site, so a flapping answer here would be a call-site type error.
+ */
+function fnctorBodyMayReturnForeignObject(funcDecl: ts.FunctionDeclaration): boolean {
+  if (!funcDecl.body) return false;
+  let found = false;
+  const obviouslyNonForeign = (e: ts.Expression): boolean => {
+    let x: ts.Expression = e;
+    while (ts.isParenthesizedExpression(x) || ts.isAsExpression(x) || ts.isNonNullExpression(x)) x = x.expression;
+    if (x.kind === ts.SyntaxKind.ThisKeyword) return true;
+    if (ts.isNumericLiteral(x) || ts.isStringLiteral(x) || ts.isNoSubstitutionTemplateLiteral(x)) return true;
+    if (
+      x.kind === ts.SyntaxKind.TrueKeyword ||
+      x.kind === ts.SyntaxKind.FalseKeyword ||
+      x.kind === ts.SyntaxKind.NullKeyword
+    ) {
+      return true;
+    }
+    if (ts.isIdentifier(x) && x.text === "undefined") return true;
+    if (ts.isVoidExpression(x) || ts.isTypeOfExpression(x)) return true;
+    if (ts.isPrefixUnaryExpression(x)) return true; // +v / -v / !v / ~v — always primitive
+    return false;
+  };
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (n !== funcDecl && ts.isFunctionLike(n)) return;
+    if (ts.isReturnStatement(n) && n.expression && !obviouslyNonForeign(n.expression)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(funcDecl.body);
+  return found;
+}
+
 function emitCallSiteFnctorRegistration(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1530,21 +1576,28 @@ function compileNewFunctionDeclaration(
   const ctorParams = fnctorConstructorParams(ctx, userCtorParams, captureLayout.allParamTypes);
 
   const ctorName = `${structName}_new`;
-  // (#4464 — DELIBERATELY NOT WIDENED) Making this result an externref, so an
-  // object-returning body could hand its object back (§10.2.1.3 step 13), does
-  // not fix `S13.2.2_A7_T1`/`_A8_T1/T2`/`_A15_T1..T4`, because the blocker is
-  // one level UP: a property read on the `new` site's value is typed from the
-  // CHECKER's constructor-instance type, not from what the body returned. The
-  // scoped sweep shows exactly that signature — `__obj.prop` answers `1`,
-  // `null` or `NaN` where the string `"A"` was written to a plain object, i.e.
-  // the read resolves against the struct slot's static type rather than the
-  // returned object. Handing back an arbitrary object therefore requires
-  // re-typing every read at the call site: the #3976 class-object conversion's
-  // territory, not this constructor's. See this issue's `## Residuals`.
-  // (An earlier WIP pass on this branch reports having built and reverted the
-  // widening; that run is not reproduced here — the sweep signature above is
-  // the evidence this comment stands on.)
-  const ctorResults: ValType[] = [{ kind: "ref", typeIdx: structTypeIdx }];
+  // (#2071, revisits the #4464 "deliberately not widened" decision) When the
+  // body can `return` a FOREIGN object, the ctor result is widened to
+  // externref and §10.2.1.3 step 13 is resolved at runtime by the same
+  // `emitConstructReturnSelect` probe the `new function(){…}` lowering uses
+  // (`constructThisExternLocal` regime in statements/control-flow.ts).
+  //
+  // #4464's blocker — "a property read on the `new` site's value is typed
+  // from the CHECKER's constructor-instance type" — was re-probed on current
+  // main before this widening: the DYNAMIC member path now resolves BOTH a
+  // struct-backed fnctor-instance prop AND a plain-`$Object` prop correctly
+  // (laundered-read probes, 2/2 pass), so an externref-flowing result reads
+  // right for the normal instance and the override alike. A site whose
+  // binding is statically struct-typed coerces the externref back with a
+  // guarded cast: unchanged for genuine instances, and a foreign override
+  // reaching such a site was spec-divergent under the old ABI too.
+  //
+  // Predicate-gated (body must actually carry a possibly-foreign `return`)
+  // and standalone/WASI-gated, so every other ctor keeps the historical
+  // `(ref $Struct)` ABI byte-identically — including the host lane, whose
+  // #1712 call-site registration tees the result into a struct-typed temp.
+  const resultIsExtern = (ctx.standalone || ctx.wasi) && fnctorBodyMayReturnForeignObject(funcDecl);
+  const ctorResults: ValType[] = resultIsExtern ? [{ kind: "externref" }] : [{ kind: "ref", typeIdx: structTypeIdx }];
   const ctorTypeIdx = addFuncType(ctx, ctorParams, ctorResults, `${ctorName}_type`);
   const ctorFuncIdx = mintDefinedFunc(ctx);
   ctx.funcMap.set(classMemberFuncKey(ctx, ctorName), ctorFuncIdx); // (#1983) collision-free key
@@ -1563,6 +1616,7 @@ function compileNewFunctionDeclaration(
     structTypeIdx,
     ctorFuncName: ctorName,
     captureLayout,
+    resultIsExtern,
   });
 
   // 4. Compile the constructor body
@@ -1649,6 +1703,23 @@ function compileNewFunctionDeclaration(
   // Bind `this` to the struct
   ctorFctx.localMap.set("this", selfLocal);
 
+  // (#2071) Widened regime: mirror the receiver into an externref local and
+  // hand it to the `constructThisExternLocal` return arm, which compiles every
+  // `return` operand as externref and runs the §10.2.1.3 step-13 runtime
+  // select (`emitConstructReturnSelect`) — Object/function operands override,
+  // everything else yields the receiver. The mirror is set BEFORE the user
+  // body compiles so the first `return` already sees it.
+  let selfExternLocal: number | undefined;
+  if (resultIsExtern) {
+    selfExternLocal = allocLocal(ctorFctx, "__self_extern", { kind: "externref" });
+    ctorFctx.body.push(
+      { op: "local.get", index: selfLocal },
+      { op: "extern.convert_any" },
+      { op: "local.set", index: selfExternLocal },
+    );
+    ctorFctx.constructThisExternLocal = selfExternLocal;
+  }
+
   // (#1712) Register the instance → constructor-closure link with the JS
   // host so instance property misses resolve through the closure's vivified
   // `.prototype` object (acorn's `Parser.prototype.m = fn; new Parser().m()`
@@ -1703,8 +1774,13 @@ function compileNewFunctionDeclaration(
   // vivified prototype.
 
   // Return the constructed receiver (as externref when the body's `return`s
-  // widened the result — #4464).
-  ctorFctx.body.push({ op: "local.get", index: selfLocal });
+  // widened the result — #4464/#2071: the implicit fall-off-the-end result is
+  // always the receiver; only explicit `return <object>` overrides).
+  if (selfExternLocal !== undefined) {
+    ctorFctx.body.push({ op: "local.get", index: selfExternLocal });
+  } else {
+    ctorFctx.body.push({ op: "local.get", index: selfLocal });
+  }
 
   // 5. Emit the call to the constructor at the call site
   const args = expr.arguments ?? [];
@@ -1722,9 +1798,11 @@ function compileNewFunctionDeclaration(
   fctx.body.push({ op: "call", funcIdx: finalCtorIdx });
   // (#3138) Function-scope fnctor: link instance → ctor closure at the call
   // site (the ctor prologue can't — no module global to read). No-op for
-  // module-global fnctors / standalone / non-closure slots.
+  // module-global fnctors / standalone / non-closure slots — and the widened
+  // (#2071) regime is standalone-only, so the struct-typed tee inside the
+  // registration never meets an externref result.
   emitCallSiteFnctorRegistration(ctx, fctx, funcName, structTypeIdx);
-  return { kind: "ref", typeIdx: structTypeIdx };
+  return resultIsExtern ? { kind: "externref" } : { kind: "ref", typeIdx: structTypeIdx };
 }
 
 /**
@@ -3844,7 +3922,10 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         emitFnctorConstructorArguments(ctx, fctx, cachedFnCtor.captureLayout, expr.expression, args, paramTypes);
         maybeSetArgcForKnownCall(ctx, fctx, cachedFnCtor.ctorFuncName, args.length, paramTypes?.length ?? args.length);
         fctx.body.push({ op: "call", funcIdx: ctorFuncIdx });
-        return { kind: "ref", typeIdx: cachedFnCtor.structTypeIdx };
+        // (#2071) A widened ctor returns externref — report it, never the struct.
+        return cachedFnCtor.resultIsExtern
+          ? { kind: "externref" }
+          : { kind: "ref", typeIdx: cachedFnCtor.structTypeIdx };
       }
     } else {
       // Build the constructor from the resolved constructor function's
@@ -3913,7 +3994,10 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         // (#3138) Function-scope fnctor: call-site instance→ctor link (the
         // cached arm bypasses compileNewFunctionDeclaration's emission).
         emitCallSiteFnctorRegistration(ctx, fctx, fnName, cachedFnCtor.structTypeIdx);
-        return { kind: "ref", typeIdx: cachedFnCtor.structTypeIdx };
+        // (#2071) A widened ctor returns externref — report it, never the struct.
+        return cachedFnCtor.resultIsExtern
+          ? { kind: "externref" }
+          : { kind: "ref", typeIdx: cachedFnCtor.structTypeIdx };
       }
     }
     // Resolve via type checker to find the function declaration
