@@ -529,6 +529,7 @@ import {
   collectEnumDeclarations,
 } from "./extern-declarations.js"; // (#3272) extracted verbatim
 import { buildLibDeclIndex } from "./lib-decl-index.js"; // (#4218) syntactic lib walk
+import { fnctorBodyMayReturnForeignObject } from "./fnctor-foreign-return.js"; // (#2071)
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
@@ -9583,7 +9584,22 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // closed representation.
     const approvedStandaloneFnctor =
       ctx.standalone && sym?.name !== undefined && ctx.fnctorEscapeGate?.approvedNames.has(sym.name) === true;
-    if ((!ctx.standalone && !ctx.wasi) || approvedStandaloneFnctor) {
+    // (#2071) A constructor whose body may `return` a FOREIGN object makes the
+    // checker's instance-shape inference UNSOUND: the constructed value may be
+    // an arbitrary object (§10.2.1.3 step 13), so a closed struct shape — and
+    // every member coercion derived from it — can misread the override
+    // (measured: `obj.prop` holding "A" answered ToNumber("A") = NaN through
+    // the inferred `prop: number`). Such instances degrade to externref and
+    // flow dynamically end to end, the same representation the escape-gate arm
+    // below already uses. Must answer in lockstep with the ctor-ABI widening
+    // in compileNewFunctionDeclaration — both read the same pure-AST predicate.
+    const fnDeclForForeign = sym?.valueDeclaration;
+    const foreignReturnFnctor =
+      (ctx.standalone || ctx.wasi) &&
+      fnDeclForForeign !== undefined &&
+      ts.isFunctionDeclaration(fnDeclForForeign) &&
+      fnctorBodyMayReturnForeignObject(fnDeclForForeign);
+    if ((!ctx.standalone && !ctx.wasi) || approvedStandaloneFnctor || foreignReturnFnctor) {
       const fnDecl = sym?.valueDeclaration;
       const isFnCtorType =
         (sym?.name !== undefined && ctx.funcConstructorMap.has(sym.name)) ||
@@ -9595,6 +9611,15 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       // itself callable) — the function VALUE type (callable) must keep its
       // closure-wrapper resolution.
       if (isFnCtorType && tsType.getCallSignatures().length === 0) {
+        // (#2071) Foreign-return-capable: always dynamic, never the reserved
+        // struct — the value at runtime may not BE that struct. This WINS over
+        // escape-gate approval: approval says the struct layout is stable, not
+        // that `new F()` yields it — with an approved foreign-return ctor the
+        // struct-typed binding guard-cast the overriding $Object to null and
+        // every read answered undefined (measured, S13.2.2_A15_T1 shape).
+        if (foreignReturnFnctor && (ctx.standalone || ctx.wasi)) {
+          return { kind: "externref" };
+        }
         // (#4155 Phase 1) Opt-in: map onto the ALREADY-RESERVED runtime struct.
         return resolveFnctorInstanceType(ctx, sym?.name) ?? { kind: "externref" };
       }

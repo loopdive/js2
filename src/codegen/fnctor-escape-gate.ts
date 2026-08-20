@@ -49,6 +49,7 @@ import { appendFnctorInternalFields } from "./fnctor-identity-fields.js";
 import { type AllocLabelResult, analyzeFnctorAllocLabels, fnctorLayoutsEnabled } from "./fnctor-alloc-labels.js"; // (#3927) per-type layout plan
 import { analyzeStableArrayPrototypeNames } from "./fnctor-array-prototype-analysis.js";
 import { applyColdTailSplit } from "./fnctor-cold-tail.js";
+import { fnctorBodyMayReturnForeignObject } from "./fnctor-foreign-return.js"; // (#2071)
 import { applyFnctorLayoutSplit, fnctorLayoutEmitEnabled } from "./fnctor-layout-emit.js"; // (#3927) per-type layout EMISSION
 import { recordFnctorFieldProvenance } from "./fnctor-field-provenance.js";
 import { fnctorFieldNumericWriteViolation, inferFnctorFieldTypeFromCtorParam } from "./fnctor-ctor-param-types.js";
@@ -1287,6 +1288,15 @@ function buildReceiverStructMap(
       let ctorSym = resolveFnctorSymbol(checker, expr.expression);
       if (!ctorSym && expr.expression.kind === ts.SyntaxKind.ThisKeyword) {
         ctorSym = resolveEnclosingFnctorOwner(checker, expr)?.sym;
+      }
+      // (#2071) `new F()` does NOT prove an F-struct when F's body may return
+      // a foreign object (§10.2.1.3 step 13 substitutes it) — a pin here
+      // narrows the read result to the struct's field type and misreads the
+      // override (ToNumber("A") = NaN). Same predicate as the ctor-ABI
+      // widening, so pin and ABI can never disagree.
+      const ctorDecl = ctorSym?.valueDeclaration;
+      if (ctorDecl !== undefined && ts.isFunctionDeclaration(ctorDecl) && fnctorBodyMayReturnForeignObject(ctorDecl)) {
+        return undefined;
       }
       return ctorSym ? `__fnctor_${ctorSym.name}` : undefined;
     }

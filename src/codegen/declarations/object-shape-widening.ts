@@ -14,6 +14,7 @@ import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { FieldDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { createDeclaredNestedWriteClassifier } from "./declared-nested-write.js";
+import { fnctorBodyMayReturnForeignObject } from "../fnctor-foreign-return.js"; // (#2071)
 import {
   bindingHasIrPlannedOpenWithTarget,
   bindingUsesOnlyIrPlannedOpenObjectOperations,
@@ -215,11 +216,73 @@ export function collectDynamicObjectReturnCarrierTypes(
  * This runs *before* collectDeclarations so the struct type is correct from
  * the start.
  */
+/**
+ * (#2071) Function declarations that are (a) constructed with `new` somewhere
+ * in this file and (b) foreign-return-capable (§10.2.1.3 step 13 may hand
+ * their `return obj` to the construct consumer). A `var X = {}` returned from
+ * such a body ESCAPES as the construct result and is read dynamically by
+ * consumers that know nothing of its evolved shape — a widened closed struct
+ * is invisible to them (measured: `__obj.prop` answered undefined).
+ */
+function computeForeignReturnCtors(checker: ts.TypeChecker, sourceFile: ts.SourceFile): Set<ts.FunctionDeclaration> {
+  const ctors = new Set<ts.FunctionDeclaration>();
+  const newTargets = new Set<ts.Symbol>();
+  const scanNew = (n: ts.Node): void => {
+    if (ts.isNewExpression(n)) {
+      const sym = checker.getSymbolAtLocation(n.expression);
+      if (sym) newTargets.add(sym);
+    }
+    forEachChild(n, scanNew);
+  };
+  scanNew(sourceFile);
+  const scanFns = (n: ts.Node): void => {
+    if (ts.isFunctionDeclaration(n) && n.name) {
+      const sym = checker.getSymbolAtLocation(n.name);
+      if (sym && newTargets.has(sym) && fnctorBodyMayReturnForeignObject(n)) ctors.add(n);
+    }
+    forEachChild(n, scanFns);
+  };
+  scanFns(sourceFile);
+  return ctors;
+}
+
+/**
+ * (#2071) Is `decl` (a `var X = {}`) declared inside one of the
+ * `foreignReturnCtors` bodies AND returned by it? Only a RETURNED local
+ * escapes as the construct result; an unreturned one keeps its widened fast
+ * path.
+ */
+function varEscapesViaForeignReturnCtor(
+  foreignReturnCtors: Set<ts.FunctionDeclaration>,
+  decl: ts.VariableDeclaration,
+  varName: string,
+): boolean {
+  if (foreignReturnCtors.size === 0) return false;
+  let fn: ts.Node | undefined = decl.parent;
+  while (fn !== undefined && !ts.isFunctionLike(fn)) fn = fn.parent;
+  if (fn === undefined || !ts.isFunctionDeclaration(fn) || !foreignReturnCtors.has(fn)) return false;
+  let returned = false;
+  const scanReturns = (n: ts.Node): void => {
+    if (returned) return;
+    if (n !== fn && ts.isFunctionLike(n)) return;
+    if (ts.isReturnStatement(n) && n.expression) {
+      let e: ts.Expression = n.expression;
+      while (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e)) e = e.expression;
+      if (ts.isIdentifier(e) && e.text === varName) returned = true;
+    }
+    forEachChild(n, scanReturns);
+  };
+  scanReturns(fn.body!);
+  return returned;
+}
+
 export function collectEmptyObjectWidening(
   ctx: CodegenContext,
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
 ): void {
+  // (#2071) Lazily computed: most files have no foreign-return constructor.
+  let foreignReturnCtors: Set<ts.FunctionDeclaration> | undefined;
   // Scan all statements (top-level and inside function bodies)
   function scanStatements(stmts: readonly ts.Statement[]): void {
     for (const stmt of stmts) {
@@ -266,6 +329,16 @@ export function collectEmptyObjectWidening(
           // hold: the #2849 host arms pass AND compiled-acorn parses.
           for (const s of stmts) {
             markObjectHashConsumers(s, varName, ctx.objectHashConsumerVars);
+          }
+
+          // (#2071) Returned from a foreign-return-capable constructor → the
+          // literal escapes as the construct result; keep it an open `$Object`
+          // (see varEscapesViaForeignReturnCtor above).
+          if ((ctx.standalone || ctx.wasi) && !ctx.objectHashConsumerVars.has(varName)) {
+            foreignReturnCtors ??= computeForeignReturnCtors(checker, sourceFile);
+            if (varEscapesViaForeignReturnCtor(foreignReturnCtors, decl, varName)) {
+              ctx.objectHashConsumerVars.add(varName);
+            }
           }
 
           // (#2992 S4, standalone) `delete varName.prop` / `delete varName[k]`

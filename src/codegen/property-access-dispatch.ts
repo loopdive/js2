@@ -127,6 +127,7 @@ import {
 } from "./shared.js";
 import { tryEmitJsonParsePropertyAccess } from "./json-standalone.js";
 import { resolveReceiverStruct } from "./fnctor-escape-gate.js";
+import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#2071)
 import { findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split
 import { findFnctorLayoutStructsForField, findFnctorResidStructsForField } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts — vote seam
 import { tryCompileTemporalPropertyAccess } from "./temporal-native.js";
@@ -3873,11 +3874,22 @@ export function finalizeStructAndDynamicMemberGet(
   // (e.g., properties on Object, {}, undefined, or dynamically-typed values).
   // Determine the expected result type from the TS checker at the access site.
   const accessType = ctx.checker.getTypeAtLocation(expr);
-  const accessWasm = symbolBrand(accessType, widenBooleanDynamicAccess(accessType, resolveWasmType(ctx, accessType)));
+  // (#2071) A foreign-return-capable fnctor instance has no trustworthy static
+  // shape (§10.2.1.3 step 13 may substitute an arbitrary object), so the
+  // member's checker type may not narrow the dynamic read — an f64 access type
+  // here would drag an overriding object's "A" through __unbox_number to NaN.
+  // The receiver already resolves externref (resolveWasmType degrade); this
+  // keeps the RESULT representation equally honest.
+  const foreignReturnReceiver = (ctx.standalone || ctx.wasi) && typeIsForeignReturnFnctorInstance(objType);
+  const accessWasm: ValType = foreignReturnReceiver
+    ? { kind: "externref" }
+    : symbolBrand(accessType, widenBooleanDynamicAccess(accessType, resolveWasmType(ctx, accessType)));
 
   // For struct types with the property, try to compile the object and do struct.get
   // but NEVER for class struct types — their fields are fixed at collection time
-  if (typeName && !ctx.classSet.has(typeName)) {
+  // — and never for a foreign-return fnctor instance (#2071): its checker shape
+  // may not describe the runtime value at all, so no field auto-registration.
+  if (typeName && !ctx.classSet.has(typeName) && !foreignReturnReceiver) {
     // typeName was already resolved above but field was not found;
     // try auto-registering the property from the TS type
     const props = objType.getProperties?.();
@@ -3976,7 +3988,10 @@ export function finalizeStructAndDynamicMemberGet(
       // NaN. The dispatch may still use its struct fast arms; only its result
       // representation stays honest.
       const preserveDynamicResultCarrier =
-        ts.isIdentifier(expr.expression) && ctx.externrefAccessorVars.has(expr.expression.text);
+        (ts.isIdentifier(expr.expression) && ctx.externrefAccessorVars.has(expr.expression.text)) ||
+        // (#2071) same honesty rule for a foreign-return fnctor instance: a
+        // same-named struct field's f64 vote must not re-narrow the read.
+        foreignReturnReceiver;
       const getIdx = ensureLateImport(
         ctx,
         "__extern_get",

@@ -23,6 +23,7 @@ import {
 import { tryNonConstructableNewTarget } from "./new-non-constructable-value.js"; // (#4246)
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
+import { fnctorBodyMayReturnForeignObject } from "../fnctor-foreign-return.js"; // (#2071)
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import {
   addFuncType,
@@ -1314,52 +1315,6 @@ function compileFnctorNewAsObject(ctx: CodegenContext, fctx: FunctionContext, fn
  * rule; the flush repairs the just-emitted ctor-call index if the import
  * insertion shifted defined functions).
  */
-/**
- * (#2071) May this constructor body's `return` hand back a FOREIGN object —
- * i.e. anything §10.2.1.3 step 13 would prefer over the freshly-created
- * receiver? Purely syntactic and deliberately conservative: any `return`
- * operand that is not OBVIOUSLY primitive / `this` counts, because the cost of
- * a false positive is one widened ctor ABI (extra runtime select), while a
- * false negative silently drops the spec override. Nested function bodies are
- * skipped — their `return`s belong to them.
- *
- * Must answer identically every time it sees the same declaration: the builder
- * uses it to mint the ctor ABI and the cache carries the answer to every later
- * `new` site, so a flapping answer here would be a call-site type error.
- */
-function fnctorBodyMayReturnForeignObject(funcDecl: ts.FunctionDeclaration): boolean {
-  if (!funcDecl.body) return false;
-  let found = false;
-  const obviouslyNonForeign = (e: ts.Expression): boolean => {
-    let x: ts.Expression = e;
-    while (ts.isParenthesizedExpression(x) || ts.isAsExpression(x) || ts.isNonNullExpression(x)) x = x.expression;
-    if (x.kind === ts.SyntaxKind.ThisKeyword) return true;
-    if (ts.isNumericLiteral(x) || ts.isStringLiteral(x) || ts.isNoSubstitutionTemplateLiteral(x)) return true;
-    if (
-      x.kind === ts.SyntaxKind.TrueKeyword ||
-      x.kind === ts.SyntaxKind.FalseKeyword ||
-      x.kind === ts.SyntaxKind.NullKeyword
-    ) {
-      return true;
-    }
-    if (ts.isIdentifier(x) && x.text === "undefined") return true;
-    if (ts.isVoidExpression(x) || ts.isTypeOfExpression(x)) return true;
-    if (ts.isPrefixUnaryExpression(x)) return true; // +v / -v / !v / ~v — always primitive
-    return false;
-  };
-  const visit = (n: ts.Node): void => {
-    if (found) return;
-    if (n !== funcDecl && ts.isFunctionLike(n)) return;
-    if (ts.isReturnStatement(n) && n.expression && !obviouslyNonForeign(n.expression)) {
-      found = true;
-      return;
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(funcDecl.body);
-  return found;
-}
-
 function emitCallSiteFnctorRegistration(
   ctx: CodegenContext,
   fctx: FunctionContext,

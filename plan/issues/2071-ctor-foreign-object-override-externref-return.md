@@ -17,6 +17,18 @@ origin: "2026-06-11 follow-up from #2018 fix (PR loopdive#1326): foreign-object 
 loc-budget-allow:
   - src/codegen/expressions/new-super.ts
   - src/codegen/context/types.ts
+  - src/codegen/declarations/object-shape-widening.ts
+  - src/codegen/index.ts
+  - src/codegen/typed-this.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/fnctor-escape-gate.ts
+func-budget-allow:
+  - src/codegen/declarations/object-shape-widening.ts::scanStatements
+  - src/codegen/declarations/object-shape-widening.ts::collectEmptyObjectWidening
+  - src/codegen/expressions/new-super.ts::compileNewFunctionDeclaration
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/index.ts::resolveWasmType
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
 ---
 
 # #2071 — `constructor() { return { x: 99 } as any; }` falls back to `this`
@@ -60,3 +72,41 @@ silent `this`.
 #2018 (PR #1326) explicitly documents this as out-of-scope follow-up;
 #2026 (class-as-value) is the adjacent ABI family. No existing issue
 covers ctor object-override representation.
+
+## Progress (2026-08-20, function-declaration slice)
+
+The FUNCTION-DECLARATION fnctor slice is implemented and verified in the
+standalone lane (17 bespoke probes + `S13.2.2_A15_T1` all pass; the fnctor
+suites' 6 failures are IDENTICAL at the pre-change merge-base — measured via
+file-copy A/B, zero regressions added). Five cooperating pieces, all keyed on
+ONE pure-AST predicate (`fnctorBodyMayReturnForeignObject`,
+`src/codegen/fnctor-foreign-return.ts`) so ABI, typing, and proof can never
+disagree:
+
+1. **Ctor ABI widening** (new-super.ts): externref result + extern self
+   mirror + `emitConstructReturnSelect` runtime probe (§10.2.1.3 step 13).
+2. **Instance-type degrade** (index.ts `resolveWasmType`): foreign-return
+   fnctor INSTANCE types resolve externref — and this now WINS over
+   escape-gate approval. Approval says the struct layout is stable, not that
+   `new F()` yields it: the approved-struct-typed binding guard-cast the
+   overriding `$Object` to null (measured: every read `undefined`).
+3. **Receiver-proof exclusions** (typed-this.ts seeding; fnctor-escape-gate.ts
+   `buildReceiverStructMap` `new F()` pin): `new F()` proves NO struct when F
+   may return foreign — the proven/pinned fast paths' field-typed narrowing
+   turned an overriding `"A"` into ToNumber("A")=NaN.
+4. **Member-read honesty** (property-access-dispatch.ts): with a foreign
+   receiver, the access's checker type may not narrow the dynamic read
+   (accessWasm → externref), same-name struct-field votes may not re-narrow
+   (`preserveDynamicResultCarrier`), and no field auto-registration.
+5. **Escaping-literal representation** (object-shape-widening.ts): a
+   `var X = {}` RETURNED from a new'd foreign-return ctor is poisoned onto the
+   open `$Object` (existing #2584/#2944 machinery), so consumers' dynamic
+   reads find its properties (closed widened structs were invisible to
+   `__extern_get` when the ladder compiled before registration).
+
+**Remaining (same family, separate slices):** `S13.2.2_A15_T3` (function
+EXPRESSION ctor — predicate/consumers only cover FunctionDeclaration),
+`A15_T2`/`A15_T4` (foreign object assigned to an OUTER/implicit global inside
+the ctor — the widening scan only covers `var X = {}` declarations).
+`A12`/`A11` are different defects (union-typed field write; missing
+`this.func` TypeError) — not this issue.
