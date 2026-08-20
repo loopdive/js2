@@ -601,6 +601,13 @@ export interface FunctionContext {
   /** Bindings widened because their assignments cross representation domains.
    * Reads keep the boxed carrier; concrete consumers perform coercion at use. */
   mixedAssignmentCarrierVars?: Set<string>;
+  /**
+   * Callback captures whose ABI deliberately remains externref.  Their
+   * checker type may be a concrete array/object, but the value crossed a host
+   * callback boundary and must stay dynamically dispatched rather than being
+   * narrowed to a WasmGC ref that the host cannot reconstruct reliably.
+   */
+  captureExternrefNames?: Set<string>;
   /** Return type */
   returnType: ValType | null; // null = void
   /** Accumulated body instructions */
@@ -613,6 +620,7 @@ export interface FunctionContext {
   continueStack: number[];
   /** Map from label name to break/continue stack indices for labeled break/continue */
   labelMap: Map<string, { breakIdx: number; continueIdx: number }>;
+  evalCompletionLocal?: number; // §13 eval completion register — statements/eval-completion-value.ts
   /** Depth for `return` inside generator body -- adjusted by loop/block nesting */
   generatorReturnDepth?: number;
   /** Map from variable name → ref cell info (for mutable closure captures) */
@@ -1068,7 +1076,7 @@ export interface FunctionContext {
    * Stack of catch rethrow info. Each entry tracks a catch variable name and the
    * current depth (number of block-like structures) from the catch boundary.
    */
-  catchRethrowStack?: { varName: string; depth: number }[];
+  catchRethrowStack?: { varName: string; depth: number; exnLocalIdx?: number }[];
   /**
    * Stack of pending finally blocks. When a return/break/continue exits a try
    * block that has a finally clause, the finally instructions must be inlined
@@ -1595,6 +1603,17 @@ export interface CodegenContext {
    */
   vecAccessorDescriptorDirty: boolean;
   /**
+   * (#4504) A descriptor that can affect inherited [[Set]] may exist in this
+   * module: an accessor, a non-writable data descriptor, an accessor
+   * declaration, or dynamically introduced code.  This is deliberately
+   * separate from `vecAccessorDescriptorDirty`: the latter protects typed vec
+   * value write-back and can stay clear for a provably data descriptor whose
+   * `writable` bit is false, while that descriptor is still load-bearing for
+   * the ordinary inherited-set decision.  Clear keeps the resolver and its
+   * result channel out of flag-clear modules.
+   */
+  inheritedSetDescriptorDirty: boolean;
+  /**
    * (#4222) The module contains a `delete <elementAccess>`, so some array index
    * may be semantically ABSENT while its dense backing slot still holds a
    * value. `__delete_property`'s vec arm (#4010) records that as a
@@ -1656,6 +1675,14 @@ export interface CodegenContext {
    * decision lives in exactly one place.
    */
   emitHostBridge: boolean;
+  /**
+   * The exact standalone Promise-delay provider registered a timer callback
+   * that must re-enter Wasm after the general JS host bridge is stripped.
+   * Finalization publishes only the reserved zero-argument timer dispatcher.
+   */
+  requiresStandaloneTimerCallbackDispatch?: boolean;
+  /** Exact #4576 dom@1 import family was checker-certified for this module. */
+  requiresStandaloneDomCapability?: boolean;
   /**
    * (#2083) When true, `getOrRegisterVecType` does NOT flip `usesVecValue`.
    * Set only for the duration of the two pre-registration calls in
@@ -1907,6 +1934,12 @@ export interface CodegenContext {
   protoIndexStoreReserved?: boolean;
   /** (#4160) Set once `fillProtoIndexStore` has run (idempotency latch). */
   protoIndexStoreFilled?: boolean;
+  /** (#4504) Mutable result channel for one completed native [[Set]] attempt:
+   * 0 = unadmitted, 1 = success/handled, 2 = refused.  `Reflect.set` exposes
+   * it as a boolean while strict assignment distinguishes refusal from an
+   * unadmitted host boundary.  Undefined when the descriptor resolver is not
+   * emitted. */
+  externSetResultGlobalIdx?: number;
   /** (#4160) Global index of `__protoidx_obj_companion` (`(mut externref)`). */
   protoIndexObjCompanionGlobalIdx?: number;
   /** (#4160) Global index of `__protoidx_arr_companion` (`(mut externref)`). */

@@ -14,6 +14,7 @@ import {
 } from "../closures.js";
 import { installFrameTrap } from "../frame-trap.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
+import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
 import {
   provablyNonConstructableStatically,
   resolvesToAmbientGlobal,
@@ -1145,20 +1146,6 @@ export function inferArrayElementType(ctx: CodegenContext, expr: ts.NewExpressio
 }
 
 /**
- * Check if a node tree references the `arguments` identifier.
- * Skips nested function declarations and function expressions (which have
- * their own `arguments` binding), but traverses into arrow functions
- * because arrows inherit the enclosing function's `arguments`.
- */
-function usesArguments(node: ts.Node): boolean {
-  if (ts.isIdentifier(node) && node.text === "arguments") return true;
-  if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) {
-    return false;
-  }
-  return forEachChild(node, usesArguments) ?? false;
-}
-
-/**
  * Flatten call-site arguments, expanding spread elements on array literals
  * into individual expressions. Returns the flat list of expressions.
  * For spread on non-literal arrays, returns null (cannot flatten at compile time).
@@ -1766,7 +1753,7 @@ function compileNewFunctionExpression(
     return null;
   }
 
-  const needsArguments = usesArguments(body);
+  const needsArguments = needsImplicitArgumentsObject(funcExpr);
 
   // (#4464) §10.2.1.3 steps 1-5: `new <FunctionExpression>(…)` creates an
   // ordinary object, calls the body with it as `this`, and yields it (unless

@@ -140,7 +140,7 @@ function producesOneExternref(ctx: CodegenContext, fn: WasmFunction, instr: Inst
   if ((a.op === "local.get" || a.op === "local.tee") && a.index !== undefined) {
     return localTypeOf(ctx, fn, a.index)?.kind === "externref";
   }
-  if ((a.op === "if" || a.op === "block") && a.blockType?.kind === "val") {
+  if ((a.op === "if" || a.op === "block" || a.op === "try_table") && a.blockType?.kind === "val") {
     return a.blockType.type?.kind === "externref";
   }
   return false;

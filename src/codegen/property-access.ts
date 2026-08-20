@@ -212,6 +212,7 @@ import {
   elementAccessTypedArrayName,
   emitNonIndexVecElementGet,
   nonArrayIndexNumericKey,
+  compileElementIndexI32,
 } from "./array-nonindex-key.js"; // (#4247)
 // (#3267) Re-export the moved symbols other modules import from property-access.js
 // so their `from "./property-access.js"` imports keep resolving unchanged.
@@ -4765,10 +4766,6 @@ function isArgumentsRootedExpression(fctx: FunctionContext, node: ts.Expression)
 }
 
 /** Inner element access logic — assumes objType is on the stack and non-null */
-function compileI32ElementIndex(ctx: CodegenContext, fctx: FunctionContext, expression: ts.Expression): void {
-  if (!tryEmitStaticI32Expression(ctx, fctx, expression)) compileExpression(ctx, fctx, expression, { kind: "i32" });
-}
-
 export function compileElementAccessBody(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -5655,7 +5652,7 @@ export function compileElementAccessBody(
     // Keep range-proven counted-loop index arithmetic in i32. Composite
     // expressions such as `i * N + k` otherwise compile through f64 and then
     // truncate back to i32 at every element read.
-    compileI32ElementIndex(ctx, fctx, expr.argumentExpression);
+    compileElementIndexI32(ctx, fctx, expr.argumentExpression);
     const valueType: ValType =
       arrDef.element.kind === "i8" || arrDef.element.kind === "i16" ? { kind: "i32" } : arrDef.element;
     if (isSafeBoundsEliminated(fctx, expr)) {
@@ -5775,7 +5772,7 @@ export function compileElementAccessBody(
   const f1BoxTypeArr = f1ElementBoxType(ctx, expr, typeDef.element);
   // Compile range-proven index arithmetic directly in i32; retain the generic
   // numeric conversion for every expression whose range is not proven.
-  compileI32ElementIndex(ctx, fctx, expr.argumentExpression);
+  compileElementIndexI32(ctx, fctx, expr.argumentExpression);
   const valueType: ValType =
     typeDef.element.kind === "i8" || typeDef.element.kind === "i16" ? { kind: "i32" } : typeDef.element;
 

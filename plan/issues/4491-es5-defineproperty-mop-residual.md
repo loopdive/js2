@@ -4,7 +4,7 @@ title: "ES5 standalone: Object.defineProperty/defineProperties/create residual (
 status: ready
 sprint: current
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-20
 assignee: claude/es6-standalone-session
 priority: high
 horizon: m
@@ -13,10 +13,18 @@ task_type: conformance
 area: codegen
 es_edition: es5
 goal: standalone-mode
-related: [4444, 3031, 4490]
+related: [4444, 3031, 4490, 4504]
 loc-budget-allow:
   - src/codegen/vec-overlay.ts
   - src/codegen/object-ops.ts
+  # 2026-08-19 mirror/vec descriptor slice: a compiled array crosses the
+  # externref boundary as a DETACHED __make_iterable mirror while
+  # Object.defineProperty gets the RAW vec, so every recorded attribute was
+  # invisible to reflective reads. The bulk went to two NEW subsystem modules
+  # (src/runtime/vec-descriptor-mirror.ts, src/runtime/builtin-proto-expando.ts)
+  # — +284 -> +134; the residual is call-site wiring that must live in the
+  # runtime barrel at the host-import boundary.
+  - src/runtime.ts
 func-budget-allow:
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
   - src/codegen/object-ops.ts::compilePropertyIntrospection
@@ -564,3 +572,37 @@ MOP; parked here so it is not re-triaged as one.
 
 `TEST262_TARGET=standalone TEST262_PATH_FILTER="built-ins/Object/defineProperty|built-ins/Object/defineProperties|built-ins/Object/create" pnpm run test:262`
 — baseline 90 non-pass. gc-lane control on the same filter. Equivalence guard.
+
+## 2026-08-19 re-census + dispatch
+
+Fresh standalone baseline (`test262-standalone-current.jsonl`, 48,735 entries,
+fetched 2026-08-19 04:52): standalone ES5 is **8,506 / 9,029 (94.2 %)** with
+**523 non-passes** (495 fail, 24 compile_error, 4 compile_timeout). Earlier
+figures in this file predate that and should be read as history.
+
+This issue's lane in the 2026-08-19 6-way fan-out: **100 rows — defineProperty 47 + defineProperties 15 + rest-of-Object 38**.
+Umbrella + full partition: #4163.
+
+The residue is a **long tail** — the largest single error signature across all
+523 rows is 13. Expect many small root causes, not one lever.
+
+Local gate for this lane: 551 locally-verified-passing standalone ES5 tests must
+stay at 551/551. Reproduce with the `--standalone` flag (without it you measure
+the JS-host lane, a different and much worse corpus at 84.8 %).
+
+**eval-rooted rows cannot be validated on the dev Mac** — CI's QuickJS eval tier
+needs clang-18 (see #4163 for the full toolchain finding); record them as
+blocked rather than chasing them.
+
+## 2026-08-20 routing correction — Date writable-data own visibility
+
+Fresh ES5 standalone triage for #4504 isolated
+`built-ins/Object/defineProperty/15.2.3.6-4-408.js` from the inherited-`[[Set]]`
+cohort. The write decision itself is already correct: a writable data descriptor
+on `Date.prototype` permits `dateObj.prop = 1002`, and the value reads back as
+`1002`. The failure is that direct/borrowed `hasOwnProperty` and `in` do not see
+the Date instance's created expando (the statically typed Date introspection path
+folds false), while the dynamic receiver path can observe it. This is a Date
+carrier own-storage/visibility and `compilePropertyIntrospection` convergence
+row, not a prototype-descriptor refusal row. #4504 explicitly excludes it from
+its nine-test denominator; retain it here for the next MOP/introspection slice.

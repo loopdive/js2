@@ -6,7 +6,7 @@
  */
 import { ts } from "../../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
-import { bodyUsesArguments } from "../helpers/body-uses-arguments.js";
+import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
 import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
 import { isStrictFunction, isSimpleParameterList } from "../helpers/is-strict-function.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
@@ -54,6 +54,7 @@ import {
 } from "../index.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "../async-frame.js"; // (#2865) nested async-gen producer
 import { ensureExnTag, nextModuleGlobalIdx } from "../registry/imports.js";
+import { buildTargetTaggedTry } from "../../ir/try-table.js";
 import {
   addFuncType,
   getArrTypeIdxFromVec,
@@ -920,7 +921,7 @@ function compileNestedFunctionDeclarationInScope(
   // Track nested functions that read `arguments` (#1053) so callers can
   // populate the __extras_argv global with runtime args beyond the
   // formal param count.
-  if (stmt.body && bodyUsesArguments(stmt.body)) {
+  if (needsImplicitArgumentsObject(stmt)) {
     ctx.funcUsesArguments.add(funcName);
   }
 
@@ -1026,7 +1027,7 @@ function compileNestedFunctionDeclarationInScope(
     // (#2743) Unmapped when strict OR the parameter list is non-simple
     // (rest/default/destructuring) — §10.2.11 FunctionDeclarationInstantiation
     // step 22.a.
-    if (stmt.body && (bodyUsesArguments(stmt.body) || reachesDirectEval)) {
+    if (needsImplicitArgumentsObject(stmt, reachesDirectEval)) {
       const unmapped =
         isStrictFunction(stmt, ctx.inferModuleStrictArguments) || !isSimpleParameterList(stmt.parameters);
       emitArgumentsObject(ctx, liftedFctx, paramTypes, 0, unmapped);
@@ -1098,13 +1099,15 @@ function compileNestedFunctionDeclarationInScope(
               { op: "local.set", index: pendingThrowLocal },
             ]
           : [];
-      liftedFctx.body.push({
-        op: "try",
-        blockType: { kind: "empty" },
-        body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
-        catches: [{ tagIdx, body: catchBody }],
-        catchAll: catchAllBody.length > 0 ? catchAllBody : undefined,
-      });
+      liftedFctx.body.push(
+        buildTargetTaggedTry(
+          ctx,
+          { kind: "empty" },
+          [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
+          [{ tagIdx, body: catchBody }],
+          catchAllBody.length > 0 ? catchAllBody : undefined,
+        ),
+      );
 
       // Return __create_generator or __create_async_generator depending on async flag
       const createGenName = isAsync ? "__create_async_generator" : "__create_generator";
@@ -1493,7 +1496,7 @@ function compileNestedFunctionDeclarationInScope(
     // Set up `arguments` object if the function body references it.
     // (#2743) Unmapped when strict OR the parameter list is non-simple
     // (rest/default/destructuring) — §10.2.11 step 22.a.
-    if (stmt.body && (bodyUsesArguments(stmt.body) || reachesDirectEval)) {
+    if (needsImplicitArgumentsObject(stmt, reachesDirectEval)) {
       const unmapped =
         isStrictFunction(stmt, ctx.inferModuleStrictArguments) || !isSimpleParameterList(stmt.parameters);
       emitArgumentsObject(ctx, liftedFctx, paramTypes, leadingParamCount, unmapped);
@@ -1570,13 +1573,15 @@ function compileNestedFunctionDeclarationInScope(
               { op: "local.set", index: pendingThrowLocal },
             ]
           : [];
-      liftedFctx.body.push({
-        op: "try",
-        blockType: { kind: "empty" },
-        body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
-        catches: [{ tagIdx, body: catchBody }],
-        catchAll: catchAllBody.length > 0 ? catchAllBody : undefined,
-      });
+      liftedFctx.body.push(
+        buildTargetTaggedTry(
+          ctx,
+          { kind: "empty" },
+          [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
+          [{ tagIdx, body: catchBody }],
+          catchAllBody.length > 0 ? catchAllBody : undefined,
+        ),
+      );
 
       // Return __create_generator or __create_async_generator depending on async flag
       const createGenName = isAsync ? "__create_async_generator" : "__create_generator";

@@ -119,13 +119,15 @@ function readImport(statement) {
   return { from, bindings, isChai: CHAI_SPECIFIERS.has(from), isImplementation: IMPLEMENTATION_PACKAGES.test(from) };
 }
 
-function classifyBody(fn, text, admitAll) {
+function classifyBody(fn, text, admitAll, supportedInfrastructure) {
   // STRUCTURAL — a `done`-callback test never resolves without a scheduler to
   // call it. `async` bodies ARE runnable: they compile to an async export and
   // are awaited on both sides.
   if (fn.parameters.length > 0) return "needs-done-callback";
   if (admitAll) return null;
-  for (const [pattern, reason] of INFRA_PATTERNS) if (pattern.test(text)) return reason;
+  for (const [pattern, reason] of INFRA_PATTERNS) {
+    if (!supportedInfrastructure.has(reason) && pattern.test(text)) return reason;
+  }
   return null;
 }
 
@@ -133,7 +135,7 @@ function classifyBody(fn, text, admitAll) {
  * @returns {{ files: Array<object>, tests: Array<object>, rejected: Array<object>,
  *             rejectionCounts: Record<string, number> }}
  */
-export function extractLitUpstreamTests({ root, testFiles, admitAll = true }) {
+export function extractLitUpstreamTests({ root, testFiles, admitAll = true, supportedInfrastructure = new Set() }) {
   const tests = [];
   const rejected = [];
   const files = [];
@@ -227,7 +229,7 @@ export function extractLitUpstreamTests({ root, testFiles, admitAll = true }) {
 
         const bodyText = fn.body.statements.map((statement) => statement.getText(sourceFile)).join("\n");
         const preludeText = [...localScope, ...localEach].join("\n");
-        const reason = classifyBody(fn, `${preludeText}\n${bodyText}`, admitAll);
+        const reason = classifyBody(fn, `${preludeText}\n${bodyText}`, admitAll, supportedInfrastructure);
         if (reason) {
           rejected.push({ ...record, reason });
           continue;

@@ -25,6 +25,7 @@ import { addStringConstantGlobal } from "./registry/imports.js"; // (#2025)
 import { stringConstantExternrefInstrs } from "./native-strings.js"; // (#2025)
 import { noJsHost } from "./expressions/helpers.js"; // (#2025)
 import { emitWasiErrorConstructor } from "./registry/error-types.js"; // (#2025)
+import { widenClosureReturnForPreInitVar } from "./declarations/hoisted-var-preinit-read.js"; // (#4206)
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { reportSilentFallback } from "./fallback-telemetry.js";
@@ -49,6 +50,7 @@ import {
   resolveWasmTypeForClosureReturn,
 } from "./index.js";
 import { refCellValueType } from "./registry/types.js"; // (#3328) boxed-capture valType fallback
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 import {
   coerceType,
   compileExpression,
@@ -124,6 +126,7 @@ import {
   getFuncRefWrapperRootTypeIdx,
 } from "./closures/funcref-wrapper-types.js";
 import { recordLiftedCaptureSlots as recordCaptureSlots } from "./closures/capture-source-slot.js";
+import { EXTERNREF_PARAM, setAccessorParamIsDynamic } from "./closures/set-accessor-param.js";
 import { collectTransitiveCaptureNames } from "./function-declaration-observation.js";
 import { prepareLiftedFrameDeclarations } from "./closures/lifted-declaration-hoisting.js";
 export { getClosureFuncSelfTypeIdx, getFuncSignature, getOrCreateFuncRefWrapperTypes, getFuncRefWrapperRootTypeIdx };
@@ -136,6 +139,7 @@ import {
 export { isVecOrArrayRefType, isHostCallbackArgument, isDeferredCallbackArgument };
 import { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding } from "./closures/funcref-as-closure.js";
 import { emitUndefined } from "./expressions/late-imports.js";
+import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 export { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding };
 
 function emitClosureDefaultReturnValue(
@@ -1689,7 +1693,7 @@ export function computeClosureWrapperSig(
   const arrowParams: ValType[] = [];
   for (const p of runtimeParameters(arrow)) {
     const paramType = ctx.checker.getTypeAtLocation(p);
-    let wasmType = resolveWasmType(ctx, paramType);
+    let wasmType = setAccessorParamIsDynamic(arrow) ? EXTERNREF_PARAM : resolveWasmType(ctx, paramType);
     // An unannotated JavaScript parameter whose default is object-valued is
     // still structurally open: callers may supply any property bag. TypeScript
     // infers the default's exact closed shape, but using that shape as the Wasm
@@ -1756,7 +1760,7 @@ export function computeClosureWrapperSig(
       // externref — the runtime value is a HOST plain object; a struct-typed
       // return null-drops it on the failed ref.test (see
       // resolveWasmTypeForClosureReturn).
-      closureReturnType = resolveWasmTypeForClosureReturn(ctx, retType);
+      closureReturnType = widenClosureReturnForPreInitVar(ctx, arrow, resolveWasmTypeForClosureReturn(ctx, retType));
     }
   }
   if (closureReturnType === null && isAssignedToSymbolIterator(arrow)) {
@@ -2467,7 +2471,7 @@ export function compileLiftedClosureBody(
 
   // Set up `arguments` object for function expressions (not arrow functions).
   // Arrow functions don't have their own `arguments` binding in JS.
-  if (ts.isFunctionExpression(arrow) && ts.isBlock(body) && (closureBodyUsesArguments(body) || reachesDirectEval)) {
+  if (ts.isFunctionExpression(arrow) && ts.isBlock(body) && needsImplicitArgumentsObject(arrow, reachesDirectEval)) {
     // Ensure __box_number is available for boxing numeric params
     const hasNumericParam = arrowParams.some((pt) => pt.kind === "f64" || pt.kind === "i32");
     if (hasNumericParam) {
@@ -2712,13 +2716,15 @@ export function compileLiftedClosureBody(
             { op: "local.set", index: pendingThrowLocal },
           ]
         : [];
-    liftedFctx.body.push({
-      op: "try",
-      blockType: { kind: "empty" },
-      body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
-      catches: [{ tagIdx, body: catchBody }],
-      catchAll: catchAllBody,
-    });
+    liftedFctx.body.push(
+      buildTargetTaggedTry(
+        ctx,
+        { kind: "empty" },
+        [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
+        [{ tagIdx, body: catchBody }],
+        catchAllBody,
+      ),
+    );
 
     // Return __create_generator or __create_async_generator depending on async flag
     const createGenName = isAsync ? "__create_async_generator" : "__create_generator";
@@ -3642,6 +3648,7 @@ export function compileArrowAsCallback(
     // (When needsThis=true, `this` is already bound to the `__this` param at
     // localMap index 1, so the fallback is never reached for that path.)
     readsCurrentThis: true,
+    captureExternrefNames: new Set(captures.filter((cap) => cap.type.kind === "externref").map((cap) => cap.name)),
   };
 
   // (#1384) Track cbFctx.body in liveBodies BEFORE any emission so addUnionImports
@@ -3709,6 +3716,14 @@ export function compileArrowAsCallback(
       }
     }
   }
+  // Callback captures are materialized into locals in this frame before the
+  // callback body is compiled.  Freeze those slots so a nested sibling call
+  // prepends the extracted capture rather than reusing the declaring frame's
+  // `outerLocalIdx` (which can alias a callback parameter such as `event`).
+  recordCaptureSlots(
+    cbFctx,
+    captures.map((capture) => capture.name),
+  );
   rehydrateWithEnvironmentScopes(fctx, cbFctx, cbName, ownLocals);
   // 4b. Convert ref/ref_null params from externref to their resolved types.
   //     The JS host passes all GC ref types as externref, so we need to convert

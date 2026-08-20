@@ -1,7 +1,7 @@
-import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { runDogfoodScript } from "./run-dogfood-script";
 
 // @ts-expect-error — .mjs setup has no declaration file
 import { isUuidUpstreamSuiteCheckoutValid, loadUuidUpstreamSuitePin } from "./setup-uuid-upstream-suite.mjs";
@@ -28,9 +28,8 @@ describe("uuid v14.0.1 upstream suite", () => {
   // is opt-in for normal Vitest runs; the canonical command is
   // `pnpm run dogfood:uuid-upstream-suite`.
   const heavy = process.env.DOGFOOD_UUID_UPSTREAM_SUITE === "1" ? it : it.skip;
-  heavy("runs all original UUID tests against Wasm and Node", { timeout: 600_000 }, () => {
-    const out = execFileSync("node", ["--import", "tsx", join(HERE, "uuid-upstream-suite.mjs"), "--json"], {
-      encoding: "utf-8",
+  heavy("runs all original UUID tests against Wasm and Node", { timeout: 600_000 }, async () => {
+    const out = await runDogfoodScript(join(HERE, "uuid-upstream-suite.mjs"), ["--json"], {
       maxBuffer: 32 * 1024 * 1024,
       env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=1536" },
     });

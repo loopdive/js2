@@ -924,6 +924,43 @@ function encodeInstrWithReloc(
       enc.byte(OP.rethrow);
       enc.u32(instr.depth);
       break;
+    case "try_table": {
+      enc.byte(OP.try_table);
+      encodeBlockType(instr.blockType, enc);
+      enc.u32(instr.catches.length);
+      for (const clause of instr.catches) {
+        switch (clause.kind) {
+          case "catch":
+          case "catch_ref": {
+            enc.byte(clause.kind === "catch" ? 0x00 : 0x01);
+            if (clause.tagIdx === undefined) throw new Error(`try_table ${clause.kind} is missing a tag index`);
+            const symIdx = tagIdxToSymIdx.get(clause.tagIdx);
+            if (symIdx !== undefined) {
+              relocs.push({
+                type: RELOC.R_WASM_TAG_INDEX_LEB,
+                offset: enc.position,
+                symbolIndex: symIdx,
+              });
+            }
+            enc.u32(clause.tagIdx);
+            enc.u32(clause.depth);
+            break;
+          }
+          case "catch_all":
+            enc.byte(0x02);
+            enc.u32(clause.depth);
+            break;
+          case "catch_all_ref":
+            enc.byte(0x03);
+            enc.u32(clause.depth);
+            break;
+        }
+      }
+      for (const i of instr.body)
+        encodeInstrWithReloc(i, enc, relocs, 0, funcIdxToSymIdx, globalIdxToSymIdx, tagIdxToSymIdx);
+      enc.byte(OP.end);
+      break;
+    }
     case "try": {
       enc.byte(OP.try);
       encodeBlockType(instr.blockType, enc);

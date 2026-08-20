@@ -25,6 +25,7 @@
 import { ts } from "../ts-api.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
+import { makeIrStandaloneDomCapabilityPlan, type IrStandaloneDomCapabilityPlan } from "./dom-capability.js";
 import {
   projectIrBackendTargetProfile,
   supportsIrBackendTargetCapability,
@@ -70,6 +71,8 @@ import {
   IR_NATIVE_MAP_NEW_FN,
   IR_NATIVE_MAP_SET_NUM_FN,
 } from "../codegen/ir-native-map.js"; // (#4461) externref-ABI adapters over the $Map helpers
+import { ensureIrNativePromiseDelayProvider } from "../codegen/ir-native-promise-delay.js";
+import { ensureIrNativePromiseAllProvider } from "../codegen/ir-native-async-runtime.js";
 import {
   ensureStandaloneWrapperInstanceOfHelper,
   type StandaloneWrapperConstructorName,
@@ -102,6 +105,7 @@ import {
   standaloneConsoleSinkAvailable,
   STANDALONE_STDOUT_APPEND_FN,
 } from "../codegen/native-strings.js";
+import { ensureNativeBatchedConcat } from "../codegen/native-batched-concat.js";
 import {
   nativeStringLiteralMaterialization,
   nativeStringLiteralInstrs,
@@ -133,6 +137,7 @@ import {
 } from "../codegen/registry/types.js";
 import type { CodegenContext, FunctionContext } from "../codegen/context/types.js";
 import { applyIrTailCalls } from "../codegen/ir-tail-call.js";
+import { parseInlineOptions } from "../codegen/ir-inline.js";
 import { lowerPreparedIrAsyncFunction } from "../codegen/ir-async-frame.js";
 import { preparedIrAsyncFromAstResolver } from "../codegen/async-ir-planning.js";
 import {
@@ -144,8 +149,13 @@ import {
   type ClosureAllocationMode,
 } from "../codegen/closures/funcref-wrapper-types.js";
 import { ensureFmodIntrinsic, isFmodIntrinsic } from "../codegen/fmod.js"; // #2945 — on-demand `%` helper materialization
-import { ensureIrNativeNumberToString, irNativeNumberToStringAvailable } from "../codegen/number-format-native.js"; // #4462 — host-free Number::toString for the IR string carrier
+import {
+  ensureIrNativeNumberToString,
+  irNativeNumberToFixedAvailable,
+  irNativeNumberToStringAvailable,
+} from "../codegen/number-format-native.js"; // #4462 — host-free Number formatting for the IR string carrier
 import { IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
+import { IR_NATIVE_PROMISE_DELAY_FN } from "./promise-delay-lowering.js";
 import {
   ensureHostCharCodeAtGuarded,
   ensureHostCharCodeAtTrusted,
@@ -305,7 +315,12 @@ import {
   replaceDefinedFuncAt,
 } from "../codegen/func-space.js"; // (#1916 S2) positional read/write chokepoints
 // (#4467) per-lane §7.1.17 Number::toString provider (host import / native thunk)
-import { ensureIrNumberToStringProvider, IR_NUMBER_TO_STRING_FN } from "./number-to-string-provider.js";
+import {
+  ensureIrNumberToFixedProvider,
+  ensureIrNumberToStringProvider,
+  IR_NUMBER_TO_FIXED_FN,
+  IR_NUMBER_TO_STRING_FN,
+} from "./number-to-string-provider.js";
 import {
   classifyIrFailure,
   IrInvariantError,
@@ -334,10 +349,12 @@ import type { PreparedClassAccessorWritebackEvidence } from "./prepared-componen
 import { sealDependencyCompletePreparedComponents } from "./prepared-component-sealing.js";
 import { attachIrStringCarrier } from "./string-carrier.js";
 import { attachIrStringSupport } from "./string-support.js";
+import { attachIrPhysicalRefTypeRefs } from "./physical-ref-support.js";
 import {
   IR_ASYNC_CLOCK_SNAPSHOT_FN,
   IR_ASYNC_CONSOLE_LOG_STRING_FN,
   IR_ASYNC_NUMBER_TO_STRING_FN,
+  IR_ASYNC_PROMISE_ALL_NATIVE_FN,
   IR_ASYNC_STRING_CONCAT_5_FN,
 } from "./async-semantic-runtime.js";
 import {
@@ -403,7 +420,15 @@ function lowerIrEntryFunction(
   existing: WasmFunction,
 ): WasmFunction {
   return fn.asyncPlan
-    ? lowerPreparedIrAsyncFunction(ctx, fn, { resolveFunc: (ref) => resolver.resolveFunc(ref) }, existing)
+    ? lowerPreparedIrAsyncFunction(
+        ctx,
+        fn,
+        {
+          resolveFunc: (ref) => resolver.resolveFunc(ref),
+          callResultAdapter: (ref) => resolver.callResultAdapter?.(ref),
+        },
+        existing,
+      )
     : lowerIrFunctionToWasm(fn, resolver).func;
 }
 
@@ -889,14 +914,27 @@ export function compileIrPathFunctions(
   loweringPlans?: IrIntegrationLoweringPlans,
   options?: IrIntegrationOptions,
 ): IrIntegrationReport {
+  const inlineOptions = parseInlineOptions(process.env.JS2WASM_IR_INLINE);
+  const fuseNativeNumberFormatCarriers =
+    inlineOptions.adapters && !inlineOptions.report && !inlineOptions.count && inlineOptions.poison === "off";
   const irTargetProfile = projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast });
   const jsHostExterns = irTargetProfile.allowHostImports;
+  const standaloneDomCapability =
+    ctx.requiresStandaloneDomCapability === true &&
+    ctx.standalone &&
+    !ctx.wasi &&
+    ctx.nativeStrings &&
+    ctx.targetProfile.environment === "none" &&
+    ctx.targetProfile.semanticProviders === "native-first"
+      ? makeIrStandaloneDomCapabilityPlan(ctx.checker, sourceFile)
+      : undefined;
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
     supportsIrBackendTargetCapability(irTargetProfile, capability);
   const supportsHostDateSnapshots = supportsBackendCapability("host-date-snapshot");
   const backendCapabilitySelectionOptions = { supportsBackendCapability };
   const moduleBindingOptions = {
     numberStorage: ctx.fast ? ("i32" as const) : ("f64" as const),
+    oracle: ctx.oracle,
     allowHostExterns: jsHostExterns && !ctx.nativeStrings,
     allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
     // (#4461) Native `$Map` storage is the host-free carrier of the same
@@ -1058,6 +1096,7 @@ export function compileIrPathFunctions(
     planIrCompilation(sourceFile, {
       experimentalIR: true,
       jsHostExterns,
+      ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
       ...(supportsHostDateSnapshots ? { hostDateSnapshots: makeIrHostDateSnapshotResolver(ctx.checker) } : {}),
       resolveModuleBinding: moduleBindingResolver,
       classifyPrimitiveExpression,
@@ -1074,6 +1113,7 @@ export function compileIrPathFunctions(
       // (codegen/index.ts) supplies — this compatibility path must not offer a
       // narrower table, or a direct caller would demote where production claims.
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
+      supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
       supportsStandaloneConsoleSink: standaloneConsoleSinkAvailable(ctx),
       supportsLiteralStringReplace: true,
       supportsHostStringArrayLiterals: jsHostExterns && !ctx.nativeStrings,
@@ -1306,6 +1346,7 @@ export function compileIrPathFunctions(
     ctx,
     moduleBindingResolver,
     loweringPlans?.postWasmStartTdzSafeBindingsByOwnerUnitId,
+    standaloneDomCapability,
   );
 
   // -------------------------------------------------------------------------
@@ -2435,9 +2476,12 @@ export function compileIrPathFunctions(
       const changed = before === undefined || fn !== before.fn;
       const hygienic = changed ? runHygienePasses(fn, allocRegistry) : fn;
       // Final synchronous parity pass: fuse only after mono/TU has settled.
-      const batched =
-        !ctx.nativeStrings && !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports
-          ? batchStringConcat(hygienic, allocRegistry)
+      const hostBatchedConcat = !ctx.nativeStrings && !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports;
+      const standaloneBatchedConcat = ctx.nativeStrings && ctx.standalone && !ctx.wasi;
+      const batched = hostBatchedConcat
+        ? batchStringConcat(hygienic, allocRegistry)
+        : standaloneBatchedConcat
+          ? batchStringConcat(hygienic, allocRegistry, 8)
           : hygienic;
       const final = batched === hygienic ? hygienic : runHygienePasses(batched, allocRegistry);
       const verifyErrors = verifyIrFunction(final);
@@ -2559,7 +2603,7 @@ export function compileIrPathFunctions(
       });
       if (ctx.programAbiCallableProviders) {
         for (const ref of collectAttachedGeneratorProviders(healthyForLower.map((entry) => entry.fn))) {
-          resolveAndObserveCallableProvider(ctx, ref);
+          resolveAndObserveCallableProvider(ctx, ref, undefined, fuseNativeNumberFormatCarriers);
         }
       }
     })
@@ -2571,6 +2615,24 @@ export function compileIrPathFunctions(
   }
   if (!runGlobalPreparation(() => preregisterExceptionSupport(ctx, healthyForLower))) return finishReport();
   if (!runGlobalPreparation(() => preregisterDynamicAndForInSupport(ctx, healthyForLower))) return finishReport();
+  if (
+    !runGlobalPreparation(() => {
+      const registry = ctx.programAbiTypes;
+      if (!registry || ctx.mapTypeIdx < 0) return;
+      let mapCarrierRef: IrTypeRef | undefined;
+      healthyForLower = healthyForLower.map((entry) => {
+        const fn = attachIrPhysicalRefTypeRefs(entry.fn, (type) => {
+          if ((type.val.kind !== "ref" && type.val.kind !== "ref_null") || type.val.typeIdx !== ctx.mapTypeIdx) {
+            return undefined;
+          }
+          return (mapCarrierRef ??= registry.prepareNativeMapCarrier());
+        });
+        return fn === entry.fn ? entry : { ...entry, fn };
+      });
+    })
+  ) {
+    return finishReport();
+  }
   if (
     !runGlobalPreparation(() => {
       const pending = new Map<IrUnitId, ProgramAbiDerivedUnitRecord>();
@@ -2610,7 +2672,12 @@ export function compileIrPathFunctions(
   recordOwnerPreparationFailures(
     failures,
     failedOwners,
-    preregisterCallableProviders(ctx, healthyForLower, preparedRuntimeManifest?.providers),
+    preregisterCallableProviders(
+      ctx,
+      healthyForLower,
+      preparedRuntimeManifest?.providers,
+      fuseNativeNumberFormatCarriers,
+    ),
   );
   healthyForLower = retainHealthyOwners(healthyForLower);
   if (healthyForLower.length === 0) return finishReport();
@@ -2939,6 +3006,7 @@ export function compileIrPathFunctions(
       unitCallableSlots,
       importedCallableCatalog,
       preparedRuntimeManifest?.providers,
+      fuseNativeNumberFormatCarriers,
     );
     const resolverInjection = process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE;
     if (resolverInjection === "function") resolver.resolveFunc(irIntrinsicFuncRef("__injected_missing_func"));
@@ -4170,6 +4238,7 @@ function makeFromAstResolver(
   ctx: CodegenContext,
   moduleBindingResolver?: IrModuleBindingResolver,
   postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"],
+  standaloneDomCapability?: IrStandaloneDomCapabilityPlan,
 ): IrFromAstResolver {
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
@@ -4280,7 +4349,7 @@ function makeFromAstResolver(
     // channel), which is why this is a resolver callback and not an
     // abstract-instr lowering case; promoting the rep half into a true
     // `str.method` instr is #2955's follow-up slice.
-    stringMethodPlan(method: string, argCount: number) {
+    stringMethodPlan(method: string, argCount: number, receiverEncoding: StringEncoding | undefined) {
       const native = ctx.nativeStrings;
       // (#3156) charCodeAt — BOTH modes lower to a guarded defined helper
       // `(recv, i32 idx) -> f64` (src/codegen/char-code-at-helpers.ts;
@@ -4293,6 +4362,18 @@ function makeFromAstResolver(
           funcName: native ? "__str_charCodeAt" : "__jsstr_charCodeAt",
           indexArgRep: "i32" as const,
           padOmitted: "charcode-zero" as const,
+        };
+      }
+      // #4576 — the native search helpers already own the exact one-argument
+      // JS defaults: pass an explicit i32 zero for the omitted position. Keep
+      // two-argument calls on legacy until the plan models indexOf's boxed host
+      // fromIndex independently from the native helper's i32 representation.
+      if (native && argCount === 1 && (method === "indexOf" || method === "includes")) {
+        return {
+          funcName: `__str_${method}`,
+          indexArgRep: "i32" as const,
+          padOmitted: "search-zero" as const,
+          resultRep: method === "indexOf" ? ("i32-number" as const) : undefined,
         };
       }
       // #2002 — the native string backend lowers the position arg via its
@@ -4324,8 +4405,13 @@ function makeFromAstResolver(
       // #1248 — native mode only lowers fully-specified call sites, except
       // `slice(start)` whose implicit end defaults to recv.length.
       if (native && omitted && !(method === "slice" && argCount === 1)) return null;
+      const provenAsciiCaseHelper =
+        native &&
+        receiverEncoding === "ascii" &&
+        process.env.JS2WASM_NATIVE_PROVEN_ASCII_CASE !== "0" &&
+        (method === "toUpperCase" || method === "toLowerCase");
       return {
-        funcName: native ? `__str_${method}` : `string_${method}`,
+        funcName: native ? `__str_${method}${provenAsciiCaseHelper ? "_ascii" : ""}` : `string_${method}`,
         indexArgRep: (native ? "i32" : "f64") as "i32" | "f64",
         padOmitted: (native ? "native-slice-len" : "host") as "native-slice-len" | "host",
       };
@@ -4441,6 +4527,9 @@ function makeFromAstResolver(
     jsHostExterns(): boolean {
       return !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports);
     },
+    standaloneDomOperation(node: ts.Node) {
+      return standaloneDomCapability?.operation(node);
+    },
     // (#2955 number-box slice) Capability: this lane owns the
     // `__box_number` / `__unbox_number` f64⇄externref host imports (legacy
     // registers them via `addUnionImports`). The from-ast boxing arms
@@ -4526,6 +4615,11 @@ function makeFromAstResolver(
     // (`nativeStrings`), so the two can never claim one call twice.
     nativeNumberToStringAvailable(): boolean {
       return irNativeNumberToStringAvailable(ctx);
+    },
+    // #4576 — bounded native Number::toFixed has a carrier-correct symbolic
+    // provider; selection and build consult the same pure lane predicate.
+    nativeNumberToFixedAvailable(): boolean {
+      return irNativeNumberToFixedAvailable(ctx);
     },
     // (#4462) Standalone's host-free console sink (#3469). Minted in the
     // pre-body window, which precedes both IR planning and body lowering, so
@@ -4693,6 +4787,7 @@ function resolveAndObserveCallableProvider(
   ctx: CodegenContext,
   ref: IrFuncRef,
   runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
+  fuseNativeNumberFormatCarriers = false,
 ): number {
   if (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic") {
     throw new TypeError("callable-provider resolution requires a runtime or intrinsic reference");
@@ -4723,26 +4818,41 @@ function resolveAndObserveCallableProvider(
   } else if (ref.binding.kind === "intrinsic" && isFmodIntrinsic(symbol)) {
     index = ensureFmodIntrinsic(ctx, symbol);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_CLOCK_SNAPSHOT_FN) {
+    if (ctx.standalone) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "standalone async clock snapshot escaped its constant runtime projection",
+      );
+    }
     index = ensureLateImport(ctx, "__date_now", [], [{ kind: "f64" }]);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_NUMBER_TO_STRING_FN) {
-    index = ensureLateImport(ctx, "number_toString", [{ kind: "f64" }], [{ kind: "externref" }]);
+    index = ctx.nativeStrings
+      ? ensureIrNativeNumberToString(ctx, fuseNativeNumberFormatCarriers)
+      : ensureLateImport(ctx, "number_toString", [{ kind: "f64" }], [{ kind: "externref" }]);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_CONSOLE_LOG_STRING_FN) {
-    index = ensureLateImport(ctx, "console_log_string", [{ kind: "externref" }], []);
+    index = ctx.nativeStrings
+      ? (ctx.funcMap.get(STANDALONE_STDOUT_APPEND_FN) ?? null)
+      : ensureLateImport(ctx, "console_log_string", [{ kind: "externref" }], []);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_STRING_CONCAT_5_FN) {
-    index = ensureLateImport(
-      ctx,
-      "__concat_5",
-      Array.from({ length: 5 }, () => ({ kind: "externref" }) as const),
-      [{ kind: "externref" }],
-    );
+    index = ctx.nativeStrings
+      ? ensureNativeBatchedConcat(ctx, 5)
+      : ensureLateImport(
+          ctx,
+          "__concat_5",
+          Array.from({ length: 5 }, () => ({ kind: "externref" }) as const),
+          [{ kind: "externref" }],
+        );
   } else if (ref.binding.kind === "intrinsic" && parseIrStringConcatManyArity(symbol) !== null) {
     const arity = parseIrStringConcatManyArity(symbol)!;
-    index = ensureLateImport(
-      ctx,
-      `__concat_${arity}`,
-      Array.from({ length: arity }, () => ({ kind: "externref" }) as const),
-      [{ kind: "externref" }],
-    );
+    index = ctx.nativeStrings
+      ? ensureNativeBatchedConcat(ctx, arity)
+      : ensureLateImport(
+          ctx,
+          `__concat_${arity}`,
+          Array.from({ length: arity }, () => ({ kind: "externref" }) as const),
+          [{ kind: "externref" }],
+        );
   } else if (ref.binding.kind === "runtime" && symbol === "__new_ReferenceError") {
     if (ctx.wasi || ctx.standalone) {
       emitWasiErrorConstructor(ctx, "ReferenceError", 1);
@@ -4762,7 +4872,11 @@ function resolveAndObserveCallableProvider(
     index = ensureVecElemSet(ctx, getOrRegisterHoleyArrayType(ctx));
   } else if (ref.binding.kind === "runtime" && symbol === IR_NUMBER_TO_STRING_NATIVE_FN) {
     // (#4462) Host-free `Number::toString` in the `(ref $AnyString)` carrier.
-    index = ensureIrNativeNumberToString(ctx);
+    index = ensureIrNativeNumberToString(ctx, fuseNativeNumberFormatCarriers);
+  } else if (ref.binding.kind === "runtime" && symbol === IR_NATIVE_PROMISE_DELAY_FN) {
+    index = ensureIrNativePromiseDelayProvider(ctx);
+  } else if (ref.binding.kind === "runtime" && symbol === IR_ASYNC_PROMISE_ALL_NATIVE_FN) {
+    index = ensureIrNativePromiseAllProvider(ctx);
   } else if (ref.binding.kind === "runtime" && symbol === IR_CONSOLE_SINK_APPEND_FN) {
     // (#4462) Host-free console sink. Never minted here: `ensureStandaloneStdoutSink`
     // owns it and runs in the pre-body window so the funcidx is final. Absence is
@@ -4837,8 +4951,15 @@ function resolveAndObserveCallableProvider(
       ensureNativeStringHelpers(ctx);
       index = nativeStrHelperHandle(ctx, "__str_charAt_cp");
     }
+  } else if (ref.binding.kind === "intrinsic" && (symbol === "__str_indexOf" || symbol === "__str_includes")) {
+    if (ctx.nativeStrings) {
+      ensureNativeStringHelpers(ctx);
+      index = nativeStrHelperHandle(ctx, symbol);
+    }
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_NUMBER_TO_STRING_FN) {
-    index = ensureIrNumberToStringProvider(ctx);
+    index = ensureIrNumberToStringProvider(ctx, fuseNativeNumberFormatCarriers);
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_NUMBER_TO_FIXED_FN) {
+    index = ensureIrNumberToFixedProvider(ctx, fuseNativeNumberFormatCarriers);
   } else if (ref.binding.kind === "intrinsic" && parseIrDateSnapshotGetter(symbol) !== undefined) {
     index = ensureDateCivilHelper(ctx);
   } else {
@@ -4902,6 +5023,7 @@ function makeResolver(
   unitCallableSlots: ReadonlyMap<IrUnitId, PreparedIrUnitCallableSlot>,
   importedCallableCatalog: ReadonlyMap<string, Import>,
   runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
+  fuseNativeNumberFormatCarriers = false,
 ): IrLowerResolver {
   // (#2949 slice 3) One dynamic-lowering handle per resolver (undefined =
   // not yet built; null = mode has no dynamic op lowering).
@@ -4955,7 +5077,7 @@ function makeResolver(
         );
       }
       if (ref.binding.kind === "runtime" || ref.binding.kind === "intrinsic") {
-        return resolveAndObserveCallableProvider(ctx, ref, runtimeProviders);
+        return resolveAndObserveCallableProvider(ctx, ref, runtimeProviders, fuseNativeNumberFormatCarriers);
       }
       const adapterName = ref.binding.kind === "import" ? ref.binding.field : ref.name;
       const idx = ctx.funcMap.get(adapterName);
@@ -4970,6 +5092,17 @@ function makeResolver(
       const helperIdx = nativeStrHelperHandle(ctx, adapterName);
       if (helperIdx !== undefined) return helperIdx;
       throw new IrInvariantError("unknown-function-ref", "lower", `ir/integration: unknown function ref "${ref.name}"`);
+    },
+    callResultAdapter(ref: IrFuncRef): "native-string-from-externref" | undefined {
+      if (!fuseNativeNumberFormatCarriers || !ctx.nativeStrings) return undefined;
+      if (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic") return undefined;
+      const symbol = ref.binding.symbol;
+      return symbol === IR_NUMBER_TO_STRING_NATIVE_FN ||
+        symbol === IR_ASYNC_NUMBER_TO_STRING_FN ||
+        symbol === IR_NUMBER_TO_STRING_FN ||
+        symbol === IR_NUMBER_TO_FIXED_FN
+        ? "native-string-from-externref"
+        : undefined;
     },
     resolveGlobal(ref: IrGlobalRef): number {
       if (process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE === "global") {
@@ -5209,6 +5342,9 @@ function makeResolver(
       }
       return ctx.exnTagIdx;
     },
+    standardizedExceptions(): boolean {
+      return ctx.standalone || ctx.wasi;
+    },
     // -------------------------------------------------------------------
     // Async / Promise dispatch (#1373b Slice 1).
     //
@@ -5294,6 +5430,7 @@ function preregisterCallableProviders(
   ctx: CodegenContext,
   fns: readonly BuiltFnRef[],
   runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
+  fuseNativeNumberFormatCarriers = false,
 ): ReadonlyMap<IrUnitId, IrOwnerPreparationFailure> {
   const failures = new Map<IrUnitId, IrOwnerPreparationFailure>();
   const owners = new Map<IrUnitId, IrLegacyUnitProjectionEntry>();
@@ -5315,7 +5452,9 @@ function preregisterCallableProviders(
     const owner = owners.get(entry.terminalOwnerUnitId)!;
     const instructionBuffers = [
       ...entry.fn.blocks.map((block) => block.instrs),
-      ...(entry.fn.asyncPlan?.states.map((state) => state.body) ?? []),
+      ...(entry.fn.asyncRuntime?.states.map((state) => state.body) ??
+        entry.fn.asyncPlan?.states.map((state) => state.body) ??
+        []),
     ];
     for (const instrs of instructionBuffers) {
       for (const root of instrs) {
@@ -5323,7 +5462,7 @@ function preregisterCallableProviders(
           const ref = callableProviderRef(instr);
           if (!ref || (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic")) return;
           try {
-            resolveAndObserveCallableProvider(ctx, ref, runtimeProviders);
+            resolveAndObserveCallableProvider(ctx, ref, runtimeProviders, fuseNativeNumberFormatCarriers);
           } catch (error) {
             if (!failures.has(owner.unitId)) {
               failures.set(owner.unitId, { owner, outcome: classifyIrFailure(error, "resolve") });

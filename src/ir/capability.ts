@@ -153,6 +153,19 @@ export function hostExternCapability(jsHost: boolean): IrOpCapability {
   return jsHost ? "claim-partial" : "defer";
 }
 
+// ── Exact standalone DOM provider (#4576) ─────────────────────────────────
+//
+// A standalone embedder can explicitly supply one authenticated DOM subtree
+// without making the target a general JavaScript host. Keep that authority
+// separate from `hostExternCapability`: setting `jsHostExterns` would also
+// admit arbitrary ambient globals and every extern-class member. The checker-
+// backed `IrStandaloneDomCapabilityPlan` instead proves one closed member/use
+// set, for which selection and lowering share node identity.
+export function domSurfaceCapability(jsHost: boolean, exactStandaloneProvider: boolean): IrOpCapability {
+  if (jsHost) return "claim-partial";
+  return exactStandaloneProvider ? "claim" : "defer";
+}
+
 // ── The console sub-surface (#4462) ────────────────────────────────────────
 //
 // `hostExternCapability` above is a flat `jsHost ? claim-partial : defer`

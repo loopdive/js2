@@ -69,9 +69,21 @@ import { createBoundaryPromiseAdapter } from "./runtime/boundary-promise-adapter
 import { createBoundaryValueAdapter, isBoundaryValueImportIntent } from "./runtime/boundary-value-adapter.js";
 import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-adapter.js";
 import { resolvePlatformCapabilityImport } from "./runtime/platform-capability-adapter.js";
+import {
+  assertExplicitEmbedderCapabilityBindings,
+  createStandaloneTimerCallbackBridge,
+  wrapStandaloneTimerCallback,
+} from "./runtime/standalone-timer-callback-bridge.js";
+import { requiresExactDomCapabilityAdapter } from "./dom-capability-contract.js";
+import {
+  createStandaloneDomCapabilityRuntime,
+  type DomCapabilityRoot,
+} from "./runtime/standalone-dom-string-bridge.js";
 import { installAmbientCompatibility } from "./runtime/compatibility-adapter.js";
 import { resolveCompatibilitySemanticImport } from "./runtime/compatibility-semantic-adapter.js";
-import { createClassMemberResolver } from "./runtime/class-method-host-bridge.js";
+import { createClassMemberResolver, createResolvedClassMethodInvoker } from "./runtime/class-method-host-bridge.js";
+import { resolveSubclassParent } from "./runtime/class-method-host-bridge.js";
+import { getWebHostConstructors } from "./runtime/web-host-constructors.js";
 import {
   _rerouteStringSymbolMethodPrimitive,
   _makeLegacyRegExpState,
@@ -1336,14 +1348,16 @@ function _dataStructHostBridgeMetadata(
  * land in one prototype view so no bridge family hides another's raw own
  * properties.
  */
-function _hostBridgeExportView<T extends Record<string, any>>(
-  exports: T,
-  expectedDataStructAuthority?: DataStructHostBridgeAuthority,
-  expectedDataStructToken?: WebAssembly.Global,
-  establishDataStructAuthority?: (authority: DataStructHostBridgeAuthority) => void,
-  mayEstablishDataStructAuthority = false,
-  mayConsumeGlobalDataStructAuthority = false,
-): T {
+interface HostBridgeAuthorityOptions {
+  expectedDataStructAuthority?: DataStructHostBridgeAuthority;
+  expectedDataStructToken?: WebAssembly.Global;
+  establishDataStructAuthority?: (authority: DataStructHostBridgeAuthority) => void;
+  mayEstablishDataStructAuthority?: boolean;
+  mayConsumeGlobalDataStructAuthority?: boolean;
+  recordExportView?: (rawExports: Record<string, any>, finalExports: Record<string, any>) => void;
+}
+
+function _hostBridgeExportView<T extends Record<string, any>>(exports: T, options: HostBridgeAuthorityOptions = {}): T {
   const overrides = new Map<string, unknown>();
   for (const [logicalName, physicalBase] of _VEC_HOST_BRIDGE_EXPORTS) {
     if (!_hasOwn(exports, logicalName)) continue;
@@ -1367,12 +1381,12 @@ function _hostBridgeExportView<T extends Record<string, any>>(
 
   const dataStructMetadata = _dataStructHostBridgeMetadata(
     exports,
-    expectedDataStructAuthority,
-    expectedDataStructToken,
-    mayEstablishDataStructAuthority,
-    mayConsumeGlobalDataStructAuthority,
+    options.expectedDataStructAuthority,
+    options.expectedDataStructToken,
+    options.mayEstablishDataStructAuthority,
+    options.mayConsumeGlobalDataStructAuthority,
   );
-  if (dataStructMetadata !== undefined) establishDataStructAuthority?.(dataStructMetadata);
+  if (dataStructMetadata !== undefined) options.establishDataStructAuthority?.(dataStructMetadata);
   for (let bit = 0; bit < _DATA_STRUCT_HOST_BRIDGE_EXPORTS.length; bit++) {
     const [logicalName, physicalBase] = _DATA_STRUCT_HOST_BRIDGE_EXPORTS[bit]!;
     if (!_hasOwn(exports, logicalName)) continue;
@@ -1385,7 +1399,10 @@ function _hostBridgeExportView<T extends Record<string, any>>(
     overrides.set(logicalName, helper);
   }
 
-  if (overrides.size === 0) return exports;
+  if (overrides.size === 0) {
+    options.recordExportView?.(exports, exports);
+    return exports;
+  }
   const view = Object.create(exports) as T;
   for (const [logicalName, helper] of overrides) {
     Object.defineProperty(view, logicalName, {
@@ -1395,6 +1412,7 @@ function _hostBridgeExportView<T extends Record<string, any>>(
       writable: false,
     });
   }
+  options.recordExportView?.(exports, view);
   return view;
 }
 
@@ -3805,10 +3823,16 @@ export function buildCompiledAdapterImports(
   if (diagnostics.length > 0) {
     throw new Error(`Invalid JavaScript adapter manifest: ${diagnostics.join("; ")}`);
   }
-  return buildImports(frozenManifest.imports, deps, frozenManifest.stringPool, {
+  const { imports, capabilities, targetProfile } = frozenManifest;
+  const explicitDomCapability = requiresExactDomCapabilityAdapter(imports, capabilities, targetProfile);
+  if (explicitDomCapability && options.domRoot === undefined) {
+    throw new Error("Explicit embedder capability 'dom' requires an authenticated domRoot");
+  }
+  assertExplicitEmbedderCapabilityBindings(frozenManifest, deps);
+  return buildImports(imports, deps, frozenManifest.stringPool, {
     ...options,
-    ambientCompatibility:
-      options.ambientCompatibility ?? frozenManifest.targetProfile.semanticProviders !== "native-first",
+    [DOM_CAPABILITY_AUTHORITY]: explicitDomCapability,
+    ambientCompatibility: options.ambientCompatibility ?? targetProfile.semanticProviders !== "native-first",
   });
 }
 
@@ -4760,7 +4784,7 @@ function _safeGet(
     // instance — the own-C.prototype level, shadowing the fnctor parent's
     // prototype chain below.
     {
-      const v = _resolveClassMemberOnInstance(obj, key, callbackState?.getExports());
+      const v = _resolveClassMember(obj, key, callbackState?.getExports());
       if (v !== _MISS) return v;
     }
     // (#1712) fnctor instances: resolve through the constructor's vivified
@@ -5816,13 +5840,14 @@ function _marshalBridgeResult(v: any, callbackState?: { getExports: () => Record
   return _wrapForHost(v, exports);
 }
 
-const _resolveClassMemberOnInstance = createClassMemberResolver({
+const _resolveClassMember = createClassMemberResolver({
   miss: _MISS,
   canBeWeakKey: _canBeWeakKey,
-  isRegisteredInstance: (value) => _fnctorInstanceCtor.has(value as object),
+  isRegisteredInstance: (value) => _fnctorInstanceCtor.has(value as object) || _userClassTags.has(value as object),
+  getClassName: (value) => _userClassTags.get(value as object),
   marshalBridgeResult: _marshalBridgeResult,
 });
-
+const _invokeClassMethod = createResolvedClassMethodInvoker(_resolveClassMember, _MISS, _unwrapForHost);
 // (#3673) Hoisted from `_resolveHostField` — was a per-call closure on a hot
 // path (invoked for every dynamic field read that reaches the host resolver).
 // #1336 — accessor properties (Object.defineProperty(obj, k, {get})) must
@@ -6281,7 +6306,7 @@ function _resolveHostField(obj: any, key: any, exports: Record<string, Function>
   // instance — the own-C.prototype level, which must SHADOW the fnctor
   // parent's prototype chain below.
   {
-    const v = _resolveClassMemberOnInstance(obj, key, exports);
+    const v = _resolveClassMember(obj, key, exports);
     if (v !== _MISS) return v;
   }
   // (#1712) fnctor instances: resolve through the constructor's vivified
@@ -8878,7 +8903,15 @@ function _createBoundaryPromiseImport(
     toHostValue: _nativeBoundaryToHost,
   });
 }
-
+function _wrapPlatformCapabilityClosure(
+  value: unknown,
+  arity: number,
+  boundary: "timer" | undefined,
+  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
+): ((...args: any[]) => any) | null {
+  if (boundary !== "timer") return _wrapWasmClosure(value, arity, callbackState);
+  return wrapStandaloneTimerCallback(value, callbackState) ?? _wrapWasmClosure(value, arity, callbackState);
+}
 function resolveImport(
   intent: ImportIntent,
   deps?: Record<string, any>,
@@ -8905,7 +8938,7 @@ function resolveImport(
     globalSandbox,
     instanceState,
     getNodeRequire: _getNodeRequire,
-    wrapWasmClosure: (value, arity) => _wrapWasmClosure(value, arity, callbackState),
+    wrapWasmClosure: (value, arity, boundary) => _wrapPlatformCapabilityClosure(value, arity, boundary, callbackState),
     wrapUnknownCallable: (value) => _maybeWrapCallableUnknownArity(value, callbackState),
   });
   if (capability) return capability;
@@ -9154,6 +9187,7 @@ function resolveImport(
           // __extern_method_call.
           ...(typeof URL !== "undefined" ? { URL } : {}),
           ...(typeof URLSearchParams !== "undefined" ? { URLSearchParams } : {}),
+          ...getWebHostConstructors(),
         };
         let Ctor = deps?.[intent.className] ?? builtinCtors[intent.className];
         // #1044 — Resolve via namespace path (e.g. require('http').Server)
@@ -9822,7 +9856,6 @@ function resolveImport(
           ) {
             throw new EvalError("reified host direct-eval bridge exports are unavailable on the AOT instance");
           }
-
           const bindings: DynamicCodeBinding[] = [];
           const appendLayer = (names: any, slots: any): void => {
             if (names == null || slots == null) return;
@@ -12270,6 +12303,8 @@ assert._isSameValue = isSameValue;
             return ret === wrappedObj ? obj : _unwrapForHost(ret);
           }
           if (typeof fn !== "function") {
+            const resolvedClassMethod = _invokeClassMethod(obj, method, exports, wrappedObj, wrappedArgs);
+            if (resolvedClassMethod !== _MISS) return resolvedClassMethod;
             // A struct proxy can have been materialized during the module start
             // function, before setInstance() made generated __sget_* exports
             // available. Its cached host view may therefore miss a physical
@@ -15451,8 +15486,7 @@ assert._isSameValue = isSameValue;
           if (instance == null || typeof subName !== "string" || typeof parentName !== "string") {
             return instance;
           }
-          // Look up the parent constructor — prefer host deps then globalThis.
-          const Parent: any = (deps && (deps as any)[parentName]) ?? (globalThis as any)[parentName];
+          const Parent: any = resolveSubclassParent(parentName, deps, _resolveNamespacedClass);
           if (typeof Parent !== "function") {
             // Cannot synthesize — return instance unchanged.
             return instance;
@@ -15751,13 +15785,11 @@ assert._isSameValue = isSameValue;
     // callable form with [[Construct]]. Everything else keeps the arrow bridge.
     case "callback_maker":
       return (id: number, cap: any) => {
-        // #3214 B2 reserves -1 for a reusable canonical IR closure and -2 for
-        // the checker-proven one-shot inline form. Legacy callbacks keep their
-        // non-negative `__cb_N` ids and remain on the existing dispatch path.
         if (id === -2) return _wrapVoidHostCallback(cap, callbackState, false);
         if (id === -1) return _wrapVoidHostCallback(cap, callbackState);
         const policy = ASYNC_CALLBACK_EXCEPTION_POLICY;
-        return createNativeFunctionCallbackBridge(id, cap, callbackState, policy, intent.constructible === true);
+        const constructible = intent.constructible === true;
+        return createNativeFunctionCallbackBridge(id, cap, callbackState, policy, constructible);
       };
     case "getter_callback_maker":
       return (id: number, cap: any) => {
@@ -16269,8 +16301,10 @@ function isFastLeafHostImport(imp: ImportDescriptor): boolean {
  * `setExports(instance.exports)` remains available for legacy callback, vec,
  * closure, and string wiring.
  */
+const DOM_CAPABILITY_AUTHORITY = Symbol("validated-dom-capability");
 export interface BuildImportsOptions {
-  domRoot?: Element | ShadowRoot;
+  domRoot?: Element | ShadowRoot | DomCapabilityRoot;
+  [DOM_CAPABILITY_AUTHORITY]?: boolean;
   globalSandbox?: Record<string, any>;
   /**
    * Install compatibility-only ambient Iterator/RegExp shims. Defaults to
@@ -16347,6 +16381,10 @@ export function buildImports(
 
   const env: Record<string, Function> = {};
   let dataStructHostBridgeAuthority: DataStructHostBridgeAuthority | undefined;
+  const timerCallbackBridge = createStandaloneTimerCallbackBridge();
+  const domCapabilityRuntime = options?.[DOM_CAPABILITY_AUTHORITY]
+    ? createStandaloneDomCapabilityRuntime(options.domRoot)
+    : undefined;
   // (#1712) Operations that NEED exports (e.g. Object.defineProperties with a
   // WasmGC-struct descriptor map — its keys/fields are only readable via the
   // __struct_field_names / __sget_* exports) but run during the module START
@@ -16354,16 +16392,23 @@ export function buildImports(
   // wires the instance.
   const lifecycle = createInstanceLifecycleAdapter({
     brandedExports: _brandedInstanceExports,
-    prepareExports: (exports, mayEstablishDataStructAuthority) =>
-      _hostBridgeExportView(
-        exports,
-        dataStructHostBridgeAuthority,
-        dataStructHostBridgeToken,
-        mayEstablishDataStructAuthority ? (authority) => (dataStructHostBridgeAuthority ??= authority) : undefined,
-        mayEstablishDataStructAuthority,
-      ),
+    prepareExports: (exports, mayEstablishInstanceAuthority) =>
+      _hostBridgeExportView(exports, {
+        expectedDataStructAuthority: dataStructHostBridgeAuthority,
+        expectedDataStructToken: dataStructHostBridgeToken,
+        establishDataStructAuthority: mayEstablishInstanceAuthority
+          ? (authority) => (dataStructHostBridgeAuthority ??= authority)
+          : undefined,
+        mayEstablishDataStructAuthority: mayEstablishInstanceAuthority,
+        recordExportView: (rawExports, finalExports) => {
+          timerCallbackBridge.recordExportView(rawExports, finalExports, mayEstablishInstanceAuthority);
+          domCapabilityRuntime?.recordExportView(rawExports, finalExports, mayEstablishInstanceAuthority);
+        },
+      }),
   });
   const callbackState = lifecycle.callbackState;
+  timerCallbackBridge.bindCallbackState(callbackState, (value, arity) => _wrapWasmClosure(value, arity, callbackState));
+  domCapabilityRuntime?.bindCallbackState(callbackState);
   let lastCaughtException: any = undefined;
   const envImportNames: string[] = [];
   let importCounts: Uint32Array | undefined;
@@ -16399,22 +16444,25 @@ export function buildImports(
     const importIndex = envImportNames.push(imp.name) - 1;
     let fn: Function;
 
-    fn = resolveImport(
-      imp.intent,
-      deps,
-      callbackState,
-      options?.globalSandbox,
-      instanceState,
-      imp.paramCount,
-      options?.dynamicCode,
-      options?.dynamicCodeEvaluator,
-      () => lastCaughtException,
-    );
+    const domBinding = domCapabilityRuntime?.bindImport(imp);
+    fn =
+      domBinding ??
+      resolveImport(
+        imp.intent,
+        deps,
+        callbackState,
+        options?.globalSandbox,
+        instanceState,
+        imp.paramCount,
+        options?.dynamicCode,
+        options?.dynamicCodeEvaluator,
+        () => lastCaughtException,
+      );
 
     // DOM containment wrapping
-    if (options?.domRoot) {
+    if (options?.domRoot && !domCapabilityRuntime) {
       if (imp.intent.type === "extern_class") {
-        fn = wrapWithContainment(fn, imp.intent, options.domRoot);
+        fn = wrapWithContainment(fn, imp.intent, options.domRoot as Element | ShadowRoot);
       }
       if (imp.intent.type === "declared_global" && imp.intent.name === "document") {
         fn = () => options.domRoot;
@@ -16560,8 +16608,11 @@ export function buildImports(
         };
       }
     }
+    domCapabilityRuntime?.recordWrappedImport(imp, domBinding, fn);
     env[imp.name] = fn;
   }
+
+  domCapabilityRuntime?.finalizeImports(env);
 
   const result: {
     env: Record<string, Function>;
@@ -16734,14 +16785,10 @@ export function wrapExports(
   const marshal: "copy" | "live" | false = options?.marshal ?? "copy";
   const brandedExports = _brandedInstanceExports(instanceOrExports);
   const rawExports = brandedExports ?? (instanceOrExports as WebAssembly.Exports);
-  const exportsForMarshal = _hostBridgeExportView(
-    rawExports as unknown as Record<string, Function>,
-    undefined,
-    undefined,
-    undefined,
-    brandedExports !== undefined,
-    true,
-  );
+  const exportsForMarshal = _hostBridgeExportView(rawExports as unknown as Record<string, Function>, {
+    mayEstablishDataStructAuthority: brandedExports !== undefined,
+    mayConsumeGlobalDataStructAuthority: true,
+  });
   const callFn0 = exportsForMarshal.__call_fn_0 as ((closure: any) => any) | undefined;
   const callFn1 = exportsForMarshal.__call_fn_1 as ((closure: any, arg: any) => any) | undefined;
   // (#1700) Vec allocator + byte-writer for Uint8Array args. Either may be

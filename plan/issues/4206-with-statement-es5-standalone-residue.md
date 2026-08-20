@@ -30,10 +30,33 @@ loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/select.ts
   - src/codegen/context/types.ts
+  # #4206 pre-init-read slice (2026-08-19): §10.2.11 gives every `var` binding
+  # `undefined` at function entry, but hoistVarDecl typed the slot from the
+  # DECLARATION, so `return value;` before `var value = "value"` read back null
+  # from a (ref null $AnyString) zero-init. The 150-line analysis lives in the
+  # new module src/codegen/declarations/hoisted-var-preinit-read.ts; these are
+  # the two irreducible wiring lines — one predicate call plus one import in
+  # each driver (index.ts +2, closures.ts +1). Already compacted from +6/+7 by
+  # folding the var-slot check into varBindingNeedsExternrefForUndefined and
+  # reducing the closure-return hook to a single call.
+  - src/codegen/index.ts
+  - src/codegen/closures.ts
+  # #4206 IR/legacy module-slot parity follow-up (2026-08-20): the complete
+  # widening analysis moved into the new leaf module
+  # src/ir/heterogeneous-module-bindings.ts. These capped drivers contain only
+  # the resolver's preclaim check and the two one-line shared-oracle adapters;
+  # keeping that wiring at the module-binding boundary preserves the strict
+  # Program ABI invariant instead of adding a postclaim exception.
+  - src/ir/module-bindings.ts
+  - src/ir/integration.ts
 func-budget-allow:
   # Four-line statement-dispatch hook; all selection logic is in the dedicated
   # isPhase1WithStatement helper and ir/with-environment subsystem.
   - src/ir/select.ts::isPhase1StatementListInScope
+  # One shared-oracle option in each existing resolver-options object; the
+  # analysis and policy remain outside these orchestration functions.
+  - src/codegen/index.ts::planIrOverlay
+  - src/ir/integration.ts::compileIrPathFunctions
 ---
 
 # #4206 — the `with` statement residue, correctly sized
@@ -612,3 +635,104 @@ first landing #4495 and a global-binding issue.** Both are heads with wide blast
 radius, both need a Fable-lane implementation plan, and neither should be started
 off this file alone. This issue stays `ready` but should be treated as **blocked
 on those two** rather than as a source of ready work.
+
+## 2026-08-19 re-census + dispatch
+
+Fresh standalone baseline (`test262-standalone-current.jsonl`, 48,735 entries,
+fetched 2026-08-19 04:52): standalone ES5 is **8,506 / 9,029 (94.2 %)** with
+**523 non-passes** (495 fail, 24 compile_error, 4 compile_timeout). Earlier
+figures in this file predate that and should be read as history.
+
+This issue's lane in the 2026-08-19 6-way fan-out: **56 rows — annexB eval-code/global-code, language/eval-code, statements/with**.
+Umbrella + full partition: #4163.
+
+The residue is a **long tail** — the largest single error signature across all
+523 rows is 13. Expect many small root causes, not one lever.
+
+Local gate for this lane: 551 locally-verified-passing standalone ES5 tests must
+stay at 551/551. Reproduce with the `--standalone` flag (without it you measure
+the JS-host lane, a different and much worse corpus at 84.8 %).
+
+**eval-rooted rows cannot be validated on the dev Mac** — CI's QuickJS eval tier
+needs clang-18 (see #4163 for the full toolchain finding); record them as
+blocked rather than chasing them.
+
+## 2026-08-19 landed slice — 13 rows, verified by the integrator
+
+Commit `bbe5002` on `es5-eval-with-annexb`, merged to `es5-standalone-integration`.
+
+**Lane 0 → 13 of 56, guard 551/551 (zero regressions), `target=standalone`** —
+both figures re-measured independently by the integrator, not accepted from the
+implementing lane.
+
+### The 13-row cluster was neither `__str_concat` nor eval
+
+`dereferencing a null pointer [in __str_concat() ← __module_init]` was the
+largest single signature in the whole 523-row ES5 standalone residue, and it sat
+under `language/statements/with/`, so it read as a `with`/eval problem. It is a
+**lossy store** in slot widening:
+
+`src/codegen/declarations/heterogeneous-scalar-var-widening.ts::assignmentWidens`
+refused to widen a primitive-pinned module `var` slot when the RHS's static tag
+was `mixed`. So `var result = "result"; result = p1;` keeps a
+`(ref null $AnyString)` slot, a number RHS fails the string coercion, **null** is
+stored, and the next `"" + result` dereferences it. The `with` scoping was
+already correct — probing `S12.10_A3.1_T2` showed `p1`, `this.p1` and
+`myObj.p1` all holding the right values; `result` was the only wrong one.
+
+### This reverses #4204's recorded verdict
+
+#4204 asserted that an unprovable (`mixed`) RHS must NOT widen, on the grounds
+that it "would move a large fraction of the corpus onto the dynamic
+representation for no measured benefit (5,943 syntactic candidates against 55
+provable ones)". That estimate was not re-measured when it was written into the
+negative test.
+
+Measured 2026-08-19, both halves:
+
+| check | result |
+| --- | --- |
+| 73 compiled `language/{statements,expressions}` modules, byte comparison | **1** module changed — and it **shrank** |
+| 1,200-file standalone A/B | 856 → 859; **0 pass→fail, 0 altered failure signatures** |
+| `tests/equivalence` | same 5 pre-existing failures in both arms |
+
+So the corpus-cost concern does not hold, and the refusal was not a coverage
+gap but a correctness bug. #4204's negative case was **updated in place** to
+assert the new verdict with the measurement recorded beside it, rather than
+deleted — the reversal stays visible to anyone re-deriving the predicate.
+A RED-on-base regression test was added
+(`tests/issue-4206-mixed-rhs-slot-widening.test.ts`).
+
+### Side effect worth knowing
+
+Rows hitting `quickjs provider is not built` went 4 → 11: the fix carries tests
+*past* their earlier failing assertion and into an `eval` call. Those become
+locally unverifiable rather than fixed — see the toolchain note in #4163.
+
+## 2026-08-20 follow-up — keep inferred widening and IR binding selection aligned
+
+The required #2906 async guard exposed an integration invariant after the
+mixed-RHS widening landed. Its `let ran: number = 0` has an unreachable
+`ran = x` after an awaited promise that always rejects. The RHS is necessarily
+unconstrainable, so the widening analysis picked legacy `externref`; the IR
+module-binding resolver correctly kept the explicit `number` annotation's f64
+ABI. The compiler then rejected the claimed body because the two plans named
+different physical storage for the same source binding.
+
+The resolution preserves both contracts:
+
+- explicit TypeScript annotations remain the representation authority (the
+  same boundary recorded in #4495), so the #2906 binding stays f64 and its
+  reader/module initializer remain IR-owned;
+- JavaScript and inferred TypeScript bindings still widen on heterogeneous or
+  mixed assignments, preserving the 13-row #4206 lever;
+- the registry-free widening analysis now lives beside IR module bindings and
+  is consumed by both direct allocation and IR selection. Until IR owns general
+  dynamic module assignment/read coercions, a genuinely widened binding is
+  rejected before claim instead of reaching the Program ABI invariant after
+  claim. The invariant itself remains strict.
+
+Regression coverage is in
+`tests/issue-4206-module-widening-ir-parity.test.ts`: one case proves the typed
+slot stays f64 and the reader emits through IR; the other proves an inferred
+externref slot cleanly preclaim-demotes and still round-trips its runtime value.

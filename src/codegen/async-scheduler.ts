@@ -49,6 +49,7 @@ import { getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.j
 // module; the inline hooks in this file (settle-body note, Promise.reject mint)
 // call these two. `ensureUnhandledRejectionReporter` is imported by index.ts.
 import { ensureUnhandledRejectionTracking, buildNoteUnhandledRejection } from "./unhandled-rejection.js";
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 
 /**
  * #1326 — Sentinel state values for `$Promise.state`. Match the JS spec
@@ -1188,27 +1189,22 @@ function ensurePromiseThenableSubstrate(
       { op: "ref.cast", typeIdx: capsTypeIdx },
       { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 1 },
       { op: "local.set", index: promiseLocal },
-      {
-        op: "try",
-        blockType: { kind: "empty" },
-        body: jobTryBody,
-        catches: [
-          {
-            tagIdx: exnTag,
-            body: [
-              // A throw from Get/then-call before settle rejects the promise
-              // (§27.2.2.2 step 2 / §27.2.1.3.2 step 15). Post-settle throws
-              // are no-ops via the one-shot settle guard.
-              { op: "local.set", index: reasonLocal },
-              { op: "local.get", index: promiseLocal },
-              { op: "ref.as_non_null" },
-              { op: "local.get", index: reasonLocal },
-              { op: "call", funcIdx: state.promiseRejectFuncIdx },
-              { op: "drop" },
-            ],
-          },
-        ],
-      },
+      buildTargetTaggedTry(ctx, { kind: "empty" }, jobTryBody, [
+        {
+          tagIdx: exnTag,
+          body: [
+            // A throw from Get/then-call before settle rejects the promise
+            // (§27.2.2.2 step 2 / §27.2.1.3.2 step 15). Post-settle throws
+            // are no-ops via the one-shot settle guard.
+            { op: "local.set", index: reasonLocal },
+            { op: "local.get", index: promiseLocal },
+            { op: "ref.as_non_null" },
+            { op: "local.get", index: reasonLocal },
+            { op: "call", funcIdx: state.promiseRejectFuncIdx },
+            { op: "drop" },
+          ],
+        },
+      ]),
       { op: "ref.null.extern" },
     ],
     exported: false,
@@ -1421,15 +1417,15 @@ function buildPromiseResolveValueBody(
           // hasThen = __promise_has_callable_then(value) — the Get("then") runs
           // accessors, so a poisoned getter THROWS here (§27.2.1.3.2 step 9):
           // catch → reject(promise, thrown).
-          {
-            op: "try",
-            blockType: { kind: "empty" },
-            body: [
+          buildTargetTaggedTry(
+            ctx,
+            { kind: "empty" },
+            [
               { op: "local.get", index: valueLocal },
               { op: "call", funcIdx: thenable.hasCallableThenFuncIdx },
               { op: "local.set", index: hasThenLocal },
             ],
-            catches: [
+            [
               {
                 tagIdx: exnTagIdx,
                 body: [
@@ -1439,7 +1435,7 @@ function buildPromiseResolveValueBody(
                 ],
               },
             ],
-          },
+          ),
           { op: "local.get", index: poisonedLocal },
           {
             op: "if",
@@ -1807,11 +1803,8 @@ function emitThenWrapperFunction(
     { op: "drop" }, // settle returns the value; the drain ignores the wrapper result
   );
 
-  body.push({
-    op: "try",
-    blockType: { kind: "empty" },
-    body: tryBody,
-    catches: [
+  body.push(
+    buildTargetTaggedTry(ctx, { kind: "empty" }, tryBody, [
       {
         tagIdx: exnTag,
         body: [
@@ -1823,8 +1816,8 @@ function emitThenWrapperFunction(
           { op: "drop" },
         ],
       },
-    ],
-  });
+    ]),
+  );
   // Wrapper result (externref) — dropped by the drain; always null now.
   body.push({ op: "ref.null.extern" });
 
@@ -1907,10 +1900,10 @@ function ensureDynamicThenWrapper(ctx: CodegenContext, kind: "fulfill" | "reject
   ];
 
   const applyArm: Instr[] = [
-    {
-      op: "try",
-      blockType: { kind: "empty" },
-      body: [
+    buildTargetTaggedTry(
+      ctx,
+      { kind: "empty" },
+      [
         { op: "call", funcIdx: objVecNewIdx },
         { op: "local.set", index: vecLocal },
         { op: "local.get", index: vecLocal },
@@ -1928,7 +1921,7 @@ function ensureDynamicThenWrapper(ctx: CodegenContext, kind: "fulfill" | "reject
         { op: "call", funcIdx: state.promiseResolveValueFuncIdx },
         { op: "drop" },
       ],
-      catches: [
+      [
         {
           tagIdx: exnTag,
           body: [
@@ -1942,7 +1935,7 @@ function ensureDynamicThenWrapper(ctx: CodegenContext, kind: "fulfill" | "reject
           ],
         },
       ],
-    },
+    ),
   ];
 
   // IsCallable ≈ "is a closure-wrapper struct" — every compiled function value
@@ -4501,11 +4494,8 @@ function emitFinallyWrapperFunction(ctx: CodegenContext, info: ClosureInfo, isRe
     { op: "call", funcIdx: state.finallyAfterFuncIdx },
   );
 
-  body.push({
-    op: "try",
-    blockType: { kind: "empty" },
-    body: tryBody,
-    catches: [
+  body.push(
+    buildTargetTaggedTry(ctx, { kind: "empty" }, tryBody, [
       {
         tagIdx: exnTag,
         body: [
@@ -4517,8 +4507,8 @@ function emitFinallyWrapperFunction(ctx: CodegenContext, info: ClosureInfo, isRe
           { op: "drop" },
         ],
       },
-    ],
-  });
+    ]),
+  );
   body.push({ op: "ref.null.extern" });
 
   pushDefinedFunc(ctx, funcIdx, {

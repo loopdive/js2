@@ -44,6 +44,8 @@ import { getOrRegisterErrorStructType, isWasiErrorName } from "../registry/error
 import { allocLocal } from "../context/locals.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
+import { reportError } from "../context/errors.js";
+import { isUnaliasedNodeFsImportBinding } from "../node-fs-binding-identity.js";
 import { annexBReadEscapesFunctionScope, annexBReadIsUnbound, collectAnnexBCancelSites } from "../annexb-cancel.js";
 import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
 import {
@@ -212,6 +214,19 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
   });
 }
 
+/** Resolve the lexical value read by an identifier, including `{ value }`. */
+function identifierValueSymbol(ctx: CodegenContext, id: ts.Identifier): ts.Symbol | undefined {
+  if (ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id) {
+    const shorthand = (
+      ctx.checker as typeof ctx.checker & {
+        getShorthandAssignmentValueSymbol?: (node: ts.ShorthandPropertyAssignment) => ts.Symbol | undefined;
+      }
+    ).getShorthandAssignmentValueSymbol?.(id.parent);
+    if (shorthand !== undefined) return shorthand;
+  }
+  return ctx.checker.getSymbolAtLocation(id);
+}
+
 /**
  * Static TDZ analysis: determine at compile time whether a let/const variable
  * access is guaranteed to be after initialization (safe) or before (TDZ violation).
@@ -222,7 +237,14 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
  * - 'check': can't determine statically — keep runtime flag check
  */
 function analyzeTdzAccess(ctx: CodegenContext, id: ts.Identifier): "skip" | "throw" | "check" {
-  const symbol = ctx.checker.getSymbolAtLocation(id);
+  // A shorthand property name (`{ value }`) has two symbols in TypeScript:
+  // the property being declared and the lexical binding whose value is read.
+  // `getSymbolAtLocation(id)` answers the former, whose declaration range is
+  // the shorthand itself. Treating that property declaration as the lexical
+  // declaration makes every tracked shorthand look like a self-read in its
+  // own TDZ and emits an unconditional ReferenceError. Ask the checker for the
+  // value symbol so ordering is measured against the real let/const binding.
+  const symbol = identifierValueSymbol(ctx, id);
   if (!symbol) return "check";
   const decl = symbol.valueDeclaration;
   if (!decl) return "check";
@@ -357,7 +379,7 @@ function isDescendantOf(node: ts.Node, ancestor: ts.Node): boolean {
 }
 
 function getDeclaredNullablePrimitiveInfo(ctx: CodegenContext, id: ts.Identifier): NullablePrimitiveInfo | null {
-  const symbol = ctx.checker.getSymbolAtLocation(id);
+  const symbol = identifierValueSymbol(ctx, id);
   const decl = symbol?.valueDeclaration;
   if (!decl) return null;
   if (ts.isVariableDeclaration(decl) || ts.isParameter(decl)) {
@@ -749,6 +771,7 @@ function compileIdentifierCore(
     // their own use site (ToNumber(undefined) = NaN matches JS).
     if (
       declaredType.kind === "externref" &&
+      !fctx.captureExternrefNames?.has(name) &&
       !fctx.undefWidenedLocals?.has(name) &&
       !fctx.forInIdentifierVars?.has(name) &&
       !fctx.mixedAssignmentCarrierVars?.has(name)
@@ -899,6 +922,21 @@ function compileIdentifierCore(
       return { kind: "ref", typeIdx: (mType as any).typeIdx };
     }
     return mType;
+  }
+
+  // Named node:fs imports are stripped into ambient declarations before
+  // codegen. WASI owns only their direct-call lowering; materialising one as a
+  // first-class value would otherwise produce an inert placeholder and let an
+  // alias call disappear. Local/module/captured shadows have already returned
+  // above, so this is the unshadowed imported binding.
+  if (ctx.wasi && isUnaliasedNodeFsImportBinding(ctx, id)) {
+    reportError(
+      ctx,
+      id,
+      `WASI node:fs binding '${name}' may only be used as a directly supported call; first-class aliases are unavailable`,
+    );
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
   }
 
   // A first-class read of the unshadowed global `%eval%` (`var indirect =
@@ -1288,8 +1326,7 @@ function compileIdentifierCore(
   // compiler-internal helper names do not resolve to any source declaration.
   const isInternalHelperName = (): boolean => {
     if (!name.startsWith("__")) return false;
-    const { checker } = ctx;
-    const valSym = checker.getSymbolAtLocation(id);
+    const valSym = identifierValueSymbol(ctx, id);
     const valDecl = valSym?.valueDeclaration;
     return !(valDecl !== undefined && ts.isFunctionDeclaration(valDecl));
   };
@@ -1299,7 +1336,7 @@ function compileIdentifierCore(
     !isInternalHelperName() &&
     !ctx.classSet.has(name)
   ) {
-    const valueDecl = ctx.checker.getSymbolAtLocation(id)?.valueDeclaration;
+    const valueDecl = identifierValueSymbol(ctx, id)?.valueDeclaration;
     const isOrdinaryFunctionDecl =
       (noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first") &&
       valueDecl !== undefined &&
@@ -1347,7 +1384,7 @@ function compileIdentifierCore(
   // (spec §13.10.1 / §13.11.4 — operand evaluation precedes ToPrimitive in `==`).
   // However, known globals (Symbol, Object, Reflect, etc.) have TS symbols from
   // lib.d.ts and should use the fallback default instead.
-  const sym = ctx.checker.getSymbolAtLocation(id);
+  const sym = identifierValueSymbol(ctx, id);
   if (!sym) {
     if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
       const dynamicGlobal = skipRuntimeEvalState
@@ -1617,7 +1654,7 @@ function emitConstantInstanceOf(
 }
 
 function identifierHasSourceDeclaration(ctx: CodegenContext, id: ts.Identifier): boolean {
-  const symbol = ctx.checker.getSymbolAtLocation(id);
+  const symbol = identifierValueSymbol(ctx, id);
   const declarations = symbol?.declarations ?? [];
   return declarations.some((decl) => !decl.getSourceFile().isDeclarationFile);
 }

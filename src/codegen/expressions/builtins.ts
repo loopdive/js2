@@ -21,6 +21,7 @@ import {
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, VOID_RESULT } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
+import { emitSymbolArgToNumberThrow } from "../tonumber-symbol-throw.js"; // (#4556)
 import { emitThrowRangeError, emitThrowTypeError } from "./helpers.js";
 import { isStaticNaN, tryStaticToNumber } from "./misc.js";
 import { sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
@@ -2312,11 +2313,7 @@ function compileDateMethodCall(
     // Read curTs FIRST.
     const tempCurTs = allocTempLocal(fctx, { kind: "i64" });
     fctx.body.push({ op: "local.get", index: tempRef });
-    fctx.body.push({
-      op: "struct.get",
-      typeIdx: dateTypeIdx,
-      fieldIdx: 0,
-    });
+    fctx.body.push({ op: "struct.get", typeIdx: dateTypeIdx, fieldIdx: 0 });
     fctx.body.push({ op: "local.set", index: tempCurTs });
 
     // Mapping: setDate(d) → [d], setMonth(mo, d?) → [mo, d],
@@ -2330,6 +2327,9 @@ function compileDateMethodCall(
     fctx.body.push({ op: "i32.const", value: args.length === 0 ? 1 : 0 });
     fctx.body.push({ op: "local.set", index: tempAnyInvalid });
 
+    // (#4556) ToNumber(Symbol) throws — tonumber-symbol-throw.ts.
+    const dateSym = emitSymbolArgToNumberThrow(ctx, fctx, args, { kind: "f64" });
+    if (dateSym !== undefined) return dateSym;
     const argLocals: Partial<Record<"y" | "mo" | "d", number>> = {};
     for (let i = 0; i < unitsForArgs.length && i < args.length; i++) {
       const unit = unitsForArgs[i]!;
@@ -3354,20 +3354,10 @@ function compileMathCall(
 
   const f64Hint: ValType = { kind: "f64" };
 
-  // ToNumber(Symbol) must throw TypeError (§7.1.4 step 5). Symbols lower to i32
-  // ids, so the f64Hint coercion path would silently leak the id as a number
-  // (e.g. `Math.abs(Symbol())` returned the raw counter). Detect a symbol-typed
-  // argument, evaluate every argument up to and including it for side effects in
-  // source order, then throw — matching how `Number(Symbol())` is handled.
-  const symbolArgIdx = expr.arguments.findIndex((a) => ctx.oracle.staticJsTypeOf(a) === "symbol");
-  if (symbolArgIdx >= 0) {
-    for (let i = 0; i <= symbolArgIdx; i++) {
-      const t = compileExpression(ctx, fctx, expr.arguments[i]!);
-      if (t !== null) fctx.body.push({ op: "drop" });
-    }
-    emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a number");
-    return { kind: "f64" };
-  }
+  // ToNumber(Symbol) must throw TypeError (§7.1.4 step 5) — see
+  // tonumber-symbol-throw.ts; `Math.abs(Symbol())` used to leak the raw id.
+  const mathSym = emitSymbolArgToNumberThrow(ctx, fctx, expr.arguments, { kind: "f64" });
+  if (mathSym !== undefined) return mathSym;
 
   if (method === "round" && expr.arguments.length >= 1) {
     // JS Math.round: compare frac = x - floor(x) to 0.5.

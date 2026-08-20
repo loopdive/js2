@@ -42,7 +42,7 @@ import {
 } from "./destructuring-params.js";
 import { emitThrowReferenceError, getFuncParamTypes } from "./expressions/helpers.js";
 import { pushDefaultValue } from "./type-coercion.js";
-import { bodyNeedsArgumentsObject, bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import {
   compileNativeGeneratorFunction,
   isNativeGeneratorCandidate,
@@ -59,6 +59,7 @@ import { detectStringBuilders } from "./string-builder.js"; // (#2641/#1210) str
 import type { StringBuilderPresizeInfo } from "./string-builder.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { emitWasiErrorConstructor, getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
 import {
   emitStandaloneArrayConstructor, // (#2917) native `class Sub extends Array`
@@ -132,6 +133,31 @@ function constructorBodyHasSuperCall(node: ts.Node): boolean {
 function getBuiltinConstructorForwardArity(ctx: CodegenContext, builtinParent: string): number {
   const declaredArity = ctx.externClasses.get(builtinParent)?.constructorParams.length ?? 0;
   return Math.max(1, declaredArity);
+}
+
+/**
+ * Resolve the host constructor import for an extern-class parent.
+ *
+ * Builtin parents historically use the synthetic `__new_<Name>` imports,
+ * while classes declared by a host module use the extern registry's prefix
+ * (for example `events_EventEmitter_new`).  Keeping this distinction in one
+ * helper is important for derived classes: their `super()` call is otherwise
+ * silently routed to a non-existent `__new_EventEmitter` import.
+ */
+function getParentConstructorImportName(ctx: CodegenContext, parentName: string): string {
+  const info = ctx.externClasses.get(parentName);
+  return info ? `${info.importPrefix}_new` : `__new_${parentName}`;
+}
+
+/**
+ * Return the host-visible constructor lookup key used by `__set_subclass_proto`.
+ * Node module classes are not globals, so pass a dotted namespace path (for
+ * example `events.EventEmitter`) for the runtime to resolve through require().
+ */
+function getParentPrototypeLookupName(ctx: CodegenContext, parentName: string): string {
+  const info = ctx.externClasses.get(parentName);
+  if (!info) return parentName;
+  return [...info.namespacePath, info.className].join(".") || info.className;
 }
 
 /**
@@ -503,10 +529,11 @@ function emitSetSubclassProto(
     // Standalone path: no host import available — leave instance alone.
     return;
   }
+  const parentLookupName = getParentPrototypeLookupName(ctx, parentName);
   addStringConstantGlobal(ctx, subName);
-  addStringConstantGlobal(ctx, parentName);
+  addStringConstantGlobal(ctx, parentLookupName);
   const subNameGlobal = ctx.stringGlobalMap.get(subName);
-  const parentNameGlobal = ctx.stringGlobalMap.get(parentName);
+  const parentNameGlobal = ctx.stringGlobalMap.get(parentLookupName);
   // (#2029) In `--target standalone`/`nativeStrings`, `addStringConstantGlobal`
   // stores the documented `-1` sentinel ("no host `string_constants` global —
   // materialize the literal inline at use sites", see registry/imports.ts).
@@ -751,13 +778,19 @@ export function collectClassDeclaration(
           // narrowed — unlike the #2620 collection refusal above, which still
           // guards a real gap. See standalone-subclass-ctors.ts.
           //
-          // (#1366a) Detect built-in parent that is host-constructible (Error
-          // family). Such subclasses get an externref-backed instance: the
-          // constructor returns externref and `super(...)` lowers to
-          // `__new_<Parent>(...)`. We deliberately keep parentStructTypeIdx
-          // undefined so the existing "root struct" path still fires for any
-          // user-class collection bookkeeping (struct registration, tag).
-          if (parentStructTypeIdx === undefined && isHostConstructibleBuiltin(parentClassName)) {
+          // (#1366a/#4534) Detect a host-constructible builtin OR an extern
+          // class parent (for example node:events' EventEmitter). Such
+          // subclasses get an externref-backed instance: the constructor
+          // returns externref and `super(...)` lowers to the parent's actual
+          // extern-class constructor import. We deliberately keep
+          // parentStructTypeIdx undefined so the existing "root struct" path
+          // still fires for any user-class collection bookkeeping (struct
+          // registration, tag).
+          const isExternClassParent = ctx.externClasses.has(parentClassName) && !(ctx.standalone || ctx.wasi);
+          if (
+            parentStructTypeIdx === undefined &&
+            (isHostConstructibleBuiltin(parentClassName) || isExternClassParent)
+          ) {
             ctx.classBuiltinParentMap.set(className, parentClassName);
             ctx.classExternrefBackedSet.add(className);
           } else if (
@@ -1193,8 +1226,16 @@ export function collectClassDeclaration(
       const memberKind = isStatic ? "static" : "instance";
       if (ctx.funcMap.has(classMemberFuncKey(ctx, fullName, memberKind))) continue;
 
-      // Static methods have no self parameter; instance methods get self: (ref $structTypeIdx)
-      const methodParams: ValType[] = isStatic ? [] : [{ kind: "ref", typeIdx: structTypeIdx }];
+      // Static methods have no self parameter; host-backed instance methods
+      // receive the real JS object as externref (see the body compilation
+      // below), while ordinary classes retain the WasmGC ref ABI.
+      const methodParams: ValType[] = isStatic
+        ? []
+        : [
+            ctx.classExternrefBackedSet.has(className)
+              ? { kind: "externref" }
+              : { kind: "ref", typeIdx: structTypeIdx },
+          ];
       for (const param of member.parameters) {
         const paramType = ctx.checker.getTypeAtLocation(param);
         if (param.dotDotDotToken) {
@@ -1277,7 +1318,7 @@ export function collectClassDeclaration(
       // Track methods that read `arguments` (#1053) so callers can
       // populate the __extras_argv global with runtime args beyond the
       // formal param count.
-      if (member.body && bodyUsesArguments(member.body)) {
+      if (needsImplicitArgumentsObject(member)) {
         ctx.funcUsesArguments.add(fullName);
       }
 
@@ -1332,7 +1373,9 @@ export function collectClassDeclaration(
       // leave empty-body placeholders causing "stack fallthru" validation errors).
       if (ctx.funcMap.has(classMemberFuncKey(ctx, getterName))) continue; // (#1983)
       // Getter takes self, returns the accessor return type
-      const getterParams: ValType[] = [{ kind: "ref", typeIdx: structTypeIdx }];
+      const getterParams: ValType[] = [
+        ctx.classExternrefBackedSet.has(className) ? { kind: "externref" } : { kind: "ref", typeIdx: structTypeIdx },
+      ];
       const sig = ctx.checker.getSignatureFromDeclaration(member);
       let getterResults: ValType[] = [];
       if (sig) {
@@ -1370,7 +1413,9 @@ export function collectClassDeclaration(
       // Skip if already registered (same collision guard as getter above)
       if (ctx.funcMap.has(classMemberFuncKey(ctx, setterName))) continue; // (#1983)
       // Setter takes self + value, returns void
-      const setterParams: ValType[] = [{ kind: "ref", typeIdx: structTypeIdx }];
+      const setterParams: ValType[] = [
+        ctx.classExternrefBackedSet.has(className) ? { kind: "externref" } : { kind: "ref", typeIdx: structTypeIdx },
+      ];
       for (const param of member.parameters) {
         setterParams.push(resolveClassAccessorParameterType(ctx, member, param));
       }
@@ -1876,6 +1921,7 @@ function compileClassBodiesInner(
   // Compile constructor
   const ctor = findConstructorImplementation(decl);
   const ctorName = `${className}_new`;
+  const isExternrefBacked = ctx.classExternrefBackedSet.has(className);
   const ctorLocalIdx = funcByName.get(classMemberFuncKey(ctx, ctorName)); // (#1983)
   if (
     ctorLocalIdx !== undefined &&
@@ -1913,8 +1959,6 @@ function compileClassBodiesInner(
     // (#1366a) Externref-backed subclasses (`class Sub extends Error`) have
     // their instance created by a host import inside `super(...)`; `__self` is
     // an externref slot and we skip the WasmGC `struct.new` initialization.
-    const isExternrefBacked = ctx.classExternrefBackedSet.has(className);
-
     // (#1965) WasmGC-struct classes compile the defaults + field initializers
     // + constructor BODY into `${className}_init(...params, self)`, while
     // `${className}_new` reduces to alloc + tail-call init. `super(args)`
@@ -2109,7 +2153,7 @@ function compileClassBodiesInner(
     if (!ctor && isExternrefBacked) {
       const parentName = ctx.classBuiltinParentMap.get(className);
       if (parentName) {
-        const importName = `__new_${parentName}`;
+        const importName = getParentConstructorImportName(ctx, parentName);
         const forwardParams = externrefParams(implicitForwarderArity);
         // Standalone / WASI: route the parent instance creation through the
         // shared native-`__new_<Parent>` dispatch ladder
@@ -2447,10 +2491,20 @@ function compileClassBodiesInner(
       const sig = ctx.checker.getSignatureFromDeclaration(member);
       const retType = sig ? ctx.checker.getReturnTypeOfSignature(sig) : undefined;
 
-      // Static methods have no self param; instance methods get self as first param
+      // Static methods have no self param; instance methods get self as first
+      // param. Host-backed subclasses (including Node extern classes such as
+      // EventEmitter) carry a real JS object, not a WasmGC `$Class` value, so
+      // their method ABI must use externref for the receiver. Keeping the old
+      // ref-typed receiver here made the body impossible to call after
+      // `super()` returned the host object (#4534).
       const params: { name: string; type: ValType }[] = isStatic
         ? []
-        : [{ name: "this", type: { kind: "ref", typeIdx: structTypeIdx } }];
+        : [
+            {
+              name: "this",
+              type: isExternrefBacked ? { kind: "externref" } : { kind: "ref", typeIdx: structTypeIdx },
+            },
+          ];
       for (let pi = 0; pi < member.parameters.length; pi++) {
         const param = member.parameters[pi]!;
         const paramName = ts.isIdentifier(param.name) ? param.name.text : `__param${pi}`;
@@ -2649,7 +2703,7 @@ function compileClassBodiesInner(
       // Set up `arguments` object if the method body references it (#820).
       // Class methods (like standalone functions) need an arguments vec struct
       // so that `arguments.length` and `arguments[n]` work at runtime.
-      if (member.body && bodyUsesArguments(member.body)) {
+      if (needsImplicitArgumentsObject(member)) {
         const methodParamTypes = params.slice(isStatic ? 0 : 1).map((p) => p.type);
         const paramOffset = isStatic ? 0 : 1; // skip 'this' param for instance methods
         // Class bodies are always strict code → unmapped arguments (#779e).
@@ -2748,13 +2802,15 @@ function compileClassBodiesInner(
                 { op: "local.set", index: pendingThrowLocal },
               ]
             : [];
-        fctx.body.push({
-          op: "try",
-          blockType: { kind: "empty" },
-          body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
-          catches: [{ tagIdx, body: catchBody }],
-          catchAll: catchAllBody.length > 0 ? catchAllBody : undefined,
-        });
+        fctx.body.push(
+          buildTargetTaggedTry(
+            ctx,
+            { kind: "empty" },
+            [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
+            [{ tagIdx, body: catchBody }],
+            catchAllBody.length > 0 ? catchAllBody : undefined,
+          ),
+        );
 
         // Return __create_generator or __create_async_generator depending on async flag
         const createGenName = isAsyncMethod ? "__create_async_generator" : "__create_generator";
@@ -3322,7 +3378,7 @@ export function compileSuperCall(
       return;
     }
     const hasSpread = args.some((a) => ts.isSpreadElement(a));
-    const importName = `__new_${builtinParent}`;
+    const importName = getParentConstructorImportName(ctx, builtinParent);
     const forwardArity = getBuiltinConstructorForwardArity(ctx, builtinParent);
     const forwardParams = externrefParams(forwardArity);
     // Standalone / WASI: explicit `super(...)` routes through the same shared

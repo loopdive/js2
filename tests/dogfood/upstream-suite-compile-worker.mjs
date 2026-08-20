@@ -38,7 +38,11 @@ async function main() {
   // lane; other upstream suites keep the worker hermetic.
   if (process.env.DOGFOOD_INSTALL_JSDOM === "1") {
     const { installReactTestEnvironment } = await import("./react-test-environment.mjs");
+    const { installReactUpstreamInfrastructure } = await import("./react-upstream-infrastructure.mjs");
     installReactTestEnvironment();
+    const { createRequire } = await import("node:module");
+    const workerRequire = createRequire(import.meta.url);
+    installReactUpstreamInfrastructure({ react: workerRequire("react") });
   }
   let result;
   try {

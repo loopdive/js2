@@ -367,9 +367,8 @@ export function tryConstructorPrototypeIdentity(
   // `.prototype` to %Array.prototype%. Intercept the COMPOUND access and emit the
   // compiler's own `Object.prototype` value-read (a synthetic `Object.prototype`
   // member access — the lowering is name-keyed on `Object`), so it matches the
-  // identity a plain `Object.prototype` read produces. Host-mode only.
+  // identity a plain `Object.prototype` read produces. (#4555) Both targets.
   if (
-    !noJsHost(ctx) &&
     propName === "prototype" &&
     ts.isPropertyAccessExpression(expr.expression) &&
     expr.expression.name.text === "constructor" &&
@@ -393,9 +392,9 @@ export function tryConstructorPrototypeIdentity(
   // synthetic `Object` identifier so `arguments.constructor === Object`. (The
   // compound `arguments.constructor.prototype` shape is handled above, because
   // the bare `Object` value's `.prototype` is not identity-equal to the
-  // `Object.prototype` member-read in this compiler.) Host-mode only.
+  // `Object.prototype` member-read in this compiler.) (#4555) Both targets —
+  // standalone reaches the same `Object` / `Object.prototype` value reads.
   if (
-    !noJsHost(ctx) &&
     propName === "constructor" &&
     ts.isIdentifier(expr.expression) &&
     expr.expression.text === "arguments" &&
@@ -1083,11 +1082,14 @@ export function tryBufferViewAttributeReads(
           });
           return { kind: "externref" };
         } else {
-          // TypedArray: backing is an f64 vec (or i8 for standalone Uint8Array);
-          // byteLen = element-count (field 0) × BYTES_PER_ELEMENT.
-          const elemKey = noJsHost(ctx) && bufRecvName === "Uint8Array" ? "i8_byte" : "f64";
-          const elemType: ValType = elemKey === "i8_byte" ? { kind: "i8" } : { kind: "f64" };
-          const viewVecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
+          // TypedArray: recover the receiver through the SAME storage mapping
+          // used by its constructor.  The old Uint8Array-vs-f64 split predates
+          // packed Int8/Int16 and dedicated i32-element storage; after that
+          // migration it cast every such receiver to the wrong vec type and
+          // trapped on `.buffer` (Deno's Uint32Array→Uint8Array call-site
+          // scratch view is the bootstrap-critical instance).
+          const viewStorage = typedArrayVecStorage(ctx, bufRecvName!);
+          const viewVecTypeIdx = getOrRegisterVecType(ctx, viewStorage.key, viewStorage.type);
           const recvType = compileExpression(ctx, fctx, expr.expression);
           if (recvType?.kind === "externref") {
             fctx.body.push({ op: "any.convert_extern" });

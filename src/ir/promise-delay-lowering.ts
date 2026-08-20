@@ -2,7 +2,7 @@
 
 import { ts } from "../ts-api.js";
 import type { IrFunctionBuilder } from "./builder.js";
-import { irImportFuncRef, irUnitFuncRef } from "./callable-bindings.js";
+import { irImportFuncRef, irRuntimeFuncRef, irUnitFuncRef } from "./callable-bindings.js";
 import { createDerivedIrUnitId, type IrSourceId, type IrUnitId } from "./identity.js";
 import { asVal, irVal, type IrClosureSignature, type IrFuncRef, type IrType, type IrValueId } from "./nodes.js";
 import {
@@ -13,6 +13,11 @@ import {
 } from "./planning-identity.js";
 import { demoteToLegacy } from "./outcomes.js";
 import type { IrPromiseDelayCertification, IrPromiseDelayResolver } from "./promise-delay.js";
+
+/** Target-neutral symbol whose standalone provider owns the native Promise/timer projection. */
+export const IR_NATIVE_PROMISE_DELAY_FN = "__ir_promise_delay_native";
+
+export type IrPromiseDelayRuntimeProjection = "host-executor" | "standalone-native";
 
 /** Exact node-identity plan produced only for the certified Promise delay. */
 export interface IrPromiseDelayLoweringPlan {
@@ -32,6 +37,7 @@ export interface IrPromiseDelayLoweringPlan {
   readonly timerTarget: IrFuncRef;
   readonly executorLiftedName: string;
   readonly timerLiftedName: string;
+  readonly runtimeProjection: IrPromiseDelayRuntimeProjection;
 }
 
 export interface IrPromiseDelayLoweringPlans {
@@ -213,6 +219,7 @@ export function buildIrPromiseDelayLoweringPlans(
   byOwner: ReadonlyMap<IrUnitId, IrPromiseDelayCertification>,
   selectedOwnerUnitIds: ReadonlySet<IrUnitId>,
   identityContext: IrPlanningIdentityContext,
+  runtimeProjection: IrPromiseDelayRuntimeProjection = "host-executor",
 ): IrPromiseDelayLoweringPlans {
   const constructions = new Map<ts.NewExpression, IrPromiseDelayLoweringPlan>();
   const timers = new Map<ts.CallExpression, IrPromiseDelayLoweringPlan>();
@@ -293,6 +300,7 @@ export function buildIrPromiseDelayLoweringPlans(
       }),
       executorLiftedName,
       timerLiftedName,
+      runtimeProjection,
     };
     constructions.set(certification.construction, plan);
     timers.set(certification.timerCall, plan);
@@ -323,6 +331,9 @@ function lowerResolveCall(
   statementPosition: boolean,
 ): IrValueId {
   requireMatchingPromiseDelayOwner(plan, host);
+  if (plan.runtimeProjection !== "host-executor") {
+    throw new Error(`ir/from-ast: standalone Promise-delay resolve escaped its native provider (${host.funcName})`);
+  }
   if (
     expr !== plan.resolveCall ||
     !statementPosition ||
@@ -360,6 +371,9 @@ function lowerTimerCall(
   statementPosition: boolean,
 ): IrValueId {
   requireMatchingPromiseDelayOwner(plan, host);
+  if (plan.runtimeProjection !== "host-executor") {
+    throw new Error(`ir/from-ast: standalone Promise-delay timer escaped its native provider (${host.funcName})`);
+  }
   if (
     expr !== plan.timerCall ||
     !statementPosition ||
@@ -430,6 +444,29 @@ export function tryLowerPromiseDelayConstruction(
   ) {
     // invariant (producer-promise): the resolver promised a well-formed plan — #4502.
     throw new Error(`ir/from-ast: malformed Promise delay construction plan (${host.funcName})`);
+  }
+  if (plan.runtimeProjection === "standalone-native") {
+    const delayExpr = plan.timerCall.arguments[1];
+    const valueExpr = plan.resolveCall.arguments[0];
+    if (!delayExpr || !valueExpr) {
+      throw new Error(`ir/from-ast: standalone Promise delay lost its certified operands (${host.funcName})`);
+    }
+    const delay = host.lowerExpr(delayExpr, irVal({ kind: "f64" }));
+    const value = host.lowerExpr(valueExpr, irVal({ kind: "f64" }));
+    if (asVal(host.builder.typeOf(delay))?.kind !== "f64" || asVal(host.builder.typeOf(value))?.kind !== "f64") {
+      demoteToLegacy(
+        "operand-coercion-unsupported",
+        `ir/from-ast: standalone Promise delay operands are not grounded f64 values (${host.funcName})`,
+      );
+    }
+    const promise = host.builder.emitCall(irRuntimeFuncRef(IR_NATIVE_PROMISE_DELAY_FN), [delay, value], {
+      kind: "extern",
+      className: "Promise",
+    });
+    if (promise === null) {
+      throw new Error(`ir/from-ast: ${IR_NATIVE_PROMISE_DELAY_FN} produced no value (${host.funcName})`);
+    }
+    return promise;
   }
   const executor = host.lowerClosure(plan.executor, plan.executorSignature, new Set(plan.executorCaptureNames), {
     orderedReadonlyCaptures: plan.executorCaptureNames,

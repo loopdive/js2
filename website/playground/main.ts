@@ -926,16 +926,25 @@ function bindInputModelPersistence(model: monaco.editor.ITextModel): void {
   });
 }
 
+function languageForSourcePath(path: string): string {
+  if (/\.(?:m?js|cjs|jsx|tsx)$/i.test(path)) return "javascript";
+  if (/\.json$/i.test(path)) return "json";
+  if (/\.(?:md|markdown|txt)$/i.test(path)) return "plaintext";
+  return "typescript";
+}
+
 function setInputSourceModel(virtualPath: string, source: string): void {
   const previousModel = inputFile.model;
   const normalizedSource = canonicalizeBenchmarkHelperImports(source, virtualPath);
   const uri = monaco.Uri.parse(`file:///${virtualPath}`);
+  const language = languageForSourcePath(virtualPath);
   let model = monaco.editor.getModel(uri);
   if (!model) {
-    model = monaco.editor.createModel(normalizedSource, "typescript", uri);
+    model = monaco.editor.createModel(normalizedSource, language, uri);
   } else if (model.getValue() !== normalizedSource) {
     model.setValue(normalizedSource);
   }
+  monaco.editor.setModelLanguage(model, language);
   if (previousModel !== model) {
     monaco.editor.setModelMarkers(previousModel, T262_MARKER_OWNER, []);
   }
@@ -1468,6 +1477,33 @@ interface T262FileResult {
   file: string;
   status: string;
   error?: string;
+  passed?: number;
+  total?: number;
+  tests?: { name?: string; status?: string }[];
+  sourceUrl?: string;
+}
+interface NpmCompatTestFile {
+  path: string;
+  status: string;
+  error?: string;
+  passed?: number;
+  total?: number;
+  source?: string;
+  sourceUrl?: string;
+  tests?: { name?: string; status?: string }[];
+}
+interface NpmCompatPlayground {
+  kind: string;
+  label: string;
+  files: NpmCompatTestFile[];
+  summary: SuiteSummary;
+  note?: string;
+}
+interface NpmCompatPackage {
+  name: string;
+  version?: string;
+  tests?: { reason?: string; status?: string; passed?: number | null; total?: number | null } | null;
+  playground?: NpmCompatPlayground;
 }
 interface T262FailureAnnotation {
   status: string;
@@ -1489,6 +1525,7 @@ interface T262TrendRun {
 
 let t262Report: T262Report | null = null;
 const t262FileResultsCache = new Map<string, T262FileResult[]>();
+let npmCompatPackages: NpmCompatPackage[] | null = null;
 
 async function loadLatestT262Summary(): Promise<T262Report["summary"] | null> {
   const runs = await fetchJson<T262TrendRun[]>(resolveSiteLink("benchmarks/results/runs/index.json"));
@@ -1536,6 +1573,15 @@ async function t262LoadFileResults(category: string): Promise<T262FileResult[]> 
   const resolved = data ?? [];
   t262FileResultsCache.set(category, resolved);
   return resolved;
+}
+
+async function loadNpmCompatPackages(): Promise<NpmCompatPackage[]> {
+  if (npmCompatPackages) return npmCompatPackages;
+  const data = await fetchJson<{ packages?: NpmCompatPackage[] }>(
+    resolveSiteLink("benchmarks/results/npm-compat.json"),
+  );
+  npmCompatPackages = Array.isArray(data?.packages) ? data.packages : [];
+  return npmCompatPackages;
 }
 
 function t262GetCategoryStats(
@@ -1933,6 +1979,89 @@ async function t262LoadAndShow(filePath: string, fileResult: T262FileResult | nu
   updateTabLabel("ts-source", fname, undefined, tabTooltips["ts-source"]);
   await compileOnly();
   t262Loading = false;
+  closeMobileSidebarAfterSelection();
+}
+
+const npmCompatRequestedPackage = new URLSearchParams(location.search).get("npm");
+let npmCompatDeepLinkApplied = false;
+
+function npmCompatFolderKey(packageName: string): string {
+  return `__npm_${packageName}__`;
+}
+
+function npmCompatFileKey(packageName: string, filePath: string): string {
+  return `npm:${packageName}:${filePath}`;
+}
+
+function npmCompatStatusClass(status: string): string {
+  switch (status) {
+    case "pass":
+      return " t262-file-pass";
+    case "fail":
+      return " t262-file-fail";
+    case "compile_error":
+      return " t262-file-ce";
+    case "skip":
+      return " t262-file-skip";
+    default:
+      return "";
+  }
+}
+
+function npmCompatFallbackPlayground(pkg: NpmCompatPackage): NpmCompatPlayground {
+  if (pkg.playground) return pkg.playground;
+  const passed = Number(pkg.tests?.passed ?? 0);
+  const total = Number(pkg.tests?.total ?? 0);
+  return {
+    kind: "unavailable",
+    label: "package tests",
+    files: [],
+    summary: { pass: passed, fail: Math.max(0, total - passed), compile_error: 0, skip: 0, total },
+    note:
+      pkg.tests?.reason ??
+      (total > 0
+        ? "This report contains package-level results only; refresh the npm compatibility report for file-level tests."
+        : "No file-level test metadata is included in this report snapshot."),
+  };
+}
+
+async function npmLoadAndShow(packageName: string, file: NpmCompatTestFile): Promise<void> {
+  let source = file.source ?? null;
+  if (source === null && file.sourceUrl) source = await fetchText(file.sourceUrl);
+  if (source === null) {
+    showT262DeepLinkBanner(`Could not load npm test source: ${file.path}`, "warn");
+    source = `// Source unavailable for ${file.path}\n// ${file.sourceUrl ?? "No source URL was recorded."}\n`;
+  }
+
+  const activePath = npmCompatFileKey(packageName, file.path);
+  const packagePath = packageName.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const virtualPath = `input/npm/${packagePath}/${file.path.replace(/^\/+/, "")}`;
+  t262Loading = true;
+  try {
+    clearT262FailureAnnotations();
+    setInputSourceModel(virtualPath, source);
+    revealSourceTab();
+    t262SetActive(activePath);
+    activeT262FileResult = {
+      file: virtualPath,
+      status: file.status,
+      ...(file.error ? { error: file.error } : {}),
+      ...(file.passed != null ? { passed: file.passed } : {}),
+      ...(file.total != null ? { total: file.total } : {}),
+      ...(file.tests ? { tests: file.tests } : {}),
+    };
+    updateTabLabel("ts-source", t262FileName(file.path), undefined, `${file.path} (${file.status})`);
+    await compileOnly();
+  } finally {
+    t262Loading = false;
+  }
+
+  if (file.status === "pass") {
+    const count = file.total != null ? ` — ${file.passed ?? 0}/${file.total} tests passed` : " — passed";
+    showT262DeepLinkBanner(`${packageName}/${file.path}${count}`, "pass");
+  } else if (file.error) {
+    showT262DeepLinkBanner(`${packageName}/${file.path}: ${file.error}`, file.status === "skip" ? "warn" : "fail");
+  }
   closeMobileSidebarAfterSelection();
 }
 
@@ -2696,6 +2825,93 @@ async function t262Render() {
     if (isStaleRender()) return;
   }
 
+  // ── npm compatibility suites ──
+  const npmPackages = await loadNpmCompatPackages();
+  if (isStaleRender()) return;
+  if (!npmCompatDeepLinkApplied) {
+    if (npmCompatRequestedPackage && npmPackages.some((pkg) => pkg.name === npmCompatRequestedPackage)) {
+      t262ExpandedFolders.add(npmCompatFolderKey(npmCompatRequestedPackage));
+    }
+    npmCompatDeepLinkApplied = true;
+  }
+  const npmMatches = npmPackages.filter((pkg) => {
+    const suite = npmCompatFallbackPlayground(pkg);
+    return (
+      !filter ||
+      pkg.name.toLowerCase().includes(filter) ||
+      suite.label.toLowerCase().includes(filter) ||
+      suite.files.some((file) => file.path.toLowerCase().includes(filter))
+    );
+  });
+  if (npmMatches.length > 0) {
+    const npmHeader = document.createElement("div");
+    npmHeader.className = "t262-section-header";
+    npmHeader.textContent = "NPM COMPATIBILITY";
+    listFragment.appendChild(npmHeader);
+
+    for (const pkg of npmMatches) {
+      const suite = npmCompatFallbackPlayground(pkg);
+      const packageKey = npmCompatFolderKey(pkg.name);
+      const packageMatches =
+        !filter || pkg.name.toLowerCase().includes(filter) || suite.label.toLowerCase().includes(filter);
+      const displayFiles = packageMatches
+        ? suite.files
+        : suite.files.filter((file) => file.path.toLowerCase().includes(filter));
+      const packageLabel = pkg.version ? `${pkg.name}  v${pkg.version}` : pkg.name;
+      await renderTopFolder(
+        packageLabel,
+        packageKey,
+        listFragment,
+        (container) => {
+          const filesEl = document.createElement("div");
+          filesEl.className = "t262-files";
+          filesEl.style.paddingLeft = "22px";
+
+          for (const file of displayFiles) {
+            const activePath = npmCompatFileKey(pkg.name, file.path);
+            const fileEl = document.createElement("div");
+            fileEl.className = `t262-file${npmCompatStatusClass(file.status)}${
+              t262ActivePath === activePath ? " active" : ""
+            }`;
+            fileEl.dataset.path = activePath;
+            fileEl.innerHTML = t262StatusIcon(file.status);
+
+            const pathEl = document.createElement("span");
+            pathEl.className = "npm-file-path";
+            pathEl.textContent = file.path;
+            fileEl.appendChild(pathEl);
+
+            if (file.total != null) {
+              const resultEl = document.createElement("span");
+              resultEl.className = "npm-file-result";
+              resultEl.textContent = `${file.passed ?? 0}/${file.total}`;
+              fileEl.appendChild(resultEl);
+            }
+
+            fileEl.title = file.error
+              ? `${file.path} (${file.status})\n${file.error}`
+              : `${file.path} (${file.status})`;
+            fileEl.addEventListener("click", () => {
+              void npmLoadAndShow(pkg.name, file);
+            });
+            filesEl.appendChild(fileEl);
+          }
+
+          if (displayFiles.length === 0) {
+            const noteEl = document.createElement("div");
+            noteEl.className = "t262-no-results";
+            noteEl.textContent = suite.note ?? "No test files are available for this package yet.";
+            filesEl.appendChild(noteEl);
+          }
+          if (t262ActivePath.startsWith(`npm:${pkg.name}:`)) appendOutputFolder(filesEl);
+          container.appendChild(filesEl);
+        },
+        suite.summary.total > 0 ? buildSuiteSummaryHtml(suite.summary) : "",
+      );
+      if (isStaleRender()) return;
+    }
+  }
+
   // ── BENCHMARKS section ──
   const benchMatches = benchmarkExamples.filter(
     (bench) =>
@@ -2812,7 +3028,7 @@ const layoutRoot = document.getElementById("layout-root")!;
 const layout = new LayoutManager(layoutRoot);
 
 // Register all tabs
-layout.registerTab({ id: "ts-source", title: inputFile.displayName, kind: "editor", permanent: true });
+layout.registerTab({ id: "ts-source", title: inputFile.displayName, kind: "editor" });
 layout.registerTab({ id: "wat-output", title: watFile.displayName, kind: "editor", permanent: true });
 layout.registerTab({ id: "wasm-hex", title: wasmHexFile.displayName, kind: "editor" });
 layout.registerTab({ id: "modular-ts", title: modularFile.displayName, kind: "editor" });
@@ -2874,6 +3090,12 @@ layout.onUnmount = (panelId: string, tabId: string) => {
   }
 };
 
+layout.onCloseTab = (_panelId: string, tabId: string): boolean => {
+  if (tabId !== "ts-source") return false;
+  clearSourceEditor();
+  return true;
+};
+
 // Layout changed: relayout editors
 layout.onLayoutChanged = () => {
   for (const slot of editorSlots) {
@@ -2923,7 +3145,7 @@ syncSidebarToggleButton();
 const fmtSize = (b: number) => (b >= 1024 ? `${(b / 1024).toFixed(1)}k` : `${b}b`);
 
 const tabTooltips: Record<string, string> = {
-  "ts-source": "TypeScript (.ts)",
+  "ts-source": "Source editor (.js / .ts)",
   "wat-output": "WebAssembly Text Format (.wat)",
   "wasm-hex": "WebAssembly Binary (.wasm)",
   "modular-ts": "JavaScript (.js)",
@@ -2976,6 +3198,7 @@ function updateTabSizes() {
 }
 
 function updateTabLabel(tabId: string, text: string, meta?: string, tooltip?: string) {
+  layout.updateTabTitle(tabId, text);
   const el = layout.getTabElement(tabId);
   if (el) {
     const label = el.querySelector(".panel-tab-label");
@@ -3024,6 +3247,37 @@ function revealSourceTab(): void {
 function showOutputPanel(name: string) {
   const panelId = layout.findPanelForTab(name);
   if (panelId) layout.switchTab(panelId, name);
+}
+
+function clearSourceEditor(): void {
+  t262Loading = true;
+  try {
+    clearT262FailureAnnotations();
+    setInputSourceModel("input/example.js", "");
+    t262SetActive(inputFile.path);
+    lastResult = null;
+    consolePre.textContent = "";
+    errorsPre.textContent = "";
+    previewPanel.innerHTML = "";
+    timingSpan.textContent = "";
+    runBtn.disabled = false;
+    benchBtn.disabled = true;
+    downloadWasmBtn.disabled = true;
+    for (const file of files) {
+      if (file.folder !== "output") continue;
+      file.model.setValue("");
+      file.compiled = false;
+      file.binarySize = undefined;
+      file.binaryData = undefined;
+    }
+    lastWasmData = null;
+    lastWasmSpans = [];
+    updateTabLabel("ts-source", "example.js", undefined, tabTooltips["ts-source"]);
+    updateTabSizes();
+    queueSidebarRefresh();
+  } finally {
+    t262Loading = false;
+  }
 }
 
 // ─── Cross-highlight functions ───────────────────────────────────────────
@@ -4453,6 +4707,13 @@ mobileLayoutMedia.addEventListener("change", (event) => {
 // by the JSONL baseline are bundled into the GitHub Pages artifact.
 async function loadDeepLinkFromUrl(): Promise<boolean> {
   const params = new URLSearchParams(location.search);
+  if (params.get("npm")) {
+    if (mobileLayoutMedia.matches) {
+      mobileSidebarOpen = true;
+      syncMobileSidebar();
+    }
+    return false;
+  }
   const t262Path = params.get("t262");
   if (!t262Path) return false;
   const errorParam = params.get("error");
@@ -4480,7 +4741,7 @@ async function loadDeepLinkFromUrl(): Promise<boolean> {
   return true;
 }
 
-function showT262DeepLinkBanner(message: string, tone: "fail" | "warn"): void {
+function showT262DeepLinkBanner(message: string, tone: "fail" | "warn" | "pass"): void {
   const existing = document.getElementById("t262-deep-link-banner");
   if (existing) existing.remove();
   const banner = document.createElement("div");
@@ -4495,9 +4756,9 @@ function showT262DeepLinkBanner(message: string, tone: "fail" | "warn"): void {
     "padding:10px 14px",
     "border-radius:0",
     "border:1px solid",
-    `border-color:${tone === "fail" ? "rgba(248,113,113,0.5)" : "rgba(250,204,21,0.5)"}`,
-    `background:${tone === "fail" ? "rgba(248,113,113,0.12)" : "rgba(250,204,21,0.12)"}`,
-    `color:${tone === "fail" ? "#fca5a5" : "#fde68a"}`,
+    `border-color:${tone === "fail" ? "rgba(248,113,113,0.5)" : tone === "pass" ? "rgba(74,222,128,0.5)" : "rgba(250,204,21,0.5)"}`,
+    `background:${tone === "fail" ? "rgba(248,113,113,0.12)" : tone === "pass" ? "rgba(74,222,128,0.12)" : "rgba(250,204,21,0.12)"}`,
+    `color:${tone === "fail" ? "#fca5a5" : tone === "pass" ? "#86efac" : "#fde68a"}`,
     "font-family:ui-monospace, SFMono-Regular, Menlo, monospace",
     "font-size:12px",
     "line-height:1.5",

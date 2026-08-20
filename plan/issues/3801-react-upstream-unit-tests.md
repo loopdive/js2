@@ -80,3 +80,20 @@ total-discovered` with all three denominators, never a bare percentage. See
   not a regression. Do not tune the harness to make the number look better.
 - Coordinate with #1033 (compile React to Wasm) and #1576 (React Tier 1 survey);
   this issue is the acceptance instrument those two lack.
+
+## Host infrastructure follow-up (2026-08-20)
+
+The shared React host has since been expanded so the native oracle and compiled
+lane resolve the production ReactDOM/client/server and test-renderer entries
+against the exact pinned React peer. It also installs jsdom, JSX runtimes,
+`create-react-class`, `internal-test-utils`, a DOM-backed noop renderer, web
+streams, and the Node stream capability used by the Fizz lanes. This removes
+the previous production/dev renderer peer mismatch and lets all admitted tests
+reach either the native oracle or the compiled call.
+
+The current exact run admits and executes **272/273** tests, has zero
+compile-quarantined batches, and scores **92/178** against compiled Wasm. The
+remaining 94 native-oracle-incompatible tests are recorded rather than
+silently omitted; they are dominated by production warning expectations,
+renderer semantics, and opaque compiled component closures at the
+Wasm/host boundary. Making those tests green is still open work.

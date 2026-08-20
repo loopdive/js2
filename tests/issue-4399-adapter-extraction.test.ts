@@ -71,6 +71,44 @@ describe("#4399 extracted JavaScript adapters", () => {
     ).toBeUndefined();
   });
 
+  it("binds timer dependencies and requests the dedicated timer boundary before generic closure fallback", () => {
+    const callback = {};
+    const invoked = vi.fn();
+    const wrapWasmClosure = vi.fn((value: unknown, arity: number, boundary?: "timer") =>
+      value === callback && arity === 0 && boundary === "timer" ? invoked : null,
+    );
+    const deps = {
+      setTimeout(this: unknown, fn: () => void, delay: number) {
+        expect(this).toBe(deps);
+        expect(delay).toBe(7);
+        fn();
+        return 91;
+      },
+      clearTimeout(this: unknown) {
+        expect(this).toBe(deps);
+        throw new Error("browser-compatible ignored clear failure");
+      },
+    };
+    const context = { ...capabilityContext, deps, wrapWasmClosure };
+    const set = resolvePlatformCapabilityImport({ type: "timer_set", mode: "timeout" }, context) as (
+      callback: unknown,
+      delay: unknown,
+    ) => unknown;
+    const clear = resolvePlatformCapabilityImport({ type: "timer_clear", mode: "timeout" }, context) as (
+      handle: unknown,
+    ) => void;
+
+    expect(set(callback, "7")).toBe(91);
+    expect(wrapWasmClosure).toHaveBeenCalledWith(callback, 0, "timer");
+    expect(invoked).toHaveBeenCalledTimes(1);
+    expect(() => clear(91)).not.toThrow();
+
+    const plain = vi.fn();
+    expect(set(plain, 7)).toBe(91);
+    expect(plain).toHaveBeenCalledTimes(1);
+    expect(wrapWasmClosure).toHaveBeenCalledTimes(1);
+  });
+
   it("installs ambient RegExp compatibility only for the explicit compatibility path", () => {
     let definitions = 0;
     const observedRegExp = new Proxy(function ObservedRegExp() {}, {

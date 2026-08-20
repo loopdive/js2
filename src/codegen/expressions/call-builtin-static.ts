@@ -98,6 +98,7 @@ import {
   ensureObjectGroupBy,
   ensureObjectRuntime,
 } from "../object-runtime.js";
+import { isArrayCarrierValType } from "../array-carrier-brand.js"; // (#4556)
 import {
   BUILTIN_CTOR_NAMES,
   emitArrayIsArrayExternrefPredicate,
@@ -607,8 +608,7 @@ export function compileBuiltinStaticCall(
     propAccess.name.text === "isArray" &&
     expr.arguments.length >= 1
   ) {
-    // Check the TypeScript type of the argument at compile time
-    const argTsType = ctx.checker.getTypeAtLocation(expr.arguments[0]!);
+    const argTsType = ctx.checker.getTypeAtLocation(expr.arguments[0]!); // compile-time arg type
     const argWasmType = resolveWasmType(ctx, argTsType);
     // externref args carry values whose array-ness can't be decided
     // statically. Two runtime cases must both be handled:
@@ -632,8 +632,8 @@ export function compileBuiltinStaticCall(
       emitArrayIsArrayExternrefPredicate(ctx, fctx);
       return { kind: "i32" };
     }
-    // If the wasm type is a ref to a vec struct (array), return true; otherwise false
-    const isArr = argWasmType.kind === "ref" || argWasmType.kind === "ref_null";
+    // (#4556) A ref to a real array CARRIER — ref-ness alone is NOT array-ness.
+    const isArr = isArrayCarrierValType(ctx, argWasmType);
     // Still compile the argument for side effects, then drop it
     const argSideType = compileExpression(ctx, fctx, expr.arguments[0]!);
     if (argSideType) fctx.body.push({ op: "drop" });

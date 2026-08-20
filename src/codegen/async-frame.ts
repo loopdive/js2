@@ -61,8 +61,9 @@ import {
   tryCatchAsyncSpillInfo,
 } from "./async-cps.js";
 import { ensureNativeGeneratorResultType } from "./generators-native.js";
-import { undefinedExternInstrs } from "./any-helpers.js"; // (#3178) canonical undefined for the done-result value
+import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js"; // (#3178) canonical undefined for the done-result value
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3 / #2710) stable-regime minting
+import { buildNativeAwaitClassification, buildNativeAwaitSuspendArm } from "./prepared-native-async-await.js";
 import {
   type AsyncDriveRuntime,
   PROMISE_STATE_FULFILLED,
@@ -97,6 +98,7 @@ import { ensureExnTag } from "./registry/imports.js";
 import { addFuncType, getOrRegisterRefCellType, getOrRegisterVecType } from "./registry/types.js";
 import { coerceType, compileExpression, compileStatement, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 
 /**
  * Is the host-free async **drive layer** (#2895 PATH B) active for this module?
@@ -142,10 +144,11 @@ export interface HostAsyncImports {
   undefinedIdx?: number;
 }
 
-function asyncUndefinedInstrs(hostImports: HostAsyncImports | undefined): Instr[] {
-  return hostImports?.undefinedIdx === undefined
-    ? [{ op: "ref.null.extern" }]
-    : [{ op: "call", funcIdx: hostImports.undefinedIdx }];
+function asyncUndefinedInstrs(ctx: CodegenContext, info: AsyncFrameInfo): Instr[] {
+  if (info.hostImports?.undefinedIdx !== undefined) {
+    return [{ op: "call", funcIdx: info.hostImports.undefinedIdx }];
+  }
+  return info.canonicalUndefinedResult ? canonicalUndefinedExternInstrs(ctx) : [{ op: "ref.null.extern" }];
 }
 
 /**
@@ -334,6 +337,18 @@ export interface AsyncFrameInfo {
    * `$Promise` + microtask-ring backend (standalone/wasi).
    */
   host: boolean;
+  /**
+   * Prepared native IR Promise<void> frames settle with the canonical native
+   * undefined singleton. Transitional direct native async/generator frames
+   * retain their existing null-sentinel behavior until that path is retired.
+   */
+  canonicalUndefinedResult?: boolean;
+  /**
+   * Prepared native IR awaits always resume through the microtask ring, even
+   * when their operand is already settled. This preserves the mandatory
+   * asynchronous turn without widening the transitional direct-native path.
+   */
+  alwaysAsyncAwait?: boolean;
   /** Host backend import indices (present iff `host`). */
   hostImports?: HostAsyncImports;
   /** Host backend: `__cb_<id>` callback id of the fulfill step adapter. */
@@ -1966,107 +1981,23 @@ export function ensureAsyncResumeFunction(
           // Classify the assimilated value; set suspendedLocal + SENT/ERROR/MODE.
           // No `br` inside these nested ifs — the single advance/suspend
           // `br`/`return` is emitted flat below at a known control depth.
-          out.push({ op: "i32.const", value: 0 });
-          out.push({ op: "local.set", index: suspendedLocal });
-
-          const deliverFromP: Instr[] = [
-            { op: "local.get", index: frameLocal },
-            { op: "local.get", index: pLocal },
-            {
-              op: "struct.get",
-              typeIdx: info.promiseTypeIdx,
-              fieldIdx: 1,
-            },
-            {
-              op: "struct.set",
-              typeIdx: info.stateTypeIdx,
-              fieldIdx: SENT_FIELD,
-            },
-          ];
-          const rejectFromP: Instr[] = [
-            // (#2958) The frame is consuming this awaited promise's rejection
-            // (the reason is re-thrown into the resume machine, where a
-            // try/catch in the async body may handle it), so mark it handled —
-            // otherwise an inlined `await Promise.reject(x)` would be reported as
-            // unhandled. No-op when tracking is inactive.
-            ...(rt && rt.markRejectionHandledFuncIdx >= 0
-              ? ([
-                  { op: "local.get", index: pLocal },
-                  { op: "call", funcIdx: rt.markRejectionHandledFuncIdx },
-                ] satisfies Instr[])
-              : []),
-            { op: "local.get", index: frameLocal },
-            { op: "local.get", index: pLocal },
-            {
-              op: "struct.get",
-              typeIdx: info.promiseTypeIdx,
-              fieldIdx: 1,
-            },
-            {
-              op: "struct.set",
-              typeIdx: info.stateTypeIdx,
-              fieldIdx: ERROR_FIELD,
-            },
-            ...setStateI32FromConst(info, frameLocal, MODE_FIELD, MODE_THROW),
-          ];
-          const markPending: Instr[] = [
-            { op: "i32.const", value: 1 },
-            { op: "local.set", index: suspendedLocal },
-          ];
-          const deliverPlain: Instr[] = [
-            { op: "local.get", index: frameLocal },
-            { op: "local.get", index: awaitedLocal },
-            {
-              op: "struct.set",
-              typeIdx: info.stateTypeIdx,
-              fieldIdx: SENT_FIELD,
-            },
-          ];
-          const pendingOrRejected: Instr[] = [
-            { op: "local.get", index: pLocal },
-            {
-              op: "struct.get",
-              typeIdx: info.promiseTypeIdx,
-              fieldIdx: 0,
-            },
-            { op: "i32.const", value: PROMISE_STATE_REJECTED },
-            { op: "i32.eq" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: rejectFromP,
-              else: markPending,
-            },
-          ];
           out.push(
-            { op: "local.get", index: awaitedLocal },
-            { op: "any.convert_extern" },
-            { op: "ref.test", typeIdx: info.promiseTypeIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: awaitedLocal },
-                { op: "any.convert_extern" },
-                { op: "ref.cast", typeIdx: info.promiseTypeIdx },
-                { op: "local.set", index: pLocal },
-                { op: "local.get", index: pLocal },
-                {
-                  op: "struct.get",
-                  typeIdx: info.promiseTypeIdx,
-                  fieldIdx: 0,
-                },
-                { op: "i32.const", value: PROMISE_STATE_FULFILLED },
-                { op: "i32.eq" },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: deliverFromP,
-                  else: pendingOrRejected,
-                },
-              ],
-              else: deliverPlain,
-            },
+            ...buildNativeAwaitClassification({
+              alwaysAsync: info.alwaysAsyncAwait === true,
+              awaitedLocal,
+              promiseLocal: pLocal,
+              frameLocal,
+              suspendedLocal,
+              promiseTypeIdx: info.promiseTypeIdx,
+              stateTypeIdx: info.stateTypeIdx,
+              sentField: SENT_FIELD,
+              errorField: ERROR_FIELD,
+              enqueueFuncIdx: rt?.enqueueFuncIdx ?? -1,
+              fulfillStepFuncIdx: info.stepFulfillFuncIdx ?? -1,
+              rejectStepFuncIdx: info.stepRejectFuncIdx ?? -1,
+              markRejectionHandledFuncIdx: rt?.markRejectionHandledFuncIdx ?? -1,
+              setThrowMode: setStateI32FromConst(info, frameLocal, MODE_FIELD, MODE_THROW),
+            }),
           );
 
           // Advance-or-suspend. STATE = resumeState for both (suspend → the
@@ -2099,11 +2030,17 @@ export function ensureAsyncResumeFunction(
           ];
           // Advance: `br` to the dispatch `loop` to re-enter at STATE=resumeState.
           const advanceArm: Instr[] = [{ op: "br", depth: loopDepth }];
+          const suspendOrQueuedArm = buildNativeAwaitSuspendArm(
+            info.alwaysAsyncAwait === true,
+            suspendedLocal,
+            suspendArm,
+            [...storeSpills(info, resumeFctx, frameLocal, term.spillNames), { op: "return" }],
+          );
           out.push({ op: "local.get", index: suspendedLocal });
           out.push({
             op: "if",
             blockType: { kind: "empty" },
-            then: suspendArm,
+            then: suspendOrQueuedArm,
             else: advanceArm,
           });
           break;
@@ -2182,7 +2119,7 @@ export function ensureAsyncResumeFunction(
           // Fall off the body — fulfil with undefined. (`return v` inside the
           // lead already settles via the `asyncDriveReturn` hook and returns.)
           out.push({ op: "local.get", index: resultPromiseLocal });
-          out.push(...asyncUndefinedInstrs(hostImports));
+          out.push(...asyncUndefinedInstrs(ctx, info));
           out.push({ op: "call", funcIdx: settleFulfillIdx });
           out.push({ op: "drop" });
           out.push({ op: "return" });
@@ -2524,15 +2461,7 @@ export function ensureAsyncResumeFunction(
         {
           op: "loop",
           blockType: { kind: "empty" },
-          body: [
-            {
-              op: "try",
-              blockType: { kind: "empty" },
-              body: chain,
-              catches: [{ tagIdx: exnTag, body: route }],
-              ...(catchAllRoute !== undefined ? { catchAll: catchAllRoute } : {}),
-            },
-          ],
+          body: [buildTargetTaggedTry(ctx, { kind: "empty" }, chain, [{ tagIdx: exnTag, body: route }], catchAllRoute)],
         },
       ],
     });
@@ -2544,17 +2473,14 @@ export function ensureAsyncResumeFunction(
         body: [{ op: "loop", blockType: { kind: "empty" }, body: chain }],
       },
     ];
-    resumeFctx.body.push({
-      op: "try",
-      blockType: { kind: "empty" },
-      body: dispatch,
-      catches: [
+    resumeFctx.body.push(
+      buildTargetTaggedTry(ctx, { kind: "empty" }, dispatch, [
         {
           tagIdx: exnTag,
           body: [{ op: "local.set", index: reasonLocal }, ...rejectTail],
         },
-      ],
-    });
+      ]),
+    );
   }
 
   resumePlaceholder.locals = resumeFctx.locals;

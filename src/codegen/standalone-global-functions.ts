@@ -15,9 +15,11 @@ import { getOrCreateFuncRefWrapperTypes } from "./closures.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { getExternrefToStringProvider } from "./coercion-engine.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { addStringConstantGlobal, addUnionImports } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { emitNativeEscape, emitNativeUnescape } from "./escape-native.js"; // (#4556) Annex B §B.2.1/§B.2.2
 import { emitNativeUriDecode, emitNativeUriEncode, URI_DECODE_MASK, URI_ENCODE_MASK } from "./uri-encoding-native.js";
 
 export const STANDALONE_ES5_GLOBAL_FUNCTION_NAMES = [
@@ -34,6 +36,19 @@ export const STANDALONE_ES5_GLOBAL_FUNCTION_NAMES = [
   // failed while every `decodeURI*`/`encodeURIComponent` twin passed).
   "encodeURI",
   "encodeURIComponent",
+  // (#4556) Annex B §B.2.1 / §B.2.2. `escape` / `unescape` are ordinary global
+  // FUNCTION PROPERTIES of the realm object with the same
+  // `{writable:true, enumerable:false, configurable:true}` attributes as the
+  // §19.2 set above — the only reason they were absent is that their direct
+  // CALL had a native lowering from the start, so nothing forced the value +
+  // own-property half. Measured: `typeof this.escape` already answered
+  // "function" (the identifier read works), while
+  // `Object.prototype.hasOwnProperty.call(this, "escape")` answered false and
+  // `getOwnPropertyDescriptor` answered undefined — so `verifyProperty` failed
+  // with "escape should be an own property"
+  // (annexB/built-ins/{escape,unescape}/prop-desc.js).
+  "escape",
+  "unescape",
 ] as const;
 
 export type StandaloneEs5GlobalFunctionName = (typeof STANDALONE_ES5_GLOBAL_FUNCTION_NAMES)[number];
@@ -47,6 +62,8 @@ const GLOBAL_FUNCTION_ARITY: Readonly<Record<StandaloneEs5GlobalFunctionName, nu
   decodeURIComponent: 1,
   encodeURI: 1,
   encodeURIComponent: 1,
+  escape: 1,
+  unescape: 1,
 });
 
 const GLOBAL_FUNCTION_SET: ReadonlySet<string> = new Set(STANDALONE_ES5_GLOBAL_FUNCTION_NAMES);
@@ -128,6 +145,12 @@ export function ensureStandaloneGlobalFunctionClosure(
   } else if (name === "decodeURI" || name === "decodeURIComponent") {
     emitNativeUriDecode(ctx);
     nativeIdx = ctx.funcMap.get("__uri_decode");
+  } else if (name === "escape") {
+    emitNativeEscape(ctx);
+    nativeIdx = ctx.funcMap.get("__escape");
+  } else if (name === "unescape") {
+    emitNativeUnescape(ctx);
+    nativeIdx = ctx.funcMap.get("__unescape");
   } else {
     emitNativeUriEncode(ctx);
     nativeIdx = ctx.funcMap.get("__uri_encode");
@@ -168,10 +191,22 @@ export function ensureStandaloneGlobalFunctionClosure(
       if (name === "isFinite") {
         closureFctx.body.push({ op: "f64.const", value: 0 }, { op: "f64.eq" });
       }
+    } else if ((name === "escape" || name === "unescape") && nativeIdx !== undefined) {
+      // (#4556) §B.2.1.1 step 1 is `ToString(string)`; `__escape`/`__unescape`
+      // then take the same native-string carrier as the direct-call lowering in
+      // annexb-escape-call.ts. No mask argument — unlike the URI family these
+      // are 1-arg helpers.
+      const toStringIdx = getExternrefToStringProvider(ctx);
+      if (toStringIdx === undefined) return null;
+      closureFctx.body.push(
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: toStringIdx },
+        { op: "call", funcIdx: nativeIdx },
+      );
     } else if (nativeIdx !== undefined) {
       // __extern_toString is the shared standalone ToString boundary. The URI
       // helpers then receive the same native-string carrier as direct calls.
-      const toStringIdx = ctx.funcMap.get("__extern_toString");
+      const toStringIdx = getExternrefToStringProvider(ctx);
       if (toStringIdx === undefined) return null;
       // (#4485) Pick the mask TABLE by helper family, not by a single name —
       // with `encodeURI` added, a `name === "encodeURIComponent"` test would

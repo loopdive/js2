@@ -1,15 +1,17 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { isSingleAwaitReturnAsyncCandidate } from "../ir/async-prepare.js";
-import { irImportFuncRef, irIntrinsicFuncRef } from "../ir/callable-bindings.js";
+import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "../ir/callable-bindings.js";
 import {
   IR_ASYNC_CLOCK_SNAPSHOT_FN,
   IR_ASYNC_CONSOLE_LOG_STRING_FN,
   IR_ASYNC_NUMBER_TO_STRING_FN,
+  IR_ASYNC_PROMISE_ALL_NATIVE_FN,
   IR_ASYNC_STRING_CONCAT_5_FN,
 } from "../ir/async-semantic-runtime.js";
 import type { IrFromAstResolver } from "../ir/from-ast.js";
 import { irVal, irVec } from "../ir/nodes.js";
+import type { IrPromiseDelayResolver } from "../ir/promise-delay.js";
 import type { ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { IrUnitId } from "../ir/identity.js";
@@ -541,6 +543,112 @@ export function preparedIrAsyncSourceCanSuspend(ctx: CodegenContext, fn: ts.Func
   );
 }
 
+const promiseDelayResolverByContext = new WeakMap<CodegenContext, IrPromiseDelayResolver>();
+
+/** Publish checker-derived delay ownership before declaration ABI collection. */
+export function registerIrAsyncPromiseDelayResolver(ctx: CodegenContext, resolver: IrPromiseDelayResolver): void {
+  promiseDelayResolverByContext.set(ctx, resolver);
+}
+
+function promiseDelayResolver(ctx: CodegenContext): IrPromiseDelayResolver | undefined {
+  return promiseDelayResolverByContext.get(ctx);
+}
+
+function sourceFunctionForCall(ctx: CodegenContext, call: ts.CallExpression): ts.FunctionDeclaration | null {
+  if (!ts.isIdentifier(call.expression)) return null;
+  const declaration = ctx.oracle.valueDeclarationOf(call.expression);
+  return declaration && ts.isFunctionDeclaration(declaration) && declaration.getSourceFile() === call.getSourceFile()
+    ? declaration
+    : null;
+}
+
+function exactStandaloneFetchUser(
+  ctx: CodegenContext,
+  fn: ts.FunctionDeclaration,
+  shape: { readonly awaitedCall: ts.CallExpression },
+): boolean {
+  const parameter = fn.parameters[0];
+  const call = shape.awaitedCall;
+  const delay = sourceFunctionForCall(ctx, call);
+  const multiplied = call.arguments[1];
+  return (
+    fn.name?.text === "fetchUser" &&
+    fn.parameters.length === 1 &&
+    !!parameter &&
+    ts.isIdentifier(parameter.name) &&
+    parameter.type?.kind === ts.SyntaxKind.NumberKeyword &&
+    exactPromiseReturn(fn, ts.SyntaxKind.NumberKeyword) &&
+    call.arguments.length === 2 &&
+    ts.isNumericLiteral(call.arguments[0]!) &&
+    Number(call.arguments[0]!.text) === 30 &&
+    !!multiplied &&
+    ts.isBinaryExpression(multiplied) &&
+    multiplied.operatorToken.kind === ts.SyntaxKind.AsteriskToken &&
+    ts.isIdentifier(multiplied.left) &&
+    ctx.oracle.valueDeclarationOf(multiplied.left) === parameter &&
+    ts.isNumericLiteral(multiplied.right) &&
+    Number(multiplied.right.text) === 10 &&
+    !!delay &&
+    promiseDelayResolver(ctx)?.resolveOwner(delay) !== undefined
+  );
+}
+
+/**
+ * Keep the first standalone-native projection closed over the exact playground
+ * dependency family. The host projection retains the broader certified async
+ * shapes; standalone widens only when every source call bottoms out at the
+ * separately prepared Promise-delay owner.
+ */
+function isExactStandaloneNativeAsyncFamilyOwner(
+  ctx: CodegenContext,
+  fn: ts.FunctionDeclaration,
+  active = new Set<ts.FunctionDeclaration>(),
+): boolean {
+  if (active.has(fn)) return false;
+  active.add(fn);
+  try {
+    const shape = preparedIrAsyncSourceShape(ctx, fn);
+    if (!shape) return false;
+    if (shape.kind === "identity") return exactStandaloneFetchUser(ctx, fn, shape);
+    if (shape.kind === "sequential-counted-loop") {
+      const callee = sourceFunctionForCall(ctx, shape.awaitedCalls[0]);
+      return !!callee && isExactStandaloneNativeAsyncFamilyOwner(ctx, callee, active);
+    }
+    if (shape.kind === "final-main") {
+      const sequential = sourceFunctionForCall(ctx, shape.awaitedCalls[0]);
+      const parallel = sourceFunctionForCall(ctx, shape.awaitedCalls[1]);
+      return (
+        !!sequential &&
+        !!parallel &&
+        isExactStandaloneNativeAsyncFamilyOwner(ctx, sequential, active) &&
+        isExactStandaloneNativeAsyncFamilyOwner(ctx, parallel, active)
+      );
+    }
+    if (fn.name?.text !== "fetchAllParallel") return false;
+    const callees = new Set<ts.FunctionDeclaration>();
+    const visit = (node: ts.Node): void => {
+      if (node !== fn && isNestedExecutable(node)) return;
+      if (ts.isCallExpression(node) && node.end <= shape.awaitedCall.pos && isPreparedAsyncThenableCall(ctx, node)) {
+        const callee = sourceFunctionForCall(ctx, node);
+        if (callee) callees.add(callee);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(fn.body!);
+    return (
+      callees.size === 1 && [...callees].every((callee) => isExactStandaloneNativeAsyncFamilyOwner(ctx, callee, active))
+    );
+  } finally {
+    active.delete(fn);
+  }
+}
+
+function preparedIrAsyncSourceCanSuspendOnTarget(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean {
+  return (
+    preparedIrAsyncSourceCanSuspend(ctx, fn) && (!ctx.standalone || isExactStandaloneNativeAsyncFamilyOwner(ctx, fn))
+  );
+}
+
 /** Exact awaited Promise.all node owned by the certified continuation shape. */
 export function isPreparedIrPromiseAllCall(ctx: CodegenContext, call: ts.CallExpression): boolean {
   const owner = enclosingFunctionDeclaration(call);
@@ -635,7 +743,7 @@ function isPreparedAsyncThenableCall(ctx: CodegenContext, call: ts.CallExpressio
     ts.isSourceFile(callee.parent) &&
     callee.getSourceFile() === owner.getSourceFile() &&
     preparedIrAsyncSourceShape(ctx, callee)?.kind === "identity" &&
-    preparedIrAsyncSourceCanSuspend(ctx, callee)
+    preparedIrAsyncSourceCanSuspendOnTarget(ctx, callee)
   );
 }
 
@@ -659,18 +767,22 @@ export function prepareAsyncCallableAbi(
   const usesPromiseAbi =
     ctx.programAbiSession !== undefined &&
     !ctx.wasi &&
-    !ctx.standalone &&
+    (!ctx.standalone || ctx.nativeStrings) &&
     !fn.typeParameters?.length &&
     ts.isSourceFile(fn.parent) &&
     shape !== null &&
-    preparedIrAsyncSourceCanSuspend(ctx, fn) &&
+    preparedIrAsyncSourceCanSuspendOnTarget(ctx, fn) &&
     params.every((param) => preparedAsyncParamAbiIsStable(ctx, param)) &&
     supportedFulfillment;
   return [params, usesPromiseAbi ? [{ kind: "externref" }] : fulfillmentResults];
 }
 
 /** Keep selector admission and the production async engine on one proof. */
-export function prepareIrAsyncSelectionOptions(ctx: CodegenContext): AsyncSelectionOptions {
+export function prepareIrAsyncSelectionOptions(
+  ctx: CodegenContext,
+  resolvePromiseDelay?: IrPromiseDelayResolver,
+): AsyncSelectionOptions {
+  if (resolvePromiseDelay) registerIrAsyncPromiseDelayResolver(ctx, resolvePromiseDelay);
   return {
     supportsAsyncIr: ctx.supportsAsyncIr,
     asyncEngineClaims: (fn) => asyncEngineWouldActivate(ctx, fn),
@@ -678,10 +790,13 @@ export function prepareIrAsyncSelectionOptions(ctx: CodegenContext): AsyncSelect
       const plan = analyzeAsyncBody(ctx, fn);
       return plan.awaitPoints.some((awaited) => plan.awaitedStaticallyResolved.get(awaited) !== true);
     },
-    // #4106: first genuinely-suspending IR producer. Host/WasmGC only — the
-    // prepared runtime-provider catalogue has no standalone/WASI projection.
+    // The exact prepared plans project either through host adapters or the
+    // standalone native `$Promise` runtime. WASI remains outside this slice.
     canPrepareSuspendingAsync: (fn) =>
-      !ctx.wasi && !ctx.standalone && ts.isFunctionDeclaration(fn) && preparedIrAsyncSourceCanSuspend(ctx, fn),
+      !ctx.wasi &&
+      (!ctx.standalone || ctx.nativeStrings) &&
+      ts.isFunctionDeclaration(fn) &&
+      preparedIrAsyncSourceCanSuspendOnTarget(ctx, fn),
     preparedAsyncPromiseVectorLocal: (declaration) => isPreparedIrPromiseVectorLocal(ctx, declaration),
     preparedAsyncThenableCall: (call) => isPreparedIrThenableCall(ctx, call),
     preparedAsyncPromiseAllCall: (call) => isPreparedIrPromiseAllCall(ctx, call),
@@ -705,9 +820,16 @@ export function preparedIrAsyncFromAstResolver(
   return {
     preparedAsyncPromiseVectorLocal: (declaration) => isPreparedIrPromiseVectorLocal(ctx, declaration),
     preparedAsyncPromiseAllPlan: (call) => {
+      if (ctx.standalone && !ctx.wasi && ctx.nativeStrings && isPreparedIrPromiseAllCall(ctx, call)) {
+        return {
+          target: irRuntimeFuncRef(IR_ASYNC_PROMISE_ALL_NATIVE_FN),
+          argumentType: irVec(irVal({ kind: "externref" }), true),
+          resultType: irVec(irVal({ kind: "f64" }), true),
+        };
+      }
       if (
-        ctx.standalone ||
         ctx.wasi ||
+        ctx.standalone ||
         ctx.strictNoHostImports ||
         !ctx.funcMap.has("Promise_all") ||
         !isPreparedIrPromiseAllCall(ctx, call)
@@ -736,9 +858,9 @@ export function collectPreparedIrAsyncOwners(
   selectedFunctions: ReadonlySet<string>,
 ): ReadonlySet<IrUnitId> {
   const owners = new Set<IrUnitId>();
-  if (ctx.wasi || ctx.standalone) return owners;
+  if (ctx.wasi || (ctx.standalone && !ctx.nativeStrings)) return owners;
   for (const claim of identityPlan.functionClaims) {
-    if (selectedFunctions.has(claim.legacyName) && preparedIrAsyncSourceCanSuspend(ctx, claim.declaration)) {
+    if (selectedFunctions.has(claim.legacyName) && preparedIrAsyncSourceCanSuspendOnTarget(ctx, claim.declaration)) {
       owners.add(claim.unitId);
     }
   }

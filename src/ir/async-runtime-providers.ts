@@ -124,11 +124,20 @@ export const ASYNC_RUNTIME_PROVIDER_IDS = Object.freeze([
   "host.value.undefined",
   "host.scheduler.drain",
   "host.scheduler.enqueue",
+  "native.promise.capability.create",
+  "native.promise.react",
+  "native.promise.resolve",
+  "native.promise.settle.fulfill",
+  "native.promise.settle.reject",
+  "native.scheduler.drain",
+  "native.scheduler.enqueue",
+  "native.value.undefined",
 ] as const);
 
 export type AsyncRuntimeProviderId = (typeof ASYNC_RUNTIME_PROVIDER_IDS)[number];
 
 const HOST_TARGET = Object.freeze(["host"] as const);
+const STANDALONE_TARGET = Object.freeze(["standalone"] as const);
 const WASMGC_BACKEND = Object.freeze(["wasmgc"] as const);
 const NO_DEPENDENCIES = Object.freeze([] as const);
 const NO_HOST_CAPABILITIES = Object.freeze([] as const);
@@ -138,6 +147,10 @@ const HOST_CAPABILITY_IMPLEMENTATION: RuntimeProviderImplementation = Object.fre
 const HOST_MANAGED_IMPLEMENTATION: RuntimeProviderImplementation = Object.freeze({
   kind: "host-managed",
   service: "promise-job-queue",
+});
+const NATIVE_MANAGED_IMPLEMENTATION: RuntimeProviderImplementation = Object.freeze({
+  kind: "native-managed",
+  service: "native-promise-runtime",
 });
 
 function provider(
@@ -154,6 +167,18 @@ function provider(
     supportedTargets: HOST_TARGET,
     supportedBackends: WASMGC_BACKEND,
     implementation,
+  });
+}
+
+function nativeProvider(id: AsyncRuntimeProviderId, feature: AsyncRuntimeFeature): RuntimeProviderDefinition {
+  return Object.freeze({
+    id,
+    feature,
+    dependencies: NO_DEPENDENCIES,
+    hostCapabilities: NO_HOST_CAPABILITIES,
+    supportedTargets: STANDALONE_TARGET,
+    supportedBackends: WASMGC_BACKEND,
+    implementation: NATIVE_MANAGED_IMPLEMENTATION,
   });
 }
 
@@ -200,4 +225,12 @@ export const ASYNC_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Obj
   ),
   provider("host.scheduler.drain", "scheduler.drain", NO_HOST_CAPABILITIES, HOST_MANAGED_IMPLEMENTATION),
   provider("host.scheduler.enqueue", "scheduler.enqueue", NO_HOST_CAPABILITIES, HOST_MANAGED_IMPLEMENTATION),
+  nativeProvider("native.promise.capability.create", "promise.capability.create"),
+  nativeProvider("native.promise.react", "promise.react"),
+  nativeProvider("native.promise.resolve", "promise.resolve"),
+  nativeProvider("native.promise.settle.fulfill", "promise.settle.fulfill"),
+  nativeProvider("native.promise.settle.reject", "promise.settle.reject"),
+  nativeProvider("native.scheduler.drain", "scheduler.drain"),
+  nativeProvider("native.scheduler.enqueue", "scheduler.enqueue"),
+  nativeProvider("native.value.undefined", "value.undefined"),
 ]);
