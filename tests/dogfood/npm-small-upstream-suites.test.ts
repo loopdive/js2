@@ -238,7 +238,7 @@ describe("small npm package upstream suites", () => {
       callbacksDeferred: 312,
     });
     expect(report.compile.modules).toBe(1);
-    expect(report.results.scored).toBe(6);
+    expect(report.results).toMatchObject({ scored: 6, passed: 6, failed: 0, runtimeFailed: 0 });
   });
 
   const styledComponentsHeavy = process.env.DOGFOOD_STYLED_COMPONENTS_UPSTREAM_SUITE === "1" ? it : it.skip;

@@ -359,11 +359,13 @@ six unchanged synchronous callbacks from `virtual-console.js` which exercise
 matching published `lib/jsdom/virtual-console.js`; its Node `events` dependency
 is left at the platform boundary rather than replaced with a harness fake.
 
-The selected module compiles and validates in about half a second. Native Node
-passes **6/6** callbacks and Wasm passes **1/6**. Each of the five failures
-reports `on is not a function`, isolating the remaining gap to callable method
-projection on the host-provided `EventEmitter`; the invalid-option callback
-passes because it does not need to register a listener.
+The selected module compiles and validates in about three seconds. Native Node
+and Wasm now both pass **6/6** callbacks. The five former `on is not a
+function` failures are fixed by the shared callable class-method projection
+bridge for host-provided `EventEmitter` instances; the invalid-option callback
+continues to pass without registering a listener. The upstream regression test
+now asserts the complete 6/6 result instead of only checking that callbacks
+were scored.
 
 The remaining 312 registrations, including full DOM construction, resource
 loading, and asynchronous cases, remain explicit deferred coverage. The
