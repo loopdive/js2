@@ -1871,15 +1871,22 @@ function knownBugsFor(name) {
 // or other host facilities out of the compiler score. Preserve the original
 // `harnessIncompatible` field for compatibility, but expose the user-facing
 // meaning explicitly so the card can distinguish unavailable infrastructure
-// from compiler-quarantined or invalid-module tests.
+// from compiler-quarantined or invalid-module tests. A native-oracle failure is
+// not automatically unavailable infrastructure: those tests did run, but
+// their expected renderer/oracle behavior could not be reproduced.
+function countUnavailableInfrastructure(report) {
+  const counts = report?.extraction?.rejectionCounts;
+  if (!counts || typeof counts !== "object") return 0;
+  return Object.entries(counts).reduce(
+    (total, [reason, count]) => (reason.startsWith("needs-") ? total + (Number.isFinite(count) ? count : 0) : total),
+    0,
+  );
+}
+
 function annotateUnavailableInfra(tests) {
   if (!tests || typeof tests !== "object") return tests;
-  const unavailableInfra = Number.isFinite(tests.unavailableInfra)
-    ? tests.unavailableInfra
-    : Number.isFinite(tests.harnessIncompatible)
-      ? tests.harnessIncompatible
-      : null;
-  return unavailableInfra === null ? tests : { ...tests, unavailableInfra };
+  const unavailableInfra = Number.isFinite(tests.unavailableInfra) ? tests.unavailableInfra : 0;
+  return { ...tests, unavailableInfra };
 }
 
 async function buildPackageEntry({ name, version, issue, entryFile, shape, report, tests, perf, entryIsBarrel }) {
@@ -2293,6 +2300,7 @@ if (!perfOnly && selectedPackages.has("react")) {
         executed: reactSuite.results?.executed ?? null,
         upstreamTestsSeen: reactSuite.extraction?.upstreamTestsSeen ?? null,
         harnessIncompatible: reactSuite.results?.harnessIncompatible ?? null,
+        unavailableInfra: countUnavailableInfrastructure(reactSuite),
         quarantined: reactSuite.compile?.quarantined?.length ?? null,
         sourceIssue: 3958,
       },
@@ -2346,6 +2354,7 @@ if (!perfOnly && selectedPackages.has("lit")) {
           admitted: litSuite.extraction?.admitted ?? null,
           upstreamTestsSeen: litSuite.extraction?.upstreamTestsSeen ?? null,
           harnessIncompatible: litSuite.results?.harnessIncompatible ?? null,
+          unavailableInfra: countUnavailableInfrastructure(litSuite),
           // The headline finding, and the reason the pass rate is low: most of
           // lit's corpus sits behind an implementation module the validator
           // rejects (#3978), so those tests never ran against Wasm at all.
@@ -2406,6 +2415,7 @@ if (!perfOnly && selectedPackages.has("react-dom")) {
         admitted: reactDomSuite.extraction?.admitted ?? null,
         upstreamTestsSeen: reactDomSuite.extraction?.upstreamTestsSeen ?? null,
         harnessIncompatible: reactDomSuite.results?.harnessIncompatible ?? null,
+        unavailableInfra: countUnavailableInfrastructure(reactDomSuite),
         // Why 0 can be scored while 1,942 are admitted: while #3982 is open the
         // implementation module itself may be rejected, and the suite's OWN
         // test file pins that this is REPORTED with the compiler's message,
@@ -2573,6 +2583,7 @@ for (const entry of NPM_COMPAT_CATALOG) {
             commit: catalogUpstreamReport.upstreamSuite?.commit ?? null,
           },
           packageApiWorkload: workload?.tests ?? undefined,
+          unavailableInfra: countUnavailableInfrastructure(catalogUpstreamReport),
         }
       : null) ??
     workload?.tests ??
