@@ -35,6 +35,7 @@ import { setupReact } from "./setup-react.mjs";
 import { setupReactDomImplementation, setupReactDomUpstreamSuite } from "./setup-react-dom-upstream-suite.mjs";
 import { extractReactUpstreamTests } from "./react-upstream-extract.mjs";
 import { installReactTestEnvironment } from "./react-test-environment.mjs";
+import { installReactUpstreamInfrastructure } from "./react-upstream-infrastructure.mjs";
 import { REACT_EXPECT_SHIM, LAST_ERROR_EXPORT, buildTestFunction } from "./react-upstream-shim.mjs";
 import { compileProjectInWorker, compileSourceInWorker } from "./upstream-suite-runner.mjs";
 
@@ -538,6 +539,7 @@ export async function runHarness({ quiet = false } = {}) {
   const reactSource = readFileSync(join(reactRoot, "package", "cjs", "react.production.js"), "utf-8");
   const implementationPin = setupReactDomImplementation();
   const localRequire = createRequire(import.meta.url);
+  const hostInfrastructure = installReactUpstreamInfrastructure({ react: localRequire("react") });
   const installedReactDom = localRequire("react-dom/package.json");
   if (installedReactDom.version !== implementationPin.version) {
     throw new Error(
@@ -581,7 +583,19 @@ export async function runHarness({ quiet = false } = {}) {
     root: suiteRoot,
     testFiles: suitePin.testFiles,
     admitAll: process.env.DOGFOOD_REACT_DOM_ADMIT_ALL !== "0",
-    supportedInfrastructure: new Set(["needs-react-dom", "needs-act", "needs-dom", "needs-scheduler"]),
+    supportedInfrastructure: new Set([
+      "needs-react-dom",
+      "needs-react-noop",
+      "needs-test-utils",
+      "needs-act",
+      "needs-console-assertions",
+      "needs-jest-runtime",
+      "needs-dom",
+      "dev-build-only",
+      "needs-feature-flags",
+      "needs-scheduler",
+      "needs-external-module",
+    ]),
   });
   // The browser server renderer is a separate published CJS graph. Including
   // it in this client module currently produces an invalid WasmGC type graph,
@@ -616,7 +630,7 @@ export async function runHarness({ quiet = false } = {}) {
   // concatenated batch lane remains available for comparison while the project
   // graph is being hardened, but is no longer the default compatibility path.
   if (process.env.DOGFOOD_REACT_DOM_PROJECT !== "0") {
-    return runProjectHarness({
+    const result = await runProjectHarness({
       report,
       log,
       implementation,
@@ -625,6 +639,8 @@ export async function runHarness({ quiet = false } = {}) {
       clientSource,
       selectedTests,
     });
+    hostInfrastructure.cleanup();
+    return result;
   }
 
   // --- 3. DOES THE IMPLEMENTATION COMPILE AT ALL? --------------------------
@@ -887,6 +903,7 @@ export async function runHarness({ quiet = false } = {}) {
     log(`[dogfood] native oracle recorded ${nativeHostErrors.length} expected late jsdom host error(s)`);
   }
   log(`[dogfood] full report → ${REPORT_PATH}`);
+  hostInfrastructure.cleanup();
   return report;
 }
 

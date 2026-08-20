@@ -41,6 +41,7 @@ import { setupReact } from "./setup-react.mjs";
 import { setupReactUpstreamSuite } from "./setup-react-upstream-suite.mjs";
 import { extractReactUpstreamTests } from "./react-upstream-extract.mjs";
 import { installReactTestEnvironment } from "./react-test-environment.mjs";
+import { installReactUpstreamInfrastructure } from "./react-upstream-infrastructure.mjs";
 import { REACT_EXPECT_SHIM, LAST_ERROR_EXPORT, buildTestFunction } from "./react-upstream-shim.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -74,7 +75,15 @@ function buildNativeRunners(tests) {
   return new Function("__REACT__", "require", source);
 }
 
-async function runNative(tests, nativeReact) {
+function withTimeout(value, timeoutMs, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs} ms`)), timeoutMs);
+  });
+  return Promise.race([Promise.resolve(value), timeout]).finally(() => clearTimeout(timer));
+}
+
+async function runNative(tests, nativeReact, timeoutMs) {
   try {
     // A few upstream tests intentionally require the published ReactDOM
     // package (for example Portal coverage).  Supplying Node's real resolver
@@ -91,7 +100,7 @@ async function runNative(tests, nativeReact) {
         // An async upstream body returns a promise; awaiting it here is what
         // makes its assertions observable at all. A rejection is a failure,
         // exactly as Jest would score it.
-        value = await runners.tests[test.id]();
+        value = await withTimeout(runners.tests[test.id](), timeoutMs, `native ${test.fullName}`);
       } catch (thrown) {
         error = thrown instanceof Error ? thrown.message : String(thrown);
       }
@@ -134,7 +143,12 @@ function quarantineFromErrors(moduleSource, tests, errors) {
   return offenders;
 }
 
-export async function runHarness({ quiet = false, filter = process.env.DOGFOOD_REACT_FILTER || "" } = {}) {
+export async function runHarness({
+  quiet = false,
+  filter = process.env.DOGFOOD_REACT_FILTER || "",
+  testTimeoutMs = Number(process.env.DOGFOOD_REACT_TEST_TIMEOUT_MS || 10_000),
+  compileTimeoutMs = Number(process.env.DOGFOOD_REACT_COMPILE_TIMEOUT_MS || 30_000),
+} = {}) {
   const log = quiet ? () => {} : (...values) => console.log(...values);
   installReactTestEnvironment();
 
@@ -171,6 +185,19 @@ export async function runHarness({ quiet = false, filter = process.env.DOGFOOD_R
     root: suiteRoot,
     testFiles: suitePin.testFiles,
     admitAll: process.env.DOGFOOD_REACT_ADMIT_ALL !== "0",
+    supportedInfrastructure: new Set([
+      "needs-react-dom",
+      "needs-react-noop",
+      "needs-test-utils",
+      "needs-act",
+      "needs-console-assertions",
+      "needs-jest-runtime",
+      "needs-dom",
+      "dev-build-only",
+      "needs-feature-flags",
+      "needs-scheduler",
+      "needs-external-module",
+    ]),
   });
   const filterPattern = filter ? new RegExp(filter, "i") : null;
   const extracted = filterPattern
@@ -204,11 +231,17 @@ export async function runHarness({ quiet = false, filter = process.env.DOGFOOD_R
   // dropped.
   const require = createRequire(import.meta.url);
   const nativeReact = require(productionModulePath);
+  const hostInfrastructure = installReactUpstreamInfrastructure({ react: nativeReact });
 
   const batches = new Map();
   for (const test of extracted.tests) {
-    if (!batches.has(test.file)) batches.set(test.file, []);
-    batches.get(test.file).push(test);
+    // The create-react-class integration file contains a large amount of
+    // nested class/factory code. Compiling all 27 lifted bodies as one module
+    // can keep the compiler busy indefinitely; one real upstream test per
+    // module bounds that compiler work without removing or rewriting tests.
+    const batchKey = test.file.endsWith("createReactClassIntegration-test.js") ? `${test.file}::${test.id}` : test.file;
+    if (!batches.has(batchKey)) batches.set(batchKey, []);
+    batches.get(batchKey).push(test);
   }
 
   const quarantined = [];
@@ -233,7 +266,11 @@ export async function runHarness({ quiet = false, filter = process.env.DOGFOOD_R
       moduleSource = buildModuleSource(reactSource, batchTests);
       const started = performance.now();
       try {
-        result = await compile(moduleSource, { fileName: "react.production.js", skipSemanticDiagnostics: true });
+        result = await withTimeout(
+          compile(moduleSource, { fileName: "react.production.js", skipSemanticDiagnostics: true }),
+          compileTimeoutMs,
+          `compile ${file}`,
+        );
       } catch (thrown) {
         result = { success: false, errors: [{ message: thrown instanceof Error ? thrown.message : String(thrown) }] };
       }
@@ -287,8 +324,9 @@ export async function runHarness({ quiet = false, filter = process.env.DOGFOOD_R
       }
     }
 
+    const reportFile = file.split("::", 1)[0];
     batchReports.push({
-      file,
+      file: reportFile,
       tests: batchTests.length,
       compileMs,
       binaryBytes: result?.binary?.length ?? 0,
@@ -297,11 +335,13 @@ export async function runHarness({ quiet = false, filter = process.env.DOGFOOD_R
       firstError,
     });
     log(
-      `[dogfood]   ${file.replace(/^.*\//, "")}: ${batchTests.length} tests, ` +
+      `[dogfood]   ${reportFile.replace(/^.*\//, "")}: ${batchTests.length} tests, ` +
         `${validates ? "valid" : `INVALID — ${String(firstError).slice(0, 70)}`}`,
     );
 
-    const nativeResults = new Map((await runNative(batchTests, nativeReact)).map((entry) => [entry.id, entry]));
+    const nativeResults = new Map(
+      (await runNative(batchTests, nativeReact, testTimeoutMs)).map((entry) => [entry.id, entry]),
+    );
     for (const test of batchTests) {
       runResults.set(test.id, { native: nativeResults.get(test.id) ?? {}, compiled, firstError });
     }
@@ -360,7 +400,7 @@ export async function runHarness({ quiet = false, filter = process.env.DOGFOOD_R
     }
     let value;
     try {
-      value = await compiled[test.id]();
+      value = await withTimeout(compiled[test.id](), testTimeoutMs, `compiled ${test.fullName}`);
     } catch (error) {
       entry.status = "trapped";
       entry.compiledMessage = error instanceof Error ? error.message : String(error);
@@ -421,6 +461,7 @@ export async function runHarness({ quiet = false, filter = process.env.DOGFOOD_R
   writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
   log(`[dogfood] ${report.summary.headline}`);
   log(`[dogfood] full report → ${REPORT_PATH}`);
+  hostInfrastructure.cleanup();
   return report;
 }
 

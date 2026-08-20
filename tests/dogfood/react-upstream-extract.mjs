@@ -122,7 +122,24 @@ function filterPreludeStatement(statement, sourceFile, supportedInfrastructure) 
   // and retain its local names in `droppedNames`.  Conservative admission then
   // rejects a test that reaches for one, while admit-all records it as a native
   // harness failure instead of letting one import poison an entire batch.
-  if (ts.isImportDeclaration(statement) || ts.isImportEqualsDeclaration(statement)) return null;
+  if (ts.isImportDeclaration(statement) || ts.isImportEqualsDeclaration(statement)) {
+    // The one selected React core test import is a tiny Jest scheduler
+    // patch. Keep its public binding and satisfy it from the explicit host
+    // infrastructure instead of dropping the declaration and reporting an
+    // avoidable `patchMessageChannel is not defined` failure.
+    if (
+      ts.isImportDeclaration(statement) &&
+      statement.moduleSpecifier.getText(sourceFile).replace(/["']/g, "") ===
+        "../../../../scripts/jest/patchMessageChannel"
+    ) {
+      return "var patchMessageChannel = globalThis.__js2ReactUpstreamInfrastructure.patchMessageChannel;";
+    }
+    return null;
+  }
+  // Destructuring assignments from React's private test utility package can
+  // contain several infrastructure names at once. Keep them as a unit; the
+  // generated require facade supplies the same named helpers in both lanes.
+  if (/require\(\s*["']internal-test-utils["']\s*\)/.test(text)) return text;
   // Scaffolding that only exists to wire up the infrastructure this harness
   // deliberately does not have (`let ReactDOMClient;`, the `internal-test-utils`
   // destructure, `jest.resetModules()`). Dropping it here rather than rejecting
@@ -133,9 +150,9 @@ function filterPreludeStatement(statement, sourceFile, supportedInfrastructure) 
   for (const [pattern, reason] of INFRA_PATTERNS) {
     if (!supportedInfrastructure.has(reason) && pattern.test(text)) return null;
   }
-  if (/require\(\s*['"]react['"]\s*\)/.test(text)) {
-    return text.replace(/require\(\s*['"]react['"]\s*\)/g, "__REACT__");
-  }
+  // Keep React requires in the generated source. The shim resolves them to
+  // the pinned implementation, and Jest-mocked-version tests need the call
+  // to go through that resolver rather than being rewritten to __REACT__.
   return text;
 }
 
@@ -305,9 +322,25 @@ export function extractReactUpstreamTests({ root, testFiles, admitAll = false, s
 
         const bodyText = fn.body.statements.map((statement) => statement.getText(sourceFile)).join("\n");
         const preludeText = [...localScope, ...localEach].join("\n");
+        // Some React files rely on the repository-wide Jest setup to expose
+        // console assertions, even though their local describe's beforeEach
+        // only initializes React and act. Reproduce that setup explicitly so
+        // those tests execute instead of failing on an undefined helper.
+        const fallbackPrelude = [];
+        if (/\b(?:let|var)\s+assertConsoleErrorDev\b/.test(preludeText))
+          fallbackPrelude.push(
+            'if (typeof assertConsoleErrorDev !== "function") assertConsoleErrorDev = require("internal-test-utils").assertConsoleErrorDev;',
+          );
+        if (/\b(?:let|var)\s+assertConsoleWarnDev\b/.test(preludeText))
+          fallbackPrelude.push(
+            'if (typeof assertConsoleWarnDev !== "function") assertConsoleWarnDev = require("internal-test-utils").assertConsoleWarnDev;',
+          );
+        if (/\b(?:let|var)\s+act\b/.test(preludeText))
+          fallbackPrelude.push('if (typeof act !== "function") act = require("internal-test-utils").act;');
+        const completePrelude = [...(preludeText ? [preludeText] : []), ...fallbackPrelude].join("\n");
         const reason = classifyBody(
           fn,
-          `${preludeText}\n${bodyText}`,
+          `${completePrelude}\n${bodyText}`,
           bodyText,
           localDropped,
           admitAll,
@@ -320,7 +353,7 @@ export function extractReactUpstreamTests({ root, testFiles, admitAll = false, s
 
         tests.push({
           ...record,
-          prelude: preludeText,
+          prelude: completePrelude,
           body: bodyText,
           isAsync: fn.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true,
         });

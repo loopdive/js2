@@ -323,6 +323,7 @@
     "axios": "^1.16.1",
     "binaryen": "^125.0.0",
     "bun": "1.3.14",
+    "create-react-class": "15.7.0",
     "deno": "2.8.1",
     "esbuild": "^0.25.12",
     "eslint": "^10.0.3",
@@ -338,8 +339,10 @@
     "moment": "2.30.1",
     "monaco-editor": "^0.55.1",
     "prettier": "^3.8.1",
+    "prop-types": "15.8.1",
     "react": "^19.2.6",
     "react-dom": "19.2.6",
+    "react-test-renderer": "19.2.6",
     "redux": "5.0.1",
     "shiki": "^4.0.2",
     "styled-components": "6.4.4",
@@ -354,6 +357,7 @@
     "vite-plugin-dts": "^4",
     "vitest": "^3",
     "wabt": "^1.0.39",
+    "web-streams-polyfill": "4.3.0",
     "webpack": "5.109.2"
   },
   "lint-staged": {
