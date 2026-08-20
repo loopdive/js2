@@ -20,7 +20,7 @@ files:
   - src/runtime.ts
 ---
 
-# Redux: three runtime clusters keep the pinned suite at 3/78
+# Redux: runtime clusters keep the pinned suite at 13/82
 
 ## Problem
 
@@ -35,7 +35,12 @@ Per-file: `createStore.spec` 2/42 · `combineReducers.spec` 6/16 ·
 `bindActionCreators.spec` 0/7 · `compose.spec` 1/6 · `applyMiddleware.spec`
 1/5 · `utils/*` 3/6.
 
-## Measured failure buckets
+The detailed bucket inventory below is retained from the pre-global-alias
+reproduction; it needs a fresh runtime re-bucketing against the 13/82 baseline.
+The global alias change only removed harness incompatibility and did not claim
+to fix any of these compiler/runtime clusters.
+
+## Measured failure buckets (pre-global-alias snapshot)
 
 1. **40× `RuntimeError: dereferencing a null pointer`** — one stack shape
    dominates `createStore.spec` and `combineReducers.spec`:
