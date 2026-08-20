@@ -10,9 +10,9 @@
 // surface is an expected, recorded outcome, same as acorn's early history.
 
 import { describe, it, expect } from "vitest";
-import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runDogfoodScript } from "./run-dogfood-script";
 // @ts-expect-error — .mjs harness, no .d.ts (pure tooling)
 import { setupMarked } from "./setup-marked.mjs";
 
@@ -30,24 +30,25 @@ describe("marked dogfood harness (#3716)", () => {
   // worker's event loop / RPC heartbeat. Opt-in (DOGFOOD_MARKED=1) — the
   // canonical entrypoint is `pnpm run dogfood:marked`.
   const heavy = process.env.DOGFOOD_MARKED === "1" ? it : it.skip;
-  heavy("runs the compile→validate→diff loop to completion and emits a structured report", { timeout: 60_000 }, () => {
-    const out = execFileSync("node", ["--import", "tsx", join(HERE, "marked-harness.mjs"), "--json"], {
-      encoding: "utf-8",
-      maxBuffer: 64 * 1024 * 1024,
-    });
-    const report = JSON.parse(out);
+  heavy(
+    "runs the compile→validate→diff loop to completion and emits a structured report",
+    { timeout: 60_000 },
+    async () => {
+      const out = await runDogfoodScript(join(HERE, "marked-harness.mjs"), ["--json"]);
+      const report = JSON.parse(out);
 
-    expect(report.marked?.version).toBe("18.0.2");
-    expect(report.compile).toBeTruthy();
-    expect(report.validation).toBeTruthy();
-    expect(report.summary?.headline).toBeTypeOf("string");
+      expect(report.marked?.version).toBe("18.0.2");
+      expect(report.compile).toBeTruthy();
+      expect(report.validation).toBeTruthy();
+      expect(report.summary?.headline).toBeTypeOf("string");
 
-    // Robust to a red surface: even if compile fails outright, the harness
-    // must have produced a compile record, not crashed.
-    expect(typeof report.compile.success).toBe("boolean");
-    if (!report.compile.success) {
-      expect(report.diff.runnable).toBe(false);
-      expect(report.diff.skippedReason).toBeTypeOf("string");
-    }
-  });
+      // Robust to a red surface: even if compile fails outright, the harness
+      // must have produced a compile record, not crashed.
+      expect(typeof report.compile.success).toBe("boolean");
+      if (!report.compile.success) {
+        expect(report.diff.runnable).toBe(false);
+        expect(report.diff.skippedReason).toBeTypeOf("string");
+      }
+    },
+  );
 });

@@ -1,9 +1,9 @@
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { runDogfoodScript } from "./run-dogfood-script";
 
 // @ts-expect-error — .mjs dogfood setup has no declaration file
 import { isReactUpstreamSuiteCheckoutValid, loadReactUpstreamSuitePin } from "./setup-react-upstream-suite.mjs";
@@ -95,9 +95,8 @@ describe("react upstream suite", () => {
   });
 
   const heavy = process.env.DOGFOOD_REACT_UPSTREAM === "1" ? it : it.skip;
-  heavy("runs React's own unit tests against compiled Wasm", { timeout: 1_800_000 }, () => {
-    const out = execFileSync("node", ["--import", "tsx", join(HERE, "react-upstream-suite.mjs"), "--json"], {
-      encoding: "utf-8",
+  heavy("runs React's own unit tests against compiled Wasm", { timeout: 1_800_000 }, async () => {
+    const out = await runDogfoodScript(join(HERE, "react-upstream-suite.mjs"), ["--json"], {
       maxBuffer: 128 * 1024 * 1024,
     });
     const report = JSON.parse(out);

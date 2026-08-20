@@ -1,8 +1,8 @@
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { runDogfoodScript } from "./run-dogfood-script";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const pin = JSON.parse(readFileSync(join(HERE, "hono-upstream-suite-pin.json"), "utf-8"));
@@ -18,9 +18,8 @@ describe("hono v4.12.16 upstream suite", () => {
   });
 
   const heavy = process.env.DOGFOOD_HONO_UPSTREAM_SUITE === "1" ? it : it.skip;
-  heavy("runs the selected original callbacks against Node and Wasm", { timeout: 600_000 }, () => {
-    const out = execFileSync("node", ["--import", "tsx", join(HERE, "hono-upstream-suite.mjs"), "--json"], {
-      encoding: "utf-8",
+  heavy("runs the selected original callbacks against Node and Wasm", { timeout: 600_000 }, async () => {
+    const out = await runDogfoodScript(join(HERE, "hono-upstream-suite.mjs"), ["--json"], {
       maxBuffer: 32 * 1024 * 1024,
     });
     const report = JSON.parse(out);

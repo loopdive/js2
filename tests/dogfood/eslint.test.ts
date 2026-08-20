@@ -1,9 +1,9 @@
 // Thin contract wrapper for the pinned ESLint npm-compat harness (#1400).
 
-import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { runDogfoodScript } from "./run-dogfood-script";
 
 // @ts-expect-error — .mjs dogfood setup has no declaration file
 import { setupEslint } from "./setup-eslint.mjs";
@@ -19,11 +19,8 @@ describe("eslint dogfood harness (#1400)", () => {
   });
 
   const heavy = process.env.DOGFOOD_ESLINT === "1" ? it : it.skip;
-  heavy("runs the bounded compile and records the honest package-entry frontier", { timeout: 240_000 }, () => {
-    const out = execFileSync("node", ["--import", "tsx", join(HERE, "eslint-harness.mjs"), "--json"], {
-      encoding: "utf-8",
-      maxBuffer: 64 * 1024 * 1024,
-    });
+  heavy("runs the bounded compile and records the honest package-entry frontier", { timeout: 240_000 }, async () => {
+    const out = await runDogfoodScript(join(HERE, "eslint-harness.mjs"), ["--json"]);
     const report = JSON.parse(out);
     expect(report.eslint?.version).toBe("10.0.3");
     expect(report.compile).toBeTruthy();

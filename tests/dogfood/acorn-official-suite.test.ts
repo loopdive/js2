@@ -8,9 +8,9 @@
 // compiled acorn got LESS correct, which is worth failing CI over.
 
 import { describe, it, expect } from "vitest";
-import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runDogfoodScript } from "./run-dogfood-script";
 // @ts-expect-error — .mjs harness, no .d.ts (pure tooling)
 import { setupAcorn } from "./setup-acorn.mjs";
 // @ts-expect-error — .mjs harness, no .d.ts (pure tooling)
@@ -45,11 +45,8 @@ describe("acorn official test suite harness (#3729)", () => {
   heavy(
     "compiled acorn passes at least the established baseline of acorn's own test suite",
     { timeout: 300_000 },
-    () => {
-      const out = execFileSync("node", ["--import", "tsx", join(HERE, "acorn-official-suite.mjs"), "--json"], {
-        encoding: "utf-8",
-        maxBuffer: 64 * 1024 * 1024,
-      });
+    async () => {
+      const out = await runDogfoodScript(join(HERE, "acorn-official-suite.mjs"), ["--json"]);
       const report = JSON.parse(out);
 
       expect(report.acorn?.version).toBe("8.16.0");
