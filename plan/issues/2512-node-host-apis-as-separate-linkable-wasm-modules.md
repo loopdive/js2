@@ -4,23 +4,24 @@ title: "Node.js host APIs as separate, link-on-demand Wasm modules (process, fs,
 status: backlog
 sprint: Backlog
 created: 2026-06-19
-updated: 2026-06-19
-priority: medium
+updated: 2026-08-20
+priority: high
 feasibility: hard
 reasoning_effort: high
 task_type: architecture
 area: codegen
 language_feature: node-host-apis
 goal: architecture
-related: [1044, 1046, 2514]
+related: [1044, 1046, 2514, 4382, 4567, 4568, 4570, 4571]
 ---
 
-> **Linking mechanism (decided):** **core-wasm module linking** (per-host shim
-> modules: `node-shim.wasm` over WASI, `deno-shim.wasm`, … sharing a store with
-> the user module) — see **#2524** (chosen, implement first). The Component Model
-> + WIT alternative — a `node:io/process` WIT world embedded in the component as
-> the declared dependency, composed against a shim component — is **#2525**
-> (deferred; clean fit for this byte/scalar boundary but lower priority).
+> **Interface and linking mechanism (decided):** the compiled user module
+> declares the standard interface it needs, such as import module `node:fs`
+> with member `readSync`. Core-Wasm module linking selects a provider over WASI,
+> a JS host, or another explicit target adapter. The provider implementation's
+> name is not part of the user's declared dependency. “Phase 1: process IO via
+> linkable js2wasm:node-io shim” (#2524) owns the current linking substrate;
+> “Component Model + WIT for host-API shims” (#2525) remains deferred.
 
 ## Problem / proposal
 
@@ -31,11 +32,13 @@ is currently lowered as **inline glue** baked into each compiled module:
 reusable Wasm module that implements the Node API surface and gets **linked when
 required**.
 
-Proposal: factor each Node host-API surface into its own linkable Wasm module
-(or host-import interface) that user modules import on demand, instead of
-re-emitting the glue per module. This keeps the user's binary focused on user
-code, lets the host-API implementations version independently, and gives a clean
-seam for the dual-mode story (WASI syscalls vs JS host).
+Proposal: factor each Node host-API surface into its own linkable provider that
+user modules import on demand, instead of re-emitting the glue per module. The
+user artifact names the standard `node:<module>` interface and real member;
+provider selection and composition happen after the compiler has frozen the
+program's required-member set. This keeps the user's binary focused on user
+code, lets implementations version independently, and gives a clean seam for
+the dual-mode story (WASI syscalls vs JS host).
 
 ## Why this surface is the tractable half
 
@@ -54,24 +57,50 @@ extract behind a stable interface.
 
 ## Scope
 
-- Define a stable host-API interface (Wasm imports / a `node:` runtime module)
-  per supported Node surface, starting with `process`.
-- Emit an *import of* that interface from the user module instead of inline glue,
-  gated on actual usage (preserve current DCE behavior).
+- Define a stable Wasm import interface named after each standard Node module,
+  starting with byte/scalar members of `node:process` and `node:fs`.
+- Emit only the real members proven used by prepared IR. Namespace recognition
+  alone must not link a provider family.
+- Select and link the provider from the frozen runtime-feature/capability plan;
+  backend emission must not rescan source or infer use from stringly import
+  names.
 - Keep the dual-mode contract: WASI syscall backing in standalone, JS host
   backing when a JS runtime is present (cf. #1044 Node-builtins-as-host-imports).
+- Prove with negative fixtures that unused Node modules, members, provider code,
+  and transitive WASI imports are absent from the artifact.
 - Out of scope: GC-typed runtime helpers (number_toString, string/array helpers)
   — tracked separately in #2514, blocked on the cross-module GC type-identity
   problem.
 
-## Open questions (route to architect)
+## Resolved constraints and remaining design work
 
-- Module-linking vs Component Model vs plain shared host-import namespace — which
-  seam, and how does it interact with `--target wasi` vs JS-host?
-- Relationship to #1044 (Node builtins as host imports) and #1046 (separate
-  ES-module compilation + consumer-driven linking) — is this a generalization of
-  #1044, or a distinct runtime-module layer?
-- Versioning / ABI stability of the interface across compiler versions.
+- The public import namespace is `node:<module>`, never an
+  implementation-specific shim name. The module declares what it needs, not
+  how it is satisfied.
+- Core-Wasm linking is the current composition mechanism. A real Node host may
+  satisfy the same interface directly where ABI adaptation permits it.
+- The first tractable tranche is byte/scalar IO. GC string/object APIs require
+  an explicit cross-module representation/versioning decision; they must not be
+  smuggled through ambient externrefs.
+- ABI versioning, provider compatibility checks, and diagnostics for a missing
+  or incompatible provider remain implementation work for this issue.
+
+## Acceptance criteria
+
+- [ ] A compiled member call declares `node:<module>` plus the real Node member
+      name and never exposes an implementation-specific provider namespace.
+- [ ] Prepared IR records the exact used-member set and provider requirements
+      before emission; linking consumes that frozen record.
+- [ ] JS-host and WASI providers can satisfy the same declared interface without
+      source changes or compiler-special syscall lowering.
+- [ ] ABI version/capability mismatches fail with stable diagnostics before a
+      provider can return an empty or placeholder value.
+- [ ] Positive fixtures execute one selected member per initial provider;
+      negative fixtures prove unused members, modules, code, and transitive host
+      imports are absent.
+- [ ] “Compiler-derived capability manifest and per-program explain workflow”
+      (#4382) explains the interface, selected provider, and transitive
+      requirements from the same decision record.
 
 ## Notes
 
