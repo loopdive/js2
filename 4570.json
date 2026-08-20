@@ -1,12 +1,11 @@
 {
   "id": "4570",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/4382-node-api-roadmap",
-  "reserved_at": "2026-08-20T04:19:30Z",
   "claimed_at": "2026-08-20T04:19:30Z",
-  "updated_at": "2026-08-20T04:19:30Z",
-  "write_id": "57188-63dxnqmd",
-  "pr_scan": "ok"
+  "updated_at": "2026-08-20T05:00:44Z",
+  "write_id": "8366-zz0bj37x",
+  "released_at": "2026-08-20T05:00:44Z"
 }
