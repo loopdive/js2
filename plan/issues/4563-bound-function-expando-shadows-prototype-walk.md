@@ -14,6 +14,11 @@ area: codegen, runtime
 es_edition: 5
 language_feature: functions
 goal: es5
+func-budget-allow:
+  # 2026-08-20: the bag-vs-prototype read order fix. fillClosurePropHelpers is
+  # the single emitter for every closure-carrier property helper, so the extra
+  # arm has to live inside it — it crosses the 300-LOC threshold by 11.
+  - src/codegen/closure-props.ts::fillClosurePropHelpers
 related: [4241, 4555, 4562, 4163]
 origin: "2026-08-19 ES5 standalone push, #4555 lane, while attempting bound-function `length`. Pre-existing; proved on the base tree."
 ---

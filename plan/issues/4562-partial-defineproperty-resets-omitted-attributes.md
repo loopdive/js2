@@ -14,6 +14,13 @@ area: runtime
 es_edition: 5
 language_feature: property-descriptors
 goal: es5
+loc-budget-allow:
+  # 2026-08-20: the §20.2.3.2 steps 5-8 `length` seed. All logic lives in the new
+  # subsystem module src/codegen/bound-fn-meta.ts, including the local plumbing
+  # (seedBoundFunctionLengthOnStack) that would otherwise sit at the call site —
+  # the god-file grows by the IMPORT LINE plus the CALL LINE and nothing else,
+  # down from +9.
+  - src/codegen/expressions/calls.ts
 related: [4437, 4555, 4563, 4491, 4163]
 origin: "2026-08-19 ES5 standalone push, #4555 lane, while attempting bound-function `length`."
 ---
