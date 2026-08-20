@@ -293,6 +293,17 @@ describe("#4376 — Deno primordials standalone runtime substrate", () => {
     );
   });
 
+  it("reuses one eval intrinsic value without executing the runtime-eval provider", async () => {
+    const result = await runStandaloneJs(`
+      const firstEval = eval;
+      const secondEval = eval;
+      export function test() { return firstEval === secondEval ? 42 : 0; }
+    `);
+
+    expect(result.value).toBe(42);
+    expect(result.calls).toEqual([]);
+  });
+
   it("forwards TDZ-flagged transitive captures from the lifted caller frame", async () => {
     const result = await runStandaloneJs(`
       let observed = 0;
