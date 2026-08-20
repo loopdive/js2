@@ -920,7 +920,18 @@ export async function runHarness({ quiet = false } = {}) {
   // The browser server renderer is a separate published CJS graph. Keep those
   // original tests in the admitted corpus, but route them to their own module
   // lane instead of including the graph in the client module.
-  const serverTests = extracted.tests.filter((test) => /\bReactDOMServer\b/.test(`${test.prelude}\n${test.body}`));
+  // Most ReactDOM files import ReactDOMServer in their shared prelude even
+  // when an individual test only exercises the client renderer. Route only a
+  // body that directly calls the legacy browser renderer, and leave mixed or
+  // client-only tests in the client graph. Fizz/edge server imports are a
+  // different published graph and are not silently claimed by this lane.
+  const hasClientRendererCall = (body) =>
+    /\b(?:ReactDOMClient|ReactDOM\.(?:render|createRoot|hydrate|flushSync)|createRoot\s*\()/.test(body);
+  const serverTests = extracted.tests.filter(
+    (test) =>
+      /\bReactDOMServer\.(?:renderToString|renderToStaticMarkup)\b/.test(test.body) &&
+      !hasClientRendererCall(test.body),
+  );
   const serverIds = new Set(serverTests.map((test) => test.id));
   const clientTests = extracted.tests.filter((test) => !serverIds.has(test.id));
   report.extraction = {

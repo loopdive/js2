@@ -320,8 +320,8 @@ client renderer modules. This keeps the two WasmGC graphs independent while
 using the same pinned React source, jsdom host, expect shim, and native oracle.
 
 The one-client/three-server smoke run compiled and validated the server graph
-in 9.4 s as a 938,550-byte module and executed all three original server tests
-against it. The tests reached the renderer and failed their assertions
+in 8.0 s as a 938,550-byte module and executed all three original server tests
+from the 115-test legacy-renderer subset against it. The tests reached the renderer and failed their assertions
 (`expected value to be contained`), so this is an infrastructure milestone,
 not a green-pass claim. The client smoke test still fails at `Cannot read
 properties of null (reading 'createRoot')`; that remains a compiler/module-
