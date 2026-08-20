@@ -32,6 +32,7 @@ export function prepareIrVectorSupport<T extends PreparedVectorEntry>(input: {
   readonly entries: readonly T[];
   readonly resolveVecForElement: (element: ValType) => IrVecLowering | null;
   readonly resolvePhysicalVec: (value: ValType) => IrVecLowering | null;
+  readonly resolveString: () => ValType | null;
   readonly typeKey: (type: IrType) => string;
 }): T[] {
   const registry = input.ctx.programAbiTypes;
@@ -68,8 +69,16 @@ export function prepareIrVectorSupport<T extends PreparedVectorEntry>(input: {
         const logicalKey = input.typeKey({ kind: "vec", elementType: type.elementType, nullable: false });
         const cached = layouts.get(logicalKey);
         if (cached) return cached;
-        const element = asVal(type.elementType);
-        if (!element || (element.kind !== "f64" && element.kind !== "i32" && element.kind !== "externref")) {
+        const element = asVal(type.elementType) ?? (type.elementType.kind === "string" ? input.resolveString() : null);
+        const materializerElement =
+          element && (element.kind === "f64" || element.kind === "i32" || element.kind === "externref")
+            ? (element as MaterializerElement)
+            : null;
+        const nativeStringElement =
+          type.elementType.kind === "string" &&
+          element !== null &&
+          (element.kind === "ref" || element.kind === "ref_null");
+        if (!element || (!materializerElement && !nativeStringElement)) {
           // (#4486) The physical vec registry carries exactly three element
           // kinds. Everything else — most visibly a NESTED vec, i.e. the
           // `vec<vec<externref>>` a `string[][]` param resolves to — is a
@@ -96,7 +105,9 @@ export function prepareIrVectorSupport<T extends PreparedVectorEntry>(input: {
         if (!vec) throw new Error(`no physical vector layout for ${logicalKey}`);
         const layout = registry.prepareVectorLayout(logicalKey, vec.vecStructTypeIdx, vec.arrayTypeIdx);
         layouts.set(logicalKey, layout);
-        physicalVectors.set(logicalKey, { structTypeIdx: vec.vecStructTypeIdx, element });
+        if (materializerElement) {
+          physicalVectors.set(logicalKey, { structTypeIdx: vec.vecStructTypeIdx, element: materializerElement });
+        }
         return layout;
       },
       (type) => {

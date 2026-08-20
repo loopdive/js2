@@ -70,21 +70,14 @@ import {
   type IrFallbackReason,
   type IrSelection,
 } from "../ir/select.js";
-import { makeIrStandaloneDomCapabilityPlan, type IrStandaloneDomCapabilityPlan } from "../ir/dom-capability.js";
 import type {
   IrHostDateGetterLoweringPlan,
   IrHostDateSnapshotLoweringPlan,
-  IrHostDateSnapshotGetter,
   IrHostVoidCallbackLoweringPlan,
   IrImportedCallLoweringPlan,
   IrTopLevelFunctionValueLoweringPlan,
 } from "../ir/ast-lowering-plans.js";
-import {
-  makeIrAmbientClassCallResolver,
-  makeIrHostGlobalResolver,
-  makeIrHostVoidCallbackResolver,
-} from "../ir/host-extern.js"; // (#2856/#3214/#3657)
-import { makeIrHostDateSnapshotResolver } from "../ir/host-date.js";
+import { makeIrAmbientClassCallResolver, makeIrHostGlobalResolver } from "../ir/host-extern.js"; // (#2856/#3214/#3657)
 import {
   projectIrBackendTargetProfile,
   supportsIrBackendTargetCapability,
@@ -201,8 +194,11 @@ import {
   type PreparedIrModuleInitBody,
 } from "./ir-prepared-free-functions.js";
 import { buildLeakedHostImportError, scanForLeakedHostImports } from "./host-import-allowlist.js";
-import { isValidatedPlatformCapabilityImport } from "../capability-registry.js";
-import { isDomCapabilityImportName } from "../dom-capability-contract.js";
+import {
+  hasCertifiedStandaloneClockCapabilityProvider,
+  isValidatedPlatformCapabilityImport,
+} from "../capability-registry.js";
+import { isDomCapabilityImportName, isDomInteractionImportName } from "../dom-capability-contract.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type {
@@ -446,7 +442,7 @@ import {
   standaloneConsoleSinkAvailable,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
-import { emitStandaloneDomStringBoundary, publishStandaloneDomStringBoundary } from "./dom-string-boundary.js";
+import { emitStandaloneDomStringBoundary } from "./dom-string-boundary.js";
 import { irNativeNumberToFixedAvailable, irNativeNumberToStringAvailable } from "./number-format-native.js"; // #4462/#4576
 import { emitJsonQuoteString } from "./json-runtime.js";
 import { isSyntheticStructName, exportFunc } from "./emit-helpers.js"; // (#3272) DRY helpers
@@ -488,6 +484,17 @@ import {
   emitIsDataStructExport,
   fillStandaloneTypeofClosureArms,
 } from "./closure-exports.js"; // (#3272) extracted verbatim
+import {
+  hasReservedStandaloneDomCallbackDispatch,
+  reserveStandaloneDomCallbackDispatch,
+} from "./standalone-dom-callback-authority.js";
+import {
+  collectIrCalendarLoweringPlans,
+  planIrCalendarResolvers,
+  planMultiCalendar,
+  planSingleSourceStandaloneCalendar,
+  planStandaloneDomCapability,
+} from "./calendar-codegen-planning.js";
 import { emitDateHostBridge } from "./date-host-bridge.js";
 import {
   emitStructFieldGetters,
@@ -2464,22 +2471,6 @@ function resolveIrOverrideParamType(
   return resolvePositionType(effectiveIrParamTypeNode(parameter), mapped, ctx, classShapes);
 }
 
-function standaloneDomCapabilityPlan(
-  ctx: CodegenContext,
-  sourceFile: ts.SourceFile,
-): IrStandaloneDomCapabilityPlan | undefined {
-  if (
-    !ctx.standalone ||
-    ctx.wasi ||
-    !ctx.nativeStrings ||
-    ctx.targetProfile.environment !== "none" ||
-    ctx.targetProfile.semanticProviders !== "native-first"
-  ) {
-    return undefined;
-  }
-  return makeIrStandaloneDomCapabilityPlan(ctx.checker, sourceFile);
-}
-
 function planIrOverlay(
   ctx: CodegenContext,
   ast: TypedAST,
@@ -2535,11 +2526,22 @@ function planIrOverlay(
   // resolution happens.
   const irTargetProfile = projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast });
   const jsHostExterns = irTargetProfile.allowHostImports;
-  const standaloneDomCapability = standaloneDomCapabilityPlan(ctx, ast.sourceFile);
+  const standaloneDomCapability = planStandaloneDomCapability(ctx, ast.checker, ast.sourceFile);
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
     supportsIrBackendTargetCapability(irTargetProfile, capability);
-  const supportsHostDateSnapshots = supportsBackendCapability("host-date-snapshot");
-  const backendCapabilitySelectionOptions = { supportsBackendCapability };
+  const calendarResolvers = planIrCalendarResolvers(
+    ast.checker,
+    jsHostExterns,
+    supportsBackendCapability("host-date-snapshot"),
+    standaloneDomCapability,
+    ctx.requiresStandaloneClockCapability === true,
+  );
+  const backendCapabilitySelectionOptions = {
+    supportsBackendCapability: (capability: IrBackendTargetCapability): boolean =>
+      capability === "host-date-snapshot"
+        ? calendarResolvers.supportsDateSnapshots
+        : supportsBackendCapability(capability),
+  };
   const resolveModuleBinding =
     options.resolveModuleBindings === false
       ? undefined
@@ -2554,6 +2556,7 @@ function planIrOverlay(
             // in the WasmGC `$Map` struct, so the binding is representable
             // here even though the extern handle is not.
             allowNativeMapStorage: ctx.nativeStrings,
+            resolveCapabilityExternBinding: standaloneDomCapability?.moduleBinding,
             allowBoundedTopLevelAccessorSelectionCandidates: true,
             stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
           },
@@ -2563,10 +2566,8 @@ function planIrOverlay(
   const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ast.checker);
   const isArrayExpression = makeIrArrayExpressionPredicate(ast.checker);
   const isRegExpExpression = makeIrRegExpExpressionPredicate(ast.checker);
-  const resolveHostVoidCallback = jsHostExterns ? makeIrHostVoidCallbackResolver(ast.checker) : undefined;
   const resolveAmbientClassCall =
     jsHostExterns && options.resolveModuleBindings !== false ? makeIrAmbientClassCallResolver(ast.checker) : undefined;
-  const resolveHostDateSnapshot = supportsHostDateSnapshots ? makeIrHostDateSnapshotResolver(ast.checker) : undefined;
   const supportsHostPromiseDelay = jsHostExterns && !ctx.fast && !ctx.nativeStrings;
   const supportsStandalonePromiseDelay =
     ctx.standalone &&
@@ -2705,9 +2706,9 @@ function planIrOverlay(
       // i.e. when native strings are off.
       forInHeadValueIsHostString: !ctx.nativeStrings,
       resolveHostGlobal: makeIrHostGlobalResolver(ast.checker),
-      ...(resolveHostVoidCallback ? { hostVoidCallbacks: resolveHostVoidCallback } : {}),
+      ...(calendarResolvers.hostVoidCallback ? { hostVoidCallbacks: calendarResolvers.hostVoidCallback } : {}),
       ...(resolveAmbientClassCall ? { ambientClassCalls: resolveAmbientClassCall } : {}),
-      ...(resolveHostDateSnapshot ? { hostDateSnapshots: resolveHostDateSnapshot } : {}),
+      ...(calendarResolvers.hostDateSnapshot ? { hostDateSnapshots: calendarResolvers.hostDateSnapshot } : {}),
       ...(resolvePromiseDelay ? { promiseDelays: resolvePromiseDelay } : {}),
       ...(resolveModuleBinding ? { resolveModuleBinding } : {}),
       classifyPrimitiveExpression,
@@ -2734,7 +2735,7 @@ function planIrOverlay(
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
       supportsStandaloneConsoleSink: standaloneConsoleSinkAvailable(ctx),
-      supportsHostStringArrayLiterals: jsHostExterns && !ctx.nativeStrings,
+      supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
       ...(jsHostExterns && legacyImportedFunctions ? { importedFunctions: legacyImportedFunctions } : {}),
@@ -2988,130 +2989,14 @@ function planIrOverlay(
     safeSelection,
     resolvePositionType: (node, mapped, classShapes) => resolvePositionType(node, mapped, ctx, classShapes),
   });
-  const hostVoidCallbacks = new Map<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>();
-  const hostDateSnapshots = new Map<ts.NewExpression, IrHostDateSnapshotLoweringPlan>();
-  const hostDateGetters = new Map<ts.CallExpression, IrHostDateGetterLoweringPlan>();
-  const hostDateImportsByOwnerUnitId = new Map<
-    IrUnitId,
-    { ownerUnitId: IrUnitId; ownerName: string; importNames: Set<string> }
-  >();
-  if (resolveHostVoidCallback) {
-    for (const [ownerName, declaration] of declByName) {
-      if (!safeSelection.funcs.has(ownerName) || !declaration.body) continue;
-      let liftedOrdinal = 0;
-      const visit = (node: ts.Node): void => {
-        if (node !== declaration && ts.isFunctionLike(node)) return;
-        if (ts.isCallExpression(node)) {
-          const certified = resolveHostVoidCallback(node);
-          if (certified) {
-            hostVoidCallbacks.set(certified.callback, {
-              ownerUnitId: irOverlayIdentity.requireIrOverlayFunctionUnitId(identityPlan, ownerName),
-              ownerName,
-              signature: { params: [], returnType: null },
-              captureNames: certified.captureNames,
-              liftedOrdinal: liftedOrdinal++,
-            });
-            return;
-          }
-        }
-        ts.forEachChild(node, visit);
-      };
-      visit(declaration.body);
-    }
-  }
-  if (resolveHostDateSnapshot) {
-    const collectHostDateImports = (ownerUnitId: IrUnitId, ownerName: string, root: ts.Node): void => {
-      const visit = (node: ts.Node): void => {
-        if (node !== root && ts.isFunctionLike(node)) return;
-        if (ts.isNewExpression(node)) {
-          const certified = resolveHostDateSnapshot(node);
-          if (certified) {
-            const snapshotPlan = { ownerUnitId, ownerName } satisfies IrHostDateSnapshotLoweringPlan;
-            const existingSnapshot = hostDateSnapshots.get(node);
-            if (
-              existingSnapshot &&
-              (existingSnapshot.ownerUnitId !== ownerUnitId || existingSnapshot.ownerName !== ownerName)
-            ) {
-              throw new IrInvariantError(
-                "selection-preparation-mismatch",
-                "resolve",
-                `host-Date snapshot changed owner from ${existingSnapshot.ownerUnitId} to ${ownerUnitId}`,
-              );
-            }
-            hostDateSnapshots.set(node, snapshotPlan);
-            let plan = hostDateImportsByOwnerUnitId.get(ownerUnitId);
-            if (!plan) {
-              plan = { ownerUnitId, ownerName, importNames: new Set() };
-              hostDateImportsByOwnerUnitId.set(ownerUnitId, plan);
-            } else if (plan.ownerName !== ownerName) {
-              throw new IrInvariantError(
-                "selection-preparation-mismatch",
-                "resolve",
-                `host-Date owner ${ownerUnitId} has conflicting legacy labels ${plan.ownerName} / ${ownerName}`,
-              );
-            }
-            plan.importNames.add("__date_now");
-            for (const call of certified.getterCalls) {
-              const access = call.expression;
-              if (!ts.isPropertyAccessExpression(access)) {
-                throw new IrInvariantError(
-                  "selection-preparation-mismatch",
-                  "resolve",
-                  `host-Date getter in ${ownerName} lost its property-access identity`,
-                );
-              }
-              const getter = access.name.text as IrHostDateSnapshotGetter;
-              if (getter !== "getDate" && getter !== "getMonth" && getter !== "getFullYear") {
-                throw new IrInvariantError(
-                  "selection-preparation-mismatch",
-                  "resolve",
-                  `host-Date snapshot in ${ownerName} gained unsupported getter ${getter}`,
-                );
-              }
-              const getterPlan = { ...snapshotPlan, snapshot: node, getter } satisfies IrHostDateGetterLoweringPlan;
-              const existingGetter = hostDateGetters.get(call);
-              if (
-                existingGetter &&
-                (existingGetter.ownerUnitId !== getterPlan.ownerUnitId ||
-                  existingGetter.snapshot !== getterPlan.snapshot ||
-                  existingGetter.getter !== getterPlan.getter)
-              ) {
-                throw new IrInvariantError(
-                  "selection-preparation-mismatch",
-                  "resolve",
-                  `host-Date getter in ${ownerName} has conflicting exact plans`,
-                );
-              }
-              hostDateGetters.set(call, getterPlan);
-            }
-          }
-        }
-        ts.forEachChild(node, visit);
-      };
-      visit(root);
-    };
-    for (const [ownerName, declaration] of declByName) {
-      if (!safeSelection.funcs.has(ownerName) || !declaration.body) continue;
-      collectHostDateImports(
-        irOverlayIdentity.requireIrOverlayFunctionUnitId(identityPlan, ownerName),
-        ownerName,
-        declaration.body,
-      );
-    }
-    if (safeSelection.moduleInit?.reason === null && safeSelection.moduleInit.stmtCount > 0) {
-      const moduleInit = identityPlan.identitySelection.moduleInit;
-      if (!moduleInit || moduleInit.reason !== null || moduleInit.stmtCount === 0) {
-        throw new IrInvariantError(
-          "selection-preparation-mismatch",
-          "resolve",
-          "host-Date module-init collection has no exact structural identity",
-        );
-      }
-      for (const statement of collectModuleInitPopulation(ast.sourceFile)) {
-        collectHostDateImports(moduleInit.unitId, moduleInit.legacyMatchName, statement);
-      }
-    }
-  }
+  const calendarLoweringPlans = collectIrCalendarLoweringPlans({
+    ctx,
+    sourceFile: ast.sourceFile,
+    identityPlan,
+    safeSelection,
+    resolvers: calendarResolvers,
+    standaloneDomReusable: standaloneDomCapability?.requiresInteraction === true,
+  });
   return {
     identityPlan,
     functionClaimsByUnitId,
@@ -3127,10 +3012,7 @@ function planIrOverlay(
     declByName,
     importedCalls,
     topLevelFunctionValues,
-    hostVoidCallbacks,
-    hostDateSnapshots,
-    hostDateGetters,
-    hostDateImportsByOwnerUnitId,
+    ...calendarLoweringPlans,
     promiseDelays,
     suspendingAsyncUnitIds: collectPreparedIrAsyncOwners(ctx, identityPlan, safeSelection.funcs),
     ...(options.importedFunctions ? { importedFunctionResolver: options.importedFunctions } : {}),
@@ -3964,18 +3846,33 @@ function preparedLexicalComponentPreflightFailure(
   if (!hasExactCurrentEnvFunctionImportManifest(ctx)) {
     return "the final env function-import manifest contains an occupied compatibility slot";
   }
-  if (plan.hostVoidCallbacks.size > 0 && !hasExactHostVoidCallbackMakerImport(ctx)) {
-    return "the exact host callback maker ABI is unavailable in the final module context";
-  }
   const retainedFunctionUnitIds = new Set(
     [...preliminaryR2Names].map((legacyName) =>
       irOverlayIdentity.requireIrOverlayFunctionUnitId(plan.identityPlan, legacyName),
     ),
   );
-  const supportsHostDateSnapshots = supportsIrBackendTargetCapability(
-    projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }),
-    "host-date-snapshot",
-  );
+  const hasStandaloneDomDispatcher =
+    ctx.requiresStandaloneDomInteractionCapability === true &&
+    ctx.standalone &&
+    !ctx.wasi &&
+    ctx.nativeStrings &&
+    ctx.targetProfile.environment === "none";
+  const hasExactStandaloneDomDispatcher =
+    hasStandaloneDomDispatcher &&
+    reserveStandaloneDomCallbackDispatch(ctx, plan.hostVoidCallbacks, retainedFunctionUnitIds) &&
+    hasReservedStandaloneDomCallbackDispatch(ctx, plan.hostVoidCallbacks, retainedFunctionUnitIds);
+  if (
+    plan.hostVoidCallbacks.size > 0 &&
+    !hasExactStandaloneDomDispatcher &&
+    !hasExactHostVoidCallbackMakerImport(ctx)
+  ) {
+    return "the exact host callback maker ABI is unavailable in the final module context";
+  }
+  const supportsHostDateSnapshots =
+    supportsIrBackendTargetCapability(
+      projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }),
+      "host-date-snapshot",
+    ) || ctx.requiresStandaloneClockCapability === true;
   if (
     !canPrepareHostDateSnapshotLoweringByIdentity(
       ctx,
@@ -4457,7 +4354,7 @@ export function generateModule(
     : undefined;
   const ctx = createCodegenContext(mod, ast.checker, options, programAbiSession, irPlanningIdentityContext);
   ctx.irBodyRouteAuditSession?.registerGenerator("single", "generateModule");
-  ctx.requiresStandaloneDomCapability = standaloneDomCapabilityPlan(ctx, ast.sourceFile) !== undefined;
+  const standaloneCalendar = planSingleSourceStandaloneCalendar(ctx, ast.checker, ast.sourceFile, inventoryOptions);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan([ast.sourceFile], ctx.oracle);
   if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
     ctx.runtimeEvalCallableBoundaryEnabled = true;
@@ -5014,7 +4911,6 @@ export function generateModule(
       irSkipBodies = routing.skipBodies;
       irPreserveBodies = routing.preserveBodies;
     }
-
     // Third pass: compile function bodies
     const {
       actuallySkipped,
@@ -5022,7 +4918,7 @@ export function generateModule(
       implicitConstructorUnitIds: actuallySkippedImplicitConstructorUnitIds,
       moduleInitNames: actuallySkippedModuleInit,
     } = compileIrRoutedDeclarations({
-      ctx,
+      ctx: standaloneCalendar.reserveDirectCallbacks(irPlanningIdentityContext, !irFirst),
       sourceFile: ast.sourceFile,
       preparedClassMembers,
       preparedImplicitConstructorUnitIds,
@@ -5800,7 +5696,7 @@ export function generateModule(
     finalizeLeafStructTypes(ctx);
 
     emitDataStructHostBridgeManifest(ctx);
-    publishStandaloneDomStringBoundary(ctx);
+    standaloneCalendar.publishDomStringBoundary();
 
     // (#4035) Apply the host-bridge export policy BEFORE dead elimination, so
     // the functions/types those exports pin are actually reclaimed. No-op when
@@ -5937,9 +5833,38 @@ function assertNoLeakedHostImports(ctx: CodegenContext, mod: WasmModule): void {
         isValidatedPlatformCapabilityImport(mod, index, "dom", "embedder", "none"),
     );
   };
+  const hasCertifiedStandaloneDomInteractionProvider = (module: string, name: string): boolean => {
+    if (
+      !ctx.requiresStandaloneDomInteractionCapability ||
+      ctx.targetProfile.environment !== "none" ||
+      module !== "env" ||
+      !isDomInteractionImportName(name)
+    ) {
+      return false;
+    }
+    return mod.imports.some(
+      (entry, index) =>
+        entry.module === module &&
+        entry.name === name &&
+        isValidatedPlatformCapabilityImport(mod, index, "dom-interaction", "embedder", "none"),
+    );
+  };
+  const hasCertifiedStandaloneClockProvider = (module: string, name: string): boolean => {
+    if (module !== "env" || name !== "__date_now") {
+      return false;
+    }
+    return hasCertifiedStandaloneClockCapabilityProvider(
+      mod,
+      ctx.requiresStandaloneClockCapability === true,
+      ctx.targetProfile.environment,
+    );
+  };
   const leaks = scanForLeakedHostImports(mod.imports, ctx.linkedNamespaces).filter(
     ({ module, name }) =>
-      !hasCertifiedStandaloneTimerProvider(module, name) && !hasCertifiedStandaloneDomProvider(module, name),
+      !hasCertifiedStandaloneTimerProvider(module, name) &&
+      !hasCertifiedStandaloneDomProvider(module, name) &&
+      !hasCertifiedStandaloneDomInteractionProvider(module, name) &&
+      !hasCertifiedStandaloneClockProvider(module, name),
   );
   for (const leak of leaks) {
     reportErrorNoNode(ctx, buildLeakedHostImportError(leak, severity), severity);
@@ -7857,9 +7782,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     : undefined;
   const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession, irPlanningIdentityContext);
   ctx.irBodyRouteAuditSession?.registerGenerator("multi", "generateMultiModule");
-  ctx.requiresStandaloneDomCapability = multiAst.sourceFiles.some(
-    (sourceFile) => standaloneDomCapabilityPlan(ctx, sourceFile) !== undefined,
-  );
+  const standaloneCalendar = planMultiCalendar(ctx, multiAst.checker, multiAst.sourceFiles, multiAst.entryFile);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan(multiAst.sourceFiles, ctx.oracle);
   if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
     ctx.runtimeEvalCallableBoundaryEnabled = true;
@@ -8203,6 +8126,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // so their reads and calls resolve to the target instead of the graceful-null
     // default. Runs after collectDeclarations (targets registered), before bodies.
     registerImportBindingAliases(ctx, multiAst.sourceFiles);
+
+    standaloneCalendar.reserveDirectCallbacks(irPlanningIdentityContext);
 
     // Phase 3: Compile all function bodies.
     //
@@ -8694,7 +8619,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     finalizeLeafStructTypes(ctx);
 
     emitDataStructHostBridgeManifest(ctx);
-    publishStandaloneDomStringBoundary(ctx);
+    standaloneCalendar.publishDomStringBoundary();
 
     // (#4035) Apply the host-bridge export policy BEFORE dead elimination, so
     // the functions/types those exports pin are actually reclaimed. No-op when

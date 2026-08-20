@@ -85,6 +85,20 @@ endpoint drift, while the paired IR/direct median ratio was 0.991725x with a
 optimization, so every affected per-row performance record remains `pending`
 and no `retirementReady` value changes.
 
+Checkpoint #4577 supplies combined standalone evidence for the existing
+scalar-loop, direct-call, string/concat, specialized-number-conversion,
+module-TDZ, and SSA-local decisions. The exact Calendar source passes 59/59
+focused ownership, authority, semantic, and artifact checks. Against the same
+standalone DOM/interaction/clock runtime, IR/direct artifacts measure
+30,089/32,379 raw bytes, 18,387/19,030 gzip-9 bytes, 477,625/481,730
+pre-optimization WAT characters, 62,481/69,234 selected body characters,
+155/172 locals, 172/172 calls, 156/167 functions, and 11/11 imports. All
+660/660 measured runtime executions preserve the deterministic 12-render
+oracle, but direct/IR/direct bracket drift leaves no defensible speedup. The
+aggregate artifact envelope and runtime parity do not isolate any one
+optimization, so pending per-row performance records remain `pending` and no
+`retirementReady` value changes.
+
 <!-- ir-optimization-source-inventory:v1 -->
 
 <!-- ir-optimization-retirement-ledger:start -->

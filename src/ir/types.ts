@@ -56,6 +56,16 @@ export interface WasmModule {
   /** Node builtin module names detected from imports (#1044) */
   nodeBuiltinModules: Set<string>;
   /**
+   * Exact compiler-owned platform-capability import allocators.
+   *
+   * Import names and signatures are public ABI and therefore cannot prove
+   * who allocated a slot: user source can deliberately declare the same
+   * spelling.  This sidecar keys the actual module import object so later
+   * capability/Program-ABI planning can distinguish a certified provider
+   * slot from an ambient look-alike without serializing mutable authority.
+   */
+  platformCapabilityImportProvenance?: Map<Import, { readonly capabilityId: string; readonly providerId: string }>;
+  /**
    * JSX runtime import specifier detected during import preprocessing (#1540).
    * `"react/jsx-runtime"` by default; `preact/jsx-runtime`, etc. for other
    * configured `jsxImportSource` values. Recorded so the import manifest
@@ -622,6 +632,7 @@ export function createEmptyModule(): WasmModule {
     stringPool: [],
     externClasses: [],
     nodeBuiltinModules: new Set(),
+    platformCapabilityImportProvenance: new Map(),
     stringLiteralValues: new Map(),
     asyncFunctions: new Set(),
     declaredFuncRefs: [],

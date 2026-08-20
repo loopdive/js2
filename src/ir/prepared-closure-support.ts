@@ -17,6 +17,7 @@ import { IrInvariantError } from "./outcomes.js";
 import {
   forEachInstrDeep,
   type IrClosureSignature,
+  type IrDomCallbackAuthority,
   type IrFunction,
   type IrInstr,
   type IrType,
@@ -31,6 +32,7 @@ export interface PreparedClosureRegistry {
     signature: IrClosureSignature,
     captureFieldTypes: readonly IrType[],
     mode?: ClosureAllocationMode,
+    domCallbackAuthority?: IrDomCallbackAuthority,
   ): IrClosureLowering | null;
 }
 
@@ -356,9 +358,10 @@ export function prepareDependencyCompleteClosureSupport(
     role: ProgramAbiClosureSupportRole,
     publish: (refs: readonly IrTypeRef[]) => void,
     mode: ClosureAllocationMode = "support",
+    domCallbackAuthority?: IrDomCallbackAuthority,
   ): void => {
     const base = registry.resolveBase(signature, mode);
-    const subtype = registry.resolveSubtype(signature, captureFieldTypes, mode);
+    const subtype = registry.resolveSubtype(signature, captureFieldTypes, mode, domCallbackAuthority);
     if (!base || !subtype) return;
     const rootTypeIdx = getFuncRefWrapperRootTypeIdx(ctx);
     if (rootTypeIdx === undefined) {
@@ -377,6 +380,11 @@ export function prepareDependencyCompleteClosureSupport(
         allocationWrapperType: requireStructType(ctx, base.structTypeIdx, "signature wrapper"),
         liftedFuncType: requireFuncType(ctx, base.funcTypeIdx),
         capturedSubtypeType: requireStructType(ctx, subtype.structTypeIdx, "captured subtype"),
+        ...(domCallbackAuthority
+          ? {
+              domCallbackAuthorityKey: `${domCallbackAuthority.ownerUnitId}\0${domCallbackAuthority.liftedOrdinal}`,
+            }
+          : {}),
       },
       role,
       publish,
@@ -425,6 +433,7 @@ export function prepareDependencyCompleteClosureSupport(
         "allocate",
         (refs) => functionRefs.set(fn, refs),
         fn.closureSubtype.hostOneShot ? "host-one-shot" : "ordinary",
+        fn.closureSubtype.domCallbackAuthority,
       );
     }
     for (const block of fn.blocks) {
@@ -437,6 +446,7 @@ export function prepareDependencyCompleteClosureSupport(
               "allocate",
               (refs) => instructionRefs.set(nested, refs),
               nested.hostOneShot ? "host-one-shot" : "ordinary",
+              nested.domCallbackAuthority,
             );
           } else if (nested.kind === "closure.call") {
             const calleeType = valueTypes.get(nested.callee);

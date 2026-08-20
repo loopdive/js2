@@ -205,7 +205,19 @@ function compileExternMethodCall(
   if (methodInfo) {
     const actualArgs = Math.min(callExpr.arguments.length, extMethodParamCount) + 1; // +1 for 'this'
     for (let i = actualArgs; i < methodInfo.params.length; i++) {
-      pushDefaultValue(fctx, methodInfo.params[i]!, ctx);
+      if (
+        ctx.requiresStandaloneDomInteractionCapability === true &&
+        importName === "HTMLElement_addEventListener" &&
+        i === 3
+      ) {
+        // The authenticated interaction adapter accepts only an omitted
+        // options sentinel. Native standalone's general undefined singleton
+        // crosses externref as an opaque WasmGC object, so this exact optional
+        // DOM position uses the ABI's null sentinel instead.
+        fctx.body.push({ op: "ref.null.extern" });
+      } else {
+        pushDefaultValue(fctx, methodInfo.params[i]!, ctx);
+      }
     }
   }
 

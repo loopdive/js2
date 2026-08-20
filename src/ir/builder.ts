@@ -742,7 +742,7 @@ export class IrFunctionBuilder {
     signature: IrClosureSignature,
     captureFieldTypes: readonly IrType[],
     captures: readonly IrValueId[],
-    hostOneShot = false,
+    options: Pick<NonNullable<IrFunction["closureSubtype"]>, "hostOneShot" | "domCallbackAuthority"> = {},
   ): IrValueId {
     if (captureFieldTypes.length !== captures.length) {
       throw new Error(
@@ -759,7 +759,8 @@ export class IrFunctionBuilder {
       signature,
       captureFieldTypes: [...captureFieldTypes],
       captures: [...captures],
-      ...(hostOneShot ? { hostOneShot: true } : {}),
+      ...(options.hostOneShot ? { hostOneShot: true } : {}),
+      ...(options.domCallbackAuthority ? { domCallbackAuthority: options.domCallbackAuthority } : {}),
       result,
       resultType,
       alloc,
@@ -1183,11 +1184,7 @@ export class IrFunctionBuilder {
     return t;
   }
 
-  finish(closureSubtype?: {
-    readonly signature: IrClosureSignature;
-    readonly captureFieldTypes: readonly IrType[];
-    readonly hostOneShot?: boolean;
-  }): IrFunction {
+  finish(closureSubtype?: NonNullable<IrFunction["closureSubtype"]>): IrFunction {
     if (this.current !== null) {
       throw new Error(`IrFunctionBuilder: finish() while block ${this.current.id} still open (func ${this.id.name})`);
     }

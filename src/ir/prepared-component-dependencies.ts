@@ -22,6 +22,15 @@ import {
   type IrVecLayoutRef,
 } from "./nodes.js";
 import type { ProgramAbiDerivedUnitRecord, ProgramAbiIntent, ProgramAbiPlanEntry } from "./program-abi.js";
+import {
+  capabilityGlobalIntentMatches,
+  externalCallableIntentMatches,
+  hasExactRequiredCapabilityGlobal,
+} from "./capability-abi-validation.js";
+import {
+  buildPreparedComponentOwnershipIndex,
+  type PreparedComponentOwnershipIndex as OwnershipIndex,
+} from "./prepared-component-ownership.js";
 
 export type PreparedComponentAbiEntry = Pick<
   ProgramAbiPlanEntry,
@@ -165,11 +174,6 @@ export interface DerivePreparedComponentDependenciesInput {
   readonly abi: PreparedComponentAbiLookup;
 }
 
-interface OwnershipIndex {
-  readonly unitTerminalOwner: ReadonlyMap<IrUnitId, IrUnitId | null>;
-  readonly classTerminalOwner: ReadonlyMap<IrClassId, IrUnitId | null>;
-}
-
 interface MutableFunctionEvidence {
   readonly function: IrFunction;
   readonly terminalOwnerUnitId: IrUnitId;
@@ -202,58 +206,6 @@ function terminalInventoryUnit(inventory: IrUnitInventory, unitId: IrUnitId): Ir
   // family. Free functions, class members, and module init all carry the same
   // exact terminal-owner contract in the inventory.
   return inventory.terminalUnits.find((unit) => unit.id === unitId);
-}
-
-function buildOwnershipIndex(
-  inventory: IrUnitInventory,
-  derivedUnits: readonly ProgramAbiDerivedUnitRecord[],
-): OwnershipIndex {
-  const directUnitOwners = new Map<IrUnitId, IrUnitId | null>();
-  for (const unit of inventory.allUnits) directUnitOwners.set(unit.id, unit.terminalOwnerId);
-  for (const unit of derivedUnits) directUnitOwners.set(unit.id, unit.terminalOwnerId);
-
-  const unitOwners = new Map<IrUnitId, IrUnitId | null>();
-  const resolveUnit = (unitId: IrUnitId, visiting = new Set<IrUnitId>()): IrUnitId | null | undefined => {
-    if (unitOwners.has(unitId)) return unitOwners.get(unitId)!;
-    const direct = directUnitOwners.get(unitId);
-    if (direct === undefined) return undefined;
-    if (direct === null || direct === unitId) {
-      unitOwners.set(unitId, direct);
-      return direct;
-    }
-    if (visiting.has(unitId)) return undefined;
-    const resolved = resolveUnit(direct, new Set(visiting).add(unitId));
-    if (resolved === undefined) return undefined;
-    unitOwners.set(unitId, resolved);
-    return resolved;
-  };
-  for (const unitId of directUnitOwners.keys()) resolveUnit(unitId);
-
-  const classRecords = new Map(inventory.classes.map((record) => [record.id, record] as const));
-  const classOwners = new Map<IrClassId, IrUnitId | null>();
-  const resolveClass = (classId: IrClassId, visiting = new Set<IrClassId>()): IrUnitId | null | undefined => {
-    if (classOwners.has(classId)) return classOwners.get(classId)!;
-    const record = classRecords.get(classId);
-    if (!record) return undefined;
-    if (record.lexicalOwnerId === null) {
-      classOwners.set(classId, null);
-      return null;
-    }
-    if (visiting.has(classId)) return undefined;
-    const nextVisiting = new Set(visiting).add(classId);
-    const nestedClass = classRecords.get(record.lexicalOwnerId as IrClassId);
-    const resolved = nestedClass
-      ? resolveClass(nestedClass.id, nextVisiting)
-      : resolveUnit(record.lexicalOwnerId as IrUnitId);
-    if (resolved === undefined) return undefined;
-    classOwners.set(classId, resolved);
-    return resolved;
-  };
-  for (const classId of classRecords.keys()) resolveClass(classId);
-  return {
-    unitTerminalOwner: readonlyMap(unitOwners),
-    classTerminalOwner: readonlyMap(classOwners),
-  };
 }
 
 function canonicalAbiEntry(abi: PreparedComponentAbiLookup, id: IrBindingId): CanonicalAbiResolution {
@@ -1030,14 +982,23 @@ function recordGlobalReference(
 ): void {
   const key = irGlobalBindingKey(ref.binding);
   const expectedOrigin = ref.binding.kind;
+  const expectedCapability = ref.binding.kind === "source" ? ref.binding.capability : undefined;
   const entry = addAbiDependency(evidence, abi, ownership, {
     bindingId: ref.binding.bindingId,
     kind: expectedOrigin === "source" ? "source-global" : expectedOrigin === "support" ? "support" : "external-global",
     structuralReferenceKey: key,
-    expected: (intent) =>
-      intent.kind === "global" &&
-      (expectedOrigin === "source" || expectedOrigin === "support" ? intent.origin === expectedOrigin : true),
+    expected: (intent) => capabilityGlobalIntentMatches(intent, expectedOrigin, expectedCapability),
   });
+  if (entry && expectedCapability === "dom" && !hasExactRequiredCapabilityGlobal(entry, ref.binding.bindingId)) {
+    evidence.abiDependencies.delete(`source-global\u0000${ref.binding.bindingId}`);
+    addFailure(evidence, {
+      code: "abi-binding-contract-mismatch",
+      ownerUnitId: evidence.terminalOwnerUnitId,
+      bindingId: ref.binding.bindingId,
+      detail: `capability source global ${key} does not own its exact canonical allocator binding`,
+    });
+    return;
+  }
   if (entry && ref.binding.kind === "source") {
     const storageTerminalOwner = terminalOwnerForIntent(entry.canonical.intent, ownership);
     if (storageTerminalOwner === null || !terminalUnitIds.has(storageTerminalOwner)) {
@@ -1196,7 +1157,7 @@ function recordExternalCallable(
       bindingId: match.id,
       kind: "external-callable",
       structuralReferenceKey: key,
-      expected: (intent) => intent.kind === "callable" && intent.origin !== "source",
+      expected: (intent) => externalCallableIntentMatches(intent, ref.binding),
     });
   }
   evidence.externalCallables.set(
@@ -1698,7 +1659,7 @@ function freezeComponent(
 export function derivePreparedComponentDependencies(
   input: DerivePreparedComponentDependenciesInput,
 ): PreparedComponentDependencyReport {
-  const ownership = buildOwnershipIndex(input.inventory, input.derivedUnits ?? []);
+  const ownership = buildPreparedComponentOwnershipIndex(input.inventory, input.derivedUnits ?? []);
   const functionsByUnitId = new Map(input.module.functions.map((fn) => [fn.unitId, fn] as const));
   const evidence: MutableFunctionEvidence[] = [];
   const globalFailures = new Map<IrUnitId, PreparedComponentDependencyFailure[]>();

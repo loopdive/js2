@@ -20,11 +20,19 @@ import type { IrSelection } from "../ir/select.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import {
+  hasReservedStandaloneDomCallbackDispatch,
+  reserveStandaloneDomCallbackDispatch,
+} from "./standalone-dom-callback-authority.js";
+import {
   canEnsureIrNativePromiseDelayProvider,
   ensureIrNativePromiseDelayProvider,
   hasExactIrNativePromiseDelayProvider,
 } from "./ir-native-promise-delay.js";
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
+import {
+  ensureStandaloneClockCapabilityImport,
+  standaloneClockCapabilityImport,
+} from "./standalone-clock-capability.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 
 function planningInvariant(code: IrPlanningIdentityInvariantCode, message: string): never {
@@ -335,7 +343,17 @@ export function prepareHostVoidCallbackLoweringByIdentity(
   if (activePlans.length === 0) return retained;
 
   const blocked = new Set<IrUnitId>();
-  if (!hasExactHostVoidCallbackMakerImport(ctx)) {
+  const hasStandaloneDomDispatcher =
+    ctx.requiresStandaloneDomInteractionCapability === true &&
+    ctx.standalone &&
+    !ctx.wasi &&
+    ctx.nativeStrings &&
+    ctx.targetProfile.environment === "none";
+  const hasExactStandaloneDomDispatcher =
+    hasStandaloneDomDispatcher &&
+    reserveStandaloneDomCallbackDispatch(ctx, callbacks, retained) &&
+    hasReservedStandaloneDomCallbackDispatch(ctx, callbacks, retained);
+  if (!hasExactStandaloneDomDispatcher && !hasExactHostVoidCallbackMakerImport(ctx)) {
     for (const callback of activePlans) blocked.add(callback.ownerUnitId);
   }
   if (!ctx.programAbiSession) {
@@ -454,7 +472,10 @@ export function canPrepareHostDateSnapshotLoweringByIdentity(
       const signature = HOST_DATE_IMPORT_SIGNATURES.get(name);
       if (
         !signature ||
-        (ctx.funcMap.has(name) && !hasExactEnvFunctionImport(ctx, name, signature.params, signature.results))
+        (ctx.funcMap.has(name) && !hasExactEnvFunctionImport(ctx, name, signature.params, signature.results)) ||
+        (ctx.requiresStandaloneClockCapability === true &&
+          name === "__date_now" &&
+          standaloneClockCapabilityImport(ctx) === undefined)
       ) {
         return false;
       }
@@ -520,7 +541,10 @@ export function prepareHostDateSnapshotLoweringByIdentity(
         const signature = HOST_DATE_IMPORT_SIGNATURES.get(name);
         if (
           !signature ||
-          (ctx.funcMap.has(name) && !hasExactEnvFunctionImport(ctx, name, signature.params, signature.results))
+          (ctx.funcMap.has(name) && !hasExactEnvFunctionImport(ctx, name, signature.params, signature.results)) ||
+          (ctx.requiresStandaloneClockCapability === true &&
+            name === "__date_now" &&
+            standaloneClockCapabilityImport(ctx) === undefined)
         ) {
           blockedBeforeRegistration.add(plan.ownerUnitId);
           break;
@@ -545,7 +569,11 @@ export function prepareHostDateSnapshotLoweringByIdentity(
   for (const name of needed) {
     const signature = HOST_DATE_IMPORT_SIGNATURES.get(name)!;
     if (!ctx.funcMap.has(name)) requestedLateImport = true;
-    ensureLateImport(ctx, name, [...signature.params], [...signature.results]);
+    if (ctx.requiresStandaloneClockCapability === true && name === "__date_now") {
+      ensureStandaloneClockCapabilityImport(ctx);
+    } else {
+      ensureLateImport(ctx, name, [...signature.params], [...signature.results]);
+    }
   }
   if (requestedLateImport) flushLateImportShifts(ctx, null);
 
@@ -554,7 +582,12 @@ export function prepareHostDateSnapshotLoweringByIdentity(
     if (!retained.has(plan.ownerUnitId)) continue;
     for (const name of plan.importNames) {
       const signature = HOST_DATE_IMPORT_SIGNATURES.get(name)!;
-      if (!hasExactEnvFunctionImport(ctx, name, signature.params, signature.results)) {
+      if (
+        !hasExactEnvFunctionImport(ctx, name, signature.params, signature.results) ||
+        (ctx.requiresStandaloneClockCapability === true &&
+          name === "__date_now" &&
+          standaloneClockCapabilityImport(ctx) === undefined)
+      ) {
         blockedAfterRegistration.add(plan.ownerUnitId);
         break;
       }
@@ -562,6 +595,16 @@ export function prepareHostDateSnapshotLoweringByIdentity(
   }
   if (blockedAfterRegistration.size > 0) {
     retained = closeRetainedIrOwnersByIdentity(sourceFile, identityContext, retained, blockedAfterRegistration);
+  }
+  if (
+    needed.has("__date_now") &&
+    ctx.requiresStandaloneClockCapability === true &&
+    ctx.standalone &&
+    !ctx.wasi &&
+    ctx.targetProfile.environment === "none" &&
+    [...plans].some((plan) => retained.has(plan.ownerUnitId))
+  ) {
+    ctx.requiresStandaloneClockCapability = true;
   }
   return projectHostDateRetention(retained, retainedModuleInitUnitId);
 }

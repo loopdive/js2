@@ -90,7 +90,9 @@ import { collectOuterWrites } from "./closure-captures.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { objectLiteralDataPropertyName } from "./property-key-fold.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
+import { coercibleStandaloneDomArgumentBoundary } from "./dom-boundary.js";
 import { fmodRefFor, FMOD_FN } from "./fmod-selection.js";
+import { detectFixedLiteralLoopSafeIndexes, forInitsIndexNonNegative } from "./fixed-literal-loop-proof.js";
 import {
   requireMatchingModuleBindingOwner,
   requireMatchingLoweringPlanOwner,
@@ -249,7 +251,8 @@ interface IrSlotRepresentation {
 /** Resolve a logical vec type without exposing its physical type index to inference. */
 function resolveIrVecType(type: IrType, cx: Pick<LowerCtx, "resolver" | "funcName">): ResolvedIrVecType | null {
   if (type.kind === "vec") {
-    const elementValType = asVal(type.elementType);
+    const elementValType =
+      asVal(type.elementType) ?? (type.elementType.kind === "string" ? cx.resolver?.resolveString?.() : undefined);
     if (!elementValType) return null;
     const lowering = cx.resolver?.resolveVecForElement?.(elementValType);
     if (!lowering) return null;
@@ -3862,7 +3865,7 @@ function lowerResolvedModuleBindingTdzCheck(name: string, binding: ModuleBinding
   requireMatchingModuleBindingOwner(binding, cx.ownerUnitId, cx.funcName);
   if (binding.type.kind === "extern") {
     assertNotDeferred(
-      hostExternCapability(cx.resolver?.jsHostExterns?.() === true),
+      domSurfaceCapability(cx.resolver?.jsHostExterns?.() === true, binding.capability === "dom"),
       `module-scope extern binding "${name}"`,
       cx.funcName,
     );
@@ -3900,7 +3903,7 @@ function lowerHostDateSnapshotExpression(expr: ts.NewExpression, cx: LowerCtx): 
   const plan = cx.hostDateSnapshots?.get(expr);
   if (!plan) return undefined;
   requireMatchingLoweringPlanOwner("host Date snapshot", plan.ownerUnitId, cx.ownerUnitId, cx.funcName);
-  const snapshot = cx.builder.emitCall(irImportFuncRef("env", "__date_now"), [], irVal({ kind: "f64" }));
+  const snapshot = cx.builder.emitCall(plan.target, [], irVal({ kind: "f64" }));
   // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (snapshot === null) throw new Error(`ir/from-ast: host Date snapshot produced no value (${cx.funcName})`);
   return snapshot;
@@ -4646,27 +4649,14 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
     }
   }
 
-  // Calendar's fixed day-name table is the one non-scalar vec admitted by
-  // this slice. In the JS-host string lane `IrType.string` is already carried
-  // as externref; emit the existing abstract coercion (lowering elides it for
-  // that representation) and reuse the canonical `$arr/$vec_externref`
-  // family. Native-string and host-free lanes are selector-gated and retain a
-  // defensive demotion here.
-  const storedElementIds =
-    elementType.kind === "string"
-      ? elementIds.map((id) => {
-          if (cx.resolver?.stringIsExternref?.() !== true) {
-            demoteToLegacy(
-              "array-representation-unsupported",
-              `ir/from-ast: string array literal needs the host externref carrier (${cx.funcName})`,
-            );
-          }
-          return cx.builder.emitCoerceToExternref(id);
-        })
-      : elementIds;
-  const storedElementType = elementType.kind === "string" ? irVal({ kind: "externref" }) : elementType;
-
-  const elemVT = asVal(storedElementType);
+  // A logical string vector uses the backend's canonical string carrier:
+  // externref in the JS-host lane and `(ref $AnyString)` in native-string
+  // WasmGC. Keep `IrType.string` in the IR so an in-bounds element read still
+  // carries string semantics into a capability-owned boundary.
+  const storedElementIds = elementIds;
+  const storedElementType = elementType;
+  const elemVT =
+    asVal(storedElementType) ?? (storedElementType.kind === "string" ? cx.resolver?.resolveString?.() : undefined);
   if (!elemVT) {
     // Non-scalar (nested vec / object / closure / …) element types are out of
     // scope for this slice. Typed-unsupported rather than a bare `Error`: the
@@ -4696,7 +4686,9 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
     vec.valueType ??
     ({ kind: "ref", typeIdx: vec.vecStructTypeIdx } as ValType);
   const resultType =
-    elemVT.kind === "f64" || elemVT.kind === "i32" ? irVec(storedElementType, false) : irVal(vecValueType);
+    elemVT.kind === "f64" || elemVT.kind === "i32" || storedElementType.kind === "string"
+      ? irVec(storedElementType, false)
+      : irVal(vecValueType);
   return cx.builder.emitVecNewFixed(storedElementIds, storedElementType, resultType);
 }
 
@@ -5776,6 +5768,12 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
       if (isProvenInBoundsIr(expr, cx)) {
         const raw = cx.builder.emitVecGet(recv, idxI32, elemIr);
         return narrowedI32 ? cx.builder.emitUnary("f64.convert_i32_s", raw, IR_F64) : raw;
+      }
+      if (elemIr.kind === "string") {
+        demoteToLegacy(
+          "element-access-unsupported",
+          `ir/from-ast: native string vec read is not proven in bounds (${cx.funcName})`,
+        );
       }
       // SAFE path — index not proven → bounds-checked read, no trap.
       if (narrowedI32) return emitSafeNarrowedI32VecGet(recv, idxI32, cx);
@@ -7804,9 +7802,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   }
 
   // #4576 — native-string lanes expose the same bounded literal-digits slice
-  // through a symbolic provider. Its thunk adapts the formatter's historical
-  // externref ABI to `(ref $AnyString)`; the existing host arm above remains a
-  // direct env import and is intentionally unchanged.
+  // through a symbolic provider while the host arm keeps its direct env import.
   if (
     methodName === "toFixed" &&
     expr.arguments.length === 1 &&
@@ -7917,6 +7913,10 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         }
         const closure = lowerHostVoidCallbackExpression(hostCallbackArrow, hostCallbackPlan, cx);
         const packed = cx.builder.emitCallablePack(closure, hostCallbackPlan.signature);
+        if (exactStandaloneDomCall && standaloneDomCall.argumentBoundaries[i] === "native-callback-zero-void") {
+          args.push(packed);
+          continue;
+        }
         // -2 is the compiler-owned one-shot sentinel: this exact inline
         // closure is created solely for the immediately following host call,
         // so it cannot cross the boundary a second time. The runtime may
@@ -7935,15 +7935,12 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         continue;
       }
       const argVal = lowerExpr(argument, cx, irVal(expected));
-      args.push(
-        coerceToExpectedExtern(
-          argVal,
-          expected,
-          cx,
-          `arg ${i} of ${definingClass}.${methodName}`,
-          exactStandaloneDomCall ? standaloneDomCall.argumentBoundaries[i] : undefined,
-        ),
+      const boundary = coercibleStandaloneDomArgumentBoundary(
+        exactStandaloneDomCall ? standaloneDomCall : undefined,
+        i,
+        cx.funcName,
       );
+      args.push(coerceToExpectedExtern(argVal, expected, cx, `arg ${i} of ${definingClass}.${methodName}`, boundary));
     }
     // (#2856) Pad missing OPTIONAL args with default sentinels: the host
     // import's Wasm signature has FIXED arity = the registered params
@@ -9277,22 +9274,6 @@ function lowerDoStatement(stmt: ts.DoStatement, cx: LowerCtx): void {
  * an index declared outside the loop) returns false → the read falls to the SAFE
  * lowering rather than being (unsoundly) trusted.
  */
-function forInitsIndexNonNegative(stmt: ts.ForStatement, indexVar: string): boolean {
-  const init = stmt.initializer;
-  if (!init || !ts.isVariableDeclarationList(init)) return false;
-  for (const decl of init.declarations) {
-    if (ts.isIdentifier(decl.name) && decl.name.text === indexVar) {
-      const ini = decl.initializer;
-      if (ini && ts.isNumericLiteral(ini)) {
-        const v = Number(ini.text.replace(/_/g, ""));
-        return Number.isFinite(v) && v >= 0;
-      }
-      return false;
-    }
-  }
-  return false;
-}
-
 /**
  * #2766 — the counted-loop in-bounds proof for the IR. Returns the
  * `"arrayVar:indexVar"` key when the `for` provably keeps its index in
@@ -9629,17 +9610,19 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
   // keeps the fast unchecked `vec.get`. Thread the proven pair onto a body-scoped
   // cx (immutable copy → no leak to siblings; nested loops accumulate outward).
   const provenPair = detectCountedLoopSafeIndex(stmt);
+  const fixedLiteralPairs = detectFixedLiteralLoopSafeIndexes(stmt, loopCx.checker);
   const denseFill = denseFillPlanForLoop(stmt);
   const denseFillPair = denseFill ? `${denseFill.arrayName}:${denseFill.indexName}` : null;
   // #2952 slice 2 — the loop's label; the body cx carries it as the
   // innermost break/continue target (a continue jumps to the update).
   const bodyScope = new Map(loopCx.scope);
   const safePairs =
-    provenPair || denseFillPair
+    provenPair || denseFillPair || fixedLiteralPairs.length > 0
       ? new Set([
           ...(loopCx.safeIndexedArrays ?? []),
           ...(provenPair ? [provenPair] : []),
           ...(denseFillPair ? [denseFillPair] : []),
+          ...fixedLiteralPairs,
         ])
       : null;
   // (#3931) Nested loops accumulate outward, exactly like `safeIndexedArrays`:
@@ -13084,7 +13067,20 @@ function lowerHostVoidCallbackExpression(
     // invariant (producer-promise): the resolver promised a well-formed plan — #4502.
     throw new Error(`ir/from-ast: malformed host void callback plan (${cx.funcName})`);
   }
-  return lowerClosureExpressionWithSignature(expr, plan.signature, plan.captureNames, cx, { hostOneShot: true });
+  return lowerClosureExpressionWithSignature(
+    expr,
+    plan.signature,
+    plan.captureNames,
+    cx,
+    plan.standaloneDomReusable === true
+      ? {
+          domCallbackAuthority: {
+            ownerUnitId: plan.ownerUnitId,
+            liftedOrdinal: plan.liftedOrdinal,
+          },
+        }
+      : { hostOneShot: true },
+  );
 }
 
 function lowerClosureExpressionWithSignature(
@@ -13116,7 +13112,9 @@ function lowerClosureExpressionWithSignature(
     expr,
     cx,
     (ordinal) => exactClosureLiftedName(cx.funcName, ordinal, exact?.expectedLiftedName),
-    exact?.expectedLiftedTarget !== undefined || exact?.hostOneShot === true,
+    exact?.expectedLiftedTarget !== undefined ||
+      exact?.hostOneShot === true ||
+      exact?.domCallbackAuthority !== undefined,
   );
   recordLiftedUnitProvenance(liftedIdentity, cx);
   const liftedTarget = irUnitFuncRef(liftedIdentity);
@@ -13199,16 +13197,14 @@ function lowerClosureExpressionWithSignature(
     cx,
     exact?.allowConciseVoidBody === true,
     exact?.hostOneShot === true,
+    exact?.domCallbackAuthority,
   );
   cx.lifted.push(lifted);
 
-  return cx.builder.emitClosureNew(
-    liftedTarget,
-    signature,
-    captureFieldTypes,
-    captureArgs,
-    exact?.hostOneShot === true,
-  );
+  return cx.builder.emitClosureNew(liftedTarget, signature, captureFieldTypes, captureArgs, {
+    ...(exact?.hostOneShot === true ? { hostOneShot: true } : {}),
+    ...(exact?.domCallbackAuthority ? { domCallbackAuthority: exact.domCallbackAuthority } : {}),
+  });
 }
 
 /**
@@ -13369,6 +13365,7 @@ function liftClosureBody(
   cx: LowerCtx,
   allowConciseVoidBody = false,
   hostOneShot = false,
+  domCallbackAuthority?: import("./nodes.js").IrDomCallbackAuthority,
 ): IrFunction {
   const body = expr.body;
   if (!body) {
@@ -13509,6 +13506,7 @@ function liftClosureBody(
         signature,
         captureFieldTypes: [...captureFieldTypes],
         ...(hostOneShot ? { hostOneShot: true } : {}),
+        ...(domCallbackAuthority ? { domCallbackAuthority } : {}),
       });
     }
     // Concise body — wrap as `return <expr>`.
@@ -13534,6 +13532,7 @@ function liftClosureBody(
     signature,
     captureFieldTypes: [...captureFieldTypes],
     ...(hostOneShot ? { hostOneShot: true } : {}),
+    ...(domCallbackAuthority ? { domCallbackAuthority } : {}),
   });
 }
 

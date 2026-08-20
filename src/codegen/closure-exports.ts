@@ -549,7 +549,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
     // A one-shot host callback is invoked only through __call_fn_0 by the
     // compiler-owned -2 wrapper. It cannot be returned, over-applied, or used
     // as a method, so wider generic dispatchers would be dead artifact weight.
-    if (info.hostOneShotOnly === true && arity !== 0) continue;
+    if (info.domCallbackOnly === true || (info.hostOneShotOnly === true && arity !== 0)) continue;
     const hostArity = closureHostArity(info);
     if (hostArity > arity) continue;
 
@@ -978,7 +978,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   const nativeProtoReceiverEntries = collectTransferredNativeProtoReceivers(ctx, arity);
 
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-    if (info.hostOneShotOnly === true) continue;
+    if (info.hostOneShotOnly === true || info.domCallbackOnly === true) continue;
     const hostArity = closureHostArity(info);
     if (hostArity > arity) continue;
     const typeDef = mod.types[typeIdx];
@@ -1491,7 +1491,7 @@ function collectClosureArityEntries(
   const seenFuncTypeIdx = new Set<number>();
   const entries: { funcTypeIdx: number; selfTypeIdx: number; closureArity: number }[] = [];
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-    if (info.hostOneShotOnly === true) continue;
+    if (info.hostOneShotOnly === true || info.domCallbackOnly === true) continue;
     const typeDef = mod.types[typeIdx];
     if (!typeDef || typeDef.kind !== "struct") continue;
     if (seenFuncTypeIdx.has(info.funcTypeIdx)) continue;
