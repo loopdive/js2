@@ -92,6 +92,7 @@ import {
   packagePerfRecord,
   skippedPerfLane,
 } from "./lib/npm-compat-perf.mjs";
+import { summarizePlaygroundFiles } from "./lib/npm-compat-playground.mjs";
 import { renderHarnessThrownText } from "./lib/wasm-exn-render.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -2013,19 +2014,7 @@ function buildNpmSuitePlayground(report, options = {}) {
   );
   const hasPerTestResults = files.some((file) => file.tests?.length || file.total != null);
   const summary = hasPerTestResults
-    ? files.reduce(
-        (counts, file) => {
-          const total = file.total ?? 1;
-          const passed = file.passed ?? (file.status === "pass" ? total : 0);
-          counts.total += total;
-          counts.pass += passed;
-          if (file.status === "fail") counts.fail += Math.max(total - passed, 1);
-          else if (file.status === "compile_error") counts.compile_error += total;
-          else if (file.status === "skip") counts.skip += total;
-          return counts;
-        },
-        { pass: 0, fail: 0, compile_error: 0, skip: 0, total: 0 },
-      )
+    ? summarizePlaygroundFiles(files)
     : {
         pass: Number(report?.results?.passed ?? 0),
         fail: Math.max(
@@ -2082,14 +2071,7 @@ function buildDifferentialPlayground(report, options = {}) {
       ...(sourcePath ? { sourceUrl: `https://raw.githubusercontent.com/loopdive/js2/main/${sourcePath}` } : {}),
     };
   });
-  const summary = files.reduce(
-    (counts, file) => {
-      counts.total++;
-      counts[file.status === "pass" ? "pass" : file.status === "fail" ? "fail" : "skip"]++;
-      return counts;
-    },
-    { pass: 0, fail: 0, compile_error: 0, skip: 0, total: 0 },
-  );
+  const summary = summarizePlaygroundFiles(files);
   return {
     kind: "differential",
     label: options.label ?? "differential tests",
