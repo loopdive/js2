@@ -458,6 +458,24 @@ class NpmCompatChart extends HTMLElement {
       }
     }
 
+    // ReactDOM's server renderer is a separate published graph and therefore
+    // has its own upstream-test denominator. Keep that result visible instead
+    // of merging server-renderer failures into the client renderer row.
+    const serverTestData = pkg.tests?.server;
+    const serverTests =
+      serverTestData && serverTestData.total != null
+        ? this._row(
+            "server tests",
+            `<span class="mono">${serverTestData.passed ?? 0}/${serverTestData.total}</span>${
+              serverTestData.passRatePct != null ? ` <span class="muted">${serverTestData.passRatePct}%</span>` : ""
+            } <span class="tag">upstream server suite</span>${
+              serverTestData.upstreamTestsSeen
+                ? ` <span class="muted">${serverTestData.selected ?? serverTestData.admitted ?? 0} of ${serverTestData.upstreamTestsSeen} selected</span>`
+                : ""
+            }`,
+          )
+        : "";
+
     // Perf — historical ratios stay split by input knowledge and placement;
     // full methodology lives below the dashboard.
     let perf;
@@ -512,7 +530,7 @@ class NpmCompatChart extends HTMLElement {
             ? `<span class="badge" title="The published entry module only re-exports other packages, so these badges describe the barrel — see the tests row for the real implementation.">entry is a barrel</span>`
             : ""
         }</div>
-        <div class="rows">${correctness}${tests}${perf}${bugs}</div>
+        <div class="rows">${correctness}${tests}${serverTests}${perf}${bugs}</div>
         <a class="entry mono" href="${npmCodeUrl}" target="_blank" rel="noopener"
           title="View ${this._esc(pkg.entryFile)} in ${this._esc(pkg.name)} ${this._esc(pkg.version)} on npm">${this._esc(pkg.entryFile)}</a>
       </div>`;
