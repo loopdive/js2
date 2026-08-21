@@ -623,3 +623,53 @@ folds false), while the dynamic receiver path can observe it. This is a Date
 carrier own-storage/visibility and `compilePropertyIntrospection` convergence
 row, not a prototype-descriptor refusal row. #4504 explicitly excludes it from
 its nine-test denominator; retain it here for the next MOP/introspection slice.
+
+## 2026-08-21 void-in-argument-position slice (closes the void-undefined family)
+
+**Root cause.** `inferParamTypeFromCallSites` narrowed an implicit-`any`
+parameter from the TS type of the argument at each call site. For a purely-void
+argument — `verifyEqualTo(arrObj, "0", getFunc())` where `getFunc` returns
+nothing — `mapTsTypeToWasm` answers `i32` ("void → no result, handled in
+codegen"). That answer is a lowering convention for a *result slot*, not a claim
+that the argument is the number `0`, but the inference took it literally: the
+harness parameter got an `i32` slot, the void call padded it with `i32.const 0`,
+and the deprecated `verifyEqualTo` reported `Expected obj[0] to equal 0,
+actually undefined` — with the **expected** side wrong, not the actual one.
+
+**Fix** (`src/codegen/declarations/param-return-inference.ts`, +21 LOC, exactly
+the shape of the #4555 under-application rule right above it): record a call
+site whose argument type is exclusively `Void | Undefined`, and withdraw the
+narrowing when the agreed type is a native scalar (`f64`/`i32`/`i64`) — those
+have no encoding of `undefined`. The parameter stays on its resolved
+`externref`, whose default value already IS the canonical undefined
+(`pushDefaultValue` → `emitUndefinedValue` → the #2106 `$undefined` singleton in
+standalone). The withdrawal is per parameter POSITION, so a numeric kernel with
+a void argument in some other slot is untouched, and annotated parameters never
+reach this inference at all.
+
+**Measured** (serial single-test standalone probes, before/after on the same
+worktree):
+
+| test                                          | before | after |
+| --------------------------------------------- | ------ | ----- |
+| `Object/defineProperty/15.2.3.6-4-207.js`     | fail   | pass  |
+| `Object/defineProperty/15.2.3.6-4-208.js`     | fail   | pass  |
+| `Object/defineProperty/15.2.3.6-4-312.js`     | fail   | pass  |
+| `Object/defineProperty/15.2.3.6-4-570.js`     | pass   | pass  |
+| `Object/defineProperty/15.2.3.6-4-498.js`     | pass   | pass  |
+
+Two 12- and 17-test control batches (arguments-object, function statements,
+call/void expressions, Math/Array/Object/String/parseInt built-ins, and 12
+`verifyEqualTo(..., getFunc())` defineProperty rows that already passed) are
+**byte-identical before and after** — no regressions in the sample.
+
+**Residuals deliberately NOT taken in this slice:**
+
+- `15.2.3.6-4-195.js` still fails, but no longer on the void value — its
+  `verifyEqualTo` now passes and it stops at `Expected obj[0] to be writable,
+  but was not`. That is inherited-accessor `[[Set]]` dispatch, a different row.
+- `[1, getFunc()]` — a void element mixed with numbers types the array
+  `number[]` after the type mapper's union rule ("`T | undefined` for primitives
+  → just use `T`"), so the element lands as `f64 0`. Pure `undefined[]`/`void[]`
+  is already correct (#2806). Changing the union rule would move every
+  `number | undefined` slot in the compiler and is out of scope here.
