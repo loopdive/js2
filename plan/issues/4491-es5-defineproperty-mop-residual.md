@@ -71,6 +71,18 @@ loc-budget-allow:
   # only the branch that reaches it. (unary-updates.ts already granted above
   # by wave-3 lane A; this extends the same file's grant.)
   - src/codegen/expressions/call-identifier.ts
+  # 2026-08-21 wave-4 lane G, Math-as-a-VALUE slice (+5): `Math.sin` passed as a
+  # first-class value reified a closure whose body THREW even though the
+  # `Math_sin` f64 kernel already existed and the direct-CALL path used it.
+  # Both phases that decide this keyed on the CALL form only. The body AND the
+  # collector predicate both live in a NEW module
+  # (src/codegen/math-static-value-body.ts); the collector retains only the
+  # 5-line dispatch, which has to be in the walker to see the node at all.
+  - src/codegen/declarations/import-collector.ts
+  # 2026-08-21 wave-4 lane G (+13 at integration base): the dispatch arm for
+  # the Math value body in `ensureStandaloneBuiltinStaticMethodClosure` — see
+  # the func-budget entry; the body lives in math-static-value-body.ts.
+  - src/codegen/builtin-value-read.ts
 oracle-ratchet-allow:
   # 2026-08-21: one getTypeAtLocation in varBindingNeedsExternrefForUndefined's
   # new call arm — the same raw-checker idiom as the surrounding predicate;
@@ -100,6 +112,13 @@ coercion-sites-allow:
   # exactly what this gate exists to prevent, so the reviewed grant is the
   # correct outcome rather than an avoidance.
   - src/codegen/string-exotic-own-props.ts
+  # 2026-08-21 wave-4 lane G: NOT new coercion vocabulary — the gate counts
+  # `__any_to_f64` as +1 only because the call sits in a new file. The pair
+  # `__any_from_extern` → `__any_to_f64` is copied verbatim from the variadic
+  # `Math.max`/`Math.min` value body in builtin-value-read.ts, deliberately, so
+  # an extracted `Math.sin` coerces its argument exactly like an extracted
+  # `Math.max` does. No ToNumber/ToString/ToPrimitive matrix is hand-rolled.
+  - src/codegen/math-static-value-body.ts
 func-budget-allow:
   # 2026-08-21 defineProperties/create edge slice: the `Properties`-map entry
   # model gains a PASS-THROUGH arm (a map entry that is not an object literal)
@@ -151,6 +170,16 @@ func-budget-allow:
   # own blast radius and is deliberately NOT bundled into a semantics fix.
   - src/codegen/expressions/unary-updates.ts::compilePrefixUpdate
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  # 2026-08-21 wave-4 lane G, Math-as-a-VALUE slice. Both growths are DISPATCH
+  # ONLY — every line of the new body lives in math-static-value-body.ts:
+  #  * ensureStandaloneBuiltinStaticMethodClosure (+12): one `else if` arm that
+  #    must sit BEFORE the `genericThrowBody` arm, because that arm claims every
+  #    `default:` case (this one included) and behind it the new arm would never
+  #    fire.
+  #  * unifiedVisitNode (+4): the collector dispatch — a predicate call and a
+  #    `mathNeeded.add`. It has to be in the walker to see the node.
+  - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
+  - src/codegen/declarations/import-collector.ts::unifiedVisitNode
 ---
 
 # #4491 — ES5 defineProperty/defineProperties/create MOP residual
@@ -861,6 +890,132 @@ row-set and control population.
 
 `TEST262_TARGET=standalone TEST262_PATH_FILTER="built-ins/Object/defineProperty|built-ins/Object/defineProperties|built-ins/Object/create" pnpm run test:262`
 — baseline 90 non-pass. gc-lane control on the same filter. Equivalence guard.
+
+## Wave-4 lane G — `Math.<fn>` as a first-class VALUE (2026-08-21)
+
+Slice landed by the wave-4 lane G row set (built-ins/Function family + the
+wave-3 lane A `arguments`-extras head). Only ONE of that whole row set was in
+reach; the rest is triaged below with reasons, so it is not re-derived.
+
+### What was broken
+
+`Math.sin` **read as a value** — `derivative(Math.sin, 0.0001)` — reified a
+closure whose body was the degrade-to-catchable refusal, so the call threw:
+
+```
+TypeError: Math.sin is not yet implemented in --target standalone
+```
+
+Meanwhile `Math.sin(x)` **called directly** worked, and had for a long time, via
+the `Math_sin` self-hosted f64 kernel (`math-helpers.ts`) that
+`expressions/builtins.ts` calls from its `hostUnary` arm. The kernel was never
+the gap.
+
+The gap was that BOTH phases which decide the value form keyed on the CALL form:
+
+1. `collectImports` (`declarations/import-collector.ts`) added to
+   `state.mathNeeded` only from a `ts.isCallExpression`, so a value read never
+   put `sin` in the set, `emitInlineMathFunctions` never emitted `Math_sin`, and
+   there was no kernel to call even in principle.
+2. `ensureStandaloneBuiltinStaticMethodClosure` (`builtin-value-read.ts`) let
+   `Math.sin` fall to its `default:` arm, whose body is `emitThrowTypeError`.
+
+Either fix alone leaves the row failing — measured both ways.
+
+### The fix
+
+New module `src/codegen/math-static-value-body.ts` holds both halves:
+
+- `mathValueReadMethod(node)` — the collector predicate (non-call-position
+  `Math.<m>` whose kernel exists). The collector keeps only a 5-line dispatch.
+- `emitMathStaticValueBody(...)` — the body:
+  `__any_from_extern` → `__any_to_f64` per arg → `call Math_<m>` → `__box_number`.
+  That coercion pair is copied verbatim from the variadic `Math.max`/`Math.min`
+  value body two arms above, deliberately, so an extracted `Math.sin` coerces
+  exactly like an extracted `Math.max` rather than growing a second matrix.
+
+**Dispatch position is load-bearing.** The new arm sits BEFORE the
+`genericThrowBody` arm, because that arm claims every `default:` case — this one
+included — so behind it the new arm would never fire. Verified it fires by the
+row flipping, not by inspection.
+
+**Declining is the default and is always safe**: the emitter returns `false`
+without pushing anything unless the kernel and all three helpers are already in
+`ctx.funcMap`, and the `&&` then falls through to the pre-existing throw body.
+Covers 21 methods (19 unary + `pow`/`atan2`); the inline-opcode Math functions
+(`abs`/`floor`/`sqrt`/…) and `random` are deliberately excluded — they have no
+`Math_<m>` function to call, so they keep today's behaviour.
+
+### Measured
+
+Real `runTest262File`, `--target standalone`, this branch's base vs. after.
+
+| row                                                | base | after |
+| -------------------------------------------------- | ---- | ----- |
+| `language/statements/function/S13.2.1_A5_T2.js`    | fail | **pass** |
+
+Blast radius: the 35-row built-ins/Function set is **byte-identical** before and
+after (33 fail / 1 pass both runs — none of them reads a Math value); the other
+5 extras-head rows are unchanged. Control set of 519 currently-passing neighbours
+(`Function/prototype/{call,apply}` families, `language/statements/function`,
+`language/expressions/call`, and the `Math/{sin,cos,tan,log,pow,atan2}`
+directories — the last added specifically because this slice changes Math
+emission) diffed base vs. after with no regressions.
+
+### Triage of the rest of the row set — NOT attempted, with reasons
+
+Measured on base with the probes noted; each is a real wall, not a skip.
+
+| bucket | n | finding |
+| ------ | -: | ------- |
+| `Function(...)` constructor result semantics | 22 of 35 | The bare `Function` value and `Function(src)` both resolve through the **runtime-eval provider realm** (`function-intrinsic-carrier.ts`: reading bare `Function` is an `intrinsic-value` boundary site). Probed: for `f = Function("a1,a2,a3","…")`, `typeof f`/`f.length`/`f.hasOwnProperty("prototype")`/`typeof f.call` are all **correct**, but `Object.prototype.toString.call(f)` is `[object Object]` (should be `[object Function]`) and `Object.getPrototypeOf(f) === Function.prototype` is **false**. Fixing means branding the interpreter-materialized callable across the provider boundary (`src/interp/`, `src/runtime.ts`), not a codegen table entry. |
+| `Function.hasOwnProperty("prototype"/"length")`, `delete Function.prototype` | 3 | Same root cause, and cheap-looking but isn't. `Object`/`Array`/`String.hasOwnProperty("prototype")` all answer **true** — `pushBuiltinCtorOwnPropSeed` seeds those carriers, and `Function: 1` **is** in `BUILTIN_CTOR_ARITY`. The seed never reaches this value because the bare `Function` identifier read does not route to `emitBuiltinConstructorIdentity` at all; it routes to the provider realm. (This is exactly failure mode 1 recorded in the `function-intrinsic-carrier.ts` header.) `delete Function.prototype` returns `true` and is a no-op, for the same reason. |
+| `Object.getPrototypeOf(fn) === Function.prototype` | — | **Also false for an ORDINARY declared function**, so this is not a Function-ctor defect but a general carrier-identity gap. It is what makes `typeof obj.call === "function"` answer `undefined` when `obj`'s prototype is a function (`S15.3.4.{3,4}_A1_T1/T2`). Out of reach of this row set. |
+| `Function.prototype.bind` | 2 | Refuses loud in standalone (`… is not yet implemented`). Genuinely unimplemented, not a plumbing gap. |
+| strict `caller`/`arguments` poison pills (`15.3.5.4_2-*gs`) | 5 | Substrate exists (`function-poison-pill.ts` threads the caller-strictness bit) but 4 of the 5 build the strict function via `Function("\"use strict\"; …")`, i.e. the provider realm again. |
+
+Base status of the 35-row set is **33 fail / 1 pass / 1 compile-error**, not
+34 — `built-ins/Function/S15.3.3_A2_T2.js` reports status `compile_error`, which
+a status filter written as `pass|fail|skip` silently drops. Recorded because a
+row that vanishes from a triage listing reads exactly like a row that was never
+in the set. Its error is the same bucket as the two rows above it:
+
+```
+Codegen error: Function.indicator built-in static property value read is not
+supported in --target standalone (#1907 / #1888 S6-b).
+```
+
+i.e. an arbitrary static property read on the `Function` carrier, which the
+provider-realm value cannot serve.
+
+### `arguments`-extras head — measured, and narrower than assumed
+
+The brief framed the remaining gap as "over-supplied arguments in ORDINARY calls
+of function declarations". Probed on base, that framing is **too broad** — the
+ordinary direct-call path already works:
+
+| probe | result |
+| ----- | ------ |
+| top-level `function one(a){…}` called `one("a","b")` | `2:a,b` — **extras work** |
+| top-level zero-formal, called through a closure var | `arguments.length` **1** (right), `arguments[0]` **null** |
+| nested `function inner(){…}` returned and called | whole `arguments` object **null** |
+| nested `function inner(a){…}` called with 2 args | whole `arguments` object **null** |
+
+So there are two distinct defects, and neither is "the ordinary-call path drops
+extras": (a) a **lifted nested function DECLARATION** gets no `arguments` object
+at all when called through a closure ref — note `compileLiftedClosureBody`
+(where wave-3 lane C installed `mappedArgsInfo`) is typed
+`ts.ArrowFunction | ts.FunctionExpression` and does **not** accept a
+`FunctionDeclaration`; (b) in the zero-formal closure-call case argc and the
+extras array disagree, leaving slot 0 filled from neither formals nor extras.
+`S13.2.2_A5_T1` is a third variant: `new F(a,b,c,d)` on a 2-formal declaration
+reading `arguments[2]`, which null-derefs despite wave-3 lane D's in-`new` work.
+
+Not attempted here — each needs its own measured slice, and guessing at the
+call/callee `paramCount` contract is how a silent wrong `arguments.length` would
+land. `S13_A2_T2` additionally needs `arg + arguments[1]` to pick the *dynamic*
+`+` (it currently folds to the numeric operator and yields `2` instead of
+`"11"`), which is a typing question, not an extras question.
 
 ## 2026-08-19 re-census + dispatch
 
