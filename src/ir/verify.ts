@@ -20,8 +20,12 @@
 // On failure, returns a list of `IrVerifyError`s rather than throwing, so
 // callers can decide whether to bail or fall back to the legacy path.
 
-import type { IrBlock, IrFunction, IrInstr, IrLabelId, IrType, IrValueId } from "./nodes.js";
+import type { IrBlock, IrFunction, IrInstr, IrLabelId, IrModuleDeclarations, IrType, IrValueId } from "./nodes.js";
 import { asVal, forEachInstrDeep, forEachNestedBuffer, irTypeEquals } from "./nodes.js";
+// #4605 — the module-level declared-type tables and the rules that read them.
+// `verifyIrFunction` stays standalone: the tables arrive as an optional
+// parameter, and their absence is always a conservative skip.
+import { declaredCallProblems, declaredGlobalProblem, irBindingKey } from "./declared-types.js";
 import type { ValType } from "./types.js";
 // #2949 slice 1 / #3954 phase 1 — the dynamic-operand rules (payload-kind
 // consistency of unbox/tag.test) are DOMAIN questions, not ECMAScript ones:
@@ -337,8 +341,21 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
  * to the producer axis's default domain, so callers that do not care are
  * unchanged; a non-JS producer passes its own and the verifier stops answering
  * from ECMAScript.
+ *
+ * `declarations` (#4605) is the OPTIONAL module-level declared-type table —
+ * `IrModule.declaredSignatures` / `.declaredGlobals`, keyed by
+ * {@link irBindingKey}. When a binding has an entry, the `call` / `global.get`
+ * / `global.set` rules check each reference against the DECLARATION, which
+ * catches the shape intra-function coherence structurally cannot: ONE mistaken
+ * reference that is perfectly coherent with itself. When it is absent — the
+ * default, and every existing caller — the #4603 coherence behaviour is
+ * unchanged. Use {@link irModuleDeclarations} to derive it from an `IrModule`.
  */
-export function verifyIrFunction(func: IrFunction, domain: TagDomain = defaultTagDomain()): IrVerifyError[] {
+export function verifyIrFunction(
+  func: IrFunction,
+  domain: TagDomain = defaultTagDomain(),
+  declarations?: IrModuleDeclarations,
+): IrVerifyError[] {
   const errors: IrVerifyError[] = [];
   const defs = new Set<IrValueId>();
 
@@ -428,7 +445,7 @@ export function verifyIrFunction(func: IrFunction, domain: TagDomain = defaultTa
   }
 
   // #1924 — per-instruction operand / result / slot type rules.
-  verifyInstrTypeRules(func, typeOf, errors);
+  verifyInstrTypeRules(func, typeOf, errors, declarations);
 
   // #1798 — defense-in-depth: every `return` terminator's value types must be
   // Wasm-assignment-compatible with the function's declared `resultTypes`.
@@ -1554,28 +1571,12 @@ function constResultKind(v: import("./nodes.js").IrConst): ValType["kind"] | nul
 }
 
 /**
- * (#4603) A stable structural key for an `IrGlobalRef` / `IrFuncRef` binding.
- *
- * The IR resolves globals and callables LAZILY through symbolic refs — neither
- * `IrModule` nor `IrFunction` carries a declared-type table (see `IrModule`,
- * which holds only `functions`). So the verifier cannot compare a `global.get`
- * against "the global's declared IrType": no such record is in scope. What IS
- * in scope is every OTHER reference to the same binding in the same function,
- * which must agree — that intra-function coherence rule is what `global.get` /
- * `global.set` get here. `name` is explicitly a debug label and never the
- * identity, so the key is built from the binding discriminant alone.
+ * (#4603) The verifier's local alias for the shared structural binding key.
+ * `declared-types.ts` owns the one implementation (#4605) — the module-level
+ * declaration tables are keyed by exactly this string, so producer and
+ * verifier must never grow a second key function.
  */
-function bindingKey(binding: unknown): string | null {
-  if (!isRecord(binding)) return null;
-  const kind = binding.kind;
-  if (typeof kind !== "string") return null;
-  const id = binding.bindingId ?? binding.unitId ?? binding.symbol;
-  if (typeof id === "string") return `${kind}:${id}`;
-  if (kind === "import" && typeof binding.module === "string" && typeof binding.field === "string") {
-    return `import:${binding.module}:${binding.field}`;
-  }
-  return null;
-}
+const bindingKey = irBindingKey;
 
 /**
  * Per-kind type-rule coverage status (#4523). `"checked"` means `checkInstr`
@@ -1798,6 +1799,13 @@ interface RoadmapRuleCtx {
   readonly numSlots: number;
   readonly callSignatures: Map<string, { arity: number; resultKind: ValType["kind"] | null }>;
   readonly globalKinds: Map<string, { kind: ValType["kind"]; via: "global.get" | "global.set" }>;
+  /**
+   * (#4605) The module's declared-type tables, when the caller supplied them.
+   * A binding WITH an entry is checked against the declaration; a binding
+   * without one falls back to #4603 coherence. Never a source of errors on its
+   * own — absence is always a conservative skip.
+   */
+  readonly declarations: IrModuleDeclarations | undefined;
 }
 
 /** Kinds whose rule is a fixed or self-declared carrier on the instr itself. */
@@ -2093,21 +2101,32 @@ function checkForOfSlots(
 }
 
 /**
- * #4603 — coherence, NOT declaration-matching, for the three symbolic-ref
- * kinds.
+ * #4603 coherence, upgraded by #4605 to declaration-matching wherever the
+ * module supplies a declaration for the binding.
  *
- * The IR resolves globals and callables lazily through symbolic refs, and
- * neither `IrModule` (which holds only `functions`) nor `IrFunction` carries a
- * declared-type table — so "must match the global's declared IrType" has
- * nothing in scope to match against. What IS in scope is every other reference
- * to the same binding in the same function: those must agree, and a
- * disagreement is a producer bug.
+ * The IR resolves globals and callables lazily through symbolic refs. When no
+ * declared-type table is in scope — the default for every single-function
+ * caller — the only derivable rule is that every reference to one binding
+ * inside one function must agree with the others, and a disagreement is a
+ * producer bug. That misses the most common defect shape: ONE mistaken
+ * reference, perfectly coherent with itself. `IrModule.declaredSignatures` /
+ * `.declaredGlobals` (#4605) close exactly that gap; a binding they do not
+ * mention keeps the coherence behaviour unchanged.
  */
 function checkSymbolicRefCoherence(instr: RoadmapSymbolicInstr, blockId: number, ctx: RoadmapRuleCtx): void {
   const key = bindingKey(instr.target.binding);
   if (key === null) return; // malformed ref — `verifySymbolicReferences` owns it
   if (instr.kind === "call") {
     const resultKind = instr.resultType ? (asVal(instr.resultType)?.kind ?? null) : null;
+    const signature = ctx.declarations?.declaredSignatures?.get(key);
+    if (signature !== undefined) {
+      const want = signature.result ? (asVal(signature.result)?.kind ?? null) : null;
+      const args = instr.args.length;
+      for (const p of declaredCallProblems(instr.target.name, args, resultKind, signature, want)) {
+        roadmapError(ctx, blockId, p);
+      }
+      return;
+    }
     const seen = ctx.callSignatures.get(key);
     if (seen === undefined) {
       ctx.callSignatures.set(key, { arity: instr.args.length, resultKind });
@@ -2136,6 +2155,12 @@ function checkSymbolicRefCoherence(instr: RoadmapSymbolicInstr, blockId: number,
         : null
       : valKindOf(ctx.typeOf, instr.value);
   if (observed === null) return;
+  const declaredType = ctx.declarations?.declaredGlobals?.get(key);
+  if (declaredType !== undefined) {
+    const problem = declaredGlobalProblem(instr.kind, instr.target.name, observed, asVal(declaredType)?.kind ?? null);
+    if (problem !== null) roadmapError(ctx, blockId, problem);
+    return;
+  }
   const seen = ctx.globalKinds.get(key);
   if (seen === undefined) {
     ctx.globalKinds.set(key, { kind: observed, via: instr.kind });
@@ -2150,7 +2175,12 @@ function checkSymbolicRefCoherence(instr: RoadmapSymbolicInstr, blockId: number,
   }
 }
 
-function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, IrType>, errors: IrVerifyError[]): void {
+function verifyInstrTypeRules(
+  func: IrFunction,
+  typeOf: ReadonlyMap<IrValueId, IrType>,
+  errors: IrVerifyError[],
+  declarations?: IrModuleDeclarations,
+): void {
   const numSlots = func.slots?.length ?? 0;
 
   // #2949 R4 — a dynamic-typed value may only feed box/unbox/tag.test, moves
@@ -2175,6 +2205,7 @@ function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, I
     numSlots,
     callSignatures: new Map(),
     globalKinds: new Map(),
+    declarations,
   };
 
   const checkInstr = (instr: IrInstr, blockId: number): void => {
