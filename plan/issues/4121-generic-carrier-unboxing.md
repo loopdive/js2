@@ -394,7 +394,8 @@ and ABI checks pass and the switch-off result is identical.
       them into a LOCAL carrier, every bucket flat.
 - [x] No equivalence-suite regressions — confirmed by a **full-capture** run and
       an A/B of the failing set with the kill switch off, not by a count match.
-      — done 2026-08-21 for this slice.
+      — done 2026-08-21 for this slice: 24 failing / 1,661 passing, failing
+      SETS identical by test id across the switch, all 24 baselined.
 
 ## What must still decline (hard-won, do not re-derive)
 
@@ -666,6 +667,38 @@ change. The hash equality is the stronger claim and it is what is reported.
 The pinned runtime-dynamic harness (separate processes, warm-ups, alternating
 order, seed 3751, checksum equality) is the right instrument for the NEXT
 slice, once an artifact difference exists to measure.
+
+### Equivalence: full capture, A/B by test id (AC 6)
+
+A count match is not acceptance, so both legs captured their failing/passing
+sets per test id (`PARTIAL_OUT`) and the sets were diffed:
+
+```
+admission ON : 24 failing / 1661 passing
+admission OFF: 24 failing / 1661 passing
+baseline known failures: 36
+
+failing ONLY with admission ON  (regressions caused by this slice): 0
+failing ONLY with admission OFF (fixed by this slice):              0
+failing (ON) and NOT in baseline:                                   0
+
+VERDICT: failing sets IDENTICAL across the kill switch; all failures are baselined.
+```
+
+The 24 are all pre-existing baseline entries, in 11 files
+(`tdz-reference-error` 6, `null-dereference-guards` 5,
+`logical-conditional-identity` 3, `new-non-constructor` 2,
+`optional-direct-closure-call` 2, and seven singletons).
+
+Note on method: a **single unsharded** `scripts/equivalence-gate.mjs` run dies
+on this 4-core/16 GB container — vitest is killed before writing its JSON
+report and the gate exits 2 with `vitest produced no JSON report; signal=
+null`, which is not a pass. Run it as 8 shards.
+
+One shard reported `1 baseline failure now PASSES`
+(`issue-1197.test.ts :: … x | 0 collapses to nothing on an i32-shaped value`).
+That is a **stale baseline entry, not this slice**: the test passes with the
+switch on AND off (22/22 both ways). The baseline was not ratcheted here.
 
 ### Gates, and one pre-existing failure found while running them
 
