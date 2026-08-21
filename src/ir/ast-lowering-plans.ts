@@ -5,6 +5,7 @@ import type { IrClassShape, IrClosureSignature, IrFuncRef, IrGlobalRef, IrType }
 import type { IrLegacyUnitProjection, IrPlanningIdentityContext } from "./planning-identity.js";
 import type { IrPromiseDelayLoweringPlans } from "./promise-delay-lowering.js";
 import { ts } from "../ts-api.js";
+import { requireCompilerTimerShimPlan } from "./timer-shim-lowering.js";
 
 export interface IrImportedOptionalParamPlan {
   readonly constantDefault?:
@@ -15,7 +16,7 @@ export interface IrImportedOptionalParamPlan {
 
 export interface IrImportedCallLoweringPlan {
   /** Module-body source-unit import or same-file ambient host import (#3657). */
-  readonly source: "module-import" | "ambient-host";
+  readonly source: "module-import" | "ambient-host" | "compiler-timer-shim";
   readonly ownerUnitId: IrUnitId;
   readonly ownerName: string;
   /** Exact source-unit target. `name` is diagnostic/adapter metadata only. */
@@ -29,6 +30,10 @@ export interface IrImportedCallLoweringPlan {
 }
 
 export function requireValidImportedCallTarget(plan: IrImportedCallLoweringPlan): void {
+  if (plan.source === "compiler-timer-shim") {
+    requireCompilerTimerShimPlan(plan);
+    return;
+  }
   if (plan.source === "ambient-host") {
     if (plan.target.binding.kind === "import" && plan.target.binding.module === "env") return;
     throw new Error(`ir/from-ast: ambient host call target ${plan.target.name} is not backed by an env import`);

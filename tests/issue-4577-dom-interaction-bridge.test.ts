@@ -297,10 +297,10 @@ describe("#4577 authenticated reusable DOM callback bridge", () => {
     expect(() => wrapStandaloneDomCallback(carrier, state)).toThrow(/base dom@1.*callback authority/i);
   });
 
-  it("leaves the JavaScript-host Calendar lane at 37/37 without standalone callback authority", async () => {
+  it("leaves the post-timer JavaScript-host Calendar lane at 38/38 without standalone callback authority", async () => {
     const lane = await observeSingleHostLane();
     const outcomes = lane.entries.flatMap((entry) => entry.outcomes);
-    expect(outcomes.filter((outcome) => outcome.kind === "emitted")).toHaveLength(37);
+    expect(outcomes.filter((outcome) => outcome.kind === "emitted")).toHaveLength(38);
     expect(outcomes.filter((outcome) => outcome.kind !== "emitted")).toHaveLength(0);
   });
 

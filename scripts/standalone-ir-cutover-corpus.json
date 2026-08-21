@@ -1,0 +1,131 @@
+{
+  "schema": "js2-ir-cutover-corpus-manifest-v1",
+  "id": "standalone-playground-compile-v1",
+  "digest": "sha256:e25d80c90cdd5eb3c6a21672e6d9f3db754ddd4a068d54d5d37b5fee856eb0b7",
+  "invocation": {
+    "route": "compile",
+    "target": "standalone",
+    "graph": "single",
+    "generator": "generateModule"
+  },
+  "sources": [
+    {
+      "id": "calendar",
+      "path": "website/playground/examples/dom/calendar.ts",
+      "bytes": 9937,
+      "sha256": "15577900caa8722bdfc0b9384aacef282c8a4c6bf8c63d6ab490a6a900ca4ce2"
+    },
+    {
+      "id": "algorithms",
+      "path": "website/playground/examples/js/algorithms.ts",
+      "bytes": 3933,
+      "sha256": "5733cc47b5421e1573e4cb5f1762a3ca9930622e6a69c8840e547755dc50ac17"
+    },
+    {
+      "id": "async",
+      "path": "website/playground/examples/js/async.ts",
+      "bytes": 2266,
+      "sha256": "6bc4fc96cc65881c9919a39b840afaf1001dfd3d0e05ef0cc141441a051f7915"
+    },
+    {
+      "id": "builtins",
+      "path": "website/playground/examples/js/builtins.ts",
+      "bytes": 3366,
+      "sha256": "49f89f34f7d4e7043d7fea89d505126918ab606eefbd6c2314887df3c4b0984e"
+    },
+    {
+      "id": "classes",
+      "path": "website/playground/examples/js/classes.ts",
+      "bytes": 2554,
+      "sha256": "e7bba1c137af2ef58c99d2d1764b53d80fef53c617d86ef9074e546531710893"
+    }
+  ],
+  "cases": [
+    {
+      "id": "compile/calendar",
+      "sourceId": "calendar",
+      "sourceKey": "calendar.ts",
+      "auditSourceId": "ir-source:v1:0000000000000000:entry:calendar.ts",
+      "expected": {
+        "sourceCount": 1,
+        "classCount": 0,
+        "allUnitCount": 17,
+        "terminalUnitCount": 10,
+        "ownedSupportUnitCount": 7,
+        "unownedSupportUnitCount": 0,
+        "derivedUnitCount": 7
+      }
+    },
+    {
+      "id": "compile/algorithms",
+      "sourceId": "algorithms",
+      "sourceKey": "algorithms.ts",
+      "auditSourceId": "ir-source:v1:0000000000000000:entry:algorithms.ts",
+      "expected": {
+        "sourceCount": 1,
+        "classCount": 0,
+        "allUnitCount": 7,
+        "terminalUnitCount": 7,
+        "ownedSupportUnitCount": 0,
+        "unownedSupportUnitCount": 0,
+        "derivedUnitCount": 0
+      }
+    },
+    {
+      "id": "compile/async",
+      "sourceId": "async",
+      "sourceKey": "async.ts",
+      "auditSourceId": "ir-source:v1:0000000000000000:entry:async.ts",
+      "expected": {
+        "sourceCount": 1,
+        "classCount": 0,
+        "allUnitCount": 8,
+        "terminalUnitCount": 6,
+        "ownedSupportUnitCount": 2,
+        "unownedSupportUnitCount": 0,
+        "derivedUnitCount": 12
+      }
+    },
+    {
+      "id": "compile/builtins",
+      "sourceId": "builtins",
+      "sourceKey": "builtins.ts",
+      "auditSourceId": "ir-source:v1:0000000000000000:entry:builtins.ts",
+      "expected": {
+        "sourceCount": 1,
+        "classCount": 0,
+        "allUnitCount": 4,
+        "terminalUnitCount": 4,
+        "ownedSupportUnitCount": 0,
+        "unownedSupportUnitCount": 0,
+        "derivedUnitCount": 0
+      }
+    },
+    {
+      "id": "compile/classes",
+      "sourceId": "classes",
+      "sourceKey": "classes.ts",
+      "auditSourceId": "ir-source:v1:0000000000000000:entry:classes.ts",
+      "expected": {
+        "sourceCount": 1,
+        "classCount": 2,
+        "allUnitCount": 11,
+        "terminalUnitCount": 11,
+        "ownedSupportUnitCount": 0,
+        "unownedSupportUnitCount": 0,
+        "derivedUnitCount": 0
+      }
+    }
+  ],
+  "totals": {
+    "caseCount": 5,
+    "sourceCount": 5,
+    "sourceBytes": 22056,
+    "classCount": 2,
+    "allUnitCount": 47,
+    "terminalUnitCount": 38,
+    "ownedSupportUnitCount": 9,
+    "unownedSupportUnitCount": 0,
+    "derivedUnitCount": 19
+  }
+}

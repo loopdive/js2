@@ -193,6 +193,7 @@ import {
   type PreparedIrFreeFunctionBodies,
   type PreparedIrModuleInitBody,
 } from "./ir-prepared-free-functions.js";
+import * as irTimerShim from "./ir-timer-shim-planning.js";
 import { buildLeakedHostImportError, scanForLeakedHostImports } from "./host-import-allowlist.js";
 import {
   hasCertifiedStandaloneClockCapabilityProvider,
@@ -2579,9 +2580,8 @@ function planIrOverlay(
     (supportsHostPromiseDelay || supportsStandalonePromiseDelay) && options.resolveModuleBindings !== false
       ? makeIrPromiseDelayResolver(ast.checker)
       : undefined;
-  // Selection gets one provisional descriptor population for the bounded
-  // top-level accessor candidate family. After the selector has made its
-  // atomic decision, lowering rebuilds the sidecar from exact selected UnitIds.
+  const timerShim = irTimerShim.timerShimResolver(ast.checker, ctx, options.resolveModuleBindings);
+  // Selection gets a provisional descriptor population; lowering rebuilds it from exact selected UnitIds.
   const selectionClassShapeSidecar = buildIrClassShapes(ctx, ast.sourceFile, identityContext, {
     kind: "selection-candidate",
   });
@@ -2595,8 +2595,7 @@ function planIrOverlay(
     selectionClassShapes,
     identityContext,
   );
-  // (#3053 U2) The gc `__dyn_member_get` body is sound in every config EXCEPT
-  // fast host-js-string (`fast && !standalone && !wasi`): there the carrier is
+  // (#3053 U2) Fast host-js-string (`fast && !standalone && !wasi`) has the carrier in
   // the gc `$AnyValue` but strings are host js-string externrefs, so the native
   // honest classifier mis-tags reads and the body is invalid. Gate the dynamic
   // member-read claim off in that ONE config (clean pre-claim rejection, not a
@@ -2725,6 +2724,7 @@ function planIrOverlay(
       projectedClassShapesById: selectionClassShapesById,
       nestedClassMemberCallableAvailable: (unitId) =>
         ctx.programAbiClassCallables?.functionForUnit(unitId) !== undefined,
+      ...irTimerShim.preparedTimerShimSelectionOption(timerShim),
       resolveLocalClassExpression,
       supportsSymbolicMathHelpers: true,
       supportsLiteralStringReplace: true,
@@ -2984,6 +2984,7 @@ function planIrOverlay(
     identityPlan,
     preparationFailuresByUnitId,
     ...(jsHostExterns && identityImportedFunctions ? { identityImportedFunctions, legacyImportedFunctions } : {}),
+    ...(timerShim ? { resolvePreparedTimerShim: timerShim } : {}),
     ...(resolveAmbientClassCall ? { resolveAmbientClassCall } : {}),
     classShapeSidecar,
     safeSelection,
@@ -4008,11 +4009,8 @@ function planIrFirstBodyRouting(
     generatorsSkippable: !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports),
     fast: ctx.fast,
   };
-  const hasLateFeaturePreparation =
-    plan.importedCalls.size > 0 ||
-    plan.hostVoidCallbacks.size > 0 ||
-    plan.hostDateImportsByOwnerUnitId.size > 0 ||
-    plan.promiseDelays.constructions.size > 0;
+  const timerRouting = irTimerShim.inspectIrCompilerTimerShimRouting(plan);
+  const hasLateFeaturePreparation = timerRouting.hasOtherLateFeaturePreparation;
   const preliminaryModuleInit = preparedExactLexicalModuleInit(
     ctx,
     sourceFile,
@@ -4020,17 +4018,13 @@ function planIrFirstBodyRouting(
     moduleInitPlanning,
     plan.identityPlan.identityContext,
   );
-  const selectedPreliminaryClassMemberUnitIds = selectPreparedClassMemberUnitIds(
-    ctx,
-    preliminarySelection,
-    plan.identityPlan,
-  );
+  const selectedClassIds = selectPreparedClassMemberUnitIds(ctx, preliminarySelection, plan.identityPlan);
   // Preserve the established late-feature gate for ordinary members and
   // constructors. Only exact selected accessor UnitIds are an
   // independently sealed component that may prepare beside host/import/date/
   // promise work in the surrounding Test262 harness.
-  const eligiblePreliminaryClassMemberUnitIds = new Set(
-    [...selectedPreliminaryClassMemberUnitIds].filter((unitId) => {
+  const classIds = new Set(
+    [...selectedClassIds].filter((unitId) => {
       if (!hasLateFeaturePreparation) return true;
       const terminal = plan.identityPlan.identityContext.terminalByUnitId.get(unitId);
       return (
@@ -4042,34 +4036,31 @@ function planIrFirstBodyRouting(
       );
     }),
   );
-  const preliminaryOwnerPopulation =
-    !hasLateFeaturePreparation || preliminaryModuleInit
-      ? selectR2PreparedOwnerComponents({
-          ctx,
-          sourceFile,
-          selectedLegacyNames: preliminarySelection.funcs,
-          baselineLegacyNames: new Set(),
-          classMemberUnitIds: eligiblePreliminaryClassMemberUnitIds,
-          identityPlan: plan.identityPlan,
-          claimsByUnitId: plan.functionClaimsByUnitId,
-          overridesByUnitId: plan.overrideMapByUnitId,
-          hostVoidCallbacks: plan.hostVoidCallbacks,
-          // (#4508) A module-binding reader may only stay a prepared candidate
-          // when the module-init that owns its storage joins the same sealed
-          // transaction.
-          preparedStorageTerminalUnitIds: new Set(preliminaryModuleInit ? [preliminaryModuleInit.unitId] : []),
-        })
-      : {
-          freeFunctionNames: new Set<string>(),
-          classMemberUnitIds: eligiblePreliminaryClassMemberUnitIds,
-        };
+  const freeNames = timerRouting.owners(preliminaryModuleInit, preliminarySelection.funcs, classIds);
+  const preliminaryOwnerPopulation = freeNames
+    ? selectR2PreparedOwnerComponents({
+        ctx,
+        sourceFile,
+        selectedLegacyNames: freeNames,
+        baselineLegacyNames: new Set(),
+        classMemberUnitIds: classIds,
+        identityPlan: plan.identityPlan,
+        claimsByUnitId: plan.functionClaimsByUnitId,
+        overridesByUnitId: plan.overrideMapByUnitId,
+        hostVoidCallbacks: plan.hostVoidCallbacks,
+        timerShimUnitIds: timerRouting.ownerUnitIds,
+        // (#4508) A module-binding reader may only stay a prepared candidate
+        // when the module-init that owns its storage joins the same sealed
+        // transaction.
+        preparedStorageTerminalUnitIds: new Set(preliminaryModuleInit ? [preliminaryModuleInit.unitId] : []),
+      })
+    : {
+        freeFunctionNames: new Set<string>(),
+        classMemberUnitIds: classIds,
+      };
   const preliminaryR2Names = preliminaryOwnerPopulation.freeFunctionNames;
   const preliminaryClassMemberUnitIds = preliminaryOwnerPopulation.classMemberUnitIds;
-  withdrawClassMembersOutsidePreparedOwnerClosure(
-    plan,
-    eligiblePreliminaryClassMemberUnitIds,
-    preliminaryClassMemberUnitIds,
-  );
+  withdrawClassMembersOutsidePreparedOwnerClosure(plan, classIds, preliminaryClassMemberUnitIds);
   // A class or module owner does not make an unrelated free-function component
   // direct-owned. Dependency-complete free functions, ordinary members,
   // accessors, and eligible source constructor `_init` bodies enter one sealed
@@ -4118,7 +4109,7 @@ function planIrFirstBodyRouting(
     prepareModuleTdzGlobals(ctx, sourceFile);
     let preparedSelection = finalizePreparedIrSelection(ctx, sourceFile, plan);
     finalizedSelection = preparedSelection;
-    if ([...preliminaryR2Names].some((legacyName) => !preparedSelection.funcs.has(legacyName))) {
+    if (timerRouting.withdrewNonTimerOwner(preliminaryR2Names, preparedSelection.funcs)) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "resolve",

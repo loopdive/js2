@@ -91,10 +91,7 @@ import {
 } from "../codegen/function-prototype-callable.js";
 import { boxToAny } from "../codegen/value-tags.js"; // (#2949 slice 3) THE canonical boxing entry point (D4)
 // (#2949 S5.1) THE canonical ToBoolean engine — one truthiness path for legacy and IR (D4).
-import {
-  emitToBoolean as emitCoercionToBoolean,
-  emitToNumber as emitCoercionToNumber,
-} from "../codegen/coercion-engine.js";
+import { emitToBoolean as emitCoercionToBoolean } from "../codegen/coercion-engine.js";
 import { JsTag, jsTagUnboxKind } from "./js-tag.js";
 import {
   ensureHoleyArrayNew,
@@ -348,7 +345,12 @@ import {
   type PreparedDerivedCallableSlot,
 } from "./prepared-closure-support.js";
 import type { PreparedClassAccessorWritebackEvidence } from "./prepared-component-dependencies.js";
-import { sealDependencyCompletePreparedComponents } from "./prepared-component-sealing.js";
+import {
+  createCompilerTimerShimLoweringBoundary,
+  prepareCompilerTimerShimLateSealTransaction,
+} from "./compiler-timer-shim-preparation.js";
+import { emitExternrefDynamicToNumber } from "./dynamic-number-lowering.js";
+import type { PreparedIrPendingPatch } from "./prepared-lowering-patch.js";
 import { attachIrStringCarrier } from "./string-carrier.js";
 import { attachIrStringSupport } from "./string-support.js";
 import { attachIrPhysicalRefTypeRefs } from "./physical-ref-support.js";
@@ -524,6 +526,7 @@ interface PreparedClosureTransaction {
   readonly refCells: RefCellRegistry;
   readonly freshSlots: readonly PreparedDerivedCallableSlot[];
   readonly componentIds: ReadonlyMap<IrUnitId, string>;
+  sealCompilerTimerShim(): void;
   bindLowerResolver(resolver: IrLowerResolver): void;
 }
 
@@ -685,7 +688,7 @@ function prepareClosureTransaction(input: {
     registry,
   );
   const classAccessorWritebacks = prepareClassAccessorWritebackEvidence(input.ctx, input.entries, input.inventory);
-  const componentIds = sealDependencyCompletePreparedComponents({
+  const timerTransaction = prepareCompilerTimerShimLateSealTransaction({
     ctx: input.ctx,
     entries: input.entries,
     inventory: input.inventory,
@@ -698,7 +701,8 @@ function prepareClosureTransaction(input: {
     registry,
     refCells,
     freshSlots,
-    componentIds,
+    componentIds: timerTransaction.componentIds,
+    sealCompilerTimerShim: timerTransaction.sealDeferred,
     bindLowerResolver: (resolver) => {
       resolveValType = (type) => lowerIrTypeToValType(type, resolver, "<closure-registry>");
     },
@@ -3104,13 +3108,6 @@ export function compileIrPathFunctions(
     return finishReport();
   }
 
-  type PendingPatch = {
-    readonly entry: BuiltFn;
-    readonly funcIdx: number;
-    readonly existing: NonNullable<ReturnType<typeof definedFuncAt>>;
-    readonly wasmFunc: ReturnType<typeof lowerIrFunctionToWasm>["func"];
-    readonly finalBody: Instr[];
-  };
   const replaceUnitCallableAt = (
     unitId: IrUnitId,
     terminalOwnerUnitId: IrUnitId,
@@ -3140,7 +3137,13 @@ export function compileIrPathFunctions(
     }
     return replacement;
   };
-  const pendingPatches: PendingPatch[] = [];
+  const pendingPatches: PreparedIrPendingPatch<BuiltFn>[] = [];
+  const timerLoweringBoundary = createCompilerTimerShimLoweringBoundary<BuiltFn>({
+    inventory: moduleBindingIdentityContext.inventory,
+    sealDeferred: () => preparedClosure?.sealCompilerTimerShim(),
+    ownerFailed: (unitId) => failedOwners.has(unitId),
+  });
+  const lowerEntries = timerLoweringBoundary.order(healthyForLower);
   // (#3551) Exact artifact identities withdrawn by the typeIdx-parity guard
   // below. Every
   // IR body was compiled against `calleeTypes` — the IR's shared view of each
@@ -3150,10 +3153,11 @@ export function compileIrPathFunctions(
   // through the wrong ABI. The cascade after this loop withdraws those callers
   // too; collecting the unit identities here is its input.
   const abiDivergentUnitIds = new Set<IrUnitId>();
-  for (const entry of healthyForLower) {
+  for (const entry of lowerEntries) {
     const name = entry.name;
     const owner = terminalOwnerOf(entry);
     try {
+      if (!timerLoweringBoundary.prepare(entry)) continue;
       if (process.env.JS2WASM_TEST_INJECT_IR_PHASE_THROW === "lower-synthetic" && entry.synthesized) {
         throw new Error("injected synthetic lower failure");
       }
@@ -6482,7 +6486,7 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         // mid-emission funcIdx shift.
         return emitCoercionToBoolean(ctx, { kind: "ref_null", typeIdx: anyTypeIdx }, []);
       },
-      emitToNumber(): readonly Instr[] {
+      emitToNumber(_scratch?: () => number): readonly Instr[] {
         // #2949 S5.3 — ToNumber(carrier) for the gc `$AnyValue` carrier via
         // `__any_to_f64`: THE canonical boxed-any→f64 helper legacy's
         // `__any_lt`/`__any_gt`/… + arithmetic helpers use (null→0, undefined→
@@ -6642,15 +6646,8 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
       // by name and add nothing — no import shift mid-emission.
       return emitCoercionToBoolean(ctx, { kind: "externref" }, []);
     },
-    emitToNumber(): readonly Instr[] {
-      // #2949 S5.P — route through the canonical coercion engine. Host mode
-      // emits the pre-registered Number(v) import; standalone first performs
-      // its native ToPrimitive("number") walk and then unboxes the result.
-      // The engine may flush a pending late-import shift even when this
-      // detached buffer allocates no locals, so it must expose savedBodies.
-      const shim = { body: [], savedBodies: [] } as unknown as FunctionContext;
-      emitCoercionToNumber(ctx, shim, { kind: "externref" });
-      return shim.body;
+    emitToNumber(scratch?: () => number): readonly Instr[] {
+      return emitExternrefDynamicToNumber(ctx, scratch);
     },
     emitEqOperand(): readonly Instr[] {
       // #2949 S5.2 — the host carrier is `externref`, which is EXACTLY the

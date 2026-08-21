@@ -94,6 +94,7 @@ import { IrInvariantError } from "./outcomes.js";
 import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
 import { parseIrDateSnapshotGetter } from "./date-runtime.js";
 import { stackifyMovableNestedValues } from "./nested-stackification.js";
+import { createIrDynamicScratchLocals } from "./lowering-dynamic-scratch.js";
 import { IR_STRING_ITERATOR_CHAR_AT_FN, type IrStringConcatMode, type IrStringEncoding } from "./string-runtime.js";
 import type { BlockType, FuncTypeDef, Instr, LocalDef, ValType, WasmFunction } from "./types.js";
 export type {
@@ -1122,32 +1123,7 @@ export function lowerIrFunctionBody<S, Slot>(
     }
     return { rhs: jsBitwiseRhsIdxF64, tmp };
   };
-  // #2949 slice 3 — scratch local for dynamic `tag.test` arms that must read
-  // the carrier twice (host-mode Object test: `typeof === "object" && !null`).
-  // Carrier-typed, allocated lazily on first use, one per function, reused
-  // across every dynamic tag.test in the body (same pattern as the bitwise /
-  // vec scratch slots above). The gc arms never invoke the allocator.
-  let dynTagScratchIdx: number | null = null;
-  const ensureDynTagScratch = (carrier: ValType): number => {
-    if (dynTagScratchIdx === null) {
-      dynTagScratchIdx = func.params.length + locals.length;
-      locals.push({ name: "$dyn_tag_scratch", type: carrier, logicalType: { kind: "val", val: carrier } });
-    }
-    return dynTagScratchIdx;
-  };
-  // (#3144) — i32 scratch local for multi-tag `class.instanceof` compares
-  // (the receiver's `__tag` is read once, compared against each compatible
-  // tag). Lazily allocated, one per function, reused across every
-  // `class.instanceof` in the body (same pattern as the scratch slots above).
-  let instanceofTagScratchIdx: number | null = null;
-  const ensureInstanceofTagScratch = (): number => {
-    if (instanceofTagScratchIdx === null) {
-      instanceofTagScratchIdx = func.params.length + locals.length;
-      const type: ValType = { kind: "i32" };
-      locals.push({ name: "$instanceof_tag_scratch", type, logicalType: { kind: "val", val: type } });
-    }
-    return instanceofTagScratchIdx;
-  };
+  const dynamicScratch = createIrDynamicScratchLocals(func.params.length, locals);
 
   // #1126 Stage 3 — best-effort `typeOf` that returns null instead of
   // throwing. Used by the fast-path operand inspection in `case "binary"`
@@ -1843,7 +1819,7 @@ export function lowerIrFunctionBody<S, Slot>(
           emitValue(instr.value, out);
           // #3954 phase 3 (W4) — see the `unbox` arm: `jsTagOf` is the one
           // explicit TagId→JsTag crossing at the frozen handle contract.
-          for (const op of dyn.emitTagTest(jsTagOf(instr.tagId), () => ensureDynTagScratch(dyn.carrier))) {
+          for (const op of dyn.emitTagTest(jsTagOf(instr.tagId), () => dynamicScratch.tag(dyn.carrier))) {
             emitter.pushRaw(out, op);
           }
           return;
@@ -1925,8 +1901,8 @@ export function lowerIrFunctionBody<S, Slot>(
             `ir/lower: resolver cannot lower dyn.to_number (resolveDynamicLowering missing/null) (${func.name})`,
           );
         }
-        emitValue(instr.value, out);
-        for (const op of dyn.emitToNumber()) emitter.pushRaw(out, op);
+        emitValue(instr.value, out); // pushraw-ok(#4588): canonical backend ToNumber sequence follows
+        for (const op of dyn.emitToNumber(dynamicScratch.toNumber)) emitter.pushRaw(out, op);
         return;
       }
       case "dyn.eq": {
@@ -2373,7 +2349,7 @@ export function lowerIrFunctionBody<S, Slot>(
         }
         // Multiple compatible tags: (tag == t0) || (tag == t1) || … via an
         // i32 scratch local (same shape as legacy's multi-tag emission).
-        const scratch = ensureInstanceofTagScratch();
+        const scratch = dynamicScratch.instanceofTag();
         emitter.pushRaw(out, { op: "local.set", index: scratch });
         emitter.pushRaw(out, { op: "local.get", index: scratch });
         emitter.pushRaw(out, { op: "i32.const", value: tags[0]! });

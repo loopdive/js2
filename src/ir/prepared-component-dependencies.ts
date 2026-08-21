@@ -31,6 +31,20 @@ import {
   buildPreparedComponentOwnershipIndex,
   type PreparedComponentOwnershipIndex as OwnershipIndex,
 } from "./prepared-component-ownership.js";
+import {
+  preparedDynamicCarrierRef,
+  preparedInstructionSupport,
+  type PreparedClassAccessorWritebackEvidence,
+  type PreparedComponentClosureSupportEvidence,
+  type PreparedDynamicInstructionSupportEvidence,
+  type PreparedInstructionSupportSidecars,
+} from "./prepared-instruction-support.js";
+export type {
+  PreparedClassAccessorWritebackEvidence,
+  PreparedComponentClosureSupportEvidence,
+  PreparedDynamicInstructionSupportEvidence,
+  PreparedInstructionSupportSidecars,
+} from "./prepared-instruction-support.js";
 
 export type PreparedComponentAbiEntry = Pick<
   ProgramAbiPlanEntry,
@@ -136,31 +150,6 @@ export interface PreparedComponentDependencyReport {
   readonly componentByTerminalUnitId: ReadonlyMap<IrUnitId, PreparedComponentDependencyEvidence>;
 }
 
-/**
- * Exact post-pass closure-support evidence prepared against allocator-owned
- * type objects before a component is sealed. Object identity is deliberate:
- * a later IR rewrite cannot inherit closure ownership from an earlier shape.
- */
-export interface PreparedComponentClosureSupportEvidence {
-  readonly typeRefs: ReadonlyMap<IrType, readonly IrTypeRef[]>;
-  readonly instructionRefs: ReadonlyMap<IrInstr, readonly IrTypeRef[]>;
-  readonly functionRefs: ReadonlyMap<IrFunction, readonly IrTypeRef[]>;
-}
-
-/**
- * Exact post-pass proof for the only prepared dynamic accessor shape: the
- * setter's dynamic value parameter is written unchanged to one mutable source
- * global. The carrier itself remains a symbolic Program ABI type dependency.
- */
-export interface PreparedClassAccessorWritebackEvidence {
-  readonly valueGlobalBindingId: IrBindingId;
-  readonly tdzGlobalBindingId?: IrBindingId;
-  /** Exact Program-ABI type behind the singleton tag used by the TDZ throw. */
-  readonly tdzExceptionTagTypeRef?: IrTypeRef;
-  readonly dynamicCarrierRef: IrTypeRef;
-  readonly dynamicCarrierValueType: string;
-}
-
 export interface DerivePreparedComponentDependenciesInput {
   readonly module: IrModule;
   /** Exact R2 candidate denominator. Local calls close components within it. */
@@ -171,6 +160,7 @@ export interface DerivePreparedComponentDependenciesInput {
   /** Final IR proved exception ops and the shared tag was reserved before sealing. */
   readonly exceptionSupportPrepared?: boolean;
   readonly classAccessorWritebacks?: ReadonlyMap<IrUnitId, PreparedClassAccessorWritebackEvidence>;
+  readonly dynamicInstructionSupport?: ReadonlyMap<IrUnitId, PreparedDynamicInstructionSupportEvidence>;
   readonly abi: PreparedComponentAbiLookup;
 }
 
@@ -624,7 +614,9 @@ function implicitSupportRequirement(
     case "dyn.eq":
     case "dyn.member_get":
     case "dyn.member_set":
-      return `${instr.kind} resolves dynamic carrier/helper support without an explicit symbolic ref`;
+      return hasPreparedSupport
+        ? null
+        : `${instr.kind} resolves dynamic carrier/helper support without an explicit symbolic ref`;
     case "string.const":
       return instr.storage || instr.materializer
         ? null
@@ -1356,7 +1348,7 @@ function collectFunctionEvidence(
       seenImplicitTypes,
       input.abi,
       ownership,
-      input.classAccessorWritebacks?.get(terminalOwnerUnitId)?.dynamicCarrierRef,
+      preparedDynamicCarrierRef(terminalOwnerUnitId, input),
     );
   };
   for (const param of fn.params) collectType(param.type);
@@ -1381,22 +1373,15 @@ function collectFunctionEvidence(
     forEachInstrDeep(instr, (nested) => {
       if (nested.resultType) collectType(nested.resultType);
       for (const shape of explicitClassShapes(nested, valueTypes)) collectClassShape(shape, classes, seenTypes);
-      const instructionClosureSupport = input.closureSupport?.instructionRefs.get(nested);
-      recordPreparedClosureRefs(
-        instructionClosureSupport,
-        `prepared IR ${nested.kind} must use Program ABI support refs`,
+      const support = preparedInstructionSupport(
+        nested,
+        terminalOwnerUnitId,
+        valueTypes,
+        functionClosureSupport,
+        input,
       );
-      const hasPreparedSupport =
-        nested.kind === "closure.cap"
-          ? (functionClosureSupport?.length ?? 0) > 0
-          : (instructionClosureSupport?.length ?? 0) > 0 ||
-            ((nested.kind === "object.new" || nested.kind === "object.get" || nested.kind === "object.set") &&
-              (() => {
-                const objectType = nested.kind === "object.new" ? nested.resultType : valueTypes.get(nested.value);
-                return (
-                  objectType?.kind === "object" && (input.closureSupport?.typeRefs.get(objectType)?.length ?? 0) > 0
-                );
-              })());
+      recordPreparedClosureRefs(support.typeRefs, `prepared IR ${nested.kind} must use Program ABI support refs`);
+      for (const target of support.callableRefs) recordExternalCallable(evidence, target, input.abi, ownership);
       const exceptionTagTypeRef = nested.kind === "throw" ? classAccessorWriteback?.tdzExceptionTagTypeRef : undefined;
       if (exceptionTagTypeRef) {
         recordSupportTypeReference(
@@ -1410,7 +1395,7 @@ function collectFunctionEvidence(
       const implicitSupport = implicitSupportRequirement(
         nested,
         valueTypes,
-        hasPreparedSupport,
+        support.hasPreparedSupport,
         input.exceptionSupportPrepared === true || exceptionTagTypeRef !== undefined,
       );
       if (implicitSupport) {

@@ -9,6 +9,7 @@ import type { IrSelection } from "../ir/select.js";
 import type { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { prepareIrAmbientClassCallLowering, recordIrOverlayPreparationFailure } from "./ir-imported-call-planning.js";
+import { prepareIrCompilerTimerShimCallLowering } from "./ir-timer-shim-planning.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
 import {
   applyIrFinalContextFunctionRetention,
@@ -124,9 +125,10 @@ export function finalizePreparedIrSelection(
   sourceFile: ts.SourceFile,
   plan: IrOverlayPreparationPlan,
 ): Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit"> {
-  let finalized = applyIrFinalContextFunctionUnitIds(
+  let finalized = prepareIrCompilerTimerShimCallLowering(ctx, sourceFile, plan, plan.safeSelection);
+  finalized = applyIrFinalContextFunctionUnitIds(
     plan,
-    prepareIrAmbientClassCallLowering(ctx, plan, plan.safeSelection),
+    prepareIrAmbientClassCallLowering(ctx, plan, finalized),
     prepareHostVoidCallbackLoweringByIdentity(
       ctx,
       sourceFile,

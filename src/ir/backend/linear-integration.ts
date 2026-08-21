@@ -86,6 +86,7 @@ import {
   buildIrUnitInventory,
   indexIrTerminalDeclarations,
   type BuildIrUnitInventoryOptions,
+  type IrTerminalUnitRecord,
   type IrUnitId,
 } from "../identity.js";
 import {
@@ -236,6 +237,15 @@ function requireUniqueLinearOwner(
   return owners[0]!;
 }
 
+function isLinearIrAttemptRoot(terminal: IrTerminalUnitRecord): boolean {
+  return !(
+    terminal.kind === "synthetic-support" &&
+    terminal.syntheticRole === "compiler-unit:timer-shim:set-timeout" &&
+    terminal.terminalOwnerId === terminal.id &&
+    terminal.lexicalOwnerId === null
+  );
+}
+
 /**
  * Validate the complete structural population received by the linear source
  * seam. Every direction is checked against the same authoritative planning
@@ -257,7 +267,8 @@ export function indexLinearIrSourceOwners(
   const expected = identityContext.inventory.terminalUnits.filter(
     (terminal) =>
       terminal.sourceId === sourceId &&
-      (terminal.observedKind === "function" || terminal.observedKind === "class-member"),
+      (terminal.observedKind === "function" || terminal.observedKind === "class-member") &&
+      isLinearIrAttemptRoot(terminal),
   );
   const liveNodes = new Set<ts.Node>();
   const visit = (node: ts.Node): void => {
@@ -394,7 +405,11 @@ export function terminalPredicate(
     checker,
   });
   const terminals = indexIrTerminalDeclarations(sourceFile, inventory);
-  return (node) => terminals.has(node);
+  const attemptRootIds = new Set(inventory.terminalUnits.filter(isLinearIrAttemptRoot).map((terminal) => terminal.id));
+  return (node) => {
+    const unitId = terminals.get(node);
+    return unitId !== undefined && attemptRootIds.has(unitId);
+  };
 }
 
 function planLinearIrOverlay(
@@ -412,7 +427,7 @@ function planLinearIrOverlay(
   const propagated = buildIrUnitTypeMap(sourceFiles, ctx.checker, identityContext);
   const recursiveTypeEvidence = buildIrRecursiveTypeEvidence(sourceFiles, ctx.checker, propagated, identityContext);
   const evidenceChecker = overlayCertifiedCheckerTypes(ctx.checker, recursiveTypeEvidence.checkerTypeOverrides);
-  const { selection } = projectIrSelectionToLegacy(
+  const projectedSelection = projectIrSelectionToLegacy(
     planIrCompilationByIdentity(
       sourceFile,
       identityContext,
@@ -431,7 +446,17 @@ function planLinearIrOverlay(
       },
       propagated,
     ),
+  ).selection;
+  const excludedCompilerSupportNames = new Set(
+    inventory.terminalUnits
+      .filter((terminal) => !isLinearIrAttemptRoot(terminal))
+      .map((terminal) => terminal.legacyMatchName),
   );
+  const selection = {
+    ...projectedSelection,
+    funcs: new Set([...projectedSelection.funcs].filter((name) => !excludedCompilerSupportNames.has(name))),
+    fallbacks: projectedSelection.fallbacks?.filter((fallback) => !excludedCompilerSupportNames.has(fallback.name)),
+  };
   return {
     identityContext,
     recursiveTypeEvidence,

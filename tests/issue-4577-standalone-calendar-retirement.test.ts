@@ -872,25 +872,25 @@ function unsupportedCounts(outcomes: readonly IrObservedOutcome[]): Record<strin
 }
 
 describe("#4577 standalone Calendar ownership and corpus retirement", () => {
-  it("ratchets the exact 37-terminal census from 31/6 to 37/0 with no Invariant", async () => {
+  it("keeps the post-timer exact 38-terminal census at 38/0 with no Invariant", async () => {
     const lane = await observeStandaloneLane();
     expect(lane.entries).toHaveLength(5);
     expect(lane.entries.flatMap(({ failures }) => failures)).toEqual([]);
     const outcomes = lane.entries.flatMap(({ outcomes }) => outcomes);
 
-    expect.soft(outcomes, "exact standalone terminal population").toHaveLength(37);
+    expect.soft(outcomes, "exact standalone terminal population").toHaveLength(38);
     expect
       .soft(
         outcomes.filter(({ kind }) => kind === "emitted"),
         "IR-emitted terminal population",
       )
-      .toHaveLength(37);
+      .toHaveLength(38);
     expect
       .soft(
         outcomes.filter(({ irBodyEmitted }) => irBodyEmitted),
         "IR body population",
       )
-      .toHaveLength(37);
+      .toHaveLength(38);
     expect
       .soft(
         outcomes.filter(({ legacyBodyEmitted }) => legacyBodyEmitted),

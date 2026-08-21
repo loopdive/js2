@@ -10,10 +10,9 @@ import type { IrFunction } from "./nodes.js";
 import { IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import {
   derivePreparedComponentDependencies,
-  type PreparedClassAccessorWritebackEvidence,
-  type PreparedComponentClosureSupportEvidence,
   type PreparedComponentDependencyFailure,
   type PreparedComponentDependencyReport,
+  type PreparedInstructionSupportSidecars,
 } from "./prepared-component-dependencies.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program-abi.js";
 import type { Import } from "./types.js";
@@ -175,15 +174,15 @@ function planBlockingClassLayouts(
   return selected.size > 0;
 }
 
-export function sealDependencyCompletePreparedComponents(input: {
-  readonly ctx: CodegenContext;
-  readonly entries: readonly PreparedComponentArtifactEntry[];
-  readonly inventory: IrUnitInventory;
-  readonly closureSupport?: PreparedComponentClosureSupportEvidence;
-  readonly classAccessorWritebacks?: ReadonlyMap<IrUnitId, PreparedClassAccessorWritebackEvidence>;
-  readonly callableImports: ReadonlyMap<string, Import>;
-  readonly onSealFailure: (terminalUnitId: IrUnitId, error: IrUnsupportedError) => void;
-}): ReadonlyMap<IrUnitId, string> {
+export function sealDependencyCompletePreparedComponents(
+  input: PreparedInstructionSupportSidecars & {
+    readonly ctx: CodegenContext;
+    readonly entries: readonly PreparedComponentArtifactEntry[];
+    readonly inventory: IrUnitInventory;
+    readonly callableImports: ReadonlyMap<string, Import>;
+    readonly onSealFailure: (terminalUnitId: IrUnitId, error: IrUnsupportedError) => void;
+  },
+): ReadonlyMap<IrUnitId, string> {
   const { ctx, entries, inventory } = input;
   const session = ctx.programAbiSession;
   if (!session) {
@@ -245,6 +244,7 @@ export function sealDependencyCompletePreparedComponents(input: {
       ...(input.closureSupport ? { closureSupport: input.closureSupport } : {}),
       exceptionSupportPrepared: ctx.exnTagIdx >= 0,
       ...(input.classAccessorWritebacks ? { classAccessorWritebacks: input.classAccessorWritebacks } : {}),
+      ...(input.dynamicInstructionSupport ? { dynamicInstructionSupport: input.dynamicInstructionSupport } : {}),
       abi: {
         get: (id) => session.getDraft(id),
         bindingIdsForStructuralReference: (key) => session.bindingIdsForStructuralReference(key),

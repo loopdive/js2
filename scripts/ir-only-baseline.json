@@ -1,12 +1,15 @@
 {
   "schemaVersion": 1,
-  "generated": "2026-08-20",
+  "generated": "2026-08-21",
   "lanes": {
     "single-host": {
+      "notes": [
+        "(#4588) terminal/emitted/irBodyEmitted 37 -> 38, with legacyBodyEmitted/unsupported/invariants remaining 0. The exact compiler-provenanced timer-shim:set-timeout is now a self-owned Prepared terminal in both lanes; its stable UnitId and target-neutral inventory replace the prior unowned-support row."
+      ],
       "entryFloor": 5,
-      "terminalUnitFloor": 37,
-      "emittedFloor": 37,
-      "irBodyEmittedFloor": 37,
+      "terminalUnitFloor": 38,
+      "emittedFloor": 38,
+      "irBodyEmittedFloor": 38,
       "legacyBodyEmittedCeiling": 0,
       "unsupportedCeiling": 0,
       "unsupportedByCode": {},
@@ -22,12 +25,13 @@
         "(#4573) emitted/irBodyEmitted 22 -> 23, legacyBodyEmitted/unsupported 15 -> 14, and body-shape-rejected 3 -> 2. The exact checker-certified Promise delay now lowers through the native standalone $Promise runtime plus one explicit embedder timer capability. Its direct body and redundant executor/timer closure path are absent; generic Promise/timer near misses remain typed Unsupported.",
         "(#4574) emitted/irBodyEmitted 23 -> 27 and legacyBodyEmitted/unsupported 14 -> 10. The exact fetchUser, fetchAllSequential, fetchAllParallel, and async main family reuses the host-certified IrAsyncPlan through native Promise/frame providers, imports only the explicit timer capability, and removes all four select/async-function outcomes. Focused semantic and shape coverage proves always-async empty Promise.all, sequential/parallel ordering, rejection/idempotence, typed spills, fixed vectors, fused concat, specialized formatting, typed output, and native undefined settlement; raw main fulfillment observes undefined tag 2 rather than null tag 1. The tuned artifact is 124,774 raw bytes, 1,069,036 WAT characters, and 346 functions versus direct at 132,157, 1,184,675, and 353; both import exactly one timer capability. The remaining ten are exactly Calendar six and Builtins four.",
         "(#4576) emitted/irBodyEmitted 27 -> 31 and legacyBodyEmitted/unsupported 10 -> 6. Builtins el/crd/rw/main now seal once through IR behind the exact dom@1 embedder capability, with eight authenticated imports, native-string projection, native toFixed/indexOf, and no broad DOM fallback. The 81-element/24-value oracle, direct poison, capability near misses, authority tampering, and optimized artifact parity are pinned; the remaining six are exactly Calendar.",
-        "(#4577) emitted/irBodyEmitted 31 -> 37 and legacyBodyEmitted/unsupported 6 -> 0. Calendar's exact ten-terminal component plus seven callback bodies now seals once through IR behind the authenticated dom@1, dom-interaction@1, and clock@1 embedder capabilities. All four former unsupported buckets are zero, Invariants remain zero, and the standalone lane is promoted from baseline-only to strict IR-only readiness for this bounded five-entry corpus."
+        "(#4577) emitted/irBodyEmitted 31 -> 37 and legacyBodyEmitted/unsupported 6 -> 0. Calendar's exact ten-terminal component plus seven callback bodies now seals once through IR behind the authenticated dom@1, dom-interaction@1, and clock@1 embedder capabilities. All four former unsupported buckets are zero, Invariants remain zero, and the standalone lane is promoted from baseline-only to strict IR-only readiness for this bounded five-entry corpus.",
+        "(#4588) terminal/emitted/irBodyEmitted 37 -> 38, with legacyBodyEmitted/unsupported/invariants remaining 0. The exact compiler-provenanced timer-shim:set-timeout is now a self-owned Prepared terminal in both lanes; its stable UnitId and target-neutral inventory replace the prior unowned-support row."
       ],
       "entryFloor": 5,
-      "terminalUnitFloor": 37,
-      "emittedFloor": 37,
-      "irBodyEmittedFloor": 37,
+      "terminalUnitFloor": 38,
+      "emittedFloor": 38,
+      "irBodyEmittedFloor": 38,
       "legacyBodyEmittedCeiling": 0,
       "unsupportedCeiling": 0,
       "unsupportedByCode": {},

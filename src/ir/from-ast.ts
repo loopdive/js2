@@ -85,6 +85,7 @@ import {
   sameIrCallableBinding,
 } from "./callable-bindings.js";
 import { IR_NUMBER_TO_FIXED_FN, IR_NUMBER_TO_STRING_FN } from "./string-runtime.js";
+import { timerArg, timerResult } from "./timer-shim-lowering.js";
 import { irBool, irTypeIsBoolean, lowerBooleanToString } from "./boolean-brand.js";
 import { collectOuterWrites } from "./closure-captures.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
@@ -5972,7 +5973,6 @@ function lowerImportedCall(
   requireMatchingLoweringPlanOwner("imported call", plan.ownerUnitId, cx.ownerUnitId, cx.funcName);
   requireValidImportedCallTarget(plan);
   if (expr.arguments.length > plan.params.length || expr.arguments.some(ts.isSpreadElement)) {
-    // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
     throw new Error(`ir/from-ast: imported call shape diverged after certification (${cx.funcName})`);
   }
   const args: IrValueId[] = [];
@@ -5990,6 +5990,10 @@ function lowerImportedCall(
         value = cx.builder.emitCallablePack(value, expected.signature);
         actual = cx.builder.typeOf(value);
       }
+      value = timerArg(plan, expected, actual, value, () =>
+        boxConcreteToDynamic(value, actual, expr.arguments[i]!, cx),
+      );
+      actual = cx.builder.typeOf(value);
       if (!irTypeAssignable(actual, expected)) {
         demoteToLegacy(
           "imported-call-planning-unsupported",
@@ -6001,10 +6005,7 @@ function lowerImportedCall(
     }
     args.push(value);
   }
-
-  // Argument evaluation can itself call a default/arguments-sensitive
-  // function, so mirror legacy ordering and publish this callee's argc only
-  // after every argument value has been evaluated.
+  // Publish argc after argument evaluation to match legacy ordering.
   if (plan.needsArgc) {
     if (!plan.argcGlobal || plan.argcGlobal.binding.kind !== "runtime") {
       // invariant (producer-promise): the certified argc-sensitive plan promised the runtime global — #4502.
@@ -6016,8 +6017,8 @@ function lowerImportedCall(
     // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
     throw new Error(`ir/from-ast: argc-insensitive call unexpectedly carries runtime global state (${cx.funcName})`);
   }
-
   const result = cx.builder.emitCall(plan.target, args, plan.returnType);
+  if (plan.source === "compiler-timer-shim") return timerResult(result, cx.builder, cx.funcName);
   if (result === null && !statementPosition) {
     unsupportedVoidCallExpression(
       `ir/from-ast: imported call to ${plan.target.name} returned void used as expression in ${cx.funcName}`,
@@ -6025,7 +6026,6 @@ function lowerImportedCall(
   }
   return result;
 }
-
 function makePromiseDelayLoweringHost(cx: LowerCtx): IrPromiseDelayLoweringHost {
   return {
     builder: cx.builder,
