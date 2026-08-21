@@ -37,9 +37,16 @@ export function shouldPublishRunHistory(env) {
   if (explicit === "0") return { publish: false, reason: "TEST262_PUBLISH_HISTORY=0" };
 
   const filter = (env.TEST262_PATH_FILTER ?? "").trim();
+  // A file-fed exact-path filter scopes the run exactly like the env-var
+  // filter does (it exists because ~9k paths do not fit in an env var — see
+  // matchesPathFilter in tests/test262-runner.ts). Without this arm, the
+  // first ES5-subset run appended `8616/9029` beside the ~43k full-corpus
+  // rows — precisely the #4412 failure mode this script exists to refuse.
+  const filterFile = (env.TEST262_PATH_FILTER_FILE ?? "").trim();
   const glob = (env.TEST262_LOCAL_SHARD_GLOB ?? "").trim();
   let scope = "";
   if (filter) scope = `TEST262_PATH_FILTER=${filter}`;
+  else if (filterFile) scope = `TEST262_PATH_FILTER_FILE=${filterFile}`;
   else if (glob && glob !== FULL_SHARD_GLOB) scope = `TEST262_LOCAL_SHARD_GLOB=${glob}`;
 
   // An explicit 1 forces the append even for a deliberately scoped run, but
