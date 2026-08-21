@@ -8,6 +8,7 @@ import {
   mergeNpmPerfHistory,
   npmPerfHistoryPoint,
   npmPerfOptimizationFailure,
+  npmPerfOptimizationOmittedPasses,
   npmPerfRows,
   packagePerfRecord,
 } from "../scripts/lib/npm-compat-perf.mjs";
@@ -136,8 +137,9 @@ describe("#3781 npm performance harness placement", () => {
       measuredRounds: 9,
       wasmSamplesUs: [2],
       nodeSamplesUs: [1],
-      optimizationLevel: 3,
+      optimizationLevel: 4,
       optimizationVerified: true,
+      optimizationOmittedPasses: ["flatten"],
     };
     const perf = packagePerfRecord(
       "op",
@@ -154,7 +156,8 @@ describe("#3781 npm performance harness placement", () => {
       harnessPlacement: "standalone",
       inputMode: "runtime-dynamic",
       wasmOptimized: true,
-      wasmOptimizeLevel: 3,
+      wasmOptimizeLevel: 4,
+      wasmOmittedPasses: ["flatten"],
     });
   });
 
@@ -201,6 +204,23 @@ describe("#3781 npm performance harness placement", () => {
       ),
     ).toContain("did not produce the measured artifact");
     expect(npmPerfOptimizationFailure({ errors: [] }, 3)).toBeNull();
+  });
+
+  it("accepts and records only the verified O4 try_table Flatten omission", () => {
+    const result = {
+      errors: [
+        {
+          severity: "warning",
+          message:
+            "wasm-opt -O4 omitted Binaryen's unsupported flatten pass for standardized try_table output; all remaining O4 passes completed.",
+        },
+      ],
+    };
+
+    expect(npmPerfOptimizationFailure(result, 4)).toBeNull();
+    expect(npmPerfOptimizationOmittedPasses(result, 4)).toEqual(["flatten"]);
+    expect(npmPerfOptimizationFailure(result, 3)).toContain("did not produce the measured artifact");
+    expect(npmPerfOptimizationOmittedPasses(result, 3)).toEqual([]);
   });
 
   it("records static and dynamic history as separate scenarios", () => {
