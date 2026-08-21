@@ -1,19 +1,97 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import binaryen from "binaryen";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { compileProject, type CompileResult } from "../src/index.js";
+import { analyzeMultiSource } from "../src/checker/index.js";
+import { generateMultiModule, type GeneratedCodegenModule } from "../src/codegen/index.js";
+import { canonicalProgramAbiCallableTypeContract } from "../src/codegen/program-abi-signatures.js";
+import { compileProject, type CompileOptions, type CompileResult } from "../src/index.js";
+import { irSupportGlobalRef } from "../src/ir/abi-bindings.js";
+import { irSupportFuncRef, irUnitCallableBindingId } from "../src/ir/callable-bindings.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
+
+// Register the low-level codegen delegates used by generateMultiModule.
+import "../src/codegen/expressions.js";
 
 const ENTRY = resolve(import.meta.dirname, "../website/playground/examples/benchmarks/loop.ts");
+const HELPERS = resolve(import.meta.dirname, "../website/playground/examples/benchmarks/helpers.ts");
+const LOOP_SOURCE = readFileSync(ENTRY, "utf8");
+const HELPERS_SOURCE = readFileSync(HELPERS, "utf8");
 const CUTOVER = "JS2WASM_MULTI_PREPARED_BENCH_LOOP_CUTOVER";
 const DIRECT_POISON = "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY";
+const REQUIRE_ROUTE = "JS2WASM_TEST_REQUIRE_MULTI_PREPARED_BENCH_LOOP";
+const TRAMPOLINE = "__fn_tramp_bench_loop_cached";
+const CACHE = "__fn_closure_bench_loop";
+const EXPECTED_RUNTIME = 1_783_293_664;
 
 function expectSuccess(result: CompileResult, label: string): void {
   expect(
     result.success,
     `${label} failed:\n${result.errors.map((error) => `${error.severity}: ${error.message}`).join("\n")}`,
   ).toBe(true);
+}
+
+async function compileBench(cutover: boolean, options: CompileOptions = {}): Promise<CompileResult> {
+  vi.stubEnv(CUTOVER, cutover ? "1" : "0");
+  return compileProject(ENTRY, {
+    experimentalIR: true,
+    target: "standalone",
+    trackIrOutcomes: true,
+    emitWat: true,
+    ...options,
+  });
+}
+
+function wasmSurface(binary: Uint8Array) {
+  const module = new WebAssembly.Module(binary);
+  return {
+    imports: WebAssembly.Module.imports(module),
+    exports: WebAssembly.Module.exports(module),
+  };
+}
+
+function watFunction(wat: string, name: string): string {
+  const sameLine = wat.indexOf(`(func $${name} `);
+  const start = sameLine >= 0 ? sameLine : wat.indexOf(`(func $${name}\n`);
+  if (start < 0) throw new Error(`missing WAT function ${name}`);
+  let depth = 0;
+  for (let index = start; index < wat.length; index++) {
+    if (wat[index] === "(") depth++;
+    else if (wat[index] === ")" && --depth === 0) return wat.slice(start, index + 1);
+  }
+  throw new Error(`unterminated WAT function ${name}`);
+}
+
+function binaryenWat(binary: Uint8Array): string {
+  const module = binaryen.readBinary(binary);
+  try {
+    return module.emitText();
+  } finally {
+    module.dispose();
+  }
+}
+
+function normalizedRawTrampoline(body: string): string {
+  return body.replace(/\(type \d+\)/, "(type #)").replace(/\$__inl\d+_/g, "$__inl#_");
+}
+
+async function benchRuntime(result: CompileResult): Promise<number> {
+  const instance = await instantiateWithRuntime(result);
+  return (instance.exports.bench_loop as () => number)();
+}
+
+function generatedBench(cutover: boolean): GeneratedCodegenModule {
+  vi.stubEnv(CUTOVER, cutover ? "1" : "0");
+  vi.stubEnv(REQUIRE_ROUTE, "1");
+  const ast = analyzeMultiSource({ "helpers.ts": HELPERS_SOURCE, "loop.ts": LOOP_SOURCE }, "loop.ts");
+  return generateMultiModule(ast, {
+    experimentalIR: true,
+    target: "standalone",
+    trackIrOutcomes: true,
+  });
 }
 
 afterEach(() => {
@@ -45,5 +123,175 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
     expect(direct.errors.map((error) => error.message).join("\n")).toContain(
       "injected direct function-body poison: bench_loop",
     );
+  });
+
+  it("removes exactly the two bench_loop direct rows while preserving its raw body and external surface", async () => {
+    const prepared = await compileBench(true, {
+      emitWatOnlyFunctions: ["bench_loop", TRAMPOLINE],
+    });
+    const direct = await compileBench(false, {
+      emitWatOnlyFunctions: ["bench_loop", TRAMPOLINE],
+    });
+    expectSuccess(prepared, "Prepared raw compile");
+    expectSuccess(direct, "direct raw control");
+
+    const preparedRows = prepared.irBodyRouteAudit?.legacyEntries ?? [];
+    const directRows = direct.irBodyRouteAudit?.legacyEntries ?? [];
+    expect(preparedRows).toHaveLength(14);
+    expect(directRows).toHaveLength(16);
+    expect(preparedRows.filter((row) => row.entryPoint !== "compileDeclarations")).toHaveLength(12);
+    expect(directRows.filter((row) => row.entryPoint !== "compileDeclarations")).toHaveLength(14);
+    expect(preparedRows.filter((row) => row.bodyName === "bench_loop")).toEqual([]);
+    expect(directRows.filter((row) => row.bodyName !== "bench_loop")).toEqual(preparedRows);
+    expect(directRows.filter((row) => row.bodyName === "bench_loop").map((row) => row.entryPoint)).toEqual([
+      "compileFunctionBody",
+      "compileStatement",
+    ]);
+    const outcome = prepared.irOutcomes?.find((candidate) => candidate.displayName === "bench_loop");
+    expect(outcome).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    expect(prepared.irBodyRouteAudit?.dispositions.find((row) => row.unitId === outcome?.unitId)?.disposition).toBe(
+      "terminal-ir",
+    );
+
+    const preparedBody = watFunction(prepared.wat, "bench_loop");
+    const directBody = watFunction(direct.wat, "bench_loop");
+    const preparedTrampoline = watFunction(prepared.wat, TRAMPOLINE);
+    const directTrampoline = watFunction(direct.wat, TRAMPOLINE);
+    expect(preparedBody).toBe(directBody);
+    expect(normalizedRawTrampoline(preparedTrampoline)).toBe(normalizedRawTrampoline(directTrampoline));
+    expect(preparedBody.match(/\$slot___ru_acc[0-7]/g)).toHaveLength(8);
+    expect(preparedTrampoline.match(/\$__inl\d+_\$slot___ru_acc[0-7]/g)).toHaveLength(8);
+    expect(preparedBody).toContain("i32.const 125000");
+    expect(preparedTrampoline).toContain("i32.const 125000");
+
+    // Early support allocation is the one intentional raw artifact delta.
+    expect(prepared.binary.byteLength).toBe(direct.binary.byteLength - 35);
+    expect(prepared.dts).toBe(direct.dts);
+    expect(prepared.importsHelper).toBe(direct.importsHelper);
+    expect(prepared.imports).toEqual(direct.imports);
+    expect(prepared.stringPool).toEqual(direct.stringPool);
+    expect(wasmSurface(prepared.binary)).toEqual(wasmSurface(direct.binary));
+    await expect(benchRuntime(prepared)).resolves.toBe(EXPECTED_RUNTIME);
+    await expect(benchRuntime(direct)).resolves.toBe(EXPECTED_RUNTIME);
+  });
+
+  it("keeps optimized bench_loop and trampoline bodies exact without size or runtime growth", async () => {
+    const prepared = await compileBench(true, { optimize: true, preserveDebugNames: true });
+    const direct = await compileBench(false, { optimize: true, preserveDebugNames: true });
+    expectSuccess(prepared, "Prepared optimized compile");
+    expectSuccess(direct, "direct optimized control");
+    expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+    expect(prepared.binary.byteLength).toBe(50_363);
+    expect(direct.binary.byteLength).toBe(50_363);
+
+    const preparedWat = binaryenWat(prepared.binary);
+    const directWat = binaryenWat(direct.binary);
+    const preparedBody = watFunction(preparedWat, "bench_loop");
+    const directBody = watFunction(directWat, "bench_loop");
+    const preparedTrampoline = watFunction(preparedWat, TRAMPOLINE);
+    const directTrampoline = watFunction(directWat, TRAMPOLINE);
+    expect(preparedBody).toBe(directBody);
+    expect(preparedTrampoline).toBe(directTrampoline);
+    expect(preparedBody).toContain("(i32.const 125000)");
+    expect(preparedTrampoline).toContain("(i32.const 125000)");
+
+    expect(prepared.dts).toBe(direct.dts);
+    expect(prepared.importsHelper).toBe(direct.importsHelper);
+    expect(prepared.imports).toEqual(direct.imports);
+    expect(prepared.stringPool).toEqual(direct.stringPool);
+    expect(wasmSurface(prepared.binary)).toEqual(wasmSurface(direct.binary));
+    await expect(benchRuntime(prepared)).resolves.toBe(EXPECTED_RUNTIME);
+    await expect(benchRuntime(direct)).resolves.toBe(EXPECTED_RUNTIME);
+  });
+
+  it("preserves support binding contracts with lane-exact singleton slots and objects", () => {
+    const prepared = generatedBench(true);
+    const direct = generatedBench(false);
+    for (const [label, result] of [
+      ["Prepared", prepared],
+      ["direct", direct],
+    ] as const) {
+      const hardErrors = result.errors.filter((error) => error.severity !== "warning");
+      expect(hardErrors, `${label}: ${hardErrors.map((error) => error.message).join("\n")}`).toEqual([]);
+      expect(result.programAbi).toBeDefined();
+    }
+    const preparedOutcome = prepared.irOutcomes?.find((candidate) => candidate.displayName === "bench_loop");
+    const directOutcome = direct.irOutcomes?.find((candidate) => candidate.displayName === "bench_loop");
+    expect(preparedOutcome?.unitId).toBe(directOutcome?.unitId);
+    if (!preparedOutcome?.unitId) throw new Error("missing exact bench_loop UnitId");
+
+    const sourceId = irUnitCallableBindingId(preparedOutcome.unitId);
+    const trampolineId = irSupportFuncRef(preparedOutcome.unitId, "function-value-trampoline", TRAMPOLINE).binding
+      .bindingId;
+    const cacheId = irSupportGlobalRef(preparedOutcome.unitId, "function-value-cache", CACHE).binding.bindingId;
+    const ids = [sourceId, trampolineId, cacheId] as const;
+    const slotExpectations = [
+      { result: prepared, source: 76, trampoline: 78, cache: 10 },
+      { result: direct, source: 76, trampoline: 252, cache: 129 },
+    ] as const;
+
+    for (const { result, source, trampoline, cache } of slotExpectations) {
+      const publication = result.programAbi!;
+      expect(publication.abi.entries().filter((entry) => ids.includes(entry.id))).toHaveLength(3);
+      expect(publication.abi.get(sourceId)).toMatchObject({
+        id: sourceId,
+        displayName: "bench_loop",
+        slotPolicy: "required",
+        slotSpace: "function",
+        intent: { kind: "callable", origin: "source", unitId: preparedOutcome.unitId },
+      });
+      expect(publication.abi.get(trampolineId)).toMatchObject({
+        id: trampolineId,
+        displayName: TRAMPOLINE,
+        slotPolicy: "required",
+        slotSpace: "function",
+        intent: { kind: "callable", origin: "support", unitId: preparedOutcome.unitId },
+      });
+      expect(publication.abi.get(cacheId)).toMatchObject({
+        id: cacheId,
+        displayName: CACHE,
+        slotPolicy: "required",
+        slotSpace: "global",
+        intent: { kind: "global", origin: "support", mutable: true, valueType: '{"kind":"externref"}' },
+      });
+      expect(publication.abi.resolveFinalIndex(sourceId)).toEqual({ space: "function", index: source });
+      expect(publication.abi.resolveFinalIndex(trampolineId)).toEqual({ space: "function", index: trampoline });
+      expect(publication.abi.resolveFinalIndex(cacheId)).toEqual({ space: "global", index: cache });
+
+      const functionImports = result.module.imports.filter((entry) => entry.desc.kind === "func").length;
+      const globalImports = result.module.imports.filter((entry) => entry.desc.kind === "global").length;
+      const sourceObject = result.module.functions[source - functionImports];
+      const trampolineObject = result.module.functions[trampoline - functionImports];
+      const cacheObject = result.module.globals[cache - globalImports];
+      expect(result.module.functions.filter((func) => func.name === "bench_loop")).toEqual([sourceObject]);
+      expect(result.module.functions.filter((func) => func.name === TRAMPOLINE)).toEqual([trampolineObject]);
+      expect(result.module.globals.filter((global) => global.name === CACHE)).toEqual([cacheObject]);
+      expect(sourceObject?.name).toBe("bench_loop");
+      expect(trampolineObject?.name).toBe(TRAMPOLINE);
+      expect(cacheObject).toMatchObject({ name: CACHE, mutable: true, type: { kind: "externref" } });
+
+      if (!sourceObject || !trampolineObject) throw new Error("missing exact function object at Program ABI slot");
+      const sourceEntry = publication.abi.get(sourceId);
+      const trampolineEntry = publication.abi.get(trampolineId);
+      const sourceSignature = canonicalProgramAbiCallableTypeContract(result.module.types[sourceObject.typeIdx]!);
+      const trampolineSignature = canonicalProgramAbiCallableTypeContract(
+        result.module.types[trampolineObject.typeIdx]!,
+      );
+      expect(sourceSignature).toEqual({ params: [], results: ['{"kind":"f64"}'] });
+      expect(sourceEntry?.intent.kind === "callable" ? sourceEntry.intent.signature : undefined).toEqual(
+        sourceSignature,
+      );
+      expect(trampolineSignature.results).toEqual(['{"kind":"f64"}']);
+      expect(trampolineSignature.params).toHaveLength(1);
+      expect(trampolineSignature.params[0]).toMatch(/^\{"kind":"ref(?:_null)?",/);
+      expect(trampolineEntry?.intent.kind === "callable" ? trampolineEntry.intent.signature : undefined).toEqual(
+        trampolineSignature,
+      );
+    }
   });
 });
