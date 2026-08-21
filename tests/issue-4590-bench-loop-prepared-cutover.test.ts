@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { analyzeMultiSource } from "../src/checker/index.js";
 import { generateMultiModule, type GeneratedCodegenModule } from "../src/codegen/index.js";
 import { canonicalProgramAbiCallableTypeContract } from "../src/codegen/program-abi-signatures.js";
-import { compileProject, type CompileOptions, type CompileResult } from "../src/index.js";
+import { compileMulti, compileProject, type CompileOptions, type CompileResult } from "../src/index.js";
 import { irSupportGlobalRef } from "../src/ir/abi-bindings.js";
 import { irSupportFuncRef, irUnitCallableBindingId } from "../src/ir/callable-bindings.js";
 import { instantiateWithRuntime } from "./equivalence/helpers.js";
@@ -23,6 +23,8 @@ const HELPERS_SOURCE = readFileSync(HELPERS, "utf8");
 const CUTOVER = "JS2WASM_MULTI_PREPARED_BENCH_LOOP_CUTOVER";
 const DIRECT_POISON = "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY";
 const REQUIRE_ROUTE = "JS2WASM_TEST_REQUIRE_MULTI_PREPARED_BENCH_LOOP";
+const SEAL_FAILURE = "JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_FAILURE";
+const TAMPER = "JS2WASM_TEST_TAMPER_MULTI_PREPARED_FUNCTION_VALUE_LEAF";
 const TRAMPOLINE = "__fn_tramp_bench_loop_cached";
 const CACHE = "__fn_closure_bench_loop";
 const EXPECTED_RUNTIME = 1_783_293_664;
@@ -83,6 +85,26 @@ async function benchRuntime(result: CompileResult): Promise<number> {
   return (instance.exports.bench_loop as () => number)();
 }
 
+function expectDirectPoison(result: CompileResult): void {
+  expect(result.success).toBe(false);
+  expect(result.errors.map((error) => error.message).join("\n")).toContain(
+    "injected direct function-body poison: bench_loop",
+  );
+  expect(
+    result.irBodyRouteAudit?.legacyEntries.filter((row) => row.bodyName === "bench_loop").map((row) => row.entryPoint),
+  ).toContain("compileFunctionBody");
+}
+
+async function compileMutatedLoop(source: string): Promise<CompileResult> {
+  vi.stubEnv(CUTOVER, "1");
+  vi.stubEnv(DIRECT_POISON, "bench_loop");
+  return compileMulti({ "helpers.ts": HELPERS_SOURCE, "loop.ts": source }, "loop.ts", {
+    experimentalIR: true,
+    target: "standalone",
+    trackIrOutcomes: true,
+  });
+}
+
 function generatedBench(cutover: boolean): GeneratedCodegenModule {
   vi.stubEnv(CUTOVER, cutover ? "1" : "0");
   vi.stubEnv(REQUIRE_ROUTE, "1");
@@ -100,6 +122,7 @@ afterEach(() => {
 
 describe("#4590 exact bench_loop Prepared cutover", () => {
   it("bypasses the real compileProject direct body and restores it with the dedicated kill switch", async () => {
+    vi.stubEnv(REQUIRE_ROUTE, "1");
     vi.stubEnv(DIRECT_POISON, "bench_loop");
     const prepared = await compileProject(ENTRY, {
       experimentalIR: true,
@@ -293,5 +316,100 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
         trampolineSignature,
       );
     }
+  });
+
+  it("fails closed when the preallocated singleton pair drifts after Prepared certification", async () => {
+    vi.stubEnv(TAMPER, "bench_loop");
+    const result = await compileBench(true);
+    expect(result.success).toBe(false);
+    expect(result.errors.map((error) => error.message).join("\n")).toContain("drifted after direct-body certification");
+    expect(result.irBodyRouteAudit?.legacyEntries.filter((row) => row.bodyName === "bench_loop")).toEqual([]);
+  });
+
+  it("withdraws an exact Unsupported preparation before requesting the direct-body skip", async () => {
+    vi.stubEnv(SEAL_FAILURE, "1");
+    vi.stubEnv(DIRECT_POISON, "bench_loop");
+    const result = await compileBench(true);
+    expectDirectPoison(result);
+    expect(result.errors.map((error) => error.message).join("\n")).not.toContain(
+      "did not withdraw atomically before its skip",
+    );
+  });
+
+  it("routes the same exact reduction after every function-value use is renamed", async () => {
+    const renamed = "renamed_reduction";
+    const source = LOOP_SOURCE.replaceAll("bench_loop", renamed);
+    vi.stubEnv(CUTOVER, "1");
+    vi.stubEnv(REQUIRE_ROUTE, "1");
+    vi.stubEnv(DIRECT_POISON, renamed);
+    const result = await compileMulti({ "helpers.ts": HELPERS_SOURCE, "loop.ts": source }, "loop.ts", {
+      experimentalIR: true,
+      target: "standalone",
+      trackIrOutcomes: true,
+    });
+    expectSuccess(result, "renamed Prepared reduction");
+    expect(result.irBodyRouteAudit?.legacyEntries.filter((row) => row.bodyName === renamed)).toEqual([]);
+    expect(result.irOutcomes?.find((outcome) => outcome.displayName === renamed)).toMatchObject({
+      irBodyEmitted: true,
+      legacyBodyEmitted: false,
+    });
+  });
+
+  it.each([
+    {
+      label: "altered reduction literal",
+      source: LOOP_SOURCE.replace("i < 1000000", "i < 999999"),
+    },
+    {
+      label: "extensionless imported source",
+      source: LOOP_SOURCE.replace('from "./helpers.ts"', 'from "./helpers"'),
+    },
+    {
+      label: "shadowed imported callee",
+      source: LOOP_SOURCE.replace(
+        "export function main(): void {",
+        "export function main(): void {\n  function addBenchCard(..._args: unknown[]): void {}",
+      ),
+    },
+    {
+      label: "stored function value",
+      source: LOOP_SOURCE.replace(
+        '  addBenchCard(wrap, "Loop: 1M Int32 sum", "Tight i32 loop with explicit | 0 wrap, no allocations", bench_loop);',
+        '  const stored = bench_loop;\n  addBenchCard(wrap, "Loop: 1M Int32 sum", "Tight i32 loop with explicit | 0 wrap, no allocations", stored);',
+      ),
+    },
+    {
+      label: "multiple function-value references",
+      source: LOOP_SOURCE.replace("  host.appendChild(wrap);", "  void bench_loop;\n  host.appendChild(wrap);"),
+    },
+    {
+      label: "additional direct caller",
+      source: LOOP_SOURCE.replace("  host.appendChild(wrap);", "  bench_loop();\n  host.appendChild(wrap);"),
+    },
+    {
+      label: "synthetic trampoline collision",
+      source: `${LOOP_SOURCE}\nfunction ${TRAMPOLINE}(value: string): string { return value; }\n`,
+    },
+    {
+      label: "nonliteral reduction bound",
+      source: `const LOOP_LIMIT = 1000000;\n${LOOP_SOURCE.replace("i < 1000000", "i < LOOP_LIMIT")}`,
+    },
+    {
+      label: "exact reduction with module initialization",
+      source: `let moduleMarker = 1;\n${LOOP_SOURCE}`,
+    },
+  ])("withdraws before skip for $label", async ({ source }) => {
+    expectDirectPoison(await compileMutatedLoop(source));
+  });
+
+  it.each([
+    ["default GC", { target: "gc" as const }],
+    ["fast standalone", { target: "standalone" as const, fast: true }],
+    ["WASI", { target: "wasi" as const }],
+    ["IR-first disabled", { target: "standalone" as const, disableIrFirst: true }],
+    ["IR disabled", { target: "standalone" as const, experimentalIR: false }],
+  ])("keeps the %s lane direct-owned", async (_label, options) => {
+    vi.stubEnv(DIRECT_POISON, "bench_loop");
+    expectDirectPoison(await compileBench(true, options));
   });
 });

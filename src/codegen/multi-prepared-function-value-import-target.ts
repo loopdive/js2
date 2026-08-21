@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { TypeOracle } from "../checker/oracle.js";
+import type { IrUnitId } from "../ir/identity.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { ts } from "../ts-api.js";
 import { hasDeclareModifier, hasExportModifier } from "./ast-modifiers.js";
@@ -89,4 +90,64 @@ export function resolveMultiPreparedFunctionValueImportTarget(input: {
   if (syntacticTargets.length !== 1) return undefined;
   const target = syntacticTargets[0]!;
   return target.name && oracle.valueDeclarationOf(target.name) === target ? target : undefined;
+}
+
+interface MultiPreparedFunctionValueUseReceipt {
+  readonly sourceFile: ts.SourceFile;
+  readonly declaration: ts.FunctionDeclaration;
+  readonly unitId: IrUnitId;
+  readonly legacyName: string;
+  readonly valueIdentifier: ts.Identifier;
+  readonly legacyOwnerUnitId: IrUnitId;
+  readonly legacyOwnerName: string;
+  readonly importedCall: ts.CallExpression;
+  readonly importedTargetUnitId: IrUnitId;
+}
+
+/** Re-prove the frozen imported function-value edge at the late body seam. */
+export function multiPreparedFunctionValueUseIsCurrent(
+  oracle: Pick<TypeOracle, "declarationsOf" | "valueDeclarationOf">,
+  identityContext: IrPlanningIdentityContext | undefined,
+  receipt: MultiPreparedFunctionValueUseReceipt,
+): boolean {
+  const { declaration, importedCall, sourceFile, valueIdentifier } = receipt;
+  if (
+    !identityContext ||
+    declaration.parent !== sourceFile ||
+    declaration.name?.text !== receipt.legacyName ||
+    identityContext.unitIdByDeclaration.get(declaration) !== receipt.unitId ||
+    identityContext.declarationByUnitId.get(receipt.unitId) !== declaration ||
+    valueIdentifier.parent !== importedCall ||
+    valueIdentifier.getSourceFile() !== sourceFile ||
+    oracle.valueDeclarationOf(valueIdentifier) !== declaration ||
+    importedCall.arguments.filter((argument) => argument === valueIdentifier).length !== 1 ||
+    !ts.isIdentifier(importedCall.expression)
+  ) {
+    return false;
+  }
+
+  let owner: ts.Node | undefined = importedCall.parent;
+  while (owner && owner !== sourceFile && !ts.isFunctionLike(owner)) owner = owner.parent;
+  if (
+    !owner ||
+    !ts.isFunctionDeclaration(owner) ||
+    owner.parent !== sourceFile ||
+    owner.name?.text !== receipt.legacyOwnerName ||
+    identityContext.unitIdByDeclaration.get(owner) !== receipt.legacyOwnerUnitId ||
+    identityContext.declarationByUnitId.get(receipt.legacyOwnerUnitId) !== owner
+  ) {
+    return false;
+  }
+
+  const importedTarget = resolveMultiPreparedFunctionValueImportTarget({
+    oracle,
+    sourceFile,
+    callee: importedCall.expression,
+    identityContext,
+  });
+  return (
+    importedTarget !== undefined &&
+    identityContext.unitIdByDeclaration.get(importedTarget) === receipt.importedTargetUnitId &&
+    identityContext.declarationByUnitId.get(receipt.importedTargetUnitId) === importedTarget
+  );
 }

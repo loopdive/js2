@@ -20,7 +20,10 @@ import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import type { IrOverlayIdentityPlan } from "./ir-overlay-identity.js";
 import { prepareIrBodies, type PreparedIrFreeFunctionBodies } from "./ir-prepared-free-functions.js";
 import { correlateIrSkippedFunctionNames, type IrExactFunctionClaim } from "./ir-overlay-safety.js";
-import { resolveMultiPreparedFunctionValueImportTarget } from "./multi-prepared-function-value-import-target.js";
+import {
+  multiPreparedFunctionValueUseIsCurrent,
+  resolveMultiPreparedFunctionValueImportTarget,
+} from "./multi-prepared-function-value-import-target.js";
 import { localGlobalIdx } from "./registry/imports.js";
 
 export interface MultiPreparedScalarLeafGraphSafety {
@@ -1486,6 +1489,7 @@ export function assertMultiPreparedFunctionValueLeafRouteCurrent(input: {
     allocated.func.body.length !== route.preparedInstructions.length ||
     allocated.func.body.some((instruction, index) => instruction !== route.preparedInstructions[index]) ||
     (route.receipt.kind === "prepared" && allocated.func.body.length === 0) ||
+    !multiPreparedFunctionValueUseIsCurrent(ctx.oracle, ctx.irPlanningIdentityContext, route) ||
     !functionValueSupportIsCurrent(ctx, candidate, route.support, false)
   ) {
     invariant("patch", `multi-source function-value leaf ${route.unitId} drifted after direct-body certification`);
