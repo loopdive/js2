@@ -217,3 +217,28 @@ The conclusion held, but the figures were noise and were retracted rather than
 left quotable. With two independent halves needing to move, a contaminated
 baseline is exactly how a partial fix reads as complete.
 
+
+## 2026-08-21 wave-2 census + Implementation Plan (coercion lane)
+
+The partial fix (`fcc0c206`) landed; the **coercion/language-core lane is 74
+rows** — `language/types/object` 12, `instanceof` 6, `assignment` 5,
+`types/string` 4, `types/reference` 4, `Scope chain disturbed` 6, long tail.
+Lane list: `.claude/worktrees/es5w2-coercion/.tmp/lane-tests.txt`.
+
+### Plan (ordered)
+
+1. Re-baseline lane + guard.
+2. **`__to_primitive` carrier coverage for closures and Dates** — the remaining
+   48 truth-table cells (24 relational function/Date, 24 `+`). This is the
+   shared object runtime, not `binary-ops.ts`. The explicitly rejected shortcut
+   stands: do NOT special-case the cascade to `__extern_toString` — it is
+   ToString, not ToPrimitive; it skips `valueOf` and converts a loud wrong
+   answer into a quiet one. Re-measure the 180-cell truth table before/after;
+   js-host must stay 180/180.
+3. **`language/types/object` rows**: mostly ToPrimitive-adjacent (constructor
+   identity, valueOf ordering) — expect step 2 to move several; re-measure
+   before touching anything else.
+4. **`instanceof` residue** (6): check against #4480 R3 (closure-proto
+   representation) before attempting; skip R3 shapes.
+5. **`Scope chain disturbed` (6)**: 5 of 6 need `with` (#4206) — verify the
+   count on this tree, fix the one reachable row, record the rest as blocked.

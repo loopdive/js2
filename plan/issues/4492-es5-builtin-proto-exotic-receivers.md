@@ -330,3 +330,34 @@ durable; re-derive from the line reference above if it has aged out).
 object defines `toString` gets the constant instead of its own method — and
 should be fixed on its own merits, with its own before/after, rather than
 smuggled into a conformance batch.
+
+## 2026-08-21 wave-2 census + Implementation Plan (protos lane)
+
+Fresh corpus on the merged tree: the **builtin-prototypes lane is 96 rows** —
+`String.prototype` 22, `Array.prototype` 20, `RegExp.prototype` 9,
+`language/literals/regexp` 4, plus Number/Boolean/Date/Error/global/annexB
+singles and 4 boxed-`valueOf` rows (#4582). Lane list:
+`.claude/worktrees/es5w2-protos/.tmp/lane-tests.txt`.
+
+Top signatures: `Unsupported dynamic regular expression pattern` (3),
+`newArr.length SameValue` (3), async-harness `[object Object]` (3),
+`Cannot access property on null or undefined` (2), inherited-index reads (2),
+`__split[N]` (2).
+
+### Plan (ordered)
+
+1. Re-baseline lane + guard; prototype-write corpus baseline isolated.
+2. **#4582 boxed `valueOf`** — the spec records a REVERTED wrong-answer attempt.
+   Read it first: verify what param 1 actually holds on the boxed-brand glue
+   before trusting the documented ABI, and note String never reaches the shared
+   fallback (`emitStringProtoMemberBody` claims it and refuses). A wrong value
+   is a failure; the refusal stays until the value is proven right. 4 rows.
+3. **`delete <NativeProto>.<member>`** (#4492 finding, ~8 rows): `936f382`
+   fixed the INDEX side via `protoIndexOwnViewSubstituteInstrs`; the NAMED
+   member side needs the same three-op agreement (has/gOPD/delete).
+4. **Array inherited-index + borrowed-HOF rows**: #4556 buckets B/H — the
+   documented `proto-index-store.ts` boundary. Attempt only with the consult-
+   order asymmetry in mind (`__extern_method_call` honours overrides for
+   memberless builtins, ignores them for membered ones — #4556 records it).
+5. **RegExp dynamic-pattern rows**: classify first; "Unsupported dynamic
+   regular expression pattern" may be an engine gap, not a dispatch bug.

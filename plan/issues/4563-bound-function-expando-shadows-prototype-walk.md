@@ -95,3 +95,32 @@ property silently stops inheriting from `Function.prototype`.
 - Verified in both lanes (shared machinery — see #4562's note on why).
 - 551-row standalone guard and the isolated prototype-write corpus stay at
   baseline; GC-lane unit suites measured relative to the merge base.
+
+## 2026-08-21 wave-2 census + Implementation Plan (function lane)
+
+The fix above landed (`829ec458`); the **function lane is now 56 rows**:
+`language/statements/function` 31, `built-ins/Function/prototype` 24 (bind
+`length`/`name` clusters minus the two #4562 already converted), misc 1. Lane
+list: `.claude/worktrees/es5w2-function/.tmp/lane-tests.txt`.
+
+Top signatures: `Cannot access property on null or undefined` (3), `Expected a
+TypeError but nothing thrown` (3), `obj.prop === X. Actual: null` (2),
+`callee === N` (2), `arguments object don't exists` (2),
+`__PROTO.isPrototypeOf(__monster) must be true` (2 — #4480 R4 shape, skip).
+
+### Plan (ordered)
+
+1. Re-baseline lane + guard on the branch point.
+2. **Bound-function `name` seed**: #4562's `length` seed landed and measured
+   +2/0; `name` is the same mechanism (§20.2.3.2 steps 9-11) on the same
+   carrier — extend `bound-fn-meta.ts`, expect ~4 rows.
+3. **Function-intrinsic `length`/`name` materialisation (#4562 proper)**: seed
+   a real record on first define inside `__defineProperty_value`, coordinating
+   with `function-instance-props.ts` meta arms. TWO-LANE job — the host lane
+   returns `undefined` from `gOPD(fn,"length")` outright; design the cross-lane
+   loop in from the start.
+4. **`language/statements/function` residue**: `[[Construct]]` return-value
+   semantics and typed-field representation rows are #4464/value-representation
+   territory — classify, fix the reachable, record the rest against the owning
+   issue.
+5. **Skip**: `isPrototypeOf` receiver-spelling rows (#4480 R4).

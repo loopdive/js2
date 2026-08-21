@@ -606,3 +606,38 @@ folds false), while the dynamic receiver path can observe it. This is a Date
 carrier own-storage/visibility and `compilePropertyIntrospection` convergence
 row, not a prototype-descriptor refusal row. #4504 explicitly excludes it from
 its nine-test denominator; retain it here for the next MOP/introspection slice.
+
+## 2026-08-21 wave-2 census + Implementation Plan
+
+Fresh corpus run on the merged integration tree (`d13f3859`): the **Object MOP
+lane is 78 rows** (`defineProperty` 36, `defineProperties` 11, `keys` 4,
+`Object.prototype` 6, `create`/gOPD/rest 21). Lane list:
+`.claude/worktrees/es5w2-obj-mop/.tmp/lane-tests.txt`.
+
+Top signatures: `Expected X, actually N` (5), `resultN !== true` (4),
+`arrObj.length SameValue` (3), `arrObj.hasOwnProperty !== true` (3),
+`arr.length SameValue` (3), `Object.prototype.isPrototypeOf not yet
+implemented` (2 — see #4480 R4 for the receiver-spelling mechanism and its
+two-lane evidence).
+
+### Plan (ordered)
+
+1. **Re-baseline**: lane list + 551-guard on the branch point, one process per
+   test for anything prototype-adjacent; record both before any edit.
+2. **Array-receiver descriptor rows first** (`arrObj.length` / index defines):
+   the #4426/#2668 vec-overlay work owns this shape; extend
+   `emitArraySetLengthValidation`'s deferral to the runtime for the remaining
+   §10.4.2.1 steps. Do NOT touch the signed-length representation (bucket E is
+   retired — ≥146 raw-i32 readers, a −1 sentinel at
+   `property-access-dispatch.ts` ~L2861; see #4556).
+3. **Accessor + attributes-only defines on plain objects**: the #4491
+   mirror→vec projection landed for reads; the residual is write-path
+   (`accessed !== true`, `resultN !== true` families). Follow the descriptor
+   table through `vec-descriptor-mirror.ts`.
+4. **Defer**: anything rooted in `Object.prototype.isPrototypeOf` receiver
+   spelling (#4480 R4) or function-intrinsic `length`/`name` (#4562) — note
+   and skip, both are owned elsewhere.
+
+Verification bar (all lanes, standing): guard 551/551 (re-baselined), vitest
+relative to merge base **including GC-lane suites**, prototype-write corpus
+isolated with frozen tree, budget gates earned before granted.
