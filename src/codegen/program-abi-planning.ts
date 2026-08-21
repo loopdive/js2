@@ -37,6 +37,11 @@ export const PROGRAM_ABI_CALLABLE_ROLE = Object.freeze({
   // the guard that keeps it that way.
   callableProvider: 12,
   classConstructorNew: 13,
+  // (#3520 C34) Per-field host accessors (`__sget_*` / `__sset_*` / `__shas_*` /
+  // `__sbool_*`). See struct-field-accessor-abi.ts for the derived-ordinal
+  // encoding; the family was previously the largest population left on the
+  // positional `retainedModuleFunction` fallback.
+  structFieldAccessor: 14,
 } as const);
 
 /**
