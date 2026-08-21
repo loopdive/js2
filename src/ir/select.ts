@@ -2673,6 +2673,24 @@ function dynamicUsesAreMoveOnly(
         if (!scanExpr(a, true)) return false;
         continue;
       }
+      // #2949 — the SYMMETRIC counterpart of the unbox arm above: a CONCRETE
+      // argument reaching a dynamic callee parameter crosses the same carrier
+      // boundary as a concrete equality operand, and the direct-call lowering
+      // already boxes it there through the canonical tag-aware boxer.
+      //
+      // Without this arm the scan demanded a dynamic-shaped operand at every
+      // dynamic parameter position, so a caller that merely HAS a dynamic
+      // binding of its own (which is what makes this scan run at all) was
+      // rejected for an argument that has nothing to do with that binding —
+      // e.g. Acorn's `isIdentifierStart(code, astral)` passing its proven-f64
+      // `code` to `isInAstralSet(code, set)`, whose own `code` is dynamic.
+      //
+      // Admission is exactly the operand family `boxConcreteToDynamic`
+      // accepts, so the claim can never withdraw on a missing box.
+      if (!argumentIsDynamic && expectedKind === "dynamic" && concreteDynamicAssignmentOperandIsBuildable(unwrap(a))) {
+        if (!scanExpr(a, false)) return false;
+        continue;
+      }
       if (!scanExpr(a, expectedKind === "dynamic")) return false;
     }
     return true;
