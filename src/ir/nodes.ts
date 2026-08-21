@@ -2402,10 +2402,35 @@ export interface IrFunction extends IrFunctionIdentity {
 // `integration.ts` accumulates the per-function results into an `IrModule`
 // container between the build phase and the lower phase.
 //
-// The container holds only functions for now. Globals/types/imports remain
-// resolved lazily via the symbolic-ref mechanism.
+// The container holds functions plus the OPTIONAL declared-type tables #4605
+// added. Globals/types/imports are still *resolved* lazily via the symbolic-ref
+// mechanism at lowering; the tables are a declaration record, not a resolver.
+// The rules that read them, and the key function they are keyed by, live in
+// `declared-types.ts` — only the shapes are here, so that module's import edge
+// into `nodes.ts` has no back edge.
 
-export interface IrModule {
+/**
+ * (#4605) The declared shape of one callable, as the module DECLARES it —
+ * independent of any particular call site. `result === null` means "no single
+ * declarable result carrier" (void, or a call-site-dependent one such as an
+ * async body's Promise-vs-awaited split — see `declarableResultType`).
+ */
+export interface IrDeclaredSignature {
+  readonly params: readonly IrType[];
+  readonly result: IrType | null;
+}
+
+/**
+ * (#4605) Module-level declaration tables, keyed by `irBindingKey`. Both are
+ * OPTIONAL and both may be partial: a missing entry means "no declaration in
+ * scope", which consumers must treat as a conservative skip.
+ */
+export interface IrModuleDeclarations {
+  readonly declaredSignatures?: ReadonlyMap<string, IrDeclaredSignature>;
+  readonly declaredGlobals?: ReadonlyMap<string, IrType>;
+}
+
+export interface IrModule extends IrModuleDeclarations {
   readonly functions: readonly IrFunction[];
 }
 

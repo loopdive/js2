@@ -1,10 +1,10 @@
 ---
 id: 4533
-title: "lodash: module init calls a null host function (0/11); lodash-es lane fails compile silently with a recursive report"
-status: ready
+title: "lodash: expand original QUnit fixture adapter and track remaining modular parity failures"
+status: in-progress
 sprint: current
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-21
 priority: medium
 horizon: m
 feasibility: medium
@@ -19,13 +19,33 @@ files:
   - src/runtime/host-call-abi.ts
 ---
 
-# lodash 0/11: `__module_init` invokes null; lodash-es lane can't say why it fails
+# lodash upstream fixture coverage and remaining modular parity
+
+## Current checkpoint (2026-08-21)
+
+The original pinned `test/test.js` source now runs **62 unchanged callbacks**
+(29 complete QUnit module slices) in both `lodash@4.18.1` and
+`lodash-es@4.18.1`. The adapter reproduces the shared fixtures that those
+callbacks use (`falsey`, `empties`, `lodashStable`, `realm`, numeric limits,
+symbols, and the QUnit skip helper) instead of classifying them as unavailable
+infrastructure. Both lanes compile and validate one Wasm module:
+
+```text
+lodash:    62 native, 51 Wasm passed, 11 Wasm failed
+lodash-es: 62 native, 44 Wasm passed, 18 Wasm failed
+deferred:  1,691 of 1,753 original registrations (not selected by this slice)
+```
+
+The earlier lodash module-init null-call and recursive/empty lodash-es report
+defects are resolved on current main. The remaining failures are now ordinary
+compiled-runtime parity findings (modular string/predicate/conversion paths),
+not hidden setup failures; keep them attributable in the generated report.
 
 ## Problem (a) — lodash
 
-The pinned lodash suite's single test module compiles **and validates**, then
-every test is blocked by one init crash (2026-08-16, `a9b20d4c`, matches the
-npm-compat card 0/11):
+The pinned lodash suite previously compiled **and validated**, then every test
+was blocked by one init crash (2026-08-16, `a9b20d4c`, matching the npm-compat
+card 0/11):
 
 ```text
 module init: TypeError: null is not a function
@@ -86,7 +106,9 @@ console.log(JSON.stringify(await runHarness({ quiet: true, packageName: 'lodash-
 
 ## Acceptance criteria
 
-- [ ] lodash `__module_init` completes; per-test results recorded.
-- [ ] lodash-es lane surfaces its real compile error (no recursive report,
-      no empty error string).
-- [ ] Reduction test for the null-slot init shape.
+- [x] lodash `__module_init` completes; per-test results are recorded.
+- [x] lodash-es lane surfaces a single, diagnosable compile/result record.
+- [x] Shared upstream fixtures are explicit and covered by the two package
+      lanes without changing the upstream callback source.
+- [ ] Resolve the remaining 11 lodash and 18 lodash-es compiled-runtime
+      mismatches, or split them into focused compiler/runtime issues.

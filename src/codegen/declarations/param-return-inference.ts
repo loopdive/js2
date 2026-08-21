@@ -9,6 +9,7 @@ import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { isSyntacticallyBooleanExpr } from "../../checker/oracle.js";
 import { fnctorCtorParamTypesFlagEnabled, numericReturnsFlagEnabled } from "../../derivation-flags.js";
 import { forEachChild, ts } from "../../ts-api.js";
+import { numericAdmissionEnabled } from "../analysis/mixed-assignment-carrier.js";
 import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { hasAsyncModifier, resolveWasmType } from "../index.js";
 import type { ValType } from "../../ir/types.js";
@@ -1181,6 +1182,60 @@ function parameterMayBeUndefined(ctx: CodegenContext, expr: ts.Identifier): bool
   const index = lastIndexOfParameterName(owner, declaration);
   if (index < 0) return false;
   return inferParamTypeFromCallSites(ctx, owner.name.text, index, owner.getSourceFile()).sawUnderApplied;
+}
+
+/**
+ * (#4121 slice 2) The route-2 CALL-DEFINITION arm: "is this direct call's
+ * result a proven `f64` carrier?", as a predicate the whole-program numeric
+ * fixpoint can consult.
+ *
+ * Route 2 (#3765) already has a call arm, but it reads `numericFunctions` —
+ * a NAME-keyed set built from every function-like of that name in the program.
+ * One same-named member of the population withdraws the name for all of them:
+ *
+ *     const o = { g: function () { return "s"; } };
+ *     function g(x) { return x + 1; }
+ *     var i = g(1);      // `g` withdrawn by `o.g`; `i` stays boxed
+ *
+ * {@link inferBindingAwareNumericReturnTypes} resolves the callee to its exact
+ * DECLARATION, so it keeps the verdict the name-keyed set has to give up. This
+ * predicate exposes that precision to the fixpoint.
+ *
+ * Two facts it deliberately does NOT launder:
+ *  - **booleans.** A boolean-branded `i32` return is the `` `${b}` `` → `1`
+ *    trap the issue's "must still decline" list names; only a plain `f64`
+ *    carrier qualifies.
+ *  - **cycles.** The return map is itself a grounded least fixpoint that
+ *    declines ungrounded recursion, so nothing here can enter a cycle that the
+ *    slot fixpoint's own groundedness pass would otherwise reject.
+ *
+ * Answers `undefined` — meaning "re-running the fixpoint would learn nothing" —
+ * whenever the map is empty, either kill switch is off, or every proven name is
+ * already in `priorNumericFunctions`. That is the gate that keeps the second
+ * analysis pass off programs it cannot change.
+ */
+export function bindingAwareNumericCallEvidence(
+  ctx: CodegenContext,
+  priorNumericFunctions: ReadonlySet<string> | undefined,
+): ((call: ts.CallExpression) => boolean) | undefined {
+  if (!numericReturnsFlagEnabled() || !numericAdmissionEnabled()) return undefined;
+  const carriers = ctx.bindingAwareNumericReturnTypes;
+  if (!carriers || carriers.size === 0) return undefined;
+  let adds = false;
+  for (const [name, carrier] of carriers) {
+    if (carrier.kind === "f64" && priorNumericFunctions?.has(name) !== true) {
+      adds = true;
+      break;
+    }
+  }
+  if (!adds) return undefined;
+  return (call) => {
+    const callee = call.expression;
+    if (!ts.isIdentifier(callee)) return false;
+    if (carriers.get(callee.text)?.kind !== "f64") return false;
+    const declaration = ctx.oracle.valueDeclarationOf(callee);
+    return declaration !== undefined && ts.isFunctionDeclaration(declaration);
+  };
 }
 
 export function inferBindingAwareNumericReturnTypes(

@@ -24,6 +24,12 @@ loc-budget-allow:
   # slot sites; two of them live here, and they must resolve the proof at the
   # same point or the hoisted and declared slots disagree.
   - src/codegen/statements/variables.ts
+  # second slice (2026-08-21): the stratified level-3 refinement has to live
+  # beside the analysis it re-runs (it calls it with one extra host fact), and
+  # the declaration-resolved return-carrier predicate beside the return map it
+  # reads. Splitting either out would separate a fact from its only producer.
+  - src/codegen/numeric-property-analysis.ts
+  - src/codegen/declarations.ts
 func-budget-allow:
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
@@ -791,6 +797,231 @@ result.
 
 **Out of scope:** the IR lattice pass (still blocked on coverage — the
 pre-flight table in slice 1 stands), new carrier kinds, peephole.
+
+## Slice-2 result (2026-08-21)
+
+Branch `claude/issue-4121-interprocedural-proofs`, based on `3c976394a`.
+Every claim below was measured in this container, on this base, with the
+kill-switch control run for it.
+
+### Anchor drift (the plan's line numbers had moved)
+
+| plan said | actually on `3c976394a` |
+| --------- | ----------------------- |
+| `inferBindingAwareNumericReturnTypes` at `param-return-inference.ts:1142` | `:1163` |
+| wired at `index.ts:4651` / `:7886` | `:4753` / `:8106` |
+| consumed at `declarations.ts:588` | `:700` |
+
+### The ordering fact the plan did not have
+
+`inferBindingAwareNumericReturnTypes` **reads** `ctx.numericLocalVerdict`
+(`param-return-inference.ts:1167` bails without it), and that verdict is
+produced by the local fixpoint the plan wanted to feed the return map INTO. So
+the two cannot be one pass. They are stratified instead:
+
+| level | pass | grounded in |
+| ----- | ---- | ----------- |
+| 1 | `analyzeNumericPropertyNames` → grounded slot verdict | itself (least fixpoint) |
+| 2 | `inferBindingAwareNumericReturnTypes` → return carriers | level 1 |
+| 3 | `refineNumericLocalsWithCallReturns` → re-run of level 1 with the level-2 fact | level 2 |
+
+Nothing feeds level 3 back into level 2, so no carrier can be laundered
+through a cycle. Level 3 is **gated**: `bindingAwareNumericCallEvidence`
+answers `undefined` — no second pass, byte-identical output — unless the return
+map names an `f64` carrier the level-1 `numericFunctions` set does not already
+have.
+
+### Step 1 — the route-2 call-definition arm: landed, and narrower than hoped
+
+Route 2 **already had** a direct-call arm: `sets.numericFunctions.has(callee.text)`.
+It is a whole-program *greatest* fixpoint and is broader than the return map in
+almost every respect. The one thing it cannot do is tell two same-named
+functions apart, because it is keyed by NAME:
+
+```js
+const o = { g: function(){ return "s"; } };
+function g(x){ return x + 1; }
+function f(){ var i = g(1); i = i + 1; return o.g().length + i * 2; }
+```
+
+`o.g` withdraws the name `g` for every declaration sharing it, so `i` stayed
+boxed. `inferBindingAwareNumericReturnTypes` resolves the callee to its exact
+declaration and keeps the verdict. Measured A/B on that shape:
+
+| | `$i` slot |
+| --- | --- |
+| default-on | **f64** |
+| `JS2WASM_NUMERIC_RETURNS=0` | externref |
+| `JS2WASM_NUMERIC_ADMISSION=0` | externref |
+
+Value agrees with node (`7`) in all three legs. Kill switches compose as the
+plan required; no new env var.
+
+**On the target module it does nothing, and the reason is measurable.** For the
+pinned `cookie@2.0.1` module the return map is **EMPTY**
+(`inferBindingAwareNumericReturnTypes` returns 0 entries) and `numericFunctions`
+is **EMPTY** too; the grounded slot set is `{i, min, min, min, start}`. Both
+fact sources are silent about `endIndex`/`eqIndex`, so there is nothing for the
+arm to import. Root cause is one level up: `endIndex`'s `len` parameter is fed
+`str.length` where `str` is the unannotated parameter of the exported
+`parseCookie`, so nothing proves it is a string, so nothing proves `len` is a
+number. That is the issue's own "second, independent gap in proving a string
+receiver for an unannotated parameter", and it is upstream of both of this
+slice's arms.
+
+### Step 2 — the route-1 argument-use arm: DECLINED, with the measurement
+
+Sub-case (b) was already conditional in the plan. Sub-case (a) is declined too,
+on two independent grounds.
+
+**(1) Its yield on both benchmark modules is zero — measured as an UPPER BOUND,
+not argued.** A deliberately unsound probe was applied that classifies EVERY
+call-argument use as ToNumber-invariant (strictly more permissive than any
+sound version of (a) could be), and the emitted output was diffed:
+
+| module | default | every argument use assumed safe | diff |
+| ------ | ------: | ------------------------------: | ---- |
+| pinned `cookie@2.0.1` | 175,932 bytes | 175,932 bytes | **identical** |
+| `benchmarks/cross-engine/axes-core.js` | 140,867 bytes | 140,867 bytes | **identical** |
+
+The reason is visible in the per-use bail census for `parseCookie`'s `index`:
+
+```
+index  CallExpression       endIndex(str, index, len)      ← argument
+index  CallExpression       eqIndex(str, index, len)       ← argument
+index  CallExpression       valueSlice(str, index, eqIdx)  ← argument
+index  BinaryExpression     index < len                    ← relational, NOT an argument
+index  BinaryExpression     index === -1                   ← strict equality
+```
+
+Clearing the three argument bails leaves `index < len` — a relational whose
+other operand (`len`) is itself a boxed local, so it is not statically numeric.
+`endIdx` likewise keeps `endIdx + 1` (`+` is a hard bail by design). **Every
+candidate in the module has at least one non-argument bail**, so the argument
+arm cannot flip any of them.
+
+**(2) The only fact that would make (a) sound is circularly defined.** An f64
+argument is representation-exact exactly when the callee's parameter is emitted
+as f64. That ABI is decided by `inferParamTypeFromCallSites`
+(`param-return-inference.ts:438`), which decides it *by asking
+`ctx.usageInference.scalarForDecl(arg)`* — the very verdict the argument rule
+would be computing. Wiring it would make the answer depend on which declaration
+is collected first (`UsageInference` memoizes per function, so the first query
+pins it), which is a determinism hazard in the emitted bytes, not just a
+precision one. The grounded param-slot verdict is a non-re-entrant alternative
+but is NOT the same fact — `parameterDefinitionsAgree` admits a slot on a
+ToNumber trust boundary even when some argument is opaque, so it does not imply
+the f64 ABI.
+
+Recorded rather than attempted. Closing it wants the param-ABI decision lifted
+out of the usage-inference query, which is its own piece of work.
+
+### Box-site census of the standalone cookie module, before/after
+
+Site definition: one boxing operation = one smi fast-path
+`(if (result externref) (then … ref.i31 …) (else …))` in a USER function
+(`$__*` helpers ARE the boxing machinery). This scanner is not slice 1's, so
+the absolute counts are not comparable with the 19/13 reported there; the
+before/after DELTA is measured with the identical scanner on both legs.
+
+| carrier | before (base `3c976394a`) | after | delta |
+| ------- | ---------------------------------: | ----: | ----: |
+| local | 12 | 12 | +0 |
+| argument | 4 | 4 | +0 |
+| other | 16 | 16 | +0 |
+| **total** | **32** | **32** | **+0** |
+
+Per function, unchanged: `parseCookie` 8, `valueSlice` 8, `parseSetCookie` 7,
+`endIndex` 4, `eqIndex` 4, `decode` 1. Nothing relocated to another carrier
+because nothing moved at all.
+
+### Perf: a null result on the pinned lane, stated as an artifact identity
+
+The pinned runtime-dynamic artifact was rebuilt exactly as
+`perfCookieStandaloneDynamic` / `compileStandaloneLane` builds it — `compileMulti`
+over `{cookie.js, __npm-compat-benchmark.mjs}`, `target: standalone`,
+`deferTopLevelInit`, `optimize: 4`, runtime seed 3751 — and hashed:
+
+| leg | bytes | imports | checksum (120,000 @ 3751) | SHA-256 |
+| --- | ----: | ------: | ------------------------: | ------- |
+| base `3c976394a` (the four changed files reverted in place) | 57,467 | 0 | 120,000 | `517a92ee758042df832249c860b31214d62cd1c94393798498a59eb24807cf05` |
+| this slice, default-on | 57,467 | 0 | 120,000 | `517a92ee758042df832249c860b31214d62cd1c94393798498a59eb24807cf05` |
+| this slice, `JS2WASM_NUMERIC_ADMISSION=0` | 57,467 | 0 | 120,000 | `517a92ee758042df832249c860b31214d62cd1c94393798498a59eb24807cf05` |
+| this slice, `JS2WASM_NUMERIC_RETURNS=0` | 57,840 | 0 | 120,000 | `387b4920c8cb8b5015517d283d574dc5979237e059a077952f85f62dcd1eb805` |
+
+The first three are **byte-identical**, so the 2026-08-09 timing methodology
+(separate processes, warm-ups, alternating order, seed 3751, checksum equality)
+would be measuring one artifact against itself — scheduler noise, not a
+compiler change. The hash equality is the stronger claim and it is what is
+reported. (The fourth row is the pre-existing 2026-08-09 return-carrier
+checkpoint, not this slice; it is included so the switch is not mistaken for a
+no-op in general.)
+
+The single-source cookie compile is byte-identical too
+(175,932 bytes, `d29b00d6ef83925279bf46f2b99958ca92da4379eefa966f2ac570ede37526c0`
+before and after), as is `axes-core` (140,867 bytes).
+
+### Equivalence: full capture, A/B by test id (AC 6)
+
+Both legs captured their failing/passing sets per test id (`PARTIAL_OUT`), 8
+shards each — a single unsharded run is still OOM-killed on this
+4-core/16 GB container and exits 2 with "vitest produced no JSON report",
+which is not a pass (slice 1's method note, re-confirmed). All 16 shards
+reported "No new equivalence regressions".
+
+```
+slice ON : 24 failing / 1661 passing
+slice OFF: 24 failing / 1661 passing        (JS2WASM_NUMERIC_ADMISSION=0)
+baseline known failures: 36
+
+failing ONLY with the slice ON  (regressions caused by this slice): 0
+failing ONLY with the slice OFF (fixed by this slice):              0
+failing (ON) and NOT in baseline:                                   0
+
+VERDICT: failing sets IDENTICAL across the kill switch; all 24 baselined.
+```
+
+**12 baseline entries now PASS and were NOT ratcheted here** — the baseline is
+stale relative to current `main`, not to this slice (each passes with the
+switch on AND off): `issue-1197` (1), `math-pow-test262-pattern` (1),
+`spec/coercion-arithmetic-add` (8), `symbol-basic` (2). Slice 1 saw one of
+these; the set has grown as `main` advanced. Ratcheting them belongs to
+whoever owns the baseline, not to a perf slice.
+
+### Two pre-existing divergences found while writing the negative tests
+
+Neither is caused or fixed by this slice — both reproduce identically with
+`JS2WASM_NUMERIC_ADMISSION=0`, with `JS2WASM_NUMERIC_RETURNS=0`, and on plain
+`origin/main`. Recorded here rather than worked around silently:
+
+| minimal repro (standalone) | node | js2 |
+| -------------------------- | ---: | --: |
+| `function m(x){ if (x>5) return true; return x+1; } var v = m(9); \`${v}\`.length` | 4 | **1** |
+| `var u; (typeof u).length` | 9 | **NaN** |
+
+The first is the `` `${b}` `` → `1` trap appearing on a **boxed** carrier —
+`var v = true` alone prints `"true"` correctly, so it is specific to a boolean
+arriving through a call into an `any` local. The second has no call and no
+boolean in it at all. Both want their own issues.
+
+### Acceptance criteria status after this slice
+
+- **AC 1** — unchanged (slice 1). The IR-pass half stays blocked on
+  #2855-successor coverage.
+- **AC 2 — NOT achieved, and now with the blocker named precisely.**
+  `var i = s.indexOf(";"); i = i + 1;` still emits `externref` when `s` is the
+  unannotated parameter of an exported function. Neither this slice's landed arm
+  (call-return) nor its declined arm (argument-use) touches the cause: nothing
+  proves `s` is a string. Pinned as an explicit `it("still declines row 4 …")`
+  so the next slice has to flip it deliberately. Note the row is receiver-
+  dependent: with a visible `f("a;b")` call site it is **already f64** today.
+- **AC 3 — achieved (vacuously, and stated as such).** IR-claimed coverage is
+  unchanged by this slice — every artifact above is byte-identical, so the
+  denominator cannot have moved. No speedup is claimed.
+- **AC 4** — unchanged (earlier checkpoint).
+- **AC 5 — achieved.** Census above, before/after, by carrier, same scanner.
+- **AC 6 — achieved.** Full-capture equivalence run + kill-switch A/B by test
+  id; see the PR body for the run output.
 
 ## Relationship to adjacent work
 
