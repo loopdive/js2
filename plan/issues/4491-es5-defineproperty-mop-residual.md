@@ -989,3 +989,21 @@ Direct value probe (`.tmp/probe/len1.js`), one program, standalone:
 Gates: `check:loc-budget`, `check:func-budget`, `check:coercion-sites`,
 `check:oracle-ratchet` all exit 0. `tsc` reports no error in any of the three
 touched files.
+
+## Wave-3 dispatch plan (2026-08-21, toward 100% ES5 standalone)
+
+328 rows remain (`.tmp/es5-remaining.txt`, derived from the 20260821-122045
+scoped run minus the 14 post-measurement flips). Four parallel lanes, each an
+Opus worktree agent with reproduce-first discipline and per-lane file
+ownership; briefs carry the banked per-cluster diagnoses from this file,
+#4206 (25-row statements/function clustering), #2875 (String residuals), and
+#2071. Lanes: (A) statements/function + types/object|reference — seeds: the
+kind-changing member-update growable trigger (`m.foo++` on a string field
+answers null, probe n1), the banked f.prototype/constructor and
+typeof-before-var heads; (B) Array/prototype + keys/gOPN — seeds: the
+declined keys/gOPN enumerability widening, the alias leak; (C)
+defineProperty/defineProperties + Object/prototype — seeds: the 138
+static-read/dynamic-store divergence, arguments-object define rows; (D)
+Function/prototype + instanceof — seeds: the C2 provider-dependence
+re-measure, apply/call receiver family, aliased-ctor instanceof. String +
+RegExp + assignment queue for the next free slot.
