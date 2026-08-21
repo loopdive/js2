@@ -221,7 +221,36 @@ styled-components (6/6), and the selected webpack slice (13/16). Stylelint is
 8/9 and Redux is 13/82; their remaining failures are scored runtime/compiler
 semantics, not missing test registration or acquisition infrastructure.
 
-## Unit-infrastructure continuation 4
+## Unit-infrastructure continuation 4 (Axios)
+
+Axios now uses the original upstream test files through the shared worker. The
+pin selects 33 of 49 files and registers 231 callbacks; native execution is
+231/231, all 33 Wasm modules compile and validate, and 21/231 Wasm callbacks
+pass. Two callbacks are scored assertion failures and 208 stop during module
+initialization. Sixteen files (414 registrations) remain explicitly deferred
+as unavailable infrastructure. The worker supplies the Node builtin namespaces
+used by Axios (`async_hooks`, `assert`, `buffer`, `crypto`, `events`, `stream`,
+`timers`, `url`, and `util`) without replacing the package implementation.
+
+The class-rest dispatch reduction is green and the generic bridge fix is in the
+codegen path. Symbol-valued module bindings now retain their semantic brand,
+removing the earlier `Cannot convert a Symbol value to a number` failure. The
+remaining scored blocker is a reference-valued callback crossing the legacy
+numeric callback bridge (`toLowerCase is not a function`); an experimental
+reference bridge exposed a closure-lifetime trap and was not shipped. Track
+that follow-up in [issue 4527](./4527-axios-class-call-concat-vararg-invalid-module.md)
+and [issue 4528](./4528-axios-module-init-symbol-tonumber.md).
+
+## CI follow-up (2026-08-21)
+
+The first CI run for the Axios continuation passed all equivalence, issue,
+smoke, and lint checks but stopped in the host-import policy ratchet. The
+generic Node builtin provider and callback normalization intentionally add 18
+runtime source lines and 22 `resolveImport` lines. The tracked source budget
+now records those measured values (`17118` and `7238`) rather than weakening a
+correctness or performance gate; the raw host-import policy remains active.
+
+## Unit-infrastructure continuation 4 (Lodash)
 
 The Hono adapter now selects four additional original files from the immutable
 v4.12.16 source inventory: the HTML helper, route helper, context-storage

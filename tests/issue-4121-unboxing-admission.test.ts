@@ -101,15 +101,13 @@ describe("#4121 — admission keys on the emitted representation, not the declar
   // The f64 slot stores `Number(source)` on every write. Route 1's soundness
   // argument is that no use can observe the pre-coercion value, so every value
   // assigned into the newly-unboxed slot must read back exactly what the boxed
-  // carrier read back. This is the A/B against the kill-switch control — the
-  // `undefined` row deliberately asserts switch-equality rather than JS
-  // equality, because both legs return -1 where JS returns NaN (a PRE-EXISTING
-  // `undefined`-through-a-method-return gap, unchanged by this slice).
+  // carrier read back. This is the A/B against the kill-switch control; the
+  // expected values are the JavaScript results, including NaN for undefined.
   it.each([
     ['"12"', 35],
     ['"zz"', Number.NaN],
     ["null", -1],
-    ["undefined", -1],
+    ["undefined", Number.NaN],
   ])("reads back identically across the kill switch when %s is assigned", async (value, expected) => {
     const source = `
       function mk(){ return { foo: function(){ return ${value}; } }; }

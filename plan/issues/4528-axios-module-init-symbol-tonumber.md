@@ -1,10 +1,10 @@
 ---
 id: 4528
-title: "axios: module init crashes with 'Cannot convert a Symbol value to a number' — 49 tests in 10 utils modules never run"
+title: "axios: Symbol module-init coercion fixed; reference callback ABI remains"
 status: ready
 sprint: current
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-21
 priority: high
 horizon: m
 feasibility: medium
@@ -16,12 +16,13 @@ goal: npm-library-support
 related: [3995, 1434, 3511, 3676]
 files:
   - src/runtime.ts
+  - src/codegen/index.ts
   - tests/dogfood/axios-upstream-suite.mjs
 ---
 
 # axios: compiled module init routes a Symbol through ToNumber
 
-## Problem
+## Historical problem (fixed)
 
 10 axios test modules (all the `tests/unit/utils/*` and several `helpers/*`
 files) compile, validate, and then **crash during `__module_init`**:
@@ -33,8 +34,10 @@ module init: TypeError: Cannot convert a Symbol value to a number
     at __module_init (wasm-function[454])
 ```
 
-49 tests never execute. Measured 2026-08-16 on `a9b20d4c`; matches the
-npm-compat card. Files: `formDataToJSON` (8), `parseHeaders` (3),
+At the 2026-08-16 checkpoint, 49 tests never executed. That historical result
+matched the npm-compat card on `a9b20d4c`; the Symbol-specific failure is now
+fixed as recorded below.
+The affected files were `formDataToJSON` (8), `parseHeaders` (3),
 `progressEventReducer` (2), `endsWith` (1), `extend` (3), `forEach` (5),
 `isX` (14), `kindOf` (1), `kindOfTest` (1), `merge` (9), `trim` (2).
 
@@ -48,6 +51,12 @@ expression** during module init. axios's `utils.js` top level builds
 unbox that the source never requests.
 
 ## Reproduction
+
+## Current checkpoint (2026-08-21)
+
+The original Symbol-to-number defect is fixed at the codegen boundary. `resolveWasmType` now preserves the ESSymbol brand for module globals and destructured bindings, so the affected modules no longer call `Number(Symbol.iterator)` during initialization. The fresh Axios slice compiles and validates all 33 selected modules.
+
+The next failure is distinct: 208/231 callbacks stop during module initialization because the existing numeric `__call_1_f64`/`__call_2_f64` bridge invokes a Wasm closure with a reference-valued array element. The runtime now wraps WasmGC closures at that boundary, exposing the real `toLowerCase is not a function` type mismatch instead of the misleading `fn is not a function`. A reference-preserving bridge needs a separate focused reduction; do not weaken `Number(Symbol())` semantics.
 
 ```bash
 node --import tsx tests/dogfood/axios-upstream-suite.mjs --json
@@ -83,6 +92,10 @@ node --import tsx tests/dogfood/axios-upstream-suite.mjs --json
    the #1434 coercion tests stay green (both directions protected).
 
 ## Acceptance criteria
+
+## Status
+
+The Symbol regression criterion is satisfied and the existing coercion tests remain the guard. The unresolved criterion is the reference-valued callback bridge; it is tracked with exact denominator data in issue 4527 and is not reclassified as unavailable infrastructure.
 
 - [ ] All 10 affected modules complete `__module_init`.
 - [ ] Committed reduction covering the identified Symbol-into-ToNumber shape.
