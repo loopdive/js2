@@ -4483,38 +4483,31 @@ export function compilePropertyIntrospection(
       return { kind: "i32", boolean: true };
     }
     if (elemIsRef && keyArg && staticKey !== null && _isCanonicalArrayIndexString(staticKey)) {
-      const dataArrTypeIdx = vecInfo!.arrTypeIdx;
-      const idxVal = Number(staticKey);
+      // (#4491) The runtime native is now the WHOLE answer. This arm used to
+      // compute `present := index < length AND data[index] != null` inline and OR
+      // it with the native, because at the time `__hasOwnProperty` could not see a
+      // vec's DENSE elements at all and answered `false` for
+      // `Object.keys(o).hasOwnProperty("0")`.
+      //
+      // It can now, and the OR became a one-way ratchet that could only ever turn
+      // `false` into `true`. A DELETED index is exactly the case that breaks:
+      // `delete a[0]` records a `FLAG_DELETED_INDEX` tombstone in the companion
+      // overlay and leaves the vec slot holding its old value, so the inline test
+      // still reported the index present and the tombstone could not veto it —
+      // `a.hasOwnProperty("0")` answered `true` while `0 in a` and
+      // `Object.hasOwn(a, "0")` (the same native, different spelling) both
+      // answered `false`.
+      //
+      // Measured on a string vec before removing the inline half: dense-live
+      // true, deleted false, out-of-range false, `defineProperty`-on-empty true —
+      // the native is correct on all four, including the sidecar case the OR was
+      // originally protecting.
       const recvLocal = allocLocal(fctx, `__hop_arr_${fctx.locals.length}`, receiverWasm);
-      const presentLocal = allocLocal(fctx, `__hop_present_${fctx.locals.length}`, { kind: "i32" });
       const recv = compileExpression(ctx, fctx, propAccess.expression, receiverWasm);
       if (recv && (recv.kind === "ref" || recv.kind === "ref_null")) {
         fctx.body.push({ op: "ref.as_non_null" });
       }
       fctx.body.push({ op: "local.set", index: recvLocal });
-      // present := (index < length) ? (data[index] != null) : 0. The bounds test
-      // gates the element load via an `if` so an out-of-range index never traps.
-      fctx.body.push({ op: "local.get", index: recvLocal });
-      fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 }); // length
-      fctx.body.push({ op: "i32.const", value: idxVal });
-      fctx.body.push({ op: "i32.gt_u" }); // length > index  ⇔  index in bounds
-      fctx.body.push({
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [
-          { op: "local.get", index: recvLocal },
-          { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 }, // data array
-          { op: "i32.const", value: idxVal },
-          { op: "array.get", typeIdx: dataArrTypeIdx }, // element
-          { op: "ref.is_null" },
-          { op: "i32.eqz" }, // present (non-null) → 1
-        ],
-        else: [{ op: "i32.const", value: 0 }],
-      });
-      fctx.body.push({ op: "local.set", index: presentLocal });
-      // result := present OR __hasOwnProperty(arr, key) — the latter catches an
-      // index added to the sidecar (e.g. defineProperty on an array index, where
-      // the vec data length is unchanged). __hasOwnProperty exists in both modes.
       const hopIdx2 = ensureLateImport(
         ctx,
         "__hasOwnProperty",
@@ -4529,13 +4522,11 @@ export function compilePropertyIntrospection(
       if (hopIdx2 !== undefined) {
         fctx.body.push({ op: "call", funcIdx: hopIdx2 });
       } else {
-        // No host helper available — drop the args, sidecar contributes nothing.
+        // No native available — drop the args and answer absent.
         fctx.body.push({ op: "drop" });
         fctx.body.push({ op: "drop" });
         fctx.body.push({ op: "i32.const", value: 0 });
       }
-      fctx.body.push({ op: "local.get", index: presentLocal });
-      fctx.body.push({ op: "i32.or" });
       return { kind: "i32", boolean: true };
     }
     // else fall through to the generic struct-field path (legacy behaviour).
