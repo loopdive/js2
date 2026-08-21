@@ -52,6 +52,7 @@ itself costs nothing.
 | `6049c004` +skip | flatten skipped | 0.1402 |
 | `1d0fc43` (mid-#4658) +skip | pre-unmask | 0.1333 |
 | `dc188a3` (= `1d0fc43` + `6d18505`) +skip | first bad | 0.0010 |
+| `0d87f216` (#4658 merge, dashboard rev) +skip | end of window | 0.0007 |
 | `7b2a1f94` (post-#4665) +skip | before #4669 | 0.0010 |
 | `f6ebb57` (first rev with #4677) | O4 retry | 0.0806 |
 | `bc588f2` (HEAD 2026-08-21) | current | 0.0752 / 0.0757 |
