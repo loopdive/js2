@@ -1,10 +1,11 @@
 ---
 id: 4558
 title: "check:linear-ir is RED on main: IR-compiled function count regressed 8 → 6, unowned"
-status: ready
+status: done
 sprint: current
 created: 2026-08-19
-updated: 2026-08-19
+updated: 2026-08-21
+completed: 2026-08-21
 priority: medium
 horizon: m
 feasibility: medium
@@ -65,12 +66,53 @@ pre-existing and independent of the linear/QuickJS work.
 
 ## Acceptance criteria
 
-- [ ] The commit that caused the decrease is named.
-- [ ] Each of the two buckets is classified regression-vs-intended, with a
+- [x] The commit that caused the decrease is named.
+- [x] Each of the two buckets is classified regression-vs-intended, with a
       reason, not silently absorbed into a refreshed baseline.
-- [ ] `npm run check:linear-ir` passes on `main`.
-- [ ] If the baseline moved rather than the code, the commit message says which
+- [x] `npm run check:linear-ir` passes on `main`.
+- [x] If the baseline moved rather than the code, the commit message says which
       functions stopped compiling through IR and why that is acceptable.
+
+## Resolution (2026-08-21)
+
+**Causing commit: `0f7f4039c` — "fix(ir): preallocate canonical counted array
+pushes" (2026-07-30).** It introduced the `vec.set_length` IR instruction for
+the proven empty-array counted-push loop (`const arr: number[] = []; for (…)
+arr.push(i)` — exactly `bench_array` in `benchmarks.ts` and
+`benchmarks/array.ts`) and wired `emitVecSetLength` into every backend emitter
+— including `LinearEmitter` (an `i32.store` at the vec layout's
+`lengthOffset`) and `PorfforSink` — but never admitted the instruction in the
+backend legality allow-lists (`linearInstrError` / `porfforInstrError` in
+`src/ir/backend/legality.ts`). So every function using the new lowering was
+rejected at the emit boundary despite the emitter supporting it.
+
+Per-bucket classification:
+
+- `illegal:instr-vec.set_length` (×2) — **regression, fixed.** Legality⇄emitter
+  desync as above; `vec.set_length` is now admitted in the linear AND porffor
+  profiles. Verified by execution probe: the counted-push shape compiles
+  through the IR overlay on `--target linear`, instantiates, and returns
+  values identical to plain JS and to the direct path (`JS2WASM_LINEAR_IR=0`),
+  for both the 10k-push and a 5-push partial-capacity variant.
+- `select:string-builder-candidate` (×2) — **intended re-scoping, baseline
+  refreshed.** `663208791` (#3740, 2026-07-28) later narrowed by #3744: the
+  constant-count literal-fragment append loop (`let s = ""; for (…) s = s +
+  "abcde"` — exactly `bench_string` ×2) is ALWAYS deferred to legacy because
+  legacy folds it into one `repeat(N)` + concat (#1004), which IR does not
+  own. The gc-lane `check:ir-fallbacks` baseline classifies the same two
+  functions as `deferred` — the linear baseline now matches. The #3740 PR
+  should have refreshed this baseline; it didn't, which is how the gate went
+  red silently.
+
+Refreshed baseline also banks three improvements that had accrued since the
+last update (`551c00632`, #2956 L4): `build` 2→0, `select:call-graph-closure`
+12→11, `select:non-export-modifier` 15→0. `npm run check:linear-ir` passes.
+
+Permanent repro: `tests/issue-4558.test.ts` — pins that the counted-push
+shape stays IR-compiled on the linear overlay with no
+`illegal:instr-vec.set_length` reject, that overlay/direct/JS values agree,
+and that `vec.set_length` is legal in both the linear and porffor
+instruction profiles (`verifyIrBackendLegality`).
 
 ## Why this matters beyond the number
 
