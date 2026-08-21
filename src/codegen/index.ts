@@ -7917,6 +7917,87 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
  * All source files share the same codegen context (funcMap, structMap, etc.).
  * Only functions exported from the entry file become Wasm exports.
  */
+type OwnNativeGenSnapshot = Map<string, import("./context/types.js").NativeGeneratorInfo | undefined>;
+
+/**
+ * (#3505) Per-source native-generator binding snapshot, taken right after that
+ * source's collect pass (the only moment the bare name-key is known to hold
+ * either this source's registration — decl matches — or a foreign one, when
+ * this source's plan bailed). The generator twin of the #4133 funcMap
+ * snapshot: `ctx.nativeGenerators` is name-keyed and last-wins, so with two
+ * modules declaring `function* g` every consumer resolved to whichever
+ * registration survived (test262 instn-uniq-env-rec: the entry generator
+ * resumed the fixture's empty state machine). `undefined` records "this
+ * source's own decl has NO native registration" and must CLEAR the key during
+ * that source's bodies so its calls take the legacy path instead of borrowing
+ * another module's state machine.
+ */
+function snapshotOwnNativeGenerators(
+  ctx: CodegenContext,
+  sf: ts.SourceFile,
+  collidingFuncNames: ReadonlySet<string>,
+): OwnNativeGenSnapshot {
+  const ownGens: OwnNativeGenSnapshot = new Map();
+  for (const stmt of sf.statements) {
+    if (!ts.isFunctionDeclaration(stmt) || !stmt.name || !stmt.body || !stmt.asteriskToken) continue;
+    const name = stmt.name.text;
+    if (!collidingFuncNames.has(name)) continue;
+    const info = ctx.nativeGenerators.get(name);
+    ownGens.set(name, info && info.decl === stmt ? info : undefined);
+  }
+  return ownGens;
+}
+
+/**
+ * (#3505) Collect-loop end state of every colliding generator name, so the
+ * per-source re-binding inside the bodies loop can be undone: the finalizer
+ * walkers after that loop must observe exactly the registry the collect pass
+ * left behind (a cleared key would drop a registered generator's dispatch arm).
+ */
+function snapshotNativeGeneratorEndState(
+  ctx: CodegenContext,
+  ownNativeGenBySource: ReadonlyMap<ts.SourceFile, OwnNativeGenSnapshot>,
+): OwnNativeGenSnapshot {
+  const endState: OwnNativeGenSnapshot = new Map();
+  for (const ownGens of ownNativeGenBySource.values()) {
+    for (const name of ownGens.keys()) {
+      if (!endState.has(name)) endState.set(name, ctx.nativeGenerators.get(name));
+    }
+  }
+  return endState;
+}
+
+/**
+ * (#3505) Point each colliding generator name at THIS source's own native
+ * registration (or clear it when this source's decl has none) for the duration
+ * of its body compilation, and drop foreign name-keyed `ctx.inlinableFunctions`
+ * entries — an earlier module's tiny factory registered under a colliding name
+ * would otherwise be inlined into this module's call sites (that inline — not
+ * funcMap — is how a fixture's generator factory reached the entry module).
+ * This source's own body compile re-registers its own version if it qualifies.
+ */
+function rebindPerSourceGeneratorState(
+  ctx: CodegenContext,
+  ownGens: OwnNativeGenSnapshot | undefined,
+  ownFuncIdx: ReadonlyMap<string, number> | undefined,
+): void {
+  for (const [name, info] of ownGens ?? []) {
+    if (info) ctx.nativeGenerators.set(name, info);
+    else ctx.nativeGenerators.delete(name);
+  }
+  for (const name of ownFuncIdx?.keys() ?? []) {
+    ctx.inlinableFunctions.delete(name);
+  }
+}
+
+/** (#3505) Undo the per-source generator re-binding (see the snapshots above). */
+function restoreNativeGeneratorEndState(ctx: CodegenContext, endState: OwnNativeGenSnapshot): void {
+  for (const [name, info] of endState) {
+    if (info) ctx.nativeGenerators.set(name, info);
+    else ctx.nativeGenerators.delete(name);
+  }
+}
+
 export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOptions): GeneratedCodegenModule {
   const mod = createEmptyModule();
   const irPlanningIdentityContext =
@@ -8227,6 +8308,13 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // internal-helper lookups in `object-runtime.ts` — is untouched.
     const collidingFuncNames = collectMultiIrFunctionNameCollisions(multiAst.sourceFiles);
     const ownFuncIdxBySource = new Map<ts.SourceFile, Map<string, number>>();
+    // (#3505) The same per-source re-binding, for `ctx.nativeGenerators` and
+    // `ctx.inlinableFunctions` — see snapshotOwnNativeGenerators /
+    // rebindPerSourceGeneratorState below.
+    const ownNativeGenBySource = new Map<
+      ts.SourceFile,
+      Map<string, import("./context/types.js").NativeGeneratorInfo | undefined>
+    >();
 
     profilePhase("collect-declarations", () => {
       for (const sf of multiAst.sourceFiles) {
@@ -8246,6 +8334,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
           if (idx !== undefined) own.set(name, idx);
         }
         if (own.size > 0) ownFuncIdxBySource.set(sf, own);
+        const ownGens = snapshotOwnNativeGenerators(ctx, sf, collidingFuncNames);
+        if (ownGens.size > 0) ownNativeGenBySource.set(sf, ownGens);
       }
     });
     // #2847: make initial boolean brands visible while bodies are emitted;
@@ -8307,6 +8397,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       sealedVars: new Set(ctx.sealedVars),
       nonExtensibleVars: new Set(ctx.nonExtensibleVars),
     };
+    const nativeGenEndState = snapshotNativeGeneratorEndState(ctx, ownNativeGenBySource);
     profilePhase("bodies", () => {
       const lastIndex = multiAst.sourceFiles.length - 1;
       for (const [index, sf] of multiAst.sourceFiles.entries()) {
@@ -8332,11 +8423,13 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
         for (const [name, idx] of ownFuncIdxBySource.get(sf) ?? []) {
           ctx.funcMap.set(name, idx);
         }
+        rebindPerSourceGeneratorState(ctx, ownNativeGenBySource.get(sf), ownFuncIdxBySource.get(sf));
         profilePhase(sf.fileName, () =>
           compileMultiPreparedScalarLeafDeclarations(ctx, sf, earlyMultiIr.get(sf), moduleInitMode),
         );
       }
     });
+    restoreNativeGeneratorEndState(ctx, nativeGenEndState);
 
     frameStage(ctx, "bodies");
 
