@@ -27,7 +27,12 @@ files:
   - tests/dogfood/hono-upstream-suite.mjs
   - tests/dogfood/hono-upstream-suite-pin.json
   - tests/dogfood/hono-upstream-suite.test.ts
+  - tests/dogfood/jest-upstream-suite.mjs
+  - tests/dogfood/jest-upstream-suite-pin.json
+  - tests/dogfood/typescript-upstream-suite.mjs
+  - tests/dogfood/typescript-upstream-suite-pin.json
   - tests/dogfood/upstream-suite-runner.mjs
+  - tests/dogfood/upstream-suite-compile-worker.mjs
   - tests/dogfood/upstream-suite-runner.test.ts
   - tests/issue-3781-npm-perf-lanes.test.ts
   - tests/issue-4585-npm-compat-refresh-resilience.test.ts
@@ -154,6 +159,27 @@ callbacks. The native oracle passes 296; 15/16 Wasm modules validate and
 unavailable registrations explicitly. The one native failure, one invalid Wasm
 module, and six module-initialization/runtime failures remain visible as test
 or compiler/runtime defects rather than being reclassified as unavailable
+infrastructure.
+
+Jest's adapter now resolves extensionless default, namespace, and directory
+imports against the immutable source checkout, normalizes the CJS-shaped
+default exports used by Node's native loader, and can compile a selected suite
+with the Node platform surface instead of the browser surface. The shared shim
+exposes the small `jest.fn`/`jest.spyOn` facade needed by those original tests.
+The selected Jest slice is now eight files and 99 callbacks: all 99 native
+callbacks pass, all eight Wasm modules validate, and 29 callbacks pass in Wasm;
+3,189 registrations remain explicitly unavailable infrastructure. The added
+`isError.test.ts` exercises the `node:util/types` host seam; its failing Wasm
+assertions remain scored runtime semantics rather than being hidden as infra.
+
+The TypeScript adapter now exercises both original base64 unit files through
+the exact release-source projection, supplies the `ts.sys.base64encode` seam,
+and compiles the Node-oriented test with the Node platform surface so its
+upstream `Buffer` guard behaves as it does under Node. The projection now also
+contains the exact `parsePseudoBigInt` implementation and its character-code
+constants. The slice registers 11 callbacks across three original files; all
+11 pass natively, all three Wasm modules validate, and four callbacks pass in
+Wasm. Its remaining 1,750 registrations stay explicit unavailable
 infrastructure.
 
 ## Unit-infrastructure continuation 2

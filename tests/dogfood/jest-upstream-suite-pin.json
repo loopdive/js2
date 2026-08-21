@@ -17,5 +17,5 @@
     "packages/jest-util/src/__tests__/isPromise.test.ts",
     "packages/jest-util/src/__tests__/isError.test.ts"
   ],
-  "_note": "The complete packages/**/__tests__ inventory is verified. This adapter runs eight original synchronous @jest/get-type and @jest/util unit files against their matching release-tag TypeScript implementation. Runner, snapshot, filesystem, worker, async, DOM, and larger package graphs remain explicit deferred coverage."
+  "_note": "The complete packages/**/__tests__ inventory is verified. The adapter runs the original synchronous @jest/get-type and jest-util unit files against their matching release-tag TypeScript implementations, including isError's node:util/types host seam. The shared runner supplies the minimal Jest spy facade needed by the selected jest-util callbacks; runner, snapshot, filesystem, worker, async, DOM, and larger package graphs remain explicit deferred coverage."
 }

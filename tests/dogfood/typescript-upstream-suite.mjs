@@ -71,7 +71,6 @@ function extractFunction(source, marker) {
   }
   throw new Error(`TypeScript utility function is unterminated: ${marker}`);
 }
-
 function exactTypescriptProjection(utilitiesSource) {
   utilitiesSource = utilitiesSource.replace(/\r\n/g, "\n");
   const startMarker = "/**\n * Replace each instance of non-ascii characters";

@@ -113,6 +113,7 @@ describe("lifecycle", () => {
     const spy = { mock: { calls: [[]] } };
     expect(spy).toHaveBeenCalledOnce();
     expect(typeof vi.spyOn).toBe("function");
+    expect(typeof jest.spyOn).toBe("function");
   });
   test("retains the lifecycle state for the next test", () => {
     expect(setupCount).toBe(1);
