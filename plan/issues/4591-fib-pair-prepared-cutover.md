@@ -13,6 +13,8 @@ area: compiler, codegen, ir
 language_feature: compiler-internals
 goal: ir-full-coverage
 sprint: current
+loc-budget-allow:
+  - src/codegen/index.ts
 parent: 3525
 depends_on: [2138, 3520, 4590]
 related: [3090, 3214, 3518, 3520, 3525, 3792, 4589, 4590]

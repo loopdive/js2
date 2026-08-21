@@ -78,6 +78,10 @@ concurrency:
 
 jobs:
   enqueue:
+    # Forks inherit scheduled/workflow_run triggers but do not have the
+    # maintainer App credentials or the canonical merge queue. Keep this
+    # automation scoped to the repository that owns those resources.
+    if: github.repository == 'loopdive/js2'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

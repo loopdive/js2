@@ -23,7 +23,7 @@
 
 import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
-import { ensureAnyToExternHelper, isAnyValue } from "../any-helpers.js";
+import { ensureAnyToExternHelper, isAnyValue, undefinedExternInstrs } from "../any-helpers.js";
 
 /** Preserve the structural boolean brand when an i32 crosses the externref ABI. */
 function boxI32ClosureResult(
@@ -46,8 +46,14 @@ export function buildClosureResultBoxing(
   returnType: ValType | null,
   boxNumberIdx: number | undefined,
 ): Instr[] {
-  // A void closure contributes no value — the ABI still owes one externref.
-  if (!returnType) return [{ op: "ref.null.extern" }];
+  // A void closure contributes no value — the ABI still owes one externref,
+  // and it owes the CANONICAL undefined (the #2106 singleton when active), not
+  // a bare null: a getter body with no return statement must read back as
+  // `undefined` (§6.2.5.5), but the raw `ref.null.extern` printed/compared as
+  // null through every dynamic consumer (measured: `Object.defineProperty(o,
+  // "p", {get: function(){}}); o.p` answered null — 15.2.3.6-4-207 family, and
+  // the same for any dynamically dispatched void method's result).
+  if (!returnType) return undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
   if ((ctx.standalone || ctx.wasi) && isAnyValue(returnType, ctx)) {
     const anyToExternIdx = ensureAnyToExternHelper(ctx);
     return anyToExternIdx !== undefined ? [{ op: "call", funcIdx: anyToExternIdx }] : [{ op: "extern.convert_any" }];

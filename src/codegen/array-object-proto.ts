@@ -63,6 +63,9 @@ import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI
 // brands (a reflective member closure must degrade to a catchable TypeError, not
 // a hard compile error — #2193 PR-C).
 import { emitObjectProtoOrRefusal as emitProtoMemberBodyRefusal } from "./object-proto-tostring.js";
+// (#4491) `Object.prototype.isPrototypeOf` — the §20.1.3.3 chain walk, routed
+// to the same `__isPrototypeOf` native the typed call path uses.
+import { emitObjectProtoIsPrototypeOfBody } from "./object-proto-is-prototype-of.js";
 import { emitStringConcatMemberBody } from "./string-proto-concat.js";
 import { emitStringSubstringMemberBody } from "./string-proto-substring.js";
 import { emitStringSplitMemberBody } from "./string-proto-split.js"; // (#4220) reflective String.prototype.split
@@ -1746,7 +1749,12 @@ function makeGlue(
             // return null → fall through to the legacy path.
             name === "Date"
             ? (emitDateProtoMemberBody(c, fctx, member) ?? emitDateReflectiveSetterBody(c, fctx, member))
-            : emitProtoMemberBodyRefusal(c, fctx, name, member),
+            : // (#4491) `Object.prototype.isPrototypeOf` has a real answer — the
+              // §20.1.3.3 chain walk. Every other Object member still degrades
+              // to the catchable refusal (`toString`'s classifier lives inside
+              // it).
+              ((name === "Object" ? emitObjectProtoIsPrototypeOfBody(c, fctx, member) : null) ??
+              emitProtoMemberBodyRefusal(c, fctx, name, member)),
   };
 }
 

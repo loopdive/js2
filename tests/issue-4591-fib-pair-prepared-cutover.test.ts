@@ -30,12 +30,6 @@ const TARGETS = ["fib", "bench_fib"] as const;
 const TRAMPOLINE = "__fn_tramp_bench_fib_cached";
 const CACHE = "__fn_closure_bench_fib";
 const EXPECTED_RUNTIME = 832_040;
-const OLD_RAW_BYTES = 114_844;
-const OLD_RAW_SHA256 = "1d9d913d021eded3d9f9e9349bd3dbe095836e9daec4f8fa53e7c27ae3c6a4e3";
-const OLD_WAT_SHA256 = "2575b086c93e14277b2cf43c837f7d944cb61e093d11c17034175d07afa23825";
-const OLD_DTS_SHA256 = "874ff64e8642ca4d5d1060091ab7d78a9ab0eda374e483e5c028115ad71c2022";
-const OLD_OPTIMIZED_BYTES = 48_521;
-const OLD_OPTIMIZED_SHA256 = "4e8f66606a18497ad7c11d4a65e14dd120b69caa825bf7a3c6e1738fbc4d2837";
 
 function expectSuccess(result: CompileResult, label: string): void {
   expect(
@@ -245,10 +239,11 @@ describe("#4591 exact Fibonacci pair Prepared cutover", () => {
     expect(watFunction(prepared.wat, "bench_fib")).toContain("call 76");
     expect(watFunction(prepared.wat, TRAMPOLINE)).toContain("call 76");
 
-    expect(direct.binary.byteLength).toBe(OLD_RAW_BYTES);
-    expect(digest(direct.binary)).toBe(OLD_RAW_SHA256);
-    expect(digest(direct.wat)).toBe(OLD_WAT_SHA256);
-    expect(digest(direct.dts)).toBe(OLD_DTS_SHA256);
+    // Absolute artifact pins (bytes + sha of the direct lane, formerly the
+    // OLD_RAW_* / OLD_WAT_/ OLD_DTS_ constants) broke on every unrelated main
+    // advance. The durable claims are asserted around this point instead:
+    // exact per-function bodies, surface parity, and DTS parity across lanes.
+    expect(digest(prepared.dts)).toBe(digest(direct.dts));
     expectSurfaceParity(prepared, direct);
     await expect(fibonacciRuntime(prepared)).resolves.toEqual([55, EXPECTED_RUNTIME]);
     await expect(fibonacciRuntime(direct)).resolves.toEqual([55, EXPECTED_RUNTIME]);
@@ -259,8 +254,8 @@ describe("#4591 exact Fibonacci pair Prepared cutover", () => {
     const direct = await compileFib(false, { optimize: true });
     expectSuccess(prepared, "Prepared optimized Fibonacci compile");
     expectSuccess(direct, "direct optimized Fibonacci control");
-    expect(direct.binary.byteLength).toBe(OLD_OPTIMIZED_BYTES);
-    expect(digest(direct.binary)).toBe(OLD_OPTIMIZED_SHA256);
+    // Same rationale: the optimized direct-lane pin (formerly 48_521 bytes +
+    // sha) is main-version-dependent; no-growth is the invariant.
     expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
     expectSurfaceParity(prepared, direct);
     await expect(fibonacciRuntime(prepared)).resolves.toEqual([55, EXPECTED_RUNTIME]);
@@ -270,8 +265,8 @@ describe("#4591 exact Fibonacci pair Prepared cutover", () => {
     const directNamed = await compileFib(false, { optimize: true, preserveDebugNames: true });
     expectSuccess(preparedNamed, "Prepared preserve-names optimized Fibonacci compile");
     expectSuccess(directNamed, "direct preserve-names optimized Fibonacci control");
-    expect(preparedNamed.binary.byteLength).toBe(50_123);
-    expect(directNamed.binary.byteLength).toBe(50_123);
+    // Lane parity replaces the absolute 50_123 pin (same rationale).
+    expect(preparedNamed.binary.byteLength).toBe(directNamed.binary.byteLength);
     const preparedWat = binaryenWat(preparedNamed.binary);
     const directWat = binaryenWat(directNamed.binary);
     for (const name of [...TARGETS, TRAMPOLINE]) {

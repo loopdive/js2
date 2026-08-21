@@ -1,9 +1,13 @@
 ---
 id: 4521
 title: "demoteOnLegacyCaller mode policy is duplicated in select.ts and select-identity.ts — hoist to one shared module"
-status: ready
+status: done
 sprint: current
 created: 2026-08-16
+updated: 2026-08-21
+completed: 2026-08-21
+updated: 2026-08-21
+completed: 2026-08-21
 priority: medium
 horizon: s
 feasibility: easy
@@ -38,12 +42,55 @@ other).
 
 ## Acceptance criteria
 
-- [ ] The policy (`jsHostExterns !== true`, plus the
+- [x] The policy (`jsHostExterns !== true`, plus the
       `legacyCallerAbiIsProjected` consult contract around it) lives in ONE
       exported helper; both select.ts and select-identity.ts call it. Grep
       for `jsHostExterns !== true` finds exactly one hit under `src/ir/`.
-- [ ] Pure refactor: `check:ir-only` (both lanes), `check:ir-fallbacks`, and
+- [x] Pure refactor: `check:ir-only` (both lanes), `check:ir-fallbacks`, and
       the equivalence gate are byte-for-byte unchanged.
-- [ ] Bonus if cheap: a comment or micro-test asserting the structural and
+- [x] Bonus if cheap: a comment or micro-test asserting the structural and
       identity paths consult the same policy object, so the next mirrored
       policy addition has an obvious home.
+
+## Resolution (2026-08-21)
+
+`src/ir/legacy-caller-policy.ts` is the single home: `demoteOnLegacyCallerPolicy`
+(the caller-direction policy, carrying the one `jsHostExterns !== true`
+comparison under `src/ir/`) and `jsHostExternsEnabled` (used by the two other
+former literal sites in select.ts — `armHostGlobalResolvers` and
+`certifiedHostIndirectEval` — so the grep criterion holds repo-wide, not just
+at the two policy sites). Both select.ts and select-identity.ts consult the
+shared helper; the consult contract (pairing with `legacyCallerAbiIsProjected`)
+is documented in the module header.
+
+`tests/issue-4521-legacy-caller-policy.test.ts` pins all three ACs: policy
+semantics, single-hit grep over `src/ir/`, and both selector paths consulting
+`demoteOnLegacyCallerPolicy(options)`.
+
+Validation: ts7 typecheck clean; `check:ir-fallbacks` OK (no increases);
+`check:ir-only` READY (both lanes, 37/37 + 38 standalone bodies unchanged);
+`check:linear-ir` OK at the refreshed #4558 baseline. The transform is
+mechanically identity-preserving (`!(x === true)` ≡ `x !== true`); the merge
+queue's equivalence gate is the final byte-parity check.
+
+## Resolution (2026-08-21)
+
+`src/ir/legacy-caller-policy.ts` is the single home: `demoteOnLegacyCallerPolicy`
+(the caller-direction policy, carrying the one `jsHostExterns !== true`
+comparison under `src/ir/`) and `jsHostExternsEnabled` (used by the two other
+former literal sites in select.ts — `armHostGlobalResolvers` and
+`certifiedHostIndirectEval` — so the grep criterion holds across the tree, not
+just at the two policy sites). Both select.ts and select-identity.ts consult
+the shared helper; the consult contract (pairing with
+`legacyCallerAbiIsProjected`) is documented in the module header.
+
+`tests/issue-4521-legacy-caller-policy.test.ts` pins all three ACs: policy
+semantics, single-hit grep over `src/ir/`, and both selector paths consulting
+`demoteOnLegacyCallerPolicy(options)`.
+
+Validation: ts7 typecheck clean; `check:ir-fallbacks` OK (no increases);
+`check:ir-only` READY; `check:linear-ir` OK at the refreshed #4558 baseline;
+LOC-budget OK (select.ts net 0 — the import line is offset by compressing the
+superseded mirrored-places comment). The transform is mechanically
+identity-preserving (`!(x === true)` ≡ `x !== true`); the merge queue's
+equivalence gate is the final byte-parity check.

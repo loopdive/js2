@@ -10,14 +10,20 @@
   "selectedFiles": [
     "src/http-exception.test.ts",
     "src/request.test.ts",
+    "src/helper/accepts/accepts.test.ts",
+    "src/middleware/powered-by/index.test.ts",
+    "src/middleware/trailing-slash/index.test.ts",
     "src/utils/accept.test.ts",
     "src/utils/basic-auth.test.ts",
+    "src/utils/body.test.ts",
     "src/utils/cookie.test.ts",
     "src/utils/encode.test.ts",
+    "src/utils/concurrent.test.ts",
+    "src/utils/filepath.test.ts",
     "src/utils/html.test.ts",
     "src/utils/ipaddr.test.ts",
     "src/utils/mime.test.ts",
     "src/utils/url.test.ts"
   ],
-  "_note": "The published Hono tarball contains dist but omits its Vitest sources. The complete 120-file src/**/*.test.{ts,tsx} inventory is verified by path hash at the matching immutable tag. The adapter executes ten self-contained HTTP/utility files against the published dist bytes; files requiring external test packages, platform adapters, DOM, sockets, or network mocks remain explicitly deferred rather than silently absent. registrationSites is a measured count of test()/it() call sites, not a claim about test.each expansion."
+  "_note": "The published Hono tarball contains dist but omits its Vitest sources. The complete 120-file src/**/*.test.{ts,tsx} inventory is verified by path hash at the matching immutable tag. The adapter executes sixteen self-contained HTTP, routing, middleware, and utility files against the published dist bytes; files requiring external test packages, platform adapters, DOM, sockets, or network mocks remain explicitly deferred rather than silently absent. registrationSites is a measured count of test()/it() call sites, not a claim about test.each expansion."
 }

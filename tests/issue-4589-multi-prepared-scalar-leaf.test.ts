@@ -25,6 +25,37 @@ const TYPE_ONLY_FILES = {
   `,
 } as const;
 
+const CANONICAL_ROUTE_FILES = {
+  "./dep.ts": `
+    export function depPure(x: number): number {
+      return x * 3;
+    }
+  `,
+  "./entry.ts": `
+    import { depPure as renamedPure } from "./dep";
+
+    let initialized: number = 40;
+
+    function initHelper(x: number): number {
+      return x + 2;
+    }
+
+    initialized = initHelper(initialized);
+
+    export function entryPure(x: number): number {
+      return x + 4;
+    }
+
+    export function callRenamed(x: number): number {
+      return renamedPure(x);
+    }
+
+    export function readInit(): number {
+      return initialized;
+    }
+  `,
+} as const;
+
 function expectSuccess(result: CompileResult, label: string): void {
   expect(
     result.success,
@@ -77,29 +108,84 @@ describe("#4589 multi-source Prepared scalar-leaf cutover", () => {
     expect(entryPureLegacyRows(direct).map((entry) => entry.entryPoint)).toContain("compileFunctionBody");
   });
 
-  it("keeps kill-switch WAT, binary, and runtime behavior exact", async () => {
-    const prepared = await compileMulti(TYPE_ONLY_FILES, "./entry.ts", {
+  it("pins canonical route counts, hashes, and kill-switch runtime parity", async () => {
+    const prepared = await compileMulti(CANONICAL_ROUTE_FILES, "./entry.ts", {
       experimentalIR: true,
       target: "standalone",
+      trackIrOutcomes: true,
       emitWat: true,
     });
     vi.stubEnv(CUTOVER, "0");
-    const direct = await compileMulti(TYPE_ONLY_FILES, "./entry.ts", {
+    const direct = await compileMulti(CANONICAL_ROUTE_FILES, "./entry.ts", {
       experimentalIR: true,
       target: "standalone",
+      trackIrOutcomes: true,
       emitWat: true,
     });
     expectSuccess(prepared, "Prepared compile");
     expectSuccess(direct, "direct control compile");
 
-    expect(digest(prepared.binary)).toBe(digest(direct.binary));
-    expect(digest(prepared.wat)).toBe(digest(direct.wat));
+    expect(prepared.irCompiledFuncs).toEqual(["entryPure"]);
+    expect(direct.irCompiledFuncs).toEqual(["entryPure"]);
+    expect(prepared.irFirstSkipped).toBeUndefined();
+    expect(direct.irFirstSkipped).toBeUndefined();
+    expect(digest(prepared.binary)).toBe("6facf9cc597fc8b9b3070723139d5d91d88dfaf11868644e15d6eb606eb96bef");
+    expect(digest(direct.binary)).toBe(digest(prepared.binary));
+    expect(digest(prepared.wat)).toBe("ebb3d4b26b057ac3798e423678c46f425da34c3b0a466cd7b7c2bc70f2fb5c74");
+    expect(digest(direct.wat)).toBe(digest(prepared.wat));
+
+    const preparedRows = prepared.irBodyRouteAudit?.legacyEntries ?? [];
+    const directRows = direct.irBodyRouteAudit?.legacyEntries ?? [];
+    expect([directRows.length, preparedRows.length]).toEqual([14, 12]);
+    expect([
+      directRows.filter((row) => row.entryPoint !== "compileDeclarations").length,
+      preparedRows.filter((row) => row.entryPoint !== "compileDeclarations").length,
+    ]).toEqual([12, 10]);
+    expect([
+      directRows.filter((row) => row.unitId !== undefined).length,
+      preparedRows.filter((row) => row.unitId !== undefined).length,
+    ]).toEqual([11, 9]);
+    expect(
+      directRows
+        .filter((row) => row.bodyName === "entryPure")
+        .map((row) => row.entryPoint)
+        .sort(),
+    ).toEqual(["compileFunctionBody", "compileStatement"]);
+    expect(preparedRows.filter((row) => row.bodyName === "entryPure")).toEqual([]);
+    const rowKey = (row: (typeof directRows)[number]): string =>
+      JSON.stringify({
+        target: row.target,
+        entryPoint: row.entryPoint,
+        bodyName: row.bodyName,
+        file: row.file,
+        line: row.line,
+        column: row.column,
+        sourceId: row.sourceId,
+        unitId: row.unitId,
+        classId: row.classId,
+        unitKind: row.unitKind,
+        terminalOwnerId: row.terminalOwnerId,
+        count: row.count,
+      });
+    expect(preparedRows.map(rowKey).sort()).toEqual(
+      directRows
+        .filter((row) => row.bodyName !== "entryPure")
+        .map(rowKey)
+        .sort(),
+    );
+    const discoverModuleInit = directRows.find((row) => row.bodyName === "__module_init" && row.unitId === undefined);
+    expect(discoverModuleInit).toMatchObject({ entryPoint: "compileModuleInitBody" });
+    expect(discoverModuleInit?.sourceId).toBeDefined();
+
     const preparedInstance = await instantiateWithRuntime(prepared);
     const directInstance = await instantiateWithRuntime(direct);
-    const preparedEntry = preparedInstance.exports.entryPure as (value: number) => number;
-    const directEntry = directInstance.exports.entryPure as (value: number) => number;
-    expect(preparedEntry(5)).toBe(9);
-    expect(preparedEntry(5)).toBe(directEntry(5));
+    const observed = (instance: WebAssembly.Instance) => [
+      (instance.exports.entryPure as (value: number) => number)(5),
+      (instance.exports.callRenamed as (value: number) => number)(5),
+      (instance.exports.readInit as () => number)(),
+    ];
+    expect(observed(preparedInstance)).toEqual([9, 15, 42]);
+    expect(observed(preparedInstance)).toEqual(observed(directInstance));
   });
 
   it("reaches the non-vacuous type-only graph through compileMulti and compileProject", async () => {

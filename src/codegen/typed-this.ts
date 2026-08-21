@@ -72,6 +72,7 @@ import { ts, forEachChild } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { Instr, LocalDef, ValType } from "../ir/types.js";
 import { resolveEnclosingFnctorOwner, resolveLiftedMethodThisStruct } from "./fnctor-escape-gate.js";
+import { foreignReturnFunctionNames } from "./fnctor-foreign-return.js"; // (#2071)
 import { allocLocal } from "./context/locals.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
@@ -96,6 +97,7 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 // reach the expression/coercion engines without a cycle back through
 // expressions.ts / index.ts.
 import { VOID_RESULT, coerceType, compileExpression, flushLateImportShifts, valTypesMatch } from "./shared.js";
+import { inheritedSetAffectsKey } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 
 /**
  * Property names whose reads/writes have dedicated lowerings (array length,
@@ -1444,7 +1446,7 @@ export function tryEmitProvenReceiverFieldGet(
   // A clear flow-presence bit is a logical own-property miss. In an active
   // inherited-descriptor module, route it to the dynamic getter so a fnctor
   // prototype can supply the value rather than inlining `undefined`.
-  if (ctx.standalone && ctx.inheritedSetDescriptorDirty && presenceSlot !== undefined) {
+  if (ctx.standalone && inheritedSetAffectsKey(ctx, propName) && presenceSlot !== undefined) {
     noteProvenReceiver(`inherited-presence:${cls}.${propName}`);
     return undefined;
   }
@@ -1583,10 +1585,18 @@ function provenReceiverClass(ctx: CodegenContext, fctx: FunctionContext, receive
     // Poisoned classes stay out: their prototype shape is not write-once, so
     // the method-call route must not admit them either.
     const approved = new Set<string>();
+    // (#2071) A constructor whose body may `return` a FOREIGN object is not a
+    // provable receiver at all: `new F()` may yield an arbitrary object
+    // (§10.2.1.3 step 13), so the checker's F-instance shape — and every
+    // field-typed narrowing derived from it — is unsound for such bindings
+    // (measured: the else-arm's coerce-to-field-type turned an overriding
+    // object's "A" into ToNumber("A") = NaN). Same pure-AST predicate the
+    // ctor-ABI widening reads, so proof and ABI can never disagree.
+    const foreignReturn = foreignReturnFunctionNames(sf);
     for (const structName of ctx.structMap.keys()) {
       if (!structName.startsWith("__fnctor_")) continue;
       const cls = structName.slice("__fnctor_".length);
-      if (!gate?.poisoned.has(cls)) approved.add(cls);
+      if (!gate?.poisoned.has(cls) && !foreignReturn.has(cls)) approved.add(cls);
     }
     result = analyzeReceiverFlow(sf, approved);
     (ctx.receiverFlowByFile ??= new Map()).set(sf, result);
