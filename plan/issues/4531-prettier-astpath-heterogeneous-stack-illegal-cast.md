@@ -16,10 +16,18 @@ goal: npm-library-support
 related: [3995, 4289, 3979]
 # +37 lines in the vec host-bridge emitter: the struct-ref push/pop arms live
 # inside the same per-vec-type cascade builder as every other element kind.
+# literals.ts carries the escape-widening predicate + shared decision helper;
+# variables.ts and vec-define-writeback.ts each take the matching ~12-line arm.
 func-budget-allow:
   - src/codegen/vec-access-exports.ts::_emitVecAccessExportsInner
+  - src/codegen/vec-define-writeback.ts::emitVecDefineWritebackExports
+  - src/codegen/literals.ts::compileArrayLiteral
+  - src/codegen/statements/variables.ts::compileVariableStatement
 loc-budget-allow:
   - src/codegen/vec-access-exports.ts
+  - src/codegen/vec-define-writeback.ts
+  - src/codegen/literals.ts
+  - src/codegen/statements/variables.ts
 files:
   - tests/dogfood/prettier-upstream-suite.mjs
 ---
@@ -117,3 +125,35 @@ const inner = (flip, callbacks) => {
 };
 export function run(f, g, flip) { return inner(flip, [{ f, g }]); }
 ```
+
+## 2026-08-21 checkpoint — escape-widening slice LANDED (curated-npm-tests lane)
+
+The construction-time carrier widening above is implemented and green on the
+reduction (`tests/issue-4531-escape-widened-array-carrier.test.ts`):
+
+- `arrayLiteralEscapeWidensToExternref` (`src/codegen/literals.ts`): shared
+  decision — non-empty, spread/hole-free, all elements object/function-tagged,
+  and the value escapes into an implicit-any / any / unknown call argument
+  (directly or through a const/let binding scanned over the enclosing
+  function scope; fail-closed on every unprovable shape).
+- `compileArrayLiteral` widens the ELEMENT carrier to externref when that
+  predicate holds and the element lane was a closed struct ref.
+- **The binding's SLOT must widen too** (`statements/variables.ts` declaration
+  cascade, before `taViewType`): first cut widened only the literal, and the
+  checker-derived closed-struct vec slot forced a vec→vec converting copy
+  whose per-element `ref.test` NULLED every open-representation element —
+  measured: `callbacks[0] === null` even caller-side. Slot + literal now
+  consult the same predicate, so no converting copy exists on this path.
+- `vec-define-writeback.ts` `__vec_set_elem` gained the struct-ref arm
+  (guarded `ref.test` → -1 sentinel, mirroring `__vec_push`); without it any
+  module with a struct-elem vec in `mutEntries` failed BINARY EMIT
+  (`ref.cast typeIdx: -1`).
+
+Validation: reduction passes both lanes (`f12g34|f21g43`); #3979 test 1
+(`[1, () => 7]` mixed literal call) flipped from `it.fails` to passing;
+#3244/#4204/#4289/#4428 guards green; clsx holds 31/32; jest holds 113/232 —
+the diff-sequences 32-test cluster did NOT move: the real jest trap is a
+DIFFERENT mechanism (guarded casts inside the module-const-arrow
+`diffSequence` closure, type-57 cascade), still open here. Prettier AstPath
+(the issue headline, class-FIELD variant) also still open — the widening
+covers literals, not class-field arrays mutated across types.

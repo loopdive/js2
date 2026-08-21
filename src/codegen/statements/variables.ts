@@ -14,6 +14,7 @@ import { needsTdzFlag, resolveWasmType, varBindingNeedsExternrefForUndefined } f
 import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
 import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import {
+  arrayLiteralEscapeWidensToExternref,
   objectLiteralIsStandaloneAnyObjectCarrier,
   objectLiteralSpreadTakesHostPath,
   resolveComputedKeyExpression,
@@ -1831,6 +1832,17 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     const mixedCarrierProvenF64 = mixedAssignmentCarrier
       ? numericProofOverridesMixedCarrier(usageInferredLocalType(ctx, decl))
       : null;
+    // (#4531) The initializer array literal widens its element carrier to
+    // externref because its value escapes into an opaque call argument (see
+    // arrayLiteralEscapeWidensToExternref). The SLOT must widen with it — a
+    // checker-derived closed-struct vec slot would force a vec→vec converting
+    // copy whose per-element ref.test nulls every open-representation element.
+    const escapeWidenedVecType: ValType | undefined =
+      decl.initializer !== undefined &&
+      ts.isArrayLiteralExpression(decl.initializer) &&
+      arrayLiteralEscapeWidensToExternref(ctx, decl.initializer)
+        ? { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, "externref", { kind: "externref" }) }
+        : undefined;
     const wasmTypeBase: ValType =
       // (#3123) A widened fnctor-subclass binding (pre-hoist recorded it in
       // `fnctorWidenedLocals` — reassigned with a foreign/host value) must
@@ -1860,7 +1872,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
                         ? { kind: "ref_null" as const, typeIdx: getOrRegisterVecType(ctx, "i32", { kind: "i32" }) }
                         : widenedTypeIdx !== undefined
                           ? { kind: "ref_null" as const, typeIdx: widenedTypeIdx }
-                          : (taViewType ??
+                          : (escapeWidenedVecType ??
+                            taViewType ??
                             subarraySubviewType ??
                             inferredVecType ??
                             standaloneRegExpMatchArrayType ??

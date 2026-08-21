@@ -3975,6 +3975,107 @@ function resolveEmptyArrayElemWasm(ctx: CodegenContext, ctxType: ts.Type): ValTy
   return undefined;
 }
 
+/**
+ * (#4531) Does this array literal's VALUE escape into an `any`/`unknown`-typed
+ * (or unresolvable) call argument — either directly (`f([{…}])`) or through a
+ * const/let binding that is later passed as such an argument? An opaque
+ * consumer may mutate the array dynamically (push an OPEN host `$Object`),
+ * which a closed-struct element carrier cannot store; the caller widens the
+ * carrier to externref when this answers true. Fail-closed: any shape this
+ * scan cannot prove answers false and the literal keeps its typed carrier.
+ */
+const escapeWidenCache = new WeakMap<ts.ArrayLiteralExpression, boolean>();
+
+/**
+ * (#4531) Shared decision for the escape widening: BOTH the array literal's
+ * element carrier (compileArrayLiteral below) and the binding's slot type
+ * (statements/variables.ts declaration cascade) must answer identically, or a
+ * vec→vec converting copy between the two representations nulls every element
+ * that fails the closed-struct ref.test. Syntactic gate: non-empty, spread- and
+ * hole-free, every element in the object/function domain (the closed-struct
+ * element lane); then the escape scan.
+ */
+export function arrayLiteralEscapeWidensToExternref(ctx: CodegenContext, expr: ts.ArrayLiteralExpression): boolean {
+  const cached = escapeWidenCache.get(expr);
+  if (cached !== undefined) return cached;
+  let result = expr.elements.length > 0;
+  for (const element of expr.elements) {
+    if (!result) break;
+    if (ts.isSpreadElement(element) || ts.isOmittedExpression(element)) result = false;
+    else {
+      const tag = ctx.oracle.staticJsTypeOf(element);
+      if (tag !== "object" && tag !== "function") result = false;
+    }
+  }
+  if (result) result = arrayLiteralEscapesToOpaqueConsumer(ctx, expr);
+  escapeWidenCache.set(expr, result);
+  return result;
+}
+
+function arrayLiteralEscapesToOpaqueConsumer(ctx: CodegenContext, expr: ts.ArrayLiteralExpression): boolean {
+  const callArgIsOpaque = (call: ts.CallExpression, arg: ts.Node): boolean => {
+    const argIndex = call.arguments.findIndex((a) => a === arg);
+    if (argIndex < 0) return false;
+    if (!ts.isIdentifier(call.expression) && !ts.isPropertyAccessExpression(call.expression)) return false;
+    const decl = ctx.oracle.valueDeclarationOf(
+      ts.isIdentifier(call.expression) ? call.expression : call.expression.name,
+    );
+    let fnLike: ts.SignatureDeclaration | undefined;
+    if (decl !== undefined) {
+      if (ts.isFunctionDeclaration(decl) || ts.isMethodDeclaration(decl)) fnLike = decl;
+      else if (
+        ts.isVariableDeclaration(decl) &&
+        decl.initializer &&
+        (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer))
+      ) {
+        fnLike = decl.initializer;
+      }
+    }
+    if (fnLike === undefined) return false; // dynamic/imported callee — keep typed carrier (fail-closed)
+    const param = fnLike.parameters[Math.min(argIndex, fnLike.parameters.length - 1)];
+    if (param === undefined) return false;
+    if (param.dotDotDotToken !== undefined) return false;
+    // JS param with no annotation = implicit any; an explicit any/unknown
+    // annotation counts too.
+    if (param.type === undefined) return true;
+    const paramFact = ctx.oracle.typeFactOf(param);
+    return paramFact.kind === "any" || paramFact.kind === "unknown";
+  };
+
+  let node: ts.Node = expr;
+  while (node.parent && ts.isParenthesizedExpression(node.parent)) node = node.parent;
+  const parent = node.parent;
+  if (parent === undefined) return false;
+  if (ts.isCallExpression(parent) && (parent.arguments as readonly ts.Node[]).includes(node)) {
+    return callArgIsOpaque(parent, node);
+  }
+  if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
+    const bindingName = parent.name.text;
+    // Scope of the scan: the enclosing function-like body (or source file).
+    let scope: ts.Node = parent;
+    for (let up: ts.Node | undefined = parent.parent; up; up = up.parent) {
+      scope = up;
+      if (ts.isFunctionLike(up) || ts.isSourceFile(up)) break;
+    }
+    let escapes = false;
+    const visit = (n: ts.Node): void => {
+      if (escapes) return;
+      if (ts.isIdentifier(n) && n.text === bindingName && n !== parent.name) {
+        const call = n.parent;
+        if (call && ts.isCallExpression(call) && (call.arguments as readonly ts.Node[]).includes(n)) {
+          // Binding identity via the oracle (never the bare name): the
+          // occurrence must resolve to THIS declaration.
+          if (ctx.oracle.variableDeclarationOf(n) === parent && callArgIsOpaque(call, n)) escapes = true;
+        }
+      }
+      if (!escapes) ts.forEachChild(n, visit);
+    };
+    visit(scope);
+    return escapes;
+  }
+  return false;
+}
+
 export function compileArrayLiteral(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -4491,6 +4592,33 @@ export function compileArrayLiteral(
       for (const v of ctx.vecTypeMap.values()) if (v === ti) return false; // exclude nested-array vec carriers
       return true;
     })();
+  // (#4531) ESCAPE widening — the diff-sequences shape. A literal of closed
+  // object structs (`const callbacks = [{ foundSubsequence, isCommon }]`)
+  // whose value ESCAPES into an `any`/`unknown`-typed call argument crosses to
+  // a consumer that mutates it dynamically: the consumer's
+  // `callbacks.push({…})` builds an OPEN host `$Object` that can never
+  // ref.test as the closed element struct, so the push is lost and
+  // `callbacks[1]` reads null. When the escape is provable at the literal,
+  // pick the universal externref element carrier up front — every element
+  // (and every later push) then shares the open representation, and the
+  // dynamic member reads both sides use already handle it. Applies to BOTH
+  // lanes (the host lane is where the diff-sequences cluster lives); nested
+  // vec elements and string carriers keep their representation exactly as the
+  // #3244 predicate scopes them.
+  const elemIsClosedStructRefAnyLane =
+    (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
+    (() => {
+      const ti = (elemWasm as { typeIdx: number }).typeIdx;
+      if (ti < 0) return false;
+      if (ti === ctx.anyStrTypeIdx || ti === ctx.nativeStrTypeIdx) return false;
+      const rt = ctx.mod.types[ti];
+      if (rt?.kind !== "struct") return false;
+      for (const v of ctx.vecTypeMap.values()) if (v === ti) return false;
+      return true;
+    })();
+  if (!hasSpread && elemIsClosedStructRefAnyLane && arrayLiteralEscapeWidensToExternref(ctx, expr)) {
+    elemWasm = { kind: "externref" };
+  }
   if (!hasSpread && (elemWasm.kind === "i32" || elemWasm.kind === "f64" || elemIsPlainObjectStructRef)) {
     const ctxArrType = ctx.checker.getContextualType(expr);
     if (ctxArrType) {
