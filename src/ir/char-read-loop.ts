@@ -59,7 +59,7 @@ import {
   detectI32LoopVar,
   isIncreasingStep,
   loopBodyMutatesStringReadInvariants,
-} from "../codegen/statements/loop-analysis.js";
+} from "./analysis/loop-shape.js";
 
 /** The recognised shape — receiver + induction variable of a canonical loop. */
 export interface CanonicalCharReadLoop {

@@ -14,7 +14,7 @@ import {
   emitFuncRefAsClosure,
   promoteAccessorCapturesToGlobals,
 } from "../closures.js";
-import { addFunctionOwnLocals } from "../binding-info.js"; // (#2103) memoized own-locals oracle
+import { addFunctionOwnLocals } from "../../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { functionReturnsThroughWithScope } from "../declarations.js";
 import {
   collectNestedCaptureReferences,

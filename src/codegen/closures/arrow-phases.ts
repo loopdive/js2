@@ -24,7 +24,7 @@ import {
   getOrRegisterRefCellType,
   resolveWasmType,
 } from "../index.js";
-import { addFunctionOwnLocals } from "../binding-info.js";
+import { addFunctionOwnLocals } from "../../ir/analysis/binding-info.js";
 import {
   closureArityField,
   closureBagField,

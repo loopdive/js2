@@ -48,7 +48,7 @@
  * to call from inside the walks.
  */
 
-import type { ts } from "../ts-api.js";
+import type { ts } from "../../ts-api.js";
 
 /**
  * Computes a function node's own locals into a caller-supplied set. Injected by

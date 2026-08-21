@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { loopBodyMutatesIndexOrArray, isIncreasingStep } from "../codegen/statements/loop-analysis.js";
+import { loopBodyMutatesIndexOrArray, isIncreasingStep } from "./analysis/loop-shape.js";
 import { ts } from "../ts-api.js";
 
 /** Prove that a counted-loop index starts at a non-negative numeric literal. */
