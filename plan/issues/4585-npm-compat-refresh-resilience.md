@@ -24,6 +24,10 @@ files:
   - tests/dogfood/react-dom-upstream-suite.mjs
   - tests/dogfood/react-dom-upstream-suite.test.ts
   - tests/dogfood/react-upstream-suite.mjs
+  - tests/dogfood/hono-upstream-suite-pin.json
+  - tests/dogfood/hono-upstream-suite.test.ts
+  - tests/dogfood/upstream-suite-runner.mjs
+  - tests/dogfood/upstream-suite-runner.test.ts
   - tests/issue-3781-npm-perf-lanes.test.ts
   - tests/issue-4585-npm-compat-refresh-resilience.test.ts
   - plan/issues/4585-npm-compat-refresh-resilience.md
@@ -117,3 +121,19 @@ the watchdog set to 2 seconds finished in 56 seconds and retained the same
 `102/179` scored result (`272/273` upstream tests represented). This change
 keeps the original corpus and records each timeout; it only prevents a missing
 async dependency from starving publication.
+
+## Unit-infrastructure checkpoint
+
+The generic pinned-suite runner now carries deferred upstream registrations into
+the report as `extraction.unavailableInfra` instead of silently dropping them
+from the npm card. This remains separate from native-oracle failures and
+invalid Wasm modules. The shared test shim also supports the lifecycle and
+spy/matcher surface used by the next Web API slices (`beforeAll`, `afterAll`,
+`vi.spyOn`, `stubEnv`, and one-call matchers).
+
+Hono's pinned suite now admits the original `src/utils/filepath.test.ts` in
+addition to its existing ten files. The unchanged two upstream callbacks both
+compile, validate, and pass in Wasm: the suite moves from 205 to 207 admitted
+callbacks and from 79 to 81 passes. The remaining 2,148 Hono registrations are
+visible as unavailable infrastructure until their external test/package and
+platform adapters are wired; no tests were rewritten or counted as passes.
