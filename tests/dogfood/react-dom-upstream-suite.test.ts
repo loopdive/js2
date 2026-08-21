@@ -124,7 +124,7 @@ describe("react-dom upstream suite", () => {
       expect(nativeRequire("internal-test-utils")).toBe(internalTestUtils);
       expect(nativeRequire("react-dom/test-utils")).toEqual({ act: internalTestUtils.act });
     } finally {
-      if (previous === undefined) delete globalThis.__js2ReactUpstreamInfrastructure;
+      if (previous === undefined) Reflect.deleteProperty(globalThis, "__js2ReactUpstreamInfrastructure");
       else globalThis.__js2ReactUpstreamInfrastructure = previous;
     }
   });
