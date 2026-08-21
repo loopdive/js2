@@ -1,10 +1,10 @@
 ---
 id: 2949
 title: "IR dynamic value representation: JsTag-carrying `dynamic` kind in IrType (make untyped JS claimable)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-07-02
-updated: 2026-07-29
+updated: 2026-08-21
 priority: high
 horizon: xl
 feasibility: hard
@@ -24,7 +24,8 @@ loc-budget-allow:
   - src/codegen/any-helpers.ts
 func-budget-allow:
   - src/codegen/index.ts::planIrOverlay
-branch: codex/2949-acorn-module-var-scalars
+  - src/ir/select.ts::dynamicUsesAreMoveOnly
+branch: claude/issue-2949-next-family
 ---
 
 # #2949 — the IR's type system is Wasm types, not JS types
@@ -2086,3 +2087,106 @@ Validation for this slice:
 - focused recursive-boolean and prior #2949 claim-flip suites pass;
 - mixed-value logical fallback is pinned;
 - typecheck and the standard IR gates pass.
+
+## Implementation Notes — concrete arguments at dynamic call parameters (2026-08-21)
+
+### The driver, re-established from source
+
+The prior slices' "#3796 driver" was a script on a lane that no longer exists,
+so it was rebuilt from the artifact it names: the npm-compat report generator's
+`--only acorn --lane standalone-dynamic` perf lane in its DEFAULT (inline,
+non-linked) form. That is the pinned acorn@8.16.0 dist bundle concatenated with
+the runtime-dynamic benchmark driver and compiled as ONE standalone source unit
+with `optimize: 4`, `deferTopLevelInit`, and `trackIrOutcomes` on. It embeds the
+whole 230 KB source as a chunked string array — the 32,768-element
+`array.new_fixed` the earlier notes describe — which is why it is a
+compile/outcome probe rather than a runtime fixture.
+
+Replayed on `fd679233f` (the recursive-boolean slice, 2026-07-30) it reports
+**20 emitted**, matching that slice's recorded figure exactly, so the
+reconstruction is the same measurement. Its denominator counts 42 terminal
+function units where the notes said 43; the recorded body-shape count was
+likewise 14 against 13 here. Treat the earlier denominator as off by one unit,
+not the emitted counts.
+
+### Census, re-measured (driver, standalone)
+
+| | `fd679233f` (2026-07-30) | `fec977606` (main, 2026-08-21) | this slice |
+| --- | --- | --- | --- |
+| emitted | 20/42 | 27/42 | **31/42** |
+| post-claim withdrawals | 0 | 1 | 1 (unchanged) |
+| `body-shape-rejected` | 13 | 8 | 8 |
+| `param-type-not-resolvable` | 4 | 2 | **0** |
+| `call-graph-closure` | 1 | 2 | **0** |
+| `regexp-constructor-unsupported` | 2 | 0 | 0 |
+| `logical-value-unsupported` | 1 | 1 | 1 |
+| `constructor-resolution-unsupported` | 1 | 1 | 1 |
+| `abi-signature-parity` | 0 | 1 | 1 |
+
+Two things moved under main without this slice. Seven functions gained a claim
+(`parse`, `parseExpressionAt`, `codePointToString`, `hasProp`,
+`isPrivateNameConflicted`, `isRegularExpressionModifier`, `stringToNumber`), and
+the RegExp-constructor bucket emptied — `isIdentifierStart` / `isIdentifierChar`
+moved off it and onto the dyn-use scan. **A post-claim withdrawal also appeared:
+`tokenizer` withdraws on `abi-signature-parity` (IR=182, legacy=151).** It is
+present on main before this branch and is unchanged by it; it is not this
+slice's to fix, but the "zero withdrawals" bar is no longer met by main itself.
+
+### Grouping of the residual body-shape rejections
+
+Measured with `JS2WASM_IR_SHAPE_DIAG=1`; each rejects on its own arm, so there
+is no longer a body-shape *family*, only singletons:
+
+| function | arm | shape |
+| --- | --- | --- |
+| `kw` | `objectlit-empty` | `var options = {}` then dynamic property writes |
+| `getOptions` | `objectlit-empty` | same, plus `for…in` over a module object |
+| `getLineInfo` | `tail-unhandled:ForStatement` | `for (;;)` with two init bindings + `new` |
+| `pushComment` | `closure-return-type` | returns a function expression |
+| `finishNodeAt` | `nontail-if-cond:PropertyAccess` | `this.options.…` guards + member writes |
+| `buildUnicodeData` | `expr-binary-op-=` | assignment-expression value into a module object |
+| `stringToBigInt` | `expr-ident-not-in-scope` | `BigInt` |
+| `__npmCompatStandaloneBenchmark` | (driver) | the harness loop itself |
+
+The two `objectlit-empty` entries share an arm but not a fix: both need the
+open-object substrate, which is a different issue's territory.
+
+### The family this slice lands
+
+`isIdentifierStart` / `isIdentifierChar`, plus `isRegExpIdentifierStart` /
+`isRegExpIdentifierPart`, which were held back only by the call-graph closure
+over them — four functions, one root cause.
+
+The root cause is NOT the RegExp constant, `String.fromCharCode`, or the
+optional-boolean parameter; each of those was measured claimable in isolation.
+It is the dyn-use move-only scan. That scan runs over the WHOLE body of any
+function owning a dynamic binding, and it checked every argument of every direct
+call against the callee's resolved parameter kind. `isIdentifierStart` owns a
+dynamic `astral` (some Acorn call sites omit the second argument, so the
+projection reports `dynamic` rather than `bool`), which is what puts it under
+the scan at all — and it was then rejected for `isInAstralSet(code, …)`, whose
+own `code` parameter resolves `dynamic` while the caller's is projected f64. The
+argument that sank the claim has nothing to do with the dynamic binding.
+
+The direct-call lowering already crosses that boundary: it boxes a concrete
+argument at a dynamic parameter through the canonical tag-aware boxer
+(`boxConcreteToDynamic`). Only the scan was missing the symmetric arm to the
+unbox arm right above it. It now admits exactly the operand family that boxer
+accepts — proven number, string, definite boolean, and conditionals over those —
+so the claim can never withdraw on a missing box, and everything else still
+declines before the claim rather than after it. A `null` argument at the same
+position stays a pre-claim `param-type-not-resolvable`, pinned by the test.
+
+One selector arm, no lowering change, no touched file outside `src/ir/select.ts`.
+
+Validation for this slice:
+
+- exact driver: **27/42 → 31/42** emitted, adding `isIdentifierStart`,
+  `isIdentifierChar`, `isRegExpIdentifierStart`, `isRegExpIdentifierPart`;
+  no function lost a claim; the withdrawal set is byte-identical to main's;
+- focused suite (`tests/issue-2949-concrete-arg-dynamic-param.test.ts`): claims
+  the family on gc AND standalone, checks the predicates' runtime values across
+  the boxed boundary, and pins the unboxable-operand refusal;
+- prior #2949 slice suites, equivalence matrix (8 shards), typecheck, lint,
+  fallback / adoption / oracle / LOC / function-budget / ir-only / linear-IR
+  gates.
