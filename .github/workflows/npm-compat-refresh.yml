@@ -112,7 +112,19 @@ jobs:
     # is kept as a second, cheaper line against any OTHER bot push to main.
     if: github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    # (#4604) 180 was outgrown by the upstream-suite roster: on 2026-08-21 four
+    # consecutive runs (700/705/714/721) died un-published — run 721's generate
+    # step was killed at exactly 180:00 with the promotion steps never reached,
+    # and the artifact stayed stale >24h while the acorn/clsx recovery
+    # (#4578/#4586/#4602) was already on main. 350 sits just under the 6h
+    # GitHub-hosted hard cap and nearly doubles the budget; the STRUCTURAL
+    # bound (per-package matrix or per-package time budgets, plus a staleness
+    # alert) is #4604's remaining scope — this raise is its immediate-unblock
+    # slice, not the fix. The sibling rule to #3988's "never cancel-in-progress
+    # a job longer than its trigger interval" applies: never let this job's
+    # runtime outgrow its own timeout, because a timeout kill and a
+    # supersession cancel produce the same stale artifact.
+    timeout-minutes: 350
     environment: baseline-promote
     permissions:
       # The branch push uses MAIN_DEPLOY_KEY (SSH) and the PR is opened with a

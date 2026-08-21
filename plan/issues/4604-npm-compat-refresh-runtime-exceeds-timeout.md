@@ -1,9 +1,10 @@
 ---
 id: 4604
 title: "npm-compat refresh runtime exceeds its 180-min timeout — dashboard stale since 2026-08-20 18:45Z"
-status: ready
+status: in-progress
 created: 2026-08-21
 updated: 2026-08-21
+assignee: loopdive/claude
 priority: critical
 feasibility: medium
 reasoning_effort: medium
@@ -61,9 +62,17 @@ hazard on the OTHER bound: **never let the job's runtime outgrow its own
 `timeout-minutes`** — a timeout kill and a supersession cancel produce the
 same stale artifact.
 
+## Status
+
+- **S1 landed (this PR): `timeout-minutes` 180 → 350.** Run 721's job record
+  settled the diagnosis: its generate step was killed at exactly 180:00
+  (16:09:17 → 19:09:01Z), promotion steps never reached — a pure timeout, the
+  fourth in a row (700/705/714/721). 350 sits just under the 6h GitHub-hosted
+  hard cap. The structural bound and the staleness alert below remain OPEN.
+
 ## Fix directions (pick during implementation)
 
-- **Immediate unblock:** raise `timeout-minutes` (e.g. 300–360) so one run can
+- **Immediate unblock (S1, done):** raise `timeout-minutes` so one run can
   actually land and publish the recovery. Cheap, reversible, buys time.
 - **Structural:** the generation is a serial walk over ever-growing upstream
   suites. Options, roughly in order of leverage:
