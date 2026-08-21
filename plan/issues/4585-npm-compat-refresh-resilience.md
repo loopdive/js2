@@ -23,6 +23,7 @@ files:
   - src/codegen/extern-declarations.ts
   - tests/dogfood/react-dom-upstream-suite.mjs
   - tests/dogfood/react-dom-upstream-suite.test.ts
+  - tests/dogfood/react-upstream-suite.mjs
   - tests/issue-3781-npm-perf-lanes.test.ts
   - tests/issue-4585-npm-compat-refresh-resilience.test.ts
   - plan/issues/4585-npm-compat-refresh-resilience.md
@@ -56,6 +57,10 @@ artifacts:
   modules while rejecting every unrelated optimizer warning.
 - Regenerate and publish the complete npm compatibility aggregate only after
   every package finishes and the fixed Acorn/clsx measurements are present.
+- Bound the React and React DOM per-test watchdogs at two seconds by default so
+  admitted upstream tests that need unavailable async infrastructure remain
+  visible in the report without consuming the aggregate refresh's entire job
+  budget.
 
 ## Acceptance criteria
 
@@ -70,6 +75,9 @@ artifacts:
       record the omitted `Flatten` pass and no raw fallback is measured.
 - [ ] A fresh aggregate refresh completes and the live page serves a post-#4578
       timestamp and corrected Acorn/clsx measurements.
+- [ ] The full aggregate refresh reaches publication without timing out in the
+      React upstream suites; all admitted tests remain represented with an
+      explicit pass, fail, trap, or infrastructure outcome.
 
 Pre-[#4586](./4586-o4-try-table-flatten-fallback.md) checkpoint: the exact standalone-dynamic clsx 2.1.1 lane at O3 measured
 0.149035 µs/op versus Node's 0.023225 µs/op (ratio 0.155833), with checksum
@@ -97,3 +105,15 @@ O3 artifact; the stale public ratio is 0.000838.
 - Focused parse/standalone tests pass `16/16`; ReactDOM infrastructure passes
   `5/5` with its heavy suite deliberately skipped. Typecheck, formatting, lint,
   LOC/function/oracle/dead-export, IR-fallback, and issue gates pass.
+
+## Refresh-timeout checkpoint
+
+The first post-O4 full refresh reached the React package at 04:54 UTC and was
+cancelled at the 180-minute workflow limit before the next package. The log
+showed no compiler error: React's 272 admitted upstream tests were being run
+with the historical ten-second per-test watchdog, so tests waiting on missing
+Jest/DOM infrastructure serialized into hours. A local complete React run with
+the watchdog set to 2 seconds finished in 56 seconds and retained the same
+`102/179` scored result (`272/273` upstream tests represented). This change
+keeps the original corpus and records each timeout; it only prevents a missing
+async dependency from starving publication.
