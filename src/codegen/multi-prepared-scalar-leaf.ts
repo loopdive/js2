@@ -303,7 +303,10 @@ export interface MultiPreparedFunctionValueLeafRoute extends MultiPreparedLeafRo
   readonly support: MultiPreparedFunctionValueSupportReceipt;
 }
 
-export type MultiPreparedEarlyLeafRoute = MultiPreparedScalarLeafRoute | MultiPreparedFunctionValueLeafRoute;
+export type MultiPreparedEarlyLeafRoute =
+  | MultiPreparedScalarLeafRoute
+  | MultiPreparedFunctionValueLeafRoute
+  | import("./multi-prepared-fibonacci-pair.js").MultiPreparedFibonacciPairRoute;
 
 function invariant(stage: "resolve" | "patch", detail: string): never {
   throw new IrInvariantError("selection-preparation-mismatch", stage, detail);
@@ -319,7 +322,7 @@ function isCommonJsAssignmentTarget(expression: ts.Expression): boolean {
   return isCommonJsAssignmentTarget(receiver);
 }
 
-function sourceContainsCommonJsExport(sourceFile: ts.SourceFile): boolean {
+export function sourceContainsCommonJsExport(sourceFile: ts.SourceFile): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
@@ -345,7 +348,7 @@ function sourceContainsCommonJsExport(sourceFile: ts.SourceFile): boolean {
   return found;
 }
 
-function hasExactNumericDeclarationSignature(declaration: ts.FunctionDeclaration): boolean {
+export function hasExactNumericDeclarationSignature(declaration: ts.FunctionDeclaration): boolean {
   return (
     declaration.name !== undefined &&
     declaration.body !== undefined &&
@@ -472,7 +475,7 @@ function unwrapParentheses(expression: ts.Expression): ts.Expression {
   return current;
 }
 
-function identifierResolvesExactly(
+export function identifierResolvesExactly(
   ctx: CodegenContext,
   identifier: ts.Identifier,
   declaration: ts.Declaration,
@@ -579,7 +582,7 @@ function collectMultiPreparedReductionLeafCandidates(
   );
 }
 
-function exactAllocatedNumericCallable(
+export function exactAllocatedNumericCallable(
   ctx: CodegenContext,
   unitId: IrUnitId,
   legacyName: string,
@@ -679,7 +682,7 @@ interface MultiPreparedFunctionValueCandidateInput<Plan extends MultiPreparedFun
   readonly hasForeignLateProvider: (unitId: IrUnitId) => boolean;
 }
 
-interface MultiPreparedFunctionValueCandidateEvidence extends MultiPreparedScalarLeafCandidateEvidence {
+export interface MultiPreparedFunctionValueCandidateEvidence extends MultiPreparedScalarLeafCandidateEvidence {
   readonly valueIdentifier: ts.Identifier;
   readonly legacyOwnerUnitId: IrUnitId;
   readonly legacyOwnerName: string;
@@ -879,7 +882,7 @@ function resolveExactFunctionValueCandidate<Plan extends MultiPreparedFunctionVa
   };
 }
 
-function functionValueSupportIsCurrent(
+export function functionValueSupportIsCurrent(
   ctx: CodegenContext,
   candidate: MultiPreparedFunctionValueCandidateEvidence,
   support: MultiPreparedFunctionValueSupportReceipt,
@@ -1333,11 +1336,7 @@ export function planEarlyMultiPreparedScalarLeafRoute<Plan extends MultiPrepared
   return states;
 }
 
-/**
- * Prepare the one structural reduction leaf whose value crosses an imported
- * source-call boundary. This route is intentionally separate from #4589: its
- * one allowed late-provider edge is proved and preallocated explicitly.
- */
+/** Prepare the exact reduction leaf whose value crosses an imported source-call boundary. */
 export function planEarlyMultiPreparedFunctionValueLeafRoute<Plan extends MultiPreparedFunctionValuePlan>(input: {
   readonly active: boolean;
   readonly cutoverEnabled: boolean;
