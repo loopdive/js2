@@ -136,11 +136,18 @@ post-claim demotion (the population a new verify error would join).
 | `check:ir-fallbacks` | OK — no unintended / post-claim / module-level increases; **0** post-claim demotions |
 | `check:ir-only` | READY — both lanes 38/38 IR bodies, 0 legacy, 0 unsupported, 0 invariants |
 | `check:linear-ir` | OK — compiled 8 (baseline 8), buckets unchanged |
-| `tests/equivalence/` (6 shards) | demotion set identical to the pre-change baseline; **zero** records carrying any new rule's message |
-| IR test surface (`tests/ir-*`, `issue-3519`, `issue-4523`) | unchanged demotions |
+| `tests/equivalence/` — **215 of 216 files** | **133** post-claim demotion records, **zero** carrying any new rule's message |
+| IR test surface (`tests/ir-*`, `issue-3519`, `issue-4523`, `issue-4603`) | 380 passing, demotions unchanged vs the pre-change baseline |
 
-The baseline for the equivalence comparison was captured on `origin/main`
-before the first edit, with the same command and the same sink.
+The decisive check is the middle one. A new rule can only cost coverage by
+demoting a function, and every demotion is recorded in that sink — so a rule
+that never appears in 104 records over the whole equivalence corpus never
+fired on valid IR.
+
+An accidental mid-refactor window supplied the counterfactual for free: with
+the arms cut out but `TYPE_RULE_STATUS` still reading `"checked"`, the #4523
+`default:` backstop fired on hundreds of real corpus compiles within one shard.
+The instrument does see these errors when they exist.
 
 ### Not fixed here
 
@@ -150,10 +157,24 @@ before the first edit, with the same command and the same sink.
 - **`switch.discSlot` and `try.payloadSlot` slot-bounds**, the two residual
   gaps #4523 noted in place. They belong to kinds that already have rules and
   were deliberately outside the 17-kind denominator, so they stay open.
-- **`tests/ir-scaffold.test.ts` fails on `origin/main`, before this change.**
-  Its selector-claim expectation does not list `withVar`, which current main
-  now claims. Reproduced on a clean checkout of `7a3724747` with no local
-  edits, so it is not caused by (and is not fixed by) this PR.
-- `tests/ir-bytecode-wasmgc-vm.test.ts` timed out locally on the container
-  (35 s test timeout) both before and after the change — an environment
-  constraint, not a signal.
+### Pre-existing failures confirmed by A/B, NOT caused here
+
+Each was re-run with `origin/main`'s `src/ir/verify.ts` copied over the
+branch's (the file-copy A/B pattern) and failed identically:
+
+| test | before | after |
+| --- | --- | --- |
+| `tests/ir-scaffold.test.ts` — selector claims `withVar`, expectation does not list it | 1 failed | 1 failed |
+| `tests/ir-bytecode-proof.test.ts` — `call` fixture with no `binding`, crashes in `lower.ts:1376` | 1 failed / 22 passed | 1 failed / 22 passed |
+| the 11 `tests/equivalence/` files that failed anywhere in the shard run, re-run together | 24 failed / 102 passed | 24 failed / 102 passed |
+
+The 11-file A/B compared the exact failure *names*, not just the counts: the
+two sorted lists are byte-identical.
+
+Two environment constraints, neither a signal about this change:
+`tests/ir-bytecode-wasmgc-vm.test.ts` hit the 35 s test timeout before and
+after; and several vitest workers died to a V8 heap-limit OOM (~510 MB), which
+`CLAUDE.md` already documents for local full-suite runs. The OOM'd slices were
+re-run file-by-file until only **one** equivalence file
+(`multi-file-compilation.test.ts`) remained uncoverable on this container — it
+OOMs on its own with a single worker. So 215 of 216 files were measured.
