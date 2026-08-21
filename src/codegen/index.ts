@@ -232,7 +232,11 @@ import {
   inferTaViewType,
   usageInferredLocalType,
 } from "./statements/variables.js"; // (#2106 S1 PR-2) hoist undefined-init retype predicate; (#684) usage-based any-local f64 override
-import { bindingHasMixedAssignmentCarrier } from "./analysis/mixed-assignment-carrier.js";
+import {
+  bindingHasMixedAssignmentCarrier,
+  numericProofOverridesMixedCarrier,
+  widenedCarrierOracleFor,
+} from "./analysis/mixed-assignment-carrier.js";
 import { symbolBrand } from "./symbol-field-carrier.js";
 import { ensureDynReadHelpers, ensureDynMemberGet } from "./dyn-read.js"; // (#2580 M0) / (#3053 U0)
 import { collectClosureBaseWrapperTypeIdxs, buildClosureRefTestArms } from "./closure-classifier.js"; // (#2175 V2-S1)
@@ -4329,6 +4333,12 @@ export function generateModule(
       [ast.sourceFile],
     );
   }
+  // (#4121) Admission keys on the representation codegen is about to emit. Must
+  // follow `applyNumericPropertyAnalysis` (the widening predicate consults its
+  // verdict) and precede any function body — `setWidenedCarrierOracle` clears
+  // the memo caches so no pre-oracle verdict can be pinned. Installed in both
+  // lanes: the widening itself is not standalone-only.
+  ctx.usageInference.setWidenedCarrierOracle(widenedCarrierOracleFor(ctx));
   // (#3057) Pre-scan for a dynamic `new <ctorVar>(buffer)` construct so the
   // runtime-kind element byte codec on the generic index path (`ta[i]` / `ta[i]=v`
   // for an `any` receiver) is enabled in helper functions compiled BEFORE the
@@ -7883,6 +7893,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       ctx.numericLocalVerdict = localVerdicts.isNumericLocal;
       ctx.stringLocalVerdict = localVerdicts.isStringLocal;
     }
+    // (#4121) Same install as the single-source lane — after the numeric-local
+    // verdict the widening predicate reads, before any body compiles.
+    ctx.usageInference.setWidenedCarrierOracle(widenedCarrierOracleFor(ctx));
     ctx.bindingAwareNumericReturnTypes = profilePhase("binding-aware-numeric-return-inference", () =>
       inferBindingAwareNumericReturnTypes(ctx, multiAst.sourceFiles),
     );
@@ -10375,8 +10388,17 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
     if (mixedAssignmentCarrier) {
       (fctx.mixedAssignmentCarrierVars ??= new Set()).add(name);
     }
-    const carrierForcesExternref = initForcesExternref || forInTargetForcesExternref || mixedAssignmentCarrier;
-    const usageF64 = carrierForcesExternref ? null : usageInferredLocalType(ctx, decl);
+    // (#4121) `initForcesExternref` / `forInTargetForcesExternref` describe a
+    // value the slot must physically hold, so they stay absolute. A
+    // mixed-assignment demotion does not — a positive unboxing proof outranks
+    // it (see `numericProofOverridesMixedCarrier`).
+    const hardForcesExternref = initForcesExternref || forInTargetForcesExternref;
+    const usageF64 = hardForcesExternref
+      ? null
+      : mixedAssignmentCarrier
+        ? numericProofOverridesMixedCarrier(usageInferredLocalType(ctx, decl))
+        : usageInferredLocalType(ctx, decl);
+    const carrierForcesExternref = hardForcesExternref || (mixedAssignmentCarrier && usageF64 === null);
     let wasmType: ValType =
       inferredArrayVecType ??
       (carrierForcesExternref || isNullablePrimitiveType(varType) || varBindingNeedsExternrefForUndefined(decl, ctx)
@@ -11038,16 +11060,26 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
         if (initForcesExternref) {
           ctx.externrefAccessorVars.add(name);
         }
-        const carrierForcesExternref = initForcesExternref || bindingHasMixedAssignmentCarrier(ctx, decl);
+        const mixedAssignmentCarrier = bindingHasMixedAssignmentCarrier(ctx, decl);
+        // (#4121) Mirror of the declaration cascade in statements/variables.ts:
+        // a positive unboxing proof outranks the mixed-assignment demotion, and
+        // resolves to `f64` HERE so the pre-hoisted slot and the declaration
+        // agree (the `isI32Coerced` arm below is not licensed by that proof).
+        const mixedCarrierProvenF64 = mixedAssignmentCarrier
+          ? numericProofOverridesMixedCarrier(usageInferredLocalType(ctx, decl))
+          : null;
+        const carrierForcesExternref = initForcesExternref || (mixedAssignmentCarrier && !mixedCarrierProvenF64);
         let wasmType: ValType = carrierForcesExternref
           ? { kind: "externref" }
-          : isI32Coerced
-            ? { kind: "i32" }
-            : isNullablePrimitiveType(varType)
-              ? { kind: "externref" }
-              : (inferLetConstInitializerWasmType(ctx, fctx, decl.initializer) ??
-                usageInferredLocalType(ctx, decl) ??
-                resolveWasmType(ctx, varType));
+          : mixedCarrierProvenF64
+            ? mixedCarrierProvenF64
+            : isI32Coerced
+              ? { kind: "i32" }
+              : isNullablePrimitiveType(varType)
+                ? { kind: "externref" }
+                : (inferLetConstInitializerWasmType(ctx, fctx, decl.initializer) ??
+                  usageInferredLocalType(ctx, decl) ??
+                  resolveWasmType(ctx, varType));
         // (#3123) A let-binding declared as a FNCTOR-SUBCLASS class instance
         // (`class C extends F`, F a top-level plain function) that is
         // REASSIGNED with another static type can hold a HOST object at

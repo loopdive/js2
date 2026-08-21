@@ -10,6 +10,7 @@
  */
 import { ts, forEachChild } from "../../ts-api.js";
 import type { JsTag } from "../../checker/oracle.js";
+import type { WidenedCarrierOracle } from "../../checker/usage-inference.js";
 import type { ValType } from "../../ir/types.js";
 import { annexBExistingVarUpdateNames } from "../annexb-cancel.js";
 import { getLocalType } from "../context/locals.js";
@@ -193,6 +194,66 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
   };
   forEachChild(scope, visit);
   return mixed;
+}
+
+/**
+ * (#4121) Kill switch for the representation-keyed unboxing admission.
+ * `JS2WASM_NUMERIC_ADMISSION=0` (also `off`, or an empty value) restores the
+ * pre-#4121 behaviour exactly: the usage-inference candidate gate keys on the
+ * checker's declared type alone, and a mixed-assignment-carrier demotion is
+ * final. Default on — same convention as `JS2WASM_NUMERIC_LOCALS` /
+ * `JS2WASM_NUMERIC_RETURNS`.
+ */
+export function numericAdmissionEnabled(): boolean {
+  const value = process.env.JS2WASM_NUMERIC_ADMISSION;
+  return value !== "0" && value !== "off" && value !== "";
+}
+
+/**
+ * (#4121) The predicate `UsageInference` consults to admit a declared-SCALAR
+ * binding whose slot codegen is nonetheless about to widen to a boxed carrier.
+ *
+ * Memoized per declaration: the underlying walk is scope-wide, and admission
+ * now asks it once per declaration in a function on top of the existing
+ * per-declaration slot-minting query.
+ *
+ * There is no re-entrancy here — `bindingHasMixedAssignmentCarrier` consults
+ * the oracle and the whole-program numeric fixpoint, never `ctx.usageInference`.
+ */
+export function widenedCarrierOracleFor(ctx: CodegenContext): WidenedCarrierOracle {
+  const memo = new WeakMap<ts.VariableDeclaration, boolean>();
+  return (decl) => {
+    if (!numericAdmissionEnabled()) return false;
+    const cached = memo.get(decl);
+    if (cached !== undefined) return cached;
+    let widened = false;
+    try {
+      widened = bindingHasMixedAssignmentCarrier(ctx, decl);
+    } catch {
+      widened = false;
+    }
+    memo.set(decl, widened);
+    return widened;
+  };
+}
+
+/**
+ * (#4121) Resolve the carrier for a binding codegen would demote to the boxed
+ * externref slot because of a mixed assignment.
+ *
+ * A demotion is a statement about what codegen could not RULE OUT. A positive
+ * unboxing proof is a statement about what it can RULE IN, and it outranks the
+ * demotion: route 1 (#684) proves every USE applies ToNumber — so an f64 slot
+ * is observationally identical even when a string is assigned to it — and
+ * route 2 (#3765) proves every DEFINITION is a number, so no cross-domain
+ * assignment exists at all. #3961's hazard (an i32 boolean slot silently
+ * coercing a later string assignment to truthiness) is untouched: that slot is
+ * i32, not f64, and neither route admits booleans.
+ *
+ * Returns the proven `f64` carrier, or `null` when the demotion stands.
+ */
+export function numericProofOverridesMixedCarrier(provenF64: ValType | null): ValType | null {
+  return numericAdmissionEnabled() ? provenF64 : null;
 }
 
 export function effectiveLocalCarrier(fctx: FunctionContext, expression: ts.Expression, fallback: ValType): ValType {
