@@ -241,6 +241,15 @@ reference bridge exposed a closure-lifetime trap and was not shipped. Track
 that follow-up in [issue 4527](./4527-axios-class-call-concat-vararg-invalid-module.md)
 and [issue 4528](./4528-axios-module-init-symbol-tonumber.md).
 
+## CI follow-up (2026-08-21)
+
+The first CI run for the Axios continuation passed all equivalence, issue,
+smoke, and lint checks but stopped in the host-import policy ratchet. The
+generic Node builtin provider and callback normalization intentionally add 18
+runtime source lines and 22 `resolveImport` lines. The tracked source budget
+now records those measured values (`17118` and `7238`) rather than weakening a
+correctness or performance gate; the raw host-import policy remains active.
+
 ## Unit-infrastructure continuation 4 (Lodash)
 
 The Lodash adapter now selects 18 original QUnit modules instead of seven,
