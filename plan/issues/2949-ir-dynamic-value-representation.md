@@ -2190,3 +2190,31 @@ Validation for this slice:
 - prior #2949 slice suites, equivalence matrix (8 shards), typecheck, lint,
   fallback / adoption / oracle / LOC / function-budget / ir-only / linear-IR
   gates.
+
+### Finding: the LINKED lane drops every claim at final-context preparation
+
+The driver above compiles acorn + the harness as ONE inline source unit. The
+same driver compiled as a **multi-source project** — `compileProject`, which is
+the linked standalone-dynamic lane's real shape — emits **1 of 43** terminal
+functions on this branch, with the same production options (`optimize: 4`,
+`deferTopLevelInit`, standalone):
+
+```
+emitted 1/43
+late-preparation-unsupported 21 · body-shape-rejected 14 ·
+regexp-constructor-unsupported 2 · call-graph-closure 2 ·
+constructor-resolution-unsupported 1 · param-type-not-resolvable 1 ·
+logical-value-unsupported 1 · post-claim withdrawals 0
+```
+
+Those 21 are units the selector **accepted** — they are in the initial
+selection and absent from the prepared selection, with no recorded preparation
+failure — and they include most of what the inline lane emits. The residual
+buckets also read like an older selection state (`regexp-constructor-unsupported`
+is empty in the inline lane).
+
+Consequence: every claim-flip this issue has measured is invisible once acorn is
+compiled as a project graph. The gap is in final-context preparation
+(`reconcileIrOverlayOutcomes`' `late-preparation-unsupported` arm), not in
+selection, so it is #3520's bookkeeping territory rather than this issue's. It
+is unchanged by this slice — measured identically before and after.
