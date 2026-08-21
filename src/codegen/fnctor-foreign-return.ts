@@ -23,13 +23,71 @@
  */
 import ts from "typescript";
 
+/**
+ * (#4610) The name this function-style constructor is reachable under, for the
+ * three spellings the rest of this module already recognises: `function F(){…}`,
+ * `var F = function(){…}` and `F = function(){…}`. Purely syntactic — it reads
+ * the declaration's own parent, never the checker.
+ */
+function fnctorSelfName(funcDecl: ts.FunctionLikeDeclaration): string | undefined {
+  if ((ts.isFunctionDeclaration(funcDecl) || ts.isFunctionExpression(funcDecl)) && funcDecl.name !== undefined) {
+    return funcDecl.name.text;
+  }
+  const parent = funcDecl.parent as ts.Node | undefined;
+  if (parent === undefined) return undefined;
+  if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name) && parent.initializer === funcDecl) {
+    return parent.name.text;
+  }
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isIdentifier(parent.left) &&
+    parent.right === funcDecl
+  ) {
+    return parent.left.text;
+  }
+  return undefined;
+}
+
 export function fnctorBodyMayReturnForeignObject(funcDecl: ts.FunctionLikeDeclaration): boolean {
   if (!funcDecl.body) return false;
+  // (#4610) `return new F(…)` inside F itself — the callable-as-function guard
+  // (`if (!(this instanceof F)) return new F(x);`). See `obviouslyNonForeign`.
+  const selfName = fnctorSelfName(funcDecl);
   let found = false;
   const obviouslyNonForeign = (e: ts.Expression): boolean => {
     let x: ts.Expression = e;
     while (ts.isParenthesizedExpression(x) || ts.isAsExpression(x) || ts.isNonNullExpression(x)) x = x.expression;
     if (x.kind === ts.SyntaxKind.ThisKeyword) return true;
+    // (#4610) SELF-CONSTRUCTION is not a foreign return. `new F(…)` written
+    // inside F's own body yields a value drawn from exactly the set `new F(…)`
+    // already yields at the OUTER construct site, so the override substitutes
+    // nothing the caller's representation did not already have to admit —
+    // formally, with S the value set of `new F(…)`, the body returns either the
+    // fresh receiver (an F instance) or an element of S, and S = {F instances}
+    // satisfies that. Treating it as foreign is what made the ubiquitous
+    // callable-as-function guard
+    //
+    //     function Test262Error(message) {
+    //       if (!(this instanceof Test262Error)) return new Test262Error(message);
+    //       this.message = message || "";
+    //     }
+    //
+    // (test262's own `harness/sta.js`) degrade EVERY Test262Error binding in
+    // EVERY standalone test to externref — 12 asyncHelpers rows failed with
+    // "Promise.prototype.then called on a non-Promise receiver" off the back of
+    // it. Name-matched, exactly like `foreignReturnFunctionNames`: a runtime
+    // rebinding of `F` is the same (already accepted) risk the `__fnctor_<name>`
+    // mapping takes everywhere else. Any OTHER `return <object>` in the body
+    // still trips the predicate, so a genuine override is never missed.
+    if (
+      selfName !== undefined &&
+      ts.isNewExpression(x) &&
+      ts.isIdentifier(x.expression) &&
+      x.expression.text === selfName
+    ) {
+      return true;
+    }
     if (ts.isNumericLiteral(x) || ts.isStringLiteral(x) || ts.isNoSubstitutionTemplateLiteral(x)) return true;
     if (
       x.kind === ts.SyntaxKind.TrueKeyword ||

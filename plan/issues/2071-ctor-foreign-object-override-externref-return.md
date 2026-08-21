@@ -127,3 +127,56 @@ too — the whole `S13.2.2_A15` family is green in the standalone lane:
 
 `A12`/`A11` are different defects (union-typed field write; missing
 `this.func` TypeError) — not this issue.
+
+## Follow-up (2026-08-21): self-construction is not a foreign return
+
+The predicate `fnctorBodyMayReturnForeignObject` counted the ubiquitous
+**callable-as-function guard** as a foreign return:
+
+```js
+function Test262Error(message) {                       // test262/harness/sta.js
+  if (!(this instanceof Test262Error)) return new Test262Error(message);
+  this.message = message || "";
+}
+```
+
+`Test262Error` is in the assembled harness of **every** test262 file, so this
+degraded every `Test262Error` binding in the STANDALONE lane to externref.
+Measured knock-on: `inferParamTypeFromCallSites` then agreed `externref` for
+`$DONE`'s implicit-any parameter instead of the `__fnctor_Test262Error` struct,
+and **12** `test/harness/asyncHelpers-throwsAsync-*.js` rows failed with
+`TypeError: Promise.prototype.then called on a non-Promise receiver`
+(bisect: pass at `f2ee892b95`, fail at `a59e7491a1`; consumer isolated
+empirically to the `resolveWasmType` degrade — the ctor-ABI and
+property-access-dispatch arms were each switched off independently and neither
+changed the verdict).
+
+Fix: `return new F(…)` written **inside F itself** is now `obviouslyNonForeign`.
+It is sound and stays purely syntactic — with `S` the value set of `new F(…)`,
+the body returns either the fresh receiver (an F instance) or an element of `S`,
+so `S = {F instances}` satisfies the recursion and the override substitutes
+nothing the outer construct site did not already admit. Any *other*
+`return <object>` in the body still trips the predicate.
+
+Ledger (standalone lane, single-test probes on this branch):
+
+| bucket | before | after |
+| --- | --- | --- |
+| `asyncHelpers-throwsAsync-*` (12 rows) | FAIL | **PASS** |
+| `asyncHelpers-asyncTest-return-not-thenable` | PASS | FAIL (also FAIL at `f2ee892b95`) |
+| other 8 asyncHelpers rows | unchanged | unchanged |
+| `probe/v2,v8,z1,z4`, `S13.2.2_A15_T1/T3` | PASS | PASS |
+| host (gc) lane, all 21 asyncHelpers + the 7 above | — | byte-for-byte same verdicts |
+
+**Known residual — `asyncHelpers-asyncTest-return-not-thenable`.** It failed at
+`f2ee892b95` with the identical `[false × 6]` message, so #2071 was masking a
+*separate* latent hole rather than fixing it: `inferParamTypeFromCallSites`
+narrows `$DONE`'s implicit-any parameter to `ref null $__fnctor_Test262Error`
+off the single `$DONE(new Test262Error(…))` call site in `asyncHelpers.js`,
+while the other call sites forward untyped identifiers that contribute nothing
+to the agreement — so a real `TypeError` reaching `$DONE` is mangled and
+`error instanceof TypeError` answers false. The #2867-S2 withdrawal does not
+apply (`$DONE` does not escape as a value). Worth its own issue; the guard
+would be "withdraw a `__fnctor_*` ref narrowing when some call site passed an
+argument the scan could not type", whose corpus-wide blast radius needs a full
+test262 run to size.
