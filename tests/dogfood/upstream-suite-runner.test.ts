@@ -72,6 +72,7 @@ QUnit.test("promise and type assertions", async function () {
   await expect(Promise.resolve("ok")).resolves.toBe("ok");
   await expect(Promise.reject(new Error("expected"))).rejects.toThrow("expected");
   expectTypeOf("compile-time only").toEqualTypeOf();
+  expectTypeOf(() => {}).toBeFunction();
 });
 ${UPSTREAM_TEST_EXPORTS}`;
 
@@ -102,8 +103,10 @@ ${UPSTREAM_TEST_EXPORTS}`;
     const generatedPath = join(root, "suite.ts");
     const source = `${UPSTREAM_TEST_SHIM}
 let setupCount = 0;
+let teardownCount = 0;
 describe("lifecycle", () => {
   beforeAll(() => { setupCount += 1; });
+  afterEach(() => { teardownCount += 1; });
   afterAll(() => { setupCount += 1; });
   test("runs beforeAll once and supports spyOn", () => {
     expect(setupCount).toBe(1);
@@ -113,6 +116,11 @@ describe("lifecycle", () => {
   });
   test("retains the lifecycle state for the next test", () => {
     expect(setupCount).toBe(1);
+    expect(teardownCount).toBe(1);
+  });
+  test("runs afterEach after an async callback", async () => {
+    expect(teardownCount).toBe(2);
+    await Promise.resolve();
   });
 });
 ${UPSTREAM_TEST_EXPORTS}`;
@@ -128,12 +136,12 @@ ${UPSTREAM_TEST_EXPORTS}`;
         if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
         else process.env.NODE_OPTIONS = previousNodeOptions;
       }
-      expect(result.native.statuses).toEqual([true, true]);
-      expect(result.native.errors).toEqual(["", ""]);
+      expect(result.native.statuses).toEqual([true, true, true]);
+      expect(result.native.errors).toEqual(["", "", ""]);
       expect(result.compile.success).toBe(true);
       expect(result.compile.validates).toBe(true);
-      expect(result.wasm?.statuses).toEqual([true, true]);
-      expect(result.wasm?.errors).toEqual(["", ""]);
+      expect(result.wasm?.statuses).toEqual([true, true, true]);
+      expect(result.wasm?.errors).toEqual(["", "", ""]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

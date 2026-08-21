@@ -24,6 +24,7 @@ files:
   - tests/dogfood/react-dom-upstream-suite.mjs
   - tests/dogfood/react-dom-upstream-suite.test.ts
   - tests/dogfood/react-upstream-suite.mjs
+  - tests/dogfood/hono-upstream-suite.mjs
   - tests/dogfood/hono-upstream-suite-pin.json
   - tests/dogfood/hono-upstream-suite.test.ts
   - tests/dogfood/upstream-suite-runner.mjs
@@ -137,3 +138,20 @@ compile, validate, and pass in Wasm: the suite moves from 205 to 207 admitted
 callbacks and from 79 to 81 passes. The remaining 2,148 Hono registrations are
 visible as unavailable infrastructure until their external test/package and
 platform adapters are wired; no tests were rewritten or counted as passes.
+
+## Unit-infrastructure continuation
+
+The Hono adapter now resolves the published package's bare-root and
+directory-index imports, removes multiline type-only imports without changing
+the callback bodies, and preserves the source directory in generated paths so
+same-named `index.test.ts` files cannot overwrite one another. The shared
+upstream shim also provides `expectTypeOf(...).toBeFunction()` and executes
+`afterEach` hooks around synchronous and promise-returning callbacks.
+
+The expanded immutable Hono slice selects 16 original files and registers 297
+callbacks. The native oracle passes 296; 15/16 Wasm modules validate and
+86/296 callbacks pass in Wasm. The report records the remaining 2,058
+unavailable registrations explicitly. The one native failure, one invalid Wasm
+module, and six module-initialization/runtime failures remain visible as test
+or compiler/runtime defects rather than being reclassified as unavailable
+infrastructure.
