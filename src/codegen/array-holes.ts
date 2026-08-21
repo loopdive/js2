@@ -303,15 +303,6 @@ function isProvablyWritableDataDescriptorLiteral(node: ts.Expression | undefined
   return writableTrue;
 }
 
-/** Every descriptor in a Properties bag must be provably writable data. */
-function isProvablyWritableDataDescriptorBag(node: ts.Expression | undefined): boolean {
-  if (!node || !ts.isObjectLiteralExpression(node)) return false;
-  for (const prop of node.properties) {
-    if (!ts.isPropertyAssignment(prop) || !isProvablyWritableDataDescriptorLiteral(prop.initializer)) return false;
-  }
-  return true;
-}
-
 /**
  * (#4504) Detect descriptors that can change an inherited [[Set]] outcome.
  * Accessor declarations are included because class/object-literal accessors
