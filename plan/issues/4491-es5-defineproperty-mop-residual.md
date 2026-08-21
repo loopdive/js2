@@ -44,6 +44,19 @@ loc-budget-allow:
   # dispatch/wiring is in the big files.
   - src/codegen/array-object-proto.ts
   - src/codegen/statements/loops.ts
+  # 2026-08-21 wave-3 lane C, arguments [[ParameterMap]] slice: a lifted
+  # function EXPRESSION built the same arguments vec as a declaration but never
+  # installed `mappedArgsInfo`, so §10.2.11 step 22.a's mapped/unmapped split
+  # depended on how the function was SPELLED. The install goes in the existing
+  # `needsImplicitArgumentsObject` block of `compileLiftedClosureBody`; the
+  # `mappedArgsInfo` shape itself gains one optional Set field.
+  - src/codegen/closures.ts
+  - src/codegen/context/types.ts
+  # 2026-08-21 wave-3 lane C, §10.1.6.3 step 4.c guard: the accessor→data
+  # refusal in `__defineProperty_value`'s ValidateAndApply preflight gains its
+  # missing IsGenericDescriptor precondition. One nested `if` around the
+  # existing throw; no new natives, no local-vector change.
+  - src/codegen/object-runtime-descriptors.ts
 oracle-ratchet-allow:
   # 2026-08-21: one getTypeAtLocation in varBindingNeedsExternrefForUndefined's
   # new call arm — the same raw-checker idiom as the surrounding predicate;
@@ -55,6 +68,24 @@ oracle-ratchet-allow:
   # void-0/#4206 arms regressed the filter harness family) — same TypeFlags
   # purity query, same rationale.
   - src/codegen/declarations.ts
+coercion-sites-allow:
+  # 2026-08-21 wave-3 lane C: NOT new coercion vocabulary — the missing half of
+  # an existing pair. `compileLiftedClosureBody` already ensures `__box_number`
+  # two lines above (param → arguments slot); the mapped REVERSE sync
+  # (`emitMappedArgReverseSync`, logical-ops.ts) unboxes back into an f64/i32
+  # parameter and silently degrades to a wrong value when `__unbox_number` is
+  # absent. `compileFunctionBody` has ensured both since #849; the lifted
+  # closure path ensured only one because it never installed `mappedArgsInfo`.
+  - src/codegen/closures.ts
+  # 2026-08-21 wave-3 lane B: ONE `number_toString` in the new
+  # `__strexo_push_keys` native. It is not a hand-rolled matrix — it is the
+  # SEALED formatter, used for the one thing §10.4.3.6 requires here (the
+  # canonical index KEY `ToString(i)`), identically to every other index-key
+  # producer in the tree (`__extern_get_idx`'s `$Object` arm, the #3251 overlay
+  # companion lookup, `emitArrayForIn`). Hand-rolling a digit loop instead is
+  # exactly what this gate exists to prevent, so the reviewed grant is the
+  # correct outcome rather than an avoidance.
+  - src/codegen/string-exotic-own-props.ts
 func-budget-allow:
   # 2026-08-21 defineProperties/create edge slice: the `Properties`-map entry
   # model gains a PASS-THROUGH arm (a map entry that is not an object literal)
@@ -65,6 +96,14 @@ func-budget-allow:
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
   - src/codegen/object-ops.ts::compilePropertyIntrospection
+  # 2026-08-21 wave-3 lane C, arguments [[ParameterMap]] slice.
+  # `compileLiftedClosureBody` grows by the mapped-arguments install (+32).
+  # `compileObjectDefinePropertyCore` is NOT growth: `compileObjectDefineProperty`
+  # was split into an 8-line wrapper (which emits §10.4.4.2 step 5.b.i after the
+  # define) plus the unchanged body under the new name, so the baseline's entry
+  # moved rather than grew. The post-merge baseline refresh absorbs the rename.
+  - src/codegen/closures.ts::compileLiftedClosureBody
+  - src/codegen/object-ops.ts::compileObjectDefinePropertyCore
   # 2026-08-21 wave-3 lane B, §10.4.3 String-exotic own KEYS: two one-call
   # prologue splices (`__object_keys` + `__object_keys_forin`), +7 lines total.
   # They MUST live inside this builder — each one references the result-vector
@@ -73,16 +112,6 @@ func-budget-allow:
   # implementation is already in a separate module
   # (src/codegen/string-exotic-own-props.ts, +184); this is call-site wiring.
   - src/codegen/object-runtime-enumeration.ts::buildObjectEnumerationHelpers
-coercion-sites-allow:
-  # 2026-08-21 wave-3 lane B: ONE `number_toString` in the new
-  # `__strexo_push_keys` native. It is not a hand-rolled matrix — it is the
-  # SEALED formatter, used for the one thing §10.4.3.6 requires here (the
-  # canonical index KEY `ToString(i)`), identically to every other index-key
-  # producer in the tree (`__extern_get_idx`'s `$Object` arm, the #3251 overlay
-  # companion lookup, `emitArrayForIn`). Hand-rolling a digit loop instead is
-  # exactly what this gate exists to prevent, so the reviewed grant is the
-  # correct outcome rather than an avoidance.
-  - src/codegen/string-exotic-own-props.ts
 ---
 
 # #4491 — ES5 defineProperty/defineProperties/create MOP residual
@@ -1113,3 +1142,230 @@ Gates: `check:loc-budget`, `check:func-budget`, `check:coercion-sites`,
   dropped before the runtime sees it (`gOPN` also `[]`), so
   `getOwnPropertyNames/15.2.3.4-4-b-3` still fails for a reason upstream of
   key enumeration.
+
+## 2026-08-21 wave-3 lane C — the `arguments` [[ParameterMap]] cluster (6 rows)
+
+All 36 of lane C's rows were re-run serially on this head before any edit; all
+36 reproduced, so nothing below is inherited from the dispatch list.
+
+The dispatch brief expected these six to need "a new arguments carrier". They
+did not. The cluster is **two independent defects in the existing mapped-args
+machinery**, and both are visible from one three-line probe.
+
+### Defect 1 — the mapped/unmapped split depended on how the function was SPELLED
+
+`compileFunctionBody` has installed `mappedArgsInfo` for function DECLARATIONS
+since #849. `compileLiftedClosureBody` builds the identical arguments vec for a
+function EXPRESSION and never installed it, so every mapped emitter
+(`emitMappedArgParamSync`, `emitMappedArgReverseSync`, the
+`Object.defineProperty(arguments, …)` arms) was simply off for the expression
+form. Measured, one program (`.tmp/probe/p3.js`), standalone:
+
+| form | `arguments[0] = 9` → `a` | `defineProperty(arguments,"0",{value:9})` → `a` |
+| ---- | ------------------------ | ---------------------------------------------- |
+| `function g(a,b,c)` (declaration) | 9 ✅ | 9 ✅ |
+| `var m = function (a,b,c)` (expression) | 0 ❌ | 0 ❌ |
+
+Every one of the six failing tests is an IIFE — `(function (a,b,c) { … }(0,1,2))`
+— which is why the whole cluster reads as an "arguments object" gap.
+
+Fix: install `mappedArgsInfo` in the existing `needsImplicitArgumentsObject`
+block of `compileLiftedClosureBody`, gated exactly as the declaration path is
+(§10.2.11 step 22.a: `isSimpleParameterList` ∧ ¬`isStrictFunction`), with
+`paramOffset: 1` because a lifted closure carries `__self` at local 0 — the
+same shape `new-super.ts` already uses for lifted methods. `__unbox_number` is
+ensured beside the `__box_number` the block already ensured: the forward sync
+boxes a param INTO the slot, the reverse sync unboxes back OUT into it, and only
+the first half was present (the reverse sync degrades silently when the import
+is missing).
+
+### Defect 2 — §10.4.4.2 sequenced Map.[[Delete]] before Map.[[Set]]
+
+With defect 1 fixed the six tests still failed, because their first define is
+`{value: 10, writable: false, …}`. Step 5.b of ArgumentsExotic.[[DefineOwnProperty]]
+is ordered: **5.b.i `Map.[[Set]](P, Desc.[[Value]])` — which writes the linked
+formal parameter — and only then 5.b.ii `Map.[[Delete]](P)` when `writable` is
+present and false.** The compiler severed the link while PARSING the descriptor
+(`unmappedIndices.add`), then routed the define to the runtime, which writes only
+the arguments slot. So `a` kept its old value:
+
+| probe (`.tmp/probe/p4.js`, declaration form, so defect 1 is not in play) | before | after |
+| --- | --- | --- |
+| `defineProperty(arguments,"0",{value:20,writable:false,e:false,c:false})` → `a` | 0 ❌ | 20 ✅ |
+| …then a second `{value:20}` → TypeError, `a` | threw ✅, `a` = 0 ❌ | threw ✅, `a` = 10 ✅ |
+| its `getOwnPropertyDescriptor` | `20/false/false/false` ✅ | unchanged ✅ |
+
+Fix: `compileObjectDefineProperty` is now an 8-line wrapper around the unchanged
+body (`compileObjectDefinePropertyCore`). When the core hands a mapped-index data
+define with an explicit `[[Value]]` to the generic path, it records the debt; the
+wrapper emits step 5.b.i **after** the define, reading the value back out of the
+arguments slot the define just wrote. That evaluates the descriptor exactly once
+and makes the two steps land in spec order (the emitter's severed-index check is
+re-opened for the duration of that one emission). The core records the debt
+rather than the wrapper re-deriving the fast-path predicate, so the two cannot
+disagree about which defines the inline path took.
+
+### The interlock this exposed, and the regression it caused
+
+Marking a mapped index as "now runtime-defined" was necessary — otherwise a
+later `{value: 20}` takes the inline fast path, writes the opaque vec slot, and
+leaves the sidecar descriptor reporting the OLD value (`15.2.3.6-4-293-3`
+failed exactly there: `0 descriptor value should be 20`). But the first cut
+stopped at that, and the inline path is also the only one that wrote the
+parameter — so `Object.defineProperty(arguments,"0",{configurable:false})`
+followed by `{value:2}` stopped updating `a`. **The 812-row control caught it:
++6 / −4.** Four `language/arguments-object/mapped/*` rows regressed. Generalising
+the debt to *every* generic-path value define on a still-mapped index (not just
+the `writable:false` one) fixes both directions; the re-run is below.
+
+### Measured — paired A/B, 812 rows, serial single-test standalone probes
+
+Set: all of `language/arguments-object` (263) + all of
+`language/expressions/function` (264) + `built-ins/Object/defineProperty/15.2.3.6-4-{2,3}*`
+(285). Base copies captured at the first edit (`.tmp/base/`), A/B by file copy on
+one head.
+
+| | base | after |
+| --- | --- | --- |
+| pass | 699 | **706** |
+| fail | 107 | 100 |
+| compile_error | 6 | 6 |
+
+**7 up, 0 down.** The six targets — `defineProperty/15.2.3.6-4-{292-1, 293-2,
+293-3, 294-1, 295-1, 296-1}` — plus one not predicted:
+`language/arguments-object/mapped/nonconfigurable-descriptors-set-value-with-define-property.js`,
+which is defect 2 in its own words.
+
+Gates: `check:loc-budget`, `check:func-budget`, `check:coercion-sites`,
+`check:oracle-ratchet` all OK (grants added to this file's frontmatter — note
+`compileObjectDefinePropertyCore` is a RENAME, not growth). `tsc` reports no
+error in `closures.ts`, `object-ops.ts` or `context/types.ts`.
+
+### Diagnosed but NOT taken (measured, so it is not re-derived)
+
+- **An ACCESSOR define on a mapped index does not install the accessor.**
+  `(function (a) { Object.defineProperty(arguments, "0", { get: function () {
+  return 10; } }); return arguments[0]; })(0)` answers **0**, not 10 — §10.4.4.2
+  step 5.a severs the map and the property becomes a real accessor, but the
+  compiled `arguments[i]` read still goes to the vec slot. No row in lane C
+  needs it (all six are data descriptors), and it needs the element READ to
+  consult the sidecar, which is the same convergence the 3-138 row wants.
+- **`defineProperties/15.2.3.7-2-16` and `create/15.2.3.5-4-15` are unchanged**
+  by this slice, and the earlier note about them needs one correction: an
+  arguments object tags `[object Arguments]` correctly and reports the right
+  `length` **inside** its function — measured on this head (`.tmp/probe/p1.js`):
+  `len=3`, `cls=[object Arguments]`, `defineProperty(arguments,"bar",…)` lands
+  and `hasOwnProperty("bar")` is true, `gOPD(arguments,"0")` round-trips. What
+  those two tests need is the arguments object as the `Properties` MAP after it
+  has ESCAPED its function (`var props = new Fun()` / `return arguments`): the
+  escaped value no longer answers the vec-carrier test, so
+  `__defineProperties` refuses with `[SITE-PROPS-BAG-NOT-AUTHORITATIVE]`
+  (`object-runtime-descriptors.ts` `nonVecFallback`). That is a carrier-identity
+  row, not an arguments-MOP row.
+
+## 2026-08-21 wave-3 lane C — §10.1.6.3 step 4.c lost its IsGenericDescriptor precondition
+
+`built-ins/Object/defineProperty/15.2.3.6-4-59` defines an accessor and then
+redefines it with an EMPTY descriptor, `Object.defineProperty(obj, "foo", {})`,
+which §10.1.6.3 makes a no-op. Standalone threw
+`Cannot redefine property: cannot convert a non-configurable accessor to a data
+property`.
+
+**Root cause.** The `__defineProperty_value` ValidateAndApply preflight
+(`object-runtime-descriptors.ts`, `s4Preflight`) implements step 4.c as "current
+entry is an accessor ⇒ throw". The spec's step 4.c is guarded: *"If
+IsGenericDescriptor(Desc) is **false** and IsAccessorDescriptor(Desc) is not
+IsAccessorDescriptor(current)"*. A descriptor mentioning neither `[[Value]]` nor
+`[[Writable]]` converts nothing, so it must not reach 4.c at all. The apply path
+20 lines below already had this right — its `keepAccessor` arm is literally
+"existing accessor AND a GENERIC desc … the accessor halves stay live" — so the
+preflight was throwing before its own correct implementation could run.
+
+**Fix.** Wrap the existing throw in an `hf & (HOST_HAS_VALUE |
+HOST_WRITABLE_SPECIFIED)` test. Steps 4.a/4.b, which run BEFORE 4.c, still reject
+a generic descriptor asking for `configurable: true` or a different `enumerable`,
+so nothing that must throw stops throwing.
+
+**Control matrix** (`.tmp/probe/p6.js`, one program, standalone — the
+must-still-throw rows are the point):
+
+| probe | before | after | expected |
+| ----- | ------ | ----- | -------- |
+| E `{}` over a NON-configurable accessor | **throws** | `function/function/false/false` | no-op ✅ |
+| F `{value:1}` over a NON-configurable accessor | throws | **throws** | TypeError ✅ |
+| G `{writable:true}` over a NON-configurable accessor | throws | **throws** | TypeError ✅ |
+| K `{enumerable:true}` over a NON-configurable, non-enumerable accessor | throws (4.b) | **throws (4.b)** | TypeError ✅ |
+| L `{configurable:true}` over a NON-configurable accessor | throws (4.a) | **throws (4.a)** | TypeError ✅ |
+| I `{enumerable:true}` where current already IS enumerable | **throws** | `function/true/false` | no-op ✅ |
+| J `{configurable:false}` over a NON-configurable accessor | **throws** | `function/false` | no-op ✅ |
+| H `{value:7}` over a CONFIGURABLE accessor | `7/undefined` | `7/undefined` | conversion ✅ |
+| M `{}` over a plain data prop | `5/true` | `5/true` | no-op ✅ |
+| N `{}` over a non-writable non-configurable data prop | `5/false/false` | unchanged | no-op ✅ |
+| O `{}` on an ABSENT key | `undefined/false/false/false` | unchanged | creates ✅ |
+| P `{enumerable:true}` over a CONFIGURABLE accessor | `function/true/true` | unchanged | attrs only ✅ |
+
+**Measured — paired A/B, serial single-test standalone probes, base = the
+commit above (file-copy revert):**
+
+| set | rows | base | after | up | down |
+| --- | ---: | ---: | ----: | -: | ---: |
+| `Object/{freeze,seal}` (147) + `defineProperty/15.2.3.6-4-<1-2 digit>*` (122) + every 3rd `getOwnPropertyDescriptor` (104) + `defineProperties/15.2.3.7-{5-b-2xx,6-a-<1-2 digit>}` (156) | 529 | 509 pass | 510 pass | **1** | **0** |
+| all of `built-ins/Object/create` — the plural applier calls this same native | 320 | 319 pass | 319 pass | 0 | **0** |
+
+The single flip is `15.2.3.6-4-59`. Gates: `check:loc-budget`,
+`check:func-budget`, `check:coercion-sites`, `check:oracle-ratchet` all OK;
+`tsc` reports no error in the touched file.
+
+### Adjacent defect found while probing, NOT fixed here
+
+`Object.defineProperty(o, k, { get: g })` where `g` is a VARIABLE holding
+`null` does **not** throw (`.tmp/probe/p5.js` row D) — §6.2.5.6 requires a
+TypeError for a `get` that is present, not undefined and not callable. The
+LITERAL spelling `{ get: null }` is caught at compile time (#3116), which is why
+`create/15.2.3.5-4-258` and `defineProperties/15.2.3.7-5-b-218` still pass. The
+runtime reader's singleton arm normalises the undefined singleton to a null slot
+and then cannot tell the two apart. Fixing it means giving the reader a
+representation that distinguishes "present undefined" from "present null" — the
+#2106 value-representation lane, not this one.
+
+### 15.2.3.6-4-21 is NOT the `get: undefined` bug it looks like
+
+Its shape — install `{set: setter}`, then redefine with `{get: getter}` where
+`getter` is `undefined` — is **already correct on this head** when it runs inside
+a function (`.tmp/probe/p5.js` row A: `d2.get === getter` ✅, `d2.set === setter`
+✅, `configurable`/`enumerable` both `false` ✅). The test declares its bindings
+at TOP LEVEL, so whatever it hits is a module-scope binding/shape difference, not
+the descriptor reader. Recorded so the next attempt starts from the probe rather
+than from the error text.
+
+## 2026-08-21 wave-3 lane C — the remaining 29 rows, triaged from SOURCE
+
+Lane C's slice was 36 rows (`defineProperty` 20, `defineProperties` 6,
+`getOwnPropertyDescriptor` 3, `create` 1, `Object/prototype` 6). All 36 were
+re-run serially on this head before any edit and all 36 reproduced; **7 now
+pass** (the six `[[ParameterMap]]` rows plus `15.2.3.6-4-59`). The other 29 are
+grouped below by the defect that actually causes them — each line is what was
+measured, not what the error text says.
+
+| n | rows | root cause | owner |
+| -: | ---- | ---------- | ----- |
+| 3 | `Object/prototype/valueOf/S15.2.4.4_A1_T{1,2,3}` | `new Object(<primitive>)` does not build a primitive WRAPPER, so `__dyn_valueOf` (`wrapper-valueof.ts`) finds no `WRAPPER_PRIMITIVE_KEY` slot and falls to its identity arm. The error text renders as `SameValue(«1.1», «1.1»)` because the wrapper stringifies as its primitive — a TYPE bug that reads as a VALUE bug, exactly as that module's header warns. Fix belongs at the `new Object(x)` lowering, not the valueOf helper. | value-representation |
+| 3 | `defineProperty/15.2.3.6-4-{195,243-1,243-2}`, `defineProperties/15.2.3.7-6-a-{204,231}` (5 rows, 3 distinct shapes) | accessor installed at an ARRAY INDEX: it installs and reports the right descriptor, but the element READ/WRITE does not dispatch through it. This is #4159's typed-lane subject plus the alias leak already recorded above. | array lane (#4159) |
+| 3 | `defineProperty/15.2.3.6-4-183`, `defineProperties/15.2.3.7-6-a-179`, and the `length` half of `-113` | array INDEX at 2^32-2 must bump `length` to 2^32-1 | #4497 (`vec-index-domain.ts` ceiling) |
+| 2 | `defineProperty/15.2.3.6-4-117`, `defineProperties/15.2.3.7-6-a-113` | `Array.prototype.length` read inside a closure → `illegal cast` | builtin-prototype-value |
+| 2 | `getOwnPropertyDescriptor/15.2.3.3-4-{34,116}` | `gOPD(Function.prototype, "constructor")` / `gOPD(Date.prototype, "constructor")` answer nothing. Verified against `Object`/`Array`, which answer `true/true/false/true` correctly — so this is not a gOPD gap but the DECLINE that `builtin-proto-constructor.ts` (#4200) documents in its own header: Date, String, Number, Boolean and Function have no identity-stable carrier, and minting one changes what the BARE identifier reads. Explicitly deferred there, not here. | #4200 follow-up |
+| 2 | `defineProperties/15.2.3.7-2-16`, `create/15.2.3.5-4-15` | the arguments object as the `Properties` MAP after it has ESCAPED its function — see the correction above; a carrier-identity row, not an arguments-MOP row | carrier identity |
+| 2 | `defineProperty/15.2.3.6-{3-123,625gs}`, `S15.2.3.6_A1` (3 rows) | module-goal-unreachable or host-shaped: `3-123` needs sloppy-script `this` (already parked above); `625gs` needs a global `var` to win over `Object.prototype`; `S15.2.3.6_A1` reaches `Document.createElement` | out of lane |
+| 1 | `defineProperty/15.2.3.6-3-138` | the banked static-read/dynamic-store divergence (closed struct already declaring the key + non-inline descriptor). Confirmed still reproducing; needs the property-access convergence, which is another lane's file. | struct/dyn convergence |
+| 1 | `defineProperty/15.2.3.6-4-21` | NOT the `get: undefined` bug it looks like — see the probe above; the same shape is already correct inside a function, so it is a top-level-binding difference | unclassified |
+| 1 | `defineProperty/15.2.3.6-4-408` | Date-instance own-storage visibility (already routed here 2026-08-20) | Date carrier |
+| 1 | `defineProperty/15.2.3.6-4-589` | a Date object stored through a prototype-chain accessor reads back `NaN` | value-representation |
+| 1 | `defineProperty/15.2.3.6-4-622` | `verifyProperty(Date, "now", …)` — `Date.now`'s own descriptor is correct (`function/true/false/true`, probed), so the failure is elsewhere in `verifyProperty`'s walk | unclassified |
+| 1 | `getOwnPropertyDescriptor/15.2.3.3-4-4` | `gOPD(globalThis, "eval")` | global object |
+| 1 | `Object/prototype/S15.2.4_A1_T2` | `delete Object.prototype.toString` then calling it must throw | builtin-proto delete |
+| 1 | `Object/prototype/constructor/S15.2.4.1_A1_T2` | `new (Object.prototype.constructor)` — "is not a constructor" | #4200 follow-up |
+| 1 | `Object/prototype/valueOf/S15.2.4.4_A14` | `(1, Object.prototype.valueOf)()` must throw on an undefined `this` | ToObject on undefined |
+
+Nothing in this table is blocked on the descriptor MOP itself any more: the two
+slices above closed the last rows whose cause lived in `object-ops.ts` /
+`object-runtime-descriptors.ts`.

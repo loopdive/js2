@@ -140,6 +140,8 @@ export { isVecOrArrayRefType, isHostCallbackArgument, isDeferredCallbackArgument
 import { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding } from "./closures/funcref-as-closure.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
+// (#4491) §10.2.11 step 22.a — the mapped-vs-unmapped `arguments` split.
+import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
 export { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding };
 
 function emitClosureDefaultReturnValue(
@@ -2485,6 +2487,38 @@ export function compileLiftedClosureBody(
     const vecRef: ValType = { kind: "ref", typeIdx: vti };
     const argsLocal = allocLocal(liftedFctx, "arguments", vecRef);
     const arrTmp = allocLocal(liftedFctx, "__args_arr_tmp", { kind: "ref", typeIdx: ati });
+
+    // (#4491) §10.2.11 step 22.a — a non-strict function expression with a simple
+    // parameter list gets a MAPPED arguments object, exactly like the declaration
+    // form. The reverse sync unboxes into an f64/i32 param, so `__unbox_number`
+    // must exist before the mapped emitters look it up.
+    if (hasNumericParam) {
+      ensureLateImportShared(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
+      flushLateImportShiftsShared(ctx, liftedFctx);
+    }
+    // `compileFunctionBody` has installed this for DECLARATIONS since #849; the
+    // lifted expression form built the identical vec and never did, so
+    // `(function (a) { arguments[0] = 1; })(0)` left `a` untouched while
+    // `function f(a) { … }` updated it. Every mapped emitter keys off
+    // `mappedArgsInfo`, so this is what turns them on for the expression form.
+    const argsParams = runtimeParameters(arrow);
+    if (
+      arrowParams.length > 0 &&
+      isSimpleParameterList(argsParams) &&
+      !isStrictFunction(arrow, ctx.inferModuleStrictArguments)
+    ) {
+      liftedFctx.mappedArgsInfo = {
+        argsLocalIdx: argsLocal,
+        arrTypeIdx: ati,
+        vecTypeIdx: vti,
+        paramCount: arrowParams.length,
+        paramOffset: 1, // lifted closures carry __self at local 0
+        paramTypes: arrowParams.slice(),
+      };
+      // (#2676) Keyed by the declaration so a `delete args[i]` in a nested
+      // strict closure can resolve an aliased `arguments` back to here.
+      ctx.mappedArgsInfoByFunc.set(arrow, liftedFctx.mappedArgsInfo);
+    }
 
     // (#779e) Build the arguments vec via the shared extras-aware helper so the
     // closure sees the TRUE call-site argument count (from __argc/__extras_argv

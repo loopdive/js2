@@ -330,13 +330,35 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
               },
               // 4.c: data↔accessor conversion. This is the DATA define path; if the
               // current entry is an accessor, converting it to data is forbidden.
-              ...eflBit(FLAG_ACCESSOR),
+              //
+              // (#4491) …but only when Desc is NOT generic. Step 4.c reads "If
+              // IsGenericDescriptor(Desc) is false and IsAccessorDescriptor(Desc)
+              // is not IsAccessorDescriptor(current)" — a descriptor that mentions
+              // neither [[Value]] nor [[Writable]] converts nothing, so
+              // `Object.defineProperty(o, k, {})` (and an attributes-only
+              // descriptor that agrees with the current attributes) over a
+              // non-configurable accessor is a legal no-op, not a TypeError.
+              // Steps 4.a/4.b above still reject a generic descriptor that asks
+              // for configurable:true or a different enumerable, and step 5's
+              // `keepAccessor` arm below already applies the generic case
+              // correctly — this only removes a throw that pre-empted it
+              // (`built-ins/Object/defineProperty/15.2.3.6-4-59`).
+              ...hfBit(HOST_HAS_VALUE),
+              ...hfBit(HOST_WRITABLE_SPECIFIED),
+              { op: "i32.or" },
               {
                 op: "if",
                 blockType: { kind: "empty" },
-                then: s4Throw(
-                  "TypeError: Cannot redefine property: cannot convert a non-configurable accessor to a data property",
-                ),
+                then: [
+                  ...eflBit(FLAG_ACCESSOR),
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: s4Throw(
+                      "TypeError: Cannot redefine property: cannot convert a non-configurable accessor to a data property",
+                    ),
+                  },
+                ],
               },
               // 4.d: both data, current non-writable (FLAG_WRITABLE clear) → reject
               // a writable:true request OR a value change (SameValue).

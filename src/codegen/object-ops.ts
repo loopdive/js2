@@ -850,7 +850,89 @@ function emitInheritedTrueDescriptorDefineProperty(
   );
 }
 
+/**
+ * (#4491) §10.4.4.2 step 5.b.i — the parameter write owed by a define that the
+ * inline mapped fast path declined.
+ *
+ * `emitMappedArgValueDefine` handles the shapes it can lower inline (it writes
+ * the slot AND the linked parameter). Every other data define on a mapped index
+ * — `writable: false`, or any index whose descriptor already lives in the
+ * runtime sidecar — falls through to the generic define, which writes only the
+ * arguments slot. The linked formal parameter was then left at its old value:
+ * `(function (a) { Object.defineProperty(arguments, "0", { value: 20, writable:
+ * false }); return a; })(0)` answered 0, not 20.
+ *
+ * The core records the debt HERE rather than the wrapper re-deriving the
+ * fast-path predicate, so the two can never disagree about which defines the
+ * inline path took. Saved/restored around the core call, since compiling the
+ * descriptor can itself contain a nested `Object.defineProperty`.
+ */
+type PendingMappedArgSync = { info: NonNullable<FunctionContext["mappedArgsInfo"]>; argIndex: number };
+let pendingMappedArgSync: PendingMappedArgSync | null = null;
+
+/**
+ * Emit step 5.b.i for the case above, AFTER the define has stored the value in
+ * the arguments slot: read that slot back — it is exactly `Desc.[[Value]]`, so
+ * the descriptor expression is evaluated once — and push it into the linked
+ * parameter. Net stack effect is zero, so the define's own result stays on top.
+ */
+function emitMappedArgValueSyncAfterDefine(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  pending: PendingMappedArgSync,
+): void {
+  const { info, argIndex } = pending;
+  const valLocal = allocLocal(fctx, `__mappedarg_defval_${fctx.locals.length}`, { kind: "externref" });
+  const idxLocal = allocLocal(fctx, `__mappedarg_defidx_${fctx.locals.length}`, { kind: "i32" });
+
+  // Under-applied calls build a vec shorter than the formal count, so the slot
+  // is not guaranteed to exist; an absent slot has no mapping to update.
+  fctx.body.push({ op: "local.get", index: info.argsLocalIdx });
+  fctx.body.push({ op: "struct.get", typeIdx: info.vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "i32.const", value: argIndex });
+  fctx.body.push({ op: "i32.gt_u" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      { op: "local.get", index: info.argsLocalIdx },
+      { op: "struct.get", typeIdx: info.vecTypeIdx, fieldIdx: 1 },
+      { op: "i32.const", value: argIndex },
+      { op: "array.get", typeIdx: info.arrTypeIdx },
+      { op: "local.set", index: valLocal },
+      { op: "i32.const", value: argIndex },
+      { op: "local.set", index: idxLocal },
+    ],
+    else: [
+      // Out of range: point the runtime index at a slot no parameter matches.
+      { op: "i32.const", value: -1 },
+      { op: "local.set", index: idxLocal },
+    ],
+  });
+
+  // The define already applied step 5.b.ii while parsing the descriptor, and
+  // `emitMappedArgReverseSync` skips severed indices. Re-open the link for the
+  // duration of this emission so the two steps land in spec order.
+  const severed = info.unmappedIndices?.delete(argIndex) ?? false;
+  emitMappedArgReverseSync(ctx, fctx, idxLocal, valLocal);
+  if (severed) info.unmappedIndices?.add(argIndex);
+}
+
 export function compileObjectDefineProperty(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): ValType | null {
+  const saved = pendingMappedArgSync;
+  pendingMappedArgSync = null;
+  const result = compileObjectDefinePropertyCore(ctx, fctx, expr);
+  const pending = pendingMappedArgSync;
+  pendingMappedArgSync = saved;
+  if (pending !== null) emitMappedArgValueSyncAfterDefine(ctx, fctx, pending);
+  return result;
+}
+
+function compileObjectDefinePropertyCore(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
@@ -1246,6 +1328,9 @@ export function compileObjectDefineProperty(
       const info = fctx.mappedArgsInfo;
       const isAccessor =
         getNode !== undefined || setNode !== undefined || getExpr !== undefined || setExpr !== undefined;
+      // (#4491) Whether the index is mapped as this define BEGINS — read before
+      // the step-5.b.ii sever below, since step 5.b.i still applies to it.
+      const wasMapped = !(info.unmappedIndices?.has(argIndex) ?? false);
       const breaksLink = isAccessor || descWritable === false;
       if (breaksLink) {
         (info.unmappedIndices ??= new Set<number>()).add(argIndex);
@@ -1287,9 +1372,25 @@ export function compileObjectDefineProperty(
         getExpr === undefined &&
         setExpr === undefined &&
         descWritable !== false && // writable:false freezes — handled by the drop path below
-        !isFrozen;
+        !isFrozen &&
+        // (#4491) …and only while the opaque vec slot is still the authority for
+        // this index. Once a define has been routed to the runtime the sidecar
+        // descriptor is, and a slot-only write would desync the two.
+        !(info.runtimeDefinedIndices?.has(argIndex) ?? false);
       if (isPureDataValueDefine) {
         return emitMappedArgValueDefine(ctx, fctx, info, argIndex, valueExpr!);
+      }
+      // Everything else falls through to the generic define, which records a
+      // real descriptor for this index.
+      (info.runtimeDefinedIndices ??= new Set<number>()).add(argIndex);
+      // …and writes only the arguments SLOT. §10.4.4.2 step 5.b.i additionally
+      // requires `Map.[[Set]]` — the linked formal parameter — for a data
+      // descriptor with an explicit [[Value]] on an index that was still mapped
+      // when this define started. The wrapper emits it after the define, so the
+      // value is read back from the slot (evaluated once) and the step-5.b.ii
+      // sever above cannot pre-empt it.
+      if (!isAccessor && valueExpr !== undefined && wasMapped) {
+        pendingMappedArgSync = { info, argIndex };
       }
     }
   }
