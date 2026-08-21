@@ -1,0 +1,12 @@
+{
+  "id": "4591",
+  "assignee": "ttraenkler/codex",
+  "requested_by": "ttraenkler/codex",
+  "status": "in-progress",
+  "branch": "codex/4591-fib-pair-prepared-cutover",
+  "reserved_at": "2026-08-21T06:49:01Z",
+  "claimed_at": "2026-08-21T06:49:01Z",
+  "updated_at": "2026-08-21T06:49:01Z",
+  "write_id": "5417-28fphv53",
+  "pr_scan": "ok"
+}
