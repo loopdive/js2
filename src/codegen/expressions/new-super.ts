@@ -299,13 +299,29 @@ function resolvesToConstructableFunctionValue(ctx: CodegenContext, calleeExpr: t
   if (resolvesToNonConstructableValue(ctx, calleeExpr)) return false;
   const sym = ctx.checker.getSymbolAtLocation(calleeExpr);
   const decl = sym?.valueDeclaration;
-  if (!decl || !ts.isVariableDeclaration(decl)) return false;
+  // (#3981 follow-up, ES5 lane) PARAMETER bindings admitted alongside vars: a
+  // callback receiving a constructor (`var mk = function(c){ return new c(); }`)
+  // fell past every arm to the null terminal — `new c()` answered null with no
+  // diagnostic, the exact gap this driver exists to close. The signature
+  // discrimination below is declaration-based and applies unchanged.
+  if (!decl || (!ts.isVariableDeclaration(decl) && !ts.isParameter(decl))) return false;
   const t = ctx.checker.getTypeAtLocation(calleeExpr);
   // Callable value (a function held in the binding). Construct-signature-bearing
   // values (real class ctors typed through the binding) are left to the static
   // class paths; here we target the ordinary-function-value cluster.
   const callSigs = t.getCallSignatures();
-  if (callSigs.length === 0) return false;
+  if (callSigs.length === 0) {
+    // (#3087 standalone twin) An UNTYPED parameter that receives a constructor
+    // at runtime (`function mk(c) { return new c(); }` — the test262 harness
+    // wrapper shape). The checker offers no signature to discriminate, but the
+    // driver is runtime-dispatched: a closure constructs, and a non-closure
+    // value falls through the dispatcher's ladder — today's alternative is the
+    // dynamic chain's silent null, strictly worse. Parameters only: an
+    // any-typed VAR keeps the existing evolving-binding routes.
+    return (
+      ts.isParameter(decl) && ts.isIdentifier(decl.name) && (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
+    );
+  }
   // Only a PLAIN constructable function gets the closure-construct bridge.
   // Generator (`function*` / `*m()`), async, and async-generator functions, plus
   // method/accessor/arrow values, have NO [[Construct]] (§14.4.13 / §15.x): e.g.
