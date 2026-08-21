@@ -206,6 +206,22 @@ results, not hidden by the adapter.
 
 ## Unit-infrastructure continuation 3
 
+The Jest source adapter now materializes the small published dependencies used
+by the selected original utilities (`detect-newline` for `jest-docblock`) as
+explicit ESM workspace adapters. Namespace imports from relative upstream
+modules are rebound to the statically read members, so the tests exercise the
+real functions instead of receiving an empty namespace carrier. This is a
+harness import adaptation; the upstream callback bodies remain unchanged.
+
+The pin now selects twelve original files across `@jest/get-type`, `jest-util`,
+`jest-docblock`, `jest-diff`, `diff-sequences`, and `jest-config`. The run
+registers 234 callbacks: 232/234 pass in the native oracle (the two native
+failures remain explicit harness-incompatible outcomes), all twelve Wasm
+modules compile and validate, and 113/232 native-compatible callbacks pass in
+Wasm. The remaining 119 are scored Wasm failures, while 3,054 registrations
+remain explicitly unavailable infrastructure. No upstream test was rewritten
+or counted as a pass because it was deferred.
+
 The shared runner now exposes `UPSTREAM_TEST_SHIM_NODE` for package graphs whose
 CommonJS dependencies execute during module initialization. It omits only the
 late-initialized browser `var global = globalThis` alias; the Node platform
