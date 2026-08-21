@@ -1,4 +1,4 @@
-// TypeScript 5.9.3 original base64 unit slice.
+// TypeScript 5.9.3 original base64 and bigint utility unit slice.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -24,7 +24,7 @@ function moduleSpecifier(fromDirectory, target) {
   return value;
 }
 
-function exactBase64Projection(utilitiesSource) {
+function exactTypescriptProjection(utilitiesSource) {
   utilitiesSource = utilitiesSource.replace(/\r\n/g, "\n");
   const startMarker = "/**\n * Replace each instance of non-ascii characters";
   const endMarker = "/** @internal */\nexport function readJsonOrUndefined";
@@ -32,14 +32,20 @@ function exactBase64Projection(utilitiesSource) {
   const end = utilitiesSource.indexOf(endMarker, start);
   if (start < 0 || end < 0) throw new Error("TypeScript base64 implementation markers changed");
   const declarations = utilitiesSource.slice(start, end);
-  return `const Debug = { assert(value: boolean, message?: string) { if (!value) throw new Error(message || "Debug assertion failed"); } };\n${declarations}`;
+  const parseStart = utilitiesSource.indexOf("export function parsePseudoBigInt");
+  const parseEndMarker = "/** @internal */\nexport function pseudoBigIntToString";
+  const parseEnd = utilitiesSource.indexOf(parseEndMarker, parseStart);
+  if (parseStart < 0 || parseEnd < 0) throw new Error("TypeScript parsePseudoBigInt implementation markers changed");
+  const parseDeclaration = utilitiesSource.slice(parseStart, parseEnd);
+  const characterCodes = `const CharacterCodes = { _0: 48, _9: 57, A: 65, B: 66, F: 70, O: 79, X: 88, a: 97, b: 98, o: 111, x: 120 } as const;`;
+  return `const Debug = { assert(value: boolean, message?: string) { if (!value) throw new Error(message || "Debug assertion failed"); } };\n${declarations}\n${characterCodes}\n${parseDeclaration}`;
 }
 
 function transformTypescriptTest(source, projectionSpecifier) {
   return source.replace(
     /^import\s+\*\s+as\s+ts\s+from\s+["']\.\.\/_namespaces\/ts\.js["'];?\s*$/m,
-    `import { base64decode, base64encode, convertToBase64 } from ${JSON.stringify(projectionSpecifier)};\n` +
-      `const ts = { base64decode, convertToBase64, sys: { base64encode: (input: string) => base64encode(undefined, input) } };`,
+    `import { base64decode, base64encode, convertToBase64, parsePseudoBigInt } from ${JSON.stringify(projectionSpecifier)};\n` +
+      `const ts = { base64decode, convertToBase64, parsePseudoBigInt, sys: { base64encode: (input: string) => base64encode(undefined, input) } };`,
   );
 }
 
@@ -49,7 +55,7 @@ export async function runHarness({ quiet = false } = {}) {
   const utilitiesPath = join(suite.root, "src", "compiler", "utilities.ts");
   const projectionPath = join(GENERATED_ROOT, "release-base64.ts");
   mkdirSync(dirname(projectionPath), { recursive: true });
-  writeFileSync(projectionPath, exactBase64Projection(readFileSync(utilitiesPath, "utf-8")));
+  writeFileSync(projectionPath, exactTypescriptProjection(readFileSync(utilitiesPath, "utf-8")));
   const runs = [];
 
   log(`[dogfood] typescript@${suite.pin.version} upstream ${suite.pin.tag} (${suite.pin.commit.slice(0, 12)})`);

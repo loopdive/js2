@@ -276,15 +276,15 @@ describe("small npm package upstream suites", () => {
     const report = await run("jest");
     expect(report.extraction).toMatchObject({
       filesSeen: 241,
-      filesSelected: 7,
-      filesDeferred: 234,
-      testsRegistered: 79,
-      nativePassed: 79,
+      filesSelected: 8,
+      filesDeferred: 233,
+      testsRegistered: 99,
+      nativePassed: 99,
       nativeFailed: 0,
     });
-    expect(report.extraction.unavailableInfra).toBe(3209);
-    expect(report.compile).toMatchObject({ modules: 7, succeeded: 7, validated: 7 });
-    expect(report.results).toMatchObject({ scored: 79, passed: 23 });
+    expect(report.extraction.unavailableInfra).toBe(3189);
+    expect(report.compile).toMatchObject({ modules: 8, succeeded: 8, validated: 8 });
+    expect(report.results).toMatchObject({ scored: 99, passed: 29 });
   });
 
   const tailwindcssHeavy = process.env.DOGFOOD_TAILWINDCSS_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -303,18 +303,18 @@ describe("small npm package upstream suites", () => {
   });
 
   const typescriptHeavy = process.env.DOGFOOD_TYPESCRIPT_UPSTREAM_SUITE === "1" ? it : it.skip;
-  typescriptHeavy("runs TypeScript's original base64 units", { timeout: 600_000 }, async () => {
+  typescriptHeavy("runs TypeScript's original base64 and bigint units", { timeout: 600_000 }, async () => {
     const report = await run("typescript");
     expect(report.extraction).toMatchObject({
       filesSeen: 256,
-      filesSelected: 2,
-      filesDeferred: 254,
-      testsRegistered: 6,
-      nativePassed: 6,
+      filesSelected: 3,
+      filesDeferred: 253,
+      testsRegistered: 11,
+      nativePassed: 11,
       nativeFailed: 0,
     });
-    expect(report.extraction.unavailableInfra).toBe(1755);
-    expect(report.compile).toMatchObject({ modules: 2, succeeded: 2, validated: 2 });
-    expect(report.results).toMatchObject({ scored: 6, passed: 1 });
+    expect(report.extraction.unavailableInfra).toBe(1750);
+    expect(report.compile).toMatchObject({ modules: 3, succeeded: 3, validated: 3 });
+    expect(report.results).toMatchObject({ scored: 11 });
   });
 });

@@ -166,14 +166,18 @@ imports against the immutable source checkout, normalizes the CJS-shaped
 default exports used by Node's native loader, and can compile a selected suite
 with the Node platform surface instead of the browser surface. The shared shim
 exposes the small `jest.fn`/`jest.spyOn` facade needed by those original tests.
-The selected Jest slice is now seven files and 79 callbacks: all 79 native
-callbacks pass, all seven Wasm modules validate, and 23 callbacks pass in Wasm;
-3,209 registrations remain explicitly unavailable infrastructure.
+The selected Jest slice is now eight files and 99 callbacks: all 99 native
+callbacks pass, all eight Wasm modules validate, and 29 callbacks pass in Wasm;
+3,189 registrations remain explicitly unavailable infrastructure. The added
+`isError.test.ts` exercises the `node:util/types` host seam; its failing Wasm
+assertions remain scored runtime semantics rather than being hidden as infra.
 
 The TypeScript adapter now exercises both original base64 unit files through
 the exact release-source projection, supplies the `ts.sys.base64encode` seam,
 and compiles the Node-oriented test with the Node platform surface so its
-upstream `Buffer` guard behaves as it does under Node. The slice registers six
-callbacks; all six pass natively, both Wasm modules validate, and one callback
-passes in Wasm. Its remaining 1,755 registrations stay explicit unavailable
+upstream `Buffer` guard behaves as it does under Node. The projection now also
+contains the exact `parsePseudoBigInt` implementation and its character-code
+constants. The slice registers 11 callbacks across three original files; all
+11 pass natively, all three Wasm modules validate, and four callbacks pass in
+Wasm. Its remaining 1,750 registrations stay explicit unavailable
 infrastructure.
