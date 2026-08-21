@@ -3093,6 +3093,19 @@ function emitExternDefinePropertyNoValue(
 // ── Object.defineProperties ───────────────────────────────────────────
 
 /**
+ * (#4491) One entry of a `Properties` map held in a variable, as
+ * `stableDescriptorMapEntries` models it.
+ *
+ * - `literal` — the entry's initializer IS an object literal, so its fields are
+ *   individually known and a later `props.k.field = v` write can be merged in.
+ * - `expr` — anything else (`var props = { "0": descObj }`): the descriptor is
+ *   opaque here and must be handed to the runtime whole.
+ */
+type DescriptorMapEntry =
+  | { kind: "literal"; literal: ts.ObjectLiteralExpression; fields: Map<string, ts.Expression> }
+  | { kind: "expr"; expr: ts.Expression };
+
+/**
  * Compile Object.defineProperties(obj, descriptors).
  *
  * Static path: when descriptors is an object literal, iterate each property
@@ -3197,29 +3210,41 @@ export function compileObjectDefineProperties(
       return undefined;
     }
     const literal = unwrapTransparentExpression(declaration.initializer) as ts.ObjectLiteralExpression;
-    const descriptors = new Map<string, Map<string, ts.Expression>>();
+    // (#4491) An entry is either a LITERAL descriptor — a field map the
+    // stability visitor below may still MERGE later writes into — or a
+    // PASS-THROUGH expression (`var properties = { "0": descObj }`), which the
+    // expansion can only hand to the runtime whole. Before this the second
+    // shape returned `undefined` here and the whole call fell to the native
+    // fallback, where an identifier map is a closed WasmGC struct and refuses
+    // with `[SITE-PROPS-BAG-NOT-AUTHORITATIVE]`.
+    const descriptors = new Map<string, DescriptorMapEntry>();
     for (const property of literal.properties) {
       if (
         !ts.isPropertyAssignment(property) ||
-        (!ts.isIdentifier(property.name) && !ts.isStringLiteral(property.name)) ||
-        !ts.isObjectLiteralExpression(unwrapTransparentExpression(property.initializer))
+        (!ts.isIdentifier(property.name) && !ts.isStringLiteral(property.name))
       ) {
         return undefined;
       }
+      const entryInit = unwrapTransparentExpression(property.initializer);
+      if (!ts.isObjectLiteralExpression(entryInit)) {
+        descriptors.set(property.name.text, { kind: "expr", expr: property.initializer });
+        continue;
+      }
       const fields = new Map<string, ts.Expression>();
-      for (const field of (unwrapTransparentExpression(property.initializer) as ts.ObjectLiteralExpression)
-        .properties) {
+      for (const field of entryInit.properties) {
         if (!ts.isPropertyAssignment(field) || (!ts.isIdentifier(field.name) && !ts.isStringLiteral(field.name))) {
           return undefined;
         }
         fields.set(field.name.text, field.initializer);
       }
-      descriptors.set(property.name.text, fields);
+      descriptors.set(property.name.text, { kind: "literal", literal: entryInit, fields });
     }
     const keys = [...descriptors.keys()];
     if (keys.length === 0 || new Set(keys).size !== keys.length) return undefined;
     const keySet = new Set(keys);
     let stable = true;
+    /** (#4491) Did the visitor merge a later write into a literal entry? */
+    let mergedIntoLiteral = false;
     const visit = (node: ts.Node): void => {
       if (!stable) return;
       if (ts.isIdentifier(node) && ctx.oracle.variableDeclarationOf(node) === declaration) {
@@ -3238,7 +3263,16 @@ export function compileObjectDefineProperties(
         ) {
           // A direct field assignment before the application preserves the
           // descriptor map's key set and can be merged into its literal shape.
-          descriptors.get(node.parent.name.text)!.set(node.parent.parent.name.text, node.parent.parent.parent.right);
+          // (#4491) …but only into a LITERAL entry. A pass-through entry has no
+          // field map to merge into, so the write is unmodelled and the whole
+          // expansion must decline rather than silently drop it.
+          const mergeTarget = descriptors.get(node.parent.name.text)!;
+          if (mergeTarget.kind !== "literal") {
+            stable = false;
+            return;
+          }
+          mergedIntoLiteral = true;
+          mergeTarget.fields.set(node.parent.parent.name.text, node.parent.parent.parent.right);
         } else {
           stable = false;
           return;
@@ -3247,21 +3281,63 @@ export function compileObjectDefineProperties(
       ts.forEachChild(node, visit);
     };
     visit(descsArg.getSourceFile());
-    return stable
-      ? keys.map((key) => ({
+    if (!stable) return undefined;
+    const hasPassThrough = [...descriptors.values()].some((e) => e.kind !== "literal");
+    return {
+      // (#4491) The reify route re-uses the ORIGINAL descriptor nodes, so it is
+      // only offered when the visitor merged nothing (a merged shape exists
+      // only as a synthesized literal, which has no source parents to compile
+      // an entry against). Otherwise the pre-existing per-key expansion runs
+      // unchanged — its emission for an all-literal, unmerged map is unaffected
+      // by this branch.
+      reify: hasPassThrough && !mergedIntoLiteral,
+      entries: keys.map((key) => {
+        const entry = descriptors.get(key)!;
+        return {
           key,
-          descriptor: ts.factory.createObjectLiteralExpression(
-            [...descriptors.get(key)!.entries()].map(([name, initializer]) =>
-              ts.factory.createPropertyAssignment(name, initializer),
-            ),
-          ),
-        }))
-      : undefined;
+          /** The node handed to `Object.defineProperty` / the reified map. */
+          descriptor:
+            entry.kind === "literal"
+              ? ts.factory.createObjectLiteralExpression(
+                  [...entry.fields.entries()].map(([name, initializer]) =>
+                    ts.factory.createPropertyAssignment(name, initializer),
+                  ),
+                )
+              : entry.expr,
+          /** The ORIGINAL source node, when there is one (reify route only). */
+          sourceNode: entry.kind === "literal" ? entry.literal : entry.expr,
+        };
+      }),
+    };
   })();
-  if (stableDescriptorMapEntries) {
+  // (#4491) A map with a pass-through entry goes to the NATIVE plural applier
+  // over a reified `$Object` rather than the per-key expansion: the native is
+  // the only path with ToPropertyDescriptor's conflict/callable checks, and it
+  // preserves §20.1.2.3.1's gather-all-then-define-all order, which a per-key
+  // expansion structurally cannot (see define-properties-map.ts).
+  const reifiedDescsArg: ts.ObjectLiteralExpression | undefined = stableDescriptorMapEntries?.reify
+    ? (() => {
+        const synth = ts.factory.createObjectLiteralExpression(
+          stableDescriptorMapEntries.entries.map(({ key, sourceNode }) =>
+            ts.factory.createPropertyAssignment(ts.factory.createStringLiteral(key), sourceNode),
+          ),
+        );
+        ts.setTextRange(synth, descsArg);
+        (synth as ts.ObjectLiteralExpression & { parent: ts.Node }).parent = expr;
+        for (const p of synth.properties) {
+          ts.setTextRange(p, descsArg);
+          (p as ts.ObjectLiteralElementLike & { parent: ts.Node }).parent = synth;
+          ts.setTextRange(p.name!, descsArg);
+          (p.name as unknown as { parent: ts.Node }).parent = p;
+        }
+        return synth;
+      })()
+    : undefined;
+  if (stableDescriptorMapEntries && !stableDescriptorMapEntries.reify) {
+    const expansion = stableDescriptorMapEntries.entries;
     let resultType: ValType | null = null;
-    for (let index = 0; index < stableDescriptorMapEntries.length; index++) {
-      const { key, descriptor } = stableDescriptorMapEntries[index]!;
+    for (let index = 0; index < expansion.length; index++) {
+      const { key, descriptor } = expansion[index]!;
       const syntheticCall = ts.factory.createCallExpression(
         ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier("Object"), "defineProperty"),
         undefined,
@@ -3269,10 +3345,10 @@ export function compileObjectDefineProperties(
       );
       ts.setTextRange(syntheticCall, expr);
       ts.setTextRange(descriptor, descsArg);
-      (descriptor as ts.ObjectLiteralExpression & { parent: ts.Node }).parent = syntheticCall;
+      (descriptor as ts.Expression & { parent: ts.Node }).parent = syntheticCall;
       (syntheticCall as ts.CallExpression & { parent: ts.Node }).parent = expr.parent;
       resultType = compileObjectDefineProperty(ctx, fctx, syntheticCall);
-      if (resultType && index + 1 < stableDescriptorMapEntries.length) fctx.body.push({ op: "drop" });
+      if (resultType && index + 1 < expansion.length) fctx.body.push({ op: "drop" });
     }
     return resultType;
   }
@@ -3882,8 +3958,11 @@ export function compileObjectDefineProperties(
   // real `$Object`, not the closed struct its `PropertyDescriptorMap` contextual
   // type produces — a struct answers no `__desc_has_own`/`__extern_get`, so every
   // field read missed. Declines (emits nothing) elsewhere: define-properties-map.ts.
+  // (#4491) …and a `Properties` IDENTIFIER whose declaration is a provably
+  // stable map literal reaches it through the same builder, over a synthesized
+  // literal that re-uses the original per-key descriptor nodes.
   const descsType =
-    compileDescriptorMapAsDynamicObject(ctx, fctx, descsArg) ??
+    compileDescriptorMapAsDynamicObject(ctx, fctx, reifiedDescsArg ?? descsArg) ??
     compileExpression(ctx, fctx, descsArg, { kind: "externref" });
   if (!descsType) {
     return { kind: "externref" };
