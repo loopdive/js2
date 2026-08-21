@@ -2142,6 +2142,80 @@ export function compileIdentifierCall(
       const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, isKnownVariable || isRuntimeEvalGlobal);
       if (dyn !== null) return dyn;
 
+      // (#4527) Reference-preserving dynamic-call bridge. A call on a KNOWN
+      // variable of `any` type (a JS callback parameter) whose closure wrapper
+      // candidates were not registered when THIS body compiled — the
+      // cross-module case: `cb.mjs`'s `callIt(cb) { return cb(2, 3); }`
+      // compiles before `main.ts`'s arrow argument exists — used to fall to
+      // the graceful `ref.null.extern` below and the callee was silently
+      // never invoked (diff-sequences' isCommon/foundSubsequence, jest-util's
+      // each-callbacks). Route it through the host `__call_dyn_<n>` bridge:
+      // the callee and every argument cross as externref (numbers boxed,
+      // refs converted), the host wraps the closure exactly like the numeric
+      // `__call_N_f64` bridges, and reference arguments stay LIVE. Host lane
+      // only — standalone keeps its existing lowering (the ReferenceError /
+      // graceful arms below).
+      if (
+        !noJsHost(ctx) &&
+        !ctx.standalone &&
+        !ctx.wasi &&
+        isKnownVariable &&
+        expr.arguments.length <= 10 &&
+        !expr.arguments.some((a) => ts.isSpreadElement(a))
+      ) {
+        addUnionImports(ctx);
+        const calleeType = compileExpression(ctx, fctx, expr.expression);
+        if (calleeType !== null) {
+          const toExtern = (t: ValType | null): void => {
+            if (t === null) {
+              fctx.body.push({ op: "ref.null.extern" });
+            } else if (t.kind === "f64") {
+              const boxIdx = ctx.funcMap.get("__box_number");
+              if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
+              else {
+                fctx.body.push({ op: "drop" });
+                fctx.body.push({ op: "ref.null.extern" });
+              }
+            } else if (t.kind === "i32") {
+              // Same convention as the sig-dispatch extras loop: a plain i32 is
+              // a NUMBER (loop counters, int literals) — only a symbol-tagged
+              // i32 boxes as a symbol. Boxing untagged i32 as boolean turned
+              // diff-sequences' index arguments into `false`/`true`.
+              if (t.symbol === true) {
+                const boxIdx = ctx.funcMap.get("__box_symbol");
+                if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
+                else {
+                  fctx.body.push({ op: "drop" });
+                  fctx.body.push({ op: "ref.null.extern" });
+                }
+              } else {
+                fctx.body.push({ op: "f64.convert_i32_s" });
+                const boxIdx = ctx.funcMap.get("__box_number");
+                if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
+                else {
+                  fctx.body.push({ op: "drop" });
+                  fctx.body.push({ op: "ref.null.extern" });
+                }
+              }
+            } else if (t.kind === "ref" || t.kind === "ref_null") {
+              fctx.body.push({ op: "extern.convert_any" });
+            }
+          };
+          toExtern(calleeType);
+          for (const arg of expr.arguments) {
+            toExtern(compileExpression(ctx, fctx, arg));
+          }
+          const bridgeName = `__call_dyn_${expr.arguments.length}`;
+          const params: ValType[] = Array.from({ length: expr.arguments.length + 1 }, () => ({
+            kind: "externref",
+          }));
+          const bridgeIdx = ensureLateImport(ctx, bridgeName, params, [{ kind: "externref" }]);
+          flushLateImportShifts(ctx, fctx);
+          fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(bridgeName) ?? bridgeIdx });
+          return { kind: "externref" };
+        }
+      }
+
       // §6.2.5.5 GetValue on an unresolvable Reference: calling a TRULY
       // undeclared identifier (`$DETACHBUFFER(ab)` with no `includes:` that
       // would define it — test262 harness/detachArrayBuffer.js) must throw

@@ -15354,6 +15354,28 @@ assert._isSameValue = isSameValue;
       // path as an object and failed with `fn is not a function`.  Normalize
       // the callback at the boundary; native functions remain unchanged and
       // closure wrapping is identity-cached by `_maybeWrapCallableUnknownArity`.
+      // (#4527) Reference-preserving dynamic-call bridge: `cb(a, b)` on an
+      // `any`-typed variable whose closure wrapper type was not registered at
+      // the call site's compile time (cross-module callbacks — diff-sequences'
+      // isCommon/foundSubsequence, jest-util's each-callbacks) used to lower to
+      // a graceful `ref.null.extern`, silently never invoking the callee. The
+      // bridge takes the callee plus N externref args verbatim; Wasm-native
+      // boxed primitives are unwrapped so a compiled closure receives host
+      // primitives (same contract as the numeric `__call_N_f64` bridges), and
+      // reference args (structs, host objects, strings) pass through LIVE.
+      if (/^__call_dyn_\d+$/.test(name))
+        return (fn: any, ...args: any[]) => {
+          const callable = _maybeWrapCallableUnknownArity(fn, callbackState);
+          if (typeof callable !== "function") {
+            throw new TypeError("value is not a function");
+          }
+          const exports = callbackState?.getExports();
+          for (let i = 0; i < args.length; i++) {
+            const prim = _nativePrimitiveToHost(args[i], exports);
+            if (prim !== _MISS) args[i] = prim;
+          }
+          return callable(...args);
+        };
       if (name === "__call_1_f64")
         return (fn: Function, a: number) => {
           const callable = _maybeWrapCallableUnknownArity(fn, callbackState);
