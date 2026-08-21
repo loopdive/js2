@@ -720,3 +720,25 @@ modules compile and validate, and Wasm scores **10 passed / 65 failed**. The
 failures remain visible compatibility findings (WebCrypto typed-array
 crossing, missing global `crypto`, UUID parsing/exception semantics, and the
 v3/v5 hash path); none are relabeled as unavailable infrastructure.
+
+## 2026-08-22 ESLint expansion handoff
+
+The shipped ESLint adapter remains the one-file `deep-merge-arrays.js` slice:
+the unchanged upstream callbacks register and pass **44/44** in both the Node
+oracle and Wasm lanes, and its module compiles and validates.
+
+A local infrastructure experiment extracted five original ESLint v10.0.3
+utility files (`deep-merge-arrays.js`, `naming.js`, `option-utils.js`,
+`serialization.js`, and `string-utils.js`). The native oracle registered and
+passed **158/158** callbacks, and all five modules compiled and validated.
+The generalized adapter is intentionally published only as a draft: its Wasm
+binding/import strategy causes registration mismatches (including 0/59, 0/18,
+and 4/23 registered callbacks in three files) and does not reproduce the
+native result set. No Wasm score claim should be made for this experiment, and
+the mismatches must not be relabeled as unavailable infrastructure.
+
+Follow-up work should preserve the per-file original test bodies while using
+direct named-import adapters or otherwise matching module-init execution
+semantics before this selection is made publishable. The experiment changes
+only adapter/pin infrastructure; it does not modify ESLint source or test
+expectations.
