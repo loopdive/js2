@@ -1,10 +1,10 @@
 ---
 id: 4121
 title: "perf: generic carrier unboxing — one `any`-typed definition boxes an entire numeric local, and every carrier needs its own bespoke pass"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-03
-updated: 2026-08-09
+updated: 2026-08-21
 priority: high
 horizon: l
 feasibility: hard
@@ -20,10 +20,18 @@ loc-budget-allow:
   - src/codegen/declarations.ts
   - src/codegen/index.ts
   - src/codegen/object-runtime.ts
+  # first slice (2026-08-21): the mixed-assignment demotion is minted at four
+  # slot sites; two of them live here, and they must resolve the proof at the
+  # same point or the hoisted and declared slots disagree.
+  - src/codegen/statements/variables.ts
 func-budget-allow:
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
   - src/codegen/object-runtime.ts::ensureObjectRuntime
+  # first slice (2026-08-21): +7 lines resolving the unboxing proof inside the
+  # existing carrier cascade — extracting it would separate the decision from
+  # the cascade it has to stay consistent with.
+  - src/codegen/statements/variables.ts::compileVariableStatement
 ---
 
 # #4121 — generic carrier unboxing
@@ -364,22 +372,30 @@ and ABI checks pass and the switch-off result is identical.
 
 ## Acceptance criteria
 
-- [ ] A pre-flight report of **which benchmark functions the IR currently
+- [x] A pre-flight report of **which benchmark functions the IR currently
       claims** vs demotes. If `benchMethod` / `parseCookie` are demoted, this
       issue is blocked on #2855 rather than ready, and that finding closes the
-      slice on its own.
+      slice on its own. — done 2026-08-21; both ARE demoted, see "First-slice
+      result".
 - [ ] `let i = 0; i = s.indexOf(";") + 1;` in a loop emits an `f64` local with
-      **zero** `__box_number` / `__unbox_number` in the loop body.
-- [ ] IR-claimed coverage reported alongside every speedup, so a headline number
-      cannot hide a shrinking denominator.
+      **zero** `__box_number` / `__unbox_number` in the loop body. — still open;
+      the admission gate no longer hides the binding, but both proofs decline
+      it (route 1 bails on the argument use, route 2 cannot ground the
+      unannotated string receiver). Next slice.
+- [x] IR-claimed coverage reported alongside every speedup, so a headline number
+      cannot hide a shrinking denominator. — reported and unchanged; no speedup
+      is claimed.
 - [x] The standalone `cookie` runtime-dynamic lane improves measurably against
       node, measured same-container interleaved behind a kill switch, with the
       checksum unchanged.
-- [ ] The residual box sites in the standalone cookie module are reported
+- [x] The residual box sites in the standalone cookie module are reported
       before/after, by carrier, so the "relocated to the next carrier" failure
-      mode is visible rather than silent.
-- [ ] No equivalence-suite regressions — confirmed by a **full-capture** run and
+      mode is visible rather than silent. — done 2026-08-21; 19 sites, 13 of
+      them into a LOCAL carrier, every bucket flat.
+- [x] No equivalence-suite regressions — confirmed by a **full-capture** run and
       an A/B of the failing set with the kill switch off, not by a count match.
+      — done 2026-08-21 for this slice: 24 failing / 1,661 passing, failing
+      SETS identical by test id across the switch, all 24 baselined.
 
 ## What must still decline (hard-won, do not re-derive)
 
@@ -467,6 +483,259 @@ the family (`JS2WASM_NUMERIC_LOCALS` already exists — extend its scope or add
 **Out of scope, do not touch:** the IR `propagate.ts` lattice, new carrier
 consumers, peephole (falsified above), and #4122's one-line fix if it has not
 landed (do not absorb it — coordinate by checking `git log origin/main`).
+
+## First-slice result (2026-08-21)
+
+Branch `claude/issue-4121-unboxing-admission`, based on `ba151267f`.
+Everything below was measured in this container, on this base, with the
+kill-switch control run for every claim.
+
+### Step 0 — pre-flight: what the IR claims vs demotes (AC 1)
+
+`JS2WASM_LOG_IR_FALLBACKS=1 JS2WASM_IR_SHAPE_DIAG=1`, `target: standalone`,
+`trackFallbacks: true`.
+
+| module                            | units | IR-claimed | demoted |
+| --------------------------------- | ----: | ---------: | ------: |
+| `benchmarks/cross-engine/axes-core.js` (+ exports) | 12 | 6 | 6 |
+| pinned `cookie@2.0.1` `dist/index.js`              |  9 | **0** | 9 |
+
+Per-unit attribution:
+
+| module     | unit                 | reject reason                       | arm                                        |
+| ---------- | -------------------- | ----------------------------------- | ------------------------------------------ |
+| axes-core  | `benchNumeric`       | *claimed*                           |                                            |
+| axes-core  | `benchProp`          | *claimed*                           |                                            |
+| axes-core  | `benchAlloc`         | *claimed*                           |                                            |
+| axes-core  | **`benchMethod`**    | `constructor-resolution-unsupported`| —                                          |
+| axes-core  | `bench_method`       | `call-graph-closure`                | —                                          |
+| axes-core  | `P`                  | `body-shape-rejected`               | `tail-unhandled:ExpressionStatement`       |
+| axes-core  | `benchString`        | `param-type-not-resolvable`         | —                                          |
+| axes-core  | `Tok`                | `body-shape-rejected`               | `nontail-assign-recv:ThisKeyword`          |
+| axes-core  | `benchTokenizer`     | `constructor-resolution-unsupported`| —                                          |
+| cookie     | **`parseCookie`**    | `body-shape-rejected`               | `expr-new-module-binding-callee:Identifier`|
+| cookie     | `stringifyCookie`    | `logical-value-unsupported`         | —                                          |
+| cookie     | `stringifySetCookie` | `logical-value-unsupported`         | —                                          |
+| cookie     | `parseSetCookie`     | `logical-value-unsupported`         | —                                          |
+| cookie     | `endIndex`           | `param-type-not-resolvable`         | —                                          |
+| cookie     | `eqIndex`            | `param-type-not-resolvable`         | —                                          |
+| cookie     | `valueSlice`         | `body-shape-rejected`               | `expr-prefix-op-++:PrefixUnaryExpression`  |
+| cookie     | `decode`             | `body-shape-rejected`               | `tail-unhandled:TryStatement`              |
+| cookie     | `defaultEncode`      | `regexp-constructor-unsupported`    | —                                          |
+
+**Both benchmark shapes this issue is about are DEMOTED.** `benchMethod` and
+every one of cookie's nine units run on the legacy path, confirming the last
+checkpoint's `benchmarkUsesIr: false` and the issue's own blocking caveat: an
+IR `propagate.ts` lattice pass would today apply to **zero** of the functions
+whose boxing motivated this issue. **The IR half of this issue is blocked on
+#2855-successor coverage**, specifically on five distinct reject arms
+(`constructor-resolution-unsupported`, `logical-value-unsupported`,
+`param-type-not-resolvable`, `expr-new-module-binding-callee`,
+`expr-prefix-op-++`, `tail-unhandled:TryStatement`). This finding stands on its
+own regardless of anything below.
+
+### Step 1 — the reduced table, re-measured after #4122 landed
+
+#4122 merged on 2026-08-03 (`378892a38`). Re-measured on this base, standalone:
+
+| source (receiver `s` unannotated / implicit-`any`)         | `$i` slot     |
+| ---------------------------------------------------------- | ------------- |
+| `let i = 0; i = i + 1;`                                     | **f64**       |
+| `let i = 0; i = s.indexOf(";");`                            | **externref** |
+| `let i = 0; i = s.indexOf(";") + 1;`                        | **externref** |
+| `var i = s.indexOf(";"); i = i + 1;`                        | **externref** |
+| the loop shape (`while (i < s.length) { … i = e + 1; }`)    | **externref** |
+
+**It still reproduces.** Two corrections to the original table:
+
+- The original cases used an annotated `s: string`. With `s: string` all five
+  now emit **f64** — that part was fixed by earlier work. The shape that still
+  boxes is the one that actually occurs in `parseCookie`: an **unannotated**
+  parameter in a `.js` source.
+- The box/unbox column no longer reads in `__box_number` / `__unbox_number`
+  calls. Those call sites were inlined into an smi fast path
+  (`(if (result externref) (then … ref.i31 …) (else … call $__box_number))`),
+  so a census that greps for the helper name now under-reports by ~everything.
+  The carrier is unchanged; only its instruction encoding is.
+
+Instrumenting the candidate loop confirms the issue's diagnosis exactly, and
+adds a second one:
+
+```
+[probe-admission] decl=i declaredType=number admitted=false   ← never a candidate
+[probe-mixed]     decl=i initialDomain=number numericLocalVerdict=false
+[probe-mixed]     decl=n initialDomain=number numericLocalVerdict=true
+```
+
+`i` is invisible to `usageInferredLocalType` (declared `number`), **and**
+independently the #3765 whole-program fixpoint cannot ground it, so
+`bindingHasMixedAssignmentCarrier` demotes it. `n` — a plain
+`n = n + 1` accumulator — is grounded and stays f64.
+
+### Step 2 — the fix
+
+Admission now keys on the representation codegen is about to emit:
+
+- `src/checker/usage-inference.ts` — new `WidenedCarrierOracle`, installed via
+  `setWidenedCarrierOracle`. `collectCandidate` admits a binding when its
+  declared type is `any`/`unknown` **or** codegen says it is widening that
+  slot to a boxed carrier anyway.
+- `src/codegen/analysis/mixed-assignment-carrier.ts` — supplies that oracle
+  (memoized per declaration), plus `numericProofOverridesMixedCarrier`: a
+  mixed-assignment demotion is "could not rule out", a positive unboxing proof
+  is "ruled in", and the proof wins. `initForcesExternref` /
+  `forInTargetForcesExternref` stay absolute — they describe a value the slot
+  must physically hold.
+- The four slot-minting sites that consult `bindingHasMixedAssignmentCarrier`
+  (`statements/variables.ts` × 2, `index.ts` var-hoister and let/const
+  pre-hoister) all resolve the proof to `f64` at the same point, so hoisted and
+  declared slots cannot disagree.
+
+**No new proof logic.** Routes 1 (#684 use-site) and 2 (#3765 definition-site)
+run unchanged. Kill switch `JS2WASM_NUMERIC_ADMISSION=0` (also `off` / empty),
+default on.
+
+### Step 3 — what it actually changes, and what it does not
+
+**It does NOT fix the reduced case.** A/B on all five rows above:
+byte-identical output with the switch on and off. The declining clause, named:
+
+```
+[probe] fn=parseCookie decl=index declaredBoxed=false poisoned=false
+        bailed=true sawEvidence=false defSite=false
+```
+
+`parseCookie`'s `index` is the **one** binding in the whole cookie module that
+the new gate newly admits (`declaredBoxed=false` — declared `number`, slot
+widened). Both proofs then decline it: route 1 **bails** (`index` is passed as
+an argument to `endIndex(str, index, len)` and to `str.slice(…)` — neither is
+ToNumber-invariant), and route 2 is **false** (its definitions flow through
+`endIndex`/`eqIndex` returns whose own parameters are unresolvable). Every
+other cookie candidate was already admitted by the old declared-`any` gate.
+
+So this slice does what it was scoped to do — it makes the carrier *visible* —
+and the remaining blocker is the second, independent gap the issue already
+names at "a second, independent gap in proving a string receiver for an
+unannotated parameter". That is the next slice, and it is proof work, not
+admission work.
+
+**It does change the shapes where the existing proofs can already close.**
+A/B, standalone, `$acc` slot in `f`:
+
+| shape                                                                   | switch off | default on |
+| ----------------------------------------------------------------------- | ---------- | ---------- |
+| `let acc = 0; acc = s.foo(); return acc * 3 - 1;`                        | externref  | **f64**    |
+| loop: `acc = s.next(); acc = acc * 3;` with `next` string-or-number      | externref  | **f64**    |
+
+Both are declared `number`, both are widened by a genuinely cross-domain
+assignment, and route 1 carries them because every use applies ToNumber. Values
+agree with node in both legs (`20008`, `20`), including when `"12"`, `"zz"`,
+`null` or `undefined` is the value assigned into the newly-unboxed slot.
+
+### Box-site census of the standalone cookie module (AC 5)
+
+User functions only — the `$__*` helpers *are* the boxing machinery. One site =
+one boxing operation (the whole smi `if`, not each `ref.i31` line).
+
+| carrier                | before (`JS2WASM_NUMERIC_ADMISSION=0`) | after (default on) | delta |
+| ---------------------- | -------------------------------------: | -----------------: | ----: |
+| local                  |                                     13 |                 13 |    +0 |
+| argument               |                                      3 |                  3 |    +0 |
+| return                 |                                      2 |                  2 |    +0 |
+| other (`local.get`)    |                                      1 |                  1 |    +0 |
+| **total**              |                                 **19** |             **19** | **+0** |
+
+Per function, unchanged in both modes: `parseCookie` 5, `parseSetCookie` 5,
+`valueSlice` 4, `endIndex` 2, `eqIndex` 2, `decode` 1.
+
+The dominant remaining carrier is the **local** — 13 of 19 — which is exactly
+the carrier this issue is named for, and it did not move. Nothing relocated to
+another carrier either: every bucket is flat, which is the point of publishing
+the census.
+
+### Perf: a null result, and why no timing run was performed
+
+Both cookie artifacts are **byte-for-byte identical**:
+
+| mode                              | bytes   | imports | SHA-256                                                            |
+| --------------------------------- | ------: | ------: | ------------------------------------------------------------------ |
+| `JS2WASM_NUMERIC_ADMISSION=0`     | 175,248 |       0 | `2efdaf992b29eb3f28c629449c352b2824dbfeaaff603e11ae4f5a97fc9267e0` |
+| default-on                        | 175,248 |       0 | `2efdaf992b29eb3f28c629449c352b2824dbfeaaff603e11ae4f5a97fc9267e0` |
+
+An A/B of one artifact against itself measures scheduler noise, not a compiler
+change. The hash equality is the stronger claim and it is what is reported.
+The pinned runtime-dynamic harness (separate processes, warm-ups, alternating
+order, seed 3751, checksum equality) is the right instrument for the NEXT
+slice, once an artifact difference exists to measure.
+
+### Equivalence: full capture, A/B by test id (AC 6)
+
+A count match is not acceptance, so both legs captured their failing/passing
+sets per test id (`PARTIAL_OUT`) and the sets were diffed:
+
+```
+admission ON : 24 failing / 1661 passing
+admission OFF: 24 failing / 1661 passing
+baseline known failures: 36
+
+failing ONLY with admission ON  (regressions caused by this slice): 0
+failing ONLY with admission OFF (fixed by this slice):              0
+failing (ON) and NOT in baseline:                                   0
+
+VERDICT: failing sets IDENTICAL across the kill switch; all failures are baselined.
+```
+
+The 24 are all pre-existing baseline entries, in 11 files
+(`tdz-reference-error` 6, `null-dereference-guards` 5,
+`logical-conditional-identity` 3, `new-non-constructor` 2,
+`optional-direct-closure-call` 2, and seven singletons).
+
+Note on method: a **single unsharded** `scripts/equivalence-gate.mjs` run dies
+on this 4-core/16 GB container — vitest is killed before writing its JSON
+report and the gate exits 2 with `vitest produced no JSON report; signal=
+null`, which is not a pass. Run it as 8 shards.
+
+One shard reported `1 baseline failure now PASSES`
+(`issue-1197.test.ts :: … x | 0 collapses to nothing on an i32-shaped value`).
+That is a **stale baseline entry, not this slice**: the test passes with the
+switch on AND off (22/22 both ways). The baseline was not ratcheted here.
+
+### Gates, and one pre-existing failure found while running them
+
+Green on this branch: `typecheck`, `check:loc-budget`, `check:func-budget`,
+`check:oracle-ratchet`, `check:ir-fallbacks` (no unintended/post-claim/
+module-level increases), `check:ir-only` (READY, 38/38 units emitted).
+
+**`check:linear-ir` FAILS — and it fails identically on pristine
+`origin/main` `ba151267f`.** Verified by reverting all four changed source
+files to their `origin/main` blobs and re-running:
+
+```
+linear-ir ratchet: FAIL
+  - IR-compiled function count DECREASED: 8 → 6
+  - demotion bucket 'illegal:instr-vec.set_length' INCREASED: 0 → 2
+  - demotion bucket 'select:string-builder-candidate' INCREASED: 0 → 2
+```
+
+Byte-identical output with the change applied, with the change applied and
+`JS2WASM_NUMERIC_ADMISSION=0`, and with the change reverted. It is not this
+slice's, the baseline was NOT refreshed here, and it wants its own issue.
+
+### Acceptance criteria status after this slice
+
+- **AC 1 — achieved.** Pre-flight table above. Verdict: the IR-pass half is
+  blocked on #2855-successor coverage; both benchmark shapes are demoted.
+- **AC 2 — NOT achieved.** `let i = 0; i = s.indexOf(";") + 1;` in a loop still
+  emits an `externref` slot. The admission gate no longer hides it; both proofs
+  decline it, for the reasons quoted above. This is the next slice.
+- **AC 3 — achieved (vacuously, and stated as such).** IR-claimed coverage is
+  reported above and is **unchanged** by this slice: 6/12 on axes-core, 0/9 on
+  cookie, identical in both kill-switch modes. No speedup is claimed, so no
+  headline number can be hiding a shrinking denominator.
+- **AC 4** — unchanged (earlier checkpoint).
+- **AC 5 — achieved.** Census above, before/after, by carrier.
+- **AC 6 — achieved.** Full-capture equivalence run + kill-switch A/B; see the
+  PR body for the run output.
 
 ## Relationship to adjacent work
 

@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-21T07:53:58.875Z",
-  "baseline_generated_at": "2026-08-21T07:53:58.875Z",
-  "baseline_sha": "6e24af546186d381657b9e2ea0f8cd49cc5e66b9",
+  "timestamp": "2026-08-21T15:09:07.017Z",
+  "baseline_generated_at": "2026-08-21T15:09:07.017Z",
+  "baseline_sha": "e4075140e6e643aac3e262864d401139d8845dd8",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -10,36 +10,36 @@
   },
   "summary": {
     "total": 43621,
-    "pass": 31451,
-    "fail": 8756,
+    "pass": 31446,
+    "fail": 8760,
     "compile_error": 3390,
-    "compile_timeout": 5,
+    "compile_timeout": 6,
     "skip": 19,
-    "compilable": 40207,
-    "host_free_pass": 31451,
+    "compilable": 40206,
+    "host_free_pass": 31446,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 42535,
         "pass": 30467,
-        "fail": 8675,
+        "fail": 8674,
         "compile_error": 3369,
-        "compile_timeout": 5,
+        "compile_timeout": 6,
         "skip": 19,
-        "compilable": 39142,
+        "compilable": 39141,
         "host_free_pass": 30467,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
       "annex_b": {
         "total": 1086,
-        "pass": 984,
-        "fail": 81,
+        "pass": 979,
+        "fail": 86,
         "compile_error": 21,
         "compile_timeout": 0,
         "skip": 0,
         "compilable": 1065,
-        "host_free_pass": 984,
+        "host_free_pass": 979,
         "stale": 0,
         "label": "Annex B (legacy web compat)"
       },
@@ -57,25 +57,25 @@
       },
       "official": {
         "total": 43621,
-        "pass": 31451,
-        "fail": 8756,
+        "pass": 31446,
+        "fail": 8760,
         "compile_error": 3390,
-        "compile_timeout": 5,
+        "compile_timeout": 6,
         "skip": 19,
-        "compilable": 40207,
-        "host_free_pass": 31451,
+        "compilable": 40206,
+        "host_free_pass": 31446,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48735,
-        "pass": 31818,
-        "fail": 11280,
+        "pass": 31813,
+        "fail": 11284,
         "compile_error": 5517,
-        "compile_timeout": 5,
+        "compile_timeout": 6,
         "skip": 115,
-        "compilable": 43098,
-        "host_free_pass": 31818,
+        "compilable": 43097,
+        "host_free_pass": 31813,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -83,24 +83,24 @@
   },
   "official_summary": {
     "total": 43621,
-    "pass": 31451,
-    "fail": 8756,
+    "pass": 31446,
+    "fail": 8760,
     "compile_error": 3390,
-    "compile_timeout": 5,
+    "compile_timeout": 6,
     "skip": 19,
-    "compilable": 40207,
-    "host_free_pass": 31451,
+    "compilable": 40206,
+    "host_free_pass": 31446,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
-    "pass": 31818,
-    "fail": 11280,
+    "pass": 31813,
+    "fail": 11284,
     "compile_error": 5517,
-    "compile_timeout": 5,
+    "compile_timeout": 6,
     "skip": 115,
-    "compilable": 43098,
-    "host_free_pass": 31818,
+    "compilable": 43097,
+    "host_free_pass": 31813,
     "stale": 0
   },
   "strict_summary": {
@@ -117,13 +117,13 @@
   "scope_summaries": {
     "annex_b": {
       "total": 1086,
-      "pass": 984,
-      "fail": 81,
+      "pass": 979,
+      "fail": 86,
       "compile_error": 21,
       "compile_timeout": 0,
       "skip": 0,
       "compilable": 1065,
-      "host_free_pass": 984,
+      "host_free_pass": 979,
       "stale": 0
     },
     "proposal": {
@@ -140,11 +140,11 @@
     "standard": {
       "total": 42535,
       "pass": 30467,
-      "fail": 8675,
+      "fail": 8674,
       "compile_error": 3369,
-      "compile_timeout": 5,
+      "compile_timeout": 6,
       "skip": 19,
-      "compilable": 39142,
+      "compilable": 39141,
       "host_free_pass": 30467,
       "stale": 0
     }
@@ -164,13 +164,13 @@
     {
       "name": "annexB/language",
       "path": "annexB/language",
-      "pass": 816,
-      "fail": 25,
+      "pass": 811,
+      "fail": 30,
       "compile_error": 4,
       "compile_timeout": 0,
       "skip": 0,
       "total": 845,
-      "host_free_pass": 816
+      "host_free_pass": 811
     },
     {
       "name": "built-ins/AbstractModuleSource",
@@ -990,9 +990,9 @@
       "name": "language/expressions",
       "path": "language/expressions",
       "pass": 8369,
-      "fail": 1543,
+      "fail": 1542,
       "compile_error": 1172,
-      "compile_timeout": 0,
+      "compile_timeout": 1,
       "skip": 18,
       "total": 11102,
       "host_free_pass": 8369
@@ -1201,7 +1201,7 @@
     "host_import_leak": 3973,
     "illegal_cast": 118,
     "negative_test_fail": 14,
-    "null_deref": 172,
+    "null_deref": 177,
     "oob": 27,
     "other": 3355,
     "promise_error": 79,
@@ -1219,8 +1219,8 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 16802,
-    "classified": 16802,
+    "total_non_pass_non_skip": 16807,
+    "classified": 16807,
     "unclassified_threshold": null,
     "has_edition_breakdown": true,
     "buckets": [
@@ -1292,11 +1292,11 @@
           "Proposals": 4471
         },
         "sample_files": [
-          "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
-          "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
-          "test/built-ins/Temporal/PlainDate/prototype/toPlainDateTime/argument-string-unknown-annotation.js"
+          "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
+          "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::CSSNumericValue_equals (##)",
@@ -1334,15 +1334,15 @@
           "ES2027": 101
         },
         "sample_files": [
-          "test/built-ins/AsyncDisposableStack/prototype/move/not-a-constructor.js",
           "test/built-ins/AsyncDisposableStack/prototype/move/sets-state-to-disposed.js",
+          "test/built-ins/AsyncDisposableStack/prototype/move/not-a-constructor.js",
           "test/built-ins/AsyncDisposableStack/instance-extensible.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.dispose-property-not-callable.js"
         ],
         "sample_signatures": [
-          "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_new (##)",
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_get_disposed, env::AsyncDisposableStack_move, env::AsyncDisposableStack_new (##)",
+          "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_new (##)",
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_new, env::AsyncDisposableStack_use (##)",
           "assertion_fail:Test262Error: [object Object] should be an own property",
           "type_error:TypeError: Cannot access property on null or undefined at #:#"
@@ -1903,8 +1903,8 @@
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 1024,
           "runtime_error": 44,
+          "assertion_fail": 1024,
           "type_error": 211,
           "other": 232,
           "illegal_cast": 7,
@@ -1923,15 +1923,15 @@
           "ES5": 3
         },
         "sample_files": [
-          "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier-by-classname.js",
           "test/language/expressions/class/dstr/async-private-gen-meth-static-ary-ptrn-elem-ary-empty-init.js",
+          "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier-by-classname.js",
           "test/language/expressions/class/async-gen-method/yield-star-getiter-async-undefined-sync-get-abrupt.js",
           "test/language/expressions/class/private-setter-brand-check-multiple-evaluations-of-class-realm-function-ctor.js",
           "test/language/expressions/class/async-method/dflt-params-ref-later.js"
         ],
         "sample_signatures": [
-          "assertion_fail:Test262Error: Expected SameValue(«null», «#») to be true",
           "runtime_error:Test262:AsyncTestFailure:Test262Error: TypeError: Cannot destructure 'null' or 'undefined'",
+          "assertion_fail:Test262Error: Expected SameValue(«null», «#») to be true",
           "type_error:TypeError: Cannot read properties of undefined (reading a class field)",
           "type_error:TypeError: Cannot read properties of undefined (reading 'access')",
           "other:Test262:AsyncTestFailure:Test262Error: [object Object]"
@@ -2218,25 +2218,26 @@
           "#1050"
         ],
         "label": "Annex B function/eval semantics",
-        "count": 32,
+        "count": 37,
         "statuses": {
           "pass": 0,
-          "fail": 29,
+          "fail": 34,
           "compile_error": 3,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 32,
+          "total": 37,
           "host_free_pass": 0
         },
         "error_categories": {
           "illegal_cast": 3,
           "assertion_fail": 23,
+          "null_deref": 5,
           "other": 4,
           "wasm_compile": 1,
           "runtime_error": 1
         },
         "by_edition": {
-          "ES5": 9,
+          "ES5": 14,
           "ES2027": 13,
           "ES2015": 10
         },
@@ -2421,8 +2422,8 @@
         "sample_files": [
           "test/built-ins/Function/prototype/toString/proxy-async-method-definition.js",
           "test/language/expressions/arrow-function/prototype-rules.js",
-          "test/built-ins/Function/prototype/toString/proxy-class.js",
           "test/built-ins/Function/15.3.5.4_2-8gs.js",
+          "test/built-ins/Function/prototype/toString/proxy-class.js",
           "test/built-ins/Function/call-bind-this-realm-undef.js"
         ],
         "sample_signatures": [
@@ -2467,14 +2468,14 @@
           "test/built-ins/Symbol/matchAll/prop-desc.js",
           "test/built-ins/Symbol/search/cross-realm.js",
           "test/built-ins/Symbol/replace/prop-desc.js",
-          "test/built-ins/Symbol/prototype/Symbol.toPrimitive/redefined-symbol-wrapper-ordinary-toprimitive.js"
+          "test/built-ins/Symbol/prototype/valueOf/this-val-symbol.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: The value of empty.description is `undefined` Expected SameValue(«null», «undefined») to be true",
           "type_error:TypeError: Cannot convert undefined or null to object",
           "assertion_fail:Test262Error: Expected SameValue(«[object Object]», «undefined») to be true",
-          "assertion_fail:Test262Error: hint: number Expected a TypeError to be thrown but no exception was thrown at all",
-          "type_error:TypeError: Symbol.prototype.valueOf is not yet implemented in --target standalone"
+          "type_error:TypeError: Symbol.prototype.valueOf is not yet implemented in --target standalone",
+          "assertion_fail:Test262Error: hint: number Expected a TypeError to be thrown but no exception was thrown at all"
         ]
       },
       {
@@ -2582,9 +2583,9 @@
         "count": 507,
         "statuses": {
           "pass": 0,
-          "fail": 498,
+          "fail": 497,
           "compile_error": 9,
-          "compile_timeout": 0,
+          "compile_timeout": 1,
           "skip": 0,
           "total": 507,
           "host_free_pass": 0
@@ -2894,27 +2895,27 @@
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 50,
           "type_error": 2,
+          "assertion_fail": 50,
           "other": 9,
           "illegal_cast": 1,
           "null_deref": 2
         },
         "by_edition": {
-          "ES2027": 13,
           "ES5": 32,
+          "ES2027": 13,
           "ES2015": 21
         },
         "sample_files": [
-          "test/language/statements/using/syntax/using-invalid-assignment-statement-body-for-of.js",
           "test/language/statements/function/13.2-18-1.js",
+          "test/language/statements/using/syntax/using-invalid-assignment-statement-body-for-of.js",
           "test/language/comments/S7.4_A5.js",
           "test/language/statements/await-using/syntax/await-using-allowed-at-top-level-of-module.js",
           "test/language/statements/function/S13.2.2_A15_T2.js"
         ],
         "sample_signatures": [
-          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "type_error:TypeError: Cannot destructure 'null' or 'undefined'",
+          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "compile_timeout:timeout (10s)",
           "other:L#:## 'await using' declarations are not allowed at the top level of scripts",
           "assertion_fail:Test262Error: ##: obj.prop === \"A\". Actual: obj.prop ===null"
@@ -3194,8 +3195,8 @@
           "Unclassified (untagged)": 2
         },
         "sample_files": [
-          "test/built-ins/NativeErrors/TypeError/prototype/message.js",
           "test/built-ins/NativeErrors/URIError/prototype/message.js",
+          "test/built-ins/NativeErrors/TypeError/prototype/message.js",
           "test/language/expressions/function/arguments-with-arguments-lex.js",
           "test/built-ins/Error/the-initial-value-of-errorprototypemessage-is-the-empty-string.js",
           "test/built-ins/NativeErrors/RangeError/prototype/message.js"

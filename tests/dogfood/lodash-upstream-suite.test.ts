@@ -14,7 +14,7 @@ describe("lodash 4.18.1 upstream suite", () => {
     expect(pin.commit).toBe("cb0b9b9212521c08e3eafe7c8cb0af1b42b6649e");
     expect(pin.testFileCount).toBe(1);
     expect(pin.registrationSites).toBe(1753);
-    expect(pin.selectedModules).toHaveLength(7);
+    expect(pin.selectedModules).toHaveLength(18);
   });
 
   const heavy = process.env.DOGFOOD_LODASH_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -24,8 +24,8 @@ describe("lodash 4.18.1 upstream suite", () => {
     });
     const report = JSON.parse(out);
     expect(report.upstreamSuite.commit).toBe(pin.commit);
-    expect(report.extraction.testsRegistered).toBe(11);
-    expect(report.extraction.nativePassed).toBe(11);
+    expect(report.extraction.testsRegistered).toBe(26);
+    expect(report.extraction.nativePassed).toBe(26);
     expect(report.results.passed + report.results.failed + report.results.runtimeFailed).toBe(report.results.scored);
   });
 
@@ -37,8 +37,8 @@ describe("lodash 4.18.1 upstream suite", () => {
     const report = JSON.parse(out);
     expect(report.package).toBe("lodash-es@4.18.1");
     expect(report.upstreamSuite.commit).toBe(pin.commit);
-    expect(report.extraction.testsRegistered).toBe(11);
-    expect(report.extraction.nativePassed).toBe(11);
+    expect(report.extraction.testsRegistered).toBe(26);
+    expect(report.extraction.nativePassed).toBe(26);
     expect(report.results.passed + report.results.failed + report.results.runtimeFailed).toBe(report.results.scored);
   });
 });

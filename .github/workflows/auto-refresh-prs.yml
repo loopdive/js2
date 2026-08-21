@@ -64,6 +64,9 @@ concurrency:
 
 jobs:
   refresh:
+    # Forks inherit the cron trigger but do not have the maintainer App
+    # credentials or a canonical merge queue to refresh.
+    if: github.repository == 'loopdive/js2'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

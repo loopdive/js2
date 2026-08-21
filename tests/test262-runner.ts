@@ -496,6 +496,32 @@ function parsePathFilter(): string[] | null {
   return _cachedPathFilter;
 }
 
+// (ES5 measurement lane) TEST262_PATH_FILTER_FILE — a file of exact
+// test-relative paths, one per line. Env-var filters cap out far below the
+// ~9k-entry ES5 subset (and 9k substring patterns would be quadratic), so a
+// file-fed EXACT-match Set is the scalable spelling. Composes with
+// TEST262_PATH_FILTER: a path passes if it matches EITHER (each is a no-op
+// when unset).
+let _cachedPathFilterSet: ReadonlySet<string> | null | undefined;
+function parsePathFilterSet(): ReadonlySet<string> | null {
+  if (_cachedPathFilterSet !== undefined) return _cachedPathFilterSet;
+  const file = process.env.TEST262_PATH_FILTER_FILE;
+  if (!file) {
+    _cachedPathFilterSet = null;
+    return null;
+  }
+  try {
+    const lines = readFileSync(file, "utf-8")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    _cachedPathFilterSet = new Set(lines);
+  } catch {
+    _cachedPathFilterSet = null;
+  }
+  return _cachedPathFilterSet;
+}
+
 /**
  * Check whether `relPath` (a test262/test-relative path like
  * `built-ins/RegExp/prototype/test/foo.js`) matches the active
@@ -504,9 +530,13 @@ function parsePathFilter(): string[] | null {
  */
 export function matchesPathFilter(relPath: string): boolean {
   const filter = parsePathFilter();
-  if (filter === null) return true;
-  for (const p of filter) {
-    if (relPath.includes(p)) return true;
+  const filterSet = parsePathFilterSet();
+  if (filter === null && filterSet === null) return true;
+  if (filterSet !== null && filterSet.has(relPath)) return true;
+  if (filter !== null) {
+    for (const p of filter) {
+      if (relPath.includes(p)) return true;
+    }
   }
   return false;
 }

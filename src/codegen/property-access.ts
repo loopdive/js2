@@ -657,8 +657,17 @@ export function emitRuntimeDescriptorGet(
 ): ValType | null {
   const accessType = ctx.checker.getTypeAtLocation(accessNode);
   const accessWasm = resolveWasmType(ctx, accessType);
+  // (#2071-adjacent, ES5 defineProperty lane) STANDALONE keeps the honest
+  // externref: this path reads RUNTIME descriptor state, and an accessor whose
+  // [[Get]] was later redefined (even to undefined, §6.2.5.6 present-undefined)
+  // can produce a value the checker's static member type never saw — narrowing
+  // here dragged a canonical `undefined` through `__unbox_number` to NaN, so
+  // `typeof obj.prop` answered "number" after `{get: undefined}` (15.2.3.6-4-498
+  // family). A numeric consumer re-narrows through its own coercion.
   const resultType: ValType =
-    !forceExternref && (accessWasm.kind === "f64" || accessWasm.kind === "i32") ? accessWasm : { kind: "externref" };
+    !forceExternref && !ctx.standalone && (accessWasm.kind === "f64" || accessWasm.kind === "i32")
+      ? accessWasm
+      : { kind: "externref" };
   const getIdx = ensureLateImport(
     ctx,
     "__extern_get",

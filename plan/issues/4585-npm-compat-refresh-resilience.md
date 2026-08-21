@@ -240,3 +240,12 @@ numeric callback bridge (`toLowerCase is not a function`); an experimental
 reference bridge exposed a closure-lifetime trap and was not shipped. Track
 that follow-up in [issue 4527](./4527-axios-class-call-concat-vararg-invalid-module.md)
 and [issue 4528](./4528-axios-module-init-symbol-tonumber.md).
+
+## Unit-infrastructure continuation 4 (Lodash)
+
+The Lodash adapter now selects 18 original QUnit modules instead of seven,
+covering arithmetic, comparison, and string helpers. The expanded lane runs
+26/26 callbacks natively for both packages; Wasm passes 26/26 for `lodash` and
+22/26 for `lodash-es` (the four failures are null string-method results).
+The other 1,727 registrations remain explicitly deferred as unavailable
+infrastructure, and no upstream callback or input is rewritten.
