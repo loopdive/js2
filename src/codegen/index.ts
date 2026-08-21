@@ -10332,6 +10332,16 @@ export function varBindingNeedsExternrefForUndefined(
   if (ctx !== undefined && decl !== undefined && hoistedVarPreInitValueIsObserved(ctx, decl)) return true; // #4206
   if (init === undefined) return false;
   if (ts.isVoidExpression(init)) return true;
+  // (ES5 defineProperty lane, #4491) `var r = f()` where f returns nothing:
+  // the call's value IS `undefined` (§10.2.1.1 step 12 / OrdinaryCallEvaluateBody),
+  // but a void-typed slot resolved f64 and stored the default 0 — so
+  // `getFunc() === undefined` answered false everywhere the harness's
+  // propertyHelper compares against a void helper's result. An externref slot
+  // holds the canonical undefined carrier instead.
+  if (ctx !== undefined && ts.isCallExpression(init)) {
+    const callType = ctx.checker.getTypeAtLocation(init);
+    if ((callType.flags & ~(ts.TypeFlags.Undefined | ts.TypeFlags.Void)) === 0) return true;
+  }
   // (#3033) Dynamic-receiver member read whose static type is purely undefined.
   if (ctx !== undefined && (ts.isPropertyAccessExpression(init) || ts.isElementAccessExpression(init))) {
     const declType = ctx.checker.getTypeAtLocation(decl!);

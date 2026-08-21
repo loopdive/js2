@@ -30,7 +30,19 @@ loc-budget-allow:
   # checker's f64 turned a get:undefined redefine's canonical undefined into
   # NaN — 15.2.3.6-4-498/516/534/552 measured fail→pass).
   - src/codegen/property-access.ts
+  # 2026-08-21 void-undefined slice: typeof unsound-fold guard for runtime
+  # accessor keys (typeof-delete.ts), void-typed binding slot widening
+  # (declarations.ts moduleGlobalWasmType arm).
+  - src/codegen/typeof-delete.ts
+  - src/codegen/declarations.ts
+oracle-ratchet-allow:
+  # 2026-08-21: one getTypeAtLocation in varBindingNeedsExternrefForUndefined's
+  # new call arm — the same raw-checker idiom as the surrounding predicate;
+  # the query is a TypeFlags test (void/undefined purity) the oracle does not
+  # express.
+  - src/codegen/index.ts
 func-budget-allow:
+  - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
   - src/codegen/object-ops.ts::compilePropertyIntrospection
 ---

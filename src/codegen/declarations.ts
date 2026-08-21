@@ -76,6 +76,7 @@ import {
   resolveWasmType,
   STRING_METHODS,
   unwrapGeneratorYieldType,
+  varBindingNeedsExternrefForUndefined,
 } from "./index.js";
 import { ensureNativePromiseBoundaryBridge, isStandalonePromiseActive } from "./async-scheduler.js";
 import {
@@ -1959,6 +1960,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // it. See `with-body-var-hoisting.ts` for the full argument and the seed
     // that gives the slot its `undefined` at `__module_init` entry.
     if (ts.isIdentifier(decl.name) && withBodyHoistedModuleVarNames(sourceFile).has(decl.name.text)) {
+      return { kind: "externref" };
+    }
+    // (#4491 lane) Same rule the function-local slot typing applies via
+    // `varBindingNeedsExternrefForUndefined`: a binding whose initializer's
+    // static type is purely void/undefined (`var r = voidFn()`, `var x = void 0`)
+    // holds the value `undefined`, which a void-derived f64 slot turns into 0 —
+    // `voidFn() === undefined` then answers false (the propertyHelper harness
+    // compares against a void helper's result constantly).
+    if (varBindingNeedsExternrefForUndefined(decl, ctx)) {
       return { kind: "externref" };
     }
     // #1914 — `var m = re.exec(s)` under standalone gets the precise
