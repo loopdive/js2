@@ -414,9 +414,23 @@ function collectVecMutationEntries(
     // of truth for mutation, just as __vec_get already does (#2669).
     const physicalExternref =
       arrDef?.kind === "array" && (arrDef.element.kind === "externref" || arrDef.element.kind === "ref_extern");
-    const mutationKey = physicalExternref ? "externref" : elemKey;
+    // (#4531/#4527) Struct-ref element carrier (`[{ f, g }]` — a typed vec of
+    // closed object structs). Push/pop through the host boundary previously
+    // reported UNSUPPORTED for these, so `callbacks.push({...})` on a vec that
+    // crossed an `any`-typed parameter silently mutated only the materialized
+    // mirror — diff-sequences' transposed-callbacks push read back null. The
+    // push arm guard-tests the incoming value against the element type and
+    // answers -1 (unsupported) on a mismatch, so only provably-compatible
+    // elements take the native store.
+    const elemIsStructRef =
+      !physicalExternref &&
+      arrDef?.kind === "array" &&
+      (arrDef.element.kind === "ref" || arrDef.element.kind === "ref_null") &&
+      nativeStrVecElemTypeIdx(ctx, vecTypeIdx) < 0;
+    const mutationKey = physicalExternref ? "externref" : elemIsStructRef ? "structref" : elemKey;
     const supported =
       mutationKey === "externref" ||
+      mutationKey === "structref" ||
       ((mutationKey === "f64" || mutationKey === "i32") && unboxNumIdx !== undefined && boxNumIdx !== undefined) ||
       // (#3311) native-string carrier (`string[]` standalone) — no numeric
       // unbox; recover the `$AnyString` ref at the store.
@@ -788,6 +802,16 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
       );
       // value unboxing per element kind (value param is local 1)
       const strElemIdx = nativeStrVecElemTypeIdx(ctx, vecTypeIdx);
+      // (#4531/#4527) Struct-ref element: recover the typed element from the
+      // externref value. The guard below already proved the ref.test, so the
+      // cast cannot trap.
+      const pushArrDef = ctx.mod.types[arrTypeIdx];
+      const structElemTypeIdx =
+        elemKey === "structref" &&
+        pushArrDef?.kind === "array" &&
+        (pushArrDef.element.kind === "ref" || pushArrDef.element.kind === "ref_null")
+          ? pushArrDef.element.typeIdx
+          : -1;
       const valueInstrs: Instr[] =
         elemKey === "externref"
           ? [{ op: "local.get", index: 1 }]
@@ -798,11 +822,37 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
               ]
             : elemKey === "i32"
               ? [{ op: "local.get", index: 1 }, { op: "call", funcIdx: unboxNumIdx! }, { op: "i32.trunc_sat_f64_s" }]
-              : // (#3311) native-string carrier: the boxed externref value is a
-                // `$NativeString` (<: `$AnyString`); recover the ref element for
-                // `array.set` — no numeric unbox.
-                [{ op: "local.get", index: 1 }, { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: strElemIdx }];
+              : elemKey === "structref"
+                ? [
+                    { op: "local.get", index: 1 },
+                    { op: "any.convert_extern" },
+                    { op: "ref.cast", typeIdx: structElemTypeIdx },
+                  ]
+                : // (#3311) native-string carrier: the boxed externref value is a
+                  // `$NativeString` (<: `$AnyString`); recover the ref element for
+                  // `array.set` — no numeric unbox.
+                  [
+                    { op: "local.get", index: 1 },
+                    { op: "any.convert_extern" },
+                    { op: "ref.cast", typeIdx: strElemIdx },
+                  ];
       const thenBranch: Instr[] = [
+        // (#4531/#4527) An incompatible value must NOT trap the cast in
+        // `valueInstrs` — answer the -1 unsupported sentinel so the runtime
+        // keeps its legacy fallback for that call.
+        ...(elemKey === "structref"
+          ? ([
+              { op: "local.get", index: 1 },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: structElemTypeIdx },
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [{ op: "i32.const", value: -1 }, { op: "return" }],
+              },
+            ] as Instr[])
+          : []),
         { op: "local.get", index: 2 },
         { op: "ref.cast", typeIdx: vecTypeIdx },
         { op: "local.set", index: vecL },
@@ -919,7 +969,8 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
           ? []
           : // (#3311) native-string element (`ref null $AnyString`) → externref via
             // the plain anyref→externref box (no `__box_number`).
-            isNativeStr
+            // (#4531/#4527) struct-ref elements box the same way.
+            isNativeStr || elemKey === "structref"
             ? [{ op: "extern.convert_any" }]
             : elemKey === "f64"
               ? [{ op: "call", funcIdx: boxNumIdx2! }]

@@ -14,6 +14,12 @@ area: codegen
 language_feature: arrays, classes
 goal: npm-library-support
 related: [3995, 4289, 3979]
+# +37 lines in the vec host-bridge emitter: the struct-ref push/pop arms live
+# inside the same per-vec-type cascade builder as every other element kind.
+func-budget-allow:
+  - src/codegen/vec-access-exports.ts::_emitVecAccessExportsInner
+loc-budget-allow:
+  - src/codegen/vec-access-exports.ts
 files:
   - tests/dogfood/prettier-upstream-suite.mjs
 ---
@@ -72,3 +78,42 @@ node --import tsx tests/dogfood/prettier-upstream-suite.mjs --json
 - [ ] `AstPath` reduction passes: mixed push + indexed read round-trips all
       three element kinds.
 - [ ] Prettier upstream ≥ 5/8 (remaining 3 tracked by #4532).
+
+## 2026-08-21 mechanism note (curated-npm-tests lane)
+
+The diff-sequences jest cluster (32 tests) reduces to this issue's family with
+a precise mechanism, measured via host-boundary traffic spies:
+
+1. `const callbacks = [{ foundSubsequence, isCommon }]` builds a TYPED vec of
+   one closed object struct.
+2. The vec crosses an `any`-typed parameter; the callee's
+   `callbacks.push({ …wrapper arrows… })` compiles its object-literal argument
+   as an OPEN host `$Object` (the externref-context literal routing), which can
+   never ref.test as the vec's closed element struct.
+3. The host push previously reported the whole vec UNSUPPORTED
+   (`__vec_mut_supported` = 0 for struct-ref elements) and silently mutated
+   only the materialized mirror; `callbacks[transposed ? 1 : 0]` then read
+   null and destructuring threw.
+
+Landed now: `__vec_push`/`__vec_pop` support struct-ref-element vecs with a
+guarded element ref.test (mismatch → the -1 unsupported sentinel, keeping the
+legacy fallback). This fixes homogeneous typed pushes through opaque
+boundaries but NOT the mixed-representation push above — the real fix is
+construction-time carrier widening: an array literal of closed-struct elements
+whose value ESCAPES into an `any`-typed call argument must select the
+universal externref element carrier (the #3244 widening extended from
+contextual-`any` literals to escaping literals). That is this issue's
+implementation step 2, now with a concrete reduction:
+
+```js
+// cb.mjs
+const inner = (flip, callbacks) => {
+  if (flip && callbacks.length === 1) {
+    const { f, g } = callbacks[0];
+    callbacks.push({ f: (x, y) => f(y, x), g: (x, y) => g(y, x) });
+  }
+  const { f, g } = callbacks[flip ? 1 : 0];   // callbacks[1] → null today
+  return '' + f(1, 2) + g(3, 4);
+};
+export function run(f, g, flip) { return inner(flip, [{ f, g }]); }
+```
