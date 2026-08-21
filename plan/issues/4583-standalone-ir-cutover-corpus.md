@@ -45,7 +45,7 @@ through the public `compile` route:
 | Classes | 2,554 | 11 | 11 | 0 | 0 | 0 |
 | **Total** | **22,056** | **47** | **38** | **9** | **0** | **19** |
 
-#4586, "Prepare the compiler timer shim through exact IR ownership," preserves
+#4588, "Prepare the compiler timer shim through exact IR ownership," preserves
 the eight-unit Async inventory while reclassifying the exact compiler timer
 shim from unowned support to a self-owned terminal. Source bytes and every
 other case count remain unchanged; the current manifest digest is

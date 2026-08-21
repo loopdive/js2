@@ -184,7 +184,7 @@ jobs:
         # fatal. R9 promotes the strict IR-only policy once blockers reach zero.
         run: pnpm run check:ir-only -- --policy=hybrid
 
-      - name: Standalone IR cutover corpus gate (#4583/#4586)
+      - name: Standalone IR cutover corpus gate (#4583/#4588)
         if: steps.npm_compat.outputs.only != 'true'
         # The package command first pins the exact manifest/digest, then checks
         # the raw generator stream at 5 successful sources / 47 units while

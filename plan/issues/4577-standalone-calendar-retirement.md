@@ -174,7 +174,7 @@ modules.
   component, `legacyBodyEmitted: false`, and `irBodyEmitted: true`.
 - Calendar ratchets standalone **31 → 37 IR** and **6 → 0
   legacy/Unsupported**, with zero Invariants and every residual bucket at zero.
-  The current post-#4586 census is 38/38 in both lanes because the exact
+  The current post-#4588 census is 38/38 in both lanes because the exact
   target-neutral timer shim is now an additional self-owned terminal.
 - The exact runtime oracle matches the existing #3523 Calendar contract across
   deterministic clock values, repeated renders, selection/reselection,
@@ -212,7 +212,7 @@ bodies. All ten source terminals report `Prepared`, `irBodyEmitted: true`, and
 The standalone lane is therefore promoted from its temporary baseline-only
 readiness mode to strict IR-only readiness for this bounded five-entry corpus.
 Calendar moved its baseline from 31 to 37 emitted/IR bodies and from 6 to 0
-legacy/Unsupported outcomes; #4586 subsequently reclassified the exact timer
+legacy/Unsupported outcomes; #4588 subsequently reclassified the exact timer
 shim to bring both current lanes to 38 emitted/IR bodies without adding a
 legacy, Unsupported, or Invariant row.
 
@@ -318,7 +318,7 @@ or `func-budget-allow` grant.
 ## Handoff
 
 Only after this atomic checkpoint reached its historical 37/37 mark (now 38/38
-after #4586) could the standalone legacy emitter be audited for physical
+after #4588) could the standalone legacy emitter be audited for physical
 deletion. Passing this example census is
 necessary evidence, not by itself proof that no other standalone legacy owner
 or fallback remains in the wider compiler. The follow-on audit confirms that

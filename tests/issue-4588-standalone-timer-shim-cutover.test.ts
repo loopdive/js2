@@ -46,7 +46,7 @@ async function compileAsync(target: "gc" | "standalone", fileName = "async.ts"):
 }
 
 async function compileAndInstantiate(source: string) {
-  const result = await compile(source, { fileName: "issue-4586-node-timeout.ts" });
+  const result = await compile(source, { fileName: "issue-4588-node-timeout.ts" });
   expect(result.success, JSON.stringify(result.errors)).toBe(true);
   const imports = buildImports(result.imports);
   const instance = new WebAssembly.Instance(new WebAssembly.Module(result.binary), imports);
@@ -95,7 +95,7 @@ function expectLegacyOrSafeReject(result: CompileResult): void {
   }
 }
 
-describe("#4586 exact compiler timer-shim physical-route cutover", () => {
+describe("#4588 exact compiler timer-shim physical-route cutover", () => {
   it("defers only exact Unsupported free-function owners for post-direct retry", () => {
     const freeUnitId = "ir-unit:v1:test:free" as IrUnitId;
     const classUnitId = "ir-unit:v1:test:class" as IrUnitId;
@@ -344,8 +344,8 @@ describe("#4586 exact compiler timer-shim physical-route cutover", () => {
       function tick(): void {}
       export function schedule(ms: number): number { return setTimeout(tick, ms); }
     `;
-    const candidate = await compileWithTimerCutover(source, "issue-4586-runtime.ts", true);
-    const directControl = await compileWithTimerCutover(source, "issue-4586-runtime.ts", false);
+    const candidate = await compileWithTimerCutover(source, "issue-4588-runtime.ts", true);
+    const directControl = await compileWithTimerCutover(source, "issue-4588-runtime.ts", false);
     for (const result of [candidate, directControl]) {
       expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     }
@@ -408,7 +408,7 @@ describe("#4586 exact compiler timer-shim physical-route cutover", () => {
        export function second(): number { return setTimeout(() => {}, 2); }`,
     ],
   ] as const)("leaves an injected shim with %s on legacy or rejects safely", async (label, source) => {
-    const result = await compileWithTimerCutover(source, `issue-4586-${label.replaceAll(" ", "-")}.ts`, true);
+    const result = await compileWithTimerCutover(source, `issue-4588-${label.replaceAll(" ", "-")}.ts`, true);
     expectLegacyOrSafeReject(result);
   });
 
@@ -426,7 +426,7 @@ describe("#4586 exact compiler timer-shim physical-route cutover", () => {
        export function main(): number { return setTimeout(() => {}, 1); }`,
     ],
   ] as const)("never gives an %s compiler provenance", async (label, source) => {
-    const result = await compileWithTimerCutover(source, `issue-4586-${label.replaceAll(" ", "-")}.ts`, true);
+    const result = await compileWithTimerCutover(source, `issue-4588-${label.replaceAll(" ", "-")}.ts`, true);
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(exactTimerOutcomes(result)).toEqual([]);
     expect(

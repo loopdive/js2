@@ -1,5 +1,5 @@
 ---
-id: 4586
+id: 4588
 title: "Prepare the compiler timer shim through exact IR ownership"
 status: done
 created: 2026-08-21
@@ -15,12 +15,13 @@ sprint: current
 parent: 3518
 depends_on: [4573, 4579, 4583, 4584]
 related: [1501, 3090, 3519, 3520, 3792, 4573, 4579, 4583, 4584]
+assignee: ttraenkler/codex
 files:
   - .github/workflows/ci.yml
   - package.json
   - plan/issues/4577-standalone-calendar-retirement.md
   - plan/issues/4583-standalone-ir-cutover-corpus.md
-  - plan/issues/4586-compiler-timer-shim-prepared-ir-cutover.md
+  - plan/issues/4588-compiler-timer-shim-prepared-ir-cutover.md
   - scripts/check-ir-only.ts
   - scripts/ir-only-baseline.json
   - scripts/standalone-ir-cutover-corpus.json
@@ -56,10 +57,10 @@ files:
   - tests/issue-4573-standalone-native-promise-delay.test.ts
   - tests/issue-4577-dom-interaction-bridge.test.ts
   - tests/issue-4577-standalone-calendar-retirement.test.ts
-  - tests/issue-4586-standalone-timer-shim-cutover.test.ts
+  - tests/issue-4588-standalone-timer-shim-cutover.test.ts
   - tests/standalone-ir-cutover-corpus.test.ts
 ---
-# #4586 — prepare the compiler timer shim through exact IR ownership
+# #4588 — prepare the compiler timer shim through exact IR ownership
 
 ## Problem
 
@@ -128,7 +129,7 @@ Both bounded IR-only lanes now measure 5/5 successful entries and 38/38
 emitted IR bodies, with zero legacy bodies, Unsupported outcomes, or
 Invariants. A four-cell basename/full-path × default/explicit-IR probe preserves
 the exact timer UnitId and records `terminal-ir` with no physical body entries
-in every cell. The exact #4586 suite is 21/21 green; the refreshed #3519 plus
+in every cell. The exact #4588 suite is 21/21 green; the refreshed #3519 plus
 corpus tests are 34/34 green, and both post-timer #4577 census assertions pass.
 
 Prepared-body fallback now restores the original free-function-only retry
