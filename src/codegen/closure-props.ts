@@ -206,9 +206,14 @@ export function buildClosurePropMethodCallElseArm(
   ctx: CodegenContext,
   externGetIdx: number,
   applyClosureIdx: number,
+  // (#4221) See `buildVecOrClosurePropMethodCallElseArm` — the absent-callee
+  // TypeError guard, threaded through to the terminal miss arm.
+  absentCalleeGuard: () => Instr[] = () => [],
 ): Instr[] {
   const isClosurePropCarrierIdx = ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER);
-  if (isClosurePropCarrierIdx === undefined) return [{ op: "ref.null.extern" }];
+  if (isClosurePropCarrierIdx === undefined) {
+    return [{ op: "ref.null.extern" }, ...absentCalleeGuard()];
+  }
   // (#3673) Prefer the reserved `__closure_method_call` helper: it keeps the
   // own-property route below AND adds the %Function.prototype%
   // `call`/`apply` builtins, which a bare own-property lookup can never find
@@ -222,7 +227,7 @@ export function buildClosurePropMethodCallElseArm(
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "externref" } },
-      else: buildProtoNamedMethodMissArm(ctx, applyClosureIdx),
+      else: buildProtoNamedMethodMissArm(ctx, applyClosureIdx, absentCalleeGuard),
       then:
         closureMethodCallIdx !== undefined
           ? ([
@@ -278,14 +283,32 @@ export function buildClosurePropMethodCallElseArm(
  * prototype — this returns `undefined` and the caller keeps its exact previous
  * `ref.null.extern`, so the emission is byte-identical for those modules.
  */
-function buildProtoNamedMethodMissArm(ctx: CodegenContext, applyClosureIdx: number): Instr[] {
+function buildProtoNamedMethodMissArm(
+  ctx: CodegenContext,
+  applyClosureIdx: number,
+  // (#4221) `__extern_method_call`'s absent-callee TypeError guard. This arm is
+  // the LAST word on `recv.<name>(…)` for a receiver the runtime models fully
+  // (a fnctor/class instance, a bare primitive): reaching its end with nothing
+  // resolved means the property is genuinely absent, and §13.3.6.2 step 5 says
+  // that is a TypeError — not `undefined`. It used to answer the undefined
+  // sentinel, which is why
+  //
+  //     function FACTORY(){ this.id = 0; this.id = this.func();
+  //                         function func(){ return "id_string"; } }
+  //     new FACTORY();      // must throw; completed normally (S13.2.2_A11)
+  //
+  // constructed successfully. Empty off the standalone lane (a JS host throws
+  // on its own), so the gc lane is byte-identical.
+  absentCalleeGuard: () => Instr[] = () => [],
+): Instr[] {
   const consult = protoIndexRecvGetMissInstrs(ctx, 0, 1);
-  if (!consult) return [{ op: "ref.null.extern" }];
+  if (!consult) return [{ op: "ref.null.extern" }, ...absentCalleeGuard()];
   return [
     ...consult,
     ...(ctx.funcMap.has("__nullish_to_null")
       ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
       : []),
+    ...absentCalleeGuard(),
     { op: "local.get", index: 0 }, // thisArg — the ORIGINAL primitive receiver
     { op: "local.get", index: 2 }, // args
     { op: "call", funcIdx: applyClosureIdx },

@@ -23,8 +23,17 @@ loc-budget-allow:
   - src/codegen/property-access-dispatch.ts
   - src/codegen/fnctor-escape-gate.ts
 oracle-ratchet-allow:
+  # (#4250 companion) One more `resolveWasmType(ctx, ctx.checker.getTypeAtLocation(…))` in
+  # `deriveFnctorFields` — a wasm-lowering ValType question, which is deliberately
+  # above what `ctx.oracle` can express (it has no `ts.Type` accessor), and the
+  # identical query the two adjacent lines already make for the FIRST write.
+  - src/codegen/fnctor-escape-gate.ts
   - src/codegen/declarations/object-shape-widening.ts
 func-budget-allow:
+  # (test262 S13.2.2_A11/A12) fnctor field slots must hold every constructor
+  # write, and the constructor body must hoist its own function declarations —
+  # both land in functions this issue already owns the surrounding budget for.
+  - src/codegen/fnctor-escape-gate.ts::deriveFnctorFields
   - src/codegen/declarations/object-shape-widening.ts::scanStatements
   - src/codegen/declarations/object-shape-widening.ts::collectEmptyObjectWidening
   - src/codegen/expressions/new-super.ts::compileNewFunctionDeclaration

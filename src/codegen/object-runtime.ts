@@ -5859,14 +5859,23 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           });
         })()
       : [];
-    let resolvedMethodGuard: Instr[] = [];
+    // (#4221) A FACTORY, not a shared array: the guard is spliced into more than
+    // one arm now, and finalize's DCE/remap walks double-remap a shared `Instr`
+    // object (`reference_shared_instr_object_dce_double_remap`).
+    let resolvedMethodGuard: () => Instr[] = () => [];
     if (throwNotAFunctionInstrs.length > 0) {
       const methodLocalIdx = 3 + methodCallLocals.length;
       methodCallLocals.push({ name: "resolvedMethod", type: { kind: "externref" } });
-      resolvedMethodGuard = [
+      resolvedMethodGuard = () => [
         { op: "local.tee", index: methodLocalIdx },
         { op: "ref.is_null" },
-        { op: "if", blockType: { kind: "empty" }, then: throwNotAFunctionInstrs },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: buildThrowJsErrorInstrs(ctx, "TypeError", "called value is not a function", {
+            forceInModuleCtor: true,
+          }),
+        },
         { op: "local.get", index: methodLocalIdx },
       ];
     }
@@ -5906,7 +5915,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             : []),
           // (#4221) an ABSENT callee is a TypeError, not `undefined`. Empty off
           // the standalone lane (see the guard builder above).
-          ...resolvedMethodGuard,
+          ...resolvedMethodGuard(),
           // __apply_closure(m, recv, args)
           { op: "local.get", index: 0 },
           { op: "local.get", index: 2 },
@@ -5933,7 +5942,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 },
               ] satisfies Instr[])
             : []),
-          ...buildVecOrClosurePropMethodCallElseArm(ctx, externGetIdx, applyClosureIdx),
+          ...buildVecOrClosurePropMethodCallElseArm(ctx, externGetIdx, applyClosureIdx, resolvedMethodGuard),
         ],
       },
     ];
