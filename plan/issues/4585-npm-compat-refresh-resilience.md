@@ -220,3 +220,21 @@ The existing selected adapters also run successfully for jsdom (6/6),
 styled-components (6/6), and the selected webpack slice (13/16). Stylelint is
 8/9 and Redux is 13/82; their remaining failures are scored runtime/compiler
 semantics, not missing test registration or acquisition infrastructure.
+
+## Unit-infrastructure continuation 4
+
+The Hono adapter now selects four additional original files from the immutable
+v4.12.16 source inventory: the HTML helper, route helper, context-storage
+middleware, and pretty-JSON middleware. The context-storage test keeps the web
+ambient surface required by Hono's standard `Request` API while the isolated
+worker supplies the real Node builtin namespaces (including
+`node:async_hooks`) through a generic host-dependency provider. This removes
+the previous module-initialization failure without substituting a mock or
+rewriting the upstream callback.
+
+The selected Hono slice is now 20/120 original files with 322 registered
+callbacks. The native oracle passes 321/322 (one upstream native failure), all
+20 Wasm modules compile and 19/20 validate, and 87/321 callbacks pass in Wasm.
+The six module/runtime failures, 228 scored Wasm failures, one invalid Wasm
+module, and the 2,033 registrations from the other 100 source files remain
+explicitly visible; they are not reclassified as unavailable infrastructure.

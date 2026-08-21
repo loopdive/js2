@@ -69,7 +69,8 @@ export async function runHarness({ quiet = false } = {}) {
       generatedPath,
     );
     const source = `${UPSTREAM_TEST_SHIM}\n${transformed}\n${UPSTREAM_TEST_EXPORTS}`;
-    const result = await compileAndRunUpstreamModule({ generatedPath, source, timeoutMs: 240_000 });
+    const workerEnv = suite.pin.nodeHostDependencyFiles?.includes(file) ? { DOGFOOD_NODE_HOST_DEPS: "1" } : undefined;
+    const result = await compileAndRunUpstreamModule({ generatedPath, source, timeoutMs: 240_000, workerEnv });
     runs.push({ file, result });
     log(
       `[dogfood] ${file}: ${result.native.statuses.filter(Boolean).length}/${result.native.count} native; ` +

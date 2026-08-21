@@ -2,7 +2,7 @@ import { performance } from "node:perf_hooks";
 import { readFileSync } from "node:fs";
 
 import { compile, compileProject } from "../../src/index.ts";
-import { wrapExports } from "../../src/runtime.ts";
+import { buildCompiledImports, wrapExports } from "../../src/runtime.ts";
 
 const generatedPath = process.argv[2];
 const mode = process.argv[3] ?? "project";
@@ -29,8 +29,41 @@ function errorText(error, instance) {
   return text;
 }
 
+async function loadNodeHostDependencies() {
+  const { createRequire } = await import("node:module");
+  const require = createRequire(import.meta.url);
+  const dependencies = Object.create(null);
+  // Extern classes imported from Node builtins are resolved by class name
+  // first (for example AsyncLocalStorage), while namespace-qualified imports
+  // are resolved from the module root. Provide both forms from the real Node
+  // modules; no package implementation or test result is substituted.
+  for (const moduleName of [
+    "node:async_hooks",
+    "node:assert",
+    "node:buffer",
+    "node:crypto",
+    "node:events",
+    "node:stream",
+    "node:timers",
+    "node:url",
+    "node:util",
+  ]) {
+    try {
+      const namespace = require(moduleName);
+      dependencies[moduleName] = namespace;
+      dependencies[moduleName.slice(5)] = namespace;
+      Object.assign(dependencies, namespace);
+    } catch {
+      // A platform may not expose every optional builtin. The compiler's
+      // normal missing-dependency diagnostic remains authoritative.
+    }
+  }
+  return dependencies;
+}
+
 async function main() {
   const started = performance.now();
+  const platform = process.env.DOGFOOD_PLATFORM ?? "web";
   // ReactDOM's original tests execute against Jest's jsdom environment. The
   // compiler worker is a separate process, so the parent harness's globals do
   // not cross the process boundary. Install the same explicit browser-global
@@ -46,7 +79,6 @@ async function main() {
   }
   let result;
   try {
-    const platform = process.env.DOGFOOD_PLATFORM ?? "web";
     const projectOptions = {
       allowJs: true,
       skipSemanticDiagnostics: true,
@@ -124,7 +156,10 @@ async function main() {
   }
 
   try {
-    const imports = result.importObject ?? {};
+    const imports =
+      platform === "node" || process.env.DOGFOOD_NODE_HOST_DEPS === "1"
+        ? buildCompiledImports(result, await loadNodeHostDependencies())
+        : (result.importObject ?? {});
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
     imports.setInstance?.(instance);
     imports.__setInstance?.(instance);

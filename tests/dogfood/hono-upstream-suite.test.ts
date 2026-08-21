@@ -8,7 +8,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const pin = JSON.parse(readFileSync(join(HERE, "hono-upstream-suite-pin.json"), "utf-8"));
 
 describe("hono v4.12.16 upstream suite", () => {
-  it("pins the complete source-unit inventory and an explicit initial slice", () => {
+  it("pins the complete source-unit inventory and an explicit runnable slice", () => {
     expect(pin.repo).toBe("https://github.com/honojs/hono.git");
     expect(pin.tag).toBe("v4.12.16");
     expect(pin.commit).toBe("90d4182aabd328e2ec6af3f25ec62ddc574ad8cb");
@@ -18,7 +18,11 @@ describe("hono v4.12.16 upstream suite", () => {
       "src/http-exception.test.ts",
       "src/request.test.ts",
       "src/helper/accepts/accepts.test.ts",
+      "src/helper/html/index.test.ts",
+      "src/helper/route/index.test.ts",
       "src/middleware/powered-by/index.test.ts",
+      "src/middleware/context-storage/index.test.ts",
+      "src/middleware/pretty-json/index.test.ts",
       "src/middleware/trailing-slash/index.test.ts",
       "src/utils/accept.test.ts",
       "src/utils/basic-auth.test.ts",
@@ -42,13 +46,13 @@ describe("hono v4.12.16 upstream suite", () => {
     const report = JSON.parse(out);
     expect(report.upstreamSuite.commit).toBe(pin.commit);
     expect(report.extraction.filesSeen).toBe(120);
-    expect(report.extraction.filesSelected).toBe(16);
-    expect(report.extraction.testsRegistered).toBe(297);
-    expect(report.extraction.nativePassed).toBe(296);
+    expect(report.extraction.filesSelected).toBe(20);
+    expect(report.extraction.testsRegistered).toBe(322);
+    expect(report.extraction.nativePassed).toBe(321);
     expect(report.extraction.nativeFailed).toBe(1);
-    expect(report.extraction.unavailableInfra).toBe(2058);
-    expect(report.compile).toMatchObject({ modules: 16, succeeded: 16, validated: 15 });
-    expect(report.results).toMatchObject({ scored: 296, passed: 86, runtimeFailed: 6 });
+    expect(report.extraction.unavailableInfra).toBe(2033);
+    expect(report.compile).toMatchObject({ modules: 20, succeeded: 20, validated: 19 });
+    expect(report.results).toMatchObject({ scored: 321, passed: 87, runtimeFailed: 6 });
     expect(report.results.passed + report.results.failed + report.results.runtimeFailed).toBe(report.results.scored);
   });
 });
