@@ -194,12 +194,15 @@ import {
   type PreparedIrModuleInitBody,
 } from "./ir-prepared-free-functions.js";
 import {
+  assertMultiPreparedFunctionValueLeafRouteCurrent,
   assertMultiPreparedScalarLeafRouteCurrent,
   buildMultiIrGraphSafety,
   collectMultiIrFunctionNameCollisions,
   compileMultiPreparedScalarLeafDeclarations,
+  planEarlyMultiPreparedFunctionValueLeafRoute,
   planEarlyMultiPreparedScalarLeafRoute,
   type EarlyMultiPreparedScalarLeafState,
+  type MultiPreparedFunctionValueSupportReceipt,
   type MultiPreparedScalarLeafGraphSafety,
 } from "./multi-prepared-scalar-leaf.js";
 import * as irTimerShim from "./ir-timer-shim-planning.js";
@@ -2239,7 +2242,8 @@ function prepareTopLevelFunctionValueTargetSupport(
   sourceFile: ts.SourceFile,
   plan: IrOverlayPlan,
   selectedLegacyNames: ReadonlySet<string>,
-): void {
+): ReadonlyMap<IrUnitId, MultiPreparedFunctionValueSupportReceipt> {
+  const receipts = new Map<IrUnitId, MultiPreparedFunctionValueSupportReceipt>();
   const selectedUnitIds = new Set(
     [...selectedLegacyNames].map((legacyName) =>
       irOverlayIdentity.requireIrOverlayFunctionUnitId(plan.identityPlan, legacyName),
@@ -2280,7 +2284,33 @@ function prepareTopLevelFunctionValueTargetSupport(
         `prepared function-value target ${unitId} could not freeze its singleton Program ABI`,
       );
     }
+    if (
+      functionValuePlan.trampoline.binding.kind !== "support" ||
+      functionValuePlan.cacheGlobal.binding.kind !== "support"
+    ) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared function-value target ${unitId} lost its exact support binding identities`,
+      );
+    }
+    receipts.set(
+      unitId,
+      Object.freeze({
+        targetFunction: ctx.programAbiSourceCallables!.functionForUnit(unitId)!,
+        targetHandle: funcIdx,
+        trampolineFunction: trampoline,
+        trampolineHandle: singleton.trampolineFuncIdx,
+        trampolineRef: functionValuePlan.trampoline,
+        trampolineBindingId: functionValuePlan.trampoline.binding.bindingId,
+        cacheGlobal: cache,
+        cacheGlobalHandle: singleton.cacheGlobalIdx,
+        cacheGlobalRef: functionValuePlan.cacheGlobal,
+        cacheGlobalBindingId: functionValuePlan.cacheGlobal.binding.bindingId,
+      }),
+    );
   }
+  return receipts;
 }
 
 function recordWholeSourceFailure(
@@ -3489,6 +3519,28 @@ function collectMultiIrLateProviderOwnerUnitIds(
   ]);
 }
 
+function multiIrFunctionValueLeafHasForeignLateProvider(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  plan: IrOverlayPlan,
+  unitId: IrUnitId,
+): boolean {
+  const valueTargets = collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan);
+  return (
+    valueTargets.size !== 1 ||
+    !valueTargets.has(unitId) ||
+    collectDirectCallerActivationTargetUnitIds(ctx, sourceFile, plan.identityPlan).has(unitId) ||
+    [...plan.importedCalls.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
+    [...plan.topLevelFunctionValues.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
+    [...plan.hostVoidCallbacks.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
+    [...plan.hostDateSnapshots.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
+    [...plan.hostDateGetters.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
+    [...plan.promiseDelays.constructions.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
+    plan.suspendingAsyncUnitIds.has(unitId) ||
+    irTimerShim.inspectIrCompilerTimerShimRouting(plan).ownerUnitIds.has(unitId)
+  );
+}
+
 function planEarlyMultiIrOverlay(
   ctx: CodegenContext,
   multiAst: MultiTypedAST,
@@ -3504,7 +3556,7 @@ function planEarlyMultiIrOverlay(
     !ctx.fast &&
     multiAst.sourceFiles.length > 1;
   if (!active) return new Map();
-  return planEarlyMultiPreparedScalarLeafRoute({
+  const scalarStates = planEarlyMultiPreparedScalarLeafRoute({
     active,
     cutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_SCALAR_LEAF_CUTOVER),
     ctx,
@@ -3516,6 +3568,32 @@ function planEarlyMultiIrOverlay(
     lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),
     projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
   });
+  const functionValueStates = planEarlyMultiPreparedFunctionValueLeafRoute({
+    active,
+    cutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_BENCH_LOOP_CUTOVER),
+    ctx,
+    sourceFiles: multiAst.sourceFiles,
+    entryFile: multiAst.entryFile,
+    safety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
+    planSource: (sourceFile) => planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined),
+    safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
+    hasForeignLateProvider: (plan, sourceFile, unitId) =>
+      multiIrFunctionValueLeafHasForeignLateProvider(ctx, sourceFile, plan, unitId),
+    prepareFunctionValueSupport: (plan, sourceFile, unitId, legacyName) =>
+      prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, new Set([legacyName])).get(unitId),
+    projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
+  });
+  for (const [sourceFile, state] of functionValueStates) {
+    if (scalarStates.has(sourceFile)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `multi-source early routes both claimed ${sourceFile.fileName}`,
+      );
+    }
+    scalarStates.set(sourceFile, state);
+  }
+  return scalarStates;
 }
 
 function compileMultiIrOverlaySource(
@@ -3558,7 +3636,14 @@ function compileMultiIrOverlaySource(
     ),
   );
   const { overrideMap, classShapes } = plan;
-  if (early?.route) {
+  if (early?.route?.routeKind === "function-value") {
+    assertMultiPreparedFunctionValueLeafRouteCurrent({
+      ctx,
+      route: early.route,
+      finalSelection: safeSelection,
+      safety,
+    });
+  } else if (early?.route) {
     assertMultiPreparedScalarLeafRouteCurrent({ ctx, route: early.route, finalSelection: safeSelection, safety });
   }
   const report = completePreparedIrIntegration({
