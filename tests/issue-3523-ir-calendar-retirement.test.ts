@@ -455,14 +455,16 @@ function semanticDomSnapshot(element: FakeElement): unknown {
   };
 }
 
-function expectDirectOptimizationReference(result: CompileResult): void {
+function expectDirectOptimizationReference(result: CompileResult, lane: "direct" | "ir" = "direct"): void {
   expect(targetCount(result, "dimOf", "__fmod")).toBe(3);
 
   const fdow = watFunction(result, "fdow").body;
   expect(targetCount(result, "fdow", "__fmod")).toBe(2);
   expect(countMatches(fdow, /\bf64\.div\b/g)).toBe(3);
+  expect(countMatches(fdow, /\bf64\.trunc\b/g)).toBe(2);
+  expect(countMatches(fdow, /\bi64\.rem_s\b/g)).toBe(2);
   expect(countMatches(fdow, /\barray\.get(?:_[su])?\b/g)).toBe(1);
-  expect(countMatches(fdow, /\bi32\.and\b/g)).toBe(3);
+  expect(countMatches(fdow, /\bi32\.and\b/g)).toBe(7);
 
   expect(targetCount(result, "renderCal", "number_toString")).toBe(7);
   expect(targetCount(result, "renderCal", "Element_set_textContent")).toBe(8);
@@ -475,14 +477,15 @@ function expectDirectOptimizationReference(result: CompileResult): void {
 
   const main = watFunction(result, "main").body;
   expect(countMatches(main, /\barray\.new_fixed\b/g)).toBe(1);
-  expect(countMatches(main, /\bi32\.lt_u\b/g)).toBe(2);
+  expect(countMatches(main, /\bi32\.lt_s\b/g)).toBe(2);
+  expect(countMatches(main, /\bi32\.lt_u\b/g)).toBe(lane === "ir" ? 0 : 2);
   expect(countMatches(main, /\barray\.get(?:_[su])?\b/g)).toBe(2);
   for (const name of FUNCTION_TERMINALS) expectNoGenericBodyMachinery(result, name);
   expect(targetCount(result, "dimOf", "__new_ReferenceError")).toBe(0);
 }
 
 function expectFinalIrOptimizationParity(result: CompileResult): void {
-  expectDirectOptimizationReference(result);
+  expectDirectOptimizationReference(result, "ir");
   expect(targetCount(result, "renderCal", "__date_now")).toBe(1);
   expect(targetCount(result, "renderCal", "__date_civil_from_days")).toBe(3);
   expect(targetCount(result, "__module_init", "__date_now")).toBe(2);
@@ -607,9 +610,11 @@ describe("#3523 Calendar retirement oracle and current baseline", () => {
     expect({
       fmod: targetCount(ir, "fdow", "__fmod"),
       div: countMatches(irFdow, /\bf64\.div\b/g),
+      trunc: countMatches(irFdow, /\bf64\.trunc\b/g),
+      remainder: countMatches(irFdow, /\bi64\.rem_s\b/g),
       arrayGet: countMatches(irFdow, /\barray\.get(?:_[su])?\b/g),
       i32And: countMatches(irFdow, /\bi32\.and\b/g),
-    }).toEqual({ fmod: 2, div: 3, arrayGet: 1, i32And: 3 });
+    }).toEqual({ fmod: 2, div: 3, trunc: 2, remainder: 2, arrayGet: 1, i32And: 7 });
     expect(countMatches(directFdow, /\bf64\.div\b/g)).toBe(3);
 
     expectFinalIrOptimizationParity(ir);
@@ -693,7 +698,11 @@ describe("#3523 Calendar final ten-body retirement gate", () => {
 
     const irRenderCal = bodySizeMetrics(result, ["renderCal"]);
     const directRenderCal = bodySizeMetrics(direct, ["renderCal"]);
-    expect(directRenderCal.locals, "direct renderCal local-count reference").toBe(63);
+    const directRenderCalWat = watFunction(direct, "renderCal").body;
+    expect(directRenderCal.locals, "direct renderCal local-count reference").toBe(66);
+    expect(targetCount(direct, "renderCal", "mname"), "default user inlining reference").toBe(0);
+    expect(countMatches(directRenderCalWat, /\bf64\.trunc\b/g), "two guarded remainder sites").toBe(2);
+    expect(countMatches(directRenderCalWat, /\bi64\.rem_s\b/g), "inlined integer remainder paths").toBe(6);
     expect(irRenderCal.locals, "IR renderCal local-pressure no-regression ceiling").toBeLessThanOrEqual(72);
     expect(irRenderCal.bytes, "renderCal body-size parity ceiling").toBeLessThanOrEqual(directRenderCal.bytes);
 
@@ -707,8 +716,11 @@ describe("#3523 Calendar final ten-body retirement gate", () => {
       ...STATIC_DERIVED_CALLBACK_NAMES,
     ]);
     const directAggregate = bodySizeMetrics(direct, [...FUNCTION_TERMINALS, "__module_init", ...DIRECT_CALLBACK_NAMES]);
-    expect(directAggregate.locals, "direct Calendar aggregate local-count reference").toBe(142);
-    expect(irAggregate.locals, "IR Calendar aggregate local-pressure no-regression ceiling").toBeLessThanOrEqual(135);
+    expect(directAggregate.locals, "direct Calendar aggregate local-count reference").toBe(151);
+    expect(irAggregate.locals, "IR Calendar aggregate local-pressure no-regression ceiling").toBeLessThanOrEqual(137);
+    expect(irAggregate.locals, "IR Calendar aggregate local-pressure direct parity").toBeLessThanOrEqual(
+      directAggregate.locals,
+    );
     expect(irAggregate.bytes, "aggregate Calendar body-size parity ceiling").toBeLessThanOrEqual(directAggregate.bytes);
     expect(result.binary.length, "whole Calendar binary-size parity ceiling").toBeLessThanOrEqual(direct.binary.length);
     expect(gzipSync(result.binary).length, "gzipped Calendar binary-size parity ceiling").toBeLessThanOrEqual(

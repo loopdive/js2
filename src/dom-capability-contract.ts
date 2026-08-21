@@ -69,13 +69,45 @@ export const DOM_CAPABILITY_IMPORTS: readonly DomCapabilityImportContract[] = Ob
 
 export const DOM_CAPABILITY_IMPORT_NAMES = Object.freeze(DOM_CAPABILITY_IMPORTS.map(({ name }) => name));
 
+/** Frozen optional Calendar interaction ABI; base dom@1 remains unchanged. */
+export const DOM_INTERACTION_CAPABILITY_ID = "dom-interaction" as const;
+export const DOM_INTERACTION_CAPABILITY_ABI_NAMESPACE = "js2wasm:capability/dom-interaction" as const;
+export const DOM_INTERACTION_CAPABILITY_ABI_VERSION = 1 as const;
+export const DOM_INTERACTION_CAPABILITY_PERMISSIONS = Object.freeze(["dom:event-listen", "dom:style-write"] as const);
+
+export interface DomInteractionImportContract {
+  readonly name: "HTMLElement_addEventListener" | "CSSStyleDeclaration_set_background";
+  readonly params: readonly string[];
+  readonly results: readonly string[];
+}
+
+export const DOM_INTERACTION_CAPABILITY_IMPORTS: readonly DomInteractionImportContract[] = Object.freeze([
+  Object.freeze({
+    name: "HTMLElement_addEventListener",
+    params: Object.freeze(["externref", "externref", "externref", "externref"]),
+    results: Object.freeze([]),
+  }),
+  Object.freeze({
+    name: "CSSStyleDeclaration_set_background",
+    params: Object.freeze(["externref", "externref"]),
+    results: Object.freeze([]),
+  }),
+]);
+
+export const DOM_INTERACTION_IMPORT_NAMES = Object.freeze(DOM_INTERACTION_CAPABILITY_IMPORTS.map(({ name }) => name));
+
 // Authority checks must never depend on a caller-mutable collection. The
 // exported tuple above is useful for manifests/tests; this private membership
 // table is the only source used by the runtime/codegen guards.
 const DOM_CAPABILITY_IMPORT_NAME_SET: ReadonlySet<string> = new Set(DOM_CAPABILITY_IMPORT_NAMES);
+const DOM_INTERACTION_IMPORT_NAME_SET: ReadonlySet<string> = new Set(DOM_INTERACTION_IMPORT_NAMES);
 
 export function isDomCapabilityImportName(name: string): name is DomCapabilityImportContract["name"] {
   return DOM_CAPABILITY_IMPORT_NAME_SET.has(name);
+}
+
+export function isDomInteractionImportName(name: string): name is DomInteractionImportContract["name"] {
+  return DOM_INTERACTION_IMPORT_NAME_SET.has(name);
 }
 
 /** Exact typed descriptor surface authenticated by the standalone adapter. */
@@ -90,6 +122,17 @@ export function isDomCapabilityImportDescriptor(descriptor: ImportDescriptor): b
   return DOM_CAPABILITY_DESCRIPTOR_KEYS.has(key);
 }
 
+/** Exact typed descriptor surface of the optional DOM-interaction extension. */
+export function isDomInteractionImportDescriptor(descriptor: ImportDescriptor): boolean {
+  if (descriptor.module !== "env" || descriptor.kind !== "func" || descriptor.intent.type !== "extern_class") {
+    return false;
+  }
+  const { intent } = descriptor;
+  return DOM_INTERACTION_DESCRIPTOR_KEYS.has(
+    `${descriptor.name}:${intent.className}:${intent.action}:${intent.member ?? ""}:${descriptor.paramCount ?? -1}`,
+  );
+}
+
 /**
  * True for a descriptor that attempts to occupy the bounded DOM surface. A
  * candidate that is not exact must fail closed instead of reaching the broad
@@ -97,7 +140,7 @@ export function isDomCapabilityImportDescriptor(descriptor: ImportDescriptor): b
  */
 export function isDomCapabilityDescriptorCandidate(descriptor: ImportDescriptor): boolean {
   if (descriptor.module !== "env") return false;
-  if (isDomCapabilityImportName(descriptor.name)) return true;
+  if (isDomCapabilityImportName(descriptor.name) || isDomInteractionImportName(descriptor.name)) return true;
   const { intent } = descriptor;
   return (
     intent.type === "declared_global" ||
@@ -117,12 +160,19 @@ export function requiresExactDomCapabilityAdapter(
   const selected = capabilities.some(
     ({ id, selectedProviders }) => id === DOM_CAPABILITY_ID && selectedProviders.includes("embedder"),
   );
+  const interactionSelected = capabilities.some(
+    ({ id, selectedProviders }) => id === DOM_INTERACTION_CAPABILITY_ID && selectedProviders.includes("embedder"),
+  );
   const contractNamed = imports.some(
     (descriptor) =>
       isDomCapabilityImportName(descriptor.name) ||
+      isDomInteractionImportName(descriptor.name) ||
       (descriptor.intent.type === "declared_global" && descriptor.intent.name === "document"),
   );
   if (!selected) {
+    if (interactionSelected) {
+      throw new TypeError("DOM interaction imports require the exact validated dom@1 embedder capability");
+    }
     const coherentJavaScriptHost =
       targetProfile.target === "gc" &&
       targetProfile.backend === "wasmgc" &&
@@ -135,12 +185,27 @@ export function requiresExactDomCapabilityAdapter(
   }
   if (
     imports.some(
-      (descriptor) => isDomCapabilityDescriptorCandidate(descriptor) && !isDomCapabilityImportDescriptor(descriptor),
+      (descriptor) =>
+        isDomCapabilityDescriptorCandidate(descriptor) &&
+        !isDomCapabilityImportDescriptor(descriptor) &&
+        !(interactionSelected && isDomInteractionImportDescriptor(descriptor)),
     )
   ) {
     throw new TypeError("Explicit DOM imports require the exact validated dom@1 embedder capability");
   }
+  if (imports.some(({ name }) => isDomInteractionImportName(name)) !== interactionSelected) {
+    throw new TypeError("DOM interaction imports require the exact validated dom-interaction@1 capability");
+  }
   return true;
+}
+
+/** True only after the companion interaction provider survived exact validation. */
+export function requiresExactDomInteractionCapabilityAdapter(
+  capabilities: readonly { readonly id: string; readonly selectedProviders: readonly string[] }[],
+): boolean {
+  return capabilities.some(
+    ({ id, selectedProviders }) => id === DOM_INTERACTION_CAPABILITY_ID && selectedProviders.includes("embedder"),
+  );
 }
 
 const DOM_CAPABILITY_DESCRIPTOR_KEYS: ReadonlySet<string> = new Set([
@@ -153,11 +218,21 @@ const DOM_CAPABILITY_DESCRIPTOR_KEYS: ReadonlySet<string> = new Set([
   "Node_appendChild:Node:method:appendChild:2",
 ]);
 
+const DOM_INTERACTION_DESCRIPTOR_KEYS: ReadonlySet<string> = new Set([
+  "HTMLElement_addEventListener:HTMLElement:method:addEventListener:4",
+  "CSSStyleDeclaration_set_background:CSSStyleDeclaration:set:background:2",
+]);
+
 /** Collision-safe, compiler-owned native-string readout used only by dom@1. */
 export const DOM_STRING_PREPARE_EXPORT = "__\0js2_dom_string_prepare";
 export const DOM_STRING_PREPARE_PHYSICAL_BASE = "$dp";
 export const DOM_STRING_CHAR_EXPORT = "__\0js2_dom_string_char";
 export const DOM_STRING_CHAR_PHYSICAL_BASE = "$dc";
+/** Optional exact arity-zero dispatcher published only for DOM interaction. */
+export const DOM_CALLBACK_DISPATCH_EXPORT = "__\0js2_dom_callback_dispatch";
+export const DOM_CALLBACK_DISPATCH_PHYSICAL_BASE = "$dd";
+/** Private trailing carrier field whose singleton value authenticates DOM callbacks. */
+export const DOM_CALLBACK_AUTHORITY_FIELD = "$domCallbackAuthority";
 export const DOM_STRING_MANIFEST_EXPORT = "__\0js2_dom_string_manifest";
 export const DOM_STRING_MANIFEST_PHYSICAL_BASE = "$dx";
 export const DOM_STRING_MARKER_EXPORT = "__\0js2_dom_string_marker";

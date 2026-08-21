@@ -26,9 +26,8 @@ import {
 } from "../ir/class-accessor-safety.js";
 import { MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
 import { collectShapes } from "../shape-inference.js";
-// (#3623) Total classification of top-level ExpressionStatements, so the
-// allow-list's fall-through leaves evidence instead of silently dropping an
-// observable statement (the #1268/#2671/#2992/#3366/#3468/#3592/#3615 class).
+// (#3623) Total top-level ExpressionStatement classification: the allow-list's fall-through
+// leaves evidence instead of silently dropping the #1268/#2671/#2992/#3366/#3468/#3592/#3615 class.
 import {
   collectOrRecordUnnamedExpressionStatement,
   createsGlobalObjectBinding,
@@ -39,6 +38,7 @@ import { emitScriptGlobalFunctionBindings } from "./global-function-bindings.js"
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
+import { routeTopLevelClassBodies } from "./prepared-class-body-cutover.js";
 import {
   collectBindingPatternNames,
   collectReferencedIdentifiers,
@@ -159,9 +159,8 @@ import { profileCount, profilePhase } from "../compile-profile.js";
 /**
  * Record source-level boundary classifications for a user-exported function
  * so the JS-host `wrapExports` can marshal native strings and TypedArray
- * params/returns across the JS↔Wasm boundary. The Wasm signature alone is ambiguous —
- * `(input: Uint8Array)` and `(input: number[])` lower to the same
- * `(ref null $Vec[f64])` — so we surface the TS-level distinction here.
+ * params/returns across the JS↔Wasm boundary. The Wasm signature alone is ambiguous:
+ * `Uint8Array` and `number[]` both lower to `(ref null $Vec[f64])`, so retain the TS distinction.
  *
  * No-op when every slot classifies as `"other"` so scalar-only modules
  * accumulate no metadata.
@@ -2835,7 +2834,7 @@ export function compileDeclarations(
           ctx.deferredClassBodies.add(stmt.name.text);
         } else {
           try {
-            compileClassBodies(ctx, stmt, funcByName, undefined, classBodyRouting);
+            routeTopLevelClassBodies(ctx, stmt, funcByName, classBodyRouting);
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             reportError(ctx, stmt, `Internal error compiling class '${stmt.name.text}': ${msg}`);

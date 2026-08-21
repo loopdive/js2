@@ -258,7 +258,7 @@ export function planIrFallbackGateEntry(graph: IrFallbackPlanningGraph): IrSelec
       isArrayExpression: makeIrArrayExpressionPredicate(checker),
       supportsSymbolicMathHelpers: true,
       supportsLiteralStringReplace: true,
-      supportsHostStringArrayLiterals: true,
+      supportsStringArrayLiterals: true,
     },
     unitTypeMap,
   );

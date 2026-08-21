@@ -2,6 +2,7 @@
 
 import type { IrHostVoidCallbackLoweringPlan, IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
 import { isBoundedPreparedAccessorClass, isBoundedPreparedNestedOrdinaryClass } from "../ir/class-accessor-safety.js";
+import { compilerTimerShimTerminalUnitIds } from "../ir/compiler-timer-shim-preparation.js";
 import type { IrClassId, IrUnitId } from "../ir/identity.js";
 import { compileIrPathFunctions, type IrIntegrationReport, type IrTypeOverrideMap } from "../ir/integration.js";
 import { asVal, type IrClassShape, type IrType } from "../ir/nodes.js";
@@ -24,6 +25,7 @@ import { preparedIrAsyncSourceCanSuspend, preparedIrAsyncSourceShape } from "./a
 import { addFuncType, getOrRegisterVecType } from "./registry/types.js";
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
+import { timerShimOutsideCaller } from "./ir-timer-shim-planning.js";
 import { closeIrBlockedComponentByIdentity } from "./ir-overlay-finalize.js";
 import { applyIrFinalContextFunctionUnitIds, type IrOverlayPreparationPlan } from "./ir-overlay-preparation.js";
 import {
@@ -722,15 +724,9 @@ function r2CarrierFixedByDeclaration(type: IrType | null): boolean {
 }
 
 /**
- * (#4514) May this prepared owner keep its component membership even though a
- * caller of it stays OUTSIDE the component (withdrawn, or legacy from the
- * start)?
- *
- * The reverse-callers edge in the ownership fixed point guards against
- * SIGNATURE divergence: an outside caller's `call` is emitted against the
- * callee's already-allocated Program ABI slot, and preparation must not leave
- * that slot describing a different function type. This predicate re-proves
- * exactly that property at the point the exemption is taken, fail-closed:
+ * (#4514) Keep a prepared owner beside an outside caller only when its callable
+ * signature cannot diverge. The caller already targets the allocated Program
+ * ABI slot, so this predicate re-proves that slot at the exemption point:
  *
  * 1. every parameter and the return carrier is fixed by the declaration
  *    (`r2CarrierFixedByDeclaration`), so the prepared component has no carrier
@@ -1135,6 +1131,7 @@ export function selectR2PreparedOwnerComponents(input: {
     { readonly params: readonly IrType[]; readonly returnType: IrType | null }
   >;
   readonly hostVoidCallbacks: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
+  readonly timerShimUnitIds?: ReadonlySet<IrUnitId>;
   /**
    * (#4508) Storage terminals this transaction actually prepares — today the
    * module-init unit, and only when `preparedExactLexicalModuleInit` admitted
@@ -1223,6 +1220,7 @@ export function selectR2PreparedOwnerComponents(input: {
       // Support bindings drafted after the component seals are outside what the
       // signature proof covers; annexB block-function hoisting is that shape.
       if (claim.declaration.name && nestedFunctionDeclarationNames.has(claim.declaration.name.text)) return false;
+      if (timerShimOutsideCaller(input, unitId, override, r2SignatureMatchesAllocatedSlot)) return true;
       return r2CertifiedAgainstOutsideCallers(input.ctx, unitId, override);
     }),
   );
@@ -1658,7 +1656,9 @@ export function prepareIrBodies(input: {
             { sealPreparedComponents: true },
           ),
   );
-  const routing = preparedIrBodyRouting(initialReport, claimsByUnitId);
+  const timerUnitIds = compilerTimerShimTerminalUnitIds(input.identityPlan.identityContext.inventory);
+  const deferUnsupportedUnitIds = new Set([...freeFunctionClaimsByUnitId.keys()].filter((id) => !timerUnitIds.has(id)));
+  const routing = preparedIrBodyRouting(initialReport, claimsByUnitId, { deferUnsupportedUnitIds });
   const report = deferUnsealedPreparedComponents(initialReport, routing.deferredUnitIds, claimsByUnitId);
   const classMemberClaimsByUnitId = classPopulation?.claimsByUnitId ?? new Map<IrUnitId, IrExactBodyClaim>();
   const irOwnedPartition = partitionPreparedUnitIds(

@@ -471,6 +471,7 @@ export function planProgramAbiGlobal(ctx: CodegenContext, plan: ProgramAbiGlobal
   if (!session) return;
   const { binding } = plan.ref;
   const origin = binding.kind === "source" ? "source" : binding.kind;
+  const capability = binding.kind === "source" ? binding.capability : undefined;
   if (origin === "source" && (plan.anchor.kind !== "source" || plan.storageOwnerUnitId === undefined)) {
     throw new ProgramAbiInvariantError(
       "invalid-callable-provenance",
@@ -503,6 +504,7 @@ export function planProgramAbiGlobal(ctx: CodegenContext, plan: ProgramAbiGlobal
         ? {
             sourceId: plan.anchor.sourceId,
             unitId: plan.storageOwnerUnitId,
+            ...(capability ? { capability } : {}),
           }
         : {}),
     },

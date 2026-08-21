@@ -26,6 +26,17 @@ func-budget-allow:
   # module. Splitting this already-652-line dispatcher is a separate refactor
   # (#3399) and not something to attempt inside a conformance fix.
   - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
+coercion-sites-allow:
+  # 2026-08-20: one `__any_to_f64` call in the new src/codegen/math-value-read.ts.
+  # This is the gate seeing the fix DO the right thing: the arguments arrive as
+  # externref and run the ENGINE ToNumber pipeline
+  # (`__any_from_extern` -> `__any_to_f64`), which is exactly what the gate
+  # exists to push work towards — the same pipeline `Math.max`/`Math.min` use
+  # for their variadic fold, so an object with a `valueOf` coerces identically
+  # whether it reaches `Math.sin` by direct call or through an extracted value.
+  # There is no hand-rolled ToNumber here to route anywhere else; the counter is
+  # per-vocabulary-token and cannot tell an engine CALL from a hand-roll.
+  - src/codegen/math-value-read.ts
 related: [2933, 1907, 4163]
 origin: "2026-08-20, ES5 standalone push follow-up. Found by bucketing the residue's explicit 'not yet implemented in --target standalone' refusals."
 ---
@@ -84,11 +95,31 @@ Covers the 1-arg self-hosted set (`sin`, `cos`, `tan`, `asin`, `acos`, `atan`,
 
 | | |
 | --- | --- |
-| `language/statements/function/S13.2.1_A5_T2.js` | FAIL → **PASS** |
-| `language/statements/return/S12.9_A4.js` | FAIL → **PASS** |
+| `test262/test/language/statements/function/S13.2.1_A5_T2.js` | FAIL → **PASS** |
+| `test262/test/language/statements/return/S12.9_A4.js` | FAIL → **PASS** |
 | 551-row standalone ES5 guard | **551 / 551** |
 
 Both rows verified individually, one process per test, `target=standalone`.
+
+**Re-verified on the merged PR tree, 2026-08-20** (the two rows are this issue's
+permanent repro, per the #2093 gate — they are cited above with their full
+`test262/test/…` paths so the gate can find them):
+
+```
+TEST262_TARGET=standalone \
+TEST262_PATH_FILTER="language/statements/function/S13.2.1_A5_T2.js|language/statements/return/S12.9_A4.js" \
+  bash scripts/run-test262-vitest.sh
+→ COMPLETED: 2 pass / 2 total
+```
+
+A note for whoever probes this next, because it cost a lane an hour: the fix is
+reached through the **builtin value-read** path, and a hand-written
+`const f: any = Math.cos; f(0)` in a TS module does **not** reach it — that shape
+still throws, from a different refusal, and the compiled binary contains neither
+the `math-value-read` body nor the generic `"not yet implemented"` string. So a
+probe in that shape looks exactly like "the fix does nothing" while the real
+conformance rows pass. Measure this one through the test262 runner, not a
+bespoke probe.
 
 ## Still open in the same family
 

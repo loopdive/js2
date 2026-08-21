@@ -20,6 +20,7 @@ import { brandExternMethodResult } from "./shared.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { nativeTypeFromTypeNode } from "./native-type-annotations.js";
 import { reportError } from "./context/errors.js";
+import { registerAmbientParseImport } from "./ambient-parse-import.js";
 import {
   heritageBaseName,
   isExternDeclaredLibName,
@@ -31,7 +32,6 @@ import {
   typeRefName,
   type LibDeclIndex,
 } from "./lib-decl-index.js";
-
 // ── Built-in extern class registration ───────────────────────────────
 
 /** Helper to create an extern method signature with externref params and results */
@@ -767,7 +767,7 @@ export function collectExternDeclarations(
             ? []
             : [nativeOf(stmt.type) ?? mapLibTypeNodeToWasm(stmt.type, libIndex, scope)];
           const typeIdx = addFuncType(ctx, params, results);
-          addImport(ctx, ctx.externImportModule ?? "env", name, { kind: "func", typeIdx });
+          registerAmbientParseImport(ctx, sourceFile, name, typeIdx);
         } else {
           const sig = ctx.checker.getSignatureFromDeclaration(stmt);
           if (sig) {
@@ -782,7 +782,7 @@ export function collectExternDeclarations(
             // (#4238) `externImportModule` retargets extern declarations at a
             // wasm-to-wasm provider namespace (`js2wasm:qjs`) instead of the
             // `env` JS-host module. Unset for every user compile.
-            addImport(ctx, ctx.externImportModule ?? "env", name, { kind: "func", typeIdx });
+            registerAmbientParseImport(ctx, sourceFile, name, typeIdx);
           }
         }
       }

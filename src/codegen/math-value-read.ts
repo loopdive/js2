@@ -74,11 +74,6 @@ const MATH_SELF_HOSTED_F64: ReadonlyMap<string, number> = new Map([
   ["pow", 2],
 ]);
 
-/** Arity of the self-hosted provider for `name`, or undefined if there is none. */
-export function mathSelfHostedArity(name: string): number | undefined {
-  return MATH_SELF_HOSTED_F64.get(name);
-}
-
 /**
  * Emit a real body for `Math.<name>` read as a value, into `closureFctx`.
  *

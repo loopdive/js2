@@ -9,7 +9,7 @@ import { loadReactDomUpstreamSuitePin, setupReactDomImplementation } from "./set
 // @ts-expect-error — .mjs dogfood setup has no declaration file
 import { loadReactUpstreamSuitePin } from "./setup-react-upstream-suite.mjs";
 // @ts-expect-error — .mjs dogfood harness has no declaration file
-import { isExpectedLateJsdomHostError } from "./react-dom-upstream-suite.mjs";
+import { isExpectedLateJsdomHostError, partitionReactDomTestsForBuild } from "./react-dom-upstream-suite.mjs";
 // @ts-expect-error — .mjs dogfood extractor has no declaration file
 import { extractReactUpstreamTests } from "./react-upstream-extract.mjs";
 
@@ -29,6 +29,39 @@ describe("react-dom upstream suite", () => {
     expect(isExpectedLateJsdomHostError(expected)).toBe(true);
     expect(isExpectedLateJsdomHostError({ ...expected, message: "different DOM failure" })).toBe(false);
     expect(isExpectedLateJsdomHostError({ name: "TypeError", message: expected.message })).toBe(false);
+  });
+
+  it("rejects exact development-only React API calls before a production run", () => {
+    const ordinary = {
+      id: "ordinary",
+      file: "ordinary.js",
+      fullName: "ordinary",
+      prelude: 'const note = "React.captureOwnerStack()";',
+      body: "React.createElement('div');",
+    };
+    const developmentOnly = {
+      id: "owner-stack",
+      file: "ReactDOMHydrationDiff-test.js",
+      fullName: "owner stack",
+      prelude: "console.error = () => React.captureOwnerStack();",
+      body: "render();",
+    };
+
+    expect(partitionReactDomTestsForBuild([ordinary, developmentOnly], "production")).toEqual({
+      tests: [ordinary],
+      rejected: [
+        {
+          id: "owner-stack",
+          file: "ReactDOMHydrationDiff-test.js",
+          fullName: "owner stack",
+          reason: "requires-development-react-api",
+        },
+      ],
+    });
+    expect(partitionReactDomTestsForBuild([ordinary, developmentOnly], "development")).toEqual({
+      tests: [ordinary, developmentOnly],
+      rejected: [],
+    });
   });
 
   it("shares one verified revision with the react suite", () => {
@@ -93,6 +126,17 @@ describe("react-dom upstream suite", () => {
     expect(extracted.tests.length + extracted.rejected.length).toBe(2003);
     expect(extracted.tests.length).toBe(2001);
     expect(extracted.rejectionCounts).toEqual({ "upstream-skipped": 2 });
+
+    const production = partitionReactDomTestsForBuild(extracted.tests, "production");
+    expect(production.tests).toHaveLength(1923);
+    expect(production.rejected).toHaveLength(78);
+    expect(
+      production.rejected.every(({ reason }: { reason: string }) => reason === "requires-development-react-api"),
+    ).toBe(true);
+    expect(partitionReactDomTestsForBuild(extracted.tests, "development")).toEqual({
+      tests: extracted.tests,
+      rejected: [],
+    });
   });
 
   const heavy = process.env.DOGFOOD_REACT_DOM_UPSTREAM === "1" ? it : it.skip;

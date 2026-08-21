@@ -29,9 +29,10 @@
 //   union or the `IrTerminator` union declared in `src/ir/nodes.ts`.
 //
 // Arms are resolved to their DECLARING interface, which may live in
-// `src/ir/nodes.ts` or in `src/ir/dialect/*.ts` — where a declaration lives is
-// the thing being decided, so it cannot also be the thing that defines the
-// population.
+// `src/ir/nodes.ts` or in `src/ir/dialect/*.ts`. The three deliberately
+// excluded symbolic references may also live in `src/ir/value-references.ts`.
+// Where a declaration lives is the thing being decided, so it cannot also be
+// the thing that defines the population.
 //
 // IN SCOPE:      78 `IrInstr` arms + 4 `IrTerminator` arms = 82.
 //
@@ -51,7 +52,7 @@
 //   place. (#4551's prose calls these "declaration kinds"; they are references.
 //   The count is the same, the reading is not.)
 //
-//   Every other `readonly kind:` in the two files belongs to an INLINE union
+//   Every other `readonly kind:` in the scanned files belongs to an INLINE union
 //   member of a payload type — `IrConst`, `IrType`, `IrCallableBinding`,
 //   `IrIntrinsicProvider`, `IrStringLengthProvider`, … — not to a top-level
 //   `export interface`, so it is never a candidate in the first place.
@@ -139,6 +140,7 @@ import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const NODES = "src/ir/nodes.ts";
+const VALUE_REFERENCES = "src/ir/value-references.ts";
 const DIALECT_DIR = path.join("src", "ir", "dialect");
 const IR_DIR = path.join("src", "ir");
 const BASELINE = "scripts/ir-kind-neutrality-baseline.json";
@@ -892,7 +894,7 @@ const dialectFiles = (() => {
     return [];
   }
 })();
-const sourceFiles = [NODES, ...dialectFiles];
+const sourceFiles = [NODES, VALUE_REFERENCES, ...dialectFiles];
 
 const declared = new Map(); // interface name -> {kind, file, line}
 for (const file of sourceFiles) {
@@ -952,7 +954,7 @@ for (const [name, info] of excluded) {
 for (const name of Object.keys(OUT_OF_SCOPE)) {
   if (!declared.has(name)) {
     fail(
-      `${NODES}: the population rule excludes \`${name}\`, which no longer exists. Update the rule in ` +
+      `${NODES}/${VALUE_REFERENCES}: the population rule excludes \`${name}\`, which no longer exists. Update the rule in ` +
         "this script's header so the reconciliation keeps describing reality.",
     );
   }

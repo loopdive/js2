@@ -35,6 +35,7 @@ import type { InnerResult } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { coerceType as coerceTypeImpl } from "../type-coercion.js";
 import { ensureDateDaysFromCivilHelper, ensureDateStruct } from "./builtins.js";
+import { emitStandaloneDateTimestamp } from "../standalone-clock-capability.js";
 import { emitObjectCoercion } from "./calls-guards.js";
 import {
   emitDynamicNewFunctionHostEval,
@@ -851,7 +852,7 @@ export function tryCompileBuiltinGlobalNew(
       // breaking unrelated Date tests). See the matching Date.now() fallback in
       // expressions/calls.ts.
       if (ctx.standalone === true) {
-        fctx.body.push({ op: "i64.const", value: 0n });
+        emitStandaloneDateTimestamp(ctx, fctx);
         fctx.body.push({ op: "struct.new", typeIdx: dateTypeIdx });
         return { kind: "ref", typeIdx: dateTypeIdx };
       }

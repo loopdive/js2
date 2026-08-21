@@ -4,7 +4,15 @@ import { ts } from "../ts-api.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import { irImportFuncRef, irRuntimeFuncRef, irUnitFuncRef } from "./callable-bindings.js";
 import { createDerivedIrUnitId, type IrSourceId, type IrUnitId } from "./identity.js";
-import { asVal, irVal, type IrClosureSignature, type IrFuncRef, type IrType, type IrValueId } from "./nodes.js";
+import {
+  asVal,
+  irVal,
+  type IrClosureSignature,
+  type IrDomCallbackAuthority,
+  type IrFuncRef,
+  type IrType,
+  type IrValueId,
+} from "./nodes.js";
 import {
   IrPlanningIdentityInvariantError,
   requireIrPlanningSourceId,
@@ -53,6 +61,8 @@ export interface ExactClosureLoweringOptions {
   readonly allowConciseVoidBody?: boolean;
   /** Exact inline host callback consumed once by `__make_callback(-2, ...)`. */
   readonly hostOneShot?: boolean;
+  /** Exact reusable callback admitted only by the standalone DOM authority. */
+  readonly domCallbackAuthority?: IrDomCallbackAuthority;
 }
 
 type PromiseDelayBuilder = Pick<IrFunctionBuilder, "emitCall" | "emitCallablePack" | "typeOf">;

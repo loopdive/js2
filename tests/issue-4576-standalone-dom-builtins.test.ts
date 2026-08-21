@@ -590,7 +590,7 @@ describe("#4576 standalone Test262 object-rest regression matrix", () => {
 });
 
 describe("#4576 standalone DOM Builtins ownership", () => {
-  it("ratchets the five-entry standalone census from 27/10 to 31/6, leaving exactly Calendar", async () => {
+  it("keeps Builtins ownership inside the fully IR-owned standalone census", async () => {
     const lane = await observeStandaloneLane();
     expect(lane.entries).toHaveLength(5);
     expect(lane.entries.flatMap(({ failures }) => failures)).toEqual([]);
@@ -602,25 +602,25 @@ describe("#4576 standalone DOM Builtins ownership", () => {
         outcomes.filter(({ kind }) => kind === "emitted"),
         "missing production: IR-emitted terminals",
       )
-      .toHaveLength(31);
+      .toHaveLength(37);
     expect
       .soft(
         outcomes.filter(({ irBodyEmitted }) => irBodyEmitted),
         "missing production: IR body population",
       )
-      .toHaveLength(31);
+      .toHaveLength(37);
     expect
       .soft(
         outcomes.filter(({ legacyBodyEmitted }) => legacyBodyEmitted),
         "missing production: legacy body population",
       )
-      .toHaveLength(6);
+      .toEqual([]);
     expect
       .soft(
         outcomes.filter(({ kind }) => kind === "unsupported"),
         "missing production: typed Unsupported population",
       )
-      .toHaveLength(6);
+      .toEqual([]);
     expect
       .soft(
         outcomes.filter(({ kind }) => kind === "invariant"),
@@ -629,23 +629,13 @@ describe("#4576 standalone DOM Builtins ownership", () => {
       .toEqual([]);
 
     const counts = unsupportedCounts(outcomes);
-    expect.soft(counts["select/host-surface-unavailable"]).toBe(2);
-    expect.soft(counts["select/call-graph-closure"]).toBe(1);
+    expect.soft(counts).toEqual({});
 
     const remaining = outcomes
       .filter(({ kind }) => kind === "unsupported")
       .map(({ file, unitKind, displayName }) => `${file.replace(/^.*examples\//, "")}:${unitKind}:${displayName}`)
       .sort();
-    expect(remaining).toEqual(
-      [
-        "dom/calendar.ts:function:el",
-        "dom/calendar.ts:function:main",
-        "dom/calendar.ts:function:onDay",
-        "dom/calendar.ts:function:renderCal",
-        "dom/calendar.ts:function:updFoot",
-        "dom/calendar.ts:module-init:<module-init>",
-      ].sort(),
-    );
+    expect(remaining).toEqual([]);
   });
 
   it("seals el/crd/rw/main once through IR and satisfies the IR-only shadow policy", async () => {
