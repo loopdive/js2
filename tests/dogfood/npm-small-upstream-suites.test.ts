@@ -198,14 +198,14 @@ describe("small npm package upstream suites", () => {
     const report = await run("stylelint");
     expect(report.extraction).toMatchObject({
       filesSeen: 281,
-      filesSelected: 5,
-      filesDeferred: 276,
-      testsRegistered: 9,
-      nativePassed: 9,
+      filesSelected: 16,
+      filesDeferred: 265,
+      testsRegistered: 24,
+      nativePassed: 24,
       nativeFailed: 0,
     });
-    expect(report.compile).toMatchObject({ modules: 5, succeeded: 5, validated: 5 });
-    expect(report.results.scored).toBe(9);
+    expect(report.compile).toMatchObject({ modules: 16, succeeded: 16, validated: 16 });
+    expect(report.results.scored).toBe(24);
   });
 
   const threeHeavy = process.env.DOGFOOD_THREE_UPSTREAM_SUITE === "1" ? it : it.skip;
