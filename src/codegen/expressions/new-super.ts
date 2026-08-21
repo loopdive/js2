@@ -15,6 +15,7 @@ import {
 import { installFrameTrap } from "../frame-trap.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
 import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
+import { emitFnctorCtorArgumentsObject, fnctorCtorNeedsArguments } from "../fnctor-ctor-arguments.js";
 import {
   provablyNonConstructableStatically,
   resolvesToAmbientGlobal,
@@ -1631,6 +1632,11 @@ function compileNewFunctionDeclaration(
     const paramType = ctx.checker.getTypeAtLocation(param);
     userCtorParams.push(resolveWasmType(ctx, paramType));
   }
+  // (fnctor-ctor-arguments.ts) Asked ONCE and shared by both halves of the
+  // `arguments` protocol — the ctor-body materialization below and the call
+  // site's `__extras_argv` publication — so they cannot disagree about whether
+  // the protocol is live for this constructor.
+  const ctorReadsArguments = fnctorCtorNeedsArguments(funcDecl);
   const captureLayout = fnctorCaptureLayout(ctx, funcName);
   const ctorIdentityParamIdx = captureLayout.allParamTypes.length + userCtorParams.length;
   const ctorParams = fnctorConstructorParams(ctx, userCtorParams, captureLayout.allParamTypes);
@@ -1677,6 +1683,7 @@ function compileNewFunctionDeclaration(
     ctorFuncName: ctorName,
     captureLayout,
     resultIsExtern,
+    readsArguments: ctorReadsArguments,
   });
 
   // 4. Compile the constructor body
@@ -1693,6 +1700,10 @@ function compileNewFunctionDeclaration(
       paramDefs.push({ name: `__tdz_box_${capture.name}`, type: captureLayout.tdzFlagParamTypes[flagIndex]! });
     }
   }
+  // (fnctor-ctor-arguments.ts) Where this ctor's FIRST user-declared parameter
+  // sits, past the capture / TDZ-flag parameters — the `paramOffset` the
+  // `arguments` vec indexes from.
+  const userParamOffset = paramDefs.length;
   for (let i = 0; i < funcDecl.parameters.length; i++) {
     const p = funcDecl.parameters[i]!;
     paramDefs.push({
@@ -1813,6 +1824,14 @@ function compileNewFunctionDeclaration(
       materializeFnctorTwinCaptures(ctx, ctorFctx, closureRecord.structTypeIdx, ctorIdentityParamIdx);
     }
   }
+  // (fnctor-ctor-arguments.ts) Materialize `arguments` — the one prologue step
+  // this synthesized body was missing relative to `function-body.ts`, which is
+  // why `arguments` read back as `null` inside every `new F(…)`. Emitted here,
+  // with `ctx.currentFunc === ctorFctx`, so a late-import shift reaches these
+  // instructions through `currentFunc.body` like any other body instruction.
+  if (ctorReadsArguments) {
+    emitFnctorCtorArgumentsObject(ctx, ctorFctx, funcDecl, userParamOffset, userCtorParams);
+  }
   // (#2071) Hoist the constructor body's own function declarations BEFORE its
   // statements compile — the same prologue every other function body gets
   // (`function-body.ts`). Without it a ctor that calls a function declared
@@ -1870,10 +1889,17 @@ function compileNewFunctionDeclaration(
   // would read the PREVIOUS function's params and coerce arguments against the
   // wrong types (observed: `call[0] expected externref, found (ref null $N)`).
   const paramTypes: ValType[] | undefined = userCtorParams;
-  emitFnctorConstructorArguments(ctx, fctx, captureLayout, expr.expression, args, paramTypes);
+  emitFnctorConstructorArguments(ctx, fctx, captureLayout, expr.expression, args, paramTypes, ctorReadsArguments);
   // Re-lookup funcIdx in case addUnionImports shifted indices
   const finalCtorIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)) ?? ctorFuncIdx; // (#1983)
-  maybeSetArgcForKnownCall(ctx, fctx, ctorName, args.length, paramTypes?.length ?? args.length);
+  // (fnctor-ctor-arguments.ts) `maybeSetArgcForKnownCall` keys on
+  // `ctx.funcUsesArguments`, which holds the SOURCE name — never the synthesized
+  // `__fnctor_<F>_new` passed here — so it returns early for every constructor.
+  // When the ctor reads `arguments`, `emitFnctorConstructorArguments` has
+  // already set `__argc` alongside `__extras_argv`; leave it alone.
+  if (!ctorReadsArguments) {
+    maybeSetArgcForKnownCall(ctx, fctx, ctorName, args.length, paramTypes?.length ?? args.length);
+  }
   fctx.body.push({ op: "call", funcIdx: finalCtorIdx });
   // (#3138) Function-scope fnctor: link instance → ctor closure at the call
   // site (the ctor prologue can't — no module global to read). No-op for
@@ -3998,8 +4024,26 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         const allParamTypes = getFuncParamTypes(ctx, ctorFuncIdx);
         const paramTypes = fnctorUserParamTypes(ctx, cachedFnCtor.captureLayout, allParamTypes);
         const args = expr.arguments ?? [];
-        emitFnctorConstructorArguments(ctx, fctx, cachedFnCtor.captureLayout, expr.expression, args, paramTypes);
-        maybeSetArgcForKnownCall(ctx, fctx, cachedFnCtor.ctorFuncName, args.length, paramTypes?.length ?? args.length);
+        // (fnctor-ctor-arguments.ts) Same cached-protocol reason as the
+        // identifier cache-hit arm below.
+        const thisReadsArguments = cachedFnCtor.readsArguments === true;
+        emitFnctorConstructorArguments(
+          ctx,
+          fctx,
+          cachedFnCtor.captureLayout,
+          expr.expression,
+          args,
+          paramTypes,
+          thisReadsArguments,
+        );
+        if (!thisReadsArguments)
+          maybeSetArgcForKnownCall(
+            ctx,
+            fctx,
+            cachedFnCtor.ctorFuncName,
+            args.length,
+            paramTypes?.length ?? args.length,
+          );
         fctx.body.push({ op: "call", funcIdx: ctorFuncIdx });
         // (#2071) A widened ctor returns externref — report it, never the struct.
         return cachedFnCtor.resultIsExtern
@@ -4066,9 +4110,29 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         const allParamTypes = getFuncParamTypes(ctx, ctorFuncIdx);
         const paramTypes = fnctorUserParamTypes(ctx, cachedFnCtor.captureLayout, allParamTypes);
         const args = expr.arguments ?? [];
-        emitFnctorConstructorArguments(ctx, fctx, cachedFnCtor.captureLayout, expr.expression, args, paramTypes);
+        // (fnctor-ctor-arguments.ts) The cache-hit arm never sees the
+        // declaration, so the `arguments` protocol travels WITH the cached ctor.
+        // Without it a second `new F(…)` dropped its over-supplied arguments
+        // while the callee still expected them on `__extras_argv`.
+        const cachedReadsArguments = cachedFnCtor.readsArguments === true;
+        emitFnctorConstructorArguments(
+          ctx,
+          fctx,
+          cachedFnCtor.captureLayout,
+          expr.expression,
+          args,
+          paramTypes,
+          cachedReadsArguments,
+        );
         const finalIdx = ctx.funcMap.get(cachedFnCtor.ctorFuncName) ?? ctorFuncIdx;
-        maybeSetArgcForKnownCall(ctx, fctx, cachedFnCtor.ctorFuncName, args.length, paramTypes?.length ?? args.length);
+        if (!cachedReadsArguments)
+          maybeSetArgcForKnownCall(
+            ctx,
+            fctx,
+            cachedFnCtor.ctorFuncName,
+            args.length,
+            paramTypes?.length ?? args.length,
+          );
         fctx.body.push({ op: "call", funcIdx: finalIdx });
         // (#3138) Function-scope fnctor: call-site instance→ctor link (the
         // cached arm bypasses compileNewFunctionDeclaration's emission).

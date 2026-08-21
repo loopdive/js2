@@ -3905,6 +3905,16 @@ export interface CodegenContext {
        * keeps the historical `(ref $Struct)` ABI byte-identically.
        */
       resultIsExtern?: boolean;
+      /**
+       * (fnctor-ctor-arguments.ts) The synthesized ctor materializes an
+       * `arguments` object, so its call sites must publish over-supplied
+       * arguments through `__extras_argv`/`__argc` instead of dropping them.
+       * Cached with the ctor because the CACHE-HIT arm emits the call site
+       * without ever seeing the declaration: a second `new F(…)` that forgot
+       * this fact silently passed the builder's protocol-speaking callee a
+       * stale/empty extras vector.
+       */
+      readsArguments?: boolean;
     }
   >;
   /**

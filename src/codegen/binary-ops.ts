@@ -92,8 +92,8 @@ const BOOLEAN_PRODUCING_BINARY_OPS: ReadonlySet<ts.SyntaxKind> = new Set([
  * (#2712 I1) Brand a comparison/equality/relational/`in`/`instanceof` result as
  * a boolean. No-op for a non-boolean operator, a null/VOID result, or an already
  * -branded / non-i32 result. Idempotent + structurally inert (the brand still
- * matches every `.kind === "i32"` check). Called at the single dispatch site in
- * expressions.ts so all boolean-producing binary results are branded uniformly.
+ * matches every `.kind === "i32"` check). Called at the TAIL of expressions.ts's
+ * binary dispatch; its 3 `instanceof` arms return earlier, so they brand themselves.
  */
 export function brandBooleanBinaryResult(op: ts.SyntaxKind, result: InnerResult): InnerResult {
   if (
