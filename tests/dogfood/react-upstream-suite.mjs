@@ -46,6 +46,13 @@ import { REACT_EXPECT_SHIM, LAST_ERROR_EXPORT, buildTestFunction } from "./react
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = join(HERE, "report", "react-upstream-suite.json");
+// React's lifted suite intentionally admits tests that need infrastructure the
+// harness cannot provide. Those tests still run against the native oracle and
+// the compiled lane, but a missing async dependency must not hold the complete
+// npm-compat refresh for ten seconds per test. The timeout is a watchdog, not
+// a test selection filter: timed-out tests remain in the report as failures or
+// harness-incompatible results.
+const DEFAULT_REACT_TEST_TIMEOUT_MS = 2_000;
 
 // `var exports = {}` makes the published CommonJS implementation an internal
 // module value. Every byte of the implementation after that one binding is
@@ -180,7 +187,7 @@ function quarantineFromErrors(moduleSource, tests, errors) {
 export async function runHarness({
   quiet = false,
   filter = process.env.DOGFOOD_REACT_FILTER || "",
-  testTimeoutMs = Number(process.env.DOGFOOD_REACT_TEST_TIMEOUT_MS || 10_000),
+  testTimeoutMs = Number(process.env.DOGFOOD_REACT_TEST_TIMEOUT_MS || DEFAULT_REACT_TEST_TIMEOUT_MS),
   compileTimeoutMs = Number(process.env.DOGFOOD_REACT_COMPILE_TIMEOUT_MS || 30_000),
 } = {}) {
   const log = quiet ? () => {} : (...values) => console.log(...values);

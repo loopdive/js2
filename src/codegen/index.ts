@@ -126,7 +126,7 @@ import {
   prepareIrAsyncSelectionOptions,
   registerIrAsyncPromiseDelayResolver,
 } from "./async-ir-planning.js";
-import { unwrapPromiseTypeNode } from "./async-static.js"; // (#1373b C-1)
+import { unwrapPromiseTypeNode } from "../ir/async-static.js"; // (#1373b C-1)
 import { createCodegenContext } from "./context/create-context.js";
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";

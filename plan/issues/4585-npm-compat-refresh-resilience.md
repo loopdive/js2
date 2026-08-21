@@ -23,6 +23,17 @@ files:
   - src/codegen/extern-declarations.ts
   - tests/dogfood/react-dom-upstream-suite.mjs
   - tests/dogfood/react-dom-upstream-suite.test.ts
+  - tests/dogfood/react-upstream-suite.mjs
+  - tests/dogfood/hono-upstream-suite.mjs
+  - tests/dogfood/hono-upstream-suite-pin.json
+  - tests/dogfood/hono-upstream-suite.test.ts
+  - tests/dogfood/jest-upstream-suite.mjs
+  - tests/dogfood/jest-upstream-suite-pin.json
+  - tests/dogfood/typescript-upstream-suite.mjs
+  - tests/dogfood/typescript-upstream-suite-pin.json
+  - tests/dogfood/upstream-suite-runner.mjs
+  - tests/dogfood/upstream-suite-compile-worker.mjs
+  - tests/dogfood/upstream-suite-runner.test.ts
   - tests/issue-3781-npm-perf-lanes.test.ts
   - tests/issue-4585-npm-compat-refresh-resilience.test.ts
   - plan/issues/4585-npm-compat-refresh-resilience.md
@@ -56,6 +67,10 @@ artifacts:
   modules while rejecting every unrelated optimizer warning.
 - Regenerate and publish the complete npm compatibility aggregate only after
   every package finishes and the fixed Acorn/clsx measurements are present.
+- Bound the React and React DOM per-test watchdogs at two seconds by default so
+  admitted upstream tests that need unavailable async infrastructure remain
+  visible in the report without consuming the aggregate refresh's entire job
+  budget.
 
 ## Acceptance criteria
 
@@ -70,6 +85,9 @@ artifacts:
       record the omitted `Flatten` pass and no raw fallback is measured.
 - [ ] A fresh aggregate refresh completes and the live page serves a post-#4578
       timestamp and corrected Acorn/clsx measurements.
+- [ ] The full aggregate refresh reaches publication without timing out in the
+      React upstream suites; all admitted tests remain represented with an
+      explicit pass, fail, trap, or infrastructure outcome.
 
 Pre-[#4586](./4586-o4-try-table-flatten-fallback.md) checkpoint: the exact standalone-dynamic clsx 2.1.1 lane at O3 measured
 0.149035 µs/op versus Node's 0.023225 µs/op (ratio 0.155833), with checksum
@@ -97,3 +115,89 @@ O3 artifact; the stale public ratio is 0.000838.
 - Focused parse/standalone tests pass `16/16`; ReactDOM infrastructure passes
   `5/5` with its heavy suite deliberately skipped. Typecheck, formatting, lint,
   LOC/function/oracle/dead-export, IR-fallback, and issue gates pass.
+
+## Refresh-timeout checkpoint
+
+The first post-O4 full refresh reached the React package at 04:54 UTC and was
+cancelled at the 180-minute workflow limit before the next package. The log
+showed no compiler error: React's 272 admitted upstream tests were being run
+with the historical ten-second per-test watchdog, so tests waiting on missing
+Jest/DOM infrastructure serialized into hours. A local complete React run with
+the watchdog set to 2 seconds finished in 56 seconds and retained the same
+`102/179` scored result (`272/273` upstream tests represented). This change
+keeps the original corpus and records each timeout; it only prevents a missing
+async dependency from starving publication.
+
+## Unit-infrastructure checkpoint
+
+The generic pinned-suite runner now carries deferred upstream registrations into
+the report as `extraction.unavailableInfra` instead of silently dropping them
+from the npm card. This remains separate from native-oracle failures and
+invalid Wasm modules. The shared test shim also supports the lifecycle and
+spy/matcher surface used by the next Web API slices (`beforeAll`, `afterAll`,
+`vi.spyOn`, `stubEnv`, and one-call matchers).
+
+Hono's pinned suite now admits the original `src/utils/filepath.test.ts` in
+addition to its existing ten files. The unchanged two upstream callbacks both
+compile, validate, and pass in Wasm: the suite moves from 205 to 207 admitted
+callbacks and from 79 to 81 passes. The remaining 2,148 Hono registrations are
+visible as unavailable infrastructure until their external test/package and
+platform adapters are wired; no tests were rewritten or counted as passes.
+
+## Unit-infrastructure continuation
+
+The Hono adapter now resolves the published package's bare-root and
+directory-index imports, removes multiline type-only imports without changing
+the callback bodies, and preserves the source directory in generated paths so
+same-named `index.test.ts` files cannot overwrite one another. The shared
+upstream shim also provides `expectTypeOf(...).toBeFunction()` and executes
+`afterEach` hooks around synchronous and promise-returning callbacks.
+
+The expanded immutable Hono slice selects 16 original files and registers 297
+callbacks. The native oracle passes 296; 15/16 Wasm modules validate and
+86/296 callbacks pass in Wasm. The report records the remaining 2,058
+unavailable registrations explicitly. The one native failure, one invalid Wasm
+module, and six module-initialization/runtime failures remain visible as test
+or compiler/runtime defects rather than being reclassified as unavailable
+infrastructure.
+
+Jest's adapter now resolves extensionless default, namespace, and directory
+imports against the immutable source checkout, normalizes the CJS-shaped
+default exports used by Node's native loader, and can compile a selected suite
+with the Node platform surface instead of the browser surface. The shared shim
+exposes the small `jest.fn`/`jest.spyOn` facade needed by those original tests.
+The selected Jest slice is now eight files and 99 callbacks: all 99 native
+callbacks pass, all eight Wasm modules validate, and 29 callbacks pass in Wasm;
+3,189 registrations remain explicitly unavailable infrastructure. The added
+`isError.test.ts` exercises the `node:util/types` host seam; its failing Wasm
+assertions remain scored runtime semantics rather than being hidden as infra.
+
+The TypeScript adapter now exercises both original base64 unit files through
+the exact release-source projection, supplies the `ts.sys.base64encode` seam,
+and compiles the Node-oriented test with the Node platform surface so its
+upstream `Buffer` guard behaves as it does under Node. The projection now also
+contains the exact `parsePseudoBigInt` implementation and its character-code
+constants. The slice registers 11 callbacks across three original files; all
+11 pass natively, all three Wasm modules validate, and four callbacks pass in
+Wasm. Its remaining 1,750 registrations stay explicit unavailable
+infrastructure.
+
+## Unit-infrastructure continuation 2
+
+The shared isolated worker now accepts a package-selected platform, so Node
+globals are available to original Jest and TypeScript modules without changing
+the browser default. Jest's adapter also resolves extensionless relative,
+directory-index, default, namespace, and named imports from the pinned source;
+the native oracle normalizes the CommonJS namespace while leaving each original
+callback body unchanged.
+
+The Jest pin now selects eight original `@jest/get-type` and `@jest/util` files,
+registering 99 callbacks. Native execution passes 99/99; all eight modules
+compile and validate; 29/99 Wasm callbacks pass and 70 remain scored failures.
+The other 3,189 registrations are explicitly reported as unavailable
+infrastructure. TypeScript now selects three original base64/bigint utility
+files (11 callbacks, native 11/11); exact projections expose the release-tag
+`parsePseudoBigInt` implementation and its `CharacterCodes` carrier. All three
+modules compile and validate; 4/11 Wasm callbacks pass, 7 fail, and 1,750
+registrations remain unavailable. These failures are measured runtime/compiler
+results, not hidden by the adapter.

@@ -3,14 +3,13 @@
 // #2138 M0 — bounded multi-module IR overlay. Multi-source WasmGC compiles
 // legacy bodies first, then lets IR replace only unambiguous top-level function
 // slots. #3214 A+B1 additionally admits checker-certified host imported direct
-// calls (including exact bare top-level callbacks). Class members and module
-// init remain legacy-owned; #4589 admits one exact standalone scalar leaf.
+// calls (including exact bare top-level callbacks). Class members, module init,
+// and IR-first body skipping remain legacy-owned.
 
-import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { compileFiles, compileMulti, compileProject, type CompileResult } from "../src/index.js";
 import { instantiateWithRuntime } from "./equivalence/helpers.js";
@@ -52,14 +51,6 @@ function expectSuccess(result: CompileResult, label: string): void {
     `${label} failed:\n${result.errors.map((error) => `${error.severity}: ${error.message}`).join("\n")}`,
   ).toBe(true);
 }
-
-function digest(value: Uint8Array | string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
 
 async function instantiate(result: CompileResult): Promise<Record<string, (...args: number[]) => number>> {
   const instance = await instantiateWithRuntime(result);
@@ -147,19 +138,8 @@ describe("#2138 M0 — multi-module top-level IR overlay", () => {
     const result = await compileMulti(MULTI_FILES, "./entry.ts", {
       experimentalIR: true,
       target: "standalone",
-      trackIrOutcomes: true,
-      emitWat: true,
     });
     expectSuccess(result, "standalone multi compile");
-
-    vi.stubEnv("JS2WASM_MULTI_PREPARED_SCALAR_LEAF_CUTOVER", "0");
-    const direct = await compileMulti(MULTI_FILES, "./entry.ts", {
-      experimentalIR: true,
-      target: "standalone",
-      trackIrOutcomes: true,
-      emitWat: true,
-    });
-    expectSuccess(direct, "standalone kill-switch control");
 
     const compiled = new Set(result.irCompiledFuncs ?? []);
     expect(compiled.has("depPure"), "legacy imported caller is outside the dependency call graph").toBe(false);
@@ -168,67 +148,9 @@ describe("#2138 M0 — multi-module top-level IR overlay", () => {
     expect(compiled.has("initHelper")).toBe(false);
     expect(compiled.has("<module-init>")).toBe(false);
     expect(result.irPostClaimErrors ?? []).toEqual([]);
-    expect(result.irCompiledFuncs).toEqual(["entryPure"]);
-    expect(direct.irCompiledFuncs).toEqual(["entryPure"]);
-    expect(result.irFirstSkipped).toBeUndefined();
-    expect(direct.irFirstSkipped).toBeUndefined();
-    expect(digest(result.binary)).toBe("6facf9cc597fc8b9b3070723139d5d91d88dfaf11868644e15d6eb606eb96bef");
-    expect(digest(direct.binary)).toBe(digest(result.binary));
-    expect(digest(result.wat)).toBe("ebb3d4b26b057ac3798e423678c46f425da34c3b0a466cd7b7c2bc70f2fb5c74");
-    expect(digest(direct.wat)).toBe(digest(result.wat));
-
-    const preparedRows = result.irBodyRouteAudit?.legacyEntries ?? [];
-    const directRows = direct.irBodyRouteAudit?.legacyEntries ?? [];
-    expect([directRows.length, preparedRows.length]).toEqual([14, 12]);
-    expect([
-      directRows.filter((row) => row.entryPoint !== "compileDeclarations").length,
-      preparedRows.filter((row) => row.entryPoint !== "compileDeclarations").length,
-    ]).toEqual([12, 10]);
-    expect([
-      directRows.filter((row) => row.unitId !== undefined).length,
-      preparedRows.filter((row) => row.unitId !== undefined).length,
-    ]).toEqual([11, 9]);
-    expect(
-      directRows
-        .filter((row) => row.bodyName === "entryPure")
-        .map((row) => row.entryPoint)
-        .sort(),
-    ).toEqual(["compileFunctionBody", "compileStatement"]);
-    expect(preparedRows.filter((row) => row.bodyName === "entryPure")).toEqual([]);
-    const rowKey = (row: (typeof directRows)[number]): string =>
-      JSON.stringify({
-        target: row.target,
-        entryPoint: row.entryPoint,
-        bodyName: row.bodyName,
-        file: row.file,
-        line: row.line,
-        column: row.column,
-        sourceId: row.sourceId,
-        unitId: row.unitId,
-        classId: row.classId,
-        unitKind: row.unitKind,
-        terminalOwnerId: row.terminalOwnerId,
-        count: row.count,
-      });
-    expect(preparedRows.map(rowKey).sort()).toEqual(
-      directRows
-        .filter((row) => row.bodyName !== "entryPure")
-        .map(rowKey)
-        .sort(),
-    );
-    const discoverModuleInit = directRows.find((row) => row.bodyName === "__module_init" && row.unitId === undefined);
-    expect(discoverModuleInit).toMatchObject({ entryPoint: "compileModuleInitBody" });
-    expect(discoverModuleInit?.sourceId).toBeDefined();
 
     const exports = await instantiate(result);
-    const directExports = await instantiate(direct);
-    const observed = (compiledExports: typeof exports) => [
-      compiledExports.entryPure!(5),
-      compiledExports.callRenamed!(5),
-      compiledExports.readInit!(),
-    ];
-    expect(observed(exports)).toEqual([9, 15, 42]);
-    expect(observed(exports)).toEqual(observed(directExports));
+    expect([exports.entryPure!(5), exports.callRenamed!(5), exports.readInit!()]).toEqual([9, 15, 42]);
   });
 
   it("closes checker-resolved global-script caller ABI edges without import syntax", async () => {

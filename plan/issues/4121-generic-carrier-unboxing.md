@@ -397,6 +397,77 @@ and ABI checks pass and the switch-off result is identical.
   `var a = b; var b = a` survives it with no numeric evidence anywhere. Any new
   consumer needs the grounded (least-fixpoint) variant.
 
+## Implementation Plan — first slice only (Fable, 2026-08-21)
+
+**Scope of this dispatch: the pre-flight claim report (AC 1), the
+admission-gate slice, and the box-site census (AC 5). Explicitly NOT the IR
+lattice pass** — the issue's own blocking caveat stands: the pass would
+silently stop applying wherever the IR demotes, and the benchmark shapes'
+claim status is unmeasured. The AST-side admission-gate fix is independent of
+that question and is called out above as "worth doing regardless of where the
+analysis eventually lives".
+
+**Step 0 — pre-flight (AC 1, do this first, it can re-scope the rest):**
+compile the benchmark shapes with IR telemetry (`result.irCompiledFuncs` /
+`irFirstSkipped`, plus `JS2WASM_IR_SHAPE_DIAG=1` for rejection attribution):
+the `method` axis kernel (find it under `benchmarks/` /
+`website/public/benchmarks/competitive/programs/`) and the pinned cookie
+`parseCookie` (the standalone runtime-dynamic harness under `benchmarks/` —
+the 2026-08-09 checkpoints in this file name the harness and seed). Record
+claimed-vs-demoted per function IN THIS FILE. If both are demoted (expected,
+`benchmarkUsesIr: false` in the last checkpoint), state plainly that the IR
+pass half is blocked on #2855-successor coverage and proceed with the
+AST-side slice below.
+
+**Step 1 — instrument, reproduce (verified anchors, 2026-08-21):** the
+candidate admission the issue describes lives in
+`src/codegen/numeric-property-analysis.ts` (1,485 LOC) — the
+`any`/`unknown`/`unresolvable` checker-type gate is visible at ~`:811`
+(`parameterDefinitionsAgree`) and the local-candidate collection nearby;
+`usageInferredLocalType` is consumed at `src/codegen/index.ts:10379` and
+`:11049` (note `carrierForcesExternref` guarding the first — read what feeds
+it); the mixed-assignment demotion is
+`src/codegen/analysis/mixed-assignment-carrier.ts` wired at
+`src/codegen/statements/variables.ts:150` (#4122's subject — check whether
+#4122 landed first; if it did, re-measure the reduced table before changing
+anything). Instrument the candidate loop and confirm the issue's finding
+still holds on current main: `let i = 0; i = s.indexOf(";") + 1;` never
+becomes a candidate because the DECLARED type is `number`.
+
+**Step 2 — the fix:** admission must key on the representation codegen is
+about to emit, not the checker's declared type. Concretely: a local whose
+slot codegen is widening to externref (via the any-typed
+assignment/mixed-carrier path) is admitted as an unboxing candidate even when
+its declared type is a scalar — the existing route-1 (#684 use-site) and
+route-2 (#3765 definition-site) proofs then run UNCHANGED and either prove
+f64 or leave it boxed. No new proof logic. Add a kill switch consistent with
+the family (`JS2WASM_NUMERIC_LOCALS` already exists — extend its scope or add
+`JS2WASM_NUMERIC_ADMISSION=0`), default on.
+
+**Step 3 — prove (ACs 2, 5, 6):**
+- The reduced case emits an `f64` slot with ZERO `__box_number` /
+  `__unbox_number` in the loop body (assert on WAT, like this file's table;
+  pin as a test).
+- Box-site census of the standalone cookie module before/after, bucketed by
+  carrier (return/local/argument/field), appended to this file — the
+  "relocated to the next carrier" mode must be visible.
+- **Full-capture equivalence run + A/B of any failing set with the switch
+  off** — a count match is not acceptance. The "What must still decline"
+  list below is load-bearing: booleans (the `${b}` → `1` trap), captured
+  bindings, read-before-definition, bigint, and the greatest-vs-least
+  fixpoint trap each need an explicit negative test if the admission change
+  can reach them.
+- Perf: re-run the pinned cookie runtime-dynamic A/B (methodology from the
+  2026-08-09 checkpoints: separate processes, warm-ups, alternating order,
+  fixed seed, checksum equality) and report the delta with the switch-off
+  control. A null result is reportable — the admission fix is about making
+  the candidates VISIBLE; if the proofs then decline them, say so and name
+  the declining clause.
+
+**Out of scope, do not touch:** the IR `propagate.ts` lattice, new carrier
+consumers, peephole (falsified above), and #4122's one-line fix if it has not
+landed (do not absorb it — coordinate by checking `git log origin/main`).
+
 ## Relationship to adjacent work
 
 - **#4118 / PR #4062** specializes named hot paths (`indexOf`, `find`, counted

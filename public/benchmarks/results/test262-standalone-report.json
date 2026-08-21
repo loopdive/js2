@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-21T02:15:27.892Z",
-  "baseline_generated_at": "2026-08-21T02:15:27.892Z",
-  "baseline_sha": "bd0d52d9e5444104ad688971b1a42108799debfe",
+  "timestamp": "2026-08-21T09:11:21.799Z",
+  "baseline_generated_at": "2026-08-21T09:11:21.799Z",
+  "baseline_sha": "2c9c07906344f9cae6ac6bd7bc484ade66e76b4f",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -1296,7 +1296,7 @@
           "test/built-ins/Temporal/PlainYearMonth/prototype/with/options-read-before-algorithmic-validation.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/add/basic-arithmetic.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/since/bubble-time-unit.js",
-          "test/built-ins/Temporal/PlainDate/prototype/subtract/overflow-undefined.js"
+          "test/built-ins/Temporal/PlainYearMonth/prototype/since/roundingmode-floor.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::CSSNumericValue_equals (##)",
@@ -1338,14 +1338,14 @@
           "test/built-ins/AsyncDisposableStack/prototype/use/gets-value-Symbol.dispose-property-once.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/allows-undefined-value.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/gets-value-Symbol.dispose-property-after-trying-Symbol.asyncDispose.js",
-          "test/built-ins/DisposableStack/prototype/use/throws-if-value-Symbol.dispose-property-not-callable.js"
+          "test/built-ins/DisposableStack/prototype/adopt/throws-if-onDispose-not-callable.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_defer, env::AsyncDisposableStack_disposeAsync, env::AsyncDisposableStack_move, env::AsyncDisposableStack_new (##)",
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_disposeAsync, env::AsyncDisposableStack_new, env::AsyncDisposableStack_use (##)",
+          "assertion_fail:Test262Error: null Expected a TypeError to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: true Expected a TypeError to be thrown but no exception was thrown at all",
-          "assertion_fail:Test262Error: [object Object] should be an own property",
-          "assertion_fail:Test262Error: null Expected a TypeError to be thrown but no exception was thrown at all"
+          "assertion_fail:Test262Error: [object Object] should be an own property"
         ]
       },
       {
@@ -2549,23 +2549,23 @@
           "null_deref": 6
         },
         "by_edition": {
-          "ES2015": 56,
           "ES2026": 21,
+          "ES2015": 56,
           "ES2025": 31,
           "ES2021": 2,
           "ES2020": 2,
           "ES2024": 2
         },
         "sample_files": [
-          "test/built-ins/Map/prototype/clear/length.js",
           "test/built-ins/Map/prototype/getOrInsert/not-a-constructor.js",
+          "test/built-ins/Map/prototype/clear/length.js",
           "test/built-ins/WeakSet/prototype/add/throw-when-value-cannot-be-held-weakly.js",
           "test/built-ins/WeakSet/iterable-with-symbol-values.js",
           "test/built-ins/Set/prototype/symmetricDifference/set-like-class-order.js"
         ],
         "sample_signatures": [
-          "assertion_fail:Test262Error: length descriptor value should be #; length value should be #",
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
+          "assertion_fail:Test262Error: length descriptor value should be #; length value should be #",
           "assertion_fail:Test262Error: Actual [] and expected [[object Object], [object Object], [object Object]] should have the same contents. add() was called # times, on the two unregistered and one well-known symbols in order",
           "type_error:TypeError: TypeError: invalid size for a set-like argument (NaN)",
           "syntax_error:SyntaxError: Cannot convert string to a BigInt in standalone mode"
@@ -2818,8 +2818,8 @@
         "sample_files": [
           "test/built-ins/Promise/any/iter-step-err-no-close.js",
           "test/built-ins/Promise/allSettled/iter-returns-undefined-reject.js",
-          "test/built-ins/Promise/all/S25.4.4.1_A5.1_T1.js",
           "test/built-ins/Promise/any/iter-returns-true-reject.js",
+          "test/built-ins/Promise/all/S25.4.4.1_A5.1_T1.js",
           "test/language/expressions/object/method-definition/async-gen-yield-star-next-then-non-callable-string-fulfillpromise.js"
         ],
         "sample_signatures": [
