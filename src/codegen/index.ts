@@ -193,6 +193,15 @@ import {
   type PreparedIrFreeFunctionBodies,
   type PreparedIrModuleInitBody,
 } from "./ir-prepared-free-functions.js";
+import {
+  assertMultiPreparedScalarLeafRouteCurrent,
+  buildMultiIrGraphSafety,
+  collectMultiIrFunctionNameCollisions,
+  compileMultiPreparedScalarLeafDeclarations,
+  planEarlyMultiPreparedScalarLeafRoute,
+  type EarlyMultiPreparedScalarLeafState,
+  type MultiPreparedScalarLeafGraphSafety,
+} from "./multi-prepared-scalar-leaf.js";
 import * as irTimerShim from "./ir-timer-shim-planning.js";
 import { buildLeakedHostImportError, scanForLeakedHostImports } from "./host-import-allowlist.js";
 import {
@@ -3134,172 +3143,6 @@ function consumeIrOverlayReport(
   }
 }
 
-/** Flat function names shared by two or more source files are not safe IR keys. */
-function collectMultiIrFunctionNameCollisions(sourceFiles: readonly ts.SourceFile[]): ReadonlySet<string> {
-  const owner = new Map<string, ts.SourceFile>();
-  const collisions = new Set<string>();
-  for (const sourceFile of sourceFiles) {
-    const namesInFile = new Set<string>();
-    for (const stmt of sourceFile.statements) {
-      if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body && !hasDeclareModifier(stmt)) {
-        namesInFile.add(stmt.name.text);
-      }
-    }
-    for (const name of namesInFile) {
-      const previous = owner.get(name);
-      if (previous && previous !== sourceFile) collisions.add(name);
-      else owner.set(name, sourceFile);
-    }
-  }
-  return collisions;
-}
-
-/** Import locals that can overwrite an unrelated flat `ctx.funcMap` key. */
-function collectMultiImportAliasNames(sourceFiles: readonly ts.SourceFile[]): ReadonlySet<string> {
-  const names = new Set<string>();
-  for (const sourceFile of sourceFiles) {
-    for (const stmt of sourceFile.statements) {
-      if (ts.isImportDeclaration(stmt)) {
-        const clause = stmt.importClause;
-        if (!clause) continue;
-        if (clause.name) names.add(clause.name.text);
-        if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
-          names.add(clause.namedBindings.name.text);
-        } else if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
-          for (const element of clause.namedBindings.elements) {
-            const target = (element.propertyName ?? element.name).text;
-            if (element.name.text !== target) names.add(element.name.text);
-          }
-        }
-      } else if (ts.isImportEqualsDeclaration(stmt)) {
-        names.add(stmt.name.text);
-      }
-    }
-  }
-  return names;
-}
-
-/** Resolve cross-file import aliases back to their declared function names. */
-function collectMultiImportedFunctionNames(
-  sourceFiles: readonly ts.SourceFile[],
-  checker: ts.TypeChecker,
-): ReadonlySet<string> {
-  const names = new Set<string>();
-  const addFunctionDeclarations = (symbol: ts.Symbol | undefined): void => {
-    if (!symbol) return;
-    const target = symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
-    for (const declaration of target.declarations ?? []) {
-      if (ts.isFunctionDeclaration(declaration) && declaration.name) names.add(declaration.name.text);
-    }
-    if (target.flags & ts.SymbolFlags.Module) {
-      for (const exported of checker.getExportsOfModule(target)) {
-        const value = exported.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(exported) : exported;
-        for (const declaration of value.declarations ?? []) {
-          if (ts.isFunctionDeclaration(declaration) && declaration.name) names.add(declaration.name.text);
-        }
-      }
-    }
-  };
-  const addTarget = (local: ts.Identifier, syntacticTarget?: string): void => {
-    addFunctionDeclarations(checker.getSymbolAtLocation(local));
-    if (syntacticTarget) names.add(syntacticTarget);
-  };
-
-  for (const sourceFile of sourceFiles) {
-    for (const stmt of sourceFile.statements) {
-      if (!ts.isImportDeclaration(stmt)) continue;
-      const clause = stmt.importClause;
-      if (!clause) continue;
-      if (clause.name) addTarget(clause.name);
-      if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
-        addTarget(clause.namedBindings.name);
-      } else if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
-        for (const element of clause.namedBindings.elements) {
-          addTarget(element.name, (element.propertyName ?? element.name).text);
-        }
-      }
-    }
-    for (const stmt of sourceFile.statements) {
-      if (ts.isImportEqualsDeclaration(stmt)) addTarget(stmt.name);
-    }
-  }
-  return names;
-}
-
-/**
- * Top-level function declarations referenced from a different source file.
- *
- * Import syntax covers ordinary ESM edges, but `compileMulti` also accepts
- * global-script roots. A module can call a function declared by one of those
- * roots without an `ImportDeclaration`; TypeScript still resolves the
- * identifier to the other file's declaration. Treat that checker-resolved
- * edge exactly like an imported target so a legacy caller never observes an
- * IR-only callable ABI (the M0 overlay has no cross-file call closure yet).
- */
-function collectMultiCrossFileFunctionNames(
-  sourceFiles: readonly ts.SourceFile[],
-  checker: ts.TypeChecker,
-): ReadonlySet<string> {
-  // Preserve the deliberately conservative namespace/default/re-export import
-  // handling above, then add all symbol-resolved cross-file references.
-  const names = new Set(collectMultiImportedFunctionNames(sourceFiles, checker));
-  // External modules can only cross source-file boundaries through the import
-  // surface already collected above. Pay the full checker walk only when a
-  // global-script root makes import-free cross-file references possible.
-  if (!sourceFiles.some((sourceFile) => !ts.isExternalModule(sourceFile))) return names;
-  const sourceSet = new Set(sourceFiles);
-  const allFunctionNames = new Set<string>();
-  for (const sourceFile of sourceFiles) {
-    for (const stmt of sourceFile.statements) {
-      if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) allFunctionNames.add(stmt.name.text);
-    }
-  }
-  const markUnknownTargetConservatively = (): void => {
-    for (const name of allFunctionNames) names.add(name);
-  };
-
-  const addResolvedTarget = (symbol: ts.Symbol | undefined, referenceFile: ts.SourceFile): void => {
-    if (!symbol) return;
-    let target = symbol;
-    if (target.flags & ts.SymbolFlags.Alias) {
-      try {
-        target = checker.getAliasedSymbol(target);
-      } catch {
-        markUnknownTargetConservatively();
-        return;
-      }
-    }
-    for (const declaration of target.declarations ?? []) {
-      if (
-        ts.isFunctionDeclaration(declaration) &&
-        declaration.name &&
-        declaration.body &&
-        sourceSet.has(declaration.getSourceFile()) &&
-        declaration.getSourceFile() !== referenceFile
-      ) {
-        names.add(declaration.name.text);
-      }
-    }
-  };
-
-  for (const sourceFile of sourceFiles) {
-    const visit = (node: ts.Node): void => {
-      if (ts.isIdentifier(node)) {
-        try {
-          addResolvedTarget(checker.getSymbolAtLocation(node), sourceFile);
-        } catch {
-          // Safety scan uncertainty must only reduce M0 coverage. In host mode
-          // this blocks callable boundaries; standalone/WASI block every name.
-          markUnknownTargetConservatively();
-        }
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(sourceFile);
-  }
-  return names;
-}
-
 function functionBodyHasUnsupportedImportUse(fn: ts.FunctionDeclaration, plan: IrOverlayPlan): boolean {
   if (!fn.body || !plan.importedFunctionResolver) return false;
   let found = false;
@@ -3384,13 +3227,7 @@ function functionHasCallableBoundary(ctx: CodegenContext, declaration: ts.Functi
  * no IR body can resolve or patch the wrong module's slot. Class members and
  * the shared `__module_init` stay legacy-owned in M0.
  */
-interface MultiIrGraphSafety {
-  readonly collisions: ReadonlySet<string>;
-  readonly crossFileFunctionNames: ReadonlySet<string>;
-  readonly importAliasNames: ReadonlySet<string>;
-  readonly occupiedFunctionKeys: readonly string[];
-  readonly occupiedFunctionNameCounts: ReadonlyMap<string, number>;
-}
+type MultiIrGraphSafety = MultiPreparedScalarLeafGraphSafety;
 
 function multiIrTargetHasExactRegistryEntry(
   ctx: CodegenContext,
@@ -3609,14 +3446,13 @@ function prepareMultiIrImportedLowering(
   };
 }
 
-function compileMultiIrOverlaySource(
+function planMultiIrOverlaySource(
   ctx: CodegenContext,
   multiAst: MultiTypedAST,
   sourceFile: ts.SourceFile,
   identityContext: IrPlanningIdentityContext,
-  safety: MultiIrGraphSafety,
   hostImportedFunctions: irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined,
-): void {
+): IrOverlayPlan {
   const sourceAst: TypedAST = {
     sourceFile,
     checker: multiAst.checker,
@@ -3624,10 +3460,70 @@ function compileMultiIrOverlaySource(
     diagnostics: multiAst.diagnostics,
     syntacticDiagnostics: multiAst.syntacticDiagnostics,
   };
-  const plan = planIrOverlay(ctx, sourceAst, identityContext, {
+  return planIrOverlay(ctx, sourceAst, identityContext, {
     resolveModuleBindings: false,
     ...(hostImportedFunctions ? { importedFunctions: hostImportedFunctions } : {}),
   });
+}
+
+function collectMultiIrLateProviderOwnerUnitIds(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  plan: IrOverlayPlan,
+): ReadonlySet<IrUnitId> {
+  return new Set([
+    ...[...plan.importedCalls.values()].map((candidate) => candidate.ownerUnitId),
+    ...[...plan.topLevelFunctionValues.values()].map((candidate) => candidate.ownerUnitId),
+    ...[...plan.hostVoidCallbacks.values()].map((candidate) => candidate.ownerUnitId),
+    ...[...plan.hostDateSnapshots.values()].map((candidate) => candidate.ownerUnitId),
+    ...[...plan.hostDateGetters.values()].map((candidate) => candidate.ownerUnitId),
+    ...[...plan.promiseDelays.constructions.values()].map((candidate) => candidate.ownerUnitId),
+    ...plan.suspendingAsyncUnitIds,
+    ...irTimerShim.inspectIrCompilerTimerShimRouting(plan).ownerUnitIds,
+    ...collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan),
+  ]);
+}
+
+function planEarlyMultiIrOverlay(
+  ctx: CodegenContext,
+  multiAst: MultiTypedAST,
+  identityContext: IrPlanningIdentityContext,
+  options: CodegenOptions | undefined,
+): Map<ts.SourceFile, EarlyMultiPreparedScalarLeafState<IrOverlayPlan>> {
+  const active =
+    !!options?.experimentalIR &&
+    !options.disableIrFirst &&
+    !explicitlyDisabledEnv(process.env.JS2WASM_IR_FIRST) &&
+    ctx.standalone &&
+    !ctx.wasi &&
+    !ctx.fast &&
+    multiAst.sourceFiles.length > 1;
+  if (!active) return new Map();
+  return planEarlyMultiPreparedScalarLeafRoute({
+    active,
+    cutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_SCALAR_LEAF_CUTOVER),
+    ctx,
+    sourceFiles: multiAst.sourceFiles,
+    entryFile: multiAst.entryFile,
+    safety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
+    planSource: (sourceFile) => planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined),
+    safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
+    lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),
+    projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
+  });
+}
+
+function compileMultiIrOverlaySource(
+  ctx: CodegenContext,
+  multiAst: MultiTypedAST,
+  sourceFile: ts.SourceFile,
+  identityContext: IrPlanningIdentityContext,
+  safety: MultiIrGraphSafety,
+  hostImportedFunctions: irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined,
+  early?: EarlyMultiPreparedScalarLeafState<IrOverlayPlan>,
+): void {
+  const plan =
+    early?.plan ?? planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, hostImportedFunctions);
   let safeSelection = makeMultiIrSafeSelection(ctx, plan, sourceFile, safety);
   safeSelection = prepareMultiIrImportedLowering(ctx, sourceFile, plan, safeSelection);
   safeSelection = synchronizeIrSafeFunctionSelection(plan, safeSelection);
@@ -3657,9 +3553,20 @@ function compileMultiIrOverlaySource(
     ),
   );
   const { overrideMap, classShapes } = plan;
-  const loweringPlans = irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, safeSelection);
-  const report = compileIrPathFunctions(ctx, sourceFile, safeSelection, overrideMap, classShapes, loweringPlans);
-  consumeIrOverlayReport(ctx, report, plan, safeSelection, sourceFile);
+  if (early?.route) {
+    assertMultiPreparedScalarLeafRouteCurrent({ ctx, route: early.route, finalSelection: safeSelection, safety });
+  }
+  const report = completePreparedIrIntegration({
+    ctx,
+    sourceFile,
+    selection: safeSelection,
+    overrideMap,
+    classShapes,
+    ...(early?.route ? { preparedReport: early.route.preparedReport } : {}),
+    ...(early?.route ? { preparedLegacyNames: early.route.preparedFreeFunctions.completedBodies } : {}),
+    projectLoweringPlans: (selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
+  });
+  consumeIrOverlayReport(ctx, report, plan, safeSelection, sourceFile, early?.skippedFunctionUnitIds);
 }
 
 function recordSourceGlobalEnvironment(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
@@ -8120,6 +8027,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     standaloneCalendar.reserveDirectCallbacks(irPlanningIdentityContext);
 
+    // (#4589) Prepare one exact standalone scalar leaf before direct bodies.
+    const earlyMultiIr = planEarlyMultiIrOverlay(ctx, multiAst, irPlanningIdentityContext!, options);
+
     // Phase 3: Compile all function bodies.
     //
     // (#3782) compileDeclarations recompiles the one accumulated module
@@ -8165,7 +8075,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
         for (const [name, idx] of ownFuncIdxBySource.get(sf) ?? []) {
           ctx.funcMap.set(name, idx);
         }
-        profilePhase(sf.fileName, () => compileDeclarations(ctx, sf, undefined, undefined, undefined, moduleInitMode));
+        profilePhase(sf.fileName, () =>
+          compileMultiPreparedScalarLeafDeclarations(ctx, sf, earlyMultiIr.get(sf), moduleInitMode),
+        );
       }
     });
 
@@ -8176,13 +8088,12 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     frameStage(ctx, "finalizeMethodTrampolines");
     profileCount("functions-after-bodies", ctx.mod.functions.length);
 
-    // (#2138 M0) Compile-twice IR overlay for multi-module top-level functions.
-    // Every legacy body in every source file is already present, and method
-    // trampolines are final, before planning starts. Imported calls remain an
-    // external selector boundary in M0 (no module-binding resolver); class
-    // members, module init, and IR-first body skipping are deliberately out of
-    // scope. In particular, never patch the one shared `__module_init` once per
-    // source file.
+    // (#2138 M0) Late IR overlay for multi-module top-level functions. Ordinary
+    // owners have direct bodies and finalized trampolines here; #4589's one
+    // exact standalone scalar singleton instead carries its Prepared body and
+    // correlated skip into this report. Imported calls remain an external
+    // selector boundary. Class members and module init stay direct-owned; never
+    // patch the shared `__module_init` once per source file.
     // Fast-mode legacy declarations use i32 for `number`, while the current IR
     // overlay uses f64. A multi-file target can be reached by a legacy caller,
     // so replacing only that target would change its live Wasm ABI. Keep the
@@ -8193,17 +8104,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
         ctx.standalone || ctx.wasi || ctx.strictNoHostImports
           ? undefined
           : irOverlayIdentity.makeIrOverlayImportedResolver(multiAst.checker, irPlanningIdentityContext!);
-      const occupiedFunctionNameCounts = new Map<string, number>();
-      for (const fn of ctx.mod.functions) {
-        occupiedFunctionNameCounts.set(fn.name, (occupiedFunctionNameCounts.get(fn.name) ?? 0) + 1);
-      }
-      const safety: MultiIrGraphSafety = {
-        collisions: collectMultiIrFunctionNameCollisions(multiAst.sourceFiles),
-        crossFileFunctionNames: collectMultiCrossFileFunctionNames(multiAst.sourceFiles, multiAst.checker),
-        importAliasNames: collectMultiImportAliasNames(multiAst.sourceFiles),
-        occupiedFunctionKeys: [...ctx.funcMap.keys()],
-        occupiedFunctionNameCounts,
-      };
+      const safety = buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker);
       profilePhase("ir-overlay", () => {
         for (const sourceFile of multiAst.sourceFiles) {
           profilePhase(sourceFile.fileName, () =>
@@ -8214,6 +8115,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
               irPlanningIdentityContext!,
               safety,
               hostImportedFunctions,
+              earlyMultiIr.get(sourceFile),
             ),
           );
         }
