@@ -9,10 +9,21 @@
   "registrationSites": 1574,
   "selectedFiles": [
     "lib/utils/__tests__/arrayEqual.test.mjs",
+    "lib/utils/__tests__/appendRuleName.test.mjs",
     "lib/utils/__tests__/containsString.test.mjs",
+    "lib/utils/__tests__/isCounterIncrementCustomIdentValue.test.mjs",
+    "lib/utils/__tests__/isCounterResetCustomIdentValue.test.mjs",
+    "lib/utils/__tests__/isCustomFunction.test.mjs",
     "lib/utils/__tests__/isNonNegativeInteger.test.mjs",
     "lib/utils/__tests__/isOnlyWhitespace.test.mjs",
-    "lib/utils/__tests__/pluralize.test.mjs"
+    "lib/utils/__tests__/isSingleLineString.test.mjs",
+    "lib/utils/__tests__/isValidHex.test.mjs",
+    "lib/utils/__tests__/isValidIdentifier.test.mjs",
+    "lib/utils/__tests__/isVariable.test.mjs",
+    "lib/utils/__tests__/normalizeCombinator.test.mjs",
+    "lib/utils/__tests__/pluralize.test.mjs",
+    "lib/utils/__tests__/ruleMessages.test.mjs",
+    "lib/utils/__tests__/vendor.test.mjs"
   ],
-  "_note": "The complete lib/**/__tests__ inventory is verified. This first adapter selects five synchronous utility modules with local implementation imports and no filesystem, PostCSS, snapshot, plugin, or async runner requirements. Original callback bodies and inputs are unchanged; all other files remain explicit deferred inventory."
+  "_note": "The complete lib/**/__tests__ inventory is verified. This adapter selects sixteen synchronous utility modules with local implementation imports and no filesystem, PostCSS, snapshot, plugin, or async runner requirements. Original callback bodies and inputs are unchanged; all other files remain explicit deferred inventory."
 }

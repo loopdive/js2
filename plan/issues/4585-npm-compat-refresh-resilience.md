@@ -29,6 +29,8 @@ files:
   - tests/dogfood/hono-upstream-suite.test.ts
   - tests/dogfood/jest-upstream-suite.mjs
   - tests/dogfood/jest-upstream-suite-pin.json
+  - tests/dogfood/lodash-upstream-suite.mjs
+  - tests/dogfood/lodash-upstream-suite.test.ts
   - tests/dogfood/typescript-upstream-suite.mjs
   - tests/dogfood/typescript-upstream-suite-pin.json
   - tests/dogfood/upstream-suite-runner.mjs
@@ -201,3 +203,20 @@ files (11 callbacks, native 11/11); exact projections expose the release-tag
 modules compile and validate; 4/11 Wasm callbacks pass, 7 fail, and 1,750
 registrations remain unavailable. These failures are measured runtime/compiler
 results, not hidden by the adapter.
+
+## Unit-infrastructure continuation 3
+
+The shared runner now exposes `UPSTREAM_TEST_SHIM_NODE` for package graphs whose
+CommonJS dependencies execute during module initialization. It omits only the
+late-initialized browser `var global = globalThis` alias; the Node platform
+already lowers bare `global` correctly. Lodash and lodash-es now select the same
+seven original modules and 11 callbacks in both lanes: native 11/11 and Wasm
+11/11, with the remaining 1,742 registrations explicitly deferred as
+unavailable infrastructure. Before this fix, all 11 callbacks in each package
+failed at initialization when Lodash's `_root` helper fell back to the
+unavailable `Function` constructor.
+
+The existing selected adapters also run successfully for jsdom (6/6),
+styled-components (6/6), and the selected webpack slice (13/16). Stylelint is
+8/9 and Redux is 13/82; their remaining failures are scored runtime/compiler
+semantics, not missing test registration or acquisition infrastructure.
