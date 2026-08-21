@@ -764,7 +764,13 @@ Gates: `check:loc-budget`, `check:func-budget`, `check:coercion-sites`,
 grants in this file's frontmatter cover it). `tsc` shows no error in any touched
 file (510 pre-existing errors, 482 of them TS2591).
 
-### BLOCKED sub-item — the two assignment-form rows
+### ~~BLOCKED sub-item~~ — CLOSED 2026-08-21 (see the uint32-pair slice below)
+
+The two assignment-form rows below landed together in the
+"uint32 `length` ASSIGNMENT pair" slice at the end of this file. The analysis
+that follows is retained because it is the reason the pair must move together.
+
+### The two assignment-form rows
 
 `Array/length/15.4.5.1-3.d-3` and `Array/S15.4.5.2_A3_T3` are the same defect on
 the plain `arr.length = n` ASSIGNMENT form, and they need **two** one-word
@@ -933,3 +939,53 @@ derived from error TEXT overstate; re-verify before scoping.
 - `15.2.3.7-6-a-{150,151,179}` remain #4497 (the 2^32 `length` boundary);
   `15.2.3.7-6-a-113` is an `Array.prototype.length` value read inside a closure
   (`illegal cast`), a builtin-prototype-value row.
+
+## 2026-08-21 uint32 `length` ASSIGNMENT pair (closes the D-L residual)
+
+Closes the "BLOCKED sub-item" above. `property-access-dispatch.ts` was held by
+another lane when that note was written; this slice holds it, so the pair moved
+together as the note prescribed.
+
+**The three edits (one semantic change, three sites):**
+
+| file | site | was | now |
+| ---- | ---- | --- | --- |
+| `src/codegen/array-length-define.ts` | `emitArraySetLengthValidation` tail | `i32.trunc_sat_f64_s` | `i32.trunc_sat_f64_u` |
+| `src/codegen/expressions/assignment.ts` | `arr.length = v` expression result | `f64.convert_i32_s` | `f64.convert_i32_u` |
+| `src/codegen/property-access-dispatch.ts` | the 9 static vec-`.length` READ widenings (L799, 2819, 2843, 2881, 2932, 2964, 2979, 2986, 3007) | `f64.convert_i32_s` | `f64.convert_i32_u` |
+
+All nine dispatch sites are `struct.get <vec> fieldIdx 0` — the length/element
+count of a length-prefixed vec, an ArrayBuffer byteLength, or a `$__ta_view`
+effective length. Every one of those is a non-negative uint32 by construction,
+so `_u` is the correct widening at each; lengths below 2^31 encode identically
+under either signedness, which is why this is inert outside the boundary band.
+Only flipping the ONE site the disassembly named would have left the other eight
+answering `−1` for the same array reached through a different static shape.
+
+**Measured** (serial single-test standalone probes, file-copy A/B on one head —
+base copies in `.tmp/base/`, captured at the first edit):
+
+| test | before | after |
+| ---- | ------ | ----- |
+| `Array/length/15.4.5.1-3.d-3.js` | fail (`2147483647`) | **pass** |
+| `Array/S15.4.5.2_A3_T3.js` | fail (`2147483647`) | **pass** |
+
+Paired control A/B, 473 rows — all of `built-ins/Array/length`,
+`Array/prototype/{join,push,splice,slice,pop}`, 40 `indexOf`, 25
+`String/prototype/slice`, the `defineProperty/15.2.3.6-4-1**` band and the
+`defineProperties/15.2.3.7-6-a-1[4-9]*` band:
+**base 328 pass → after 329 pass, 1 up, 0 down.**
+
+The landed boundary flips named as must-stay-green controls
+(`15.2.3.6-4-{154,155,116}`, `15.2.3.7-6-a-{150,151}`) are all still `pass`,
+as are `Array/length/S15.4.5.1_A1.{1,2,3}_T1`.
+
+Direct value probe (`.tmp/probe/len1.js`), one program, standalone:
+`a.length = 4294967295` → `4294967295` · `(b.length = 4294967294)` →
+`4294967294` (assignment RESULT, the second half of the pair) ·
+`[1,2,3].length` → `3`, shrink to `2` → `"1,2"` · `d.length = 4294967296` →
+`RangeError` thrown, as §10.4.2.4 step 3 requires.
+
+Gates: `check:loc-budget`, `check:func-budget`, `check:coercion-sites`,
+`check:oracle-ratchet` all exit 0. `tsc` reports no error in any of the three
+touched files.

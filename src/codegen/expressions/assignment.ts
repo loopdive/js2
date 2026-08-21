@@ -4061,9 +4061,9 @@ function compilePropertyAssignment(
       fctx.body.push({ op: "local.get", index: vecTmp });
       fctx.body.push({ op: "local.get", index: newLenTmp });
       fctx.body.push({ op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 });
-      // Return the new length as the assignment expression result
+      // Assignment result — UNSIGNED widening (#4491, see array-length-define.ts).
       fctx.body.push({ op: "local.get", index: newLenTmp });
-      if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+      if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
       return ctx.fast ? { kind: "i32" } : { kind: "f64" };
     }
   }
