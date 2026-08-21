@@ -90,3 +90,14 @@ remaining four scored failures are unchanged compiler/runtime residuals:
 `arrayEqual` still traps with an illegal cast, `ruleMessages` loses arguments
 through its returned message closure, and both `vendor` callbacks return null.
 The other 1,550 registrations remain explicitly deferred infrastructure.
+
+## Latest adapter checkpoint (2026-08-21, utility expansion)
+
+The adapter now selects **30** original synchronous utility files and registers
+**108/108** callbacks natively. All 30 modules compile and validate in the
+Wasm lane. Wasm passes **104/108** callbacks with no runtime-only failures; the
+same four compiler residuals remain (`arrayEqual`, the parameterized
+`ruleMessages` closure, and two `vendor` cases). The remaining **251 files / 1,466
+registrations** stay explicitly deferred as unavailable infrastructure rather
+than being silently omitted. The added files are local utility/reference
+modules; no test body or input was rewritten.
