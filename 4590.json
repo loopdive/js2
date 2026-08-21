@@ -1,0 +1,12 @@
+{
+  "id": "4590",
+  "assignee": "ttraenkler/codex",
+  "requested_by": "ttraenkler/codex",
+  "status": "in-progress",
+  "branch": "codex/4590-bench-loop-prepared-cutover",
+  "reserved_at": "2026-08-21T05:29:56Z",
+  "claimed_at": "2026-08-21T05:29:56Z",
+  "updated_at": "2026-08-21T05:29:56Z",
+  "write_id": "38140-gfhthxi5",
+  "pr_scan": "ok"
+}
