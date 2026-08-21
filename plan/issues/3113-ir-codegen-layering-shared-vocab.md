@@ -240,6 +240,19 @@ Notes on the three judgement calls:
   ("If a candidate is not a dependency-free leaf, do not move it"). It is the
   obvious first candidate for a follow-up that moves the `analysis/` pair
   together.
+
+  > **Correction (2026-08-21).** Row 3's "own deps" cell records
+  > `remainder-fast-path`'s deps but **not `static-numeric-range`'s**, and that
+  > omission makes the follow-up it recommends unreachable:
+  > `static-numeric-range.ts:4` imports `../statements/loop-analysis.js` —
+  > row **6** of this very table, classified `(b) bridge, left`. So the *pair*
+  > is not a leaf either, and no relocation-only move set clears the edge. The
+  > dep predates this PR (added by `8e77e6740`, 2026-08-09, an ancestor of it);
+  > it is a measurement gap, not drift. Moving the pair anyway scores 92 → 90
+  > but trips the ratchet's own `NEW file with codegen imports` FAIL and leaves
+  > the IR's transitive reach into codegen unchanged. Full measurement and the
+  > two routes that would actually work: `4601-ir-integration-bridge-containment.md`,
+  > "Progress log".
 - **#6 `loop-analysis`** is pure AST analysis (`from-ast.ts` already documents
   it as "no codegen state") and reads like vocabulary, but it imports
   `codegen/closures.js` and `statements/tdz.js`, so it is not a leaf either.
