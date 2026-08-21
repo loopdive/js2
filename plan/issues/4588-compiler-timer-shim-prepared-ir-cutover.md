@@ -23,6 +23,7 @@ files:
   - plan/issues/4583-standalone-ir-cutover-corpus.md
   - plan/issues/4588-compiler-timer-shim-prepared-ir-cutover.md
   - scripts/check-ir-only.ts
+  - scripts/ir-kind-neutrality-baseline.json
   - scripts/ir-only-baseline.json
   - scripts/standalone-ir-cutover-corpus.json
   - src/codegen/index.ts
@@ -35,6 +36,7 @@ files:
   - src/codegen/tonumber-fast-path-flags.ts
   - src/ir/ast-lowering-plans.ts
   - src/ir/backend/handles.ts
+  - src/ir/backend/linear-integration.ts
   - src/ir/compiler-timer-shim-preparation.ts
   - src/ir/dynamic-number-lowering.ts
   - src/ir/from-ast.ts
@@ -58,6 +60,7 @@ files:
   - tests/issue-4577-dom-interaction-bridge.test.ts
   - tests/issue-4577-standalone-calendar-retirement.test.ts
   - tests/issue-4588-standalone-timer-shim-cutover.test.ts
+  - tests/linear-number-to-string.test.ts
   - tests/standalone-ir-cutover-corpus.test.ts
 ---
 # #4588 — prepare the compiler timer shim through exact IR ownership
@@ -160,3 +163,10 @@ node-wrapper fixture: one was a stale 6 → 7 terminal census, while the other
 exposed the lost free-function retry contract fixed above. The unrelated #1501,
 "browser: setTimeout/setInterval/clearTimeout/clearInterval host imports,"
 test is byte-for-byte unchanged from the branch base.
+
+Landing validation also keeps the exact compiler timer support terminal out of
+the linear backend's attempt-root, legacy-slot, and rejection telemetry. A
+user-authored function named `setTimeout` remains an ordinary attempted owner,
+so the exclusion is provenance-bound rather than spelling-bound. The IR-kind
+neutrality verdicts and ratchets are unchanged; its baseline refresh records
+only current evidence-line locations after the timer-cutover source changes.
