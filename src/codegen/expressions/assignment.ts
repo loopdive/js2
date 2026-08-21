@@ -3469,6 +3469,20 @@ function tryEmitPinnedStructMemberSet(
     // member-set dispatcher/sidecar.
     ensureI32Condition(fctx, valResult, ctx);
     coerceType(ctx, fctx, { kind: "i32", boolean: true }, { kind: "externref" });
+  } else if (
+    // (#4611) A wasm-vec value keeps its raw identity through the member-set
+    // dispatcher: the generic vec→externref coercion appends `__make_iterable`,
+    // whose JS-array COPY fails the dispatcher arm's element ref.test and
+    // silently demotes a struct-slot write to the sidecar — splitting the field
+    // across storages (acorn `this.range = [pos, 0]` under `if (options.ranges)`).
+    // The arm's `__vec_from_extern` short-circuits on the exact vec rep, so the
+    // raw box lands the SAME vec on the slot; the sidecar terminal stores the
+    // raw vec extern, which `_safeSet`/`_safeGet` already handle (#1712 view).
+    valResult &&
+    (valResult.kind === "ref" || valResult.kind === "ref_null") &&
+    getArrTypeIdxFromVec(ctx, (valResult as { typeIdx: number }).typeIdx) >= 0
+  ) {
+    fctx.body.push({ op: "extern.convert_any" });
   } else if (valResult && valResult.kind !== "externref") {
     coerceType(ctx, fctx, valResult, { kind: "externref" });
   } else if (!valResult) {

@@ -1,7 +1,7 @@
 ---
 id: 4611
 title: "fnctor: conditional ctor field write lands in the host sidecar while reads take the struct-field fast path — acorn ranges/comments families (24 tests)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-21
 updated: 2026-08-21
@@ -15,9 +15,16 @@ language_feature: constructors, objects
 goal: npm-library-support
 related: [4610, 3729, 4155, 4211, 1712]
 files:
+  - src/codegen/expressions/assignment.ts
   - src/codegen/fnctor-escape-gate.ts
   - src/codegen/statements/variables.ts
   - src/runtime.ts
+# The fix is one guarded arm in the pinned member-set value coercion; the
+# function is the #2664 dispatcher entry and cannot shrink here.
+loc-budget-allow:
+  - src/codegen/expressions/assignment.ts
+func-budget-allow:
+  - src/codegen/expressions/assignment.ts::tryEmitPinnedStructMemberSet
 ---
 
 # fnctor conditional ctor writes split a field across three storages
@@ -93,3 +100,31 @@ tests report empty arrays.
       mutate the same storage.
 - [ ] acorn official suite ≥ 3510/3518 (ranges + comments families fixed).
 - [ ] No fnctor-lane regressions (presence bits, layout census).
+
+## 2026-08-21 checkpoint — ranges family FIXED (curated-npm-tests lane)
+
+Root cause confirmed and narrower than the three-storage framing: the
+`__set_member_<f>` dispatcher arm was ALWAYS prepared to land the write on the
+struct slot (guarded value ref.test + `__vec_from_extern` materializer +
+`struct.set` + presence bit), but the value it received could never match —
+`tryEmitPinnedStructMemberSet` coerced the RHS vec via the generic
+vec→externref lane, which appends `__make_iterable` (#854), and the dispatcher
+tested the JS-array COPY. Fix: a wasm-vec RHS at the pinned member set boxes
+raw (`extern.convert_any` only); the arm's `__vec_from_extern` short-circuits
+identity on the exact rep, and the sidecar terminal stores the raw vec extern,
+which `_safeSet`/`_safeGet` already handle (#1712 view).
+
+- acorn official suite: 3494 → **3512/3518**; `bucketCounts.ast-mismatch`
+  24 → 6. All ranges-family tests flip.
+- `tests/issue-4611-fnctor-conditional-vec-field.test.ts` (2 tests). The
+  `ranges:false` leg asserts `m.range == null`, not `=== undefined`: an
+  unwritten presence-tracked field reads null in host mode — PRE-EXISTING
+  (identical on unmodified base), presence-bits family (#3780), not this bug.
+- `tests/issue-4155-fnctor-shape-regression.test.ts` "field added by a method,
+  never seeded in the ctor" flipped from `it.fails` to passing.
+- fnctor guards green: #4155 ×3, #4211, #4537.
+
+REMAINING (this issue stays open): the 6 onComment-family failures —
+`array length mismatch N !== 0`; comment pushes into the options-held array
+land in a storage the harness reader never consults. Separate reduction
+needed (push-into-`this.options.<arr>` shape, not a ctor field write).
