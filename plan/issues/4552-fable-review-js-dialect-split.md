@@ -415,3 +415,5 @@ evidence quotes); nothing to unblock, nothing to fold.
    dialect fails the gate instead of passing silently.
 2. **C2 (schema Q1):** open the `instrKind` namespace in
    `docs/ir/ir-module.schema.json` + version bump, under #3030.
+
+**C1 done in PR #4708** (2026-08-21) — R1 now walks all of `src/` with resolution-based matching; `tests/issue-4552-ir-dialect-gate-scope.test.ts` proves the gate fails on the demonstrated `src/codegen/peephole.ts` import (5 of its 8 tests fail against the pre-fix script). C2 remains open.
