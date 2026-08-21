@@ -536,11 +536,20 @@ export function emitObjectCoercion(
       return { kind: "externref" };
     }
   }
-  // Unknown / object / externref / union — per spec, `Object(o)` returns `o`
-  // unchanged for objects. We can't distinguish primitive-boxed-as-externref
-  // from real objects statically, so the best static behavior is identity.
-  // (A future revision could call a `__to_object` host helper for runtime
-  // ToObject of any-typed values; out of scope for this issue.)
+  // Unknown / object / externref / union. (#4530) In host mode, route through
+  // the `__to_object` host helper: it performs the real §7.1.18 ToObject at
+  // runtime (primitive → wrapper object, object → identity), so
+  // `Object(value) !== value` distinguishes primitives even when the static
+  // type is `any` (jest-get-type's isPrimitive). Standalone / no-JS-host keeps
+  // the historical identity fallback — a native ToObject is separate work.
   compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
+  if (!noJsHost(ctx)) {
+    const toObjIdx = ensureLateImport(ctx, "__to_object", [{ kind: "externref" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    const finalToObjIdx = ctx.funcMap.get("__to_object") ?? toObjIdx;
+    if (finalToObjIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: finalToObjIdx });
+    }
+  }
   return { kind: "externref" };
 }

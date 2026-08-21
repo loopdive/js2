@@ -3368,6 +3368,14 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  later reads. Mirrors `methodClosureGlobals` (#1394) for the function-decl
    *  case where the same JS identifier is read as a value at multiple sites. */
   funcClosureGlobals: Map<string, number>;
+  /** (#4530) Canonical singleton KEY per target function index. An import
+   *  alias (`import cx from 'clsx'` → funcMap "cx" → clsx's funcIdx) reads the
+   *  same function value under a different name; keying the singleton pair by
+   *  name alone minted a SECOND trampoline/cache for the alias, breaking
+   *  `default === named` identity and giving the alias a wrapper the call-site
+   *  dispatch candidates never match. First name to materialize a funcIdx
+   *  claims the key; later aliases reuse it. */
+  funcClosureSingletonKeyByFuncIdx: Map<number, string>;
   /** Whether targeting WASI */
   wasi: boolean;
   /** Whether Node-compatible ambient globals such as `global` are enabled. */

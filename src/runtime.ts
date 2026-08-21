@@ -10962,6 +10962,26 @@ assert._isSameValue = isSameValue;
       }
       if (name === "__object_create") return (proto: any) => Object.create(proto);
       if (name === "__new_plain_object") return (): any => ({});
+      // (#4530) §7.1.18 ToObject for an any-typed `Object(v)` argument. The
+      // static coercion in calls-guards.ts only recognizes statically-typed
+      // primitives; a dynamic value compiled as identity, so
+      // `Object(value) !== value` (jest-get-type's isPrimitive) answered false
+      // for every primitive. Host-side Object() performs the real Table-13
+      // wrapping; objects (including opaque WasmGC structs) pass through
+      // unchanged, exactly the identity the spec requires for them.
+      if (name === "__to_object")
+        return (v: any): any => {
+          if (v == null) return {};
+          // A primitive boxed in a Wasm-native carrier ($Any number/boolean,
+          // native string/symbol struct) is an opaque struct here; Object()
+          // on it would answer identity and hide the primitive. Recover the
+          // primitive first so ToObject wraps it per §7.1.18 Table 13.
+          if (typeof v === "object" && _isWasmStruct(v)) {
+            const prim = _nativePrimitiveToHost(v, callbackState?.getExports());
+            if (prim !== _MISS && prim != null) return Object(prim);
+          }
+          return Object(v);
+        };
       if (name === "__register_prototype")
         return (proto: any, csv: any): void => {
           // #1047 — populate the prototype method-name allowlist consulted by
@@ -15369,6 +15389,14 @@ assert._isSameValue = isSameValue;
                 /* fall through to typeof */
               }
             }
+            // (#4529) A number/boolean/bigint/string/symbol boxed in a
+            // Wasm-native carrier ($Any / native string / symbol struct)
+            // crosses the boundary as an opaque struct, so bare `typeof v`
+            // answered "object" for every primitive — jest-get-type's
+            // `getType(1)` via a cross-module `unknown` parameter classified
+            // as "object". Recover the primitive first and report its tag.
+            const prim = _nativePrimitiveToHost(v, exports);
+            if (prim !== _MISS) return typeof prim;
           }
           return typeof v;
         };

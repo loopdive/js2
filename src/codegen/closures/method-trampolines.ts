@@ -970,7 +970,13 @@ export function ensureFuncClosureSingleton(
     return undefined;
   };
 
-  let key = funcName;
+  // (#4530) Canonicalize aliases: an import alias resolves to the SAME
+  // funcIdx under a different name. Reusing the first materialized key keeps
+  // one trampoline/cache pair per target function, so `import cx from 'clsx'`
+  // and the named `clsx` binding compare identical and share the wrapper type
+  // the call-site dispatch candidates expect.
+  const canonicalKey = ctx.funcClosureSingletonKeyByFuncIdx.get(funcIdx);
+  let key = canonicalKey ?? funcName;
   let trampolineName = `__fn_tramp_${key}_cached`;
   let trampolineFuncIdx = ctx.funcMap.get(trampolineName);
   let cacheGlobalIdx = ctx.funcClosureGlobals.get(key);
@@ -1052,6 +1058,10 @@ export function ensureFuncClosureSingleton(
     });
     ctx.funcClosureGlobals.set(key, cacheGlobalIdx);
   }
+
+  // (#4530) First materialization claims the canonical key so later aliases
+  // of the same target function reuse this exact trampoline/cache pair.
+  if (canonicalKey === undefined) ctx.funcClosureSingletonKeyByFuncIdx.set(funcIdx, key);
 
   observeProgramAbiFunctionValue(ctx, funcIdx, trampolineFuncIdx, cacheGlobalIdx);
 

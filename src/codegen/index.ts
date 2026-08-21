@@ -7852,6 +7852,18 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
     }
     const nested = ctx.nestedFuncCaptures.get(targetName);
     if (nested !== undefined && !ctx.nestedFuncCaptures.has(localName)) ctx.nestedFuncCaptures.set(localName, nested);
+    // (#4530) The call path keys the `arguments`-extras protocol and rest-param
+    // packing by the CALLEE NAME (`ctx.funcUsesArguments.has(funcName)` /
+    // `ctx.funcRestParams.get(funcName)` in call-identifier.ts). Without these
+    // two copies, a call through an import alias of an `arguments`-reading
+    // zero-param function (clsx's exact shape: `import cx from 'clsx'`) found
+    // the funcIdx via the alias above but skipped `__argc`/`__extras_argv` —
+    // every argument was silently dropped and `arguments.length` read 0.
+    if (ctx.funcUsesArguments.has(targetName) && !ctx.funcUsesArguments.has(localName)) {
+      ctx.funcUsesArguments.add(localName);
+    }
+    const restInfo = ctx.funcRestParams.get(targetName);
+    if (restInfo !== undefined && !ctx.funcRestParams.has(localName)) ctx.funcRestParams.set(localName, restInfo);
     // (#2931) If the target is a reassigned function backed by a live-binding
     // global, propagate membership so the aliased local name reads through the
     // (copied) module global too.

@@ -1414,7 +1414,22 @@ export function compileIdentifierCall(
         const builtinAliasInfo = builtinAliasClosure
           ? ctx.closureInfoByTypeIdx.get(builtinAliasClosure.type.typeIdx)
           : undefined;
-        const sigParamCount = builtinAliasInfo?.paramTypes.length ?? sig.parameters.length;
+        // (#4530) TS synthesizes `(...args: any[])` for a JS function whose
+        // body reads `arguments` — the synthetic rest symbol has NO parameter
+        // declaration. The compiled callee carries no vec parameter for it
+        // (its arguments travel via `__argc`/`__extras_argv`), so treating the
+        // slot as one positional vec param materialized the FIRST argument
+        // into a vec (a string became its char array: clsx('foo') → "f o o")
+        // and the built wrapper type never matched the stored closure. Drop
+        // the synthetic slot from the positional count; the extras packing
+        // below then carries every call-site argument. A REAL declared rest
+        // (`function f(...xs)`) keeps its ParameterDeclaration and its vec
+        // param — only the declaration-less synthetic slot is stripped.
+        const declaredSigParamCount = sig.parameters.length;
+        const lastSigParam = sig.parameters[declaredSigParamCount - 1];
+        const syntheticRestSlots =
+          !builtinAliasInfo && declaredSigParamCount > 0 && lastSigParam!.valueDeclaration === undefined ? 1 : 0;
+        const sigParamCount = builtinAliasInfo?.paramTypes.length ?? declaredSigParamCount - syntheticRestSlots;
         const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
         const sigRetWasm =
           builtinAliasInfo?.returnType ?? (isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType));

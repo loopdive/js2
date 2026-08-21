@@ -348,6 +348,11 @@ export function inferParamTypeFromCallSites(
   // `undefined` — e.g. `verifyEqualTo(arr, "0", getFunc())` where `getFunc`
   // returns nothing. See the withdrawal rule below.
   let sawNullishArg = false;
+  // (#4530) A call site whose argument is `any`/`unknown` AND none of the
+  // stronger sub-proofs below (numeric usage verdict, string verdict, .d.ts
+  // seed) resolved it — an OPAQUE argument that can hold any runtime value.
+  // See the ref-narrowing withdrawal rule below.
+  let sawOpaqueAnyArg = false;
 
   const isRecursiveCall = (call: ts.CallExpression | ts.NewExpression): boolean => {
     const target = ctx.oracle.valueDeclarationOf(call.expression);
@@ -463,9 +468,15 @@ export function inferParamTypeFromCallSites(
                 // also has a proven-array call; ignoring the recursive value
                 // narrows `children` to a vec and destroys element arguments.
                 conflict = true;
+              } else {
+                sawOpaqueAnyArg = true;
               }
             } else if (isRecursiveCall(node)) {
               conflict = true;
+            } else {
+              // (#4530) e.g. `f(arguments[i])` — an ElementAccess/other `any`
+              // expression the sub-proofs above cannot see through.
+              sawOpaqueAnyArg = true;
             }
           } else {
             // (#4491) `void` / `undefined` maps to i32 in the type mapper
@@ -531,6 +542,18 @@ export function inferParamTypeFromCallSites(
   // whose default value IS the canonical `undefined` (`pushDefaultValue` →
   // `emitUndefinedValue` → the #2106 `$undefined` singleton in standalone).
   if (type !== null && sawNullishArg && (type.kind === "f64" || type.kind === "i32" || type.kind === "i64")) {
+    type = null;
+  }
+  // (#4530) Soundness, same shape as the #2867 S2 escape rule: a call site
+  // passing an OPAQUE `any` argument (no numeric/string/seed verdict) can
+  // deliver any runtime value, so an agreed GC-`ref` narrowing from the OTHER
+  // sites is unproven — clsx's `toVal(mix)` had one object-literal site and one
+  // `toVal(arguments[i])` site; the literal narrowed `mix` to that struct,
+  // `typeof mix` then static-folded to "object", and every string/number/array
+  // argument silently took the object branch with zero enumerable keys. Only
+  // the trapping/misfolding ref narrowing is withdrawn; scalar narrowings keep
+  // their existing coerce-don't-trap risk profile (same split as #2867 S2).
+  if (sawOpaqueAnyArg && type !== null && (type.kind === "ref" || type.kind === "ref_null")) {
     type = null;
   }
   // (#2867 S2) Soundness, same shape as the #3548 under-application rule: if the
