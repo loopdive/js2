@@ -935,6 +935,9 @@ function __js2RequireActual(name) {
   if (name === "react") return typeof __REACT__ === "undefined" ? __js2ReactInfra().react : __REACT__;
   if (name === "react-dom" || name === "react-dom/client") {
     __js2CheckReactVersion("react-dom");
+    if (typeof __js2NativeHost !== "undefined" && __js2NativeHost) {
+      return name === "react-dom" ? __js2ReactInfra().reactDom : __js2ReactInfra().reactDomClient;
+    }
     // When the harness has compiled ReactDOM's published graphs, keep the
     // package import inside that graph. The host facades remain the fallback
     // for the standalone React suite, where no compiled ReactDOM carrier is
@@ -959,6 +962,7 @@ function __js2RequireActual(name) {
     name === "react-dom/static.edge"
   ) {
     __js2CheckReactVersion("react-dom");
+    if (typeof __js2NativeHost !== "undefined" && __js2NativeHost) return __js2ReactInfra().reactDomServer;
     // Each Fizz lane compiles exactly one published server graph (browser,
     // node, or edge). Route every server/static entrypoint to that graph while
     // the lane is active; the graph's own test file determines which API is
@@ -979,8 +983,14 @@ function __js2RequireActual(name) {
       throw new Error("React upstream native renderer infrastructure is unavailable");
     return nativeRenderer;
   }
-  if (name === "react-test-renderer") return __js2ReactTestRenderer;
-  if (name === "react-noop-renderer") return __js2ReactNoop;
+  if (name === "react-test-renderer")
+    return typeof __js2NativeHost !== "undefined" && __js2NativeHost
+      ? __js2ReactInfra().reactTestRenderer
+      : __js2ReactTestRenderer;
+  if (name === "react-noop-renderer")
+    return typeof __js2NativeHost !== "undefined" && __js2NativeHost
+      ? __js2ReactInfra().reactNoop
+      : __js2ReactNoop;
   // These entries are internal React-monorepo test dependencies rather than
   // published package graphs. Keep their host carriers explicit so an
   // upstream test reaches its assertion instead of failing at module lookup.

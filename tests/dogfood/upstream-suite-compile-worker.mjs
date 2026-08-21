@@ -80,7 +80,10 @@ async function main() {
     installReactTestEnvironment();
     const { createRequire } = await import("node:module");
     const workerRequire = createRequire(import.meta.url);
-    installReactUpstreamInfrastructure({ react: workerRequire("react") });
+    installReactUpstreamInfrastructure({
+      react: workerRequire("react"),
+      preferReactDomAct: process.env.DOGFOOD_REACT_DOM_ACT === "1",
+    });
   }
   let result;
   try {

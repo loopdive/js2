@@ -348,9 +348,9 @@ function createReactNoopAdapter(react, reactTestRenderer, reactDom, reactDomClie
   };
 }
 
-function createInternalTestUtils({ reactTestRenderer, reactDom, consumeConsole }) {
+function createInternalTestUtils({ reactTestRenderer, reactDom, consumeConsole, preferReactDomAct = false }) {
   const act = (callback) => {
-    if (typeof reactTestRenderer?.act === "function") return reactTestRenderer.act(callback);
+    if (!preferReactDomAct && typeof reactTestRenderer?.act === "function") return reactTestRenderer.act(callback);
     // The production test-renderer intentionally has no `act` export. The
     // upstream tests still use the shared internal helper for ReactDOM roots,
     // so use ReactDOM's synchronous commit boundary instead of merely calling
@@ -515,7 +515,7 @@ function unrefMessagePorts() {
  * generated test source can use them in the native oracle and through the
  * Wasm host boundary.
  */
-export function installReactUpstreamInfrastructure({ react, build = "production" } = {}) {
+export function installReactUpstreamInfrastructure({ react, build = "production", preferReactDomAct = false } = {}) {
   const nativeReact = react ?? readReactForBuild(build);
   const { reactDom, reactDomClient, reactDomServer, reactTestRenderer } = loadCrossPackageReactModules(nativeReact, {
     build,
@@ -580,7 +580,7 @@ export function installReactUpstreamInfrastructure({ react, build = "production"
     propTypes,
     createReactClass,
     createReactClassFactory: createReactClassFactoryModule,
-    internalTestUtils: createInternalTestUtils({ reactTestRenderer, reactDom, consumeConsole }),
+    internalTestUtils: createInternalTestUtils({ reactTestRenderer, reactDom, consumeConsole, preferReactDomAct }),
     webStreams,
     patchMessageChannel() {},
     // Node Fizz's upstream tests construct `stream.PassThrough` through a

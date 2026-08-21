@@ -11,6 +11,7 @@ import { loadReactDomUpstreamSuitePin, setupReactDomImplementation } from "./set
 import { loadReactUpstreamSuitePin } from "./setup-react-upstream-suite.mjs";
 // @ts-expect-error — .mjs dogfood harness has no declaration file
 import {
+  createNativeRequire,
   isExpectedLateJsdomHostError,
   partitionProjectTests,
   partitionReactDomTestsForBuild,
@@ -105,6 +106,27 @@ describe("react-dom upstream suite", () => {
     expect(implementation.nodeFizzServerPath).toMatch(/react-dom-server\.node\.development\.js$/);
     expect(implementation.edgeFizzServerPath).toMatch(/react-dom-server\.edge\.development\.js$/);
     expect(implementation.moduleNames.fizzServer).toBe("package/cjs/react-dom-server.browser.development.js");
+  });
+
+  it("uses the pinned cross-package singletons in the native oracle", () => {
+    const previous = globalThis.__js2ReactUpstreamInfrastructure;
+    const react = { version: "pinned-react" };
+    const reactDom = { version: "pinned-react-dom" };
+    const reactDomClient = { createRoot: () => null };
+    const internalTestUtils = { act: () => Promise.resolve() };
+    const infrastructure = { react, reactDom, reactDomClient, internalTestUtils };
+    globalThis.__js2ReactUpstreamInfrastructure = infrastructure;
+    try {
+      const nativeRequire = createNativeRequire();
+      expect(nativeRequire("react")).toBe(react);
+      expect(nativeRequire("react-dom")).toBe(reactDom);
+      expect(nativeRequire("react-dom/client")).toBe(reactDomClient);
+      expect(nativeRequire("internal-test-utils")).toBe(internalTestUtils);
+      expect(nativeRequire("react-dom/test-utils")).toEqual({ act: internalTestUtils.act });
+    } finally {
+      if (previous === undefined) delete globalThis.__js2ReactUpstreamInfrastructure;
+      else globalThis.__js2ReactUpstreamInfrastructure = previous;
+    }
   });
 
   it("partitions project entries without dropping tests or mixing files", () => {

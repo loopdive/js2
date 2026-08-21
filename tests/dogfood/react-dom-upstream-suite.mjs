@@ -268,11 +268,9 @@ function buildServerImplementationSource({ reactSource, sharedSource, serverSour
   ].join("\n");
 }
 
-function reactDomTestSetup(prelude, testSource = prelude, { server = false, fizz = false } = {}) {
-  const lines = [
-    `${server ? "__reactDomServerEnsureInit" : "__reactDomEnsureInit"}();`,
-    `document.body.textContent = "";`,
-  ];
+function reactDomTestSetup(prelude, testSource = prelude, { server = false, fizz = false, nativeHost = false } = {}) {
+  const lines = [`document.body.textContent = "";`];
+  if (!nativeHost) lines.unshift(`${server ? "__reactDomServerEnsureInit" : "__reactDomEnsureInit"}();`);
   const binds = (name, expression) => {
     const declaration = new RegExp(`\\b(let|var|const)\\s+${name}\\b`).exec(prelude);
     if (declaration && declaration[1] !== "const") {
@@ -486,6 +484,7 @@ function buildNativeRunners(implementation, tests, options = {}) {
   const init = server ? "__reactDomServerEnsureInit()" : "__reactDomEnsureInit()";
   const source = [
     implementation,
+    options.nativeHost ? "var __js2NativeHost = true;" : "",
     REACT_EXPECT_SHIM,
     ...tests.map((test) => buildTestFunction(withReactDomSetup(test, options), { exported: false })),
     `return { init: function () { ${init}; }, __lastError: function () { return __lastError; }, tests: { ${tests
@@ -496,11 +495,51 @@ function buildNativeRunners(implementation, tests, options = {}) {
   return new Function("require", source);
 }
 
+// The native oracle must use the same pinned React object and the same
+// cross-package renderer instances as the host infrastructure. Passing
+// createRequire() directly gives react-dom a second React singleton, so
+// createRoot/act tests either render nothing or fail before their assertions.
+// Keep these dependencies explicit: they are the native counterpart of the
+// compiled lane's __js2RequireActual() facades, not a test-result shortcut.
+export function createNativeRequire() {
+  const nativeRequire = createRequire(import.meta.url);
+  const infrastructure = globalThis.__js2ReactUpstreamInfrastructure;
+  return (name) => {
+    if (name === "react") return infrastructure?.react ?? nativeRequire(name);
+    if (name === "react-dom") return infrastructure?.reactDom ?? nativeRequire(name);
+    if (name === "react-dom/client") return infrastructure?.reactDomClient ?? nativeRequire(name);
+    if (name === "react-dom/server") return infrastructure?.reactDomServer ?? nativeRequire(name);
+    if (name === "react-test-renderer") return infrastructure?.reactTestRenderer ?? nativeRequire(name);
+    if (name === "react-noop-renderer") {
+      if (!infrastructure?.reactNoop) throw new Error("ReactDOM upstream noop renderer infrastructure is unavailable");
+      return infrastructure.reactNoop;
+    }
+    if (name === "react-native-renderer") {
+      if (!infrastructure?.reactNativeRenderer)
+        throw new Error("ReactDOM upstream native renderer infrastructure is unavailable");
+      return infrastructure.reactNativeRenderer;
+    }
+    if (name === "internal-test-utils") {
+      if (!infrastructure?.internalTestUtils)
+        throw new Error("ReactDOM upstream internal test utilities are unavailable");
+      return infrastructure.internalTestUtils;
+    }
+    if (name === "react/jsx-runtime") return infrastructure?.reactJsxRuntime ?? nativeRequire(name);
+    if (name === "react/jsx-dev-runtime") return infrastructure?.reactJsxDevRuntime ?? nativeRequire(name);
+    if (name === "react-dom/test-utils") {
+      if (!infrastructure?.internalTestUtils)
+        throw new Error("ReactDOM upstream test-utils infrastructure is unavailable");
+      return { act: infrastructure.internalTestUtils.act };
+    }
+    return nativeRequire(name);
+  };
+}
+
 async function runNative(implementation, tests, options = {}) {
   try {
-    const nativeRequire = createRequire(import.meta.url);
-    const runners = buildNativeRunners(implementation, tests, options)(nativeRequire);
-    runners.init();
+    const nativeOptions = { ...options, nativeHost: true };
+    const runners = buildNativeRunners(implementation, tests, nativeOptions)(createNativeRequire());
+    if (!nativeOptions.nativeHost) runners.init();
     const out = [];
     for (const test of tests) {
       nativeContextTest = test.id;
@@ -912,7 +951,11 @@ async function runProjectHarness({
           entryFile: "entry.ts",
           files,
           timeoutMs,
-          workerEnv: { DOGFOOD_INSTALL_JSDOM: "1", DOGFOOD_NAMED_TEST_EXPORTS: "1" },
+          workerEnv: {
+            DOGFOOD_INSTALL_JSDOM: "1",
+            DOGFOOD_NAMED_TEST_EXPORTS: "1",
+            DOGFOOD_REACT_DOM_ACT: "1",
+          },
         });
       } catch (error) {
         isolated = {
@@ -1106,7 +1149,11 @@ export async function runHarness({ quiet = false } = {}) {
   const reactSource = readFileSync(reactModulePath, "utf-8");
   const implementationPin = setupReactDomImplementation({ build });
   const localRequire = createRequire(import.meta.url);
-  const hostInfrastructure = installReactUpstreamInfrastructure({ react: localRequire(reactModulePath), build });
+  const hostInfrastructure = installReactUpstreamInfrastructure({
+    react: localRequire(reactModulePath),
+    build,
+    preferReactDomAct: true,
+  });
   const installedReactDom = localRequire("react-dom/package.json");
   if (installedReactDom.version !== implementationPin.version) {
     throw new Error(
