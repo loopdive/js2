@@ -34,6 +34,7 @@ import {
 import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-field-carrier.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
 import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
+import { functionPrototypeMemberSpecLength } from "./function-prototype-callable.js"; // (§20.2.3)
 import { emitSymbolDescLoad, ensureNativeSymbolBoundaryBridge, usesNativeSymbolProvider } from "./symbol-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { rollbackSpeculative, snapshotSpeculative } from "./context/speculative.js";
@@ -2558,6 +2559,17 @@ export function tryLengthAndNameReads(
     // externref / __extern_get path so the host-bound function's actual
     // `.length` is read.
     const isBindResult = isBindResultExpr(ctx, expr.expression);
+    // (§20.2.3) `<callable>.{apply,call,bind,toString}.length` — the spec arity,
+    // which `lib.es5.d.ts` does not spell (`apply`'s `argArray?` is optional
+    // there, so the §15.1.5 prefix walk answers 1 for a member the spec pins
+    // at 2). Table + gate live in function-prototype-callable.ts.
+    if (!isBindResult) {
+      const specLength = functionPrototypeMemberSpecLength(ctx, expr.expression);
+      if (specLength !== undefined) {
+        fctx.body.push({ op: "f64.const", value: specLength });
+        return { kind: "f64" };
+      }
+    }
     const callSigs = objType.getCallSignatures?.();
     const constructSigs2 = objType.getConstructSignatures?.();
     const lengthSigs =

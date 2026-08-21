@@ -65,6 +65,16 @@ export function expectedArgumentCountOfParams(params: readonly (ts.ParameterDecl
       count++;
       continue;
     }
+    // The TypeScript `this` pseudo-parameter is a TYPE annotation, not a
+    // FormalParameter — §15.1.5 never sees it, and it may only appear first.
+    // Counting it inflated `.length` by one for every signature that declares
+    // one, which in `lib.es5.d.ts` is exactly the `%Function.prototype%`
+    // invokers: `call(this: Function, thisArg, ...argArray)` answered 2 where
+    // §20.2.3.3 says 1, and `bind` likewise (test262
+    // `built-ins/Function/prototype/call/S15.3.4.4_A2_T2.js`). `apply` read 2
+    // and IS 2, so it hid the defect. `calls.ts`'s `countSpecLength` already
+    // skipped it; this is the same rule in the module that owns the count.
+    if (ts.isIdentifier(decl.name) && decl.name.text === "this") continue;
     if (decl.dotDotDotToken !== undefined || decl.questionToken !== undefined || decl.initializer !== undefined) {
       // §15.1.5: the walk STOPS here — parameters to the right never count,
       // even when they are themselves required.
