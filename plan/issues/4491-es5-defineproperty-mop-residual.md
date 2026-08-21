@@ -57,6 +57,12 @@ loc-budget-allow:
   # missing IsGenericDescriptor precondition. One nested `if` around the
   # existing throw; no new natives, no local-vector change.
   - src/codegen/object-runtime-descriptors.ts
+  # 2026-08-21 wave-3 lane A (types/object + types/reference rows): the two
+  # "the closed struct cannot serve this write" arms of `compileMemberIncDec`
+  # now share ONE externref read-modify-write emitter, hoisted to module scope
+  # (`emitMemberIncDecExternrefFallback`) rather than inlined twice. The file
+  # grows by the hoisted helper; the driver function grows by the second call.
+  - src/codegen/expressions/unary-updates.ts
 oracle-ratchet-allow:
   # 2026-08-21: one getTypeAtLocation in varBindingNeedsExternrefForUndefined's
   # new call arm — the same raw-checker idiom as the surrounding predicate;
@@ -112,6 +118,24 @@ func-budget-allow:
   # implementation is already in a separate module
   # (src/codegen/string-exotic-own-props.ts, +184); this is call-site wiring.
   - src/codegen/object-runtime-enumeration.ts::buildObjectEnumerationHelpers
+  # 2026-08-21 wave-3 lane A: `compileMemberIncDec` gains one call to the
+  # hoisted externref RMW emitter (its body SHRANK by the de-duplicated
+  # emitter); `compileTypeofComparison` gains the 4-line
+  # `readPrecedesVarInitializer` unsound-fold guard — a `var x` read that is
+  # textually before its own initializer must not fold the checker's
+  # initializer-derived type. Both are guard clauses in long dispatch chains
+  # whose arms cannot be reordered without changing precedence.
+  - src/codegen/expressions/unary-updates.ts::compileMemberIncDec
+  - src/codegen/typeof-delete.ts::compileTypeofComparison
+  # 2026-08-21 wave-3 lane A, realm-global member CALL/READ: two guard clauses
+  # that must sit at a specific point in a long ordered dispatch chain — the
+  # call one BEFORE `compileReceiverMethodCall` (which resolves the member
+  # against the `typeof globalThis` struct and throws on the miss), the element
+  # one BEFORE the JSON/linear/Math arms. Both bodies live in their own
+  # modules (realm-global-member-call.ts, and the existing #4500 Slice A helper
+  # in property-access.ts); only the dispatch point is in the big function.
+  - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/property-access.ts::compileElementAccess
 ---
 
 # #4491 — ES5 defineProperty/defineProperties/create MOP residual
@@ -1369,3 +1393,306 @@ measured, not what the error text says.
 Nothing in this table is blocked on the descriptor MOP itself any more: the two
 slices above closed the last rows whose cause lived in `object-ops.ts` /
 `object-runtime-descriptors.ts`.
+
+## Wave-3 lane A, slice 1 (2026-08-21) — 5 of 41 rows closed
+
+Measured on `claude/pull-from-upstream-zgdo0m` @ `1d57d9229a`, `--target
+standalone`, single-test in-process runner, QuickJS eval provider built
+locally (artifact `13c33e175f16`, adapter key `1429ec7ecf2163fd`). Row set:
+the 41 `language/statements/function` + `language/types/object` +
+`language/types/reference` non-passes in `.tmp/es5-remaining.txt`. **All 41
+re-verified failing on that head before any edit** — none had flipped.
+
+### Cluster A — an ALWAYS-numeric update on a field the closed struct cannot hold (4 rows)
+
+`S8.6_A2_T1`, `S8.6_A2_T2`, `S8.6_A3_T1`, `S8.6_A3_T2` — all four `fail` →
+`pass`. Two shapes of one defect; the literal pins each slot's storage type:
+
+| source | closed struct | observed | spec |
+| --- | --- | --- | --- |
+| `var m = {foo:"bar"}; m.foo++` | `foo` is a string slot | `m.foo` is **null** (a later `+` null-derefs in `__str_concat`) | `NaN` |
+| `var m = {}; m.foo++` | no `foo` slot at all | update RESULT is `NaN` (correct) but the write is **dropped**, so `"foo" in m` is false | `NaN`, property created |
+
+The two halves needed separate fixes and are separable — the first is a
+representation choice made before codegen, the second is an emission arm.
+
+**Half 1 — `markStandaloneNumericUpdateKindChangeTargets`**
+(src/codegen/declarations/object-shape-widening.ts) joins the existing
+`markStandalone*Targets` markers in `collectGrowableObjectLiterals`, so a
+non-empty literal whose field is hit by an always-numeric update is routed to
+the open `$Object` builder and inherits that block's concrete-struct consumer
+guard unchanged. Isolation that fixed the direction before writing it: adding
+`if (false) { delete m.zzz; }` — which routes the literal to `$Object` through
+the pre-existing `markStandaloneDeleteTargets` poison — makes `{foo:"bar"}` +
+`foo++` answer NaN with no other change.
+
+The trigger is deliberately narrow. `+=` is **excluded**: `"a" += x` stays a
+String, so it does not change a string field's kind — only `++`/`--`/`-=`/
+`*=`/`/=`/`%=`/`**=` are always-numeric. And the disagreement must be provable
+from the literal's own syntax (a string/template/boolean/null/object/array/
+function initializer, or the field being absent); a call or an identifier
+initializer answers "unknown" and stays on the closed-struct path.
+
+**Half 2 — the unknown-field arm of `compileMemberIncDec`**
+(src/codegen/expressions/unary-updates.ts) emitted `f64.const NaN` and dropped
+the write when the receiver's struct resolved but carried no slot for the
+property. It now reuses the SAME externref read-modify-write the #2656
+unresolvable-receiver arm one screen above already uses — the read still
+answers undefined → NaN, so the result value is unchanged; only the vanished
+write-back changes. The two arms were de-duplicated into one module-scope
+`emitMemberIncDecExternrefFallback` rather than inlined twice.
+
+Half 2 is what closes the EMPTY-literal rows, and it is worth recording that
+the delete-poison isolation did **not** help them: `var m = {}` with the
+poison still lost the write, because the empty-widening path had already
+resolved a zero-field struct and the drop is downstream of the
+representation choice.
+
+### Cluster B — `typeof x` read textually BEFORE `var x = <init>` (1 row + 1 advanced)
+
+`S8.7_A5_T1` `fail` → `pass`; `S13.2.2_A19_T8` advances from CHECK#0 to
+CHECK#2.
+
+A `var` binding hoists; its VALUE does not. The checker types the symbol from
+its initializer, so `staticTypeofForType` folds the EVENTUAL type forever:
+
+```js
+typeof __func;                     // observed "function", spec "undefined"
+var __func = function () {};
+
+typeof __ref;                      // observed "object",   spec "undefined"
+var obj = new Object(); var __ref = obj;
+```
+
+This re-diagnoses #4206's Cluster C ("`var f = function(){}` hoists carrying
+its VALUE"). The binding does **not** hoist its value: `__module_init` seeds
+each backing global with the `$undefined` singleton and overwrites it in
+declaration order, exactly as the spec requires. Only the CONST-FOLD was
+wrong. `readPrecedesVarInitializer` (src/codegen/typeof-delete.ts) kills the
+fold for that window; the existing runtime `__typeof*` path then reads the
+global and answers correctly on both sides of it.
+
+Two findings that cost real time and are cheap to hand on:
+
+- **A first cut tested `ref.is_null` on the backing global and silently never
+  fired.** The seed is the `$undefined` SINGLETON, not a null extern — so the
+  guard compiled, allocated its locals, and changed nothing. The fix is to
+  kill the fold and let the runtime path read the value, never to test
+  live-ness by pointer.
+- **The two fold sites must be guarded together.** `typeof(__ref) !==
+  "undefined"` folds in `compileTypeofComparison`, while the `'Actual: ' +
+  typeof(__ref)` in the SAME throw statement folds in
+  `compileTypeofExpression`. Guarding only the latter produced a test that
+  threw while reporting `Actual: undefined` — the two arms disagreeing inside
+  one source line. The comparison arm also has to unwrap parentheses, which
+  the plain arm already did.
+
+Narrow by construction: standalone/WASI-gated; `let`/`const` excluded (their
+pre-declaration read is a TDZ ReferenceError, owned by the boxed-TDZ path);
+the read and the declaration must share one enclosing code unit (otherwise
+`function f(){ return typeof x }; var x = 1; f()` would be mis-guarded — it
+runs AFTER the declaration despite reading earlier); and no loop may enclose
+the read inside that unit (a backward edge can revisit it).
+
+### Blast radius, measured
+
+73 currently-passing standalone rows re-run, 73/73 still pass — 42 sampled
+across `expressions/{postfix,prefix}-{in,de}crement`, `compound-assignment`,
+`expressions/object`, `types/object`, `Object/{defineProperty,keys,
+getOwnPropertyNames}`, `statements/{for-in,with}`, plus 31 across
+`expressions/typeof`, `statements/variable`, `global-code`,
+`statements/function`, `types/reference` and `expressions/delete`. Gates
+`check:loc-budget`, `check:func-budget`, `check:coercion-sites`,
+`check:oracle-ratchet` all exit 0; `tsc` clean on the three touched files.
+
+### Wave-3 lane A, slice 2 — `var F = function(){}` had no `constructor` back-ref (1 row)
+
+`S13.2_A4_T2` `fail` → `pass`; `13.2-17-1` advances past its first assertion.
+
+§13.2 step 10 does not care how the function object was produced, but this
+compiler does. Measured on this head, the ONLY varying axis being the
+declaration form:
+
+| source | `F.prototype.constructor` |
+| --- | --- |
+| `function __func(){}` | `__func` — correct |
+| `var __gunc = function(){}` | `[object Object]` — the bare prototype object; the property was simply ABSENT and the read walked on |
+
+`fnctorConstructorInstallInstrs` (src/codegen/expressions/fnctor-prototype.ts)
+declined the second form on purpose, and its #4480 note says why: the value it
+installs must be the very object an ordinary `F` identifier read yields, and
+`var F = function(){}` has no `__fn_closure_<F>` singleton. Publishing the
+singleton anyway would make the IDENTITY assertion false — a wrong answer
+where there was merely a missing property.
+
+The note also names the value that IS identity-stable for this shape and did
+not need inventing: **the module global the identifier read itself returns.**
+`moduleGlobalConstructorInstallInstrs` installs `global.get <F's slot>`, so
+`F.prototype.constructor === F` holds because both sides are the same
+`global.get`, not because two constructions happen to agree.
+
+Gate order matters here: the arm fires only when the caller resolved NO
+declaration (`ctx.funcMapOwnerDecl` / `topLevelFunctionDeclarations` both
+miss — the `function F(){}` case is the sibling arm's) and the name is not a
+top-level function name, so a declaration whose decl node we merely failed to
+find cannot fall through into it. The backing global must also be `externref`;
+a primitive slot cannot carry a function value.
+
+Blast radius: 38 further passing rows across `statements/function`,
+`expressions/function`, `Function/prototype`, `Object/getPrototypeOf`,
+`expressions/new` and `expressions/instanceof` — 38/38 still pass, plus the
+42-row control set re-run at 42/42.
+
+**Still failing in this cluster, and why they are NOT this head:**
+`S13.2.2_A1_T1/T2` and `S8.6.2_A1` need `F.prototype.isPrototypeOf(new F())`,
+which `fnctor-instance-prototype.ts` already records as blocked by the #2660
+escape gate (writing the call demotes `F` out of the approved set) and whose
+file this lane does not own. `S8.6.2_A2` needs an inherited-property WRITE to
+shadow on the instance. `13.2-17-1` now fails one assertion later, on an
+`Object.prototype.constructor` ACCESSOR being consulted by `verifyProperty`.
+
+### Wave-3 lane A, slice 3 — `for…in` over a literal that writes GREW (1 row)
+
+`S8.6_A4_T1` `fail` → `pass`.
+
+```js
+var o = { bar: true };
+o.some = 1; o.foo = "a";
+for (var k in o) count++;      // observed 1, spec 3
+```
+
+The #2837 growable pre-pass already recognises the growth (two depth-1
+out-of-shape writes). Its consumer-safety poison for `for…in` then CANCELS the
+marking — and that poison is a HOST-lane statement: "`for (k in V)` lowers
+against V's STATIC struct type, so an externref `$Object` would fail the
+cast."
+
+In standalone the relation inverts, the same way #2992 S6 established for
+`delete`: the closed struct is precisely what cannot serve the consumer,
+because the added keys have no slots to enumerate. So the enumeration is a
+REASON to open the object, not a reason to leave it shut.
+`markStandaloneEnumeratedGrowthTargets` fires only on the conjunction
+(enumerated ∧ grown), inside the standalone-only `mopSet` arm that already
+carries the concrete-struct-consumer guard.
+
+The one #2837 poison that keeps its force in standalone is re-stated by hand:
+an ARITHMETIC read of a field off `V` wants the `struct.get` f64 contract
+(#1897), so such a var declines and keeps its closed struct — with the
+enumeration gap intact. That is a deliberate documented trade, not an
+oversight.
+
+Scan shape worth noting for the next editor: the three signals (the literal,
+the writes, the loop) routinely sit in DIFFERENT statements, so this marker
+scans the whole statement list at once. The sibling `markStandalone*Targets`
+helpers are called per-statement and would never see them together.
+
+Blast radius: 42 further passing rows across `statements/for-in`,
+`Object/{keys,getOwnPropertyNames,assign}`, `JSON/stringify`,
+`expressions/object` and `Array/prototype/{map,filter,forEach}` — 40 pass, and
+the two that do not (`expressions/object/{getter,setter}-body-strict-inside`)
+were **re-run on the pristine branch head `1d57d9229a` with all four touched
+files reverted and fail there identically**, so they are pre-existing on this
+branch and not attributable to any slice here. The 42-row control set re-runs
+at 42/42.
+
+### Wave-3 lane A, slice 4 — the realm-global member CALL and BRACKET read (1 row)
+
+`S8.6.2_A5_T3` `fail` → `pass`.
+
+#4500 Slice A taught the member READ that `this.p` / `globalThis.p` on a
+`var`-declared script global must answer from the wasm module global that
+actually stores it. Two siblings never got the same treatment, and the split is
+visible inside one program:
+
+```js
+var count = 0, knock = function () { count++; };
+var g = this.knock;   typeof g   // "function"   — Slice A, correct
+this.knock();                    // TypeError: called value is not a function
+this["knock"]();                 // TypeError
+var c = this["count"];           // undefined  (the dot form answers 0)
+```
+
+The read being right while the call throws is the tell: one lowering learned
+about module globals and the other did not.
+
+- **The bracket READ** — `tryEmitRealmGlobalModuleGlobalElementRead`
+  (src/codegen/property-access.ts) is the literal twin of the Slice A dot arm.
+  §13.3.3 makes the two spellings the same [[Get]]; only a key the compiler can
+  resolve to a fixed string qualifies, so a genuinely dynamic `this[k]` keeps
+  the existing dynamic read.
+- **The CALL** — `tryEmitRealmGlobalMemberCall`
+  (src/codegen/expressions/realm-global-member-call.ts, new) reads the callee
+  out of the module global and invokes it through `__apply_closure`, passing the
+  compiled receiver so a STRICT callee still sees the global object (a bare
+  `f()` would bind `undefined`).
+
+**Dispatch POSITION is the load-bearing part, and it cost two attempts.** The
+arm first went into `compileCallDispatchTail` — the last-resort arm, one line
+above the graceful `ref.null.extern` fallback — and never fired, because
+`compileReceiverMethodCall` claims the call much earlier: it resolves the member
+against the checker's `typeof globalThis` struct, misses (a `var` global has no
+field there), and its resolved-method-is-null guard raises the TypeError. So the
+arm has to sit BEFORE the property-access dispatch block in
+`compileCallExpression`, not after everything else. A "last-resort" position is
+only last-resort for calls nothing else claimed; this one was claimed and
+answered wrongly.
+
+Blast radius: 50 passing rows across `expressions/call`, `expressions/this`,
+`global-code`, `built-ins/global*`, `Function.prototype.{call,apply}`,
+`types/{object,reference}` and `built-ins/Math` — 50/50 pass; control set 3
+(38 rows over `statements/function`, `expressions/function`,
+`Function/prototype`, `Object/getPrototypeOf`, `expressions/new`,
+`expressions/instanceof`) re-runs 38/38.
+
+**Not fixed, and it is one head, not four:** `S8.6.2_A5_T{1,2,4}`,
+`S8.7.2_A3` and `S13.2.2_A19_T7` all need `this.x = v` / `this["x"] = v` on a
+name with NO `var` declaration to CREATE a script-global binding that a bare
+`x` reference then resolves. That is the implicit-global-binding work #4206
+already scoped out (its `S13.2.2_A17_T2/T3` + `A18_T1/T2` entry is the same
+head); the read/call arms here deliberately do not touch it, because creating a
+binding is a declaration-time act and these arms are expression lowerings.
+
+### Wave-3 lane A — final tally and the residual heads
+
+**8 of 41 rows closed** (`fail` → `pass`), verified by a final serial re-run of
+the whole 41-row set on `worktree-agent-a0565c82af575a1ff`:
+
+| row | slice |
+| --- | --- |
+| `language/types/object/S8.6_A2_T1` | 1 — kind-changing numeric update |
+| `language/types/object/S8.6_A2_T2` | 1 |
+| `language/types/object/S8.6_A3_T1` | 1 |
+| `language/types/object/S8.6_A3_T2` | 1 |
+| `language/types/reference/S8.7_A5_T1` | 1 — typeof before `var` initializer |
+| `language/statements/function/S13.2_A4_T2` | 2 — `var F = function(){}` constructor back-ref |
+| `language/types/object/S8.6_A4_T1` | 3 — `for…in` over a grown literal |
+| `language/types/object/S8.6.2_A5_T3` | 4 — realm-global member call / bracket read |
+
+The other 33 all still report `fail` — none regressed to `compile_error`, and
+one moved the other way: `S8.6.2_A5_T2` was `compile_error` (standalone emitted
+the `env::DisposableStack_move` host import, #2961) in the wave-3 row list and
+now compiles and runs, failing on the implicit-global head below.
+
+Two rows ADVANCED without passing, which is worth recording because both are
+now failing on a different defect than the one they were filed under:
+
+- `S13.2.2_A19_T8` — CHECK#0 and #1 now pass; it fails at CHECK#2, on a
+  `var __func` re-declared inside a SECOND `with` block keeping the first
+  block's scope (the residual #4206 already named).
+- `13.2-17-1` — `typeof fun.prototype.constructor` is now `"function"`; it
+  fails one assertion later, inside `verifyProperty`, on an
+  `Object.prototype.constructor` ACCESSOR being consulted.
+
+**The residual heads, grouped by what actually blocks them** (so the next lane
+does not re-derive this):
+
+| head | rows | why not taken here |
+| --- | ---: | --- |
+| implicit-global binding — `this.x = v` / `x = v` on an UNDECLARED name must CREATE a script-global that a bare `x` resolves | 8 | `S8.6.2_A5_T{1,2,4}`, `S8.7.2_A3`, `S13.2.2_A19_T7`, `S8.7_A5_T2`, `S13.2.2_A17_T2/T3` (+`A18_T1/T2` add `with (arguments)`). Creating a binding is a declaration-time act; every arm this lane touched is an expression lowering. This is ONE head, not eight, and it is the single largest remaining item in the set. |
+| `F.prototype.isPrototypeOf(new F())` | 3 | `S13.2.2_A1_T1/T2`, `S8.6.2_A1`. `fnctor-instance-prototype.ts` already records the blocker: writing the call is a dynamic method use on `F`'s prototype, which demotes `F` out of the #2660 escape gate's approved set. Its file is owned by another lane. |
+| `new F()` whose ctor RETURNS a function | 3 | `S13.2.2_A8_T1/T2/T3` — #2071's area, unchanged. |
+| `arguments` extras beyond the formals | 4 | `S13.2_A2_T1/T2` (null-deref in `__module_init`), `S13.2.2_A5_T1`, `S13_A11_T4`. `S13_A2_T2` is the adjacent operator half (`arg + arguments[1]` picks numeric). |
+| `var F; F = function(){}` — the SPLIT declaration/assignment fnctor | 2 | `S13.2.2_A4_T2`, and it also blocks `S13.2.2_A2`. **Newly isolated here**, and it is a one-line-apart A/B: `var F = function(){}; F.prototype = {…}; new F().m()` WORKS, while `var F; F = function(){}; …` answers `undefined` for the inherited member. `resolveFnctorSymbol` (fnctor-escape-gate.ts) walks the symbol's declarations and finds a `VariableDeclaration` with NO initializer, so the whole #2660 fnctor machinery declines. Admitting the shape means proving the assignment is the ONLY one targeting that binding, and `resolveFnctorSymbol` is consulted by the `new F()` lowering and the escape gate alike — a wide blast radius for a narrow win, so it is left measured rather than attempted. |
+| `Math.<unary>` as a first-class VALUE | 1 | `S13.2.1_A5_T2` passes `Math.sin` to a higher-order function. `builtin-value-read.ts`'s `default` arm reifies an identity-stable closure whose BODY throws (#2984 Phase 3). The self-hosted `Math_sin` f64→f64 func already exists (math-helpers.ts) and a body could be `__unbox_number` → `Math_sin` → `__box_number`; what is missing is plumbing the name into the `needed` set that decides whether `Math_sin` is emitted at all, which happens in a different phase from the value read. |
+| duplicate function declarations | 1 | `S13_A6_T1` — the later `function __func(){return 'A'}` must win for BOTH earlier and later calls. The call site is typed f64 from the FIRST declaration, so the string result coerces to NaN. A checker-merged-symbol representation question. |
+| non-extensible `__proto__` write | 1 | `S8.6.2_A8` — `x.__proto__ = y` on a `preventExtensions` object mutates the prototype. Also measured: `Object.getPrototypeOf(x)` answers `null` rather than `Object.prototype` for that object, so there are TWO defects here and the read one is the more basic. |

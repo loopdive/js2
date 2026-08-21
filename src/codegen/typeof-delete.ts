@@ -29,7 +29,7 @@ import { addUnionImports, parseRegExpLiteral, resolveWasmType } from "./index.js
 import { emitExternrefDestructureGuard } from "./destructuring-params.js";
 import { buildThrowJsErrorInstrs, type JsErrorKind } from "./js-errors.js";
 import { compileStandaloneRegExpLiteral } from "./regexp-standalone.js";
-import { addImport } from "./registry/imports.js";
+import { addImport, localGlobalIdx } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import {
   emitArgumentsTypeofComparison,
@@ -37,7 +37,7 @@ import {
   staticTypeofForArgumentsIdentifier,
 } from "./arguments-object-mop.js"; // (#4555)
 import type { InnerResult } from "./shared.js";
-import { coerceType, compileExpression, ensureAnyHelpers, isAnyValue } from "./shared.js";
+import { coerceType, compileExpression, ensureAnyHelpers, isAnyValue, skipTransparentExpressions } from "./shared.js";
 import { compileStringLiteral } from "./string-ops.js";
 import { emitDynamicWithDelete, findWithBinding, resolveWithBinding } from "./with-scope.js";
 import {
@@ -1289,6 +1289,80 @@ function emitAnnexBTypeofFlagBranch(ctx: CodegenContext, fctx: FunctionContext, 
   return strType;
 }
 
+/** The nearest enclosing function-like body (or the SourceFile) around `node`. */
+function enclosingCodeUnit(node: ts.Node): ts.Node {
+  for (let cur: ts.Node | undefined = node.parent; cur; cur = cur.parent) {
+    if (
+      ts.isSourceFile(cur) ||
+      ts.isFunctionDeclaration(cur) ||
+      ts.isFunctionExpression(cur) ||
+      ts.isArrowFunction(cur) ||
+      ts.isMethodDeclaration(cur) ||
+      ts.isConstructorDeclaration(cur) ||
+      ts.isGetAccessorDeclaration(cur) ||
+      ts.isSetAccessorDeclaration(cur)
+    ) {
+      return cur;
+    }
+  }
+  return node.getSourceFile();
+}
+
+/** True when any iteration statement encloses `node` before `stop`. */
+function insideLoopWithin(node: ts.Node, stop: ts.Node): boolean {
+  for (let cur: ts.Node | undefined = node.parent; cur && cur !== stop; cur = cur.parent) {
+    if (ts.isIterationStatement(cur, /*lookInLabeledStatements*/ true)) return true;
+  }
+  return false;
+}
+
+/**
+ * (#4491) True when `ident` is read TEXTUALLY BEFORE its own
+ * `var ident = <initializer>` — the `var` binding hoists, its VALUE does not, so
+ * §13.5.3 must answer `"undefined"` for that window. The checker types the symbol
+ * from its initializer, so `staticTypeofForType` folds the EVENTUAL type forever:
+ *
+ *     typeof __func;                   // observed "function", spec "undefined"
+ *     var __func = function () {};
+ *
+ *     typeof __ref;                    // observed "object",   spec "undefined"
+ *     var obj = new Object(); var __ref = obj;
+ *
+ * Callers use it only to KILL the fold; the runtime `__typeof*` path then reads
+ * the backing module global, which `__module_init` seeds with the `$undefined`
+ * singleton before any statement runs and overwrites in declaration order — so
+ * both sides of the window answer correctly with no new emission of our own.
+ * (An earlier cut tested `ref.is_null` on that global instead; the seed is the
+ * singleton, never a null extern, so the guard silently never fired.)
+ *
+ * Deliberately narrow, because "textually before" only implies "temporally
+ * before" under both of these:
+ *   - the read and the declaration share one enclosing code unit (otherwise
+ *     `function f(){ return typeof x } ; var x = 1; f()` would be mis-guarded —
+ *     it runs AFTER the declaration despite reading earlier in the text);
+ *   - no loop encloses the read inside that unit (a backward edge can revisit
+ *     the read after the declaration already ran).
+ * `let`/`const` are excluded: their pre-declaration read is a TDZ ReferenceError,
+ * a different answer owned by the boxed-TDZ path above. Standalone/WASI-gated —
+ * the host lane keeps its existing fold byte-for-byte.
+ */
+function readPrecedesVarInitializer(ctx: CodegenContext, fctx: FunctionContext, operand: ts.Expression): boolean {
+  if (!(ctx.standalone || ctx.wasi)) return false;
+  const ident = skipTransparentExpressions(operand);
+  if (!ts.isIdentifier(ident)) return false;
+  if (fctx.localMap.get(ident.text) !== undefined) return false;
+  if (!ctx.moduleGlobals.has(ident.text)) return false;
+  const decl = ctx.oracle.valueDeclarationOf(ident);
+  if (!decl || !ts.isVariableDeclaration(decl) || decl.initializer === undefined) return false;
+  if (!ts.isVariableDeclarationList(decl.parent)) return false;
+  if ((decl.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0) return false;
+  if (decl.getSourceFile() !== ident.getSourceFile()) return false;
+  if (ident.getStart() >= decl.getStart()) return false;
+  const unit = enclosingCodeUnit(ident);
+  if (unit !== enclosingCodeUnit(decl)) return false;
+  return !insideLoopWithin(ident, unit);
+}
+
 /**
  * (#2623 P-7) True when SOME assignment expression in `sf` targets a bare
  * identifier named `name`. Used to detect null/undefined flow-narrowing the
@@ -1623,6 +1697,11 @@ export function compileTypeofExpression(
     if (!forceRuntimeTypeof && typeofFoldUnsoundForJsParam(ctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
+    // (#4491) Read before the binding's own `var x = <init>` statement runs —
+    // the hoisted binding still holds `undefined` (see readPrecedesVarInitializer).
+    if (!forceRuntimeTypeof && readPrecedesVarInitializer(ctx, fctx, bareTdz)) {
+      forceRuntimeTypeof = true;
+    }
     // (#4491) A member read whose (receiver, key) is RUNTIME accessor-descriptor
     // state: the getter may be redefined at runtime — even to undefined
     // (§6.2.5.6 present-undefined) — so the checker's member-type fold
@@ -1867,6 +1946,16 @@ export function compileTypeofComparison(
   }
   // (#4204) Same unsound-fold guard as compileTypeofExpression.
   if (staticTypeof !== null && ts.isIdentifier(operand) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, operand)) {
+    staticTypeof = null;
+  }
+  // (#4491) `typeof x <cmp> "…"` read before `var x = <init>` runs — the hoisted
+  // binding still holds `undefined`, so the checker's initializer-derived fold is
+  // wrong for that window. Emit the same one-sided live-ness guard the plain
+  // `typeof` arm uses: a NULL backing global answers "undefined", anything else
+  // keeps the folded verdict.
+  // (#4491) Read before the binding's own `var x = <init>` runs — the hoisted
+  // binding still holds `undefined` (see readPrecedesVarInitializer).
+  if (staticTypeof !== null && staticTypeof !== "undefined" && readPrecedesVarInitializer(ctx, fctx, operand)) {
     staticTypeof = null;
   }
   // (#4428) Element read off an array whose ELEMENT representation was widened

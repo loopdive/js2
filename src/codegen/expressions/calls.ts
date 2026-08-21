@@ -335,6 +335,7 @@ import { compileBuiltinStaticCall, tryCompileFromCharCodeFamilyReflective } from
 import { compileNamespaceStaticCall } from "./call-namespace-static.js";
 import { compileReceiverMethodCall } from "./call-receiver-method.js";
 import { compileTailDispatch } from "./call-tail-dispatch.js";
+import { tryEmitRealmGlobalMemberCall } from "./realm-global-member-call.js"; // (#4491)
 import {
   emitNativeGeneratorToVec,
   nativeGeneratorInfoForForOfSubject,
@@ -6758,6 +6759,18 @@ function compileCallExpression(
       fctx.body.push({ op: "call", funcIdx });
     }
     return { kind: "externref" };
+  }
+
+  // (#4491) `this.f(…)` / `this["f"](…)` where `f` is a `var`-declared script
+  // global. Must run BEFORE the receiver-type method dispatch below: that arm
+  // resolves the member against the checker's `typeof globalThis` struct, which
+  // has no field for a `var` global, and its resolved-method-is-null guard turns
+  // the miss into `TypeError: called value is not a function`. The member READ
+  // has answered from the module global since #4500 Slice A; this is the CALL
+  // twin. Narrowly gated (see the module), so every other call is unchanged.
+  {
+    const realmGlobalCall = tryEmitRealmGlobalMemberCall(ctx, fctx, expr);
+    if (realmGlobalCall !== undefined) return realmGlobalCall;
   }
 
   // Handle property access calls: console.log, Math.xxx, extern methods
