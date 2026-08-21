@@ -108,6 +108,12 @@ Refreshed baseline also banks three improvements that had accrued since the
 last update (`551c00632`, #2956 L4): `build` 2→0, `select:call-graph-closure`
 12→11, `select:non-export-modifier` 15→0. `npm run check:linear-ir` passes.
 
+Permanent repro: `tests/issue-4558.test.ts` — pins that the counted-push
+shape stays IR-compiled on the linear overlay with no
+`illegal:instr-vec.set_length` reject, that overlay/direct/JS values agree,
+and that `vec.set_length` is legal in both the linear and porffor
+instruction profiles (`verifyIrBackendLegality`).
+
 ## Why this matters beyond the number
 
 `plan/log/ir-adoption.md` still carries 39 `direct-only`/`mixed` rows, so IR
