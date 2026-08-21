@@ -1,6 +1,6 @@
-// Jest 30.4.2 original @jest/get-type unit slice.
+// Jest 30.4.2 original @jest/get-type and @jest/util unit slice.
 
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -27,46 +27,61 @@ function moduleSpecifier(fromDirectory, target) {
 function resolveJestImport(filePath, specifier) {
   const base = resolve(dirname(filePath), specifier);
   const candidates = [
-    /\.(?:[cm]?js|tsx?)$/.test(base) ? base : null,
+    base,
     `${base}.ts`,
     `${base}.tsx`,
     `${base}.js`,
+    `${base}.jsx`,
     `${base}.mjs`,
+    `${base}.cjs`,
     join(base, "index.ts"),
     join(base, "index.tsx"),
     join(base, "index.js"),
-    join(base, "index.mjs"),
+    join(base, "index.jsx"),
   ];
-  return candidates.find((candidate) => candidate !== null && existsSync(candidate)) ?? null;
+  const target = candidates.find((candidate) => {
+    try {
+      return statSync(candidate).isFile();
+    } catch {
+      return false;
+    }
+  });
+  if (!target) throw new Error(`[dogfood] Jest relative import not found: ${specifier} from ${filePath}`);
+  return target;
 }
 
 function transformJestTest(source, filePath, generatedPath, { normalizeCjs = false } = {}) {
   let importIndex = 0;
-  source = source.replace(
-    /import\s+((?:\*\s+as\s+[A-Za-z_$][\w$]*)|(?:[A-Za-z_$][\w$]*))\s+from\s+(["'])(\.\.?\/?[^"']*)\2;?/g,
-    (_match, binding, quote, specifier) => {
-      const target = resolveJestImport(filePath, specifier);
-      if (!target) throw new Error(`[dogfood] Jest published source is missing ${specifier} imported by ${filePath}`);
-      const rewritten = moduleSpecifier(dirname(generatedPath), target);
-      if (!normalizeCjs) return `import ${binding} from ${quote}${rewritten}${quote};`;
-      const namespaceName = `__jestImport${importIndex++}`;
-      return (
-        `import * as ${namespaceName} from ${quote}${rewritten}${quote};\n` +
-        `const ${binding.replace(/^\*\s+as\s+/, "")} = ${namespaceName}.default?.default ?? ${namespaceName}.default ?? ${namespaceName};`
-      );
-    },
-  );
   return source.replace(
-    /import\s+\{([^}]+)\}\s+from\s+(["'])(\.\.?\/?[^"']*)\2;?/g,
+    /import\s+((?:[A-Za-z_$][\w$]*\s*,\s*)?(?:\*\s+as\s+[A-Za-z_$][\w$]*|\{[^}]+\}|[A-Za-z_$][\w$]*))\s+from\s+(["'])(\.\.?\/?[^"']*)\2;?/g,
     (_match, bindings, quote, specifier) => {
       const target = resolveJestImport(filePath, specifier);
-      if (!target) throw new Error(`[dogfood] Jest published source is missing ${specifier} imported by ${filePath}`);
       const rewritten = moduleSpecifier(dirname(generatedPath), target);
-      if (!normalizeCjs) return `import {${bindings}} from ${quote}${rewritten}${quote};`;
       const namespaceName = `__jestImport${importIndex++}`;
+      if (!normalizeCjs) return `import ${bindings} from ${quote}${rewritten}${quote};`;
+      const normalized = `${namespaceName}.default?.default ?? ${namespaceName}.default ?? ${namespaceName}`;
+      if (bindings.startsWith("{")) {
+        return (
+          `import * as ${namespaceName} from ${quote}${rewritten}${quote};\n` + `const ${bindings} = ${normalized};`
+        );
+      }
+      if (bindings.startsWith("* as ")) {
+        const name = bindings.slice("* as ".length).trim();
+        return `import * as ${namespaceName} from ${quote}${rewritten}${quote};\n` + `const ${name} = ${normalized};`;
+      }
+      const comma = bindings.indexOf(",");
+      if (comma >= 0) {
+        const defaultName = bindings.slice(0, comma).trim();
+        const named = bindings.slice(comma + 1).trim();
+        return (
+          `import * as ${namespaceName} from ${quote}${rewritten}${quote};\n` +
+          `const ${defaultName} = ${normalized};\n` +
+          `const ${named} = ${normalized};`
+        );
+      }
       return (
         `import * as ${namespaceName} from ${quote}${rewritten}${quote};\n` +
-        `const {${bindings}} = ${namespaceName}.default || ${namespaceName};`
+        `const ${bindings.trim()} = ${normalized};`
       );
     },
   );

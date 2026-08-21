@@ -272,7 +272,7 @@ describe("small npm package upstream suites", () => {
   });
 
   const jestHeavy = process.env.DOGFOOD_JEST_UPSTREAM_SUITE === "1" ? it : it.skip;
-  jestHeavy("runs Jest's selected original get-type and utility units", { timeout: 600_000 }, async () => {
+  jestHeavy("runs Jest's selected original utility units", { timeout: 600_000 }, async () => {
     const report = await run("jest");
     expect(report.extraction).toMatchObject({
       filesSeen: 241,
@@ -284,7 +284,7 @@ describe("small npm package upstream suites", () => {
     });
     expect(report.extraction.unavailableInfra).toBe(3189);
     expect(report.compile).toMatchObject({ modules: 8, succeeded: 8, validated: 8 });
-    expect(report.results).toMatchObject({ scored: 99, passed: 29 });
+    expect(report.results).toMatchObject({ scored: 99, passed: 29, failed: 70, runtimeFailed: 0 });
   });
 
   const tailwindcssHeavy = process.env.DOGFOOD_TAILWINDCSS_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -315,6 +315,6 @@ describe("small npm package upstream suites", () => {
     });
     expect(report.extraction.unavailableInfra).toBe(1750);
     expect(report.compile).toMatchObject({ modules: 3, succeeded: 3, validated: 3 });
-    expect(report.results).toMatchObject({ scored: 11 });
+    expect(report.results.scored).toBe(11);
   });
 });

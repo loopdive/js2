@@ -24,6 +24,53 @@ function moduleSpecifier(fromDirectory, target) {
   return value;
 }
 
+function extractFunction(source, marker) {
+  const start = source.indexOf(marker);
+  if (start < 0) throw new Error(`TypeScript utility marker changed: ${marker}`);
+  const open = source.indexOf("{", start);
+  if (open < 0) throw new Error(`TypeScript utility body marker changed: ${marker}`);
+  let depth = 0;
+  let quote = null;
+  let lineComment = false;
+  let blockComment = false;
+  for (let index = open; index < source.length; index++) {
+    const current = source[index];
+    const next = source[index + 1];
+    if (lineComment) {
+      if (current === "\n") lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (current === "*" && next === "/") {
+        blockComment = false;
+        index++;
+      }
+      continue;
+    }
+    if (quote) {
+      if (current === "\\") index++;
+      else if (current === quote) quote = null;
+      continue;
+    }
+    if (current === "/" && next === "/") {
+      lineComment = true;
+      index++;
+      continue;
+    }
+    if (current === "/" && next === "*") {
+      blockComment = true;
+      index++;
+      continue;
+    }
+    if (current === '"' || current === "'" || current === "`") {
+      quote = current;
+      continue;
+    }
+    if (current === "{") depth++;
+    else if (current === "}" && --depth === 0) return source.slice(start, index + 1);
+  }
+  throw new Error(`TypeScript utility function is unterminated: ${marker}`);
+}
 function exactTypescriptProjection(utilitiesSource) {
   utilitiesSource = utilitiesSource.replace(/\r\n/g, "\n");
   const startMarker = "/**\n * Replace each instance of non-ascii characters";
@@ -32,20 +79,15 @@ function exactTypescriptProjection(utilitiesSource) {
   const end = utilitiesSource.indexOf(endMarker, start);
   if (start < 0 || end < 0) throw new Error("TypeScript base64 implementation markers changed");
   const declarations = utilitiesSource.slice(start, end);
-  const parseStart = utilitiesSource.indexOf("export function parsePseudoBigInt");
-  const parseEndMarker = "/** @internal */\nexport function pseudoBigIntToString";
-  const parseEnd = utilitiesSource.indexOf(parseEndMarker, parseStart);
-  if (parseStart < 0 || parseEnd < 0) throw new Error("TypeScript parsePseudoBigInt implementation markers changed");
-  const parseDeclaration = utilitiesSource.slice(parseStart, parseEnd);
+  const parsePseudoBigInt = extractFunction(utilitiesSource, "export function parsePseudoBigInt");
   const characterCodes = `const CharacterCodes = { _0: 48, _9: 57, A: 65, B: 66, F: 70, O: 79, X: 88, a: 97, b: 98, o: 111, x: 120 } as const;`;
-  return `const Debug = { assert(value: boolean, message?: string) { if (!value) throw new Error(message || "Debug assertion failed"); } };\n${declarations}\n${characterCodes}\n${parseDeclaration}`;
+  return `const Debug = { assert(value: boolean, message?: string) { if (!value) throw new Error(message || "Debug assertion failed"); } };\n${characterCodes}\n${declarations}\n${parsePseudoBigInt}`;
 }
 
 function transformTypescriptTest(source, projectionSpecifier) {
   return source.replace(
     /^import\s+\*\s+as\s+ts\s+from\s+["']\.\.\/_namespaces\/ts\.js["'];?\s*$/m,
-    `import { base64decode, base64encode, convertToBase64, parsePseudoBigInt } from ${JSON.stringify(projectionSpecifier)};\n` +
-      `const ts = { base64decode, convertToBase64, parsePseudoBigInt, sys: { base64encode: (input: string) => base64encode(undefined, input) } };`,
+    `import { base64decode, base64encode, convertToBase64, parsePseudoBigInt } from ${JSON.stringify(projectionSpecifier)};\nconst ts = { base64decode, base64encode, convertToBase64, parsePseudoBigInt, sys: { base64decode: (input) => base64decode(undefined, input), base64encode: (input) => base64encode(undefined, input) } };`,
   );
 }
 

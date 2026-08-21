@@ -185,10 +185,10 @@ const vi = {
   unstubAllEnvs() {},
 };
 // A number of Jest-owned packages publish their original tests with the Jest
-// global even when the selected unit itself only needs spies. Keep this small
-// facade backed by the same deterministic implementation as vi; package
-// adapters can add a package-specific module/mock registry when a test needs
-// more than function spies.
+// global even when the selected unit only needs spies. Keep this small facade
+// backed by the same deterministic implementation as vi; package adapters can
+// add a package-specific module/mock registry when a test needs more than
+// function spies.
 const jest = {
   fn: vi.fn,
   spyOn: vi.spyOn,
