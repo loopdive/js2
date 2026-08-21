@@ -26,7 +26,11 @@ import {
   type IrFunction,
   type IrValueId,
   type TypeRuleCategory,
+  type TypeRuleStatus,
 } from "../src/ir/index.js";
+
+/** Local alias so the roadmap loop can index the map with a plain string. */
+type TypeRuleStatusLike = TypeRuleStatus;
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
 const irIdentities = createTestIrFunctionIdentityFactory("issue-4523-type-rule-coverage");
@@ -119,17 +123,54 @@ const EXPECTED_KINDS: readonly string[] = [
   "while.loop",
 ];
 
-/** The 16 kinds `checkInstr` ruled at the time #4523 landed. Ratchet floor. */
-const BASELINE_CHECKED_COUNT = 16;
+/**
+ * Ratchet floor for the checked-kind count.
+ *
+ * 16 when #4523 landed; #4603 implemented a real rule for 16 of the 17
+ * `rule-worth-adding` kinds, so the floor moves to 32. The 17th
+ * (`early.return`) was a misclassification — `verifyIrFunction` has applied
+ * its rule since #2856 — and is now `checked-elsewhere`, not a checked arm.
+ */
+const BASELINE_CHECKED_COUNT = 32;
 
-/** Per-category triage counts recorded in the issue file (AC 3). */
+/** Per-category triage counts (#4523 triage, as retired by #4603). */
 const BASELINE_CATEGORY_COUNTS: Readonly<Record<TypeRuleCategory, number>> = {
   structural: 5,
-  "checked-elsewhere": 12,
+  // 12 + `early.return` (#4603 reclassification).
+  "checked-elsewhere": 13,
   "resolver-typed": 23,
   "dynamic-by-design": 5,
-  "rule-worth-adding": 17,
+  // #4603 emptied the roadmap. This is a FLOOR of zero, not a target to
+  // refill: a new kind that genuinely needs a rule may re-enter the bucket,
+  // and the parity/ratchet tests above still hold in that case.
+  "rule-worth-adding": 0,
 };
+
+/**
+ * The 17 kinds #4523 put on the roadmap. #4603 closed all of them: 16 with a
+ * `checkInstr` arm, `early.return` by recognising the rule already existed.
+ * Pinned so a later PR cannot quietly re-open one by flipping it back to a
+ * skip without saying so here.
+ */
+const ROADMAP_KINDS_4523: readonly string[] = [
+  "const",
+  "call",
+  "global.get",
+  "global.set",
+  "select",
+  "if",
+  "object.new",
+  "closure.new",
+  "class.new",
+  "class.super_init",
+  "class.instanceof",
+  "coerce.to_externref",
+  "iter.done",
+  "forof.vec",
+  "forof.iter",
+  "forof.string",
+  "early.return",
+];
 
 const checkedKinds = Object.keys(TYPE_RULE_STATUS).filter((k) => TYPE_RULE_STATUS[k as never] === "checked");
 
@@ -160,6 +201,30 @@ function constFunc(name: string): IrFunction {
   };
 }
 
+/**
+ * A minimal valid void function whose only instr is a bare `early.return` —
+ * a kind that still legitimately reaches `checkInstr`'s `default:` after
+ * #4603, so it can play the desync probe `const` used to play.
+ */
+function earlyReturnFunc(name: string): IrFunction {
+  return {
+    ...irIdentities.next(name),
+    params: [],
+    resultTypes: [],
+    blocks: [
+      {
+        id: asBlockId(0),
+        blockArgs: [],
+        blockArgTypes: [],
+        instrs: [{ kind: "early.return", value: null, result: null, resultType: null }],
+        terminator: { kind: "return", values: [] as IrValueId[] },
+      },
+    ],
+    exported: false,
+    valueCount: 0,
+  };
+}
+
 describe("#4523 TYPE_RULE_STATUS / checkInstr parity", () => {
   it("the map covers exactly the IrInstr kind union (runtime pin of the compile-time Record)", () => {
     expect(Object.keys(TYPE_RULE_STATUS).sort()).toEqual([...EXPECTED_KINDS].sort());
@@ -187,7 +252,9 @@ describe("#4523 TYPE_RULE_STATUS / checkInstr parity", () => {
   });
 
   it("the triage totals match the counts recorded in the issue file", () => {
-    const counts: Record<string, number> = {};
+    // Seed every category at 0 — #4603 emptied `rule-worth-adding`, and an
+    // absent key must read as "zero kinds", not as "category retired".
+    const counts: Record<string, number> = Object.fromEntries(TYPE_RULE_CATEGORIES.map((c) => [c, 0]));
     for (const status of Object.values(TYPE_RULE_STATUS)) {
       const category = typeRuleCategoryOf(status);
       if (category !== null) counts[category] = (counts[category] ?? 0) + 1;
@@ -197,15 +264,25 @@ describe("#4523 TYPE_RULE_STATUS / checkInstr parity", () => {
     expect(checkedKinds.length + skipped).toBe(78);
   });
 
-  it("the roadmap denominator (rule-worth-adding) is non-empty and named", () => {
+  it("the roadmap denominator (rule-worth-adding) matches the recorded count", () => {
     const roadmap = Object.entries(TYPE_RULE_STATUS)
       .filter(([, s]) => typeRuleCategoryOf(s) === "rule-worth-adding")
       .map(([k]) => k);
     expect(roadmap.length).toBe(BASELINE_CATEGORY_COUNTS["rule-worth-adding"]);
-    // Spot-check the kinds #4523's plan called out as obvious rule candidates.
-    for (const kind of ["const", "call", "select", "global.get", "global.set"]) {
-      expect(roadmap).toContain(kind);
+  });
+
+  it("#4603 — every kind on #4523's roadmap is closed (checked, or checked-elsewhere)", () => {
+    for (const kind of ROADMAP_KINDS_4523) {
+      const status = TYPE_RULE_STATUS[kind as never] as TypeRuleStatusLike;
+      const category = status === "checked" ? "checked" : typeRuleCategoryOf(status);
+      expect(category, `${kind} must not sit in rule-worth-adding any more`).not.toBe("rule-worth-adding");
     }
+    // 16 of the 17 got a real `checkInstr` arm; `early.return`'s rule already
+    // lived in `verifyIrFunction` (arity + returnTypeAssignable, #1798/#2856),
+    // where it also carries the `demote` flag a `checkInstr` arm would lose.
+    const checkedFromRoadmap = ROADMAP_KINDS_4523.filter((k) => TYPE_RULE_STATUS[k as never] === "checked");
+    expect(checkedFromRoadmap).toHaveLength(16);
+    expect(ROADMAP_KINDS_4523.filter((k) => TYPE_RULE_STATUS[k as never] !== "checked")).toEqual(["early.return"]);
   });
 });
 
@@ -220,7 +297,9 @@ describe("#4523 desync detection (AC 2 — removing a rule must fail loudly)", (
   });
 
   it("a kind carrying a skip reason legitimately reaches default: (no error)", () => {
-    for (const kind of ["if", "try", "throw", "await", "extern.call"] as const) {
+    // `if` was in this list until #4603 gave it a rule; `early.return` replaces
+    // it as the sample of a kind whose rule lives outside `checkInstr`.
+    for (const kind of ["early.return", "try", "throw", "await", "extern.call"] as const) {
       expect(typeRuleCoverageProblem(kind, TYPE_RULE_STATUS[kind]), kind).toBeNull();
     }
   });
@@ -235,17 +314,19 @@ describe("#4523 desync detection (AC 2 — removing a rule must fail loudly)", (
     // The #4070-method proof, as a test rather than a scratch build. Deleting
     // a `case` arm and flipping a kind's status to "checked" are the SAME
     // desync from `default:`'s point of view — both leave a kind the map calls
-    // checked with no arm handling it. `const` currently carries a skip
-    // reason, so flipping it reproduces the condition without touching
-    // production wiring; the entry is restored in `finally`.
-    const saved = TYPE_RULE_STATUS.const;
+    // checked with no arm handling it. `const` carried a skip reason until
+    // #4603 gave it a real arm, so the probe kind moved to `early.return` —
+    // still a `{ skip }` entry (its rule lives in `verifyIrFunction`), so
+    // flipping it reproduces the condition without touching production
+    // wiring; the entry is restored in `finally`.
+    const saved = TYPE_RULE_STATUS["early.return"];
     try {
-      TYPE_RULE_STATUS.const = "checked";
-      const messages = verifyIrFunction(constFunc("desyncConst")).map((e) => e.message);
-      expect(messages.some((m) => m.includes("type-rule missing for 'const'"))).toBe(true);
+      TYPE_RULE_STATUS["early.return"] = "checked";
+      const messages = verifyIrFunction(earlyReturnFunc("desyncEarlyReturn")).map((e) => e.message);
+      expect(messages.some((m) => m.includes("type-rule missing for 'early.return'"))).toBe(true);
       expect(messages.some((m) => m.includes("TYPE_RULE_STATUS says checked"))).toBe(true);
     } finally {
-      TYPE_RULE_STATUS.const = saved;
+      TYPE_RULE_STATUS["early.return"] = saved;
     }
     // ...and the same function is clean again once the map is consistent.
     expect(verifyIrFunction(constFunc("restoredConst")).map((e) => e.message)).toEqual([]);
