@@ -172,16 +172,16 @@ function codes(report: ReturnType<typeof evaluateIrCutoverCorpusJsonl>) {
 describe("standalone IR cutover pinned corpus", () => {
   it("pins the committed five-case manifest and its exact denominator", () => {
     const committed = loadCorpusManifest();
-    expect(committed.digest).toBe("sha256:ae5cf842daa9e8170516a3468f21e51339504c0bd468da16cb4a2638639ccd37");
+    expect(committed.digest).toBe("sha256:e25d80c90cdd5eb3c6a21672e6d9f3db754ddd4a068d54d5d37b5fee856eb0b7");
     expect(committed.totals).toEqual({
       caseCount: 5,
       sourceCount: 5,
       sourceBytes: 22_056,
       classCount: 2,
       allUnitCount: 47,
-      terminalUnitCount: 37,
+      terminalUnitCount: 38,
       ownedSupportUnitCount: 9,
-      unownedSupportUnitCount: 1,
+      unownedSupportUnitCount: 0,
       derivedUnitCount: 19,
     });
     expect(computeIrCutoverCorpusManifestDigest(committed)).toBe(committed.digest);

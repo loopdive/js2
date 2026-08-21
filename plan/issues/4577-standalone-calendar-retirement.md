@@ -4,17 +4,19 @@ title: "Standalone IR: retire Calendar through explicit DOM interaction and cloc
 status: done
 created: 2026-08-20
 updated: 2026-08-20
+completed: 2026-08-20
 priority: critical
 feasibility: hard
 reasoning_effort: max
 task_type: refactor
 area: ir, runtime, capabilities, dom, modules
-es_edition: n/a
 language_feature: dom-events-date-snapshots-module-state
 goal: ir-full-coverage
 sprint: current
 parent: 3518
 depends_on: [3523, 4398, 4576]
+required_by: [4585]
+es_edition: n/a
 assignee: ttraenkler/codex
 horizon: l
 lane: ir-retirement-r9-standalone-calendar
@@ -109,7 +111,6 @@ files:
   - tests/issue-4577-standalone-calendar-retirement.test.ts
   - tests/issue-4577-standalone-clock-capability.test.ts
 ---
-
 # #4577 — standalone Calendar through explicit interaction and clock capabilities
 
 ## Problem
@@ -171,8 +172,10 @@ modules.
 
 - All ten Calendar terminals report one dependency-complete Prepared
   component, `legacyBodyEmitted: false`, and `irBodyEmitted: true`.
-- Standalone ratchets **31 → 37 IR** and **6 → 0 legacy/Unsupported**, with
-  zero Invariants and every residual bucket at zero. JS-host remains 37/37.
+- Calendar ratchets standalone **31 → 37 IR** and **6 → 0
+  legacy/Unsupported**, with zero Invariants and every residual bucket at zero.
+  The current post-#4586 census is 38/38 in both lanes because the exact
+  target-neutral timer shim is now an additional self-owned terminal.
 - The exact runtime oracle matches the existing #3523 Calendar contract across
   deterministic clock values, repeated renders, selection/reselection,
   listener dispatch, footer totals, and all DOM text/style mutations.
@@ -203,13 +206,15 @@ bodies. All ten source terminals report `Prepared`, `irBodyEmitted: true`, and
 
 | Lane | Entries | Terminals | IR bodies | Legacy bodies | Unsupported | Invariants |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| JS host | 5/5 | 37 | 37 | 0 | 0 | 0 |
-| standalone | 5/5 | 37 | 37 | 0 | 0 | 0 |
+| JS host | 5/5 | 38 | 38 | 0 | 0 | 0 |
+| standalone | 5/5 | 38 | 38 | 0 | 0 | 0 |
 
 The standalone lane is therefore promoted from its temporary baseline-only
 readiness mode to strict IR-only readiness for this bounded five-entry corpus.
-Its baseline moves from 31 to 37 emitted/IR bodies and from 6 to 0
-legacy/Unsupported outcomes; every former Unsupported code bucket is empty.
+Calendar moved its baseline from 31 to 37 emitted/IR bodies and from 6 to 0
+legacy/Unsupported outcomes; #4586 subsequently reclassified the exact timer
+shim to bring both current lanes to 38 emitted/IR bodies without adding a
+legacy, Unsupported, or Invariant row.
 
 The 59/59 final focused checks divide into Calendar 11/11, clock 23/23, DOM
 interaction 7/7, and DOM module-storage/provenance 18/18. Together they prove:
@@ -312,8 +317,9 @@ or `func-budget-allow` grant.
 
 ## Handoff
 
-Only after this atomic checkpoint reaches 37/37 may the standalone legacy
-emitter be audited for physical deletion. Passing this example census is
+Only after this atomic checkpoint reached its historical 37/37 mark (now 38/38
+after #4586) could the standalone legacy emitter be audited for physical
+deletion. Passing this example census is
 necessary evidence, not by itself proof that no other standalone legacy owner
 or fallback remains in the wider compiler. The follow-on audit confirms that
 physical retirement is still open: public direct toggles remain, single-source

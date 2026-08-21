@@ -185,7 +185,7 @@ export function correlateIrSkippedFunctionNames(
 export function preparedIrBodyRouting(
   report: IrIntegrationReport,
   claimsByUnitId: ReadonlyMap<IrUnitId, IrExactBodyClaim>,
-  options: { readonly deferUnsupported?: boolean } = {},
+  options: { readonly deferUnsupportedUnitIds?: ReadonlySet<IrUnitId> } = {},
 ): {
   readonly irOwnedUnitIds: ReadonlySet<IrUnitId>;
   readonly preparedUnitIds: ReadonlySet<IrUnitId>;
@@ -222,13 +222,17 @@ export function preparedIrBodyRouting(
       // without giving the direct emitter a retry. The declaration pass will
       // install only its non-shipping structural placeholder.
       irOwned.add(evidence.unitId);
-    } else if (options.deferUnsupported === true) {
+    } else if (
+      evidence.error.outcome.code !== "timer-component-not-isolated" &&
+      options.deferUnsupportedUnitIds?.has(evidence.unitId)
+    ) {
       // A typed Unsupported during early preparation is a soft withdrawal,
       // not completed ownership. Let direct emission establish the remaining
       // ABI, then include this exact owner in the ordinary post-direct IR
       // population so free-function callers and dependencies are reconciled
-      // together. Prepared class members intentionally keep Unsupported as a
-      // terminal direct-only withdrawal.
+      // together. Only explicitly named free-function UnitIds enter this
+      // retry seam; class/module owners and an atomically rejected timer
+      // component keep Unsupported as a terminal direct-only withdrawal.
       deferred.add(evidence.unitId);
     }
   }

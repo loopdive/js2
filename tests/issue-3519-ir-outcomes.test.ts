@@ -273,13 +273,30 @@ export function answer(): number { return 42; }
     ]);
   });
 
-  it("does not count compiler-injected timer wrappers as user source units", async () => {
+  it("records the compiler-injected timer wrapper as an exact IR terminal", async () => {
     const result = await compile(`export function delayed(): void { setTimeout(() => {}, 1); }`, {
       fileName: "timer.ts",
       trackIrOutcomes: true,
     });
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(terminal(result)).toEqual([expect.objectContaining({ displayName: "delayed", line: 1, column: 1 })]);
+    expect(terminal(result)).toHaveLength(2);
+    const timer = terminal(result).find((outcome) => outcome.displayName === "setTimeout");
+    expect(timer).toMatchObject({
+      unitKind: "function",
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
+    expect(timer?.unitId).toContain("compiler-unit%3Atimer-shim%3Aset-timeout");
+    expect(result.irBodyRouteAudit?.dispositions.find((row) => row.unitId === timer?.unitId)).toMatchObject({
+      terminal: true,
+      terminalOwnerId: timer?.unitId,
+      disposition: "terminal-ir",
+    });
+    expect(terminal(result).find((outcome) => outcome.displayName === "delayed")).toMatchObject({
+      line: 1,
+      column: 1,
+    });
   });
 
   it("preserves typed TypeMap invariants on a failed CompileResult", async () => {
@@ -372,6 +389,12 @@ export function second(x: number): number { return x + 2; }`,
     );
     expect(result.success, JSON.stringify({ outcomes: result.irOutcomes, errors: result.errors }, null, 2)).toBe(false);
     expect(terminal(result)).toEqual([
+      expect.objectContaining({
+        displayName: "setTimeout",
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+      }),
       expect.objectContaining({ displayName: "delay", kind: "invariant", code: "missing-terminal-outcome" }),
     ]);
   });

@@ -21,7 +21,7 @@ export const SINGLE_HOST_ENTRIES = [
 /**
  * #3518 standalone lane — the SAME five terminals compiled with
  * `target: "standalone"` (no JS host imports). #4577 closes the bounded
- * playground population at 37/37 compile-once IR bodies, so this lane now uses
+ * playground population at 38/38 compile-once IR bodies, so this lane now uses
  * strict `"ir-only"` readiness rather than the temporary baseline-only mode.
  * Wider compiler reachability remains a separate R9/R10 requirement.
  */

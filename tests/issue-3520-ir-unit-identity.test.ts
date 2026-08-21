@@ -302,7 +302,19 @@ describe("#3520 structural IR identity", () => {
       entrySource: processed,
       compilerOriginAt: (_sourceFile, offset) => transformed.positionMap.compilerOriginAtOutputOffset(offset),
     });
-    expect(inventory.terminalUnits.some((unit) => unit.displayName === "setTimeout")).toBe(false);
+    const timer = inventory.terminalUnits.find((unit) => unit.displayName === "setTimeout");
+    const expectedTimerId = createDerivedIrUnitId({
+      parentId: inventory.sources[0]!.id,
+      role: "compiler-unit:timer-shim:set-timeout",
+      ordinal: 0,
+    });
+    expect(timer).toMatchObject({
+      id: expectedTimerId,
+      terminal: true,
+      terminalOwnerId: expectedTimerId,
+      kind: "synthetic-support",
+      syntheticRole: "compiler-unit:timer-shim:set-timeout",
+    });
     expect(inventory.terminalUnits.find((unit) => unit.displayName === "main")?.id).toBe(
       rawInventory.terminalUnits.find((unit) => unit.displayName === "main")?.id,
     );
@@ -370,6 +382,23 @@ describe("#3520 structural IR identity", () => {
 
     const result = await compile(text, { fileName: "node-wrapper.ts", trackIrOutcomes: true });
     expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const outcomeByLabel = new Map((result.irOutcomes ?? []).map((outcome) => [outcome.displayName, outcome]));
+    expect(outcomeByLabel.get("User_m")).toMatchObject({
+      kind: "unsupported",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(outcomeByLabel.get("helper")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: true,
+      irBodyEmitted: true,
+    });
+    expect(outcomeByLabel.get("main")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
     expect(
       (result.irOutcomes ?? []).map((outcome) => ({
         key: outcome.key,
@@ -779,14 +808,25 @@ describe("#3520 structural IR identity", () => {
     const result = await compile(text, { fileName: "inventory.ts", trackIrOutcomes: true });
     const untracked = await compile(text, { fileName: "inventory.ts" });
     const outcomes = result.irOutcomes ?? [];
+    const outerTerminal = inventory.terminalUnits.find((unit) => unit.legacyMatchName === "outer")!;
+    const nestedClass = inventory.classes.find((record) => record.displayName === "C")!;
+    const nestedMethod = inventory.terminalUnits.find((unit) => unit.legacyMatchName === "C_m@nested:237:247")!;
 
     expect(inventory.sources).toHaveLength(1);
     expect(inventory.classes).toHaveLength(2);
     expect(inventory.allUnits).toHaveLength(12);
-    expect(inventory.terminalUnits).toHaveLength(6);
+    expect(inventory.terminalUnits).toHaveLength(7);
     expect(inventory.allUnits.length).toBeGreaterThan(inventory.terminalUnits.length);
+    expect(nestedMethod).toMatchObject({
+      kind: "class-instance-method",
+      observedKind: "class-member",
+      lexicalOwnerId: nestedClass.id,
+      containingTerminalOwnerId: outerTerminal.id,
+      terminalOwnerId: nestedMethod.id,
+    });
     expect(inventory.terminalUnits.map((unit) => unit.legacyMatchName)).toEqual([
       "outer",
+      "C_m@nested:237:247",
       "Counter_m",
       "Counter_s",
       "Counter_get_x",
@@ -810,7 +850,7 @@ describe("#3520 structural IR identity", () => {
     ).toBe(true);
   });
 
-  it("requires producer provenance before suppressing a timer support row", () => {
+  it("requires producer provenance before promoting a timer shim terminal", () => {
     const text = `// #1501 timer host-import shim (auto-injected)
 function setTimeout(callback: () => void) { callback(); }
 export function user() { return 1; }
@@ -839,16 +879,27 @@ export function user() { return 1; }
       entrySource: fixture,
       compilerOriginAt: (_sourceFile, offset) => positionMap.compilerOriginAtOutputOffset(offset),
     });
+    const rawTimer = raw.allUnits.find((unit) => unit.displayName === "setTimeout");
     const timer = tagged.allUnits.find((unit) => unit.displayName === "setTimeout");
+    const expectedTimerId = createDerivedIrUnitId({
+      parentId: tagged.sources[0]!.id,
+      role: "compiler-unit:timer-shim:set-timeout",
+      ordinal: 0,
+    });
 
     expect(raw.terminalUnits.map((unit) => unit.legacyMatchName)).toEqual(["setTimeout", "user"]);
-    expect(tagged.terminalUnits.map((unit) => unit.legacyMatchName)).toEqual(["user"]);
+    expect(rawTimer).toMatchObject({
+      terminal: true,
+      kind: "top-level-function",
+    });
+    expect(rawTimer).not.toHaveProperty("syntheticRole");
+    expect(tagged.terminalUnits.map((unit) => unit.legacyMatchName)).toEqual(["setTimeout", "user"]);
     expect(timer).toMatchObject({
-      terminal: false,
+      id: expectedTimerId,
+      terminal: true,
       kind: "synthetic-support",
       syntheticRole: "compiler-unit:timer-shim:set-timeout",
-      terminalOwnerId: null,
-      unownedReason: "no-r0-attempt-root",
+      terminalOwnerId: expectedTimerId,
     });
   });
 
@@ -1055,6 +1106,7 @@ export function user() { return 1; }
     };
 
     await assertProjection("timer-projection.ts", `export function main() { setTimeout(() => {}, 1); return 1; }`, {}, [
+      ["setTimeout", "function", "emitted"],
       ["main", "function", "unsupported"],
     ]);
     await assertProjection(

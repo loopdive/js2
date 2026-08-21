@@ -12,6 +12,7 @@ import {
 import type { IrUnitTypeMap, TypeMap, TypeMapEntry } from "./propagate.js";
 import type { IrRecursiveTypeEvidence } from "./type-evidence.js";
 import type { IrClassMethodDescriptor } from "./nodes.js";
+import { claimPreparedTimerShims } from "./injected-timer-shim.js";
 import {
   boundedPreparedNestedOrdinaryClassBindingName,
   exactPreparedAccessorSyntaxKey,
@@ -96,6 +97,8 @@ export type IrIdentitySelectionOptions = Omit<IrSelectionOptions, "recursiveType
   readonly recursiveTypeEvidence?: IrRecursiveTypeEvidence;
   /** Exact allocator evidence required before a promoted nested accessor may claim its body slot. */
   readonly nestedClassMemberCallableAvailable?: (unitId: IrUnitId) => boolean;
+  /** Checker/AST/use proof for the one compiler-owned setTimeout wrapper slice. */
+  readonly isPreparedInjectedTimerShim?: (declaration: ts.FunctionDeclaration) => boolean;
 };
 
 export interface IrLegacySelectionProjection {
@@ -610,7 +613,6 @@ export function planIrCompilationByIdentity(
     );
   }
   if (!options?.experimentalIR) return { units: new Map(), funcs: new Map() };
-
   const functions = collectFunctions(sourceFile, sourceId, identityContext);
   const functionsByName = new Map<string, IndexedFunction[]>();
   const units = new Map<IrUnitId, IrIdentitySelectionUnit>();
@@ -657,14 +659,15 @@ export function planIrCompilationByIdentity(
       .filter(([, candidates]) => candidates.length === 1 && asyncUnitIds.has(candidates[0]!.unit.unitId))
       .map(([name]) => name),
   );
-  const { recursiveTypeEvidence: _recursiveTypeEvidence, ...runtimeOptions } = options;
+  const { recursiveTypeEvidence: _recursive, isPreparedInjectedTimerShim: _timer, ...runtimeOptions } = options;
   configureIrStructuralSelectorPredicates(sourceFile, runtimeOptions, uniqueClasses, uniqueFunctions, asyncNames);
   const trackFallbacks = options.trackFallbacks === true;
   const reasons = new Map<IrUnitId, IrFallbackReason>();
   const details = new Map<IrUnitId, string>();
   const helperTypes = helperTypeMap(functionsByName, typeMap);
   const individuallyClaimed = new Map<IrUnitId, IrIdentityFunctionClaim>();
-  for (const indexed of functions) {
+  const preparedTimerUnitIds = claimPreparedTimerShims(identityContext, functions, options, individuallyClaimed);
+  for (const indexed of functions.filter(({ unit }) => !preparedTimerUnitIds.has(unit.unitId))) {
     if (!indexed.declaration.name) {
       if (trackFallbacks) reasons.set(indexed.unit.unitId, "unnamed");
       continue;
@@ -985,7 +988,7 @@ export function planIrCompilationByIdentity(
     const graph = buildIdentityCallGraph(functions, functionsByName, uniqueFunctions, localClasses);
     localCallees = graph.callees;
     for (const unitId of [...claimed.keys()]) {
-      if (!graph.hasExternalCall.has(unitId)) continue;
+      if (!graph.hasExternalCall.has(unitId) || preparedTimerUnitIds.has(unitId)) continue;
       claimed.delete(unitId);
       if (trackFallbacks) reasons.set(unitId, "external-call");
     }
