@@ -132,6 +132,18 @@ export interface NumericPropertyAnalysisHost {
    * the local, weaker backstop for hosts that do not supply it.
    */
   readonly excludeNames?: ReadonlySet<string>;
+  /**
+   * (#4121 slice 2) "Does this direct call resolve to a declaration whose
+   * return the binding-aware least fixpoint proved to be a plain `f64`?"
+   *
+   * The prover's own call arm is `numericFunctions`, a NAME-keyed set: one
+   * same-named function-like anywhere in the program that is not numeric
+   * withdraws the name for every declaration sharing it. This predicate is
+   * declaration-resolved and recovers exactly that lost precision. Absent on
+   * the first pass — see `bindingAwareNumericCallEvidence`, which supplies it
+   * only when it can add something.
+   */
+  readonly provenNumericCallReturn?: (call: ts.CallExpression) => boolean;
 }
 
 type FunctionLike = ts.FunctionLikeDeclaration & { body: ts.ConciseBody };
@@ -1014,7 +1026,10 @@ function makeProver(
       const callee = unwrap(value.expression);
       if (ts.isIdentifier(callee)) {
         if (NUMERIC_GLOBAL_CALLS.has(callee.text)) return true;
-        return sets.numericFunctions.has(callee.text);
+        if (sets.numericFunctions.has(callee.text)) return true;
+        // (#4121 slice 2) The declaration-resolved arm. See
+        // {@link NumericPropertyAnalysisHost.provenNumericCallReturn}.
+        return host.provenNumericCallReturn?.(value) === true;
       }
       if (ts.isPropertyAccessExpression(callee)) {
         const recv = unwrap(callee.expression);
@@ -1482,4 +1497,38 @@ export function applyNumericPropertyAnalysis(
     target.usageInference.setNumericLocalOracle(verdicts.isNumericLocal);
     target.numericLocalVerdict = verdicts.isNumericLocal;
   }
+}
+
+/**
+ * (#4121 slice 2) Re-run the local carrier verdict once the declaration-resolved
+ * return carriers are known, and reinstall it.
+ *
+ * The two analyses are STRATIFIED, not mutually recursive:
+ * `inferBindingAwareNumericReturnTypes` reads the local verdict this module
+ * produces, so it cannot run first; its result is therefore new evidence that
+ * only a SECOND pass can consume. Nothing here feeds back into the return map,
+ * so there is no cycle to launder a carrier through — level 1 (locals) grounds
+ * level 2 (returns), and level 2 grounds this level-3 refinement.
+ *
+ * Only the LOCAL verdict is republished. Field and string verdicts keep their
+ * first-pass values: those decide struct shapes and parameter ABIs that other
+ * passes have already read by this point, and this slice's evidence is about
+ * a local's carrier, not a field's.
+ *
+ * `callEvidence === undefined` means the first pass already knew everything the
+ * return map could tell it, so no second pass runs and the output is
+ * byte-identical.
+ */
+export function refineNumericLocalsWithCallReturns(
+  target: NumericPropertyAnalysisTarget,
+  host: NumericPropertyAnalysisHost,
+  sourceFiles: readonly ts.SourceFile[],
+  callEvidence: ((call: ts.CallExpression) => boolean) | undefined,
+): boolean {
+  if (callEvidence === undefined) return false;
+  if (process.env.JS2WASM_NUMERIC_LOCALS === "0" || target.runtimeEvalCallableBoundaryEnabled === true) return false;
+  const refined = analyzeNumericPropertyNames({ ...host, provenNumericCallReturn: callEvidence }, sourceFiles);
+  target.usageInference.setNumericLocalOracle(refined.isNumericLocal);
+  target.numericLocalVerdict = refined.isNumericLocal;
+  return true;
 }

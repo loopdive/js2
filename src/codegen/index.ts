@@ -428,6 +428,7 @@ import {
   inferImplicitAnyParamType,
   inferNumericReturnTypes,
   inferBindingAwareNumericReturnTypes,
+  bindingAwareNumericCallEvidence,
   collectEmptyObjectWidening,
   collectObjectLiteralAssignedPropertyNames,
   collectGrowableObjectLiterals,
@@ -524,7 +525,12 @@ import {
   resolveSameShapeFieldNameCollisions,
 } from "./struct-field-exports.js"; // (#3272) extracted verbatim
 import { analyzeBooleanPropertyNames, recoverBooleanStructFieldBrands } from "./struct-field-boolean-brand.js";
-import { analyzeNumericPropertyNames, applyNumericPropertyAnalysis } from "./numeric-property-analysis.js"; // (#3683 S4a)
+import {
+  analyzeNumericPropertyNames,
+  applyNumericPropertyAnalysis,
+  refineNumericLocalsWithCallReturns,
+} from "./numeric-property-analysis.js"; // (#3683 S4a)
+import type { NumericPropertyAnalysisHost } from "./numeric-property-analysis.js";
 import { collectUserMethodNames } from "./user-method-names.js"; // (#3673)
 import {
   registerWasiImports,
@@ -4320,6 +4326,33 @@ function resolveAndRecordShapeBranding(ctx: CodegenContext): void {
   ctx.programAbiSession?.recordShapeBranding(affected);
 }
 
+/**
+ * (#4121 slice 2) Stratified level 3 of the numeric-carrier analysis: feed the
+ * declaration-resolved return carriers back into the local slot fixpoint.
+ *
+ * Levels 1 and 2 cannot be merged — `inferBindingAwareNumericReturnTypes` READS
+ * the level-1 local verdict, so its own result is evidence only a later pass
+ * can consume. `bindingAwareNumericCallEvidence` answers `undefined` whenever
+ * that evidence is already in the name-keyed `numericFunctions` set, so a
+ * program the refinement cannot change never pays for a second pass and emits
+ * byte-identical output.
+ *
+ * The widening oracle is reinstalled on a real refinement because its memo, and
+ * the usage-inference caches behind it, were built against the superseded
+ * verdict. Both happen before any function body compiles.
+ */
+function applyCallReturnRefinement(
+  ctx: CodegenContext,
+  host: NumericPropertyAnalysisHost | undefined,
+  sourceFiles: readonly ts.SourceFile[],
+  priorNumericFunctions: ReadonlySet<string> | undefined,
+): void {
+  if (host === undefined) return;
+  const evidence = bindingAwareNumericCallEvidence(ctx, priorNumericFunctions);
+  if (!refineNumericLocalsWithCallReturns(ctx, host, sourceFiles, evidence)) return;
+  ctx.usageInference.setWidenedCarrierOracle(widenedCarrierOracleFor(ctx));
+}
+
 export interface GeneratedCodegenModule extends CodegenResult {
   irPostClaimErrors?: { kind: string; func: string; message: string }[];
   irCompiledFuncs?: readonly string[];
@@ -4414,16 +4447,18 @@ export function generateModule(
   // #2847's boolean verdict is recomputed here rather than read from
   // `ctx.booleanPropertyNames` (assigned much later) so the exclusion is exact
   // without reordering an established pass.
+  // (#4121 slice 2) Kept so the stratified second pass below can re-run the
+  // SAME analysis with one extra fact rather than a re-derived approximation.
+  let numericAnalysisHost: NumericPropertyAnalysisHost | undefined;
+  let priorNumericFunctions: ReadonlySet<string> | undefined;
   if (ctx.standalone) {
-    applyNumericPropertyAnalysis(
-      ctx,
-      {
-        oracle: ctx.oracle,
-        fnctorReceivers: new Set(ctx.fnctorEscapeGate.receiverStruct.keys()),
-        excludeNames: analyzeBooleanPropertyNames(ctx, [ast.sourceFile]),
-      },
-      [ast.sourceFile],
-    );
+    numericAnalysisHost = {
+      oracle: ctx.oracle,
+      fnctorReceivers: new Set(ctx.fnctorEscapeGate.receiverStruct.keys()),
+      excludeNames: analyzeBooleanPropertyNames(ctx, [ast.sourceFile]),
+    };
+    applyNumericPropertyAnalysis(ctx, numericAnalysisHost, [ast.sourceFile]);
+    priorNumericFunctions = ctx.numericFunctionNames;
   }
   // (#4121) Admission keys on the representation codegen is about to emit. Must
   // follow `applyNumericPropertyAnalysis` (the widening predicate consults its
@@ -4751,6 +4786,7 @@ export function generateModule(
     // the function's signature instead of being patched after the fact.
     ctx.numericReturnTypes = inferNumericReturnTypes(ctx, ast.sourceFile);
     ctx.bindingAwareNumericReturnTypes = inferBindingAwareNumericReturnTypes(ctx, [ast.sourceFile]);
+    applyCallReturnRefinement(ctx, numericAnalysisHost, [ast.sourceFile], priorNumericFunctions);
     ctx.booleanPropertyNames = analyzeBooleanPropertyNames(ctx, [ast.sourceFile]);
 
     // #1677 — final reconcile of native-string helper indices before any USER
@@ -8086,25 +8122,26 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // imported parser). Run the same whole-program analysis over the complete
     // linked source population and consume only its symbol-scoped local verdict;
     // field-shape promotion remains owned by the existing single-source path.
+    let linkedNumericHost: NumericPropertyAnalysisHost | undefined;
+    let linkedPriorNumericFunctions: ReadonlySet<string> | undefined;
     if (ctx.standalone && process.env.JS2WASM_NUMERIC_LOCALS !== "0") {
+      linkedNumericHost = { oracle: ctx.oracle, excludeNames: ctx.booleanPropertyNames };
       const localVerdicts = profilePhase("numeric-local-analysis", () =>
-        analyzeNumericPropertyNames(
-          {
-            oracle: ctx.oracle,
-            excludeNames: ctx.booleanPropertyNames,
-          },
-          multiAst.sourceFiles,
-        ),
+        analyzeNumericPropertyNames(linkedNumericHost!, multiAst.sourceFiles),
       );
       ctx.usageInference.setNumericLocalOracle(localVerdicts.isNumericLocal);
       ctx.numericLocalVerdict = localVerdicts.isNumericLocal;
       ctx.stringLocalVerdict = localVerdicts.isStringLocal;
+      linkedPriorNumericFunctions = localVerdicts.numericFunctions;
     }
     // (#4121) Same install as the single-source lane — after the numeric-local
     // verdict the widening predicate reads, before any body compiles.
     ctx.usageInference.setWidenedCarrierOracle(widenedCarrierOracleFor(ctx));
     ctx.bindingAwareNumericReturnTypes = profilePhase("binding-aware-numeric-return-inference", () =>
       inferBindingAwareNumericReturnTypes(ctx, multiAst.sourceFiles),
+    );
+    profilePhase("numeric-local-call-return-refinement", () =>
+      applyCallReturnRefinement(ctx, linkedNumericHost, multiAst.sourceFiles, linkedPriorNumericFunctions),
     );
     // #1677 — final reconcile before any user function is registered.
     reconcileNativeStrFinalizeShift(ctx);
