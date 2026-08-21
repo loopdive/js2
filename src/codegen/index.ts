@@ -255,7 +255,7 @@ import { fillFusedToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-ga
 import { fillTypedMemberSetF64Dispatch } from "./member-set-f64.js"; // (#4157 A) write-side f64 twin
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
 import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
-import { fillAccessorDrivers } from "./accessor-driver.js";
+import { CALL_ACCESSOR_GET, fillAccessorDrivers } from "./accessor-driver.js";
 import { fillDisposableStackDisposeDriver } from "./disposable-runtime.js";
 import {
   collectGlobalObjectPropertyNames,
@@ -7243,6 +7243,20 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
           mode: "closure-eqref-multi";
           fieldIdx: number;
           candidates: { closureTypeIdx: number; closureInfo: ClosureInfo }[];
+        }
+      | {
+          // (ES5 standalone lane) A callable stored in an `externref`/`eqref`
+          // method field whose closure type was never tracked for this struct
+          // (the fnctor `this.toString = function(){…}` shape). Dispatched
+          // DYNAMICALLY through `__call_accessor_get(recv, callable)` rather than
+          // a baked `call_ref`, so it needs no compile-time closure identity.
+          structName: string;
+          typeIdx: number;
+          mode: "callable-dynamic";
+          fieldIdx: number;
+          fieldKind: "externref" | "eqref";
+          accessorGetIdx: number;
+          typeofFunctionIdx: number;
         };
 
     const entries: DispatchEntry[] = [];
@@ -7319,6 +7333,44 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
               pushedClosure = true;
               break;
             }
+          }
+        }
+        // (ES5 standalone lane) The field holds a callable, but no closure type
+        // was TRACKED for this struct — so none of the three arms above can bake
+        // a static `call_ref`. Dispatch dynamically instead, through the same
+        // `__call_accessor_get(recv, callable)` driver the open-`$Object`
+        // property runtime uses to run a getter with a bound `this`.
+        //
+        // This is the plain-function-constructor ("fnctor") case:
+        // `function F(){ this.toString = function(){…} }`. Its instance is a
+        // NOMINAL struct whose `toString` field is a plain `externref`, but the
+        // write goes through the fnctor constructor-field path, not the typed
+        // `obj.f = fn` path that populates `ctx.valueOfClosureTypes` — so
+        // `trackedTypes` is empty and #1989's `closure-extern` arm never fires.
+        // The struct then produced NO dispatch entry at all, `__call_toString`
+        // answered `ref.null.extern`, and `__class_to_primitive`'s string-hint
+        // tail rendered the canonical "[object Object]". Measured standalone:
+        // `"" + new F()`, `String(new F())` and every borrowed
+        // `String.prototype.<m>.call(new F(), …)` all answered "[object Object]"
+        // for a receiver whose own `toString` returns "OWN".
+        //
+        // `__typeof_function` gates the call so a non-callable field (a data
+        // property literally named `toString`) still reports "absent" (null)
+        // rather than invoking a garbage funcref — same answer as today.
+        if (!pushedClosure && (field.type.kind === "externref" || field.type.kind === "eqref")) {
+          const accessorGetIdx = ctx.funcMap.get(CALL_ACCESSOR_GET);
+          const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+          if (accessorGetIdx !== undefined && typeofFunctionIdx !== undefined) {
+            entries.push({
+              structName,
+              typeIdx,
+              mode: "callable-dynamic",
+              fieldIdx,
+              fieldKind: field.type.kind,
+              accessorGetIdx,
+              typeofFunctionIdx,
+            });
+            pushedClosure = true;
           }
         }
       }
@@ -7428,6 +7480,40 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
         } else {
           boxResult(ci.returnType, thenInstrs);
         }
+      } else if (entry.mode === "callable-dynamic") {
+        // (ES5 standalone lane) Untracked callable in a method field: read it,
+        // confirm it is callable, and invoke it with `this` bound to the
+        // receiver via the shared accessor-get driver. `boxResult` is not needed
+        // — the driver already answers a boxed `externref`.
+        //
+        // A field never assigned holds `ref.null.extern` (or the `$undefined`
+        // singleton); `__typeof_function` answers 0 for both, so the arm reports
+        // "no such method" exactly as an absent entry did.
+        const callableLocal = 6; // externref scratch (the stored method value)
+        const loadField: Instr[] = [
+          { op: "local.get", index: anyLocal },
+          { op: "ref.cast", typeIdx: entry.typeIdx },
+          { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.fieldIdx },
+        ];
+        if (entry.fieldKind === "eqref") loadField.push({ op: "extern.convert_any" });
+        thenInstrs.push(
+          ...loadField,
+          { op: "local.set", index: callableLocal },
+          { op: "local.get", index: callableLocal },
+          { op: "call", funcIdx: entry.typeofFunctionIdx },
+          {
+            op: "if",
+            blockType: { kind: "val" as const, type: { kind: "externref" as const } },
+            then: [
+              // receiver (externref) — `this` for the call
+              { op: "local.get", index: anyLocal },
+              { op: "extern.convert_any" },
+              { op: "local.get", index: callableLocal },
+              { op: "call", funcIdx: entry.accessorGetIdx },
+            ],
+            else: [{ op: "ref.null.extern" }],
+          },
+        );
       } else if (entry.mode === "closure-eqref-multi") {
         // (#2891) GUARDED dispatch over candidate closure types for an eqref
         // method field. Read the field once into the eqref scratch, then
@@ -7565,6 +7651,11 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
     // `ref.test` on the funcref (field 0), not by the struct type alone.
     locals.push({ name: "__tp_funcref", type: { kind: "funcref" } });
     const eqrefFuncLocal = 5;
+    // (ES5 standalone lane) externref scratch (index 6) for the
+    // `callable-dynamic` arm — the untracked method value read out of the
+    // struct field, held across the `__typeof_function` guard and the
+    // `__call_accessor_get` invocation.
+    locals.push({ name: "__tp_callable", type: { kind: "externref" } });
     const currentThisGlobalIdx2 = ensureCurrentThisGlobal(ctx);
 
     const body: Instr[] = [

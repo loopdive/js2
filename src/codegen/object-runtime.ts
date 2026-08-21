@@ -4557,6 +4557,31 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             },
           ] satisfies Instr[])
         : []),
+      // (ES5 standalone lane) …and a `$BoxedBoolean`. This arm was MISSING while
+      // its number and string siblings were present, so `true`/`false` was the
+      // one primitive that fell through to the non-`$Object` tail and got asked
+      // `__class_to_primitive`. That answered correctly ONLY while the module
+      // emitted no `__call_toString` dispatcher at all (absent dispatcher ⇒
+      // "return the input unchanged"); the moment ANY struct in the module
+      // contributed a dispatcher arm, the boxed boolean matched none of them and
+      // `__class_to_primitive`'s string-hint tail rendered its
+      // "toString absent ⇒ inherited Object.prototype.toString" answer,
+      // "[object Object]". Measured: `String.prototype.trim.call(true)` and
+      // `new Boolean().indexOf(…)` both flipped the moment an unrelated object
+      // literal in the same file gained a dispatcher arm — an action-at-a-
+      // distance bug that the early-out removes at the source. §7.1.1 step 1:
+      // ToPrimitive of a value that is ALREADY primitive returns it unchanged.
+      ...(ctx.nativeBoxBooleanTypeIdx >= 0
+        ? ([
+            { op: "local.get", index: L_ANY },
+            { op: "ref.test", typeIdx: ctx.nativeBoxBooleanTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "local.get", index: 0 }, { op: "return" }],
+            },
+          ] satisfies Instr[])
+        : []),
       ...(ctx.anyStrTypeIdx >= 0
         ? ([
             { op: "local.get", index: L_ANY },
