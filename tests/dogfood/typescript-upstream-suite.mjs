@@ -38,7 +38,8 @@ function exactBase64Projection(utilitiesSource) {
 function transformTypescriptTest(source, projectionSpecifier) {
   return source.replace(
     /^import\s+\*\s+as\s+ts\s+from\s+["']\.\.\/_namespaces\/ts\.js["'];?\s*$/m,
-    `import { base64decode, convertToBase64 } from ${JSON.stringify(projectionSpecifier)};\nconst ts = { base64decode, convertToBase64 };`,
+    `import { base64decode, base64encode, convertToBase64 } from ${JSON.stringify(projectionSpecifier)};\n` +
+      `const ts = { base64decode, convertToBase64, sys: { base64encode: (input: string) => base64encode(undefined, input) } };`,
   );
 }
 
@@ -58,7 +59,12 @@ export async function runHarness({ quiet = false } = {}) {
     const original = readFileSync(filePath, "utf-8");
     const transformed = transformTypescriptTest(original, moduleSpecifier(dirname(generatedPath), projectionPath));
     const source = `${UPSTREAM_TEST_SHIM}\nconst assert = __qunitAssert;\n${transformed}\n${UPSTREAM_TEST_EXPORTS}`;
-    const result = await compileAndRunUpstreamModule({ generatedPath, source, timeoutMs: 240_000 });
+    const result = await compileAndRunUpstreamModule({
+      generatedPath,
+      source,
+      timeoutMs: 240_000,
+      workerEnv: { DOGFOOD_PLATFORM: "node" },
+    });
     runs.push({ file, result });
     log(
       `[dogfood] ${file}: ${result.native.statuses.filter(Boolean).length}/${result.native.count} native; ` +

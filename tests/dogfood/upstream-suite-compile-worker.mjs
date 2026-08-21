@@ -46,11 +46,12 @@ async function main() {
   }
   let result;
   try {
+    const platform = process.env.DOGFOOD_PLATFORM ?? "web";
     const projectOptions = {
       allowJs: true,
       skipSemanticDiagnostics: true,
       target: "gc",
-      platform: "web",
+      platform,
       experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
       // The upstream compatibility lane only needs the binary. WAT is a
       // diagnostic artifact and can become quadratic for large generated
@@ -70,7 +71,7 @@ async function main() {
             skipSemanticDiagnostics: true,
             experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
             sourceMap: true,
-            platform: "web",
+            platform,
             deferTopLevelInit: true,
           })
         : await compileProject(generatedPath, projectOptions);

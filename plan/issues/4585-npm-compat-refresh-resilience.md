@@ -27,7 +27,12 @@ files:
   - tests/dogfood/hono-upstream-suite.mjs
   - tests/dogfood/hono-upstream-suite-pin.json
   - tests/dogfood/hono-upstream-suite.test.ts
+  - tests/dogfood/jest-upstream-suite.mjs
+  - tests/dogfood/jest-upstream-suite-pin.json
+  - tests/dogfood/typescript-upstream-suite.mjs
+  - tests/dogfood/typescript-upstream-suite-pin.json
   - tests/dogfood/upstream-suite-runner.mjs
+  - tests/dogfood/upstream-suite-compile-worker.mjs
   - tests/dogfood/upstream-suite-runner.test.ts
   - tests/issue-3781-npm-perf-lanes.test.ts
   - tests/issue-4585-npm-compat-refresh-resilience.test.ts
@@ -154,4 +159,21 @@ callbacks. The native oracle passes 296; 15/16 Wasm modules validate and
 unavailable registrations explicitly. The one native failure, one invalid Wasm
 module, and six module-initialization/runtime failures remain visible as test
 or compiler/runtime defects rather than being reclassified as unavailable
+infrastructure.
+
+Jest's adapter now resolves extensionless default, namespace, and directory
+imports against the immutable source checkout, normalizes the CJS-shaped
+default exports used by Node's native loader, and can compile a selected suite
+with the Node platform surface instead of the browser surface. The shared shim
+exposes the small `jest.fn`/`jest.spyOn` facade needed by those original tests.
+The selected Jest slice is now seven files and 79 callbacks: all 79 native
+callbacks pass, all seven Wasm modules validate, and 23 callbacks pass in Wasm;
+3,209 registrations remain explicitly unavailable infrastructure.
+
+The TypeScript adapter now exercises both original base64 unit files through
+the exact release-source projection, supplies the `ts.sys.base64encode` seam,
+and compiles the Node-oriented test with the Node platform surface so its
+upstream `Buffer` guard behaves as it does under Node. The slice registers six
+callbacks; all six pass natively, both Wasm modules validate, and one callback
+passes in Wasm. Its remaining 1,755 registrations stay explicit unavailable
 infrastructure.

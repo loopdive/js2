@@ -272,18 +272,19 @@ describe("small npm package upstream suites", () => {
   });
 
   const jestHeavy = process.env.DOGFOOD_JEST_UPSTREAM_SUITE === "1" ? it : it.skip;
-  jestHeavy("runs Jest's original get-type units", { timeout: 600_000 }, async () => {
+  jestHeavy("runs Jest's selected original get-type and utility units", { timeout: 600_000 }, async () => {
     const report = await run("jest");
     expect(report.extraction).toMatchObject({
       filesSeen: 241,
-      filesSelected: 2,
-      filesDeferred: 239,
-      testsRegistered: 32,
-      nativePassed: 32,
+      filesSelected: 7,
+      filesDeferred: 234,
+      testsRegistered: 79,
+      nativePassed: 79,
       nativeFailed: 0,
     });
-    expect(report.compile.modules).toBe(2);
-    expect(report.results.scored).toBe(32);
+    expect(report.extraction.unavailableInfra).toBe(3209);
+    expect(report.compile).toMatchObject({ modules: 7, succeeded: 7, validated: 7 });
+    expect(report.results).toMatchObject({ scored: 79, passed: 23 });
   });
 
   const tailwindcssHeavy = process.env.DOGFOOD_TAILWINDCSS_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -302,17 +303,18 @@ describe("small npm package upstream suites", () => {
   });
 
   const typescriptHeavy = process.env.DOGFOOD_TYPESCRIPT_UPSTREAM_SUITE === "1" ? it : it.skip;
-  typescriptHeavy("runs TypeScript's original base64 unit", { timeout: 600_000 }, async () => {
+  typescriptHeavy("runs TypeScript's original base64 units", { timeout: 600_000 }, async () => {
     const report = await run("typescript");
     expect(report.extraction).toMatchObject({
       filesSeen: 256,
-      filesSelected: 1,
-      filesDeferred: 255,
-      testsRegistered: 1,
-      nativePassed: 1,
+      filesSelected: 2,
+      filesDeferred: 254,
+      testsRegistered: 6,
+      nativePassed: 6,
       nativeFailed: 0,
     });
-    expect(report.compile.modules).toBe(1);
-    expect(report.results.scored).toBe(1);
+    expect(report.extraction.unavailableInfra).toBe(1755);
+    expect(report.compile).toMatchObject({ modules: 2, succeeded: 2, validated: 2 });
+    expect(report.results).toMatchObject({ scored: 6, passed: 1 });
   });
 });
