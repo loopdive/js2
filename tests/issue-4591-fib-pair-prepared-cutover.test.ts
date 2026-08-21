@@ -496,6 +496,10 @@ describe("#4591 exact Fibonacci pair Prepared cutover", () => {
       source: replaceOnce(FIB_SOURCE, "  host.appendChild(wrap);", "  void bench_fib;\n  host.appendChild(wrap);"),
     },
     {
+      label: "recursive member function-value reference",
+      source: replaceOnce(FIB_SOURCE, "  host.appendChild(wrap);", "  void fib;\n  host.appendChild(wrap);"),
+    },
+    {
       label: "outer function reassignment",
       source: replaceOnce(
         FIB_SOURCE,
