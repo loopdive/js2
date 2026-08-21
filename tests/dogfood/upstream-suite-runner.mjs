@@ -105,12 +105,15 @@ function __upstreamExpect(actual) {
     toHaveProperty(expected) { const n = ++__upstreamAssertion; if (actual == null || !(expected in Object(actual))) __upstreamFail("assertion " + n + " missing property " + String(expected)); },
     toMatchObject(expected) { const n = ++__upstreamAssertion; if (!__upstreamSubset(actual, expected)) __upstreamFail("assertion " + n + " object subset mismatch"); },
     toMatch(expected) { const n = ++__upstreamAssertion; const value = String(actual); if (expected instanceof RegExp ? !expected.test(value) : !value.includes(String(expected))) __upstreamFail("assertion " + n + " pattern mismatch"); },
+    toBeCalled() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length === 0) __upstreamFail("assertion " + n + " expected spy to be called"); },
+    toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length === 0) __upstreamFail("assertion " + n + " expected spy to be called"); },
     toBeCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = actual && actual.mock && actual.mock.calls; let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
     toHaveBeenCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = actual && actual.mock && actual.mock.calls; let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
     toHaveBeenCalledTimes(expected) { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length !== expected) __upstreamFail("assertion " + n + " spy call count mismatch"); },
     toHaveBeenCalledOnce() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length !== 1) __upstreamFail("assertion " + n + " spy call count mismatch"); },
     toBeCalledOnce() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length !== 1) __upstreamFail("assertion " + n + " spy call count mismatch"); },
     toBeInstanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected !== "function" || !(actual instanceof expected)) __upstreamFail("assertion " + n + " instance mismatch"); },
+    instanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected !== "function" || !(actual instanceof expected)) __upstreamFail("assertion " + n + " instance mismatch"); },
     toMatchSnapshot() {
       if (typeof __upstreamSnapshotMatcher !== "function") {
         __upstreamFail("snapshot assertion requires a package-specific snapshot adapter");
@@ -129,6 +132,8 @@ function __upstreamExpect(actual) {
     toBeNull() { const n = ++__upstreamAssertion; if (actual === null) __upstreamFail("assertion " + n + " unexpectedly null"); },
     toBeTruthy() { const n = ++__upstreamAssertion; if (actual) __upstreamFail("assertion " + n + " unexpectedly truthy"); },
     toBeFalsy() { const n = ++__upstreamAssertion; if (!actual) __upstreamFail("assertion " + n + " unexpectedly falsey"); },
+    toBeInstanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected === "function" && actual instanceof expected) __upstreamFail("assertion " + n + " unexpected instance"); },
+    instanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected === "function" && actual instanceof expected) __upstreamFail("assertion " + n + " unexpected instance"); },
     toBeCalled() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
     toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
     toHaveBeenCalledOnce() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (calls && calls.length === 1) __upstreamFail("assertion " + n + " unexpected spy call"); },
