@@ -627,3 +627,19 @@ constructors when a suite explicitly selects the Node platform. The expanded
 upstream callbacks remain outside the denominator. The unresolved TextEncoder
 and crypto behavior is reported as Wasm compatibility failure, not relabeled as
 unavailable infrastructure. Deferred inventory is now 2,044 registrations.
+
+## 2026-08-21 Vitest global-stub infrastructure checkpoint
+
+The shared upstream shim now implements Vitest's generic `vi.stubGlobal` and
+`vi.unstubAllGlobals` contract. Each stub records whether the global was an
+own property and restores or deletes it in reverse order, so upstream tests can
+temporarily install browser/platform globals without leaking state into later
+callbacks. The runner regression test exercises the complete install/restore
+cycle in both Node and Wasm.
+
+Hono's unchanged `src/helper/testing/index.test.ts` is now admitted. The
+expanded 19-file selection registers **316/316 native callbacks** (up from
+311/311), compiles 19 modules (18 validate), and records **90/316 Wasm passes**.
+The five new callbacks still expose existing Hono route/object compiler
+failures; only the former `vi.stubGlobal is not a function` harness failure was
+removed. Deferred inventory is now 2,039 registrations.
