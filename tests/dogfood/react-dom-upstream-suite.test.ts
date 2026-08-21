@@ -9,7 +9,11 @@ import { loadReactDomUpstreamSuitePin, setupReactDomImplementation } from "./set
 // @ts-expect-error — .mjs dogfood setup has no declaration file
 import { loadReactUpstreamSuitePin } from "./setup-react-upstream-suite.mjs";
 // @ts-expect-error — .mjs dogfood harness has no declaration file
-import { isExpectedLateJsdomHostError, partitionReactDomTestsForBuild } from "./react-dom-upstream-suite.mjs";
+import {
+  isExpectedLateJsdomHostError,
+  partitionProjectTests,
+  partitionReactDomTestsForBuild,
+} from "./react-dom-upstream-suite.mjs";
 // @ts-expect-error — .mjs dogfood extractor has no declaration file
 import { extractReactUpstreamTests } from "./react-upstream-extract.mjs";
 
@@ -102,6 +106,24 @@ describe("react-dom upstream suite", () => {
     expect(implementation.moduleNames.fizzServer).toBe("package/cjs/react-dom-server.browser.development.js");
   });
 
+  it("partitions project entries without dropping tests or mixing files", () => {
+    const make = (file: string, index: number, size: number) => ({
+      file,
+      id: `${file}-${index}`,
+      prelude: "p".repeat(size),
+      body: "",
+    });
+    const input = [make("a.js", 0, 7), make("a.js", 1, 7), make("b.js", 0, 7)];
+    const batches = partitionProjectTests(input, 15);
+
+    expect(batches.map(({ file, tests }) => [file, tests.map(({ id }) => id)])).toEqual([
+      ["a.js", ["a.js-0"]],
+      ["a.js", ["a.js-1"]],
+      ["b.js", ["b.js-0"]],
+    ]);
+    expect(batches.flatMap(({ tests }) => tests).map(({ id }) => id)).toEqual(input.map(({ id }) => id));
+  });
+
   it("keeps every non-skipped ReactDOM test reachable in conservative mode", () => {
     const pin = loadReactDomUpstreamSuitePin();
     const extracted = extractReactUpstreamTests({
@@ -152,6 +174,12 @@ describe("react-dom upstream suite", () => {
     const report = JSON.parse(stdout);
 
     expect(report.upstreamSuite.commit).toBe("eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401");
+    // The client corpus is intentionally compiled as multiple project entries;
+    // a single 1,261-test entry can hit the worker deadline before any test
+    // executes. Every batch remains in the report and contributes its own
+    // validation/result rows.
+    expect(report.compile.batches.length).toBeGreaterThan(1);
+    expect(report.summary.implementationInvalid).toBe(false);
 
     // Every upstream test is either scored or rejected with a recorded reason,
     // never dropped.
