@@ -1,8 +1,10 @@
 {
   "id": "3520",
-  "assignee": "ttraenkler/codex-r1",
+  "assignee": "ttraenkler/fable-lead",
+  "requested_by": "ttraenkler/fable-lead",
   "status": "in-progress",
   "branch": "symphony/3520-r1-identity-abi",
-  "claimed_at": "2026-07-21T20:21:29Z",
-  "updated_at": "2026-07-21T20:21:29Z"
+  "claimed_at": "2026-08-21T21:31:29Z",
+  "updated_at": "2026-08-21T21:31:29Z",
+  "write_id": "21029-q0cj2zdh"
 }
