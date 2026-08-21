@@ -291,9 +291,97 @@ function emitStaticMemberNotAConstructorThrow(
  *    construct signatures** that would have made a static guard fire;
  *  - it is NOT a known compiled class and NOT a registered extern class.
  */
+/**
+ * (#3025) Syntactic fallback for `new f(...)` written INSIDE a `with` body.
+ *
+ * TypeScript refuses to resolve bare identifiers under a `with` (it cannot model
+ * the Object Environment Record), so `getSymbolAtLocation` answers `undefined`
+ * even for a `var` declared in the very same block:
+ *
+ *     with (myObj) { var f = function () { … }; var obj = new f(); }
+ *
+ * With no declaration, `resolvesToConstructableFunctionValue` declined, the
+ * native-construct driver was never reserved, and the whole `S12.10_A1.8_T*` /
+ * `S12.10_A3.8_T*` family died at the `new` site. Recover the declaration by
+ * scanning the enclosing function (or source file) for `var <name> = function
+ * (…) {…}` — the exact shape those tests use, and the only one this fallback
+ * claims. Anything else (a parameter, a re-assignment, a non-function
+ * initializer) yields `undefined` and the ordinary dispatch continues.
+ */
+function withBodyVarFunctionInitializer(callee: ts.Identifier): ts.FunctionExpression | undefined {
+  let insideWith = false;
+  for (let cur: ts.Node | undefined = callee; cur !== undefined; cur = cur.parent) {
+    const parent: ts.Node | undefined = cur.parent;
+    if (parent !== undefined && ts.isWithStatement(parent) && parent.statement === cur) {
+      insideWith = true;
+      break;
+    }
+  }
+  if (!insideWith) return undefined;
+
+  // Nearest enclosing function body (or the source file for top-level `with`).
+  let scope: ts.Node | undefined = callee;
+  while (
+    scope !== undefined &&
+    !ts.isSourceFile(scope) &&
+    !ts.isFunctionDeclaration(scope) &&
+    !ts.isFunctionExpression(scope) &&
+    !ts.isArrowFunction(scope) &&
+    !ts.isMethodDeclaration(scope) &&
+    !ts.isConstructorDeclaration(scope)
+  ) {
+    scope = scope.parent;
+  }
+  if (scope === undefined) return undefined;
+
+  let found: ts.FunctionExpression | undefined;
+  let rebound = false;
+  const visit = (node: ts.Node): void => {
+    if (rebound) return;
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === callee.text &&
+      node.initializer !== undefined
+    ) {
+      let init: ts.Expression = node.initializer;
+      while (ts.isParenthesizedExpression(init)) init = init.expression;
+      if (
+        ts.isFunctionExpression(init) &&
+        init.asteriskToken === undefined &&
+        !init.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)
+      ) {
+        // A SECOND function-valued declaration of the same name is still one
+        // shape; a differently-shaped rebind is not claimable.
+        found = init;
+      } else {
+        rebound = true;
+        return;
+      }
+    }
+    // A later `f = <something else>` makes the binding's value unknowable here.
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === callee.text
+    ) {
+      rebound = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(scope, visit);
+  return rebound ? undefined : found;
+}
+
 function resolvesToConstructableFunctionValue(ctx: CodegenContext, calleeExpr: ts.Expression): boolean {
   if (!ts.isIdentifier(calleeExpr)) return false;
   if (ctx.classSet.has(calleeExpr.text) || ctx.externClasses.has(calleeExpr.text)) return false;
+  // (#3025) `with`-body callee the checker cannot resolve — see above.
+  if (ctx.oracle.isUnresolvableIdentifier(calleeExpr)) {
+    return withBodyVarFunctionInitializer(calleeExpr) !== undefined;
+  }
   // An arrow / bound / prototype-method value is non-constructable — that is the
   // throwing path, handled by resolvesToNonConstructableValue. Do not claim it.
   if (resolvesToNonConstructableValue(ctx, calleeExpr)) return false;

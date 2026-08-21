@@ -19,6 +19,7 @@ import {
   promoteAccessorCapturesToGlobals,
 } from "../closures.js";
 import { addFunctionOwnLocals } from "../binding-info.js"; // (#2103) memoized own-locals oracle
+import { functionReturnsThroughWithScope } from "../declarations.js";
 import {
   collectNestedCaptureReferences,
   functionDeclarationObservesBindingValue,
@@ -660,6 +661,11 @@ function compileNestedFunctionDeclarationInScope(
     returnType = { kind: "externref" };
   } else if (foreignNoSignature) {
     // Foreign eval-body function: dynamic `any` return (externref).
+    returnType = { kind: "externref" };
+  } else if (functionReturnsThroughWithScope(ctx, stmt)) {
+    // The checker resolved this function's returned NAME against the binding the
+    // `with` receiver shadows, so its inferred return type describes the wrong
+    // value (see `functionReturnsThroughWithScope`). Carry it as `any`.
     returnType = { kind: "externref" };
   } else if (sig) {
     let retType = ctx.checker.getReturnTypeOfSignature(sig);

@@ -49,6 +49,15 @@ loc-budget-allow:
   # Program ABI invariant instead of adding a postclaim exception.
   - src/ir/module-bindings.ts
   - src/ir/integration.ts
+  # #4206 with-routed-return slice (2026-08-21): the analysis
+  # (`functionReturnsThroughWithScope`) lives in src/codegen/declarations.ts
+  # beside the sibling `functionReturnsDynamicObjectCarrier` it mirrors. This
+  # file gets ONLY the wiring: one import plus a two-line result-type arm in the
+  # nested-function registration path, which is the third and last site that
+  # picks a wasm result type for a function declaration. Splitting three lines
+  # of dispatch into a new module would hide the arm from the two identical
+  # arms it must stay in step with.
+  - src/codegen/statements/nested-declarations.ts
 func-budget-allow:
   # Four-line statement-dispatch hook; all selection logic is in the dedicated
   # isPhase1WithStatement helper and ir/with-environment subsystem.
@@ -57,6 +66,11 @@ func-budget-allow:
   # analysis and policy remain outside these orchestration functions.
   - src/codegen/index.ts::planIrOverlay
   - src/ir/integration.ts::compileIrPathFunctions
+  # #4206 with-routed-return slice (2026-08-21): a two-line arm added to the
+  # existing result-type `if/else` chain, next to the generator and
+  # foreign-eval arms it sits between. The analysis is elsewhere
+  # (declarations.ts::functionReturnsThroughWithScope); this is the dispatch.
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
 ---
 
 # #4206 — the `with` statement residue, correctly sized
@@ -736,3 +750,89 @@ Regression coverage is in
 `tests/issue-4206-module-widening-ir-parity.test.ts`: one case proves the typed
 slot stays f64 and the reader emits through IR; the other proves an inferred
 externref slot cleanly preclaim-demotes and still round-trips its runtime value.
+## 2026-08-21 — two more `with` clusters closed, one re-diagnosed
+
+Measured on `claude/pull-from-upstream-zgdo0m` @ c0297f920c, `--target
+standalone`, single-test in-process runner, quickjs eval provider built
+(adapter key `1429ec7ecf2163fd` — without it the whole `S12.10_A1.8_T*` family
+reports a provider-missing error rather than its real result).
+
+### Cluster A — `with`-routed RETURN value was coerced to the shadowed binding's type (5 rows)
+
+`language/identifier-resolution/S10.2.2_A1_T5..T9` — all five `fail` →
+all five `pass`.
+
+```js
+var x = 0;
+var myObj = { x: "obj" };
+function f1() { with (myObj) { return x; } }   // spec: "obj"
+```
+
+**The prior diagnosis was wrong in a way worth recording.** It read the failure
+as `proveStructTypedWithTarget` declining an outer-scope receiver. Instrumented,
+that proof *accepts* (`ACCEPT __anon_1`) and Tier-1 routes the read correctly —
+proved by re-running with `var x = "outer"`, which returns `"obj"`. The bug is
+one level up: the TS checker does not model `with`, so it resolves `return x` to
+the outer `var x = 0` and infers `f1(): number`. Codegen pins the wasm result to
+`f64` and coerces the routed *string* field into it, so `f1()` is `NaN`.
+
+Fix: `functionReturnsThroughWithScope` (src/codegen/declarations.ts) — a
+function with no explicit return annotation that has a `return <expr naming
+something>` inside one of its own `with` bodies gets an `externref` result
+instead of the inferred one. Transitive through a direct `return callee()`,
+because T5–T8 wrap the `with` in an inner `f2` and return `f2()` from `f1`,
+where the same misinference repeats. Wired at all three function-registration
+sites (two in declarations.ts, one in statements/nested-declarations.ts).
+
+### Cluster B — `new` over a `with`-body closure (10 rows)
+
+`language/statements/with/S12.10_A1.8_T1..T5` and `S12.10_A3.8_T1..T5` — all
+ten `compile_error` → all ten `pass`. Three stacked blockers, not the two on
+record:
+
+1. **The IR selector refused the statement.** `visitConstructors` in
+   src/ir/with-environment.ts rejected any `new` over a with-captured closure.
+   The with-captures ride the closure struct like ordinary captures, so
+   construction needs no new lowering; the refusal is removed.
+
+2. **`new f()` threw `TypeError: f is not a constructor` at the
+   unresolvable-identifier arm.** TypeScript deliberately declines to resolve
+   bare identifiers inside a `with` body, so `getSymbolAtLocation` answers
+   `undefined` even for a `var` declared in the same block — and
+   `tryNonConstructableNewTarget` reads "no symbol" as "no binding exists,
+   throw". That arm now declines inside a `with` body
+   (src/codegen/expressions/new-non-constructable-value.ts).
+
+3. **The native-construct driver was never reserved, for the same reason.**
+   `resolvesToConstructableFunctionValue` needs the callee's declaration, which
+   the checker will not give inside a `with`. It now falls back to a syntactic
+   scan for `var <name> = function (…) {…}` in the enclosing scope, declining on
+   any rebind (src/codegen/expressions/new-super.ts). With that, the existing
+   `__native_construct_N` driver constructs the closure value and the
+   with-scoped writes inside the constructor body land on the receiver.
+
+### Cluster C — `var f = function(){}` inside `with` — RE-DIAGNOSED, not fixed
+
+`S13.2.2_A19_T8`'s CHECK#0 (`typeof __func` must be `"undefined"` at the top of
+the program) was attributed to with-environment closure lifting installing a
+hoisted module-level function binding. **It is not a `with` bug at all.** The
+identical program with the `with` removed fails identically:
+
+```js
+if (typeof __func !== "undefined") throw …;   // observed: "function"
+var __func = function () { return 2; };
+```
+
+So the defect is in the general `var f = function(){}` lowering (the binding is
+hoisted already carrying its function value instead of `undefined`), and fixing
+it means touching the typeof/var-function-expression model, not `with`. Not
+attempted here.
+
+`A19_T8` also has a **second, independent** failure: with CHECK#0 neutralised,
+CHECK#1 passes but CHECK#2 returns the outer `b` (`"a"`) instead of the second
+`with` receiver's `b` (`"b"`) — a re-declared `var __func` inside a *second*
+`with` block keeps the first block's scope.
+
+`S13.2.2_A17_T2/T3` and `A18_T1/T2` are a different subsystem again: they assign
+to **undeclared** globals (`__obj = …`, `getRight = …`) and `A18` uses
+`with (arguments)`. Out of reach without the implicit-global-binding work.
