@@ -384,3 +384,24 @@ Top signatures: `Unsupported dynamic regular expression pattern` (3),
   and armed the flag by accident.
 - New three-op disagreement found and deliberately not shipped → **#4596**
   (gOPD compile-time synthesis ignores a runtime delete).
+
+## 2026-08-21 — bucket B/H survey (protos lane; surveyed, deliberately not attempted)
+
+The remaining Array rows split three ways, none a small slice:
+
+- **(a) live-prototype element visibility** (`Array.prototype[1] = 1` then
+  `concat`/`toString`/`toLocaleString`) — the documented `array-holes.ts`
+  boundary: a flat vec cannot re-check HasProperty against a live prototype per
+  element. Exactly what `936f382` measured and left.
+- **(b) heterogeneous-array value representation** (`[0].concat(obj, arr, -1,
+  true, "NaN")` returns NaN for the object element) — value-rep lane, not a
+  prototype problem.
+- **(c) `x.concat = Array.prototype.concat; x.concat(…)`** — `concat` has no
+  reflective Array body, and the refusal is INCONSISTENT: the `.call` form says
+  the honest "not yet callable as a value in --target standalone" while the
+  stored-slot form says a misleading "Cannot access property on null or
+  undefined". Minimum fix: make the stored-slot form reach the same honest
+  refusal.
+
+The consult-order asymmetry (Finding: `__extern_method_call` honours an
+override for `join` but not `toString`) was NOT touched by any wave-2 change.
