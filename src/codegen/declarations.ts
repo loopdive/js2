@@ -143,6 +143,7 @@ export {
   collectGrowableObjectLiterals,
 } from "./declarations/object-shape-widening.js";
 export {
+  bindingAwareNumericCallEvidence,
   inferBindingAwareNumericReturnTypes,
   inferImplicitAnyParamType,
   inferNumericReturnTypes,
