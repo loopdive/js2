@@ -89,6 +89,7 @@ import {
   mergeNpmPerfHistory,
   npmPerfHistoryPoint,
   npmPerfOptimizationFailure,
+  npmPerfOptimizationOmittedPasses,
   npmPerfRows,
   packagePerfRecord,
   skippedPerfLane,
@@ -408,7 +409,7 @@ const STANDALONE_STATIC_OPERATION_EXPORT = "__npmCompatStaticOperation";
 const CLSX_PERF_OP_NAME = "op_two_strings";
 const LIT_WHEN_PERF_EXPORT = "__npmCompatLitWhen";
 const NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL = 4,
-  NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL = 3;
+  NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL = 4;
 
 function npmCompatOptimizationLevel(placement) {
   return placement === "standalone" ? NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL : NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL;
@@ -497,6 +498,7 @@ async function compileStandaloneLane({
   runtimeArgument,
 }) {
   let optimizationVerified = false;
+  let optimizationOmittedPasses = [];
   const failStandalone = (status, diagnostic, extra = {}) =>
     failedOptimizedPerfLane("standalone", status, diagnostic, {
       inputMode,
@@ -644,6 +646,7 @@ export function ${STANDALONE_BENCHMARK_EXPORT}(iterations) {
     if (optimizationFailure) {
       return failStandalone("optimization-error", optimizationFailure, { compileDurationMs });
     }
+    optimizationOmittedPasses = npmPerfOptimizationOmittedPasses(result, NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL);
     optimizationVerified = true;
   }
   if (inspectWatFunctions?.length) {
@@ -817,7 +820,9 @@ export function ${STANDALONE_BENCHMARK_EXPORT}(iterations) {
       irCompiledFunctions: result.irCompiledFuncs ?? [],
       target: "standalone",
       ...(optimizationVerified
-        ? verifiedOptimizationMetadata("standalone")
+        ? verifiedOptimizationMetadata("standalone", {
+            ...(optimizationOmittedPasses.length > 0 ? { optimizationOmittedPasses } : {}),
+          })
         : requestedOptimizationMetadata("standalone", { binaryProvenance: "reused-unverified" })),
       ...(runtimeArgument === undefined ? {} : { runtimeArgumentSuppliedAfterCompile: true }),
       ...(staticEvaluation ? { staticEvaluation } : {}),
@@ -1638,6 +1643,7 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
       }),
     };
   }
+  const optimizationOmittedPasses = npmPerfOptimizationOmittedPasses(result, npmCompatOptimizationLevel(placement));
 
   let module;
   const moduleCompileStarted = performance.now();
@@ -1720,6 +1726,9 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
     compileDurationMs,
     moduleCompileDurationMs,
     instantiateDurationMs: performance.now() - instantiateStarted,
+    optimizationMetadata: verifiedOptimizationMetadata(placement, {
+      ...(optimizationOmittedPasses.length > 0 ? { optimizationOmittedPasses } : {}),
+    }),
   };
 }
 
@@ -1807,7 +1816,7 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
       actualChecksum,
       testCompiledToWasm: false,
       target: "js-host",
-      ...verifiedOptimizationMetadata("js-host"),
+      ...compiled.optimizationMetadata,
     };
   };
 
@@ -1873,7 +1882,7 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
       benchmarkUsesIr: compiled.result.irCompiledFuncs?.includes(STANDALONE_BENCHMARK_EXPORT) ?? false,
       irCompiledFunctions: compiled.result.irCompiledFuncs ?? [],
       target: "standalone",
-      ...verifiedOptimizationMetadata("standalone"),
+      ...compiled.optimizationMetadata,
     };
   };
 
@@ -1941,7 +1950,7 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
       benchmarkUsesIr: compiled.result.irCompiledFuncs?.includes(STANDALONE_BENCHMARK_EXPORT) ?? false,
       irCompiledFunctions: compiled.result.irCompiledFuncs ?? [],
       target: "standalone",
-      ...verifiedOptimizationMetadata("standalone"),
+      ...compiled.optimizationMetadata,
       runtimeArgumentSuppliedAfterCompile: true,
     };
   };
@@ -3027,6 +3036,8 @@ const summary = {
       "js-host": NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL,
       standalone: NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL,
     },
+    optimizationPassPolicy:
+      "Binaryen O4 is required. Standardized-EH modules may omit only the unsupported Flatten pass; the omission is recorded on each affected lane.",
     inputModes: {
       "compile-time-static": "package, test driver, and fixed inputs are visible to the Wasm compiler",
       "runtime-dynamic":

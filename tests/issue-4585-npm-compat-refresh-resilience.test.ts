@@ -74,7 +74,8 @@ describe("#4585 npm compatibility refresh resilience", () => {
 
     expect(standalone).toContain("optimize: NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL");
     expect(generator).toContain("NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL = 4");
-    expect(generator).toContain("NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL = 3");
+    expect(generator).toContain("NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL = 4");
+    expect(generator).toContain("npmPerfOptimizationOmittedPasses(");
     expect(generator).toContain("npmPerfOptimizationFailure(result");
     expect(generator).toContain("assertMeasuredOptimizationReceipts(packages)");
     expect(generator).toContain("--reuse-standalone-binary is diagnostic-only");

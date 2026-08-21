@@ -167,9 +167,28 @@ export function failedPerfLane(placement, status, diagnostic, extra = {}) {
   };
 }
 
-export function npmPerfOptimizationFailure(result, optimizationLevel) {
-  const warning = result?.errors?.find(
+const O4_TRY_TABLE_FLATTEN_OMISSION =
+  "wasm-opt -O4 omitted Binaryen's unsupported flatten pass for standardized try_table output; all remaining O4 passes completed.";
+
+function wasmOptWarnings(result) {
+  return (result?.errors ?? []).filter(
     (entry) => entry?.severity === "warning" && /\bwasm-opt\b/i.test(String(entry.message ?? "")),
+  );
+}
+
+function isVerifiedO4FlattenOmission(warning, optimizationLevel) {
+  return optimizationLevel === 4 && String(warning.message ?? "") === O4_TRY_TABLE_FLATTEN_OMISSION;
+}
+
+export function npmPerfOptimizationOmittedPasses(result, optimizationLevel) {
+  return wasmOptWarnings(result).some((warning) => isVerifiedO4FlattenOmission(warning, optimizationLevel))
+    ? ["flatten"]
+    : [];
+}
+
+export function npmPerfOptimizationFailure(result, optimizationLevel) {
+  const warning = wasmOptWarnings(result).find(
+    (candidate) => !isVerifiedO4FlattenOmission(candidate, optimizationLevel),
   );
   if (!warning) return null;
   return `wasm-opt -O${optimizationLevel} did not produce the measured artifact: ${String(warning.message)}`;
@@ -224,6 +243,7 @@ export function npmPerfRows(packages) {
         ratioStd: lane.ratioStd ?? 0,
         wasmOptimized: optimizationVerified,
         wasmOptimizeLevel: optimizationVerified ? lane.optimizationLevel : null,
+        wasmOmittedPasses: optimizationVerified ? (lane.optimizationOmittedPasses ?? []) : [],
         warmupRounds: lane.warmupRounds,
         measuredRounds: lane.measuredRounds,
         sampleOp: lane.sampleOp,
