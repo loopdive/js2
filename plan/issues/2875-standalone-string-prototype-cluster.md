@@ -27,6 +27,21 @@ umbrella: 2860
 #     Load-bearing, not cosmetic — without it, emitting a `__call_toString`
 #     dispatcher at all makes `String.prototype.trim.call(true)` answer
 #     "[object Object]" (measured: 2 pass→fail before this arm was added).
+# Slice B follow-up (#2875, 2026-08-21) — class-to-primitive.ts, the SHARED
+# source of the three "action-at-a-distance" carriers Slice B patched one at a
+# time. `__class_to_primitive`'s STRING-hint arm answered the inherited-
+# Object.prototype.toString string "[object Object]" whenever `__call_toString`
+# reported "absent" — but "absent" also describes every value that is not a
+# user object at all, and EVERY non-`$Object`/non-`$Vec` value reaches the
+# driver (`undefined`, `$AnyValue` boxes, `$PropEntry` slot values, RegExp
+# match arrays). So one harness object literal with a `toString` field was
+# enough to flip that module's `__class_to_primitive` from its "return the
+# input unchanged" stub to the full body, and every unrelated carrier in the
+# file started rendering "[object Object]". The absent-toString branch now
+# falls through to the driver's shared return-unchanged tail; both callers
+# already re-render a real object as "[object Object]" themselves. The
+# `$BoxedBoolean` / `$Error` early-outs added above stay (valid §7.1.1 step-1
+# primitive early-outs, and a per-site cost saving).
 loc-budget-allow:
   - src/codegen/native-strings.ts
   - src/codegen/array-object-proto.ts
