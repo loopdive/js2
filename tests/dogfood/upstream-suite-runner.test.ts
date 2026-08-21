@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 
 // @ts-expect-error — .mjs dogfood runner has no declaration file
-import { UPSTREAM_TEST_EXPORTS, UPSTREAM_TEST_SHIM, compileAndRunUpstreamModule } from "./upstream-suite-runner.mjs";
+import {
+  UPSTREAM_TEST_EXPORTS,
+  UPSTREAM_TEST_SHIM,
+  compileAndRunUpstreamModule,
+  summarizeUpstreamRuns,
+} from "./upstream-suite-runner.mjs";
 
 describe("upstream suite runner", () => {
   it("awaits async callbacks without classifying them as unavailable infrastructure", async () => {
@@ -91,4 +96,70 @@ ${UPSTREAM_TEST_EXPORTS}`;
       rmSync(root, { recursive: true, force: true });
     }
   }, 90_000);
+
+  it("supports suite lifecycle hooks and the spy helpers used by upstream Web API tests", async () => {
+    const root = mkdtempSync(join(tmpdir(), "js2-upstream-runner-"));
+    const generatedPath = join(root, "suite.ts");
+    const source = `${UPSTREAM_TEST_SHIM}
+let setupCount = 0;
+describe("lifecycle", () => {
+  beforeAll(() => { setupCount += 1; });
+  afterAll(() => { setupCount += 1; });
+  test("runs beforeAll once and supports spyOn", () => {
+    expect(setupCount).toBe(1);
+    const spy = { mock: { calls: [[]] } };
+    expect(spy).toHaveBeenCalledOnce();
+    expect(typeof vi.spyOn).toBe("function");
+  });
+  test("retains the lifecycle state for the next test", () => {
+    expect(setupCount).toBe(1);
+  });
+});
+${UPSTREAM_TEST_EXPORTS}`;
+
+    try {
+      const previousNodeOptions = process.env.NODE_OPTIONS;
+      process.env.NODE_OPTIONS = [previousNodeOptions, "--import=tsx"].filter(Boolean).join(" ");
+      let result;
+      try {
+        result = await compileAndRunUpstreamModule({ generatedPath, source, timeoutMs: 60_000 });
+      } finally {
+        // biome-ignore lint/performance/noDelete: `process.env.X = undefined` sets the string "undefined" instead of unsetting the var
+        if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+        else process.env.NODE_OPTIONS = previousNodeOptions;
+      }
+      expect(result.native.statuses).toEqual([true, true]);
+      expect(result.native.errors).toEqual(["", ""]);
+      expect(result.compile.success).toBe(true);
+      expect(result.compile.validates).toBe(true);
+      expect(result.wasm?.statuses).toEqual([true, true]);
+      expect(result.wasm?.errors).toEqual(["", ""]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 90_000);
+
+  it("reports deferred upstream registrations as unavailable infrastructure", () => {
+    const report = summarizeUpstreamRuns({
+      name: "fixture",
+      pin: { repo: "https://example.test/fixture", tag: "v1", commit: "abc", registrationSites: 5 },
+      testFiles: ["a.test.ts", "b.test.ts"],
+      selectedFiles: ["a.test.ts"],
+      runs: [
+        {
+          file: "a.test.ts",
+          result: {
+            native: { count: 2, names: ["one", "two"], statuses: [true, true], errors: ["", ""] },
+            compile: { success: true, validates: true, durationMs: 1, binaryBytes: 2 },
+            wasm: { statuses: [true, false], errors: ["", "mismatch"] },
+          },
+        },
+      ],
+    });
+    expect(report.extraction.deferredRegistrations).toBe(3);
+    expect(report.extraction.unavailableInfra).toBe(3);
+    expect(report.summary.unavailableInfra).toBe(3);
+    expect(report.results.passed).toBe(1);
+    expect(report.results.failed).toBe(1);
+  });
 });

@@ -2006,6 +2006,8 @@ function knownBugsFor(name) {
 // not automatically unavailable infrastructure: those tests did run, but
 // their expected renderer/oracle behavior could not be reproduced.
 function countUnavailableInfrastructure(report) {
+  const explicit = report?.extraction?.unavailableInfra;
+  if (Number.isFinite(explicit)) return Math.max(0, explicit);
   const counts = report?.extraction?.rejectionCounts;
   if (!counts || typeof counts !== "object") return 0;
   return Object.entries(counts).reduce(

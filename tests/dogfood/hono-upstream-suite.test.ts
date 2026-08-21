@@ -21,6 +21,7 @@ describe("hono v4.12.16 upstream suite", () => {
       "src/utils/basic-auth.test.ts",
       "src/utils/cookie.test.ts",
       "src/utils/encode.test.ts",
+      "src/utils/filepath.test.ts",
       "src/utils/html.test.ts",
       "src/utils/ipaddr.test.ts",
       "src/utils/mime.test.ts",
@@ -37,8 +38,8 @@ describe("hono v4.12.16 upstream suite", () => {
     expect(report.upstreamSuite.commit).toBe(pin.commit);
     expect(report.extraction.filesSeen).toBe(120);
     expect(report.extraction.filesSelected).toBe(10);
-    expect(report.extraction.testsRegistered).toBe(205);
-    expect(report.extraction.nativePassed).toBe(205);
+    expect(report.extraction.testsRegistered).toBe(207);
+    expect(report.extraction.nativePassed).toBe(207);
     expect(report.results.passed + report.results.failed + report.results.runtimeFailed).toBe(report.results.scored);
   });
 });
