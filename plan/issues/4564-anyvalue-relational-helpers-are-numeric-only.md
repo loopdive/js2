@@ -242,3 +242,31 @@ Lane list: `.claude/worktrees/es5w2-coercion/.tmp/lane-tests.txt`.
    representation) before attempting; skip R3 shapes.
 5. **`Scope chain disturbed` (6)**: 5 of 6 need `with` (#4206) — verify the
    count on this tree, fix the one reachable row, record the rest as blocked.
+
+### CORRECTION (2026-08-21, wave-2 baseline): js-host is NOT a valid guard for the `+` half
+
+The wave-1 "js-host 180/180" reading was made against **node-literal
+expectations** on that harness's matrix. The wave-2 lane rebuilt the table with
+**spec-identity expectations** (what the test262 rows actually assert), because
+two carrier texts are implementation-defined and node literals mis-measure them
+on this tree: our `fn.toString()` is `function () { [native code] }` (node
+prints the source text) and our `dt.toString()` is UTC (node prints local TZ).
+
+Under that corrected oracle, at the wave-2 branch point (`5176abc1`):
+
+| | wrong cells |
+| --- | ---: |
+| standalone | 50 |
+| **js-host** | **66** |
+
+**All 26 `+` cells are wrong in BOTH lanes, identically** — so `+`-ToPrimitive
+is a *shared* defect, not standalone-only, and **the js-host lane cannot serve
+as the guard for the `+` work** (it can still guard the relational half).
+
+Hand-verified single expressions, not just table cells:
+
+- `fn + fn` → NaN and `ob + ob` → NaN — plain **object** `+` is broken too,
+  not only closures.
+- `"1" + dt` → `"1[object Object]"` — a `Date` reduces via the generic default;
+  its own `toString` never runs.
+- `fn >= fn` → false, `dt >= dt` → false (the known relational half).
