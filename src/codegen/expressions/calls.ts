@@ -1089,17 +1089,7 @@ function tryEmitNativeProtoReflectiveCall(
     if (resolveObjectToStringTag(ctx, expr.arguments[0]) !== undefined) return undefined;
   }
 
-  // Map the lib interface → builtin brand. Array<T> / ReadonlyArray<T> / Object.
-  let brand: number | undefined;
-  if (ifaceName === "Array" || ifaceName === "ReadonlyArray") brand = ensureArrayNativeProtoGlue(ctx);
-  else if (ifaceName === "Object") brand = ensureObjectNativeProtoGlue(ctx);
-  else if (ifaceName === "String")
-    brand = ensureStringNativeProtoGlue(ctx); // (#2875)
-  else if (ifaceName === "DataView")
-    brand = ensureDataViewNativeProtoGlue(ctx); // (#3173)
-  else if (ifaceName === "ArrayBuffer")
-    brand = ensureArrayBufferNativeProtoGlue(ctx); // (#1595)
-  else if (ifaceName === "Date") brand = ensureDateNativeProtoGlue(ctx); // (#3219)
+  const brand = nativeProtoBrandForInterface(ctx, ifaceName);
   if (brand === undefined) return undefined;
 
   const glue = getNativeProtoBuiltinGlue(ctx, brand);
@@ -1121,10 +1111,15 @@ function tryEmitNativeProtoReflectiveCall(
  * user-arg list is just `[thisArg]`, threaded into the closure's lone `this`
  * param). Returns the result ValType, or `undefined` to fall through.
  */
-function emitReflectiveNativeProtoClosureCall(
+export function emitReflectiveNativeProtoClosureCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  expr: ts.CallExpression,
+  /**
+   * (#2875) Argument SOURCE, not necessarily the syntactic call — only
+   * `.arguments` is read. `transferred-native-proto-call.ts` supplies a
+   * synthesized `[thisArg, …userArgs]` list whose elements are all real nodes.
+   */
+  expr: { readonly arguments: readonly ts.Expression[] },
   receiver: ts.Expression,
   brand: number,
   member: string,
@@ -9098,6 +9093,25 @@ export function emitDynamicCombinatorArg(
     notIterLocal,
     rejectReason,
   });
+}
+
+/**
+ * (#2875) Lib INTERFACE name (`String`, `Array`, …) → the registered
+ * `$NativeProto` brand whose member closures model that prototype, ensuring the
+ * glue on the way. `undefined` for an interface with no wired glue.
+ *
+ * Shared with `transferred-native-proto-call.ts` so the two spellings of the
+ * same operation — `String.prototype.m.call(x)` and `x.m = String.prototype.m;
+ * x.m()` — resolve the same brand by construction rather than by coincidence.
+ */
+export function nativeProtoBrandForInterface(ctx: CodegenContext, ifaceName: string): number | undefined {
+  if (ifaceName === "Array" || ifaceName === "ReadonlyArray") return ensureArrayNativeProtoGlue(ctx);
+  if (ifaceName === "Object") return ensureObjectNativeProtoGlue(ctx);
+  if (ifaceName === "String") return ensureStringNativeProtoGlue(ctx); // (#2875)
+  if (ifaceName === "DataView") return ensureDataViewNativeProtoGlue(ctx); // (#3173)
+  if (ifaceName === "ArrayBuffer") return ensureArrayBufferNativeProtoGlue(ctx); // (#1595)
+  if (ifaceName === "Date") return ensureDateNativeProtoGlue(ctx); // (#3219)
+  return undefined;
 }
 
 export { compileCallExpression, compileIIFE, compileOptionalCallExpression };

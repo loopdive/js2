@@ -42,10 +42,22 @@ umbrella: 2860
 # already re-render a real object as "[object Object]" themselves. The
 # `$BoxedBoolean` / `$Error` early-outs added above stay (valid §7.1.1 step-1
 # primitive early-outs, and a per-site cost saving).
+# Slice D (#2875, 2026-08-21) — sub-cluster b2, the TRANSFERRED builtin-proto
+# method call (`o.charAt = String.prototype.charAt; o.charAt(1)`). The arm
+# itself is a NEW module (src/codegen/expressions/transferred-native-proto-call.ts,
+# ~155 lines, no budget entry). What lands in the two god-files is only the
+# seam: calls.ts +14 (widen `emitReflectiveNativeProtoClosureCall`'s arg source
+# to `{arguments}` so a synthesized `[thisArg, …args]` list can be passed, plus
+# the extracted+exported `nativeProtoBrandForInterface` the two spellings now
+# share) and calls-closures.ts +8 (a two-line call to the new module at the top
+# of `compileCallablePropertyCall`, which is also the +7 in that function).
+# Neither is new subsystem logic in the barrel.
 loc-budget-allow:
   - src/codegen/native-strings.ts
   - src/codegen/array-object-proto.ts
   - src/codegen/object-runtime.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/expressions/calls-closures.ts
 # Slice B, same three arms. Each addition is a NEW leaf arm inside an existing
 # dispatch ladder (a terminal `else`, one `ref.test` early-out, one `entry.mode`
 # branch); splitting the host function is a separate refactor from #3399's list,
@@ -55,6 +67,9 @@ func-budget-allow:
   - src/codegen/object-runtime.ts::ensureObjectRuntime
   - src/codegen/index.ts::emitToPrimitiveMethodExports
   - src/codegen/index.ts::emitDispatchForMethod
+  # Slice D: the two-line early-out described above. The function is on #3399's
+  # split list already; this change adds a dispatch hop, not a subsystem.
+  - src/codegen/expressions/calls-closures.ts::compileCallablePropertyCall
 ---
 
 > **Blocked on #2885** (standalone descriptor-reflection core). The reflective
@@ -459,6 +474,108 @@ Harvested from fork PR #4124's `#3978` slice, re-derived against current main.
 across the case-conversion family, `indexOf`, `charCodeAt` and `substring`, and
 all of those now pass on main by other routes. `slice` was the only part still
 outstanding. Do not re-harvest #3978 expecting its headline number.
+
+## Slice D (LANDED, 2026-08-21) — sub-cluster **b2**, the TRANSFERRED-slot call
+
+The W13 decomposition's **b2** row ("glue exists but the call never reaches it")
+had a second, sharper half than the ToString framing it was written under: the
+two SPELLINGS of one operation disagreed. Measured on this branch's base
+(`runTest262File(…, "standalone")`):
+
+| spelling | base | spec |
+| --- | --- | --- |
+| `String.prototype.charAt.call(o, 1)` | `"b"` | `"b"` |
+| `o.charAt = String.prototype.charAt; o.charAt(1)` | **THREW** `TypeError: Cannot access property on null or undefined` | `"b"` |
+
+Root cause is NOT ToString and not a missing glue body — the glue runs fine
+through `.call`. It is `compileCallablePropertyCall`'s funcref dispatch
+(calls-closures.ts): candidates are admitted by **exact param count** against
+the field's DECLARED signature (`charAt: (pos: number) => string`, one param),
+while a native-proto member closure is lifted to `(self, this, …args)` — two
+params here. No candidate matched, the guarded `ref.cast` produced null, and
+the null funcref surfaced as that TypeError.
+
+Widening the candidate filter was rejected: it would admit any same-arity
+closure stored in a mis-typed field, trading a loud failure for a silent
+mis-dispatch. Instead a new module
+`src/codegen/expressions/transferred-native-proto-call.ts` resolves the SYNTAX
+that put the value in the slot (`var o = { m: <Iface>.prototype.<member> }`) and
+re-emits the call through `emitReflectiveNativeProtoClosureCall` — the same
+emitter the `.call` spelling already uses, so the two cannot drift. It declines
+(byte-identical lowering) for a non-identifier receiver, a non-literal
+initializer, a slot the module ASSIGNS anywhere, an interface with no wired
+glue, and a non-`method` glue kind.
+
+**Measured** — 38-row standalone re-run of the `built-ins/String/prototype` +
+`built-ins/Function/prototype` failing set, base vs head:
+**+2, 0 regressions** — `charAt/S15.5.4.4_A5` and `charCodeAt/S15.5.4.5_A4`
+flip FAIL→PASS. Control sweep of **204** files sampled across
+`built-ins/String/prototype` + `built-ins/Object/prototype` +
+`built-ins/Function/prototype`: **identical** (157 pass / 45 fail / 2
+compile_error on both sides). Covered by
+`tests/issue-2875-transferred-proto-method-call.test.ts` (5 cases, including the
+reassigned-slot decline and an ordinary-literal-method guard).
+
+**Pre-existing, NOT introduced here:** `tests/issue-2875-slice-b-undefined-roc.test.ts`
+› `includes.call('abc','b') === true` fails on base as well (verified by
+file-copy A/B on this branch).
+
+## Slice E (LANDED, 2026-08-21) — prototype-installed `toString`, DIRECT call only
+
+Found while sizing `slice/S15.5.4.13_A3_T4`. #4482 taught the direct
+`.toString()` arm (call-receiver-method.ts) to step aside when the program
+installs its own `toString` on the receiver, but
+`sourceOverridesMethodOnReceiver` saw only two routes — a write on the BINDING
+(`a.toString = …`) and a write on `this` inside the constructor. The third ES5
+route writes to `F.prototype`, which matches neither, so a fnctor instance whose
+prototype defines a real `toString` kept the static `Object.prototype.toString`
+arm. Measured standalone on base (literal-JS `allowJs` lane):
+
+| probe (`function F(v){this.value=v}`) | base | spec |
+| --- | --- | --- |
+| `F.prototype.gimme = fn; new F(7).gimme()` | `"G7"` | `"G7"` |
+| `F.prototype.toString = fn; new F(7).toString()` | `"[object Object]"` | `"T7"` |
+
+An ORDINARY prototype method already dispatched, so this was one name being
+wrong, not a missing feature. `ctorPrototypeInstallsMethod` (member-override-scan.ts)
+adds the third route.
+
+**Measured: 0 test262 rows move, 0 regressions.** Stated plainly because the
+fix is a wrong-answer repair, not a conformance lever. Controls run:
+the 38-row failing set (identical), the 204-file
+String/Object/Function-prototype sweep (identical), all **14** test262 files
+matching `prototype.toString = function` (identical, file-copy A/B), and the
+**10** prototype-touching `tests/equivalence/*` files, 160 tests (identical; the
+one failure in `arguments-nested-and-loops` reproduces on base). Covered by
+`tests/issue-2875-prototype-installed-tostring.test.ts`.
+
+### Why `slice/S15.5.4.13_A3_T4` still fails — the remaining half, diagnosed
+
+That row needs `__instance.slice(0,100) === "undefined"`, i.e. ToString of the
+instance INSIDE the borrowed String glue, not a direct `.toString()` call.
+Measured after slice E:
+
+| expression | after slice E | spec |
+| --- | --- | --- |
+| `i.toString()` | `"undefined"` ✓ | `"undefined"` |
+| `String(i)` / `"" + i` / `i.slice(0,100)` | `"[object Object]"` | `"undefined"` |
+
+All three of the still-wrong ones reduce to `__any_to_string` → the Slice B
+OrdinaryToPrimitive terminal → `__class_to_primitive` → `__call_toString`.
+`emitDispatchForMethod` (index.ts) builds that dispatcher's entries from own
+struct FIELDS (four modes: `standalone`, `closure`, `closure-extern`,
+`closure-eqref-multi`, plus Slice B's `callable-dynamic`) and has **no
+prototype-installed arm**, so a `$__fnctor_F` with no own `toString` field
+produces no entry and the dispatcher answers `ref.null.extern`.
+
+The fix is a fifth entry mode: for a `$__fnctor_F` struct whose ctor `F` has a
+`F.prototype.<method> = …` write, look the method up in the per-fnctor
+`__fnctor_proto_F` `$Object` and invoke it with `__apply_closure` — the same
+runtime route `emitFnctorSubclassDynamicMethodCall` (calls-closures.ts) already
+uses for an approved standalone fnctor's prototype method. `emitDispatchForMethod`
+is already in this issue's `func-budget-allow`. Not attempted here: it is an
+index.ts dispatcher change with a corpus-wide blast radius and wants its own
+control sweep.
 
 ## Next slice — primitive-number and builtin-brand receivers return `null`
 
