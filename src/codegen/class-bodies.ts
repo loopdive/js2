@@ -1730,7 +1730,7 @@ export interface ClassBodyCompileRouting {
   readonly skippedImplicitConstructorUnitIds?: IrUnitId[];
 }
 
-function skipExactPreparedClassBody(
+export function skipExactPreparedClassBody(
   ctx: CodegenContext,
   declaration: ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
   routing: ClassBodyCompileRouting | undefined,
@@ -1811,7 +1811,7 @@ export function compileClassBodies(
   }
 }
 
-function skipPreparedClassConstructorBody(
+export function skipPreparedClassConstructorBody(
   ctx: CodegenContext,
   funcByName: ReadonlyMap<string, number>,
   routing: ClassBodyCompileRouting | undefined,
