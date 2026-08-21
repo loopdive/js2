@@ -158,7 +158,7 @@ import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
 import { buildObjectEnumerationHelpers } from "./object-runtime-enumeration.js"; // (#3274 wave-B) enumeration/array-like/object-static helper builders
 import { buildObjectPrototypeHelpers } from "./object-runtime-prototype.js"; // (#3274 wave-B) prototype-chain helper builders
 import * as fnctorArray from "./fnctor-array-prototype.js";
-import { isSyntheticStructName } from "./emit-helpers.js";
+import { isEnumerableOwnFieldName, isSyntheticStructName } from "./emit-helpers.js";
 import { isUserDeclaredStruct } from "./user-declared-structs.js"; // (#3920) user shape vs builtin carrier
 import {
   type ColdFieldLocation,
@@ -7862,7 +7862,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
     const shapeFieldIdx = fields.findIndex((field) => field?.name === "$shape");
     const shapeId = ctx.shapeIdByStructName.get(structName);
     for (const field of fields) {
-      if (!field?.name || field.name.startsWith("$") || field.name.startsWith("__")) continue;
+      if (!isEnumerableOwnFieldName(field?.name)) continue;
       const presenceSlot = presenceSlotOf(fields, field.name);
       if (presenceSlot) {
         const typeDef = ctx.mod.types[typeIdx];
@@ -8182,7 +8182,7 @@ function collectClosedStructEnumerationEntries(ctx: CodegenContext): EnumShapeEn
 
     const byName = new Map<string, EnumOwnField>();
     for (const field of fields) {
-      if (!field?.name || field.name.startsWith("$") || field.name.startsWith("__")) continue;
+      if (!isEnumerableOwnFieldName(field?.name)) continue;
       const presenceSlot = presenceSlotOf(fields, field.name);
       byName.set(field.name, {
         name: field.name,
