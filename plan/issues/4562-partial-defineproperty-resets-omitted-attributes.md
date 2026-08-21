@@ -21,6 +21,22 @@ loc-budget-allow:
   # the god-file grows by the IMPORT LINE plus the CALL LINE and nothing else,
   # down from +9.
   - src/codegen/expressions/calls.ts
+  # 2026-08-21: the intrinsic-record seed. All logic lives in the new subsystem
+  # module src/codegen/fn-intrinsic-seed.ts and it is invoked from
+  # carrier-bag-define.ts (not a god-file); the finalize-time fill hangs off the
+  # tail of fillFunctionInstanceProps, so the finalize driver src/codegen/index.ts
+  # does NOT grow at all. What is left in this god-file is +2 lines: one
+  # `keyLocalIdx: 1,` at each of the two define appliers that host the arm. The
+  # arm cannot find the descriptor key without being told which local holds it,
+  # and defaulting the index would silently misbehave for any future applier with
+  # a different local layout — so the two lines are the irreducible residue.
+  - src/codegen/object-runtime-descriptors.ts
+func-budget-allow:
+  # 2026-08-21: the same +2 lines as the loc allowance above, seen through the
+  # function gate — both define appliers are emitted inside this one function,
+  # so the two `keyLocalIdx: 1,` arguments land on it. Nothing else was added
+  # here; the seed itself is a separate module.
+  - src/codegen/object-runtime-descriptors.ts::buildObjectDescriptorHelpers
 coercion-sites-allow:
   # 2026-08-20: one `__unbox_number` call in the new src/codegen/bound-fn-meta.ts.
   # It is NOT a hand-rolled ToNumber: §20.2.3.2 step 6.b is answered FIRST by
