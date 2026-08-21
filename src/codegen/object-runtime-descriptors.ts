@@ -37,7 +37,7 @@ import { emitSelfHostedFunc } from "./stdlib-selfhost.js";
 import { SELF_HOSTED_OBJECT_RUNTIME } from "../stdlib/object-runtime.js";
 import { getOrRegisterVecBaseType } from "./registry/types.js";
 import { reserveVecOverlayHelpers } from "./vec-overlay.js";
-import { buildIntegrityPredicate, registerIntegrityBagResolver } from "./object-integrity-carrier.js";
+import { buildObjectIntegrityPredicates } from "./object-integrity-carrier.js";
 import { buildObjectIntegrityMutationHelpers } from "./object-runtime-integrity.js";
 import { bagGopdBetween, bagKeysIf } from "./carrier-bag-visibility.js"; // (#4010 S3) visibility over the bags
 import {
@@ -3295,36 +3295,25 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
 
   // ── Object integrity predicates (#1472 Phase B Blocker A Half 1, PR #1074) ─
   //
-  // __object_isFrozen / __object_isSealed / __object_isExtensible read the
-  // object-level `$Object.flags` (field 4). On a never-frozen `$Object` the
-  // flags field is 0 → isFrozen/isSealed read false, isExtensible reads true.
-  // ES §20.5.2.13/14: isFrozen/isSealed on a NON-object return TRUE; §20.5.2.12:
-  // isExtensible on a non-object returns FALSE. (Merged from main; preserved
-  // here through the Blocker B merge so the standalone predicates remain native.)
-  // (#4032) `ref.test $Object` false does NOT mean "not an object" — see
-  // `object-integrity-carrier.ts` for the mechanism, the two halves of the fix,
-  // and why this is byte-neutral in host mode (`integrityBagIdx === undefined`).
-  const integrityBagIdx = registerIntegrityBagResolver(ctx, registerNative);
-  const emitIntegrityPredicate = (name: string, flagBit: number, invert: boolean, terminalResult: number): void => {
-    const { locals, body } = buildIntegrityPredicate({
-      objectTypeIdx,
-      flagBit,
-      invert,
-      terminalResult,
-      integrityBagIdx,
-    });
-    registerNative(name, [{ kind: "externref" }], [{ kind: "i32" }], locals, body);
-  };
-  emitIntegrityPredicate("__object_isFrozen", OBJ_FLAG_FROZEN, false, 1);
-  emitIntegrityPredicate("__object_isSealed", OBJ_FLAG_SEALED, false, 1);
-  emitIntegrityPredicate("__object_isExtensible", OBJ_FLAG_NONEXTENSIBLE, true, 0);
-  // Known-object variants: same body, terminal fallback flipped to the ORDINARY
-  // OBJECT rule. Standalone/wasi only — host already answers these correctly.
-  if (integrityBagIdx !== undefined) {
-    emitIntegrityPredicate("__object_isFrozen_obj", OBJ_FLAG_FROZEN, false, 0);
-    emitIntegrityPredicate("__object_isSealed_obj", OBJ_FLAG_SEALED, false, 0);
-    emitIntegrityPredicate("__object_isExtensible_obj", OBJ_FLAG_NONEXTENSIBLE, true, 1);
-  }
+  // Emitted by `object-integrity-carrier.ts`, which owns the whole mechanism:
+  // the non-`$Object` carrier bag (#4032) and the computed §7.3.15 own-property
+  // walk (#4491). Called here so the native minting ORDER — and therefore every
+  // subsequent function index — is unchanged.
+  const integrityBagIdx = buildObjectIntegrityPredicates({
+    ctx,
+    registerNative,
+    objectTypeIdx,
+    propMapTypeIdx,
+    propEntryTypeIdx,
+    propMapRef,
+    entryRefNull,
+    FLAG_WRITABLE,
+    FLAG_CONFIGURABLE,
+    FLAG_ACCESSOR,
+    OBJ_FLAG_NONEXTENSIBLE,
+    OBJ_FLAG_SEALED,
+    OBJ_FLAG_FROZEN,
+  });
 
   // Register at the original minting point so every subsequent function index
   // remains byte-for-byte stable.
