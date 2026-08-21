@@ -164,6 +164,7 @@ function __upstreamExpect(actual) {
 }
 const expect = __upstreamExpect;
 const __upstreamGlobalStubs = [];
+const __upstreamEnvStubs = [];
 const vi = {
   fn(implementation) {
     function spy() {
@@ -200,9 +201,21 @@ const vi = {
     __upstreamGlobalStubs.length = 0;
   },
   stubEnv(key, value) {
-    if (globalThis.process && globalThis.process.env) globalThis.process.env[key] = String(value);
+    if (globalThis.process && globalThis.process.env) {
+      const env = globalThis.process.env;
+      const name = String(key);
+      __upstreamEnvStubs.push({ env, name, hadOwn: Object.prototype.hasOwnProperty.call(env, name), previous: env[name] });
+      env[name] = String(value);
+    }
   },
-  unstubAllEnvs() {},
+  unstubAllEnvs() {
+    for (let index = __upstreamEnvStubs.length - 1; index >= 0; index--) {
+      const stub = __upstreamEnvStubs[index];
+      if (stub.hadOwn) stub.env[stub.name] = stub.previous;
+      else delete stub.env[stub.name];
+    }
+    __upstreamEnvStubs.length = 0;
+  },
 };
 // A number of Jest-owned packages publish their original tests with the Jest
 // global even when the selected unit only needs spies. Keep this small facade

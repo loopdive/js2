@@ -264,6 +264,46 @@ ${UPSTREAM_TEST_EXPORTS}`;
     }
   }, 90_000);
 
+  it("restores Vitest environment stubs", async () => {
+    const root = mkdtempSync(join(tmpdir(), "js2-upstream-runner-"));
+    const generatedPath = join(root, "suite.ts");
+    const source = `${UPSTREAM_TEST_SHIM}
+QUnit.test("restores environment stubs when a process environment is available", function () {
+  const processValue = globalThis.process;
+  expect(typeof vi.stubEnv).toBe("function");
+  expect(typeof vi.unstubAllEnvs).toBe("function");
+  if (processValue && processValue.env) {
+    const key = "__JS2_UPSTREAM_RUNNER_ENV_STUB";
+    const before = processValue.env[key];
+    vi.stubEnv(key, "stubbed");
+    expect(processValue.env[key]).toBe("stubbed");
+    vi.unstubAllEnvs();
+    expect(processValue.env[key]).toBe(before);
+  }
+});
+${UPSTREAM_TEST_EXPORTS}`;
+
+    try {
+      const previousNodeOptions = process.env.NODE_OPTIONS;
+      process.env.NODE_OPTIONS = [previousNodeOptions, "--import=tsx"].filter(Boolean).join(" ");
+      let result;
+      try {
+        result = await compileAndRunUpstreamModule({ generatedPath, source, timeoutMs: 60_000 });
+      } finally {
+        // biome-ignore lint/performance/noDelete: `process.env.X = undefined` sets the string "undefined" instead of unsetting the var
+        if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+        else process.env.NODE_OPTIONS = previousNodeOptions;
+      }
+      expect(result.native.statuses).toEqual([true]);
+      expect(result.native.errors).toEqual([""]);
+      expect(result.compile?.success).toBe(true);
+      expect(result.compile?.validates).toBe(true);
+      expect(result.wasm?.statuses).toEqual([true]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 90_000);
+
   it("forwards a package-selected Node platform to the isolated compiler worker", async () => {
     const root = mkdtempSync(join(tmpdir(), "js2-upstream-runner-"));
     const generatedPath = join(root, "suite.ts");
