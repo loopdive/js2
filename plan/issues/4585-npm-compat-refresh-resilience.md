@@ -17,10 +17,13 @@ horizon: s
 related: [3781, 3958, 3982, 4130]
 origin: "The live npm dashboard retained its pre-#4578 Acorn/clsx snapshot because both post-fix aggregate refreshes aborted before publication."
 files:
+  - scripts/generate-npm-compat-report.mjs
+  - scripts/lib/npm-compat-perf.mjs
   - src/codegen/ambient-parse-import.ts
   - src/codegen/extern-declarations.ts
   - tests/dogfood/react-dom-upstream-suite.mjs
   - tests/dogfood/react-dom-upstream-suite.test.ts
+  - tests/issue-3781-npm-perf-lanes.test.ts
   - tests/issue-4585-npm-compat-refresh-resilience.test.ts
   - plan/issues/4585-npm-compat-refresh-resilience.md
 ---
@@ -48,6 +51,9 @@ artifacts:
   runtime manifest validator.
 - Reject exact `React.captureOwnerStack()` call sites before a production
   ReactDOM run, report the reason, and retain them in development runs.
+- Compile standalone performance lanes at verified O4 after [#4586](./4586-o4-try-table-flatten-fallback.md),
+  explicitly recording the unsupported `Flatten` omission for `try_table`
+  modules while rejecting every unrelated optimizer warning.
 - Regenerate and publish the complete npm compatibility aggregate only after
   every package finishes and the fixed Acorn/clsx measurements are present.
 
@@ -60,8 +66,17 @@ artifacts:
       records an explicit reason, and leaves the development corpus unchanged.
 - [x] The pinned Acorn dogfood suite completes without the adapter-manifest
       exception.
+- [x] JS-host and standalone rows record O4; `try_table` modules explicitly
+      record the omitted `Flatten` pass and no raw fallback is measured.
 - [ ] A fresh aggregate refresh completes and the live page serves a post-#4578
       timestamp and corrected Acorn/clsx measurements.
+
+Pre-[#4586](./4586-o4-try-table-flatten-fallback.md) checkpoint: the exact standalone-dynamic clsx 2.1.1 lane at O3 measured
+0.149035 µs/op versus Node's 0.023225 µs/op (ratio 0.155833), with checksum
+14/14 and an explicit verified-O3 receipt. The stale public row is 0.000122.
+The exact Node 25 Acorn 8.16.0 lane measured 57,331.486 µs/op versus Node's
+4,012.257 µs/op (ratio 0.069983), checksum 422/422, and a verified 2,132,904-byte
+O3 artifact; the stale public ratio is 0.000838.
 
 ## Non-goals
 

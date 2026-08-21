@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { compile, validateJavaScriptAdapterManifest, type JavaScriptAdapterManifestV1 } from "../src/index.js";
+import { type JavaScriptAdapterManifestV1, compile, validateJavaScriptAdapterManifest } from "../src/index.js";
 
 const ACORN_PARSE_SHAPE = `
   var pp = {};
@@ -58,5 +59,39 @@ describe("#4585 npm compatibility refresh resilience", () => {
       if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_LIB_SCAN");
       else process.env.JS2WASM_LIB_SCAN = previous;
     }
+  });
+
+  it("uses a supported optimized tier for standalone npm measurements", () => {
+    const generator = readFileSync(new URL("../scripts/generate-npm-compat-report.mjs", import.meta.url), "utf8");
+    const standalone = generator.slice(
+      generator.indexOf("async function compileStandaloneLane"),
+      generator.indexOf("// Per-package perf probes"),
+    );
+    const generic = generator.slice(
+      generator.indexOf("async function compileNpmCompatPerfLane"),
+      generator.indexOf("async function perfNpmCompatPackage"),
+    );
+
+    expect(standalone).toContain("optimize: NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL");
+    expect(generator).toContain("NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL = 4");
+    expect(generator).toContain("NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL = 4");
+    expect(generator).toContain("npmPerfOptimizationOmittedPasses(");
+    expect(generator).toContain("npmPerfOptimizationFailure(result");
+    expect(generator).toContain("assertMeasuredOptimizationReceipts(packages)");
+    expect(generator).toContain("--reuse-standalone-binary is diagnostic-only");
+    expect(generator.match(/failedPerfLane\(/g)).toHaveLength(1);
+    expect(generator).toContain("optimizationVerified: false");
+    expect(generator).toContain("lane.optimizationRequested !== true");
+    expect(generator).toContain("npmPerfOptimizationFailure(floorResult, NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL)");
+    expect(generic).toContain(
+      'optimize: npmCompatOptimizationLevel(target === "standalone" ? "standalone" : "js-host")',
+    );
+    expect(generic.indexOf("...(compileOptions ?? {})")).toBeLessThan(
+      generic.indexOf("optimize: npmCompatOptimizationLevel"),
+    );
+    expect(generic.indexOf("...(compileOptions ?? {})")).toBeLessThan(generic.indexOf("target,"));
+    expect(generator).toContain("optimizationLevels: {");
+    expect(generator).toContain('"js-host": NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL');
+    expect(generator).toContain("standalone: NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL");
   });
 });

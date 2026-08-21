@@ -167,6 +167,33 @@ export function failedPerfLane(placement, status, diagnostic, extra = {}) {
   };
 }
 
+const O4_TRY_TABLE_FLATTEN_OMISSION =
+  "wasm-opt -O4 omitted Binaryen's unsupported flatten pass for standardized try_table output; all remaining O4 passes completed.";
+
+function wasmOptWarnings(result) {
+  return (result?.errors ?? []).filter(
+    (entry) => entry?.severity === "warning" && /\bwasm-opt\b/i.test(String(entry.message ?? "")),
+  );
+}
+
+function isVerifiedO4FlattenOmission(warning, optimizationLevel) {
+  return optimizationLevel === 4 && String(warning.message ?? "") === O4_TRY_TABLE_FLATTEN_OMISSION;
+}
+
+export function npmPerfOptimizationOmittedPasses(result, optimizationLevel) {
+  return wasmOptWarnings(result).some((warning) => isVerifiedO4FlattenOmission(warning, optimizationLevel))
+    ? ["flatten"]
+    : [];
+}
+
+export function npmPerfOptimizationFailure(result, optimizationLevel) {
+  const warning = wasmOptWarnings(result).find(
+    (candidate) => !isVerifiedO4FlattenOmission(candidate, optimizationLevel),
+  );
+  if (!warning) return null;
+  return `wasm-opt -O${optimizationLevel} did not produce the measured artifact: ${String(warning.message)}`;
+}
+
 export function packagePerfRecord(sampleOp, jsHost, standalone, additionalLanes = {}) {
   const record = {
     sampleOp,
@@ -205,6 +232,7 @@ export function npmPerfRows(packages) {
     ]) {
       const lane = pkg.perf.lanes[key];
       if (lane?.status !== "measured") continue;
+      const optimizationVerified = lane.optimizationVerified === true;
       rows.push({
         name: `${pkg.name} · ${label}`,
         path: `${pkg.entryFile}#${key}`,
@@ -213,8 +241,9 @@ export function npmPerfRows(packages) {
         wasmStdUs: lane.wasmStdUs,
         jsStdUs: lane.nodeStdUs,
         ratioStd: lane.ratioStd ?? 0,
-        wasmOptimized: true,
-        wasmOptimizeLevel: 4,
+        wasmOptimized: optimizationVerified,
+        wasmOptimizeLevel: optimizationVerified ? lane.optimizationLevel : null,
+        wasmOmittedPasses: optimizationVerified ? (lane.optimizationOmittedPasses ?? []) : [],
         warmupRounds: lane.warmupRounds,
         measuredRounds: lane.measuredRounds,
         sampleOp: lane.sampleOp,
@@ -237,7 +266,7 @@ function measuredRatio(lane) {
  * the per-package history charts. Older reports predate `perf.lanes`; their
  * top-level perf record was the JS-host/runtime-dynamic lane.
  */
-export function npmPerfHistoryPoint(packages, generatedAt, sourceRevision = null) {
+export function npmPerfHistoryPoint(packages, generatedAt, sourceRevision = null, optimizationLevels = null) {
   const snapshots = {};
   for (const pkg of packages) {
     const perf = pkg?.perf;
@@ -262,6 +291,7 @@ export function npmPerfHistoryPoint(packages, generatedAt, sourceRevision = null
   return {
     generatedAt,
     ...(sourceRevision ? { sourceRevision } : {}),
+    ...(optimizationLevels ? { optimizationLevels } : {}),
     packages: snapshots,
   };
 }
