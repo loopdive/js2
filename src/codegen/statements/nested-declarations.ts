@@ -1,12 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-/**
- * Nested function and class declaration lowering.
- * Handles function declarations within other functions, class declarations,
- * function hoisting, default parameter handling, and the arguments object.
- */
+/** Nested declaration lowering, hoisting, default parameters, and `arguments`. */
 import { ts } from "../../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
-import { bodyUsesArguments } from "../helpers/body-uses-arguments.js";
+import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
 import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
 import { isStrictFunction, isSimpleParameterList } from "../helpers/is-strict-function.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
@@ -18,7 +14,8 @@ import {
   emitFuncRefAsClosure,
   promoteAccessorCapturesToGlobals,
 } from "../closures.js";
-import { addFunctionOwnLocals } from "../binding-info.js"; // (#2103) memoized own-locals oracle
+import { addFunctionOwnLocals } from "../../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
+import { functionReturnsThroughWithScope } from "../declarations.js";
 import {
   collectNestedCaptureReferences,
   functionDeclarationObservesBindingValue,
@@ -30,6 +27,7 @@ import {
 import { recordLiftedCaptureSlots } from "../closures/capture-source-slot.js";
 import { collectOwnerBindingsWrittenAfterDeclaration } from "../closures/declaration-write-analysis.js";
 import { popBody, pushBody } from "../context/bodies.js";
+import { recordNestedFunctionBody } from "../context/body-route-audit.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "../context/types.js";
@@ -54,6 +52,7 @@ import {
 } from "../index.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "../async-frame.js"; // (#2865) nested async-gen producer
 import { ensureExnTag, nextModuleGlobalIdx } from "../registry/imports.js";
+import { buildTargetTaggedTry } from "../../ir/try-table.js";
 import {
   addFuncType,
   getArrTypeIdxFromVec,
@@ -190,7 +189,7 @@ export function compileNestedClassDeclaration(
 ): void {
   const className = syntheticName ?? decl.name?.text;
   if (!className) return;
-
+  ctx.irBodyRouteAuditSession?.recordRoot("compileNestedClassDeclaration", className, decl);
   // §15.7.1: the class name is in TDZ while its own `extends` clause is
   // evaluated. `class x extends x {}` must throw ReferenceError (#1594B). Only
   // a NAMED class can self-reference in its own heritage (`decl.name` present);
@@ -559,7 +558,7 @@ function compileNestedFunctionDeclarationInScope(
   opts: CompileNestedFunctionOptions,
 ): void {
   if (!stmt.name || !stmt.body) return;
-  const funcName = stmt.name.text;
+  const funcName = recordNestedFunctionBody(ctx, stmt, opts.preRegisterOnly);
   const foreignEvalDeclaration = isForeignEvalNode(stmt);
 
   const prepareBodyBindings = (bodyFctx: FunctionContext): void => {
@@ -659,6 +658,11 @@ function compileNestedFunctionDeclarationInScope(
     returnType = { kind: "externref" };
   } else if (foreignNoSignature) {
     // Foreign eval-body function: dynamic `any` return (externref).
+    returnType = { kind: "externref" };
+  } else if (functionReturnsThroughWithScope(ctx, stmt)) {
+    // The checker resolved this function's returned NAME against the binding the
+    // `with` receiver shadows, so its inferred return type describes the wrong
+    // value (see `functionReturnsThroughWithScope`). Carry it as `any`.
     returnType = { kind: "externref" };
   } else if (sig) {
     let retType = ctx.checker.getReturnTypeOfSignature(sig);
@@ -920,7 +924,7 @@ function compileNestedFunctionDeclarationInScope(
   // Track nested functions that read `arguments` (#1053) so callers can
   // populate the __extras_argv global with runtime args beyond the
   // formal param count.
-  if (stmt.body && bodyUsesArguments(stmt.body)) {
+  if (needsImplicitArgumentsObject(stmt)) {
     ctx.funcUsesArguments.add(funcName);
   }
 
@@ -1026,7 +1030,7 @@ function compileNestedFunctionDeclarationInScope(
     // (#2743) Unmapped when strict OR the parameter list is non-simple
     // (rest/default/destructuring) — §10.2.11 FunctionDeclarationInstantiation
     // step 22.a.
-    if (stmt.body && (bodyUsesArguments(stmt.body) || reachesDirectEval)) {
+    if (needsImplicitArgumentsObject(stmt, reachesDirectEval)) {
       const unmapped =
         isStrictFunction(stmt, ctx.inferModuleStrictArguments) || !isSimpleParameterList(stmt.parameters);
       emitArgumentsObject(ctx, liftedFctx, paramTypes, 0, unmapped);
@@ -1098,13 +1102,15 @@ function compileNestedFunctionDeclarationInScope(
               { op: "local.set", index: pendingThrowLocal },
             ]
           : [];
-      liftedFctx.body.push({
-        op: "try",
-        blockType: { kind: "empty" },
-        body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
-        catches: [{ tagIdx, body: catchBody }],
-        catchAll: catchAllBody.length > 0 ? catchAllBody : undefined,
-      });
+      liftedFctx.body.push(
+        buildTargetTaggedTry(
+          ctx,
+          { kind: "empty" },
+          [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
+          [{ tagIdx, body: catchBody }],
+          catchAllBody.length > 0 ? catchAllBody : undefined,
+        ),
+      );
 
       // Return __create_generator or __create_async_generator depending on async flag
       const createGenName = isAsync ? "__create_async_generator" : "__create_generator";
@@ -1493,7 +1499,7 @@ function compileNestedFunctionDeclarationInScope(
     // Set up `arguments` object if the function body references it.
     // (#2743) Unmapped when strict OR the parameter list is non-simple
     // (rest/default/destructuring) — §10.2.11 step 22.a.
-    if (stmt.body && (bodyUsesArguments(stmt.body) || reachesDirectEval)) {
+    if (needsImplicitArgumentsObject(stmt, reachesDirectEval)) {
       const unmapped =
         isStrictFunction(stmt, ctx.inferModuleStrictArguments) || !isSimpleParameterList(stmt.parameters);
       emitArgumentsObject(ctx, liftedFctx, paramTypes, leadingParamCount, unmapped);
@@ -1570,13 +1576,15 @@ function compileNestedFunctionDeclarationInScope(
               { op: "local.set", index: pendingThrowLocal },
             ]
           : [];
-      liftedFctx.body.push({
-        op: "try",
-        blockType: { kind: "empty" },
-        body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
-        catches: [{ tagIdx, body: catchBody }],
-        catchAll: catchAllBody.length > 0 ? catchAllBody : undefined,
-      });
+      liftedFctx.body.push(
+        buildTargetTaggedTry(
+          ctx,
+          { kind: "empty" },
+          [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
+          [{ tagIdx, body: catchBody }],
+          catchAllBody.length > 0 ? catchAllBody : undefined,
+        ),
+      );
 
       // Return __create_generator or __create_async_generator depending on async flag
       const createGenName = isAsync ? "__create_async_generator" : "__create_generator";

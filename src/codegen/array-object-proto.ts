@@ -63,6 +63,10 @@ import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI
 // brands (a reflective member closure must degrade to a catchable TypeError, not
 // a hard compile error — #2193 PR-C).
 import { emitObjectProtoOrRefusal as emitProtoMemberBodyRefusal } from "./object-proto-tostring.js";
+// (#4491) `Object.prototype.isPrototypeOf` — the §20.1.3.3 chain walk, routed
+// to the same `__isPrototypeOf` native the typed call path uses.
+import { emitObjectProtoIsPrototypeOfBody } from "./object-proto-is-prototype-of.js";
+import { emitWrapperProtoValueOfBody, isWrapperBrandName } from "./wrapper-proto-value-of.js";
 import { emitStringConcatMemberBody } from "./string-proto-concat.js";
 import { emitStringSubstringMemberBody } from "./string-proto-substring.js";
 import { emitStringSplitMemberBody } from "./string-proto-split.js"; // (#4220) reflective String.prototype.split
@@ -70,8 +74,13 @@ import { htmlWrapperFor } from "./html-wrapper-native.js"; // (#4445) Annex B §
 import { emitStringHtmlWrapperMemberBody } from "./string-proto-html.js"; // (#4445) reflective HTML wrappers
 import { emitStringMatchSearchMemberBody } from "./string-proto-match-search.js"; // (#4439) reflective match/search
 import { emitStringReplaceMemberBody } from "./string-proto-replace-transfer.js"; // (#4232) reflective String.prototype.replace
-import { NO_ARG_STRING_MEMBER_HELPER, emitStringProtoToStringFlat } from "./string-proto-tostring.js"; // (#3992)
+import {
+  NO_ARG_STRING_MEMBER_HELPER,
+  SUPERSEDED_BY_BORROWED_PATH,
+  emitStringProtoToStringFlat,
+} from "./string-proto-tostring.js"; // (#3992)
 import { standaloneGlobalFunctionSeedInstrs } from "./standalone-global-functions.js";
+import { emitBuiltinNamespaceObject } from "./builtin-static-globals.js";
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -892,28 +901,7 @@ function emitStringRequireObjectCoercible(ctx: CodegenContext, fctx: FunctionCon
  * `$__any_to_string` are functions (append-only, no index shift).
  */
 function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
-  // (#2742) SUPERSEDED-WIRING CARVE-OUT. For these five members the #2875
-  // reflective body is strictly worse than the legacy borrowed-receiver path it
-  // intercepts, so refuse here and let the caller fall through.
-  //
-  // Why this is a carve-out and NOT "remove the wiring": #2875 was written when
-  // legacy `.call` dropped `thisArg`; #3254 later fixed that with a
-  // `receiverOverride` covering `STANDALONE_STR_PROTO_METHODS`. But #2875 also
-  // carries semantics legacy never had — `emitStringRequireObjectCoercible` —
-  // so the wiring is superseded for SOME members and still load-bearing for
-  // others. Measured, blanket removal costs 13 `this-value-not-obj-coercible`
-  // and `trimStart`/`trimEnd` files; this per-member set costs zero.
-  //
-  // Test262 A/B (450 files, same box/run/list, both arms one tree; rows floored
-  // 450/450, zero timeouts): **+18 fail→pass, 0 pass→fail**, the 13 files that a
-  // blanket removal regresses all HELD, `substring`/`charAt` control unmoved,
-  // and zero off-target moves. Full ledger + the two rejected variants are in
-  // plan/issues/2742-string-prototype-generic-receiver-tostring-this-coercion.md.
-  //
-  // Deliberately EXCLUDED (their wired bodies still win — do not "simplify"
-  // this set without re-running the A/B): `charCodeAt`, `indexOf`,
-  // `lastIndexOf`, `trimStart`, `trimEnd`, `at`, `substring`, `charAt`.
-  const SUPERSEDED_BY_BORROWED_PATH = new Set(["trim", "codePointAt", "includes", "startsWith", "endsWith"]);
+  // (#2742) The superseded-wiring carve-out — see string-proto-tostring.ts.
   if (SUPERSEDED_BY_BORROWED_PATH.has(member)) return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
 
   const IN_SCOPE = new Set(["at", "charCodeAt", "codePointAt"]);
@@ -1753,7 +1741,14 @@ function makeGlue(
     // (#2875 slice 1) String.prototype.{charAt,at} likewise. Other Array/String
     // members + all Object members still degrade to a catchable TypeError.
     emitMemberBody: (c, fctx, member) =>
-      name === "Array"
+      // (#4491 wave-5 T2) `this<X>Value(this)` for the three primitive-wrapper
+      // families (§21.1.3.7 / §22.1.3.28 / §20.3.3.3). Routed FIRST so it
+      // serves String too — `emitStringProtoMemberBody` would otherwise claim
+      // the member and answer the refusal. Declines (returns null, emits
+      // nothing) for every other family/member, so the ladder below is reached
+      // byte-identically.
+      (member === "valueOf" && isWrapperBrandName(name) ? emitWrapperProtoValueOfBody(c, fctx, name) : null) ??
+      (name === "Array"
         ? emitArrayProtoMemberBody(c, fctx, member)
         : name === "String"
           ? emitStringProtoMemberBody(c, fctx, member)
@@ -1762,7 +1757,12 @@ function makeGlue(
             // return null → fall through to the legacy path.
             name === "Date"
             ? (emitDateProtoMemberBody(c, fctx, member) ?? emitDateReflectiveSetterBody(c, fctx, member))
-            : emitProtoMemberBodyRefusal(c, fctx, name, member),
+            : // (#4491) `Object.prototype.isPrototypeOf` has a real answer — the
+              // §20.1.3.3 chain walk. Every other Object member still degrades
+              // to the catchable refusal (`toString`'s classifier lives inside
+              // it).
+              ((name === "Object" ? emitObjectProtoIsPrototypeOfBody(c, fctx, member) : null) ??
+              emitProtoMemberBodyRefusal(c, fctx, name, member))),
   };
 }
 
@@ -2586,6 +2586,64 @@ export function emitGeneratorFunctionPrototypeSingleton(ctx: CodegenContext, fct
 }
 
 /**
+ * Native standalone `%AsyncGenerator%` (= `%AsyncGeneratorFunction.prototype%`)
+ * identity used by primordial capture. The outer object owns a stable
+ * `prototype` value representing `%AsyncGeneratorPrototype%`.
+ *
+ * Async-generator frame dispatch already lives in the async iterator runtime;
+ * exposing `next`/`return`/`throw` as first-class method closures is a separate
+ * semantic layer. Keeping the nested object distinct (rather than aliasing the
+ * synchronous generator prototype) preserves the intrinsic identities while
+ * allowing reflection/bootstrap to proceed without a JavaScript host.
+ */
+export function emitAsyncGeneratorFunctionPrototypeSingleton(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+): ValType | null {
+  ensureObjectRuntime(ctx);
+  const newObjectIdx = ctx.funcMap.get("__new_plain_object");
+  const setIdx = ctx.funcMap.get("__extern_set");
+  if (newObjectIdx === undefined || setIdx === undefined) return null;
+
+  const globalName = "__native_async_generator_function_prototype";
+  let globalIdx = ctx.builtinObjectGlobals.get(globalName);
+  if (globalIdx === undefined) {
+    globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+    ctx.mod.globals.push({
+      name: globalName,
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    ctx.builtinObjectGlobals.set(globalName, globalIdx);
+  }
+
+  const outerLocal = allocLocal(fctx, `__async_genfn_proto_${fctx.locals.length}`, { kind: "externref" });
+  const innerLocal = allocLocal(fctx, `__async_gen_proto_${fctx.locals.length}`, { kind: "externref" });
+  const initBody: Instr[] = [
+    { op: "call", funcIdx: newObjectIdx },
+    { op: "local.set", index: innerLocal },
+    { op: "call", funcIdx: newObjectIdx },
+    { op: "local.set", index: outerLocal },
+    { op: "local.get", index: outerLocal },
+  ];
+  addStringConstantGlobal(ctx, "prototype");
+  initBody.push(...stringConstantExternrefInstrs(ctx, "prototype"));
+  initBody.push(
+    { op: "local.get", index: innerLocal },
+    { op: "call", funcIdx: setIdx },
+    { op: "local.get", index: outerLocal },
+    { op: "global.set", index: globalIdx },
+  );
+
+  fctx.body.push({ op: "global.get", index: globalIdx });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
+  fctx.body.push({ op: "global.get", index: globalIdx });
+  return { kind: "externref" };
+}
+
+/**
  * (#2996) Native standalone `globalThis` value. In host/gc mode a bare
  * `globalThis` identifier read leaks the `env::__get_globalThis` host import
  * (see `compileIdentifier`), which a no-JS-host binary can't satisfy — yet the
@@ -2636,11 +2694,42 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
   ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   const objLocal = allocLocal(fctx, `__native_globalThis_obj_${fctx.locals.length}`, { kind: "externref" });
+
+  // Deno's primordials bootstrap deliberately discovers namespace objects via
+  // a computed realm-global read (`globalThis[name]`) before copying their own
+  // descriptors. The namespace carrier and the realm property must therefore
+  // be the same object; an empty or second carrier loses function identity.
+  // Build these demand-driven seeds through the canonical namespace emitter.
+  // Keep the detached body live while later seed construction can still add
+  // imports and shift defined-function indices.
+  const savedBody = fctx.body;
+  fctx.body = [];
+  ctx.liveBodies.add(savedBody);
+  for (const name of ["Array", "Object", "JSON", "Math", "Proxy", "Reflect"] as const) {
+    fctx.body.push({ op: "local.get", index: objLocal });
+    addStringConstantGlobal(ctx, name);
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
+    if (emitBuiltinNamespaceObject(ctx, fctx, name) === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    const defineIdx = ctx.funcMap.get("__defineProperty_value");
+    if (defineIdx === undefined) {
+      fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "drop" });
+      continue;
+    }
+    // Global builtin bindings: writable, non-enumerable, configurable.
+    fctx.body.push({ op: "f64.const", value: 0x05 }, { op: "call", funcIdx: defineIdx }, { op: "drop" });
+  }
+  const namespaceSeeds = fctx.body;
+  fctx.body = savedBody;
+  ctx.liveBodies.delete(savedBody);
+  ctx.liveBodies.add(namespaceSeeds);
   const functionSeeds = standaloneGlobalFunctionSeedInstrs(ctx, objLocal);
   const newObjectIdx = ctx.funcMap.get("__new_plain_object");
   const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   if (!functionSeeds || newObjectIdx === undefined || defineValueIdx === undefined || boxNumberIdx === undefined) {
+    ctx.liveBodies.delete(namespaceSeeds);
     return null;
   }
 
@@ -2665,15 +2754,18 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
     { op: "call", funcIdx: boxNumberIdx },
   ]);
   seedValue("undefined", undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }]);
+  seedValue("globalThis", [{ op: "local.get", index: objLocal }]);
 
   const initBody: Instr[] = [
     { op: "call", funcIdx: newObjectIdx },
     { op: "local.set", index: objLocal },
     ...functionSeeds,
     ...valueSeeds,
+    ...namespaceSeeds,
     { op: "local.get", index: objLocal },
     { op: "global.set", index: globalIdx },
   ];
+  ctx.liveBodies.delete(namespaceSeeds);
   fctx.body.push({ op: "global.get", index: globalIdx });
   fctx.body.push({ op: "ref.is_null" });
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
@@ -2709,12 +2801,26 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
  * returns the externref ValType, or `null` if the `$Object` runtime is
  * unavailable (caller falls through to the host-import path).
  */
-export function emitArrayIteratorPrototypeSingleton(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
+export type NativeIteratorPrototypeKind = "Array" | "Map" | "Set" | "String";
+
+/**
+ * Materialize one identity-stable intrinsic iterator prototype object.
+ *
+ * The iterator record carriers do not model [[Prototype]] yet. Keeping one
+ * singleton per iterator family nevertheless gives reflective bootstrap code
+ * a genuine object identity (rather than null) and prevents Map/Set/String
+ * iterator prototypes from collapsing onto %ArrayIteratorPrototype%.
+ */
+export function emitIteratorPrototypeSingleton(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  kind: NativeIteratorPrototypeKind,
+): ValType | null {
   ensureObjectRuntime(ctx);
   const newObjectIdx = ctx.funcMap.get("__new_plain_object");
   if (newObjectIdx === undefined) return null;
 
-  const globalName = "__native_array_iterator_prototype";
+  const globalName = `__native_${kind.toLowerCase()}_iterator_prototype`;
   let globalIdx = ctx.builtinObjectGlobals.get(globalName);
   if (globalIdx === undefined) {
     globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
@@ -2736,4 +2842,8 @@ export function emitArrayIteratorPrototypeSingleton(ctx: CodegenContext, fctx: F
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
   fctx.body.push({ op: "global.get", index: globalIdx });
   return { kind: "externref" };
+}
+
+export function emitArrayIteratorPrototypeSingleton(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
+  return emitIteratorPrototypeSingleton(ctx, fctx, "Array");
 }

@@ -54,7 +54,6 @@
  * `smi-box-fast-path.ts`, same flag, with the measurement in the issue entry.
  */
 import type { Instr, ValType, FuncHandle } from "../ir/types.js";
-import { tunedFlagEnabled } from "../perf-flags.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -62,6 +61,8 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { fusedToNumberEnabled, smiFastPathEnabled } from "./tonumber-fast-path-flags.js";
+export { fusedToNumberEnabled, smiFastPathAllValues, smiFastPathEnabled } from "./tonumber-fast-path-flags.js";
 
 /** The abstract `i31` heap type, as every other `ref.test`/`ref.cast` site spells it. */
 const HEAP_I31 = -20;
@@ -77,49 +78,6 @@ const FUSED_NAME = "__to_number";
  * (contexts are per-compile) and collects with it.
  */
 const reservedIn = new WeakSet<CodegenContext>();
-
-/**
- * Both flags were opt-in until the #4157 tuned-set flip; both are now **default
- * ON** under the `src/perf-flags.ts` token rule (unset ⇒ on, `0`/`off`/empty ⇒
- * off, anything else ⇒ the tuned default).
- *
- * The reason the original spelling was the OPPOSITE of `derivation-flags.ts` —
- * "these change EMITTED CODE on a hot path and have not been measured, so a
- * typo must not enable them" — was retired by the measurement, not by fiat:
- * entry (34) measured them. The same sentence now runs the other way, since a
- * typo must not silently disable a default the project chose.
- *
- * `JS2WASM_FUSED_TONUMBER` — Slice A, the fused `__to_number`.
- */
-export function fusedToNumberEnabled(): boolean {
-  return tunedFlagEnabled(process.env.JS2WASM_FUSED_TONUMBER);
-}
-
-/** `JS2WASM_SMI_FASTPATH` — Slice B. Default ON (at the `all` level). */
-export function smiFastPathEnabled(): boolean {
-  return tunedFlagEnabled(process.env.JS2WASM_SMI_FASTPATH);
-}
-
-/**
- * `JS2WASM_SMI_FASTPATH=all` — Slice B plus the *unrestricted* box-side guard
- * (`smi-box-fast-path.ts`). A second LEVEL of the same flag rather than a second
- * flag, because the two positions differ only in how many boxing sites the guard
- * is inlined at, and that is purely a SIZE lever: the restricted level pays
- * ~20 B at sites whose f64 is provably i32-derived, the unrestricted one pays
- * ~50 B at every boxing site in the module. `=1` keeps the cheap level; `=all`
- * implies `=1`.
- *
- * **`all` is the DEFAULT level** — it is what entry (34) measured. `=1` is now a
- * deliberate step DOWN to the cheap level, so it is the one spelling that has to
- * be recognised exactly; every other non-off value takes the default.
- */
-export function smiFastPathAllValues(): boolean {
-  const raw = process.env.JS2WASM_SMI_FASTPATH;
-  if (!tunedFlagEnabled(raw)) return false;
-  if (raw === undefined) return true;
-  const norm = raw.trim().toLowerCase();
-  return norm !== "1" && norm !== "true" && norm !== "on" && norm !== "yes";
-}
 
 /**
  * Slice B needs a scratch local; Slice A does not. Several callers reach
@@ -307,6 +265,39 @@ function reserveFusedToNumber(ctx: CodegenContext, fctx: FunctionContext): FuncH
 }
 
 /**
+ * Reserve and return the exact callable providers selected by standalone
+ * `externref -> f64` ToNumber lowering.
+ *
+ * Prepared-component sealing cannot infer these from `dyn.to_number`: with
+ * fusion enabled the emitted site calls `__to_number` directly, while the
+ * helper transitively calls `__to_primitive` and `__unbox_number`; with fusion
+ * disabled the site calls the latter pair directly. Returning the handles
+ * from this module keeps provider selection coupled to the canonical flag and
+ * reservation policy instead of duplicating it in the IR integration layer.
+ */
+export function prepareStandaloneExternrefToNumberProviders(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+):
+  | {
+      readonly toPrimitive: FuncHandle;
+      readonly unboxNumber: FuncHandle;
+      readonly fusedToNumber?: FuncHandle;
+    }
+  | undefined {
+  if (!ctx.standalone) return undefined;
+  const deps = ensureDeps(ctx, fctx);
+  if (!deps) return undefined;
+  if (!fusedToNumberEnabled()) {
+    return { toPrimitive: deps.toPrimIdx, unboxNumber: deps.unboxIdx };
+  }
+  const fusedToNumber = reserveFusedToNumber(ctx, fctx);
+  return fusedToNumber === undefined
+    ? undefined
+    : { toPrimitive: deps.toPrimIdx, unboxNumber: deps.unboxIdx, fusedToNumber };
+}
+
+/**
  * Fill the reserved `__to_number` at FINALIZE, when `__to_primitive` and
  * `__unbox_number` hold their final indices. No-op unless Slice A reserved one.
  */
@@ -334,9 +325,14 @@ export function fillFusedToNumber(ctx: CodegenContext): void {
  * so the flag-off binary is byte-identical by construction (nothing below
  * mutates `ctx` before the flag test).
  */
-export function tryEmitFastToNumber(ctx: CodegenContext, fctx: FunctionContext, hint: string): boolean {
+export function tryEmitFastToNumber(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  hint: string,
+  allocScratch?: () => number,
+): boolean {
   const fused = fusedToNumberEnabled();
-  const smi = smiFastPathEnabled() && canAllocateLocals(fctx);
+  const smi = smiFastPathEnabled() && (allocScratch !== undefined || canAllocateLocals(fctx));
   if (!smi && !fused) return false;
   // ToNumber is ToPrimitive with the NUMBER hint. A "string"/"default" hint is
   // a different abstract operation with a different method order (and, for
@@ -374,7 +370,7 @@ export function tryEmitFastToNumber(ctx: CodegenContext, fctx: FunctionContext, 
   // externref answers 0 here and takes the slow arm — which returns 0 for null,
   // the same answer. No separate null test is needed, and `ref.cast` in the
   // then-arm therefore cannot see null.
-  const tmp = allocTempLocal(fctx, { kind: "externref" });
+  const tmp = allocScratch?.() ?? allocTempLocal(fctx, { kind: "externref" });
   fctx.body.push({ op: "local.tee", index: tmp });
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "ref.test", typeIdx: HEAP_I31 });
@@ -390,7 +386,7 @@ export function tryEmitFastToNumber(ctx: CodegenContext, fctx: FunctionContext, 
     ],
     else: [{ op: "local.get", index: tmp }, ...slow],
   });
-  releaseTempLocal(fctx, tmp);
+  if (!allocScratch) releaseTempLocal(fctx, tmp);
   note("smiSites");
   return true;
 }

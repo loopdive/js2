@@ -4,6 +4,7 @@
  */
 import { ts, forEachChild } from "../../ts-api.js";
 import { receiverIsRealmGlobalObject } from "../helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver
+import { tryEmitRealmGlobalElementWrite } from "../realm-global-element-write.js"; // (#4491 T4) its bracket twin
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import { integrityVarKey } from "../widened-var-key.js";
 import { PROP_FLAG_ACCESSOR, PROP_FLAG_WRITABLE } from "../object-ops.js";
@@ -11,6 +12,8 @@ import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
 import { emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3
 import { emitHoleToUndefined, holeSentinelInstrs } from "../array-holes.js";
+// prettier-ignore
+import { emitUnbackableIndexFlag, guardedElementSetInstrs, needsGapFillCondInstrs, needsGrowCondInstrs } from "../vec-sparse-index.js";
 import { tryEmitLinearU8ElementCompound, tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
 import { emitAnyAdd, emitModulo, emitToInt32, emitToUint8Clamp } from "../binary-ops.js";
 import { popBody, pushBody } from "../context/bodies.js";
@@ -123,6 +126,7 @@ import {
   elementAccessTypedArrayName,
   emitNonIndexVecElementSet,
   nonArrayIndexNumericKey,
+  compileElementIndexI32,
 } from "../array-nonindex-key.js"; // (#4247) §10.4.2.2 named-key routing + the relocated TA-view-name helper
 import {
   compileStringBuilderAppend,
@@ -151,6 +155,7 @@ import { tryCompileStrictFunctionPoisonAssignment } from "../function-poison-pil
 import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
 import { emitToPropertyKeyOnce } from "./computed-member-reference.js";
+import { inheritedSetAffectsKey } from "../inherited-set-gate.js"; // (#4602) per-key #4504 gate
 
 /**
  * Emit a null/undefined guard for an externref-typed destructuring source.
@@ -3403,6 +3408,11 @@ function tryEmitPinnedStructMemberSet(
 ): ValType | undefined {
   if (ts.isPrivateIdentifier(target.name)) return undefined;
   const propName = target.name.text;
+  // Preserve the source Reference's strictness through the pinned-fnctor
+  // dispatcher.  A synthetic module wrapper must not turn a sloppy script
+  // assignment into `__extern_set_strict`: that would make an inherited
+  // refusal throw instead of completing as the required no-op.
+  const strict = isStrictContext(target, ctx.inferModuleStrictArguments);
   if (
     propName === "length" ||
     propName === "constructor" ||
@@ -3419,7 +3429,7 @@ function tryEmitPinnedStructMemberSet(
   // Pre-check the dispatcher is reservable BEFORE emitting any receiver/value
   // side effects, so a decline leaves the body untouched (the
   // emitAlternateStructSetDispatch reserve below is idempotent).
-  if (reserveMemberSetDispatch(ctx, propName, /*strict*/ true, fctx) === undefined) return undefined;
+  if (reserveMemberSetDispatch(ctx, propName, strict, fctx) === undefined) return undefined;
 
   // Evaluate the receiver (reference before value), coerce to externref.
   const objResult = compileExpression(ctx, fctx, target.expression);
@@ -3452,7 +3462,7 @@ function tryEmitPinnedStructMemberSet(
   // Evaluate the value, coerce/box to externref.
   const valResult = compileExpression(ctx, fctx, value);
   // (#4157 A) statically-f64 value → the typed write twin (no box/unbox).
-  const f64Set = tryEmitTypedF64MemberSet(ctx, fctx, objLocal, valResult, propName, /*strict*/ true);
+  const f64Set = tryEmitTypedF64MemberSet(ctx, fctx, objLocal, valResult, propName, strict);
   if (f64Set !== undefined) return f64Set;
   if (valResult && ctx.booleanPropertyNames.has(propName)) {
     // #2847: a dynamic method bridge may already have boxed an untyped
@@ -3472,7 +3482,7 @@ function tryEmitPinnedStructMemberSet(
 
   // #2664 deferred set dispatcher: native `struct.set` arms (incl. the
   // late-registered `__fnctor_<F>`) + `__extern_set_strict` sidecar terminal.
-  const dispatched = emitAlternateStructSetDispatch(ctx, fctx, objLocal, valLocal, propName, /*strict*/ true);
+  const dispatched = emitAlternateStructSetDispatch(ctx, fctx, objLocal, valLocal, propName, strict);
   if (!dispatched) return undefined; // no struct candidate yet — fall through to the normal write path
   // `=` evaluates to the assigned value.
   fctx.body.push({ op: "local.get", index: valLocal });
@@ -4055,9 +4065,9 @@ function compilePropertyAssignment(
       fctx.body.push({ op: "local.get", index: vecTmp });
       fctx.body.push({ op: "local.get", index: newLenTmp });
       fctx.body.push({ op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 });
-      // Return the new length as the assignment expression result
+      // Assignment result — UNSIGNED widening (#4491, see array-length-define.ts).
       fctx.body.push({ op: "local.get", index: newLenTmp });
-      if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+      if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
       return ctx.fast ? { kind: "i32" } : { kind: "f64" };
     }
   }
@@ -4275,6 +4285,17 @@ function compilePropertyAssignment(
     return compilePropertyAssignmentExternSet(ctx, fctx, target, value, fieldName);
   }
   const presenceSlot = presenceSlotOf(fields, fieldName);
+
+  // A flow-grown slot with a clear presence bit is not an own property yet.
+  // When inherited descriptors are observable, route it through the existing
+  // dynamic member-set dispatcher so its strict/non-strict terminal reaches
+  // the shared four-state [[Set]] decision before materializing the slot.
+  // This runs before either receiver or RHS is emitted, preserving evaluation
+  // order and leaving the direct physical fast path for a present slot in the
+  // dispatcher/runtime itself.
+  if (ctx.standalone && inheritedSetAffectsKey(ctx, fieldName) && presenceSlot !== undefined) {
+    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, fieldName);
+  }
 
   const structSelfType: ValType = { kind: "ref_null", typeIdx: structTypeIdx };
   const structObjResult = compileExpression(ctx, fctx, target.expression, structSelfType);
@@ -4771,6 +4792,10 @@ function compileElementAssignment(
     }
   }
 
+  // (#4491 T4) Bracket twin of the #4500 Slice A dot arm; placed like it — after
+  // the runtime-state checks, before the struct lowerings. See its module.
+  const realmGlobalElemWrite = tryEmitRealmGlobalElementWrite(ctx, fctx, target, value);
+  if (realmGlobalElemWrite !== undefined) return realmGlobalElemWrite;
   // #1886 Slice B: linear-backed Uint8Array write `buf[i] = v` →
   // i32.store8(ptr+i, trunc(v)). Only fires for a registered linear-safe
   // buffer; any other target falls through to the GC element-assign path.
@@ -5087,9 +5112,7 @@ function compileElementAssignment(
     // Preserve range-proven counted-loop index arithmetic as i32. Fall back to
     // the existing conversion path when constants, bounds, or overflow safety
     // cannot be established.
-    const idxResult = tryEmitStaticI32Expression(ctx, fctx, target.argumentExpression)
-      ? ({ kind: "i32" } as const)
-      : compileExpression(ctx, fctx, target.argumentExpression, { kind: "i32" });
+    const idxResult = compileElementIndexI32(ctx, fctx, target.argumentExpression);
     if (!idxResult) {
       reportError(ctx, target, "Failed to compile element index");
       return null;
@@ -5203,11 +5226,12 @@ function compileElementAssignment(
       kind: "i32",
     });
 
-    fctx.body.push({ op: "local.get", index: idxLocal });
-    fctx.body.push({ op: "local.get", index: dataLocal });
-    fctx.body.push({ op: "array.len" });
-    fctx.body.push({ op: "i32.ge_s" }); // idx >= capacity?
-
+    // (#4491 lane J) An index above the 16M allocation guard is UNBACKABLE: the
+    // flag gates the grow, the gap-fill and the `array.set`, and every index
+    // compare below turns UNSIGNED (the local holds a u32 bit pattern — index
+    // 2**32-2 arrives as `-2`). Full rationale in vec-sparse-index.ts.
+    const unbackedLocal = emitUnbackableIndexFlag(fctx, idxLocal);
+    fctx.body.push(...needsGrowCondInstrs(unbackedLocal, idxLocal, dataLocal));
     fctx.body.push({
       op: "if",
       blockType: { kind: "empty" },
@@ -5309,9 +5333,7 @@ function compileElementAssignment(
       fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 0 }); // current length
       fctx.body.push({ op: "local.set", index: gapOldLenLocal });
       // if (idx > length) array.fill(data, length, undefined, idx - length)
-      fctx.body.push({ op: "local.get", index: idxLocal });
-      fctx.body.push({ op: "local.get", index: gapOldLenLocal });
-      fctx.body.push({ op: "i32.gt_s" });
+      fctx.body.push(...needsGapFillCondInstrs(unbackedLocal, idxLocal, gapOldLenLocal));
       fctx.body.push({
         op: "if",
         blockType: { kind: "empty" },
@@ -5327,11 +5349,8 @@ function compileElementAssignment(
       });
     }
 
-    // array.set: data[idx] = val (using potentially grown data)
-    fctx.body.push({ op: "local.get", index: dataLocal });
-    fctx.body.push({ op: "local.get", index: idxLocal });
-    fctx.body.push({ op: "local.get", index: valLocal });
-    fctx.body.push({ op: "array.set", typeIdx: arrTypeIdx });
+    // array.set: data[idx] = val (skipped for an unbackable index).
+    fctx.body.push(...guardedElementSetInstrs(unbackedLocal, dataLocal, idxLocal, valLocal, arrTypeIdx));
 
     // Update length if idx+1 > current length:
     // if (idx + 1 > vec.length) vec.length = idx + 1
@@ -5340,7 +5359,7 @@ function compileElementAssignment(
     fctx.body.push({ op: "i32.add" });
     fctx.body.push({ op: "local.get", index: vecLocal });
     fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 0 }); // get length
-    fctx.body.push({ op: "i32.gt_s" });
+    fctx.body.push({ op: "i32.gt_u" });
     fctx.body.push({
       op: "if",
       blockType: { kind: "empty" },

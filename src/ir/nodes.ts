@@ -59,6 +59,10 @@ import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
 // exposure — the same property `js-tag.ts`'s header protects.
 import { type TagId, tagRefinementEquals } from "./tag-domain.js";
 import type { ValType } from "./types.js";
+import type { IrDomCallbackAuthority } from "./capability-provenance.js";
+import type { IrCallableBinding, IrFuncRef, IrGlobalBinding, IrGlobalRef } from "./value-references.js";
+export type { IrDomCallbackAuthority } from "./capability-provenance.js";
+export type { IrCallableBinding, IrFuncRef, IrGlobalBinding, IrGlobalRef } from "./value-references.js";
 
 // ---------------------------------------------------------------------------
 // Symbolic references
@@ -71,44 +75,6 @@ import type { ValType } from "./types.js";
 // a symbolic `IrFuncRef` with a structural callable binding; lowering resolves
 // it to a concrete index AFTER all imports are finalized, making the shift
 // pass a no-op on the IR path. `name` remains only a compatibility/debug label.
-
-/** Closed structural identity for every direct-callable IR target. */
-export type IrCallableBinding =
-  | { readonly kind: "unit"; readonly unitId: IrUnitId }
-  | { readonly kind: "import"; readonly module: string; readonly field: string }
-  | { readonly kind: "runtime"; readonly symbol: string }
-  | { readonly kind: "intrinsic"; readonly symbol: string }
-  | { readonly kind: "support"; readonly bindingId: IrBindingId };
-
-export interface IrFuncRef {
-  readonly kind: "func";
-  /** Compatibility/debug label; never the semantic lookup key. */
-  readonly name: string;
-  readonly binding: IrCallableBinding;
-}
-
-/** Closed structural identity for every IR global target. */
-export type IrGlobalBinding =
-  | { readonly kind: "source"; readonly bindingId: IrBindingId }
-  | {
-      readonly kind: "import";
-      readonly bindingId: IrBindingId;
-      readonly module: string;
-      readonly field: string;
-    }
-  | {
-      readonly kind: "runtime";
-      readonly bindingId: IrBindingId;
-      readonly symbol: string;
-    }
-  | { readonly kind: "support"; readonly bindingId: IrBindingId };
-
-export interface IrGlobalRef {
-  readonly kind: "global";
-  /** Compatibility/debug label; never the semantic lookup key. */
-  readonly name: string;
-  readonly binding: IrGlobalBinding;
-}
 
 /** Closed structural identity for every symbolic IR type target. */
 export type IrTypeBinding =
@@ -362,7 +328,19 @@ export type IrType =
   // Default (undefined) is "signed" for backward compat — every existing
   // `val: { kind: "i32" }` callsite preserves its current semantics.
   // Stage 1 only adds the field; producers / consumers come in Stages 2-3.
-  | { readonly kind: "val"; readonly val: ValType; readonly signed?: boolean }
+  | {
+      readonly kind: "val";
+      readonly val: ValType;
+      readonly signed?: boolean;
+      /**
+       * Final Program-ABI identity for a backend-owned `ref` / `ref_null`
+       * carrier. Middle-end producers may still carry the allocator index in
+       * `val` while building the candidate; preparation attaches this ref
+       * before a component may seal. Lowering resolves the symbolic identity,
+       * never the stale candidate index.
+       */
+      readonly typeRef?: IrTypeRef;
+    }
   // Backend-agnostic string marker (#1169a). The actual Wasm representation
   // is decided at lowering time via `IrLowerResolver.resolveString`:
   //   - host-strings backend  → `externref`
@@ -1280,6 +1258,8 @@ export interface IrInstrClosureNew extends IrInstrBase {
   readonly captures: readonly IrValueId[];
   /** Checker-certified immediate one-shot host-boundary consumption. */
   readonly hostOneShot?: boolean;
+  /** Exact reusable DOM callback authority. */
+  readonly domCallbackAuthority?: IrDomCallbackAuthority;
 }
 
 /**
@@ -2366,6 +2346,7 @@ export interface IrFunction extends IrFunctionIdentity {
     readonly signature: IrClosureSignature;
     readonly captureFieldTypes: readonly IrType[];
     readonly hostOneShot?: boolean;
+    readonly domCallbackAuthority?: IrDomCallbackAuthority;
   };
   /**
    * Slice 6 (#1169e): Wasm-local slots used for cross-iteration mutable

@@ -333,6 +333,20 @@ export function emitFuncRefAsClosure(
   // mints an interned string global, and a path that ends up not carrying the
   // slot should not leave one behind.
   const metaDecl = ctx.funcMapOwnerDecl.get(funcName) ?? ctx.topLevelFunctionDeclarations.get(funcName);
+  // Constructibility belongs to the source function, not to whichever value
+  // read happened to materialize its cached capture struct first. A self-read
+  // can mint an ordinary function's artifact with `__constructible`, followed
+  // by another lowering path that historically passed the default `false`.
+  // Since artifacts are keyed by function identity, that disagreement omitted
+  // one operand from the later `struct.new`. Normalize ordinary declarations
+  // here so every materialization uses one stable layout.
+  constructible =
+    constructible ||
+    ((noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first") &&
+      metaDecl !== undefined &&
+      ts.isFunctionDeclaration(metaDecl) &&
+      metaDecl.asteriskToken === undefined &&
+      !(metaDecl.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false));
   // (#4440) A STATIC class method reaches this helper (not the cached-singleton
   // one — `property-access-dispatch.ts` reads `C.m` through `emitFuncRefAsClosure`),
   // and its `funcName` is the physical `ClassName_m`, which neither map above

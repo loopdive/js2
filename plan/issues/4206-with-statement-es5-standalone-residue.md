@@ -4,7 +4,7 @@ title: "`with` statement, ES5 standalone: 73-row residue reduced to 51; first IR
 status: ready
 sprint: current
 created: 2026-08-07
-updated: 2026-08-15
+updated: 2026-08-21
 priority: high
 horizon: xl
 feasibility: hard
@@ -30,10 +30,58 @@ loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/select.ts
   - src/codegen/context/types.ts
+  # #4206 pre-init-read slice (2026-08-19): §10.2.11 gives every `var` binding
+  # `undefined` at function entry, but hoistVarDecl typed the slot from the
+  # DECLARATION, so `return value;` before `var value = "value"` read back null
+  # from a (ref null $AnyString) zero-init. The 150-line analysis lives in the
+  # new module src/codegen/declarations/hoisted-var-preinit-read.ts; these are
+  # the two irreducible wiring lines — one predicate call plus one import in
+  # each driver (index.ts +2, closures.ts +1). Already compacted from +6/+7 by
+  # folding the var-slot check into varBindingNeedsExternrefForUndefined and
+  # reducing the closure-return hook to a single call.
+  - src/codegen/index.ts
+  - src/codegen/closures.ts
+  # #4206 IR/legacy module-slot parity follow-up (2026-08-20): the complete
+  # widening analysis moved into the new leaf module
+  # src/ir/heterogeneous-module-bindings.ts. These capped drivers contain only
+  # the resolver's preclaim check and the two one-line shared-oracle adapters;
+  # keeping that wiring at the module-binding boundary preserves the strict
+  # Program ABI invariant instead of adding a postclaim exception.
+  - src/ir/module-bindings.ts
+  - src/ir/integration.ts
+  # #4206 with-routed-return slice (2026-08-21): the analysis
+  # (`functionReturnsThroughWithScope`) lives in src/codegen/declarations.ts
+  # beside the sibling `functionReturnsDynamicObjectCarrier` it mirrors. This
+  # file gets ONLY the wiring: one import plus a two-line result-type arm in the
+  # nested-function registration path, which is the third and last site that
+  # picks a wasm result type for a function declaration. Splitting three lines
+  # of dispatch into a new module would hide the arm from the two identical
+  # arms it must stay in step with.
+  - src/codegen/statements/nested-declarations.ts
 func-budget-allow:
   # Four-line statement-dispatch hook; all selection logic is in the dedicated
   # isPhase1WithStatement helper and ir/with-environment subsystem.
   - src/ir/select.ts::isPhase1StatementListInScope
+  # One shared-oracle option in each existing resolver-options object; the
+  # analysis and policy remain outside these orchestration functions.
+  - src/codegen/index.ts::planIrOverlay
+  - src/ir/integration.ts::compileIrPathFunctions
+  # #4206 with-routed-return slice (2026-08-21): a two-line arm added to the
+  # existing result-type `if/else` chain, next to the generator and
+  # foreign-eval arms it sits between. The analysis is elsewhere
+  # (declarations.ts::functionReturnsThroughWithScope); this is the dispatch.
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
+  # #4206 eval-reachable-literal slice (2026-08-21): +3 / +1 lines of WIRING
+  # only — one `collectEvalMutableNames(sourceFile)` call in the outer function
+  # and one `if (evalMutableNames.has(varName)) mopSet.add(varName)` beside the
+  # three existing `markStandalone*Targets` markers it joins. The whole analysis
+  # lives in the new leaf module
+  # src/codegen/declarations/eval-reachable-object-shape.ts. The marker line has
+  # to sit in that block: it feeds the SAME `mopSet` whose concrete-struct
+  # consumer guard immediately below is what keeps the promotion ABI-safe, so
+  # hoisting it elsewhere would bypass that guard.
+  - src/codegen/declarations/object-shape-widening.ts::collectGrowableObjectLiterals
+  - src/codegen/declarations/object-shape-widening.ts::scanStatements#2
 ---
 
 # #4206 — the `with` statement residue, correctly sized
@@ -612,3 +660,306 @@ first landing #4495 and a global-binding issue.** Both are heads with wide blast
 radius, both need a Fable-lane implementation plan, and neither should be started
 off this file alone. This issue stays `ready` but should be treated as **blocked
 on those two** rather than as a source of ready work.
+
+## 2026-08-19 re-census + dispatch
+
+Fresh standalone baseline (`test262-standalone-current.jsonl`, 48,735 entries,
+fetched 2026-08-19 04:52): standalone ES5 is **8,506 / 9,029 (94.2 %)** with
+**523 non-passes** (495 fail, 24 compile_error, 4 compile_timeout). Earlier
+figures in this file predate that and should be read as history.
+
+This issue's lane in the 2026-08-19 6-way fan-out: **56 rows — annexB eval-code/global-code, language/eval-code, statements/with**.
+Umbrella + full partition: #4163.
+
+The residue is a **long tail** — the largest single error signature across all
+523 rows is 13. Expect many small root causes, not one lever.
+
+Local gate for this lane: 551 locally-verified-passing standalone ES5 tests must
+stay at 551/551. Reproduce with the `--standalone` flag (without it you measure
+the JS-host lane, a different and much worse corpus at 84.8 %).
+
+**eval-rooted rows cannot be validated on the dev Mac** — CI's QuickJS eval tier
+needs clang-18 (see #4163 for the full toolchain finding); record them as
+blocked rather than chasing them.
+
+## 2026-08-19 landed slice — 13 rows, verified by the integrator
+
+Commit `bbe5002` on `es5-eval-with-annexb`, merged to `es5-standalone-integration`.
+
+**Lane 0 → 13 of 56, guard 551/551 (zero regressions), `target=standalone`** —
+both figures re-measured independently by the integrator, not accepted from the
+implementing lane.
+
+### The 13-row cluster was neither `__str_concat` nor eval
+
+`dereferencing a null pointer [in __str_concat() ← __module_init]` was the
+largest single signature in the whole 523-row ES5 standalone residue, and it sat
+under `language/statements/with/`, so it read as a `with`/eval problem. It is a
+**lossy store** in slot widening:
+
+`src/codegen/declarations/heterogeneous-scalar-var-widening.ts::assignmentWidens`
+refused to widen a primitive-pinned module `var` slot when the RHS's static tag
+was `mixed`. So `var result = "result"; result = p1;` keeps a
+`(ref null $AnyString)` slot, a number RHS fails the string coercion, **null** is
+stored, and the next `"" + result` dereferences it. The `with` scoping was
+already correct — probing `S12.10_A3.1_T2` showed `p1`, `this.p1` and
+`myObj.p1` all holding the right values; `result` was the only wrong one.
+
+### This reverses #4204's recorded verdict
+
+#4204 asserted that an unprovable (`mixed`) RHS must NOT widen, on the grounds
+that it "would move a large fraction of the corpus onto the dynamic
+representation for no measured benefit (5,943 syntactic candidates against 55
+provable ones)". That estimate was not re-measured when it was written into the
+negative test.
+
+Measured 2026-08-19, both halves:
+
+| check | result |
+| --- | --- |
+| 73 compiled `language/{statements,expressions}` modules, byte comparison | **1** module changed — and it **shrank** |
+| 1,200-file standalone A/B | 856 → 859; **0 pass→fail, 0 altered failure signatures** |
+| `tests/equivalence` | same 5 pre-existing failures in both arms |
+
+So the corpus-cost concern does not hold, and the refusal was not a coverage
+gap but a correctness bug. #4204's negative case was **updated in place** to
+assert the new verdict with the measurement recorded beside it, rather than
+deleted — the reversal stays visible to anyone re-deriving the predicate.
+A RED-on-base regression test was added
+(`tests/issue-4206-mixed-rhs-slot-widening.test.ts`).
+
+### Side effect worth knowing
+
+Rows hitting `quickjs provider is not built` went 4 → 11: the fix carries tests
+*past* their earlier failing assertion and into an `eval` call. Those become
+locally unverifiable rather than fixed — see the toolchain note in #4163.
+
+## 2026-08-20 follow-up — keep inferred widening and IR binding selection aligned
+
+The required #2906 async guard exposed an integration invariant after the
+mixed-RHS widening landed. Its `let ran: number = 0` has an unreachable
+`ran = x` after an awaited promise that always rejects. The RHS is necessarily
+unconstrainable, so the widening analysis picked legacy `externref`; the IR
+module-binding resolver correctly kept the explicit `number` annotation's f64
+ABI. The compiler then rejected the claimed body because the two plans named
+different physical storage for the same source binding.
+
+The resolution preserves both contracts:
+
+- explicit TypeScript annotations remain the representation authority (the
+  same boundary recorded in #4495), so the #2906 binding stays f64 and its
+  reader/module initializer remain IR-owned;
+- JavaScript and inferred TypeScript bindings still widen on heterogeneous or
+  mixed assignments, preserving the 13-row #4206 lever;
+- the registry-free widening analysis now lives beside IR module bindings and
+  is consumed by both direct allocation and IR selection. Until IR owns general
+  dynamic module assignment/read coercions, a genuinely widened binding is
+  rejected before claim instead of reaching the Program ABI invariant after
+  claim. The invariant itself remains strict.
+
+Regression coverage is in
+`tests/issue-4206-module-widening-ir-parity.test.ts`: one case proves the typed
+slot stays f64 and the reader emits through IR; the other proves an inferred
+externref slot cleanly preclaim-demotes and still round-trips its runtime value.
+## 2026-08-21 — two more `with` clusters closed, one re-diagnosed
+
+Measured on `claude/pull-from-upstream-zgdo0m` @ c0297f920c, `--target
+standalone`, single-test in-process runner, quickjs eval provider built
+(adapter key `1429ec7ecf2163fd` — without it the whole `S12.10_A1.8_T*` family
+reports a provider-missing error rather than its real result).
+
+### Cluster A — `with`-routed RETURN value was coerced to the shadowed binding's type (5 rows)
+
+`language/identifier-resolution/S10.2.2_A1_T5..T9` — all five `fail` →
+all five `pass`.
+
+```js
+var x = 0;
+var myObj = { x: "obj" };
+function f1() { with (myObj) { return x; } }   // spec: "obj"
+```
+
+**The prior diagnosis was wrong in a way worth recording.** It read the failure
+as `proveStructTypedWithTarget` declining an outer-scope receiver. Instrumented,
+that proof *accepts* (`ACCEPT __anon_1`) and Tier-1 routes the read correctly —
+proved by re-running with `var x = "outer"`, which returns `"obj"`. The bug is
+one level up: the TS checker does not model `with`, so it resolves `return x` to
+the outer `var x = 0` and infers `f1(): number`. Codegen pins the wasm result to
+`f64` and coerces the routed *string* field into it, so `f1()` is `NaN`.
+
+Fix: `functionReturnsThroughWithScope` (src/codegen/declarations.ts) — a
+function with no explicit return annotation that has a `return <expr naming
+something>` inside one of its own `with` bodies gets an `externref` result
+instead of the inferred one. Transitive through a direct `return callee()`,
+because T5–T8 wrap the `with` in an inner `f2` and return `f2()` from `f1`,
+where the same misinference repeats. Wired at all three function-registration
+sites (two in declarations.ts, one in statements/nested-declarations.ts).
+
+### Cluster B — `new` over a `with`-body closure (10 rows)
+
+`language/statements/with/S12.10_A1.8_T1..T5` and `S12.10_A3.8_T1..T5` — all
+ten `compile_error` → all ten `pass`. Three stacked blockers, not the two on
+record:
+
+1. **The IR selector refused the statement.** `visitConstructors` in
+   src/ir/with-environment.ts rejected any `new` over a with-captured closure.
+   The with-captures ride the closure struct like ordinary captures, so
+   construction needs no new lowering; the refusal is removed.
+
+2. **`new f()` threw `TypeError: f is not a constructor` at the
+   unresolvable-identifier arm.** TypeScript deliberately declines to resolve
+   bare identifiers inside a `with` body, so `getSymbolAtLocation` answers
+   `undefined` even for a `var` declared in the same block — and
+   `tryNonConstructableNewTarget` reads "no symbol" as "no binding exists,
+   throw". That arm now declines inside a `with` body
+   (src/codegen/expressions/new-non-constructable-value.ts).
+
+3. **The native-construct driver was never reserved, for the same reason.**
+   `resolvesToConstructableFunctionValue` needs the callee's declaration, which
+   the checker will not give inside a `with`. It now falls back to a syntactic
+   scan for `var <name> = function (…) {…}` in the enclosing scope, declining on
+   any rebind (src/codegen/expressions/new-super.ts). With that, the existing
+   `__native_construct_N` driver constructs the closure value and the
+   with-scoped writes inside the constructor body land on the receiver.
+
+### Cluster C — `var f = function(){}` inside `with` — RE-DIAGNOSED, not fixed
+
+`S13.2.2_A19_T8`'s CHECK#0 (`typeof __func` must be `"undefined"` at the top of
+the program) was attributed to with-environment closure lifting installing a
+hoisted module-level function binding. **It is not a `with` bug at all.** The
+identical program with the `with` removed fails identically:
+
+```js
+if (typeof __func !== "undefined") throw …;   // observed: "function"
+var __func = function () { return 2; };
+```
+
+So the defect is in the general `var f = function(){}` lowering (the binding is
+hoisted already carrying its function value instead of `undefined`), and fixing
+it means touching the typeof/var-function-expression model, not `with`. Not
+attempted here.
+
+`A19_T8` also has a **second, independent** failure: with CHECK#0 neutralised,
+CHECK#1 passes but CHECK#2 returns the outer `b` (`"a"`) instead of the second
+`with` receiver's `b` (`"b"`) — a re-declared `var __func` inside a *second*
+`with` block keeps the first block's scope.
+
+`S13.2.2_A17_T2/T3` and `A18_T1/T2` are a different subsystem again: they assign
+to **undeclared** globals (`__obj = …`, `getRight = …`) and `A18` uses
+`with (arguments)`. Out of reach without the implicit-global-binding work.
+
+## 2026-08-21 (later) — 10 of the 12 `language/statements/with` residue rows closed
+
+Measured on `claude/pull-from-upstream-zgdo0m` @ `88bd2ccf0e`, `--target
+standalone`, single-test in-process runner, QuickJS eval provider built locally
+(artifact `13c33e175f16`, adapter key `1429ec7ecf2163fd`). Row set: the 12
+`language/statements/with` non-passes in
+`benchmarks/results/test262-standalone-results-20260821-122045.jsonl`. All 12
+re-verified failing on that head before any edit.
+
+### Cluster D — a direct `eval` could mutate a literal the compiler had CLOSED (7 rows)
+
+`S12.10_A4_T{4,5,6}` and `S12.10_A5_T{1,2,3,6}` — all seven `fail` → `pass`.
+
+The membrane was NOT at fault, which is what the split below establishes. In a
+module with `eval`, `myObj` crosses to QuickJS as a live membrane wrapper and
+`__membrane_set` / `__membrane_delete` run the compiled object's own dynamic
+paths. What fails is the REPRESENTATION on the compiled side: a closed struct
+pins each field's storage type and its key set, so:
+
+| eval'd code, `var myObj = { p1: 'a' }` | observed |
+| --- | --- |
+| `with(myObj){ p1 = 'b' }` (string → string) | correct — this is why `A4_T1..T3` always passed |
+| `with(myObj){ p1 = {b:'hi'} }` | write silently DROPPED, `p1` stays `'a'` |
+| `myObj.p1 = {b:'hi'}` (no `with`) | stores **null** |
+| `with(myObj){ del = delete p1 }` | `del === true`, `'p1' in myObj` still true |
+
+Isolation: adding a syntactic `delete myObj.p1` under `if (false)` — which
+routes the literal to the open `$Object` via the existing
+`markStandaloneDeleteTargets` poison — makes every one of those cases behave
+correctly with no membrane change at all.
+
+Fix: `collectEvalMutableNames`
+(src/codegen/declarations/eval-reachable-object-shape.ts) joins the three
+existing `markStandalone*Targets` markers in
+`collectGrowableObjectLiterals`, so a var an `eval` can mutate is promoted to
+the open representation and inherits that block's concrete-struct consumer
+guard unchanged.
+
+The trigger is deliberately narrow — opening a literal costs the fixed-key
+`struct.get` fast path — and requires all four of: a direct by-name `eval`; a
+compile-time-known argument (string / substitution-free template); the variable
+occurring as an IDENTIFIER token in that text (scanned with `ts.createScanner`,
+so a name inside a nested string or comment does not count); and the text
+containing something that can mutate (`=`, a compound assignment, `++`/`--`,
+`delete`). **Declared residual:** a computed eval source (`eval(src)`) promotes
+nothing — it says nothing about which names it touches, and opening every
+literal in the module on its account was not worth the cost.
+
+Blast radius measured, not argued: all **538** currently-passing standalone rows
+whose source contains an `eval(<literal>)` were re-run — 538/538 still pass.
+
+### Cluster E — Tier-2 `with` bound a COPY of its target (3 rows)
+
+`S12.10_A3.5_T{1,2,4}` — all three `fail` → `pass`.
+
+`compileDynamicWithStatement` asked `compileExpression` for `externref`. For a
+nominal struct that routes through the #2358 ToPrimitive-boundary arm, which
+REIFIES (field-copies) a literal carrying `valueOf`/`toString` into a fresh
+`$Object`. §14.11.7 binds ToObject(target) — the same object — so every write
+made through the object environment record landed on the copy and was lost.
+
+It is silent in a way worth recording: the body's own read of the name answers
+the value it just wrote (the copy is consistent with itself), so only an
+observation of the ORIGINAL object shows the loss.
+
+Factor isolation (each row a separate compile+run):
+
+| shape | `o.p1` after `with (o) { p1 = 'x' }` |
+| --- | --- |
+| `{p1, valueOf: fn}` inside `for (k in o)` | `'a'` — WRONG |
+| `{p1, toString: fn}` inside `for (k in o)` | `'a'` — WRONG |
+| `{p1, foo: fn}` inside `for (k in o)` | `'x'` — ok (name-triggered, not fn-member-triggered) |
+| `{p1, n: 5}` inside `for (k in o)` | `'x'` — ok |
+| `{p1, valueOf: fn}` with NO loop | `'x'` — ok (still proves Tier-1) |
+
+So both factors are required: the enclosing `for…in` is what pushes the
+statement onto Tier-2, and `valueOf`/`toString` is what makes the Tier-2
+coercion copy.
+
+Fix: compile the target with NO expected type and convert the reference by hand
+(`extern.convert_any` for a `ref`/`ref_null`), so the record holds the live
+object. `__extern_get`/`__extern_set` already carry closed-struct arms for it.
+
+### Still failing — `S12.10_A5_T4` / `A5_T5`, and they advanced
+
+Both now delete correctly (`'p1' in myObj` is `false`) and fail one check
+later, on a defect that is NOT `with`-related and reproduces with a plain
+syntactic `delete`:
+
+```js
+var o = { p1: {a:'hello'}, del:false };
+delete o.p1;
+o.p1.a;            // returns undefined; must throw TypeError
+typeof o.p1;       // "object"; must be "undefined"
+```
+
+A member read off a deleted/absent property of an open `$Object` neither throws
+nor types as `undefined`. That is its own head — property-access on the open
+representation — and should not be filed against `with`.
+
+### `language/statements/function` — 25 rows re-verified, clustered, none taken
+
+All 25 reproduce on this head. Clustering (so the next lane does not re-derive
+it), with the two `with`-adjacent clusters already covered above:
+
+| cluster | rows | first cause |
+| --- | ---: | --- |
+| `f.prototype` / `prototype.constructor` object model | 4 | `S13.2.2_A1_T1/T2`, `S13.2_A4_T2`, `13.2-17-1` — overlaps the function-prototype lane, deliberately not taken here |
+| `new F()` whose ctor RETURNS a function | 3 | `S13.2.2_A8_T1/T2/T3` — `typeof new F()` is `"object"`, want `"function"`; this is #2071's area |
+| `arguments` extras lost on an INDIRECT call | 2 | `S13.2_A2_T1/T2` — `var g = F(); g("x")` reads `arguments[0]` as null when the callee has 0 formals; direct calls are fine |
+| `+` picks numeric when one operand is `arguments[i]` | 1 | `S13_A2_T2` — `(function(arg){return arg + arguments[1]})(1,"1")` is `2`, want `"11"`; `typeof arguments[1]` is already correctly `"string"`, so the vec is right and the OPERATOR is wrong |
+| implicit-global / `with (arguments)` | 4 | `S13.2.2_A17_T2/T3`, `A18_T1/T2` — unchanged from the earlier entry |
+| `var f = function(){}` hoists carrying its VALUE | 2 | `S13.2.2_A19_T7/T8`. Re-measured with no `with` anywhere: `typeof __func` before the declaration line answers `"function"`; `this.hasOwnProperty('__func')` answers `false`. Two separate heads (hoisting model; global-binding unification) |
+| unimplemented builtin | 1 | `S13.2.1_A5_T2` — `Math.sin` in standalone |
+| unclustered singles | 8 | `S13_A6_T1`, `S13.2.2_A5_T1`, `A2`, `A4_T2`, `S13_A15_T3`, `S13_A11_T4`, `13.2-18-1`, `S13.2.1_A6_T2` |

@@ -78,6 +78,17 @@ describe("linear Number::toString", () => {
     const report = getLastLinearIrReport();
     expect(report).toBeDefined();
     expect(report?.ownerEvidence.map((entry) => entry.legacyName)).not.toContain("setTimeout");
+    expect(report?.legacySlots.map((entry) => entry.legacyName)).not.toContain("setTimeout");
     expect(report?.rejected.some((entry) => entry.reason === "select:external-call")).toBe(false);
+
+    const userTimer = await compile(
+      `export function setTimeout(delay: number): number { return delay; }
+export function user(x: number): number { return setTimeout(x) + 1; }`,
+      { target: "linear", fileName: "linear-user-timer.ts" },
+    );
+    expect(userTimer.success, userTimer.errors.map((error) => error.message).join("\n")).toBe(true);
+    const userReport = getLastLinearIrReport();
+    expect(userReport?.ownerEvidence.map((entry) => entry.legacyName)).toContain("setTimeout");
+    expect(userReport?.legacySlots.map((entry) => entry.legacyName)).toContain("setTimeout");
   });
 });

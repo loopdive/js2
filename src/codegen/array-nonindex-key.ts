@@ -48,8 +48,16 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
-import { coerceType, ensureLateImport, flushLateImportShifts, skipTransparentExpressions } from "./shared.js";
+import {
+  coerceType,
+  compileExpression,
+  ensureLateImport,
+  flushLateImportShifts,
+  skipTransparentExpressions,
+} from "./shared.js";
 import { resolveConstantExpression } from "./literals.js";
+import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
+import { highArrayIndexLiteralI32 } from "./vec-sparse-index.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
 import { VEC_PROP_GET, VEC_PROP_SET } from "./vec-props.js";
 
@@ -230,6 +238,46 @@ export function nonArrayIndexNumericKey(
   const inner = skipTransparentExpressions(key);
   if (inner.kind === ts.SyntaxKind.TrueKeyword) return "true";
   if (inner.kind === ts.SyntaxKind.FalseKeyword) return "false";
+  // (#4556) `null` / `undefined` element keys. ToPropertyKey(null) is the
+  // STRING `"null"`, not index 0 — but the vec lane coerced them to i32 and
+  // wrote element 0 (`x[null] = 0` made `x[0]` 0 and `x["null"]` undefined;
+  // test262 `built-ins/Array/S15.4_A1.1_T5`). Same failure shape as the
+  // boolean-literal arm directly above, same fix.
+  if (inner.kind === ts.SyntaxKind.NullKeyword) return "null";
+  if (
+    inner.kind === ts.SyntaxKind.UndefinedKeyword ||
+    ts.isVoidExpression(inner) ||
+    (ts.isIdentifier(inner) && inner.text === "undefined" && isUnshadowedGlobal(fctx, "undefined"))
+  ) {
+    return "undefined";
+  }
+  // (#4556) `new Boolean(<const>)` — the wrapper twin of the `new Number` /
+  // `new String` arms in the key resolvers: ToPropertyKey runs ToPrimitive
+  // first, so the key is `"true"` / `"false"` (`S15.4_A1.1_T6`).
+  if (
+    ts.isNewExpression(inner) &&
+    ts.isIdentifier(inner.expression) &&
+    inner.expression.text === "Boolean" &&
+    isUnshadowedGlobal(fctx, "Boolean")
+  ) {
+    const args = inner.arguments;
+    if (args === undefined || args.length === 0) return "false";
+    if (args.length === 1) {
+      // LITERAL argument only — `resolveConstantExpression` would fold a
+      // MUTABLE `let`/`var` binding to its initializer (see the note in
+      // `arrayIndexConstantKey`), so a later reassignment would silently give
+      // the wrong key.
+      const a = skipTransparentExpressions(args[0]!);
+      if (a.kind === ts.SyntaxKind.TrueKeyword) return "true";
+      if (a.kind === ts.SyntaxKind.FalseKeyword) return "false";
+      if (ts.isNumericLiteral(a)) {
+        const c = Number(a.text);
+        return c !== 0 && !Number.isNaN(c) ? "true" : "false";
+      }
+      if (ts.isStringLiteral(a)) return a.text.length > 0 ? "true" : "false";
+    }
+    return undefined;
+  }
 
   const n = resolveNumericKey(ctx, fctx, key);
   if (n !== undefined) {
@@ -242,6 +290,109 @@ export function nonArrayIndexNumericKey(
   const s = resolveStringKey(ctx, fctx, key);
   if (s === undefined || isArrayIndexString(s) || !isNamedNumericOrBooleanSpelling(s)) return undefined;
   return s;
+}
+
+/**
+ * (#4556) The reverse of {@link nonArrayIndexNumericKey}: a compile-time
+ * constant element key whose `ToString` **IS** an array index, spelled as
+ * something other than a plain number.
+ *
+ * `#4247` routed the constant NON-index keys to the named store and let every
+ * index key "fall through to the untouched vec path". For a numeric literal
+ * that is right. For the other constant spellings of an index it is not: the
+ * vec path compiles the key with an `{kind:"i32"}` hint, and a string / wrapper
+ * expression has no i32 lowering, so it silently produced **0**. Measured
+ * standalone, all four of these hit element 0:
+ *
+ * ```js
+ * var a = [10, 20, 30];
+ * a["1"]                 // 10, expected 20
+ * a[new Number(2)]       // 10, expected 30
+ * a[new String("2")]     // 10, expected 30
+ * var b = []; b["1"] = 1 // b.length 1, b[1] undefined
+ * ```
+ *
+ * (test262 `built-ins/Array/S15.4_A1.1_T{4,7,8}`.) ToPropertyKey runs
+ * ToString/ToPrimitive on the key, so all three spellings denote the SAME
+ * index as the numeric literal and must reach the same element.
+ *
+ * Returns the index, or `undefined` when the key is dynamic, is not an index,
+ * or is already a plain numeric spelling — the last case deliberately, so a
+ * module using only ordinary `a[1]` indices is byte-identical.
+ */
+export function arrayIndexConstantKey(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  key: ts.Expression,
+): number | undefined {
+  const inner = skipTransparentExpressions(key);
+  // A numeric spelling already lowers correctly through the i32 hint — leave it
+  // on the untouched path. Booleans are NOT indices (`x[true]` is `"true"`) and
+  // are owned by `nonArrayIndexNumericKey`.
+  if (ts.isNumericLiteral(inner)) return undefined;
+  if (ts.isPrefixUnaryExpression(inner) && ts.isNumericLiteral(inner.operand)) return undefined;
+  if (inner.kind === ts.SyntaxKind.TrueKeyword || inner.kind === ts.SyntaxKind.FalseKeyword) return undefined;
+
+  // LITERAL ARGUMENTS ONLY — never an identifier, at this level or inside the
+  // wrapper. `resolveConstantExpression` (literals.ts) folds a `let`/`var`
+  // binding to its INITIALIZER, mutability be damned, and returns it as a
+  // STRING even for a numeric one. So `for (var i = 0; …) nums[i]` resolved `i`
+  // to `"0"`, which IS an array index, and every iteration read `nums[0]`:
+  // `[1,2,3]` summed to 3 instead of 6. That fold is harmless to
+  // `nonArrayIndexNumericKey` — an index-looking result makes it decline — but
+  // here it is the ANSWER, so the same input becomes a silent wrong read.
+  // Every measured win (`S15.4_A1.1_T{4,7,8}`) spells the key as a literal or a
+  // wrapper around one, so nothing is lost by refusing identifiers outright.
+  const wrapperArg =
+    ts.isNewExpression(inner) &&
+    ts.isIdentifier(inner.expression) &&
+    (inner.expression.text === "Number" || inner.expression.text === "String") &&
+    isUnshadowedGlobal(fctx, inner.expression.text) &&
+    inner.arguments?.length === 1
+      ? skipTransparentExpressions(inner.arguments[0]!)
+      : undefined;
+  const isWrapper = wrapperArg !== undefined && (ts.isStringLiteral(wrapperArg) || ts.isNumericLiteral(wrapperArg));
+  if (!ts.isStringLiteral(inner) && !isWrapper) return undefined;
+
+  if (ts.isStringLiteral(inner)) return isArrayIndexString(inner.text) ? Number(inner.text) : undefined;
+  // `new String("2")` is a string key; `new Number(2)` a numeric one.
+  if (ts.isStringLiteral(wrapperArg!)) {
+    return isArrayIndexString(wrapperArg!.text) ? Number(wrapperArg!.text) : undefined;
+  }
+  const n = Number((wrapperArg as ts.NumericLiteral).text);
+  return isArrayIndexNumber(n) ? n : undefined;
+}
+
+/**
+ * (#4556) Compile an element-access key into an i32 index. The single entry
+ * point for BOTH the read site (property-access.ts) and the write site
+ * (assignment.ts), relocated here so the two cannot drift apart.
+ *
+ * Order matters. {@link arrayIndexConstantKey} runs FIRST because the generic
+ * `compileExpression(key, {kind:"i32"})` at the bottom has no lowering for a
+ * string / wrapper spelling of an index and silently produced `0` — every
+ * `a["1"]`, `a[new Number(2)]`, `a[new String("2")]` read element 0 and
+ * `b["1"] = 1` wrote element 0. A plain numeric spelling is declined by the
+ * resolver and keeps the untouched range-proven / generic path.
+ */
+export function compileElementIndexI32(ctx: CodegenContext, fctx: FunctionContext, key: ts.Expression): ValType | null {
+  const idx = arrayIndexConstantKey(ctx, fctx, key);
+  if (idx !== undefined) {
+    fctx.body.push({ op: "i32.const", value: idx });
+    return { kind: "i32" };
+  }
+  // (#4491 lane J) A numeric-literal index above `i32.MAX` — `x[2147483648]`,
+  // `x[4294967294]`. Both the range-proven emitter and the generic f64
+  // fallback SATURATE it to 2147483647, silently renaming the index. Emit the
+  // u32 bit pattern instead; every index comparison on the vec paths is
+  // unsigned. See vec-sparse-index.ts.
+  const highIdx = highArrayIndexLiteralI32(key);
+  if (highIdx !== undefined) {
+    fctx.body.push({ op: "i32.const", value: highIdx });
+    return { kind: "i32" };
+  }
+  if (tryEmitStaticI32Expression(ctx, fctx, key)) return { kind: "i32" };
+  return compileExpression(ctx, fctx, key, { kind: "i32" });
 }
 
 /**
@@ -272,6 +423,13 @@ export function nonArrayIndexNumericKey(
  */
 function isNamedNumericOrBooleanSpelling(s: string): boolean {
   if (s === "true" || s === "false") return true;
+  // (#4556) `"null"` / `"undefined"` join `"true"`/`"false"` for the identical
+  // reason: the key arms above now WRITE under exactly those names, so the
+  // string spelling of the read has to reach the same bag entry or `x[null] =
+  // 0; x["null"]` would disagree. Neither is an `Array.prototype` member name,
+  // so admitting them does not weaken the round-trip guard's real job (keeping
+  // `length` / `push` / `constructor` off the bag).
+  if (s === "null" || s === "undefined") return true;
   return String(Number(s)) === s;
 }
 

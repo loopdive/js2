@@ -49,6 +49,7 @@ import {
   flattenCallArgs,
   STANDALONE_TA_SCALAR_HOFS,
 } from "./calls.js";
+import { tryEmitTransferredNativeProtoMethodCall } from "./transferred-native-proto-call.js";
 import { buildArgcExtrasSetupFromLocals } from "./argc-extras.js";
 import { tryCompileGetPrototypeOfIsPrototypeOf } from "./object-get-prototype-of.js";
 import { tryEmitStaticOrNativeIsPrototypeOf } from "../native-is-prototype-of.js";
@@ -81,7 +82,7 @@ type FuncCandidate = { funcTypeIdx: number; structTypeIdx: number; returnType: V
  * in `declaration.parameters`, and declaration-file signatures keep their
  * checker-authored parameter list unchanged.
  */
-function runtimeSignatureParameters(sig: ts.Signature): readonly ts.Symbol[] {
+export function runtimeSignatureParameters(sig: ts.Signature): readonly ts.Symbol[] {
   const declaration = sig.getDeclaration();
   if (
     declaration !== undefined &&
@@ -996,6 +997,13 @@ export function compileCallablePropertyCall(
   ) {
     console.error("[marked-callable-enter]", fctx.name, className, methodName);
   }
+
+  // (#2875 b2) `o.charAt(1)` where `o`'s literal seeded `charAt` from
+  // `String.prototype.charAt` — the arity-filtered dispatch below can never
+  // match that lifted `(self, this, …args)` closure. See
+  // transferred-native-proto-call.ts; declines silently for every other shape.
+  const transferred = tryEmitTransferredNativeProtoMethodCall(ctx, fctx, expr, propAccess);
+  if (transferred !== undefined) return transferred;
 
   // (#1712) Function-style-constructor instances NEVER carry their prototype
   // methods as struct fields: compileFnctorNew synthesizes the runtime

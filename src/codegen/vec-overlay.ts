@@ -74,6 +74,7 @@
  * `ctx.standalone` (see buildObjectDescriptorHelpers) and the fill gates on
  * the reserve flag — host output is byte-identical.
  */
+import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -90,11 +91,17 @@ import {
   fillVecHasOwnHelpers,
 } from "./vec-bag-seed.js";
 import { buildVecHasIdxPresencePrologue } from "./vec-overlay-presence.js";
-import { protoIndexGetIdxMissInstrs, protoIndexHasIdxInstrs } from "./proto-index-store.js";
+import {
+  protoIndexGetIdxMissInstrs,
+  protoIndexHasIdxInstrs,
+  SET_DECISION_HANDLED,
+  SET_DECISION_REFUSED,
+} from "./proto-index-store.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { nonExtensibleFreshIndexGuard, nonWritableLengthIndexGuard } from "./vec-define-rejections.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { canonicalNumericKeyGuard } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
+import { holeTestInstrs } from "./array-holes.js";
 
 /**
  * `$PropEntry.$flags` bit claimed by the overlay (see the flag table in
@@ -690,6 +697,11 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
   if (carriers.length === 0) return;
   const vecBaseIdx = getOrRegisterVecBaseType(ctx);
   const core = ensureOverlayCore(ctx, objectTypeIdx, newPlainObjectIdx);
+  // #4504 only needs this extra logical-own screen in modules that can observe
+  // an inherited descriptor. Keep the historical gOPD/hasOwn tree untouched
+  // otherwise; the existing `$Hole` carrier is still used by the write path
+  // below when this gate is armed.
+  const inheritedSetHolePresenceActive = inheritedSetAnyDirty(ctx) && ctx.usesArrayHoles;
 
   const findFn = (name: string) => ctx.mod.functions.find((f) => f.name === name);
   const missExtern = (): Instr[] => undefinedExternInstrs(ctx)?.map((i) => ({ ...i })) ?? [{ op: "ref.null.extern" }];
@@ -898,7 +910,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
    * dominant cluster shape `var arr = []` is an externref carrier whose null
    * default observes as undefined-ish).
    */
-  const growDefaultArms = (anyLocal: number, idxLocal: number): Instr[] => {
+  const growDefaultArms = (anyLocal: number, idxLocal: number, externAsUndefined = false): Instr[] => {
     const arms: Instr[] = [];
     for (const c of carriers) {
       const elemSetIdx = ensureVecElemSet(ctx, c.vecTypeIdx);
@@ -907,7 +919,14 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         c.kind === "f64"
           ? [{ op: "f64.const", value: 0 }]
           : c.kind === "externref"
-            ? [{ op: "ref.null.extern" }]
+            ? // (#4491) A DATA define with no [[Value]] gives the property
+              // `undefined` (CompletePropertyDescriptor), not the carrier's
+              // null hole — `arr[0]` must read `undefined`. Opt-in, so the
+              // accessor arm (whose slot is dead, the getter answers) and the
+              // ArraySetLength growth keep the null default.
+              externAsUndefined
+              ? missExtern()
+              : [{ op: "ref.null.extern" }]
             : [{ op: "ref.null", typeIdx: NONE_HEAP }];
       arms.push(
         { op: "local.get", index: anyLocal },
@@ -1120,14 +1139,50 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                   { op: "local.get", index: 14 },
                   { op: "f64.ne" },
                   { op: "if", blockType: { kind: "empty" }, then: s3.throwRange() },
-                  // u ≥ 2^31 → legacy no-op (i32 vec length cannot represent it)
+                  // (#4491 bucket D) u ≥ 2^31 → SPARSE-LENGTH arm, not the old
+                  // no-op. The `$__vec_base` length field is an i32, but §10.4.2
+                  // lengths are uint32, and the field round-trips the whole u32
+                  // domain as a BIT PATTERN — the dynamic read arm in
+                  // `object-runtime.ts` (and the static one below) widen it with
+                  // `f64.convert_i32_u`, so 0xFFFFFFFF reads back as 4294967295
+                  // rather than -1. Bailing here left `arr.length` at its old
+                  // value with no error at all (measured: `defineProperty(arr,
+                  // "length", {value: 2**32-2})` answered 0), which is a WRONG
+                  // ANSWER rather than an unimplemented one.
+                  //
+                  // The element machinery below is skipped deliberately: a
+                  // length ≥ 2^31 is unbackable (the backing `$data` array is
+                  // capped far lower, and the static paths refuse to allocate
+                  // above 16M), so this is always a grow into sparse territory
+                  // with no real elements to create — exactly what the static
+                  // `maybeEmitVecLengthDefine` does above its own 16M ceiling.
+                  // It also cannot use the signed shrink loop: `i32.lt_s`
+                  // against a newLen whose bit pattern is negative never
+                  // terminates.
                   { op: "local.get", index: 15 },
                   { op: "f64.const", value: 2147483647 },
                   { op: "f64.gt" },
                   {
                     op: "if",
                     blockType: { kind: "empty" },
-                    then: bailReturnVec.map((i) => ({ ...i })),
+                    then: [
+                      // Same §10.1.6.3 legality delegate as the in-range path —
+                      // a non-writable / non-configurable `length` still refuses.
+                      { op: "local.get", index: 6 },
+                      ...lengthLitExtern(),
+                      { op: "local.get", index: 15 },
+                      { op: "call", funcIdx: s3.boxNumIdx },
+                      { op: "local.get", index: 3 },
+                      { op: "call", funcIdx: dpValueIdx },
+                      { op: "drop" },
+                      // vec.length = ToUint32(u) as the raw 32-bit pattern.
+                      { op: "local.get", index: 4 },
+                      { op: "ref.cast", typeIdx: vecBaseIdx },
+                      { op: "local.get", index: 15 },
+                      { op: "i32.trunc_sat_f64_u" },
+                      { op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 },
+                      ...bailReturnVec.map((i) => ({ ...i })),
+                    ],
                   },
                   // Delegate {value: u, ...attrs} — §10.1.6.3 legality against
                   // the seeded current (non-writable value change → TypeError,
@@ -1580,6 +1635,38 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             },
           ],
         },
+        // (#4491) A value-LESS data define at an OOB index extends length too.
+        // §10.4.2.2 step 3.c sets length to index+1 after ANY successful index
+        // define, regardless of descriptor kind. The accessor arm below already
+        // does this and the value arm above gets it via the element write-back,
+        // which left exactly one shape unhandled — attributes only:
+        //
+        //   var a = [];
+        //   Object.defineProperty(a, "0", { enumerable: true });
+        //   a.length;              // was 0, want 1
+        //   for (k in a) …         // saw nothing, so `isEnumerable` was false
+        //
+        // `hasOwnProperty("0")` already answered true off the companion, so the
+        // index existed while `length` denied it (15.2.3.7-6-a-195, and the
+        // singular twin). Same `growDefaultArms` + same hole-default boundary as
+        // the accessor arm.
+        { op: "local.get", index: 10 },
+        { op: "i32.const", value: HOST_HAS_VALUE },
+        { op: "i32.and" },
+        { op: "i32.eqz" },
+        { op: "local.get", index: 7 },
+        { op: "i32.const", value: 0 },
+        { op: "i32.ge_s" },
+        { op: "i32.and" },
+        { op: "local.get", index: 7 },
+        { op: "local.get", index: 8 },
+        { op: "i32.ge_s" },
+        { op: "i32.and" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: growDefaultArms(4, 7, /* externAsUndefined */ true),
+        },
         { op: "local.get", index: 0 },
       ];
     }
@@ -1733,6 +1820,36 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { name: "e", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
       ];
       const bailMiss = (): Instr[] => [...missExtern(), { op: "return" }];
+      // A backed externref `$Hole` is storage, not an implicit array-element
+      // descriptor. `__vec_gopd` feeds both getOwnPropertyDescriptor and the
+      // vec hasOwn prologue, so screening it here keeps the public own view in
+      // step with the active #4504 write decision. This runs only after the
+      // index has passed the backed-length test below.
+      const holeBail = (): Instr[] => {
+        if (!inheritedSetHolePresenceActive) return [];
+        const arms: Instr[] = [];
+        for (const carrier of carriers) {
+          if (carrier.kind !== "externref") continue;
+          arms.push(
+            { op: "local.get", index: 2 },
+            { op: "ref.test", typeIdx: carrier.vecTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: 2 },
+                { op: "ref.cast", typeIdx: carrier.vecTypeIdx },
+                { op: "struct.get", typeIdx: carrier.vecTypeIdx, fieldIdx: 1 },
+                { op: "local.get", index: 4 },
+                { op: "array.get", typeIdx: carrier.arrTypeIdx },
+                ...holeTestInstrs(ctx),
+                { op: "if", blockType: { kind: "empty" }, then: bailMiss() },
+              ],
+            },
+          );
+        }
+        return arms;
+      };
       const setKey = (key: string, valueInstrs: Instr[]): Instr[] => [
         { op: "local.get", index: 6 },
         ...nativeStringLiteralInstrs(ctx, key),
@@ -1877,6 +1994,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
           op: "if",
           blockType: { kind: "empty" },
           then: [
+            ...holeBail(),
             { op: "call", funcIdx: newPlainObjectIdx },
             { op: "local.set", index: 6 },
             ...setKey("value", [
@@ -1910,6 +2028,17 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
     const fn = findFn("__extern_set");
     const vecDpValueIdx = ctx.funcMap.get(DP_VALUE_NAME);
     if (fn && vecDpValueIdx !== undefined) {
+      // The overlay is a second non-$Object own layer in front of the normal
+      // vec expando bag.  In descriptor-dirty standalone modules its direct
+      // writes must publish the same final [[Set]] state as every other
+      // carrier, and an absent/deleted numeric entry must ask the shared
+      // resolver before it recreates storage.
+      const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
+      const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
+      const descriptorDecisionAvailable =
+        ctx.standalone && inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined && setDecideIdx !== undefined;
+      const holeAwarePresence =
+        descriptorDecisionAvailable && ctx.usesArrayHoles && carriers.some((carrier) => carrier.kind === "externref");
       const base = 3 + fn.locals.length;
       const anyLocal = base;
       const keyLocal = base + 1;
@@ -1917,6 +2046,9 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
       const entryLocal = base + 3;
       const indexLocal = base + 4;
       const setterLocal = base + 5;
+      const decisionLocal = base + 6;
+      const backedLenLocal = base + 7;
+      const presenceLocal = base + 8;
       fn.locals.push(
         { name: "__ov_set_any", type: { kind: "anyref" } },
         { name: "__ov_set_key", type: { kind: "externref" } },
@@ -1924,7 +2056,98 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { name: "__ov_set_entry", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
         { name: "__ov_set_index", type: { kind: "i32" } },
         { name: "__ov_set_setter", type: { kind: "externref" } },
+        ...(descriptorDecisionAvailable
+          ? ([
+              { name: "__ov_set_decision", type: { kind: "i32" } },
+              { name: "__ov_set_backed_len", type: { kind: "i32" } },
+              ...(holeAwarePresence ? ([{ name: "__ov_set_present", type: { kind: "i32" } }] as const) : []),
+            ] as const)
+          : []),
       );
+      const publishSuccess = (): Instr[] =>
+        !descriptorDecisionAvailable
+          ? []
+          : ([
+              { op: "i32.const", value: 1 },
+              { op: "global.set", index: setResultGlobalIdx! },
+            ] satisfies Instr[]);
+      const publishRefusalAndReturn = (): Instr[] => [
+        { op: "i32.const", value: 2 },
+        { op: "global.set", index: setResultGlobalIdx! },
+        { op: "return" },
+      ];
+      const overlayStore = (flags: number): Instr[] => [
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: keyLocal },
+        { op: "local.get", index: 2 },
+        { op: "f64.const", value: flags },
+        { op: "call", funcIdx: vecDpValueIdx },
+        { op: "drop" },
+        ...publishSuccess(),
+        { op: "return" },
+      ];
+      const resolveThenStore = (ownLayer: () => Instr[], flags: number): Instr[] => [
+        { op: "local.get", index: 0 },
+        ...ownLayer(),
+        { op: "local.get", index: keyLocal },
+        { op: "local.get", index: 2 },
+        { op: "call", funcIdx: setDecideIdx! },
+        { op: "local.tee", index: decisionLocal },
+        { op: "i32.const", value: SET_DECISION_HANDLED },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [...publishSuccess(), { op: "return" }],
+        },
+        { op: "local.get", index: decisionLocal },
+        { op: "i32.const", value: SET_DECISION_REFUSED },
+        { op: "i32.eq" },
+        { op: "if", blockType: { kind: "empty" }, then: publishRefusalAndReturn() },
+        ...overlayStore(flags),
+      ];
+      const nullOwnLayer = (): Instr[] => [{ op: "ref.null.extern" }];
+      const companionOwnLayer = (): Instr[] => [
+        { op: "local.get", index: compLocal },
+        { op: "ref.as_non_null" },
+        { op: "extern.convert_any" },
+      ];
+      const backedIndexIsPresent = (): Instr[] => {
+        if (!holeAwarePresence) return [{ op: "i32.const", value: 1 }];
+        const body: Instr[] = [
+          { op: "i32.const", value: 1 },
+          { op: "local.set", index: presenceLocal },
+        ];
+        for (const carrier of carriers) {
+          if (carrier.kind !== "externref") continue;
+          body.push(
+            { op: "local.get", index: anyLocal },
+            { op: "ref.test", typeIdx: carrier.vecTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: anyLocal },
+                { op: "ref.cast", typeIdx: carrier.vecTypeIdx },
+                { op: "struct.get", typeIdx: carrier.vecTypeIdx, fieldIdx: 1 },
+                { op: "local.get", index: indexLocal },
+                { op: "array.get", typeIdx: carrier.arrTypeIdx },
+                ...holeTestInstrs(ctx),
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "i32.const", value: 0 },
+                    { op: "local.set", index: presenceLocal },
+                  ],
+                },
+              ],
+            },
+          );
+        }
+        body.push({ op: "local.get", index: presenceLocal });
+        return body;
+      };
       fn.body.unshift(
         { op: "local.get", index: 0 },
         { op: "any.convert_extern" },
@@ -1965,66 +2188,72 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                     {
                       op: "if",
                       blockType: { kind: "empty" },
-                      then: [
-                        // Ordinary assignment recreates a deleted array index
-                        // as a fresh writable/enumerable/configurable data
-                        // property. __vec_dp_value clears the tombstone first,
-                        // deliberately avoiding a seed from the stale carrier.
-                        { op: "local.get", index: 0 },
-                        { op: "local.get", index: keyLocal },
-                        { op: "local.get", index: 2 },
-                        { op: "f64.const", value: SEED_FLAGS },
-                        { op: "call", funcIdx: vecDpValueIdx },
-                        { op: "drop" },
-                        { op: "return" },
-                      ],
+                      then: descriptorDecisionAvailable
+                        ? resolveThenStore(nullOwnLayer, SEED_FLAGS)
+                        : [
+                            // Ordinary assignment recreates a deleted array index
+                            // as a fresh writable/enumerable/configurable data
+                            // property. __vec_dp_value clears the tombstone first,
+                            // deliberately avoiding a seed from the stale carrier.
+                            { op: "local.get", index: 0 },
+                            { op: "local.get", index: keyLocal },
+                            { op: "local.get", index: 2 },
+                            { op: "f64.const", value: SEED_FLAGS },
+                            { op: "call", funcIdx: vecDpValueIdx },
+                            { op: "drop" },
+                            { op: "return" },
+                          ],
                     },
-                    { op: "local.get", index: entryLocal },
-                    { op: "ref.as_non_null" },
-                    { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
-                    { op: "i32.const", value: FLAG_ACCESSOR },
-                    { op: "i32.and" },
-                    {
-                      op: "if",
-                      blockType: { kind: "empty" },
-                      // (#3251 S2) accessor entry → invoke `e.set` with the
-                      // ORIGINAL vec receiver as `this`; a null setter is a
-                      // sloppy no-op (strict-throw is a documented boundary,
-                      // same discipline as the frozen-gate).
-                      then: [
-                        { op: "local.get", index: entryLocal },
-                        { op: "ref.as_non_null" },
-                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 5 },
-                        { op: "extern.convert_any" },
-                        { op: "local.tee", index: setterLocal },
-                        { op: "ref.is_null" },
-                        { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
-                        { op: "local.get", index: 0 },
-                        { op: "local.get", index: setterLocal },
-                        { op: "local.get", index: 2 },
-                        { op: "call", funcIdx: callAccessorSetIdx },
-                        { op: "return" },
-                      ],
-                    },
-                    { op: "local.get", index: entryLocal },
-                    { op: "ref.as_non_null" },
-                    { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
-                    { op: "i32.const", value: FLAG_WRITABLE },
-                    { op: "i32.and" },
-                    {
-                      op: "if",
-                      blockType: { kind: "empty" },
-                      then: [
-                        { op: "local.get", index: 0 },
-                        { op: "local.get", index: keyLocal },
-                        { op: "local.get", index: 2 },
-                        { op: "f64.const", value: HOST_HAS_VALUE },
-                        { op: "call", funcIdx: vecDpValueIdx },
-                        { op: "drop" },
-                        { op: "return" },
-                      ],
-                      else: [{ op: "return" }],
-                    },
+                    ...(descriptorDecisionAvailable
+                      ? resolveThenStore(companionOwnLayer, HOST_HAS_VALUE)
+                      : ([
+                          { op: "local.get", index: entryLocal },
+                          { op: "ref.as_non_null" },
+                          { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+                          { op: "i32.const", value: FLAG_ACCESSOR },
+                          { op: "i32.and" },
+                          {
+                            op: "if",
+                            blockType: { kind: "empty" },
+                            // (#3251 S2) accessor entry → invoke `e.set` with the
+                            // ORIGINAL vec receiver as `this`; a null setter is a
+                            // sloppy no-op (strict-throw is a documented boundary,
+                            // same discipline as the frozen-gate).
+                            then: [
+                              { op: "local.get", index: entryLocal },
+                              { op: "ref.as_non_null" },
+                              { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 5 },
+                              { op: "extern.convert_any" },
+                              { op: "local.tee", index: setterLocal },
+                              { op: "ref.is_null" },
+                              { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
+                              { op: "local.get", index: 0 },
+                              { op: "local.get", index: setterLocal },
+                              { op: "local.get", index: 2 },
+                              { op: "call", funcIdx: callAccessorSetIdx },
+                              { op: "return" },
+                            ],
+                          },
+                          { op: "local.get", index: entryLocal },
+                          { op: "ref.as_non_null" },
+                          { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+                          { op: "i32.const", value: FLAG_WRITABLE },
+                          { op: "i32.and" },
+                          {
+                            op: "if",
+                            blockType: { kind: "empty" },
+                            then: [
+                              { op: "local.get", index: 0 },
+                              { op: "local.get", index: keyLocal },
+                              { op: "local.get", index: 2 },
+                              { op: "f64.const", value: HOST_HAS_VALUE },
+                              { op: "call", funcIdx: vecDpValueIdx },
+                              { op: "drop" },
+                              { op: "return" },
+                            ],
+                            else: [{ op: "return" }],
+                          },
+                        ] satisfies Instr[])),
                   ],
                 },
               ],
@@ -2043,21 +2272,49 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                 {
                   op: "if",
                   blockType: { kind: "empty" },
-                  then: [
-                    { op: "local.get", index: 0 },
-                    { op: "local.get", index: keyLocal },
-                    { op: "local.get", index: 2 },
-                    // (#2668) SEED_FLAGS, not HOST_HAS_VALUE. This is an ORDINARY set and
-                    // every non-null-entry arm above returns, so the index is either brand
-                    // new (§10.1.6.3 CreateDataProperty ⇒ all-true W/E/C) or an implicit
-                    // dense element (already all-true). HOST_HAS_VALUE specifies none of the
-                    // three, so `var a = []; a[0] = 101` defaulted them FALSE. See
-                    // tests/issue-2668-vec-ordinary-set-creates-default-data.test.ts.
-                    { op: "f64.const", value: SEED_FLAGS },
-                    { op: "call", funcIdx: vecDpValueIdx },
-                    { op: "drop" },
-                    { op: "return" },
-                  ],
+                  then: descriptorDecisionAvailable
+                    ? [
+                        // A backed element is a physical own property and
+                        // wins before any inherited descriptor. A logical
+                        // tail hole is absent, however, so it takes the
+                        // shared nearest-descriptor decision before storage
+                        // is allocated/recreated in the overlay.
+                        ...vecBackedLen(anyLocal, backedLenLocal),
+                        { op: "local.get", index: indexLocal },
+                        { op: "local.get", index: backedLenLocal },
+                        { op: "i32.lt_s" },
+                        {
+                          op: "if",
+                          blockType: { kind: "val", type: { kind: "i32" } },
+                          // A backed `$Hole` sentinel is storage, not an own
+                          // property. It must behave like a numeric miss so an
+                          // inherited setter/non-writable data descriptor wins
+                          // before the ordinary assignment can fill it.
+                          then: backedIndexIsPresent(),
+                          else: [{ op: "i32.const", value: 0 }],
+                        },
+                        {
+                          op: "if",
+                          blockType: { kind: "empty" },
+                          then: overlayStore(SEED_FLAGS),
+                          else: resolveThenStore(nullOwnLayer, SEED_FLAGS),
+                        },
+                      ]
+                    : [
+                        { op: "local.get", index: 0 },
+                        { op: "local.get", index: keyLocal },
+                        { op: "local.get", index: 2 },
+                        // (#2668) SEED_FLAGS, not HOST_HAS_VALUE. This is an ORDINARY set and
+                        // every non-null-entry arm above returns, so the index is either brand
+                        // new (§10.1.6.3 CreateDataProperty ⇒ all-true W/E/C) or an implicit
+                        // dense element (already all-true). HOST_HAS_VALUE specifies none of the
+                        // three, so `var a = []; a[0] = 101` defaulted them FALSE. See
+                        // tests/issue-2668-vec-ordinary-set-creates-default-data.test.ts.
+                        { op: "f64.const", value: SEED_FLAGS },
+                        { op: "call", funcIdx: vecDpValueIdx },
+                        { op: "drop" },
+                        { op: "return" },
+                      ],
                 },
               ],
             },

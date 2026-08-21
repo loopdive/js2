@@ -56,7 +56,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js";
-import { ensureStandaloneNativeMethodClosure } from "./native-proto.js";
+import { ensureStandaloneNativeMethodClosure, seededNativeProtoDataMembersByBrand } from "./native-proto.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 
 /** `$PropEntry.$value` field index (object-runtime.ts layout). */
@@ -115,7 +115,9 @@ export function unshiftExternGetProtoMethodArm(ctx: CodegenContext): void {
   if (!fn) return;
 
   const byBrand = mintedMethodsByBrand(ctx);
-  if (byBrand.size === 0) return;
+  const seededByBrand = seededNativeProtoDataMembersByBrand(ctx);
+  const protoGetIdx = ctx.funcMap.get("__protoidx_get_r");
+  if (byBrand.size === 0 && (seededByBrand.size === 0 || protoGetIdx === undefined)) return;
 
   const { objectTypeIdx, propEntryTypeIdx } = objTypes;
   const objLocal = 2 + fn.locals.length;
@@ -129,10 +131,36 @@ export function unshiftExternGetProtoMethodArm(ctx: CodegenContext): void {
 
   /** For one brand: a `key == <member>` ladder answering the singleton value. */
   const memberLadder = (brand: number): Instr[] => {
-    const members = byBrand.get(brand);
-    if (!members) return [];
+    const seededMembers = new Set(seededByBrand.get(brand) ?? []);
+    const members = new Set(byBrand.get(brand) ?? []);
+    if (protoGetIdx !== undefined) {
+      for (const member of seededMembers) members.add(member);
+    }
+    if (members.size === 0) return [];
     const out: Instr[] = [];
     for (const member of [...members].sort()) {
+      if (protoGetIdx !== undefined && seededMembers.has(member)) {
+        out.push(
+          { op: "local.get", index: keyLocal },
+          { op: "ref.as_non_null" },
+          ...nativeStringLiteralInstrs(ctx, member),
+          { op: "call", funcIdx: strEqualsIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              // The seeded companion is the mutable own-property table. It
+              // contains the initial singleton, then records replacement or
+              // absence after assignment/delete. The shortcut must observe it.
+              { op: "local.get", index: 0 },
+              { op: "local.get", index: 1 },
+              { op: "call", funcIdx: protoGetIdx },
+              { op: "return" },
+            ],
+          },
+        );
+        continue;
+      }
       // Idempotent: the closure exists (that is how we found it), so this
       // resolves the handle without minting or emitting anything new.
       const closure = ensureStandaloneNativeMethodClosure(ctx, brand, member, "method", {
@@ -196,7 +224,8 @@ export function unshiftExternGetProtoMethodArm(ctx: CodegenContext): void {
 
   /** The `$NativeProto`-receiver arm: brand straight off the struct. */
   const protoArms: Instr[] = [];
-  for (const brand of [...byBrand.keys()].sort((a, b) => a - b)) {
+  const brands = new Set([...byBrand.keys(), ...(protoGetIdx === undefined ? [] : seededByBrand.keys())]);
+  for (const brand of [...brands].sort((a, b) => a - b)) {
     const ladder = memberLadder(brand);
     if (ladder.length === 0) continue;
     protoArms.push(

@@ -215,11 +215,26 @@ describe("#4204 — module `var` widens when provably assigned another JS type",
   });
 
   describe("NEGATIVE — the predicate stays narrow", () => {
-    it("an UNPROVABLE (mixed) RHS does not widen", async () => {
-      // `f()` returns `any` here. Widening on an unknown tag would move a large
-      // fraction of the corpus onto the dynamic representation for no measured
-      // benefit — 5,943 syntactic candidates against 55 provable ones.
-      expect(await moduleGlobalType("function f(x) { return x; } var a = 2; a = f(1); var u = a;", "a")).toBe("f64");
+    it("(SUPERSEDED by #4206) an UNPROVABLE (mixed) RHS now DOES widen", async () => {
+      // This case asserted `f64` when #4204 landed, on the grounds that widening
+      // on an unknown tag would move a large fraction of the corpus onto the
+      // dynamic representation for no measured benefit (5,943 syntactic
+      // candidates against 55 provable ones).
+      //
+      // #4206 measured both halves and reversed the verdict. The refusal is a
+      // LOSSY STORE, not a coverage gap: `var s = "a"; s = f(1)` coerces the
+      // number into a `(ref null $AnyString)` slot, which stores **null** and
+      // traps in `__str_concat` on the next concatenation — the largest single
+      // failure signature in the ES5 standalone residue. And the corpus cost is
+      // ~nil: over 73 compiled `language/{statements,expressions}` modules
+      // exactly one changed a byte (and shrank), and a 1,200-file standalone A/B
+      // produced three fail→pass, zero pass→fail, zero altered signatures.
+      //
+      // Kept as an explicit assertion of the NEW verdict rather than deleted, so
+      // the reversal is visible to anyone re-deriving the predicate.
+      expect(await moduleGlobalType("function f(x) { return x; } var a = 2; a = f(1); var u = a;", "a")).toBe(
+        "externref",
+      );
     });
 
     it("a same-named local in another function cannot widen the global", async () => {

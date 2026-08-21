@@ -29,7 +29,7 @@ import {
   promoteAccessorCapturesToGlobals,
 } from "./closures.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js"; // (#3132 S2) obj-literal async-gen method drive
-import { addFunctionOwnLocals } from "./binding-info.js";
+import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { emitHoleSentinel } from "./array-holes.js"; // (#2001 S1)
@@ -45,7 +45,7 @@ import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-i
 import { resolveStructName } from "./expressions/misc.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "./expressions/proto-override.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
-import { bodyNeedsArgumentsObject, bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { widenedVarKeyFromDecl } from "./widened-var-key.js";
 import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
@@ -62,6 +62,7 @@ import {
   resolveWasmType,
 } from "./index.js";
 import { ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 import {
   compileNativeGeneratorFunction,
   emitNativeGeneratorToVec,
@@ -2559,6 +2560,27 @@ export function compileObjectLiteralForStruct(
     if (methodName === undefined) continue;
     const fullName = `${typeName}_${methodName}`;
     const existingFuncIdx = ctx.funcMap.get(fullName);
+    // Struct-shape deduplication is intentionally independent of source
+    // identity.  Once one literal has compiled a method body, reusing its
+    // name-keyed function for a later same-shape literal also reuses the
+    // promoted capture globals.  The next literal can therefore run the first
+    // body's captures (or observe a null capture slot) even though its method
+    // source is different.  A populated existing body proves this is a later
+    // literal; fork its method just as we already do for ToPrimitive methods.
+    // Empty pre-registered placeholders remain shared for the first literal.
+    const existingFunc = existingFuncIdx !== undefined ? definedFuncAt(ctx, existingFuncIdx) : undefined;
+    // Binding-pattern methods have a representation-specific destructuring
+    // ABI. Reusing a populated method body across same-shaped literals is safe
+    // for ordinary positional methods, but the broad fork changes the hidden
+    // parameter carrier for array/object patterns and leaves their iterator
+    // value in the wrong domain. Keep the existing signature-based fork path
+    // for those methods and apply the distinct-literal fork only to positional
+    // methods.
+    const hasBindingPatternParameter = prop.parameters.some(
+      (parameter) => ts.isArrayBindingPattern(parameter.name) || ts.isObjectBindingPattern(parameter.name),
+    );
+    const forkForDistinctLiteral =
+      existingFunc !== undefined && existingFunc.body.length > 0 && !hasBindingPatternParameter;
 
     // (#1989) ToPrimitive-relevant methods (`valueOf`/`toString`/
     // `@@toPrimitive`) MUST be per-instance when two same-shape object literals
@@ -2657,7 +2679,7 @@ export function compileObjectLiteralForStruct(
     // signature matches the first literal's (the exact #1989 same-shape repro).
     // Other methods keep the #1557 behaviour: fork only on a real signature
     // mismatch.
-    if (!forkToPrimitive) {
+    if (!forkToPrimitive && !forkForDistinctLiteral) {
       // Reaching here with `!forkToPrimitive` guarantees `existingFuncIdx` is
       // defined (the `existingFuncIdx === undefined && !forkToPrimitive`
       // short-circuit above already `continue`d), but TS can't narrow it.
@@ -3283,7 +3305,7 @@ export function compileObjectLiteralForStruct(
       // Track object-literal methods that read `arguments` (#1053) so
       // callers can populate the __extras_argv global with runtime args
       // beyond the formal param count.
-      if (prop.body && bodyUsesArguments(prop.body)) {
+      if (needsImplicitArgumentsObject(prop)) {
         ctx.funcUsesArguments.add(fullName);
       }
 
@@ -3427,7 +3449,7 @@ export function compileObjectLiteralForStruct(
       // Set up `arguments` object if the method body references it (#820).
       // Object literal methods need an arguments vec struct so that
       // `arguments.length` and `arguments[n]` work at runtime.
-      if (prop.body && bodyUsesArguments(prop.body)) {
+      if (needsImplicitArgumentsObject(prop)) {
         const methodParamTypes = methodFctxParams.slice(1).map((p) => p.type); // skip 'this'
         // Object-literal methods inherit the surrounding code's strictness (#779e).
         // (#2743) Also unmapped when the parameter list is non-simple
@@ -3510,13 +3532,15 @@ export function compileObjectLiteralForStruct(
                 { op: "local.set", index: pendingThrowLocal },
               ]
             : [];
-        methodFctx.body.push({
-          op: "try",
-          blockType: { kind: "empty" },
-          body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
-          catches: [{ tagIdx, body: catchBody }],
-          catchAll: catchAllBody.length > 0 ? catchAllBody : undefined,
-        });
+        methodFctx.body.push(
+          buildTargetTaggedTry(
+            ctx,
+            { kind: "empty" },
+            [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
+            [{ tagIdx, body: catchBody }],
+            catchAllBody.length > 0 ? catchAllBody : undefined,
+          ),
+        );
 
         // Return __create_generator or __create_async_generator depending on async flag
         const createGenName = isAsyncMethod ? "__create_async_generator" : "__create_generator";
@@ -4609,7 +4633,21 @@ export function compileArrayLiteral(
         // byte-identical (their elision keeps the element default / sNaN path).
         emitHoleSentinel(ctx, fctx);
       } else {
-        compileExpression(ctx, fctx, el, elemWasm);
+        // A heterogeneous object-literal array selects the universal
+        // externref carrier above because its closed struct shapes are not
+        // interchangeable. Keep construction in lockstep with that decision:
+        // a closed struct merely wrapped as externref is opaque to the dynamic
+        // property reads used by callback destructuring (`forEach(({x}) => …)`),
+        // so every field would read as undefined. Build data-only literals as
+        // open `$Object`s instead. The builder recursively applies the same
+        // representation to nested data literals, while accessors, methods,
+        // spreads, and computed keys retain their established lowering.
+        const objectElement = elemWasm.kind === "externref" ? unwrapObjectLiteralElement(el) : null;
+        const openObjectType =
+          objectElement !== null && staticObjectLiteralDataKeys(ctx, objectElement) !== null
+            ? compileObjectLiteralAsExternref(ctx, fctx, objectElement)
+            : null;
+        if (openObjectType === null) compileExpression(ctx, fctx, el, elemWasm);
       }
     }
     fctx.body.push({ op: "array.new_fixed", typeIdx: arrTypeIdx, length: expr.elements.length });

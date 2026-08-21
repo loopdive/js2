@@ -275,8 +275,8 @@ jobs:
           }
           stage_files
           if git diff --cached --quiet; then
-            echo "No changes to commit after staging — main already current."
-            exit 0
+            echo "::error::No changes to commit after staging despite sync=true. This means baseline drift was detected, but the same commit could not be produced. Check drift detection and file staging."
+            exit 1
           fi
 
           # Option A re-anchor loop (see promote-baseline / #1861): snapshot

@@ -8,9 +8,13 @@
     "version": "19.2.6",
     "tarball": "fixtures/react-dom-19.2.6.tgz",
     "sharedModule": "package/cjs/react-dom.production.js",
-    "clientModule": "package/cjs/react-dom-client.production.js"
+    "clientModule": "package/cjs/react-dom-client.production.js",
+    "serverModule": "package/cjs/react-dom-server-legacy.browser.production.js",
+    "fizzServerModule": "package/cjs/react-dom-server.browser.production.js",
+    "nodeFizzServerModule": "package/cjs/react-dom-server.node.production.js",
+    "edgeFizzServerModule": "package/cjs/react-dom-server.edge.production.js"
   },
-  "_note": "Shares React's pinned tag and immutable commit — react-dom is versioned in lockstep with react in the same monorepo, so reusing the verified checkout from setup-react-upstream-suite.mjs keeps the tests and the implementation on the same commit with zero skew. The published react-dom tarball omits its tests, exactly as react's does. The client lane uses the two published CJS modules needed for DOM rendering (the shared entry and the client renderer), each in its own function scope. Server-renderer tests are retained in testFiles but rejected at run time with the explicit `needs-react-dom-server` reason until the server bundle can be compiled as a separate valid module. testFiles is the ENTIRE public `packages/react-dom/src/__tests__` directory; which of them can be scored is decided at run time and reported by reason, never by hand-picking files here.",
+  "_note": "Shares React's pinned tag and immutable commit — react-dom is versioned in lockstep with react in the same monorepo, so reusing the verified checkout from setup-react-upstream-suite.mjs keeps the tests and the implementation on the same commit with zero skew. The published react-dom tarball omits its tests, exactly as react's does. The client lane uses the shared entry and client renderer; legacy SSR plus browser, Node, and Edge Fizz each use their own published server graph and function scope. Server-renderer tests are run in those independent lanes rather than rejected merely because the client graph cannot contain a server graph. testFiles is the ENTIRE public `packages/react-dom/src/__tests__` directory; which tests can be scored is decided at run time and reported by reason, never by hand-picking files here.",
   "testFiles": [
     "packages/react-dom/src/__tests__/CSSPropertyOperations-test.js",
     "packages/react-dom/src/__tests__/DOMPropertyOperations-test.js",

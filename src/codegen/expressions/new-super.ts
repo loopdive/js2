@@ -14,6 +14,8 @@ import {
 } from "../closures.js";
 import { installFrameTrap } from "../frame-trap.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
+import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
+import { emitFnctorCtorArgumentsObject, fnctorCtorNeedsArguments } from "../fnctor-ctor-arguments.js";
 import {
   provablyNonConstructableStatically,
   resolvesToAmbientGlobal,
@@ -22,6 +24,7 @@ import {
 import { tryNonConstructableNewTarget } from "./new-non-constructable-value.js"; // (#4246)
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
+import { fnctorBodyMayReturnForeignObject } from "../fnctor-foreign-return.js"; // (#2071)
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import {
   addFuncType,
@@ -87,7 +90,8 @@ import {
   registerCompileSuperPropertyAccess,
   resolveEnclosingClassName,
 } from "../shared.js";
-import { maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
+import { hoistFunctionDeclarations, maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
+import { beginNestedFunctionNameScope, endNestedFunctionNameScope } from "../nested-function-name-scope.js"; // (#4456/#2071)
 import { compileStringLiteral } from "../string-ops.js";
 import { coerceType as coerceTypeImpl, pushDefaultValue } from "../type-coercion.js";
 import { ensureDateDaysFromCivilHelper, ensureDateStruct } from "./builtins.js";
@@ -289,21 +293,125 @@ function emitStaticMemberNotAConstructorThrow(
  *    construct signatures** that would have made a static guard fire;
  *  - it is NOT a known compiled class and NOT a registered extern class.
  */
+/**
+ * (#3025) Syntactic fallback for `new f(...)` written INSIDE a `with` body.
+ *
+ * TypeScript refuses to resolve bare identifiers under a `with` (it cannot model
+ * the Object Environment Record), so `getSymbolAtLocation` answers `undefined`
+ * even for a `var` declared in the very same block:
+ *
+ *     with (myObj) { var f = function () { … }; var obj = new f(); }
+ *
+ * With no declaration, `resolvesToConstructableFunctionValue` declined, the
+ * native-construct driver was never reserved, and the whole `S12.10_A1.8_T*` /
+ * `S12.10_A3.8_T*` family died at the `new` site. Recover the declaration by
+ * scanning the enclosing function (or source file) for `var <name> = function
+ * (…) {…}` — the exact shape those tests use, and the only one this fallback
+ * claims. Anything else (a parameter, a re-assignment, a non-function
+ * initializer) yields `undefined` and the ordinary dispatch continues.
+ */
+function withBodyVarFunctionInitializer(callee: ts.Identifier): ts.FunctionExpression | undefined {
+  let insideWith = false;
+  for (let cur: ts.Node | undefined = callee; cur !== undefined; cur = cur.parent) {
+    const parent: ts.Node | undefined = cur.parent;
+    if (parent !== undefined && ts.isWithStatement(parent) && parent.statement === cur) {
+      insideWith = true;
+      break;
+    }
+  }
+  if (!insideWith) return undefined;
+
+  // Nearest enclosing function body (or the source file for top-level `with`).
+  let scope: ts.Node | undefined = callee;
+  while (
+    scope !== undefined &&
+    !ts.isSourceFile(scope) &&
+    !ts.isFunctionDeclaration(scope) &&
+    !ts.isFunctionExpression(scope) &&
+    !ts.isArrowFunction(scope) &&
+    !ts.isMethodDeclaration(scope) &&
+    !ts.isConstructorDeclaration(scope)
+  ) {
+    scope = scope.parent;
+  }
+  if (scope === undefined) return undefined;
+
+  let found: ts.FunctionExpression | undefined;
+  let rebound = false;
+  const visit = (node: ts.Node): void => {
+    if (rebound) return;
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === callee.text &&
+      node.initializer !== undefined
+    ) {
+      let init: ts.Expression = node.initializer;
+      while (ts.isParenthesizedExpression(init)) init = init.expression;
+      if (
+        ts.isFunctionExpression(init) &&
+        init.asteriskToken === undefined &&
+        !init.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)
+      ) {
+        // A SECOND function-valued declaration of the same name is still one
+        // shape; a differently-shaped rebind is not claimable.
+        found = init;
+      } else {
+        rebound = true;
+        return;
+      }
+    }
+    // A later `f = <something else>` makes the binding's value unknowable here.
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === callee.text
+    ) {
+      rebound = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(scope, visit);
+  return rebound ? undefined : found;
+}
+
 function resolvesToConstructableFunctionValue(ctx: CodegenContext, calleeExpr: ts.Expression): boolean {
   if (!ts.isIdentifier(calleeExpr)) return false;
   if (ctx.classSet.has(calleeExpr.text) || ctx.externClasses.has(calleeExpr.text)) return false;
+  // (#3025) `with`-body callee the checker cannot resolve — see above.
+  if (ctx.oracle.isUnresolvableIdentifier(calleeExpr)) {
+    return withBodyVarFunctionInitializer(calleeExpr) !== undefined;
+  }
   // An arrow / bound / prototype-method value is non-constructable — that is the
   // throwing path, handled by resolvesToNonConstructableValue. Do not claim it.
   if (resolvesToNonConstructableValue(ctx, calleeExpr)) return false;
   const sym = ctx.checker.getSymbolAtLocation(calleeExpr);
   const decl = sym?.valueDeclaration;
-  if (!decl || !ts.isVariableDeclaration(decl)) return false;
+  // (#3981 follow-up, ES5 lane) PARAMETER bindings admitted alongside vars: a
+  // callback receiving a constructor (`var mk = function(c){ return new c(); }`)
+  // fell past every arm to the null terminal — `new c()` answered null with no
+  // diagnostic, the exact gap this driver exists to close. The signature
+  // discrimination below is declaration-based and applies unchanged.
+  if (!decl || (!ts.isVariableDeclaration(decl) && !ts.isParameter(decl))) return false;
   const t = ctx.checker.getTypeAtLocation(calleeExpr);
   // Callable value (a function held in the binding). Construct-signature-bearing
   // values (real class ctors typed through the binding) are left to the static
   // class paths; here we target the ordinary-function-value cluster.
   const callSigs = t.getCallSignatures();
-  if (callSigs.length === 0) return false;
+  if (callSigs.length === 0) {
+    // (#3087 standalone twin) An UNTYPED parameter that receives a constructor
+    // at runtime (`function mk(c) { return new c(); }` — the test262 harness
+    // wrapper shape). The checker offers no signature to discriminate, but the
+    // driver is runtime-dispatched: a closure constructs, and a non-closure
+    // value falls through the dispatcher's ladder — today's alternative is the
+    // dynamic chain's silent null, strictly worse. Parameters only: an
+    // any-typed VAR keeps the existing evolving-binding routes.
+    return (
+      ts.isParameter(decl) && ts.isIdentifier(decl.name) && (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
+    );
+  }
   // Only a PLAIN constructable function gets the closure-construct bridge.
   // Generator (`function*` / `*m()`), async, and async-generator functions, plus
   // method/accessor/arrow values, have NO [[Construct]] (§14.4.13 / §15.x): e.g.
@@ -550,7 +658,7 @@ export function hostTaBufferArgSymName(ctx: CodegenContext, args: readonly ts.Ex
 // (#4017) Moved to ./non-constructable.ts together with the rest of the
 // "does this callee have [[Construct]]?" analysis; re-exported here because
 // json-standalone.ts and new-builtin-globals.ts import it from this module.
-export { resolvesToAmbientGlobal } from "./non-constructable.js";
+export { resolvesToAmbientGlobal, resolvesToNamedAmbientGlobal } from "./non-constructable.js";
 
 /** Compile super.method(args) — resolve to ParentClass_method and call with this */
 /**
@@ -1145,20 +1253,6 @@ export function inferArrayElementType(ctx: CodegenContext, expr: ts.NewExpressio
 }
 
 /**
- * Check if a node tree references the `arguments` identifier.
- * Skips nested function declarations and function expressions (which have
- * their own `arguments` binding), but traverses into arrow functions
- * because arrows inherit the enclosing function's `arguments`.
- */
-function usesArguments(node: ts.Node): boolean {
-  if (ts.isIdentifier(node) && node.text === "arguments") return true;
-  if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) {
-    return false;
-  }
-  return forEachChild(node, usesArguments) ?? false;
-}
-
-/**
  * Flatten call-site arguments, expanding spread elements on array literals
  * into individual expressions. Returns the flat list of expressions.
  * For spread on non-literal arrays, returns null (cannot flatten at compile time).
@@ -1538,26 +1632,38 @@ function compileNewFunctionDeclaration(
     const paramType = ctx.checker.getTypeAtLocation(param);
     userCtorParams.push(resolveWasmType(ctx, paramType));
   }
+  // (fnctor-ctor-arguments.ts) Asked ONCE and shared by both halves of the
+  // `arguments` protocol — the ctor-body materialization below and the call
+  // site's `__extras_argv` publication — so they cannot disagree about whether
+  // the protocol is live for this constructor.
+  const ctorReadsArguments = fnctorCtorNeedsArguments(funcDecl);
   const captureLayout = fnctorCaptureLayout(ctx, funcName);
   const ctorIdentityParamIdx = captureLayout.allParamTypes.length + userCtorParams.length;
   const ctorParams = fnctorConstructorParams(ctx, userCtorParams, captureLayout.allParamTypes);
 
   const ctorName = `${structName}_new`;
-  // (#4464 — DELIBERATELY NOT WIDENED) Making this result an externref, so an
-  // object-returning body could hand its object back (§10.2.1.3 step 13), does
-  // not fix `S13.2.2_A7_T1`/`_A8_T1/T2`/`_A15_T1..T4`, because the blocker is
-  // one level UP: a property read on the `new` site's value is typed from the
-  // CHECKER's constructor-instance type, not from what the body returned. The
-  // scoped sweep shows exactly that signature — `__obj.prop` answers `1`,
-  // `null` or `NaN` where the string `"A"` was written to a plain object, i.e.
-  // the read resolves against the struct slot's static type rather than the
-  // returned object. Handing back an arbitrary object therefore requires
-  // re-typing every read at the call site: the #3976 class-object conversion's
-  // territory, not this constructor's. See this issue's `## Residuals`.
-  // (An earlier WIP pass on this branch reports having built and reverted the
-  // widening; that run is not reproduced here — the sweep signature above is
-  // the evidence this comment stands on.)
-  const ctorResults: ValType[] = [{ kind: "ref", typeIdx: structTypeIdx }];
+  // (#2071, revisits the #4464 "deliberately not widened" decision) When the
+  // body can `return` a FOREIGN object, the ctor result is widened to
+  // externref and §10.2.1.3 step 13 is resolved at runtime by the same
+  // `emitConstructReturnSelect` probe the `new function(){…}` lowering uses
+  // (`constructThisExternLocal` regime in statements/control-flow.ts).
+  //
+  // #4464's blocker — "a property read on the `new` site's value is typed
+  // from the CHECKER's constructor-instance type" — was re-probed on current
+  // main before this widening: the DYNAMIC member path now resolves BOTH a
+  // struct-backed fnctor-instance prop AND a plain-`$Object` prop correctly
+  // (laundered-read probes, 2/2 pass), so an externref-flowing result reads
+  // right for the normal instance and the override alike. A site whose
+  // binding is statically struct-typed coerces the externref back with a
+  // guarded cast: unchanged for genuine instances, and a foreign override
+  // reaching such a site was spec-divergent under the old ABI too.
+  //
+  // Predicate-gated (body must actually carry a possibly-foreign `return`)
+  // and standalone/WASI-gated, so every other ctor keeps the historical
+  // `(ref $Struct)` ABI byte-identically — including the host lane, whose
+  // #1712 call-site registration tees the result into a struct-typed temp.
+  const resultIsExtern = (ctx.standalone || ctx.wasi) && fnctorBodyMayReturnForeignObject(funcDecl);
+  const ctorResults: ValType[] = resultIsExtern ? [{ kind: "externref" }] : [{ kind: "ref", typeIdx: structTypeIdx }];
   const ctorTypeIdx = addFuncType(ctx, ctorParams, ctorResults, `${ctorName}_type`);
   const ctorFuncIdx = mintDefinedFunc(ctx);
   ctx.funcMap.set(classMemberFuncKey(ctx, ctorName), ctorFuncIdx); // (#1983) collision-free key
@@ -1576,6 +1682,8 @@ function compileNewFunctionDeclaration(
     structTypeIdx,
     ctorFuncName: ctorName,
     captureLayout,
+    resultIsExtern,
+    readsArguments: ctorReadsArguments,
   });
 
   // 4. Compile the constructor body
@@ -1592,6 +1700,10 @@ function compileNewFunctionDeclaration(
       paramDefs.push({ name: `__tdz_box_${capture.name}`, type: captureLayout.tdzFlagParamTypes[flagIndex]! });
     }
   }
+  // (fnctor-ctor-arguments.ts) Where this ctor's FIRST user-declared parameter
+  // sits, past the capture / TDZ-flag parameters — the `paramOffset` the
+  // `arguments` vec indexes from.
+  const userParamOffset = paramDefs.length;
   for (let i = 0; i < funcDecl.parameters.length; i++) {
     const p = funcDecl.parameters[i]!;
     paramDefs.push({
@@ -1662,6 +1774,23 @@ function compileNewFunctionDeclaration(
   // Bind `this` to the struct
   ctorFctx.localMap.set("this", selfLocal);
 
+  // (#2071) Widened regime: mirror the receiver into an externref local and
+  // hand it to the `constructThisExternLocal` return arm, which compiles every
+  // `return` operand as externref and runs the §10.2.1.3 step-13 runtime
+  // select (`emitConstructReturnSelect`) — Object/function operands override,
+  // everything else yields the receiver. The mirror is set BEFORE the user
+  // body compiles so the first `return` already sees it.
+  let selfExternLocal: number | undefined;
+  if (resultIsExtern) {
+    selfExternLocal = allocLocal(ctorFctx, "__self_extern", { kind: "externref" });
+    ctorFctx.body.push(
+      { op: "local.get", index: selfLocal },
+      { op: "extern.convert_any" },
+      { op: "local.set", index: selfExternLocal },
+    );
+    ctorFctx.constructThisExternLocal = selfExternLocal;
+  }
+
   // (#1712) Register the instance → constructor-closure link with the JS
   // host so instance property misses resolve through the closure's vivified
   // `.prototype` object (acorn's `Parser.prototype.m = fn; new Parser().m()`
@@ -1695,8 +1824,35 @@ function compileNewFunctionDeclaration(
       materializeFnctorTwinCaptures(ctx, ctorFctx, closureRecord.structTypeIdx, ctorIdentityParamIdx);
     }
   }
-  for (const stmt of body.statements) {
-    compileStatement(ctx, ctorFctx, stmt);
+  // (fnctor-ctor-arguments.ts) Materialize `arguments` — the one prologue step
+  // this synthesized body was missing relative to `function-body.ts`, which is
+  // why `arguments` read back as `null` inside every `new F(…)`. Emitted here,
+  // with `ctx.currentFunc === ctorFctx`, so a late-import shift reaches these
+  // instructions through `currentFunc.body` like any other body instruction.
+  if (ctorReadsArguments) {
+    emitFnctorCtorArgumentsObject(ctx, ctorFctx, funcDecl, userParamOffset, userCtorParams);
+  }
+  // (#2071) Hoist the constructor body's own function declarations BEFORE its
+  // statements compile — the same prologue every other function body gets
+  // (`function-body.ts`). Without it a ctor that calls a function declared
+  // later in its own body
+  //
+  //     function FACTORY(){ this.id = func(); function func(){ return "s"; } }
+  //
+  // compiled the call while `func` was still unregistered, so it fell through
+  // to the `ref.null.extern` fallback and the field read back `null`/`NaN`
+  // instead of the returned value (test262 `S13.2.2_A12`). The name scope is
+  // opened and closed around the body for the #4456 reason: the hoisted names
+  // are lexically this constructor's, and a later same-named declaration
+  // elsewhere must not alias this one's compiled function.
+  const ctorNameScope = beginNestedFunctionNameScope(ctx);
+  try {
+    hoistFunctionDeclarations(ctx, ctorFctx, body.statements);
+    for (const stmt of body.statements) {
+      compileStatement(ctx, ctorFctx, stmt);
+    }
+  } finally {
+    endNestedFunctionNameScope(ctx, ctorNameScope);
   }
   if (savedFunc) ctx.funcStack.pop();
   if (savedFunc) ctx.parentBodiesStack.pop();
@@ -1716,8 +1872,13 @@ function compileNewFunctionDeclaration(
   // vivified prototype.
 
   // Return the constructed receiver (as externref when the body's `return`s
-  // widened the result — #4464).
-  ctorFctx.body.push({ op: "local.get", index: selfLocal });
+  // widened the result — #4464/#2071: the implicit fall-off-the-end result is
+  // always the receiver; only explicit `return <object>` overrides).
+  if (selfExternLocal !== undefined) {
+    ctorFctx.body.push({ op: "local.get", index: selfExternLocal });
+  } else {
+    ctorFctx.body.push({ op: "local.get", index: selfLocal });
+  }
 
   // 5. Emit the call to the constructor at the call site
   const args = expr.arguments ?? [];
@@ -1728,16 +1889,25 @@ function compileNewFunctionDeclaration(
   // would read the PREVIOUS function's params and coerce arguments against the
   // wrong types (observed: `call[0] expected externref, found (ref null $N)`).
   const paramTypes: ValType[] | undefined = userCtorParams;
-  emitFnctorConstructorArguments(ctx, fctx, captureLayout, expr.expression, args, paramTypes);
+  emitFnctorConstructorArguments(ctx, fctx, captureLayout, expr.expression, args, paramTypes, ctorReadsArguments);
   // Re-lookup funcIdx in case addUnionImports shifted indices
   const finalCtorIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)) ?? ctorFuncIdx; // (#1983)
-  maybeSetArgcForKnownCall(ctx, fctx, ctorName, args.length, paramTypes?.length ?? args.length);
+  // (fnctor-ctor-arguments.ts) `maybeSetArgcForKnownCall` keys on
+  // `ctx.funcUsesArguments`, which holds the SOURCE name — never the synthesized
+  // `__fnctor_<F>_new` passed here — so it returns early for every constructor.
+  // When the ctor reads `arguments`, `emitFnctorConstructorArguments` has
+  // already set `__argc` alongside `__extras_argv`; leave it alone.
+  if (!ctorReadsArguments) {
+    maybeSetArgcForKnownCall(ctx, fctx, ctorName, args.length, paramTypes?.length ?? args.length);
+  }
   fctx.body.push({ op: "call", funcIdx: finalCtorIdx });
   // (#3138) Function-scope fnctor: link instance → ctor closure at the call
   // site (the ctor prologue can't — no module global to read). No-op for
-  // module-global fnctors / standalone / non-closure slots.
+  // module-global fnctors / standalone / non-closure slots — and the widened
+  // (#2071) regime is standalone-only, so the struct-typed tee inside the
+  // registration never meets an externref result.
   emitCallSiteFnctorRegistration(ctx, fctx, funcName, structTypeIdx);
-  return { kind: "ref", typeIdx: structTypeIdx };
+  return resultIsExtern ? { kind: "externref" } : { kind: "ref", typeIdx: structTypeIdx };
 }
 
 /**
@@ -1766,7 +1936,7 @@ function compileNewFunctionExpression(
     return null;
   }
 
-  const needsArguments = usesArguments(body);
+  const needsArguments = needsImplicitArgumentsObject(funcExpr);
 
   // (#4464) §10.2.1.3 steps 1-5: `new <FunctionExpression>(…)` creates an
   // ordinary object, calls the body with it as `this`, and yields it (unless
@@ -3854,10 +4024,31 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         const allParamTypes = getFuncParamTypes(ctx, ctorFuncIdx);
         const paramTypes = fnctorUserParamTypes(ctx, cachedFnCtor.captureLayout, allParamTypes);
         const args = expr.arguments ?? [];
-        emitFnctorConstructorArguments(ctx, fctx, cachedFnCtor.captureLayout, expr.expression, args, paramTypes);
-        maybeSetArgcForKnownCall(ctx, fctx, cachedFnCtor.ctorFuncName, args.length, paramTypes?.length ?? args.length);
+        // (fnctor-ctor-arguments.ts) Same cached-protocol reason as the
+        // identifier cache-hit arm below.
+        const thisReadsArguments = cachedFnCtor.readsArguments === true;
+        emitFnctorConstructorArguments(
+          ctx,
+          fctx,
+          cachedFnCtor.captureLayout,
+          expr.expression,
+          args,
+          paramTypes,
+          thisReadsArguments,
+        );
+        if (!thisReadsArguments)
+          maybeSetArgcForKnownCall(
+            ctx,
+            fctx,
+            cachedFnCtor.ctorFuncName,
+            args.length,
+            paramTypes?.length ?? args.length,
+          );
         fctx.body.push({ op: "call", funcIdx: ctorFuncIdx });
-        return { kind: "ref", typeIdx: cachedFnCtor.structTypeIdx };
+        // (#2071) A widened ctor returns externref — report it, never the struct.
+        return cachedFnCtor.resultIsExtern
+          ? { kind: "externref" }
+          : { kind: "ref", typeIdx: cachedFnCtor.structTypeIdx };
       }
     } else {
       // Build the constructor from the resolved constructor function's
@@ -3919,14 +4110,37 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         const allParamTypes = getFuncParamTypes(ctx, ctorFuncIdx);
         const paramTypes = fnctorUserParamTypes(ctx, cachedFnCtor.captureLayout, allParamTypes);
         const args = expr.arguments ?? [];
-        emitFnctorConstructorArguments(ctx, fctx, cachedFnCtor.captureLayout, expr.expression, args, paramTypes);
+        // (fnctor-ctor-arguments.ts) The cache-hit arm never sees the
+        // declaration, so the `arguments` protocol travels WITH the cached ctor.
+        // Without it a second `new F(…)` dropped its over-supplied arguments
+        // while the callee still expected them on `__extras_argv`.
+        const cachedReadsArguments = cachedFnCtor.readsArguments === true;
+        emitFnctorConstructorArguments(
+          ctx,
+          fctx,
+          cachedFnCtor.captureLayout,
+          expr.expression,
+          args,
+          paramTypes,
+          cachedReadsArguments,
+        );
         const finalIdx = ctx.funcMap.get(cachedFnCtor.ctorFuncName) ?? ctorFuncIdx;
-        maybeSetArgcForKnownCall(ctx, fctx, cachedFnCtor.ctorFuncName, args.length, paramTypes?.length ?? args.length);
+        if (!cachedReadsArguments)
+          maybeSetArgcForKnownCall(
+            ctx,
+            fctx,
+            cachedFnCtor.ctorFuncName,
+            args.length,
+            paramTypes?.length ?? args.length,
+          );
         fctx.body.push({ op: "call", funcIdx: finalIdx });
         // (#3138) Function-scope fnctor: call-site instance→ctor link (the
         // cached arm bypasses compileNewFunctionDeclaration's emission).
         emitCallSiteFnctorRegistration(ctx, fctx, fnName, cachedFnCtor.structTypeIdx);
-        return { kind: "ref", typeIdx: cachedFnCtor.structTypeIdx };
+        // (#2071) A widened ctor returns externref — report it, never the struct.
+        return cachedFnCtor.resultIsExtern
+          ? { kind: "externref" }
+          : { kind: "ref", typeIdx: cachedFnCtor.structTypeIdx };
       }
     }
     // Resolve via type checker to find the function declaration

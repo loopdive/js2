@@ -20,6 +20,7 @@ import { ts } from "../../ts-api.js";
 import type { TypeOracle } from "../../checker/oracle.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
+import { emitEvalCompletionTail } from "../statements/eval-completion-value.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitVariadicStringConcat, nativeStringRepr } from "../builtin-scaffold.js";
 import { emitGlobalEnvironmentObject } from "../global-environment.js";
@@ -29,6 +30,7 @@ import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, compileStatement } from "../shared.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { collectReferencedIdentifiers, emitFuncRefAsClosure, getFuncSignature } from "../closures.js";
+import { emitCachedFuncClosureAccess } from "../closures/method-trampolines.js";
 import { compileAndEmitToString } from "../coercion-engine.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { emitThrowJsError, noJsHost } from "./helpers.js";
@@ -1357,11 +1359,9 @@ function compileInlinedEvalStatements(
       return { kind: "externref" };
     }
 
-    // A non-expression tail returns undefined. A throw leaves the block
-    // polymorphic, so the trailing push is dead but keeps stack types stable.
-    compileStatement(ctx, fctx, last);
-    emitUndefined(ctx, fctx);
-    return { kind: "externref" };
+    // A non-expression tail carries the §13 completion value OUT of whatever it
+    // nests — see statements/eval-completion-value.ts for the register and why.
+    return emitEvalCompletionTail(ctx, fctx, () => compileStatement(ctx, fctx, last));
   } finally {
     if (savedBindingState) {
       fctx.localMap = savedBindingState.localMap;
@@ -1934,7 +1934,12 @@ export function emitStandaloneIndirectEvalRuntime(
 ): ValType | undefined {
   if (!ctx.standalone) return undefined;
   if (args.length === 0) {
-    fctx.body.push({ op: "ref.null.extern" });
+    // (#2875 w4-F) §19.2.1.1 step 2 — `eval()` passes `undefined`, not a String,
+    // so PerformEval returns it unchanged. `ref.null.extern` is `null`, a
+    // DIFFERENT value: measured, `String(eval())` read `"null"` and `typeof
+    // eval()` read `"object"` while `eval(undefined)` already read `"undefined"`
+    // (probe `test262/test/probe/f-und.js`).
+    emitUndefined(ctx, fctx);
     return { kind: "externref" };
   }
 
@@ -1971,17 +1976,67 @@ export function emitStandaloneIndirectEvalRuntime(
   return emitRuntimeEvalResultUnwrap(ctx, fctx);
 }
 
-/** Materialize the current realm's first-class `%eval%` value for standalone.
- *
- * The provider already owns the canonical intrinsic marker and installs it on
- * the shared global object. Evaluating the tiny global Script `eval` through
- * the existing indirect-eval entry returns that exact marker, so aliases are
- * callable through `__runtime_apply_interpreted` and remain identity-equal to
- * `globalThis.eval`. This deliberately reuses the published ABI instead of
- * adding a second "get intrinsic" export.
+/** Hoist the realm's first-class `%eval%` wrapper without executing eval. */
+export function ensureStandaloneIntrinsicEvalWrapper(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+): { fnName: string; funcIdx: number } | undefined {
+  const fnName = "__js2wasm_intrinsic_indirect_eval";
+  const existing = ctx.funcMap.get(fnName);
+  if (existing !== undefined) return { fnName, funcIdx: existing };
+
+  // The sequence form is load-bearing: the wrapper is an ordinary function,
+  // so a bare `eval(source)` in its body would be direct eval in the wrapper's
+  // lexical environment. `(0, eval)(source)` preserves the intrinsic value's
+  // indirect/global semantics and is intercepted by the established runtime-
+  // eval call lowering when this synthetic declaration is compiled.
+  const sf = ts.createSourceFile(
+    EVAL_SOURCE_FILENAME,
+    `function ${fnName}(source) { return (0, eval)(source); }`,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.JS,
+  );
+  if (sf.statements.length !== 1 || !ts.isFunctionDeclaration(sf.statements[0]!)) return undefined;
+  const fnDecl = sf.statements[0] as ts.FunctionDeclaration;
+
+  const savedLocalMap = fctx.localMap;
+  const savedBoxed = fctx.boxedCaptures;
+  const savedFuncCount = ctx.mod.functions.length;
+  fctx.localMap = new Map();
+  fctx.boxedCaptures = undefined;
+  try {
+    hoistFunctionDeclarations(ctx, fctx, [fnDecl]);
+  } catch {
+    if (ctx.mod.functions.length > savedFuncCount) {
+      ctx.mod.functions.length = savedFuncCount;
+      const cutoff = ctx.numImportFuncs + savedFuncCount;
+      for (const [name, idx] of ctx.funcMap) {
+        if (idx >= cutoff) ctx.funcMap.delete(name);
+      }
+    }
+    return undefined;
+  } finally {
+    fctx.localMap = savedLocalMap;
+    fctx.boxedCaptures = savedBoxed;
+  }
+
+  const funcIdx = ctx.funcMap.get(fnName);
+  return funcIdx === undefined ? undefined : { fnName, funcIdx };
+}
+
+/**
+ * Materialize the current realm's first-class `%eval%` value for standalone.
+ * Capturing `eval` is pure AOT and does not execute the provider; calling the
+ * resulting closure later invokes the existing indirect-eval provider seam.
  */
 export function emitStandaloneIntrinsicEvalValue(ctx: CodegenContext, fctx: FunctionContext): ValType | undefined {
-  return emitStandaloneIndirectEvalRuntime(ctx, fctx, [ts.factory.createStringLiteral("eval")]);
+  const wrapper = ensureStandaloneIntrinsicEvalWrapper(ctx, fctx);
+  if (!wrapper) return undefined;
+  const closureRef = emitCachedFuncClosureAccess(ctx, fctx, wrapper.fnName, wrapper.funcIdx);
+  if (!closureRef) return undefined;
+  if (closureRef.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+  return { kind: "externref" };
 }
 
 /** Materialize the current realm's callable `%Function%` intrinsic through the

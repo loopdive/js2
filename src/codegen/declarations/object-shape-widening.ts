@@ -14,6 +14,8 @@ import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { FieldDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { createDeclaredNestedWriteClassifier } from "./declared-nested-write.js";
+import { collectEvalMutableNames } from "./eval-reachable-object-shape.js"; // (#4206)
+import { fnctorBodyMayReturnForeignObject } from "../fnctor-foreign-return.js"; // (#2071)
 import {
   bindingHasIrPlannedOpenWithTarget,
   bindingUsesOnlyIrPlannedOpenObjectOperations,
@@ -215,11 +217,160 @@ export function collectDynamicObjectReturnCarrierTypes(
  * This runs *before* collectDeclarations so the struct type is correct from
  * the start.
  */
+/**
+ * (#2071) Function declarations that are (a) constructed with `new` somewhere
+ * in this file and (b) foreign-return-capable (§10.2.1.3 step 13 may hand
+ * their `return obj` to the construct consumer). A `var X = {}` returned from
+ * such a body ESCAPES as the construct result and is read dynamically by
+ * consumers that know nothing of its evolved shape — a widened closed struct
+ * is invisible to them (measured: `__obj.prop` answered undefined).
+ */
+function computeForeignReturnCtors(
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+): Set<ts.FunctionLikeDeclaration> {
+  const ctors = new Set<ts.FunctionLikeDeclaration>();
+  const newTargets = new Set<ts.Symbol>();
+  const scanNew = (n: ts.Node): void => {
+    if (ts.isNewExpression(n)) {
+      const sym = checker.getSymbolAtLocation(n.expression);
+      if (sym) newTargets.add(sym);
+    }
+    forEachChild(n, scanNew);
+  };
+  scanNew(sourceFile);
+  const admit = (nameNode: ts.Identifier, fn: ts.FunctionLikeDeclaration): void => {
+    const sym = checker.getSymbolAtLocation(nameNode);
+    if (sym && newTargets.has(sym) && fnctorBodyMayReturnForeignObject(fn)) ctors.add(fn);
+  };
+  const scanFns = (n: ts.Node): void => {
+    if (ts.isFunctionDeclaration(n) && n.name) {
+      admit(n.name, n);
+    } else if (
+      // `var F = function(){…}` and `F = function(){…}` — the S13.2.2_A15_T3/T4
+      // constructor spellings.
+      ts.isVariableDeclaration(n) &&
+      ts.isIdentifier(n.name) &&
+      n.initializer !== undefined &&
+      ts.isFunctionExpression(n.initializer)
+    ) {
+      admit(n.name, n.initializer);
+    } else if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(n.left) &&
+      ts.isFunctionExpression(n.right)
+    ) {
+      admit(n.left, n.right);
+    }
+    forEachChild(n, scanFns);
+  };
+  scanFns(sourceFile);
+  return ctors;
+}
+
+/**
+ * (#2071) Does `fn`'s own body (nested functions excluded) contain
+ * `return <varName>`?
+ */
+function fnBodyReturnsIdentifier(fn: ts.FunctionLikeDeclaration, varName: string): boolean {
+  if (fn.body === undefined) return false;
+  let returned = false;
+  const scanReturns = (n: ts.Node): void => {
+    if (returned) return;
+    if (n !== fn && ts.isFunctionLike(n)) return;
+    if (ts.isReturnStatement(n) && n.expression) {
+      let e: ts.Expression = n.expression;
+      while (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e)) e = e.expression;
+      if (ts.isIdentifier(e) && e.text === varName) returned = true;
+    }
+    forEachChild(n, scanReturns);
+  };
+  scanReturns(fn.body);
+  return returned;
+}
+
+/**
+ * (#2071) `var X;` (no initializer, module level) — or an implicit global —
+ * whose `X = {…}` assignment happens INSIDE a foreign-return-capable new'd
+ * ctor body that also `return X`s: X escapes both as the construct result and
+ * as a global, so its evolved closed shape is unsound everywhere. Poison the
+ * name onto the open `$Object` and pin its evolved checker type (and the
+ * ctor's return type) so no flow position resolves to the closed struct
+ * (measured: the closed-struct global guard-cast the `$Object` to null and
+ * `obj.prop` answered null — S13.2.2_A15_T2/T4).
+ */
+function poisonForeignCtorAssignedGlobals(
+  ctx: CodegenContext,
+  checker: ts.TypeChecker,
+  foreignReturnCtors: Set<ts.FunctionLikeDeclaration>,
+): void {
+  for (const fn of foreignReturnCtors) {
+    if (fn.body === undefined) continue;
+    const assignedIds = new Map<string, ts.Identifier>();
+    const scan = (n: ts.Node): void => {
+      if (n !== fn && ts.isFunctionLike(n)) return;
+      if (
+        ts.isBinaryExpression(n) &&
+        n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(n.left) &&
+        ts.isObjectLiteralExpression(n.right) &&
+        !assignedIds.has(n.left.text)
+      ) {
+        assignedIds.set(n.left.text, n.left);
+      }
+      forEachChild(n, scan);
+    };
+    scan(fn.body);
+    for (const [name, id] of assignedIds) {
+      if (!fnBodyReturnsIdentifier(fn, name)) continue;
+      ctx.objectHashConsumerVars.add(name);
+      ctx.growableObjectLiteralVars.add(name);
+      const pin = (t: ts.Type | undefined): void => {
+        if (t !== undefined && !(t.flags & ts.TypeFlags.Any) && t.getProperties().length > 0) {
+          ctx.objectHashConsumerTypes.add(t);
+        }
+      };
+      pin(checker.getTypeAtLocation(id));
+      const vd = checker.getSymbolAtLocation(id)?.valueDeclaration;
+      if (vd !== undefined && ts.isVariableDeclaration(vd) && ts.isIdentifier(vd.name)) {
+        pin(checker.getTypeAtLocation(vd.name));
+      }
+      const sig = checker.getSignatureFromDeclaration(fn);
+      if (sig) pin(checker.getReturnTypeOfSignature(sig));
+    }
+  }
+}
+
+/**
+ * (#2071) Is `decl` (a `var X = {}`) declared inside one of the
+ * `foreignReturnCtors` bodies AND returned by it? Only a RETURNED local
+ * escapes as the construct result; an unreturned one keeps its widened fast
+ * path.
+ */
+function varEscapesViaForeignReturnCtor(
+  foreignReturnCtors: Set<ts.FunctionLikeDeclaration>,
+  decl: ts.VariableDeclaration,
+  varName: string,
+): boolean {
+  if (foreignReturnCtors.size === 0) return false;
+  let fn: ts.Node | undefined = decl.parent;
+  while (fn !== undefined && !ts.isFunctionLike(fn)) fn = fn.parent;
+  if (fn === undefined || !foreignReturnCtors.has(fn as ts.FunctionLikeDeclaration)) return false;
+  return fnBodyReturnsIdentifier(fn as ts.FunctionLikeDeclaration, varName);
+}
+
 export function collectEmptyObjectWidening(
   ctx: CodegenContext,
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
 ): void {
+  // (#2071) Lazily computed: most files have no foreign-return constructor.
+  let foreignReturnCtors: Set<ts.FunctionLikeDeclaration> | undefined;
+  if (ctx.standalone || ctx.wasi) {
+    foreignReturnCtors = computeForeignReturnCtors(checker, sourceFile);
+    if (foreignReturnCtors.size > 0) poisonForeignCtorAssignedGlobals(ctx, checker, foreignReturnCtors);
+  }
   // Scan all statements (top-level and inside function bodies)
   function scanStatements(stmts: readonly ts.Statement[]): void {
     for (const stmt of stmts) {
@@ -266,6 +417,16 @@ export function collectEmptyObjectWidening(
           // hold: the #2849 host arms pass AND compiled-acorn parses.
           for (const s of stmts) {
             markObjectHashConsumers(s, varName, ctx.objectHashConsumerVars);
+          }
+
+          // (#2071) Returned from a foreign-return-capable constructor → the
+          // literal escapes as the construct result; keep it an open `$Object`
+          // (see varEscapesViaForeignReturnCtor above).
+          if ((ctx.standalone || ctx.wasi) && !ctx.objectHashConsumerVars.has(varName)) {
+            foreignReturnCtors ??= computeForeignReturnCtors(checker, sourceFile);
+            if (varEscapesViaForeignReturnCtor(foreignReturnCtors, decl, varName)) {
+              ctx.objectHashConsumerVars.add(varName);
+            }
           }
 
           // (#2992 S4, standalone) `delete varName.prop` / `delete varName[k]`
@@ -740,6 +901,8 @@ export function collectGrowableObjectLiterals(
   // `0` restores the old "every depth-2 write opens the root" policy.
   const keepClosedOuterForDeclaredNestedWrites = process.env.JS2WASM_KEEP_CLOSED_NESTED_TABLES !== "0";
   const nestedWriteTargetsDeclaredField = createDeclaredNestedWriteClassifier(ctx, sourceFile);
+  // (#4206) Names a direct `eval(<literal>)` in this module could mutate.
+  const evalMutableNames = collectEvalMutableNames(sourceFile);
 
   // Does a contextual type at a use site REQUIRE the closed-struct representation?
   // True only for a CONCRETE nominal struct (named own properties, not any/unknown/
@@ -767,6 +930,36 @@ export function collectGrowableObjectLiterals(
           const varName = decl.name.text;
           const shape = literalShapeNames(decl.initializer);
           if (!shape) continue; // not a pure data literal → skip (externref builder would decline)
+
+          // A value nested in an object literal passed to an `any`/`unknown`
+          // callable crosses a fully dynamic JavaScript boundary. Keeping the
+          // nested value as a closed struct makes its fields invisible after
+          // the outer literal is stored in an open object. Deno's bootstrap
+          // uses this exact shape when it publishes `infra` through its
+          // any-typed captured Object.assign primordial:
+          //
+          //   ObjectAssign(globalThis, { __infra: infra })
+          //
+          // Pin the declaration itself to the open-object representation so
+          // the published value keeps both identity and reflective fields.
+          const isNestedDynamicCallArgument = (id: ts.Identifier): boolean => {
+            if (!(ctx.standalone || ctx.wasi) || id.text !== varName) return false;
+            const property = id.parent;
+            if (
+              !(
+                (ts.isShorthandPropertyAssignment(property) && property.name === id) ||
+                (ts.isPropertyAssignment(property) && property.initializer === id)
+              )
+            ) {
+              return false;
+            }
+            const literal = property.parent;
+            if (!ts.isObjectLiteralExpression(literal)) return false;
+            const call = literal.parent;
+            if (!ts.isCallExpression(call) || !call.arguments.includes(literal)) return false;
+            const calleeType = checker.getTypeAtLocation(call.expression);
+            return (calleeType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+          };
 
           // (#671 W1) A direct bare-identifier DeleteBinding in `with (varName)`
           // makes the legacy static scope fall through to runtime HasBinding /
@@ -829,7 +1022,15 @@ export function collectGrowableObjectLiterals(
               markStandaloneDeleteTargets(s, varName, mopSet);
               markStandaloneAccessorDefineTargets(s, varName, mopSet);
               markStandaloneOutOfShapeDataDefineTargets(s, varName, shape, mopSet); // #4524
+              // (#4491) `m.foo++` on a field the literal typed non-numerically —
+              // or on no field at all — cannot land in the closed struct.
+              markStandaloneNumericUpdateKindChangeTargets(s, varName, decl.initializer, mopSet);
             }
+            // (#4491) `for…in` over a literal that out-of-shape writes GREW:
+            // the closed struct has no slots for the added keys, so the
+            // enumeration is a reason to OPEN the object, not to leave it shut.
+            markStandaloneEnumeratedGrowthTargets(stmts, varName, shape, mopSet);
+            if (evalMutableNames.has(varName)) mopSet.add(varName); // (#4206)
             // Consumer-safety (#1897/#2837): when the var ALSO flows into a
             // CONCRETE nominal-struct-typed position (call/new arg, return,
             // assignment), the externref `$Object` rep would fail that
@@ -882,6 +1083,9 @@ export function collectGrowableObjectLiterals(
           let poisoned = false;
 
           const visit = (node: ts.Node): void => {
+            if (ts.isIdentifier(node) && isNestedDynamicCallArgument(node)) {
+              grows = true;
+            }
             // Out-of-shape write rooted at varName.
             if (
               ts.isBinaryExpression(node) &&
@@ -956,7 +1160,8 @@ export function collectGrowableObjectLiterals(
               ts.isIdentifier(node) &&
               node.text === varName &&
               isValueUseOfIdentifier(node) &&
-              !isObjectMopCallArg(node)
+              !isObjectMopCallArg(node) &&
+              !isNestedDynamicCallArgument(node)
             ) {
               if (typeRequiresStruct(checker.getContextualType(node))) {
                 poisoned = true;
@@ -1048,6 +1253,18 @@ export function collectGrowableObjectLiterals(
       }
       if (ts.isFunctionDeclaration(stmt) && stmt.body) {
         scanStatements(stmt.body.statements);
+      } else {
+        // Bootstrap sources commonly keep all realm state inside an IIFE.
+        // Apply the same object-carrier analysis inside function/arrow
+        // expressions; otherwise their declarations never reach this pass.
+        const scanNestedFunctionExpressions = (node: ts.Node): void => {
+          if ((ts.isArrowFunction(node) || ts.isFunctionExpression(node)) && ts.isBlock(node.body)) {
+            scanStatements(node.body.statements);
+            return;
+          }
+          forEachChild(node, scanNestedFunctionExpressions);
+        };
+        forEachChild(stmt, scanNestedFunctionExpressions);
       }
       if (ts.isTryStatement(stmt)) {
         scanStatements(stmt.tryBlock.statements);
@@ -1193,6 +1410,168 @@ function isValueUseOfIdentifier(id: ts.Identifier): boolean {
  * (#2872) already proved correct in every lane. Parenthesized targets
  * (`delete (o.k)`) are unwrapped like the module-init collector does.
  */
+/**
+ * (#4491) Compound/update operators whose result is ALWAYS a Number, whatever the
+ * current value is (§13.4 UpdateExpression, §13.15.3 with a numeric operator).
+ * `+=` is deliberately ABSENT: `"a" += x` stays a String, so it does not change
+ * a string field's kind.
+ */
+function isAlwaysNumericCompoundOperator(kind: ts.SyntaxKind): boolean {
+  return (
+    kind === ts.SyntaxKind.MinusEqualsToken ||
+    kind === ts.SyntaxKind.AsteriskEqualsToken ||
+    kind === ts.SyntaxKind.SlashEqualsToken ||
+    kind === ts.SyntaxKind.PercentEqualsToken ||
+    kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken
+  );
+}
+
+/**
+ * (#4491) Does an ALWAYS-numeric update of `propName` disagree with the kind the
+ * object literal's own initializer pins into the closed struct slot?
+ *
+ * Returns true only when we can PROVE the disagreement from the literal's own
+ * syntax — the field is absent (the update must CREATE it), or its initializer is
+ * a syntactically non-numeric primitive/aggregate. Anything we cannot read off the
+ * initializer (a call, an identifier, a numeric literal) answers false and stays
+ * on the closed-struct path: the same when-in-doubt-don't-mark discipline the rest
+ * of this pass uses.
+ */
+function numericUpdateChangesLiteralFieldKind(literal: ts.ObjectLiteralExpression, propName: string): boolean {
+  for (const property of literal.properties) {
+    const name = property.name;
+    if (!name || (!ts.isIdentifier(name) && !ts.isStringLiteral(name) && !ts.isNumericLiteral(name))) continue;
+    if (name.text !== propName) continue;
+    if (!ts.isPropertyAssignment(property)) return false; // shorthand/method — unknown kind
+    let initializer: ts.Expression = property.initializer;
+    while (ts.isParenthesizedExpression(initializer)) initializer = initializer.expression;
+    return (
+      ts.isStringLiteral(initializer) ||
+      ts.isNoSubstitutionTemplateLiteral(initializer) ||
+      ts.isTemplateExpression(initializer) ||
+      initializer.kind === ts.SyntaxKind.TrueKeyword ||
+      initializer.kind === ts.SyntaxKind.FalseKeyword ||
+      initializer.kind === ts.SyntaxKind.NullKeyword ||
+      ts.isObjectLiteralExpression(initializer) ||
+      ts.isArrayLiteralExpression(initializer) ||
+      ts.isFunctionExpression(initializer) ||
+      ts.isArrowFunction(initializer)
+    );
+  }
+  return true; // absent from the literal — the update has to CREATE the property
+}
+
+/**
+ * (#4491, standalone-only caller) Poison `varName` when an ALWAYS-numeric member
+ * UPDATE (`V.k++`, `--V.k`, `V.k -= n`, …) targets a field whose closed-struct slot
+ * cannot hold the numeric result.
+ *
+ * Two shapes, one defect — the slot's storage type is pinned by the literal:
+ *
+ * | source                                   | closed struct  | observed        | spec |
+ * | ---------------------------------------- | -------------- | --------------- | ---- |
+ * | `var m = {foo:"bar"}; m.foo++`           | `foo: stringref` | `m.foo` is null | NaN  |
+ * | `var m = {a:1};       m.foo++`           | no `foo` slot  | write DROPPED   | NaN, `"foo" in m` |
+ *
+ * The first stores a boxed NaN through a string-typed slot (later reads null-deref
+ * in `__str_concat`); the second takes `unary-updates.ts`'s unknown-field arm,
+ * which emits `f64.const NaN` and drops the write entirely, so the property is
+ * never created. Routing the var to the open `$Object` builder puts BOTH on the
+ * `__extern_get`/`__extern_set` read-modify-write, which stores a boxed number
+ * under a fresh key. Mirrors the #4250 write-kind-disagreement pattern.
+ */
+function markStandaloneNumericUpdateKindChangeTargets(
+  node: ts.Node,
+  varName: string,
+  literal: ts.ObjectLiteralExpression,
+  poisonSet: Set<string>,
+): void {
+  const considerTarget = (target: ts.Expression): void => {
+    let expression: ts.Expression = target;
+    while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
+    if (!ts.isPropertyAccessExpression(expression)) return;
+    if (!ts.isIdentifier(expression.expression) || expression.expression.text !== varName) return;
+    if (ts.isPrivateIdentifier(expression.name)) return;
+    if (numericUpdateChangesLiteralFieldKind(literal, expression.name.text)) poisonSet.add(varName);
+  };
+  const visit = (n: ts.Node): void => {
+    if (ts.isPostfixUnaryExpression(n)) {
+      considerTarget(n.operand);
+    } else if (
+      ts.isPrefixUnaryExpression(n) &&
+      (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      considerTarget(n.operand);
+    } else if (ts.isBinaryExpression(n) && isAlwaysNumericCompoundOperator(n.operatorToken.kind)) {
+      considerTarget(n.left);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+}
+
+/**
+ * (#4491, standalone-only caller) Poison `varName` when a NON-EMPTY literal is
+ * both GROWN by an out-of-shape write and ENUMERATED by `for…in`.
+ *
+ *     var o = { bar: true };
+ *     o.some = 1; o.foo = "a";
+ *     for (var k in o) count++;      // observed 1, spec 3
+ *
+ * The #2837 growable pre-pass already recognises the growth, but its
+ * consumer-safety poison for `for…in` then cancels the marking — and that
+ * poison is a HOST-lane statement ("for…in lowers against V's STATIC struct
+ * type, so an externref `$Object` would fail the cast"). In standalone the
+ * relation inverts, exactly as #2992 S6 argued for `delete`: the closed struct
+ * is precisely what cannot serve the consumer, because the added keys have no
+ * slots to enumerate. So the enumeration is a REASON to open the object here,
+ * not a reason to leave it closed.
+ *
+ * The one #2837 poison that still has force in standalone is kept by hand: an
+ * ARITHMETIC read of a field off `V` wants the `struct.get` f64 contract
+ * (#1897), so a var with one declines and keeps its closed struct — with the
+ * enumeration gap intact, which is the documented trade.
+ */
+function markStandaloneEnumeratedGrowthTargets(
+  stmts: readonly ts.Statement[],
+  varName: string,
+  shape: ReadonlySet<string>,
+  poisonSet: Set<string>,
+): void {
+  let enumerated = false;
+  let grown = false;
+  let arithmeticFieldRead = false;
+  const visit = (n: ts.Node): void => {
+    if (ts.isForInStatement(n) && ts.isIdentifier(n.expression) && n.expression.text === varName) {
+      enumerated = true;
+    }
+    if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(n.left) &&
+      ts.isIdentifier(n.left.expression) &&
+      n.left.expression.text === varName &&
+      !ts.isPrivateIdentifier(n.left.name) &&
+      !shape.has(n.left.name.text)
+    ) {
+      grown = true;
+    }
+    if (
+      ts.isBinaryExpression(n) &&
+      isArithmeticOperator(n.operatorToken.kind) &&
+      (isFieldReadOf(n.left, varName) || isFieldReadOf(n.right, varName))
+    ) {
+      arithmeticFieldRead = true;
+    }
+    ts.forEachChild(n, visit);
+  };
+  // The three signals routinely sit in DIFFERENT statements (the literal, the
+  // writes, the loop), so the scan is over the whole statement list at once —
+  // a per-statement call would never see them together.
+  for (const s of stmts) visit(s);
+  if (enumerated && grown && !arithmeticFieldRead) poisonSet.add(varName);
+}
+
 function markStandaloneDeleteTargets(node: ts.Node, varName: string, poisonSet: Set<string>): void {
   const visit = (n: ts.Node): void => {
     if (ts.isDeleteExpression(n)) {

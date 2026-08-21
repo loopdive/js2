@@ -212,6 +212,7 @@ import {
   elementAccessTypedArrayName,
   emitNonIndexVecElementGet,
   nonArrayIndexNumericKey,
+  compileElementIndexI32,
 } from "./array-nonindex-key.js"; // (#4247)
 // (#3267) Re-export the moved symbols other modules import from property-access.js
 // so their `from "./property-access.js"` imports keep resolving unchanged.
@@ -656,8 +657,17 @@ export function emitRuntimeDescriptorGet(
 ): ValType | null {
   const accessType = ctx.checker.getTypeAtLocation(accessNode);
   const accessWasm = resolveWasmType(ctx, accessType);
+  // (#2071-adjacent, ES5 defineProperty lane) STANDALONE keeps the honest
+  // externref: this path reads RUNTIME descriptor state, and an accessor whose
+  // [[Get]] was later redefined (even to undefined, §6.2.5.6 present-undefined)
+  // can produce a value the checker's static member type never saw — narrowing
+  // here dragged a canonical `undefined` through `__unbox_number` to NaN, so
+  // `typeof obj.prop` answered "number" after `{get: undefined}` (15.2.3.6-4-498
+  // family). A numeric consumer re-narrows through its own coercion.
   const resultType: ValType =
-    !forceExternref && (accessWasm.kind === "f64" || accessWasm.kind === "i32") ? accessWasm : { kind: "externref" };
+    !forceExternref && !ctx.standalone && (accessWasm.kind === "f64" || accessWasm.kind === "i32")
+      ? accessWasm
+      : { kind: "externref" };
   const getIdx = ensureLateImport(
     ctx,
     "__extern_get",
@@ -3353,6 +3363,36 @@ function tryEmitRealmGlobalModuleGlobalRead(
   return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
 }
 
+/**
+ * (#4491) The BRACKET spelling of the #4500 Slice A arm above — `this["p"]` /
+ * `globalThis["p"]` where `p` is a `var`-declared script global.
+ *
+ * §13.3.3 makes the two spellings the same [[Get]], and the compiler's own
+ * global-object model makes them disagree: the dot form has read the module
+ * global since Slice A, while the bracket form kept falling to the
+ * `typeof globalThis` struct and answered `undefined`. Measured on this head:
+ *
+ *     var count = 0;   this.count      // 0          — Slice A
+ *     var count = 0;   this["count"]   // undefined  — this arm
+ *
+ * Only a key the compiler can resolve to a fixed string qualifies; a genuinely
+ * dynamic key (`this[k]`) keeps the existing dynamic read, which consults the
+ * real global object. Declining is byte-identical.
+ */
+function tryEmitRealmGlobalModuleGlobalElementRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.ElementAccessExpression,
+): ValType | undefined {
+  if (!receiverIsRealmGlobalObject(ctx, fctx, expr.expression)) return undefined;
+  const key = resolveComputedKeyExpression(ctx, expr.argumentExpression);
+  if (key === undefined) return undefined;
+  const globalIdx = ctx.moduleGlobals.get(key);
+  if (globalIdx === undefined) return undefined;
+  fctx.body.push({ op: "global.get", index: globalIdx });
+  return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
+}
+
 export function compilePropertyAccess(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -4364,6 +4404,11 @@ export function compileElementAccess(
   const functionPoisonResult = tryCompileFunctionPoisonRead(ctx, fctx, expr);
   if (functionPoisonResult !== undefined) return functionPoisonResult;
 
+  // (#4491) `this["p"]` / `globalThis["p"]` on a `var`-declared script global —
+  // the bracket twin of the #4500 Slice A dot arm.
+  const realmGlobalElementRead = tryEmitRealmGlobalModuleGlobalElementRead(ctx, fctx, expr);
+  if (realmGlobalElementRead !== undefined) return realmGlobalElementRead;
+
   const jsonParseElementType = tryEmitJsonParseElementAccess(ctx, fctx, expr);
   if (jsonParseElementType !== undefined) return jsonParseElementType;
 
@@ -4765,10 +4810,6 @@ function isArgumentsRootedExpression(fctx: FunctionContext, node: ts.Expression)
 }
 
 /** Inner element access logic — assumes objType is on the stack and non-null */
-function compileI32ElementIndex(ctx: CodegenContext, fctx: FunctionContext, expression: ts.Expression): void {
-  if (!tryEmitStaticI32Expression(ctx, fctx, expression)) compileExpression(ctx, fctx, expression, { kind: "i32" });
-}
-
 export function compileElementAccessBody(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -5655,7 +5696,7 @@ export function compileElementAccessBody(
     // Keep range-proven counted-loop index arithmetic in i32. Composite
     // expressions such as `i * N + k` otherwise compile through f64 and then
     // truncate back to i32 at every element read.
-    compileI32ElementIndex(ctx, fctx, expr.argumentExpression);
+    compileElementIndexI32(ctx, fctx, expr.argumentExpression);
     const valueType: ValType =
       arrDef.element.kind === "i8" || arrDef.element.kind === "i16" ? { kind: "i32" } : arrDef.element;
     if (isSafeBoundsEliminated(fctx, expr)) {
@@ -5775,7 +5816,7 @@ export function compileElementAccessBody(
   const f1BoxTypeArr = f1ElementBoxType(ctx, expr, typeDef.element);
   // Compile range-proven index arithmetic directly in i32; retain the generic
   // numeric conversion for every expression whose range is not proven.
-  compileI32ElementIndex(ctx, fctx, expr.argumentExpression);
+  compileElementIndexI32(ctx, fctx, expr.argumentExpression);
   const valueType: ValType =
     typeDef.element.kind === "i8" || typeDef.element.kind === "i16" ? { kind: "i32" } : typeDef.element;
 

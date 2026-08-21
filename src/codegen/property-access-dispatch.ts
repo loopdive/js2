@@ -34,6 +34,7 @@ import {
 import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-field-carrier.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
 import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
+import { functionPrototypeMemberSpecLength } from "./function-prototype-callable.js"; // (§20.2.3)
 import { emitSymbolDescLoad, ensureNativeSymbolBoundaryBridge, usesNativeSymbolProvider } from "./symbol-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { rollbackSpeculative, snapshotSpeculative } from "./context/speculative.js";
@@ -75,6 +76,7 @@ import {
   emitBuiltinNamespaceObject,
   isBuiltinConstructorIdentityName,
 } from "./builtin-static-globals.js";
+import { tryEmitPrimitiveStringConstructorRead } from "./string-primitive-constructor.js"; // (#2875 w4-F)
 import { tryCompileNativeDisposableStackAnyDisposedGet } from "./disposable-runtime.js";
 import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
 import { tryEmitDerivedLengthLocal } from "./derived-split-scalar.js";
@@ -127,6 +129,7 @@ import {
 } from "./shared.js";
 import { tryEmitJsonParsePropertyAccess } from "./json-standalone.js";
 import { resolveReceiverStruct } from "./fnctor-escape-gate.js";
+import { foreignReturnFunctionNames, typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#2071)
 import { findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split
 import { findFnctorLayoutStructsForField, findFnctorResidStructsForField } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts — vote seam
 import { tryCompileTemporalPropertyAccess } from "./temporal-native.js";
@@ -367,9 +370,8 @@ export function tryConstructorPrototypeIdentity(
   // `.prototype` to %Array.prototype%. Intercept the COMPOUND access and emit the
   // compiler's own `Object.prototype` value-read (a synthetic `Object.prototype`
   // member access — the lowering is name-keyed on `Object`), so it matches the
-  // identity a plain `Object.prototype` read produces. Host-mode only.
+  // identity a plain `Object.prototype` read produces. (#4555) Both targets.
   if (
-    !noJsHost(ctx) &&
     propName === "prototype" &&
     ts.isPropertyAccessExpression(expr.expression) &&
     expr.expression.name.text === "constructor" &&
@@ -393,9 +395,9 @@ export function tryConstructorPrototypeIdentity(
   // synthetic `Object` identifier so `arguments.constructor === Object`. (The
   // compound `arguments.constructor.prototype` shape is handled above, because
   // the bare `Object` value's `.prototype` is not identity-equal to the
-  // `Object.prototype` member-read in this compiler.) Host-mode only.
+  // `Object.prototype` member-read in this compiler.) (#4555) Both targets —
+  // standalone reaches the same `Object` / `Object.prototype` value reads.
   if (
-    !noJsHost(ctx) &&
     propName === "constructor" &&
     ts.isIdentifier(expr.expression) &&
     expr.expression.text === "arguments" &&
@@ -481,6 +483,10 @@ export function tryConstructorPrototypeIdentity(
       return emitBuiltinConstructorIdentity(ctx, fctx, builtinName);
     }
   }
+
+  // (#2875 w4-F) `<primitive string>.constructor` → the same carrier as above.
+  const psc = tryEmitPrimitiveStringConstructorRead(ctx, fctx, expr, propName);
+  if (psc !== undefined) return psc;
 
   // (#3177) Standalone `.constructor` on a TYPEDARRAY-typed receiver —
   // `Uint16Array.prototype.constructor` (the `.prototype` read's TS type IS the
@@ -795,7 +801,7 @@ export function tryBufferViewAttributeReads(
           },
         ],
       });
-      if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+      if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
       return ctx.fast ? { kind: "i32" } : { kind: "f64" };
     }
   }
@@ -1083,11 +1089,14 @@ export function tryBufferViewAttributeReads(
           });
           return { kind: "externref" };
         } else {
-          // TypedArray: backing is an f64 vec (or i8 for standalone Uint8Array);
-          // byteLen = element-count (field 0) × BYTES_PER_ELEMENT.
-          const elemKey = noJsHost(ctx) && bufRecvName === "Uint8Array" ? "i8_byte" : "f64";
-          const elemType: ValType = elemKey === "i8_byte" ? { kind: "i8" } : { kind: "f64" };
-          const viewVecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
+          // TypedArray: recover the receiver through the SAME storage mapping
+          // used by its constructor.  The old Uint8Array-vs-f64 split predates
+          // packed Int8/Int16 and dedicated i32-element storage; after that
+          // migration it cast every such receiver to the wrong vec type and
+          // trapped on `.buffer` (Deno's Uint32Array→Uint8Array call-site
+          // scratch view is the bootstrap-critical instance).
+          const viewStorage = typedArrayVecStorage(ctx, bufRecvName!);
+          const viewVecTypeIdx = getOrRegisterVecType(ctx, viewStorage.key, viewStorage.type);
           const recvType = compileExpression(ctx, fctx, expr.expression);
           if (recvType?.kind === "externref") {
             fctx.body.push({ op: "any.convert_extern" });
@@ -2555,6 +2564,17 @@ export function tryLengthAndNameReads(
     // externref / __extern_get path so the host-bound function's actual
     // `.length` is read.
     const isBindResult = isBindResultExpr(ctx, expr.expression);
+    // (§20.2.3) `<callable>.{apply,call,bind,toString}.length` — the spec arity,
+    // which `lib.es5.d.ts` does not spell (`apply`'s `argArray?` is optional
+    // there, so the §15.1.5 prefix walk answers 1 for a member the spec pins
+    // at 2). Table + gate live in function-prototype-callable.ts.
+    if (!isBindResult) {
+      const specLength = functionPrototypeMemberSpecLength(ctx, expr.expression);
+      if (specLength !== undefined) {
+        fctx.body.push({ op: "f64.const", value: specLength });
+        return { kind: "f64" };
+      }
+    }
     const callSigs = objType.getCallSignatures?.();
     const constructSigs2 = objType.getConstructSignatures?.();
     const lengthSigs =
@@ -2801,7 +2821,7 @@ export function tryLengthAndNameReads(
             // type has `length` at field 0, so the matched concrete type works.
             const vecIdx = (concreteType as { typeIdx: number }).typeIdx;
             fctx.body.push({ op: "struct.get", typeIdx: vecIdx, fieldIdx: 0 });
-            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
           },
           () => {
             // [externref] → __extern_length (genuine host receiver / real JS array)
@@ -2825,7 +2845,7 @@ export function tryLengthAndNameReads(
       if (shapeInfo) {
         compileExpression(ctx, fctx, expr.expression);
         fctx.body.push({ op: "struct.get", typeIdx: shapeInfo.vecTypeIdx, fieldIdx: 0 });
-        if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+        if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
         return ctx.fast ? { kind: "i32" } : { kind: "f64" };
       }
     }
@@ -2863,7 +2883,7 @@ export function tryLengthAndNameReads(
               fctx.body.push({ op: "local.get", index: localIdx });
               fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
             }
-            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
             return ctx.fast ? { kind: "i32" } : { kind: "f64" };
           }
         }
@@ -2914,7 +2934,7 @@ export function tryLengthAndNameReads(
               { op: "local.get", index: anyTmpIdx },
               { op: "ref.cast", typeIdx: vecTypeIdx },
               { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
-              ...(ctx.fast ? [] : ([{ op: "f64.convert_i32_s" }] satisfies Instr[])),
+              ...(ctx.fast ? [] : ([{ op: "f64.convert_i32_u" }] satisfies Instr[])),
               { op: "local.set", index: lenTmp2 },
             ],
             else: fallbackInstrs2,
@@ -2946,7 +2966,7 @@ export function tryLengthAndNameReads(
             exprTypeDef.fields[1]?.name === "data"
           ) {
             fctx.body.push({ op: "struct.get", typeIdx: exprTypeIdx, fieldIdx: 0 });
-            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
             return ctx.fast ? { kind: "i32" } : { kind: "f64" };
           }
           const lenTmp = allocLocal(fctx, `__len_tmp_${fctx.locals.length}`, { kind: "anyref" });
@@ -2961,14 +2981,14 @@ export function tryLengthAndNameReads(
               { op: "local.get", index: lenTmp },
               { op: "ref.cast", typeIdx: vecTypeIdx },
               { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
-              ...(ctx.fast ? [] : ([{ op: "f64.convert_i32_s" }] satisfies Instr[])),
+              ...(ctx.fast ? [] : ([{ op: "f64.convert_i32_u" }] satisfies Instr[])),
             ],
             else: [{ op: ctx.fast ? "i32.const" : "f64.const", value: 0 }],
           });
           return lenResult;
         }
         fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 }); // get length from vec
-        if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+        if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
         return ctx.fast ? { kind: "i32" } : { kind: "f64" };
       }
     }
@@ -2989,7 +3009,7 @@ export function tryLengthAndNameReads(
         const typeDef = ctx.mod.types[vecTypeIdx];
         if (typeDef?.kind === "struct" && typeDef.fields[0]?.name === "length" && typeDef.fields[1]?.name === "data") {
           fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
-          if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+          if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
           return ctx.fast ? { kind: "i32" } : { kind: "f64" };
         }
       }
@@ -3871,11 +3891,22 @@ export function finalizeStructAndDynamicMemberGet(
   // (e.g., properties on Object, {}, undefined, or dynamically-typed values).
   // Determine the expected result type from the TS checker at the access site.
   const accessType = ctx.checker.getTypeAtLocation(expr);
-  const accessWasm = symbolBrand(accessType, widenBooleanDynamicAccess(accessType, resolveWasmType(ctx, accessType)));
+  // (#2071) A foreign-return-capable fnctor instance has no trustworthy static
+  // shape (§10.2.1.3 step 13 may substitute an arbitrary object), so the
+  // member's checker type may not narrow the dynamic read — an f64 access type
+  // here would drag an overriding object's "A" through __unbox_number to NaN.
+  // The receiver already resolves externref (resolveWasmType degrade); this
+  // keeps the RESULT representation equally honest.
+  const foreignReturnReceiver = (ctx.standalone || ctx.wasi) && typeIsForeignReturnFnctorInstance(objType);
+  const accessWasm: ValType = foreignReturnReceiver
+    ? { kind: "externref" }
+    : symbolBrand(accessType, widenBooleanDynamicAccess(accessType, resolveWasmType(ctx, accessType)));
 
   // For struct types with the property, try to compile the object and do struct.get
   // but NEVER for class struct types — their fields are fixed at collection time
-  if (typeName && !ctx.classSet.has(typeName)) {
+  // — and never for a foreign-return fnctor instance (#2071): its checker shape
+  // may not describe the runtime value at all, so no field auto-registration.
+  if (typeName && !ctx.classSet.has(typeName) && !foreignReturnReceiver) {
     // typeName was already resolved above but field was not found;
     // try auto-registering the property from the TS type
     const props = objType.getProperties?.();
@@ -3974,7 +4005,10 @@ export function finalizeStructAndDynamicMemberGet(
       // NaN. The dispatch may still use its struct fast arms; only its result
       // representation stays honest.
       const preserveDynamicResultCarrier =
-        ts.isIdentifier(expr.expression) && ctx.externrefAccessorVars.has(expr.expression.text);
+        (ts.isIdentifier(expr.expression) && ctx.externrefAccessorVars.has(expr.expression.text)) ||
+        // (#2071) same honesty rule for a foreign-return fnctor instance: a
+        // same-named struct field's f64 vote must not re-narrow the read.
+        foreignReturnReceiver;
       const getIdx = ensureLateImport(
         ctx,
         "__extern_get",
@@ -4105,6 +4139,28 @@ export function finalizeStructAndDynamicMemberGet(
             // BOTH finders, which de-narrows exactly like the cold fix above.
             for (const lay of findFnctorLayoutStructsForField(ctx, propName)) fieldKinds.add(lay.fieldType.kind);
             for (const resid of findFnctorResidStructsForField(ctx, propName)) fieldKinds.add(resid.fieldType.kind);
+            // (#2071) A foreign-return ctor's struct is a bad narrowing
+            // witness: the same prop name is typically ALSO written to the
+            // object the ctor RETURNS (that is the §10.2.1.3 override
+            // pattern), and that object's props live on the open `$Object` —
+            // an externref carrier this finder can't see. Same seam as the
+            // #3927 hidden-carrier fixes above: contribute externref, which
+            // de-narrows (measured: `obj.prop` holding "A" was narrowed to
+            // the fnctor field's f64 and answered NaN, S13.2.2_A15_T2 shape).
+            if ((ctx.standalone || ctx.wasi) && !fieldKinds.has("externref")) {
+              const sfForeign = expr.getSourceFile();
+              const foreignNames = sfForeign === undefined ? undefined : foreignReturnFunctionNames(sfForeign);
+              if (foreignNames !== undefined && foreignNames.size > 0) {
+                const foreignIdxs = new Set<number>();
+                for (const nm of foreignNames) {
+                  const ti = ctx.structMap.get(`__fnctor_${nm}`);
+                  if (ti !== undefined) foreignIdxs.add(ti);
+                }
+                if (structCandidates.some((c) => foreignIdxs.has(c.structTypeIdx))) {
+                  fieldKinds.add("externref");
+                }
+              }
+            }
             // (#2864 wave-2 S1) The #2979 generator-sentinel exception, which
             // every OTHER consumer of this candidate set already carries
             // (`fillMemberGetDispatch`'s sentinel-aware box, `planGeneric`'s

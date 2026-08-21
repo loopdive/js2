@@ -481,6 +481,16 @@ export function getToPrimitiveProvider(ctx: CodegenContext): number | undefined 
   return ctx.funcMap.get("__to_primitive");
 }
 
+/** Look up the canonical runtime ToString provider after its owner is ready. */
+export function getExternrefToStringProvider(ctx: CodegenContext): number | undefined {
+  return ctx.funcMap.get("__extern_toString");
+}
+
+/** Look up the canonical StringToNumber provider after its owner is ready. */
+export function getStringToNumberProvider(ctx: CodegenContext): number | undefined {
+  return ctx.funcMap.get("__str_to_number");
+}
+
 /**
  * Append `ToBoolean(value)` (§7.1.2 → i32, 1 = truthy) for a value of ValType
  * `valType` already on the stack into `sink`. The consolidation of the two

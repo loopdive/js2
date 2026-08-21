@@ -72,8 +72,10 @@ import { emitJsonStringifyValue } from "./json-codec-native.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
+import { emitMathValueReadBody } from "./math-value-read.js"; // (#4565)
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureExternStrictEqHelper } from "./any-helpers.js";
 import { sameValueNumberOps } from "./same-value-number-ops.js";
+import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
 
 export const BUILTIN_CTOR_NAMES = new Set([
   "Object",
@@ -882,6 +884,17 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       paramTypes = [{ kind: "externref" }];
       returnType = BOOLEAN_PREDICATE_RESULT;
       break;
+    case "Object.assign":
+      // Deno snapshots Object.assign into its primordials object, then invokes
+      // that captured function while constructing `Deno.core`. Register the
+      // native object runtime before minting the closure so every funcidx used
+      // by the body is settled. The closure exposes the builtin's declared
+      // two-argument shape; its second argument is packed into the same
+      // `$ObjVec` consumed by the direct Object.assign lowering.
+      ensureObjVecBuilders(ctx);
+      paramTypes = [{ kind: "externref" }, { kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
     case "Object.keys":
       paramTypes = [{ kind: "externref" }];
       // Standalone Object.keys returns the object-runtime `$ObjVec` as an
@@ -900,6 +913,23 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     case "Object.hasOwn":
       paramTypes = [{ kind: "externref" }, { kind: "externref" }];
       returnType = BOOLEAN_PREDICATE_RESULT;
+      break;
+    case "Object.defineProperty":
+      ensureObjectRuntime(ctx);
+      paramTypes = [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
+    case "Object.setPrototypeOf":
+      ensureObjectRuntime(ctx);
+      paramTypes = [{ kind: "externref" }, { kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
+    case "Object.freeze":
+    case "Object.seal":
+    case "Object.preventExtensions":
+      ensureObjectRuntime(ctx);
+      paramTypes = [{ kind: "externref" }];
+      returnType = { kind: "externref" };
       break;
     // (#2933) Namespace static-method VALUE reads for the fixed-arity `Reflect.*`
     // methods that the standalone CALL path already backs with a simple
@@ -926,6 +956,14 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     case "Reflect.ownKeys":
       paramTypes = [{ kind: "externref" }];
       returnType = { kind: "externref" };
+      break;
+    case "Reflect.getOwnPropertyDescriptor":
+      paramTypes = [{ kind: "externref" }, { kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
+    case "Reflect.defineProperty":
+      paramTypes = [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }];
+      returnType = BOOLEAN_PREDICATE_RESULT;
       break;
     // (#2933) JSON.stringify as a VALUE — fixed 1-arg compact form. Serialises
     // host-free via the native `__json_stringify_root` (the SAME entry the
@@ -1071,6 +1109,21 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     if (key === "Array.isArray") {
       closureFctx.body.push({ op: "local.get", index: 1 });
       emitArrayIsArrayExternrefPredicate(ctx, closureFctx);
+    } else if (key === "Object.assign") {
+      const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
+      const assignIdx = ctx.funcMap.get("__object_assign");
+      if (assignIdx === undefined) return null;
+      const sourcesLocal = allocLocal(closureFctx, "assign_sources", { kind: "externref" });
+      closureFctx.body.push(
+        { op: "call", funcIdx: newIdx },
+        { op: "local.set", index: sourcesLocal },
+        { op: "local.get", index: sourcesLocal },
+        { op: "local.get", index: 2 },
+        { op: "call", funcIdx: pushIdx },
+        { op: "local.get", index: 1 },
+        { op: "local.get", index: sourcesLocal },
+        { op: "call", funcIdx: assignIdx },
+      );
     } else if (key === "Object.keys") {
       const keysIdx = ensureLateImport(ctx, "__object_keys", [{ kind: "externref" }], [{ kind: "externref" }]);
       if (keysIdx === undefined) return null;
@@ -1106,6 +1159,33 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       closureFctx.body.push({ op: "local.get", index: 1 });
       closureFctx.body.push({ op: "local.get", index: 2 });
       closureFctx.body.push({ op: "call", funcIdx: hasOwnIdx });
+    } else if (key === "Object.defineProperty") {
+      const defineIdx = ctx.funcMap.get("__obj_define_from_desc");
+      if (defineIdx === undefined) return null;
+      closureFctx.body.push(
+        { op: "local.get", index: 1 },
+        { op: "local.get", index: 2 },
+        { op: "local.get", index: 3 },
+        { op: "call", funcIdx: defineIdx },
+      );
+    } else if (key === "Object.setPrototypeOf") {
+      const setPrototypeIdx = ctx.funcMap.get("__object_setPrototypeOf");
+      if (setPrototypeIdx === undefined) return null;
+      closureFctx.body.push(
+        { op: "local.get", index: 1 },
+        { op: "local.get", index: 2 },
+        { op: "call", funcIdx: setPrototypeIdx },
+      );
+    } else if (key === "Object.freeze" || key === "Object.seal" || key === "Object.preventExtensions") {
+      const helperName =
+        key === "Object.freeze"
+          ? "__object_freeze"
+          : key === "Object.seal"
+            ? "__object_seal"
+            : "__object_preventExtensions";
+      const integrityIdx = ctx.funcMap.get(helperName);
+      if (integrityIdx === undefined) return null;
+      closureFctx.body.push({ op: "local.get", index: 1 }, { op: "call", funcIdx: integrityIdx });
     } else if (key === "Reflect.get") {
       // (#2933) Same native the 2-arg standalone `Reflect.get(target, key)` call
       // path uses (calls.ts). The value closure is fixed 2-arg — the optional
@@ -1144,13 +1224,74 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       closureFctx.body.push({ op: "local.get", index: 3 });
       closureFctx.body.push({ op: "call", funcIdx: idx });
     } else if (key === "Reflect.ownKeys") {
-      // Native __object_keys — string own keys of the $Object hash-map, per the
-      // standalone `Reflect.ownKeys(target)` call path (Symbol/non-enumerable
-      // keys are out of scope for the open-object runtime, consistent with it).
-      const idx = ensureLateImport(ctx, "__object_keys", [{ kind: "externref" }], [{ kind: "externref" }]);
+      // Reflect.ownKeys includes non-enumerable own properties. The native
+      // runtime does not yet retain symbol-keyed properties, so its strongest
+      // available approximation is __getOwnPropertyNames, not __object_keys
+      // (which deliberately implements Object.keys' enumerable-only view).
+      // This distinction is observable for builtin namespace carriers: Deno's
+      // primordials bootstrap discovers JSON.parse/stringify through this
+      // extracted function value.
+      const idx = ensureLateImport(ctx, "__getOwnPropertyNames", [{ kind: "externref" }], [{ kind: "externref" }]);
       if (idx === undefined) return null;
       closureFctx.body.push({ op: "local.get", index: 1 });
       closureFctx.body.push({ op: "call", funcIdx: idx });
+    } else if (key === "Reflect.getOwnPropertyDescriptor") {
+      // The first-class Reflect method must share the direct call path's
+      // native descriptor provider. Deno snapshots this method through object
+      // destructuring before using it to copy every primordial descriptor.
+      const runtime = ensureObjectRuntime(ctx);
+      const beforeThrow = closureFctx.body.length;
+      emitThrowTypeError(ctx, closureFctx, "Reflect.getOwnPropertyDescriptor called on non-object");
+      const throwInstrs = closureFctx.body.splice(beforeThrow);
+      closureFctx.body.push(
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: runtime.objectTypeIdx },
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: runtime.proxyTypeIdx },
+        { op: "i32.or" },
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+      );
+      const idx = ensureLateImport(
+        ctx,
+        "__getOwnPropertyDescriptor",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      if (idx === undefined) return null;
+      closureFctx.body.push({ op: "local.get", index: 1 }, { op: "local.get", index: 2 }, { op: "call", funcIdx: idx });
+    } else if (key === "Reflect.defineProperty") {
+      // Deno snapshots Reflect.defineProperty and invokes it with descriptor
+      // objects returned by Reflect.getOwnPropertyDescriptor. Route that
+      // first-class call through the same native dynamic-descriptor applier as
+      // the direct syntax and surface its boolean [[DefineOwnProperty]] result.
+      const runtime = ensureObjectRuntime(ctx);
+      const beforeThrow = closureFctx.body.length;
+      emitThrowTypeError(ctx, closureFctx, "Reflect.defineProperty called on non-object");
+      const throwInstrs = closureFctx.body.splice(beforeThrow);
+      closureFctx.body.push(
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: runtime.objectTypeIdx },
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: runtime.proxyTypeIdx },
+        { op: "i32.or" },
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+      );
+      const defineIdx = ctx.funcMap.get("__obj_define_from_desc");
+      const truthyIdx = ctx.funcMap.get("__is_truthy");
+      if (defineIdx === undefined || truthyIdx === undefined) return null;
+      closureFctx.body.push(
+        { op: "local.get", index: 1 },
+        { op: "local.get", index: 2 },
+        { op: "local.get", index: 3 },
+        { op: "call", funcIdx: defineIdx },
+        { op: "call", funcIdx: truthyIdx },
+      );
     } else if (key === "JSON.stringify") {
       // Ensure the native codec (`__json_stringify_value` + its 1-arg entry
       // `__json_stringify_root`, `anyref -> ref $AnyString`) is registered; the
@@ -1316,6 +1457,11 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
           ],
         },
       );
+    } else if (genericThrowBody && builtinName === "Math" && emitMathValueReadBody(ctx, closureFctx, propName)) {
+      // (#4565; supersedes the #4491 wave-4 lane G arm, same defect) — the
+      // upstream module mints the `Math_<fn>` kernel late itself, so it needs
+      // no collector-phase seeding. Kept BEFORE the `genericThrowBody` arm
+      // below because that arm claims every `default:` case.
     } else if (genericThrowBody) {
       // (#2984 Phase 3) Degrade-to-catchable body: a real TypeError instance +
       // `throw` — the EXACT helper the Phase-2 proto refusal bodies use,

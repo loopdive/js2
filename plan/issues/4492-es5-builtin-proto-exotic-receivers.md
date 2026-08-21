@@ -264,3 +264,69 @@ likely the same `__extern_get` arm-ordering family on closed shapes. The
 doesn't flip, the candidacy widening (necessary-but-insufficient, edits
 reconstructible from the section above) composes with whatever it finds.
 Reflection lane redirected to P1/P2 (its substrate).
+
+## 2026-08-19 re-census + dispatch
+
+Fresh standalone baseline (`test262-standalone-current.jsonl`, 48,735 entries,
+fetched 2026-08-19 04:52): standalone ES5 is **8,506 / 9,029 (94.2 %)** with
+**523 non-passes** (495 fail, 24 compile_error, 4 compile_timeout). Earlier
+figures in this file predate that and should be read as history.
+
+This issue's lane in the 2026-08-19 6-way fan-out: **73 rows — String / RegExp / Number / Boolean / Error / Date / global**.
+Umbrella + full partition: #4163.
+
+The residue is a **long tail** — the largest single error signature across all
+523 rows is 13. Expect many small root causes, not one lever.
+
+Local gate for this lane: 551 locally-verified-passing standalone ES5 tests must
+stay at 551/551. Reproduce with the `--standalone` flag (without it you measure
+the JS-host lane, a different and much worse corpus at 84.8 %).
+
+**eval-rooted rows cannot be validated on the dev Mac** — CI's QuickJS eval tier
+needs clang-18 (see #4163 for the full toolchain finding); record them as
+blocked rather than chasing them.
+
+## 2026-08-19 landed slice — 4 rows, and two findings worth more than the rows
+
+Commits `df8d071`, `a047a5f`, `58b8635` on `es5-string-regexp-misc`.
+**Lane 1 → 5 of 73, guard 551/551 (zero pass→fail), `target=standalone`.**
+Base measured by reverting the touched files to `f7df34f1` in the same tree, so
+the delta is a real before/after, not an inherited figure.
+
+| commit | rows | what |
+| --- | ---: | --- |
+| `df8d071` | +1 | tag the four exotic builtin prototypes in `Object.prototype.toString` (`built-ins/Number/prototype/S15.7.3.1_A2_T2`) |
+| `a047a5f` | +1 | `String.prototype.trim` gets its real reflective body (`.../trim/15.5.4.20-2-43`) |
+| `58b8635` | +2 | `new String(<array>)` performs the real ToString, host-free (`S15.5.2.1_A1_T9`, `_A1_T19`) |
+
+QuickJS-blocked in this lane: **2** rows (`built-ins/global/S10.2.3_A1.1_T3`,
+`S10.2.3_A1.2_T3`).
+
+### Finding 1 — `delete <NativeProto>.<member>` is a silent no-op in standalone
+
+Returns `true`, and `hasOwnProperty` still reports `true` afterwards. Gates
+**~8 rows** across `RegExp` A9 ×3, `Number/prototype/S15.7.3.1_A2_T1`,
+`Number/prototype/S15.7.4_A1`, `Number/S15.7.2.1_A4`,
+`String/prototype/S15.5.4_A1` and `_A3`. This is a coherent standalone gap with
+a single root cause and is the largest identified lever left in this issue's
+area — larger than anything the three landed commits moved.
+
+### Finding 2 — a silent wrong answer, found, fixed, and deliberately NOT shipped
+
+`x.toString()` on a plain object literal returns a **constant** `"[object
+Object]"` (`src/codegen/expressions/call-receiver-method.ts:3259`), while
+`String(x)` on the same receiver goes through the real path and is correct. So
+the two disagree, and the fold is wrong whenever the receiver has an own or
+inherited `toString`.
+
+A verified fix exists but moved **zero** rows in this lane, so the lane reverted
+it rather than carry unmeasured regression risk into the push. That is the right
+call for a conformance lane and the reasoning is recorded here so the finding is
+not lost. Patch kept at
+`/Users/thomas/.claude/jobs/f2c14fbe/tmp/tostring-fold.py` (session scratch — not
+durable; re-derive from the line reference above if it has aged out).
+
+**This is a correctness bug independent of test262 scoring** — a program whose
+object defines `toString` gets the constant instead of its own method — and
+should be fixed on its own merits, with its own before/after, rather than
+smuggled into a conformance batch.

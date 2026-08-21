@@ -128,6 +128,7 @@ import {
   resolveComputedKeyExpression,
   resolvePropertyNameText,
 } from "../literals.js";
+import { compileInternalCallArgument } from "./internal-call-argument.js";
 import {
   jsonGapFromStaticSpace,
   staticSpaceValue,
@@ -247,7 +248,6 @@ import {
   compileDateMethodCall,
   compileMathCall,
   ensureDateDaysFromCivilHelper,
-  wasiAllocStringData,
 } from "./builtins.js";
 import { tryCompileTemporalMethodCall, tryCompileTemporalStaticCall } from "../temporal-native.js";
 import {
@@ -256,6 +256,7 @@ import {
   compileClosureCall,
   compileGetterCallable,
   compileObjectPrototypeFallback,
+  runtimeSignatureParameters,
   tryExternClassMethodOnAny,
 } from "./calls-closures.js";
 import { compileOptionalCallExpression } from "./calls-optional.js";
@@ -316,6 +317,7 @@ import {
 } from "./calls-guards.js";
 import { reshapeSloppyPrimitiveThisArg } from "./sloppy-this-toobject.js"; // (#4246)
 import { planInlinedReceiver, releaseInlinedReceiver } from "./inlined-call-receiver.js"; // (#4246)
+import { seedBoundFunctionLengthOnStack } from "../bound-fn-meta.js"; // (#4562) §20.2.3.2 steps 5-8
 import { buildHostCallFallbackArm, ensureHostCallFallbackImports, planHostCallFallback } from "./host-call-fallback.js";
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
 import {
@@ -335,6 +337,7 @@ import { compileBuiltinStaticCall, tryCompileFromCharCodeFamilyReflective } from
 import { compileNamespaceStaticCall } from "./call-namespace-static.js";
 import { compileReceiverMethodCall } from "./call-receiver-method.js";
 import { compileTailDispatch } from "./call-tail-dispatch.js";
+import { tryEmitRealmGlobalMemberCall } from "./realm-global-member-call.js"; // (#4491)
 import {
   emitNativeGeneratorToVec,
   nativeGeneratorInfoForForOfSubject,
@@ -1089,17 +1092,7 @@ function tryEmitNativeProtoReflectiveCall(
     if (resolveObjectToStringTag(ctx, expr.arguments[0]) !== undefined) return undefined;
   }
 
-  // Map the lib interface → builtin brand. Array<T> / ReadonlyArray<T> / Object.
-  let brand: number | undefined;
-  if (ifaceName === "Array" || ifaceName === "ReadonlyArray") brand = ensureArrayNativeProtoGlue(ctx);
-  else if (ifaceName === "Object") brand = ensureObjectNativeProtoGlue(ctx);
-  else if (ifaceName === "String")
-    brand = ensureStringNativeProtoGlue(ctx); // (#2875)
-  else if (ifaceName === "DataView")
-    brand = ensureDataViewNativeProtoGlue(ctx); // (#3173)
-  else if (ifaceName === "ArrayBuffer")
-    brand = ensureArrayBufferNativeProtoGlue(ctx); // (#1595)
-  else if (ifaceName === "Date") brand = ensureDateNativeProtoGlue(ctx); // (#3219)
+  const brand = nativeProtoBrandForInterface(ctx, ifaceName);
   if (brand === undefined) return undefined;
 
   const glue = getNativeProtoBuiltinGlue(ctx, brand);
@@ -1121,10 +1114,15 @@ function tryEmitNativeProtoReflectiveCall(
  * user-arg list is just `[thisArg]`, threaded into the closure's lone `this`
  * param). Returns the result ValType, or `undefined` to fall through.
  */
-function emitReflectiveNativeProtoClosureCall(
+export function emitReflectiveNativeProtoClosureCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  expr: ts.CallExpression,
+  /**
+   * (#2875) Argument SOURCE, not necessarily the syntactic call — only
+   * `.arguments` is read. `transferred-native-proto-call.ts` supplies a
+   * synthesized `[thisArg, …userArgs]` list whose elements are all real nodes.
+   */
+  expr: { readonly arguments: readonly ts.Expression[] },
   receiver: ts.Expression,
   brand: number,
   member: string,
@@ -2155,6 +2153,7 @@ function emitBoundFnValueFromLocals(
   fctx.body.push({ op: "ref.null.extern" }); // (#4241) $bag — no expandos at birth
   fctx.body.push({ op: "struct.new", typeIdx: bfIdx });
   fctx.body.push({ op: "extern.convert_any" });
+  seedBoundFunctionLengthOnStack(ctx, fctx, targetLocal, partialArgLocals.length); // (#4562) §20.2.3.2 steps 5-8
 }
 
 export function compileFunctionBind(
@@ -2709,14 +2708,6 @@ export function resolvePromiseSubclassThisArg(
   // the subclassed promise (one object, not two). Detection (parent-chain
   // walk, standalone gate) + emission live in `promise-subclass.ts`.
   return tryEmitPromiseSubclassReceiver(ctx, fctx, argExpr);
-}
-
-export function usesArguments(node: ts.Node): boolean {
-  if (ts.isIdentifier(node) && node.text === "arguments") return true;
-  if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) {
-    return false;
-  }
-  return forEachChild(node, usesArguments) ?? false;
 }
 
 /**
@@ -3807,7 +3798,12 @@ export function tryEmitInlineDynamicCall(
   // dispatch arm can marshal it independently without re-evaluating.
   const argLocals: number[] = [];
   for (let i = 0; i < arity; i++) {
-    compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "externref" });
+    // A dynamic native call is still an internal JavaScript-value boundary.
+    // In particular, Deno invokes the captured `Object.assign` primordial
+    // through this path. Materialize plain object literals as open `$Object`
+    // carriers so the selected callable can enumerate and mutate them rather
+    // than receiving an opaque boxed closed struct.
+    compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, { kind: "externref" });
     const argLocal = allocLocal(fctx, `__dyn_arg${i}_${fctx.locals.length}`, { kind: "externref" });
     fctx.body.push({ op: "local.set", index: argLocal });
     argLocals.push(argLocal);
@@ -6768,6 +6764,18 @@ function compileCallExpression(
     return { kind: "externref" };
   }
 
+  // (#4491) `this.f(…)` / `this["f"](…)` where `f` is a `var`-declared script
+  // global. Must run BEFORE the receiver-type method dispatch below: that arm
+  // resolves the member against the checker's `typeof globalThis` struct, which
+  // has no field for a `var` global, and its resolved-method-is-null guard turns
+  // the miss into `TypeError: called value is not a function`. The member READ
+  // has answered from the module global since #4500 Slice A; this is the CALL
+  // twin. Narrowly gated (see the module), so every other call is unchanged.
+  {
+    const realmGlobalCall = tryEmitRealmGlobalMemberCall(ctx, fctx, expr);
+    if (realmGlobalCall !== undefined) return realmGlobalCall;
+  }
+
   // Handle property access calls: console.log, Math.xxx, extern methods
   if (ts.isPropertyAccessExpression(expr.expression)) {
     const propAccess = expr.expression;
@@ -7275,7 +7283,7 @@ function compileCallExpression(
               namedThisCall || closureReceiver ? { kind: "externref" } : undefined,
             );
             if (thisType && closureReceiver) {
-              emitClosureReceiverInstall(fctx, closureReceiver);
+              emitClosureReceiverInstall(ctx, fctx, closureReceiver);
             } else if (thisType && !namedThisCall) {
               fctx.body.push({ op: "drop" });
             }
@@ -8514,13 +8522,18 @@ function compileExpressionCallee(
   if (callSigs && callSigs.length > 0) {
     const sig = callSigs[0]!;
 
-    // Look for a matching closure type
-    const sigParamCount = sig.parameters.length;
+    // Look for a matching closure type. (#4491) `runtimeSignatureParameters`
+    // drops the synthetic `(...args: any[])` the checker gives a JS function
+    // that reads `arguments` — it has no formal slot in the compiled callee, and
+    // counting it here nulls the coerced argument and mis-reports `__argc`
+    // (`__FUNC()(__JEDI)` in S13.2_A2_T1).
+    const runtimeSigParams = runtimeSignatureParameters(sig);
+    const sigParamCount = runtimeSigParams.length;
     const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
     const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
     const sigParamWasmTypes: ValType[] = [];
     for (let i = 0; i < sigParamCount; i++) {
-      const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
+      const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
       sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
     }
 
@@ -8971,51 +8984,6 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
 /** Resolve the enclosing class name from a FunctionContext.
  *  Uses enclosingClassName if set (e.g. closures), otherwise parses ClassName from "ClassName_methodName". */
 
-/**
- * Compile a string expression argument and write it to WASI linear memory via bump allocator.
- * Pushes (ptr: i32, len: i32) onto the stack.
- *
- * For string literals, this is handled at the call site via wasiAllocStringData.
- * This function handles dynamic string values (variables, expressions) by
- * compiling a runtime copy from the WasmGC string to linear memory.
- *
- * Current limitation: only supports string literals assigned to variables at compile time.
- * For truly dynamic strings, we'd need a runtime string-to-memory encoder.
- * For now, emit unreachable for unsupported cases.
- */
-export function compileWasiStringArgToLinearMemory(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  expr: ts.Expression,
-): void {
-  // If it's an identifier referencing a const/let with a string literal initializer,
-  // we can resolve it at compile time
-  if (ts.isIdentifier(expr)) {
-    const sym = ctx.checker.getSymbolAtLocation(expr);
-    if (sym?.valueDeclaration && ts.isVariableDeclaration(sym.valueDeclaration)) {
-      const init = sym.valueDeclaration.initializer;
-      if (init && (ts.isStringLiteral(init) || ts.isNoSubstitutionTemplateLiteral(init))) {
-        const data = wasiAllocStringData(ctx, init.text);
-        fctx.body.push({ op: "i32.const", value: data.offset });
-        fctx.body.push({ op: "i32.const", value: data.length });
-        return;
-      }
-    }
-  }
-
-  // Template literal with only a head (no substitutions)
-  if (ts.isNoSubstitutionTemplateLiteral(expr)) {
-    const data = wasiAllocStringData(ctx, expr.text);
-    fctx.body.push({ op: "i32.const", value: data.offset });
-    fctx.body.push({ op: "i32.const", value: data.length });
-    return;
-  }
-
-  // Fallback: unsupported dynamic string — trap at runtime
-  // TODO: implement runtime GC-string to linear-memory copy for dynamic strings
-  fctx.body.push({ op: "unreachable" });
-}
-
 // ── #2922 arms 2+3 — dynamic Promise.all/race argument ──────────────────────
 
 /**
@@ -9146,6 +9114,25 @@ export function emitDynamicCombinatorArg(
     notIterLocal,
     rejectReason,
   });
+}
+
+/**
+ * (#2875) Lib INTERFACE name (`String`, `Array`, …) → the registered
+ * `$NativeProto` brand whose member closures model that prototype, ensuring the
+ * glue on the way. `undefined` for an interface with no wired glue.
+ *
+ * Shared with `transferred-native-proto-call.ts` so the two spellings of the
+ * same operation — `String.prototype.m.call(x)` and `x.m = String.prototype.m;
+ * x.m()` — resolve the same brand by construction rather than by coincidence.
+ */
+export function nativeProtoBrandForInterface(ctx: CodegenContext, ifaceName: string): number | undefined {
+  if (ifaceName === "Array" || ifaceName === "ReadonlyArray") return ensureArrayNativeProtoGlue(ctx);
+  if (ifaceName === "Object") return ensureObjectNativeProtoGlue(ctx);
+  if (ifaceName === "String") return ensureStringNativeProtoGlue(ctx); // (#2875)
+  if (ifaceName === "DataView") return ensureDataViewNativeProtoGlue(ctx); // (#3173)
+  if (ifaceName === "ArrayBuffer") return ensureArrayBufferNativeProtoGlue(ctx); // (#1595)
+  if (ifaceName === "Date") return ensureDateNativeProtoGlue(ctx); // (#3219)
+  return undefined;
 }
 
 export { compileCallExpression, compileIIFE, compileOptionalCallExpression };

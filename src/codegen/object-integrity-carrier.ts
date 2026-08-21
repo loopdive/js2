@@ -190,9 +190,29 @@ export function buildIntegrityPredicate(args: {
   invert: boolean;
   terminalResult: number;
   integrityBagIdx: number | undefined;
+  /**
+   * (#4491 wave-5 T2) §7.3.15 `TestIntegrityLevel` fallback for the DIRECT
+   * `$Object` arm, consulted only where the level's flag bit is clear. Absent
+   * (`isExtensible`, host mode) ⇒ the body is byte-identical to before.
+   * See object-integrity-test-level.ts for why the bag arm never gets it.
+   */
+  derive?: { locals: { name: string; type: ValType }[]; instrs: (objLocal: number) => Instr[] };
 }): { locals: { name: string; type: ValType }[]; body: Instr[] } {
-  const { objectTypeIdx, flagBit, invert, terminalResult, integrityBagIdx } = args;
+  const { objectTypeIdx, flagBit, invert, terminalResult, integrityBagIdx, derive } = args;
   const decode = (localIdx: number): Instr[] => decodeIntegrityFlag(objectTypeIdx, localIdx, flagBit, invert);
+  /** The DIRECT `$Object` arm — the only one the §7.3.15 fallback is sound on. */
+  const decodeDirect = (localIdx: number): Instr[] =>
+    derive === undefined
+      ? decode(localIdx)
+      : [
+          ...decode(localIdx),
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [{ op: "i32.const", value: 1 }],
+            else: derive.instrs(localIdx),
+          },
+        ];
   const elseArm: Instr[] =
     integrityBagIdx === undefined
       ? [{ op: "i32.const", value: terminalResult }]
@@ -211,6 +231,7 @@ export function buildIntegrityPredicate(args: {
         ];
   const locals: { name: string; type: ValType }[] = [{ name: "any", type: { kind: "anyref" } }];
   if (integrityBagIdx !== undefined) locals.push({ name: "bag", type: { kind: "anyref" } });
+  if (derive !== undefined) locals.push(...derive.locals);
   return {
     locals,
     body: [
@@ -218,7 +239,7 @@ export function buildIntegrityPredicate(args: {
       { op: "any.convert_extern" },
       { op: "local.tee", index: 1 },
       { op: "ref.test", typeIdx: objectTypeIdx },
-      { op: "if", blockType: { kind: "val", type: { kind: "i32" } }, then: decode(1), else: elseArm },
+      { op: "if", blockType: { kind: "val", type: { kind: "i32" } }, then: decodeDirect(1), else: elseArm },
     ],
   };
 }

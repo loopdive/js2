@@ -62,6 +62,7 @@ import {
   type IrBlock,
   type IrClassShape,
   type IrClosureSignature,
+  type IrDomCallbackAuthority,
   type IrFuncRef,
   type IrFunction,
   type IrGlobalRef,
@@ -92,6 +93,8 @@ import { jsTagOf } from "./js-tag-domain.js"; // #3954 — the TagId → JsTag c
 import { IrInvariantError } from "./outcomes.js";
 import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
 import { parseIrDateSnapshotGetter } from "./date-runtime.js";
+import { stackifyMovableNestedValues } from "./nested-stackification.js";
+import { createIrDynamicScratchLocals } from "./lowering-dynamic-scratch.js";
 import { IR_STRING_ITERATOR_CHAR_AT_FN, type IrStringConcatMode, type IrStringEncoding } from "./string-runtime.js";
 import type { BlockType, FuncTypeDef, Instr, LocalDef, ValType, WasmFunction } from "./types.js";
 export type {
@@ -107,6 +110,8 @@ export type {
 
 export interface IrLowerResolver {
   resolveFunc(ref: IrFuncRef): number;
+  /** Exact post-call carrier adaptation for a provider with a legacy ABI. */
+  callResultAdapter?(ref: IrFuncRef): "native-string-from-externref" | undefined;
   resolveGlobal(ref: IrGlobalRef): number;
   resolveType(ref: IrTypeRef): number;
   internFuncType(type: FuncTypeDef): number;
@@ -166,6 +171,8 @@ export interface IrLowerResolver {
     signature: IrClosureSignature,
     captureFieldTypes: readonly IrType[],
     hostOneShot?: boolean,
+    domCallbackAuthority?: IrDomCallbackAuthority,
+    liftedFuncIdx?: number,
   ): IrClosureLowering | null;
   /**
    * Slice 3 (#1169c): resolve the WasmGC struct type for a ref cell
@@ -289,6 +296,12 @@ export interface IrLowerResolver {
    * through the same single tag.
    */
   ensureExnTag?(): number;
+  /**
+   * True for no-JavaScript-host targets that use the standardized
+   * `try_table` exception proposal. Host `gc` output keeps the legacy
+   * `try`/`catch` encoding for compatibility with JavaScript engines.
+   */
+  standardizedExceptions?(): boolean;
   /**
    * #1373b Phase C scaffolding — resolve (and lazily register) the
    * standalone `$Promise` WasmGC struct type. The struct's layout is
@@ -893,59 +906,18 @@ export function lowerIrFunctionBody<S, Slot>(
     }
   }
 
-  // An effectful value in a nested region can also stay on the Wasm stack
-  // when its sole consumer is a later in-place instruction separated only by
-  // pure instructions. The consumer is guaranteed to emit at that exact
-  // region position, and crossing pure work cannot change observable order,
-  // so this removes only a redundant local.set/local.get pair.
-  for (const value of [...crossBlock]) {
-    const defPoint = lexicalDefPoints.get(value);
-    const usePoints = lexicalUsePoints.get(value);
-    const def = defBy.get(value);
-    const usePoint = usePoints?.length === 1 ? usePoints[0] : undefined;
-    const consumer = usePoint?.consumer;
-    if (
-      !defPoint ||
-      defPoint.region >= 0 ||
-      !def ||
-      effectsArePure(effectsOf(def)) ||
-      !usePoint ||
-      usePoint.region !== defPoint.region ||
-      usePoint.index <= defPoint.index ||
-      !consumer
-    ) {
-      continue;
-    }
-    const regionInstrs = lexicalInstrsByRegion.get(defPoint.region);
-    if (!regionInstrs) continue;
-    let terminalConsumer = consumer;
-    let terminalIndex = usePoint.index;
-    const isInPlace = (candidate: IrInstr): boolean =>
-      candidate.result === null ||
-      crossBlock.has(candidate.result) ||
-      anchorEager.has(candidate.result) ||
-      ((totalUses.get(candidate.result) ?? 0) === 0 && isSideEffecting(candidate));
-    while (!isInPlace(terminalConsumer)) {
-      if (terminalConsumer.result === null || !effectsArePure(effectsOf(terminalConsumer))) break;
-      const nextUses = lexicalUsePoints.get(terminalConsumer.result);
-      const next = nextUses?.length === 1 ? nextUses[0] : undefined;
-      if (
-        !next?.consumer ||
-        next.region !== defPoint.region ||
-        next.index <= terminalIndex ||
-        regionInstrs.slice(terminalIndex + 1, next.index).some((between) => !effectsArePure(effectsOf(between)))
-      ) {
-        break;
-      }
-      terminalConsumer = next.consumer;
-      terminalIndex = next.index;
-    }
-    if (!isInPlace(terminalConsumer)) continue;
-    if (regionInstrs.slice(defPoint.index + 1, terminalIndex).some((between) => !effectsArePure(effectsOf(between))))
-      continue;
-    crossBlock.delete(value);
-    needsLocal.delete(value);
-  }
+  // Effect-aware nested stackification is isolated so this backend driver
+  // only supplies the lexical schedule it already computed above.
+  stackifyMovableNestedValues({
+    crossBlock,
+    needsLocal,
+    anchorEager,
+    totalUses,
+    definitions: defBy,
+    definitionPoints: lexicalDefPoints,
+    usePoints: lexicalUsePoints,
+    instructionsByRegion: lexicalInstrsByRegion,
+  });
   // --- local allocation ---------------------------------------------------
   // Stable order: scan blocks then instrs. Every `needsLocal` value gets one
   // internal emission slot, placed after the function's parameter slots.
@@ -1151,32 +1123,7 @@ export function lowerIrFunctionBody<S, Slot>(
     }
     return { rhs: jsBitwiseRhsIdxF64, tmp };
   };
-  // #2949 slice 3 — scratch local for dynamic `tag.test` arms that must read
-  // the carrier twice (host-mode Object test: `typeof === "object" && !null`).
-  // Carrier-typed, allocated lazily on first use, one per function, reused
-  // across every dynamic tag.test in the body (same pattern as the bitwise /
-  // vec scratch slots above). The gc arms never invoke the allocator.
-  let dynTagScratchIdx: number | null = null;
-  const ensureDynTagScratch = (carrier: ValType): number => {
-    if (dynTagScratchIdx === null) {
-      dynTagScratchIdx = func.params.length + locals.length;
-      locals.push({ name: "$dyn_tag_scratch", type: carrier, logicalType: { kind: "val", val: carrier } });
-    }
-    return dynTagScratchIdx;
-  };
-  // (#3144) — i32 scratch local for multi-tag `class.instanceof` compares
-  // (the receiver's `__tag` is read once, compared against each compatible
-  // tag). Lazily allocated, one per function, reused across every
-  // `class.instanceof` in the body (same pattern as the scratch slots above).
-  let instanceofTagScratchIdx: number | null = null;
-  const ensureInstanceofTagScratch = (): number => {
-    if (instanceofTagScratchIdx === null) {
-      instanceofTagScratchIdx = func.params.length + locals.length;
-      const type: ValType = { kind: "i32" };
-      locals.push({ name: "$instanceof_tag_scratch", type, logicalType: { kind: "val", val: type } });
-    }
-    return instanceofTagScratchIdx;
-  };
+  const dynamicScratch = createIrDynamicScratchLocals(func.params.length, locals);
 
   // #1126 Stage 3 — best-effort `typeOf` that returns null instead of
   // throwing. Used by the fast-path operand inspection in `case "binary"`
@@ -1499,6 +1446,13 @@ export function lowerIrFunctionBody<S, Slot>(
         // primitive — byte-identical {op:"call"} on WasmGC, OP.CALL on bytecode.
         for (const a of instr.args) emitValue(a, out);
         emitter.emitCall(resolver.resolveFunc(instr.target), out);
+        if (resolver.callResultAdapter?.(instr.target) === "native-string-from-externref") {
+          const stringCarrier = resolver.resolveString?.();
+          if (!stringCarrier || (stringCarrier.kind !== "ref" && stringCarrier.kind !== "ref_null")) {
+            throw new Error(`ir/lower: native string call adapter has no reference carrier (${func.name})`);
+          }
+          emitter.emitFromExternref({ typeIdx: stringCarrier.typeIdx }, out);
+        }
         return;
       }
       case "intrinsic": {
@@ -1865,7 +1819,7 @@ export function lowerIrFunctionBody<S, Slot>(
           emitValue(instr.value, out);
           // #3954 phase 3 (W4) — see the `unbox` arm: `jsTagOf` is the one
           // explicit TagId→JsTag crossing at the frozen handle contract.
-          for (const op of dyn.emitTagTest(jsTagOf(instr.tagId), () => ensureDynTagScratch(dyn.carrier))) {
+          for (const op of dyn.emitTagTest(jsTagOf(instr.tagId), () => dynamicScratch.tag(dyn.carrier))) {
             emitter.pushRaw(out, op);
           }
           return;
@@ -1947,8 +1901,8 @@ export function lowerIrFunctionBody<S, Slot>(
             `ir/lower: resolver cannot lower dyn.to_number (resolveDynamicLowering missing/null) (${func.name})`,
           );
         }
-        emitValue(instr.value, out);
-        for (const op of dyn.emitToNumber()) emitter.pushRaw(out, op);
+        emitValue(instr.value, out); // pushraw-ok(#4588): canonical backend ToNumber sequence follows
+        for (const op of dyn.emitToNumber(dynamicScratch.toNumber)) emitter.pushRaw(out, op);
         return;
       }
       case "dyn.eq": {
@@ -2115,15 +2069,17 @@ export function lowerIrFunctionBody<S, Slot>(
       }
       // Slice 3 (#1169c): closure / ref-cell ops.
       case "closure.new": {
+        const liftedIdx = resolver.resolveFunc(instr.liftedFunc);
         const sub = resolver.resolveClosureSubtype?.(
           instr.signature,
           instr.captureFieldTypes,
           instr.hostOneShot === true,
+          instr.domCallbackAuthority,
+          liftedIdx,
         );
         if (!sub) {
           throw new Error(`ir/lower: resolver cannot lower closure subtype (${func.name})`);
         }
-        const liftedIdx = resolver.resolveFunc(instr.liftedFunc);
         // ref.func $lifted, (#3673) $arity, push captures, struct.new <subtype>.
         emitter.emitFuncRef(liftedIdx, out);
         emitter.emitClosureArityOperand?.(instr.signature.defaultParamStart ?? instr.signature.params.length, out);
@@ -2143,6 +2099,7 @@ export function lowerIrFunctionBody<S, Slot>(
           subMeta.signature,
           subMeta.captureFieldTypes,
           subMeta.hostOneShot === true,
+          subMeta.domCallbackAuthority,
         );
         if (!sub) {
           throw new Error(`ir/lower: resolver cannot resolve closure subtype for ${func.name}`);
@@ -2392,7 +2349,7 @@ export function lowerIrFunctionBody<S, Slot>(
         }
         // Multiple compatible tags: (tag == t0) || (tag == t1) || … via an
         // i32 scratch local (same shape as legacy's multi-tag emission).
-        const scratch = ensureInstanceofTagScratch();
+        const scratch = dynamicScratch.instanceofTag();
         emitter.pushRaw(out, { op: "local.set", index: scratch });
         emitter.pushRaw(out, { op: "local.get", index: scratch });
         emitter.pushRaw(out, { op: "i32.const", value: tags[0]! });
@@ -2469,10 +2426,7 @@ export function lowerIrFunctionBody<S, Slot>(
       }
       case "vec.new_fixed": {
         // #1804 — build a fixed-length vec from its element SSA values.
-        const elemVT = asVal(instr.elementType);
-        if (!elemVT) {
-          throw new Error(`ir/lower: vec.new_fixed elementType must be a val IrType (${func.name})`);
-        }
+        lowerIrTypeToValType(instr.elementType, resolver, func.name);
         const vec = resolveVecType(
           instr.resultType ?? { kind: "vec", elementType: instr.elementType, nullable: false },
           instr.alloc,
@@ -4005,7 +3959,13 @@ function memberValType(t: IrType, funcName: string): ValType {
 }
 
 export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcName: string): ValType {
-  if (t.kind === "val") return t.val;
+  if (t.kind === "val") {
+    if (!t.typeRef) return t.val;
+    if (t.val.kind !== "ref" && t.val.kind !== "ref_null") {
+      throw new Error(`ir/lower: symbolic physical type ref is attached to non-reference ${t.val.kind} (${funcName})`);
+    }
+    return { kind: t.val.kind, typeIdx: resolver.resolveType(t.typeRef) };
+  }
   // #3214 B0 — source-level callable boundaries use the same externref ABI as
   // legacy callbacks. The signature remains in IrType for exact unpack/call
   // lowering; it has no distinct Wasm parameter representation.

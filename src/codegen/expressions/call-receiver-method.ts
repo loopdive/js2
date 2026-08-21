@@ -45,7 +45,7 @@ import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } f
 import { tryCompileHostStringPredicate } from "../host-string-prefix-suffix.js";
 import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
 import { effectiveLocalCarrier } from "../analysis/mixed-assignment-carrier.js";
-import { staticIntegerRange } from "../analysis/static-numeric-range.js";
+import { staticIntegerRange } from "../../ir/analysis/static-numeric-range.js";
 import {
   emitArrayBufferResize,
   emitArrayBufferSlice,
@@ -130,6 +130,11 @@ import { compileExternMethodCall } from "./extern.js";
 import { tryEmitValueOfFallback } from "./valueof-fallback.js";
 import { sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
+import {
+  directObjectMethodFuncIdx,
+  emitKnownRestMethodArguments,
+  knownMethodRestInfo,
+} from "./object-method-rest-abi.js";
 import {
   buildThrowJsErrorInstrs,
   canonicalClassExpressionName,
@@ -542,41 +547,6 @@ function tryCompileDerivedHostSubstringCharCodeAt(
     });
   }
   return { kind: "f64" };
-}
-
-/**
- * Materialize the hidden vector argument for a known user method with a
- * JavaScript rest parameter. Method signatures carry the rest array as one
- * Wasm parameter, but a source call supplies ordinary positional arguments;
- * an omitted rest argument therefore needs `{ length: 0, data: [] }`, not a
- * null ref. The latter used to make even `new Marked().use()` trap before the
- * method body ran.
- */
-function emitKnownRestMethodArguments(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  expr: ts.CallExpression,
-  paramTypes: ValType[] | undefined,
-  restInfo: { restIndex: number; elemType: ValType; arrayTypeIdx: number; vecTypeIdx: number },
-  selfOffset: number,
-): boolean {
-  if (expr.arguments.some((arg) => ts.isSpreadElement(arg))) return false;
-  const fixedCount = restInfo.restIndex;
-  for (let i = 0; i < fixedCount; i++) {
-    if (i < expr.arguments.length) {
-      compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[selfOffset + i]);
-    } else {
-      pushDefaultValue(fctx, paramTypes?.[selfOffset + i] ?? { kind: "f64" }, ctx);
-    }
-  }
-  const restCount = Math.max(0, expr.arguments.length - fixedCount);
-  fctx.body.push({ op: "i32.const", value: restCount });
-  for (let i = fixedCount; i < expr.arguments.length; i++) {
-    compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, restInfo.elemType);
-  }
-  fctx.body.push({ op: "array.new_fixed", typeIdx: restInfo.arrayTypeIdx, length: restCount });
-  fctx.body.push({ op: "struct.new", typeIdx: restInfo.vecTypeIdx });
-  return true;
 }
 
 export function compileReceiverMethodCall(
@@ -1630,7 +1600,7 @@ export function compileReceiverMethodCall(
       const dynResult = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, methodName);
       if (dynResult !== undefined) return dynResult;
     }
-    if (funcIdx !== undefined) {
+    if ((funcIdx = directObjectMethodFuncIdx(ctx, expr, funcIdx)) !== undefined) {
       const isStaticMethod = receiverIsClassObject;
       // Static methods: evaluate receiver for side effects, drop, call directly
       if (isStaticMethod) {
@@ -1644,7 +1614,7 @@ export function compileReceiverMethodCall(
         const paramTypes = getFuncParamTypes(ctx, resolvedStaticIdx);
         const paramCount = paramTypes ? paramTypes.length : expr.arguments.length;
         const calleeReadsArgsStatic = ctx.funcUsesArguments.has(fullName);
-        const restInfoStatic = ctx.funcRestParams.get(fullName);
+        const restInfoStatic = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 0);
         const handledRestStatic =
           restInfoStatic !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoStatic, 0);
         if (!handledRestStatic) {
@@ -1822,7 +1792,7 @@ export function compileReceiverMethodCall(
         // User-visible param count excludes self (param 0)
         const ngParamCount = paramTypes ? paramTypes.length - 1 : expr.arguments.length;
         const calleeReadsArgsNg = ctx.funcUsesArguments.has(fullName);
-        const restInfoNg = ctx.funcRestParams.get(fullName);
+        const restInfoNg = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 1);
         const handledRestNg =
           restInfoNg !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoNg, 1);
         if (!handledRestNg) {
@@ -1889,7 +1859,7 @@ export function compileReceiverMethodCall(
       const paramTypes = getFuncParamTypes(ctx, funcIdx);
       const methodParamCount = paramTypes ? Math.max(0, paramTypes.length - 1) : expr.arguments.length;
       const calleeReadsArgsNn = ctx.funcUsesArguments.has(fullName);
-      const restInfoNn = ctx.funcRestParams.get(fullName);
+      const restInfoNn = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 1);
       const handledRestNn =
         restInfoNn !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoNn, 1);
       if (!handledRestNn) {
@@ -1944,13 +1914,13 @@ export function compileReceiverMethodCall(
     if (structTypeName) {
       const methodName = propAccess.name.text;
       const fullName = `${structTypeName}_${methodName}`;
-      const funcIdx = ctx.funcMap.get(fullName);
+      let funcIdx = ctx.funcMap.get(fullName);
       // If no method found, check callable property on struct
       if (funcIdx === undefined) {
         const callablePropResult = compileCallablePropertyCall(ctx, fctx, expr, propAccess, structTypeName);
         if (callablePropResult !== undefined) return callablePropResult;
       }
-      if (funcIdx !== undefined) {
+      if ((funcIdx = directObjectMethodFuncIdx(ctx, expr, funcIdx)) !== undefined) {
         // Push self (the receiver) as first argument, with type hint from method's first param
         const structMethodPTypes = getFuncParamTypes(ctx, funcIdx);
         const recvType = compileExpression(ctx, fctx, propAccess.expression, structMethodPTypes?.[0]);
@@ -1987,7 +1957,7 @@ export function compileReceiverMethodCall(
           }
           const smMethodParamCount = paramTypes ? paramTypes.length - 1 : expr.arguments.length;
           const calleeReadsArgsSm = ctx.funcUsesArguments.has(fullName);
-          const restInfoSm = ctx.funcRestParams.get(fullName);
+          const restInfoSm = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 1);
           const handledRestSm =
             restInfoSm !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoSm, 1);
           if (!handledRestSm) {
@@ -2050,7 +2020,7 @@ export function compileReceiverMethodCall(
         const paramTypes = getFuncParamTypes(ctx, funcIdx);
         const nnMethodParamCount = paramTypes ? paramTypes.length - 1 : expr.arguments.length;
         const calleeReadsArgsNns = ctx.funcUsesArguments.has(fullName);
-        const restInfoNns = ctx.funcRestParams.get(fullName);
+        const restInfoNns = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 1);
         const handledRestNns =
           restInfoNns !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoNns, 1);
         if (!handledRestNns) {
@@ -3174,10 +3144,10 @@ export function compileReceiverMethodCall(
     // real `TypeError`. Declining routes it to the stored-member closure arm,
     // whose brand preamble does that (the expando-named half of the same rows,
     // `d.myToString = …`, already threw before this change).
-    //
-    // Receiver-precise (`sourceOverridesMethodOnReceiver`): a module that does
-    // not override `toString` on this binding compiles byte-identically.
-    !(ctx.standalone && sourceOverridesMethodOnReceiver(propAccess.expression, "toString"))
+    // Receiver-precise (`sourceOverridesMethodOnReceiver`): a module that does not
+    // override `toString` on this binding compiles byte-identically. (#4482: `ctx`
+    // widens "this binding" to a `new A(…)` binding whose ctor installs the slot.)
+    !(ctx.standalone && sourceOverridesMethodOnReceiver(propAccess.expression, "toString", ctx))
   ) {
     // #1463 — `someFn.toString()` where `someFn` is a top-level function
     // declaration → return the captured source text directly. Must happen

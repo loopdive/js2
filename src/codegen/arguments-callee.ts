@@ -61,12 +61,14 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
+import { seedStrictArgumentsCalleePoison } from "./arguments-callee-poison-accessor.js"; // (#4555) §10.6 step 14
 // Imported from the trampoline module directly, not the `closures.ts` barrel:
 // `closures.ts` imports THIS module for its own function-expression seed, and
 // going through the barrel would close that cycle. `expressions/new-super.ts`
 // reaches the same helper the same way.
 import { emitCachedFuncClosureExternref } from "./closures/method-trampolines.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { shouldRegisterArgumentsWithHost } from "./helpers/arguments-registration.js";
 import { isStrictFunction } from "./helpers/is-strict-function.js";
 import { noJsHost } from "./js-errors.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -165,9 +167,24 @@ export function seedDeclarationArgumentsCallee(
   funcName: string,
   argsLocalIdx: number,
 ): void {
-  // §10.6 step 14 gives a STRICT arguments object a poison accessor instead;
-  // see `arguments-callee-poison.ts` for the half of that this lane covers.
-  if (isStrictFunction(decl, ctx.inferModuleStrictArguments)) return;
+  // (#4555) §10.6 step 14 gives a STRICT arguments object a poison ACCESSOR
+  // instead of this data property. (`arguments-callee-poison.ts` covers only a
+  // direct syntactic read; the accessor is what a descriptor query, a
+  // `hasOwnProperty`, or a write on an escaped arguments object observes.)
+  if (isStrictFunction(decl, ctx.inferModuleStrictArguments)) {
+    // (#4578) The poison accessor is observable only when the arguments object
+    // itself is observable. Reuse the same conservative proof that guards
+    // private host-registration elision: `.length` and checker-proven numeric
+    // indexed reads stay entirely inside the vec representation, while eval,
+    // escape, reflection, mutation, receiver use, and ambiguous keys all keep
+    // the eager accessor. This removes a full object-runtime descriptor insert
+    // from every hot call in strict ESM packages such as clsx and Acorn.
+    if (decl.body && !shouldRegisterArgumentsWithHost(ctx, decl.body, fctx.directEvalBindingNames !== undefined)) {
+      return;
+    }
+    seedStrictArgumentsCalleePoison(ctx, fctx, argsLocalIdx);
+    return;
+  }
   if (ctx.classSet.has(funcName)) return;
   const captures = ctx.nestedFuncCaptures.get(funcName);
   if (captures && captures.length > 0) return;
@@ -203,7 +220,16 @@ export function seedLiftedClosureArgumentsCallee(
   arrow: ts.FunctionLikeDeclaration,
   argsLocalIdx: number,
 ): void {
-  if (isStrictFunction(arrow, ctx.inferModuleStrictArguments)) return;
+  if (isStrictFunction(arrow, ctx.inferModuleStrictArguments)) {
+    if (
+      arrow.body &&
+      !shouldRegisterArgumentsWithHost(ctx, arrow.body, liftedFctx.directEvalBindingNames !== undefined)
+    ) {
+      return;
+    }
+    seedStrictArgumentsCalleePoison(ctx, liftedFctx, argsLocalIdx); // (#4555) §10.6 step 14
+    return;
+  }
   const selfType = liftedFctx.params[0]?.type ?? null;
   if (selfType === null) return;
   seedArgumentsCallee(ctx, liftedFctx, argsLocalIdx, () => {

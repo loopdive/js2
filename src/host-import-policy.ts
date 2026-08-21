@@ -2,6 +2,8 @@
 
 import type { ImportDescriptor, ImportIntent } from "./index.js";
 import type { WasmModule } from "./ir/types.js";
+import type { CompileEnvironment } from "./target-profile.js";
+import { isDomCapabilityImportDescriptor, isDomInteractionImportDescriptor } from "./dom-capability-contract.js";
 
 export type HostImportPolicyClass =
   | "platform-capability"
@@ -156,7 +158,13 @@ function classifyBuiltin(name: string): HostImportPolicy {
  * makes a new intent a compile error until policy is chosen; name-based
  * `builtin` fallbacks may still return `unknown`, which is deliberately loud.
  */
-export function classifyHostImport(descriptor: ImportDescriptor): HostImportPolicy {
+export function classifyHostImport(descriptor: ImportDescriptor, environment?: CompileEnvironment): HostImportPolicy {
+  if (environment === "none" && isDomInteractionImportDescriptor(descriptor)) {
+    return policy("platform-capability", "dom-interaction", 4577, false, "explicit DOM interaction capability");
+  }
+  if (environment === "none" && isDomCapabilityImportDescriptor(descriptor)) {
+    return policy("platform-capability", "dom", 4576, false, "explicit bounded DOM subtree capability");
+  }
   const intent = descriptor.intent;
   switch (intent.type) {
     case "string_literal":
@@ -233,7 +241,9 @@ export function classifyHostImport(descriptor: ImportDescriptor): HostImportPoli
     case "date_method":
       return policy("legacy-semantic", "date", 4397, true, "host-backed Date semantics");
     case "date_now":
-      return policy("platform-capability", "clock", 4398, true, "wall-clock capability");
+      return environment === "none"
+        ? policy("platform-capability", "clock", 4577, false, "explicit standalone embedder clock capability")
+        : policy("platform-capability", "clock", 4398, true, "wall-clock capability");
     case "declared_global":
       return policy("platform-capability", `global:${intent.name}`, 4398, false, "declared ambient host capability");
     case "dynamic_import":
@@ -302,13 +312,14 @@ export function buildHostImportInventory(
   mod: WasmModule,
   envManifest: readonly ImportDescriptor[],
   linkedNamespaces: readonly string[] = [],
+  environment?: CompileEnvironment,
 ): HostImportInventoryEntry[] {
   const envByName = new Map(envManifest.map((descriptor) => [descriptor.name, descriptor] as const));
   const linkedNamespaceSet = new Set(linkedNamespaces);
   return mod.imports.map((entry) => {
     const descriptor = entry.module === "env" ? envByName.get(entry.name) : undefined;
     const classified = descriptor
-      ? classifyHostImport(descriptor)
+      ? classifyHostImport(descriptor, environment)
       : entry.module === "env"
         ? policy("unknown", "unclassified", 4401, false, `env import '${entry.name}' has no typed intent`)
         : classifyNonEnvImport(entry.module, entry.name, linkedNamespaceSet);

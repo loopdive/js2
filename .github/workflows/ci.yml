@@ -164,6 +164,15 @@ jobs:
         if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run check:jstag-seam
 
+      - name: IR->codegen layering ratchet (#3113)
+        if: steps.npm_compat.outputs.only != 'true'
+        # The intended layering is emit <- ir <- codegen. It regrew ~4x (25 ->
+        # 96 import lines) in the six weeks after #3113 slice 1 because nothing
+        # enforced it. Ratchet, not emptiness check: containing the 7k-LOC
+        # ir/integration.ts bridge (#3113 S3) is blocked on #3520/#3521, so the
+        # reachable invariant is "no growth, ratchet toward zero".
+        run: pnpm run check:ir-layering
+
       - name: IR fallback gate (#1376)
         if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run check:ir-fallbacks
@@ -183,6 +192,13 @@ jobs:
         # measured, while any invariant, missing unit, or compile failure is
         # fatal. R9 promotes the strict IR-only policy once blockers reach zero.
         run: pnpm run check:ir-only -- --policy=hybrid
+
+      - name: Standalone IR cutover corpus gate (#4583/#4588)
+        if: steps.npm_compat.outputs.only != 'true'
+        # The package command first pins the exact manifest/digest, then checks
+        # the raw generator stream at 5 successful sources / 47 units while
+        # requiring every physical route to be IR-owned.
+        run: pnpm run check:standalone-ir-cutover-corpus
 
       - name: Dead-export gate (#3090 Phase 2)
         if: steps.npm_compat.outputs.only != 'true'

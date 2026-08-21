@@ -56,6 +56,16 @@ export interface WasmModule {
   /** Node builtin module names detected from imports (#1044) */
   nodeBuiltinModules: Set<string>;
   /**
+   * Exact compiler-owned platform-capability import allocators.
+   *
+   * Import names and signatures are public ABI and therefore cannot prove
+   * who allocated a slot: user source can deliberately declare the same
+   * spelling.  This sidecar keys the actual module import object so later
+   * capability/Program-ABI planning can distinguish a certified provider
+   * slot from an ambient look-alike without serializing mutable authority.
+   */
+  platformCapabilityImportProvenance?: Map<Import, { readonly capabilityId: string; readonly providerId: string }>;
+  /**
    * JSX runtime import specifier detected during import preprocessing (#1540).
    * `"react/jsx-runtime"` by default; `preact/jsx-runtime`, etc. for other
    * configured `jsxImportSource` values. Recorded so the import manifest
@@ -424,6 +434,7 @@ type InstrBase =
   | { op: "memory.copy" }
   | { op: "memory.fill" }
   | { op: "try"; blockType: BlockType; body: Instr[]; catches: CatchClause[]; catchAll?: Instr[] }
+  | { op: "try_table"; blockType: BlockType; body: Instr[]; catches: TryTableCatch[] }
   | { op: "throw"; tagIdx: number }
   | { op: "rethrow"; depth: number }
   | { op: "any.convert_extern" }
@@ -560,6 +571,15 @@ export interface CatchClause {
   body: Instr[];
 }
 
+/** A standardized exception-handling clause attached to `try_table`. */
+export interface TryTableCatch {
+  kind: "catch" | "catch_ref" | "catch_all" | "catch_all_ref";
+  /** Present for the tagged `catch` / `catch_ref` forms. */
+  tagIdx?: number;
+  /** Relative label depth of the enclosing handler block. */
+  depth: number;
+}
+
 export interface TagDef {
   name: string;
   /** Type index of the tag's function signature (params = exception values) */
@@ -612,6 +632,7 @@ export function createEmptyModule(): WasmModule {
     stringPool: [],
     externClasses: [],
     nodeBuiltinModules: new Set(),
+    platformCapabilityImportProvenance: new Map(),
     stringLiteralValues: new Map(),
     asyncFunctions: new Set(),
     declaredFuncRefs: [],

@@ -4,7 +4,7 @@ title: "Run react-dom's own unit tests against compiled react-dom"
 status: in-progress
 sprint: current
 created: 2026-08-01
-updated: 2026-08-15
+updated: 2026-08-21
 priority: high
 horizon: m
 feasibility: medium
@@ -295,6 +295,114 @@ upstream probe reaches the renderer and reports the next real runtime finding:
 behavioral compiler/runtime gap, not a compile or Wasm-validation failure; the
 PR remains draft until that path is addressed.
 
+## Host-infrastructure audit (2026-08-20)
+
+The shared React test shim now exposes Node's `global` spelling as an alias of
+`globalThis` in both the native oracle and Wasm lane. This covers the original
+ReactDOM tests that install `ReadableStream`, `TextEncoder`, scheduler state,
+or jsdom globals through `global.*`; it is host setup, not a package behavior
+substitute.
+
+The legacy single-module probe was rerun with one admitted test and produced a
+valid 2.4 MB Wasm module in 104 s. The test reached the renderer but failed
+with `Cannot read properties of null (reading 'createRoot')`, confirming a
+remaining project/module export or compiler representation issue rather than
+unavailable DOM infrastructure. The default IR project lane remains the path
+to fix; do not turn the legacy probe into a pass-rate claim.
+
+## Separate server-renderer lane checkpoint (2026-08-20)
+
+The harness now acquires the published `react-dom-server-legacy.browser.production.js`
+bundle and compiles it in a separate module graph. The original server-renderer
+tests are admitted to that lane instead of being rejected as
+`needs-react-dom-server`; the client graph still contains only the shared and
+client renderer modules. This keeps the two WasmGC graphs independent while
+using the same pinned React source, jsdom host, expect shim, and native oracle.
+
+The one-client/three-server smoke run compiled and validated the server graph
+in 8.0 s as a 938,550-byte module and executed all three original server tests
+from the 115-test legacy-renderer subset against it. The tests reached the renderer and failed their assertions
+(`expected value to be contained`), so this is an infrastructure milestone,
+not a green-pass claim. The client smoke test still fails at `Cannot read
+properties of null (reading 'createRoot')`; that remains a compiler/module-
+export issue rather than unavailable host infrastructure. The full server lane
+is now measurable and its compile, validation, native-oracle, and behavior
+counts are persisted under `report.server`.
+
+## Jest adapter infrastructure checkpoint (2026-08-20)
+
+The extractor no longer mistakes ordinary application calls such as
+`value.toString()` and `text.toLowerCase()` for Jest matchers. It now walks the
+syntax tree and only classifies calls rooted at `expect(...)` (including
+`.not`, `.resolves`, and `.rejects`). The shared shim implements the additional
+upstream matchers `toMatch`, `toContainEqual`, `toHaveBeenNthCalledWith`,
+`toMatchInlineSnapshot`, and `toMatchRenderedOutput`, and the host console
+capture is declared as available infrastructure in both suites.
+
+In conservative extraction mode this raises the React slice to 272/273
+admitted tests (the one remainder is an upstream skip) and the ReactDOM slice
+to 1,770/2,003 admitted tests. The remaining ReactDOM rejections are private
+Fizz/test scaffolding and are recorded by reason rather than silently
+discarded. This checkpoint changes what reaches
+the compiler, not the Wasm behavior score: the client renderer still has the
+known module-export/runtime gap and the server smoke still has behavior
+failures.
+
+## Browser Fizz lane checkpoint (2026-08-20)
+
+The browser Fizz tests now have their own published implementation graph:
+`package/cjs/react-dom-server.browser.production.js`. The harness routes 60
+original upstream tests from `ReactDOMFizzServerBrowser-test.js`,
+`ReactDOMFizzStaticBrowser-test.js`, and `ReactDOMFizzStaticFloat-test.js` to
+that graph, while the 115 legacy browser-server tests remain on their own
+`react-dom-server-legacy.browser.production.js` lane. The Fizz graph no longer
+concatenates the legacy renderer, so its compile and validation result is
+independent rather than an accidental combined-server result.
+
+The host boundary now supplies the standard browser/Node constructors required
+by the published browser bundle (`MessageChannel`, `MessagePort`, Web Streams,
+`TextEncoder`/`TextDecoder`, `Headers`, and abort signals) through the existing
+generic runtime constructor mapping. This is host capability plumbing; the
+renderer algorithms remain in the compiled module. Upstream Fizz setup also
+uses `serverAct`, and inline string snapshots compare the serialized value used
+by Jest's original matcher.
+
+The bounded smoke run admitted one test in each lane. The Fizz module compiled,
+validated, and instantiated as a roughly 1.15 MB Wasm module; its native oracle
+passed, while the compiled test reached the renderer and failed with
+`Cannot access property on null or undefined`. That is a compiler/runtime
+behavior gap, not unavailable infrastructure. The full Fizz lane is now
+measurable and is persisted separately in the npm-compat report. Node/edge Fizz
+files still require their own stream, crypto, and async-hooks host graphs, and
+the client/legacy behavioral gaps remain open.
+
+## Node and Edge Fizz lane checkpoint (2026-08-20)
+
+The same harness now acquires the published Node and Edge server bundles:
+`react-dom-server.node.production.js` and `react-dom-server.edge.production.js`.
+It routes 35 original Node-Fizz tests and 2 original Edge-Fizz tests to those
+graphs, with separate compile/validation/test denominators and npm-compat rows.
+Both one-test smoke lanes compiled, validated, instantiated, and reached the
+upstream test with a passing native oracle. Node stream construction is exposed
+through a named host capability for `stream.PassThrough`; the test's dynamic
+constructor spelling is lowered only at that host boundary because the generic
+dynamic-constructor path cannot preserve a Node stream subclass. The Edge lane
+uses the existing Web Streams/TextEncoder/AsyncLocalStorage host surface.
+
+The remaining Node/Edge smoke failures are now compiler/runtime behavior
+findings (`writable is not defined` in the Node stream test and a null-property
+access in the Edge resource-hint test), not unavailable host setup. This is
+important attribution: the published platform graphs and their required host
+objects are now actually running, while the remaining work belongs in the
+compiled renderer/runtime.
+
+The extractor also now lifts concise upstream arrows (`it('name', () =>
+expect(...))`) and async concise arrows as expression statements. The full
+ReactDOM corpus therefore reports 2,001/2,003 admitted tests; the only two
+rejections are the upstream `.skip` tests. The 172 private Fizz/test-scaffolding
+uses that remain in conservative mode are still recorded as unavailable
+scaffolding rather than silently promoted.
+
 ## Remaining blockers (skipped tests in `tests/issue-3982.test.ts`)
 
 36 of the 39 extracted compiler blockers are green. Three are `it.skip` with the
@@ -333,6 +441,55 @@ because its Phase-0 reservation reached its capture verdict too late — see the
 comment in `src/codegen/statements/nested-declarations.ts`. A future fix has to
 add binding-aware slots on top of main's design, not restore that one.
 
+## Browser infrastructure checkpoint (2026-08-20)
+
+The shared jsdom host now promotes every browser constructor used directly by
+the selected ReactDOM corpus, including `ProgressEvent`. jsdom exposed that
+constructor only as `window.ProgressEvent`, while ReactDOM's original event
+tests instantiate the global `ProgressEvent`; the missing promotion made those
+tests fail in the native oracle before they could provide compiler evidence.
+The host surface is covered by
+`tests/dogfood/react-upstream-infrastructure.test.ts`. The remaining native
+incompatible results are renderer/oracle behavior differences, not skipped
+tests caused by an unavailable browser API.
+
+The same audit found one shared-browser gap affecting Lit as well: jsdom
+provides `Document` on `window`, but the host had not promoted the constructor
+to the global scope. Lit's published `css-tag` module evaluates
+`Document.prototype` during initialization, so the omission caused a
+pre-test `ReferenceError`. `Document` is now part of the explicit DOM global
+allowlist and has a regression assertion; a direct native import of the
+published Lit `css-tag` entry now initializes successfully.
+
+The conservative ReactDOM extraction then exposed a second infrastructure gap:
+172 Fizz tests imported the private monorepo
+`../test-utils/FizzTestUtils` module, whose bindings were previously dropped.
+The shim now provides the four original DOM helpers (`insertNodesAndExecuteScripts`,
+`mergeOptions`, `stripExternalRuntimeInNodes`, and `getVisibleChildren`) as an
+explicit host facade, with a native regression exercise. The Jest shim also
+implements the one remaining matcher used by the corpus, `toBeGreaterThan`.
+Conservative extraction now admits **2,001/2,003** ReactDOM tests; the only
+rejections are the two upstream `.skip` tests. This changes reachability and
+host setup, not the renderer's compiled behavior score.
+
+## Project-batching checkpoint (2026-08-21)
+
+The client project lane no longer places the entire selected corpus in one
+entry module. `partitionProjectTests` groups tests by their original upstream
+file and splits only oversized files at a bounded entry-source size (800,000
+characters by default, configurable with
+`DOGFOOD_REACT_DOM_PROJECT_BATCH_CHARS`). Each batch is compiled in its own
+worker invocation and every test keeps its native result, Wasm result, and
+compile/validation error in the report. A timeout or invalid batch therefore
+cannot erase the rest of the denominator.
+
+The bounded unchanged-corpus probe with 50 client tests produced two valid
+project batches in 88.2 seconds: all 50 compiled and reached the runner, zero
+were blocked before Wasm execution, 49 were native-oracle-incompatible, and one
+was scored (0/1). A forced five-batch probe with a 1,000-character limit also
+validated all five batches with zero skipped tests. The remaining failures are
+renderer/compiler behavior, not missing batching or DOM host setup.
+
 ## Acceptance criteria
 
 - [x] The corpus is react-dom's own test sources at a verified commit shared
@@ -342,7 +499,11 @@ add binding-aware slots on top of main's design, not restore that one.
 - [x] `admitted + rejected == upstreamTestsSeen` is asserted.
 - [x] The implementation is compiled alone and reported by name with the
       compiler's own message when it fails.
-- [ ] react-dom's published client module compiles to a valid Wasm module.
+- [x] react-dom's published client module compiles to a valid Wasm module.
+- [x] The client corpus is split into independently validated project batches;
+      a worker timeout cannot hide the remaining tests.
+- [x] The published browser server module has an independent valid Wasm lane.
+- [x] The published browser Fizz module has its own independent valid Wasm lane.
 - [x] The native oracle and compiled lane run under the same jsdom host setup.
 - [ ] Freeze deferred capture-cycle ABIs before compiling ordinary callers.
 - [ ] Capture a nested `async function` declaration inside an `async` parent.
@@ -350,6 +511,33 @@ add binding-aware slots on top of main's design, not restore that one.
 - [ ] Make the admitted upstream ReactDOM tests green against compiled Wasm.
 - [x] Tests blocked before a valid implementation exists are reported as not
       executed, never as behavioral divergences.
+
+## Cross-package React host infrastructure checkpoint (2026-08-20)
+
+The shared React upstream host now resolves the published ReactDOM/client/server
+and `react-test-renderer` entries under `NODE_ENV=production`, while aliasing
+the exact pinned React object into their CommonJS peer lookup. This removes the
+dev-renderer/production-React internal queue mismatch (`actQueue.push`) that
+previously failed before an upstream assertion ran. It exposes jsdom,
+ReactDOM, the JSX runtimes, `create-react-class`, `internal-test-utils`, a
+`react-noop-renderer` adapter, a version-only `react-native-renderer` carrier,
+and Node stream capability explicitly.
+
+Production test-renderer does not provide `act` or a committed tree, so the
+noop adapter uses a jsdom ReactDOM root with `flushSync` and exposes the
+test-renderer-shaped children/JSON/ref view. The native oracle leaves host
+React values untouched; only the compiled Wasm call path may opt into a
+boundary preparation step.
+
+The exact React run now admits and executes **272/273** upstream tests (one
+upstream skip), has **0 compile-quarantined** tests, and produces **44 valid
+Wasm batches**. Of the 272 executed tests, **178 are natively scoreable and
+92 pass** against compiled Wasm; **94** are reported as native-oracle
+incompatible. Those 94 are not missing package lookups: the remaining groups
+are production warning expectations, renderer semantics, and compiled
+component/function closures that still arrive as opaque host objects. ReactDOM
+compiled correctness therefore remains a separate follow-up, while this
+checkpoint makes the cross-package infrastructure explicit and measurable.
 
 ## Permanent test reference
 

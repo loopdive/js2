@@ -5,6 +5,7 @@
 // the fallback gate must ask the same question without importing codegen.
 
 import { ts } from "../ts-api.js";
+import { isExactInjectedTimerShim } from "./injected-timer-shim.js";
 
 export interface IrPromiseDelayCertification {
   readonly owner: ts.FunctionDeclaration & { readonly name: ts.Identifier; readonly body: ts.Block };
@@ -62,55 +63,6 @@ function isAmbientPromise(node: ts.Identifier, construction: ts.NewExpression, c
   const signature = checker.getResolvedSignature(construction);
   if (!signature?.declaration?.getSourceFile().isDeclarationFile) return false;
   return isPromiseNumberType(checker.getTypeAtLocation(construction), checker);
-}
-
-function isExactInjectedTimerShim(declaration: ts.Declaration, checker: ts.TypeChecker): boolean {
-  if (
-    !ts.isFunctionDeclaration(declaration) ||
-    !declaration.name ||
-    declaration.name.text !== "setTimeout" ||
-    declaration.parameters.length !== 2 ||
-    !declaration.body ||
-    declaration.body.statements.length !== 1 ||
-    !ts.isIdentifier(declaration.parameters[0]!.name) ||
-    !ts.isIdentifier(declaration.parameters[1]!.name)
-  ) {
-    return false;
-  }
-  const sourceFile = declaration.getSourceFile();
-  if (!sourceFile.text.startsWith("// #1501 timer host-import shim (auto-injected)")) return false;
-  const statement = declaration.body.statements[0]!;
-  if (!ts.isReturnStatement(statement) || !statement.expression || !ts.isCallExpression(statement.expression)) {
-    return false;
-  }
-  const call = statement.expression;
-  if (
-    call.questionDotToken ||
-    (call.typeArguments?.length ?? 0) !== 0 ||
-    !ts.isIdentifier(call.expression) ||
-    call.expression.text !== "__timer_set_timeout" ||
-    call.arguments.length !== 2 ||
-    !ts.isIdentifier(call.arguments[0]!) ||
-    !ts.isIdentifier(call.arguments[1]!)
-  ) {
-    return false;
-  }
-  const callbackSymbol = symbolAt(declaration.parameters[0]!.name, checker);
-  const delaySymbol = symbolAt(declaration.parameters[1]!.name, checker);
-  if (
-    symbolAt(call.arguments[0]!, checker) !== callbackSymbol ||
-    symbolAt(call.arguments[1]!, checker) !== delaySymbol
-  ) {
-    return false;
-  }
-  const hostSymbol = symbolAt(call.expression, checker);
-  const hostDeclaration = hostSymbol?.valueDeclaration ?? hostSymbol?.declarations?.[0];
-  return (
-    !!hostDeclaration &&
-    ts.isFunctionDeclaration(hostDeclaration) &&
-    !hostDeclaration.body &&
-    hostDeclaration.getSourceFile() === sourceFile
-  );
 }
 
 function isCertifiedTimerBinding(call: ts.CallExpression, checker: ts.TypeChecker): boolean {

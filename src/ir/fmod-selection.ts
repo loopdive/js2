@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
-import { staticIntegerRange } from "../codegen/analysis/static-numeric-range.js";
+import { staticIntegerRange } from "./analysis/static-numeric-range.js";
 import { FMOD_EARLY_MAGNITUDE_FN, FMOD_FN } from "../codegen/fmod.js";
 import { ts } from "../ts-api.js";
 import { peelExpr } from "./analysis/i32-slots.js";

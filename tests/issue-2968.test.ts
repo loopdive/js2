@@ -1,57 +1,35 @@
 import { test, expect, describe } from "vitest";
 import { compile } from "../src/index.ts";
-import { WASI } from "node:wasi";
-import { openSync, readFileSync, closeSync, mkdirSync, existsSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 
 // #2968 — WASI `_start` uncaught-exception printer.
 //
 // When an uncaught exception reaches `_start` in a `--target wasi` binary, the
 // `_start` wrapper renders it to stderr (fd 2) via the #2962 native
 // `__error_to_string` / `__any_to_string` path and `proc_exit(1)`s, instead of
-// the pre-fix silent exit 0. Validated under a real WASI runtime (`node:wasi`,
-// which — like the V8/Node #2962 harness — supports the compiler's exception
-// encoding). Modern wasmtime rejects the compiler's legacy exception-handling
-// opcodes for EVERY try/catch program (a separate, pre-existing, compiler-wide
-// gap), so these end-to-end runs use `node:wasi`.
-
-const WORK_DIR = "/tmp/wasi-test-2968";
+// the pre-fix silent exit 0. The compiler now emits standardized `try_table`
+// EH for host-free targets. These assertions use node:wasi in an isolated
+// child with exnref enabled; #2997 separately executes the output in Wasmtime.
 
 /** Compile `src` for wasi, run `_start` under node:wasi, return {code, stderr}. */
 async function runWasi(src: string): Promise<{ code: number; stdout: string; stderr: string }> {
   const r = await compile(src, { fileName: "test.ts", target: "wasi" });
   expect(r.success).toBe(true);
 
-  if (!existsSync(WORK_DIR)) mkdirSync(WORK_DIR, { recursive: true });
-  const outPath = `${WORK_DIR}/out-${Math.random().toString(36).slice(2)}.txt`;
-  const errPath = `${WORK_DIR}/err-${Math.random().toString(36).slice(2)}.txt`;
-  const outFd = openSync(outPath, "w+");
-  const errFd = openSync(errPath, "w+");
-  try {
-    const wasi = new WASI({
-      version: "preview1",
-      args: ["prog"],
-      returnOnExit: true,
-      stdout: outFd,
-      stderr: errFd,
-    });
-    const mod = await WebAssembly.compile(r.binary);
-    const instance = await WebAssembly.instantiate(mod, wasi.getImportObject());
+  const runner = `
+    import { WASI } from "node:wasi";
+    const chunks = [];
+    for await (const chunk of process.stdin) chunks.push(chunk);
+    const wasi = new WASI({ version: "preview1", args: ["prog"], returnOnExit: true });
+    const { instance } = await WebAssembly.instantiate(Buffer.concat(chunks), wasi.getImportObject());
     const code = wasi.start(instance);
-    return {
-      code: typeof code === "number" ? code : 0,
-      stdout: readFileSync(outPath, "utf-8"),
-      stderr: readFileSync(errPath, "utf-8"),
-    };
-  } finally {
-    closeSync(outFd);
-    closeSync(errFd);
-    try {
-      rmSync(outPath);
-      rmSync(errPath);
-    } catch {
-      /* ignore */
-    }
-  }
+    process.exitCode = typeof code === "number" ? code : 0;
+  `;
+  const child = spawnSync(process.execPath, ["--experimental-wasm-exnref", "--input-type=module", "-e", runner], {
+    input: r.binary,
+    encoding: "utf8",
+  });
+  return { code: child.status ?? 1, stdout: child.stdout, stderr: child.stderr };
 }
 
 describe("#2968 — WASI _start uncaught-exception printer", () => {
@@ -95,12 +73,9 @@ describe("#2968 — WASI _start uncaught-exception printer", () => {
   test("a throwing wasi module gains the exception-tag + proc_exit + fd_write it needs", async () => {
     const r = await compile(`throw new TypeError("x");`, { fileName: "test.ts", target: "wasi" });
     expect(r.success).toBe(true);
-    const mod = new WebAssembly.Module(r.binary);
-    const importNames = WebAssembly.Module.imports(mod).map((i) => i.name);
-    expect(importNames).toContain("fd_write");
-    expect(importNames).toContain("proc_exit");
-    const exportNames = WebAssembly.Module.exports(mod).map((e) => e.name);
-    expect(exportNames).toContain("_start");
+    expect(r.wat).toContain('(import "wasi_snapshot_preview1" "fd_write"');
+    expect(r.wat).toContain('(import "wasi_snapshot_preview1" "proc_exit"');
+    expect(r.wat).toContain('(export "_start"');
   });
 
   test("a NON-throwing wasi module is unaffected: no proc_exit import, still runs", async () => {

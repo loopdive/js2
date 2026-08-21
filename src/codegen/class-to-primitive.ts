@@ -287,11 +287,46 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
     },
   ];
 
-  // string hint: toString → valueOf. Inherited toString yields the primitive
-  // "[object Object]", so an ABSENT toString resolves to it as the FIRST method.
+  // string hint: toString → valueOf.
+  //
+  // (ES5 standalone lane) An ABSENT `toString` must NOT be answered here with
+  // the inherited-`Object.prototype.toString` string "[object Object]". This
+  // driver cannot tell "a class instance that happens to have no toString" from
+  // "a value that is not a user object at all" — both miss every per-struct
+  // dispatcher arm and land on this branch. And EVERY value that is neither a
+  // `$Object` nor a `$Vec` reaches the driver: `undefined`, an `$AnyValue`
+  // tagged box, a `$PropEntry` slot value, a RegExp match array, a boxed
+  // primitive crossing the open-`any` boundary. Answering "[object Object]" for
+  // those STOMPS a value the caller was about to render correctly, because
+  // `__to_primitive` accepts the driver's primitive result and hands that
+  // string on instead of the original carrier.
+  //
+  // That is an ACTION-AT-A-DISTANCE bug, not a local one: while a module emits
+  // no `__call_toString` arm at all, `fillClassToPrimitive` leaves the
+  // "return the input unchanged" stub and everything renders fine. The moment
+  // any single struct in the module contributes one arm — one harness object
+  // literal with a `toString` field is enough — this full body takes over and
+  // every unrelated carrier in that module starts rendering "[object Object]".
+  // Measured on the first full ES5 run after the callable-dynamic arm landed:
+  // `"1" + undefined` → "1[object Object]", `undefined in obj` false,
+  // `[0,"a"].join` → "[object Object], [object Object]", the
+  // harness compare-array failure messages, the RegExp exec match arrays.
+  // Two earlier fixes patched single carriers ($BoxedBoolean, $Error) with
+  // early-outs in `__to_primitive`; this is the shared source of all of them.
+  //
+  // Returning the input UNCHANGED loses nothing for a real object: the two
+  // callers both re-render it. `__any_to_string`'s terminal accepts only a
+  // primitive from the driver and otherwise emits the same "[object Object]"
+  // literal it emitted before, and `__to_primitive`'s class arm falls through
+  // to its own "return unchanged" tail. So a genuine class instance with no
+  // `toString` still stringifies to "[object Object]" — via the caller, which
+  // knows whether the value is an object.
+  //
+  // The `numberHint` twin's `returnObjectTag` stays: it fires only when
+  // `valueOf` MATCHED a dispatcher arm and returned an object, which proves the
+  // receiver really is a user object this driver may describe.
   const stringHint: Instr[] = [
     ...callAndReturnIfPrimitive(callToStringIdx, L_RS),
-    // toString absent → inherited toString → "[object Object]" (primitive, first)
     ...presentNonNull(L_RS),
     {
       op: "if",
@@ -302,8 +337,9 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
         // valueOf absent (inherited → object) or present-object → both object → TypeError
         ...throwTypeError,
       ],
-      // toString absent → default Object.prototype.toString
-      else: returnObjectTag,
+      // toString absent → fall through to the shared "return input unchanged"
+      // tail; the caller decides whether "[object Object]" is the right answer.
+      else: [],
     },
   ];
 

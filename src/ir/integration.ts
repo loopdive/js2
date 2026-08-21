@@ -25,6 +25,15 @@
 import { ts } from "../ts-api.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
+import { ClosureStructRegistry } from "./closure-struct-registry.js";
+import { irTypeKey } from "./type-key.js";
+export { irTypeKey } from "./type-key.js";
+import {
+  ensureStandaloneClockCapabilityImport,
+  standaloneClockCapabilityImport,
+} from "../codegen/standalone-clock-capability.js";
+import { makeCalendarIrSelectionSupport } from "./calendar-selection-support.js";
+import { makeIrStandaloneDomCapabilityPlan, type IrStandaloneDomCapabilityPlan } from "./dom-capability.js";
 import {
   projectIrBackendTargetProfile,
   supportsIrBackendTargetCapability,
@@ -70,6 +79,8 @@ import {
   IR_NATIVE_MAP_NEW_FN,
   IR_NATIVE_MAP_SET_NUM_FN,
 } from "../codegen/ir-native-map.js"; // (#4461) externref-ABI adapters over the $Map helpers
+import { ensureIrNativePromiseDelayProvider } from "../codegen/ir-native-promise-delay.js";
+import { ensureIrNativePromiseAllProvider } from "../codegen/ir-native-async-runtime.js";
 import {
   ensureStandaloneWrapperInstanceOfHelper,
   type StandaloneWrapperConstructorName,
@@ -80,10 +91,7 @@ import {
 } from "../codegen/function-prototype-callable.js";
 import { boxToAny } from "../codegen/value-tags.js"; // (#2949 slice 3) THE canonical boxing entry point (D4)
 // (#2949 S5.1) THE canonical ToBoolean engine — one truthiness path for legacy and IR (D4).
-import {
-  emitToBoolean as emitCoercionToBoolean,
-  emitToNumber as emitCoercionToNumber,
-} from "../codegen/coercion-engine.js";
+import { emitToBoolean as emitCoercionToBoolean } from "../codegen/coercion-engine.js";
 import { JsTag, jsTagUnboxKind } from "./js-tag.js";
 import {
   ensureHoleyArrayNew,
@@ -102,13 +110,14 @@ import {
   standaloneConsoleSinkAvailable,
   STANDALONE_STDOUT_APPEND_FN,
 } from "../codegen/native-strings.js";
+import { ensureNativeBatchedConcat } from "../codegen/native-batched-concat.js";
 import {
   nativeStringLiteralMaterialization,
   nativeStringLiteralInstrs,
   type NativeStringLiteralMaterialization,
   type StringEncoding,
 } from "../codegen/native-string-literals.js";
-import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../codegen/regexp-runtime-contract.js";
+import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
 import { ensureStandaloneRegExpCarrierTestHelper } from "../codegen/regexp-standalone.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../codegen/registry/imports.js";
 import { emitWasiErrorConstructor } from "../codegen/registry/error-types.js";
@@ -133,19 +142,18 @@ import {
 } from "../codegen/registry/types.js";
 import type { CodegenContext, FunctionContext } from "../codegen/context/types.js";
 import { applyIrTailCalls } from "../codegen/ir-tail-call.js";
+import { parseInlineOptions } from "../codegen/ir-inline.js";
 import { lowerPreparedIrAsyncFunction } from "../codegen/ir-async-frame.js";
 import { preparedIrAsyncFromAstResolver } from "../codegen/async-ir-planning.js";
-import {
-  getFuncRefWrapperRootTypeIdx,
-  CLOSURE_CAPTURE_FIELD_BASE,
-  closureArityField,
-  closureBagField,
-  getOrCreateFuncRefWrapperTypes,
-  type ClosureAllocationMode,
-} from "../codegen/closures/funcref-wrapper-types.js";
+import { getFuncRefWrapperRootTypeIdx } from "../codegen/closures/funcref-wrapper-types.js";
 import { ensureFmodIntrinsic, isFmodIntrinsic } from "../codegen/fmod.js"; // #2945 — on-demand `%` helper materialization
-import { ensureIrNativeNumberToString, irNativeNumberToStringAvailable } from "../codegen/number-format-native.js"; // #4462 — host-free Number::toString for the IR string carrier
+import {
+  ensureIrNativeNumberToString,
+  irNativeNumberToFixedAvailable,
+  irNativeNumberToStringAvailable,
+} from "../codegen/number-format-native.js"; // #4462 — host-free Number formatting for the IR string carrier
 import { IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
+import { IR_NATIVE_PROMISE_DELAY_FN } from "./promise-delay-lowering.js";
 import {
   ensureHostCharCodeAtGuarded,
   ensureHostCharCodeAtTrusted,
@@ -256,6 +264,7 @@ import {
   type IrClassMemberKind,
   type IrClassShape,
   type IrClosureSignature,
+  type IrDomCallbackAuthority,
   type IrFuncRef,
   type IrFunction,
   type IrGlobalRef,
@@ -305,7 +314,12 @@ import {
   replaceDefinedFuncAt,
 } from "../codegen/func-space.js"; // (#1916 S2) positional read/write chokepoints
 // (#4467) per-lane §7.1.17 Number::toString provider (host import / native thunk)
-import { ensureIrNumberToStringProvider, IR_NUMBER_TO_STRING_FN } from "./number-to-string-provider.js";
+import {
+  ensureIrNumberToFixedProvider,
+  ensureIrNumberToStringProvider,
+  IR_NUMBER_TO_FIXED_FN,
+  IR_NUMBER_TO_STRING_FN,
+} from "./number-to-string-provider.js";
 import {
   classifyIrFailure,
   IrInvariantError,
@@ -331,13 +345,20 @@ import {
   type PreparedDerivedCallableSlot,
 } from "./prepared-closure-support.js";
 import type { PreparedClassAccessorWritebackEvidence } from "./prepared-component-dependencies.js";
-import { sealDependencyCompletePreparedComponents } from "./prepared-component-sealing.js";
+import {
+  createCompilerTimerShimLoweringBoundary,
+  prepareCompilerTimerShimLateSealTransaction,
+} from "./compiler-timer-shim-preparation.js";
+import { emitExternrefDynamicToNumber } from "./dynamic-number-lowering.js";
+import type { PreparedIrPendingPatch } from "./prepared-lowering-patch.js";
 import { attachIrStringCarrier } from "./string-carrier.js";
 import { attachIrStringSupport } from "./string-support.js";
+import { attachIrPhysicalRefTypeRefs } from "./physical-ref-support.js";
 import {
   IR_ASYNC_CLOCK_SNAPSHOT_FN,
   IR_ASYNC_CONSOLE_LOG_STRING_FN,
   IR_ASYNC_NUMBER_TO_STRING_FN,
+  IR_ASYNC_PROMISE_ALL_NATIVE_FN,
   IR_ASYNC_STRING_CONCAT_5_FN,
 } from "./async-semantic-runtime.js";
 import {
@@ -403,7 +424,15 @@ function lowerIrEntryFunction(
   existing: WasmFunction,
 ): WasmFunction {
   return fn.asyncPlan
-    ? lowerPreparedIrAsyncFunction(ctx, fn, { resolveFunc: (ref) => resolver.resolveFunc(ref) }, existing)
+    ? lowerPreparedIrAsyncFunction(
+        ctx,
+        fn,
+        {
+          resolveFunc: (ref) => resolver.resolveFunc(ref),
+          callResultAdapter: (ref) => resolver.callResultAdapter?.(ref),
+        },
+        existing,
+      )
     : lowerIrFunctionToWasm(fn, resolver).func;
 }
 
@@ -497,6 +526,7 @@ interface PreparedClosureTransaction {
   readonly refCells: RefCellRegistry;
   readonly freshSlots: readonly PreparedDerivedCallableSlot[];
   readonly componentIds: ReadonlyMap<IrUnitId, string>;
+  sealCompilerTimerShim(): void;
   bindLowerResolver(resolver: IrLowerResolver): void;
 }
 
@@ -658,7 +688,7 @@ function prepareClosureTransaction(input: {
     registry,
   );
   const classAccessorWritebacks = prepareClassAccessorWritebackEvidence(input.ctx, input.entries, input.inventory);
-  const componentIds = sealDependencyCompletePreparedComponents({
+  const timerTransaction = prepareCompilerTimerShimLateSealTransaction({
     ctx: input.ctx,
     entries: input.entries,
     inventory: input.inventory,
@@ -671,7 +701,8 @@ function prepareClosureTransaction(input: {
     registry,
     refCells,
     freshSlots,
-    componentIds,
+    componentIds: timerTransaction.componentIds,
+    sealCompilerTimerShim: timerTransaction.sealDeferred,
     bindLowerResolver: (resolver) => {
       resolveValType = (type) => lowerIrTypeToValType(type, resolver, "<closure-registry>");
     },
@@ -889,19 +920,32 @@ export function compileIrPathFunctions(
   loweringPlans?: IrIntegrationLoweringPlans,
   options?: IrIntegrationOptions,
 ): IrIntegrationReport {
+  const inlineOptions = parseInlineOptions(process.env.JS2WASM_IR_INLINE);
+  const fuseNativeNumberFormatCarriers =
+    inlineOptions.adapters && !inlineOptions.report && !inlineOptions.count && inlineOptions.poison === "off";
   const irTargetProfile = projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast });
   const jsHostExterns = irTargetProfile.allowHostImports;
+  const standaloneDomCapability =
+    ctx.requiresStandaloneDomCapability === true &&
+    ctx.standalone &&
+    !ctx.wasi &&
+    ctx.nativeStrings &&
+    ctx.targetProfile.environment === "none" &&
+    ctx.targetProfile.semanticProviders === "native-first"
+      ? makeIrStandaloneDomCapabilityPlan(ctx.checker, sourceFile)
+      : undefined;
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
     supportsIrBackendTargetCapability(irTargetProfile, capability);
-  const supportsHostDateSnapshots = supportsBackendCapability("host-date-snapshot");
-  const backendCapabilitySelectionOptions = { supportsBackendCapability };
+  const { supportsDateSnapshots, resolveHostVoidCallback, backendCapabilitySelectionOptions } =
+    makeCalendarIrSelectionSupport(ctx, jsHostExterns, standaloneDomCapability, supportsBackendCapability);
   const moduleBindingOptions = {
     numberStorage: ctx.fast ? ("i32" as const) : ("f64" as const),
+    oracle: ctx.oracle,
     allowHostExterns: jsHostExterns && !ctx.nativeStrings,
     allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
-    // (#4461) Native `$Map` storage is the host-free carrier of the same
-    // builtin; it must agree with the selector-side option in codegen/index.ts.
+    // (#4461) Native `$Map` storage must agree with the selector-side option.
     allowNativeMapStorage: ctx.nativeStrings,
+    resolveCapabilityExternBinding: standaloneDomCapability?.moduleBinding,
     stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
   };
   // Direct compatibility callers share this context; structural globals never fall back to declaration names.
@@ -1058,7 +1102,9 @@ export function compileIrPathFunctions(
     planIrCompilation(sourceFile, {
       experimentalIR: true,
       jsHostExterns,
-      ...(supportsHostDateSnapshots ? { hostDateSnapshots: makeIrHostDateSnapshotResolver(ctx.checker) } : {}),
+      ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
+      ...(resolveHostVoidCallback ? { hostVoidCallbacks: resolveHostVoidCallback } : {}),
+      ...(supportsDateSnapshots ? { hostDateSnapshots: makeIrHostDateSnapshotResolver(ctx.checker) } : {}),
       resolveModuleBinding: moduleBindingResolver,
       classifyPrimitiveExpression,
       classifyDeclaredPrimitiveExpression,
@@ -1074,9 +1120,10 @@ export function compileIrPathFunctions(
       // (codegen/index.ts) supplies — this compatibility path must not offer a
       // narrower table, or a direct caller would demote where production claims.
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
+      supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
       supportsStandaloneConsoleSink: standaloneConsoleSinkAvailable(ctx),
       supportsLiteralStringReplace: true,
-      supportsHostStringArrayLiterals: jsHostExterns && !ctx.nativeStrings,
+      supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
     });
@@ -1152,7 +1199,7 @@ export function compileIrPathFunctions(
     }
     return owner;
   };
-  const unsupportedHostDateOwnerNames = supportsHostDateSnapshots
+  const unsupportedHostDateOwnerNames = supportsDateSnapshots
     ? new Set<string>()
     : collectSelectedHostDateSnapshotOwners(sourceFile, selected, makeIrHostDateSnapshotResolver(ctx.checker));
   const unsupportedHostDateOwners = new Map<IrUnitId, IrLegacyUnitProjectionEntry>();
@@ -1306,6 +1353,7 @@ export function compileIrPathFunctions(
     ctx,
     moduleBindingResolver,
     loweringPlans?.postWasmStartTdzSafeBindingsByOwnerUnitId,
+    standaloneDomCapability,
   );
 
   // -------------------------------------------------------------------------
@@ -2435,9 +2483,12 @@ export function compileIrPathFunctions(
       const changed = before === undefined || fn !== before.fn;
       const hygienic = changed ? runHygienePasses(fn, allocRegistry) : fn;
       // Final synchronous parity pass: fuse only after mono/TU has settled.
-      const batched =
-        !ctx.nativeStrings && !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports
-          ? batchStringConcat(hygienic, allocRegistry)
+      const hostBatchedConcat = !ctx.nativeStrings && !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports;
+      const standaloneBatchedConcat = ctx.nativeStrings && ctx.standalone && !ctx.wasi;
+      const batched = hostBatchedConcat
+        ? batchStringConcat(hygienic, allocRegistry)
+        : standaloneBatchedConcat
+          ? batchStringConcat(hygienic, allocRegistry, 8)
           : hygienic;
       const final = batched === hygienic ? hygienic : runHygienePasses(batched, allocRegistry);
       const verifyErrors = verifyIrFunction(final);
@@ -2559,7 +2610,7 @@ export function compileIrPathFunctions(
       });
       if (ctx.programAbiCallableProviders) {
         for (const ref of collectAttachedGeneratorProviders(healthyForLower.map((entry) => entry.fn))) {
-          resolveAndObserveCallableProvider(ctx, ref);
+          resolveAndObserveCallableProvider(ctx, ref, undefined, fuseNativeNumberFormatCarriers);
         }
       }
     })
@@ -2571,6 +2622,24 @@ export function compileIrPathFunctions(
   }
   if (!runGlobalPreparation(() => preregisterExceptionSupport(ctx, healthyForLower))) return finishReport();
   if (!runGlobalPreparation(() => preregisterDynamicAndForInSupport(ctx, healthyForLower))) return finishReport();
+  if (
+    !runGlobalPreparation(() => {
+      const registry = ctx.programAbiTypes;
+      if (!registry || ctx.mapTypeIdx < 0) return;
+      let mapCarrierRef: IrTypeRef | undefined;
+      healthyForLower = healthyForLower.map((entry) => {
+        const fn = attachIrPhysicalRefTypeRefs(entry.fn, (type) => {
+          if ((type.val.kind !== "ref" && type.val.kind !== "ref_null") || type.val.typeIdx !== ctx.mapTypeIdx) {
+            return undefined;
+          }
+          return (mapCarrierRef ??= registry.prepareNativeMapCarrier());
+        });
+        return fn === entry.fn ? entry : { ...entry, fn };
+      });
+    })
+  ) {
+    return finishReport();
+  }
   if (
     !runGlobalPreparation(() => {
       const pending = new Map<IrUnitId, ProgramAbiDerivedUnitRecord>();
@@ -2610,7 +2679,12 @@ export function compileIrPathFunctions(
   recordOwnerPreparationFailures(
     failures,
     failedOwners,
-    preregisterCallableProviders(ctx, healthyForLower, preparedRuntimeManifest?.providers),
+    preregisterCallableProviders(
+      ctx,
+      healthyForLower,
+      preparedRuntimeManifest?.providers,
+      fuseNativeNumberFormatCarriers,
+    ),
   );
   healthyForLower = retainHealthyOwners(healthyForLower);
   if (healthyForLower.length === 0) return finishReport();
@@ -2939,6 +3013,7 @@ export function compileIrPathFunctions(
       unitCallableSlots,
       importedCallableCatalog,
       preparedRuntimeManifest?.providers,
+      fuseNativeNumberFormatCarriers,
     );
     const resolverInjection = process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE;
     if (resolverInjection === "function") resolver.resolveFunc(irIntrinsicFuncRef("__injected_missing_func"));
@@ -3020,8 +3095,7 @@ export function compileIrPathFunctions(
       preparedClosure?.registry ??
       new ClosureStructRegistry(ctx, (t) => lowerIrTypeToValType(t, resolver, "<closure-registry>"));
     deferredCl.resolveBase = (sig) => closureRegistry.resolveBase(sig);
-    deferredCl.resolveSubtype = (sig, fields, hostOneShot) =>
-      closureRegistry.resolveSubtype(sig, fields, hostOneShot ? "host-one-shot" : "ordinary");
+    deferredCl.resolveSubtype = closureRegistry.resolveDeferredSubtype.bind(closureRegistry);
     const refCellRegistry = preparedClosure?.refCells ?? new RefCellRegistry(ctx);
     deferredCell.resolve = (inner) => refCellRegistry.resolve(inner);
     // Slice 4 (#1169d): the class registry is a thin lookup over the
@@ -3034,13 +3108,6 @@ export function compileIrPathFunctions(
     return finishReport();
   }
 
-  type PendingPatch = {
-    readonly entry: BuiltFn;
-    readonly funcIdx: number;
-    readonly existing: NonNullable<ReturnType<typeof definedFuncAt>>;
-    readonly wasmFunc: ReturnType<typeof lowerIrFunctionToWasm>["func"];
-    readonly finalBody: Instr[];
-  };
   const replaceUnitCallableAt = (
     unitId: IrUnitId,
     terminalOwnerUnitId: IrUnitId,
@@ -3070,7 +3137,13 @@ export function compileIrPathFunctions(
     }
     return replacement;
   };
-  const pendingPatches: PendingPatch[] = [];
+  const pendingPatches: PreparedIrPendingPatch<BuiltFn>[] = [];
+  const timerLoweringBoundary = createCompilerTimerShimLoweringBoundary<BuiltFn>({
+    inventory: moduleBindingIdentityContext.inventory,
+    sealDeferred: () => preparedClosure?.sealCompilerTimerShim(),
+    ownerFailed: (unitId) => failedOwners.has(unitId),
+  });
+  const lowerEntries = timerLoweringBoundary.order(healthyForLower);
   // (#3551) Exact artifact identities withdrawn by the typeIdx-parity guard
   // below. Every
   // IR body was compiled against `calleeTypes` — the IR's shared view of each
@@ -3080,10 +3153,11 @@ export function compileIrPathFunctions(
   // through the wrong ABI. The cascade after this loop withdraws those callers
   // too; collecting the unit identities here is its input.
   const abiDivergentUnitIds = new Set<IrUnitId>();
-  for (const entry of healthyForLower) {
+  for (const entry of lowerEntries) {
     const name = entry.name;
     const owner = terminalOwnerOf(entry);
     try {
+      if (!timerLoweringBoundary.prepare(entry)) continue;
       if (process.env.JS2WASM_TEST_INJECT_IR_PHASE_THROW === "lower-synthetic" && entry.synthesized) {
         throw new Error("injected synthetic lower failure");
       }
@@ -3530,6 +3604,7 @@ function resolveModuleBindingGlobal(
       storageType = resolveIrDynamicCarrierType(ctx);
       break;
     case "extern":
+    case "capability-extern":
       if (!ctx.externClasses.has(identity.valueKind.className)) {
         throw new IrInvariantError(
           "unknown-type-ref",
@@ -3593,7 +3668,8 @@ function resolveModuleBindingGlobal(
     );
   }
   const tdzGlobalName = tdzGlobal ? expectedTdzGlobalName : null;
-  const globalRef = irSourceGlobalRef(identity.globalBindingId, globalName);
+  const capability = identity.valueKind.kind === "capability-extern" ? identity.valueKind.capability : undefined;
+  const globalRef = irSourceGlobalRef(identity.globalBindingId, globalName, capability);
   const tdzGlobalRef = tdzGlobal ? irSourceGlobalRef(identity.tdzBindingId, expectedTdzGlobalName) : null;
   planProgramAbiGlobal(ctx, {
     ref: globalRef,
@@ -3620,6 +3696,7 @@ function resolveModuleBindingGlobal(
     globalName,
     tdzGlobalName,
     type,
+    ...(capability ? { capability } : {}),
     ...(postWasmStartTdzSafeBindingsByOwnerUnitId?.get(identity.ownerUnitId)?.has(identity.globalBindingId)
       ? { omitTdzReadCheck: true as const }
       : {}),
@@ -3783,6 +3860,8 @@ interface DeferredClosureResolver {
     sig: IrClosureSignature,
     fields: readonly IrType[],
     hostOneShot?: boolean,
+    domCallbackAuthority?: IrDomCallbackAuthority,
+    liftedFuncIdx?: number,
   ) => IrClosureLowering | null;
 }
 
@@ -4170,6 +4249,7 @@ function makeFromAstResolver(
   ctx: CodegenContext,
   moduleBindingResolver?: IrModuleBindingResolver,
   postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"],
+  standaloneDomCapability?: IrStandaloneDomCapabilityPlan,
 ): IrFromAstResolver {
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
@@ -4280,7 +4360,7 @@ function makeFromAstResolver(
     // channel), which is why this is a resolver callback and not an
     // abstract-instr lowering case; promoting the rep half into a true
     // `str.method` instr is #2955's follow-up slice.
-    stringMethodPlan(method: string, argCount: number) {
+    stringMethodPlan(method: string, argCount: number, receiverEncoding: StringEncoding | undefined) {
       const native = ctx.nativeStrings;
       // (#3156) charCodeAt — BOTH modes lower to a guarded defined helper
       // `(recv, i32 idx) -> f64` (src/codegen/char-code-at-helpers.ts;
@@ -4293,6 +4373,18 @@ function makeFromAstResolver(
           funcName: native ? "__str_charCodeAt" : "__jsstr_charCodeAt",
           indexArgRep: "i32" as const,
           padOmitted: "charcode-zero" as const,
+        };
+      }
+      // #4576 — the native search helpers already own the exact one-argument
+      // JS defaults: pass an explicit i32 zero for the omitted position. Keep
+      // two-argument calls on legacy until the plan models indexOf's boxed host
+      // fromIndex independently from the native helper's i32 representation.
+      if (native && argCount === 1 && (method === "indexOf" || method === "includes")) {
+        return {
+          funcName: `__str_${method}`,
+          indexArgRep: "i32" as const,
+          padOmitted: "search-zero" as const,
+          resultRep: method === "indexOf" ? ("i32-number" as const) : undefined,
         };
       }
       // #2002 — the native string backend lowers the position arg via its
@@ -4324,8 +4416,13 @@ function makeFromAstResolver(
       // #1248 — native mode only lowers fully-specified call sites, except
       // `slice(start)` whose implicit end defaults to recv.length.
       if (native && omitted && !(method === "slice" && argCount === 1)) return null;
+      const provenAsciiCaseHelper =
+        native &&
+        receiverEncoding === "ascii" &&
+        process.env.JS2WASM_NATIVE_PROVEN_ASCII_CASE !== "0" &&
+        (method === "toUpperCase" || method === "toLowerCase");
       return {
-        funcName: native ? `__str_${method}` : `string_${method}`,
+        funcName: native ? `__str_${method}${provenAsciiCaseHelper ? "_ascii" : ""}` : `string_${method}`,
         indexArgRep: (native ? "i32" : "f64") as "i32" | "f64",
         padOmitted: (native ? "native-slice-len" : "host") as "native-slice-len" | "host",
       };
@@ -4441,6 +4538,9 @@ function makeFromAstResolver(
     jsHostExterns(): boolean {
       return !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports);
     },
+    standaloneDomOperation(node: ts.Node) {
+      return standaloneDomCapability?.operation(node);
+    },
     // (#2955 number-box slice) Capability: this lane owns the
     // `__box_number` / `__unbox_number` f64⇄externref host imports (legacy
     // registers them via `addUnionImports`). The from-ast boxing arms
@@ -4526,6 +4626,11 @@ function makeFromAstResolver(
     // (`nativeStrings`), so the two can never claim one call twice.
     nativeNumberToStringAvailable(): boolean {
       return irNativeNumberToStringAvailable(ctx);
+    },
+    // #4576 — bounded native Number::toFixed has a carrier-correct symbolic
+    // provider; selection and build consult the same pure lane predicate.
+    nativeNumberToFixedAvailable(): boolean {
+      return irNativeNumberToFixedAvailable(ctx);
     },
     // (#4462) Standalone's host-free console sink (#3469). Minted in the
     // pre-body window, which precedes both IR planning and body lowering, so
@@ -4693,6 +4798,7 @@ function resolveAndObserveCallableProvider(
   ctx: CodegenContext,
   ref: IrFuncRef,
   runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
+  fuseNativeNumberFormatCarriers = false,
 ): number {
   if (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic") {
     throw new TypeError("callable-provider resolution requires a runtime or intrinsic reference");
@@ -4723,26 +4829,41 @@ function resolveAndObserveCallableProvider(
   } else if (ref.binding.kind === "intrinsic" && isFmodIntrinsic(symbol)) {
     index = ensureFmodIntrinsic(ctx, symbol);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_CLOCK_SNAPSHOT_FN) {
+    if (ctx.standalone) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "standalone async clock snapshot escaped its constant runtime projection",
+      );
+    }
     index = ensureLateImport(ctx, "__date_now", [], [{ kind: "f64" }]);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_NUMBER_TO_STRING_FN) {
-    index = ensureLateImport(ctx, "number_toString", [{ kind: "f64" }], [{ kind: "externref" }]);
+    index = ctx.nativeStrings
+      ? ensureIrNativeNumberToString(ctx, fuseNativeNumberFormatCarriers)
+      : ensureLateImport(ctx, "number_toString", [{ kind: "f64" }], [{ kind: "externref" }]);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_CONSOLE_LOG_STRING_FN) {
-    index = ensureLateImport(ctx, "console_log_string", [{ kind: "externref" }], []);
+    index = ctx.nativeStrings
+      ? (ctx.funcMap.get(STANDALONE_STDOUT_APPEND_FN) ?? null)
+      : ensureLateImport(ctx, "console_log_string", [{ kind: "externref" }], []);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_STRING_CONCAT_5_FN) {
-    index = ensureLateImport(
-      ctx,
-      "__concat_5",
-      Array.from({ length: 5 }, () => ({ kind: "externref" }) as const),
-      [{ kind: "externref" }],
-    );
+    index = ctx.nativeStrings
+      ? ensureNativeBatchedConcat(ctx, 5)
+      : ensureLateImport(
+          ctx,
+          "__concat_5",
+          Array.from({ length: 5 }, () => ({ kind: "externref" }) as const),
+          [{ kind: "externref" }],
+        );
   } else if (ref.binding.kind === "intrinsic" && parseIrStringConcatManyArity(symbol) !== null) {
     const arity = parseIrStringConcatManyArity(symbol)!;
-    index = ensureLateImport(
-      ctx,
-      `__concat_${arity}`,
-      Array.from({ length: arity }, () => ({ kind: "externref" }) as const),
-      [{ kind: "externref" }],
-    );
+    index = ctx.nativeStrings
+      ? ensureNativeBatchedConcat(ctx, arity)
+      : ensureLateImport(
+          ctx,
+          `__concat_${arity}`,
+          Array.from({ length: arity }, () => ({ kind: "externref" }) as const),
+          [{ kind: "externref" }],
+        );
   } else if (ref.binding.kind === "runtime" && symbol === "__new_ReferenceError") {
     if (ctx.wasi || ctx.standalone) {
       emitWasiErrorConstructor(ctx, "ReferenceError", 1);
@@ -4762,7 +4883,11 @@ function resolveAndObserveCallableProvider(
     index = ensureVecElemSet(ctx, getOrRegisterHoleyArrayType(ctx));
   } else if (ref.binding.kind === "runtime" && symbol === IR_NUMBER_TO_STRING_NATIVE_FN) {
     // (#4462) Host-free `Number::toString` in the `(ref $AnyString)` carrier.
-    index = ensureIrNativeNumberToString(ctx);
+    index = ensureIrNativeNumberToString(ctx, fuseNativeNumberFormatCarriers);
+  } else if (ref.binding.kind === "runtime" && symbol === IR_NATIVE_PROMISE_DELAY_FN) {
+    index = ensureIrNativePromiseDelayProvider(ctx);
+  } else if (ref.binding.kind === "runtime" && symbol === IR_ASYNC_PROMISE_ALL_NATIVE_FN) {
+    index = ensureIrNativePromiseAllProvider(ctx);
   } else if (ref.binding.kind === "runtime" && symbol === IR_CONSOLE_SINK_APPEND_FN) {
     // (#4462) Host-free console sink. Never minted here: `ensureStandaloneStdoutSink`
     // owns it and runs in the pre-body window so the funcidx is final. Absence is
@@ -4837,8 +4962,15 @@ function resolveAndObserveCallableProvider(
       ensureNativeStringHelpers(ctx);
       index = nativeStrHelperHandle(ctx, "__str_charAt_cp");
     }
+  } else if (ref.binding.kind === "intrinsic" && (symbol === "__str_indexOf" || symbol === "__str_includes")) {
+    if (ctx.nativeStrings) {
+      ensureNativeStringHelpers(ctx);
+      index = nativeStrHelperHandle(ctx, symbol);
+    }
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_NUMBER_TO_STRING_FN) {
-    index = ensureIrNumberToStringProvider(ctx);
+    index = ensureIrNumberToStringProvider(ctx, fuseNativeNumberFormatCarriers);
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_NUMBER_TO_FIXED_FN) {
+    index = ensureIrNumberToFixedProvider(ctx, fuseNativeNumberFormatCarriers);
   } else if (ref.binding.kind === "intrinsic" && parseIrDateSnapshotGetter(symbol) !== undefined) {
     index = ensureDateCivilHelper(ctx);
   } else {
@@ -4902,6 +5034,7 @@ function makeResolver(
   unitCallableSlots: ReadonlyMap<IrUnitId, PreparedIrUnitCallableSlot>,
   importedCallableCatalog: ReadonlyMap<string, Import>,
   runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
+  fuseNativeNumberFormatCarriers = false,
 ): IrLowerResolver {
   // (#2949 slice 3) One dynamic-lowering handle per resolver (undefined =
   // not yet built; null = mode has no dynamic op lowering).
@@ -4955,7 +5088,7 @@ function makeResolver(
         );
       }
       if (ref.binding.kind === "runtime" || ref.binding.kind === "intrinsic") {
-        return resolveAndObserveCallableProvider(ctx, ref, runtimeProviders);
+        return resolveAndObserveCallableProvider(ctx, ref, runtimeProviders, fuseNativeNumberFormatCarriers);
       }
       const adapterName = ref.binding.kind === "import" ? ref.binding.field : ref.name;
       const idx = ctx.funcMap.get(adapterName);
@@ -4970,6 +5103,17 @@ function makeResolver(
       const helperIdx = nativeStrHelperHandle(ctx, adapterName);
       if (helperIdx !== undefined) return helperIdx;
       throw new IrInvariantError("unknown-function-ref", "lower", `ir/integration: unknown function ref "${ref.name}"`);
+    },
+    callResultAdapter(ref: IrFuncRef): "native-string-from-externref" | undefined {
+      if (!fuseNativeNumberFormatCarriers || !ctx.nativeStrings) return undefined;
+      if (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic") return undefined;
+      const symbol = ref.binding.symbol;
+      return symbol === IR_NUMBER_TO_STRING_NATIVE_FN ||
+        symbol === IR_ASYNC_NUMBER_TO_STRING_FN ||
+        symbol === IR_NUMBER_TO_STRING_FN ||
+        symbol === IR_NUMBER_TO_FIXED_FN
+        ? "native-string-from-externref"
+        : undefined;
     },
     resolveGlobal(ref: IrGlobalRef): number {
       if (process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE === "global") {
@@ -5027,13 +5171,7 @@ function makeResolver(
     resolveClosureRoot(): number | null {
       return getFuncRefWrapperRootTypeIdx(ctx) ?? null;
     },
-    resolveClosureSubtype(
-      sig: IrClosureSignature,
-      fields: readonly IrType[],
-      hostOneShot?: boolean,
-    ): IrClosureLowering | null {
-      return closureResolver.resolveSubtype(sig, fields, hostOneShot);
-    },
+    resolveClosureSubtype: (...args) => closureResolver.resolveSubtype(...args),
     resolveRefCell(inner: ValType): IrRefCellLowering | null {
       return refCellResolver.resolve(inner);
     },
@@ -5209,6 +5347,9 @@ function makeResolver(
       }
       return ctx.exnTagIdx;
     },
+    standardizedExceptions(): boolean {
+      return ctx.standalone || ctx.wasi;
+    },
     // -------------------------------------------------------------------
     // Async / Promise dispatch (#1373b Slice 1).
     //
@@ -5294,6 +5435,7 @@ function preregisterCallableProviders(
   ctx: CodegenContext,
   fns: readonly BuiltFnRef[],
   runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
+  fuseNativeNumberFormatCarriers = false,
 ): ReadonlyMap<IrUnitId, IrOwnerPreparationFailure> {
   const failures = new Map<IrUnitId, IrOwnerPreparationFailure>();
   const owners = new Map<IrUnitId, IrLegacyUnitProjectionEntry>();
@@ -5315,7 +5457,9 @@ function preregisterCallableProviders(
     const owner = owners.get(entry.terminalOwnerUnitId)!;
     const instructionBuffers = [
       ...entry.fn.blocks.map((block) => block.instrs),
-      ...(entry.fn.asyncPlan?.states.map((state) => state.body) ?? []),
+      ...(entry.fn.asyncRuntime?.states.map((state) => state.body) ??
+        entry.fn.asyncPlan?.states.map((state) => state.body) ??
+        []),
     ];
     for (const instrs of instructionBuffers) {
       for (const root of instrs) {
@@ -5323,7 +5467,7 @@ function preregisterCallableProviders(
           const ref = callableProviderRef(instr);
           if (!ref || (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic")) return;
           try {
-            resolveAndObserveCallableProvider(ctx, ref, runtimeProviders);
+            resolveAndObserveCallableProvider(ctx, ref, runtimeProviders, fuseNativeNumberFormatCarriers);
           } catch (error) {
             if (!failures.has(owner.unitId)) {
               failures.set(owner.unitId, { owner, outcome: classifyIrFailure(error, "resolve") });
@@ -5392,7 +5536,12 @@ function preregisterHostDateSnapshotSupport(ctx: CodegenContext, fns: readonly B
     }
   }
   if (needed.size === 0) return;
-  if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) {
+  const exactStandaloneClock =
+    ctx.standalone &&
+    !ctx.wasi &&
+    ctx.requiresStandaloneClockCapability === true &&
+    ctx.targetProfile.environment === "none";
+  if ((ctx.standalone || ctx.wasi || ctx.strictNoHostImports) && !exactStandaloneClock) {
     throw new Error("ir/integration: synthetic Date snapshots require the JS host");
   }
 
@@ -5401,7 +5550,11 @@ function preregisterHostDateSnapshotSupport(ctx: CodegenContext, fns: readonly B
     const spec = HOST_DATE_IMPORTS.get(name);
     if (!spec) throw new Error(`ir/integration: unsupported synthetic Date import ${name}`);
     if (!ctx.funcMap.has(name)) added = true;
-    ensureLateImport(ctx, spec.name, [...spec.params], [...spec.results]);
+    if (exactStandaloneClock && spec.name === "__date_now") {
+      ensureStandaloneClockCapabilityImport(ctx);
+    } else {
+      ensureLateImport(ctx, spec.name, [...spec.params], [...spec.results]);
+    }
   }
   if (added) flushLateImportShifts(ctx, null);
 
@@ -5410,7 +5563,10 @@ function preregisterHostDateSnapshotSupport(ctx: CodegenContext, fns: readonly B
   // resolving them as the ambient Date ABI.
   for (const name of needed) {
     const spec = HOST_DATE_IMPORTS.get(name)!;
-    if (!exactHostDateImport(ctx, spec)) {
+    if (
+      !exactHostDateImport(ctx, spec) ||
+      (exactStandaloneClock && spec.name === "__date_now" && standaloneClockCapabilityImport(ctx) === undefined)
+    ) {
       throw new Error(`ir/integration: ${name} is not the exact env host-Date import`);
     }
   }
@@ -5591,6 +5747,8 @@ function prepareVectors(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
     entries: fns,
     resolveVecForElement: (element) => resolveVecForElementImpl(ctx, element),
     resolvePhysicalVec: (value) => resolvePhysicalVecImpl(ctx, value),
+    resolveString: () =>
+      ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 ? { kind: "ref", typeIdx: ctx.anyStrTypeIdx } : { kind: "externref" },
     typeKey: irTypeKey,
   });
 }
@@ -6328,7 +6486,7 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         // mid-emission funcIdx shift.
         return emitCoercionToBoolean(ctx, { kind: "ref_null", typeIdx: anyTypeIdx }, []);
       },
-      emitToNumber(): readonly Instr[] {
+      emitToNumber(_scratch?: () => number): readonly Instr[] {
         // #2949 S5.3 — ToNumber(carrier) for the gc `$AnyValue` carrier via
         // `__any_to_f64`: THE canonical boxed-any→f64 helper legacy's
         // `__any_lt`/`__any_gt`/… + arithmetic helpers use (null→0, undefined→
@@ -6488,15 +6646,8 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
       // by name and add nothing — no import shift mid-emission.
       return emitCoercionToBoolean(ctx, { kind: "externref" }, []);
     },
-    emitToNumber(): readonly Instr[] {
-      // #2949 S5.P — route through the canonical coercion engine. Host mode
-      // emits the pre-registered Number(v) import; standalone first performs
-      // its native ToPrimitive("number") walk and then unboxes the result.
-      // The engine may flush a pending late-import shift even when this
-      // detached buffer allocates no locals, so it must expose savedBodies.
-      const shim = { body: [], savedBodies: [] } as unknown as FunctionContext;
-      emitCoercionToNumber(ctx, shim, { kind: "externref" });
-      return shim.body;
+    emitToNumber(scratch?: () => number): readonly Instr[] {
+      return emitExternrefDynamicToNumber(ctx, scratch);
     },
     emitEqOperand(): readonly Instr[] {
       // #2949 S5.2 — the host carrier is `externref`, which is EXACTLY the
@@ -6642,45 +6793,6 @@ class ObjectStructRegistry {
 }
 
 /**
- * Recursive IrType→string key for shape hashing. Mirrors the legacy
- * `fieldsHashKey` format closely so identical shapes registered through
- * either path collide on a single struct (although the actual
- * legacy/IR convergence is enforced via `legacyFieldsHashKey` on the
- * lowered ValTypes — this key is the IR-side memo).
- */
-export function irTypeKey(t: IrType): string {
-  if (t.kind === "val") {
-    if (t.val.kind === "ref" || t.val.kind === "ref_null") {
-      return `${t.val.kind}:${(t.val as { typeIdx: number }).typeIdx}`;
-    }
-    return t.val.kind;
-  }
-  if (t.kind === "string") return "string";
-  if (t.kind === "vec") return `vec<${irTypeKey(t.elementType)}>${t.nullable ? "?" : ""}`;
-  if (t.kind === "object") {
-    return `object{${t.shape.fields.map((f) => `${f.name}:${irTypeKey(f.type)}`).join(",")}}`;
-  }
-  if (t.kind === "closure") {
-    const ps = t.signature.params.map(irTypeKey).join(",");
-    return `closure(${ps})->${t.signature.returnType === null ? "void" : irTypeKey(t.signature.returnType)}`;
-  }
-  if (t.kind === "callable") {
-    const ps = t.signature.params.map(irTypeKey).join(",");
-    return `callable(${ps})->${t.signature.returnType === null ? "void" : irTypeKey(t.signature.returnType)}`;
-  }
-  if (t.kind === "class") return `class:${t.shape.classId}`;
-  // Slice 10 (#1169i): extern is keyed solely on className.
-  if (t.kind === "extern") return `extern:${t.className}`;
-  // #1926 — union members / boxed inner are IrTypes; recurse.
-  if (t.kind === "union") return `union<${t.members.map(irTypeKey).join(",")}>`;
-  // #2949 — dynamic is keyed with its optional JsTag refinement: two
-  // dynamics with different refinements are distinct types (irTypeEquals is
-  // exact on the tag), so their keys must differ too.
-  if (t.kind === "dynamic") return t.tag === undefined ? "dynamic" : `dynamic:${t.tag}`;
-  return `boxed<${irTypeKey(t.inner)}>`;
-}
-
-/**
  * Mirror of `fieldsHashKey` in `src/codegen/index.ts`. Re-implemented
  * locally so the IR module doesn't pull on `codegen/index.ts`'s public
  * surface (which is large). The two implementations must stay in sync —
@@ -6697,172 +6809,6 @@ function legacyFieldsHashKey(fields: readonly FieldDef[]): string {
     }
   }
   return parts.join("|");
-}
-
-// ---------------------------------------------------------------------------
-// Closure / ref-cell registries (#1169c)
-// ---------------------------------------------------------------------------
-
-/**
- * Slice 3 / #3214 B0: closure allocation registry. Maintains:
- *   - **base** structs (one per signature) — the canonical legacy
- *     `__fn_wrap_*` allocation wrapper returned by
- *     `getOrCreateFuncRefWrapperTypes`. Every lifted funcref and closure SSA
- *     carrier uses the module-wide wrapper root instead, making its type stable
- *     across modules with different wrapper creation order.
- *   - **subtype** structs (one per `(signature, captureFieldTypes)`
- *     pair) — extends the base with capture fields. Constructed at
- *     each `closure.new` site; lifted bodies `ref.cast` __self to
- *     their corresponding subtype to read captures.
- */
-class ClosureStructRegistry {
-  private readonly baseCache = new Map<string, IrClosureLowering>();
-  private readonly subCache = new Map<string, IrClosureLowering>();
-
-  constructor(
-    private readonly ctx: CodegenContext,
-    private readonly resolveValType: (t: IrType) => ValType,
-  ) {}
-
-  private observe(typeIdx: number, mode: ClosureAllocationMode): void {
-    const info = this.ctx.closureInfoByTypeIdx.get(typeIdx);
-    if (!info) return;
-    if (mode === "ordinary") info.hostOneShotOnly = false;
-    else if (mode === "host-one-shot" && info.hostOneShotOnly === undefined) info.hostOneShotOnly = true;
-  }
-
-  resolveBase(sig: IrClosureSignature, mode: ClosureAllocationMode = "support"): IrClosureLowering | null {
-    const key = sigKey(sig);
-    const cached = this.baseCache.get(key);
-    if (cached) {
-      this.observe(cached.structTypeIdx, mode);
-      return cached;
-    }
-
-    // Resolve the source signature first, then delegate both the allocation
-    // wrapper and lifted func type to the canonical legacy registry. This is
-    // the ABI join point: legacy and IR share allocation metadata, while the
-    // helper makes the lifted func's self type the module-wide wrapper root.
-    let paramTypes: ValType[];
-    let resultTypes: ValType[];
-    try {
-      paramTypes = sig.params.map((p) => this.resolveValType(p));
-      resultTypes = sig.returnType === null ? [] : [this.resolveValType(sig.returnType)];
-    } catch {
-      return null;
-    }
-    const wrapper = getOrCreateFuncRefWrapperTypes(this.ctx, paramTypes, resultTypes, mode);
-    if (!wrapper) return null;
-
-    const lowering: IrClosureLowering = {
-      structTypeIdx: wrapper.structTypeIdx,
-      funcFieldIdx: 0,
-      capFieldIdx: () => {
-        throw new Error("ir/integration: base closure struct has no captures");
-      },
-      funcTypeIdx: wrapper.liftedFuncTypeIdx,
-    };
-    this.baseCache.set(key, lowering);
-    return lowering;
-  }
-
-  resolveSubtype(
-    sig: IrClosureSignature,
-    captureFieldTypes: readonly IrType[],
-    mode: ClosureAllocationMode = "support",
-  ): IrClosureLowering | null {
-    // A no-capture closure allocates the signature wrapper directly. Creating
-    // a redundant empty subtype would add an unnecessary RTT; invocation reads
-    // every wrapper through the root and discriminates on the funcref type.
-    if (captureFieldTypes.length === 0) return this.resolveBase(sig, mode);
-
-    const key = `${sigKey(sig)}#${captureFieldTypes.map(irTypeKey).join(",")}`;
-    const cached = this.subCache.get(key);
-    if (cached) {
-      this.observe(cached.structTypeIdx, mode);
-      return cached;
-    }
-
-    const base = this.resolveBase(sig, mode);
-    if (!base) return null;
-
-    const fields: FieldDef[] = [
-      { name: "func", type: { kind: "funcref" }, mutable: false },
-      closureArityField(), // (#3673)
-      closureBagField(), // (#4241)
-    ];
-    for (let i = 0; i < captureFieldTypes.length; i++) {
-      let ft: ValType;
-      try {
-        ft = this.resolveValType(captureFieldTypes[i]!);
-      } catch {
-        return null;
-      }
-      fields.push({ name: `cap${i}`, type: ft, mutable: false });
-    }
-
-    const subIdx = this.ctx.mod.types.length;
-    // `compileIrPathFunctions` is invoked once per source file in the M0
-    // overlay, so this registry-local cache restarts at zero. Allocate against
-    // the module-wide struct registry to keep B2 captured subtypes unique and
-    // avoid overwriting a user class (or an earlier file's IR closure) named
-    // `__ir_closure_N`.
-    let subOrdinal = this.subCache.size;
-    let subName = `__ir_closure_${subOrdinal}`;
-    while (this.ctx.structMap.has(subName)) {
-      subName = `__ir_closure_${++subOrdinal}`;
-    }
-    this.ctx.mod.types.push({
-      kind: "struct",
-      name: subName,
-      fields,
-      superTypeIdx: base.structTypeIdx,
-    } as StructTypeDef);
-    this.ctx.structMap.set(subName, subIdx);
-    this.ctx.typeIdxToStructName.set(subIdx, subName);
-    // Closure subtypes are private callable carriers, not user-visible data
-    // structs. Keep them out of structFields just like legacy captured
-    // closures: registering them there makes finalize emit __sget_capN,
-    // __struct_field_names, and __is_data_struct, both bloating the module and
-    // misclassifying an IR closure as an object at the host boundary.
-
-    const baseInfo = this.ctx.closureInfoByTypeIdx.get(base.structTypeIdx);
-    if (!baseInfo) {
-      throw new Error(`ir/integration: canonical wrapper ${base.structTypeIdx} has no closure metadata`);
-    }
-    this.ctx.closureInfoByTypeIdx.set(subIdx, {
-      structTypeIdx: subIdx,
-      funcTypeIdx: base.funcTypeIdx,
-      paramTypes: [...baseInfo.paramTypes],
-      returnType: baseInfo.returnType,
-      hasCaptures: true,
-      ...(mode === "host-one-shot" ? { hostOneShotOnly: true } : mode === "ordinary" ? { hostOneShotOnly: false } : {}),
-    });
-
-    const fieldIdxByCap = new Map<number, number>();
-    for (let i = 0; i < captureFieldTypes.length; i++) fieldIdxByCap.set(i, i + CLOSURE_CAPTURE_FIELD_BASE); // after (#3673) $arity + (#4241) $bag
-
-    const lowering: IrClosureLowering = {
-      structTypeIdx: subIdx,
-      funcFieldIdx: 0,
-      capFieldIdx: (i: number): number => {
-        const v = fieldIdxByCap.get(i);
-        if (v === undefined) throw new Error(`ir/integration: closure subtype has no capture index ${i}`);
-        return v;
-      },
-      // call_ref dispatches via the signature-specific lifted func type. Its
-      // self param is the wrapper root; the captured body downcasts that root
-      // to this concrete subtype before reading captures.
-      funcTypeIdx: base.funcTypeIdx,
-    };
-    this.subCache.set(key, lowering);
-    return lowering;
-  }
-}
-
-function sigKey(sig: IrClosureSignature): string {
-  const ps = sig.params.map(irTypeKey).join(",");
-  return `(${ps})->${sig.returnType === null ? "void" : irTypeKey(sig.returnType)}`;
 }
 
 /**

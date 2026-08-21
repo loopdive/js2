@@ -309,7 +309,7 @@ function walkForReuse(
     const a = instr as AnyInstr;
     const kids = childArrays(a);
     if (kids.length > 0) {
-      const reentrant = a.op === "loop" || a.op === "try";
+      const reentrant = a.op === "loop" || a.op === "try" || a.op === "try_table";
       for (const kid of kids) {
         const sub: WalkState = { live: new Map(state.live), vals: new ValueIds(state.vals) };
         if (reentrant) {

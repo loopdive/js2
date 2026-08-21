@@ -386,7 +386,9 @@ function proveStructTypedWithTarget(ctx: CodegenContext, stmt: ts.WithStatement)
   // W1's IR-owned target plan is also the static-projection disqualifier: a
   // bare `delete name` needs runtime HasBinding/DeleteBinding and one canonical
   // open object identity for the later direct readback.
-  if (planIrWithTarget(stmt).representation === "open-object") return null;
+  // `fieldNames` is this target's own key set: it keeps a write to an OUTER
+  // binding from disqualifying the static projection (see planIrWithTarget).
+  if (planIrWithTarget(stmt, fieldNames).representation === "open-object") return null;
 
   // Gates (a)/(b): a body-referenced name the static struct scope cannot route
   // but the object actually binds ⇒ defer to Tier-2.
@@ -415,12 +417,25 @@ function proveStructTypedWithTarget(ctx: CodegenContext, stmt: ts.WithStatement)
 function compileDynamicWithStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.WithStatement): void {
   // §14.11.7 step 1-3: evaluate the target and coerce to a uniform externref
   // receiver (struct ref / boxed any / host object all normalize to externref).
-  const targetType = compileExpression(ctx, fctx, stmt.expression, { kind: "externref" });
+  //
+  // (#4206) Compile with NO expected type, then convert the reference by hand.
+  // Asking for `externref` here routes a nominal struct through the #2358
+  // ToPrimitive-boundary arm, which REIFIES a literal carrying `valueOf` /
+  // `toString` — i.e. field-COPIES it into a fresh `$Object`. An object
+  // environment record over a copy still reads and writes plausibly inside the
+  // body, so the loss is silent: `for (p in o) with (o) { p1 = "x1" }` left
+  // `o.p1` untouched while the body's own read of `p1` answered `"x1"`. §14.11.7
+  // binds ToObject(target) — the same object — so the live reference is the only
+  // correct receiver, and `__extern_get`/`__extern_set` already carry
+  // closed-struct arms for it.
+  const targetType = compileExpression(ctx, fctx, stmt.expression);
   if (!targetType) {
     reportWithStatementDiagnostic(ctx, stmt, "dynamic with target did not compile");
     return;
   }
-  if (targetType.kind !== "externref") {
+  if (targetType.kind === "ref" || targetType.kind === "ref_null") {
+    fctx.body.push({ op: "extern.convert_any" });
+  } else if (targetType.kind !== "externref") {
     coerceType(ctx, fctx, targetType, { kind: "externref" });
   }
   const captureName = `__with_dyn_${fctx.locals.length}`;

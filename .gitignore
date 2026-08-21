@@ -166,3 +166,4 @@ examples/native-messaging/node-fs.wasm
 # Claude Code session transcripts (bind-mounted into devcontainer, host-persisted)
 .claude-sessions/
 tests/dogfood/.react-dom-upstream-suite-impl/
+tests/dogfood/.react-dom-upstream-suite-project/

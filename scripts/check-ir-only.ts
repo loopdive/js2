@@ -20,12 +20,10 @@ export const SINGLE_HOST_ENTRIES = [
 
 /**
  * #3518 standalone lane — the SAME five terminals compiled with
- * `target: "standalone"` (no JS host imports). This lane is deliberately NOT
- * required to reach IR-only readiness: standalone IR coverage is still partial,
- * so the lane is a **regression ratchet** over honestly measured floors, per
- * the epic's rule 5 ("no corpus-zero shortcuts"). Its readiness mode is
- * `"baseline"`, which keeps `--policy=ir-only` from asserting compile-once on a
- * population that provably is not there yet.
+ * `target: "standalone"` (no JS host imports). #4577 closes the bounded
+ * playground population at 38/38 compile-once IR bodies, so this lane now uses
+ * strict `"ir-only"` readiness rather than the temporary baseline-only mode.
+ * Wider compiler reachability remains a separate R9/R10 requirement.
  */
 export const STANDALONE_ENTRIES = SINGLE_HOST_ENTRIES;
 
@@ -184,7 +182,7 @@ export async function observeStandaloneLane(
   entries: readonly string[] = STANDALONE_ENTRIES,
   compileEntry: CompileSeedEntry = standaloneCompileSeedEntry,
 ): Promise<IrOnlyLaneObservation> {
-  return observeLane("standalone", entries, compileEntry, "baseline", STANDALONE_ENTRIES.length);
+  return observeLane("standalone", entries, compileEntry, "ir-only", STANDALONE_ENTRIES.length);
 }
 
 function bump(target: Record<string, number>, key: string): void {

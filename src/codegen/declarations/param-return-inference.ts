@@ -9,6 +9,7 @@ import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { isSyntacticallyBooleanExpr } from "../../checker/oracle.js";
 import { fnctorCtorParamTypesFlagEnabled, numericReturnsFlagEnabled } from "../../derivation-flags.js";
 import { forEachChild, ts } from "../../ts-api.js";
+import { numericAdmissionEnabled } from "../analysis/mixed-assignment-carrier.js";
 import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { hasAsyncModifier, resolveWasmType } from "../index.js";
 import type { ValType } from "../../ir/types.js";
@@ -189,6 +190,14 @@ export interface CallSiteParamInference {
    * narrowing has no proof behind it. See {@link functionNameEscapesAsValue}.
    */
   escapesAsValue: boolean;
+  /**
+   * (#4555) Whether some call site supplies FEWER arguments than this
+   * parameter's index — i.e. the parameter is observably `undefined` at
+   * runtime. Already used to withdraw a native-scalar narrowing; also the
+   * proof the numeric-RETURN inference needs before it may promote a
+   * `return <param>` to f64. See {@link parameterMayBeUndefined}.
+   */
+  sawUnderApplied: boolean;
 }
 
 /**
@@ -336,6 +345,10 @@ export function inferParamTypeFromCallSites(
   let conflict = false;
   let sawCallSite = false;
   let sawUnderApplied = false;
+  // (#4491) A call site whose argument's TS type is exclusively `void` /
+  // `undefined` — e.g. `verifyEqualTo(arr, "0", getFunc())` where `getFunc`
+  // returns nothing. See the withdrawal rule below.
+  let sawNullishArg = false;
 
   const isRecursiveCall = (call: ts.CallExpression | ts.NewExpression): boolean => {
     const target = ctx.oracle.valueDeclarationOf(call.expression);
@@ -456,6 +469,12 @@ export function inferParamTypeFromCallSites(
               conflict = true;
             }
           } else {
+            // (#4491) `void` / `undefined` maps to i32 in the type mapper
+            // ("void → no result, handled in codegen"), which is a lowering
+            // convention for a RESULT, not a claim that this argument is the
+            // number 0. Record the position; the withdrawal rule below keeps a
+            // native scalar from being inferred out of it.
+            if ((argType.flags & ~(ts.TypeFlags.Void | ts.TypeFlags.Undefined)) === 0) sawNullishArg = true;
             const wasmType = resolveWasmType(ctx, argType);
             if (agreed === null) {
               agreed = wasmType;
@@ -489,6 +508,32 @@ export function inferParamTypeFromCallSites(
   if (type !== null && type.kind === "ref" && sawUnderApplied) {
     type = { kind: "ref_null", typeIdx: type.typeIdx };
   }
+  // (#4555) The same under-application rule, applied to the NATIVE SCALAR
+  // narrowings the #3548 rule left alone. A `ref` at least has `ref.null` as a
+  // filler; `f64`/`i32`/`i64` have NO encoding of `undefined`, so the caller's
+  // pad emits a zero (`pushDefaultValue`) and the missing argument silently
+  // becomes `0` instead. That is observable ES semantics, not a representation
+  // detail: `function f(a, b) { return b === undefined; } f(1, 2); f(1);`
+  // returned `false` for the second call, because the `f(1, 2)` site narrowed
+  // `b` to f64 and the `f(1)` site padded it with `f64.const 0`.
+  // Withdrawing the narrowing leaves the parameter on its resolved `externref`,
+  // which carries the real `undefined`. Only the under-applied POSITION is
+  // withdrawn — a fully-applied parameter of the same function keeps its
+  // native slot, so numeric kernels are untouched.
+  if (type !== null && sawUnderApplied && (type.kind === "f64" || type.kind === "i32" || type.kind === "i64")) {
+    type = null;
+  }
+  // (#4491) The same rule for an argument that IS `undefined` rather than
+  // missing. A call site passing a void call's result (`h(getFunc())`) can only
+  // ever deliver `undefined`, and `f64`/`i32`/`i64` have no encoding for it — the
+  // argument silently becomes `0`, which is what made the harness's
+  // `verifyEqualTo(arrObj, "0", getFunc())` report "Expected obj[0] to equal 0".
+  // Withdrawing the narrowing leaves the parameter on its resolved `externref`,
+  // whose default value IS the canonical `undefined` (`pushDefaultValue` →
+  // `emitUndefinedValue` → the #2106 `$undefined` singleton in standalone).
+  if (type !== null && sawNullishArg && (type.kind === "f64" || type.kind === "i32" || type.kind === "i64")) {
+    type = null;
+  }
   // (#2867 S2) Soundness, same shape as the #3548 under-application rule: if the
   // function ALSO escapes as a value, callers exist that this scan never saw, so
   // an agreed GC-`ref` narrowing is unproven. Withdraw it — a ref narrowing is
@@ -501,7 +546,7 @@ export function inferParamTypeFromCallSites(
   if (escapesAsValue && type !== null && (type.kind === "ref" || type.kind === "ref_null")) {
     type = null;
   }
-  return { type, sawCallSite, escapesAsValue };
+  return { type, sawCallSite, escapesAsValue, sawUnderApplied };
 }
 
 /**
@@ -1072,6 +1117,104 @@ export function inferNumericReturnTypes(ctx: CodegenContext, sourceFile: ts.Sour
  * fixpoint: only calls to an already-admitted callee are evidence, so a
  * return-only recursive cycle cannot type itself.
  */
+/**
+ * (#4555) Can `expr` — an identifier — be `undefined` at runtime because it
+ * names a PARAMETER that some call site does not supply?
+ *
+ * The value side of this is already handled: an under-applied parameter no
+ * longer narrows to a native scalar, so it carries the real `undefined`. The
+ * RETURN side was not, and the two must agree — a function whose result type
+ * is f64 coerces that `undefined` back to `NaN` on the way out:
+ *
+ *     function g(a, b) { return b; }
+ *     g(1, 2);   //  2
+ *     g(1);      //  was NaN, want undefined
+ *
+ * Answers `false` for a parameter with a default or a `?` marker (those have a
+ * defined value at every call) and for anything that is not a parameter of a
+ * named function declaration, so the numeric-kernel promotion is unchanged
+ * everywhere it was already sound.
+ */
+function lastIndexOfParameterName(owner: ts.FunctionDeclaration, declaration: ts.ParameterDeclaration): number {
+  // §10.2.1: with duplicate formal names the LAST one owns the binding, so it
+  // is that position's supplied-ness that decides. The checker resolves a
+  // reference to the FIRST declaration, which for `function f(x, a, b, x)`
+  // called as `f(1, 2)` reported a supplied parameter for a binding that is
+  // `undefined`. Non-duplicate names are unaffected (the two indices coincide).
+  if (!ts.isIdentifier(declaration.name)) return owner.parameters.indexOf(declaration);
+  const name = declaration.name.text;
+  let last = -1;
+  owner.parameters.forEach((parameter, index) => {
+    if (ts.isIdentifier(parameter.name) && parameter.name.text === name) last = index;
+  });
+  return last;
+}
+
+function parameterMayBeUndefined(ctx: CodegenContext, expr: ts.Identifier): boolean {
+  const declaration = ctx.oracle.valueDeclarationOf(expr);
+  if (!declaration || !ts.isParameter(declaration)) return false;
+  if (declaration.initializer !== undefined || declaration.questionToken !== undefined) return false;
+  const owner = declaration.parent;
+  if (!ts.isFunctionDeclaration(owner) || owner.name === undefined) return false;
+  const index = lastIndexOfParameterName(owner, declaration);
+  if (index < 0) return false;
+  return inferParamTypeFromCallSites(ctx, owner.name.text, index, owner.getSourceFile()).sawUnderApplied;
+}
+
+/**
+ * (#4121 slice 2) The route-2 CALL-DEFINITION arm: "is this direct call's
+ * result a proven `f64` carrier?", as a predicate the whole-program numeric
+ * fixpoint can consult.
+ *
+ * Route 2 (#3765) already has a call arm, but it reads `numericFunctions` —
+ * a NAME-keyed set built from every function-like of that name in the program.
+ * One same-named member of the population withdraws the name for all of them:
+ *
+ *     const o = { g: function () { return "s"; } };
+ *     function g(x) { return x + 1; }
+ *     var i = g(1);      // `g` withdrawn by `o.g`; `i` stays boxed
+ *
+ * {@link inferBindingAwareNumericReturnTypes} resolves the callee to its exact
+ * DECLARATION, so it keeps the verdict the name-keyed set has to give up. This
+ * predicate exposes that precision to the fixpoint.
+ *
+ * Two facts it deliberately does NOT launder:
+ *  - **booleans.** A boolean-branded `i32` return is the `` `${b}` `` → `1`
+ *    trap the issue's "must still decline" list names; only a plain `f64`
+ *    carrier qualifies.
+ *  - **cycles.** The return map is itself a grounded least fixpoint that
+ *    declines ungrounded recursion, so nothing here can enter a cycle that the
+ *    slot fixpoint's own groundedness pass would otherwise reject.
+ *
+ * Answers `undefined` — meaning "re-running the fixpoint would learn nothing" —
+ * whenever the map is empty, either kill switch is off, or every proven name is
+ * already in `priorNumericFunctions`. That is the gate that keeps the second
+ * analysis pass off programs it cannot change.
+ */
+export function bindingAwareNumericCallEvidence(
+  ctx: CodegenContext,
+  priorNumericFunctions: ReadonlySet<string> | undefined,
+): ((call: ts.CallExpression) => boolean) | undefined {
+  if (!numericReturnsFlagEnabled() || !numericAdmissionEnabled()) return undefined;
+  const carriers = ctx.bindingAwareNumericReturnTypes;
+  if (!carriers || carriers.size === 0) return undefined;
+  let adds = false;
+  for (const [name, carrier] of carriers) {
+    if (carrier.kind === "f64" && priorNumericFunctions?.has(name) !== true) {
+      adds = true;
+      break;
+    }
+  }
+  if (!adds) return undefined;
+  return (call) => {
+    const callee = call.expression;
+    if (!ts.isIdentifier(callee)) return false;
+    if (carriers.get(callee.text)?.kind !== "f64") return false;
+    const declaration = ctx.oracle.valueDeclarationOf(callee);
+    return declaration !== undefined && ts.isFunctionDeclaration(declaration);
+  };
+}
+
 export function inferBindingAwareNumericReturnTypes(
   ctx: CodegenContext,
   sourceFiles: readonly ts.SourceFile[],
@@ -1150,6 +1293,9 @@ export function inferBindingAwareNumericReturnTypes(
     if (ts.isNumericLiteral(expr)) return true;
     if (expr.kind === ts.SyntaxKind.TrueKeyword || expr.kind === ts.SyntaxKind.FalseKeyword) return true;
     if (ts.isIdentifier(expr)) {
+      // (#4555) An under-applied parameter is `undefined` at some call, which
+      // an f64 result would render as NaN. See `parameterMayBeUndefined`.
+      if (parameterMayBeUndefined(ctx, expr)) return false;
       // The local oracle is a grounded NUMBER-carrier proof: its construction
       // explicitly rejects every booleanish definition and resolves the exact
       // lexical slot, so same-name/shadowed bindings cannot leak evidence.

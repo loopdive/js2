@@ -2,7 +2,7 @@
 import { ts } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { getLocalType } from "./context/locals.js";
-import { staticIntegerRange } from "./analysis/static-numeric-range.js";
+import { staticIntegerRange } from "../ir/analysis/static-numeric-range.js";
 import { withSpeculativeCompile } from "./context/speculative.js";
 
 /** Emit a range-proven integer expression without f64 conversions/helpers. */

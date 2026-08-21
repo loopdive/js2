@@ -103,9 +103,9 @@ describe("#3498 landing four-lane backend benchmark", () => {
 
   coreIt(
     "executes exact V8 and JS2-Wasm outputs for all four kernels",
-    () => {
+    async () => {
       if (!coreAvailable) throw new Error("LANDING_FOUR_LANE_REQUIRED=1 but Wasmtime/wasm-opt are unavailable");
-      coreResult = runProbe(coreOutput, true);
+      coreResult = await runProbe(coreOutput, true);
       expect(coreResult.cells).toHaveLength(16);
       expect(coreResult.cells.map((cell) => `${cell.programId}:${cell.laneId}`)).toEqual(
         LANDING_BENCHMARK_PROGRAMS.flatMap((program) => LANDING_FOUR_LANE_IDS.map((lane) => `${program.id}:${lane}`)),
@@ -123,9 +123,9 @@ describe("#3498 landing four-lane backend benchmark", () => {
     60_000,
   );
 
-  coreIt("rejects source substitution, omission, output drift, skipped success, and invalid timing", () => {
+  coreIt("rejects source substitution, omission, output drift, skipped success, and invalid timing", async () => {
     if (!coreAvailable) throw new Error("LANDING_FOUR_LANE_REQUIRED=1 but Wasmtime/wasm-opt are unavailable");
-    coreResult ??= runProbe(coreOutput, true);
+    coreResult ??= await runProbe(coreOutput, true);
     validateLandingFourLaneResult(coreResult);
 
     const substituted = clone(coreResult);
@@ -450,7 +450,7 @@ describe("#3498 landing four-lane backend benchmark", () => {
     "refuses a partial capture whose fingerprint changed",
     async () => {
       if (!coreAvailable) throw new Error("LANDING_FOUR_LANE_REQUIRED=1 but Wasmtime/wasm-opt are unavailable");
-      coreResult ??= runProbe(coreOutput, true);
+      coreResult ??= await runProbe(coreOutput, true);
       const executable = coreResult.cells.filter((cell) => cell.status !== "unsupported");
       writeFileSync(
         join(coreOutput, "partial-measurements.json"),
@@ -535,9 +535,9 @@ describe("#3498 landing four-lane backend benchmark", () => {
 
   nativeIt(
     "probes both native routes and classifies every sanitizer result",
-    () => {
+    async () => {
       if (!nativeAvailable) throw new Error("LANDING_FOUR_LANE_REQUIRED=1 but Porffor/Clang are unavailable");
-      const result = runProbe(fullOutput, false);
+      const result = await runProbe(fullOutput, false);
       const js2Cells = result.cells.filter((cell) => cell.laneId === "js2-shared-plan-porffor-c-native");
       const plainCells = result.cells.filter((cell) => cell.laneId === "plain-porffor-c-native");
       expect(js2Cells).toHaveLength(4);
@@ -609,7 +609,7 @@ describe("#3498 landing four-lane backend benchmark", () => {
   );
 });
 
-function runProbe(output: string, withoutPorffor: boolean): LandingFourLaneResult {
+async function runProbe(output: string, withoutPorffor: boolean): Promise<LandingFourLaneResult> {
   rmSync(output, { recursive: true, force: true });
   const command = [
     "--import",
@@ -620,11 +620,7 @@ function runProbe(output: string, withoutPorffor: boolean): LandingFourLaneResul
     "--output",
     output,
   ];
-  const executed = spawnSync(process.execPath, command, {
-    cwd: repoRoot,
-    encoding: "utf8",
-    maxBuffer: 128 * 1024 * 1024,
-  });
+  const executed = await spawnAsync(process.execPath, command, { cwd: repoRoot });
   expect(executed.status, `${executed.stdout}\n${executed.stderr}`).toBe(0);
   const latest = JSON.parse(readFileSync(join(output, "latest.json"), "utf8")) as LandingFourLaneResult;
   const summary = readFileSync(join(output, "summary.md"), "utf8");

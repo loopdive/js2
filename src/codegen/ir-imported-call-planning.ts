@@ -21,6 +21,11 @@ import type { ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import type { IrClassShapeLookup } from "./ir-class-shapes.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
+import {
+  planIrCompilerTimerShimCall,
+  shouldVisitIrImportedCallBody,
+  type IrPreparedTimerShimResolver,
+} from "./ir-timer-shim-planning.js";
 
 export interface IrImportedCallPlanningState {
   readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
@@ -187,8 +192,9 @@ interface IrImportedOverlayPlans {
 function planSourceUnitImportedCalls(
   ctx: CodegenContext,
   state: IrImportedCallPlanningState,
-  identityImportedFunctions: IrIdentityImportedFunctionResolver,
+  identityImportedFunctions: IrIdentityImportedFunctionResolver | undefined,
   legacyImportedFunctions: IrImportedFunctionResolver | undefined,
+  resolvePreparedTimerShim: IrPreparedTimerShimResolver | undefined,
   classShapeSidecar: IrClassShapeLookup,
   safeSelection: IrMutableCallSelection,
   resolvePositionType: IrPositionTypeResolver,
@@ -199,9 +205,11 @@ function planSourceUnitImportedCalls(
     ts.Identifier,
     import("../ir/ast-lowering-plans.js").IrTopLevelFunctionValueLoweringPlan
   >();
-  const planIdentity = irOverlayIdentity.makeIrFeaturePlanIdentity(identityPlan, identityImportedFunctions);
+  const planIdentity = identityImportedFunctions
+    ? irOverlayIdentity.makeIrFeaturePlanIdentity(identityPlan, identityImportedFunctions)
+    : undefined;
   const entrySourceId = identityPlan.identityContext.inventory.sources.find((source) => source.kind === "entry")?.id;
-  if (!entrySourceId) {
+  if (identityImportedFunctions && !entrySourceId) {
     throw new IrInvariantError(
       "selection-preparation-mismatch",
       "resolve",
@@ -211,10 +219,17 @@ function planSourceUnitImportedCalls(
   for (const [ownerName, declaration] of identityPlan.declarationByLegacyName) {
     if (!safeSelection.funcs.has(ownerName) || !declaration.body) continue;
     let planningFailure: IrPreparationFailure | undefined;
+    let preparedTimerShim: ReturnType<typeof planIrCompilerTimerShimCall>;
+    try {
+      preparedTimerShim = planIrCompilerTimerShimCall(resolvePreparedTimerShim, declaration, ownerName, identityPlan);
+      if (preparedTimerShim) importedCalls.set(preparedTimerShim.call, preparedTimerShim.plan);
+    } catch (error) {
+      planningFailure = classifyIrFailure(error, "resolve");
+    }
     const visit = (node: ts.Node): void => {
       if (planningFailure) return;
       if (node !== declaration && ts.isFunctionLike(node)) return;
-      if (ts.isCallExpression(node)) {
+      if (ts.isCallExpression(node) && planIdentity) {
         const certified = certifyImportedIrCall(node, legacyImportedFunctions);
         if (certified) {
           try {
@@ -265,7 +280,7 @@ function planSourceUnitImportedCalls(
               returnType,
               optionalParams,
               needsArgc,
-              ...(needsArgc ? { argcGlobal: irArgcGlobalRef(entrySourceId) } : {}),
+              ...(needsArgc ? { argcGlobal: irArgcGlobalRef(entrySourceId!) } : {}),
             });
             for (const functionArgument of certified.functionArguments) {
               const valueIdentity = planIdentity.value(ownerName, functionArgument.argument, functionArgument.target);
@@ -303,7 +318,9 @@ function planSourceUnitImportedCalls(
       }
       ts.forEachChild(node, visit);
     };
-    visit(declaration.body);
+    if (shouldVisitIrImportedCallBody(planIdentity !== undefined, preparedTimerShim !== undefined)) {
+      visit(declaration.body);
+    }
     if (planningFailure) {
       recordIrOverlayPreparationFailure(state, ownerName, planningFailure);
       safeSelection.funcs.delete(ownerName);
@@ -413,6 +430,7 @@ export interface PlanIrImportedCallsOptions extends IrImportedCallPlanningState 
   readonly ctx: CodegenContext;
   readonly identityImportedFunctions?: IrIdentityImportedFunctionResolver;
   readonly legacyImportedFunctions?: IrImportedFunctionResolver;
+  readonly resolvePreparedTimerShim?: IrPreparedTimerShimResolver;
   readonly resolveAmbientClassCall?: IrAmbientClassCallResolver;
   readonly classShapeSidecar: IrClassShapeLookup;
   readonly safeSelection: IrMutableCallSelection;
@@ -424,28 +442,31 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
     ctx,
     identityImportedFunctions,
     legacyImportedFunctions,
+    resolvePreparedTimerShim,
     resolveAmbientClassCall,
     classShapeSidecar,
     safeSelection,
     resolvePositionType,
   } = options;
-  const plans = identityImportedFunctions
-    ? planSourceUnitImportedCalls(
-        ctx,
-        options,
-        identityImportedFunctions,
-        legacyImportedFunctions,
-        classShapeSidecar,
-        safeSelection,
-        resolvePositionType,
-      )
-    : {
-        importedCalls: new Map<ts.CallExpression, IrImportedCallLoweringPlan>(),
-        topLevelFunctionValues: new Map<
-          ts.Identifier,
-          import("../ir/ast-lowering-plans.js").IrTopLevelFunctionValueLoweringPlan
-        >(),
-      };
+  const plans =
+    identityImportedFunctions || resolvePreparedTimerShim
+      ? planSourceUnitImportedCalls(
+          ctx,
+          options,
+          identityImportedFunctions,
+          legacyImportedFunctions,
+          resolvePreparedTimerShim,
+          classShapeSidecar,
+          safeSelection,
+          resolvePositionType,
+        )
+      : {
+          importedCalls: new Map<ts.CallExpression, IrImportedCallLoweringPlan>(),
+          topLevelFunctionValues: new Map<
+            ts.Identifier,
+            import("../ir/ast-lowering-plans.js").IrTopLevelFunctionValueLoweringPlan
+          >(),
+        };
   if (resolveAmbientClassCall) {
     appendAmbientClassCalls(
       options,

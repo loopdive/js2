@@ -17,8 +17,9 @@ import {
   ensureBindingLocals,
 } from "./destructuring.js";
 import { emitExternrefDestructureGuard } from "../destructuring-params.js";
-import { collectBindingNames } from "./loop-analysis.js";
+import { collectBindingNames } from "../../ir/analysis/loop-shape.js";
 import { adjustRethrowDepth, restoreBlockScopedShadows, saveBlockScopedShadows } from "./shared.js";
+import { buildStandardTryTable } from "../../ir/try-table.js";
 
 type BoxedCapture = { refCellTypeIdx: number; valType: ValType };
 
@@ -131,7 +132,7 @@ function bumpOuterBranchDepths(instrs: Instr[], outerDepths: Set<number>, delta:
     // with the canonical traversal. Each of these container ops introduces
     // exactly one Wasm label, so any branch found inside a child array is one
     // level deeper than `instr` itself — hence `localDepth + 1`.
-    const isLabelOp = op === "block" || op === "loop" || op === "if" || op === "try";
+    const isLabelOp = op === "block" || op === "loop" || op === "if" || op === "try" || op === "try_table";
     const childLocalDepth = isLabelOp ? localDepth + 1 : localDepth;
     walkChildren(instr, (children) => bumpOuterBranchDepths(children, outerDepths, delta, childLocalDepth));
   }
@@ -294,6 +295,12 @@ export function compileThrowStatement(ctx: CodegenContext, fctx: FunctionContext
     for (let i = fctx.catchRethrowStack.length - 1; i >= 0; i--) {
       const entry = fctx.catchRethrowStack[i]!;
       if (entry.varName === thrownName) {
+        if ((ctx.wasi || ctx.standalone) && entry.exnLocalIdx !== undefined) {
+          const tagIdx = ensureExnTag(ctx);
+          fctx.body.push({ op: "local.get", index: entry.exnLocalIdx });
+          fctx.body.push({ op: "throw", tagIdx });
+          return;
+        }
         fctx.body.push({ op: "rethrow", depth: entry.depth } as any);
         return;
       }
@@ -324,6 +331,7 @@ export function compileThrowStatement(ctx: CodegenContext, fctx: FunctionContext
 
 export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.TryStatement): void {
   const tagIdx = ensureExnTag(ctx);
+  const standardizedEh = ctx.wasi || ctx.standalone;
 
   // Pre-compile the finally body once so we can clone it into each
   // control-flow path instead of re-compiling the TS statements 2-5 times.
@@ -462,9 +470,18 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
   // that runs the finally block and then rethrows the exception.
   if (finallyInstrs && !stmt.catchClause) {
     fctx.body = [];
-    fctx.body.push(...cloneFinally());
-    fctx.body.push({ op: "rethrow", depth: 0 } as any);
-    catchAllBody = fctx.body;
+    if (standardizedEh) {
+      const finallyExnLocal = allocLocal(fctx, `__finally_exn_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: finallyExnLocal });
+      fctx.body.push(...cloneFinally());
+      fctx.body.push({ op: "local.get", index: finallyExnLocal });
+      fctx.body.push({ op: "throw", tagIdx });
+      catches = [{ tagIdx, body: fctx.body }];
+    } else {
+      fctx.body.push(...cloneFinally());
+      fctx.body.push({ op: "rethrow", depth: 0 } as any);
+      catchAllBody = fctx.body;
+    }
   }
 
   if (stmt.catchClause) {
@@ -517,7 +534,11 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
       const rethrowEligible = catchVarName !== undefined && !catchVarIsReassigned(stmt.catchClause.block, catchVarName);
       if (catchVarName && rethrowEligible) {
         if (!fctx.catchRethrowStack) fctx.catchRethrowStack = [];
-        fctx.catchRethrowStack.push({ varName: catchVarName, depth: 0 });
+        fctx.catchRethrowStack.push({
+          varName: catchVarName,
+          depth: 0,
+          ...(standardizedEh && exnLocalIdx !== null ? { exnLocalIdx } : {}),
+        });
       }
 
       if (finallyInstrs) {
@@ -615,15 +636,29 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
       // The cloned finally inside the inner catch_all is at +2 depth relative
       // to the original outer context (outer try +1, inner try +1), but the
       // pre-compiled finallyInstrs targets +1. Bump outer branch depths by +1.
-      const innerCatchAllBody: Instr[] = [...cloneFinallyAtDepth(1), { op: "rethrow", depth: 0 } as any];
-
-      fctx.body.push({
-        op: "try",
-        blockType: { kind: "empty" },
-        body: catchBodyInstrs,
-        catches: [],
-        catchAll: innerCatchAllBody,
-      } as any);
+      if (standardizedEh) {
+        const innerExnLocal = allocLocal(fctx, `__finally_exn_${fctx.locals.length}`, { kind: "externref" });
+        const innerHandler: Instr[] = [
+          { op: "local.set", index: innerExnLocal },
+          ...cloneFinallyAtDepth(1),
+          { op: "local.get", index: innerExnLocal },
+          { op: "throw", tagIdx },
+        ];
+        fctx.body.push(
+          buildStandardTryTable({ kind: "empty" }, catchBodyInstrs, [
+            { kind: "catch", tagIdx, payloadType: { kind: "externref" }, body: innerHandler },
+          ]),
+        );
+      } else {
+        const innerCatchAllBody: Instr[] = [...cloneFinallyAtDepth(1), { op: "rethrow", depth: 0 } as any];
+        fctx.body.push({
+          op: "try",
+          blockType: { kind: "empty" },
+          body: catchBodyInstrs,
+          catches: [],
+          catchAll: innerCatchAllBody,
+        } as any);
+      }
 
       // Finally on normal exit path (no exception in catch body) — at +1 depth
       // (the outer try frame), so use the as-compiled clone.
@@ -722,14 +757,31 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
   if (fctx.generatorReturnDepth !== undefined) fctx.generatorReturnDepth--;
   adjustRethrowDepth(fctx, -1);
 
-  // Emit the try instruction with catch $tag + catch_all
-  fctx.body.push({
-    op: "try",
-    blockType: { kind: "empty" },
-    body: tryBody,
-    catches,
-    catchAll: catchAllBody,
-  });
+  // Embedded standalone runtimes implement the standardized EH proposal.
+  // Keep the legacy structured encoding byte-inert for JS-host output.
+  if (standardizedEh) {
+    if (catchAllBody) throw new Error("standalone try_table lowering cannot retain a legacy catch_all body");
+    fctx.body.push(
+      buildStandardTryTable(
+        { kind: "empty" },
+        tryBody,
+        catches.map((c) => ({
+          kind: "catch" as const,
+          tagIdx: c.tagIdx,
+          payloadType: { kind: "externref" as const },
+          body: c.body,
+        })),
+      ),
+    );
+  } else {
+    fctx.body.push({
+      op: "try",
+      blockType: { kind: "empty" },
+      body: tryBody,
+      catches,
+      catchAll: catchAllBody,
+    });
+  }
 }
 
 /** Compile a function declaration nested inside another function.

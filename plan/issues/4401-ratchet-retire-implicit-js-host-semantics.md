@@ -3,7 +3,7 @@ id: 4401
 title: "Ratchet and retire implicit JavaScript-host semantic fallbacks"
 status: in-progress
 created: 2026-08-13
-updated: 2026-08-13
+updated: 2026-08-20
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -15,7 +15,7 @@ sprint: current
 parent: 4395
 depends_on: [4397, 4399]
 horizon: l
-related: [1524, 1932, 1934, 2094, 2879, 2961, 3526, 3681, 4035, 4382]
+related: [1524, 1932, 1934, 2094, 2879, 2961, 3526, 3681, 4035, 4382, 4573, 4576, 4577]
 ---
 # #4401 — Ratchet and retire implicit JS-host semantic fallbacks
 
@@ -164,6 +164,40 @@ Track at least:
   construct probe non-vacuous. Together they enable identity-preserving Proxy
   forwarding to a caller-owned JS constructor and do not forgive any legacy or
   unknown semantic provider.
+- #4573 extracts standalone timer binding and authenticated callback authority
+  from the generic adapter/runtime surfaces. Their two explicit-provider leaves
+  are tracked by a separate 306-line maximum, while the existing runtime,
+  resolver, and generic-adapter ceilings remain unchanged. This keeps the
+  capability visible without conflating it with implicit semantic-host debt.
+- The completed #4576 checkpoint applies the same rule to standalone DOM.
+  The exact `dom@1` provider and its authenticated native-string bridge add
+  **583** explicit-capability lines, moving that separately tracked surface
+  from **306 → 889** lines. The generic owned-adapter measure remains **790**,
+  `resolveImport` remains **7,216** lines and **15** cases, and `runtime.ts` is
+  **17,099** lines under its unchanged **17,100** ceiling. The live gate still
+  reports 33 native-first probes, 393 imports, **0 legacy-semantic**, **0
+  unknown**, and the non-vacuous compatibility control at 19 legacy imports.
+  Builtins imports exactly eight signature-checked DOM operations; none is
+  forgiven as implicit semantic-host debt. The guarded runtime benchmark records
+  parity within noise, and the final full-gate sweep is green.
+- The #4577 Calendar checkpoint extends the separately counted explicit
+  provider surface by 305 lines: 186 lines of exact DOM interaction/callback
+  authority in the existing provider leaves, a 58-line clock adapter, and a
+  61-line compiler-certified capability-authority leaf. The complete
+  explicit-capability measure is therefore **1,194** lines (889 → 1,194),
+  while the generic owned-adapter surface remains below its existing ceiling.
+  `runtime.ts` measures **17,095** lines and `resolveImport` remains **7,216**
+  lines / **15** cases. Native-first
+  continues to report 33 probes, zero legacy-semantic imports, and zero unknown
+  imports; the compatibility control remains non-vacuous.
+- The manifest is deliberately not runtime authority. It describes the exact
+  `dom@1`, `dom-interaction@1`, and `clock@1` provider/ABI selection, but
+  compiler-owned import provenance plus the registry's complete-import check
+  must first certify the artifact. DOM string and callback crossings then bind
+  to the exact root, instance/export view, manifest global, binding table, and
+  private callback brand. Forged, copied, relabeled, donor, or incomplete
+  manifests cannot grant capability authority. This keeps declarative
+  observability separate from bearer credentials.
 
 Still open: product/Test262/npm denominators, binary/startup/performance
 budgets, and the final default-policy evidence gate.

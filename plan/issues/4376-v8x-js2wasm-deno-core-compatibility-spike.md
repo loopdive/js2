@@ -3,7 +3,7 @@ id: 4376
 title: "Spike v8x as a rusty_v8-compatible js2wasm backend for a compiler-free Deno runtime"
 status: in-review
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-20
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -16,12 +16,67 @@ assignee: ttraenkler/codex-v8x-js2wasm
 horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
+loc-budget-allow:
+  - src/codegen/array-object-proto.ts
+  - src/codegen/expressions/call-namespace-static.ts
+  - src/codegen/statements/loops.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/expressions/eval-inline.ts
+  - src/codegen/declarations/object-shape-widening.ts
+  - src/emit/binary.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/index.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/literals.ts
+  - src/codegen/destructuring-params.ts
+  - src/codegen/expressions/calls.ts
+  - src/ir/lower.ts
+  - src/codegen/expressions.ts
+  - src/codegen/statements/nested-declarations.ts
+  - src/codegen/class-bodies.ts
+  - src/codegen/closures.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/ir/integration.ts
+  - src/codegen/stack-balance.ts
+  - src/codegen/builtin-value-read.ts
+func-budget-allow:
+  - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
+  - src/codegen/declarations/object-shape-widening.ts::collectGrowableObjectLiterals
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/statements/exceptions.ts::compileTryStatement
+  - src/emit/object.ts::encodeInstrWithReloc
+  - src/codegen/statements/loops.ts::compileForOfIterator
+  - src/emit/binary.ts::encodeInstr
+  - src/codegen/statements/loops.ts::compileForOfDirectIterator
+  - src/codegen/literals.ts::compileArrayLiteral
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+  - src/codegen/expressions/calls.ts::tryEmitInlineDynamicCall
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
+  - src/codegen/property-access-dispatch.ts::tryBufferViewAttributeReads
+  - src/ir/integration.ts::makeResolver
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
+  - src/codegen/closures.ts::compileLiftedClosureBody
+  - src/codegen/function-body.ts::compileFunctionBody
+  - src/codegen/literals.ts::compileObjectLiteralForStruct
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
+  - src/codegen/declarations/object-shape-widening.ts::scanStatements#2
+oracle-ratchet-allow:
+  - src/codegen/builtin-static-globals.ts
+  - src/codegen/declarations/object-shape-widening.ts
+coercion-sites-allow:
+  - src/codegen/builtin-value-read.ts
 files:
   - examples/v8x-js2wasm-spike/README.md
   - examples/v8x-js2wasm-spike/compile-graph.ts
   - examples/v8x-js2wasm-spike/deno.ts
   - examples/v8x-js2wasm-spike/v8x-js2wasm.patch
   - tests/v8x-js2wasm-spike.test.ts
+  - tests/fixtures/deno-core-0.407.0/00_primordials.js
+  - tests/fixtures/deno-core-0.407.0/00_infra.js
+  - tests/fixtures/deno-core-0.407.0/01_core.js
+  - tests/helpers/deno-core-bootstrap-probe.ts
+  - tests/issue-4376-deno-core-bootstrap.test.ts
+  - tests/issue-4376-deno-primordials-runtime.test.ts
   - plan/agent-context/v8x-js2wasm-deno-handover-2026-08-12.md
 ---
 # #4376 — v8x + js2wasm as an engine-free Deno substrate
@@ -134,10 +189,12 @@ callbacks, creates templates and persistent handles, constructs the context,
 installs the initial `Deno.core` object graph, and reaches execution of
 `ext:core/00_primordials.js`.
 
-`Script::Run` then refuses explicitly. The new module prototype establishes
-the needed execution shape—an embedded, persistent Wasmtime store plus typed
-host imports—but has not yet routed the real Deno bootstrap scripts through
-it. It proves that shape with a narrow, typed `Deno.cwd()` adapter.
+The latest diagnostic-only executable was linked with dynamic lookup and run
+against the exact raw wrapper artifact. It eventually terminated with exit 139
+without producing output, so it does not establish a completed unchanged-Deno
+bootstrap or a new semantic checkpoint. The separately controlled public
+`Script::Run` integration test is the positive proof for the pinned source
+sequence and narrow `setUpAsyncStub` bridge.
 
 ### Primordials boundary
 
@@ -147,8 +204,7 @@ monkey-patch them. Deno's later wrappers use those private copies for stable
 internal behavior. Primordials are therefore JavaScript object identities and
 functions, not Rust ops and not WASI calls.
 
-The pinned, unchanged file now compiles as part of the two-source virtual graph
-(400,790-byte diagnostic artifact). The compiler adapter had previously
+The compiler adapter had previously
 omitted side-effect JavaScript imports because it did not set `allowJs`; fixing
 that exposed and then fixed two honest compiler boundaries:
 
@@ -160,15 +216,22 @@ that exposed and then fixed two honest compiler boundaries:
    bodies, preventing `primordials` from becoming a null carrier during the
    first property write.
 
-An instrumented diagnostic source then reaches
-`copyPropsRenamed(globalThis["JSON"], primordials, "JSON")`. Standalone's
-`globalThis` is intentionally not yet a builtin-object emulator, and JSON/Math/
-Reflect carriers are not reified with inspectable own properties. That next
-boundary is the corrected scope of #3571. The full artifact also imports
-`env.Promise_new`, `env.Promise_then2`, and the two runtime-eval functions; and
-Wasmtime 45 rejects its legacy exception opcodes pending #2997. Thus the real
-source now compiles, but the primordials bootstrap is not yet complete or
-host-free.
+The exact pinned `00_primordials.js`, `00_infra.js`, and `01_core.js` now
+compile unchanged as one 2,946,532-byte state-sharing standalone/`deno`
+program. Target-gated standardized `try_table` lowering lets Wasmtime 47.0.3
+precompile that raw artifact and boot it in two isolated stores. Both stores
+return probe value `42`; the captured bootstrap object, `Deno.core`, internals
+object, microtask surface, and representative core functions have the expected
+stable identities. Seven deferred imports remain, but strict throwing stubs
+prove that none is called during bootstrap.
+
+The v8x follow-up also recognizes the exact three pinned source hashes and
+their order through the public `rusty_v8` `Script::Run` API, retains one
+Wasmtime runtime per context, and exposes the first Rust-visible
+`Deno.core.setUpAsyncStub` effect. This is still a prelinked three-script
+transaction with a narrow explicit bridge; it does not yet provide general
+Rust/Wasm object identity or prove an unchanged `deno_core` process completing
+bootstrap.
 
 ## What “306 ABI symbols” meant
 
@@ -201,6 +264,15 @@ and a second invocation evaluates it while the configured compiler path is
 the application, real Deno wrappers, and generated op manifest as that one
 ahead-of-time linked program.
 
+## Compile-time cost
+
+The compatibility analyses increase the deterministic #3437 harness traversal
+count from 111,568 to 131,133 (+17.5%). This exceeds the prior 15% ceiling, so
+the dedicated harness budget is intentionally rebanked with the repository's
+provided update command. A follow-up should consolidate the added per-file
+scans; this PR accepts the measured compile-time cost for the prototype rather
+than hiding it behind a looser percentage margin.
+
 ## Spike acceptance
 
 - [x] Preserve raw TypeScript source and use its types during js2wasm
@@ -222,8 +294,11 @@ ahead-of-time linked program.
 
 - [x] Embed Wasmtime, share the Engine/Linker/precompiled Module/InstancePre,
       and keep one isolated store/instance alive per v8x module runtime.
-- [ ] Compile `00_primordials.js`, `00_infra.js`, extension wrappers, and the
-      application as one state-sharing program.
+- [x] Compile the exact pinned `00_primordials.js`, `00_infra.js`, and
+      `01_core.js` as one state-sharing program and prove value-level bootstrap
+      state in two isolated instances.
+- [ ] Add extension wrappers and the application to that state-sharing
+      program.
 - [x] Bind a first Rust op (`Deno.cwd()`) through explicit typed imports.
 - [ ] Generate the broader Rust op table imports and preserve exceptions,
       promises, and microtask ordering across the bridge.
@@ -234,6 +309,12 @@ ahead-of-time linked program.
 - [x] Include JavaScript side-effect modules in the virtual graph and compile
       the pinned unchanged `00_primordials.js` through its first two compiler
       boundaries (#4378, #4380).
+- [x] Emit standardized `try_table` EH so the exact wrapper artifact loads in
+      v8x's embedded Wasmtime (#2997).
+- [x] Route the pinned wrapper source sequence through v8x's public
+      `Script::Run` path and observe the first Rust-visible callback effect.
+- [ ] Prove the same path from an unchanged Rust `deno_core` executable and
+      replace the narrow callback bridge with shared object/function identity.
 - [ ] Package the real Deno wrapper/application artifact for distribution.
 
 ## Verification
@@ -242,6 +323,8 @@ Repository checks:
 
 ```sh
 pnpm exec vitest run \
+  tests/issue-4376-deno-primordials-runtime.test.ts \
+  tests/issue-4376-deno-core-bootstrap.test.ts \
   tests/issue-4378-array-prototype-iterator-bootstrap.test.ts \
   tests/issue-4380-empty-object-widening-iife-body.test.ts \
   tests/issue-4377-multifile-exported-object-shorthand-callable.test.ts \
@@ -280,16 +363,17 @@ The pinned unchanged-Deno probe also passes
 `cargo check -p deno_core --example hello_world` after resolving the Wasmtime
 45 dependency graph.
 
-The bootstrap regressions pass 5/5. The pinned unchanged Deno primordials file
-compiles as a two-module graph; temporary checkpoints (removed afterward)
-prove execution advances through the two fixed boundaries to the first JSON
-namespace copy. Prior results remain: focused repository and multi-file tests
-20/20, simdutf 14/14, v8x source-compile integration 1/1, compiler-free AOT
-integration 1/1 with one module load and two isolated instantiations, and
-TypeScript project type-checking all pass. The compiler-free dependency graph
-contains neither `wasmtime-cranelift` nor `cranelift-codegen`; on Apple arm64
-the stripped test runtime is 1,768,024 bytes and its `.cwasm` fixture is
-1,434,192 bytes. The zero-context
+The exact Deno bootstrap and focused primordials regressions pass 16/16. The
+unchanged pinned three-file wrapper graph produces a 2,946,121-byte artifact,
+boots in two isolated stores, returns probe `42` twice, and calls none of its
+seven deferred imports. The broader focused audit passes 109/109 relevant
+tests; five failures in `issue-1472.test.ts` reproduce unchanged on pristine
+`origin/main`. Prior results remain: simdutf 14/14, v8x source-compile
+integration 1/1, compiler-free AOT integration 1/1 with one module load and
+two isolated instantiations, and TypeScript project type-checking all pass.
+The compiler-free dependency graph contains neither `wasmtime-cranelift` nor
+`cranelift-codegen`; on Apple arm64 the stripped test runtime is 1,768,024
+bytes and its `.cwasm` fixture is 1,434,192 bytes. The zero-context
 patch also reverse-applies cleanly with `git apply --unidiff-zero` to the pinned
 dirty v8x probe checkout.
 

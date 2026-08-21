@@ -3,7 +3,7 @@ id: 3995
 title: "npm-compat: pin and adapt original upstream test suites for catalog packages"
 status: ready
 created: 2026-07-30
-updated: 2026-08-14
+updated: 2026-08-21
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -40,6 +40,16 @@ func-budget-allow:
   - src/codegen/closures/arrow-phases.ts::planClosureCaptures
   - src/codegen/expressions/identifiers.ts::compileIdentifierCore
   - src/codegen/context/create-context.ts::createCodegenContext
+  # The React/ReactDOM upstream adapter exercises these existing codegen
+  # paths. Keep the PR's measured growth explicit until the post-merge
+  # baseline refresh records the new ceilings.
+  - src/codegen/class-bodies.ts::collectClassDeclaration
+  - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
+  - src/codegen/declarations.ts::compileDeclarations
+  - src/codegen/literals.ts::compileObjectLiteralForStruct
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
+  - src/codegen/index.ts::emitIteratorMethodExport
+  - src/runtime.ts::<anonymous>#89
 ---
 # npm-compat: pin and adapt original upstream test suites for catalog packages
 
@@ -50,6 +60,14 @@ The catalog package tarballs do not ship their original unit suites. The npm-com
 Pin matching source revisions and provide adapters for: hono, lodash, axios, react-dom, webpack, uuid, typescript, redux, jest, styled-components, moment, stylelint, three, lit, tailwindcss, and cookie. Keep upstream-suite validation distinct from compile checks, synthetic differential vectors, and benchmark harnesses.
 
 Start with React DOM, Jest, and Lit, which already compile and validate their entry artifacts.
+
+The React browser harness installs the complete set of HTML element constructors
+provided by JSDOM that appear in the pinned React and ReactDOM sources. This
+keeps `instanceof` and feature-detection paths faithful without inventing host
+stubs; constructors absent from JSDOM remain unavailable rather than being
+reported as passing infrastructure. This includes the event constructors used
+by Fizz and event-plugin tests, which JSDOM exposes on `window` but not on
+Node's `globalThis` by default.
 
 ## Provenance
 
@@ -222,17 +240,17 @@ explicitly `adapter-pending`; the next slices should expand the unified runner
 in ascending harness complexity (Redux/Axios first, then jsdom/Prettier and the
 large compiler/tooling suites).
 
-## 2026-08-14 Redux complete runtime suite
+## 2026-08-20 Redux complete runtime suite
 
 Redux 5.0.1 now uses all nine original `*.spec.ts` runtime files from
 `reduxjs/redux@v5.0.1` (commit
 `50b010210df25c470386f7e39a9389a4a77b3842`). All 82 callbacks register and
-all nine generated test modules compile to valid Wasm. The synchronous Node
-oracle reproduces 78 callbacks; the four promise-returning callbacks are
-explicitly harness-incompatible until the shared runner supports async Wasm
-tests. The measured Wasm baseline is **5/78**: ten callbacks reach an assertion
-and diverge, while 63 encounter a module-level runtime trap in the larger
-`bindActionCreators`, `combineReducers`, and `createStore` files. The existing
+all nine generated test modules compile to valid Wasm. The shared runner now
+supplies the Node-compatible `global` alias used by Redux's warning tests, so
+the synchronous Node oracle reproduces all **82/82** callbacks. The measured
+Wasm baseline is **13/82**; the remaining failures are runtime/compiler
+mismatches in the existing `bindActionCreators`, `combineReducers`, and
+`createStore` paths rather than unavailable test infrastructure. The existing
 1/1 package API workload remains visible as a separate secondary result.
 
 Vitest's spy/assertion surface and the one RxJS protocol test use narrow test
@@ -322,14 +340,16 @@ QUnit registration sites from `mrdoob/three.js@r185` (commit
 `2431a09f46f34c560bc8e44b33be0e567723d5b9`). The first runtime adapter runs
 the original dependency-light `MathUtils.tests.js` module directly against the
 matching GitHub source. Its generated module compiles and validates, native
-Node passes **18/18**, and Wasm currently reports **0/18**.
+Node passes **18/18**, and Wasm now reports **17/18**.
 
-The module reaches the shared QUnit callback runner but currently returns false
-for every callback without a surfaced assertion message. The report preserves
-those measured zeroes and all 231 deferred browser, WebGL, DOM, loader, and
-larger object-graph files. The npm-compat generator invokes the suite directly,
-so the merge-only refresh publishes the numeric result and upstream pin rather
-than leaving Three.js at `adapter pending`.
+The adapter preserves Three's default-exported `QUnit.module(...)` call as a
+top-level registration side effect; otherwise the compiler elided the unused
+default value and the Wasm lane observed zero registered tests. The remaining
+single failure is a floating-point last-bit difference in `MathUtils.damp`, not
+missing test infrastructure. All 231 deferred browser, WebGL, DOM, loader, and
+larger object-graph files remain explicit inventory. The npm-compat generator
+invokes the suite directly, so the merge-only refresh publishes the numeric
+result and upstream pin rather than leaving Three.js at `adapter pending`.
 
 ## 2026-08-14 jsdom VirtualConsole slice
 
@@ -341,11 +361,13 @@ six unchanged synchronous callbacks from `virtual-console.js` which exercise
 matching published `lib/jsdom/virtual-console.js`; its Node `events` dependency
 is left at the platform boundary rather than replaced with a harness fake.
 
-The selected module compiles and validates in about half a second. Native Node
-passes **6/6** callbacks and Wasm passes **1/6**. Each of the five failures
-reports `on is not a function`, isolating the remaining gap to callable method
-projection on the host-provided `EventEmitter`; the invalid-option callback
-passes because it does not need to register a listener.
+The selected module compiles and validates in about three seconds. Native Node
+and Wasm now both pass **6/6** callbacks. The five former `on is not a
+function` failures are fixed by the shared callable class-method projection
+bridge for host-provided `EventEmitter` instances; the invalid-option callback
+continues to pass without registering a listener. The upstream regression test
+now asserts the complete 6/6 result instead of only checking that callbacks
+were scored.
 
 The remaining 312 registrations, including full DOM construction, resource
 loading, and asynchronous cases, remain explicit deferred coverage. The
@@ -469,3 +491,232 @@ Compiler, filesystem, loader, snapshot, async, and larger graph files remain
 explicit deferred inventory. The npm-compat generator invokes the adapter
 directly so the merge-only refresh publishes numeric results and cannot fall
 back to `adapter pending`.
+
+## 2026-08-20 non-blocking Vitest launcher infrastructure
+
+Opt-in Vitest wrappers now share `tests/dogfood/run-dogfood-script.ts`. It
+launches every adapter with Node's explicit `--import tsx` loader and awaits
+the child process, so long Wasm compiles no longer block the Vitest worker
+heartbeat or use tsx's restricted IPC socket. The package scripts and wrapper
+tests are covered by `dogfood-launchers.test.ts`.
+
+The React upstream wrapper passes its full local gate (7/7 wrapper tests), the
+bounded ReactDOM wrapper passes 4/4 with no worker timeout, and the complete
+Redux callback inventory runs through the same path: 82/82 admitted and
+scored, 9/9 modules compile and validate, 13 Wasm passes, 69 semantic
+failures, and zero runtime failures. The remaining Redux failures are
+compiler semantics, not unavailable runner infrastructure.
+
+## 2026-08-20 React cross-package infrastructure checkpoint
+
+The React upstream adapter now preserves each source test file's strict-mode
+boundary when lifting individual Jest callbacks. It also supplies the
+original `create-react-class/factory` module and routes the indirect factory
+call through a callable host facade that reifies only the class specification
+object. This is host/test infrastructure, not a change to React's upstream
+test bodies.
+
+On the unchanged 273-test React inventory, the full local run now executes
+272 admitted tests and scores **102/179** in Wasm (up from 92/178); the native
+oracle's infrastructure-incompatible bucket fell from 94 to 93. The
+create-react-class slice specifically moved from 0/16 to **10/16** scored
+passes. The remaining React failures are compiler/runtime behavior or
+development-build warning differences, not silently skipped infrastructure.
+
+The shared JSDOM setup also now installs the browser constructors and standard
+web globals referenced by the ReactDOM corpus (image/table/media elements,
+streams, encoders, fetch types, files, and abort primitives). Node-owned
+`performance`, `queueMicrotask`, and `setImmediate` remain untouched because
+JSDOM's implementations delegate back to those globals and copying them would
+recurse. The setup test covers representative constructors and stream/fetch
+globals. The host dependency resolver now also searches pnpm peer-dependency
+roots, so ReactDOM's upstream `scheduler` and `scheduler/unstable_mock`
+imports resolve to the installed package even though the workspace root does
+not expose a direct symlink.
+
+The upstream runner also accepts `DOGFOOD_REACT_BUILD=development`. This uses
+the published `react.development.js` artifact and loads ReactDOM and the test
+renderer under the matching `NODE_ENV`, which is the environment used by
+React's Jest suite. The default npm-compat lane remains the production build;
+the development option gives the original warning and `act` tests a faithful
+renderer pair instead of treating production-build differences as unavailable
+host infrastructure. The selected build is recorded in the JSON report.
+
+The first development-build probe (80 filtered upstream tests) is intentionally
+recorded as a compiler finding: the native oracle ran, but all 80 Wasm batches
+hit the existing stack-balance/local-index invariant in the development graph,
+so **0/61** tests were scoreable. This does not change the default production
+result or turn an invalid binary into an infrastructure pass; the opt-in lane
+is retained to make the correct upstream environment runnable once that
+compiler blocker is addressed.
+
+## 2026-08-20 Hono web-host and Vitest infrastructure checkpoint
+
+The Hono adapter now exercises ten self-contained HTTP/utility files from the
+pinned v4.12.16 release instead of the original two-file smoke slice:
+`http-exception`, `request`, `accept`, `basic-auth`, `cookie`, `encode`, `html`,
+`ipaddr`, `mime`, and `url`. All **205/205** extracted callbacks execute in the
+native oracle, and the ten modules compile; nine validate because the upstream
+`ipaddr` module still exposes an existing Wasm fall-through type error. The
+validated Wasm modules score **78/205**. The remaining failures are compiler or
+runtime semantics (URL decoding, request-body/object carriers, cookie signing,
+binary encoding, and IPv4/IPv6 conversion), not unavailable test infrastructure.
+
+The shared upstream runner now supports Vitest table-template expansion,
+`describe.each`, promise `resolves`/`rejects` matchers with immediate rejection
+handlers, `toMatchObject`, and Vitest's compile-time-only `expectTypeOf` chain.
+The runtime host constructor registry also exposes the standard Node Web API
+constructors (`Request`, `Response`, `FormData`, `Blob`, and `File`) when they
+exist on `globalThis`, allowing Hono's original request tests to initialize in
+both Node and Wasm. These adapters are generic and are covered by a runner
+regression test; no Hono test callback or input is rewritten.
+
+The ReactDOM adapter now has the same explicit build selection as the React
+adapter: production remains the npm-compat default, while
+`DOGFOOD_REACT_DOM_BUILD=development` loads the matching development React,
+ReactDOM client, legacy server, and browser/Node/Edge Fizz graphs. This is
+important for the original warning and `act` tests: production artifacts omit
+those diagnostics, which otherwise appears as unavailable native test
+infrastructure. The selection is pin-checked and covered by the ReactDOM
+setup regression test; it does not change the production catalog result.
+
+## 2026-08-20 final package checkpoint and handoff
+
+The jsdom VirtualConsole slice now runs its six selected original callbacks
+through both oracles: native Node **6/6** and Wasm **6/6**. The former five
+`on is not a function` failures were the shared callable host-method bridge,
+not jsdom test defects. The remaining jsdom registrations stay explicitly
+deferred because they require the full DOM/resource/async graph.
+
+The Three.js MathUtils slice now preserves the upstream default-exported
+`QUnit.module` registration side effect. Native Node is **18/18** and Wasm is
+**17/18**; the one remaining `MathUtils.damp` mismatch is a last-bit floating
+point difference, not unavailable infrastructure. The other 231 upstream
+files remain deferred browser/WebGL/loader coverage.
+
+The long landing-four-lane CI probe in this work was changed to await its
+child process instead of blocking Vitest's worker heartbeat; the focused core
+probe passes locally. Keep this CI plumbing in PR #4660 and treat the Lit
+compiler gaps in #3977/#3978/#3979/#3980 as the next independent work item.
+
+## 2026-08-21 shared matcher infrastructure checkpoint
+
+The shared upstream assertion shim now implements Vitest's `instanceOf` and
+`toBeInstanceOf` aliases in both positive and negated form, plus the positive
+`toBeCalled` and `toHaveBeenCalled` spy aliases. These are generic runner
+features, covered by `upstream-suite-runner.test.ts`; they are not Hono-specific
+rewrites. Before this change Hono's `utils/body.test.ts` was incorrectly
+classified as harness-incompatible because the native oracle could not call
+`expect(value).not.instanceOf(...)`.
+
+Rerunning the unchanged 16-file Hono selection after the shim fix produced
+**297/297 native callbacks** (previously 296/297 with one harness error), all
+16 modules compiled, 15 validated, and **86/297 Wasm callbacks passed**. The
+remaining 211 Wasm failures and six module-init runtime failures are compiler
+or runtime semantics; they are now scored rather than hidden as unavailable
+infrastructure. The full 120-file inventory and 2,058 deferred registrations
+remain explicit in the report.
+
+The same generic runner now exposes `it.skip`/`test.skip`, `todo`, and skipped
+suite registration semantics. This admits Hono's original Node-facing
+`utils/buffer.test.ts` and `utils/crypto.test.ts` without changing their
+callbacks. The compile worker also forwards the host's standard Web
+constructors when a suite explicitly selects the Node platform. The expanded
+18-file selection registers **311/311 native callbacks**, compiles 18 modules
+(17 validate), and scores **90/311 Wasm passes**; the two intentionally skipped
+upstream callbacks remain outside the denominator. The unresolved TextEncoder
+and crypto behavior is reported as Wasm compatibility failure, not relabeled as
+unavailable infrastructure. Deferred inventory is now 2,044 registrations.
+
+## 2026-08-21 Vitest global-stub infrastructure checkpoint
+
+The shared upstream shim now implements Vitest's generic `vi.stubGlobal` and
+`vi.unstubAllGlobals` contract. Each stub records whether the global was an
+own property and restores or deletes it in reverse order, so upstream tests can
+temporarily install browser/platform globals without leaking state into later
+callbacks. The runner regression test exercises the complete install/restore
+cycle in both Node and Wasm.
+
+Hono's unchanged `src/helper/testing/index.test.ts` is now admitted. The
+expanded 19-file selection registers **316/316 native callbacks** (up from
+311/311), compiles 19 modules (18 validate), and records **90/316 Wasm passes**.
+The five new callbacks still expose existing Hono route/object compiler
+failures; only the former `vi.stubGlobal is not a function` harness failure was
+removed. Deferred inventory is now 2,039 registrations.
+
+## 2026-08-21 Vitest environment-stub checkpoint
+
+The shared upstream shim now gives `vi.stubEnv` and `vi.unstubAllEnvs` real
+Vitest-style save/restore behavior. Each environment write records the prior
+own-property state and restores or deletes it in reverse order. A runner
+regression covers the contract without depending on a host-only process
+global.
+
+Hono's original `src/helper/dev/index.test.ts` is now admitted because its
+`NO_COLOR` setup/teardown no longer leaves the process environment mutated.
+The unchanged selection registers **324/324 native callbacks** (up from
+316/316), compiles all 20 modules (18 validate), and leaves the Wasm score at
+**90/324** while the two invalid modules remain compiler findings. Deferred
+inventory is now **2,031** registrations. The native oracle was run with
+`NO_COLOR` unset so the upstream color expectations are not contaminated by
+the local shell environment.
+
+## 2026-08-21 Jest module-isolation infrastructure checkpoint
+
+The React/ReactDOM upstream shim now implements `jest.isolateModules()`. Each
+isolated callback gets a fresh namespace object for every required module, the
+same namespace is reused for repeated requires within that callback, and the
+outer registry is restored when the callback returns. This supplies the
+identity contract used by ReactDOM's original selective-hydration and event-
+propagation tests without mutating Node's process-wide require cache or
+rewriting either test.
+
+The new regression exercises the exact contract in both the native oracle and
+compiled Wasm: two isolated `react-dom/client` requires are distinct, each is
+distinct from the outer namespace, and repeated outer requires remain stable.
+The remaining ReactDOM implementation/compile blockers are unchanged; this
+checkpoint removes a harness gap so those original callbacks can be scored as
+soon as their published graph validates.
+
+The same host surface now supplies React's original `IntersectionMocks` helper:
+observer registration and teardown, simulated intersection entries, and
+`getBoundingClientRect`/`getClientRects` stubs. `IntersectionObserver` is also
+registered in the generic Web-host constructor table so compiled code sees the
+same host class at module instantiation. The host behavior is covered directly
+in Node and the compiled regression verifies the observer registration path.
+
+The same build-time environment now supplies React's stable-package selectors
+(`__VARIANT__` and `__EXPERIMENTAL__`) as `false`, and exposes the published
+ReactDOM `HTMLNodeType` constants to the original tests. These are Jest/build
+bindings, not package behavior; defining them prevents avoidable native
+oracle failures while keeping the stable, non-experimental test branch.
+
+## 2026-08-21 Jest utility-suite infrastructure checkpoint
+
+The Jest adapter now admits four additional original release-tag test files:
+`diff-sequences`, `jest-docblock`, `jest-diff`'s control-character utility, and
+`jest-config`'s `stringToBytes` utility. The verified 30.4.2 checkout therefore
+registers **234 callbacks across 12 files** (232/234 pass in the Node oracle),
+and all 12 generated modules compile and validate. The Wasm lane passes
+**113/232 native-compatible callbacks**; the other 119 remain scored failures,
+not unavailable tests. The remaining **3,054 registrations** are explicitly
+reported as unavailable infrastructure from the other 229 verified test files.
+
+The missing `node:os` builtin is now in the generic Node host dependency set.
+`jest-docblock`'s `detect-newline@3.1.0` CommonJS dependency is materialized
+from the installed, lockfile-pinned source as an ESM adapter with a version and
+source-hash check. A narrow namespace-import rewrite binds the static members
+used by the original tests; no callback body or expected result is rewritten.
+The two native snapshot cases remain harness-incompatible and the Wasm
+semantic failures remain visible in the scored report.
+
+## 2026-08-21 UUID common-suite CI checkpoint
+
+UUID's existing pinned v14.0.1 runner is now part of the shared
+`npm-small-upstream-suites.test.ts` package gate. The gate verifies the complete
+official ten-file inventory and, when `DOGFOOD_UUID_UPSTREAM_SUITE=1`, runs all
+**75/75 original callbacks** in both lanes: the Node oracle passes 75, all ten
+modules compile and validate, and Wasm scores **10 passed / 65 failed**. The
+failures remain visible compatibility findings (WebCrypto typed-array
+crossing, missing global `crypto`, UUID parsing/exception semantics, and the
+v3/v5 hash path); none are relabeled as unavailable infrastructure.
