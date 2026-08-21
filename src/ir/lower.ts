@@ -1901,7 +1901,7 @@ export function lowerIrFunctionBody<S, Slot>(
             `ir/lower: resolver cannot lower dyn.to_number (resolveDynamicLowering missing/null) (${func.name})`,
           );
         }
-        emitValue(instr.value, out);
+        emitValue(instr.value, out); // pushraw-ok(#4588): canonical backend ToNumber sequence follows
         for (const op of dyn.emitToNumber(dynamicScratch.toNumber)) emitter.pushRaw(out, op);
         return;
       }
