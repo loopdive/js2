@@ -361,6 +361,13 @@ const QUnit = {
 };
 `;
 
+// CommonJS package graphs can execute imported modules before the generated
+// entry module initializes a top-level `var global` alias. The Node platform
+// already provides the binding through codegen, so Node-oriented adapters must
+// omit this browser compatibility declaration rather than observing it as
+// undefined during module initialization.
+export const UPSTREAM_TEST_SHIM_NODE = UPSTREAM_TEST_SHIM.replace("var global = globalThis;\n", "");
+
 export const UPSTREAM_TEST_EXPORTS = String.raw`
 export function upstreamTestCount(): number { return __upstreamTests.length; }
 export function upstreamTestNames(): string[] {
