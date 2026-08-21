@@ -624,29 +624,64 @@ export function isGlobalObjectExpr(ctx: CodegenContext, fctx: FunctionContext, e
   return ts.isIdentifier(cur) && cur.text === "globalThis" && !ctx.moduleGlobals.has("globalThis");
 }
 
+/**
+ * The deleted member's NAME, for either spelling of a global-object member
+ * access — `this.x` and `this["x"]` name the same property (§13.5.1.2 runs
+ * ToPropertyKey on the computed form), so the `{ DontDelete }` answer must not
+ * depend on which one the source used.
+ *
+ * (#4491 T4) The element-access arm is the gap: `S12.2_A2` spells its checks
+ * `delete this["__variable"]`, which fell past a property-access-only guard to
+ * the generic member delete and answered `true` for a declared `var`. The
+ * identifier form of the same check (`delete __variable`) already answered
+ * `false` in the same file — one binding, two answers, decided by spelling.
+ * Only a STRING/no-substitution-template literal key qualifies; a computed key
+ * is not knowable here and keeps the runtime path.
+ */
+function unwrapTypeOnly(expr: ts.Expression): ts.Expression {
+  let cur = expr;
+  while (
+    ts.isParenthesizedExpression(cur) ||
+    ts.isAsExpression(cur) ||
+    ts.isNonNullExpression(cur) ||
+    ts.isTypeAssertionExpression(cur)
+  ) {
+    cur = cur.expression;
+  }
+  return cur;
+}
+
+function globalObjectDeletedMember(operand: ts.Expression): { name: string; receiver: ts.Expression } | undefined {
+  // `delete(this["k"])` — the Sputnik spelling — parses the operand as a
+  // ParenthesizedExpression, so an unwrapped test misses the very files this
+  // guard exists for.
+  const target = unwrapTypeOnly(operand);
+  if (ts.isPropertyAccessExpression(target)) {
+    if (ts.isPrivateIdentifier(target.name)) return undefined;
+    return { name: target.name.text, receiver: unwrapTypeOnly(target.expression) };
+  }
+  if (ts.isElementAccessExpression(target)) {
+    const key = unwrapTypeOnly(target.argumentExpression);
+    if (!ts.isStringLiteral(key) && !ts.isNoSubstitutionTemplateLiteral(key)) return undefined;
+    return { name: key.text, receiver: unwrapTypeOnly(target.expression) };
+  }
+  return undefined;
+}
+
 /** Whether a direct module-init member delete targets a script var/function. */
 export function isNonConfigurableGlobalObjectDelete(
   ctx: CodegenContext,
   fctx: FunctionContext,
   operand: ts.Expression,
 ): boolean {
-  if (!ts.isPropertyAccessExpression(operand) || fctx.name !== "__module_init" || ctx.sourceIsModule) return false;
-  let receiver: ts.Expression = operand.expression;
-  while (
-    ts.isParenthesizedExpression(receiver) ||
-    ts.isAsExpression(receiver) ||
-    ts.isNonNullExpression(receiver) ||
-    ts.isTypeAssertionExpression(receiver)
-  ) {
-    receiver = receiver.expression;
-  }
+  if (fctx.name !== "__module_init" || ctx.sourceIsModule) return false;
+  const member = globalObjectDeletedMember(operand);
+  if (member === undefined) return false;
+  const { name, receiver } = member;
   const isGlobalObject =
     receiver.kind === ts.SyntaxKind.ThisKeyword ||
     (ts.isIdentifier(receiver) && receiver.text === "globalThis" && !ctx.moduleGlobals.has("globalThis"));
-  return (
-    isGlobalObject &&
-    (ctx.globalObjectVarBindings?.has(operand.name.text) || ctx.topLevelFunctionNames.has(operand.name.text))
-  );
+  return isGlobalObject && (ctx.globalObjectVarBindings?.has(name) || ctx.topLevelFunctionNames.has(name));
 }
 
 /** Emit the known outcome for a direct delete of a script var/function property. */

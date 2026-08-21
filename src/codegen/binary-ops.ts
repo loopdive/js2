@@ -39,6 +39,14 @@ import { tryStaticToNumber } from "./expressions/misc.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { admitsObjectRelational, reduceRelationalOperandsToPrimitive } from "./relational-to-primitive.js";
+// (#4491 T4) §13.15.3 `+` over object operands.
+import {
+  addOperandCallableSourceText,
+  admitsObjectAdd,
+  emitAddOrdinaryToPrimitiveResidue,
+} from "./add-to-primitive.js";
+import { addStringConstantGlobal } from "./registry/imports.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringImports, addUnionImports, resolveWasmType } from "./index.js";
 import { isI32CompatibleOperand, nativeTypeOfExpression } from "./native-type-annotations.js";
 import type { InnerResult } from "./shared.js";
@@ -803,18 +811,28 @@ export function compileBinaryExpression(
     if (flatResult !== null) return flatResult;
   }
 
+  // Regular binary ops: evaluate both sides
+  const leftTsType = ctx.checker.getTypeAtLocation(expr.left);
+  const rightTsType = ctx.checker.getTypeAtLocation(expr.right);
+
   // ── Constant folding: emit a single constant when both operands are compile-time known ──
   {
-    const folded = tryStaticToNumber(ctx, expr);
+    // (#4491 T4) …but NEVER for a `+` whose operands the §13.15.3 object arm
+    // owns. `tryStaticToNumber` is a **ToNumber** folder: it answers `NaN` for
+    // an object literal, which is right for `+{}` / `Number({})` and wrong for
+    // `{} + {}` — that is `"[object Object][object Object]"`, a STRING. The
+    // folder runs before any of the operand analysis below, so the literal-vs-
+    // literal spelling was decided here while the identical `var a={},b={}; a+b`
+    // reached the correct runtime dispatch: one expression, two answers.
+    // Gated exactly like `admitsObjectAdd` (standalone, native strings), so the
+    // js-host/gc lane keeps folding byte-for-byte and stays the regression guard.
+    const objectAddOwned = op === ts.SyntaxKind.PlusToken && admitsObjectAdd(ctx, leftTsType, rightTsType);
+    const folded = objectAddOwned ? undefined : tryStaticToNumber(ctx, expr);
     if (folded !== undefined) {
       fctx.body.push({ op: "f64.const", value: folded });
       return { kind: "f64" };
     }
   }
-
-  // Regular binary ops: evaluate both sides
-  const leftTsType = ctx.checker.getTypeAtLocation(expr.left);
-  const rightTsType = ctx.checker.getTypeAtLocation(expr.right);
   const isEqualityOp =
     op === ts.SyntaxKind.EqualsEqualsToken ||
     op === ts.SyntaxKind.ExclamationEqualsToken ||
@@ -1647,6 +1665,17 @@ export function compileBinaryExpression(
     }
   }
 
+  // (#4491 T4) …and the OBJECT arm of the same §13.15.3 dispatch. `emitAnyAdd`
+  // is already ToPrimitive-correct; it was simply unreachable for an operand
+  // whose static type is a real object type (`Date`, a function, `{}`), which
+  // then fell through to the f64 lowering below and unboxed to NaN. Gated
+  // exactly like the relational OBJECT arm just below — standalone only, native
+  // strings required — so the js-host lane is byte-identical. See
+  // add-to-primitive.ts.
+  if (op === ts.SyntaxKind.PlusToken && admitsObjectAdd(ctx, leftTsType, rightTsType)) {
+    return emitAnyAdd(ctx, fctx, expr);
+  }
+
   // (#2059) Relational where an operand is statically `any`/`unknown`: §7.2.13
   // compares two strings lexicographically, but the numeric paths below
   // ToNumber both sides, so `("a" as any) < ("b" as any)` yielded `false`.
@@ -2263,6 +2292,20 @@ function emitAddOperand(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Exp
   ) {
     inner = (inner as ts.ParenthesizedExpression | ts.AsExpression | ts.NonNullExpression).expression;
   }
+  // (#4491 T4) §20.2.3.5 step 1 — a top-level function operand reduces to its
+  // captured SOURCE TEXT, the same string `fn.toString()` already returns
+  // (#1463). Materialize it here so the two spellings agree; without this the
+  // runtime residue fallback answers step 3's NativeFunction placeholder and
+  // `f1 + 1 === f1.toString() + 1` is false. See add-to-primitive.ts for the
+  // four guards that keep the fold honest.
+  const callableSource = addOperandCallableSourceText(ctx, fctx, inner);
+  if (callableSource !== undefined) {
+    addStringConstantGlobal(ctx, callableSource);
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, callableSource));
+    const srcTmp = allocTempLocal(fctx, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: srcTmp });
+    return srcTmp;
+  }
   let structName = noJsHost ? resolveStructNameForExpr(ctx, fctx, inner) : undefined;
   if (noJsHost && structName === undefined && ts.isIdentifier(inner)) {
     const localIdx = fctx.localMap.get(inner.text);
@@ -2480,6 +2523,14 @@ export function emitAnyAddFromExternTemps(
         fctx.body.push({ op: "ref.null.extern" });
         fctx.body.push({ op: "call", funcIdx: toPrimIdx });
         fctx.body.push({ op: "local.set", index: rPrim });
+        // (#4491 T4) §7.1.1.1 step 6 — `__to_primitive`'s non-`$Object` tail
+        // hands a function closure / `Date` struct back UNCHANGED, which the
+        // string-vs-numeric test below then unboxes to NaN. Finish the
+        // reduction with the ordinary valueOf→toString probe the spec mandates.
+        if (finalToStr !== undefined) {
+          emitAddOrdinaryToPrimitiveResidue(ctx, fctx, lPrim, finalToStr);
+          emitAddOrdinaryToPrimitiveResidue(ctx, fctx, rPrim, finalToStr);
+        }
       } else {
         // Degrade: no ToPrimitive available — carry the raw operands through.
         fctx.body.push({ op: "local.get", index: lTmp });

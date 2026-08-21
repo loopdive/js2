@@ -2896,3 +2896,240 @@ nor harms it.
 Three of the four target rows now pass (`S13.2_A2_T1`, `S13.2_A2_T2`,
 `S13_A11_T4`); `S13.2.2_A5_T1` was already passing at the base. `S13_A2_T2`
 remains the one open row, on the dynamic-`+` head recorded above.
+
+## Wave-5 lane T4 — slice T4-A: §13.15.3 `+` never reduced an OBJECT operand (2026-08-21)
+
+Base for every number below: `0e71b59ed3`, measured in this worktree with
+`runTest262File(..., "standalone")` on the 31-row `.tmp/wave5-T4.txt` set.
+**T4 baseline on that head: 2/31 pass** — `10.4.3-1-64-s.js` and
+`10.4.3-1-65-s.js` were already green and are NOT counted as flips.
+
+### What was wrong
+
+`emitAnyAdd` (binary-ops.ts) is a fully spec-shaped §13.15.3: it reduces both
+operands with `__to_primitive` (default hint) and only then chooses
+concat-vs-numeric. Its gate admitted an operand **only when the static type is
+`any`/`unknown`**. Every operand with a real object type — a `Date`, a function,
+an object literal — missed it and fell through to the f64 numeric lowering,
+where an object unboxes to NaN. This is half (b) of the relational defect
+already written down in `relational-to-primitive.ts`, in the operator that file
+explicitly says was fine ("`f + ""` produced the correct string all along").
+That sentence is true and misleading: it holds only because a statically-STRING
+operand is caught by an earlier `isStringType` gate, so the spelling one reaches
+for when checking is the one spelling that never reaches the broken path.
+
+Three independent defects stacked behind that gate, each invisible until the one
+above it was fixed:
+
+| # | defect | evidence |
+| - | --- | --- |
+| 1 | object-typed operand never reached `emitAnyAdd` | `f1 + 1` → NaN; `{} + f1` → NaN |
+| 2 | `tryStaticToNumber` folded `{} + {}` to `NaN` **before** any operand analysis | `{} + {}` → NaN while `var a={},b={}; a+b` → `"[object Object][object Object]"` — one expression, two answers |
+| 3 | `__to_primitive`'s non-`$Object` tail returns a closure / `Date` struct UNCHANGED | `f1 + f1` → NaN after #1 was fixed |
+
+Defect 2 is the one worth naming: the folder is a **ToNumber** folder, and
+`NaN` is its right answer for `+{}` / `Number({})`. Reusing it for binary `+`
+silently answered a different question, and only the literal-vs-variable
+spelling difference exposed it.
+
+### Change
+
+New module `src/codegen/add-to-primitive.ts` (all new bodies; `binary-ops.ts`
+gets dispatch wiring only):
+
+- `admitsObjectAdd(ctx, left, right)` — the operand gate, deliberately the same
+  predicate as `admitsObjectRelational` (`isObjectOperandType` is now exported
+  from `relational-to-primitive.ts` rather than forked) and the same target gate:
+  `semanticProviders === "native-first"` + native strings. The js-host/gc lane is
+  byte-identical and remains the regression guard, exactly as #1374's 14
+  runtime_error regressions require.
+- `emitAddOrdinaryToPrimitiveResidue(...)` — §7.1.1.1 steps 2-5 run against a
+  ToPrimitive result that is STILL an object: `valueOf` then `toString` via
+  `__extern_get` + the accessor-get driver, accepting only a primitive, falling
+  back to the runtime ToString. Scoped to the `+` dispatch, **not** to
+  `__to_primitive` itself: that tail's "return unchanged" answer is load-bearing
+  for shapes which early-out above it, and the file records two
+  action-at-a-distance regressions (boxed-boolean, native error) caused by
+  exactly that kind of widening.
+- `addOperandCallableSourceText(...)` — §20.2.3.5 step 1. `f1 + 1` must equal
+  `f1.toString() + 1`, and `f1.toString()` is already served from
+  `ctx.funcSourceText` (#1463). The `+` operand asks the SAME map by the SAME
+  key so the two spellings cannot disagree. Four guards: not a local (#3364
+  shadowing), never assigned (`identifierIsWrittenTo`), no `f.valueOf=` /
+  `f.toString=` / computed-member assignment anywhere in the file, and a call
+  signature per `ctx.oracle.signatureOf`.
+- the constant fold is skipped when `admitsObjectAdd` owns the `+` (defect 2).
+
+### Measured
+
+| row | base | after |
+| --- | --- | --- |
+| `language/expressions/addition/S11.6.1_A2.2_T3.js` | FAIL (`f1 + 1` → NaN) | **PASS** |
+| `language/expressions/addition/S11.6.1_A3.2_T1.2.js` | FAIL (`({} + fn)` → NaN) | **PASS** |
+| `language/expressions/addition/S11.6.1_A2.2_T2.js` | FAIL (NaN) | FAIL — now `"[object Object][object Object]"`, see below |
+
+Control: 70 passing neighbours (`language/expressions/{addition,subtraction,
+multiplication,relational,equality,typeof,template,comparison}`,
+`built-ins/Date/prototype/{toString,toDateString,valueOf,getTime}`,
+`built-ins/String/prototype/concat`), **66/70 base, 66/70 after — identical
+set**. The 4 non-passing rows were verified failing on base by file-copy A/B
+(3× `prop-desc` "descriptor should be configurable", 1× a template-literal
+legacy-octal negative test); none is addition-related.
+
+### Left open, with the reason
+
+`S11.6.1_A2.2_T2` (`new Date(0) + new Date(0)`) is now correctly reduced to a
+STRING and correctly concatenated — it fails only because that string is
+`"[object Object]"`. A standalone `Date` is the nominal `__Date` struct, so it
+reaches `__any_to_string`'s generic terminal, which has no Date arm. The
+statically-resolved `d.toString()` is right (`builtins.ts` folds it to
+`__date_format_string(ts, 2)`); every DYNAMIC spelling — `String(d)`, `"" + d`,
+`d + d`, a template substitution — answers `"[object Object]"`. That is one
+value with two renderings and it is not an addition defect; the fix belongs in
+`__any_to_string`'s terminal, alongside the `__error_to_string` arm. Closed as
+slice T4-B, below.
+
+## Wave-5 lane T4 — slice T4-B: a DYNAMIC Date rendered as `[object Object]` (2026-08-21)
+
+Same base `0e71b59ed3`, on top of slice T4-A.
+
+### What was wrong
+
+A standalone `Date` is the nominal `__Date` struct (one i64 `[[DateValue]]`
+field). It is not a `$Object`, not a `$__vec_base`, and it contributes no
+`__call_toString` dispatcher arm, so it fell through every arm of
+`__any_to_string` to the canonical `"[object Object]"` terminal. Measured on
+`new Date(0)`, standalone:
+
+| spelling | base | after |
+| --- | --- | --- |
+| `d.toString()` | `Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)` | unchanged |
+| `String(d)` | `[object Object]` | `Thu Jan 01 1970 …` |
+| `"" + d` | `[object Object]` | `Thu Jan 01 1970 …` |
+| `d + d` | `[object Object][object Object]` | two date strings |
+
+The static call was right all along — `builtins.ts` folds `d.toString()` to
+`__date_format_string(ts, 2)`. Every DYNAMIC spelling reached a different
+terminal that had never heard of Dates. The failure is easy to miss precisely
+because the spelling one reaches for when checking (`d.toString()`) is the
+correct one.
+
+### Change
+
+New module `src/codegen/date-any-to-string.ts` mints
+`__date_any_to_string(anyref) -> ref $AnyString`: cast to `__Date`, read
+`[[DateValue]]`, render the Invalid-Date sentinel (i64 MIN) as the literal
+`"Invalid Date"` (§21.4.4.41.4 step 3), else call **the same**
+`__date_format_string(ts, mode 2)` the static path uses — so the two spellings
+cannot drift. `native-strings.ts` gets wiring only: a `ref.test __Date` arm
+wrapped around the existing `objectOrErrorTag`, on the identical
+factory-`loadRef` discipline the error arm uses (#1448 — an aliased `Instr`
+array double-shifts funcIdx when post-codegen passes walk the tree).
+
+`ensureDateFormatStringHelper` is now exported from `expressions/builtins.ts`.
+It is called BEFORE `__any_to_string`'s own index is baked, the same ordering
+rule the neighbouring `ensureErrorToStringHelper` call documents: it only
+APPENDS defined functions, so nothing already emitted shifts.
+
+**Demand gate:** `ctx.structMap.get("__Date") === undefined` ⇒ the module never
+constructed a Date ⇒ nothing is minted and the terminal is byte-identical. That
+gate is exact rather than heuristic — the struct type is registered by
+`ensureDateStruct`, which only a real Date construction or Date method call
+reaches.
+
+### Measured
+
+`language/expressions/addition/S11.6.1_A2.2_T2.js` FAIL → **PASS** (T4 rows now
+3/3 on the addition bucket).
+
+Control: 79 passing neighbours weighted toward the shared terminal this touches
+— 25 `built-ins/Date/**`, 12 `built-ins/{Error,TypeError,RangeError}/**`,
+10 `built-ins/Array/prototype/{join,toString}/**`, 12 `built-ins/String/**`,
+10 `built-ins/JSON/stringify/**`, 10 `language/expressions/template-literal/**`.
+**75/79 base, 75/79 after — identical set.** The 4 non-passing rows were
+verified failing on base by file-copy A/B (3× `prop-desc` "descriptor should be
+configurable", 1× the template-literal legacy-octal negative test); none is
+ToString-related.
+
+## Wave-5 lane T4 — slice T4-C: a `var`-declared script global had no BINDING (2026-08-21)
+
+Same base `0e71b59ed3`, on top of T4-A/T4-B.
+
+### What was wrong — one binding, three spellings, three answers
+
+§9.1.1.4.17 CreateGlobalVarBinding was never implemented. Its FUNCTION sibling
+(§9.1.1.4.18) landed in #4394, so GlobalDeclarationInstantiation was half done,
+and the `this.x` / `this["x"]` pair had been fixed in the read direction only.
+Measured on this head for `var __variable`:
+
+| probe | base | spec |
+| --- | --- | --- |
+| `__variable` (bare read) | works | works |
+| `this["__variable"]` (read) | works (#4491 bracket read arm) | works |
+| `this["__variable"] = v` (write) | lands on the realm OBJECT, invisible to every read | writes the binding |
+| `delete __variable` | `false` | `false` |
+| `delete this["__variable"]` | **`true`** | `false` |
+| `for (var p in this)` | lists top-level FUNCTIONS only | lists vars too |
+
+Each row is the same binding asked a different way. The write one is the worst
+shape: `this['x'] = "baloon"` succeeded, and then **nothing could read it back**
+— not `this['x']`, not the bare identifier — because the read had already been
+moved to the module global while the write had not. That is the exact hazard
+#4500 Slice A documents in the opposite direction, and it says why: a half-fixed
+read/write pair is worse than neither half.
+
+### Change
+
+Three small pieces, two of them new modules:
+
+1. `global-environment.ts` — `isNonConfigurableGlobalObjectDelete` accepts the
+   ELEMENT-access spelling (string-literal key) as well as the dot form, and
+   unwraps parens on the operand. `S12.2_A2` spells its checks
+   `delete(this["__variable"])`, so the operand is a `ParenthesizedExpression`
+   and an unwrapped test misses the very files the guard exists for.
+2. `src/codegen/realm-global-element-write.ts` (new) —
+   `tryEmitRealmGlobalElementWrite`, the bracket twin of #4500 Slice A's dot
+   write. Only a compile-time-resolvable key, only a proven realm-global
+   receiver, only a name that already has a wasm module global; anything else
+   declines byte-identically. `compileElementAssignment` gets 4 lines of
+   dispatch wiring.
+3. `src/codegen/global-var-bindings.ts` (new) — `emitScriptGlobalVarBindings`,
+   §9.1.1.4.17, modelled directly on `global-function-bindings.ts` and emitted
+   right after it at the top of `__module_init`. Attributes
+   `{writable:true, enumerable:true, configurable:false}`; value `undefined`,
+   which is what GDI initialises a var binding to.
+
+   The "already present" test is a **runtime** `__hasOwnProperty` consult, not a
+   skip-list: the realm object is pre-seeded with builtins (`NaN`, `Infinity`,
+   `undefined`, `globalThis`, the §19.2 functions, the namespace objects) whose
+   attributes differ, and `var NaN;` must not redefine them. A hardcoded list
+   would have to track every future seed; the spec's own test cannot go stale.
+   Names that are also top-level function declarations are skipped at compile
+   time — the function binding is the one GDI initialises.
+
+### Measured
+
+| row | base | after |
+| --- | --- | --- |
+| `language/statements/variable/S12.2_A2.js` | FAIL (`delete this["v"]` → true) | **PASS** |
+| `language/statements/variable/S12.2_A11.js` | FAIL (write invisible to reads) | **PASS** |
+| `language/statements/variable/S12.2_A9.js` | FAIL (for-in skipped the var) | **PASS** |
+
+Control: 101 passing neighbours chosen for what this touches — 15
+`language/statements/for-in`, 14 `built-ins/Object/{keys,getOwnPropertyNames,
+getOwnPropertyDescriptor}`, 12 `language/global-code` (+annexB), 12
+`language/statements/variable`, 12 `language/expressions/assignment`, 12
+`language/statements/function`, 12 `language/eval-code`, 12
+`language/{identifiers,block-scope}`. **99/101 base, 99/101 after — identical
+set**; the 2 non-passing rows (`language/global-code/export.js`,
+`language/statements/function/invalid-function-body-2.js`, both negative
+"should not be evaluated" tests) were verified failing on base by file-copy A/B.
+
+### Known residual, stated rather than hidden
+
+`Object.getOwnPropertyDescriptor(this, "v").value` reports the initial
+`undefined`, not the live value: the realm property is a BINDING record while
+the wasm module global is the VALUE. Every read spelling resolves to the module
+global, so nothing observes the stale slot except a descriptor read. Closing it
+means making the two one cell — a representation change, not a seeding change,
+and out of scope here.

@@ -4,6 +4,7 @@
  */
 import { ts, forEachChild } from "../../ts-api.js";
 import { receiverIsRealmGlobalObject } from "../helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver
+import { tryEmitRealmGlobalElementWrite } from "../realm-global-element-write.js"; // (#4491 T4) its bracket twin
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import { integrityVarKey } from "../widened-var-key.js";
 import { PROP_FLAG_ACCESSOR, PROP_FLAG_WRITABLE } from "../object-ops.js";
@@ -4791,6 +4792,10 @@ function compileElementAssignment(
     }
   }
 
+  // (#4491 T4) Bracket twin of the #4500 Slice A dot arm; placed like it — after
+  // the runtime-state checks, before the struct lowerings. See its module.
+  const realmGlobalElemWrite = tryEmitRealmGlobalElementWrite(ctx, fctx, target, value);
+  if (realmGlobalElemWrite !== undefined) return realmGlobalElemWrite;
   // #1886 Slice B: linear-backed Uint8Array write `buf[i] = v` →
   // i32.store8(ptr+i, trunc(v)). Only fires for a registered linear-safe
   // buffer; any other target falls through to the GC element-assign path.
