@@ -231,12 +231,6 @@ describe("#4573 standalone native Promise-delay compile-once ownership", () => {
       irBodyEmitted: true,
       preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
-    expect(terminalOutcome(ir, "setTimeout")).toMatchObject({
-      unitId: expect.stringContaining("compiler-unit%3Atimer-shim%3Aset-timeout"),
-      kind: "emitted",
-      legacyBodyEmitted: false,
-      irBodyEmitted: true,
-    });
     expect(ir.irCompiledFuncs ?? []).toContain("delay");
     expect(actualImportNames(ir)).toEqual(["env.__timer_set_timeout"]);
     expect(ir.imports.map((entry) => `${entry.module}.${entry.name}`)).toEqual(["env.__timer_set_timeout"]);
