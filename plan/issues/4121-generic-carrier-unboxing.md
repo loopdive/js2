@@ -737,6 +737,61 @@ slice's, the baseline was NOT refreshed here, and it wants its own issue.
 - **AC 6 — achieved.** Full-capture equivalence run + kill-switch A/B; see the
   PR body for the run output.
 
+## Implementation Plan — slice 2: interprocedural definition/use proofs (Fable, 2026-08-21)
+
+Slice 1 (PR #4695) made the admission gate see `parseCookie`'s `index`; both
+existing proofs then declined it. This slice closes the two measured decline
+arms, reusing machinery that already exists rather than adding a fifth pass.
+
+**Verified anchors (2026-08-21):**
+`inferBindingAwareNumericReturnTypes` (`src/codegen/declarations/param-return-inference.ts:1142`)
+already computes a grounded least-fixpoint `Map<string, ValType>` of
+proven-numeric RETURN carriers (the #4121 2026-08-09 "residual return-carrier
+checkpoint", kill switch `JS2WASM_NUMERIC_RETURNS`, wired at
+`src/codegen/index.ts:4651`/`:7886`, consumed at `declarations.ts:588`).
+Route 2 (definition-site, #3765) does NOT consult it: a definition that is a
+direct call (`i = endIndex(str, index, len)`) contributes no numeric
+evidence when the callee's own params are unresolvable — exactly slice 1's
+measured decline.
+
+**Step 1 — route-2 call-definition arm.** In the route-2 definition prover
+(`numeric-property-analysis.ts`), a definition whose value is a direct call
+to a binding present in `ctx.bindingAwareNumericReturnTypes` with an f64 (or
+i32-boolean-branded — but see the boolean trap below) carrier is proven
+numeric. Groundedness is inherited: the return map is itself a grounded
+least fixpoint that declines ungrounded recursion, so this cannot launder a
+cycle. Kill switch: fold under `JS2WASM_NUMERIC_RETURNS` (the fact source)
+plus the slice-1 admission switch; no new env var.
+
+**Step 2 — route-1 argument-use arm.** Route 1 (use-site, #684) bails when
+the local is passed as an ARGUMENT (`endIndex(str, index, len)`,
+`str.slice(index)`). Two sub-cases, in order of safety:
+(a) the callee's corresponding param is itself proven-numeric via the
+callsite-param inference (#2803's `inferBindingAware…` param twin in
+`param-return-inference.ts`) — then an f64 argument is representation-exact,
+no boxing needed; (b) otherwise the use is ToNumber-neutral only if a box is
+emitted at the call frontier — which the "box only at the frontier" rule
+already sanctions. Implement (a); for (b) only count the use as
+non-blocking when the existing frontier-boxing path provably fires (measure
+first; if the plumbing is absent, record it and leave (b) declined).
+
+**Step 3 — prove.** (i) The reduced case
+`var i = s.indexOf(";"); i = i + 1;` (table row 4 — the case slice 1 left
+red) emits an f64 slot with zero box/unbox in the loop; pin as a WAT test
+next to slice 1's. (ii) `parseCookie`'s `index` specifically: report
+claimed→proven with the box-site census delta by carrier (the 13 local-carrier
+sites are the target). (iii) Full-capture equivalence A/B by test id across
+the kill switch — the "What must still decline" list is unchanged and
+load-bearing; booleans stay OUT of the step-1 arm (an i32-branded return
+assigned into a numeric local is exactly the `${b}` → `1` trap — decline
+mixed boolean/number, as the return-map's own prover already does).
+(iv) The pinned cookie runtime-dynamic A/B per the 2026-08-09 methodology,
+switch-off control, checksum equality; report honestly including a null
+result.
+
+**Out of scope:** the IR lattice pass (still blocked on coverage — the
+pre-flight table in slice 1 stands), new carrier kinds, peephole.
+
 ## Relationship to adjacent work
 
 - **#4118 / PR #4062** specializes named hot paths (`indexOf`, `find`, counted
