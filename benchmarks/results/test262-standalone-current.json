@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-21T01:40:01.998Z",
-  "baseline_generated_at": "2026-08-21T01:40:01.998Z",
-  "baseline_sha": "f6ebb57eeabc9b6beaec91a51de46cd4b38ea2b3",
+  "timestamp": "2026-08-21T07:01:21.981Z",
+  "baseline_generated_at": "2026-08-21T07:01:21.981Z",
+  "baseline_sha": "ff99f2e739c8410a58097d69678f27cb6215fd67",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -1294,16 +1294,16 @@
         "sample_files": [
           "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
-          "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
+          "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
+          "test/built-ins/Temporal/Duration/prototype/round/subclassing-ignored.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::CSSNumericValue_equals (##)",
           "host_import_leak:standalone target emitted host imports: env::CSSNumericValue_equals, env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
           "host_import_leak:standalone target emitted host imports: env::CSSNumericValue_equals, env::__temporal_plain_date_from_string_field (##)",
-          "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_from_string_field (##)",
-          "other:ReferenceError: Temporal is not defined"
+          "other:ReferenceError: Temporal is not defined",
+          "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_from_string_field (##)"
         ]
       },
       {
@@ -1338,7 +1338,7 @@
           "test/built-ins/AsyncDisposableStack/prototype/move/sets-state-to-disposed.js",
           "test/built-ins/AsyncDisposableStack/instance-extensible.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
-          "test/built-ins/AsyncDisposableStack/prototype/Symbol.toStringTag.js"
+          "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.dispose-property-not-callable.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_new (##)",
@@ -1466,15 +1466,15 @@
         "sample_files": [
           "test/built-ins/JSON/stringify/value-tojson-object-circular.js",
           "test/built-ins/JSON/parse/text-object.js",
-          "test/built-ins/JSON/parse/reviver-object-define-prop-err.js",
           "test/built-ins/JSON/stringify/replacer-function-result-undefined.js",
+          "test/built-ins/JSON/parse/reviver-object-define-prop-err.js",
           "test/built-ins/JSON/parse/reviver-wrapper.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "other:L#:## Codegen error: JSON.parse of this value is not yet supported by the native JSON provider (##). Pure-Wasm JSON.stringify of null/undefined/boolean works standalone; numbers, objects, arrays, strings, and JSON.parse require the Phase # ",
-          "assertion_fail:Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: Expected SameValue(«\"#\"», «undefined») to be true",
+          "assertion_fail:Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: [[Set]] should not be called."
         ]
       },
@@ -1569,7 +1569,7 @@
           "other:L#:## Codegen error: standalone RegExp engine does not support String.prototype.match with dynamic RegExp flags (## Phase 2a). Use a supported pattern/flag set, or recompile with a JS host target.; L#:## Codegen error: standalone RegExp eng",
           "host_import_leak:standalone target emitted host imports: env::Object_set_constructor (##)",
           "assertion_fail:Test262Error: Expected SameValue(«#», «#») to be true",
-          "other:L#:## Codegen error: standalone RegExp engine does not support @@replace with a function (or non-string) replacer (## follow-up) (## Phase 2a). Use a supported pattern/flag set, or recompile with a JS host target."
+          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
         ]
       },
       {
@@ -2035,15 +2035,15 @@
         },
         "sample_files": [
           "test/built-ins/TypedArrayConstructors/internals/Set/BigInt/null-tobigint.js",
-          "test/built-ins/TypedArrayConstructors/from/invoked-as-func.js",
           "test/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/detached-buffer.js",
+          "test/built-ins/TypedArrayConstructors/from/invoked-as-func.js",
           "test/built-ins/TypedArrayConstructors/from/source-value-is-symbol-throws.js",
           "test/built-ins/TypedArrayConstructors/of/invoked-as-func.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with BigInt64Array and makeArray.)",
-          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)",
           "null_deref:dereferencing a null pointer [in __closure_134() ← testWithAllTypedArrayConstructors ← __fn_tramp_testWithAllTypedArrayConstructors_cached ← __call_fn_method_4]",
+          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)",
           "assertion_fail:Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)",
           "assertion_fail:Test262Error: Expected SameValue(«#», «#») to be true (Testing with Float64Array and makeArray.)"
         ]
@@ -2894,27 +2894,27 @@
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 50,
           "type_error": 2,
+          "assertion_fail": 50,
           "other": 9,
           "illegal_cast": 1,
           "null_deref": 2
         },
         "by_edition": {
-          "ES2027": 13,
           "ES5": 32,
+          "ES2027": 13,
           "ES2015": 21
         },
         "sample_files": [
-          "test/language/statements/using/syntax/using-invalid-assignment-statement-body-for-of.js",
           "test/language/statements/function/13.2-18-1.js",
+          "test/language/statements/using/syntax/using-invalid-assignment-statement-body-for-of.js",
           "test/language/comments/S7.4_A5.js",
           "test/language/statements/await-using/syntax/await-using-allowed-at-top-level-of-module.js",
           "test/language/statements/function/S13.2.2_A15_T2.js"
         ],
         "sample_signatures": [
-          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "type_error:TypeError: Cannot destructure 'null' or 'undefined'",
+          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "compile_timeout:timeout (10s)",
           "other:L#:## 'await using' declarations are not allowed at the top level of scripts",
           "assertion_fail:Test262Error: ##: obj.prop === \"A\". Actual: obj.prop ===null"
