@@ -924,7 +924,7 @@ Site definition: one boxing operation = one smi fast-path
 the absolute counts are not comparable with the 19/13 reported there; the
 before/after DELTA is measured with the identical scanner on both legs.
 
-| carrier | before (`origin/main` `3c976394a`) | after | delta |
+| carrier | before (base `3c976394a`) | after | delta |
 | ------- | ---------------------------------: | ----: | ----: |
 | local | 12 | 12 | +0 |
 | argument | 4 | 4 | +0 |
@@ -944,7 +944,7 @@ over `{cookie.js, __npm-compat-benchmark.mjs}`, `target: standalone`,
 
 | leg | bytes | imports | checksum (120,000 @ 3751) | SHA-256 |
 | --- | ----: | ------: | ------------------------: | ------- |
-| `origin/main` `3c976394a` (sources reverted in place) | 57,467 | 0 | 120,000 | `517a92ee758042df832249c860b31214d62cd1c94393798498a59eb24807cf05` |
+| base `3c976394a` (the four changed files reverted in place) | 57,467 | 0 | 120,000 | `517a92ee758042df832249c860b31214d62cd1c94393798498a59eb24807cf05` |
 | this slice, default-on | 57,467 | 0 | 120,000 | `517a92ee758042df832249c860b31214d62cd1c94393798498a59eb24807cf05` |
 | this slice, `JS2WASM_NUMERIC_ADMISSION=0` | 57,467 | 0 | 120,000 | `517a92ee758042df832249c860b31214d62cd1c94393798498a59eb24807cf05` |
 | this slice, `JS2WASM_NUMERIC_RETURNS=0` | 57,840 | 0 | 120,000 | `387b4920c8cb8b5015517d283d574dc5979237e059a077952f85f62dcd1eb805` |
@@ -960,6 +960,33 @@ no-op in general.)
 The single-source cookie compile is byte-identical too
 (175,932 bytes, `d29b00d6ef83925279bf46f2b99958ca92da4379eefa966f2ac570ede37526c0`
 before and after), as is `axes-core` (140,867 bytes).
+
+### Equivalence: full capture, A/B by test id (AC 6)
+
+Both legs captured their failing/passing sets per test id (`PARTIAL_OUT`), 8
+shards each — a single unsharded run is still OOM-killed on this
+4-core/16 GB container and exits 2 with "vitest produced no JSON report",
+which is not a pass (slice 1's method note, re-confirmed). All 16 shards
+reported "No new equivalence regressions".
+
+```
+slice ON : 24 failing / 1661 passing
+slice OFF: 24 failing / 1661 passing        (JS2WASM_NUMERIC_ADMISSION=0)
+baseline known failures: 36
+
+failing ONLY with the slice ON  (regressions caused by this slice): 0
+failing ONLY with the slice OFF (fixed by this slice):              0
+failing (ON) and NOT in baseline:                                   0
+
+VERDICT: failing sets IDENTICAL across the kill switch; all 24 baselined.
+```
+
+**12 baseline entries now PASS and were NOT ratcheted here** — the baseline is
+stale relative to current `main`, not to this slice (each passes with the
+switch on AND off): `issue-1197` (1), `math-pow-test262-pattern` (1),
+`spec/coercion-arithmetic-add` (8), `symbol-basic` (2). Slice 1 saw one of
+these; the set has grown as `main` advanced. Ratcheting them belongs to
+whoever owns the baseline, not to a perf slice.
 
 ### Two pre-existing divergences found while writing the negative tests
 
