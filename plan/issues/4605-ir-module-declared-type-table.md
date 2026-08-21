@@ -20,7 +20,7 @@ origin: "#4603 finding 1 (PR #4704): call/global.* type rules could only be intr
 # open-PR scan at reservation: open PRs 4703/4707 introduce no issue file
 # with an id near 4605; the assignment book's prior reservation was #4603.
 # Note: "#4605" also appears in old prose as a PULL REQUEST number (ids and
-# PR numbers share one sequence); no plan/issues/4605-*.md exists on main.
+# PR numbers share one sequence); no issue FILE with id 4605 exists on main.
 ---
 
 # #4605 — module-level declared-type table for the IR verifier
