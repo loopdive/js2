@@ -3,7 +3,7 @@ id: 3995
 title: "npm-compat: pin and adapt original upstream test suites for catalog packages"
 status: ready
 created: 2026-07-30
-updated: 2026-08-20
+updated: 2026-08-21
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -598,3 +598,21 @@ The long landing-four-lane CI probe in this work was changed to await its
 child process instead of blocking Vitest's worker heartbeat; the focused core
 probe passes locally. Keep this CI plumbing in PR #4660 and treat the Lit
 compiler gaps in #3977/#3978/#3979/#3980 as the next independent work item.
+
+## 2026-08-21 shared matcher infrastructure checkpoint
+
+The shared upstream assertion shim now implements Vitest's `instanceOf` and
+`toBeInstanceOf` aliases in both positive and negated form, plus the positive
+`toBeCalled` and `toHaveBeenCalled` spy aliases. These are generic runner
+features, covered by `upstream-suite-runner.test.ts`; they are not Hono-specific
+rewrites. Before this change Hono's `utils/body.test.ts` was incorrectly
+classified as harness-incompatible because the native oracle could not call
+`expect(value).not.instanceOf(...)`.
+
+Rerunning the unchanged 16-file Hono selection after the shim fix produced
+**297/297 native callbacks** (previously 296/297 with one harness error), all
+16 modules compiled, 15 validated, and **86/297 Wasm callbacks passed**. The
+remaining 211 Wasm failures and six module-init runtime failures are compiler
+or runtime semantics; they are now scored rather than hidden as unavailable
+infrastructure. The full 120-file inventory and 2,058 deferred registrations
+remain explicit in the report.
