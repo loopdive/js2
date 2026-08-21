@@ -4663,60 +4663,54 @@ export function compilePropertyIntrospection(
       fctx.body.push({ op: "i32.const", value: 1 });
       return { kind: "i32", boolean: true };
     }
+    // (#4491 wave-5 T2) A canonical INDEX key on a REFERENCE-element vec.
+    //
+    // #2746 answered this statically: `present := index < length && data[index]
+    // != null`, OR-ed with the native predicate to catch sidecar additions. The
+    // bounds half rests on "a hole is a distinguishable `ref.null`", and that is
+    // no longer true — `delete arr[0]` records the hole by flagging the #3251
+    // COMPANION entry and leaves the vec slot alone, so the static half read
+    // `present = 1` and the OR made it unconditionally true. Measured:
+    //
+    //   var a = ["x", "y"]; delete a[0];
+    //   a.hasOwnProperty("0")   // true — while `0 in a`, `for…in`,
+    //                           // getOwnPropertyNames and gOPD all said absent
+    //
+    // The native predicate alone is now correct in every direction (its #4010
+    // S3 vec prologue consults `__vec_gopd` then the bag). Verified through an
+    // opaque receiver, which forces exactly that path: present index true,
+    // out-of-bounds false, deleted index false, `Object.defineProperty`-added
+    // index true, numeric-element arrays likewise. So the static bounds
+    // computation is dropped rather than patched — it can only re-derive what
+    // the predicate already knows, and this is the second way it has been
+    // wrong. NUMERIC-element vecs are untouched: they keep the
+    // `provesDenseLiteralOwnIndex` constant fold above and the legacy path
+    // below, exactly as before.
     if (elemIsRef && keyArg && staticKey !== null && _isCanonicalArrayIndexString(staticKey)) {
-      const dataArrTypeIdx = vecInfo!.arrTypeIdx;
-      const idxVal = Number(staticKey);
-      const recvLocal = allocLocal(fctx, `__hop_arr_${fctx.locals.length}`, receiverWasm);
-      const presentLocal = allocLocal(fctx, `__hop_present_${fctx.locals.length}`, { kind: "i32" });
-      const recv = compileExpression(ctx, fctx, propAccess.expression, receiverWasm);
-      if (recv && (recv.kind === "ref" || recv.kind === "ref_null")) {
-        fctx.body.push({ op: "ref.as_non_null" });
+      const recv = compileExpression(ctx, fctx, propAccess.expression);
+      if (recv === null) return null;
+      if (recv.kind === "ref" || recv.kind === "ref_null") {
+        fctx.body.push({ op: "extern.convert_any" });
+      } else if (recv.kind !== "externref") {
+        coerceType(ctx, fctx, recv, { kind: "externref" });
       }
-      fctx.body.push({ op: "local.set", index: recvLocal });
-      // present := (index < length) ? (data[index] != null) : 0. The bounds test
-      // gates the element load via an `if` so an out-of-range index never traps.
-      fctx.body.push({ op: "local.get", index: recvLocal });
-      fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 }); // length
-      fctx.body.push({ op: "i32.const", value: idxVal });
-      fctx.body.push({ op: "i32.gt_u" }); // length > index  ⇔  index in bounds
-      fctx.body.push({
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [
-          { op: "local.get", index: recvLocal },
-          { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 }, // data array
-          { op: "i32.const", value: idxVal },
-          { op: "array.get", typeIdx: dataArrTypeIdx }, // element
-          { op: "ref.is_null" },
-          { op: "i32.eqz" }, // present (non-null) → 1
-        ],
-        else: [{ op: "i32.const", value: 0 }],
-      });
-      fctx.body.push({ op: "local.set", index: presentLocal });
-      // result := present OR __hasOwnProperty(arr, key) — the latter catches an
-      // index added to the sidecar (e.g. defineProperty on an array index, where
-      // the vec data length is unchanged). __hasOwnProperty exists in both modes.
+      const keyT = compileExpression(ctx, fctx, keyArg, { kind: "externref" });
+      if (keyT && keyT.kind !== "externref") coerceType(ctx, fctx, keyT, { kind: "externref" });
       const hopIdx2 = ensureLateImport(
         ctx,
         "__hasOwnProperty",
         [{ kind: "externref" }, { kind: "externref" }],
         [{ kind: "i32" }],
       );
-      fctx.body.push({ op: "local.get", index: recvLocal });
-      fctx.body.push({ op: "extern.convert_any" });
-      const keyT = compileExpression(ctx, fctx, keyArg, { kind: "externref" });
-      if (keyT && keyT.kind !== "externref") coerceType(ctx, fctx, keyT, { kind: "externref" });
       flushLateImportShifts(ctx, fctx);
       if (hopIdx2 !== undefined) {
         fctx.body.push({ op: "call", funcIdx: hopIdx2 });
-      } else {
-        // No host helper available — drop the args, sidecar contributes nothing.
-        fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "i32.const", value: 0 });
+        return { kind: "i32", boolean: true };
       }
-      fctx.body.push({ op: "local.get", index: presentLocal });
-      fctx.body.push({ op: "i32.or" });
+      // No predicate available — drop the args and keep the pre-#4491 "absent".
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "i32.const", value: 0 });
       return { kind: "i32", boolean: true };
     }
     // (#4491) A NON-index static key on an array receiver — "4294967295"

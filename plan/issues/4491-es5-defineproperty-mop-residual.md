@@ -3133,3 +3133,244 @@ the wasm module global is the VALUE. Every read spelling resolves to the module
 global, so nothing observes the stale slot except a descriptor read. Closing it
 means making the two one cell — a representation change, not a seeding change,
 and out of scope here.
+
+## Implementation Plan (T7) — provider-realm carrier identity (2026-08-21)
+
+Base `437da6e582` (lane worktree `worktree-agent-a2b0a2cc453cd1af2`). Every
+number below was measured on that HEAD with the real `runTest262File`
+(`--target standalone`, quickjs eval provider ACTIVE — the tier line
+`QUICKJS (artifact 073742801ba7, adapter key 1429ec7ecf2163fd)` appears on every
+run), not inherited from the wave-4 lane G table.
+
+### The marshalling contract as it stands today
+
+A value crossing the provider→caller seam takes one of three shapes, and the
+shape decides which caller-side surfaces answer:
+
+| provider value | crosses as | caller sees |
+| --- | --- | --- |
+| interpreted callable (`Function(src)`, an eval-defined function) | `$RuntimeEvalAotCallable` carrier (`runtime-eval-callable.ts`), wrapping the raw provider marker | `typeof` ✓, call ✓, `.name`/`.length` ✓ (carrier property-get trampoline), `hasOwnProperty("name"/"length")` ✓ |
+| the realm's `%Function%` / `%eval%` intrinsic (bare `Function` read) | raw `$RuntimeEvalInterpretedCallback` marker, kind `INTRINSIC_FUNCTION` — deliberately NOT wrapped, so repeated reads stay reference-identical | `typeof` ✓, call ✓, `.name`/`.length`/`.constructor` ✓ (marker arm in the universal property getter), **`hasOwnProperty` ✗, `delete` ✗, `getOwnPropertyNames` ✗** |
+| any other object (plain object, array, RegExp) | #4245 slice-2 **mirrored box** — a compiled `$Object` carrying the QuickJS object's own string keys, resynced at each seam crossing | own data properties ✓; **no [[Prototype]], no exotic brand** |
+
+Measured surface for `var f = Function("a","b","return a+b;")`:
+
+| probe | HEAD | spec |
+| --- | --- | --- |
+| `typeof f` | `function` | `function` |
+| `f(1,2)` | `3` | `3` |
+| `f.length` / `f.name` | `2` / `anonymous` | `2` / `anonymous` |
+| `f.hasOwnProperty("name")` / `("length")` | `true` / `true` | `true` |
+| `typeof f.call` / `typeof f.apply` | `function` | `function` |
+| `f.constructor === Function` | `true` | `true` |
+| `Object.prototype.toString.call(f)` | **`[object Object]`** | `[object Function]` |
+| `Object.getPrototypeOf(f) === Function.prototype` | **`false`** | `true` |
+| `f.hasOwnProperty("prototype")` / `typeof f.prototype` | **`false` / `undefined`** | `true` / `object` |
+| `Function.hasOwnProperty("prototype")` / `("length")` | **`false` / `false`** | `true` |
+| `delete Function.prototype` | **`true`** | `false` |
+| `Object.getOwnPropertyNames(Function)` | **`""`** | `length,name,prototype` |
+
+### Correction to the wave-4 lane G triage: two of its rows are NOT provider bugs
+
+Lane G recorded `Object.getPrototypeOf(fn) === Function.prototype` as a
+carrier-identity gap and attributed the four
+`Function/prototype/{call,apply}/S15.3.4.{3,4}_A1_T{1,2}` rows to it. Measured
+here, that attribution is wrong and would have sent this lane at the wrong
+subsystem:
+
+```
+var proto = Function(); function FACTORY(){} FACTORY.prototype = proto;
+var obj = new FACTORY;
+  Object.getPrototypeOf(obj) === proto   →  false     ← the real blocker
+  typeof proto.call                       →  "function"  (the carrier is fine)
+```
+
+and with an ORDINARY function as the prototype the same probe fails identically
+(`FACTORY2.prototype = function(){}; Object.getPrototypeOf(obj2) === FACTORY2.prototype`
+→ `false`). So those four rows are the **[[Prototype]]-slot typing wall**
+(`$Object.$proto` vs `$NativeProto`) that the wave-5 dispatch table already
+prices at exactly 4 rows — not the provider seam. **Non-goal for T7.**
+
+### Ordered slices, with per-slice row counts verified on HEAD
+
+| # | slice | rows | verdict |
+| --- | --- | ---: | --- |
+| A | §20.1.3.6 tag for a `Function`-typed receiver | 3 | LANDED |
+| B | `%Function%` own-property surface (`hasOwnProperty` / `delete`) | 3 | LANDED |
+| C | provider-box re-hydration (RegExp + Array [[Prototype]] / brand) | 10 | NOT ATTEMPTED — priced below, blast radius exceeds the row count |
+| D | strict `caller` poison pills (`15.3.5.4_2-*gs`) | 5 | NOT ATTEMPTED — composes C-class work with strict-mode `caller` |
+
+**Slice A — the tag.** `Object.prototype.toString.call(<Function-typed value>)`
+answered `[object Object]`. The cause is not the runtime classifier (which
+delegates to `__typeof_function` and is correct) but the #2501 COMPILE-TIME fold
+`resolveObjectToStringTag` (`object-proto-tostring.ts`): it reaches its
+`callSigs.length > 0` arm only for values whose type HAS call signatures, and
+lib.d.ts's ambient `Function` interface declares `apply`/`call`/`bind` and no
+call signature. Every `Function(…)` / `new Function` result types as exactly
+that interface, so it fell through to the standalone `Object` default. The same
+spec fact is already encoded one file away, in
+`function-intrinsic-carrier.ts`'s `isFunctionValuedReceiverType`.
+
+Rows: `built-ins/Function/S15.3.5_A1_T1`, `S15.3.5_A1_T2`,
+`built-ins/Object/prototype/toString/Object.prototype.toString.call-function.js`.
+
+**Slice B — the own-property surface.** `Object`/`Array`/`String`/`RegExp` all
+answer `hasOwnProperty("prototype")` correctly because their bare read yields
+the #3006 `__builtin_ctor_*` carrier, whose own props `pushBuiltinCtorOwnPropSeed`
+seeds. `Function` alone routes to the provider marker (that is failure mode 1 in
+`function-intrinsic-carrier.ts`'s header), and the marker is invisible to
+`__hasOwnProperty` / `__object_hasOwn` / `__delete_property`. Swapping the bare
+read to the carrier is the fix #4440 already tried and rejected — the carrier has
+no [[Call]], and `var F = Function; F("a","return a")` must keep working. So the
+marker keeps its identity and GROWS the surface instead.
+
+`delete` is load-bearing here and not a separate nicety: test262's
+`isConfigurable` is `delete obj[name]; return !__hasOwnProperty(obj, name)`, so
+`S15.3.3.1_A3` needs BOTH halves. Rows: `built-ins/Function/S15.3.3_A1`,
+`S15.3.3_A3`, `built-ins/Function/prototype/S15.3.3.1_A3`.
+
+**Slice C — box re-hydration, priced and declined.** An eval-returned RegExp or
+non-empty Array crosses as the mirrored box, so it has no [[Prototype]] and no
+exotic brand:
+
+```
+Object.getPrototypeOf(eval("/1/g"))              →  null   (want RegExp.prototype)
+Object.getPrototypeOf(eval("[1,2]"))             →  null   (want Array.prototype)
+Object.prototype.toString.call(eval("[1,2]"))    →  "[object Object]"
+typeof eval("/ab+c/g").exec                      →  undefined
+```
+
+Rows (all verified FAIL on HEAD): the six
+`language/statementList/eval-{block,class,fn}-regexp-literal{,-flags}.js` and
+four `language/statementList/eval-{block,class,fn}-array-literal{,-with-item}.js`.
+
+The only shape that fixes them is minting the value in the CALLER's realm, the
+way #4308 slice A already does for the seven error constructors — i.e. the
+adapter calls back through `realm.RegExp(source, flags)`. That is blocked one
+step earlier, and the block is measured, not assumed:
+
+```
+var G = Function("return this;")();
+  typeof G.Array   →  "function"
+  typeof G.RegExp  →  "undefined"      ← the realm object does not expose RegExp
+  G.RegExp === RegExp  →  false
+```
+
+So slice C is: (1) add `RegExp` (and the rest of the exotic-constructor set) to
+the caller's realm-object seed, (2) teach `qjsPublish` to detect the exotic class
+and mint through the realm constructor, (3) rebuild + republish the quickjs
+adapter artifact. Step 1 changes what EVERY eval-linking module publishes on its
+global object, and step 3 invalidates the adapter cache key for every lane. Ten
+rows do not buy that blast radius in this lane's budget — it wants its own slice
+with its own control corpus. Recorded here so the next lane starts from the
+measurement rather than re-deriving it.
+
+**Slice D — poison pills, not attempted.** Four of the five build the strict
+function through `Function("\"use strict\"; …")`, so they need slice C's class of
+work (a provider-materialized function whose strictness is observable to the
+caller's `caller` accessor) plus §9.2.7 `caller`-poisoning across the seam. The
+substrate (`function-poison-pill.ts`) exists; the seam half does not.
+
+### Adjacent findings, filed rather than fixed
+
+- `Date.hasOwnProperty("prototype")` and `("length")` are **false** (rows
+  `built-ins/Date/S15.9.4_A1`, `S15.9.4_A5`). Same shape as slice B but a
+  different cause: `Date` is in `BUILTIN_CTOR_ARITY` and NOT in
+  `BUILTIN_CONSTRUCTOR_IDENTITY_NAMES`, so its bare read mints no carrier at all.
+  Cheap-looking, but adding `Date` to the identity set changes every bare `Date`
+  read and needs its own control run.
+- `Object.getPrototypeOf(Map) === Function.prototype` is **false** while the same
+  probe on `Array`/`Object` is **true** — the #3006 identity carriers do not seed
+  `$proto`. Feeds `built-ins/{Map,Set,WeakMap,WeakSet,WeakRef,FinalizationRegistry,
+  DisposableStack,AsyncDisposableStack}/…proto…` (~8 non-ES5 rows).
+
+### Wave-5 lane T2 result (standing dev `team-dev-2`, 2026-08-21)
+
+Base `0e71b59ed3`. **60 rows → 9 passing before any edit, 19 after.** The row
+list predates ~50 landed fixes, so the first action was re-verifying every row
+on head: 9 were already green (`15.2.3.6-4-{292-1,293-2,293-3,294-1,295-1,296-1,59}`,
+`getOwnPropertyNames/15.2.3.4-4-44`, `keys/15.2.3.14-1-3`) and are **not**
+counted below.
+
+| slice | sha | rows flipped | control |
+| --- | --- | --- | --- |
+| Native `{Number,String,Boolean}.prototype.valueOf` bodies | `fd244dbf3b` | `S9.9_A{3,4,5}` | 55/55 |
+| Derive §7.3.15 `TestIntegrityLevel` for `isFrozen`/`isSealed` | `b9867ff1c1` | `isFrozen/15.2.3.12-{2-1,2-2,3-28}` | 127/127, 0 regressions |
+| Per-binding single-assignment proof + `new Object(prim).valueOf()` | `7d3b693be0` | `prototype/valueOf/S15.2.4.4_A1_T{1,2,3}` | 240/242 (2 pre-existing) |
+| `arr.hasOwnProperty(<index>)` sees a deleted element | `8a6bdbcffb` | `getOwnPropertyNames/15.2.3.4-4-b-6` | 119/120 (1 pre-existing) |
+
+Three findings worth more than their row count:
+
+- **One regression was self-inflicted and caught only by the wide control.**
+  The first `valueOf` body returned non-null, which short-circuits `makeGlue`'s
+  `??` refusal, so a non-wrapper receiver fell off the end of the function
+  instead of throwing — `Boolean/prototype/valueOf/S15.6.4.3_A2_T5` went pass →
+  fail. A body that replaces a refusal must carry the refusal's throw itself.
+  Fixed in `7d3b693be0`.
+- **#4232's name-level single-assignment scan can never fire in test262.** The
+  harness is concatenated into the same source file, so `assert.js` /
+  `propertyHelper.js` parameters poison every short spelling (`a`, `obj`, `x`).
+  Measured: `var a = new Object(1.1); a.constructor` traced to "a POISONED".
+  `single-assignment-binding.ts` now answers per BINDING. Any future guard that
+  proves "this name is written once" must do the same.
+- **`Object.preventExtensions` on a merely non-extensible object is FROZEN**
+  (§7.3.15 step 2 is vacuous with no own properties). The predicates read a flag
+  only `Object.freeze` writes, so they answered `false`. The derivation is
+  additive — consulted only where the flag is clear — and runs on the direct
+  `$Object` arm only, because the #4032 integrity bag holds a carrier's expandos
+  and never its elements (deriving over an array's bag would call
+  `Object.preventExtensions([1,2])` frozen).
+
+#### Diagnosed but NOT attempted — with the measurement, so the next lane starts here
+
+- **`for…in` over a builtin INSTANCE enumerates its prototype's methods.**
+  `var d = new Date(0); d.prop1 = 100; for (var k in d)` yields **44 `Date.prototype`
+  method names** (`toString`, `getTime`, …, plus the symbol sentinel
+  `__@toPrimitive@64`) and does **not** yield `prop1`. `Object.keys(d)` and
+  `getOwnPropertyNames(d)` both correctly answer `["prop1"]`, so the key SOURCE
+  is right and the for-in path is not. Suspect `__protoidx_forin_push`
+  (`proto-index-store.ts` `fillForInPushBody`), which walks the builtin-proto
+  companion with `__obj_ordered` — enumerable-only — so either the #2175 seeder's
+  `PROTO_METHOD_DEFINE_FLAGS` (`0xbd`) is not landing `enumerable:false` on the
+  companion entries, or the names arrive from `buildBagPushKeys`/the boundary
+  helper instead. This is wider than one row and deserves its own issue; it costs
+  `keys/15.2.3.14-6-5` here.
+- **Expandos on a `$Date` receiver are invisible to `hasOwnProperty` and `in`.**
+  `d.prop1 = 100` reads back fine and shows up in `Object.keys`/gOPN, but
+  `d.hasOwnProperty("prop1")` and `"prop1" in d` are both **false**; likewise
+  after `Object.defineProperty(dateObj, "prop", …)`. There is no DATE carrier in
+  `carrier-bag-visibility.ts` (only closure / vec / error / instance-expando), so
+  the store the reads use is not the one the predicates consult. Costs
+  `15.2.3.6-4-408`.
+- **Array-index ACCESSOR properties** (`Object.defineProperty(arr, "1", {get})`,
+  then `arr[1]` invoking the getter, and the §15.4.5.1 step-4.c
+  accessor→data refusal) — 8 rows: `defineProperties/15.2.3.7-6-a-{179,183,204,231}`,
+  `defineProperty/15.2.3.6-4-{183,195,243-1,243-2}`. Arrays are vec carriers; index
+  accessors need an overlay tier that does not exist. Not started.
+- **`Array.prototype.length` as an own data property** — `15.2.3.6-4-117` and
+  `15.2.3.7-6-a-113` both crash with `RuntimeError: illegal cast in
+  __closure_62()`, i.e. a compiler bug rather than a missing answer, reached
+  through `Array.prototype.length = 0`.
+- **`Object(<function>)` / `Object(<Date>)` identity is preserved but the
+  static type is not.** `new Object(func) === func` is already **true**; what
+  fails is `typeof n_obj` (folds to `"object"`) and `n_obj()` (not lowered as a
+  call), because `new Object(x)` has TS type `Object`. Same class as the
+  `.constructor`/`valueOf` folds fixed above, but the fix is in the `typeof`
+  and call-site lowerings, not the read path. 5 rows: `S15.2.1.1_A2_T11`,
+  `S15.2.2.1_A2_T{2,5,6,7}`.
+- **`var o2 = undefined; o2 = Object.preventExtensions(o)`** — `preventExtensions`
+  itself returns its argument correctly (measured), but the binding is typed
+  `undefined` from its initializer and the object assignment lands as `0`. A
+  declared-type-widening defect, not a MOP one. Costs `preventExtensions/15.2.3.10-2`.
+- **`Object.getOwnPropertyDescriptor(<B>.prototype, "constructor")`** answers
+  `undefined` for `Date`/`Function` — `constructor` is deliberately not in
+  `memberCsv` (`native-proto.ts`: "constructors have their own carrier"), so the
+  #2175 companion seeder never installs it. Seeding it would also flip
+  `Date/prototype/constructor/prop-desc`, `Error/…/prop-desc`,
+  `Set/…`, `WeakSet/…`, `Iterator/…` — ~7 rows suite-wide for one seeder entry.
+  Sized, not attempted. Costs `15.2.3.3-4-{34,116}` here.
+
+Untouched walls confirmed on this lane: the global-object rows
+(`15.2.3.3-4-4` reads `Object.getOwnPropertyDescriptor(this, "eval")`),
+the `arguments`-object freeze family (`freeze/15.2.3.9-2-a-{11,12,14}`),
+and `S15.2.3.6_A1` (needs `document.createElement`).

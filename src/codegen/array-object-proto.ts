@@ -66,6 +66,7 @@ import { emitObjectProtoOrRefusal as emitProtoMemberBodyRefusal } from "./object
 // (#4491) `Object.prototype.isPrototypeOf` — the §20.1.3.3 chain walk, routed
 // to the same `__isPrototypeOf` native the typed call path uses.
 import { emitObjectProtoIsPrototypeOfBody } from "./object-proto-is-prototype-of.js";
+import { emitWrapperProtoValueOfBody, isWrapperBrandName } from "./wrapper-proto-value-of.js";
 import { emitStringConcatMemberBody } from "./string-proto-concat.js";
 import { emitStringSubstringMemberBody } from "./string-proto-substring.js";
 import { emitStringSplitMemberBody } from "./string-proto-split.js"; // (#4220) reflective String.prototype.split
@@ -1740,7 +1741,14 @@ function makeGlue(
     // (#2875 slice 1) String.prototype.{charAt,at} likewise. Other Array/String
     // members + all Object members still degrade to a catchable TypeError.
     emitMemberBody: (c, fctx, member) =>
-      name === "Array"
+      // (#4491 wave-5 T2) `this<X>Value(this)` for the three primitive-wrapper
+      // families (§21.1.3.7 / §22.1.3.28 / §20.3.3.3). Routed FIRST so it
+      // serves String too — `emitStringProtoMemberBody` would otherwise claim
+      // the member and answer the refusal. Declines (returns null, emits
+      // nothing) for every other family/member, so the ladder below is reached
+      // byte-identically.
+      (member === "valueOf" && isWrapperBrandName(name) ? emitWrapperProtoValueOfBody(c, fctx, name) : null) ??
+      (name === "Array"
         ? emitArrayProtoMemberBody(c, fctx, member)
         : name === "String"
           ? emitStringProtoMemberBody(c, fctx, member)
@@ -1754,7 +1762,7 @@ function makeGlue(
               // to the catchable refusal (`toString`'s classifier lives inside
               // it).
               ((name === "Object" ? emitObjectProtoIsPrototypeOfBody(c, fctx, member) : null) ??
-              emitProtoMemberBodyRefusal(c, fctx, name, member)),
+              emitProtoMemberBodyRefusal(c, fctx, name, member))),
   };
 }
 

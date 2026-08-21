@@ -39,6 +39,7 @@ import { SELF_HOSTED_OBJECT_RUNTIME } from "../stdlib/object-runtime.js";
 import { getOrRegisterVecBaseType } from "./registry/types.js";
 import { reserveVecOverlayHelpers } from "./vec-overlay.js";
 import { buildIntegrityPredicate, registerIntegrityBagResolver } from "./object-integrity-carrier.js";
+import { buildIntegrityDerivation, integrityDerivationLocals } from "./object-integrity-test-level.js";
 import { buildObjectIntegrityMutationHelpers } from "./object-runtime-integrity.js";
 import { bagGopdBetween, bagKeysIf } from "./carrier-bag-visibility.js"; // (#4010 S3) visibility over the bags
 import {
@@ -3401,24 +3402,54 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
   // `object-integrity-carrier.ts` for the mechanism, the two halves of the fix,
   // and why this is byte-neutral in host mode (`integrityBagIdx === undefined`).
   const integrityBagIdx = registerIntegrityBagResolver(ctx, registerNative);
-  const emitIntegrityPredicate = (name: string, flagBit: number, invert: boolean, terminalResult: number): void => {
+  const emitIntegrityPredicate = (
+    name: string,
+    flagBit: number,
+    invert: boolean,
+    terminalResult: number,
+    // (#4491 wave-5 T2) §7.3.15 level, when this predicate has one. `undefined`
+    // for `isExtensible` (a pure flag question, no per-property derivation) and
+    // in host mode, where the body must stay byte-identical.
+    level?: "frozen" | "sealed",
+  ): void => {
+    const derive =
+      level === undefined || integrityBagIdx === undefined
+        ? undefined
+        : {
+            locals: integrityDerivationLocals(propMapRef, entryRefNull),
+            instrs: (objLocal: number): Instr[] =>
+              buildIntegrityDerivation({
+                objectTypeIdx,
+                propMapTypeIdx,
+                propEntryTypeIdx,
+                objLocal,
+                // 0 = param, 1 = `any`, 2 = `bag`; the derivation's five follow.
+                localBase: 3,
+                frozen: level === "frozen",
+                nonExtensibleBit: OBJ_FLAG_NONEXTENSIBLE,
+                flagWritable: FLAG_WRITABLE,
+                flagConfigurable: FLAG_CONFIGURABLE,
+                flagAccessor: FLAG_ACCESSOR,
+              }),
+          };
     const { locals, body } = buildIntegrityPredicate({
       objectTypeIdx,
       flagBit,
       invert,
       terminalResult,
       integrityBagIdx,
+      derive,
     });
     registerNative(name, [{ kind: "externref" }], [{ kind: "i32" }], locals, body);
   };
-  emitIntegrityPredicate("__object_isFrozen", OBJ_FLAG_FROZEN, false, 1);
-  emitIntegrityPredicate("__object_isSealed", OBJ_FLAG_SEALED, false, 1);
+  emitIntegrityPredicate("__object_isFrozen", OBJ_FLAG_FROZEN, false, 1, "frozen");
+  emitIntegrityPredicate("__object_isSealed", OBJ_FLAG_SEALED, false, 1, "sealed");
   emitIntegrityPredicate("__object_isExtensible", OBJ_FLAG_NONEXTENSIBLE, true, 0);
   // Known-object variants: same body, terminal fallback flipped to the ORDINARY
   // OBJECT rule. Standalone/wasi only — host already answers these correctly.
   if (integrityBagIdx !== undefined) {
-    emitIntegrityPredicate("__object_isFrozen_obj", OBJ_FLAG_FROZEN, false, 0);
-    emitIntegrityPredicate("__object_isSealed_obj", OBJ_FLAG_SEALED, false, 0);
+    emitIntegrityPredicate("__object_isFrozen_obj", OBJ_FLAG_FROZEN, false, 0, "frozen");
+    emitIntegrityPredicate("__object_isSealed_obj", OBJ_FLAG_SEALED, false, 0, "sealed");
     emitIntegrityPredicate("__object_isExtensible_obj", OBJ_FLAG_NONEXTENSIBLE, true, 1);
   }
 
