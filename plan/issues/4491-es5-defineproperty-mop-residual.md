@@ -2221,3 +2221,189 @@ not a member-set one.
 neighbours. Four rows in that batch fail identically before and after
 (`Number/prototype/toString/S15.7.4.2_A1_T01`, two `Boolean/prototype/valueOf`,
 `Array/prototype/slice/15.4.4.10-10-c-ii-1`) and are excluded.
+
+---
+
+## Wave-4 lane I — HEAD 1: builtin-prototype NAME CAPTURE (2026-08-21)
+
+Lane E isolated this and handed it on: an OWN data property whose name collides
+with a builtin-prototype method is hijacked by that builtin's dispatch on a
+receiver WITHOUT the brand. Base `da724268b0`, `--target standalone`, real
+`runTest262File`.
+
+### The capture set is 1,040 names, not four
+
+Lane E named `dispose` / `move` / `defer` / `adopt`. **Enumerated from the
+dispatch code itself** (`ctx.externClasses`, dumped with a throwaway probe at
+the top of `tryExternClassMethodOnAny`, on a trivial standalone program): the
+first-match loop's candidate pool carries **1,040 distinct method names** — the
+whole ambient `lib.dom.d.ts` + builtin surface, from `addEventListener` to
+`deref`. Every one of them is a capture candidate; the four lane E saw are the
+ones its row happened to touch.
+
+Measured hijack rate on base, deterministic sample of 100 of those 1,040
+(`.tmp/genbatch.mjs`, mulberry32 seed 20260821, each name in a zero-arg
+`o[<name>] = function(){return "R"}; o.<name>()` shape, 10 names per file):
+
+| lane | names answering `"R"` | names answering wrongly |
+| --- | ---: | ---: |
+| base `da724268b0` | 95 / 100 | **5** — `cloneContents`, `getRemoteCertificates`, `getType`, `importNode`, `text`, each silently `null` |
+| after this slice | **100 / 100** | 0 |
+
+Plus the six lane E / adjacent-brand names, hand-probed one file each
+(`.tmp/probe/h1c.js`, `h1f.js`): base `dispose`/`defer`/`adopt`/`use` throw
+`TypeError: DisposableStack.prototype.<m> requires a DisposableStack receiver`,
+`move` answers `null`, `deref`/`register`/`unregister`/`disposeAsync` **trap**
+(`RuntimeError: dereferencing a null pointer`); after, all ten answer `"R"`.
+The silent-`null` answers are the worse half — nothing in the program mentions
+DisposableStack, and nothing reports an error.
+
+### Root cause — the refusal never learned the bracket spelling
+
+The #3033 guard in `tryExternClassMethodOnAny` (calls-closures.ts) already
+declines extern dispatch when the program defines its own function-valued member
+of that name. It sits ABOVE every claiming arm, so it is the one place that
+covers all 1,040 names at once. `sourceDefinesFunctionMember`
+(source-function-members.ts) scanned only the DOTTED write:
+
+```js
+o.dispose = function () {};     // seen  → refusal fires  → generic call ✅
+o['dispose'] = function () {};  // MISSED → the loop claims the name    ❌
+```
+
+The bracket form is the dominant spelling in the ES5 sputnik corpus
+(`seat['move']=function(){position++}`) and in any code building a method table
+from string keys. The miss is **file-scoped**, which is why the defect hides:
+add one dotted write of the same name anywhere in the file and every bracket
+site starts working (`.tmp/probe/h1d.js` — four spellings, all pass, because the
+file also contains `o.dispose = …`).
+
+### Fix — at the refusal, not in the brand arm's else
+
+New module `src/codegen/element-access-member-names.ts`:
+`elementAccessAssignedMemberName(node)` returns the literal property name a
+`<recv>[<key>] = <fn>` assignment writes. Two-line dispatch in
+`source-function-members.ts`'s existing visitor. Literal keys only — a computed
+key (`o[k] = fn`) names nothing at compile time, and widening to "some member
+was written" would decline extern dispatch for every program touching a dynamic
+property, far past the evidence.
+
+**Why not the else arm of the DisposableStack brand test** (per wave-3 lane A's
+"fix the claiming arm at its position"): the brand arm's MISS currently throws
+`RequireInternalSlot`, and turning that into a generic-path fall-through would
+have to be repeated once per builtin. The refusal runs before ALL of them, so
+one recognizer retires the whole class. The brand arm keeps its throw, which is
+still correct for the receiver it is actually meant to judge.
+
+### Measured
+
+**Rows flipped fail → pass: 1** — `language/types/object/S8.6.2_A5_T2.js`
+(`seat['move']=function(){position++}`; it also needed lane E's implicit-global
+`position++`, which is already on this base).
+
+**Controls: 80 rows**, base-vs-after by file-copy revert, same runner, same
+lane, quickjs runtime-eval provider built for each lane's own adapter key:
+50 from `language/expressions/object` + `language/types/object` +
+`built-ins/Object/{defineProperty,defineProperties}` (population 2,952) and 25
+from `built-ins/{DisposableStack,WeakRef,FinalizationRegistry,Map,Set}`
+(population 756) — the branded-builtin families added specifically because this
+slice changes when their dispatch is claimed — plus the 5 target rows.
+Deterministic shuffle seed 20260821.
+**79 of 80 byte-identical; the one move is `S8.6.2_A5_T2` fail → pass.**
+Base 59 pass / 21 fail; after 60 pass / 20 fail.
+
+### Residual, deliberately not taken
+
+`o[k] = fn` with a COMPUTED key stays captured. Closing it needs the runtime
+dispatch to consult the receiver's own property table before the extern loop,
+which is the dispatch-model change #2151 owns — not a scan widening.
+
+---
+
+## Wave-4 lane I — HEAD 2: a builtin prototype can never BE a `[[Prototype]]`
+
+**WALL. Measured, bounded, not attempted.** Row set
+`built-ins/Function/prototype/{apply/S15.3.4.3,call/S15.3.4.4}_A1_T{1,2}` — all
+four verified failing on base `da724268b0` (`--target standalone`), all four on
+the SAME assertion, `typeof obj.apply` / `typeof obj.call` answering
+`"undefined"` where the spec says `"function"`. Each row's SECOND half — the
+`obj.apply()` TypeError — already passes on base, so the typeof read is the
+whole blocker.
+
+### It is NOT the provider realm, and it is not a Function defect
+
+Lane G filed this under "provider-realm carrier identity" (the 22-row
+`Function(…)` wall). It is neither. `F.prototype = X; var o = new F;`, one
+program, `.tmp/probe/h2c.js`, no `eval`, no `Function(…)`:
+
+| `X` | `Object.getPrototypeOf(o)` | inherited member read |
+| --- | --- | --- |
+| `Function.prototype` | **null** | `undefined` |
+| `Array.prototype` | **null** | `undefined` |
+| `String.prototype` | **null** | `undefined` |
+| an ordinary declared `function g` | **null** | `undefined` |
+| `Object.prototype` | **null** | `function` (every object gets it anyway) |
+| an object LITERAL | `=== X` ✅ | `function` ✅ |
+| `new Object()` + expandos | `=== X` ✅ | `function` ✅ |
+
+`Object.create(Array.prototype).slice` and `Object.setPrototypeOf(o, Function.prototype)`
+fail the same way (`.tmp/probe/h2d.js`), and so does
+`Object.create(Object.prototype)`. So the head is not "Function" and not "eval":
+**no builtin prototype can serve as any object's `[[Prototype]]` in standalone.**
+
+### Mechanical cause — one type, one `ref.test`
+
+Builtin prototypes ARE identity-stable (`Function.prototype === Function.prototype`
+→ true, two separate reads compare equal — `.tmp/probe/h2e.js`), and they answer
+member queries: `Function.prototype.apply` is `"function"`,
+`FP.hasOwnProperty("apply")` is `true`. But they are `$NativeProto` VALUE objects
+(brand + member CSV, `array-object-proto.ts` / `builtin-brands.ts`), not native
+`$Object`s — `Object.getOwnPropertyNames(Function.prototype)` returns **`[]`**,
+which is the tell.
+
+`$Object.$proto` is typed `ref null $Object`. Every seeding helper therefore
+ends in the same two instructions — `__object_create`
+(`object-runtime-prototype.ts` ~L104) does
+`ref.test $Object` on its argument and stores `null` on a miss; the identical
+coercion is written into `__object_setPrototypeOf` right below it. `new F()`
+routes through `compileFnctorNewAsObject` (`expressions/new-super.ts` ~L1355) →
+`__object_create(F.prototype)`, so a `$NativeProto` prototype silently becomes
+`$proto = null` and every inherited read misses.
+
+The per-fnctor prototype global itself is fine: `F.prototype === Function.prototype`
+is **true** and `F.prototype.apply` is `"function"` after the assignment
+(`.tmp/probe/h2b.js`). Nothing is lost at the WRITE; it is lost at the seed.
+
+### Cost of closing it, and why this lane stopped
+
+Closing it means giving `$Object.$proto` a representation that can hold a
+`$NativeProto` — a second field, or a per-brand shim `$Object` materialized with
+the brand's members as own closure properties — and then teaching the
+`__extern_get` / `__extern_has` / `__getPrototypeOf` / `__isPrototypeOf` proto
+walks to traverse it. That is the `$Object` dispatch model, touched in four
+runtime helpers plus every walk.
+
+Priced against the payoff: **a scan of all 328 remaining ES5 standalone rows
+finds only these 4** using a builtin prototype as an object's `[[Prototype]]`
+(`.tmp/scanproto.mjs`; the regex catches `X.prototype = <Builtin>.prototype`,
+`Object.create(<Builtin>.prototype)`, `setPrototypeOf(_, <Builtin>.prototype)`
+and `X.prototype = Function(…)`).
+
+Two cheaper shapes were considered and rejected **as measured, not as guesses**:
+
+- **Seed the fnctor prototype global with a materialized `$Object` when the RHS
+  is syntactically `<Builtin>.prototype`.** It would flip these 4 — and it would
+  make `F.prototype === Function.prototype` go **false**, trading a passing
+  identity for a passing typeof. It also has to seed a `bind` property whose
+  value cannot be built (`Function.prototype.bind` still refuses loud in
+  standalone).
+- **Answer `obj.apply` by a compile-time fold** keyed on the recorded prototype
+  assignment. That is the same fold-instead-of-carrier move that produced the
+  divergence documented above — `hasOwnProperty("apply")` true while
+  `getOwnPropertyNames()` is empty. Adding another fold deepens the hole the 4
+  rows are a symptom of.
+
+So the boundary is: **the 4 rows are reachable only behind a `[[Prototype]]`
+representation change, and the whole ES5 standalone gap behind that change is
+those same 4 rows.** Worth doing when the `$Object` proto model is opened for
+another reason; not worth opening it for.
