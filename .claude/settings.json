@@ -258,5 +258,6 @@
   },
   "worktree": {
     "bgIsolation": "none"
-  }
+  },
+  "outputStyle": "Concise"
 }
