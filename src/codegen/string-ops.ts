@@ -48,7 +48,7 @@ import { tryCompileStandaloneSplitSeparator, tryCompileStandaloneStringValueRepl
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { resolveStrictConstant, staticStringLength } from "./analysis/static-string-constants.js";
 import { staticConstStringValues } from "./analysis/static-string-values.js";
-import { staticIntegerRange } from "./analysis/static-numeric-range.js";
+import { staticIntegerRange } from "../ir/analysis/static-numeric-range.js";
 import { emitDerivedNativeCharCodeRead, selectProvenAsciiCaseHelper } from "./derived-ascii-case.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import { tryEmitStaticNeedleIndexOf } from "./static-needle-indexof.js";

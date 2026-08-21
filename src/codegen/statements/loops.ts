@@ -68,7 +68,7 @@ import {
   loopBodyMutatesIndexOrArray,
   loopBodyMutatesStringReadInvariants,
   varCounterRedeclarationBlocksI32,
-} from "./loop-analysis.js";
+} from "../../ir/analysis/loop-shape.js";
 import { emitForAwaitElementUnwrap, emitForAwaitStepCapCheck } from "./for-await-helpers.js";
 import { buildStandardTryTable } from "../../ir/try-table.js";
 import {

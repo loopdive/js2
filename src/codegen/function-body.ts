@@ -60,8 +60,8 @@ import { collectI32SpecializedArrays } from "./array-element-typing.js";
 // dependency-free analysis module so the IR front-end can reuse the SAME
 // hardened #1120/#1236 proof without importing this emit-heavy module.
 // Re-exported here because `codegen/index.ts` and tests import it by this path.
-export { collectI32CoercedLocals } from "./analysis/i32-coerced-locals.js";
-import { collectI32CoercedLocals } from "./analysis/i32-coerced-locals.js";
+export { collectI32CoercedLocals } from "../ir/analysis/i32-coerced-locals.js";
+import { collectI32CoercedLocals } from "../ir/analysis/i32-coerced-locals.js";
 import { detectArrayReduceFusion, applyArrayReduceFusion } from "./array-reduce-fusion.js";
 import { compileNativeGeneratorFunction } from "./generators-native.js";
 import { maybeActivateAsync } from "./async-activation.js";

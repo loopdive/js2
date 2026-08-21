@@ -7,10 +7,22 @@
  * queries returning booleans / Sets / string[] / small records, used by the
  * loop drivers to pick a lowering strategy. Keeping them here decouples the
  * "should we take the fast path?" reasoning from the emit-heavy drivers.
+ *
+ * (#4601 route 1) Moved from `src/codegen/statements/loop-analysis.ts` to here,
+ * BELOW the IR. Five `src/ir/` modules (`from-ast`, `char-read-loop`,
+ * `i32-pure-bitwise`, `fixed-literal-loop-proof`, `analysis/i32-slots`) reuse
+ * these proofs, and while the file sat under `src/codegen/` each of those was an
+ * inverted `ir -> codegen` import edge in the `check:ir-layering` ratchet — an
+ * edge that would block deleting the legacy front-end (#3518 R10). The move was
+ * only possible once the file's own two dependencies
+ * (`collectReferencedIdentifiers`, `collectPatternBindingNames`) were lifted out
+ * of their `CodegenContext`-typed homes into `ir/analysis/ast-scope.ts`; the
+ * closure is now a genuine leaf (`ts-api` + `ast-scope`). `statements/loops.ts`
+ * and `statements/exceptions.ts` import it back down-stack, which is the
+ * intended `emit <- ir <- codegen` direction.
  */
 import { forEachChild, ts } from "../../ts-api.js";
-import { collectReferencedIdentifiers } from "../closures.js";
-import { collectPatternBindingNames } from "./tdz.js";
+import { collectPatternBindingNames, collectReferencedIdentifiers } from "./ast-scope.js";
 
 /**
  * Detect integer loop counter pattern: for (let i = INT; i < EXPR; i++)

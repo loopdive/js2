@@ -8,7 +8,7 @@
  * importing the emit-heavy legacy function-body module — which would create an
  * import cycle (`codegen/index.ts` already imports `ir/`). No CodegenContext,
  * no emission: a `ts.FunctionLikeDeclaration` in, a `Set<string>` out. Same
- * precedent as `src/codegen/statements/loop-analysis.ts`, which `from-ast.ts`
+ * precedent as `src/ir/analysis/loop-shape.ts`, which `from-ast.ts`
  * already imports for `isIncreasingStep` / `loopBodyMutatesIndexOrArray`.
  *
  * (#1930 three-question doctrine.) This is a **Q-CANON** matcher: "is the

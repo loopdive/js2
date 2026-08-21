@@ -43,7 +43,7 @@ import {
   numericProofOverridesMixedCarrier,
 } from "../analysis/mixed-assignment-carrier.js";
 import { staticConstStringValues } from "../analysis/static-string-values.js";
-import { staticIntegerRange } from "../analysis/static-numeric-range.js";
+import { staticIntegerRange } from "../../ir/analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
 import { tryCompileSingleUnitSplitLengthBinding } from "../derived-split-scalar.js";
 import { tryCompileDerivedAsciiCaseBinding as tryAsciiCase } from "../derived-ascii-case.js";
