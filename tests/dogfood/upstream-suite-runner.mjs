@@ -255,6 +255,13 @@ function __upstreamRegister(name, body) {
 }
 function it(name, body) { __upstreamRegister(name, body); }
 function test(name, body) { __upstreamRegister(name, body); }
+function __upstreamSkip() {}
+it.skip = __upstreamSkip;
+it.todo = __upstreamSkip;
+test.skip = __upstreamSkip;
+test.todo = __upstreamSkip;
+describe.skip = __upstreamSkip;
+describe.todo = __upstreamSkip;
 function afterEach(body) { __upstreamAfterEach.push(body); }
 function __upstreamTableRows(strings, values) {
   const markers = [];
