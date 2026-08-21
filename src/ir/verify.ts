@@ -1525,8 +1525,206 @@ function unopOperandKind(op: import("./nodes.js").IrUnop): ValType["kind"] | nul
 }
 
 /**
+ * Per-kind type-rule coverage status (#4523). `"checked"` means `checkInstr`
+ * below has a `case` arm implementing a real type rule for that kind; a
+ * `{ skip }` entry records WHY the kind has no rule *in `checkInstr`*, using
+ * one of five categories (see `TYPE_RULE_CATEGORIES`).
+ *
+ * This is a `Record` over the `IrInstr["kind"]` union ON PURPOSE — it is the
+ * compile-time half of the hybrid policy decided in #4523:
+ *
+ *   - a NEW `IrInstr` kind fails `pnpm run typecheck` until its author
+ *     classifies it here (opt-out for new kinds), and
+ *   - DELETING an existing `checkInstr` case makes the instr fall through to
+ *     the `default:` arm, which sees `"checked"` and pushes a verifier error
+ *     (loud failure for rule removal), and
+ *   - the 62 non-`"checked"` kinds stay an explicit, reasoned baseline rather
+ *     than 62 empty `case` arms (opt-in stays for the legacy set).
+ *
+ * `rule-worth-adding:` IS the roadmap denominator — those are the kinds with
+ * NO type rule anywhere in this file today and a real, derivable one available
+ * from data already on the instruction.
+ *
+ * Keep this map adjacent to `checkInstr`: they are two halves of one contract.
+ */
+export type TypeRuleStatus = "checked" | { readonly skip: string };
+
+/**
+ * The five triage categories (#4523). A skip reason MUST start with one of
+ * these followed by `": "` — `typeRuleCategoryOf` parses the prefix and the
+ * coverage test pins the per-category counts.
+ *
+ *   - `structural`        — no typed value operands at all (labels, buffers,
+ *                           literals); the def-use/scope walk is already total.
+ *   - `checked-elsewhere` — a real type rule for this kind already runs in
+ *                           this file, just not inside `checkInstr`.
+ *   - `resolver-typed`    — the operand/result carrier is chosen at lowering
+ *                           from data NOT on the instruction; nothing for the
+ *                           mid-end to check.
+ *   - `dynamic-by-design` — operates on boxed/host values that carry no
+ *                           static type constraint.
+ *   - `rule-worth-adding` — no rule today, a real one is derivable. Roadmap.
+ */
+export const TYPE_RULE_CATEGORIES = [
+  "structural",
+  "checked-elsewhere",
+  "resolver-typed",
+  "dynamic-by-design",
+  "rule-worth-adding",
+] as const;
+
+export type TypeRuleCategory = (typeof TYPE_RULE_CATEGORIES)[number];
+
+/** Parse the category prefix off a `{ skip }` reason. `"checked"` → null. */
+export function typeRuleCategoryOf(status: TypeRuleStatus): TypeRuleCategory | null {
+  if (status === "checked") return null;
+  const head = status.skip.slice(0, status.skip.indexOf(":"));
+  return (TYPE_RULE_CATEGORIES as readonly string[]).includes(head) ? (head as TypeRuleCategory) : null;
+}
+
+export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
+  // --- checked here (16) -------------------------------------------------
+  binary: "checked",
+  intrinsic: "checked",
+  "slot.read": "checked",
+  "slot.write": "checked",
+  "string.char_at": "checked",
+  "string.char_code_at": "checked",
+  "string.concat": "checked",
+  "string.const": "checked",
+  "string.eq": "checked",
+  "string.len": "checked",
+  unary: "checked",
+  "vec.get": "checked",
+  "vec.len": "checked",
+  "vec.new_fixed": "checked",
+  "vec.set": "checked",
+  "vec.set_length": "checked",
+
+  // --- checked-elsewhere (12) --------------------------------------------
+  // `verifyInstrStructure` owns these: it needs `operandIrType` (a whole-
+  // function scan) plus the block/localDefs walk state, which `checkInstr`
+  // does not have. Re-implementing them here would duplicate, not add.
+  box: { skip: "checked-elsewhere: union-membership + no-re-box rules in verifyInstrStructure (#2949 R1)" },
+  unbox: {
+    skip: "checked-elsewhere: dynamic-operand tagId + payload-kind rules in verifyInstrStructure (#2949 R2/R3)",
+  },
+  "tag.test": { skip: "checked-elsewhere: shares unbox's dynamic-operand tagId rules in verifyInstrStructure (#2949)" },
+  "dyn.truthy": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#2949 S5.1)" },
+  "dyn.to_number": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#2949 S5.3)" },
+  "dyn.eq": { skip: "checked-elsewhere: both-operands-dynamic rule in verifyInstrStructure (#2949 S5.2)" },
+  "dyn.member_get": { skip: "checked-elsewhere: recv/key/result all-dynamic rules in verifyInstrStructure (#3053 U1)" },
+  "dyn.member_set": {
+    skip: "checked-elsewhere: recv/key/value dynamic + void-result rules in verifyInstrStructure (#3795)",
+  },
+  "while.loop": { skip: "checked-elsewhere: condValue-must-be-i32 rule in verifyInstrStructure (#1980)" },
+  "for.loop": { skip: "checked-elsewhere: condValue-must-be-i32 rule in verifyInstrStructure (#1980)" },
+  "if.stmt": { skip: "checked-elsewhere: cond-must-be-i32 rule in verifyInstrStructure (#2952 slice 2)" },
+  switch: {
+    skip: "checked-elsewhere: disc i32/f64 + parallel-arrays + single-default in verifyInstrStructure; discSlot bound is a residual gap",
+  },
+
+  // --- structural (5) ----------------------------------------------------
+  // No typed value operands whatsoever — the def-use walk and the label-scope
+  // walk are already total over these, so a type rule has nothing to bind to.
+  try: { skip: "structural: buffers only; payloadSlot bound is a residual gap" },
+  "br.label": {
+    skip: "structural: label + mode literals, no value operands; label binding enforced in the scope walk (#2952 slice 2)",
+  },
+  "labeled.block": { skip: "structural: label + body buffer, no value operands" },
+  "gen.epilogue": { skip: "structural: no value operands; only an optional provider ref" },
+  "extern.regex": { skip: "structural: pattern/flags are string literals, no value operands" },
+
+  // --- resolver-typed (23) -----------------------------------------------
+  // The operand/result carrier is decided at lowering from data that is NOT
+  // on the instruction (a shape, a signature, an iterator protocol, the CPS
+  // transform). The mid-end cannot derive the expected type to compare against.
+  "raw.wasm": { skip: "resolver-typed: opaque backend op sequence; only stackDelta is mid-end-visible" },
+  "object.get": { skip: "resolver-typed: field type comes from the receiver's shape at lowering, not from the instr" },
+  "object.set": { skip: "resolver-typed: field type comes from the receiver's shape at lowering, not from the instr" },
+  "closure.cap": { skip: "resolver-typed: capture slot type comes from the closure signature at lowering" },
+  "closure.call": { skip: "resolver-typed: callee signature is resolved from the closure value at lowering" },
+  "refcell.new": { skip: "resolver-typed: cell struct type is allocated by the resolver at lowering" },
+  "refcell.get": { skip: "resolver-typed: payload type comes from the cell's resolver-allocated struct" },
+  "refcell.set": { skip: "resolver-typed: payload type comes from the cell's resolver-allocated struct" },
+  "class.super_call": { skip: "resolver-typed: method signature resolved from parentShape + methodName at lowering" },
+  "class.get": { skip: "resolver-typed: field type comes from the receiver's class shape at lowering" },
+  "class.set": { skip: "resolver-typed: field type comes from the receiver's class shape at lowering" },
+  "class.call": { skip: "resolver-typed: method signature resolved from the receiver's shape at lowering" },
+  "class.static_call": { skip: "resolver-typed: static method signature resolved from shape + methodName at lowering" },
+  "iter.new": { skip: "resolver-typed: iterator carrier chosen by the iteration-protocol lowering" },
+  "iter.next": { skip: "resolver-typed: result object carrier chosen by the iteration-protocol lowering" },
+  "iter.value": { skip: "resolver-typed: yielded value type is whatever the iterator produces (boxed at lowering)" },
+  "iter.return": { skip: "resolver-typed: early-exit protocol call, carrier chosen at lowering" },
+  "gen.push": { skip: "resolver-typed: queue element carrier chosen by the generator lowering" },
+  "gen.yieldStar": { skip: "resolver-typed: delegation carrier chosen by the generator lowering" },
+  "gen.setReturn": { skip: "resolver-typed: return-slot carrier chosen by the generator lowering" },
+  await: { skip: "resolver-typed: #1373 Phase B is type-only; the CPS transform picks the carrier" },
+  "async.return": { skip: "resolver-typed: #1373 Phase B is type-only; the CPS transform picks the carrier" },
+  "async.throw": { skip: "resolver-typed: #1373 Phase B is type-only; the CPS transform picks the carrier" },
+
+  // --- dynamic-by-design (5) ---------------------------------------------
+  // Boxed / host values that carry no static type constraint to check.
+  throw: { skip: "dynamic-by-design: the thrown value is any JS value on the boxed carrier" },
+  "extern.new": {
+    skip: "dynamic-by-design: host constructor args are externref-boxed, no static arity/type available",
+  },
+  "extern.call": { skip: "dynamic-by-design: host method args are externref-boxed, no static signature available" },
+  "extern.prop": { skip: "dynamic-by-design: host property read, result is externref by construction" },
+  "extern.propSet": { skip: "dynamic-by-design: host property write, value is externref-boxed" },
+
+  // --- rule-worth-adding (17) — THE ROADMAP DENOMINATOR (#4523) ----------
+  // No type rule anywhere in this file today, and a real one IS derivable
+  // from data already on the instruction (or on `func`).
+  const: { skip: "rule-worth-adding: resultType must match the IrConst literal's own kind" },
+  call: { skip: "rule-worth-adding: arg arity/types and result vs the target's resolved signature" },
+  "global.get": { skip: "rule-worth-adding: resultType must match the global's declared IrType" },
+  "global.set": { skip: "rule-worth-adding: value type must match the global's declared IrType" },
+  select: { skip: "rule-worth-adding: condition must be i32; both arms and resultType must agree" },
+  if: {
+    skip: "rule-worth-adding: cond must be i32; thenValue/elseValue must match resultType (if.stmt already has the cond rule)",
+  },
+  "object.new": { skip: "rule-worth-adding: values arity/types vs shape.fields[].type, both on the instr" },
+  "closure.new": { skip: "rule-worth-adding: captures arity/types vs captureFieldTypes, both on the instr" },
+  "class.new": { skip: "rule-worth-adding: args vs the constructor signature on shape" },
+  "class.super_init": { skip: "rule-worth-adding: args vs the constructor signature on parentShape" },
+  "class.instanceof": { skip: "rule-worth-adding: resultType must be i32 (bool) — fixed, cheap" },
+  "coerce.to_externref": { skip: "rule-worth-adding: resultType must be externref — fixed, cheap" },
+  "iter.done": { skip: "rule-worth-adding: resultType must be i32 (done flag) — fixed, cheap" },
+  "forof.vec": {
+    skip: "rule-worth-adding: counter/length/vec/data/element slot indices need the slot.read bounds rule; elementType vs the vec's element type",
+  },
+  "forof.iter": { skip: "rule-worth-adding: iter/result/element slot indices need the slot.read bounds rule" },
+  "forof.string": { skip: "rule-worth-adding: counter/length/str/element slot indices need the slot.read bounds rule" },
+  "early.return": { skip: "rule-worth-adding: value type must match func.returnType (null iff void)" },
+};
+
+/**
+ * The `default:` arm's decision (#4523), factored out so a test can exercise
+ * every branch without a synthetic `IrInstr` and without weakening the
+ * production wiring — `checkInstr` calls exactly this function.
+ *
+ * Returns the verifier-error message, or `null` when reaching `default:` is
+ * legitimate (the kind carries a `{ skip }` reason).
+ *
+ * @param kind   the instruction kind that fell through to `default:`
+ * @param status that kind's entry in `TYPE_RULE_STATUS`
+ */
+export function typeRuleCoverageProblem(kind: IrInstr["kind"], status: TypeRuleStatus | undefined): string | null {
+  if (status === undefined) {
+    return `type-rule status missing for '${kind}' — TYPE_RULE_STATUS is out of sync with the IrInstr union (#4523)`;
+  }
+  if (status === "checked") {
+    return `type-rule missing for '${kind}' — TYPE_RULE_STATUS says checked, but no checkInstr case handled it (#4523)`;
+  }
+  return null;
+}
+
+/**
  * Walk every instruction (incl. nested buffers) once and apply the per-kind
  * type rules. `typeOf` is the precomputed def→IrType map.
+ *
+ * Coverage policy and the map that pins it: see `TYPE_RULE_STATUS` above.
  */
 function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, IrType>, errors: IrVerifyError[]): void {
   const numSlots = func.slots?.length ?? 0;
@@ -1778,6 +1976,16 @@ function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, I
             block: blockId,
           });
         }
+        break;
+      }
+      // (#4523) Coverage backstop. `default:` fires exactly when NO case arm
+      // above matched, so a kind whose rule was deleted lands here while
+      // `TYPE_RULE_STATUS` still calls it "checked" — a desync the map alone
+      // cannot catch (the map stays type-correct). Valid IR never reaches an
+      // error here: every non-"checked" kind carries a `{ skip }` reason.
+      default: {
+        const message = typeRuleCoverageProblem(instr.kind, TYPE_RULE_STATUS[instr.kind]);
+        if (message !== null) errors.push({ message, func: func.name, block: blockId });
         break;
       }
     }

@@ -7,11 +7,17 @@ import { describe, expect, it } from "vitest";
 import {
   UPSTREAM_TEST_EXPORTS,
   UPSTREAM_TEST_SHIM,
+  UPSTREAM_TEST_SHIM_NODE,
   compileAndRunUpstreamModule,
   summarizeUpstreamRuns,
 } from "./upstream-suite-runner.mjs";
 
 describe("upstream suite runner", () => {
+  it("provides a Node shim without a late-initialized global alias", () => {
+    expect(UPSTREAM_TEST_SHIM).toContain("var global = globalThis;");
+    expect(UPSTREAM_TEST_SHIM_NODE).not.toContain("var global = globalThis;");
+  });
+
   it("awaits async callbacks without classifying them as unavailable infrastructure", async () => {
     const root = mkdtempSync(join(tmpdir(), "js2-upstream-runner-"));
     const generatedPath = join(root, "suite.ts");
@@ -113,6 +119,7 @@ describe("lifecycle", () => {
     const spy = { mock: { calls: [[]] } };
     expect(spy).toHaveBeenCalledOnce();
     expect(typeof vi.spyOn).toBe("function");
+    expect(typeof jest.spyOn).toBe("function");
   });
   test("retains the lifecycle state for the next test", () => {
     expect(setupCount).toBe(1);
@@ -142,6 +149,43 @@ ${UPSTREAM_TEST_EXPORTS}`;
       expect(result.compile.validates).toBe(true);
       expect(result.wasm?.statuses).toEqual([true, true, true]);
       expect(result.wasm?.errors).toEqual(["", "", ""]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 90_000);
+
+  it("forwards a package-selected Node platform to the isolated compiler worker", async () => {
+    const root = mkdtempSync(join(tmpdir(), "js2-upstream-runner-"));
+    const generatedPath = join(root, "suite.ts");
+    const source = `
+export function upstreamTestCount() { return 1; }
+export function upstreamTestNames() { return ["Node global"] as any; }
+export function upstreamTestErrors() { return [""] as any; }
+export function runUpstreamTest(index: number) {
+  return index === 0 && typeof global === "object" && global === globalThis ? 1 : 0;
+}
+`;
+
+    try {
+      const previousNodeOptions = process.env.NODE_OPTIONS;
+      process.env.NODE_OPTIONS = [previousNodeOptions, "--import=tsx"].filter(Boolean).join(" ");
+      let result;
+      try {
+        result = await compileAndRunUpstreamModule({
+          generatedPath,
+          source,
+          timeoutMs: 60_000,
+          workerEnv: { DOGFOOD_PLATFORM: "node" },
+        });
+      } finally {
+        // biome-ignore lint/performance/noDelete: `process.env.X = undefined` sets the string "undefined" instead of unsetting the var
+        if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+        else process.env.NODE_OPTIONS = previousNodeOptions;
+      }
+      expect(result.native.statuses).toEqual([true]);
+      expect(result.compile?.success).toBe(true);
+      expect(result.compile?.validates).toBe(true);
+      expect(result.wasm?.statuses).toEqual([true]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

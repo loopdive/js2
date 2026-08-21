@@ -27,7 +27,14 @@ files:
   - tests/dogfood/hono-upstream-suite.mjs
   - tests/dogfood/hono-upstream-suite-pin.json
   - tests/dogfood/hono-upstream-suite.test.ts
+  - tests/dogfood/jest-upstream-suite.mjs
+  - tests/dogfood/jest-upstream-suite-pin.json
+  - tests/dogfood/lodash-upstream-suite.mjs
+  - tests/dogfood/lodash-upstream-suite.test.ts
+  - tests/dogfood/typescript-upstream-suite.mjs
+  - tests/dogfood/typescript-upstream-suite-pin.json
   - tests/dogfood/upstream-suite-runner.mjs
+  - tests/dogfood/upstream-suite-compile-worker.mjs
   - tests/dogfood/upstream-suite-runner.test.ts
   - tests/issue-3781-npm-perf-lanes.test.ts
   - tests/issue-4585-npm-compat-refresh-resilience.test.ts
@@ -155,3 +162,61 @@ unavailable registrations explicitly. The one native failure, one invalid Wasm
 module, and six module-initialization/runtime failures remain visible as test
 or compiler/runtime defects rather than being reclassified as unavailable
 infrastructure.
+
+Jest's adapter now resolves extensionless default, namespace, and directory
+imports against the immutable source checkout, normalizes the CJS-shaped
+default exports used by Node's native loader, and can compile a selected suite
+with the Node platform surface instead of the browser surface. The shared shim
+exposes the small `jest.fn`/`jest.spyOn` facade needed by those original tests.
+The selected Jest slice is now eight files and 99 callbacks: all 99 native
+callbacks pass, all eight Wasm modules validate, and 29 callbacks pass in Wasm;
+3,189 registrations remain explicitly unavailable infrastructure. The added
+`isError.test.ts` exercises the `node:util/types` host seam; its failing Wasm
+assertions remain scored runtime semantics rather than being hidden as infra.
+
+The TypeScript adapter now exercises both original base64 unit files through
+the exact release-source projection, supplies the `ts.sys.base64encode` seam,
+and compiles the Node-oriented test with the Node platform surface so its
+upstream `Buffer` guard behaves as it does under Node. The projection now also
+contains the exact `parsePseudoBigInt` implementation and its character-code
+constants. The slice registers 11 callbacks across three original files; all
+11 pass natively, all three Wasm modules validate, and four callbacks pass in
+Wasm. Its remaining 1,750 registrations stay explicit unavailable
+infrastructure.
+
+## Unit-infrastructure continuation 2
+
+The shared isolated worker now accepts a package-selected platform, so Node
+globals are available to original Jest and TypeScript modules without changing
+the browser default. Jest's adapter also resolves extensionless relative,
+directory-index, default, namespace, and named imports from the pinned source;
+the native oracle normalizes the CommonJS namespace while leaving each original
+callback body unchanged.
+
+The Jest pin now selects eight original `@jest/get-type` and `@jest/util` files,
+registering 99 callbacks. Native execution passes 99/99; all eight modules
+compile and validate; 29/99 Wasm callbacks pass and 70 remain scored failures.
+The other 3,189 registrations are explicitly reported as unavailable
+infrastructure. TypeScript now selects three original base64/bigint utility
+files (11 callbacks, native 11/11); exact projections expose the release-tag
+`parsePseudoBigInt` implementation and its `CharacterCodes` carrier. All three
+modules compile and validate; 4/11 Wasm callbacks pass, 7 fail, and 1,750
+registrations remain unavailable. These failures are measured runtime/compiler
+results, not hidden by the adapter.
+
+## Unit-infrastructure continuation 3
+
+The shared runner now exposes `UPSTREAM_TEST_SHIM_NODE` for package graphs whose
+CommonJS dependencies execute during module initialization. It omits only the
+late-initialized browser `var global = globalThis` alias; the Node platform
+already lowers bare `global` correctly. Lodash and lodash-es now select the same
+seven original modules and 11 callbacks in both lanes: native 11/11 and Wasm
+11/11, with the remaining 1,742 registrations explicitly deferred as
+unavailable infrastructure. Before this fix, all 11 callbacks in each package
+failed at initialization when Lodash's `_root` helper fell back to the
+unavailable `Function` constructor.
+
+The existing selected adapters also run successfully for jsdom (6/6),
+styled-components (6/6), and the selected webpack slice (13/16). Stylelint is
+8/9 and Redux is 13/82; their remaining failures are scored runtime/compiler
+semantics, not missing test registration or acquisition infrastructure.

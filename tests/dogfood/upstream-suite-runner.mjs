@@ -184,6 +184,17 @@ const vi = {
   },
   unstubAllEnvs() {},
 };
+// A number of Jest-owned packages publish their original tests with the Jest
+// global even when the selected unit only needs spies. Keep this small facade
+// backed by the same deterministic implementation as vi; package adapters can
+// add a package-specific module/mock registry when a test needs more than
+// function spies.
+const jest = {
+  fn: vi.fn,
+  spyOn: vi.spyOn,
+  resetModules() {},
+  doMock() {},
+};
 const __upstreamBeforeEach = [];
 const __upstreamAfterEach = [];
 const __upstreamBeforeAll = [];
@@ -349,6 +360,13 @@ const QUnit = {
   test(name, body) { __upstreamTests.push({ name: String(name), body }); },
 };
 `;
+
+// CommonJS package graphs can execute imported modules before the generated
+// entry module initializes a top-level `var global` alias. The Node platform
+// already provides the binding through codegen, so Node-oriented adapters must
+// omit this browser compatibility declaration rather than observing it as
+// undefined during module initialization.
+export const UPSTREAM_TEST_SHIM_NODE = UPSTREAM_TEST_SHIM.replace("var global = globalThis;\n", "");
 
 export const UPSTREAM_TEST_EXPORTS = String.raw`
 export function upstreamTestCount(): number { return __upstreamTests.length; }
@@ -581,6 +599,7 @@ export async function compileAndRunUpstreamModule({
   source,
   nativeSource = source,
   timeoutMs = 180_000,
+  workerEnv,
 }) {
   mkdirSync(dirname(generatedPath), { recursive: true });
   writeFileSync(generatedPath, source);
@@ -592,7 +611,7 @@ export async function compileAndRunUpstreamModule({
     return { native: { fatal: errorText(error), count: 0, names: [], statuses: [] }, compile: null, wasm: null };
   }
 
-  const isolated = await runIsolatedCompile(generatedPath, timeoutMs);
+  const isolated = await runIsolatedCompile(generatedPath, timeoutMs, "project", workerEnv);
   return { native, ...isolated };
 }
 

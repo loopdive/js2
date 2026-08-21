@@ -223,7 +223,11 @@ above.
       legacy catch path.
 - [ ] The IR-only policy is the only production policy. All IR/legacy escape
       hatches and compile-twice switches are removed from public options, env
-      handling, tests, scripts, and documentation.
+      handling, tests, scripts, and documentation. The env-var set to remove
+      is the #4522 inventory's four retire-at-R9 vars (`JS2WASM_IR_FIRST`,
+      `JS2WASM_IR_STRING_BUILDER`, `JS2WASM_IR_ASYNC`,
+      `JS2WASM_IR_OBJECT_SHAPES`); diagnostics/self-checks classified keep
+      there survive — consume that table, do not re-audit at flip time.
 - [ ] `compileStatement` / `compileExpression` and the direct AST→Wasm handler
       graph are unreachable and deleted. The refreshed #3090 report records
       zero frontend-only survivors and separately records retained runtime/

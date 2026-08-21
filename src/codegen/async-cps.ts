@@ -3,7 +3,7 @@
 // Shared async/await CPS analysis and state-machine contracts (#1042/#1373b).
 
 import type { TypeOracle } from "../checker/oracle.js";
-import { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "./async-static.js";
+import { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "../ir/async-static.js";
 import { isPromiseType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { forEachChild, ts } from "../ts-api.js";
@@ -159,7 +159,7 @@ export function analyzeAsyncBody(_ctx: CodegenContext, fn: ts.FunctionLikeDeclar
 // moved to the leaf module `async-static.ts` so the IR front-end can import
 // them without an import cycle (this file imports codegen/index.ts, which
 // imports ir/select.ts). Re-exported here for existing callers.
-export { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "./async-static.js";
+export { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "../ir/async-static.js";
 
 /** Promise static combinators whose call result is already a real Promise. */
 const PROMISE_COMBINATOR_NAMES = new Set(["all", "race", "any", "allSettled"]);

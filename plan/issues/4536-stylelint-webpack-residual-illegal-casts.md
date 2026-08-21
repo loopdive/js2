@@ -4,7 +4,7 @@ title: "stylelint arrayEqual + webpack groupBy/formatSize residuals: illegal cas
 status: ready
 sprint: current
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-21
 priority: low
 horizon: s
 feasibility: medium
@@ -79,3 +79,14 @@ node --import tsx tests/dogfood/webpack-upstream-suite.mjs --json
 - [ ] stylelint pinned suite 9/9.
 - [ ] webpack pinned suite 16/16.
 - [ ] Each fix carried by a general reduction, no package-specific casing.
+
+## Latest adapter checkpoint (2026-08-21)
+
+The Stylelint adapter now selects 16 original pure utility files instead of
+five, increasing the admitted corpus from 9 to 24 callbacks without adding a
+PostCSS, filesystem, plugin, or async test shim. All 16 modules compile and
+validate; 20/24 callbacks pass in Wasm and all 24 pass in native Node. The
+remaining four scored failures are unchanged compiler/runtime residuals:
+`arrayEqual` still traps with an illegal cast, `ruleMessages` loses arguments
+through its returned message closure, and both `vendor` callbacks return null.
+The other 1,550 registrations remain explicitly deferred infrastructure.
