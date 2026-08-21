@@ -6,7 +6,7 @@ assignee: ttraenkler/fable-lead
 claimed_by: fable-lead
 claimed_at: 2026-07-21T20:23:19Z
 branch: claude/issue-3520-r1-completion
-pr: 4722
+pr: 4729
 last_merged_pr: 3798
 sprint: current
 created: 2026-07-21
@@ -1082,10 +1082,25 @@ already completed; it is preserved for history in the Commit 3.3 section.
     current main**, 22 failing tests, and the failing file/test sets are
     byte-identical on `540064dfb` and on this branch. They are main-side drift,
     not regressions. The bulk are the C30–C33 five-entry census assertions
-    carrying 2026-07-30 denominators (166 defined functions / 45 generic / 24
-    vec / 26 closure / 1 date / 5 data) against a main that now measures 139
-    defined functions and emits **zero** vec/closure/date/data host-bridge rows
-    for those entries. Four are semantic drift:
+    carrying 2026-07-30 denominators. Re-measured at `540064dfb` with an
+    exact `:role:` match:
+
+    | census figure           | C30–C33 asserts | main `540064dfb` |
+    | ----------------------- | --------------- | ---------------- |
+    | defined functions       | 166             | **139**          |
+    | retained-module-function| 45              | **40**           |
+    | vec-host-bridge         | 24              | 24               |
+    | closure-host-bridge     | 26              | **14**           |
+    | date-civil-support      | 1               | 1                |
+    | data-struct-host-bridge | 5               | **3**            |
+
+    The structural families are all still published — vec and date match
+    exactly; the closure and data counts moved because those entries emit
+    fewer dispatcher/classifier helpers than they did on 2026-07-30. Do **not**
+    simply overwrite the numbers: the closure `26 → 14` and data `5 → 3` moves
+    need a cause before they are re-asserted, or the anti-vacuity value of
+    those census tests is thrown away. Four further failures are semantic
+    drift:
     `issue-3520-module-binding-class-identity` (a planning invariant no longer
     raised), `issue-3520-lowering-plan-identity` (a capability violation now
     thrown ahead of the expected stale-owner error),
@@ -2922,21 +2937,26 @@ analyzeSource(source, entry) -> generateModule(ast, { experimentalIR: true,
 trackIrOutcomes: true })` over `SINGLE_HOST_ENTRIES`), base `origin/main`
 `540064dfb` versus this branch:
 
-| Measure                                  | base `540064dfb` | C34     |
-| ---------------------------------------- | ---------------- | ------- |
-| defined functions                        | 139              | 139     |
-| generic `retained-module-function` rows  | 40               | **15**  |
-| `struct-field-accessor` rows             | 0                | **25**  |
-| terminal / emitted / unsupported / invariant | 37 / 32 / 5 / 0 | 37 / 32 / 5 / 0 |
+| Measure                                      | base `540064dfb` | C34             |
+| -------------------------------------------- | ---------------- | --------------- |
+| defined functions                            | 139              | 139             |
+| generic `retained-module-function` rows      | 40               | **15**          |
+| `struct-field-accessor` rows                 | 0                | **25**          |
+| `vec-host-bridge` rows                       | 24               | 24              |
+| `closure-host-bridge` rows                   | 14               | 14              |
+| `date-civil-support` rows                    | 1                | 1               |
+| `data-struct-host-bridge` rows               | 3                | 3               |
+| terminal / emitted / unsupported / invariant | 37 / 32 / 5 / 0  | 37 / 32 / 5 / 0 |
 
 The 25 rows are **moved, not created**: defined-function count and every
 routing figure are unchanged. The 25 are the `async.ts` state-slot accessors
 (13 `__sget_*` + 12 `__sset_*`), which were 62.5 % of the remaining generic
 bucket.
 
-**Byte identity.** All five entries were emitted through `emitBinary` in both
-tracked and untracked lanes on the base copies and on this branch; all twenty
-sha256 digests match, so this landing changes ownership only. `check:ir-only
+**Byte identity.** All five entries were emitted through `emitBinary` across
+`gc`, `standalone`, and `wasi` in both tracked and untracked lanes, on the base
+copies and on this branch: **all 30 sha256 digests match**, with zero compile
+failures on either side. This landing changes ownership only. `check:ir-only
 --policy=hybrid` and `check:ir-fallbacks --verbose` produce **byte-identical
 output** on base and branch (READY, 38 terminal / 38 emitted / 0 unsupported /
 0 invariants per lane; no unintended, post-claim, or module-level increase).
@@ -2950,10 +2970,15 @@ oracle ratchet (`+0 / +0`), and dead-export (**19 known / 0 new**) all pass.
 The full 62-file `issue-3520-*` + backend-contract + `#1899` matrix reports the
 **identical 17 failing files / 22 failing tests on base and on branch** — see
 the resume checkpoint for why those are main-side drift and why re-baselining
-them gates R1 acceptance. The equivalence gate reports no new regressions on
-either side; the 12 baseline failures that now pass are pre-existing main-side
-drift and the baseline is deliberately left unchanged in this ownership-only
-slice.
+them gates R1 acceptance. A six-file struct/host accessor regression sweep
+(`issue-1320-sget-host-box`, `anon-struct`, `issue-1821-delete-struct-fastpath`,
+`issue-2582-numeric-key-struct-read`, `arraybuffer-dataview`,
+`issue-2194-objlit-method-host-leak`) likewise reports the identical 10 failing
+tests on base and on branch; those are a pre-existing `string_constants`
+harness-wiring drift, not accessor behavior. The equivalence gate reports no new
+regressions on either side; the 12 baseline failures that now pass are
+pre-existing main-side drift and the baseline is deliberately left unchanged in
+this ownership-only slice.
 
 C34 closes exact retained ownership for the per-field host accessor family, not
 R1. The 15 remaining generic rows, the direct `funcMap`/`structMap`/module-array

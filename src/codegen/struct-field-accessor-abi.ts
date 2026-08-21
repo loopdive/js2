@@ -112,6 +112,13 @@ export function structFieldAccessorDerivedOrdinal(
  * claimed as an owner of a slot that is gone. Duplicate (kind, field) records
  * for the same exact function are collapsed; a duplicate carrying a DIFFERENT
  * function object is left to the registry's contradictory-ownership invariant.
+ *
+ * The canonical field order is computed over the PRE-ELISION record, following
+ * the R1a rule that a retained support node keeps the ID it was assigned before
+ * a dead-binding pass ran. Deriving it from the surviving subset instead would
+ * make a survivor's ordinal depend on whether some unrelated accessor was
+ * eliminated — reintroducing, in a smaller form, exactly the positional
+ * coupling this role exists to remove. Eliminated accessors are simply absent.
  */
 export function observeStructFieldAccessorAbi(ctx: CodegenContext): void {
   if (observedStructFieldAccessorContexts.has(ctx)) return;
@@ -121,10 +128,9 @@ export function observeStructFieldAccessorAbi(ctx: CodegenContext): void {
   if (!recorded || recorded.length === 0) return;
   observedStructFieldAccessorContexts.add(ctx);
 
+  const fieldOrder = structFieldAccessorFieldOrder(recorded.map((entry) => entry.fieldName));
   const live = recorded.filter((entry) => definedFuncHandleOf(ctx, entry.func) !== undefined);
   if (live.length === 0) return;
-
-  const fieldOrder = structFieldAccessorFieldOrder(live.map((entry) => entry.fieldName));
   const observations: ProgramAbiEntrySourceSupportObservation[] = [];
   const claimed = new Map<number, WasmFunction>();
   for (const entry of live) {
