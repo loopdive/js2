@@ -1696,3 +1696,27 @@ does not re-derive this):
 | `Math.<unary>` as a first-class VALUE | 1 | `S13.2.1_A5_T2` passes `Math.sin` to a higher-order function. `builtin-value-read.ts`'s `default` arm reifies an identity-stable closure whose BODY throws (#2984 Phase 3). The self-hosted `Math_sin` f64→f64 func already exists (math-helpers.ts) and a body could be `__unbox_number` → `Math_sin` → `__box_number`; what is missing is plumbing the name into the `needed` set that decides whether `Math_sin` is emitted at all, which happens in a different phase from the value read. |
 | duplicate function declarations | 1 | `S13_A6_T1` — the later `function __func(){return 'A'}` must win for BOTH earlier and later calls. The call site is typed f64 from the FIRST declaration, so the string result coerces to NaN. A checker-merged-symbol representation question. |
 | non-extensible `__proto__` write | 1 | `S8.6.2_A8` — `x.__proto__ = y` on a `preventExtensions` object mutates the prototype. Also measured: `Object.getPrototypeOf(x)` answers `null` rather than `Object.prototype` for that object, so there are TWO defects here and the read one is the more basic. |
+
+## Wave-4 dispatch plan (2026-08-21, base `7e2d724311`)
+
+Wave-3 landed: lane D (+5: arguments inside `new F(…)`, instanceof boolean
+branding), lane B (+3: String-exotic own keys), lane C (+8: [[ParameterMap]]
+for function expressions + §10.4.4.2 step-5.b order + step-4.c guard), lane A
+(+8: kind-changing member updates, typeof-before-var fold guard, `var F =
+function(){}` constructor back-ref, for-in over grown literal, realm-global
+member call/bracket read). Acceptance measurement in flight.
+
+Three Opus lanes dispatched in parallel, each in its own worktree, no pushes
+(tech-lead integrates serially with gates as commit blockers):
+
+| lane | head / row set | rows | seed analysis |
+| --- | --- | ---: | --- |
+| E | implicit-global binding — `this.x = v` / `x = v` on an UNDECLARED name must CREATE a script global that a bare read resolves | 10 | wave-3 lane A residual table: the single largest one-head item. Declaration-time synthesis of an externref module global seeded `$undefined`, so the existing #4500 Slice A read arm + lane A's slice-4 call arm resolve it. `S13.2.2_A17/A18` add `with (arguments)` and may be blocked past the head. |
+| F | String / RegExp / regexp-literals / types-string | 55 | never had a dedicated lane; `.tmp/wave4-laneF.txt`. Triage-first; #2875 records the known walls (primitive-string for-in, empty-string key, value-rep). |
+| G | built-ins/Function + `arguments` extras beyond formals + `Math.sin` as value | 41 | `.tmp/wave4-laneG.txt` + lane A's extras rows. The __extras_argv/__argc protocol exists (fnctor-ctor-arguments.ts documents it); the ordinary-call sibling drops extras. |
+
+Not dispatched, measured verdicts on record: split-decl fnctor (`var F; F =
+function(){}` — wide blast radius via resolveFnctorSymbol, narrow win),
+`new F()` returning a function (#2071), isPrototypeOf behind the #2660 escape
+gate, duplicate function declarations (checker-merged-symbol representation),
+non-extensible `__proto__` (read defect is the more basic half).
