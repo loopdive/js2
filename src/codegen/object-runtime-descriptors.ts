@@ -393,6 +393,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       recvLocalIdx: 0,
       anyLocalIdx: 5,
       bagLocalIdx: 13,
+      keyLocalIdx: 1,
       fallback: [{ op: "local.get", index: 0 }, { op: "return" }],
     });
     const dpValueBoundaryLocal = 13 + (dpValueClosureArm ? 1 : 0);
@@ -741,6 +742,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       recvLocalIdx: 0,
       anyLocalIdx: 6,
       bagLocalIdx: 16,
+      keyLocalIdx: 1,
       fallback: [{ op: "local.get", index: 0 }, { op: "return" }],
     });
     const dpAccessorBoundaryLocal = 16 + (dpAccessorClosureArm ? 1 : 0);
