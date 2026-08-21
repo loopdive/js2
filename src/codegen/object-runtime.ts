@@ -4593,6 +4593,30 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             },
           ] satisfies Instr[])
         : []),
+      // (ES5 standalone lane) The native ERROR struct returns UNCHANGED — the
+      // same action-at-a-distance hazard as the boxed-boolean arm above, third
+      // instance. An error's spec toString is Error.prototype.toString, served
+      // by `__any_to_string`'s error arm AFTER ToPrimitive hands the struct
+      // back unchanged. That held only while the module emitted no
+      // `__call_toString` dispatcher; once ANY struct contributed an arm (a
+      // harness object literal with a `toString` field suffices),
+      // `__class_to_primitive`'s string-hint tail rendered the error as
+      // "[object Object]". Measured on the first full ES5 run after the
+      // dispatcher arm landed: every `errObj.toString()` and every thrown-
+      // error rendering regressed — the 15.11.4.4-* family, try/S12.14_A19,
+      // and ~14 harness asyncHelpers/compare-array rows whose failure
+      // MESSAGES stringify errors.
+      ...(ctx.errorStructTypeIdx >= 0
+        ? ([
+            { op: "local.get", index: L_ANY },
+            { op: "ref.test", typeIdx: ctx.errorStructTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "local.get", index: 0 }, { op: "return" }],
+            },
+          ] satisfies Instr[])
+        : []),
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: L_ANY },
