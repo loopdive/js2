@@ -155,3 +155,23 @@ unavailable registrations explicitly. The one native failure, one invalid Wasm
 module, and six module-initialization/runtime failures remain visible as test
 or compiler/runtime defects rather than being reclassified as unavailable
 infrastructure.
+
+## Unit-infrastructure continuation 2
+
+The shared isolated worker now accepts a package-selected platform, so Node
+globals are available to original Jest and TypeScript modules without changing
+the browser default. Jest's adapter also resolves extensionless relative,
+directory-index, default, namespace, and named imports from the pinned source;
+the native oracle normalizes the CommonJS namespace while leaving each original
+callback body unchanged.
+
+The Jest pin now selects eight original `@jest/get-type` and `@jest/util` files,
+registering 99 callbacks. Native execution passes 99/99; all eight modules
+compile and validate; 29/99 Wasm callbacks pass and 70 remain scored failures.
+The other 3,189 registrations are explicitly reported as unavailable
+infrastructure. TypeScript now selects three original base64/bigint utility
+files (11 callbacks, native 11/11); exact projections expose the release-tag
+`parsePseudoBigInt` implementation and its `CharacterCodes` carrier. All three
+modules compile and validate; 4/11 Wasm callbacks pass, 7 fail, and 1,750
+registrations remain unavailable. These failures are measured runtime/compiler
+results, not hidden by the adapter.

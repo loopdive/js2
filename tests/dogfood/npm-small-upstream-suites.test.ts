@@ -272,18 +272,19 @@ describe("small npm package upstream suites", () => {
   });
 
   const jestHeavy = process.env.DOGFOOD_JEST_UPSTREAM_SUITE === "1" ? it : it.skip;
-  jestHeavy("runs Jest's original get-type units", { timeout: 600_000 }, async () => {
+  jestHeavy("runs Jest's selected original utility units", { timeout: 600_000 }, async () => {
     const report = await run("jest");
     expect(report.extraction).toMatchObject({
       filesSeen: 241,
-      filesSelected: 2,
-      filesDeferred: 239,
-      testsRegistered: 32,
-      nativePassed: 32,
+      filesSelected: 8,
+      filesDeferred: 233,
+      testsRegistered: 99,
+      nativePassed: 99,
       nativeFailed: 0,
     });
-    expect(report.compile.modules).toBe(2);
-    expect(report.results.scored).toBe(32);
+    expect(report.extraction.unavailableInfra).toBe(3189);
+    expect(report.compile).toMatchObject({ modules: 8, succeeded: 8, validated: 8 });
+    expect(report.results).toMatchObject({ scored: 99, passed: 29, failed: 70, runtimeFailed: 0 });
   });
 
   const tailwindcssHeavy = process.env.DOGFOOD_TAILWINDCSS_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -302,17 +303,18 @@ describe("small npm package upstream suites", () => {
   });
 
   const typescriptHeavy = process.env.DOGFOOD_TYPESCRIPT_UPSTREAM_SUITE === "1" ? it : it.skip;
-  typescriptHeavy("runs TypeScript's original base64 unit", { timeout: 600_000 }, async () => {
+  typescriptHeavy("runs TypeScript's original base64 and bigint units", { timeout: 600_000 }, async () => {
     const report = await run("typescript");
     expect(report.extraction).toMatchObject({
       filesSeen: 256,
-      filesSelected: 1,
-      filesDeferred: 255,
-      testsRegistered: 1,
-      nativePassed: 1,
+      filesSelected: 3,
+      filesDeferred: 253,
+      testsRegistered: 11,
+      nativePassed: 11,
       nativeFailed: 0,
     });
-    expect(report.compile.modules).toBe(1);
-    expect(report.results.scored).toBe(1);
+    expect(report.extraction.unavailableInfra).toBe(1750);
+    expect(report.compile).toMatchObject({ modules: 3, succeeded: 3, validated: 3 });
+    expect(report.results.scored).toBe(11);
   });
 });

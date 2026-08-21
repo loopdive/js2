@@ -184,6 +184,17 @@ const vi = {
   },
   unstubAllEnvs() {},
 };
+// A number of Jest-owned packages publish their original tests with the Jest
+// global even when the selected unit only needs spies. Keep this small facade
+// backed by the same deterministic implementation as vi; package adapters can
+// add a package-specific module/mock registry when a test needs more than
+// function spies.
+const jest = {
+  fn: vi.fn,
+  spyOn: vi.spyOn,
+  resetModules() {},
+  doMock() {},
+};
 const __upstreamBeforeEach = [];
 const __upstreamAfterEach = [];
 const __upstreamBeforeAll = [];
@@ -581,6 +592,7 @@ export async function compileAndRunUpstreamModule({
   source,
   nativeSource = source,
   timeoutMs = 180_000,
+  workerEnv,
 }) {
   mkdirSync(dirname(generatedPath), { recursive: true });
   writeFileSync(generatedPath, source);
@@ -592,7 +604,7 @@ export async function compileAndRunUpstreamModule({
     return { native: { fatal: errorText(error), count: 0, names: [], statuses: [] }, compile: null, wasm: null };
   }
 
-  const isolated = await runIsolatedCompile(generatedPath, timeoutMs);
+  const isolated = await runIsolatedCompile(generatedPath, timeoutMs, "project", workerEnv);
   return { native, ...isolated };
 }
 
