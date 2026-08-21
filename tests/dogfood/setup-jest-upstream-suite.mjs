@@ -7,16 +7,19 @@ import { setupPinnedUpstreamSuite } from "./setup-pinned-upstream-suite.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-const DETECT_NEWLINE_VERSION = "3.1.0";
+const DETECT_NEWLINE_PIN = {
+  version: "3.1.0",
+  sourceSha256: "7306f2ecc168c9e20be4a2a3d44a0dad59ea21dc0bf4cd41ea85829bc79e2c18",
+};
 
-function resolveDetectNewlineSource() {
+function resolveDetectNewlineSource(pin = DETECT_NEWLINE_PIN) {
   const workspaceNodeModules = resolve(HERE, "../../node_modules");
-  const direct = join(workspaceNodeModules, `detect-newline/index.js`);
+  const direct = join(workspaceNodeModules, "detect-newline/index.js");
   const candidates = [direct];
   const pnpmRoot = join(workspaceNodeModules, ".pnpm");
   try {
     for (const entry of readdirSync(pnpmRoot)) {
-      if (entry.startsWith(`detect-newline@${DETECT_NEWLINE_VERSION}`)) {
+      if (entry.startsWith(`detect-newline@${pin.version}`)) {
         candidates.push(join(pnpmRoot, entry, "node_modules/detect-newline/index.js"));
       }
     }
@@ -27,22 +30,20 @@ function resolveDetectNewlineSource() {
   const sourcePath = candidates.find((candidate) => existsSync(candidate));
   if (!sourcePath) {
     throw new Error(
-      `[dogfood] Jest requires detect-newline@${DETECT_NEWLINE_VERSION}; ` +
-        "run pnpm install before running the upstream suite",
+      `[dogfood] Jest requires detect-newline@${pin.version}; ` + "run pnpm install before running the upstream suite",
     );
   }
   const source = readFileSync(sourcePath, "utf8");
   const packagePath = join(dirname(sourcePath), "package.json");
   const packageVersion = JSON.parse(readFileSync(packagePath, "utf8")).version;
-  if (packageVersion !== DETECT_NEWLINE_VERSION) {
-    throw new Error(
-      `[dogfood] detect-newline version mismatch: expected ${DETECT_NEWLINE_VERSION}, got ${packageVersion}`,
-    );
+  if (packageVersion !== pin.version) {
+    throw new Error(`[dogfood] detect-newline version mismatch: expected ${pin.version}, got ${packageVersion}`);
   }
-  return {
-    source,
-    sha256: createHash("sha256").update(source).digest("hex"),
-  };
+  const sha256 = createHash("sha256").update(source).digest("hex");
+  if (sha256 !== pin.sourceSha256) {
+    throw new Error(`[dogfood] detect-newline source hash mismatch: expected ${pin.sourceSha256}, got ${sha256}`);
+  }
+  return { source, sha256 };
 }
 
 export function adaptDetectNewline(source) {
@@ -71,7 +72,8 @@ export function setupJestUpstreamSuite(options = {}) {
   // explicit ESM adapter inside the verified checkout. This keeps the
   // upstream test and implementation unchanged while making the real
   // dependency available to both Node's oracle and the Wasm project resolver.
-  const dependency = resolveDetectNewlineSource();
+  const dependencyPin = suite.pin.dependencies?.["detect-newline"] ?? DETECT_NEWLINE_PIN;
+  const dependency = resolveDetectNewlineSource(dependencyPin);
   const dependencyRoot = join(suite.root, "node_modules", "detect-newline");
   mkdirSync(dependencyRoot, { recursive: true });
   writeFileSync(
@@ -79,7 +81,7 @@ export function setupJestUpstreamSuite(options = {}) {
     JSON.stringify(
       {
         name: "detect-newline",
-        version: DETECT_NEWLINE_VERSION,
+        version: dependencyPin.version,
         type: "module",
         main: "./index.ts",
         exports: "./index.ts",
