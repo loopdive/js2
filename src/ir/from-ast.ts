@@ -49,10 +49,10 @@ import {
   IR_DYN_METHOD_CALL_1_FN,
   IR_DYN_STRING_REPLACE_FN,
 } from "../codegen/dyn-ops.js";
-import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../codegen/regexp-runtime-contract.js";
+import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
 import { IR_NATIVE_MAP_GET_NUM_FN, IR_NATIVE_MAP_NEW_FN, IR_NATIVE_MAP_SET_NUM_FN } from "../codegen/ir-native-map.js"; // (#4461) native $Map adapter ABI
 // (#1373b C-1) Leaf-module async helpers (no codegen/index cycle).
-import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "../codegen/async-static.js";
+import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "./async-static.js";
 import { boundedPreparedNestedOrdinaryClassBindingName } from "./class-accessor-safety.js";
 import { remainderFastPathPlan } from "../codegen/analysis/remainder-fast-path.js";
 import { evaluateConstantCondition } from "../codegen/statements/control-flow.js";
