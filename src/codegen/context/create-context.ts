@@ -147,6 +147,7 @@ export function createCodegenContext(
     protoMemberDirty: false, // (#2175 V2-S3b-1) scanForArrayHoles: branded builtin .prototype reaches the dynamic reader as a VALUE
     vecAccessorDescriptorDirty: false, // (#4159) scanForArrayHoles: a non-data descriptor may exist somewhere
     inheritedSetDescriptorDirty: false, // (#4504) scanForArrayHoles: a descriptor may affect inherited [[Set]]
+    inheritedSetDirtyKeys: new Set<string>(), // (#4602) scanForArrayHoles: statically-named keys such a descriptor could use
     vecIndexDeleteDirty: false, // (#4222) scanForArrayHoles: a `delete arr[i]` may tombstone an index
     vecOwnKeysDirty: false, // (#4230 L1) scanForArrayHoles: a descriptor define / own-name read is present
     dynamicCodeDirty: false, // (#4159/#4160) scanForArrayHoles: eval/Function present ⇒ both flags above forced
