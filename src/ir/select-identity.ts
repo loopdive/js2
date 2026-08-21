@@ -13,6 +13,7 @@ import type { IrUnitTypeMap, TypeMap, TypeMapEntry } from "./propagate.js";
 import type { IrRecursiveTypeEvidence } from "./type-evidence.js";
 import type { IrClassMethodDescriptor } from "./nodes.js";
 import { claimPreparedTimerShims } from "./injected-timer-shim.js";
+import { demoteOnLegacyCallerPolicy } from "./legacy-caller-policy.js";
 import {
   boundedPreparedNestedOrdinaryClassBindingName,
   exactPreparedAccessorSyntaxKey,
@@ -982,7 +983,7 @@ export function planIrCompilationByIdentity(
   }
 
   const claimed = new Map(individuallyClaimed);
-  const demoteOnLegacyCaller = options.jsHostExterns !== true;
+  const demoteOnLegacyCaller = demoteOnLegacyCallerPolicy(options);
   let localCallees: ReadonlyMap<IrUnitId, ReadonlySet<IrUnitId>> | undefined;
   if (individuallyClaimed.size > 0) {
     const graph = buildIdentityCallGraph(functions, functionsByName, uniqueFunctions, localClasses);

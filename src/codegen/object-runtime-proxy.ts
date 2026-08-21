@@ -9,6 +9,7 @@
  * back (still called from `ensureObjectRuntime`). Byte-identity IDENTICAL across
  * gc/standalone/wasi is the acceptance gate (`scripts/prove-emit-identity.mjs`).
  */
+import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import type { ObjectRuntimeTypes } from "./object-runtime.js";
@@ -1372,8 +1373,7 @@ export function ensureProxyRuntime(
   const setBody = findBody("__extern_set");
   if (setBody) {
     const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
-    const inheritedSetRuntimeActive =
-      ctx.standalone && ctx.inheritedSetDescriptorDirty && setResultGlobalIdx !== undefined;
+    const inheritedSetRuntimeActive = ctx.standalone && inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined;
     const isTruthyIdx = ctx.funcMap.get("__is_truthy");
     const resultAwareGuard = inheritedSetRuntimeActive && isTruthyIdx !== undefined;
     const callSetDispatch = (): Instr[] => [

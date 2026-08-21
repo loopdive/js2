@@ -29,6 +29,8 @@ files:
   - tests/dogfood/hono-upstream-suite.test.ts
   - tests/dogfood/jest-upstream-suite.mjs
   - tests/dogfood/jest-upstream-suite-pin.json
+  - tests/dogfood/lodash-upstream-suite.mjs
+  - tests/dogfood/lodash-upstream-suite.test.ts
   - tests/dogfood/typescript-upstream-suite.mjs
   - tests/dogfood/typescript-upstream-suite-pin.json
   - tests/dogfood/upstream-suite-runner.mjs
@@ -219,3 +221,45 @@ modules compile and validate, and 113/232 native-compatible callbacks pass in
 Wasm. The remaining 119 are scored Wasm failures, while 3,054 registrations
 remain explicitly unavailable infrastructure. No upstream test was rewritten
 or counted as a pass because it was deferred.
+
+The shared runner now exposes `UPSTREAM_TEST_SHIM_NODE` for package graphs whose
+CommonJS dependencies execute during module initialization. It omits only the
+late-initialized browser `var global = globalThis` alias; the Node platform
+already lowers bare `global` correctly. Lodash and lodash-es now select the same
+seven original modules and 11 callbacks in both lanes: native 11/11 and Wasm
+11/11, with the remaining 1,742 registrations explicitly deferred as
+unavailable infrastructure. Before this fix, all 11 callbacks in each package
+failed at initialization when Lodash's `_root` helper fell back to the
+unavailable `Function` constructor.
+
+The existing selected adapters also run successfully for jsdom (6/6),
+styled-components (6/6), and the selected webpack slice (13/16). Stylelint is
+8/9 and Redux is 13/82; their remaining failures are scored runtime/compiler
+semantics, not missing test registration or acquisition infrastructure.
+
+## Unit-infrastructure continuation 4
+
+The Hono adapter now selects four additional original files from the immutable
+v4.12.16 source inventory: the HTML helper, route helper, context-storage
+middleware, and pretty-JSON middleware. The context-storage test keeps the web
+ambient surface required by Hono's standard `Request` API while the isolated
+worker supplies the real Node builtin namespaces (including
+`node:async_hooks`) through a generic host-dependency provider. This removes
+the previous module-initialization failure without substituting a mock or
+rewriting the upstream callback.
+
+The selected Hono slice is now 20/120 original files with 322 registered
+callbacks. The native oracle passes 321/322 (one upstream native failure), all
+20 Wasm modules compile and 19/20 validate, and 87/321 callbacks pass in Wasm.
+The six module/runtime failures, 228 scored Wasm failures, one invalid Wasm
+module, and the 2,033 registrations from the other 100 source files remain
+explicitly visible; they are not reclassified as unavailable infrastructure.
+
+## Unit-infrastructure continuation 5
+
+The Lodash adapter now selects 18 original QUnit modules instead of seven,
+covering arithmetic, comparison, and string helpers. The expanded lane runs
+26/26 callbacks natively for both packages; Wasm passes 26/26 for `lodash` and
+22/26 for `lodash-es` (the four failures are null string-method results).
+The other 1,727 registrations remain explicitly deferred as unavailable
+infrastructure, and no upstream callback or input is rewritten.

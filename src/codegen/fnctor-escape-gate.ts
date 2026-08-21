@@ -49,6 +49,7 @@ import { appendFnctorInternalFields } from "./fnctor-identity-fields.js";
 import { type AllocLabelResult, analyzeFnctorAllocLabels, fnctorLayoutsEnabled } from "./fnctor-alloc-labels.js"; // (#3927) per-type layout plan
 import { analyzeStableArrayPrototypeNames } from "./fnctor-array-prototype-analysis.js";
 import { applyColdTailSplit } from "./fnctor-cold-tail.js";
+import { fnctorBodyMayReturnForeignObject, foreignReturnFunctionNames } from "./fnctor-foreign-return.js"; // (#2071)
 import { applyFnctorLayoutSplit, fnctorLayoutEmitEnabled } from "./fnctor-layout-emit.js"; // (#3927) per-type layout EMISSION
 import { recordFnctorFieldProvenance } from "./fnctor-field-provenance.js";
 import { fnctorFieldNumericWriteViolation, inferFnctorFieldTypeFromCtorParam } from "./fnctor-ctor-param-types.js";
@@ -1288,6 +1289,19 @@ function buildReceiverStructMap(
       if (!ctorSym && expr.expression.kind === ts.SyntaxKind.ThisKeyword) {
         ctorSym = resolveEnclosingFnctorOwner(checker, expr)?.sym;
       }
+      // (#2071) `new F()` does NOT prove an F-struct when F's body may return
+      // a foreign object (§10.2.1.3 step 13 substitutes it) — a pin here
+      // narrows the read result to the struct's field type and misreads the
+      // override (ToNumber("A") = NaN). Same predicate as the ctor-ABI
+      // widening, so pin and ABI can never disagree.
+      const ctorDecl = ctorSym?.valueDeclaration;
+      if (ctorDecl !== undefined && ts.isFunctionDeclaration(ctorDecl) && fnctorBodyMayReturnForeignObject(ctorDecl)) {
+        return undefined;
+      }
+      // Fn-expression / assigned-later ctor spellings: match by name.
+      if (ctorSym !== undefined && foreignReturnFunctionNames(expr.getSourceFile()).has(ctorSym.name)) {
+        return undefined;
+      }
       return ctorSym ? `__fnctor_${ctorSym.name}` : undefined;
     }
     if (ts.isPropertyAccessExpression(expr)) {
@@ -1754,6 +1768,44 @@ export function analyzeFnctorEscapeGate(
   };
 }
 
+/** Identity key for "can one slot hold both?" — ref kinds compare by target type. */
+function fnctorSlotKey(t: ValType): string {
+  return t.kind === "ref" || t.kind === "ref_null" ? `ref:${(t as { typeIdx: number }).typeIdx}` : t.kind;
+}
+
+/**
+ * (#4250) Widen an already-recorded fnctor field whose LATER constructor write
+ * stores a kind its slot cannot hold. Returns true when the slot was widened.
+ *
+ * Only the FIRST `this.<field> = …` used to type the slot, so a constructor that
+ * writes two different kinds to one field silently lost the second:
+ *
+ *     function FACTORY(){ this.id = 0; this.id = func();
+ *                         function func(){ return "id_string"; } }
+ *
+ * typed `$id` from `0` (f64) and coerced the string write to NaN (test262
+ * `S13.2.2_A12` read back `0`). A slot must hold every value the constructor
+ * stores, so a disagreeing later write demotes it to the boxed `externref`.
+ *
+ * Deliberately narrow: both sides must be CONCRETELY typed and disagree. A write
+ * the checker gave up on (`externref`) proves nothing about the slot — that is
+ * the pre-existing exposure the whole-program write-kind verdict (#4250) owns —
+ * so it is left alone rather than de-optimizing every constructor that seeds a
+ * numeric field from an untyped value.
+ */
+function widenSlotOnWriteKindDisagreement(ctx: CodegenContext, existing: FieldDef, valueExpr: ts.Expression): boolean {
+  if (existing.type.kind === "externref" || existing.dynamicObjectCarrier === true) return false;
+  // Chain unwrap, byte-identical to the carrier loop in `recordThisField`.
+  let carrierExpr = valueExpr;
+  while (ts.isBinaryExpression(carrierExpr) && carrierExpr.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    carrierExpr = carrierExpr.right;
+  }
+  const written = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(carrierExpr));
+  if (written.kind === "externref" || fnctorSlotKey(written) === fnctorSlotKey(existing.type)) return false;
+  existing.type = { kind: "externref" };
+  return true;
+}
+
 /**
  * #2773 S1 (keystone) — derive the WasmGC field shape of a fnctor's
  * `$__fnctor_<Name>` struct from its constructor body's `this.<field> = …`
@@ -1790,6 +1842,10 @@ export function deriveFnctorFields(
   // narrowing is applied optimistically and reverted below for any field that
   // turns out to be presence-tracked.
   const ctorParamNarrowed = new Map<string, ValType>();
+  // (#4250) Fields whose OWN constructor writes disagree in machine kind — the
+  // slot was widened to the boxed carrier and must not be re-narrowed by a
+  // downstream whole-program promotion.
+  const writeKindConflicted = new Set<string>();
 
   // Record one `this.<field>` slot from an assignment whose LHS is `this.<field>`.
   // `valueExpr` is the value being assigned to THAT field (for type inference) —
@@ -1800,6 +1856,12 @@ export function deriveFnctorFields(
     const existing = fields.find((f) => f.name === fieldName);
     if (existing) {
       if (!conditional) onlyConditional.set(fieldName, false);
+      // (#4250) A later write whose value kind cannot live in the slot the FIRST
+      // write chose widens it to the boxed carrier — see `widenSlotOnWriteKindDisagreement`.
+      if (widenSlotOnWriteKindDisagreement(ctx, existing, valueExpr)) {
+        writeKindConflicted.add(fieldName);
+        ctorParamNarrowed.delete(fieldName);
+      }
       return;
     }
     // Prefer the RHS type — when `this` is `any`, the LHS type is also `any`
@@ -2100,6 +2162,10 @@ export function deriveFnctorFields(
   for (const field of fields) {
     if (field.type.kind !== "externref") continue;
     if (onlyConditional.get(field.name) === true) continue;
+    // (#4250) A slot this constructor itself proved heterogeneous stays boxed —
+    // the name-keyed verdict is about OTHER writes and cannot outvote a
+    // disagreement inside the body it is typing.
+    if (writeKindConflicted.has(field.name)) continue;
     if (!ctx.numericPropertyNames?.has(field.name)) continue;
     if (ctx.classAccessorSet.has(`${flowStructName}_${field.name}`)) continue;
     field.type = { kind: "f64" };
@@ -2131,6 +2197,7 @@ export function deriveFnctorFields(
     for (const field of fields) {
       if (field.type.kind !== "externref") continue;
       if (onlyConditional.get(field.name) === true) continue;
+      if (writeKindConflicted.has(field.name)) continue; // (#4250) see the numeric loop
       if (!ctx.stringPropertyNames?.has(field.name)) continue;
       if (ctx.classAccessorSet.has(`${flowStructName}_${field.name}`)) continue;
       field.type = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };

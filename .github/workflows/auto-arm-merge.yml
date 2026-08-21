@@ -58,6 +58,9 @@ concurrency:
 
 jobs:
   arm:
+    # This is maintainer-only merge-queue automation; fork PR events must not
+    # attempt to mint the canonical repository's App token.
+    if: github.repository == 'loopdive/js2'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

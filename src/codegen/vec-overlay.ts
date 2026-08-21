@@ -74,6 +74,7 @@
  * `ctx.standalone` (see buildObjectDescriptorHelpers) and the fill gates on
  * the reserve flag — host output is byte-identical.
  */
+import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -700,7 +701,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
   // an inherited descriptor. Keep the historical gOPD/hasOwn tree untouched
   // otherwise; the existing `$Hole` carrier is still used by the write path
   // below when this gate is armed.
-  const inheritedSetHolePresenceActive = ctx.inheritedSetDescriptorDirty && ctx.usesArrayHoles;
+  const inheritedSetHolePresenceActive = inheritedSetAnyDirty(ctx) && ctx.usesArrayHoles;
 
   const findFn = (name: string) => ctx.mod.functions.find((f) => f.name === name);
   const missExtern = (): Instr[] => undefinedExternInstrs(ctx)?.map((i) => ({ ...i })) ?? [{ op: "ref.null.extern" }];
@@ -1138,14 +1139,50 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                   { op: "local.get", index: 14 },
                   { op: "f64.ne" },
                   { op: "if", blockType: { kind: "empty" }, then: s3.throwRange() },
-                  // u ≥ 2^31 → legacy no-op (i32 vec length cannot represent it)
+                  // (#4491 bucket D) u ≥ 2^31 → SPARSE-LENGTH arm, not the old
+                  // no-op. The `$__vec_base` length field is an i32, but §10.4.2
+                  // lengths are uint32, and the field round-trips the whole u32
+                  // domain as a BIT PATTERN — the dynamic read arm in
+                  // `object-runtime.ts` (and the static one below) widen it with
+                  // `f64.convert_i32_u`, so 0xFFFFFFFF reads back as 4294967295
+                  // rather than -1. Bailing here left `arr.length` at its old
+                  // value with no error at all (measured: `defineProperty(arr,
+                  // "length", {value: 2**32-2})` answered 0), which is a WRONG
+                  // ANSWER rather than an unimplemented one.
+                  //
+                  // The element machinery below is skipped deliberately: a
+                  // length ≥ 2^31 is unbackable (the backing `$data` array is
+                  // capped far lower, and the static paths refuse to allocate
+                  // above 16M), so this is always a grow into sparse territory
+                  // with no real elements to create — exactly what the static
+                  // `maybeEmitVecLengthDefine` does above its own 16M ceiling.
+                  // It also cannot use the signed shrink loop: `i32.lt_s`
+                  // against a newLen whose bit pattern is negative never
+                  // terminates.
                   { op: "local.get", index: 15 },
                   { op: "f64.const", value: 2147483647 },
                   { op: "f64.gt" },
                   {
                     op: "if",
                     blockType: { kind: "empty" },
-                    then: bailReturnVec.map((i) => ({ ...i })),
+                    then: [
+                      // Same §10.1.6.3 legality delegate as the in-range path —
+                      // a non-writable / non-configurable `length` still refuses.
+                      { op: "local.get", index: 6 },
+                      ...lengthLitExtern(),
+                      { op: "local.get", index: 15 },
+                      { op: "call", funcIdx: s3.boxNumIdx },
+                      { op: "local.get", index: 3 },
+                      { op: "call", funcIdx: dpValueIdx },
+                      { op: "drop" },
+                      // vec.length = ToUint32(u) as the raw 32-bit pattern.
+                      { op: "local.get", index: 4 },
+                      { op: "ref.cast", typeIdx: vecBaseIdx },
+                      { op: "local.get", index: 15 },
+                      { op: "i32.trunc_sat_f64_u" },
+                      { op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 },
+                      ...bailReturnVec.map((i) => ({ ...i })),
+                    ],
                   },
                   // Delegate {value: u, ...attrs} — §10.1.6.3 legality against
                   // the seeded current (non-writable value change → TypeError,
@@ -1999,10 +2036,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
       const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
       const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
       const descriptorDecisionAvailable =
-        ctx.standalone &&
-        ctx.inheritedSetDescriptorDirty &&
-        setResultGlobalIdx !== undefined &&
-        setDecideIdx !== undefined;
+        ctx.standalone && inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined && setDecideIdx !== undefined;
       const holeAwarePresence =
         descriptorDecisionAvailable && ctx.usesArrayHoles && carriers.some((carrier) => carrier.kind === "externref");
       const base = 3 + fn.locals.length;

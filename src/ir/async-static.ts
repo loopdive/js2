@@ -5,6 +5,14 @@
 // ir/select.ts — so `ir/* → async-cps` would close a module-init cycle (the
 // #3324 hazard class). async-cps.ts re-exports these for its existing callers;
 // behaviour is byte-identical to the pre-extraction definitions.
+//
+// (#3113 S2) The extraction landed this in `src/codegen/`, which left the two
+// primary consumers — both under `src/ir/` — importing UPWARD across the layer
+// boundary. It now lives below the IR, where the leaf argument above always
+// pointed: these are predicates over `ts` syntax nodes with no codegen state,
+// no CodegenContext, and no codegen imports. The three codegen consumers
+// (index.ts, async-frame.ts, async-cps.ts) import down-stack instead, which is
+// the intended direction (emit <- ir <- codegen).
 
 import { ts } from "../ts-api.js";
 

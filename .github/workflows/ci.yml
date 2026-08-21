@@ -164,6 +164,15 @@ jobs:
         if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run check:jstag-seam
 
+      - name: IR->codegen layering ratchet (#3113)
+        if: steps.npm_compat.outputs.only != 'true'
+        # The intended layering is emit <- ir <- codegen. It regrew ~4x (25 ->
+        # 96 import lines) in the six weeks after #3113 slice 1 because nothing
+        # enforced it. Ratchet, not emptiness check: containing the 7k-LOC
+        # ir/integration.ts bridge (#3113 S3) is blocked on #3520/#3521, so the
+        # reachable invariant is "no growth, ratchet toward zero".
+        run: pnpm run check:ir-layering
+
       - name: IR fallback gate (#1376)
         if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run check:ir-fallbacks

@@ -264,21 +264,6 @@ export function selectWithEnvironmentClosures(statement: ts.Statement): IrWithEn
   };
 
   visit(statement);
-  if (refusal === null && closureCount > 0) {
-    const visitConstructors = (node: ts.Node): void => {
-      if (refusal !== null) return;
-      if (ts.isNewExpression(node)) {
-        let callee: ts.Expression = node.expression;
-        while (ts.isParenthesizedExpression(callee)) callee = callee.expression;
-        if (ts.isFunctionExpression(callee) || (ts.isIdentifier(callee) && closureBindingNames.has(callee.text))) {
-          refusal = "constructible closure capture is not in the with-environment IR slice";
-          return;
-        }
-      }
-      forEachChild(node, visitConstructors);
-    };
-    visitConstructors(statement);
-  }
   return refusal === null ? { ok: true, closureCount } : { ok: false, reason: refusal };
 }
 

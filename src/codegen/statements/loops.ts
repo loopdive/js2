@@ -43,6 +43,7 @@ import {
   getOrRegisterVecBaseType,
 } from "../registry/types.js";
 import { overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
+import { reserveVecIndexEnumerable } from "../vec-index-enumerable.js"; // (#4491) overlay-aware index [[Enumerable]]
 import { coerceType, compileExpression, compileStatement, valTypesMatch } from "../shared.js";
 import {
   compileArrayDestructuring,
@@ -3320,22 +3321,43 @@ function emitArrayForIn(
   // body's break/continue depths are untouched. Route-inactive modules and the
   // host key path emit the bare block, byte-for-byte as before.
   const forInHasIdx = !hostKeys && overlayRouteActive(ctx) ? ctx.funcMap.get("__extern_has_idx") : undefined;
+  // (#4491) `[[Enumerable]]` joins the SAME gate. §14.7.5.10 EnumerateObject-
+  // Properties yields only own ENUMERABLE keys, and since #3251 an array index
+  // can carry `enumerable: false` — `Object.defineProperties(arr, {"0": {value:
+  // 1001, writable: true, configurable: true}})`, where §6.2.5.6 defaults the
+  // absent attribute to false. The descriptor already records it correctly; the
+  // index loop enumerated it anyway. Reserved here (append-only mint, no funcIdx
+  // shift) and filled at finalize — vec-index-enumerable.ts.
+  // `keyLocal` must actually hold the decimal key STRING for the native to look
+  // it up: without `number_toString` the native lane leaves a raw f64 there, so
+  // the gate would be a type error rather than a wrong answer. Decline instead.
+  const forInEnumIdx = hostKeys || numToStrIdx === undefined ? undefined : reserveVecIndexEnumerable(ctx);
+  const skipGate: Instr[] = [];
+  if (forInHasIdx !== undefined) {
+    skipGate.push(
+      { op: "local.get", index: vecLocal },
+      { op: "extern.convert_any" },
+      { op: "local.get", index: iLocal },
+      { op: "f64.convert_i32_s" },
+      { op: "call", funcIdx: forInHasIdx },
+      { op: "i32.eqz" },
+      { op: "br_if", depth: 0 },
+    );
+  }
+  if (forInEnumIdx !== undefined) {
+    skipGate.push(
+      { op: "local.get", index: vecLocal },
+      { op: "extern.convert_any" },
+      { op: "local.get", index: keyLocal },
+      { op: "call", funcIdx: forInEnumIdx },
+      { op: "i32.eqz" },
+      { op: "br_if", depth: 0 },
+    );
+  }
   loopBody.push({
     op: "block",
     blockType: { kind: "empty" },
-    body:
-      forInHasIdx === undefined
-        ? userBody
-        : [
-            { op: "local.get", index: vecLocal },
-            { op: "extern.convert_any" },
-            { op: "local.get", index: iLocal },
-            { op: "f64.convert_i32_s" },
-            { op: "call", funcIdx: forInHasIdx },
-            { op: "i32.eqz" },
-            { op: "br_if", depth: 0 },
-            ...userBody,
-          ],
+    body: skipGate.length === 0 ? userBody : [...skipGate, ...userBody],
   });
 
   // increment + restart

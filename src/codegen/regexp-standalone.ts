@@ -87,7 +87,7 @@ import { tryCompileStandaloneRegExpFunctionReplace } from "./regex-replace-fn.js
 import { nativeStringRepr } from "./builtin-scaffold.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
-import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
+import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../ir/regexp-runtime-contract.js";
 import { emitTestCapsAcquire, emitTestCapsRelease } from "./regex-scratch-pool.js";
 import {
   ensureDynamicPatternTokenDecoder,

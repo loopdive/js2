@@ -72,6 +72,10 @@ concurrency:
 jobs:
   validate-inputs:
     name: validate refresh inputs
+    # Scheduled baseline promotion is owned by the canonical repository. A
+    # fork has no baseline-promote credentials and should not launch the full
+    # refresh matrix only to fail at the final promotion step.
+    if: github.repository == 'loopdive/js2'
     runs-on: ubuntu-latest
     steps:
       # #2562 — confirmation is required ONLY for an emergency (forced) dispatch.
