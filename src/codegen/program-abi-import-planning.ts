@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { irGlobalBindingKey, irImportGlobalRef, irPlannedImportGlobalRef } from "../ir/abi-bindings.js";
-import { irCallableBindingKey, irImportFuncRef } from "../ir/callable-bindings.js";
+import { irCallableBindingKey, irCapabilityImportFuncRef, irImportFuncRef } from "../ir/callable-bindings.js";
 import { createIrBindingId, type IrBindingId, type IrSourceId } from "../ir/identity.js";
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { IrGlobalRef } from "../ir/nodes.js";
@@ -73,6 +73,8 @@ interface ProgramAbiCallableImport {
   readonly key: string;
   readonly value: Import;
   readonly signature: FuncTypeDef;
+  readonly capabilityId?: string;
+  readonly providerId?: string;
 }
 
 function callableImportError(message: string): ProgramAbiInvariantError {
@@ -178,7 +180,10 @@ function collectProgramAbiCallableImports(ctx: CodegenContext): readonly Program
     ) {
       throw callableImportError("function import requires non-empty module and field strings");
     }
-    const ref = irImportFuncRef(value.module, value.name, value.name);
+    const provenance = ctx.mod.platformCapabilityImportProvenance?.get(value);
+    const ref = provenance
+      ? irCapabilityImportFuncRef(value.module, value.name, provenance.capabilityId, provenance.providerId, value.name)
+      : irImportFuncRef(value.module, value.name, value.name);
     const baseKey = irCallableBindingKey(ref.binding);
     let group = importsByBaseKey.get(baseKey);
     if (!group) {
@@ -190,6 +195,7 @@ function collectProgramAbiCallableImports(ctx: CodegenContext): readonly Program
         baseKey,
         value,
         signature: callableImportSignature(ctx, value),
+        ...(provenance ? { capabilityId: provenance.capabilityId, providerId: provenance.providerId } : {}),
       }),
     );
   }
@@ -347,6 +353,7 @@ export class ProgramAbiCallableImportRegistry {
         kind: "callable",
         origin: "import",
         signature: canonicalProgramAbiCallableTypeContract(typeContract),
+        ...(entry.capabilityId ? { capabilityId: entry.capabilityId, providerId: entry.providerId } : {}),
       },
     });
     this.session.registerCallableTypeContract(bindingId, typeContract);

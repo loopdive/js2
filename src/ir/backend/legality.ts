@@ -249,6 +249,12 @@ function linearInstrError(instr: IrInstr): string | null {
     case "vec.len":
     case "vec.get":
     case "vec.set":
+    // #4558 — the counted-push preallocation (0f7f4039c) wired
+    // `emitVecSetLength` into LinearEmitter (an i32.store at the layout's
+    // lengthOffset) but never admitted the instruction here, so every
+    // function using the preallocated-push lowering demoted at
+    // `illegal:instr-vec.set_length` despite the emitter supporting it.
+    case "vec.set_length":
     case "while.loop":
     case "for.loop":
     // #2952 slice 2 — br.label lowers to a core-Wasm `br` (depth derived by
@@ -359,6 +365,10 @@ function porfforInstrError(instr: IrInstr): string | null {
     case "vec.len":
     case "vec.get":
     case "vec.set":
+    // #4558 — same desync as the linear profile: PorfforSink.emitVecSetLength
+    // (a u32 store at the planned layout's lengthOffset) landed with the
+    // counted-push preallocation but was never admitted here.
+    case "vec.set_length":
     case "select":
     case "if":
     case "early.return":

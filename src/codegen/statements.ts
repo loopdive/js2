@@ -317,6 +317,7 @@ export function compileStatement(ctx: CodegenContext, fctx: FunctionContext, stm
   }
 
   try {
+    ctx.irBodyRouteAuditSession?.recordFrame("compileStatement", fctx, stmt);
     compileStatementInner(ctx, fctx, stmt);
   } catch (e) {
     // Defensive: catch any unhandled crash in statement compilation

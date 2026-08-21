@@ -647,8 +647,8 @@ class SourceInventoryBuilder {
         const compilerOrigin = this.compilerOrigin(statement);
         if (compilerOrigin) {
           const role = compilerUnitRole(compilerOrigin);
-          const timerSynthetic = compilerOrigin.producer === "timer-shim";
-          if (timerSynthetic) {
+          const unownedTimerSupport = compilerOrigin.producer === "timer-shim" && compilerOrigin.role !== "set-timeout";
+          if (unownedTimerSupport) {
             const unit = this.addSupportUnit(
               "synthetic-support",
               null,

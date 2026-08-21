@@ -23,7 +23,7 @@
  */
 import { ts, forEachChild } from "../ts-api.js";
 import type { TypeOracle } from "../checker/oracle.js";
-import { staticIntegerRange } from "./analysis/static-numeric-range.js";
+import { staticIntegerRange } from "../ir/analysis/static-numeric-range.js";
 
 /**
  * A deliberately narrow range-backed extension to the structural Q-CANON

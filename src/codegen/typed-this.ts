@@ -97,6 +97,7 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 // reach the expression/coercion engines without a cycle back through
 // expressions.ts / index.ts.
 import { VOID_RESULT, coerceType, compileExpression, flushLateImportShifts, valTypesMatch } from "./shared.js";
+import { inheritedSetAffectsKey } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 
 /**
  * Property names whose reads/writes have dedicated lowerings (array length,
@@ -1445,7 +1446,7 @@ export function tryEmitProvenReceiverFieldGet(
   // A clear flow-presence bit is a logical own-property miss. In an active
   // inherited-descriptor module, route it to the dynamic getter so a fnctor
   // prototype can supply the value rather than inlining `undefined`.
-  if (ctx.standalone && ctx.inheritedSetDescriptorDirty && presenceSlot !== undefined) {
+  if (ctx.standalone && inheritedSetAffectsKey(ctx, propName) && presenceSlot !== undefined) {
     noteProvenReceiver(`inherited-presence:${cls}.${propName}`);
     return undefined;
   }

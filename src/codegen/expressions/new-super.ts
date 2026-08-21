@@ -658,7 +658,7 @@ export function hostTaBufferArgSymName(ctx: CodegenContext, args: readonly ts.Ex
 // (#4017) Moved to ./non-constructable.ts together with the rest of the
 // "does this callee have [[Construct]]?" analysis; re-exported here because
 // json-standalone.ts and new-builtin-globals.ts import it from this module.
-export { resolvesToAmbientGlobal } from "./non-constructable.js";
+export { resolvesToAmbientGlobal, resolvesToNamedAmbientGlobal } from "./non-constructable.js";
 
 /** Compile super.method(args) — resolve to ParentClass_method and call with this */
 /**

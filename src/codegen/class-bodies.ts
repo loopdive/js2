@@ -1730,7 +1730,7 @@ export interface ClassBodyCompileRouting {
   readonly skippedImplicitConstructorUnitIds?: IrUnitId[];
 }
 
-function skipExactPreparedClassBody(
+export function skipExactPreparedClassBody(
   ctx: CodegenContext,
   declaration: ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
   routing: ClassBodyCompileRouting | undefined,
@@ -1761,7 +1761,8 @@ function skipExactPreparedClassBody(
   return true;
 }
 
-function assertDirectClassBodyAllowed(name: string): void {
+function assertDirectClassBodyAllowed(ctx: CodegenContext, name: string, declaration: ts.Node): void {
+  ctx.irBodyRouteAuditSession?.recordRoot("compileClassBodies", name, declaration);
   const poisoned = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
   if (!poisoned || !poisoned.split(",").includes(name)) return;
   throw new Error(`injected direct class-body poison: ${name}`);
@@ -1781,6 +1782,7 @@ export function compileClassBodies(
     reportError(ctx, decl, "Cannot compile unnamed class");
     return;
   }
+  ctx.irBodyRouteAuditSession?.recordRoot("compileClassBodies", className, decl);
   const structTypeIdx = ctx.structMap.get(className);
   const fields = ctx.structFields.get(className);
   if (structTypeIdx === undefined || !fields) {
@@ -1788,16 +1790,11 @@ export function compileClassBodies(
     return;
   }
 
-  // (#779a) For nested class declarations, an enclosing function may still be
-  // mid-compilation (its `fctx.body` holds the captured-global copy emitted by
-  // `promoteAccessorCapturesToGlobals`). Compiling constructor/method bodies
-  // below overwrites `ctx.currentFunc`, so a string-constant import added
-  // during a binding-pattern destructure (e.g. the "Cannot destructure ..."
-  // message) would run `fixupModuleGlobalIndices` WITHOUT the enclosing body in
-  // its shift set — leaving its already-emitted `global.set`/`global.get`
-  // indices stale while the captured-global maps shift past them. Register the
-  // enclosing function on the shift-tracking stacks so its body is shifted too
-  // (mirrors the object-literal method path in literals.ts:1663-1666).
+  // (#779a) A nested class's enclosing function can remain mid-compilation,
+  // with captured-global copies in its `fctx.body`. Compiling members replaces
+  // `ctx.currentFunc`, so binding-pattern string imports could otherwise shift
+  // globals without that enclosing body and leave stale indices. Register it
+  // on the shift-tracking stacks, mirroring object-literal methods (literals.ts).
   const enclosingFunc = ctx.currentFunc;
   if (enclosingFunc) {
     ctx.funcStack.push(enclosingFunc);
@@ -1814,7 +1811,7 @@ export function compileClassBodies(
   }
 }
 
-function skipPreparedClassConstructorBody(
+export function skipPreparedClassConstructorBody(
   ctx: CodegenContext,
   funcByName: ReadonlyMap<string, number>,
   routing: ClassBodyCompileRouting | undefined,
@@ -1928,7 +1925,7 @@ function compileClassBodiesInner(
     !skipPreparedClassConstructorBody(ctx, funcByName, routing, decl, ctor, className, ctorName)
   ) {
     const func = ctx.mod.functions[ctorLocalIdx]!;
-    assertDirectClassBodyAllowed(ctorName);
+    assertDirectClassBodyAllowed(ctx, ctorName, ctor ?? decl);
     const params: { name: string; type: ValType }[] = [];
     // (#2086) Match the synthetic forwarder params added during pre-registration
     // from the SAME shared rule — `__arg{i}` externref forwarders (#1833) and/or
@@ -2487,7 +2484,7 @@ function compileClassBodiesInner(
         routing.skippedNames.push(fullName);
         continue;
       }
-      assertDirectClassBodyAllowed(fullName);
+      assertDirectClassBodyAllowed(ctx, fullName, member);
       const sig = ctx.checker.getSignatureFromDeclaration(member);
       const retType = sig ? ctx.checker.getReturnTypeOfSignature(sig) : undefined;
 
@@ -2890,7 +2887,7 @@ function compileClassBodiesInner(
         routing.skippedNames.push(getterName);
         continue;
       }
-      assertDirectClassBodyAllowed(getterName);
+      assertDirectClassBodyAllowed(ctx, getterName, member);
       const sig = ctx.checker.getSignatureFromDeclaration(member);
       const retType = sig ? ctx.checker.getReturnTypeOfSignature(sig) : undefined;
 
@@ -2998,7 +2995,7 @@ function compileClassBodiesInner(
         routing.skippedNames.push(setterName);
         continue;
       }
-      assertDirectClassBodyAllowed(setterName);
+      assertDirectClassBodyAllowed(ctx, setterName, member);
 
       // First param is self, remaining are the setter parameters
       const params: { name: string; type: ValType }[] = [

@@ -55,6 +55,8 @@ files:
   - src/codegen/context/types.ts
   - src/codegen/dom-string-boundary.ts
   - src/codegen/extern-declarations.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/expressions/object-method-rest-abi.ts
   - src/codegen/index.ts
   - src/codegen/ir-async-frame.ts
   - src/codegen/ir-inline.ts
@@ -239,3 +241,20 @@ harness-budget, typecheck, formatting, lint, and diff-integrity gates pass. The
 host-policy census remains non-vacuous at **33 probes / 393 imports / 0
 legacy-semantic / 0 unknown**, and the optimization ledger validates at **50
 decisions / 36 IR-owned / 3 retirement-ready / 2 source-anchored**.
+
+## PR #4663 Test262 follow-up
+
+The [post-merge Test262 report](https://github.com/loopdive/js2/pull/4663#issuecomment-5360874330)
+identified one newly lost standalone pass and a neighboring assertion failure
+that had both become null dereferences. The closed-struct direct-call route was
+padding an object method's `...[pattern]` tuple formal with `ref.null`, because
+only ordinary identifier rest formals publish `$Vec` metadata.
+
+The direct route now declines that fixed-tuple binding-pattern ABI so the
+existing generic dispatcher performs rest initialization. Ordinary
+`...identifier` object methods recover their already-materialized `$Vec`
+layout and remain direct calls. The #4576 matrix hash-pins and executes both
+exact Test262 sources: `scope-meth-param-rest-elem-var-close.js` passes again,
+while `scope-meth-param-rest-elem-var-open.js` returns to its exact pre-merge
+assertion failure rather than trapping. A WAT/runtime control independently
+proves the ordinary identifier-rest direct path.

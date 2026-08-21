@@ -69,10 +69,10 @@ import {
 } from "./builtin-fn-meta.js";
 import { getOrCreateFuncRefWrapperTypes } from "./closures.js";
 import { emitJsonStringifyValue } from "./json-codec-native.js";
-import { emitMathStaticValueBody, isSelfHostedMathValueMethod } from "./math-static-value-body.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
+import { emitMathValueReadBody } from "./math-value-read.js"; // (#4565)
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureExternStrictEqHelper } from "./any-helpers.js";
 import { sameValueNumberOps } from "./same-value-number-ops.js";
 import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
@@ -1457,18 +1457,11 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
           ],
         },
       );
-    } else if (
-      genericThrowBody &&
-      isSelfHostedMathValueMethod(builtinName, propName) &&
-      emitMathStaticValueBody(ctx, closureFctx, propName)
-    ) {
-      // (#4491 wave-4 lane G) `Math.<fn>` as a VALUE computes instead of
-      // throwing — see `math-static-value-body.ts`. Placed BEFORE the
-      // `genericThrowBody` arm below because that arm claims every `default:`
-      // case, this one included; behind it the arm would never fire. The
-      // emitter declines (returns false, pushing nothing) whenever the
-      // `Math_<fn>` kernel or a coercion helper is missing, and the `&&` then
-      // falls through to the throw body exactly as before.
+    } else if (genericThrowBody && builtinName === "Math" && emitMathValueReadBody(ctx, closureFctx, propName)) {
+      // (#4565; supersedes the #4491 wave-4 lane G arm, same defect) — the
+      // upstream module mints the `Math_<fn>` kernel late itself, so it needs
+      // no collector-phase seeding. Kept BEFORE the `genericThrowBody` arm
+      // below because that arm claims every `default:` case.
     } else if (genericThrowBody) {
       // (#2984 Phase 3) Degrade-to-catchable body: a real TypeError instance +
       // `throw` — the EXACT helper the Phase-2 proto refusal bodies use,

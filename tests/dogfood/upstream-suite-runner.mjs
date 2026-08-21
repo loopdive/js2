@@ -105,10 +105,15 @@ function __upstreamExpect(actual) {
     toHaveProperty(expected) { const n = ++__upstreamAssertion; if (actual == null || !(expected in Object(actual))) __upstreamFail("assertion " + n + " missing property " + String(expected)); },
     toMatchObject(expected) { const n = ++__upstreamAssertion; if (!__upstreamSubset(actual, expected)) __upstreamFail("assertion " + n + " object subset mismatch"); },
     toMatch(expected) { const n = ++__upstreamAssertion; const value = String(actual); if (expected instanceof RegExp ? !expected.test(value) : !value.includes(String(expected))) __upstreamFail("assertion " + n + " pattern mismatch"); },
+    toBeCalled() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length === 0) __upstreamFail("assertion " + n + " expected spy to be called"); },
+    toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length === 0) __upstreamFail("assertion " + n + " expected spy to be called"); },
     toBeCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = actual && actual.mock && actual.mock.calls; let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
     toHaveBeenCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = actual && actual.mock && actual.mock.calls; let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
     toHaveBeenCalledTimes(expected) { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length !== expected) __upstreamFail("assertion " + n + " spy call count mismatch"); },
+    toHaveBeenCalledOnce() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length !== 1) __upstreamFail("assertion " + n + " spy call count mismatch"); },
+    toBeCalledOnce() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length !== 1) __upstreamFail("assertion " + n + " spy call count mismatch"); },
     toBeInstanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected !== "function" || !(actual instanceof expected)) __upstreamFail("assertion " + n + " instance mismatch"); },
+    instanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected !== "function" || !(actual instanceof expected)) __upstreamFail("assertion " + n + " instance mismatch"); },
     toMatchSnapshot() {
       if (typeof __upstreamSnapshotMatcher !== "function") {
         __upstreamFail("snapshot assertion requires a package-specific snapshot adapter");
@@ -124,7 +129,14 @@ function __upstreamExpect(actual) {
     toEqual(expected) { const n = ++__upstreamAssertion; if (__upstreamSame(actual, expected)) __upstreamFail("assertion " + n + " unexpected deep equality"); },
     toBeUndefined() { const n = ++__upstreamAssertion; if (actual === undefined) __upstreamFail("assertion " + n + " unexpectedly undefined"); },
     toBeDefined() { const n = ++__upstreamAssertion; if (actual !== undefined) __upstreamFail("assertion " + n + " unexpectedly defined"); },
+    toBeNull() { const n = ++__upstreamAssertion; if (actual === null) __upstreamFail("assertion " + n + " unexpectedly null"); },
+    toBeTruthy() { const n = ++__upstreamAssertion; if (actual) __upstreamFail("assertion " + n + " unexpectedly truthy"); },
+    toBeFalsy() { const n = ++__upstreamAssertion; if (!actual) __upstreamFail("assertion " + n + " unexpectedly falsey"); },
+    toBeInstanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected === "function" && actual instanceof expected) __upstreamFail("assertion " + n + " unexpected instance"); },
+    instanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected === "function" && actual instanceof expected) __upstreamFail("assertion " + n + " unexpected instance"); },
+    toBeCalled() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
     toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
+    toHaveBeenCalledOnce() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (calls && calls.length === 1) __upstreamFail("assertion " + n + " unexpected spy call"); },
     toThrow() { const n = ++__upstreamAssertion; if (typeof actual !== "function" || __upstreamThrown(actual) !== null) __upstreamFail("assertion " + n + " unexpected throw"); },
     toThrowError() { const n = ++__upstreamAssertion; if (typeof actual !== "function" || __upstreamThrown(actual) !== null) __upstreamFail("assertion " + n + " unexpected throw"); },
   };
@@ -151,6 +163,8 @@ function __upstreamExpect(actual) {
   return positive;
 }
 const expect = __upstreamExpect;
+const __upstreamGlobalStubs = [];
+const __upstreamEnvStubs = [];
 const vi = {
   fn(implementation) {
     function spy() {
@@ -161,28 +175,122 @@ const vi = {
     spy.mock = { calls: [] };
     spy.mockClear = function() { spy.mock.calls.length = 0; return spy; };
     spy.mockReturnValue = function(value) { implementation = function() { return value; }; return spy; };
+    spy.mockImplementation = function(next) { implementation = next; return spy; };
+    spy.mockRestore = function() {};
     return spy;
   },
+  spyOn(object, key) {
+    const original = object[key];
+    const spy = vi.fn(function() { return original.apply(this, arguments); });
+    spy.mockRestore = function() { object[key] = original; };
+    object[key] = spy;
+    return spy;
+  },
+  stubGlobal(key, value) {
+    const name = String(key);
+    const hadOwn = Object.prototype.hasOwnProperty.call(globalThis, name);
+    __upstreamGlobalStubs.push({ name, hadOwn, previous: globalThis[name] });
+    globalThis[name] = value;
+  },
+  unstubAllGlobals() {
+    for (let index = __upstreamGlobalStubs.length - 1; index >= 0; index--) {
+      const stub = __upstreamGlobalStubs[index];
+      if (stub.hadOwn) globalThis[stub.name] = stub.previous;
+      else delete globalThis[stub.name];
+    }
+    __upstreamGlobalStubs.length = 0;
+  },
+  stubEnv(key, value) {
+    if (globalThis.process && globalThis.process.env) {
+      const env = globalThis.process.env;
+      const name = String(key);
+      __upstreamEnvStubs.push({ env, name, hadOwn: Object.prototype.hasOwnProperty.call(env, name), previous: env[name] });
+      env[name] = String(value);
+    }
+  },
+  unstubAllEnvs() {
+    for (let index = __upstreamEnvStubs.length - 1; index >= 0; index--) {
+      const stub = __upstreamEnvStubs[index];
+      if (stub.hadOwn) stub.env[stub.name] = stub.previous;
+      else delete stub.env[stub.name];
+    }
+    __upstreamEnvStubs.length = 0;
+  },
+};
+// A number of Jest-owned packages publish their original tests with the Jest
+// global even when the selected unit only needs spies. Keep this small facade
+// backed by the same deterministic implementation as vi; package adapters can
+// add a package-specific module/mock registry when a test needs more than
+// function spies.
+const jest = {
+  fn: vi.fn,
+  spyOn: vi.spyOn,
+  resetModules() {},
+  doMock() {},
 };
 const __upstreamBeforeEach = [];
+const __upstreamAfterEach = [];
+const __upstreamBeforeAll = [];
+const __upstreamAfterAll = [];
 function describe(_name, body) {
   const hookCount = __upstreamBeforeEach.length;
+  const afterHookCount = __upstreamAfterEach.length;
+  const beforeAllCount = __upstreamBeforeAll.length;
+  const afterAllCount = __upstreamAfterAll.length;
   body();
   __upstreamBeforeEach.length = hookCount;
+  __upstreamAfterEach.length = afterHookCount;
+  __upstreamBeforeAll.length = beforeAllCount;
+  __upstreamAfterAll.length = afterAllCount;
 }
 function beforeEach(body) { __upstreamBeforeEach.push(body); }
+function beforeAll(body) { __upstreamBeforeAll.push(body); }
+function afterAll(body) { __upstreamAfterAll.push(body); }
 function __upstreamRegister(name, body) {
   const hooks = __upstreamBeforeEach.slice();
+  const afterHooks = __upstreamAfterEach.slice();
+  const beforeAllHooks = __upstreamBeforeAll.slice();
+  const afterAllHooks = __upstreamAfterAll.slice();
   __upstreamTests.push({
     name: String(name),
+    beforeAllHooks,
+    afterAllHooks,
     body: function(assertion) {
       for (let index = 0; index < hooks.length; index++) hooks[index]();
-      return body(assertion);
+      let result;
+      try {
+        result = body(assertion);
+      } catch (error) {
+        for (let index = afterHooks.length - 1; index >= 0; index--) afterHooks[index]();
+        throw error;
+      }
+      if (result && typeof result.then === "function") {
+        return result.then(
+          function(value) {
+            for (let index = afterHooks.length - 1; index >= 0; index--) afterHooks[index]();
+            return value;
+          },
+          function(error) {
+            for (let index = afterHooks.length - 1; index >= 0; index--) afterHooks[index]();
+            throw error;
+          },
+        );
+      }
+      for (let index = afterHooks.length - 1; index >= 0; index--) afterHooks[index]();
+      return result;
     },
   });
 }
 function it(name, body) { __upstreamRegister(name, body); }
 function test(name, body) { __upstreamRegister(name, body); }
+function __upstreamSkip() {}
+it.skip = __upstreamSkip;
+it.todo = __upstreamSkip;
+test.skip = __upstreamSkip;
+test.todo = __upstreamSkip;
+describe.skip = __upstreamSkip;
+describe.todo = __upstreamSkip;
+function afterEach(body) { __upstreamAfterEach.push(body); }
 function __upstreamTableRows(strings, values) {
   const markers = [];
   let source = "";
@@ -268,6 +376,7 @@ function __upstreamTypeExpectation() {
     toBeBoolean() { return chain; },
     toBeArray() { return chain; },
     toBeObject() { return chain; },
+    toBeFunction() { return chain; },
     toBeUndefined() { return chain; },
     toBeDefined() { return chain; },
   };
@@ -292,6 +401,13 @@ const QUnit = {
 };
 `;
 
+// CommonJS package graphs can execute imported modules before the generated
+// entry module initializes a top-level `var global` alias. The Node platform
+// already provides the binding through codegen, so Node-oriented adapters must
+// omit this browser compatibility declaration rather than observing it as
+// undefined during module initialization.
+export const UPSTREAM_TEST_SHIM_NODE = UPSTREAM_TEST_SHIM.replace("var global = globalThis;\n", "");
+
 export const UPSTREAM_TEST_EXPORTS = String.raw`
 export function upstreamTestCount(): number { return __upstreamTests.length; }
 export function upstreamTestNames(): string[] {
@@ -304,6 +420,11 @@ export async function runUpstreamTest(index: number): Promise<number> {
   __upstreamCurrentTestName = __upstreamTests[index].name;
   let result;
   try {
+    const beforeAllHooks = __upstreamTests[index].beforeAllHooks || [];
+    for (let hookIndex = 0; hookIndex < beforeAllHooks.length; hookIndex++) {
+      const hook = beforeAllHooks[hookIndex];
+      if (!hook.__upstreamRan) { hook(); hook.__upstreamRan = true; }
+    }
     result = __upstreamTests[index].body(__qunitAssert);
   } catch (error) {
     __upstreamErrors[index] = error && error.message !== undefined ? String(error.message) : String(error);
@@ -318,9 +439,23 @@ export async function runUpstreamTest(index: number): Promise<number> {
       }),
     );
     __upstreamErrors[index] = outcome.error;
+    if (index === __upstreamTests.length - 1) {
+      const afterAllHooks = __upstreamTests[index].afterAllHooks || [];
+      for (let hookIndex = afterAllHooks.length - 1; hookIndex >= 0; hookIndex--) {
+        const hook = afterAllHooks[hookIndex];
+        if (!hook.__upstreamRan) { hook(); hook.__upstreamRan = true; }
+      }
+    }
     return outcome.passed ? 1 : 0;
   }
   __upstreamErrors[index] = "";
+  if (index === __upstreamTests.length - 1) {
+    const afterAllHooks = __upstreamTests[index].afterAllHooks || [];
+    for (let hookIndex = afterAllHooks.length - 1; hookIndex >= 0; hookIndex--) {
+      const hook = afterAllHooks[hookIndex];
+      if (!hook.__upstreamRan) { hook(); hook.__upstreamRan = true; }
+    }
+  }
   return 1;
 }
 export function runUpstreamTests(): number[] {
@@ -331,6 +466,11 @@ export function runUpstreamTests(): number[] {
     __upstreamCurrentTestName = __upstreamTests[i].name;
     let result;
     try {
+      const beforeAllHooks = __upstreamTests[i].beforeAllHooks || [];
+      for (let hookIndex = 0; hookIndex < beforeAllHooks.length; hookIndex++) {
+        const hook = beforeAllHooks[hookIndex];
+        if (!hook.__upstreamRan) { hook(); hook.__upstreamRan = true; }
+      }
       result = __upstreamTests[i].body(__qunitAssert);
     } catch (error) {
       statuses.push(0);
@@ -347,6 +487,13 @@ export function runUpstreamTests(): number[] {
     } else {
       statuses.push(1);
       __upstreamErrors.push("");
+    }
+    if (i === __upstreamTests.length - 1) {
+      const afterAllHooks = __upstreamTests[i].afterAllHooks || [];
+      for (let hookIndex = afterAllHooks.length - 1; hookIndex >= 0; hookIndex--) {
+        const hook = afterAllHooks[hookIndex];
+        if (!hook.__upstreamRan) { hook(); hook.__upstreamRan = true; }
+      }
     }
   }
   return statuses;
@@ -492,6 +639,7 @@ export async function compileAndRunUpstreamModule({
   source,
   nativeSource = source,
   timeoutMs = 180_000,
+  workerEnv,
 }) {
   mkdirSync(dirname(generatedPath), { recursive: true });
   writeFileSync(generatedPath, source);
@@ -503,7 +651,7 @@ export async function compileAndRunUpstreamModule({
     return { native: { fatal: errorText(error), count: 0, names: [], statuses: [] }, compile: null, wasm: null };
   }
 
-  const isolated = await runIsolatedCompile(generatedPath, timeoutMs);
+  const isolated = await runIsolatedCompile(generatedPath, timeoutMs, "project", workerEnv);
   return { native, ...isolated };
 }
 
@@ -560,6 +708,13 @@ export function summarizeUpstreamRuns({ name, pin, testFiles, selectedFiles, run
       filesSelected: selectedFiles.length,
       filesDeferred: testFiles.length - selectedFiles.length,
       testsRegistered: 0,
+      deferredRegistrations: 0,
+      // A deferred upstream registration is not a compiler failure: the
+      // adapter deliberately did not execute it because its host/package
+      // dependency surface is not wired yet. Keep that inventory explicit so
+      // npm-compat can show unavailable infrastructure instead of making the
+      // denominator look like a silent omission.
+      unavailableInfra: 0,
       nativePassed: 0,
       nativeFailed: 0,
     },
@@ -602,6 +757,11 @@ export function summarizeUpstreamRuns({ name, pin, testFiles, selectedFiles, run
       });
     }
   }
+  const registrationSites = Number(pin.registrationSites);
+  if (Number.isFinite(registrationSites)) {
+    report.extraction.deferredRegistrations = Math.max(0, registrationSites - report.extraction.testsRegistered);
+    report.extraction.unavailableInfra = report.extraction.deferredRegistrations;
+  }
   report.compile.details = runs.map((run) => ({
     file: run.file,
     ...run.result.compile,
@@ -615,6 +775,7 @@ export function summarizeUpstreamRuns({ name, pin, testFiles, selectedFiles, run
     deferredFiles: report.extraction.filesDeferred,
     nativePassed: report.extraction.nativePassed,
     nativeFailed: report.extraction.nativeFailed,
+    unavailableInfra: report.extraction.unavailableInfra,
     wasmPassed: report.results.passed,
     wasmFailed: report.results.failed,
     runtimeFailed: report.results.runtimeFailed,

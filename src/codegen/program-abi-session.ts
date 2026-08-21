@@ -32,6 +32,7 @@ import {
   type ProgramAbiCallableTypeContract,
 } from "./program-abi-signatures.js";
 import { SHAPE_BRAND_FIELD } from "./shape-brand.js";
+import { programAbiIntentsEqual } from "./program-abi-intent-equality.js";
 
 const ABI_DOMAIN_ORDINAL = Object.freeze({
   callable: 0,
@@ -866,39 +867,6 @@ function cloneDraft(draft: ProgramAbiDraft): ProgramAbiDraft {
   }) as ProgramAbiDraft;
 }
 
-function intentsEqual(a: ProgramAbiDraft["intent"], b: ProgramAbiDraft["intent"]): boolean {
-  if (a.kind !== b.kind) return false;
-  if (a.kind === "callable" && b.kind === "callable") {
-    return (
-      a.origin === b.origin &&
-      a.unitId === b.unitId &&
-      a.classId === b.classId &&
-      a.sourceId === b.sourceId &&
-      a.signature.params.length === b.signature.params.length &&
-      a.signature.params.every((value, index) => value === b.signature.params[index]) &&
-      a.signature.results.length === b.signature.results.length &&
-      a.signature.results.every((value, index) => value === b.signature.results[index])
-    );
-  }
-  if (a.kind === "global" && b.kind === "global") {
-    return (
-      a.origin === b.origin &&
-      a.valueType === b.valueType &&
-      a.mutable === b.mutable &&
-      a.sourceId === b.sourceId &&
-      a.unitId === b.unitId
-    );
-  }
-  if (a.kind === "type" && b.kind === "type") return a.shapeKey === b.shapeKey;
-  if (a.kind === "export" && b.kind === "export") {
-    return a.externalName === b.externalName && a.targetId === b.targetId;
-  }
-  if (a.kind === "class" && b.kind === "class") {
-    return a.classId === b.classId && a.layoutKey === b.layoutKey;
-  }
-  return a.kind === "support" && b.kind === "support" && a.role === b.role;
-}
-
 function draftsEqual(a: ProgramAbiDraft, b: ProgramAbiDraft): boolean {
   const ar = a as ProgramAbiDraft & {
     readonly aliasOf?: IrBindingId;
@@ -920,7 +888,7 @@ function draftsEqual(a: ProgramAbiDraft, b: ProgramAbiDraft): boolean {
     a.structuralOrder.domainOrdinal === b.structuralOrder.domainOrdinal &&
     a.structuralOrder.roleOrdinal === b.structuralOrder.roleOrdinal &&
     a.structuralOrder.derivedOrdinal === b.structuralOrder.derivedOrdinal &&
-    intentsEqual(a.intent, b.intent)
+    programAbiIntentsEqual(a.intent, b.intent)
   );
 }
 
@@ -940,7 +908,7 @@ function planEntriesEqualIgnoringDenseOrder(a: ProgramAbiPlanEntry, b: ProgramAb
     a.slotPolicy === b.slotPolicy &&
     ar.slotSpace === br.slotSpace &&
     ar.aliasOf === br.aliasOf &&
-    intentsEqual(a.intent, b.intent)
+    programAbiIntentsEqual(a.intent, b.intent)
   );
 }
 
@@ -1174,14 +1142,7 @@ export class ProgramAbiSession {
     return this.drafts.get(id);
   }
 
-  /**
-   * Resolve the exact planned ABI identities for one symbolic IR reference.
-   *
-   * Dependency discovery runs before the whole-program ABI is published, so
-   * it cannot search final numeric slots. The structural reference stored on
-   * each draft is already the canonical identity contract; return every match
-   * in structural plan order so callers can fail closed on ambiguity.
-   */
+  /** Resolve every exact pre-publication ABI identity in structural plan order. */
   bindingIdsForStructuralReference(key: string): readonly IrBindingId[] {
     if (typeof key !== "string" || key.length === 0) return Object.freeze([]);
     return Object.freeze(
@@ -1198,6 +1159,10 @@ export class ProgramAbiSession {
 
   registeredDerivedUnit(id: IrUnitId): ProgramAbiDerivedUnitRecord | undefined {
     return this.derivedUnits.get(id);
+  }
+
+  derivedUnitRecords(): IterableIterator<ProgramAbiDerivedUnitRecord> {
+    return this.derivedUnits.values();
   }
 
   /**

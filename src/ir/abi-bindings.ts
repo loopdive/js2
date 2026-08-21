@@ -31,6 +31,13 @@ function compatibilityName(explicit: string | undefined, fallback: string, label
   return requireNonEmpty(explicit ?? fallback, label);
 }
 
+function requireSourceGlobalCapability(value: "dom" | undefined): "dom" | undefined {
+  if (value !== undefined && value !== "dom") {
+    throw new TypeError("source global capability must be dom when present");
+  }
+  return value;
+}
+
 function globalRef(name: string, binding: IrGlobalBinding): IrGlobalRef {
   requireBindingId(binding.bindingId, "global bindingId", "global");
   return Object.freeze({
@@ -116,10 +123,16 @@ export function arePairedIrModuleGlobalBindingIds(valueId: IrBindingId, tdzId: I
 }
 
 /** Exact source-owned value storage for one top-level declaration ordinal. */
-export function irModuleGlobalRef(sourceId: IrSourceId, declarationOrdinal: number, adapterName: string): IrGlobalRef {
+export function irModuleGlobalRef(
+  sourceId: IrSourceId,
+  declarationOrdinal: number,
+  adapterName: string,
+  capability?: "dom",
+): IrGlobalRef {
   return globalRef(adapterName, {
     kind: "source",
     bindingId: irModuleGlobalBindingId(sourceId, declarationOrdinal),
+    ...(requireSourceGlobalCapability(capability) ? { capability } : {}),
   });
 }
 
@@ -136,10 +149,11 @@ export function irModuleTdzGlobalRef(
 }
 
 /** Rehydrate a source-owned reference from its already-planned exact binding. */
-export function irSourceGlobalRef(bindingId: IrBindingId, adapterName: string): IrGlobalRef {
+export function irSourceGlobalRef(bindingId: IrBindingId, adapterName: string, capability?: "dom"): IrGlobalRef {
   return globalRef(adapterName, {
     kind: "source",
     bindingId: requireBindingId(bindingId, "source global bindingId", "global"),
+    ...(requireSourceGlobalCapability(capability) ? { capability } : {}),
   });
 }
 
@@ -342,7 +356,10 @@ function keyPart(value: string): string {
 export function irGlobalBindingKey(binding: IrGlobalBinding): string {
   const bindingId = keyPart(requireBindingId(binding.bindingId, "global bindingId", "global"));
   switch (binding.kind) {
-    case "source":
+    case "source": {
+      const capability = requireSourceGlobalCapability(binding.capability);
+      return capability === undefined ? `source|${bindingId}` : `source|${bindingId}|capability|${keyPart(capability)}`;
+    }
     case "support":
       return `${binding.kind}|${bindingId}`;
     case "import":

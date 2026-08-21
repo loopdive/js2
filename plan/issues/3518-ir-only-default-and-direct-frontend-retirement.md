@@ -18,21 +18,8 @@ complexity: XL
 es_edition: n/a
 lane: ir-retirement
 model: gpt-5.6-sol
-related: [1373b, 2855, 2950, 3090, 3142, 3143, 3341, 3517, 3529, 3520, 3521, 3522, 3523, 3525, 3526, 3527, 3528, 3678, 3681, 4382, 4576]
+related: [1373b, 2855, 2950, 3090, 3142, 3143, 3341, 3517, 3529, 3520, 3521, 3522, 3523, 3525, 3526, 3527, 3528, 3678, 3681, 4382, 4576, 4577]
 origin: "2026-07-21 explicit user directive: enable IR-only by default and retire the old direct codegen path"
-loc-budget-allow:
-  # +2: one import plus one call, wiring the new
-  # `src/codegen/ir-legacy-caller-abi.ts` predicate into the existing
-  # `legacyCallerAbiIsProjected` callback. All logic lives in that new module;
-  # this is the irreducible remainder, since the callback is constructed inside
-  # `planIrOverlay` and handed to the selector from there.
-  - src/codegen/index.ts
-func-budget-allow:
-  # +1: the single `hasFullyAnnotatedScalarAbi(declaration)` early-return added
-  # to the `legacyCallerAbiIsProjected` closure. That closure is built inside
-  # `planIrOverlay` because it captures `ctx`/`resolveImplicitParamType`; there
-  # is no seam that reaches the selector without passing through this function.
-  - src/codegen/index.ts::planIrOverlay
 ---
 # #3518 — IR-only default and direct front-end retirement
 
@@ -83,7 +70,7 @@ The following measurements are independent and must not be conflated:
 | Adoption matrix                                  |       **18 / 58 rows IR-owned** | Those syntax rows have an IR implementation in measured configurations | Their legacy handlers are unreachable in mixed functions or at module scope |
 | Front-end reachability                           | **59,676 legacy-only fn-lines** | Approximate final deletion opportunity                                 | Those lines are dormant today                                               |
 | Runtime/builtin reachability                     |               **~47K fn-lines** | Behavior emission must gain IR-owned entry points                      | Those routines should be deleted with the front-end                         |
-| Bounded host terminal readiness                  |  **37/37 IR; 0 legacy bodies** | Every measured playground terminal is prepared and compile-once        | Global runtime/linear/direct paths are unreachable or IR-only is ready       |
+| Bounded host + standalone readiness              | **37/37 IR; 0 legacy in each** | Every measured playground terminal is prepared and compile-once in both lanes | Global runtime/linear/direct paths are unreachable or repository-wide IR-only is ready |
 
 R0 is complete. After the #3522 cross-owner/Builtins transactions and the
 #3523 Algorithms and Calendar function-plus-module-init transactions, the
@@ -92,6 +79,14 @@ units, 37 emitted IR bodies, 0 typed Unsupported outcomes, 0 Invariants, and 0
 legacy bodies. All Algorithms and Calendar terminals now seal in exact
 prepared components and compile once through IR. This is a bounded census,
 not repository-wide strict IR-only readiness.
+
+The #4577 Calendar checkpoint brings the matching standalone census to the
+same 5/5 entries and 37/37 compile-once IR bodies, with zero legacy,
+Unsupported, or Invariant outcomes, and promotes that bounded lane from
+baseline-only to strict IR-only policy. Calendar's ten source terminals, seven
+reusable callbacks, five nullable DOM globals, and exact DOM/interaction/clock
+imports form one sealed transaction. This does not widen the denominator beyond
+the five playground entries.
 
 Additional blockers:
 
@@ -110,6 +105,13 @@ Additional blockers:
   generic `__module_init` compilation is dead.
 - Multi-source/M0 is a per-source, post-legacy overlay; fast-mode multi-source,
   class members, module init, and IR-first body skipping are incomplete.
+- Physical standalone reachability is not retired by the green bounded census:
+  public direct toggles remain; non-prepared single-source units still enter
+  `compileDeclarations`; multi-source is direct-first; and CJS, nested
+  function/class/expression, IIFE, dynamic-code, fast, WASI, and linear roots
+  retain direct AST-to-Wasm entry edges. R9 must first make the complete
+  standalone program denominator fail closed; R10 then proves and deletes dead
+  direct reachability without removing shared host/WASI behavior.
 - The linear backend still has direct AST-reading paths and does not consume the
   same whole-program IR contract as WasmGC.
 - The R0 typed gate has replaced substring-matched build-error policy. The
@@ -221,7 +223,11 @@ above.
       legacy catch path.
 - [ ] The IR-only policy is the only production policy. All IR/legacy escape
       hatches and compile-twice switches are removed from public options, env
-      handling, tests, scripts, and documentation.
+      handling, tests, scripts, and documentation. The env-var set to remove
+      is the #4522 inventory's four retire-at-R9 vars (`JS2WASM_IR_FIRST`,
+      `JS2WASM_IR_STRING_BUILDER`, `JS2WASM_IR_ASYNC`,
+      `JS2WASM_IR_OBJECT_SHAPES`); diagnostics/self-checks classified keep
+      there survive — consume that table, do not re-audit at flip time.
 - [ ] `compileStatement` / `compileExpression` and the direct AST→Wasm handler
       graph are unreachable and deleted. The refreshed #3090 report records
       zero frontend-only survivors and separately records retained runtime/
@@ -578,3 +584,41 @@ The frozen runtime A/B establishes parity within noise, and the complete
 publication gate matrix is green. This closes the Builtins checkpoint, not the
 R9 epic: Calendar's atomic six-unit retirement remains the next standalone
 census step.
+
+### Completed checkpoint: standalone Calendar capability transaction (2026-08-20)
+
+#4577 advances the bounded standalone lane from **31 → 37 of 37 IR bodies**
+and **6 → 0 legacy/typed Unsupported**, with every former reason bucket and
+Invariant count at zero. The lane now enforces strict IR-only readiness rather
+than the temporary baseline-only policy. The single-host control remains
+37/37. This closes the exact five-entry playground census, not R9's complete
+source-program denominator.
+
+Calendar's nine functions and module init publish atomically with seven exact
+reusable callbacks and five source-qualified nullable DOM globals. The frozen
+`dom@1` eight-import ABI is unchanged; a separate two-import
+`dom-interaction@1` provider owns listener/background mutation and the exact
+one-import `clock@1` provider owns Date snapshots under the standalone
+UTC/zero-offset profile. Compiler-owned import/storage/callback provenance,
+complete registry contracts, instance-pinned runtime authority, multi-source
+isolation, donor/tamper controls, and direct-body poison keep all of those
+capabilities fail closed.
+
+The final focused matrix is **59/59**. The same-source, same-standalone-runtime
+IR-versus-legacy-direct artifact A/B records IR/direct at 30,089/32,379 raw
+bytes, 18,387/19,030 gzip-9 bytes, 477,625/481,730 pre-optimization WAT
+characters, 62,481/69,234 selected body characters, 155/172 locals, 172/172
+calls, 156/167 functions, and 11/11 imports. All 660/660 measured executions
+preserve the 12-render oracle, but bracket noise supports no runtime speedup
+claim. Aggregate optimization evidence is recorded without promoting pending
+per-transform performance rows.
+
+The post-checkpoint reachability audit keeps R9/R10 open. `experimentalIR:
+false`, `disableIrFirst`, and the environment kill switch still expose direct
+selection; ordinary non-prepared single-source and all multi-source compilation
+still enter legacy declarations/body walking before any overlay; fast
+multi-source has no overlay; and CJS, nested containers, IIFEs, dynamic code,
+generic class/module shapes, WASI, and linear remain outside this bounded
+census. The next cutover must fail typed before body emission across that full
+denominator, then prove the standalone legacy walkers unreachable before shared
+direct code can be removed.

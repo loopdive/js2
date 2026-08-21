@@ -390,3 +390,44 @@ fnctors) so that instances ARE `$Object`s. That single change would retire
 R1, R4 and most of R3 at once, and it is why this issue's remaining
 residuals are all recorded against the representation rather than against
 the walk.
+
+
+## 2026-08-20 — R4 also reproduces on the JS-HOST lane
+
+R4 is framed as a standalone substrate problem owned by the #2660 escape gate.
+Measured on `main` 2026-08-20, it reproduces **identically on `--js-host`**:
+
+```js
+function A() {}
+var a = new A();
+A.prototype.isPrototypeOf(a);   // false on BOTH lanes — must be true
+```
+
+Controls, also run on **both** lanes, both correct on each:
+
+```js
+var proto = {}, o = Object.create(proto);
+proto.isPrototypeOf(o);                      // true
+Object.getPrototypeOf(o) === proto;          // true
+Object.getPrototypeOf(a).isPrototypeOf(a);   // true
+Object.getPrototypeOf(a) === A.prototype;    // true
+```
+
+So the chain walk is correct for any genuine `$Object` receiver on both lanes;
+only the `<UserFn>.prototype` **receiver spelling** is wrong, and it is wrong in
+js-host too — where the #2660 escape gate and the `$Object.$proto` walk are not
+the mechanism.
+
+**Consequence:** R4's "owner: #2660 escape-gate" is incomplete. Either there is a
+second, host-side cause producing the same wrong boolean, or the shared cause
+sits above both lanes. A fix validated only on standalone would leave the js-host
+lane silently wrong, so R4's successor needs a **two-lane** acceptance test.
+
+Worth stressing what class this is: no throw, no refusal, no compile error — just
+the wrong boolean, from a plain-JS idiom. It is also **context-dependent**: a
+module that first evaluates `Object.getPrototypeOf(a) === A.prototype` then gets
+`true` from the same call, so any regression test for it must be a **bare**
+module or it will pass while the bug is live.
+
+(Originally filed separately as #4581 before the "(#4480 S2, NOT taken)" comment
+at the call site was found; #4581 is retired as a duplicate and points here.)

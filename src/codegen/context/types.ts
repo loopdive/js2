@@ -17,6 +17,8 @@ import type { ObjectRuntimeTypes } from "../object-runtime.js";
 import type { FallbackCounts } from "../fallback-telemetry.js";
 import type { CompileTargetProfile } from "../../target-profile.js";
 import type { IrRuntimeEvalBoundaryPlan } from "../../ir/runtime-eval-boundary-plan.js";
+import type { StandaloneCapabilityDemandState } from "./capability-state.js";
+import type * as BodyRouteAudit from "./body-route-audit.js";
 
 export interface CodegenError {
   message: string;
@@ -71,14 +73,13 @@ export interface CodegenError {
 }
 
 /** Result returned by generateModule / generateMultiModule. */
-export interface CodegenResult {
+export interface CodegenResult extends BodyRouteAudit.Result {
   module: WasmModule;
   errors: CodegenError[];
   /**
    * #2089 — silent-fallback telemetry counters captured during this codegen
-   * run (per class → per site → count). Surfaced so the gate
-   * (`scripts/check-codegen-fallbacks.ts`) can aggregate structured counts
-   * rather than parsing warning strings. Optional so existing callers that
+   * run (per class → per site → count). Surfaced for structured gate
+   * aggregation rather than warning parsing. Optional so existing callers that
    * destructure `{ module, errors }` are unaffected.
    */
   fallbackCounts?: FallbackCounts;
@@ -87,7 +88,7 @@ export interface CodegenResult {
 }
 
 /** Public options for backend code generation. */
-export interface CodegenOptions {
+export interface CodegenOptions extends BodyRouteAudit.Options {
   /** Whether to generate source positions for source map */
   sourceMap?: boolean;
   /** Fast mode: i32 default numbers */
@@ -343,6 +344,8 @@ export interface ClosureInfo {
    * callable/property/method bridges. An ordinary allocation clears the bit.
    */
   hostOneShotOnly?: boolean;
+  /** Compiler-only carrier admitted exclusively by the reusable DOM callback dispatcher. */
+  domCallbackOnly?: boolean;
   /**
    * True when a source closure observes the call-site arity protocol through
    * its own `arguments`, a rest parameter, or a parameter default. Undefined
@@ -1285,7 +1288,7 @@ export interface FunctionContext {
   typedThisLocalIdx?: number;
 }
 
-export interface CodegenContext {
+export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRouteAudit.Context {
   mod: WasmModule;
   /**
    * Immutable target/provider/interop policy resolved once at context creation.
@@ -1625,6 +1628,23 @@ export interface CodegenContext {
    */
   inheritedSetDescriptorDirty: boolean;
   /**
+   * (#4602) Property KEYS a #4504-relevant descriptor could be installed
+   * under, when every trigger in the module names its key statically (an
+   * accessor declaration's literal name, a `defineProperty` call with a
+   * literal key and non-provably-writable descriptor, a literal
+   * `defineProperties`/`create` bag entry, a literal `__defineGetter__`/
+   * `__defineSetter__` key).  A trigger whose key cannot be resolved
+   * statically (freeze, a captured define builtin, a computed name, dynamic
+   * code) sets `inheritedSetDescriptorDirty` instead, which supersedes this
+   * set.  Consumers with a static property name gate per key via
+   * `inheritedSetAffectsKey`; key-dynamic runtime machinery activates on
+   * `inheritedSetAnyDirty`.  A clean key compiles byte-identical to a
+   * flag-clear module — that is the whole point: one accessor declaration in
+   * a 226KB bundle must not demote every unrelated member write (measured
+   * ~1.7x on acorn standalone, #4602).
+   */
+  inheritedSetDirtyKeys: Set<string>;
+  /**
    * (#4222) The module contains a `delete <elementAccess>`, so some array index
    * may be semantically ABSENT while its dense backing slot still holds a
    * value. `__delete_property`'s vec arm (#4010) records that as a
@@ -1686,14 +1706,6 @@ export interface CodegenContext {
    * decision lives in exactly one place.
    */
   emitHostBridge: boolean;
-  /**
-   * The exact standalone Promise-delay provider registered a timer callback
-   * that must re-enter Wasm after the general JS host bridge is stripped.
-   * Finalization publishes only the reserved zero-argument timer dispatcher.
-   */
-  requiresStandaloneTimerCallbackDispatch?: boolean;
-  /** Exact #4576 dom@1 import family was checker-certified for this module. */
-  requiresStandaloneDomCapability?: boolean;
   /**
    * (#2083) When true, `getOrRegisterVecType` does NOT flip `usesVecValue`.
    * Set only for the duration of the two pre-registration calls in

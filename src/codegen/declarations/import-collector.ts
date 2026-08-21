@@ -18,7 +18,6 @@ import { ensureWrapperTypes } from "../any-helpers.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "../async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "../async-frame.js";
 import { isStandalonePromiseActive } from "../async-scheduler.js";
-import { mathValueReadMethod } from "../math-static-value-body.js";
 import { unwrapTransparentExpression } from "../object-descriptor-analysis.js";
 import {
   functionBodyReferencesThis,
@@ -702,10 +701,6 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
       state.mathNeedsToUint32 = true;
     }
   }
-  // (#4491 wave-4 lane G) `Math.<m>` read as a VALUE, not called — the arm just
-  // above fires only for a `ts.isCallExpression`. See `math-static-value-body.ts`.
-  const mathValueMethod = mathValueReadMethod(node);
-  if (mathValueMethod !== undefined) state.mathNeeded.add(mathValueMethod);
   if (
     ts.isBinaryExpression(node) &&
     (node.operatorToken.kind === ts.SyntaxKind.AsteriskAsteriskToken ||

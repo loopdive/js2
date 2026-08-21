@@ -74,7 +74,7 @@ import {
   defaultValueInstrs,
   emitGuardedRefCast,
 } from "./type-coercion.js";
-import { staticIntegerRange } from "./analysis/static-numeric-range.js";
+import { staticIntegerRange } from "../ir/analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import { countedPushIndexOfUnroll, emitArrayIndexOfScan } from "./array-indexof-scan.js";
 import { compileArrayConcatExternHost, compileArrayMethodExtern } from "./array-method-host.js";

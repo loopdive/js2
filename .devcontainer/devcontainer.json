@@ -11,7 +11,14 @@
   },
   "runArgs": ["--cap-add=NET_ADMIN", "--cap-add=NET_RAW", "--memory=16g", "--memory-swap=32g"],
   "overrideCommand": false,
-  "appPort": ["2222:2222", "7681:7681"],
+  // 7681 is ttyd: an UNAUTHENTICATED writable web terminal. Publishing it on
+  // 0.0.0.0 exposes a shell to the whole LAN, and the container CANNOT filter
+  // by source (Docker Desktop's userland proxy rewrites every client to one
+  // fixed address), so the host binding is the only real control. Default is
+  // loopback; set TTYD_BIND_IP in the environment that launches the container
+  // (e.g. your Tailscale address) to reach it remotely. 2222 (sshd) stays on
+  // all interfaces: it is key-only, no passwords, no root login.
+  "appPort": ["2222:2222", "${localEnv:TTYD_BIND_IP:127.0.0.1}:7681:7681"],
   "customizations": {
     "vscode": {
       "extensions": [

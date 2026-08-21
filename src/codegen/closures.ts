@@ -27,12 +27,14 @@ import { noJsHost } from "./expressions/helpers.js"; // (#2025)
 import { emitWasiErrorConstructor } from "./registry/error-types.js"; // (#2025)
 import { widenClosureReturnForPreInitVar } from "./declarations/hoisted-var-preinit-read.js"; // (#4206)
 import { popBody, pushBody } from "./context/bodies.js";
+import { recordClosureBody } from "./context/body-route-audit.js";
 import { reportError } from "./context/errors.js";
 import { reportSilentFallback } from "./fallback-telemetry.js";
 import { resolveLiftedMethodThisStruct } from "./fnctor-escape-gate.js"; // (#2681/#2686 A3) lifted-method `this`→struct
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
 import { seedLiftedClosureArgumentsCallee } from "./arguments-callee.js"; // (#4243) §10.6 step 13.a
 import { resolveCallbackMakerName } from "./callback-ctor-bridge.js"; // (#4394) bridge [[Construct]] parity
+import { registerStandaloneDomCallbackDirectClosure } from "./standalone-dom-callback-authority.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
   addFuncType,
@@ -96,7 +98,22 @@ import {
   recordDirectCallTwin,
   refinedTwinReturnType,
 } from "./typed-this.js";
-import { addFunctionOwnLocals, registerOwnLocalsCollector } from "./binding-info.js"; // (#2103) shared, memoized per-function binding-info oracle
+import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103) shared, memoized per-function binding-info oracle
+// (#4601 route 1) The pure-AST scope / free-variable walks now live BELOW the
+// IR so `statements/loop-analysis.ts` — which five `src/ir/` modules import —
+// can follow them down. Re-exported below so every existing consumer of
+// `closures.js` keeps importing exactly what it imported before.
+import {
+  collectBindingPatternNames,
+  collectFunctionOwnLocals,
+  collectReferencedIdentifiers,
+  isFunctionScopeBoundary,
+} from "../ir/analysis/ast-scope.js";
+export {
+  collectBindingPatternNames,
+  collectFunctionOwnLocals,
+  collectReferencedIdentifiers,
+} from "../ir/analysis/ast-scope.js";
 // (#2957 phase 2) arrow/fn-expr async activation. Imported LAST: `async-activation`
 // pulls the `async-cps`/`async-frame` chain which imports back into `closures`
 // (a cycle), so it must evaluate after this module's other deps are loaded to
@@ -169,7 +186,6 @@ import {
   mintClosureStructTypes,
   emitClosureParamDestructuring,
   emitClosureConstruction,
-  registerClosureBindingInfo,
 } from "./closures/arrow-phases.js"; // (#3278) arrow/fn-expr closure phase helpers
 import {
   collectDirectEvalActivationBindingNames,
@@ -198,19 +214,6 @@ export {
 };
 
 // ── Arrow function callbacks ──────────────────────────────────────────
-
-/** True for nodes that introduce a new function scope (params + body locals). */
-function isFunctionScopeBoundary(node: ts.Node): boolean {
-  return (
-    ts.isFunctionDeclaration(node) ||
-    ts.isFunctionExpression(node) ||
-    ts.isArrowFunction(node) ||
-    ts.isMethodDeclaration(node) ||
-    ts.isGetAccessorDeclaration(node) ||
-    ts.isSetAccessorDeclaration(node) ||
-    ts.isConstructorDeclaration(node)
-  );
-}
 
 function isSymbolIteratorExpression(expr: ts.Expression): boolean {
   return (
@@ -257,176 +260,6 @@ function inferExplicitClosureReturnType(
   };
   visit(fn.body);
   return inferred;
-}
-
-/**
- * Collect names that are LOCALLY DECLARED inside a function-like node's scope.
- * Used to compute the shadow set for free-variable analysis.
- *
- * Includes:
- *   - parameter binding identifiers (function-scoped)
- *   - `var` declarations anywhere in the body (function-scoped)
- *   - top-level `function`/`class` declarations in the body
- *
- * Does NOT cross nested function boundaries.
- *
- * Conservatively excludes block-scoped `let`/`const` since they only shadow
- * within their block, and adding them to the function-wide shadow set would
- * incorrectly mask legitimate outer captures.
- */
-export function collectFunctionOwnLocals(funcLike: ts.Node, out: Set<string>): void {
-  if (!isFunctionScopeBoundary(funcLike)) return;
-  const decl = funcLike as ts.SignatureDeclaration;
-  // Params (including destructuring binding identifiers)
-  if (decl.parameters) {
-    for (const p of decl.parameters) {
-      if (ts.isIdentifier(p.name)) {
-        out.add(p.name.text);
-      } else if (ts.isObjectBindingPattern(p.name) || ts.isArrayBindingPattern(p.name)) {
-        collectBindingPatternNames(p.name, out);
-      }
-    }
-  }
-  // Body var/function/class decls. Concise arrow bodies are expressions — no decls.
-  const body = (decl as { body?: ts.Node | undefined }).body;
-  if (body && ts.isBlock(body)) {
-    for (const stmt of body.statements) {
-      collectVarAndTopLevelDecls(stmt, out, /*atTopLevel=*/ true);
-    }
-  }
-}
-
-// (#2103) Back the shared binding-info oracle with the own-locals collector
-// above. Registered once at module load; the oracle memoizes per function node
-// so the repeated per-scope-boundary calls inside the identifier walks below
-// (and across all other lowerings) reuse a single computed set.
-registerOwnLocalsCollector(collectFunctionOwnLocals);
-
-/**
- * Recursively collect `var` declarations (function-scoped) and top-level
- * `function`/`class` declarations from a node tree, without crossing nested
- * function scope boundaries.
- */
-function collectVarAndTopLevelDecls(node: ts.Node, out: Set<string>, atTopLevel: boolean): void {
-  if (isFunctionScopeBoundary(node)) return; // do not cross
-  if (ts.isVariableStatement(node)) {
-    const isVar = !(node.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
-    if (isVar) {
-      for (const d of node.declarationList.declarations) {
-        if (ts.isIdentifier(d.name)) out.add(d.name.text);
-        else if (ts.isObjectBindingPattern(d.name) || ts.isArrayBindingPattern(d.name)) {
-          collectBindingPatternNames(d.name, out);
-        }
-      }
-    }
-    // Initializers may contain nested functions — keep walking but we won't
-    // descend into their bodies (boundary check above).
-    for (const d of node.declarationList.declarations) {
-      if (d.initializer) collectVarAndTopLevelDecls(d.initializer, out, false);
-    }
-    return;
-  }
-  if (ts.isForStatement(node) && node.initializer && ts.isVariableDeclarationList(node.initializer)) {
-    const isVar = !(node.initializer.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
-    if (isVar) {
-      for (const d of node.initializer.declarations) {
-        if (ts.isIdentifier(d.name)) out.add(d.name.text);
-        else if (ts.isObjectBindingPattern(d.name) || ts.isArrayBindingPattern(d.name)) {
-          collectBindingPatternNames(d.name, out);
-        }
-      }
-    }
-  }
-  if ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && ts.isVariableDeclarationList(node.initializer)) {
-    const isVar = !(node.initializer.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
-    if (isVar) {
-      for (const d of node.initializer.declarations) {
-        if (ts.isIdentifier(d.name)) out.add(d.name.text);
-        else if (ts.isObjectBindingPattern(d.name) || ts.isArrayBindingPattern(d.name)) {
-          collectBindingPatternNames(d.name, out);
-        }
-      }
-    }
-  }
-  if (ts.isFunctionDeclaration(node) && node.name && atTopLevel) {
-    out.add(node.name.text);
-    return; // do not recurse into nested function body
-  }
-  if (ts.isClassDeclaration(node) && node.name && atTopLevel) {
-    out.add(node.name.text);
-    return;
-  }
-  forEachChild(node, (c) => collectVarAndTopLevelDecls(c, out, false));
-}
-
-/**
- * Collect all identifiers referenced in a node.
- *
- * If `shadowed` is provided, identifiers in that set are NOT collected. The
- * walker also detects nested function scopes and augments the shadow set with
- * each nested function's own locals so that references inside them to names
- * shadowed by nested var/param decls aren't incorrectly attributed to the
- * outer scope.
- *
- * Callers analyzing free variables of a function-like body should compute the
- * function's own locals via `collectFunctionOwnLocals` and pass them as the
- * initial `shadowed` set, since the walker enters the body without crossing
- * the boundary itself.
- */
-export function collectReferencedIdentifiers(node: ts.Node, names: Set<string>, shadowed?: ReadonlySet<string>): void {
-  if (ts.isIdentifier(node)) {
-    if (!shadowed || !shadowed.has(node.text)) names.add(node.text);
-    return;
-  }
-  // Track `this` keyword references so arrow functions can capture the
-  // enclosing scope's `this` through the normal closure mechanism.
-  if (node.kind === ts.SyntaxKind.ThisKeyword || node.kind === ts.SyntaxKind.SuperKeyword) {
-    if (!shadowed || !shadowed.has("this")) names.add("this");
-    return;
-  }
-  // (#3378) A non-computed MEMBER/PROPERTY NAME is never a free-variable
-  // reference — `a.join`, the key of `{ join: x }`, or `ns.Type` name a
-  // property, not a binding. The generic `forEachChild` walk below would
-  // otherwise collect the `.name` Identifier and, if it collides with an
-  // outer local (e.g. `parts.join('')` vs. a module-scope `let join`), record
-  // a SPURIOUS capture. That capture's `outerLocalIdx` is valid only in the
-  // declaring frame, so baking it into a differently-framed nested closure
-  // emits a `local.get` past the closure's local count ("local index out of
-  // range" — the deepEqual.js `__closure_NN` crash). Recurse only into the
-  // reference-bearing children (the object/expression, the initializer, and
-  // any computed key), skipping the member NAME. Optional chaining
-  // (`a?.b`, `a?.[k]`) shares the same node kinds.
-  if (ts.isPropertyAccessExpression(node)) {
-    collectReferencedIdentifiers(node.expression, names, shadowed);
-    return;
-  }
-  if (ts.isQualifiedName(node)) {
-    collectReferencedIdentifiers(node.left, names, shadowed);
-    return;
-  }
-  if (ts.isPropertyAssignment(node)) {
-    // A computed key (`{ [k]: v }`) IS a reference; a plain identifier / string
-    // / numeric key is a property name. Always recurse the initializer.
-    if (ts.isComputedPropertyName(node.name)) {
-      collectReferencedIdentifiers(node.name, names, shadowed);
-    }
-    collectReferencedIdentifiers(node.initializer, names, shadowed);
-    return;
-  }
-  if (isFunctionScopeBoundary(node)) {
-    // Augment shadow set with this nested function's own locals before
-    // recursing into its body. Function/method names declared by nested
-    // FunctionExpressions/ArrowFunctions don't leak out, so we don't add the
-    // node's own name to the OUTER shadow set; we add it (the named func
-    // expr's own name) to the inner shadow so self-references aren't treated
-    // as outer captures.
-    const merged = new Set<string>(shadowed ?? []);
-    addFunctionOwnLocals(node, merged); // (#2103) memoized own-locals
-    if (ts.isFunctionExpression(node) && node.name) merged.add(node.name.text);
-    forEachChild(node, (child) => collectReferencedIdentifiers(child, names, merged));
-    return;
-  }
-  forEachChild(node, (child) => collectReferencedIdentifiers(child, names, shadowed));
 }
 
 /**
@@ -866,18 +699,6 @@ export function promoteAccessorCapturesToGlobals(
     // through `ctx.capturedGlobals` — the same store as the method body and
     // the enclosing function's own post-promotion references.
     (fctx.promotedCaptureNames ??= new Set()).add(name);
-  }
-}
-
-/** Collect all identifier names from a binding pattern (destructuring parameter) */
-export function collectBindingPatternNames(pattern: ts.BindingPattern, names: Set<string>): void {
-  for (const element of pattern.elements) {
-    if (ts.isOmittedExpression(element)) continue;
-    if (ts.isIdentifier(element.name)) {
-      names.add(element.name.text);
-    } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
-      collectBindingPatternNames(element.name, names);
-    }
   }
 }
 
@@ -2158,7 +1979,7 @@ export function compileLiftedClosureBody(
   arrow: ts.ArrowFunction | ts.FunctionExpression,
   opts: LiftedClosureBodyOptions,
 ): LiftedClosureBodyResult {
-  const body = arrow.body;
+  const body = recordClosureBody(ctx, "compileLiftedClosureBody", opts.closureName, arrow);
   const {
     closureName,
     captures,
@@ -2174,7 +1995,6 @@ export function compileLiftedClosureBody(
     isNamedFuncExpr,
   } = opts;
   let { closureReturnType, liftedFuncTypeIdx } = opts;
-
   // 5. Build the lifted function body
   // Shared-wrapper lifted functions receive the canonical wrapper ROOT,
   // regardless of their per-signature allocation wrapper. Captured bodies
@@ -2992,7 +2812,7 @@ export function compileArrowAsClosure(
 ): ValType | null {
   const closureId = ctx.closureCounter++;
   const closureName = `__closure_${closureId}`;
-  const body = arrow.body;
+  const body = recordClosureBody(ctx, "compileArrowAsClosure", closureName, arrow);
   reportClosureNameMap(arrow, closureName);
 
   // Check if this is a generator function expression (function*() { ... })
@@ -3245,6 +3065,16 @@ export function compileArrowAsClosure(
     ? undefined
     : recordDirectCallGeneric(ctx, arrow, closureName, structTypeIdx, liftedParams, closureResults);
 
+  const constructionMeta = registerStandaloneDomCallbackDirectClosure(ctx, arrow, {
+    structTypeIdx,
+    liftedFuncTypeIdx,
+    closureReturnType,
+    arrowParams,
+    inlineBody: captureFreeNumericInlineBody(arrow, captures.length, liftedFctx, arrowParams.length),
+    liftedFuncIdx,
+    baseConstruction: mintedTypes.meta,
+  });
+
   // 7. At the creation site, emit struct.new with funcref + arity + captured values.
   const hasRestParam = runtimeParameters(arrow).some((param) => param.dotDotDotToken !== undefined);
   emitClosureConstruction(
@@ -3254,7 +3084,7 @@ export function compileArrowAsClosure(
     liftedFuncIdx,
     structTypeIdx,
     hasRestParam ? Math.max(0, arrowParams.length - 1) : arrowParams.length,
-    mintedTypes.meta, // (#4437)
+    constructionMeta, // (#4437) plus the certified DOM callback carrier, when present
   );
   if (directGenericGlobalIdx !== undefined) {
     // Keep one typed handle to the exact closure instance installed on the
@@ -3267,17 +3097,6 @@ export function compileArrowAsClosure(
       { op: "ref.as_non_null" },
     );
   }
-
-  // 8. Register closure info so call sites can emit call_ref — see registerClosureBindingInfo.
-  registerClosureBindingInfo(
-    ctx,
-    arrow,
-    structTypeIdx,
-    liftedFuncTypeIdx,
-    closureReturnType,
-    arrowParams,
-    captureFreeNumericInlineBody(arrow, captures.length, liftedFctx, arrowParams.length),
-  );
 
   return { kind: "ref", typeIdx: structTypeIdx };
 }

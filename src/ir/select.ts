@@ -68,12 +68,13 @@ export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
+import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { objectLiteralDataPropertyName } from "./property-key-fold.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
-import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "../codegen/async-static.js";
+import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "./async-static.js";
 import { closureSignatureEquals, type IrClassShape, type IrClosureSignature, type IrType } from "./nodes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
@@ -89,6 +90,7 @@ export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_
 
 import { binaryOpCapability, domSurfaceCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
 import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
+import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
 import { isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-bindings.js";
@@ -515,13 +517,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * build demotion.
    */
   readonly supportsLiteralStringReplace?: boolean;
-  /**
-   * True only when the active backend can materialise a fixed array of
-   * checker-proven strings as an externref vec. The default is false: native
-   * strings and host-free lanes use a different string carrier and must stay
-   * on the legacy path instead of failing after an IR claim.
-   */
-  readonly supportsHostStringArrayLiterals?: boolean;
+  /** Backend can materialize a fixed logical-string vector. */
+  readonly supportsStringArrayLiterals?: boolean;
   /**
    * The active backend has both the JS-host eval capability and the host
    * externref string carrier needed by the exact indirect-eval import ABI.
@@ -1021,13 +1018,12 @@ export function planIrCompilation(
   //     masks (e.g. `joinNums` in `algorithms.ts` under wasi). Keep the
   //     conservative caller-direction demotion there until those callee
   //     bodies are rejected up front by the body-shape work (#2856/#2857).
-  // -------------------------------------------------------------------------
-  const demoteOnLegacyCaller = options?.jsHostExterns !== true;
+  // (#4521) The policy lives in ./legacy-caller-policy.ts, shared with select-identity.ts.
+  const demoteOnLegacyCaller = demoteOnLegacyCallerPolicy(options);
   // #3214 A+B1 — B0 made an exact FunctionTypeNode source boundary use the
-  // canonical externref callable ABI in both front-ends.  Host mode can now use
-  // the same caller-direction relaxation for callable-param functions as for
-  // scalar leaves. Standalone/WASI retain the conservative closure until B1 is
-  // explicitly implemented for their carrier/runtime.
+  // canonical externref callable ABI in both front-ends, so host mode uses the
+  // same caller-direction relaxation for callable-param functions as for
+  // scalar leaves; standalone/WASI retain the conservative closure until B1.
   const { callers, callees, hasExternalCall } = buildLocalCallGraph(declByName, localClasses);
 
   const claimed = new Set(individuallyClaimed);
@@ -1423,7 +1419,7 @@ let currentStandaloneDomCapability: IrStandaloneDomCapabilityPlan | null = null;
  * resolver was supplied at all).
  */
 function armHostGlobalResolvers(sourceFile: ts.SourceFile, options: IrSelectionOptions | undefined): void {
-  const deferred = hostExternCapability(options?.jsHostExterns === true) === "defer";
+  const deferred = hostExternCapability(jsHostExternsEnabled(options)) === "defer";
   const resolver = options?.resolveHostGlobal ?? null;
   currentHostGlobalResolver = resolver && !deferred ? resolver : null;
   currentDeferredHostGlobalResolver = resolver && deferred ? resolver : null;
@@ -1431,8 +1427,8 @@ function armHostGlobalResolvers(sourceFile: ts.SourceFile, options: IrSelectionO
   currentStandaloneDomCapability =
     candidate &&
     candidate.sourceFile === sourceFile &&
-    domSurfaceCapability(options?.jsHostExterns === true, true) !== "defer" &&
-    options?.jsHostExterns !== true
+    domSurfaceCapability(jsHostExternsEnabled(options), true) !== "defer" &&
+    !jsHostExternsEnabled(options)
       ? candidate
       : null;
 }
@@ -5871,7 +5867,8 @@ function expressionTouchesScalarModuleBinding(expr: ts.Expression): boolean {
     if (touched) return;
     if (ts.isIdentifier(node)) {
       const binding = moduleBinding(node);
-      if ((binding && binding.valueKind.kind !== "extern") || moduleScalarAliasFamily(node) !== undefined) {
+      const scalarBinding = binding && !isIrModuleReferenceValueKind(binding.valueKind);
+      if (scalarBinding || moduleScalarAliasFamily(node) !== undefined) {
         touched = true;
         return;
       }
@@ -6033,7 +6030,7 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
   const binding = moduleBinding(candidate);
   if (binding?.valueKind.kind === "f64") return "f64";
   if (binding?.valueKind.kind === "i32") return "boolean";
-  if (binding?.valueKind.kind === "extern") return "extern";
+  if (binding?.valueKind.kind === "extern" || binding?.valueKind.kind === "capability-extern") return "extern";
   // A #4208 update-retyped module binding has deliberately stale checker
   // evidence: after `value--`, a Boolean/string initializer now holds a
   // Number. Do not fall through to scalarExpressionFamily and resurrect the
@@ -6466,7 +6463,7 @@ function certifiedHostIndirectEval(
   const shape = exactIndirectEvalStatement(expr);
   if (
     !shape ||
-    currentSelectionOptions?.jsHostExterns !== true ||
+    !jsHostExternsEnabled(currentSelectionOptions) ||
     currentSelectionOptions?.supportsHostIndirectEval !== true ||
     !selectorSeesAmbientBinding(shape.evalIdentifier) ||
     (scope?.has("eval") ?? false) ||
@@ -8433,7 +8430,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (ts.isPropertyAccessExpression(expr.expression)) {
       if (!ts.isIdentifier(expr.expression.name)) return false;
       const standaloneDomCall = standaloneDomOperation(expr);
-      if (standaloneDomCall?.kind === "member-call") {
+      if (isDirectStandaloneDomMemberCall(standaloneDomCall)) {
         // Arity, optional/computed syntax, declaration identity, and boundary
         // families were certified when the source-wide plan was built. Keep
         // ordinary Phase-1 recursion for lexical scope and argument effects.
@@ -9124,7 +9121,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (
       everyElementPrimitive &&
       primitiveFamilies.has("string") &&
-      currentSelectionOptions?.supportsHostStringArrayLiterals !== true
+      currentSelectionOptions?.supportsStringArrayLiterals !== true
     ) {
       return shapeNo("expr-arraylit-string-backend", expr);
     }

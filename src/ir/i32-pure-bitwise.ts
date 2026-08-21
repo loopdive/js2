@@ -64,7 +64,7 @@
  */
 import { forEachChild, ts } from "../ts-api.js";
 import { collectI32CoercedLocals } from "../codegen/function-body.js";
-import { detectI32LoopVar } from "../codegen/statements/loop-analysis.js";
+import { detectI32LoopVar } from "./analysis/loop-shape.js";
 import { matchProvenCharRead, type ProvenCharReads } from "./char-read-loop.js";
 
 /** Names (function-wide) proven to always hold a clean int32 value when read. */

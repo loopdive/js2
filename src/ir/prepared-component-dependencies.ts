@@ -22,6 +22,29 @@ import {
   type IrVecLayoutRef,
 } from "./nodes.js";
 import type { ProgramAbiDerivedUnitRecord, ProgramAbiIntent, ProgramAbiPlanEntry } from "./program-abi.js";
+import {
+  capabilityGlobalIntentMatches,
+  externalCallableIntentMatches,
+  hasExactRequiredCapabilityGlobal,
+} from "./capability-abi-validation.js";
+import {
+  buildPreparedComponentOwnershipIndex,
+  type PreparedComponentOwnershipIndex as OwnershipIndex,
+} from "./prepared-component-ownership.js";
+import {
+  preparedDynamicCarrierRef,
+  preparedInstructionSupport,
+  type PreparedClassAccessorWritebackEvidence,
+  type PreparedComponentClosureSupportEvidence,
+  type PreparedDynamicInstructionSupportEvidence,
+  type PreparedInstructionSupportSidecars,
+} from "./prepared-instruction-support.js";
+export type {
+  PreparedClassAccessorWritebackEvidence,
+  PreparedComponentClosureSupportEvidence,
+  PreparedDynamicInstructionSupportEvidence,
+  PreparedInstructionSupportSidecars,
+} from "./prepared-instruction-support.js";
 
 export type PreparedComponentAbiEntry = Pick<
   ProgramAbiPlanEntry,
@@ -127,31 +150,6 @@ export interface PreparedComponentDependencyReport {
   readonly componentByTerminalUnitId: ReadonlyMap<IrUnitId, PreparedComponentDependencyEvidence>;
 }
 
-/**
- * Exact post-pass closure-support evidence prepared against allocator-owned
- * type objects before a component is sealed. Object identity is deliberate:
- * a later IR rewrite cannot inherit closure ownership from an earlier shape.
- */
-export interface PreparedComponentClosureSupportEvidence {
-  readonly typeRefs: ReadonlyMap<IrType, readonly IrTypeRef[]>;
-  readonly instructionRefs: ReadonlyMap<IrInstr, readonly IrTypeRef[]>;
-  readonly functionRefs: ReadonlyMap<IrFunction, readonly IrTypeRef[]>;
-}
-
-/**
- * Exact post-pass proof for the only prepared dynamic accessor shape: the
- * setter's dynamic value parameter is written unchanged to one mutable source
- * global. The carrier itself remains a symbolic Program ABI type dependency.
- */
-export interface PreparedClassAccessorWritebackEvidence {
-  readonly valueGlobalBindingId: IrBindingId;
-  readonly tdzGlobalBindingId?: IrBindingId;
-  /** Exact Program-ABI type behind the singleton tag used by the TDZ throw. */
-  readonly tdzExceptionTagTypeRef?: IrTypeRef;
-  readonly dynamicCarrierRef: IrTypeRef;
-  readonly dynamicCarrierValueType: string;
-}
-
 export interface DerivePreparedComponentDependenciesInput {
   readonly module: IrModule;
   /** Exact R2 candidate denominator. Local calls close components within it. */
@@ -162,12 +160,8 @@ export interface DerivePreparedComponentDependenciesInput {
   /** Final IR proved exception ops and the shared tag was reserved before sealing. */
   readonly exceptionSupportPrepared?: boolean;
   readonly classAccessorWritebacks?: ReadonlyMap<IrUnitId, PreparedClassAccessorWritebackEvidence>;
+  readonly dynamicInstructionSupport?: ReadonlyMap<IrUnitId, PreparedDynamicInstructionSupportEvidence>;
   readonly abi: PreparedComponentAbiLookup;
-}
-
-interface OwnershipIndex {
-  readonly unitTerminalOwner: ReadonlyMap<IrUnitId, IrUnitId | null>;
-  readonly classTerminalOwner: ReadonlyMap<IrClassId, IrUnitId | null>;
 }
 
 interface MutableFunctionEvidence {
@@ -202,58 +196,6 @@ function terminalInventoryUnit(inventory: IrUnitInventory, unitId: IrUnitId): Ir
   // family. Free functions, class members, and module init all carry the same
   // exact terminal-owner contract in the inventory.
   return inventory.terminalUnits.find((unit) => unit.id === unitId);
-}
-
-function buildOwnershipIndex(
-  inventory: IrUnitInventory,
-  derivedUnits: readonly ProgramAbiDerivedUnitRecord[],
-): OwnershipIndex {
-  const directUnitOwners = new Map<IrUnitId, IrUnitId | null>();
-  for (const unit of inventory.allUnits) directUnitOwners.set(unit.id, unit.terminalOwnerId);
-  for (const unit of derivedUnits) directUnitOwners.set(unit.id, unit.terminalOwnerId);
-
-  const unitOwners = new Map<IrUnitId, IrUnitId | null>();
-  const resolveUnit = (unitId: IrUnitId, visiting = new Set<IrUnitId>()): IrUnitId | null | undefined => {
-    if (unitOwners.has(unitId)) return unitOwners.get(unitId)!;
-    const direct = directUnitOwners.get(unitId);
-    if (direct === undefined) return undefined;
-    if (direct === null || direct === unitId) {
-      unitOwners.set(unitId, direct);
-      return direct;
-    }
-    if (visiting.has(unitId)) return undefined;
-    const resolved = resolveUnit(direct, new Set(visiting).add(unitId));
-    if (resolved === undefined) return undefined;
-    unitOwners.set(unitId, resolved);
-    return resolved;
-  };
-  for (const unitId of directUnitOwners.keys()) resolveUnit(unitId);
-
-  const classRecords = new Map(inventory.classes.map((record) => [record.id, record] as const));
-  const classOwners = new Map<IrClassId, IrUnitId | null>();
-  const resolveClass = (classId: IrClassId, visiting = new Set<IrClassId>()): IrUnitId | null | undefined => {
-    if (classOwners.has(classId)) return classOwners.get(classId)!;
-    const record = classRecords.get(classId);
-    if (!record) return undefined;
-    if (record.lexicalOwnerId === null) {
-      classOwners.set(classId, null);
-      return null;
-    }
-    if (visiting.has(classId)) return undefined;
-    const nextVisiting = new Set(visiting).add(classId);
-    const nestedClass = classRecords.get(record.lexicalOwnerId as IrClassId);
-    const resolved = nestedClass
-      ? resolveClass(nestedClass.id, nextVisiting)
-      : resolveUnit(record.lexicalOwnerId as IrUnitId);
-    if (resolved === undefined) return undefined;
-    classOwners.set(classId, resolved);
-    return resolved;
-  };
-  for (const classId of classRecords.keys()) resolveClass(classId);
-  return {
-    unitTerminalOwner: readonlyMap(unitOwners),
-    classTerminalOwner: readonlyMap(classOwners),
-  };
 }
 
 function canonicalAbiEntry(abi: PreparedComponentAbiLookup, id: IrBindingId): CanonicalAbiResolution {
@@ -672,7 +614,9 @@ function implicitSupportRequirement(
     case "dyn.eq":
     case "dyn.member_get":
     case "dyn.member_set":
-      return `${instr.kind} resolves dynamic carrier/helper support without an explicit symbolic ref`;
+      return hasPreparedSupport
+        ? null
+        : `${instr.kind} resolves dynamic carrier/helper support without an explicit symbolic ref`;
     case "string.const":
       return instr.storage || instr.materializer
         ? null
@@ -1030,14 +974,23 @@ function recordGlobalReference(
 ): void {
   const key = irGlobalBindingKey(ref.binding);
   const expectedOrigin = ref.binding.kind;
+  const expectedCapability = ref.binding.kind === "source" ? ref.binding.capability : undefined;
   const entry = addAbiDependency(evidence, abi, ownership, {
     bindingId: ref.binding.bindingId,
     kind: expectedOrigin === "source" ? "source-global" : expectedOrigin === "support" ? "support" : "external-global",
     structuralReferenceKey: key,
-    expected: (intent) =>
-      intent.kind === "global" &&
-      (expectedOrigin === "source" || expectedOrigin === "support" ? intent.origin === expectedOrigin : true),
+    expected: (intent) => capabilityGlobalIntentMatches(intent, expectedOrigin, expectedCapability),
   });
+  if (entry && expectedCapability === "dom" && !hasExactRequiredCapabilityGlobal(entry, ref.binding.bindingId)) {
+    evidence.abiDependencies.delete(`source-global\u0000${ref.binding.bindingId}`);
+    addFailure(evidence, {
+      code: "abi-binding-contract-mismatch",
+      ownerUnitId: evidence.terminalOwnerUnitId,
+      bindingId: ref.binding.bindingId,
+      detail: `capability source global ${key} does not own its exact canonical allocator binding`,
+    });
+    return;
+  }
   if (entry && ref.binding.kind === "source") {
     const storageTerminalOwner = terminalOwnerForIntent(entry.canonical.intent, ownership);
     if (storageTerminalOwner === null || !terminalUnitIds.has(storageTerminalOwner)) {
@@ -1196,7 +1149,7 @@ function recordExternalCallable(
       bindingId: match.id,
       kind: "external-callable",
       structuralReferenceKey: key,
-      expected: (intent) => intent.kind === "callable" && intent.origin !== "source",
+      expected: (intent) => externalCallableIntentMatches(intent, ref.binding),
     });
   }
   evidence.externalCallables.set(
@@ -1395,7 +1348,7 @@ function collectFunctionEvidence(
       seenImplicitTypes,
       input.abi,
       ownership,
-      input.classAccessorWritebacks?.get(terminalOwnerUnitId)?.dynamicCarrierRef,
+      preparedDynamicCarrierRef(terminalOwnerUnitId, input),
     );
   };
   for (const param of fn.params) collectType(param.type);
@@ -1420,22 +1373,15 @@ function collectFunctionEvidence(
     forEachInstrDeep(instr, (nested) => {
       if (nested.resultType) collectType(nested.resultType);
       for (const shape of explicitClassShapes(nested, valueTypes)) collectClassShape(shape, classes, seenTypes);
-      const instructionClosureSupport = input.closureSupport?.instructionRefs.get(nested);
-      recordPreparedClosureRefs(
-        instructionClosureSupport,
-        `prepared IR ${nested.kind} must use Program ABI support refs`,
+      const support = preparedInstructionSupport(
+        nested,
+        terminalOwnerUnitId,
+        valueTypes,
+        functionClosureSupport,
+        input,
       );
-      const hasPreparedSupport =
-        nested.kind === "closure.cap"
-          ? (functionClosureSupport?.length ?? 0) > 0
-          : (instructionClosureSupport?.length ?? 0) > 0 ||
-            ((nested.kind === "object.new" || nested.kind === "object.get" || nested.kind === "object.set") &&
-              (() => {
-                const objectType = nested.kind === "object.new" ? nested.resultType : valueTypes.get(nested.value);
-                return (
-                  objectType?.kind === "object" && (input.closureSupport?.typeRefs.get(objectType)?.length ?? 0) > 0
-                );
-              })());
+      recordPreparedClosureRefs(support.typeRefs, `prepared IR ${nested.kind} must use Program ABI support refs`);
+      for (const target of support.callableRefs) recordExternalCallable(evidence, target, input.abi, ownership);
       const exceptionTagTypeRef = nested.kind === "throw" ? classAccessorWriteback?.tdzExceptionTagTypeRef : undefined;
       if (exceptionTagTypeRef) {
         recordSupportTypeReference(
@@ -1449,7 +1395,7 @@ function collectFunctionEvidence(
       const implicitSupport = implicitSupportRequirement(
         nested,
         valueTypes,
-        hasPreparedSupport,
+        support.hasPreparedSupport,
         input.exceptionSupportPrepared === true || exceptionTagTypeRef !== undefined,
       );
       if (implicitSupport) {
@@ -1698,7 +1644,7 @@ function freezeComponent(
 export function derivePreparedComponentDependencies(
   input: DerivePreparedComponentDependenciesInput,
 ): PreparedComponentDependencyReport {
-  const ownership = buildOwnershipIndex(input.inventory, input.derivedUnits ?? []);
+  const ownership = buildPreparedComponentOwnershipIndex(input.inventory, input.derivedUnits ?? []);
   const functionsByUnitId = new Map(input.module.functions.map((fn) => [fn.unitId, fn] as const));
   const evidence: MutableFunctionEvidence[] = [];
   const globalFailures = new Map<IrUnitId, PreparedComponentDependencyFailure[]>();

@@ -5,6 +5,7 @@
  *
  * Extracted from expressions.ts (#688 step 6).
  */
+import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import { ts } from "../ts-api.js";
 import { isVoidType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
@@ -1484,7 +1485,7 @@ function compileObjectDefinePropertyCore(
   // genuine instance-side accessors retain the compiled fast path below.
   const prototypeDescriptorTarget =
     ctx.standalone &&
-    ctx.inheritedSetDescriptorDirty &&
+    inheritedSetAnyDirty(ctx) &&
     (() => {
       const unwrapped = unwrapTransparentExpression(objArg);
       return ts.isPropertyAccessExpression(unwrapped) && unwrapped.name.text === "prototype";

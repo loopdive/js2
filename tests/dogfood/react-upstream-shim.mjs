@@ -16,6 +16,12 @@ export const REACT_EXPECT_SHIM = `
 // and compiled lane must execute the original assertions with the production
 // value instead of relying on an ambient host global.
 var __DEV__ = false;
+// React's Jest transform injects these build selectors as lexical constants.
+// The published stable package is neither an www variant nor an experimental
+// build, so expose the same values instead of letting original tests fail at
+// the build constants are not defined.
+var __VARIANT__ = false;
+var __EXPERIMENTAL__ = false;
 // React's upstream tests use Node's global spelling for host polyfills. Keep
 // that compatibility binding in the native and Wasm lanes alike.
 var global = globalThis;
@@ -352,6 +358,8 @@ function __recordError(error) {
 
 var __jestSpies = [];
 var __jestMocks = {};
+var __jestIsolationDepth = 0;
+var __jestIsolationModules = null;
 // Some React files gate additional registrations with if (gate(...)) at
 // describe scope. The extractor carries that scope into each lifted test, so
 // the registration calls must remain harmless rather than becoming an
@@ -399,14 +407,55 @@ function __jestSpyOn(target, key) {
   __jestSpies.push(mock);
   return mock;
 }
+function __js2CloneModuleNamespace(value) {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== "object" && typeof value !== "function") return value;
+  var clone;
+  if (typeof value === "function") {
+    clone = function () { return value.apply(this, arguments); };
+  } else if (Array.isArray(value)) {
+    clone = value.slice();
+  } else {
+    clone = {};
+  }
+  var keys = Object.keys(value);
+  for (var i = 0; i < keys.length; i++) clone[keys[i]] = value[keys[i]];
+  return clone;
+}
+function __js2IsolatedModule(name, value) {
+  if (__jestIsolationDepth === 0) return value;
+  if (__jestIsolationModules === null) __jestIsolationModules = {};
+  if (Object.prototype.hasOwnProperty.call(__jestIsolationModules, name)) return __jestIsolationModules[name];
+  var isolated = __js2CloneModuleNamespace(value);
+  __jestIsolationModules[name] = isolated;
+  return isolated;
+}
+function __jestIsolateModules(callback) {
+  var previousDepth = __jestIsolationDepth;
+  var previousModules = __jestIsolationModules;
+  __jestIsolationDepth = previousDepth + 1;
+  __jestIsolationModules = {};
+  try {
+    return typeof callback === "function" ? callback() : undefined;
+  } finally {
+    __jestIsolationDepth = previousDepth;
+    __jestIsolationModules = previousModules;
+  }
+}
 var jest = {
   fn: __jestFn,
   spyOn: __jestSpyOn,
   resetModules: function () { __jestMocks = {}; },
+  // Jest gives each isolateModules callback a fresh module registry. The
+  // package graphs themselves stay host-owned here, so the faithful boundary
+  // is a fresh namespace object per required module, scoped to the callback.
+  // This preserves the identity contract tested by ReactDOM without mutating
+  // Node's process-wide require cache or leaking state into later callbacks.
+  isolateModules: __jestIsolateModules,
   mock: function (name, factory) {
     __jestMocks[name] = typeof factory === "function" ? factory : function () { return factory; };
   },
-  requireActual: function (name) { return __js2RequireActual(name); },
+  requireActual: function (name) { return __js2IsolatedModule(name, __js2RequireActual(name)); },
   restoreAllMocks: function () {
     for (var i = 0; i < __jestSpies.length; i++) __jestSpies[i].mockRestore();
     __jestSpies.length = 0;
@@ -793,6 +842,33 @@ var __js2InternalTestUtils = {
   assertLog: function () {},
 };
 
+var __js2IntersectionMocks = {
+  mockIntersectionObserver: function () {
+    return __js2ReactInfra().intersectionMocks.mockIntersectionObserver();
+  },
+  simulateIntersection: function () {
+    return __js2ReactInfra().intersectionMocks.simulateIntersection.apply(
+      __js2ReactInfra().intersectionMocks,
+      arguments,
+    );
+  },
+  setBoundingClientRect: function (target, rect) {
+    return __js2ReactInfra().intersectionMocks.setBoundingClientRect(target, rect);
+  },
+  setClientRects: function (target, rects) {
+    return __js2ReactInfra().intersectionMocks.setClientRects(target, rects);
+  },
+};
+
+var __js2HTMLNodeType = {
+  ELEMENT_NODE: 1,
+  TEXT_NODE: 3,
+  COMMENT_NODE: 8,
+  DOCUMENT_NODE: 9,
+  DOCUMENT_TYPE_NODE: 10,
+  DOCUMENT_FRAGMENT_NODE: 11,
+};
+
 function __js2AssertConsole(kind, expected) {
   var actual = __js2ReactInfra().consumeConsole(kind);
   var wanted = Array.isArray(expected) ? expected : [expected];
@@ -911,6 +987,8 @@ function __js2RequireActual(name) {
   if (name === "react/jsx-runtime") return __js2ReactInfra().reactJsxRuntime;
   if (name === "react/jsx-dev-runtime") return __js2ReactInfra().reactJsxDevRuntime;
   if (name === "internal-test-utils") return __js2InternalTestUtils;
+  if (name === "./utils/IntersectionMocks") return __js2IntersectionMocks;
+  if (name === "react-dom-bindings/src/client/HTMLNodeType") return __js2HTMLNodeType;
   if (name === "prop-types") return __js2PropTypes;
   if (name === "create-react-class") return __js2CreateReactClass;
   if (name === "create-react-class/factory") {
@@ -936,8 +1014,8 @@ function __js2RequireActual(name) {
 }
 
 function require(name) {
-  if (__jestMocks[name]) return __jestMocks[name]();
-  return __js2RequireActual(name);
+  if (__jestMocks[name]) return __js2IsolatedModule(name, __jestMocks[name]());
+  return __js2IsolatedModule(name, __js2RequireActual(name));
 }
 `;
 

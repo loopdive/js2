@@ -223,7 +223,7 @@ const TIMER_EMBEDDER_DEPENDENCY_BY_IMPORT: Readonly<Record<string, string>> = Ob
   __timer_clear_interval: "clearInterval",
 });
 
-/** Fail closed when an explicit standalone timer capability has no embedder binding. */
+/** Fail closed when an explicit standalone capability has no required embedder binding. */
 export function assertExplicitEmbedderCapabilityBindings(
   manifest: JavaScriptAdapterManifestV1,
   deps: Record<string, any> | undefined,

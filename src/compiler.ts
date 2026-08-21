@@ -22,6 +22,13 @@ import { resetCompileDepth } from "./codegen/expressions.js";
 import { resetDerivationFlagCache } from "./derivation-flags.js";
 import { generateModule, generateMultiModule } from "./codegen/index.js";
 import type { CodegenOptions } from "./codegen/context/types.js";
+import {
+  emitIrCutoverAudit,
+  finalizeSingleSourceIrTelemetry,
+  isIrCutoverAuditRequested,
+  readIrCompileRoute,
+  withDefaultIrCompileRoute,
+} from "./compiler/ir-cutover-invocation.js";
 import { assertCodegenRegistrationsComplete } from "./codegen/shared.js";
 import { isFatalCodegenDiagnostic } from "./codegen/context/errors.js";
 import type { WasmModule } from "./ir/types.js";
@@ -399,22 +406,6 @@ function originalLineAndCharacter(source: string, offset: number): { line: numbe
   return { line, character: offset - lastNewline - 1 };
 }
 
-/** Map opt-in IR ledger locations through the same preprocessor map as diagnostics. */
-function remapIrOutcomePositions(
-  outcomes: NonNullable<CompileResult["irOutcomes"]>,
-  processedFile: ts.SourceFile,
-  originalSource: string,
-  positionMap: PositionMap,
-): NonNullable<CompileResult["irOutcomes"]> {
-  if (positionMap.isIdentity) return outcomes;
-  return outcomes.map((outcome) => {
-    const processedOffset = processedFile.getPositionOfLineAndCharacter(outcome.line - 1, outcome.column - 1);
-    const originalOffset = Math.min(Math.max(0, positionMap.toInputOffset(processedOffset)), originalSource.length);
-    const original = originalLineAndCharacter(originalSource, originalOffset);
-    return { ...outcome, line: original.line + 1, column: original.character + 1 };
-  });
-}
-
 function isGuardedNullablePrimitiveDiagnostic(diag: ts.Diagnostic, checker: ts.TypeChecker): boolean {
   if (diag.code !== 2322 && diag.code !== 2345) return false;
   const file = diag.file;
@@ -642,8 +633,17 @@ function detectRawWasiImports(source: string): { rawWasi: Set<string>; memAccess
 
 type FailureTelemetry = Pick<
   CompileResult,
-  "fallbackCounts" | "irPostClaimErrors" | "irCompiledFuncs" | "irFirstSkipped" | "irOutcomes"
+  "fallbackCounts" | "irPostClaimErrors" | "irCompiledFuncs" | "irFirstSkipped" | "irOutcomes" | "irBodyRouteAudit"
 >;
+
+const EMPTY_FAILURE_TELEMETRY: Partial<FailureTelemetry> = Object.freeze({
+  fallbackCounts: undefined,
+  irPostClaimErrors: undefined,
+  irCompiledFuncs: undefined,
+  irFirstSkipped: undefined,
+  irOutcomes: undefined,
+  irBodyRouteAudit: undefined,
+});
 
 /** The canonical failure result, retaining any telemetry codegen already produced. */
 function failResult(errors: CompileError[], telemetry: Partial<FailureTelemetry> = {}): CompileResult {
@@ -741,6 +741,7 @@ function buildCodegenOptions(
   }
   const targetProfile = resolveCompileTargetProfile(options);
   return {
+    irCutoverRoute: readIrCompileRoute(options, "compileSourceSync"),
     sourceMap: emitSourceMap,
     fast: options.fast,
     nativeStrings: options.nativeStrings,
@@ -783,7 +784,7 @@ function buildCodegenOptions(
     // ignores it until #2138 wires the IR overlay into the multi generator.
     experimentalIR: options.experimentalIR !== false,
     // #3519 — opt-in typed terminal ledger; routing remains hybrid.
-    trackIrOutcomes: options.trackIrOutcomes === true,
+    trackIrOutcomes: options.trackIrOutcomes === true || isIrCutoverAuditRequested(),
     // (#2973) Forward the IR-first opt-out. The eval / new Function host shims
     // set this so a post-claim IR-first hard error in a sub-compile is not
     // swallowed by the shim's fallback catch into a silent wrong answer.
@@ -985,14 +986,7 @@ function runPipeline(input: PipelineInput): CompileResult {
 
   // Step 2: Generate the module (IR/codegen).
   let mod;
-  let capturedFallbackCounts: import("./index.js").CompileResult["fallbackCounts"];
-  let capturedIrPostClaimErrors: import("./index.js").CompileResult["irPostClaimErrors"];
-  // (#3000) genuine-emission signal — functions/class-members actually IR-emitted.
-  let capturedIrCompiledFuncs: import("./index.js").CompileResult["irCompiledFuncs"];
-  // (#2138) IR-first skip telemetry — populated when IR-first is active (default as of #3143).
-  let capturedIrFirstSkipped: import("./index.js").CompileResult["irFirstSkipped"];
-  // #3519 — retain terminal outcomes even when a later codegen/emit check fails.
-  let capturedIrOutcomes: import("./index.js").CompileResult["irOutcomes"];
+  let telemetry: Partial<FailureTelemetry> = EMPTY_FAILURE_TELEMETRY;
   try {
     if (useLinear) {
       mod = multiAst
@@ -1010,15 +1004,21 @@ function runPipeline(input: PipelineInput): CompileResult {
           : generateModule(entryAst, input.codegenOptions, input.irInventoryOptions),
       );
       mod = result.module;
-      capturedFallbackCounts = result.fallbackCounts;
-      capturedIrPostClaimErrors = result.irPostClaimErrors;
+      telemetry = {
+        fallbackCounts: result.fallbackCounts,
+        irPostClaimErrors: result.irPostClaimErrors,
+        irCompiledFuncs: result.irCompiledFuncs,
+        irFirstSkipped: multiAst ? undefined : (result as ReturnType<typeof generateModule>).irFirstSkipped,
+        irOutcomes: result.irOutcomes,
+        irBodyRouteAudit: result.irBodyRouteAudit,
+      };
       // (#3153) Post-claim demotion telemetry sink. When
       // `JS2WASM_IR_POSTCLAIM_LOG=<path>` is set, append one JSONL record per
       // post-claim demotion (selector claimed, from-ast/resolve/lower threw —
       // exactly the #3143 IR-first divergence population) so a whole test-suite
       // run doubles as an empirical throw-site meter. Same env-gated telemetry
       // pattern as JS2WASM_LOG_IR_FALLBACKS; inert (no fs touch) when unset.
-      if (process.env.JS2WASM_IR_POSTCLAIM_LOG && capturedIrPostClaimErrors?.length) {
+      if (process.env.JS2WASM_IR_POSTCLAIM_LOG && result.irPostClaimErrors?.length) {
         try {
           // Dynamic import kept out of the module graph on purpose: this is
           // node-only telemetry and `compiler.ts` is also bundled for the
@@ -1031,7 +1031,7 @@ function runPipeline(input: PipelineInput): CompileResult {
           if (!fs) throw new Error("node:fs unavailable");
           const { appendFileSync } = fs;
           const file = options.fileName ?? "<source>";
-          const lines = capturedIrPostClaimErrors
+          const lines = result.irPostClaimErrors
             .map((e) => JSON.stringify({ file, func: e.func, kind: e.kind, message: e.message }))
             .join("\n");
           appendFileSync(process.env.JS2WASM_IR_POSTCLAIM_LOG, lines + "\n");
@@ -1039,11 +1039,6 @@ function runPipeline(input: PipelineInput): CompileResult {
           // Telemetry must never fail a compile.
         }
       }
-      capturedIrCompiledFuncs = result.irCompiledFuncs;
-      capturedIrOutcomes = result.irOutcomes;
-      capturedIrFirstSkipped = multiAst
-        ? undefined // #2138 M0 multi overlay is compile-twice only; it never enables IR-first body skipping
-        : (result as ReturnType<typeof generateModule>).irFirstSkipped;
       // Propagate codegen errors with source locations. #1921 — a deliberate
       // "degrade" diagnostic is surfaced as a non-fatal "warning"; the fatal
       // decision is made by isFatalCodegenDiagnostic on the raw severity.
@@ -1058,13 +1053,7 @@ function runPipeline(input: PipelineInput): CompileResult {
       }
       // #1921 — gate on severity, not a "Codegen error:" message prefix.
       if (result.errors.some(isFatalCodegenDiagnostic)) {
-        return failResult(errors, {
-          fallbackCounts: capturedFallbackCounts,
-          irPostClaimErrors: capturedIrPostClaimErrors,
-          irCompiledFuncs: capturedIrCompiledFuncs,
-          irFirstSkipped: capturedIrFirstSkipped,
-          irOutcomes: capturedIrOutcomes,
-        });
+        return failResult(errors, telemetry);
       }
     }
   } catch (e) {
@@ -1077,13 +1066,7 @@ function runPipeline(input: PipelineInput): CompileResult {
       `Codegen error: ${e instanceof Error ? e.message : String(e)}`,
       "error",
     );
-    return failResult(errors, {
-      fallbackCounts: capturedFallbackCounts,
-      irPostClaimErrors: capturedIrPostClaimErrors,
-      irCompiledFuncs: capturedIrCompiledFuncs,
-      irFirstSkipped: capturedIrFirstSkipped,
-      irOutcomes: capturedIrOutcomes,
-    });
+    return failResult(errors, telemetry);
   }
 
   // Step 2b: Apply C ABI transformations if requested (linear target only).
@@ -1129,13 +1112,7 @@ function runPipeline(input: PipelineInput): CompileResult {
           `Use the host-assisted compatibility profile for this source until its native provider is implemented.`,
         "error",
       );
-      return failResult(errors, {
-        fallbackCounts: capturedFallbackCounts,
-        irPostClaimErrors: capturedIrPostClaimErrors,
-        irCompiledFuncs: capturedIrCompiledFuncs,
-        irFirstSkipped: capturedIrFirstSkipped,
-        irOutcomes: capturedIrOutcomes,
-      });
+      return failResult(errors, telemetry);
     }
   }
 
@@ -1167,13 +1144,7 @@ function runPipeline(input: PipelineInput): CompileResult {
       `Binary emit error: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`,
       "error",
     );
-    return failResult(errors, {
-      fallbackCounts: capturedFallbackCounts,
-      irPostClaimErrors: capturedIrPostClaimErrors,
-      irCompiledFuncs: capturedIrCompiledFuncs,
-      irFirstSkipped: capturedIrFirstSkipped,
-      irOutcomes: capturedIrOutcomes,
-    });
+    return failResult(errors, telemetry);
   }
 
   // Step 3b: Optimize — applied by the async entry adapters via applyOptimize,
@@ -1287,11 +1258,7 @@ function runPipeline(input: PipelineInput): CompileResult {
       capabilityDiagnostics: capabilityProviderDiagnostics,
       exportBoundaries: exportBoundaryPolicies,
     }),
-    fallbackCounts: capturedFallbackCounts,
-    irPostClaimErrors: capturedIrPostClaimErrors,
-    irCompiledFuncs: capturedIrCompiledFuncs,
-    irFirstSkipped: capturedIrFirstSkipped,
-    irOutcomes: capturedIrOutcomes,
+    ...telemetry,
   };
 }
 
@@ -1315,7 +1282,7 @@ export async function compileSource(
   // entry point (compileSourceSync) is preserved for callers that cannot be
   // async — notably the JS `eval` host shim in runtime-eval.ts, which never
   // optimizes.
-  const result = compileSourceSync(source, options, languageService);
+  const result = compileSourceSync(source, withDefaultIrCompileRoute(options, "compile"), languageService);
 
   if (options.optimize && result.success) {
     const level = typeof options.optimize === "number" ? options.optimize : 3;
@@ -1452,7 +1419,10 @@ export function compileSourceSync(
   let isJsMode = options.allowJs === true || (options.fileName?.endsWith(".js") ?? false);
   const defaultFileName = options.fileName ?? (isJsMode ? "input.js" : "input.ts");
   const effectiveFileName = options.moduleName ?? defaultFileName;
-  let irInventory = irIds.maybe(positionMap, options.trackIrOutcomes || targetProfile.backend === "linear");
+  let irInventory = irIds.maybe(
+    positionMap,
+    options.trackIrOutcomes || isIrCutoverAuditRequested() || targetProfile.backend === "linear",
+  );
   // #2645/#2736 — `--target node`/`deno` (formerly `--platform node`) implies
   // node-style emulation so the ambient surface and the importable `node:<mod>`
   // capability gate share one target model. This EFFECTIVE flag drives the
@@ -1664,10 +1634,7 @@ export function compileSourceSync(
     runEarlyErrorsOnAllowJs: true,
     options,
   });
-  if (result.irOutcomes) {
-    result.irOutcomes = remapIrOutcomePositions(result.irOutcomes, ast.sourceFile, source, positionMap);
-  }
-  return result;
+  return finalizeSingleSourceIrTelemetry(result, ast.sourceFile, source, positionMap);
 }
 
 /**
@@ -1807,26 +1774,28 @@ export async function compileMultiSource(
     for (const name of memAccessors) wasiMemAccessors.add(name);
   }
   return applyOptimize(
-    runPipeline({
-      userSourceFiles: multiAst.sourceFiles,
-      entryAst,
-      multiAst,
-      errors,
-      codegenOptions: buildCodegenOptions(options, emitSourceMap, {
-        nodeBuiltins,
-        wasiNodeFsFuncs,
-        wasiRawImports,
-        wasiMemAccessors,
+    emitIrCutoverAudit(
+      runPipeline({
+        userSourceFiles: multiAst.sourceFiles,
+        entryAst,
+        multiAst,
+        errors,
+        codegenOptions: buildCodegenOptions(withDefaultIrCompileRoute(options, "compileMulti"), emitSourceMap, {
+          nodeBuiltins,
+          wasiNodeFsFuncs,
+          wasiRawImports,
+          wasiMemAccessors,
+        }),
+        sourcesContent,
+        diagnosticAnchor: multiAst.entryFile,
+        // #3506 — retain real `.js` roots (`allowJs`) while allowing a syntax
+        // oracle to opt back into the ECMAScript early-error pass. Kept separate
+        // from strictJsSyntax because resolution-phase tests must observe the
+        // linked graph without manufacturing a parse rejection.
+        runEarlyErrorsOnAllowJs: options.enforceJsEarlyErrors === true,
+        options,
       }),
-      sourcesContent,
-      diagnosticAnchor: multiAst.entryFile,
-      // #3506 — retain real `.js` roots (`allowJs`) while allowing a syntax
-      // oracle to opt back into the ECMAScript early-error pass. Kept separate
-      // from strictJsSyntax because resolution-phase tests must observe the
-      // linked graph without manufacturing a parse rejection.
-      runEarlyErrorsOnAllowJs: options.enforceJsEarlyErrors === true,
-      options,
-    }),
+    ),
     options,
     multiAst.entryFile,
   );
@@ -1900,16 +1869,18 @@ export async function compileFilesSource(entryPath: string, options: CompileOpti
     sourcesContent.set(sf.fileName, sf.getFullText());
   }
   return applyOptimize(
-    runPipeline({
-      userSourceFiles: multiAst.sourceFiles,
-      entryAst,
-      multiAst,
-      errors,
-      codegenOptions: buildCodegenOptions(options, emitSourceMap),
-      sourcesContent,
-      diagnosticAnchor: multiAst.entryFile,
-      options,
-    }),
+    emitIrCutoverAudit(
+      runPipeline({
+        userSourceFiles: multiAst.sourceFiles,
+        entryAst,
+        multiAst,
+        errors,
+        codegenOptions: buildCodegenOptions(withDefaultIrCompileRoute(options, "compileFiles"), emitSourceMap),
+        sourcesContent,
+        diagnosticAnchor: multiAst.entryFile,
+        options,
+      }),
+    ),
     options,
     multiAst.entryFile,
   );

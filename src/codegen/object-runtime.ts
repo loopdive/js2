@@ -55,6 +55,7 @@
  * runtime — it emits `struct.get`/`struct.set` directly and never calls
  * `ensureLateImport` for these names.
  */
+import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { BFN_ID_FIELD_IDX, BFN_STATE_FIELD_IDX } from "./builtin-fn-meta.js"; // (#4241) header-derived
@@ -2791,7 +2792,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // only at individual callers) prevents descriptor-bearing host/native-first
   // builds from gaining a private result global whose index could be shifted by
   // later imports.
-  const inheritedSetRuntimeActive = ctx.standalone && ctx.inheritedSetDescriptorDirty;
+  const inheritedSetRuntimeActive = ctx.standalone && inheritedSetAnyDirty(ctx);
   const SET_RESULT_UNADMITTED = 0;
   const SET_RESULT_SUCCESS = 1;
   const SET_RESULT_REFUSED = 2;
@@ -8544,7 +8545,7 @@ export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
  */
 export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
   if (!ctx.standalone || ctx.anyStrTypeIdx < 0) return;
-  const inheritedSetGetMissActive = ctx.inheritedSetDescriptorDirty;
+  const inheritedSetGetMissActive = inheritedSetAnyDirty(ctx);
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
@@ -9737,7 +9738,7 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
   const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
   const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
   const descriptorDecisionAvailable =
-    ctx.standalone && ctx.inheritedSetDescriptorDirty && setResultGlobalIdx !== undefined && setDecideIdx !== undefined;
+    ctx.standalone && inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined && setDecideIdx !== undefined;
   const RESULT_SUCCESS = 1;
   const RESULT_REFUSED = 2;
   const publishSuccess = (): Instr[] =>

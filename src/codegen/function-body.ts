@@ -60,8 +60,8 @@ import { collectI32SpecializedArrays } from "./array-element-typing.js";
 // dependency-free analysis module so the IR front-end can reuse the SAME
 // hardened #1120/#1236 proof without importing this emit-heavy module.
 // Re-exported here because `codegen/index.ts` and tests import it by this path.
-export { collectI32CoercedLocals } from "./analysis/i32-coerced-locals.js";
-import { collectI32CoercedLocals } from "./analysis/i32-coerced-locals.js";
+export { collectI32CoercedLocals } from "../ir/analysis/i32-coerced-locals.js";
+import { collectI32CoercedLocals } from "../ir/analysis/i32-coerced-locals.js";
 import { detectArrayReduceFusion, applyArrayReduceFusion } from "./array-reduce-fusion.js";
 import { compileNativeGeneratorFunction } from "./generators-native.js";
 import { maybeActivateAsync } from "./async-activation.js";
@@ -419,7 +419,6 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
     i32CoercedLocals: i32CoercedLocals.size > 0 ? i32CoercedLocals : undefined,
     i32SpecializedArrays: i32SpecializedArrays.size > 0 ? i32SpecializedArrays : undefined,
   };
-
   // A nested lexical descendant can direct-eval a name owned by this function,
   // so mark the whole ancestor chain before any parameter/default/body lowering
   // can capture those bindings through a narrower, non-canonical cell type.

@@ -25,6 +25,11 @@ export function resolvesToAmbientGlobal(ctx: CodegenContext, id: ts.Identifier):
   return decls.every((d) => d.getSourceFile().isDeclarationFile);
 }
 
+/** Ambient-global proof with the source spelling checked at the same boundary. */
+export function resolvesToNamedAmbientGlobal(ctx: CodegenContext, expr: ts.Expression, name: string): boolean {
+  return ts.isIdentifier(expr) && expr.text === name && resolvesToAmbientGlobal(ctx, expr);
+}
+
 /**
  * The strength of a non-constructability conclusion.
  *

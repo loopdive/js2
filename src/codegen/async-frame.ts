@@ -37,7 +37,7 @@ import type { Instr, ValType, WasmFunction } from "../ir/types.js";
  */
 import { forEachChild, ts } from "../ts-api.js";
 import type { AsyncCfgPlan, AsyncCfgState, AsyncCpsPlan, AsyncResumePoint } from "./async-cps.js";
-import { awaitIsStaticallyResolved } from "./async-static.js"; // (#3723) settled-local flow test
+import { awaitIsStaticallyResolved } from "../ir/async-static.js"; // (#3723) settled-local flow test
 import {
   ASYNC_CPS_ENABLED,
   FORAWAIT_ITER_SPILL,
@@ -728,7 +728,7 @@ function bindingLiveAcrossLaterAwait(name: string, k: number, plan: AsyncCpsPlan
  * resumes with `v` unchanged. So an await whose operand type carries no `then`
  * is a pass-through no matter what the syntax looks like.
  *
- * This exists because {@link import("./async-static.js").awaitIsStaticallyResolved}
+ * This exists because {@link import("../ir/async-static.js").awaitIsStaticallyResolved}
  * cannot answer it. That helper is deliberately a checker-free LEAF module (it
  * imports only `ts-api`, so the IR front-end can consume it without closing the
  * #3324 import cycle), which means it recognises literals and

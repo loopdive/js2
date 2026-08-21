@@ -690,7 +690,7 @@ export function compileExpression(
   expr: ts.Expression,
   expectedType?: ValType,
 ): ValType | null {
-  __compileDepth++;
+  __compileDepth = ctx.irBodyRouteAuditSession?.enterExpression(fctx, expr, __compileDepth) ?? __compileDepth + 1;
   if (__compileDepth > MAX_COMPILE_DEPTH) {
     __compileDepth--;
     reportError(ctx, expr, `compilation depth exceeded (${MAX_COMPILE_DEPTH}) — possible infinite recursion`);

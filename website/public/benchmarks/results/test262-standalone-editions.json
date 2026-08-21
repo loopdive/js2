@@ -1,21 +1,21 @@
 [
   {
     "edition": "ES5",
-    "pass": 8618,
-    "fail": 386,
+    "pass": 8632,
+    "fail": 372,
     "ce": 25,
     "skip": 0,
     "total": 9029,
-    "pct": 95,
+    "pct": 96,
     "features": [
       {
         "name": "caller",
-        "pass": 22,
-        "fail": 1,
+        "pass": 23,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 23,
-        "pct": 96
+        "pct": 100
       },
       {
         "name": "Reflect.construct",
@@ -48,9 +48,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 8121,
-    "fail": 2996,
-    "ce": 586,
+    "pass": 8122,
+    "fail": 2994,
+    "ce": 587,
     "skip": 1,
     "total": 11704,
     "pct": 69,
@@ -111,8 +111,8 @@
       },
       {
         "name": "arrow-function",
-        "pass": 391,
-        "fail": 41,
+        "pass": 392,
+        "fail": 40,
         "ce": 8,
         "skip": 0,
         "total": 440,
@@ -120,8 +120,8 @@
       },
       {
         "name": "Proxy",
-        "pass": 132,
-        "fail": 276,
+        "pass": 133,
+        "fail": 275,
         "ce": 23,
         "skip": 0,
         "total": 431,
@@ -129,8 +129,8 @@
       },
       {
         "name": "Reflect.construct",
-        "pass": 351,
-        "fail": 42,
+        "pass": 352,
+        "fail": 41,
         "ce": 22,
         "skip": 0,
         "total": 415,
@@ -337,8 +337,8 @@
       {
         "name": "tail-call-optimization",
         "pass": 27,
-        "fail": 6,
-        "ce": 0,
+        "fail": 5,
+        "ce": 1,
         "skip": 0,
         "total": 33,
         "pct": 82
@@ -4268,8 +4268,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4140,
-    "fail": 1204,
+    "pass": 4145,
+    "fail": 1199,
     "ce": 101,
     "skip": 0,
     "total": 5445,

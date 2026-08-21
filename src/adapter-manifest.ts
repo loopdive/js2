@@ -129,14 +129,47 @@ export function validateJavaScriptAdapterManifest(manifest: JavaScriptAdapterMan
   );
   diagnostics.push(...validateExportBoundaryPolicies(manifest.exportSignatures, manifest.exportBoundaries));
 
-  const manifestImports = new Set(manifest.imports.map((entry) => `${entry.module}\0${entry.name}\0${entry.kind}`));
-  const capabilityImportOwners = new Map<string, Set<string>>();
+  const capabilityRequirementCounts = new Map<string, number>();
+  for (const requirement of manifest.capabilities) {
+    capabilityRequirementCounts.set(requirement.id, (capabilityRequirementCounts.get(requirement.id) ?? 0) + 1);
+  }
+  for (const [id, count] of capabilityRequirementCounts) {
+    if (count > 1) diagnostics.push(`duplicate capability requirement '${id}' appears ${count} times`);
+  }
+
+  const manifestImportCounts = new Map<string, number>();
+  for (const entry of manifest.imports) {
+    const key = `${entry.module}\0${entry.name}\0${entry.kind}`;
+    manifestImportCounts.set(key, (manifestImportCounts.get(key) ?? 0) + 1);
+  }
+  const reportedDuplicateManifestImports = new Set<string>();
+  for (const entry of manifest.imports) {
+    const key = `${entry.module}\0${entry.name}\0${entry.kind}`;
+    const count = manifestImportCounts.get(key) ?? 0;
+    if (count > 1 && !reportedDuplicateManifestImports.has(key)) {
+      diagnostics.push(`duplicate adapter import '${entry.module}::${entry.name}' appears ${count} times`);
+      reportedDuplicateManifestImports.add(key);
+    }
+  }
+  const manifestImports = new Set(manifestImportCounts.keys());
+
+  const capabilityImportOwners = new Map<string, string[]>();
+  const capabilityImportLabels = new Map<string, string>();
   for (const requirement of manifest.capabilities) {
     for (const entry of requirement.imports) {
       const key = `${entry.module}\0${entry.name}\0${entry.kind}`;
-      const owners = capabilityImportOwners.get(key) ?? new Set<string>();
-      owners.add(requirement.id);
+      const owners = capabilityImportOwners.get(key) ?? [];
+      owners.push(requirement.id);
       capabilityImportOwners.set(key, owners);
+      capabilityImportLabels.set(key, `${entry.module}::${entry.name}`);
+    }
+  }
+  for (const [key, owners] of capabilityImportOwners) {
+    if (owners.length > 1) {
+      diagnostics.push(
+        `capability import '${capabilityImportLabels.get(key)}' has ${owners.length} ownership claims ` +
+          `('${owners.join("', '")}'); expected exactly one`,
+      );
     }
   }
   for (const descriptor of manifest.imports) {
@@ -144,12 +177,12 @@ export function validateJavaScriptAdapterManifest(manifest: JavaScriptAdapterMan
     if (policy.classification !== "platform-capability") continue;
     const key = `${descriptor.module}\0${descriptor.name}\0${descriptor.kind}`;
     const owners = capabilityImportOwners.get(key);
-    if (!owners || owners.size === 0) {
+    if (!owners || owners.length === 0) {
       diagnostics.push(`platform import '${descriptor.module}::${descriptor.name}' has no capability requirement`);
-    } else if (owners.size !== 1 || !owners.has(policy.family)) {
+    } else if (owners.length === 1 && owners[0] !== policy.family) {
       diagnostics.push(
         `platform import '${descriptor.module}::${descriptor.name}' belongs to capability '${policy.family}', not ` +
-          `'${[...owners].sort().join(",")}'`,
+          `'${owners[0]}'`,
       );
     }
   }
