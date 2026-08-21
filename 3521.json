@@ -1,8 +1,10 @@
 {
   "id": "3521",
-  "assignee": "",
-  "status": "reserved",
+  "assignee": "ttraenkler/fable-lead",
+  "requested_by": "ttraenkler/fable-lead",
+  "status": "in-progress",
   "branch": "",
-  "reserved_at": "2026-07-21T12:42:07Z",
-  "updated_at": "2026-07-21T12:42:07Z"
+  "claimed_at": "2026-08-21T21:31:33Z",
+  "updated_at": "2026-08-21T21:31:33Z",
+  "write_id": "21531-f6spu5lw"
 }
