@@ -6,6 +6,18 @@ import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { ts } from "../ts-api.js";
 import { hasDeclareModifier, hasExportModifier } from "./ast-modifiers.js";
 
+/** Require one oracle value declaration and the same singleton declaration population. */
+export function exactOracleValueDeclaration(
+  oracle: Pick<TypeOracle, "declarationsOf" | "valueDeclarationOf">,
+  identifier: ts.Identifier,
+): ts.Declaration | undefined {
+  const valueDeclaration = oracle.valueDeclarationOf(identifier);
+  const declarations = oracle.declarationsOf(identifier);
+  return valueDeclaration && declarations.length === 1 && declarations[0] === valueDeclaration
+    ? valueDeclaration
+    : undefined;
+}
+
 function exactRelativeModuleSourceKey(importerSourceKey: string, specifier: string): string | undefined {
   if (!specifier.startsWith("./") && !specifier.startsWith("../")) return undefined;
   const parts = importerSourceKey.split("/").slice(0, -1);
@@ -29,15 +41,12 @@ export function resolveMultiPreparedFunctionValueImportTarget(input: {
   readonly identityContext: IrPlanningIdentityContext;
 }): ts.FunctionDeclaration | undefined {
   const { callee, identityContext, oracle, sourceFile } = input;
-  const localImport = oracle.valueDeclarationOf(callee);
-  const localDeclarations = oracle.declarationsOf(callee);
+  const localImport = exactOracleValueDeclaration(oracle, callee);
   if (
     !localImport ||
     !ts.isImportSpecifier(localImport) ||
     localImport.isTypeOnly ||
-    localImport.name.text !== callee.text ||
-    localDeclarations.length !== 1 ||
-    localDeclarations[0] !== localImport
+    localImport.name.text !== callee.text
   ) {
     return undefined;
   }

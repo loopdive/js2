@@ -199,12 +199,15 @@ import {
   buildMultiIrGraphSafety,
   collectMultiIrFunctionNameCollisions,
   compileMultiPreparedScalarLeafDeclarations,
-  planEarlyMultiPreparedFunctionValueLeafRoute,
   planEarlyMultiPreparedScalarLeafRoute,
   type EarlyMultiPreparedScalarLeafState,
   type MultiPreparedFunctionValueSupportReceipt,
   type MultiPreparedScalarLeafGraphSafety,
 } from "./multi-prepared-scalar-leaf.js";
+import {
+  assertMultiPreparedFibonacciPairRouteCurrent,
+  planEarlyMultiPreparedFunctionValueRoutes,
+} from "./multi-prepared-fibonacci-pair.js";
 import * as irTimerShim from "./ir-timer-shim-planning.js";
 import { buildLeakedHostImportError, scanForLeakedHostImports } from "./host-import-allowlist.js";
 import {
@@ -3519,11 +3522,11 @@ function multiIrFunctionValueLeafHasForeignLateProvider(
   sourceFile: ts.SourceFile,
   plan: IrOverlayPlan,
   unitId: IrUnitId,
+  functionValueTarget: boolean,
 ): boolean {
   const valueTargets = collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan);
   return (
-    valueTargets.size !== 1 ||
-    !valueTargets.has(unitId) ||
+    (functionValueTarget ? valueTargets.size !== 1 || !valueTargets.has(unitId) : valueTargets.has(unitId)) ||
     collectDirectCallerActivationTargetUnitIds(ctx, sourceFile, plan.identityPlan).has(unitId) ||
     [...plan.importedCalls.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
     [...plan.topLevelFunctionValues.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
@@ -3563,17 +3566,18 @@ function planEarlyMultiIrOverlay(
     lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),
     projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
   });
-  const functionValueStates = planEarlyMultiPreparedFunctionValueLeafRoute({
+  const functionValueStates = planEarlyMultiPreparedFunctionValueRoutes({
     active,
-    cutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_BENCH_LOOP_CUTOVER),
+    leafCutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_BENCH_LOOP_CUTOVER),
+    fibonacciPairCutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_FIB_PAIR_CUTOVER),
     ctx,
     sourceFiles: multiAst.sourceFiles,
     entryFile: multiAst.entryFile,
     safety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
     planSource: (sourceFile) => planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined),
     safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
-    hasForeignLateProvider: (plan, sourceFile, unitId) =>
-      multiIrFunctionValueLeafHasForeignLateProvider(ctx, sourceFile, plan, unitId),
+    hasForeignLateProvider: (plan, sourceFile, unitId, functionValueTarget) =>
+      multiIrFunctionValueLeafHasForeignLateProvider(ctx, sourceFile, plan, unitId, functionValueTarget),
     prepareFunctionValueSupport: (plan, sourceFile, unitId, legacyName) =>
       prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, new Set([legacyName])).get(unitId),
     projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
@@ -3631,7 +3635,9 @@ function compileMultiIrOverlaySource(
     ),
   );
   const { overrideMap, classShapes } = plan;
-  if (early?.route?.routeKind === "function-value") {
+  if (early?.route?.routeKind === "fibonacci-pair") {
+    assertMultiPreparedFibonacciPairRouteCurrent({ ctx, route: early.route, finalSelection: safeSelection, safety });
+  } else if (early?.route?.routeKind === "function-value") {
     assertMultiPreparedFunctionValueLeafRouteCurrent({
       ctx,
       route: early.route,
