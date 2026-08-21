@@ -43,6 +43,10 @@ import type { ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { getNativeProtoBuiltinGlue } from "../native-proto.js";
 import { emitReflectiveNativeProtoClosureCall, nativeProtoBrandForInterface } from "./calls.js";
+import {
+  resolveAssignedTransferredProtoMember,
+  tryEmitTransferredObjectToStringCall,
+} from "./transferred-proto-assignment.js";
 
 /** Unwrap parenthesized / `as` / non-null wrappers to the underlying expression. */
 function unwrapTransparent(e: ts.Expression): ts.Expression {
@@ -80,11 +84,15 @@ export function tryEmitTransferredNativeProtoMethodCall(
   if (!ts.isIdentifier(recvExpr)) return undefined;
   const memberName = propAccess.name.text;
 
-  const initializer = ctx.oracle.variableInitializerOf(recvExpr);
-  if (initializer === undefined || !ts.isObjectLiteralExpression(initializer)) return undefined;
-  const protoAccess = resolveTransferredProtoMember(initializer, memberName);
+  const protoAccess = resolveTransferredProtoMemberFromEitherSpelling(ctx, recvExpr, memberName, expr);
   if (protoAccess === undefined) return undefined;
-  if (memberSlotIsWrittenTo(recvExpr.getSourceFile(), recvExpr.text, memberName)) return undefined;
+
+  // (#4491 wave-5 T1) `Object.prototype.toString` is resolved by the #2501
+  // compile-time tag classifier, not by the Object glue — whose `toString` body
+  // is the catchable-refusal stand-in. Try it before the glue route below;
+  // declines emit nothing.
+  const objToString = tryEmitTransferredObjectToStringCall(ctx, fctx, expr, recvExpr, protoAccess);
+  if (objToString !== undefined) return objToString;
 
   const ifaceId = (protoAccess.expression as ts.PropertyAccessExpression).expression as ts.Identifier;
   const brand = nativeProtoBrandForInterface(ctx, ifaceId.text);
@@ -104,6 +112,30 @@ export function tryEmitTransferredNativeProtoMethodCall(
     "method",
     /* isCall */ true,
   );
+}
+
+/**
+ * (#4491 wave-5 T1) The `<Iface>.prototype.<member>` access the slot holds,
+ * proved by EITHER transfer spelling — the wave-3 object-literal initializer,
+ * or the wave-5 single-assignment form. Order matters: the literal arm is tried
+ * first and keeps its own write-guard, so every program the literal arm already
+ * resolved lowers byte-identically; only literal-arm DECLINES reach the
+ * assignment arm.
+ */
+function resolveTransferredProtoMemberFromEitherSpelling(
+  ctx: CodegenContext,
+  recvExpr: ts.Identifier,
+  memberName: string,
+  expr: ts.CallExpression,
+): ts.PropertyAccessExpression | undefined {
+  const initializer = ctx.oracle.variableInitializerOf(recvExpr);
+  if (initializer !== undefined && ts.isObjectLiteralExpression(initializer)) {
+    const fromLiteral = resolveTransferredProtoMember(initializer, memberName);
+    if (fromLiteral !== undefined && !memberSlotIsWrittenTo(recvExpr.getSourceFile(), recvExpr.text, memberName)) {
+      return fromLiteral;
+    }
+  }
+  return resolveAssignedTransferredProtoMember(recvExpr.getSourceFile(), recvExpr.text, memberName, expr.getStart());
 }
 
 /**

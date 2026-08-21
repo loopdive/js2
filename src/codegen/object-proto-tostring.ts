@@ -615,6 +615,20 @@ export function resolveObjectToStringTag(ctx: CodegenContext, argExpr: ts.Expres
   if (symName === "Boolean") return deferOrStandalone("Boolean");
   if (symName === "String") return deferOrStandalone("String");
 
+  // (#4491 wave-5 T1) The NAMESPACE objects. §21.3.1.9 / §25.5.3 give `Math`
+  // and `JSON` an own `@@toStringTag` of their own name, so §20.1.3.6 step 15
+  // overrides the step-13 "Object" default. Standalone had no @@toStringTag
+  // resolution and fell through to that default, so `Object.prototype.toString
+  // .call(Math)` and `String(Math)` both answered "[object Object]" where the
+  // spec says "[object Math]". The tag is a compile-time constant here — the
+  // receiver is the namespace itself — so no dynamic lookup is needed.
+  //
+  // `deferOrStandalone`, not an unconditional return: in HOST mode the real
+  // `Object.prototype.toString` already gets these right INCLUDING a test that
+  // mutates `Math[Symbol.toStringTag]`, which a baked constant could not follow.
+  if (symName === "Math") return deferOrStandalone("Math");
+  if (symName === "JSON") return deferOrStandalone("JSON");
+
   // Named builtin exotic *instances* the host mis-tags (opaque Wasm receiver):
   // Date / RegExp / Error(+subclasses) / arguments. `.prototype` of these was
   // already filtered above, so a match here is a real instance.

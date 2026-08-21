@@ -2662,6 +2662,92 @@ lane J), $ObjVec arm for __hasOwnProperty (lane J's concat gate blocker),
 ToString-of-object user-toString dispatch (#1472, 6 rows + lane F's
 String()-vs-call divergence).
 
+### Wave-5 T1 result (2026-08-21, lane team-dev-1, base `0e71b59ed3`)
+
+**Rows: 2/16 at start, 2/16 at end — no row flipped.** Both passing rows
+(`fromCharCode/S15.5.3.2_A1`, `substring/S15.5.4.15_A1_T5`) already passed on
+the branch base; the 14 failures were each re-verified on this HEAD before any
+edit. Two mechanisms landed, each with a control run; every remaining row is
+priced below.
+
+| commit | change | control |
+| --- | --- | --- |
+| `b865397216` | transferred-proto ASSIGNMENT resolution + `Object.prototype.toString` transfer emitter | 60/60 |
+| (this commit) | §20.1.3.6 `Math` / `JSON` namespace tag | 45/45 Math+JSON, 60/60 T1 neighbours, 42/45 toString-family (the 2 FAILs are pre-existing — verified by file-copy A/B against the base file) |
+
+#### What the assignment arm fixed, and why it flipped nothing
+
+Wave-3's `transferred-native-proto-call.ts` resolves a transfer written through
+an object LITERAL. Every Sputnik-era genericity test writes it as an
+ASSIGNMENT, which that module declines on purpose. Measured on the base:
+
+| probe | base | now |
+| --- | --- | --- |
+| `var o={}; o.split=String.prototype.split; o.split()` | THREW `TypeError: Cannot access property on null or undefined` | `["[object Object]"]` ✓ |
+| `var x={}; x.getClass=Object.prototype.toString; x.getClass()` | THREW same | `"[object Object]"` ✓ |
+| `var a=[1,2]; a.g=Object.prototype.toString; a.g()` | THREW same | `"[object Array]"` ✓ |
+
+The idiom now works. No T1 row flips on it alone because each row has a
+SECOND, independent blocker behind the transfer — which the arm made visible:
+the concat pair's error moved from the null-funcref TypeError to
+`Array.prototype.concat is not yet callable as a value in --target standalone`,
+naming the real gate (the owed `$ObjVec`-arm follow-up).
+
+#### Per-row verdict for the 14 failures
+
+| rows | blocker | verdict |
+| --- | --- | --- |
+| `concat/S15.4.4.4_A2_T{1,2}` | `Array.prototype.concat` has no value-callable body | the owed `$ObjVec` follow-up; the transfer half is now done |
+| `split/instance-is-math` | the split receiver's ToString runs through `$__any_to_string` at RUNTIME, which has no static tag. The compile-time classifier now answers `Math` (`Object.prototype.toString.call(Math)` and `String(Math)` both correct), but the borrowed-receiver path does not consult it | needs `emitBorrowedStringReceiverToString` to fold a statically-known namespace receiver; NOT safe as a blanket object rule (an object with a user `toString` must dispatch to it) |
+| `slice/S15.5.4.13_A3_T4`, `slice/S15.5.4.13_A1_T5` | ToString-of-object must call the receiver's USER `toString` | the owed #1472 follow-up |
+| `trim/15.5.4.20-2-51` | `ToString(arguments)` answers `"1,2,true"` (array join) instead of `"[object Arguments]"` | the `arguments` isArray-branding WALL — do not re-attempt |
+| `split/argument-is-regexp-and-instance-is-number` | transfer target is `Number.prototype`, not a variable | out of the assignment arm's shape by design |
+| `split/arguments-are-boolean-…-instance-is-boolean` | `new Boolean` receiver + THREE args drops the `limit`; the same call with two args, or with a `{}` receiver and three, is correct | narrow wrapper-receiver arity edge, isolated but not fixed |
+| `split/instance-is-number-1e21` | `new Number(-1e21)` receiver — "called value is not a function" | wrapper-receiver transfer, unpriced |
+| `split/separator-regexp-limit-string-via-eval` | eval-dependent | unpriced |
+| `filter/15.4.4.20-9-b-2` | `Cannot redefine property: configurable attribute of a non-configurable property` | unrelated to transfers; belongs with the T2 descriptor lane |
+| `forEach/15.4.4.18-3-23` | `testResult !== true` | unrelated to transfers |
+
+#### `String.fromCharCode` as a value — ATTEMPTED, NOT LANDED (full diagnosis)
+
+The two `fromCharCode` rows need the extracted value to be CALLABLE. The
+attempt was reverted, but the root cause is fully measured and the next lane
+should not re-derive it:
+
+1. The `default:` arm of `ensureStandaloneBuiltinStaticMethodClosure` reifies
+   the value at its DECLARED arity (one). A four-argument call matches no
+   funcref candidate, so the guarded `ref.cast` yields null and the failure
+   (`TypeError: Cannot access property on null or undefined`) arrives from the
+   DISPATCH — the body never runs. A variadic body on the `Math.max`
+   `(ref null $vec_externref) -> externref` convention is the right shape.
+2. **`resolveBuiltinStaticBindingAlias` only recognises the DESTRUCTURING
+   spelling** (`const { ownKeys } = Reflect`). The plain
+   `var f = String.fromCharCode` resolves to `undefined`, so the call site
+   falls back to the TypeScript lib signature.
+3. That fallback is what destroys the arguments. For a rest-parameter static
+   the lib signature's single slot is a `number[]` vec, and the generic
+   slot-by-slot loop compiles argument 0 against it. The emitted WAT for
+   `String.fromCharCode(97)` is literally `f64.const 97` / `drop` /
+   `ref.null 4` — evaluated, discarded, replaced by a null vec. Measured
+   `f(97, 98)` answered NUL + `"b"`: argument 0 destroyed, argument 1 intact
+   only because it overflowed into the separately-boxed extras path.
+4. A fourth defect sits behind those: the #2933 variadic call-site arm coerces
+   its externref result for `f64`/`i32` and passes `externref` through, but
+   DROPS every other expected type and pushes a default. That never showed
+   because `Math.max`/`Math.min` return numbers; a reified `fromCharCode`
+   returns `string`, which lowers to `(ref $AnyString)`, so `f(97)` answered
+   `undefined` with the correct `"a"` computed and thrown away.
+
+So the slice is four coupled fixes (variadic body, plain-alias resolution,
+argv-slot construction at the call site, ref-typed return recovery), not one.
+`S15.5.3.2_A4` additionally needs a `[[Construct]]` refusal on the reified
+value. Sized L, not S — the "static-method-body slice" estimate in the wave-5
+seed was low.
+
+**`Math.max` as a value works today only because its arguments survive the same
+mis-compiled slot by accident of being numbers.** Anyone touching the variadic
+convention should treat that as unowned behaviour, not as a working reference.
+
 ---
 
 ## Wave-4 lane H — the `arguments`-extras residual (2026-08-21, base `da724268b0`)
