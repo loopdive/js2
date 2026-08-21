@@ -1,0 +1,12 @@
+{
+  "id": "4588",
+  "assignee": "ttraenkler/codex",
+  "requested_by": "ttraenkler/codex",
+  "status": "in-progress",
+  "branch": "codex/4586-standalone-timer-shim-cutover",
+  "reserved_at": "2026-08-21T04:10:01Z",
+  "claimed_at": "2026-08-21T04:10:01Z",
+  "updated_at": "2026-08-21T04:10:01Z",
+  "write_id": "67668-dfnr9wi3",
+  "pr_scan": "ok"
+}
