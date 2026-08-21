@@ -185,14 +185,17 @@ const vi = {
   unstubAllEnvs() {},
 };
 const __upstreamBeforeEach = [];
+const __upstreamAfterEach = [];
 const __upstreamBeforeAll = [];
 const __upstreamAfterAll = [];
 function describe(_name, body) {
   const hookCount = __upstreamBeforeEach.length;
+  const afterHookCount = __upstreamAfterEach.length;
   const beforeAllCount = __upstreamBeforeAll.length;
   const afterAllCount = __upstreamAfterAll.length;
   body();
   __upstreamBeforeEach.length = hookCount;
+  __upstreamAfterEach.length = afterHookCount;
   __upstreamBeforeAll.length = beforeAllCount;
   __upstreamAfterAll.length = afterAllCount;
 }
@@ -201,6 +204,7 @@ function beforeAll(body) { __upstreamBeforeAll.push(body); }
 function afterAll(body) { __upstreamAfterAll.push(body); }
 function __upstreamRegister(name, body) {
   const hooks = __upstreamBeforeEach.slice();
+  const afterHooks = __upstreamAfterEach.slice();
   const beforeAllHooks = __upstreamBeforeAll.slice();
   const afterAllHooks = __upstreamAfterAll.slice();
   __upstreamTests.push({
@@ -209,12 +213,33 @@ function __upstreamRegister(name, body) {
     afterAllHooks,
     body: function(assertion) {
       for (let index = 0; index < hooks.length; index++) hooks[index]();
-      return body(assertion);
+      let result;
+      try {
+        result = body(assertion);
+      } catch (error) {
+        for (let index = afterHooks.length - 1; index >= 0; index--) afterHooks[index]();
+        throw error;
+      }
+      if (result && typeof result.then === "function") {
+        return result.then(
+          function(value) {
+            for (let index = afterHooks.length - 1; index >= 0; index--) afterHooks[index]();
+            return value;
+          },
+          function(error) {
+            for (let index = afterHooks.length - 1; index >= 0; index--) afterHooks[index]();
+            throw error;
+          },
+        );
+      }
+      for (let index = afterHooks.length - 1; index >= 0; index--) afterHooks[index]();
+      return result;
     },
   });
 }
 function it(name, body) { __upstreamRegister(name, body); }
 function test(name, body) { __upstreamRegister(name, body); }
+function afterEach(body) { __upstreamAfterEach.push(body); }
 function __upstreamTableRows(strings, values) {
   const markers = [];
   let source = "";
@@ -300,6 +325,7 @@ function __upstreamTypeExpectation() {
     toBeBoolean() { return chain; },
     toBeArray() { return chain; },
     toBeObject() { return chain; },
+    toBeFunction() { return chain; },
     toBeUndefined() { return chain; },
     toBeDefined() { return chain; },
   };
