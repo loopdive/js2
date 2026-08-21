@@ -126,6 +126,30 @@ export function tryCompileEs5GetPrototypeOfEarly(
       return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
     }
   }
+
+  // (§20.2.3) `Object.getPrototypeOf(Function.prototype) === Object.prototype`.
+  // %Function.prototype% is a built-in function object whose [[Prototype]] is
+  // %Object.prototype%; it carries no `$proto` link the native `__getPrototypeOf`
+  // walk can follow, so that walk answered `null` — a SILENT wrong answer that
+  // also made `getPrototypeOf(Function.prototype) === getPrototypeOf([1,2])`
+  // spuriously true (both null). `Object.prototype` is already the
+  // identity-stable singleton this file emits for `Math`/`JSON`, so routing here
+  // gives real `ref.eq` identity (test262 `Function/prototype/S15.3.4_A3_T1.js`).
+  //
+  // Deliberately narrow: ONLY `Function.prototype`. The other builtin prototypes
+  // do NOT uniformly inherit from %Object.prototype% (`Int8Array.prototype` →
+  // %TypedArray%.prototype, `TypeError.prototype` → `Error.prototype`), and this
+  // hook runs BEFORE the typed-array / generator / class getPrototypeOf arms —
+  // a blanket branch here would preempt them with a wrong answer.
+  if (
+    ts.isPropertyAccessExpression(arg0) &&
+    arg0.name.text === "prototype" &&
+    ts.isIdentifier(arg0.expression) &&
+    arg0.expression.text === "Function" &&
+    isGlobalBuiltinIdentifier(ctx, fctx, arg0.expression)
+  ) {
+    return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
+  }
   return null;
 }
 

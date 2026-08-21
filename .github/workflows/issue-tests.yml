@@ -38,6 +38,9 @@ concurrency:
 
 jobs:
   shard:
+    # This post-merge detector depends on the canonical baselines repository;
+    # fork schedules must not run an expensive suite with no deploy key.
+    if: github.repository == 'loopdive/js2'
     runs-on: ubuntu-latest
     env:
       # This broad post-merge detector intentionally stays toolchain-light and
