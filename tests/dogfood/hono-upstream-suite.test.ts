@@ -44,11 +44,11 @@ describe("hono v4.12.16 upstream suite", () => {
     expect(report.extraction.filesSeen).toBe(120);
     expect(report.extraction.filesSelected).toBe(16);
     expect(report.extraction.testsRegistered).toBe(297);
-    expect(report.extraction.nativePassed).toBe(296);
-    expect(report.extraction.nativeFailed).toBe(1);
+    expect(report.extraction.nativePassed).toBe(297);
+    expect(report.extraction.nativeFailed).toBe(0);
     expect(report.extraction.unavailableInfra).toBe(2058);
     expect(report.compile).toMatchObject({ modules: 16, succeeded: 16, validated: 15 });
-    expect(report.results).toMatchObject({ scored: 296, passed: 86, runtimeFailed: 6 });
+    expect(report.results).toMatchObject({ scored: 297, passed: 86, runtimeFailed: 6 });
     expect(report.results.passed + report.results.failed + report.results.runtimeFailed).toBe(report.results.scored);
   });
 });
