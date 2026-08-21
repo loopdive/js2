@@ -52,12 +52,32 @@ function resolveJestImport(filePath, specifier) {
 
 function transformJestTest(source, filePath, generatedPath, { normalizeCjs = false } = {}) {
   let importIndex = 0;
-  return source.replace(
+  const namespaceReplacements = [];
+  let transformed = source.replace(
     /import\s+((?:[A-Za-z_$][\w$]*\s*,\s*)?(?:\*\s+as\s+[A-Za-z_$][\w$]*|\{[^}]+\}|[A-Za-z_$][\w$]*))\s+from\s+(["'])(\.\.?\/?[^"']*)\2;?/g,
     (_match, bindings, quote, specifier) => {
       const target = resolveJestImport(filePath, specifier);
       const rewritten = moduleSpecifier(dirname(generatedPath), target);
       const namespaceName = `__jestImport${importIndex++}`;
+      // The compiler's internal-module namespace value is demand-driven,
+      // while Jest's source tests use `import * as x` as a plain object.
+      // Rebind only the members the original test reads through named
+      // imports; this preserves the upstream body without requiring a whole
+      // module namespace carrier at runtime.
+      if (bindings.startsWith("* as ")) {
+        const name = bindings.slice("* as ".length).trim();
+        const members = [...source.matchAll(new RegExp(`\\b${name}\\.([A-Za-z_$][\\w$]*)`, "g"))]
+          .map((match) => match[1])
+          .filter((member, index, values) => values.indexOf(member) === index);
+        if (members.length > 0) {
+          const imported = members.map((member) => `${member} as ${namespaceName}_${member}`).join(", ");
+          namespaceReplacements.push({
+            pattern: new RegExp(`\\b${name}\\.(${members.join("|")})\\b`, "g"),
+            replacement: (_full, member) => `${namespaceName}_${member}`,
+          });
+          return `import { ${imported} } from ${quote}${rewritten}${quote};`;
+        }
+      }
       if (!normalizeCjs) return `import ${bindings} from ${quote}${rewritten}${quote};`;
       const normalized = `${namespaceName}.default?.default ?? ${namespaceName}.default ?? ${namespaceName}`;
       if (bindings.startsWith("{")) {
@@ -85,6 +105,8 @@ function transformJestTest(source, filePath, generatedPath, { normalizeCjs = fal
       );
     },
   );
+  for (const { pattern, replacement } of namespaceReplacements) transformed = transformed.replace(pattern, replacement);
+  return transformed;
 }
 
 export async function runHarness({ quiet = false } = {}) {

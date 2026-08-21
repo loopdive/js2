@@ -690,3 +690,22 @@ The same build-time environment now supplies React's stable-package selectors
 ReactDOM `HTMLNodeType` constants to the original tests. These are Jest/build
 bindings, not package behavior; defining them prevents avoidable native
 oracle failures while keeping the stable, non-experimental test branch.
+
+## 2026-08-21 Jest utility-suite infrastructure checkpoint
+
+The Jest adapter now admits four additional original release-tag test files:
+`diff-sequences`, `jest-docblock`, `jest-diff`'s control-character utility, and
+`jest-config`'s `stringToBytes` utility. The verified 30.4.2 checkout therefore
+registers **234 callbacks across 12 files** (232/234 pass in the Node oracle),
+and all 12 generated modules compile and validate. The Wasm lane passes
+**113/232 native-compatible callbacks**; the other 119 remain scored failures,
+not unavailable tests. The remaining **3,054 registrations** are explicitly
+reported as unavailable infrastructure from the other 229 verified test files.
+
+The missing `node:os` builtin is now in the generic Node host dependency set.
+`jest-docblock`'s `detect-newline@3.1.0` CommonJS dependency is materialized
+from the installed, lockfile-pinned source as an ESM adapter with a version and
+source-hash check. A narrow namespace-import rewrite binds the static members
+used by the original tests; no callback body or expected result is rewritten.
+The two native snapshot cases remain harness-incompatible and the Wasm
+semantic failures remain visible in the scored report.
