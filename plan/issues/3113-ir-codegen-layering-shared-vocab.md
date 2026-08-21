@@ -1,10 +1,11 @@
 ---
 id: 3113
 title: "Fix IR->codegen reverse layering: move shared vocabulary (js-tag) below IR; contain the bridge to ir/integration.ts"
-status: ready
+status: done
 sprint: current
 created: 2026-07-09
-updated: 2026-07-17
+updated: 2026-08-21
+completed: 2026-08-21
 priority: medium
 horizon: m
 feasibility: medium
@@ -180,3 +181,105 @@ budget (new script file is fine; touching `src/codegen/index.ts` needs care).
 
 **Amended AC (supersedes AC 1–2 above):** the enforced state is "committed
 baseline, no growth, ratchet-to-zero direction"; AC 3 unchanged.
+
+## Outcome — S1 + S2 shipped 2026-08-21
+
+Both slices landed as planned. **S3 (the `integration.ts` bridge move) remains
+deferred** — see "Follow-up still owed" below.
+
+### S1 — the layering ratchet (shipped)
+
+`scripts/check-ir-layering.mjs` + `scripts/ir-layering-baseline.json`, wired as
+`check:ir-layering` in package.json and into the `quality` CI job immediately
+before `check:ir-fallbacks`. Gate semantics cloned from `check-linear-ir.ts`:
+per-file increase **or** a NEW file with codegen imports fails; decreases pass
+with a hint to bank via `--update`.
+
+`tests/issue-3113-ir-layering-gate.test.ts` (8 tests) proves the gate fires on
+a synthetic tree (growth, new file, `import type`), does **not** fire on
+`codegen-linear`, and that the committed baseline equals live measurement so it
+cannot drift silently.
+
+**Measured seed: 96 import lines / 20 files — not the 100 / 20 the plan above
+records.** The plan's figure came from a `from "../codegen` prefix grep, which
+also matches `../../codegen-linear/…`. `src/codegen-linear/` is a sibling
+*backend*, not the WasmGC codegen layer this issue is about, so those 4 lines
+are not part of the inversion. The script therefore **resolves** specifiers
+instead of prefix-matching, and reports the codegen-linear count as a separate
+informational line so the exclusion is visible rather than silent. Four of the
+five lines attributed to `ir/backend/linear-integration.ts` were this artifact;
+its real debt is 1 line.
+
+`import type` **is** counted: the boundary is about the dependency graph, and a
+type-only edge still constrains what may move. Dynamic `import("…")` and
+`export … from "…"` are counted for the same reason (and to close the obvious
+bypasses); neither occurs in `src/ir/` today.
+
+### S2 — `from-ast.ts` codegen-import classification
+
+Criterion for category (a), per the plan and the slice-1 precedent: the module
+must be a **dependency-free leaf** with respect to the ir↔codegen boundary — no
+codegen imports, no `CodegenContext`, no codegen state.
+
+| # | codegen import                       | LOC   | own deps                                       | class                  | action     |
+| - | ------------------------------------ | ----- | ---------------------------------------------- | ---------------------- | ---------- |
+| 1 | `regexp-runtime-contract.js`         | 9     | **none**                                       | (a) shared vocabulary  | **MOVED**  |
+| 2 | `async-static.js`                    | 160   | `src/ts-api.js` only                           | (a) shared vocabulary  | **MOVED**  |
+| 3 | `analysis/remainder-fast-path.js`    | 109   | `ts-api` + `codegen/analysis/static-numeric-range.js` | (b) near-leaf   | left       |
+| 4 | `ir-native-map.js`                   | 138   | 5 codegen (CodegenContext, func-space, …)      | (b) bridge             | left       |
+| 5 | `dyn-ops.js`                         | 589   | 11 codegen (CodegenContext, func-space, regex/…) | (b) bridge           | left       |
+| 6 | `statements/loop-analysis.js`        | 654   | `codegen/closures.js`, `statements/tdz.js`     | (b) bridge             | left       |
+| 7 | `statements/control-flow.js`         | 1,789 | ~15 codegen (CodegenContext, coercion-engine, …) | (b) bridge           | left       |
+
+Notes on the three judgement calls:
+
+- **#3 `remainder-fast-path` is the near miss.** It touches no codegen state —
+  `ts-api` plus one sibling, `analysis/static-numeric-range.js`. But it is not
+  dependency-free: moving it alone re-creates the upward import from its new
+  home, and moving both is a 2-module change the plan explicitly scopes out
+  ("If a candidate is not a dependency-free leaf, do not move it"). It is the
+  obvious first candidate for a follow-up that moves the `analysis/` pair
+  together.
+- **#6 `loop-analysis`** is pure AST analysis (`from-ast.ts` already documents
+  it as "no codegen state") and reads like vocabulary, but it imports
+  `codegen/closures.js` and `statements/tdz.js`, so it is not a leaf either.
+- **#5 and #7** are the real bridge calls: both take `CodegenContext` and emit.
+  They belong behind the bridge, which is S3's problem, not S2's.
+
+`select.ts`'s single codegen import was `async-static.js` (the same leaf as
+#2), so moving it cleared that file entirely — 20 files → 19.
+
+### Result
+
+| | files | import lines |
+| - | - | - |
+| seeded baseline | 20 | 96 |
+| after `regexp-runtime-contract` | 20 | 94 |
+| after `async-static` | **19** | **92** |
+
+Both moves are pure relocation, proven byte-identical with
+`node scripts/prove-emit-identity.mjs check` → **IDENTICAL, all 60
+(file,target) emits** (the corpus is 60 now, not the 56 the plan cites), ts7
+typecheck clean, `check:ir-fallbacks` / `check:ir-only` / `check:ir-dialect` /
+`check:jstag-seam` / `check:dead-exports` / `check:host-import-policy` all
+green, LOC + func budgets OK.
+
+**Pre-existing failures confirmed NOT caused by this work** (each reproduced on
+unmodified `origin/main` @ `ba151267f` in a scratch worktree):
+
+- `tests/issue-2175-regexp-proto-readers.test.ts` — 3 failing tests.
+- `pnpm run check:linear-ir` — FAIL, identical three lines (`compiled 8 → 6`,
+  `illegal:instr-vec.set_length 0 → 2`, `select:string-builder-candidate
+  0 → 2`). It is a **local dev tool, not wired into any workflow**. Its
+  baseline was deliberately **not** refreshed here: banking another lane's
+  regression into an unrelated PR would hide it. Worth its own issue.
+
+### Follow-up still owed
+
+**S3 — containing `ir/integration.ts` (7,335 LOC, 42 of the remaining 92 import
+lines) — was deliberately not attempted**, per the plan: it collides with the
+in-flight #3520–#3523 branches that edit that file heavily. That is Problem 2 in
+this issue's original statement and it is still open; the ratchet now stops the
+boundary regrowing while it waits. This issue is closed against its **amended**
+AC (ratchet in place, no growth, direction set); S3 needs a fresh issue once
+#3520/#3521 land.
