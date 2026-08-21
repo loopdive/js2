@@ -361,3 +361,26 @@ Top signatures: `Unsupported dynamic regular expression pattern` (3),
    memberless builtins, ignores them for membered ones — #4556 records it).
 5. **RegExp dynamic-pattern rows**: classify first; "Unsupported dynamic
    regular expression pattern" may be an engine gap, not a dispatch bug.
+
+
+## 2026-08-21 wave-2 corrections (protos lane, measured)
+
+- **Finding 1 is STALE**: 3 of its ~8 `delete <NativeProto>.<member>` rows
+  already pass at the wave-2 branch point (`Number/prototype/S15.7.3.1_A2_T1`,
+  `S15.7.4_A1`, `String/prototype/S15.5.4_A3`) — `936f382` landed after that
+  census. The lever was really 2 open + 3 accessor-blocked; **both open rows are
+  now closed** (`7b8410`: a `DeleteExpression` parent arms `protoMemberDirty`,
+  which the member-value-use carve-out at `array-holes.ts:559` wrongly withheld —
+  the syntactic path cannot record a deletion, and `__nproto_hasown`'s
+  `$memberCsv` fallback resurrected the name).
+- **The RegExp A9 rows (3) are BLOCKED on the accessor tier, not open**:
+  `global`/`ignoreCase`/`multiline` are getter-kind; the companion seeder skips
+  accessors deliberately, and `native-proto.ts` records that seeding them
+  regresses the §22.2.6 `SameValue(this, %RegExp.prototype%)` identity read via
+  a mechanism its own doc marks UNIDENTIFIED. Needs the accessor tier as a
+  separate slice.
+- The census contradiction (`S15.5.4_A3` passing while `_A1` failed on identical
+  code) is explained: A3 reads `Object.prototype` as a value one line earlier
+  and armed the flag by accident.
+- New three-op disagreement found and deliberately not shipped → **#4596**
+  (gOPD compile-time synthesis ignores a runtime delete).
