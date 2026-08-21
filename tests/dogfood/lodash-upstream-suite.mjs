@@ -8,7 +8,7 @@ import { setupNpmCompatCatalogPackage } from "./npm-compat-catalog.mjs";
 import { setupLodashUpstreamSuite } from "./setup-lodash-upstream-suite.mjs";
 import {
   UPSTREAM_TEST_EXPORTS,
-  UPSTREAM_TEST_SHIM,
+  UPSTREAM_TEST_SHIM_NODE,
   cliUpstreamHarness,
   compileAndRunUpstreamModule,
   summarizeUpstreamRuns,
@@ -50,13 +50,22 @@ export async function runHarness({ quiet = false, packageName = "lodash" } = {})
   const source = [
     ...methodImports,
     `const _ = { ${methodNames.join(", ")} };`,
-    UPSTREAM_TEST_SHIM,
+    UPSTREAM_TEST_SHIM_NODE,
     ...slices,
     UPSTREAM_TEST_EXPORTS,
   ].join("\n");
 
   log(`[dogfood] ${packageName}@${packageSetup.version} upstream ${suite.pin.tag} (${suite.pin.commit.slice(0, 12)})`);
-  const result = await compileAndRunUpstreamModule({ generatedPath, source, timeoutMs: 300_000 });
+  // Lodash's modular published files are CommonJS and resolve their internal
+  // helpers through `require`. Compile this adapter with the Node platform so
+  // that host-facing CommonJS bindings are installed instead of the browser
+  // platform's null placeholder. The test source and callbacks remain exact.
+  const result = await compileAndRunUpstreamModule({
+    generatedPath,
+    source,
+    timeoutMs: 300_000,
+    workerEnv: { DOGFOOD_PLATFORM: "node" },
+  });
   const runs = [{ file: basename(suite.sourcePath), result }];
   const report = summarizeUpstreamRuns({
     name: `${packageName}@${packageSetup.version}`,

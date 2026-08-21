@@ -7,11 +7,17 @@ import { describe, expect, it } from "vitest";
 import {
   UPSTREAM_TEST_EXPORTS,
   UPSTREAM_TEST_SHIM,
+  UPSTREAM_TEST_SHIM_NODE,
   compileAndRunUpstreamModule,
   summarizeUpstreamRuns,
 } from "./upstream-suite-runner.mjs";
 
 describe("upstream suite runner", () => {
+  it("provides a Node shim without a late-initialized global alias", () => {
+    expect(UPSTREAM_TEST_SHIM).toContain("var global = globalThis;");
+    expect(UPSTREAM_TEST_SHIM_NODE).not.toContain("var global = globalThis;");
+  });
+
   it("awaits async callbacks without classifying them as unavailable infrastructure", async () => {
     const root = mkdtempSync(join(tmpdir(), "js2-upstream-runner-"));
     const generatedPath = join(root, "suite.ts");
