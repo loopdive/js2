@@ -76,7 +76,6 @@ import {
   resolveWasmType,
   STRING_METHODS,
   unwrapGeneratorYieldType,
-  varBindingNeedsExternrefForUndefined,
 } from "./index.js";
 import { ensureNativePromiseBoundaryBridge, isStandalonePromiseActive } from "./async-scheduler.js";
 import {
@@ -2089,14 +2088,25 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     if (ts.isIdentifier(decl.name) && withBodyHoistedModuleVarNames(sourceFile).has(decl.name.text)) {
       return { kind: "externref" };
     }
-    // (#4491 lane) Same rule the function-local slot typing applies via
-    // `varBindingNeedsExternrefForUndefined`: a binding whose initializer's
-    // static type is purely void/undefined (`var r = voidFn()`, `var x = void 0`)
-    // holds the value `undefined`, which a void-derived f64 slot turns into 0 —
-    // `voidFn() === undefined` then answers false (the propertyHelper harness
-    // compares against a void helper's result constantly).
-    if (varBindingNeedsExternrefForUndefined(decl, ctx)) {
-      return { kind: "externref" };
+    // (#4491 lane) A module global initialized from a PURELY-VOID call
+    // (`var r = voidFn()`) holds the value `undefined`, which a void-derived
+    // f64 slot turns into 0 — `voidFn() === undefined` then answered false
+    // (the propertyHelper harness compares against a void helper's result
+    // constantly). ONLY the call arm — this deliberately does NOT reuse the
+    // full `varBindingNeedsExternrefForUndefined` predicate the function-local
+    // slot typing consults: its `void 0`-initializer and #4206
+    // pre-init-observed arms were tuned for locals, and widening module
+    // globals on those arms regressed Array.prototype.filter's harness shapes
+    // (15.4.4.20-9-2/-3/-4/-6, bisected to exactly this consult).
+    {
+      let init = decl.initializer;
+      while (init && ts.isParenthesizedExpression(init)) init = init.expression;
+      if (init !== undefined && ts.isCallExpression(init)) {
+        const callType = ctx.checker.getTypeAtLocation(init);
+        if ((callType.flags & ~(ts.TypeFlags.Undefined | ts.TypeFlags.Void)) === 0) {
+          return { kind: "externref" };
+        }
+      }
     }
     // #1914 — `var m = re.exec(s)` under standalone gets the precise
     // match-vec ref type so indexed reads stay on the static vec path

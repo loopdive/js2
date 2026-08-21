@@ -41,6 +41,11 @@ oracle-ratchet-allow:
   # the query is a TypeFlags test (void/undefined purity) the oracle does not
   # express.
   - src/codegen/index.ts
+  # 2026-08-21 (regression fix): the module-global consult was narrowed to an
+  # INLINE void-call check in moduleGlobalWasmType (the full predicate's
+  # void-0/#4206 arms regressed the filter harness family) — same TypeFlags
+  # purity query, same rationale.
+  - src/codegen/declarations.ts
 func-budget-allow:
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
