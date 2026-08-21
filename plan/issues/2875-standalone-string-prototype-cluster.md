@@ -52,9 +52,18 @@ umbrella: 2860
 # share) and calls-closures.ts +8 (a two-line call to the new module at the top
 # of `compileCallablePropertyCall`, which is also the +7 in that function).
 # Neither is new subsystem logic in the barrel.
+# Wave-4 lane F slice F1 (2026-08-21): +5 property-access-dispatch.ts — the
+# irreducible dispatch wiring for the new `string-primitive-constructor.ts`
+# module (one import line, one comment, two call lines, one blank). The whole
+# body lives in the new module; nothing else was added to the driver.
+# Wave-4 lane F slice F5 (2026-08-21): +5 eval-inline.ts — one `emitUndefined`
+# call replacing a `ref.null.extern`, plus the five-line comment recording the
+# measurement that justifies it. No new function; the arm already existed.
 loc-budget-allow:
   - src/codegen/native-strings.ts
   - src/codegen/array-object-proto.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/expressions/eval-inline.ts
   - src/codegen/object-runtime.ts
   - src/codegen/expressions/calls.ts
   - src/codegen/expressions/calls-closures.ts
@@ -63,6 +72,7 @@ loc-budget-allow:
 # branch); splitting the host function is a separate refactor from #3399's list,
 # not something this behaviour fix can carry.
 func-budget-allow:
+  - src/codegen/property-access-dispatch.ts::tryConstructorPrototypeIdentity
   - src/codegen/native-strings.ts::ensureAnyToStringHelper
   - src/codegen/object-runtime.ts::ensureObjectRuntime
   - src/codegen/index.ts::emitToPrimitiveMethodExports
@@ -649,3 +659,127 @@ with no String involvement anywhere.
 So the honest next slice for **this** issue is (a) — wire `split` and `concat`
 reflective glue bodies, ~13 ES5 files — with (b2) as a small follow-up. That is
 a genuinely ~15-file lever, not a 67-file one.
+
+---
+
+## Wave-4 lane F — slice F1: `<primitive string>.constructor` (2026-08-21)
+
+**Measured before/after** (`runTest262File(…, "standalone")`, this branch's base
+`284bd91a1f`, probe `test262/test/probe/f-str-ctor2.js`):
+
+| expression | base | after | spec |
+| --- | --- | --- | --- |
+| `String.prototype.constructor === String` | `true` | `true` | `true` |
+| `new String("abc").constructor === String` | `true` | `true` | `true` |
+| `"abc".constructor === String` | **`false`** | `true` | `true` |
+| `typeof "abc".constructor` (via a local) | `undefined` | `function` | `function` |
+| `"abc"["constructor"] === String` | **`false`** | `true` | `true` |
+
+The object receivers were already served by the #3006/#4223 `.constructor` arm
+ladder in `tryConstructorPrototypeIdentity`; every arm there keys off a receiver
+type that HAS a symbol (`String` the interface, `Object`, a TypedArray
+interface). The primitive `string` type has none, so the read fell past the whole
+ladder to the dynamic tail, which answers `undefined`.
+
+**Fix**: new module `src/codegen/string-primitive-constructor.ts` — when
+`ctx.oracle.typeFactOf(receiver).kind === "string"` and the property is
+`constructor`, evaluate the receiver for side effects, drop it, and emit the same
+`__builtin_ctor_String` carrier (`emitBuiltinConstructorIdentity`). Five lines of
+dispatch wiring in `property-access-dispatch.ts` (allowances above).
+
+**Rows flipped (4)**: `language/types/string/S8.4_A12`, `S8.4_A9_T1`,
+`S8.4_A9_T2`, `S8.4_A9_T3`.
+
+**Blast radius**: standalone-only; declines unless the oracle proves the exact
+primitive `string` type (no union / `any` / wrapper object), declines on a write
+or `delete` target, and declines module-wide if the module touches any
+`.constructor` property (`moduleTouchesConstructorProp`) or writes to
+`String.prototype` / `Object.prototype`. Control set of 63 currently-passing
+neighbours (String/prototype/{charAt,indexOf,slice,split,concat,toString,valueOf,
+substring,trim}, built-ins/String, built-ins/RegExp{,/prototype/exec,/prototype/test},
+Array/prototype/join, language/expressions/addition, language/types/string,
+language/literals/string): 63/63 pass before and after.
+
+**Deliberate non-attempt**: the same hole exists for `number`/`boolean`
+primitives (`(1).constructor === Number`). Not extended here — those rows are not
+in this lane's set, and each extra primitive widens the fold's blast radius
+without a measured row to justify it.
+
+## Wave-4 lane F — slice F2: `String` static methods as own props (2026-08-21)
+
+**Measured before/after** (standalone, probe `test262/test/probe/f-fcc.js`):
+
+| query | base | after |
+| --- | --- | --- |
+| `gOPD(String, "fromCharCode")` | `{value:<fn>, w:true, e:false, c:true}` | unchanged |
+| `String.hasOwnProperty("fromCharCode")` | **`false`** | `true` |
+| `Object.getOwnPropertyNames(String)` | `length,name,prototype` | `length,name,prototype,fromCharCode,fromCodePoint,raw` |
+
+`builtin-static-gopd.ts` already synthesized the descriptor for a syntactic gOPD,
+but presence goes through the runtime `$Object` carrier, which
+`pushBuiltinCtorOwnPropSeed` seeded with `length`/`name`/`prototype` only. A
+descriptor that exists while `hasOwnProperty` denies the property is worse than
+either answer alone.
+
+**Fix**: `CTOR_STATIC_METHODS` in `builtin-ctor-own-props.ts` seeds the three
+§22.1.2 String statics onto the carrier with `{w:true,e:false,c:true}`, value =
+the same per-(builtin, method) singleton the descriptor and a plain
+`String.fromCharCode` read yield. Seeded after `prototype` so
+`getOwnPropertyNames` reports creation order.
+
+**Rows flipped (1)**: `built-ins/String/fromCharCode/S15.5.3.2_A1`.
+
+**Deliberately String-only**: seeding materializes one singleton closure per
+listed method at carrier-init, so applying it to all of
+`BUILTIN_STATIC_METHOD_ARITY` would pull ~30 closures for `Math` and ~24 for
+`Object` into any module that mentions the bare identifier — the #4232 §5
+cost-regression shape. Same reasoning as #4234's Number-only constants.
+Widening needs its own cost measurement.
+
+**Controls**: 63/63 (same set as F1).
+
+### Declined in this slice, with reasons
+
+- `S15.5.3.2_A3_T2` (`var f = String.fromCharCode; delete String.fromCharCode;
+  f(65,66,66,65) === "ABBA"`) and `S15.5.3.2_A4` (`new f(...)` must throw). The
+  seed does not help: measured after the change, `typeof f === "function"` and
+  the value survives the delete, but **calling** it throws — `String.fromCharCode`
+  has no wired native closure BODY (`f-transfer-static.js`: a call through an
+  any-typed helper answers *"String.fromCharCode is not yet implemented in
+  --target standalone"*, and a direct call of the transferred variable answers
+  *"Cannot access property on null or undefined"*, i.e. two different unwired
+  call paths, not one). `Math.abs` behaves identically; `Array.isArray` — which
+  IS wired — works. So these two rows need a static-method body slice
+  (`fromCharCode` from f64 char codes) plus [[Construct]] refusal on a
+  builtin-fn singleton, neither of which is a property-seed change.
+
+## Wave-4 lane F — slice F5: `eval()` with no argument returns `undefined` (2026-08-21)
+
+**Measured** (`--target standalone`, probe `test262/test/probe/f-und.js`):
+
+| producer | base | after | spec |
+| --- | --- | --- | --- |
+| `String(undefined)` | `"undefined"` | `"undefined"` | `"undefined"` |
+| `String(function(){}())` (bare `return`) | `"undefined"` | `"undefined"` | `"undefined"` |
+| `String(void 0)` | `"undefined"` | `"undefined"` | `"undefined"` |
+| `String(eval(undefined))` | `"undefined"` | `"undefined"` | `"undefined"` |
+| `String(eval())` | **`"null"`** | `"undefined"` | `"undefined"` |
+| `typeof eval()` | **`"object"`** | `"undefined"` | `"undefined"` |
+
+`emitStandaloneIndirectEvalRuntime`'s zero-argument arm pushed
+`ref.null.extern`. §19.2.1.1 step 2: `eval()` passes `undefined`, which is not a
+String, so PerformEval returns it unchanged — and this build DOES distinguish the
+two values everywhere else, which is why only this one spelling was wrong.
+(The sibling `emitStandaloneDirectEvalRuntime` already called `emitUndefined`;
+the script-global direct-eval route takes the indirect emitter, so it hit the
+wrong one.)
+
+**Fix**: one `emitUndefined(ctx, fctx)` in place of the `ref.null.extern`.
+
+**Rows flipped (1)**: `built-ins/String/S15.5.1.1_A1_T6`.
+
+**Controls**: 137/137 — the set was widened with 17 passing `built-ins/eval` and
+`language/eval-code/{direct,indirect}` rows for this slice. Three rows in that
+batch fail identically before and after (`built-ins/eval/{length-non-configurable,
+name,not-a-constructor}` — `eval` has no own `length`/`name` and no
+[[Construct]] refusal) and are excluded.

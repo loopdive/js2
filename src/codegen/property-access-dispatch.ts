@@ -76,6 +76,7 @@ import {
   emitBuiltinNamespaceObject,
   isBuiltinConstructorIdentityName,
 } from "./builtin-static-globals.js";
+import { tryEmitPrimitiveStringConstructorRead } from "./string-primitive-constructor.js"; // (#2875 w4-F)
 import { tryCompileNativeDisposableStackAnyDisposedGet } from "./disposable-runtime.js";
 import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
 import { tryEmitDerivedLengthLocal } from "./derived-split-scalar.js";
@@ -482,6 +483,10 @@ export function tryConstructorPrototypeIdentity(
       return emitBuiltinConstructorIdentity(ctx, fctx, builtinName);
     }
   }
+
+  // (#2875 w4-F) `<primitive string>.constructor` → the same carrier as above.
+  const psc = tryEmitPrimitiveStringConstructorRead(ctx, fctx, expr, propName);
+  if (psc !== undefined) return psc;
 
   // (#3177) Standalone `.constructor` on a TYPEDARRAY-typed receiver —
   // `Uint16Array.prototype.constructor` (the `.prototype` read's TS type IS the

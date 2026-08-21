@@ -292,6 +292,8 @@ import { fillVecLengthDynamicArms } from "./vec-length-set.js";
 import { fillTaCtorGetMetaArm } from "./ta-ctor-meta.js"; // `$__ta_ctor` name/length meta arm
 import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
 import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
+import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; // (#2875 w4-F)
+import { unshiftNativeProtoDeleteArm } from "./native-proto-delete.js"; // (#2875 w4-F)
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
@@ -5547,6 +5549,11 @@ export function generateModule(
     // declared ladder to the bag miss-arm, so the two compose without overlap.
     fillClosedStructExternSetArms(ctx);
     fillFnctorPrototypeDispatchArms(ctx);
+    // (#2875 w4-F) LAST __extern_set prologue: a runtime-keyed write to a
+    // getter-only RegExp member is a sloppy no-op, not a bag entry.
+    unshiftRegExpAccessorSetGuard(ctx);
+    // (#2875 w4-F) `delete <Builtin>.prototype.<m>` rewrites the member CSV.
+    unshiftNativeProtoDeleteArm(ctx);
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
@@ -8572,6 +8579,11 @@ export function generateMultiModule(
     // declared ladder to the bag miss-arm, so the two compose without overlap.
     fillClosedStructExternSetArms(ctx);
     fillFnctorPrototypeDispatchArms(ctx);
+    // (#2875 w4-F) LAST __extern_set prologue: a runtime-keyed write to a
+    // getter-only RegExp member is a sloppy no-op, not a bag entry.
+    unshiftRegExpAccessorSetGuard(ctx);
+    // (#2875 w4-F) `delete <Builtin>.prototype.<m>` rewrites the member CSV.
+    unshiftNativeProtoDeleteArm(ctx);
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.

@@ -180,6 +180,11 @@ func-budget-allow:
   #    `mathNeeded.add`. It has to be in the walker to see the node.
   - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
   - src/codegen/declarations/import-collector.ts::unifiedVisitNode
+  # Wave-4 lane F slice F3: +3 each — the finalize ladders ARE these two
+  # functions, so a new `__extern_set` prologue pass has nowhere else to be
+  # called from.
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # #4491 — ES5 defineProperty/defineProperties/create MOP residual
@@ -2056,3 +2061,163 @@ function(){}` — wide blast radius via resolveFnctorSymbol, narrow win),
 `new F()` returning a function (#2071), isPrototypeOf behind the #2660 escape
 gate, duplicate function declarations (checker-merged-symbol representation),
 non-extensible `__proto__` (read defect is the more basic half).
+
+---
+
+## Wave-4 lane F — slice F3: runtime-keyed write to a getter-only RegExp member (2026-08-21)
+
+**Measured before/after** (`--target standalone`, base `284bd91a1f`, probe
+`test262/test/probe/f-re-proto3.js`, `var s = /^|^/; var k = "global";`):
+
+| expression | base | after | spec |
+| --- | --- | --- | --- |
+| `s.global` (static) | `false` | `false` | `false` |
+| `s.global = "x"; s.global` | `false` | `false` | `false` |
+| `s[k]` | `undefined` | `undefined` | `false` (still wrong — see below) |
+| `s[k] = "x"; s[k]` | **`"x"`** | `undefined` | `false` |
+| `hasOwnProperty(s, k)` after the write | **`true`** | `false` | `false` |
+
+§22.2.6 makes `source`/`flags`/`global`/`ignoreCase`/`multiline`/`dotAll`/
+`unicode`/`unicodeSets`/`sticky`/`hasIndices` getter-only accessors on
+`RegExp.prototype`, so §10.1.9 step 3 makes an instance assignment a sloppy
+no-op. A `$NativeRegExp` is not a `$Object`, so `__extern_set` routed the write
+to the instance expando bag; #4504's inherited-accessor walk could not see it,
+because that walk follows `$Object.$proto` links through `$PropEntry` tables and
+`RegExp.prototype` is a `$NativeProto` whose getters live in a member CSV.
+
+**Why it is not just a spelling curiosity**: `propertyHelper.js`'s
+`isWritable(obj, name, verifyProp)` does `obj[name] = v` with `name` a VARIABLE,
+i.e. exactly the runtime-keyed form — which is why `verifyNotWritable` reported
+these as writable on a build whose static read was already correct.
+
+**Fix**: new module `src/codegen/regexp-accessor-set-guard.ts` mints
+`__regexp_getter_only_set(obj, key) -> i32` (a `ref.test $NativeRegExp` plus ten
+`__str_equals` comparisons) and unshifts an early `return` onto `__extern_set` at
+finalize — last among the `__extern_set` prologue passes, so it is the body's
+first instruction. Demand-gated on the RegExp struct existing in the module.
+
+**Rows flipped (3)**: `built-ins/RegExp/prototype/global/S15.10.7.2_A10`,
+`ignoreCase/S15.10.7.3_A10`, `multiline/S15.10.7.4_A10`.
+
+**Deliberately NOT done in this slice**
+
+- **Strict `[[Set]]`.** §10.1.9.2 says a strict write to a getter-only accessor
+  throws a TypeError. `__extern_set_strict` is a separate function and is
+  untouched: no row in this lane's set exercises it, and a wrong throw is
+  catchable and therefore observable.
+- **The READ side.** `s[k]` still answers `undefined` instead of `false` — the
+  `$NativeProto` getter is not consulted by `__extern_get` either. That is the
+  #2885 reflective-getter core, not a `[[Set]]` question, and the no-op above is
+  correct standing alone.
+- **`delete` on a `$NativeProto` member** (`S15.10.7.{2,3,4}_A9`, 3 rows).
+  Measured: `delete RegExp.prototype.global` returns `true` but
+  `RegExp.prototype.hasOwnProperty('global')` stays `true` — there is no delete
+  path for native-proto members at all (`native-proto.ts` has no tombstone
+  concept). Flipping those needs a per-(proto object, member) tombstone side
+  table consulted by `__nproto_hasown` and by member dispatch, which is a
+  different and larger change than this guard.
+
+**Controls**: 95/95 passing neighbours, before and after (63 String/RegExp/
+addition/literals rows plus 32 Object.defineProperty / gOPD / Object.keys /
+Array.prototype.push / assignment / delete / RegExp.prototype.{source,toString}
+rows). Three rows in the supplementary batch fail identically on base and after
+(`Array/prototype/push/S15.4.4.7_A2_T{1,2}` — push-as-a-value unwired;
+`RegExp/prototype/source/cross-realm` — `__module_init` null deref) and are
+excluded from the control set for that reason.
+
+## Wave-4 lane F — slice F4: String-exotic own props are immutable and undeletable (2026-08-21)
+
+Same defect shape as F3, second receiver family. §10.4.3 gives a String WRAPPER
+an own `length` and own canonical INDEX properties, all `{w:false,e:false,c:false}`.
+#4232 already taught `hasOwnProperty` about them (`__strexo_hasown`) and gOPD
+already reported the right triple — but they are DERIVED from the [[StringData]]
+slot rather than being `$PropEntry` rows, so `__obj_find` missed them and a
+runtime-keyed write created an own bag entry that shadowed both.
+
+**Measured** (probe `test262/test/probe/f-misc2.js`, `var si = new String("globglob")`):
+
+| query | base | after | spec |
+| --- | --- | --- | --- |
+| `gOPD(si,"length")` | `{w:f,e:f,c:f,v:8}` | unchanged | unchanged |
+| `si.length = "x"; si.length` (static) | `8` | `8` | `8` |
+| `isWritable(si,"length")` (propertyHelper) | **`true`** | `false` | `false` |
+| `delete si.length` | **`true`** | `false` | `false` |
+
+**Fix**: reuse `__strexo_hasown` as the predicate in the same finalize splice —
+`__extern_set` returns early, `__delete_property` returns `0` (§10.1.10 step 4).
+Reusing #4232's native is the point: presence, descriptor and mutability then
+cannot disagree, because all three read the same predicate.
+
+**Rows flipped (2)**: `built-ins/String/S15.5.5.1_A3`, `built-ins/String/S15.5.5.1_A4_T2`.
+
+**Controls**: 120/120. The set was widened for this slice's blast radius with
+`String/prototype/{charCodeAt,toUpperCase}`, `Object/{getOwnPropertyNames,seal,
+freeze}`, `Array/prototype/indexOf`, `Array/length`, `for-in`,
+`property-accessors` — 25 further passing neighbours. Nine rows in that batch
+fail identically before and after (`charCodeAt/S15.5.4.5_A1.1`, three
+`Object/seal`, three `Array/prototype/indexOf`, `Array/length/15.4.5.1-3.d-3`,
+`property-accessors/S11.2.1_A3_T1`) and are excluded for that reason.
+
+## Wave-4 lane F — slice F6: `delete <Builtin>.prototype.<member>` actually deletes (2026-08-21)
+
+Every own property of a builtin prototype is `{[[Configurable]]: true}`, so the
+delete must succeed AND must make `hasOwnProperty` answer `false`.
+
+**Measured** (probe `test262/test/probe/f-re-proto.js`):
+
+| step | base | after | spec |
+| --- | --- | --- | --- |
+| `RegExp.prototype.hasOwnProperty('global')` | `true` | `true` | `true` |
+| `delete RegExp.prototype.global` | `true` | `true` | `true` |
+| `…hasOwnProperty('global')` again | **`true`** | `false` | `false` |
+
+The delete reported success and changed nothing: a builtin prototype is a
+`$NativeProto` glue singleton whose own-member set is the `$memberCsv` native
+string `__nproto_hasown` (#4248) scans, and `__delete_property` only knows how to
+tombstone a `$PropEntry` row in a `$Object` hash table.
+
+**Fix**: new module `src/codegen/native-proto-delete.ts` mints
+`__nproto_delete(obj, key)`, which rewrites `$memberCsv` (a MUTABLE `externref`
+field) with the comma-padded token removed, and unshifts it onto
+`__delete_property`. At RUNTIME exactly one consumer reads that field —
+`__nproto_hasown`, behind `hasOwnProperty`/`Object.hasOwn`/`propertyIsEnumerable`
+— so removing the token is exactly, and only, the observable delete. Every other
+`memberCsv` mention in codegen is the COMPILE-TIME `glue.memberCsv` used while
+emitting static member reads, which is why dispatch is unaffected (see the
+non-attempt below).
+
+**Rows flipped (3)**: `built-ins/RegExp/prototype/{global/S15.10.7.2_A9,
+ignoreCase/S15.10.7.3_A9, multiline/S15.10.7.4_A9}`.
+
+**Two toolchain traps found while building it — worth knowing before the next
+native is spliced into `__delete_property`:**
+
+1. **Do not read a parameter more than once through a cast chain.** The first cut
+   repeated `local.get 0; any.convert_extern; ref.cast $NativeProto` at each use.
+   After the caller-side inliner copied the body into `__delete_property`, the
+   later `local.get 0` sites had been forwarded the FIRST occurrence's
+   already-cast value, so the body's own `any.convert_extern` was handed a
+   `(ref null $NativeProto)` and the module failed validation with
+   *"any.convert_extern[0] expected type externref"*. Recovering the receiver
+   ONCE into a local fixes it.
+2. **`__str_replace` is declared to return `$AnyString`, and the replaced result
+   is a rope.** Holding it in a `$NativeString` local made the emitter insert a
+   narrowing cast that trapped at runtime (*"illegal cast in
+   __delete_property"*). Keep the local wide and call `__str_flatten` explicitly.
+
+**Deliberately NOT done**: making the delete affect DISPATCH.
+`built-ins/String/prototype/S15.5.4_A1` and `built-ins/RegExp/S15.10.4.1_A6_T1`
+both delete a prototype's `toString` and then expect the call to fall back up the
+chain to `Object.prototype.toString` (`"[object String]"` / `"[object RegExp]"`).
+Measured after this slice they still answer `null` and `"/(?:)/"` respectively:
+static member reads consult the compile-time `glue.memberCsv`, not the runtime
+field, so a runtime delete cannot redirect them. That is a dispatch-model change,
+not a member-set one.
+
+**Controls**: 168/168. Widened again for this slice with
+`Object/prototype/{hasOwnProperty,propertyIsEnumerable}`, `Number/prototype/toString`,
+`Boolean/prototype/valueOf`, `Date/prototype/getTime`, `Array/prototype/slice`,
+`String/prototype/lastIndexOf`, `RegExp/prototype/exec` — 31 further passing
+neighbours. Four rows in that batch fail identically before and after
+(`Number/prototype/toString/S15.7.4.2_A1_T01`, two `Boolean/prototype/valueOf`,
+`Array/prototype/slice/15.4.4.10-10-c-ii-1`) and are excluded.
