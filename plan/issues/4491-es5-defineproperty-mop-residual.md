@@ -678,3 +678,106 @@ call/void expressions, Math/Array/Object/String/parseInt built-ins, and 12
   → just use `T`"), so the element lands as `f64 0`. Pure `undefined[]`/`void[]`
   is already correct (#2806). Changing the union rule would move every
   `number | undefined` slot in the compiler and is out of scope here.
+
+## 2026-08-21 bucket D re-triage + the uint32 `length` VALUE slice
+
+**Bucket D was 26 rows in the 2026-08-15 triage; on this head it is 10.** Every
+row in the file set that mentions a 2^32-boundary literal
+(`built-ins/Object/define{Property,Properties}`, `built-ins/Array{,/length}`,
+35 files) was re-run serially against my own HEAD before touching anything —
+several had already been carried by the session's earlier slices (`15.2.3.6-4-
+{184,185,186}`, `15.2.3.7-6-a-{180,181,182}`, `-{149,152,153}`,
+`15.2.3.6-4-{153,156,157}` all pass now).
+
+The 10 reproducing rows split into **three unrelated defects**, not one:
+
+| part | rows | defect |
+| ---- | ---- | ------ |
+| **D-L** `length` **VALUE** in `[2^31, 2^32-1]` | `defineProperty/15.2.3.6-4-{154,155}`, `defineProperties/15.2.3.7-6-a-{150,151}`, `Array/length/15.4.5.1-3.d-3`, `Array/S15.4.5.2_A3_T3` | this slice (4 of 6 landed; 2 blocked, below) |
+| **D-I** array **INDEX** at 2^32-2 must bump `length` to 2^32-1 | `defineProperty/15.2.3.6-4-183`, `defineProperties/15.2.3.7-6-a-179` | #4497 — needs the `vec-index-domain.ts` ceiling raised from 2^31-1 |
+| **D-A** allocation | `Array/S15.4.5.2_A1_T1`, `Array/length/S15.4.5.2_A3_T4`, `Array/length/S15.4.2.2_A2.1_T1` | #4498 — `new Array(2^32-1)` / `x[2^31]=1` trap ("requested new array is too large" / "array element access out of bounds") |
+
+(`Array/length/define-own-prop-length-overflow-realm.js` is eval-rooted and
+cannot be validated here — no QuickJS provider on this box, per #4163.)
+
+### Root cause of D-L: an explicit bail, not a truncation
+
+`vec-overlay.ts`'s native `__vec_dp_value` `"length"` arm (the standalone
+ArraySetLength) carried
+
+```
+// u ≥ 2^31 → legacy no-op (i32 vec length cannot represent it)
+```
+
+and **returned the receiver untouched**. So
+`Object.defineProperty(arr, "length", {value: 2**32-2})` answered `0` — a wrong
+answer with no error, invisible to every gate.
+
+The premise is false in the direction that matters. STORING elements at such an
+index does need sparse arrays; carrying the uint32 length VALUE does not — the
+`$__vec_base` length field round-trips the whole u32 domain as a bit pattern,
+and the readers that can observe a length ≥ 2^31 already widen it with
+`f64.convert_i32_u` (the `__extern_get` `"length"` arm in `object-runtime.ts`,
+added by the `vec-length-set.ts` slice, which had already made the *dynamic*
+`arr.length = n` store unsigned). The define arm was the odd one out.
+
+**Fix** (`src/codegen/vec-overlay.ts`, +38 −2): replace the bail with a
+sparse-length arm — the same §10.1.6.3 `__vec_dp_value` legality delegate as the
+in-range path (so a non-writable / non-configurable `length` still refuses),
+then `vec.length = i32.trunc_sat_f64_u(u)`. The element machinery is skipped
+deliberately: a length ≥ 2^31 is unbackable, so it is always a grow into sparse
+territory with no real elements to create — exactly what the static
+`maybeEmitVecLengthDefine` does above its own 16M ceiling. It also *cannot* use
+the shrink loop below it, whose `i32.lt_s` against a newLen with a negative bit
+pattern never terminates.
+
+### Measured (serial single-test standalone probes, file-copy A/B on one head)
+
+| set | files | base | branch | up | down |
+| --- | ----: | ---: | -----: | -: | ---: |
+| boundary candidates (every 2^32-literal file in the 4 dirs) | 35 | 23 pass | 27 pass | **4** | **0** |
+| control: `Array/length/**` + `defineProperty/15.2.3.6-4-1*` + `defineProperties/15.2.3.7-6-a-1[4-9]*` | 204 | 186 pass | 191 pass | **5** | **0** |
+| blast radius: seeded-120 sample of `built-ins/**/{name,length}.js` (the propertyHelper population) + 60 `push`/`pop`/`splice` | 180 | 103 pass | 103 pass | 0 | **0** |
+
+Flips: `defineProperty/15.2.3.6-4-{154,155}`,
+`defineProperties/15.2.3.7-6-a-{150,151}`, and — not predicted —
+`defineProperty/15.2.3.6-4-116` ("length descriptor should be writable"), which
+reads the descriptor back through the same companion the arm now populates.
+
+Gates: `check:loc-budget`, `check:func-budget`, `check:coercion-sites`,
+`check:oracle-ratchet` all OK (the `vec-overlay.ts` / `fillVecOverlayHelpers`
+grants in this file's frontmatter cover it). `tsc` shows no error in any touched
+file (510 pre-existing errors, 482 of them TS2591).
+
+### BLOCKED sub-item — the two assignment-form rows
+
+`Array/length/15.4.5.1-3.d-3` and `Array/S15.4.5.2_A3_T3` are the same defect on
+the plain `arr.length = n` ASSIGNMENT form, and they need **two** one-word
+changes, only one of which is in reach:
+
+1. `emitArraySetLengthValidation` (`array-length-define.ts`) ends
+   `i32.trunc_sat_f64_s` — signed, so a validated `2**32-1` SATURATES to
+   2147483647. Its comment reads this as needing sparse arrays; per the argument
+   above that is the wrong diagnosis, and `_u` is the fix. (Same for the
+   assignment-expression result widening in `expressions/assignment.ts`.)
+2. The STATIC `.length` READ of a vec receiver widens with
+   `f64.convert_i32_s` — **`src/codegen/property-access-dispatch.ts` ~L2985**
+   (verified by disassembling the emitted module: `$run` is
+   `f64.convert_i32_s (struct.get $15 0 …)`). That file is held by another lane
+   right now, so this slice does not touch it.
+
+Both edits were **implemented and measured, then REVERTED**, because half of the
+pair is worse than neither: with the unsigned store and the signed read,
+`[].length = 2**32-1` answers **-1** where it used to answer 2147483647 — still
+failing, no test won, and a behaviour change on every `arr.length = <≥2^31>`
+with no way to validate it to green from here. Measured state of the pair, so
+the next attempt does not re-derive it:
+
+| probe | base | store `_u` only | store + read `_u` |
+| ----- | ---- | --------------- | ----------------- |
+| `var a=[]; a.length=2**32-1; a.length` | 2147483647 | −1 | (expected 4294967295 — unverified, read not touched) |
+
+**Whoever holds `property-access-dispatch.ts` next: make the vec `length` read
+`f64.convert_i32_u`, then flip the two truncations above.** Lengths below 2^31 —
+every ordinary array — encode identically under either signedness, so the change
+is inert outside the boundary band.
