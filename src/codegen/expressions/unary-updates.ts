@@ -51,6 +51,7 @@ import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { compileComputedMemberKeyAfterBaseGuard } from "./computed-member-reference.js";
 import { emitMappedArgParamSync } from "./logical-ops.js";
 import { resolveStructName } from "./misc.js";
+import { isSloppyImplicitGlobalBinding, tryEmitImplicitGlobalIncDec } from "./implicit-global-binding.js"; // (#3966) `p++` on a realm-global property
 
 /**
  * §13.4 UpdateExpression evaluation applies ToNumeric to the operand's current
@@ -1224,6 +1225,11 @@ function compilePrefixUpdate(
           // (#4079) f64 OR i32 backing slot — see compileGlobalIncDec.
           return compileGlobalIncDec(ctx, fctx, ppCapIdx, "f64.add", "prefix");
         }
+        // (#3966) sloppy implicit global — see the postfix arm below.
+        if (isSloppyImplicitGlobalBinding(ctx, fctx, ppOperand.text)) {
+          const implicit = tryEmitImplicitGlobalIncDec(ctx, fctx, ppOperand.text, "f64.add", "prefix");
+          if (implicit !== undefined) return implicit;
+        }
       }
       // ++obj.prop or ++obj[idx] — delegate to member increment helper
       return compileMemberIncDec(ctx, fctx, expr.operand, "add", "prefix");
@@ -1402,6 +1408,11 @@ function compilePrefixUpdate(
           // (#4079) f64 OR i32 backing slot — see compileGlobalIncDec.
           return compileGlobalIncDec(ctx, fctx, mmCapIdx, arithOp, "prefix");
         }
+        // (#3966) sloppy implicit global — see the postfix arm below.
+        if (isSloppyImplicitGlobalBinding(ctx, fctx, mmOperand.text)) {
+          const implicit = tryEmitImplicitGlobalIncDec(ctx, fctx, mmOperand.text, arithOp, "prefix");
+          if (implicit !== undefined) return implicit;
+        }
       }
       // --obj.prop or --obj[idx] — delegate to member decrement helper
       return compileMemberIncDec(ctx, fctx, expr.operand, "sub", "prefix");
@@ -1491,6 +1502,12 @@ function compilePostfixUnary(
         }
         // (#4079) f64 OR i32 backing slot — see compileGlobalIncDec.
         return compileGlobalIncDec(ctx, fctx, postCapIdx, arithOp, "postfix");
+      }
+      // (#3966) A sloppy implicit global has real storage on the realm global
+      // object; the `f64.const 0` fallback below dropped the store entirely.
+      if (isSloppyImplicitGlobalBinding(ctx, fctx, postOperand.text)) {
+        const implicit = tryEmitImplicitGlobalIncDec(ctx, fctx, postOperand.text, arithOp, "postfix");
+        if (implicit !== undefined) return implicit;
       }
       // Graceful fallback: emit 0 for unknown postfix increment/decrement
       fctx.body.push({ op: "f64.const", value: 0 });

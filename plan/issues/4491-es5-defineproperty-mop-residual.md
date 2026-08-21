@@ -63,6 +63,14 @@ loc-budget-allow:
   # (`emitMemberIncDecExternrefFallback`) rather than inlined twice. The file
   # grows by the hoisted helper; the driver function grows by the second call.
   - src/codegen/expressions/unary-updates.ts
+  # 2026-08-21 (wave-4 lane E, #3966 slice): +17 / +11 lines of pure DISPATCH
+  # wiring — three `if (isSloppyImplicitGlobalBinding(...))` guards in the
+  # update path and one predicate disjunction plus one negation in the call
+  # path. Every new BODY lives in the new module
+  # src/codegen/expressions/implicit-global-binding.ts; these two files gain
+  # only the branch that reaches it. (unary-updates.ts already granted above
+  # by wave-3 lane A; this extends the same file's grant.)
+  - src/codegen/expressions/call-identifier.ts
 oracle-ratchet-allow:
   # 2026-08-21: one getTypeAtLocation in varBindingNeedsExternrefForUndefined's
   # new call arm — the same raw-checker idiom as the surrounding predicate;
@@ -136,6 +144,13 @@ func-budget-allow:
   # in property-access.ts); only the dispatch point is in the big function.
   - src/codegen/expressions/calls.ts::compileCallExpression
   - src/codegen/property-access.ts::compileElementAccess
+  # 2026-08-21 (wave-4 lane E, #3966 slice): +10 each, dispatch-only.
+  # `compilePrefixUpdate` gains one 4-line guard per operator (`++`/`--`);
+  # `compileIdentifierCall` gains a predicate binding and one extra
+  # disjunct/negation. Splitting either function is a real refactor with its
+  # own blast radius and is deliberately NOT bundled into a semantics fix.
+  - src/codegen/expressions/unary-updates.ts::compilePrefixUpdate
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
 ---
 
 # #4491 — ES5 defineProperty/defineProperties/create MOP residual
@@ -675,6 +690,172 @@ reproduced or fixed under the module goal: it depends on SLOPPY-script `this`
 being the global object (truthy). Compiled modules are always strict, where
 `this` is `undefined` (falsy) and the shape already passes. Not a defect in the
 MOP; parked here so it is not re-triaged as one.
+
+## Wave-4 lane E — implicit-global binding (head shared with #3966)
+
+Row set handed to this lane: `S13.2.2_A17_T2/T3`, `S13.2.2_A18_T1/T2`,
+`S13.2.2_A19_T7`, `S8.6.2_A5_T1/T2/T4`, `S8.7.2_A3`, `S8.7_A5_T2`. All ten
+verified FAILING on the lane's base (`284bd91a1f`) before any edit.
+
+### Step 0 — the head is NARROWER than "creation". Measured first.
+
+The brief assumed the binding is never CREATED. It is. A single probe of the
+three creation spellings at script top level passes on base, untouched:
+
+| probe (top level, standalone)                     | base |
+| ------------------------------------------------- | ---- |
+| `this.a = 1` then bare `a`                        | pass |
+| `b = 2` then bare `b`                             | pass |
+| `this["c"] = 3` then bare `c`                     | pass |
+| `this.a = 1` then `this.a`                        | pass |
+
+So #3956 (read) + #4500 Slice B (plain write) already give these names real
+storage on the realm global object, and the synthesised-module-global design the
+brief sketched would have DUPLICATED that storage — two carriers for one name,
+which is the exact failure mode #4500 Slice A's own note warns about ("fixing
+only the read makes `this.p = 2; this.p === 2` regress"). It was not built.
+
+What is actually missing is every OTHER operation on such a name. Matrix
+(`.tmp/probe/p5.js`, one program, each case fault-isolated in a `try`):
+
+| shape                                             | base | after |
+| ------------------------------------------------- | ---- | ----- |
+| `p++` / `++p`, script top level                   | **0** ❌ | 1 ✅ |
+| `p++` / `++p`, inside a nested function           | **0** ❌ | 1 ✅ |
+| `p += 2`, top level and nested                    | 2 ✅ | 2 ✅ |
+| `p = p + 3`, top level and nested                 | 3 ✅ | 3 ✅ |
+| `f()` where `this.f = function(){}`               | silently **no-op** ❌ | runs ✅ |
+| `f()` where bare `f = function(){}`               | **ReferenceError** ❌ | runs ✅ |
+| `this["f"]()`                                     | **no-op** ❌ | no-op ❌ (see residual) |
+
+### Step 1 — root causes (two, both "the arm was simply never written")
+
+1. **UpdateExpression.** `compilePostfixUnary`'s identifier path ends in
+   `fctx.body.push({ op: "f64.const", value: 0 })` — "graceful fallback: emit 0
+   for unknown postfix increment/decrement". For an implicit global that both
+   answers the wrong value AND drops the store. `compilePrefixUpdate` falls
+   through to `compileMemberIncDec` on an Identifier operand, equally inert.
+   Neither consulted `ctx.sloppyImplicitGlobals`, which the read
+   (`emitImplicitGlobalRead`) and the plain write have consulted since #3956/#4500.
+2. **CallExpression.** `tryEmitInlineDynamicCall` refuses unless the callee is a
+   "known variable" (local / module global / captured global). An implicit
+   global is none of those, so the call fell to one of the two arms below it:
+   a hard `ReferenceError: <name> is not defined` when the name has no TS
+   declaration, or the graceful `ref.null.extern` when it has one — the latter
+   is why `beep()` in `S8.6.2_A5_T4` ran to completion having done nothing.
+
+### Step 2 — change
+
+New module `src/codegen/expressions/implicit-global-binding.ts`:
+`isSloppyImplicitGlobalBinding` (one predicate, shared) and
+`tryEmitImplicitGlobalIncDec` (GetValue → ToNumeric → ±1 → PutValue, reusing
+`emitImplicitGlobalRead` for the read half and the same `__extern_set` carrier
+`assignment.ts` uses for the write half, so read and write cannot drift apart
+again — which is precisely how this defect arose).
+
+Dispatch-only wiring in the two god-files: three guards in `unary-updates.ts`
+(postfix, prefix `++`, prefix `--`) and, in `call-identifier.ts`, one extra
+disjunct on the `tryEmitInlineDynamicCall` gate plus one negation on the
+ReferenceError arm.
+
+### Step 3 — measured result
+
+**Rows flipped fail → pass: 3.** `S13.2.2_A17_T2`, `S8.6.2_A5_T1`,
+`S8.6.2_A5_T4`. Zero rows moved the other way.
+
+**Control set: 60 files, deterministic shuffle seed 20260821**
+(`.tmp/mkcontrols.mjs`, population 733) over `language/statements/with`,
+`global-code`, `expressions/typeof`, `types/reference`, `statements/variable`,
+`expressions/assignment`, `types/object`, `statements/function`. Run on base and
+on branch by file-copy revert, same runner, same lane:
+**41 pass / 18 fail / 1 compile_error on BOTH — the two result files are
+byte-identical.**
+
+### Step 4 — the other seven rows, and why each is NOT this head
+
+Recorded so the next lane does not re-derive them. Each was reduced to a probe.
+
+| row | first failing assertion | actual head |
+| --- | ----------------------- | ----------- |
+| `S8.6.2_A5_T2` | `position === 1` | **builtin-prototype name capture**, see below |
+| `S13.2.2_A18_T1/T2` | `callee === 0` | `with (arguments)` must resolve `callee` to the arguments object's own property; we bind the outer `var callee` instead |
+| `S13.2.2_A17_T3` | `__obj.p1 === "w1"` | `with`-scoped write precedence, #4231/#4264 |
+| `S13.2.2_A19_T7` | `this.hasOwnProperty('__func')` | global-object ↔ `var`-binding aliasing (#3956 residual): `__func` IS declared, so this is not implicit-global creation at all |
+| `S8.7.2_A3` | `this.x !== undefined` at line 1 | reading an ABSENT realm-global property must answer `undefined`, not throw; then `this.x++` must CREATE it (NaN). Genuinely the "creation" head the brief described — but via a MEMBER update, not an identifier one |
+| `S8.7_A5_T2` | `typeof(__ref)` after `__ref = obj` | `typeof` on an implicit global holding an OBJECT answers `"undefined"` |
+
+### Step 5 — `typeof` on an implicit global: ATTEMPTED, MEASURED, REVERTED
+
+Recorded in full because the reason it was abandoned is more useful than the
+attempt. Nothing from this step is in the branch.
+
+`typeof-delete.ts` const-folds `typeof <name>` to the literal `"undefined"`
+whenever the checker reports no value declaration — right for a name that never
+exists, wrong for one the program creates at runtime. Replacing the fold with a
+guarded runtime probe (`__extern_has` ? `__typeof(__extern_get(…))` :
+`"undefined"`) makes the OBVIOUS probe pass:
+
+| probe (`.tmp/probe/p20.js`)                        | fold | probe arm |
+| --------------------------------------------------- | ---- | --------- |
+| `typeof r` before any assignment                    | ✅   | ✅        |
+| `r = new Object(); typeof r`                        | **"undefined"** ❌ | "object" ✅ |
+| `r = 5; typeof r` / `r = "s"; typeof r`             | **"undefined"** ❌ | ✅        |
+
+**It still flips zero rows, and the reason is a defect the arm does not own.**
+A runtime-computed `typeof` result is fine when CONCATENATED and broken when
+used directly (`.tmp/probe/p25.js`, `p26.js`, standalone):
+
+| expression, after `w1 = obj`                       | result |
+| ---------------------------------------------------- | ------ |
+| `"" + (typeof w1)`                                  | `"object"` ✅ |
+| `s = "" + (typeof w1); s === "object"`              | true ✅ |
+| `typeof w1 !== "object"`                            | **true** ❌ |
+| `(typeof w1) === "undefined"`                       | false ✅ |
+| `(typeof w1).length`                                | **NaN** ❌ |
+
+The `.length` row is the decisive one: it rules out the string-EQUALITY route
+and every carrier hypothesis at once. Three carriers were tried and all three
+produce that same NaN — raw `externref`; `any.convert_extern` + `ref.cast` to
+`$AnyString` (verified `absentType = {ref, typeIdx: 6}`, `anyStrTypeIdx = 6`,
+`nativeStrTypeIdx = 7`, so the cast is to the type the literal itself uses); and
+a five-instruction form with no `if` and no extra locals at all, byte-shaped
+exactly like the generic `__typeof` path at `typeof-delete.ts:1796`. Ordering was
+also ruled out (`p26` puts the direct use FIRST; same NaN). Instrumentation
+confirms the arm fires at every site.
+
+So the residual is: **a runtime `__typeof` result is unusable in direct value
+position under standalone** — the concat path coerces it, the value path does
+not. That is #2107's territory (the note there records the same class of failure
+and answers it with `__any_typeof` returning a native `ref $AnyString`, which
+needs an `$AnyValue` operand this path does not have). Fixing `typeof` for
+implicit globals means giving the global-object read an `$AnyValue`-shaped
+answer, or teaching the value path the externref carrier — either is a
+different slice with a different blast radius than this head, so the arm was
+removed rather than landed unvalidated.
+
+Second finding from the same probes, unresolved and worth a look: in
+`S8.7_A5_T2` the probe arm reports the property ABSENT after `__ref = obj`
+(CHECK#1 passes, CHECK#2 fails), while `.tmp/probe/p21.js` — the same shape with
+a different name — reports it present. So the bare-assignment write may not
+always reach the realm global object; that would be a defect in the #4500
+Slice B write arm, not in `typeof`.
+
+**`S8.6.2_A5_T2` is a builtin-prototype name capture, not an implicit-global
+defect — and it is a live miscompile well outside this row.** Reduced to:
+
+```js
+var a1 = {};
+a1['dispose'] = function () { /* … */ };
+a1.dispose();     // TypeError: DisposableStack.prototype.dispose requires a DisposableStack receiver
+```
+
+An OWN data property whose name matches a builtin-prototype method (`dispose`,
+`move`, `defer`, `adopt`, …) is captured by that builtin's native dispatch
+instead of taking precedence, on a receiver that does not have the brand.
+`a1['moveq']` is fine; `a1['move']` is not. The test uses `seat['move']`, so it
+never reaches the increment the row is nominally about. Left unfixed here: it
+lives in the builtin-proto dispatch, not in this head, and it deserves its own
+row-set and control population.
 
 ## Validation
 
