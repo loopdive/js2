@@ -44,6 +44,11 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = join(HERE, "report", "react-dom-upstream-suite.json");
 const GENERATED_ROOT = join(HERE, ".react-dom-upstream-suite-impl");
 const PROJECT_ROOT = join(HERE, ".react-dom-upstream-suite-project");
+// Keep the complete upstream corpus observable without allowing a missing
+// browser/test dependency to consume the refresh job's entire wall-clock
+// budget. A timeout is reported on the individual test; it never removes the
+// test from extraction or the denominator silently.
+const DEFAULT_REACT_DOM_TEST_TIMEOUT_MS = 2_000;
 
 let nativeContextFile = "<setup>";
 let nativeContextTest = "<setup>";
@@ -552,7 +557,7 @@ async function runServerHarness({
     serverSource: isFizz ? "" : (serverSource ?? ""),
     fizzSource,
   });
-  const testTimeoutMs = Number(process.env.DOGFOOD_REACT_DOM_TEST_TIMEOUT_MS ?? 10_000);
+  const testTimeoutMs = Number(process.env.DOGFOOD_REACT_DOM_TEST_TIMEOUT_MS ?? DEFAULT_REACT_DOM_TEST_TIMEOUT_MS);
   const configuredCompileTimeout = Number(process.env.DOGFOOD_REACT_DOM_COMPILE_TIMEOUT_MS ?? 300_000);
   const compileTimeoutMs =
     Number.isFinite(configuredCompileTimeout) && configuredCompileTimeout > 0 ? configuredCompileTimeout : 300_000;
