@@ -7,33 +7,11 @@ import type { Instr } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { ensureExnTag } from "../registry/imports.js";
 
-/**
- * #1452 — Walk a binding pattern (array / object / nested / rest) and yield
- * every identifier name that the pattern binds. `{a: y}` introduces `y`,
- * not `a`. `[...rest]` introduces `rest`. Used to drive the bulk TDZ-flip
- * step that runs after a binding-pattern destructure completes.
- */
-export function* collectPatternBindingNames(name: ts.BindingName): Iterable<string> {
-  if (ts.isIdentifier(name)) {
-    yield name.text;
-    return;
-  }
-  if (ts.isArrayBindingPattern(name)) {
-    for (const el of name.elements) {
-      if (ts.isOmittedExpression(el)) continue;
-      yield* collectPatternBindingNames(el.name);
-    }
-    return;
-  }
-  if (ts.isObjectBindingPattern(name)) {
-    for (const el of name.elements) {
-      // For `{a: y}` el.name is `y`; for `{a}` el.name is also `a`.
-      // For `{...rest}` el.name is the rest identifier. Either way
-      // walking el.name covers every introduced binding.
-      yield* collectPatternBindingNames(el.name);
-    }
-  }
-}
+// (#4601 route 1) `collectPatternBindingNames` is a pure-AST walk with no
+// CodegenContext in sight; it moved below the IR (`ir/analysis/ast-scope.ts`)
+// so `statements/loop-analysis.ts` could follow it down. Re-exported here so
+// every existing importer of `tdz.js` is unchanged.
+export { collectPatternBindingNames } from "../../ir/analysis/ast-scope.js";
 
 /**
  * Emit instructions to set a TDZ flag global to 1 (initialized) for a module-level

@@ -16,6 +16,14 @@ parent: 3518
 depends_on: [3520, 3521]
 related: [3113, 1172]
 origin: "#3113 closed against amended ACs (PR #4689); S3 split out so the bridge containment is not orphaned"
+# Rename-rekeying grant, NOT a growth allowance. `collectI32CoercedLocals` was
+# already 422 LOC and is byte-identical after the move (git reports 99%
+# similarity; the only changed line is a doc-comment pointer). The func-budget
+# gate keys on `path::name`, so relocating the file below the IR reads as a
+# brand-new over-budget function. Splitting it is real work that belongs to
+# #3399, not to a pure-motion layering PR — see the 2026-08-21 progress log.
+func-budget-allow:
+  - src/ir/analysis/i32-coerced-locals.ts::collectI32CoercedLocals
 # id 4601 reserved via claim-issue.mjs --allocate --allow-unscanned on
 # 2026-08-21 (gh CLI offline in this container; pr_scan=degraded). Equivalent
 # open-PR scan via the GitHub MCP at reservation time: open PRs were 4681,
@@ -146,3 +154,70 @@ Route 1 is the one consistent with #3113's "move vocabulary BELOW the IR".
 Issue stays `blocked`: the bridge (#3520/#3521) is the blocker for the main
 scope, and this near-leaf branch turns out to need its own decomposition step
 rather than a relocation.
+
+### 2026-08-21 — route 1 LANDED: leaf closure lifted, baseline 92 → 83
+
+Route 1 above ("extract the pure-AST subset of `loop-analysis.ts` below the
+IR") was executed. The decomposition step the previous entry called for is the
+new `src/ir/analysis/ast-scope.ts`.
+
+**What moved** (all pure motion — no signature, no call site, no behavior
+change; old homes re-export so no codegen consumer's import changes meaning):
+
+| from | to | why it is a leaf |
+| - | - | - |
+| `codegen/closures.ts` (5 walks) | `ir/analysis/ast-scope.ts` (new) | `ts-api` + `binding-info` only |
+| `codegen/statements/tdz.ts` `collectPatternBindingNames` | same file | pure generator over `ts.BindingName` |
+| `codegen/binding-info.ts` | `ir/analysis/binding-info.ts` | `import type { ts }` only |
+| `codegen/statements/loop-analysis.ts` | `ir/analysis/loop-shape.ts` | now `ts-api` + `ast-scope` |
+| `codegen/analysis/static-numeric-range.ts` | `ir/analysis/static-numeric-range.ts` | `ts-api`, `checker/oracle` (type-only), `loop-shape` |
+| `codegen/analysis/remainder-fast-path.ts` | `ir/analysis/remainder-fast-path.ts` | `ts-api` + `static-numeric-range` |
+| `codegen/analysis/i32-coerced-locals.ts` | `ir/analysis/i32-coerced-locals.ts` | `ts-api` only |
+
+The five walks lifted out of the 3,984-LOC `closures.ts` are
+`isFunctionScopeBoundary`, `collectBindingPatternNames`,
+`collectFunctionOwnLocals`, `collectVarAndTopLevelDecls` and
+`collectReferencedIdentifiers`. `binding-info.ts` had to travel with them
+because it holds the memoized own-locals oracle they register into — leaving it
+under `src/codegen/` would have made `ast-scope.ts` itself a new inverted edge,
+which is the `NEW file with codegen imports` FAIL the previous attempt hit.
+
+**Ratchet**, banked in the landing PR:
+
+| | files | import lines |
+| - | - | - |
+| main @ `83973b6e3` | 19 | 92 |
+| after route 1 | **15** | **83** |
+
+Four files clear their codegen dependency entirely and drop out of the
+baseline: `ir/analysis/i32-slots.ts`, `ir/char-read-loop.ts`,
+`ir/fixed-literal-loop-proof.ts`, `ir/remainder-fast-path.ts`. `from-ast.ts`
+5→3, `fmod-selection.ts` 2→1, `i32-pure-bitwise.ts` 2→1. **No new file with
+codegen imports** — the gate's own PASS is the leaf-proof the previous attempt
+could not produce.
+
+**The pair move landed too.** Once `loop-shape.ts` was below the IR,
+`static-numeric-range`'s third edge (the one the earlier attempt tripped on)
+resolved below the boundary, so the `remainder-fast-path` / `static-numeric-range`
+pair became genuinely leaf and moved with the same commit. `i32-coerced-locals.ts`
+was already a `ts-api`-only leaf and rode along; it is what empties
+`ir/analysis/i32-slots.ts`.
+
+**Evidence.** `prove-emit-identity check` → IDENTICAL, all 60 (file,target)
+pairs, run after each of the two commits. ts7 typecheck clean.
+`check:ir-fallbacks`, `check:ir-only`, `check:linear-ir`, `check:ir-dialect`
+unchanged; LOC budget green (net +69, the new `ast-scope.ts` header).
+
+One **func-budget grant** was needed and is in this file's frontmatter:
+`i32-coerced-locals.ts::collectI32CoercedLocals`. It is a rename-rekeying
+artifact, not growth — the function was already 422 LOC, git reports 99%
+similarity across the move, and the only changed line is a doc-comment pointer.
+The gate keys on `path::name`, so relocating the file makes an existing
+over-budget function read as a brand-new one. Splitting it belongs to #3399.
+
+**Not done, deliberately.** Route 2 (injecting the predicate through
+`StaticIntegerRangeContext`) was not taken — it is a public-contract change
+needing its own differential evidence, and route 1 makes it unnecessary. The
+`integration.ts` bridge (41 of the remaining 83 lines) is untouched: it is the
+`blocked`-on-#3520/#3521 main scope. The AC target of ≤50 total lines is not
+met by this PR alone and still needs the bridge containment.

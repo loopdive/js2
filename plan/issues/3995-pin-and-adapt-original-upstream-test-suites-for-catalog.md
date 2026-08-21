@@ -660,3 +660,52 @@ The unchanged selection registers **324/324 native callbacks** (up from
 inventory is now **2,031** registrations. The native oracle was run with
 `NO_COLOR` unset so the upstream color expectations are not contaminated by
 the local shell environment.
+
+## 2026-08-21 Jest module-isolation infrastructure checkpoint
+
+The React/ReactDOM upstream shim now implements `jest.isolateModules()`. Each
+isolated callback gets a fresh namespace object for every required module, the
+same namespace is reused for repeated requires within that callback, and the
+outer registry is restored when the callback returns. This supplies the
+identity contract used by ReactDOM's original selective-hydration and event-
+propagation tests without mutating Node's process-wide require cache or
+rewriting either test.
+
+The new regression exercises the exact contract in both the native oracle and
+compiled Wasm: two isolated `react-dom/client` requires are distinct, each is
+distinct from the outer namespace, and repeated outer requires remain stable.
+The remaining ReactDOM implementation/compile blockers are unchanged; this
+checkpoint removes a harness gap so those original callbacks can be scored as
+soon as their published graph validates.
+
+The same host surface now supplies React's original `IntersectionMocks` helper:
+observer registration and teardown, simulated intersection entries, and
+`getBoundingClientRect`/`getClientRects` stubs. `IntersectionObserver` is also
+registered in the generic Web-host constructor table so compiled code sees the
+same host class at module instantiation. The host behavior is covered directly
+in Node and the compiled regression verifies the observer registration path.
+
+The same build-time environment now supplies React's stable-package selectors
+(`__VARIANT__` and `__EXPERIMENTAL__`) as `false`, and exposes the published
+ReactDOM `HTMLNodeType` constants to the original tests. These are Jest/build
+bindings, not package behavior; defining them prevents avoidable native
+oracle failures while keeping the stable, non-experimental test branch.
+
+## 2026-08-21 Jest utility-suite infrastructure checkpoint
+
+The Jest adapter now admits four additional original release-tag test files:
+`diff-sequences`, `jest-docblock`, `jest-diff`'s control-character utility, and
+`jest-config`'s `stringToBytes` utility. The verified 30.4.2 checkout therefore
+registers **234 callbacks across 12 files** (232/234 pass in the Node oracle),
+and all 12 generated modules compile and validate. The Wasm lane passes
+**113/232 native-compatible callbacks**; the other 119 remain scored failures,
+not unavailable tests. The remaining **3,054 registrations** are explicitly
+reported as unavailable infrastructure from the other 229 verified test files.
+
+The missing `node:os` builtin is now in the generic Node host dependency set.
+`jest-docblock`'s `detect-newline@3.1.0` CommonJS dependency is materialized
+from the installed, lockfile-pinned source as an ESM adapter with a version and
+source-hash check. A narrow namespace-import rewrite binds the static members
+used by the original tests; no callback body or expected result is rewritten.
+The two native snapshot cases remain harness-incompatible and the Wasm
+semantic failures remain visible in the scored report.

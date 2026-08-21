@@ -17,7 +17,7 @@ import {
   ensureBindingLocals,
 } from "./destructuring.js";
 import { emitExternrefDestructureGuard } from "../destructuring-params.js";
-import { collectBindingNames } from "./loop-analysis.js";
+import { collectBindingNames } from "../../ir/analysis/loop-shape.js";
 import { adjustRethrowDepth, restoreBlockScopedShadows, saveBlockScopedShadows } from "./shared.js";
 import { buildStandardTryTable } from "../../ir/try-table.js";
 
