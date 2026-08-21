@@ -74,7 +74,7 @@ import { compileAnnexBEscapeCall } from "../annexb-escape-call.js"; // (#3064 / 
 import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import { ensureWasiWriteFileStringsHelper } from "../wasi.js";
 import { wasiAllocStringData } from "./builtins.js";
-import { compileClosureCall } from "./calls-closures.js";
+import { compileClosureCall, runtimeSignatureParameters } from "./calls-closures.js";
 import { tryCompileStoredObjectBuiltinCall } from "./call-object-builtins.js";
 import { compileSpreadCallArgs } from "./extern.js";
 import {
@@ -1415,7 +1415,16 @@ export function compileIdentifierCall(
         const builtinAliasInfo = builtinAliasClosure
           ? ctx.closureInfoByTypeIdx.get(builtinAliasClosure.type.typeIdx)
           : undefined;
-        const sigParamCount = builtinAliasInfo?.paramTypes.length ?? sig.parameters.length;
+        // (#4491) `runtimeSignatureParameters` drops the `(...args: any[])` the
+        // checker SYNTHESIZES for a JS function that reads `arguments`
+        // (`function __GUNC(){ return arguments[0]; }`). That symbol has no
+        // formal slot in the compiled callee — the real values travel through
+        // `__argc`/`__extras_argv` — so treating it as a formal both coerces
+        // actual argument 0 to the rest ARRAY type (a string is not a vec, so
+        // the guarded cast NULLS it) and reports `__argc = 1`. `arguments.length`
+        // stayed right while `arguments[0]` read back `null` (S13.2_A2_T1).
+        const runtimeSigParams = runtimeSignatureParameters(sig);
+        const sigParamCount = builtinAliasInfo?.paramTypes.length ?? runtimeSigParams.length;
         const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
         const sigRetWasm =
           builtinAliasInfo?.returnType ?? (isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType));

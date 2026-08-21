@@ -34,6 +34,7 @@ import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import {
   emitArgumentsTypeofComparison,
   emitPropertyDeleteWithUnmappedArgumentsWriteback,
+  prepareDynamicArgumentsDeleteIndex, // (#4491) runtime `delete arguments[i]`
   staticTypeofForArgumentsIdentifier,
 } from "./arguments-object-mop.js"; // (#4555)
 import type { InnerResult } from "./shared.js";
@@ -753,6 +754,9 @@ export function compileDeleteExpression(
     const keyLocal = allocLocal(fctx, `__del_key_${fctx.locals.length}`, { kind: "externref" });
     fctx.body.push({ op: "local.set", index: keyLocal });
 
+    // (#4491) Runtime `delete arguments[i]` — derived BEFORE `delIdx` below.
+    const dynamicArgsIndex = prepareDynamicArgumentsDeleteIndex(ctx, fctx, inner, keyLocal);
+
     // (#2703) RequireObjectCoercible(base) — `delete null.x` / `delete
     // undefined[k]` (and any unresolvable base such as `Object[0][0]`) throw a
     // TypeError (§13.5.1.2 step 5.b → ToObject). The guard only fires when the
@@ -790,7 +794,7 @@ export function compileDeleteExpression(
     }
     fctx.body.push({ op: "local.get", index: recvLocal });
     fctx.body.push({ op: "local.get", index: keyLocal });
-    emitPropertyDeleteWithUnmappedArgumentsWriteback(ctx, fctx, inner, delIdx);
+    emitPropertyDeleteWithUnmappedArgumentsWriteback(ctx, fctx, inner, delIdx, dynamicArgsIndex);
     // (#2703) Strict mode: a failed delete (result 0 — a non-configurable own
     // property) is a TypeError instead of a `false` result (§13.5.1.2 step 6.b).
     emitStrictDeleteCheck(ctx, fctx, expr);

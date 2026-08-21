@@ -256,6 +256,7 @@ import {
   compileClosureCall,
   compileGetterCallable,
   compileObjectPrototypeFallback,
+  runtimeSignatureParameters,
   tryExternClassMethodOnAny,
 } from "./calls-closures.js";
 import { compileOptionalCallExpression } from "./calls-optional.js";
@@ -8521,13 +8522,18 @@ function compileExpressionCallee(
   if (callSigs && callSigs.length > 0) {
     const sig = callSigs[0]!;
 
-    // Look for a matching closure type
-    const sigParamCount = sig.parameters.length;
+    // Look for a matching closure type. (#4491) `runtimeSignatureParameters`
+    // drops the synthetic `(...args: any[])` the checker gives a JS function
+    // that reads `arguments` — it has no formal slot in the compiled callee, and
+    // counting it here nulls the coerced argument and mis-reports `__argc`
+    // (`__FUNC()(__JEDI)` in S13.2_A2_T1).
+    const runtimeSigParams = runtimeSignatureParameters(sig);
+    const sigParamCount = runtimeSigParams.length;
     const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
     const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
     const sigParamWasmTypes: ValType[] = [];
     for (let i = 0; i < sigParamCount; i++) {
-      const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
+      const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
       sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
     }
 

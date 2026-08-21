@@ -82,7 +82,7 @@ type FuncCandidate = { funcTypeIdx: number; structTypeIdx: number; returnType: V
  * in `declaration.parameters`, and declaration-file signatures keep their
  * checker-authored parameter list unchanged.
  */
-function runtimeSignatureParameters(sig: ts.Signature): readonly ts.Symbol[] {
+export function runtimeSignatureParameters(sig: ts.Signature): readonly ts.Symbol[] {
   const declaration = sig.getDeclaration();
   if (
     declaration !== undefined &&

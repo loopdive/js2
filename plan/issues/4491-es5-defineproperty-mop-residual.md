@@ -93,6 +93,15 @@ loc-budget-allow:
   # to be in this function — it must run BEFORE the existing `externToStrIdx`
   # capture or that index shifts underneath it (#2043).
   - src/codegen/array-methods.ts
+  # 2026-08-21 wave-4 lane H, synthetic-`arguments`-rest slice (+5): TWO
+  # two-line parameter-resolution swaps in `compileTailDispatch`'s
+  # CallExpression-callee and generic-callee arms — `sig.parameters` →
+  # `runtimeSignatureParameters(sig)`, the helper that ALREADY exists in
+  # calls-closures.ts for exactly this (it was private; this slice exports it).
+  # There is no new body to move out: the change is which symbol list the two
+  # existing loops read. Both arms sit at fixed points in one long ordered
+  # dispatch chain and cannot be hoisted without reordering it.
+  - src/codegen/expressions/call-tail-dispatch.ts
 oracle-ratchet-allow:
   # 2026-08-21: one getTypeAtLocation in varBindingNeedsExternrefForUndefined's
   # new call arm — the same raw-checker idiom as the surrounding predicate;
@@ -204,6 +213,18 @@ func-budget-allow:
   # called from.
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+  # 2026-08-21 wave-4 lane H. Both are DISPATCH/WIRING only:
+  #  * compileTailDispatch (+4): the two `runtimeSignatureParameters(sig)`
+  #    swaps described in the loc-budget entry above — no new body, just which
+  #    symbol list the two existing param loops read.
+  #  * compileDeleteExpression (+2): one call to
+  #    `prepareDynamicArgumentsDeleteIndex`. It MUST sit here, between the
+  #    `keyLocal` store and the `__delete_property` `ensureLateImport` — the
+  #    helper can pull a late import, and a late import registered after that
+  #    funcIdx is captured shifts the already-planned call. The whole body
+  #    lives in the existing subsystem module arguments-object-mop.ts.
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+  - src/codegen/typeof-delete.ts::compileDeleteExpression
 ---
 
 # #4491 — ES5 defineProperty/defineProperties/create MOP residual
@@ -2640,3 +2661,152 @@ module-global array-carrier corruption (x[100]=7 + x.length=2 at module scope,
 lane J), $ObjVec arm for __hasOwnProperty (lane J's concat gate blocker),
 ToString-of-object user-toString dispatch (#1472, 6 rows + lane F's
 String()-vs-call divergence).
+
+---
+
+## Wave-4 lane H — the `arguments`-extras residual (2026-08-21, base `da724268b0`)
+
+Four target rows were handed over as one head ("extras beyond the formals").
+They were three unrelated defects plus one already-fixed row. Measured on the
+integration base BEFORE any edit, `--target standalone`, serial single-test
+probes:
+
+| row | base | cause |
+| --- | --- | --- |
+| `language/statements/function/S13.2_A2_T1` | fail — null deref in `__module_init` | synthetic-rest signature (slice H1) |
+| `language/statements/function/S13.2_A2_T2` | fail — same | synthetic-rest signature (slice H1) |
+| `language/statements/function/S13.2.2_A5_T1` | **pass** | already closed by wave-3 lane D; no work needed |
+| `language/statements/function/S13_A11_T4` | fail — `delete arguments[i]` did nothing | runtime-index delete (slice H2) |
+| `language/statements/function/S13_A2_T2` | fail — `x === 2`, want `"11"` | dynamic `+`; NOT taken, see below |
+
+### Slice H1 — the checker's synthetic `arguments` rest parameter
+
+**The call/callee arity contract, measured rather than assumed.** A shape
+matrix (`function` declaration vs expression × 0/1/2 formals × called
+direct / through a `var` alias / through a returned closure), read as
+`arguments.length` plus `typeof arguments[i]` for i in 0..3:
+
+| shape | base | after |
+| --- | --- | --- |
+| 0/1/2-formal declaration, called DIRECT with 4 args | correct | correct |
+| 0-formal function EXPRESSION, called direct | correct | correct |
+| 0-formal, through a returned closure, 1 arg | `len=1`, `[0]` **null** | `len=1`, `[0]` string |
+| 0-formal, through a returned closure, 2 args | `len=2`, `[0]` **null**, `[1]` ok | both correct |
+| 0-formal, through a returned closure, 0 args | `len=0` | `len=0` |
+
+The direct-call path was never broken, and `arguments.length` was never wrong —
+which is why the head read as "extras". The actual defect is upstream of the
+extras protocol: TypeScript, compiling a `.js` file, gives a function that reads
+`arguments` the signature `(...args: any[]): any` even though the declaration
+lists no parameters. Traced at the call site, `g("jedi")` resolved
+`matchedClosureInfo.paramTypes = [ref_null $vec_externref]` against
+`sigStr = (...args: any[]): any`.
+
+Four dispatch sites read `sig.parameters` directly. Believing the synthetic
+symbol is a formal, they (1) coerced actual argument 0 to the rest ARRAY type —
+a string is not a vec, so the guarded cast NULLED it, and the null is what got
+packed into `__extras_argv` — and (2) set `__argc = 1`. `totalLen = argc +
+extrasLen` therefore stayed right while slot 0 was filled from neither formals
+nor extras. That is exactly the "argc and extras disagree" symptom, one level
+down.
+
+`runtimeSignatureParameters` (calls-closures.ts) already existed for this, with
+this diagnosis already in its doc comment; it was private and used at one site.
+Exported and applied at the four arity-resolution sites: `compileIdentifierCall`,
+`compileExpressionCallee`, and both `compileTailDispatch` arms (the
+CallExpression-callee arm is the one `__FUNC()(__JEDI)` takes — the identifier
+arm alone left both S13.2_A2_T* still failing).
+
+**Blast radius, measured.** 903-row control set — `built-ins/Function/prototype/
+{call,apply}` (the wave-3 flip canaries), `language/arguments-object`,
+`language/statements/function`, `language/expressions/call` — run serially per
+row, file-copy A/B on one head:
+
+| | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| base `da724268b0` | 642 | 249 | 12 |
+| after H1 | **664** | 227 | 14 |
+
+**+22 `fail` → `pass`, 0 `pass` → anything.** Two of the 22 are the target rows;
+the other 20 are collateral —
+`language/arguments-object/*async-gen-meth-args-trailing-comma-*` (async-generator
+methods, plain and on class decl/expr, static and instance), which read
+`arguments` and hit the identical defect.
+
+The two `fail → compile_error` rows in the raw diff
+(`built-ins/Function/prototype/apply/S15.3.4.3_A3_T9`,
+`language/statements/function/param-eval-non-strict-is-correct-value`) are NOT a
+regression: both are eval-dependent and both report the missing QuickJS provider
+artifact. With the artifact linked they pass identically before and after. The
+whole control run was executed without that artifact, so its absolute pass
+counts understate eval-dependent rows — identically on both sides, so the delta
+stands.
+
+### Slice H2 — `delete arguments[i]` with a RUNTIME index
+
+`S13_A11_T4` loops `for (var i = 0; i < arguments.length; i++) { delete
+arguments[i]; … typeof arguments[i] === "undefined" }` on a **zero-formal**
+declaration. Two things blocked it:
+
+1. `emitPropertyDeleteWithUnmappedArgumentsWriteback` handled only a LITERAL
+   index (`ts.isNumericLiteral` / `isStringLiteral`), so a runtime `i` never
+   cleared the backing vec — `__delete_property` reported `true` and the read
+   still returned the original argument.
+2. It also bailed on `fctx.mappedArgsInfo` being present at all. A zero-formal
+   function DOES get a `mappedArgsInfo` record (its [[ParameterMap]] is simply
+   empty), so the writeback was skipped for exactly the functions where every
+   index is unmapped. The bail is now `paramCount > 0`.
+
+The externref key becomes an index through `coerceType` (the single coercion
+engine), then a `f64(trunc(v)) === v && v >= 0` guard: NaN (a non-numeric key)
+and any fraction are rejected, so `delete arguments["nope"]` leaves the vec
+alone. The conversion is emitted BEFORE `__delete_property`'s funcIdx is
+captured — a late import registered after that point shifts the already-planned
+call.
+
+Measured (probe, 4 args, `typeof arguments[i]` after each delete):
+
+| shape | base | after |
+| --- | --- | --- |
+| 0-formal, `delete arguments[i]` in a loop | all four keep their values | all four `undefined` |
+| 0-formal, `delete arguments[0]` literal | `undefined` (already worked) | unchanged |
+| 0-formal, `delete arguments[k]`, `k = "nope"` | slot 0 kept | slot 0 kept |
+| 1-formal, `delete arguments[i]` in a loop | values kept | **values kept — deliberately unchanged** |
+
+### Deliberately NOT taken, with the measurement
+
+- **The MAPPED runtime-index delete** (the 1-formal row above). §10.4.4.5 says a
+  successful delete on a mapped index both removes the slot and severs the
+  param↔arguments map. The existing mapped arm does that for literal indices
+  only; extending it to runtime indices would clear the slot without severing
+  the map (a later `a = 5` would re-mirror into the cleared slot), which is a
+  different wrong rather than right. No row in the set demands it.
+
+- **`S13_A2_T2` — `arg + arguments[1]` must pick the DYNAMIC `+`.** Still fails
+  identically after both slices (`x === 2`, wants `"11"`), so the extras fixes
+  left it as the sole blocker, as lane G predicted. It is not narrow: the gate
+  is `leftIsAny && rightIsAny` in `binary-ops.ts` (~L1004), computed from the
+  CHECKER type of each operand, and the fix has to change which operand types
+  reach a value-representation decision — `#2106` territory, not this lane's.
+
+- **`arguments.length` was never the defect anywhere in this head.** Every shape
+  in the matrix reported it correctly before and after. A fix that "corrected"
+  it would have been the silent-wrong-answer outcome lane G warned about.
+
+### Lane H combined tally
+
+End to end, integration base `da724268b0` → `66be196878`, same 903-row control
+set: **+23 `fail` → `pass`, 0 `pass` → anything** (22 from H1, 1 from H2). Six
+rows move across `compile_error` in the raw diff (4 to `pass`, 2 to `fail`), all
+in `built-ins/Function/prototype/apply/` — the QuickJS eval-adapter cache raced
+between the four measurement shards. Re-run serially in one process, every one
+of them reports the same status with and without the change.
+
+The wave-3 `Function/prototype/{call,apply}` `S15.3.4.{3,4}_A{6,7}` canary
+family (24 rows) is byte-identical before and after: 1 pass / 23 fail on both
+sides. It was already failing at the integration base; this lane neither helps
+nor harms it.
+
+Three of the four target rows now pass (`S13.2_A2_T1`, `S13.2_A2_T2`,
+`S13_A11_T4`); `S13.2.2_A5_T1` was already passing at the base. `S13_A2_T2`
+remains the one open row, on the dynamic-`+` head recorded above.
