@@ -46,6 +46,7 @@ import { buildVecFromExternMaterializer, coercionInstrs, getVecInfo } from "./ty
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
 import { presenceSetInstrs, presenceTestInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { coldFieldWriteArm, coldTailAllocatorName, findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927)
+import { inheritedSetAffectsKey } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import {
   findFnctorLayoutStructsForField,
   findFnctorResidStructsForField,
@@ -203,7 +204,9 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
     // each arm embeds its `next` chain exactly once (#1302).
     const layoutLocs = findFnctorLayoutStructsForField(ctx, propName).filter((loc) => loc.mutable);
     const residLocs = findFnctorResidStructsForField(ctx, propName);
-    const inheritedFlowDecisionActive = ctx.standalone && ctx.inheritedSetDescriptorDirty;
+    // (#4602) Per-key: only a key a suspicious descriptor could actually use
+    // demotes this property's writes; a clean key keeps the pre-#4504 path.
+    const inheritedFlowDecisionActive = ctx.standalone && inheritedSetAffectsKey(ctx, propName);
     const buildResidArmChain = (idx: number): Instr[] => {
       if (idx >= residLocs.length) return buildFallback();
       const loc = residLocs[idx]!;
@@ -381,7 +384,7 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
       // slot on MISS/ALLOW.  A present slot remains a physical own field and
       // writes directly, ahead of every prototype descriptor.
       const presenceAwareSetFieldInstrs: Instr[] =
-        ctx.standalone && ctx.inheritedSetDescriptorDirty && cand.presenceSlot !== undefined
+        inheritedFlowDecisionActive && cand.presenceSlot !== undefined
           ? [
               { op: "local.get", index: 2 },
               { op: "ref.cast", typeIdx: cand.structTypeIdx },

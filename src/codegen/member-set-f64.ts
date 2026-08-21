@@ -50,6 +50,7 @@ import { addFuncType } from "./registry/types.js";
 import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
 import { allocLocal } from "./context/locals.js";
 import { coercionInstrs } from "./type-coercion.js";
+import { inheritedSetAffectsKey } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 
 /** Flag gate. Default ON; `=0` ⇒ nothing below runs ⇒ byte-identical output. */
 export function setMemberF64Enabled(): boolean {
@@ -233,7 +234,7 @@ export function fillTypedMemberSetF64Dispatch(ctx: CodegenContext): void {
       ];
       const direct: Instr[] = !canStoreDirect
         ? buildDelegate()
-        : ctx.standalone && ctx.inheritedSetDescriptorDirty && cand.presenceSlot !== undefined
+        : ctx.standalone && inheritedSetAffectsKey(ctx, propName) && cand.presenceSlot !== undefined
           ? [
               { op: "local.get", index: 2 },
               { op: "ref.cast", typeIdx: cand.structTypeIdx },
