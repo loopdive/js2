@@ -88,13 +88,13 @@
     {
       "name": "eval()",
       "testCategories": ["language/eval-code", "built-ins/eval"],
-      "passCount": 334,
+      "passCount": 338,
       "totalCount": 357
     },
     {
       "name": "with statement",
       "testCategories": ["language/statements/with", "annexB/language/statements/with"],
-      "passCount": 140,
+      "passCount": 143,
       "totalCount": 181
     },
     {
@@ -105,13 +105,13 @@
         "language/statements/variable",
         "language/block-scope"
       ],
-      "passCount": 533,
+      "passCount": 538,
       "totalCount": 604
     },
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 976,
+      "passCount": 984,
       "totalCount": 1177
     },
     {
@@ -126,7 +126,7 @@
         "language/statements/continue",
         "language/statements/return"
       ],
-      "passCount": 641,
+      "passCount": 642,
       "totalCount": 699
     },
     {
@@ -144,13 +144,13 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4036,
+      "passCount": 4037,
       "totalCount": 4581
     },
     {
       "name": "Strings",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 1027,
+      "passCount": 1028,
       "totalCount": 1230
     },
     {
@@ -179,7 +179,7 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 1992,
+      "passCount": 1993,
       "totalCount": 3161
     },
     {
@@ -203,7 +203,7 @@
     {
       "name": "Arrow functions",
       "testCategories": ["language/expressions/arrow-function", "language/expressions/async-arrow-function"],
-      "passCount": 391,
+      "passCount": 392,
       "totalCount": 440
     },
     {
@@ -306,7 +306,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 574,
+      "passCount": 575,
       "totalCount": 1072
     },
     {
@@ -558,7 +558,7 @@
     {
       "name": "var hoisting",
       "testCategories": ["language/statements/variable", "language/statements/var"],
-      "passCount": 157,
+      "passCount": 162,
       "totalCount": 178
     },
     {
