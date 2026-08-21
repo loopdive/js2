@@ -26,6 +26,8 @@ describe("hono v4.12.16 upstream suite", () => {
       "src/utils/cookie.test.ts",
       "src/utils/encode.test.ts",
       "src/utils/concurrent.test.ts",
+      "src/utils/buffer.test.ts",
+      "src/utils/crypto.test.ts",
       "src/utils/filepath.test.ts",
       "src/utils/html.test.ts",
       "src/utils/ipaddr.test.ts",
@@ -42,13 +44,13 @@ describe("hono v4.12.16 upstream suite", () => {
     const report = JSON.parse(out);
     expect(report.upstreamSuite.commit).toBe(pin.commit);
     expect(report.extraction.filesSeen).toBe(120);
-    expect(report.extraction.filesSelected).toBe(16);
-    expect(report.extraction.testsRegistered).toBe(297);
-    expect(report.extraction.nativePassed).toBe(297);
+    expect(report.extraction.filesSelected).toBe(18);
+    expect(report.extraction.testsRegistered).toBe(311);
+    expect(report.extraction.nativePassed).toBe(311);
     expect(report.extraction.nativeFailed).toBe(0);
-    expect(report.extraction.unavailableInfra).toBe(2058);
-    expect(report.compile).toMatchObject({ modules: 16, succeeded: 16, validated: 15 });
-    expect(report.results).toMatchObject({ scored: 297, passed: 86, runtimeFailed: 6 });
+    expect(report.extraction.unavailableInfra).toBe(2044);
+    expect(report.compile).toMatchObject({ modules: 18, succeeded: 18, validated: 17 });
+    expect(report.results).toMatchObject({ scored: 311, passed: 90, runtimeFailed: 6 });
     expect(report.results.passed + report.results.failed + report.results.runtimeFailed).toBe(report.results.scored);
   });
 });

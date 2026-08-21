@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 
 import { compile, compileProject } from "../../src/index.ts";
 import { buildCompiledImports, wrapExports } from "../../src/runtime.ts";
+import { getWebHostConstructors } from "../../src/runtime/web-host-constructors.ts";
 
 const generatedPath = process.argv[2];
 const mode = process.argv[3] ?? "project";
@@ -56,6 +57,11 @@ async function loadNodeHostDependencies() {
       // Optional builtins remain subject to the compiler's normal diagnostic.
     }
   }
+  // Node exposes the WHATWG encoding/stream constructors globally, but the
+  // compiled adapter resolves extern classes from the explicit dependency
+  // map. Forward the same host constructors so upstream Node tests can use
+  // TextEncoder/TextDecoder and related Web APIs without a package shim.
+  Object.assign(dependencies, getWebHostConstructors());
   return dependencies;
 }
 

@@ -194,6 +194,41 @@ ${UPSTREAM_TEST_EXPORTS}`;
     }
   }, 90_000);
 
+  it("keeps upstream skip and todo registrations out of the runnable denominator", async () => {
+    const root = mkdtempSync(join(tmpdir(), "js2-upstream-runner-"));
+    const generatedPath = join(root, "suite.ts");
+    const source = `${UPSTREAM_TEST_SHIM}
+describe.skip("skipped group", () => {
+  test("never registers", () => { throw new Error("must not run"); });
+});
+it.skip("skipped test", () => { throw new Error("must not run"); });
+test.todo("future test");
+QUnit.test("runnable test", function () { expect(1).toBe(1); });
+${UPSTREAM_TEST_EXPORTS}`;
+
+    try {
+      const previousNodeOptions = process.env.NODE_OPTIONS;
+      process.env.NODE_OPTIONS = [previousNodeOptions, "--import=tsx"].filter(Boolean).join(" ");
+      let result;
+      try {
+        result = await compileAndRunUpstreamModule({ generatedPath, source, timeoutMs: 60_000 });
+      } finally {
+        // biome-ignore lint/performance/noDelete: `process.env.X = undefined` sets the string "undefined" instead of unsetting the var
+        if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+        else process.env.NODE_OPTIONS = previousNodeOptions;
+      }
+      expect(result.native.count).toBe(1);
+      expect(result.native.names).toEqual(["runnable test"]);
+      expect(result.native.statuses).toEqual([true]);
+      expect(result.compile.success).toBe(true);
+      expect(result.compile.validates).toBe(true);
+      expect(result.wasm?.count).toBe(1);
+      expect(result.wasm?.statuses).toEqual([true]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 90_000);
+
   it("forwards a package-selected Node platform to the isolated compiler worker", async () => {
     const root = mkdtempSync(join(tmpdir(), "js2-upstream-runner-"));
     const generatedPath = join(root, "suite.ts");
