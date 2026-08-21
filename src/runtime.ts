@@ -15327,10 +15327,33 @@ assert._isSameValue = isSameValue;
           return thisArg !== undefined ? jsArr.flatMap(wrapped, thisArg) : jsArr.flatMap(wrapped);
         };
       // Callback bridges for functional array methods
-      if (name === "__call_1_f64") return (fn: Function, a: number) => fn(a);
-      if (name === "__call_2_f64") return (fn: Function, a: number, b: number) => fn(a, b);
-      if (name === "__call_1_i32") return (fn: Function, a: number) => fn(a);
-      if (name === "__call_2_i32") return (fn: Function, a: number, b: number) => fn(a, b);
+      // Functional-array callbacks can be compiled closures represented by a
+      // WasmGC struct rather than a native JS Function.  The legacy bridge
+      // used to assume the caller had already wrapped that value, so a
+      // module-initializer callback such as Axios's `kindOfTest` reached this
+      // path as an object and failed with `fn is not a function`.  Normalize
+      // the callback at the boundary; native functions remain unchanged and
+      // closure wrapping is identity-cached by `_maybeWrapCallableUnknownArity`.
+      if (name === "__call_1_f64")
+        return (fn: Function, a: number) => {
+          const callable = _maybeWrapCallableUnknownArity(fn, callbackState);
+          return callable(a);
+        };
+      if (name === "__call_2_f64")
+        return (fn: Function, a: number, b: number) => {
+          const callable = _maybeWrapCallableUnknownArity(fn, callbackState);
+          return callable(a, b);
+        };
+      if (name === "__call_1_i32")
+        return (fn: Function, a: number) => {
+          const callable = _maybeWrapCallableUnknownArity(fn, callbackState);
+          return callable(a);
+        };
+      if (name === "__call_2_i32")
+        return (fn: Function, a: number, b: number) => {
+          const callable = _maybeWrapCallableUnknownArity(fn, callbackState);
+          return callable(a, b);
+        };
       if (name === "__typeof")
         return (v: any) => {
           // (#1594A) Closure structs report `typeof === "object"` in JS, but the

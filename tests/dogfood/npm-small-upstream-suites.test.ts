@@ -154,15 +154,15 @@ describe("small npm package upstream suites", () => {
     const report = await run("axios");
     expect(report.extraction).toMatchObject({
       filesSeen: 49,
-      filesSelected: 25,
-      filesDeferred: 24,
-      testsRegistered: 170,
-      nativePassed: 170,
+      filesSelected: 33,
+      filesDeferred: 16,
+      testsRegistered: 231,
+      nativePassed: 231,
       nativeFailed: 0,
     });
-    expect(report.compile).toMatchObject({ modules: 25, succeeded: 25, validated: 25 });
-    expect(report.results).toMatchObject({ scored: 170 });
-    expect(report.results.passed).toBeGreaterThanOrEqual(16);
+    expect(report.compile).toMatchObject({ modules: 33, succeeded: 33, validated: 33 });
+    expect(report.results).toMatchObject({ scored: 231 });
+    expect(report.results.passed).toBeGreaterThanOrEqual(21);
   });
 
   const prettierHeavy = process.env.DOGFOOD_PRETTIER_UPSTREAM_SUITE === "1" ? it : it.skip;

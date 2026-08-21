@@ -9,6 +9,9 @@
   "registrationSites": 645,
   "selectedFiles": [
     "tests/unit/cancel/isCancel.test.js",
+    "tests/unit/cancel/canceledError.test.js",
+    "tests/unit/composeSignals.test.js",
+    "tests/unit/core/AxiosError.test.js",
     "tests/unit/core/buildFullPath.test.js",
     "tests/unit/core/mergeConfig.test.js",
     "tests/unit/core/settle.test.js",
@@ -23,6 +26,11 @@
     "tests/unit/helpers/progressEventReducer.test.js",
     "tests/unit/helpers/spread.test.js",
     "tests/unit/helpers/validator.test.js",
+    "tests/unit/estimateDataURLDecodedBytes.test.js",
+    "tests/unit/fromDataURI.test.js",
+    "tests/unit/parseProtocol.test.js",
+    "tests/unit/platform.test.js",
+    "tests/unit/transformResponse.test.js",
     "tests/unit/utils/endsWith.test.js",
     "tests/unit/utils/extend.test.js",
     "tests/unit/utils/forEach.test.js",
@@ -34,5 +42,6 @@
     "tests/unit/utils/toFlatObject.test.js",
     "tests/unit/utils/trim.test.js"
   ],
-  "_note": "The complete 49-file tests/unit/**/*.test.js inventory is verified. The initial adapter selects 25 self-contained synchronous files (155 registration sites); HTTP server, socket, stream, filesystem, and async-runner files remain explicitly deferred. registrationSites counts static it()/test() sites across all 49 files and does not expand it.each tables."
+  "nodeHostDependencyFiles": ["tests/unit/cancel/canceledError.test.js", "tests/unit/core/AxiosError.test.js"],
+  "_note": "The complete 49-file tests/unit/**/*.test.js inventory is verified. The adapter selects thirty-three self-contained synchronous utility/core files; the two tests that import node:util/types use the generic isolated-worker Node host-dependency provider while retaining the web ambient default. HTTP server, socket, stream, filesystem, and async-runner files remain explicitly deferred. registrationSites counts static it()/test() sites across all 49 files and does not expand it.each tables."
 }

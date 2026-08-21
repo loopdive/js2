@@ -6179,7 +6179,13 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
           if (classArity !== undefined && funcType.params.length - 1 !== classArity) continue;
           if (funcType.params.slice(1).some((param) => !supportsHostClassBridgeParam(param))) continue;
         }
-        const extraParams = restInfo ? funcType.params.slice(1, 1 + restInfo.restIndex) : funcType.params.slice(1);
+        // Class-method rest metadata uses the Wasm parameter index, including
+        // the receiver at slot 0. The rest vector therefore lives at
+        // `restIndex`; fixed user parameters occupy slots 1..restIndex-1.
+        // Slicing through `1 + restIndex` treated the vector itself as a fixed
+        // argument, which made the vararg bridge pass three values to a
+        // `(receiver, vector)` method and produced invalid Wasm.
+        const extraParams = restInfo ? funcType.params.slice(1, restInfo.restIndex) : funcType.params.slice(1);
         entries.push({ structName, typeIdx, funcIdx, resultType, extraParams, restInfo });
         continue;
       }
@@ -6280,10 +6286,19 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
     };
 
     for (const entry of entries) {
-      const testAndCall: Instr[] = [
-        { op: "local.get", index: receiverAnyLocal },
-        { op: "ref.cast", typeIdx: entry.typeIdx },
-      ];
+      // Keep the vararg bridge's receiver off the operand stack while the
+      // host argument array is inspected and packed. Those helper calls have
+      // their own stack contracts; carrying a concrete class ref across them
+      // lets a later arm consume it as an argument and leaves the target call
+      // with only the vector. Reload and cast the receiver immediately before
+      // the target call below. Fixed-arity arms retain the older compact shape.
+      const testAndCall: Instr[] =
+        classMember && classArity === -1
+          ? []
+          : [
+              { op: "local.get", index: receiverAnyLocal },
+              { op: "ref.cast", typeIdx: entry.typeIdx },
+            ];
       if (classMember && classArity === -1 && entry.restInfo) {
         const restInfo = entry.restInfo;
         const lengthIdx = ctx.funcMap.get("__extern_length");
@@ -6301,7 +6316,7 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
           { op: "call", funcIdx: lengthIdx },
           { op: "local.set", index: 3 },
           { op: "local.get", index: 3 },
-          { op: "f64.const", value: restInfo.restIndex },
+          { op: "f64.const", value: entry.extraParams.length },
           { op: "f64.sub" },
           { op: "f64.const", value: 0 },
           { op: "f64.max" },
@@ -6333,7 +6348,7 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
                     const indexInstrs: Instr[] = [
                       { op: "local.get", index: 7 },
                       { op: "f64.convert_i32_s" },
-                      { op: "f64.const", value: restInfo.restIndex },
+                      { op: "f64.const", value: entry.extraParams.length },
                       { op: "f64.add" },
                     ];
                     appendHostIndex(indexInstrs, []);
@@ -6357,7 +6372,7 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
         const fixedInstrs: Instr[] = [];
         const boxIdx = ctx.funcMap.get("__box_number");
         const unboxIdx = ctx.funcMap.get("__unbox_number");
-        for (let arg = 0; arg < restInfo.restIndex; arg++) {
+        for (let arg = 0; arg < entry.extraParams.length; arg++) {
           const expected = entry.extraParams[arg]!;
           const coercion = callArgCoercionInstrs({ kind: "externref" }, expected, boxIdx ?? null, unboxIdx ?? null);
           fixedInstrs.push(
@@ -6371,12 +6386,21 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
             ...coercion,
           );
         }
-        testAndCall.splice(2, 0, ...fixedInstrs);
-        // The receiver stays on the stack while the argument vector is built.
-        // Reload the vector explicitly before the target call; casting the
-        // receiver itself here leaves only one value for the two-parameter
-        // class method ABI and makes the module fail validation.
-        testAndCall.push({ op: "local.get", index: 6 }, { op: "ref.cast", typeIdx: restInfo.vecTypeIdx });
+        // The legacy shape starts with the receiver cast, so fixed arguments
+        // were inserted at offset 2. Vararg bridges now build their arguments
+        // before loading/casting the receiver; prepend those fixed arguments
+        // instead of splitting the length result from its local.set.
+        testAndCall.splice(classMember && classArity === -1 ? 0 : 2, 0, ...fixedInstrs);
+        // Reload both operands immediately before the target call. In
+        // particular, do not carry the receiver through the host helper calls
+        // above: the target ABI is `(receiver, rest-vector)`, not just the
+        // vector produced by the packing loop.
+        testAndCall.push(
+          { op: "local.get", index: receiverAnyLocal },
+          { op: "ref.cast", typeIdx: entry.typeIdx },
+          { op: "local.get", index: 6 },
+          { op: "ref.cast", typeIdx: restInfo.vecTypeIdx },
+        );
       } else if (classMember && classArity !== undefined) {
         const boxIdx = ctx.funcMap.get("__box_number");
         const unboxIdx = ctx.funcMap.get("__unbox_number");
@@ -9551,7 +9575,16 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     return { kind: "ref_null", typeIdx: ctx.anyValueTypeIdx };
   }
 
-  return mapTsTypeToWasm(tsType, ctx.checker, ctx.fast);
+  // Preserve the semantic brand for primitive symbols at every binding
+  // boundary, not only inside registered struct fields.  Symbols share the
+  // physical i32 representation with booleans and numbers, but crossing an
+  // externref boundary must use __unbox_symbol rather than ToNumber.  Without
+  // this final brand step a module-level destructuring such as
+  // `const { iterator } = Symbol` allocated an unbranded i32 global and the
+  // destructuring emitter generated Number(Symbol.iterator), which correctly
+  // throws but incorrectly prevented ordinary Symbol-keyed imports from
+  // initializing.  The brand is a no-op for every non-symbol type.
+  return symbolBrand(tsType, mapTsTypeToWasm(tsType, ctx.checker, ctx.fast));
 }
 
 /**
