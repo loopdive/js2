@@ -63,7 +63,7 @@
  */
 import { forEachChild, ts } from "../../ts-api.js";
 import type { IrBinop } from "../nodes.js";
-import { collectI32CoercedLocals } from "../../codegen/analysis/i32-coerced-locals.js";
+import { collectI32CoercedLocals } from "./i32-coerced-locals.js";
 import { detectI32LoopVar } from "./loop-shape.js";
 
 const I32_MIN = -2147483648;

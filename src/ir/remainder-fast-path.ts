@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import type { RemainderFastPathPlan } from "../codegen/analysis/remainder-fast-path.js";
+import type { RemainderFastPathPlan } from "./analysis/remainder-fast-path.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import { irVal, type IrFuncRef, type IrValueId } from "./nodes.js";
 

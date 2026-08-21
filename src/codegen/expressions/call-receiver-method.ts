@@ -45,7 +45,7 @@ import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } f
 import { tryCompileHostStringPredicate } from "../host-string-prefix-suffix.js";
 import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
 import { effectiveLocalCarrier } from "../analysis/mixed-assignment-carrier.js";
-import { staticIntegerRange } from "../analysis/static-numeric-range.js";
+import { staticIntegerRange } from "../../ir/analysis/static-numeric-range.js";
 import {
   emitArrayBufferResize,
   emitArrayBufferSlice,
