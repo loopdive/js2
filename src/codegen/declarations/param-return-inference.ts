@@ -344,6 +344,10 @@ export function inferParamTypeFromCallSites(
   let conflict = false;
   let sawCallSite = false;
   let sawUnderApplied = false;
+  // (#4491) A call site whose argument's TS type is exclusively `void` /
+  // `undefined` — e.g. `verifyEqualTo(arr, "0", getFunc())` where `getFunc`
+  // returns nothing. See the withdrawal rule below.
+  let sawNullishArg = false;
 
   const isRecursiveCall = (call: ts.CallExpression | ts.NewExpression): boolean => {
     const target = ctx.oracle.valueDeclarationOf(call.expression);
@@ -464,6 +468,12 @@ export function inferParamTypeFromCallSites(
               conflict = true;
             }
           } else {
+            // (#4491) `void` / `undefined` maps to i32 in the type mapper
+            // ("void → no result, handled in codegen"), which is a lowering
+            // convention for a RESULT, not a claim that this argument is the
+            // number 0. Record the position; the withdrawal rule below keeps a
+            // native scalar from being inferred out of it.
+            if ((argType.flags & ~(ts.TypeFlags.Void | ts.TypeFlags.Undefined)) === 0) sawNullishArg = true;
             const wasmType = resolveWasmType(ctx, argType);
             if (agreed === null) {
               agreed = wasmType;
@@ -510,6 +520,17 @@ export function inferParamTypeFromCallSites(
   // withdrawn — a fully-applied parameter of the same function keeps its
   // native slot, so numeric kernels are untouched.
   if (type !== null && sawUnderApplied && (type.kind === "f64" || type.kind === "i32" || type.kind === "i64")) {
+    type = null;
+  }
+  // (#4491) The same rule for an argument that IS `undefined` rather than
+  // missing. A call site passing a void call's result (`h(getFunc())`) can only
+  // ever deliver `undefined`, and `f64`/`i32`/`i64` have no encoding for it — the
+  // argument silently becomes `0`, which is what made the harness's
+  // `verifyEqualTo(arrObj, "0", getFunc())` report "Expected obj[0] to equal 0".
+  // Withdrawing the narrowing leaves the parameter on its resolved `externref`,
+  // whose default value IS the canonical `undefined` (`pushDefaultValue` →
+  // `emitUndefinedValue` → the #2106 `$undefined` singleton in standalone).
+  if (type !== null && sawNullishArg && (type.kind === "f64" || type.kind === "i32" || type.kind === "i64")) {
     type = null;
   }
   // (#2867 S2) Soundness, same shape as the #3548 under-application rule: if the

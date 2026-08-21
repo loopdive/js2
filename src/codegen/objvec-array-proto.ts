@@ -9,6 +9,7 @@ import { fillCarrierBagDelete } from "./carrier-bag-delete.js";
 import { fillCarrierBagVisibility } from "./carrier-bag-visibility.js";
 import { fillVecPropsKeySource } from "./vec-props-key-source.js";
 import { fillGopnVecArm, fillVecOverlayPushKeys } from "./vec-overlay-keys.js";
+import { fillVecIndexEnumerable } from "./vec-index-enumerable.js";
 
 /** Finalize the generic vec overlay before installing the exact `$ObjVec` prototype arm. */
 export function fillObjVecReflectionHelpers(ctx: CodegenContext): void {
@@ -34,6 +35,11 @@ export function fillObjVecReflectionHelpers(ctx: CodegenContext): void {
   // other half — the `$__vec_base` arm `__getOwnPropertyNames` never had — and
   // is placed here so it can bake the same (now-filled) index.
   fillVecOverlayPushKeys(ctx);
+  // (#4491) Same pass, same reason: the `for…in` `[[Enumerable]]` gate reserved
+  // at for-in emit time reads `__vec_overlay_lookup`, which only exists after
+  // `fillVecOverlayHelpers` above. A skipped fill leaves the "enumerable"
+  // placeholder, i.e. the pre-#4491 answer.
+  fillVecIndexEnumerable(ctx);
   fillGopnVecArm(ctx);
   fillObjVecArrayPrototypeArm(ctx);
 }

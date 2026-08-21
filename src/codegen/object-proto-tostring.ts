@@ -111,8 +111,9 @@ const TYPEOF_PREDICATE_TAGS: ReadonlyArray<readonly [string, string]> = [
  * | `String.prototype`  | §22.1.3 — IS a String object, value `""` | `[object String]`  |
  * | `Boolean.prototype` | §20.3.3 — IS a Boolean object, `false`   | `[object Boolean]` |
  * | `Array.prototype`   | §23.1.3 — IS an Array exotic object      | `[object Array]`   |
+ * | `Function.prototype`| §20.2.3 — IS a built-in function object  | `[object Function]`|
  *
- * These are the same four the runtime sees as a `$NativeProto` rather than as
+ * These are the ones the runtime sees as a `$NativeProto` rather than as
  * the carrier its instances use, so the `$__vec_base` / `$Object`-wrapper arms
  * above miss them and the receiver reached the loud refusal. It is the SAME
  * spec fact `unshiftNativeProtoToPrimitiveArm` (native-proto-wrapper-primitive.ts)
@@ -120,9 +121,8 @@ const TYPEOF_PREDICATE_TAGS: ReadonlyArray<readonly [string, string]> = [
  *
  * Deliberately NOT a catch-all over every `$NativeProto`. `Date.prototype`,
  * `RegExp.prototype` and `Error.prototype` WERE exotic in ES5 and are ordinary
- * objects from ES2015 on (so `[object Object]`), and `Function.prototype` is
- * callable (so `[object Function]`) — three different right answers that a
- * single default arm would get wrong for at least one of them. Anything not
+ * objects from ES2015 on (so `[object Object]`) — a different right answer from
+ * the five listed, which a single default arm would get wrong. Anything not
  * listed keeps falling through to the refusal, which stays loud.
  */
 const NATIVE_PROTO_BRAND_TAGS: ReadonlyArray<readonly [string, string]> = [
@@ -130,6 +130,14 @@ const NATIVE_PROTO_BRAND_TAGS: ReadonlyArray<readonly [string, string]> = [
   ["String", "String"],
   ["Boolean", "Boolean"],
   ["Array", "Array"],
+  // (§20.2.3) `Function.prototype` IS a built-in *function* object — it has a
+  // [[Call]] slot (it is the `%Function.prototype%` intrinsic that returns
+  // undefined for any argument list), so §20.1.3.6 step 6 tags it `Function`,
+  // not the step-13 `Object` default every other `X.prototype` gets. Callability
+  // is already minted (`function-prototype-callable.ts`); this is the BRAND that
+  // makes `Object.prototype.toString.call(Function.prototype)` answer
+  // `[object Function]` (test262 `built-ins/Function/prototype/S15.3.4_A1.js`).
+  ["Function", "Function"],
 ];
 
 /** `$NativeProto` field indices — mirrors native-proto.ts / #4248's reader. */

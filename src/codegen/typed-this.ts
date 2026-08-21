@@ -72,6 +72,7 @@ import { ts, forEachChild } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { Instr, LocalDef, ValType } from "../ir/types.js";
 import { resolveEnclosingFnctorOwner, resolveLiftedMethodThisStruct } from "./fnctor-escape-gate.js";
+import { foreignReturnFunctionNames } from "./fnctor-foreign-return.js"; // (#2071)
 import { allocLocal } from "./context/locals.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
@@ -1584,10 +1585,18 @@ function provenReceiverClass(ctx: CodegenContext, fctx: FunctionContext, receive
     // Poisoned classes stay out: their prototype shape is not write-once, so
     // the method-call route must not admit them either.
     const approved = new Set<string>();
+    // (#2071) A constructor whose body may `return` a FOREIGN object is not a
+    // provable receiver at all: `new F()` may yield an arbitrary object
+    // (§10.2.1.3 step 13), so the checker's F-instance shape — and every
+    // field-typed narrowing derived from it — is unsound for such bindings
+    // (measured: the else-arm's coerce-to-field-type turned an overriding
+    // object's "A" into ToNumber("A") = NaN). Same pure-AST predicate the
+    // ctor-ABI widening reads, so proof and ABI can never disagree.
+    const foreignReturn = foreignReturnFunctionNames(sf);
     for (const structName of ctx.structMap.keys()) {
       if (!structName.startsWith("__fnctor_")) continue;
       const cls = structName.slice("__fnctor_".length);
-      if (!gate?.poisoned.has(cls)) approved.add(cls);
+      if (!gate?.poisoned.has(cls) && !foreignReturn.has(cls)) approved.add(cls);
     }
     result = analyzeReceiverFlow(sf, approved);
     (ctx.receiverFlowByFile ??= new Map()).set(sf, result);

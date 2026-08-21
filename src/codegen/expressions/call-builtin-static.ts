@@ -28,7 +28,10 @@ import {
 } from "../array-object-proto.js";
 import { undefinedExternInstrs } from "../any-helpers.js";
 import { BUILTIN_STATIC_METHOD_ARITY, pushBuiltinFnSingletonValueInstrs } from "../builtin-fn-meta.js";
-import { ensureFunctionPrototypeCallHelper } from "../function-prototype-callable.js";
+import {
+  ensureFunctionPrototypeCallHelper,
+  tryEmitNonCallableNamespaceInvokerThrow,
+} from "../function-prototype-callable.js";
 import {
   allocJoinFoldLocals,
   emitStringJoinFold,
@@ -299,6 +302,18 @@ export function compileBuiltinStaticCall(
       fctx.body.push({ op: "call", funcIdx: helperIdx });
       return { kind: "externref" };
     }
+  }
+
+  // (§20.2.3.1-.3) `JSON.bind()` and friends — a non-callable builtin namespace
+  // receiving `bind`/`call`/`apply`: catchable TypeError, not a `__get_builtin`
+  // hard refusal. Rationale + scope live with the helper.
+  if (
+    noJsHost(ctx) &&
+    ts.isIdentifier(propAccess.expression) &&
+    isGlobalBuiltinIdentifier(ctx, fctx, propAccess.expression) &&
+    tryEmitNonCallableNamespaceInvokerThrow(ctx, fctx, propAccess)
+  ) {
+    return { kind: "externref" };
   }
 
   if (ts.isIdentifier(propAccess.expression) && propAccess.expression.text === "Math") {

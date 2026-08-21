@@ -14,6 +14,8 @@ import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { FieldDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { createDeclaredNestedWriteClassifier } from "./declared-nested-write.js";
+import { collectEvalMutableNames } from "./eval-reachable-object-shape.js"; // (#4206)
+import { fnctorBodyMayReturnForeignObject } from "../fnctor-foreign-return.js"; // (#2071)
 import {
   bindingHasIrPlannedOpenWithTarget,
   bindingUsesOnlyIrPlannedOpenObjectOperations,
@@ -215,11 +217,160 @@ export function collectDynamicObjectReturnCarrierTypes(
  * This runs *before* collectDeclarations so the struct type is correct from
  * the start.
  */
+/**
+ * (#2071) Function declarations that are (a) constructed with `new` somewhere
+ * in this file and (b) foreign-return-capable (§10.2.1.3 step 13 may hand
+ * their `return obj` to the construct consumer). A `var X = {}` returned from
+ * such a body ESCAPES as the construct result and is read dynamically by
+ * consumers that know nothing of its evolved shape — a widened closed struct
+ * is invisible to them (measured: `__obj.prop` answered undefined).
+ */
+function computeForeignReturnCtors(
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+): Set<ts.FunctionLikeDeclaration> {
+  const ctors = new Set<ts.FunctionLikeDeclaration>();
+  const newTargets = new Set<ts.Symbol>();
+  const scanNew = (n: ts.Node): void => {
+    if (ts.isNewExpression(n)) {
+      const sym = checker.getSymbolAtLocation(n.expression);
+      if (sym) newTargets.add(sym);
+    }
+    forEachChild(n, scanNew);
+  };
+  scanNew(sourceFile);
+  const admit = (nameNode: ts.Identifier, fn: ts.FunctionLikeDeclaration): void => {
+    const sym = checker.getSymbolAtLocation(nameNode);
+    if (sym && newTargets.has(sym) && fnctorBodyMayReturnForeignObject(fn)) ctors.add(fn);
+  };
+  const scanFns = (n: ts.Node): void => {
+    if (ts.isFunctionDeclaration(n) && n.name) {
+      admit(n.name, n);
+    } else if (
+      // `var F = function(){…}` and `F = function(){…}` — the S13.2.2_A15_T3/T4
+      // constructor spellings.
+      ts.isVariableDeclaration(n) &&
+      ts.isIdentifier(n.name) &&
+      n.initializer !== undefined &&
+      ts.isFunctionExpression(n.initializer)
+    ) {
+      admit(n.name, n.initializer);
+    } else if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(n.left) &&
+      ts.isFunctionExpression(n.right)
+    ) {
+      admit(n.left, n.right);
+    }
+    forEachChild(n, scanFns);
+  };
+  scanFns(sourceFile);
+  return ctors;
+}
+
+/**
+ * (#2071) Does `fn`'s own body (nested functions excluded) contain
+ * `return <varName>`?
+ */
+function fnBodyReturnsIdentifier(fn: ts.FunctionLikeDeclaration, varName: string): boolean {
+  if (fn.body === undefined) return false;
+  let returned = false;
+  const scanReturns = (n: ts.Node): void => {
+    if (returned) return;
+    if (n !== fn && ts.isFunctionLike(n)) return;
+    if (ts.isReturnStatement(n) && n.expression) {
+      let e: ts.Expression = n.expression;
+      while (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e)) e = e.expression;
+      if (ts.isIdentifier(e) && e.text === varName) returned = true;
+    }
+    forEachChild(n, scanReturns);
+  };
+  scanReturns(fn.body);
+  return returned;
+}
+
+/**
+ * (#2071) `var X;` (no initializer, module level) — or an implicit global —
+ * whose `X = {…}` assignment happens INSIDE a foreign-return-capable new'd
+ * ctor body that also `return X`s: X escapes both as the construct result and
+ * as a global, so its evolved closed shape is unsound everywhere. Poison the
+ * name onto the open `$Object` and pin its evolved checker type (and the
+ * ctor's return type) so no flow position resolves to the closed struct
+ * (measured: the closed-struct global guard-cast the `$Object` to null and
+ * `obj.prop` answered null — S13.2.2_A15_T2/T4).
+ */
+function poisonForeignCtorAssignedGlobals(
+  ctx: CodegenContext,
+  checker: ts.TypeChecker,
+  foreignReturnCtors: Set<ts.FunctionLikeDeclaration>,
+): void {
+  for (const fn of foreignReturnCtors) {
+    if (fn.body === undefined) continue;
+    const assignedIds = new Map<string, ts.Identifier>();
+    const scan = (n: ts.Node): void => {
+      if (n !== fn && ts.isFunctionLike(n)) return;
+      if (
+        ts.isBinaryExpression(n) &&
+        n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(n.left) &&
+        ts.isObjectLiteralExpression(n.right) &&
+        !assignedIds.has(n.left.text)
+      ) {
+        assignedIds.set(n.left.text, n.left);
+      }
+      forEachChild(n, scan);
+    };
+    scan(fn.body);
+    for (const [name, id] of assignedIds) {
+      if (!fnBodyReturnsIdentifier(fn, name)) continue;
+      ctx.objectHashConsumerVars.add(name);
+      ctx.growableObjectLiteralVars.add(name);
+      const pin = (t: ts.Type | undefined): void => {
+        if (t !== undefined && !(t.flags & ts.TypeFlags.Any) && t.getProperties().length > 0) {
+          ctx.objectHashConsumerTypes.add(t);
+        }
+      };
+      pin(checker.getTypeAtLocation(id));
+      const vd = checker.getSymbolAtLocation(id)?.valueDeclaration;
+      if (vd !== undefined && ts.isVariableDeclaration(vd) && ts.isIdentifier(vd.name)) {
+        pin(checker.getTypeAtLocation(vd.name));
+      }
+      const sig = checker.getSignatureFromDeclaration(fn);
+      if (sig) pin(checker.getReturnTypeOfSignature(sig));
+    }
+  }
+}
+
+/**
+ * (#2071) Is `decl` (a `var X = {}`) declared inside one of the
+ * `foreignReturnCtors` bodies AND returned by it? Only a RETURNED local
+ * escapes as the construct result; an unreturned one keeps its widened fast
+ * path.
+ */
+function varEscapesViaForeignReturnCtor(
+  foreignReturnCtors: Set<ts.FunctionLikeDeclaration>,
+  decl: ts.VariableDeclaration,
+  varName: string,
+): boolean {
+  if (foreignReturnCtors.size === 0) return false;
+  let fn: ts.Node | undefined = decl.parent;
+  while (fn !== undefined && !ts.isFunctionLike(fn)) fn = fn.parent;
+  if (fn === undefined || !foreignReturnCtors.has(fn as ts.FunctionLikeDeclaration)) return false;
+  return fnBodyReturnsIdentifier(fn as ts.FunctionLikeDeclaration, varName);
+}
+
 export function collectEmptyObjectWidening(
   ctx: CodegenContext,
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
 ): void {
+  // (#2071) Lazily computed: most files have no foreign-return constructor.
+  let foreignReturnCtors: Set<ts.FunctionLikeDeclaration> | undefined;
+  if (ctx.standalone || ctx.wasi) {
+    foreignReturnCtors = computeForeignReturnCtors(checker, sourceFile);
+    if (foreignReturnCtors.size > 0) poisonForeignCtorAssignedGlobals(ctx, checker, foreignReturnCtors);
+  }
   // Scan all statements (top-level and inside function bodies)
   function scanStatements(stmts: readonly ts.Statement[]): void {
     for (const stmt of stmts) {
@@ -266,6 +417,16 @@ export function collectEmptyObjectWidening(
           // hold: the #2849 host arms pass AND compiled-acorn parses.
           for (const s of stmts) {
             markObjectHashConsumers(s, varName, ctx.objectHashConsumerVars);
+          }
+
+          // (#2071) Returned from a foreign-return-capable constructor → the
+          // literal escapes as the construct result; keep it an open `$Object`
+          // (see varEscapesViaForeignReturnCtor above).
+          if ((ctx.standalone || ctx.wasi) && !ctx.objectHashConsumerVars.has(varName)) {
+            foreignReturnCtors ??= computeForeignReturnCtors(checker, sourceFile);
+            if (varEscapesViaForeignReturnCtor(foreignReturnCtors, decl, varName)) {
+              ctx.objectHashConsumerVars.add(varName);
+            }
           }
 
           // (#2992 S4, standalone) `delete varName.prop` / `delete varName[k]`
@@ -740,6 +901,8 @@ export function collectGrowableObjectLiterals(
   // `0` restores the old "every depth-2 write opens the root" policy.
   const keepClosedOuterForDeclaredNestedWrites = process.env.JS2WASM_KEEP_CLOSED_NESTED_TABLES !== "0";
   const nestedWriteTargetsDeclaredField = createDeclaredNestedWriteClassifier(ctx, sourceFile);
+  // (#4206) Names a direct `eval(<literal>)` in this module could mutate.
+  const evalMutableNames = collectEvalMutableNames(sourceFile);
 
   // Does a contextual type at a use site REQUIRE the closed-struct representation?
   // True only for a CONCRETE nominal struct (named own properties, not any/unknown/
@@ -860,6 +1023,7 @@ export function collectGrowableObjectLiterals(
               markStandaloneAccessorDefineTargets(s, varName, mopSet);
               markStandaloneOutOfShapeDataDefineTargets(s, varName, shape, mopSet); // #4524
             }
+            if (evalMutableNames.has(varName)) mopSet.add(varName); // (#4206)
             // Consumer-safety (#1897/#2837): when the var ALSO flows into a
             // CONCRETE nominal-struct-typed position (call/new arg, return,
             // assignment), the externref `$Object` rep would fail that

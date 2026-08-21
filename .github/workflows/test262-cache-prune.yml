@@ -27,6 +27,9 @@ permissions:
 
 jobs:
   prune:
+    # The run cache is maintained only by the canonical repository; forks do
+    # not have the baselines deploy key.
+    if: github.repository == 'loopdive/js2'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout main repo (for sprint tags + prune script)

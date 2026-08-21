@@ -4,7 +4,7 @@
  * Extracted from expressions.ts (issue #688 step 5).
  */
 import { ts } from "../ts-api.js";
-import { chainRootIsGrowable } from "./property-access.js";
+import { chainRootIsGrowable, runtimeAccessorDescriptorKey } from "./property-access.js";
 import { emitHostEqualityFromStack } from "./coercion-engine.js";
 import { resolveWidenedVarKey } from "./widened-var-key.js";
 import { isBooleanType, isStringType, isSymbolType } from "../checker/type-mapper.js";
@@ -1623,6 +1623,19 @@ export function compileTypeofExpression(
     if (!forceRuntimeTypeof && typeofFoldUnsoundForJsParam(ctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
+    // (#4491) A member read whose (receiver, key) is RUNTIME accessor-descriptor
+    // state: the getter may be redefined at runtime — even to undefined
+    // (§6.2.5.6 present-undefined) — so the checker's member-type fold
+    // ("number" from the original getter) is unsound. Take the runtime path;
+    // the descriptor read returns the honest externref.
+    if (
+      !forceRuntimeTypeof &&
+      ts.isPropertyAccessExpression(bareTdz) &&
+      !ts.isPrivateIdentifier(bareTdz.name) &&
+      runtimeAccessorDescriptorKey(ctx, bareTdz.expression, bareTdz.name.text) !== undefined
+    ) {
+      forceRuntimeTypeof = true;
+    }
     // (#2623 P-7) `typeof x` where x's FLOW-narrowed type is null/undefined but
     // the binding is ASSIGNED elsewhere in the source must NOT const-fold: TS
     // does not apply assignments made inside nested closures to the outer flow,
@@ -1897,6 +1910,17 @@ export function compileTypeofComparison(
   // (#4394) JSDoc-typed JS parameter — no runtime enforcement, fold unsound
   // (`typeof testFunc !== "function"` in asyncHelpers must observe the value).
   if (staticTypeof !== null && typeofFoldUnsoundForJsParam(ctx, operand)) {
+    staticTypeof = null;
+  }
+  // (#4491) Runtime accessor-descriptor member read — same guard as
+  // compileTypeofExpression: the getter may be redefined at runtime, the
+  // checker's member type is not evidence.
+  if (
+    staticTypeof !== null &&
+    ts.isPropertyAccessExpression(operand) &&
+    !ts.isPrivateIdentifier(operand.name) &&
+    runtimeAccessorDescriptorKey(ctx, operand.expression, operand.name.text) !== undefined
+  ) {
     staticTypeof = null;
   }
   if (staticTypeof !== null) {

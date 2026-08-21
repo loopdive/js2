@@ -264,7 +264,7 @@ import { fillFusedToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-ga
 import { fillTypedMemberSetF64Dispatch } from "./member-set-f64.js"; // (#4157 A) write-side f64 twin
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
 import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
-import { fillAccessorDrivers } from "./accessor-driver.js";
+import { CALL_ACCESSOR_GET, fillAccessorDrivers } from "./accessor-driver.js";
 import { fillDisposableStackDisposeDriver } from "./disposable-runtime.js";
 import {
   collectGlobalObjectPropertyNames,
@@ -550,6 +550,7 @@ import {
   collectEnumDeclarations,
 } from "./extern-declarations.js"; // (#3272) extracted verbatim
 import { buildLibDeclIndex } from "./lib-decl-index.js"; // (#4218) syntactic lib walk
+import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#2071)
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
@@ -7071,6 +7072,20 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
           mode: "closure-eqref-multi";
           fieldIdx: number;
           candidates: { closureTypeIdx: number; closureInfo: ClosureInfo }[];
+        }
+      | {
+          // (ES5 standalone lane) A callable stored in an `externref`/`eqref`
+          // method field whose closure type was never tracked for this struct
+          // (the fnctor `this.toString = function(){…}` shape). Dispatched
+          // DYNAMICALLY through `__call_accessor_get(recv, callable)` rather than
+          // a baked `call_ref`, so it needs no compile-time closure identity.
+          structName: string;
+          typeIdx: number;
+          mode: "callable-dynamic";
+          fieldIdx: number;
+          fieldKind: "externref" | "eqref";
+          accessorGetIdx: number;
+          typeofFunctionIdx: number;
         };
 
     const entries: DispatchEntry[] = [];
@@ -7147,6 +7162,44 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
               pushedClosure = true;
               break;
             }
+          }
+        }
+        // (ES5 standalone lane) The field holds a callable, but no closure type
+        // was TRACKED for this struct — so none of the three arms above can bake
+        // a static `call_ref`. Dispatch dynamically instead, through the same
+        // `__call_accessor_get(recv, callable)` driver the open-`$Object`
+        // property runtime uses to run a getter with a bound `this`.
+        //
+        // This is the plain-function-constructor ("fnctor") case:
+        // `function F(){ this.toString = function(){…} }`. Its instance is a
+        // NOMINAL struct whose `toString` field is a plain `externref`, but the
+        // write goes through the fnctor constructor-field path, not the typed
+        // `obj.f = fn` path that populates `ctx.valueOfClosureTypes` — so
+        // `trackedTypes` is empty and #1989's `closure-extern` arm never fires.
+        // The struct then produced NO dispatch entry at all, `__call_toString`
+        // answered `ref.null.extern`, and `__class_to_primitive`'s string-hint
+        // tail rendered the canonical "[object Object]". Measured standalone:
+        // `"" + new F()`, `String(new F())` and every borrowed
+        // `String.prototype.<m>.call(new F(), …)` all answered "[object Object]"
+        // for a receiver whose own `toString` returns "OWN".
+        //
+        // `__typeof_function` gates the call so a non-callable field (a data
+        // property literally named `toString`) still reports "absent" (null)
+        // rather than invoking a garbage funcref — same answer as today.
+        if (!pushedClosure && (field.type.kind === "externref" || field.type.kind === "eqref")) {
+          const accessorGetIdx = ctx.funcMap.get(CALL_ACCESSOR_GET);
+          const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+          if (accessorGetIdx !== undefined && typeofFunctionIdx !== undefined) {
+            entries.push({
+              structName,
+              typeIdx,
+              mode: "callable-dynamic",
+              fieldIdx,
+              fieldKind: field.type.kind,
+              accessorGetIdx,
+              typeofFunctionIdx,
+            });
+            pushedClosure = true;
           }
         }
       }
@@ -7256,6 +7309,40 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
         } else {
           boxResult(ci.returnType, thenInstrs);
         }
+      } else if (entry.mode === "callable-dynamic") {
+        // (ES5 standalone lane) Untracked callable in a method field: read it,
+        // confirm it is callable, and invoke it with `this` bound to the
+        // receiver via the shared accessor-get driver. `boxResult` is not needed
+        // — the driver already answers a boxed `externref`.
+        //
+        // A field never assigned holds `ref.null.extern` (or the `$undefined`
+        // singleton); `__typeof_function` answers 0 for both, so the arm reports
+        // "no such method" exactly as an absent entry did.
+        const callableLocal = 6; // externref scratch (the stored method value)
+        const loadField: Instr[] = [
+          { op: "local.get", index: anyLocal },
+          { op: "ref.cast", typeIdx: entry.typeIdx },
+          { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.fieldIdx },
+        ];
+        if (entry.fieldKind === "eqref") loadField.push({ op: "extern.convert_any" });
+        thenInstrs.push(
+          ...loadField,
+          { op: "local.set", index: callableLocal },
+          { op: "local.get", index: callableLocal },
+          { op: "call", funcIdx: entry.typeofFunctionIdx },
+          {
+            op: "if",
+            blockType: { kind: "val" as const, type: { kind: "externref" as const } },
+            then: [
+              // receiver (externref) — `this` for the call
+              { op: "local.get", index: anyLocal },
+              { op: "extern.convert_any" },
+              { op: "local.get", index: callableLocal },
+              { op: "call", funcIdx: entry.accessorGetIdx },
+            ],
+            else: [{ op: "ref.null.extern" }],
+          },
+        );
       } else if (entry.mode === "closure-eqref-multi") {
         // (#2891) GUARDED dispatch over candidate closure types for an eqref
         // method field. Read the field once into the eqref scratch, then
@@ -7393,6 +7480,11 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
     // `ref.test` on the funcref (field 0), not by the struct type alone.
     locals.push({ name: "__tp_funcref", type: { kind: "funcref" } });
     const eqrefFuncLocal = 5;
+    // (ES5 standalone lane) externref scratch (index 6) for the
+    // `callable-dynamic` arm — the untracked method value read out of the
+    // struct field, held across the `__typeof_function` guard and the
+    // `__call_accessor_get` invocation.
+    locals.push({ name: "__tp_callable", type: { kind: "externref" } });
     const currentThisGlobalIdx2 = ensureCurrentThisGlobal(ctx);
 
     const body: Instr[] = [
@@ -9396,7 +9488,17 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // closed representation.
     const approvedStandaloneFnctor =
       ctx.standalone && sym?.name !== undefined && ctx.fnctorEscapeGate?.approvedNames.has(sym.name) === true;
-    if ((!ctx.standalone && !ctx.wasi) || approvedStandaloneFnctor) {
+    // (#2071) A constructor whose body may `return` a FOREIGN object makes the
+    // checker's instance-shape inference UNSOUND: the constructed value may be
+    // an arbitrary object (§10.2.1.3 step 13), so a closed struct shape — and
+    // every member coercion derived from it — can misread the override
+    // (measured: `obj.prop` holding "A" answered ToNumber("A") = NaN through
+    // the inferred `prop: number`). Such instances degrade to externref and
+    // flow dynamically end to end, the same representation the escape-gate arm
+    // below already uses. Must answer in lockstep with the ctor-ABI widening
+    // in compileNewFunctionDeclaration — both read the same pure-AST predicate.
+    const foreignReturnFnctor = (ctx.standalone || ctx.wasi) && typeIsForeignReturnFnctorInstance(tsType);
+    if ((!ctx.standalone && !ctx.wasi) || approvedStandaloneFnctor || foreignReturnFnctor) {
       const fnDecl = sym?.valueDeclaration;
       const isFnCtorType =
         (sym?.name !== undefined && ctx.funcConstructorMap.has(sym.name)) ||
@@ -9408,6 +9510,15 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       // itself callable) — the function VALUE type (callable) must keep its
       // closure-wrapper resolution.
       if (isFnCtorType && tsType.getCallSignatures().length === 0) {
+        // (#2071) Foreign-return-capable: always dynamic, never the reserved
+        // struct — the value at runtime may not BE that struct. This WINS over
+        // escape-gate approval: approval says the struct layout is stable, not
+        // that `new F()` yields it — with an approved foreign-return ctor the
+        // struct-typed binding guard-cast the overriding $Object to null and
+        // every read answered undefined (measured, S13.2.2_A15_T1 shape).
+        if (foreignReturnFnctor && (ctx.standalone || ctx.wasi)) {
+          return { kind: "externref" };
+        }
         // (#4155 Phase 1) Opt-in: map onto the ALREADY-RESERVED runtime struct.
         return resolveFnctorInstanceType(ctx, sym?.name) ?? { kind: "externref" };
       }
@@ -10125,6 +10236,16 @@ export function varBindingNeedsExternrefForUndefined(
   if (ctx !== undefined && decl !== undefined && hoistedVarPreInitValueIsObserved(ctx, decl)) return true; // #4206
   if (init === undefined) return false;
   if (ts.isVoidExpression(init)) return true;
+  // (ES5 defineProperty lane, #4491) `var r = f()` where f returns nothing:
+  // the call's value IS `undefined` (§10.2.1.1 step 12 / OrdinaryCallEvaluateBody),
+  // but a void-typed slot resolved f64 and stored the default 0 — so
+  // `getFunc() === undefined` answered false everywhere the harness's
+  // propertyHelper compares against a void helper's result. An externref slot
+  // holds the canonical undefined carrier instead.
+  if (ctx !== undefined && ts.isCallExpression(init)) {
+    const callType = ctx.checker.getTypeAtLocation(init);
+    if ((callType.flags & ~(ts.TypeFlags.Undefined | ts.TypeFlags.Void)) === 0) return true;
+  }
   // (#3033) Dynamic-receiver member read whose static type is purely undefined.
   if (ctx !== undefined && (ts.isPropertyAccessExpression(init) || ts.isElementAccessExpression(init))) {
     const declType = ctx.checker.getTypeAtLocation(decl!);

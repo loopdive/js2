@@ -4558,10 +4558,59 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             },
           ] satisfies Instr[])
         : []),
+      // (ES5 standalone lane) …and a `$BoxedBoolean`. This arm was MISSING while
+      // its number and string siblings were present, so `true`/`false` was the
+      // one primitive that fell through to the non-`$Object` tail and got asked
+      // `__class_to_primitive`. That answered correctly ONLY while the module
+      // emitted no `__call_toString` dispatcher at all (absent dispatcher ⇒
+      // "return the input unchanged"); the moment ANY struct in the module
+      // contributed a dispatcher arm, the boxed boolean matched none of them and
+      // `__class_to_primitive`'s string-hint tail rendered its
+      // "toString absent ⇒ inherited Object.prototype.toString" answer,
+      // "[object Object]". Measured: `String.prototype.trim.call(true)` and
+      // `new Boolean().indexOf(…)` both flipped the moment an unrelated object
+      // literal in the same file gained a dispatcher arm — an action-at-a-
+      // distance bug that the early-out removes at the source. §7.1.1 step 1:
+      // ToPrimitive of a value that is ALREADY primitive returns it unchanged.
+      ...(ctx.nativeBoxBooleanTypeIdx >= 0
+        ? ([
+            { op: "local.get", index: L_ANY },
+            { op: "ref.test", typeIdx: ctx.nativeBoxBooleanTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "local.get", index: 0 }, { op: "return" }],
+            },
+          ] satisfies Instr[])
+        : []),
       ...(ctx.anyStrTypeIdx >= 0
         ? ([
             { op: "local.get", index: L_ANY },
             { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "local.get", index: 0 }, { op: "return" }],
+            },
+          ] satisfies Instr[])
+        : []),
+      // (ES5 standalone lane) The native ERROR struct returns UNCHANGED — the
+      // same action-at-a-distance hazard as the boxed-boolean arm above, third
+      // instance. An error's spec toString is Error.prototype.toString, served
+      // by `__any_to_string`'s error arm AFTER ToPrimitive hands the struct
+      // back unchanged. That held only while the module emitted no
+      // `__call_toString` dispatcher; once ANY struct contributed an arm (a
+      // harness object literal with a `toString` field suffices),
+      // `__class_to_primitive`'s string-hint tail rendered the error as
+      // "[object Object]". Measured on the first full ES5 run after the
+      // dispatcher arm landed: every `errObj.toString()` and every thrown-
+      // error rendering regressed — the 15.11.4.4-* family, try/S12.14_A19,
+      // and ~14 harness asyncHelpers/compare-array rows whose failure
+      // MESSAGES stringify errors.
+      ...(ctx.errorStructTypeIdx >= 0
+        ? ([
+            { op: "local.get", index: L_ANY },
+            { op: "ref.test", typeIdx: ctx.errorStructTypeIdx },
             {
               op: "if",
               blockType: { kind: "empty" },
@@ -5811,14 +5860,23 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           });
         })()
       : [];
-    let resolvedMethodGuard: Instr[] = [];
+    // (#4221) A FACTORY, not a shared array: the guard is spliced into more than
+    // one arm now, and finalize's DCE/remap walks double-remap a shared `Instr`
+    // object (`reference_shared_instr_object_dce_double_remap`).
+    let resolvedMethodGuard: () => Instr[] = () => [];
     if (throwNotAFunctionInstrs.length > 0) {
       const methodLocalIdx = 3 + methodCallLocals.length;
       methodCallLocals.push({ name: "resolvedMethod", type: { kind: "externref" } });
-      resolvedMethodGuard = [
+      resolvedMethodGuard = () => [
         { op: "local.tee", index: methodLocalIdx },
         { op: "ref.is_null" },
-        { op: "if", blockType: { kind: "empty" }, then: throwNotAFunctionInstrs },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: buildThrowJsErrorInstrs(ctx, "TypeError", "called value is not a function", {
+            forceInModuleCtor: true,
+          }),
+        },
         { op: "local.get", index: methodLocalIdx },
       ];
     }
@@ -5858,7 +5916,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             : []),
           // (#4221) an ABSENT callee is a TypeError, not `undefined`. Empty off
           // the standalone lane (see the guard builder above).
-          ...resolvedMethodGuard,
+          ...resolvedMethodGuard(),
           // __apply_closure(m, recv, args)
           { op: "local.get", index: 0 },
           { op: "local.get", index: 2 },
@@ -5885,7 +5943,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 },
               ] satisfies Instr[])
             : []),
-          ...buildVecOrClosurePropMethodCallElseArm(ctx, externGetIdx, applyClosureIdx),
+          ...buildVecOrClosurePropMethodCallElseArm(ctx, externGetIdx, applyClosureIdx, resolvedMethodGuard),
         ],
       },
     ];

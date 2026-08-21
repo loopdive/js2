@@ -1139,14 +1139,50 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                   { op: "local.get", index: 14 },
                   { op: "f64.ne" },
                   { op: "if", blockType: { kind: "empty" }, then: s3.throwRange() },
-                  // u ≥ 2^31 → legacy no-op (i32 vec length cannot represent it)
+                  // (#4491 bucket D) u ≥ 2^31 → SPARSE-LENGTH arm, not the old
+                  // no-op. The `$__vec_base` length field is an i32, but §10.4.2
+                  // lengths are uint32, and the field round-trips the whole u32
+                  // domain as a BIT PATTERN — the dynamic read arm in
+                  // `object-runtime.ts` (and the static one below) widen it with
+                  // `f64.convert_i32_u`, so 0xFFFFFFFF reads back as 4294967295
+                  // rather than -1. Bailing here left `arr.length` at its old
+                  // value with no error at all (measured: `defineProperty(arr,
+                  // "length", {value: 2**32-2})` answered 0), which is a WRONG
+                  // ANSWER rather than an unimplemented one.
+                  //
+                  // The element machinery below is skipped deliberately: a
+                  // length ≥ 2^31 is unbackable (the backing `$data` array is
+                  // capped far lower, and the static paths refuse to allocate
+                  // above 16M), so this is always a grow into sparse territory
+                  // with no real elements to create — exactly what the static
+                  // `maybeEmitVecLengthDefine` does above its own 16M ceiling.
+                  // It also cannot use the signed shrink loop: `i32.lt_s`
+                  // against a newLen whose bit pattern is negative never
+                  // terminates.
                   { op: "local.get", index: 15 },
                   { op: "f64.const", value: 2147483647 },
                   { op: "f64.gt" },
                   {
                     op: "if",
                     blockType: { kind: "empty" },
-                    then: bailReturnVec.map((i) => ({ ...i })),
+                    then: [
+                      // Same §10.1.6.3 legality delegate as the in-range path —
+                      // a non-writable / non-configurable `length` still refuses.
+                      { op: "local.get", index: 6 },
+                      ...lengthLitExtern(),
+                      { op: "local.get", index: 15 },
+                      { op: "call", funcIdx: s3.boxNumIdx },
+                      { op: "local.get", index: 3 },
+                      { op: "call", funcIdx: dpValueIdx },
+                      { op: "drop" },
+                      // vec.length = ToUint32(u) as the raw 32-bit pattern.
+                      { op: "local.get", index: 4 },
+                      { op: "ref.cast", typeIdx: vecBaseIdx },
+                      { op: "local.get", index: 15 },
+                      { op: "i32.trunc_sat_f64_u" },
+                      { op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 },
+                      ...bailReturnVec.map((i) => ({ ...i })),
+                    ],
                   },
                   // Delegate {value: u, ...attrs} — §10.1.6.3 legality against
                   // the seeded current (non-writable value change → TypeError,
