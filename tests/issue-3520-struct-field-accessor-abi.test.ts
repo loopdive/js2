@@ -168,6 +168,15 @@ describe("#3520 C34 per-field host accessor Program ABI ownership", () => {
     expect(structFieldAccessorDerivedOrdinal(forward, "get", "y")).toBe(8);
     expect(structFieldAccessorDerivedOrdinal(forward, "get", "absent")).toBeUndefined();
 
+    // Elision invariance: dropping a field from the SURVIVING set must not be
+    // allowed to renumber its neighbours. `observeStructFieldAccessorAbi`
+    // derives the order from the pre-elision record for exactly this reason —
+    // deriving it from survivors would give `y` a different ordinal purely
+    // because `x` was eliminated.
+    const survivorsOnly = structFieldAccessorFieldOrder(["visible", "y"]);
+    expect(structFieldAccessorDerivedOrdinal(survivorsOnly, "get", "y")).toBe(4);
+    expect(structFieldAccessorDerivedOrdinal(forward, "get", "y")).toBe(8);
+
     // Every kind fits inside the reserved stride, so no two fields overlap.
     for (const kind of Object.values(STRUCT_FIELD_ACCESSOR_KIND)) {
       expect(kind).toBeLessThan(STRUCT_FIELD_ACCESSOR_KIND_STRIDE);
