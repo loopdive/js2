@@ -220,3 +220,12 @@ The existing selected adapters also run successfully for jsdom (6/6),
 styled-components (6/6), and the selected webpack slice (13/16). Stylelint is
 8/9 and Redux is 13/82; their remaining failures are scored runtime/compiler
 semantics, not missing test registration or acquisition infrastructure.
+
+## Unit-infrastructure continuation 4
+
+The Lodash adapter now selects 18 original QUnit modules instead of seven,
+covering arithmetic, comparison, and string helpers. The expanded lane runs
+26/26 callbacks natively for both packages; Wasm passes 26/26 for `lodash` and
+22/26 for `lodash-es` (the four failures are null string-method results).
+The other 1,727 registrations remain explicitly deferred as unavailable
+infrastructure, and no upstream callback or input is rewritten.
