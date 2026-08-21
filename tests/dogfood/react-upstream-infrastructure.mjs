@@ -400,6 +400,101 @@ function createInternalTestUtils({ reactTestRenderer, reactDom, consumeConsole }
   };
 }
 
+// ReactDOM's selector and fragment-ref tests import this small private helper
+// from the monorepo. It is test infrastructure rather than published package
+// code, so keep the browser behavior on the host while exposing the same
+// functions through the explicit React upstream capability surface.
+function createIntersectionMocks() {
+  const state = { callback: null, observedTargets: [] };
+  const hostWindow = globalThis.window;
+  const previousWindowObserver = hostWindow?.IntersectionObserver;
+  const previousGlobalObserver = globalThis.IntersectionObserver;
+  class IntersectionObserver {
+    constructor(callback) {
+      state.callback = callback;
+    }
+
+    disconnect() {
+      state.callback = null;
+      state.observedTargets.splice(0);
+    }
+
+    observe(target) {
+      state.observedTargets.push(target);
+    }
+
+    unobserve(target) {
+      const index = state.observedTargets.indexOf(target);
+      if (index >= 0) state.observedTargets.splice(index, 1);
+    }
+  }
+  if (hostWindow) hostWindow.IntersectionObserver = IntersectionObserver;
+  globalThis.IntersectionObserver = IntersectionObserver;
+
+  function mockIntersectionObserver() {
+    state.callback = null;
+    state.observedTargets = [];
+    if (hostWindow) hostWindow.IntersectionObserver = IntersectionObserver;
+    return state;
+  }
+
+  function simulateIntersection(...entries) {
+    if (typeof state.callback !== "function") throw new Error("IntersectionObserver callback is not installed");
+    state.callback(
+      entries.map(([target, rect, ratio]) => ({
+        boundingClientRect: {
+          top: rect.y,
+          left: rect.x,
+          width: rect.width,
+          height: rect.height,
+        },
+        intersectionRatio: ratio,
+        target,
+      })),
+    );
+  }
+
+  function setBoundingClientRect(target, { x, y, width, height }) {
+    target.getBoundingClientRect = () => ({
+      width,
+      height,
+      left: x,
+      right: x + width,
+      top: y,
+      bottom: y + height,
+    });
+  }
+
+  function setClientRects(target, rects) {
+    target.getClientRects = () =>
+      rects.map(({ x, y, width, height }) => ({
+        width,
+        height,
+        left: x,
+        right: x + width,
+        top: y,
+        bottom: y + height,
+        x,
+        y,
+      }));
+  }
+
+  return {
+    mockIntersectionObserver,
+    simulateIntersection,
+    setBoundingClientRect,
+    setClientRects,
+    cleanup() {
+      if (hostWindow) {
+        if (previousWindowObserver === undefined) delete hostWindow.IntersectionObserver;
+        else hostWindow.IntersectionObserver = previousWindowObserver;
+      }
+      if (previousGlobalObserver === undefined) delete globalThis.IntersectionObserver;
+      else globalThis.IntersectionObserver = previousGlobalObserver;
+    },
+  };
+}
+
 function unrefMessagePorts() {
   // ReactDOM's scheduler owns a MessageChannel. Its ports are useful while a
   // test is running, but a referenced port keeps Node alive after the report
@@ -450,6 +545,7 @@ export function installReactUpstreamInfrastructure({ react, build = "production"
     return out;
   };
   const reactNoop = createReactNoopAdapter(nativeReact, reactTestRenderer, reactDom, reactDomClient);
+  const intersectionMocks = createIntersectionMocks();
   const prepareReactValue = createReactValueAdapter(nativeReact);
   const reactJsxRuntime = readModule("react/jsx-runtime");
   const reactJsxDevRuntime = readModule("react/jsx-dev-runtime");
@@ -471,6 +567,7 @@ export function installReactUpstreamInfrastructure({ react, build = "production"
     reactDomServer,
     reactTestRenderer,
     reactNoop,
+    intersectionMocks,
     prepareReactValue,
     // Native oracle values already have React's host representation. The
     // compiled lane flips this switch only while an exported Wasm test is
@@ -518,6 +615,7 @@ export function installReactUpstreamInfrastructure({ react, build = "production"
     if (cleaned) return;
     cleaned = true;
     unrefMessagePorts();
+    intersectionMocks.cleanup();
     console.error = previousError;
     console.warn = previousWarn;
     if (previous === undefined) delete globalThis.__js2ReactUpstreamInfrastructure;

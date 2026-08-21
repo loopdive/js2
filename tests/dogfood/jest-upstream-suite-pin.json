@@ -15,7 +15,17 @@
     "packages/jest-util/src/__tests__/errorWithStack.test.ts",
     "packages/jest-util/src/__tests__/formatTime.test.ts",
     "packages/jest-util/src/__tests__/isPromise.test.ts",
-    "packages/jest-util/src/__tests__/isError.test.ts"
+    "packages/jest-util/src/__tests__/isError.test.ts",
+    "packages/diff-sequences/src/__tests__/index.test.ts",
+    "packages/jest-docblock/src/__tests__/index.test.ts",
+    "packages/jest-diff/src/__tests__/escapeControlCharacters.test.ts",
+    "packages/jest-config/src/__tests__/stringToBytes.test.ts"
   ],
-  "_note": "The complete packages/**/__tests__ inventory is verified. The adapter runs the original synchronous @jest/get-type and jest-util unit files against their matching release-tag TypeScript implementations, including isError's node:util/types host seam. The shared runner supplies the minimal Jest spy facade needed by the selected jest-util callbacks; runner, snapshot, filesystem, worker, async, DOM, and larger package graphs remain explicit deferred coverage."
+  "dependencies": {
+    "detect-newline": {
+      "version": "3.1.0",
+      "sourceSha256": "7306f2ecc168c9e20be4a2a3d44a0dad59ea21dc0bf4cd41ea85829bc79e2c18"
+    }
+  },
+  "_note": "The complete packages/**/__tests__ inventory is verified. The adapter runs the original synchronous @jest/get-type, jest-util, diff-sequences, jest-docblock, jest-diff, and jest-config unit files against their matching release-tag TypeScript implementations, including isError's node:util/types and jest-docblock's node:os host seams. The shared runner supplies the minimal Jest spy facade needed by the selected jest-util callbacks; runner, snapshot, filesystem, worker, async, DOM, and larger package graphs remain explicit deferred coverage."
 }

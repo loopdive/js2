@@ -43,6 +43,7 @@ async function loadNodeHostDependencies() {
     "node:buffer",
     "node:crypto",
     "node:events",
+    "node:os",
     "node:stream",
     "node:timers",
     "node:url",
