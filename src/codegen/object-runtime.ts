@@ -195,7 +195,11 @@ import { ensureArgcGlobal } from "./statements/nested-declarations.js";
 import { buildLazyNativeProtoGetInstrs, flushPendingNativeProtoSeeders, getBuiltinBrand } from "./native-proto.js";
 import { applyUndefinedInstrs, guardNullableApplyArguments } from "./apply-closure-args.js";
 import { vecConstructorArmInstrs } from "./vec-constructor-carrier.js"; // (#4220) runtime `<array>.constructor`
-import { registerStringExoticHasOwn, stringExoticHasOwnPrologue } from "./string-exotic-own-props.js"; // (#4232) §10.4.3 own props
+import {
+  registerStringExoticHasOwn,
+  registerStringExoticPushKeys,
+  stringExoticHasOwnPrologue,
+} from "./string-exotic-own-props.js"; // (#4232/#4491) §10.4.3 own props + own keys
 import { ensureWrapperConstructorCarriers, wrapperConstructorArmInstrs } from "./wrapper-constructor-carrier.js"; // (#4223) runtime `<wrapper>.constructor`
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 import { backedBoundsGuard, canonicalIndexDigitStep } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
@@ -4085,6 +4089,17 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     propEntryTypeIdx,
     objFindIdx,
   });
+  // (#4491) The ENUMERATION half of the same §10.4.3 gap. Minted here — where
+  // `__objvec_push` has just become available — so it exists by the time
+  // `buildObjectEnumerationHelpers` / `buildObjectDescriptorHelpers` assemble
+  // `__object_keys` / `__getOwnPropertyNames` further down; both resolve it by
+  // NAME and emit nothing when it is absent.
+  registerStringExoticPushKeys(ctx, {
+    objectTypeIdx,
+    propEntryTypeIdx,
+    objFindIdx,
+    objVecPushIdx,
+  });
   // (#2175 P2) A `$NativeProto` receiver is substituted by its brand COMPANION,
   // where `defineProperty(<Builtin>.prototype, …)` actually stored the entry
   // (#4176 write arms). Own-layer only, no chain walk, no-op for every other
@@ -4211,6 +4226,19 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // locals: 2=o(ref null $Object) 3=any(anyref)
   {
     const body: Instr[] = [
+      // (#4491) §10.4.3 String-exotic own properties (`length` + the canonical
+      // indices) are DERIVED from the wrapper's [[PrimitiveValue]], so the
+      // `__obj_find` walk below never sees them: `"0" in new String("abc")`
+      // answered `false` while `hasOwnProperty("0")` answered `true` (#4232
+      // taught only the own-predicate). An OWN property is also a HasProperty
+      // hit, so the same consult-only prologue is sound here — it answers 1 or
+      // falls through untouched, never 0.
+      //
+      // This is what makes `for…in` over a String object yield its indices:
+      // the for-in loop re-checks each key's liveness with `__extern_has`
+      // (#2066), so an index key the enumerator produced was dropped again one
+      // instruction later.
+      ...stringExoticHasOwnPrologue(strExoticHasOwnIdx),
       // any = any.convert_extern(obj); if !ref.test $Object → carrier bag,
       // then (#4176) the RECEIVER-AWARE proto-companion consult, else 0.
       // HasProperty (§7.3.12) is prototype-inclusive, so a closure/vec/struct

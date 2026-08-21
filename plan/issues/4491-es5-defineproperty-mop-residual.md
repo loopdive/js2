@@ -65,6 +65,24 @@ func-budget-allow:
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
   - src/codegen/object-ops.ts::compilePropertyIntrospection
+  # 2026-08-21 wave-3 lane B, §10.4.3 String-exotic own KEYS: two one-call
+  # prologue splices (`__object_keys` + `__object_keys_forin`), +7 lines total.
+  # They MUST live inside this builder — each one references the result-vector
+  # LOCAL INDEX of the native it is spliced into, so it cannot be lifted out
+  # without also lifting the two native bodies. The prologue's whole
+  # implementation is already in a separate module
+  # (src/codegen/string-exotic-own-props.ts, +184); this is call-site wiring.
+  - src/codegen/object-runtime-enumeration.ts::buildObjectEnumerationHelpers
+coercion-sites-allow:
+  # 2026-08-21 wave-3 lane B: ONE `number_toString` in the new
+  # `__strexo_push_keys` native. It is not a hand-rolled matrix — it is the
+  # SEALED formatter, used for the one thing §10.4.3.6 requires here (the
+  # canonical index KEY `ToString(i)`), identically to every other index-key
+  # producer in the tree (`__extern_get_idx`'s `$Object` arm, the #3251 overlay
+  # companion lookup, `emitArrayForIn`). Hand-rolling a digit loop instead is
+  # exactly what this gate exists to prevent, so the reviewed grant is the
+  # correct outcome rather than an avoidance.
+  - src/codegen/string-exotic-own-props.ts
 ---
 
 # #4491 — ES5 defineProperty/defineProperties/create MOP residual
@@ -1007,3 +1025,91 @@ static-read/dynamic-store divergence, arguments-object define rows; (D)
 Function/prototype + instanceof — seeds: the C2 provider-dependence
 re-measure, apply/call receiver family, aliased-ctor instanceof. String +
 RegExp + assignment queue for the next free slot.
+
+## 2026-08-21 wave-3 lane B — §10.4.3 String-exotic own KEYS (the enumeration half of #4232)
+
+`hasOwnProperty` has answered String-exotic own properties correctly since
+#4232. Nothing else did: the key list for `Object.keys` / `getOwnPropertyNames`
+/ `for…in` is built by walking the `$Object` own-props TABLE, and a String
+exotic's `length` and indices are DERIVED from the `[[PrimitiveValue]]`
+[[StringData]], not stored as table entries. Measured on this branch,
+`--target standalone`, before the fix (`.tmp/probe/s11.js`, `s13.js`, one
+program each):
+
+| expression | before | after | spec |
+| ---------- | ------ | ----- | ---- |
+| `Object.keys("abc")` | `[]` | `["0","1","2"]` | ✅ |
+| `Object.keys(new String("abc"))` | `[]` | `["0","1","2"]` | ✅ |
+| `Object.getOwnPropertyNames(new String("abc"))` | `["[[PrimitiveValue]]"]` | `["0","1","2","length"]` | ✅ |
+| …then `str[5] = "de"` | `["5","[[PrimitiveValue]]"]` | `["0","1","2","5","length"]` | ✅ |
+| `Object.getOwnPropertyNames("ab")` | `[]` | `["0","1","length"]` | ✅ |
+| `"0" in new String("abc")` | **false** | `true` | ✅ |
+| `for (p in new String("abc"))` | `[]` | `["0","1","2"]` | ✅ |
+
+**Three defects, one slice** — they are not separable, and the middle one is
+why the naive fix is a net ZERO:
+
+1. **No index keys in the enumerators.** New native `__strexo_push_keys(obj,
+   vec) -> i32` (`src/codegen/string-exotic-own-props.ts`) resolves the
+   [[StringData]] from either receiver shape — a `new String` wrapper
+   (`$Object` + the reserved slot) or a PRIMITIVE string reaching
+   `Object.keys("abc")` (the `$AnyString` itself; standalone does not
+   materialize the call-site ToObject) — and pushes `"0" … "len-1"`. Spliced as
+   a one-call prologue into `__object_keys`, `__object_keys_forin` and
+   `__getOwnPropertyNames`. Those indices are the LOWEST by construction (an
+   index below the [[StringData]] length is non-configurable, §10.4.3.5, so a
+   `defineProperty` can never create a competing table entry), which is why
+   pushing them ahead of the table walk IS OrdinaryOwnPropertyKeys order rather
+   than an approximation of it. `length` is a non-index key, so gOPN appends it
+   AFTER the table walk — `str[5]="de"` must read `[…,"5","length"]`, not
+   `[…,"length","5"]` — and `Object.keys` never gets it (non-enumerable).
+2. **`[[PrimitiveValue]]` leaked out of gOPN.** The all-keys walk pushed every
+   live entry; the reserved FLAG_INTERNAL slot is not an own property.
+   `Object.keys` was never affected — its walk is `__obj_ordered`, which
+   filters by [[Enumerable]].
+3. **`__extern_has` did not know about String-exotic indices**, so `"0" in str`
+   was `false`. Fixing only (1) is a NET ZERO, not a +1: `Object/keys/
+   15.2.3.14-6-3` asserts `for…in` and `Object.keys` AGREE on a String object,
+   and it had been passing **vacuously** because both were empty. Teaching the
+   enumerator alone turned that vacuous pass into a real `pass → fail` while
+   flipping two others — measured, not predicted. The for-in loop re-checks
+   each key's liveness with `__extern_has` (#2066), so every index key the
+   enumerator produced was discarded one instruction later; #4232 had taught
+   only the OWN predicate. The same consult-only prologue on `__extern_has` is
+   sound (an own property IS a HasProperty hit) and closes it.
+
+**Measured**, serial single-test standalone probes, file-copy A/B on one head
+(base copies captured at the first edit in `.tmp/base/`):
+
+| control set | rows | base | after |
+| ----------- | ---- | ---- | ----- |
+| all of `Object/{keys,getOwnPropertyNames}` + `getOwnPropertyDescriptor` + the `defineProperties/15.2.3.7-6-a-19*/20*` for-in-enumerability band + `String/prototype/{toString,valueOf}` + `language/statements/for-in` | 225 | 187 pass | **190 pass** |
+| `language/expressions/in` + `Object/{hasOwn,prototype/hasOwnProperty,prototype/propertyIsEnumerable}` + `Array/prototype/{indexOf,every}` + `String/prototype/indexOf` + `built-ins/String` + more `for-in` | 327 | 272 pass | **272 pass** |
+| **total** | **552** | **459** | **462** — 3 up, **0 down** |
+
+Flips: `Object/keys/15.2.3.14-1-3`, `Object/getOwnPropertyNames/15.2.3.4-4-44`
+(both assigned rows) and `Object/getOwnPropertyNames/non-object-argument-valid`
+(unassigned bonus). The `vec-index-enumerable.ts` for-in gate stays green —
+`defineProperties/15.2.3.7-6-a-{198,203}` both still `pass`. The one non-flip
+message change in the second set is a func-INDEX shift inside a pre-existing
+`CompileError` (`#452` → `#453`), expected from adding a native.
+
+Gates: `check:loc-budget`, `check:func-budget`, `check:coercion-sites`,
+`check:oracle-ratchet` all exit 0. `tsc` reports no error in any touched file.
+
+### Follow-ups this slice deliberately did NOT take
+
+- **`const FLAG_INTERNAL_SLOT = 0x10` in `object-runtime-descriptors.ts` is an
+  invariant living only in prose.** It duplicates `FLAG_INTERNAL` in
+  `object-runtime.ts` rather than importing it, purely so this wave's diff in
+  the C-lane-fenced file stays one contiguous region (one import + five hunks,
+  all inside the `__getOwnPropertyNames` block). A follow-up should export the
+  flag from the owning module and import it here — see the #4082 result-boxing
+  header for why this repo treats prose invariants as a defect.
+- **`for…in` over a PRIMITIVE string enumerates `String.prototype`'s methods**
+  (`toString|charAt|charCodeAt|…`, measured) instead of `["0","1","2"]`. A
+  separate receiver-classification bug in the static-unroll path, untouched.
+- **`Object.keys({"": "empty"})` is `[]`** — an empty-string property key is
+  dropped before the runtime sees it (`gOPN` also `[]`), so
+  `getOwnPropertyNames/15.2.3.4-4-b-3` still fails for a reason upstream of
+  key enumeration.
