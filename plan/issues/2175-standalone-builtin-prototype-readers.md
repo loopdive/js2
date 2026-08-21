@@ -38,6 +38,14 @@ func-budget-allow:
   # module (src/codegen/function-prototype-callable.ts); only the ordered
   # dispatch arm is here, and it must precede the generic signature count.
   - src/codegen/property-access-dispatch.ts::tryLengthAndNameReads
+coercion-sites-allow:
+  # 2026-08-21 lane D (arguments inside `new F(…)`): __box_number/__unbox_number
+  # here are a REPRESENTATION transfer, not a hand-rolled ToNumber — numeric
+  # ctor params ride the externref arguments vector and the mapped-arguments
+  # writeback restores the declared param slot type. Same class as the
+  # bound-fn-meta declaration (#4562): routing through the coercion engine
+  # would coerce values §10.4.4 says must pass through unchanged.
+  - src/codegen/fnctor-ctor-arguments.ts
 depends_on: [2101]
 origin: "2026-06-16 — sdev5 #2161a refinement: RegExp.prototype-as-object refusal is the convergent gate across RegExp/class/TypedArray standalone reflection"
 ---
