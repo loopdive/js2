@@ -3,7 +3,7 @@ id: 3995
 title: "npm-compat: pin and adapt original upstream test suites for catalog packages"
 status: ready
 created: 2026-07-30
-updated: 2026-08-21
+updated: 2026-08-22
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -394,6 +394,18 @@ React, DOM, snapshot, SSR, Stylis, and larger object-graph files remain
 explicit deferred inventory. The npm-compat generator invokes the adapter
 directly so the merge-only refresh publishes numeric results and cannot fall
 back to `adapter pending`.
+
+## 2026-08-22 styled-components utility expansion
+
+The styled-components adapter now includes the original
+`generateAlphabeticName.test.ts` utility file and registers **9/9** callbacks
+across four dependency-light utility files. Native Node and Wasm both pass all
+9 callbacks. The shared upstream assertion shim now supports the string form
+of Vitest's `toMatchInlineSnapshot`, and the adapter provides the pinned
+release version fixture used by styled-components' build-time `__VERSION__`
+constant. The remaining 37 files and 659 registrations stay visible as
+unavailable infrastructure; React, DOM, snapshot, SSR, Stylis, and larger
+object-graph coverage is not counted as passing.
 
 ## 2026-08-14 Jest get-type slice
 
