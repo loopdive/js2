@@ -64,6 +64,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js";
 import { presenceTestInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { coldFieldReadArm, findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split
+import { inheritedSetAffectsKey } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import {
   findFnctorLayoutStructsForField,
   findFnctorResidStructsForField,
@@ -585,7 +586,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
     // is cloned because this fill can splice a presence miss into multiple
     // independently-remapped instruction trees.
     const presenceMiss = (): Instr[] =>
-      ctx.standalone && ctx.inheritedSetDescriptorDirty
+      ctx.standalone && inheritedSetAffectsKey(ctx, propName)
         ? (structuredClone(fallback) as Instr[])
         : (undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }]);
 
@@ -938,7 +939,7 @@ export function fillTypedMemberGetF64Dispatch(ctx: CodegenContext): void {
           ]
         : [{ op: "f64.const", value: NaN }];
     const presenceMiss = (): Instr[] =>
-      ctx.standalone && ctx.inheritedSetDescriptorDirty
+      ctx.standalone && inheritedSetAffectsKey(ctx, propName)
         ? (structuredClone(fallback) as Instr[])
         : [{ op: "f64.const", value: NaN }];
 

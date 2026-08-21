@@ -38,7 +38,10 @@ import { ensureNativeStringHelpers, flatStringType } from "../native-strings.js"
 import { compileStringBuilderInit } from "../string-builder.js";
 import { tryEmitLinearU8New } from "../linear-uint8-codegen.js";
 import { tryCompileWithScopedVarDeclaration } from "../with-var-decl.js";
-import { bindingHasMixedAssignmentCarrier } from "../analysis/mixed-assignment-carrier.js";
+import {
+  bindingHasMixedAssignmentCarrier,
+  numericProofOverridesMixedCarrier,
+} from "../analysis/mixed-assignment-carrier.js";
 import { staticConstStringValues } from "../analysis/static-string-values.js";
 import { staticIntegerRange } from "../analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
@@ -685,7 +688,13 @@ function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type, decl?: ts.V
   const nativeLocal = nativeTypeOfDeclaration(ctx.checker, decl);
   if (nativeLocal) return nativeLocal;
   if (decl && ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) return { kind: "externref" };
-  if (decl && bindingHasMixedAssignmentCarrier(ctx, decl)) return { kind: "externref" };
+  // (#4121) A mixed-assignment demotion is "could not rule out"; a positive
+  // unboxing proof is "ruled in", and outranks it. See
+  // `numericProofOverridesMixedCarrier`.
+  const usageF64 = usageInferredLocalType(ctx, decl);
+  if (decl && bindingHasMixedAssignmentCarrier(ctx, decl)) {
+    return numericProofOverridesMixedCarrier(usageF64) ?? { kind: "externref" };
+  }
   if (isNullablePrimitiveType(type)) return { kind: "externref" };
   // (#2806) A `var x = (void 0)` binding needs an externref slot (the same one
   // `= undefined` gets), so a later reference assignment isn't coerced to numeric
@@ -695,7 +704,7 @@ function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type, decl?: ts.V
   // stay numeric for the delete/undefined f64-sentinel machinery (#1112). See
   // `varBindingNeedsExternrefForUndefined`.
   if (varBindingNeedsExternrefForUndefined(decl, ctx)) return { kind: "externref" };
-  return usageInferredLocalType(ctx, decl) ?? resolveWasmType(ctx, type);
+  return usageF64 ?? resolveWasmType(ctx, type);
 }
 
 /**
@@ -1815,6 +1824,13 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     if (mixedAssignmentCarrier) {
       (fctx.mixedAssignmentCarrierVars ??= new Set()).add(name);
     }
+    // (#4121) A positive unboxing proof outranks the demotion. Resolved HERE
+    // rather than by falling through the cascade: the cascade's `isI32Coerced`
+    // arm is exactly the specialization the comment above warns about, and the
+    // proof licenses `f64`, never `i32`.
+    const mixedCarrierProvenF64 = mixedAssignmentCarrier
+      ? numericProofOverridesMixedCarrier(usageInferredLocalType(ctx, decl))
+      : null;
     const wasmTypeBase: ValType =
       // (#3123) A widened fnctor-subclass binding (pre-hoist recorded it in
       // `fnctorWidenedLocals` — reassigned with a foreign/host value) must
@@ -1822,7 +1838,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       // re-allocates here (the pre-hoisted slot reuse below is gated on
       // plain-fn capture and does not fire for uncaptured bindings).
       mixedAssignmentCarrier
-        ? { kind: "externref" as const }
+        ? (mixedCarrierProvenF64 ?? { kind: "externref" as const })
         : isProxyTargetBinding
           ? { kind: "externref" as const }
           : fctx.forInIdentifierVars?.has(name)

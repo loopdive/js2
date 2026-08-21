@@ -2455,6 +2455,7 @@ jobs:
     # below restore the failure semantics the implicit `success()` provided.
     if: |
       !cancelled() &&
+      github.repository == 'loopdive/js2' &&
       needs.merge-report.result == 'success' &&
       needs.mg-artifact-probe.result == 'success' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
@@ -3417,7 +3418,7 @@ jobs:
   # step below for the full rationale). Both are mutually exclusive by actor.
   write-run-cache-bot:
     name: promote root baseline + cache per-SHA for queue merge (#3467/#3468)
-    if: github.event_name == 'push' && github.actor == 'github-merge-queue[bot]'
+    if: github.repository == 'loopdive/js2' && github.event_name == 'push' && github.actor == 'github-merge-queue[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -1617,6 +1617,23 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   inheritedSetDescriptorDirty: boolean;
   /**
+   * (#4602) Property KEYS a #4504-relevant descriptor could be installed
+   * under, when every trigger in the module names its key statically (an
+   * accessor declaration's literal name, a `defineProperty` call with a
+   * literal key and non-provably-writable descriptor, a literal
+   * `defineProperties`/`create` bag entry, a literal `__defineGetter__`/
+   * `__defineSetter__` key).  A trigger whose key cannot be resolved
+   * statically (freeze, a captured define builtin, a computed name, dynamic
+   * code) sets `inheritedSetDescriptorDirty` instead, which supersedes this
+   * set.  Consumers with a static property name gate per key via
+   * `inheritedSetAffectsKey`; key-dynamic runtime machinery activates on
+   * `inheritedSetAnyDirty`.  A clean key compiles byte-identical to a
+   * flag-clear module — that is the whole point: one accessor declaration in
+   * a 226KB bundle must not demote every unrelated member write (measured
+   * ~1.7x on acorn standalone, #4602).
+   */
+  inheritedSetDirtyKeys: Set<string>;
+  /**
    * (#4222) The module contains a `delete <elementAccess>`, so some array index
    * may be semantically ABSENT while its dense backing slot still holds a
    * value. `__delete_property`'s vec arm (#4010) records that as a
@@ -3890,6 +3907,16 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
       ctorFuncName: string;
       /** Exact leading-capture ABI used when the synthesized constructor was minted. */
       captureLayout: import("../fnctor-constructor-identity.js").FnctorCaptureLayout;
+      /**
+       * (#2071) The synthesized ctor was minted with an EXTERNREF result (its
+       * body may `return` a foreign object, so §10.2.1.3 step 13 is resolved
+       * at runtime via `emitConstructReturnSelect`). Every `new` site of this
+       * fnctor — builder and cache-hit alike — must report the externref
+       * result type; reporting the struct type against a widened ctor is a
+       * Wasm type error at the call site. Standalone/WASI only; absent/false
+       * keeps the historical `(ref $Struct)` ABI byte-identically.
+       */
+      resultIsExtern?: boolean;
     }
   >;
   /**

@@ -170,8 +170,13 @@ export function buildVecOrClosurePropMethodCallElseArm(
   ctx: CodegenContext,
   externGetIdx: number,
   applyClosureIdx: number,
+  // (#4221) `__extern_method_call`'s absent-callee TypeError guard, threaded
+  // down so the TERMINAL miss raises the same §13.3.6.2 step-5 error the
+  // `$Object` arm already does. A FACTORY — a shared `Instr` object would be
+  // double-remapped by the finalize walks.
+  absentCalleeGuard: () => Instr[] = () => [],
 ): Instr[] {
-  const closureArm = buildClosurePropMethodCallElseArm(ctx, externGetIdx, applyClosureIdx);
+  const closureArm = buildClosurePropMethodCallElseArm(ctx, externGetIdx, applyClosureIdx, absentCalleeGuard);
   const transferredCharAtArm = buildTransferredCharAtMethodArm(ctx, externGetIdx, applyClosureIdx);
   const isVecIdx = ctx.funcMap.get(IS_VEC_PROP_CARRIER);
   if (isVecIdx === undefined) return [...transferredCharAtArm, ...closureArm];

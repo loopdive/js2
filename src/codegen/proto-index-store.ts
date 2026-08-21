@@ -99,6 +99,7 @@
  *    resolves the subclass brand then Object — the middle hop is a measured
  *    follow-up if it ever surfaces.
  */
+import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
@@ -249,7 +250,7 @@ export function reserveProtoIndexStore(ctx: CodegenContext): void {
   // native-prototype companions.  It never creates a companion while deciding.
   // This helper is deliberately absent from descriptor-free modules so the
   // existing proto-store function space remains byte-identical.
-  if (ctx.inheritedSetDescriptorDirty) {
+  if (inheritedSetAnyDirty(ctx)) {
     reserve(PROTOIDX_SET_R, [ext, ext, ext], [i32], zero);
   }
   // (#2175 P2) `recv -> recv'` for the OWN-property views: a `$NativeProto`
@@ -552,7 +553,7 @@ export function fillProtoIndexStore(ctx: CodegenContext): void {
   fillNormKeyBody(ctx, deps);
   fillHasKBody(ctx, deps);
   fillGetKBody(ctx, deps);
-  if (ctx.inheritedSetDescriptorDirty) fillSetRBody(ctx, deps);
+  if (inheritedSetAnyDirty(ctx)) fillSetRBody(ctx, deps);
   fillHasFBody(ctx, deps);
   fillGetFBody(ctx, deps);
   fillBrandOffBody(ctx);

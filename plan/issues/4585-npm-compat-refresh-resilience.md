@@ -238,3 +238,12 @@ callbacks. The native oracle passes 321/322 (one upstream native failure), all
 The six module/runtime failures, 228 scored Wasm failures, one invalid Wasm
 module, and the 2,033 registrations from the other 100 source files remain
 explicitly visible; they are not reclassified as unavailable infrastructure.
+
+## Unit-infrastructure continuation 5
+
+The Lodash adapter now selects 18 original QUnit modules instead of seven,
+covering arithmetic, comparison, and string helpers. The expanded lane runs
+26/26 callbacks natively for both packages; Wasm passes 26/26 for `lodash` and
+22/26 for `lodash-es` (the four failures are null string-method results).
+The other 1,727 registrations remain explicitly deferred as unavailable
+infrastructure, and no upstream callback or input is rewritten.

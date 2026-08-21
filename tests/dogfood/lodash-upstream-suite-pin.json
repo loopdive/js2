@@ -10,12 +10,23 @@
   "testSourceSha256": "dff4bb034bc54534e9d73ba352accee0a2a49e657f984b25d4c391b2db36e294",
   "selectedModules": [
     "lodash.add",
+    "lodash.capitalize",
     "lodash.divide",
+    "lodash.eq",
+    "lodash.gt",
+    "lodash.gte",
+    "lodash.lowerCase",
+    "lodash.lowerFirst",
+    "lodash.lt",
+    "lodash.lte",
     "lodash.multiply",
     "lodash.replace",
+    "lodash.startCase",
     "lodash.subtract",
     "lodash.toLower",
-    "lodash.toUpper"
+    "lodash.toUpper",
+    "lodash.upperCase",
+    "lodash.upperFirst"
   ],
-  "_note": "Lodash keeps 1,753 QUnit registration sites in one 27,234-line test/test.js file. The immutable commit and source digest pin that entire original suite. The adapter copies complete upstream QUnit.module slices for seven self-contained arithmetic/string modules and runs their unchanged callbacks against the matching published modular method files; the remaining modules stay reported as deferred."
+  "_note": "Lodash keeps 1,753 QUnit registration sites in one 27,234-line test/test.js file. The immutable commit and source digest pin that entire original suite. The adapter copies complete upstream QUnit.module slices for eighteen self-contained arithmetic, comparison, and string modules and runs their unchanged callbacks against the matching published modular method files; the remaining modules stay reported as deferred."
 }

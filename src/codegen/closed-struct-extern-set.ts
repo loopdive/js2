@@ -52,6 +52,7 @@
  * (`__is_class_instance_carrier` screens them), and the lookup answers null
  * there, so the clear is a cheap no-op outside class instances.
  */
+import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
@@ -163,7 +164,7 @@ export function fillClosedStructExternSetArms(ctx: CodegenContext): void {
   // active, because only then would recursive __extern_set re-enter the new
   // descriptor decision.
   const resurrectIdx =
-    ctx.standalone && ctx.inheritedSetDescriptorDirty ? ctx.funcMap.get(INSTANCE_FIELD_RESURRECT) : undefined;
+    ctx.standalone && inheritedSetAnyDirty(ctx) ? ctx.funcMap.get(INSTANCE_FIELD_RESURRECT) : undefined;
   const externSetIdx = ctx.funcMap.get("__extern_set");
   const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
   const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
@@ -234,7 +235,7 @@ export function fillClosedStructExternSetArms(ctx: CodegenContext): void {
   // index churn here.
   const presenceDecisionAvailable =
     ctx.standalone &&
-    ctx.inheritedSetDescriptorDirty &&
+    inheritedSetAnyDirty(ctx) &&
     setResultGlobalIdx !== undefined &&
     setDecideIdx !== undefined &&
     setOwnIdx !== undefined &&
