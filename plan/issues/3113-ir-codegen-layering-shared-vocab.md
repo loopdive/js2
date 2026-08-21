@@ -123,3 +123,60 @@ byte-identical via `scripts/prove-emit-identity.mjs check` — all 56
 transitively pulling ~17 codegen modules (move the bridge to the codegen side /
 behind a narrow interface). That is a larger, design-sensitive change and is
 left open under this issue.
+
+## Implementation Plan (Fable, 2026-08-21)
+
+**Re-measured on `bc588f2f3` + the #4558/#4521 branch:** the inversion has
+kept regrowing since slice 1 — now **20 files under `src/ir/` import from
+`../codegen`, ~100 import lines** (was 6 files / 25 lines when this issue was
+filed), and `ir/integration.ts` is **7,335 LOC** (was 2,610). Top offenders:
+`integration.ts` 42 lines, `from-ast.ts` 7, `number-to-string-provider.ts` 6,
+`prepared-vector-support.ts` / `prepared-closure-support.ts` /
+`backend/linear-integration.ts` 5 each. Consequences for sequencing:
+
+- The original step 2 (move `integration.ts` to the codegen side) is now MORE
+  disruptive and collides with the in-flight R1–R4 branches (#3520–#3523),
+  which edit that file heavily. **Do not do it in this dispatch.**
+- The guard (original step 4) is the urgent part — the boundary regrew 4×
+  since this issue was FILED because nothing enforces it. AC 1's "grep empty"
+  is not reachable today; the guard must be a **ratchet**, not an emptiness
+  check.
+
+**S1 — the layering ratchet (this dispatch, Opus):**
+
+1. `scripts/check-ir-layering.mjs`: walk `src/ir/**/*.ts`, count import lines
+   whose specifier resolves into `src/codegen/` (match `from "../codegen` and
+   `from "../../codegen`; ignore type-only? NO — count `import type` too, the
+   boundary is about the dependency graph). Output per-file counts.
+2. Baseline `scripts/ir-layering-baseline.json` seeded at the measured
+   current truth (per-file map + total). Gate semantics cloned from
+   `scripts/check-linear-ir.ts`: any per-file increase OR any NEW file with
+   codegen imports fails; decreases pass with a hint to `--update`;
+   `--update` refreshes.
+3. Wire as `"check:ir-layering"` in package.json and add to the `quality` CI
+   job exactly where `check:ir-fallbacks` is invoked (find it in
+   `.github/workflows/` and mirror the invocation).
+4. Prove the gate fires: a unit test (`tests/issue-3113-ir-layering-gate.test.ts`)
+   that runs the script against a synthetic tree (tmp dir with a violating
+   file) and asserts failure, plus asserts the committed baseline matches the
+   script's live measurement (so the baseline cannot drift silently).
+
+**S2 — `from-ast.ts` import review (same dispatch, only if S1 lands clean):**
+classify each of its 7 codegen imports as (a) shared vocabulary → move the
+module (or the needed part) below IR like js-tag was, or (b) a bridge call →
+leave, listed in the baseline. Move ONLY category (a), one import per commit,
+each proven byte-identical via `node scripts/prove-emit-identity.mjs check`
+(all 56 emits IDENTICAL) + ts7 typecheck. If a candidate is not a
+dependency-free leaf, do not move it — record why in this file instead.
+
+**S3 — deferred, do NOT attempt now:** the `integration.ts` bridge move.
+Blocked on #3520/#3521 landing (active edits). The ratchet from S1 protects
+the boundary meanwhile.
+
+**Validation bar for the PR:** `check:ir-layering` green + fires on synthetic
+violation; `prove-emit-identity` IDENTICAL if any file moved; ts7 typecheck;
+`check:ir-fallbacks` / `check:ir-only` / `check:linear-ir` unchanged; LOC
+budget (new script file is fine; touching `src/codegen/index.ts` needs care).
+
+**Amended AC (supersedes AC 1–2 above):** the enforced state is "committed
+baseline, no growth, ratchet-to-zero direction"; AC 3 unchanged.
