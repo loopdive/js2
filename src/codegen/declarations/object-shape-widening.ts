@@ -14,6 +14,7 @@ import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { FieldDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { createDeclaredNestedWriteClassifier } from "./declared-nested-write.js";
+import { collectEvalMutableNames } from "./eval-reachable-object-shape.js"; // (#4206)
 import { fnctorBodyMayReturnForeignObject } from "../fnctor-foreign-return.js"; // (#2071)
 import {
   bindingHasIrPlannedOpenWithTarget,
@@ -900,6 +901,8 @@ export function collectGrowableObjectLiterals(
   // `0` restores the old "every depth-2 write opens the root" policy.
   const keepClosedOuterForDeclaredNestedWrites = process.env.JS2WASM_KEEP_CLOSED_NESTED_TABLES !== "0";
   const nestedWriteTargetsDeclaredField = createDeclaredNestedWriteClassifier(ctx, sourceFile);
+  // (#4206) Names a direct `eval(<literal>)` in this module could mutate.
+  const evalMutableNames = collectEvalMutableNames(sourceFile);
 
   // Does a contextual type at a use site REQUIRE the closed-struct representation?
   // True only for a CONCRETE nominal struct (named own properties, not any/unknown/
@@ -1020,6 +1023,7 @@ export function collectGrowableObjectLiterals(
               markStandaloneAccessorDefineTargets(s, varName, mopSet);
               markStandaloneOutOfShapeDataDefineTargets(s, varName, shape, mopSet); // #4524
             }
+            if (evalMutableNames.has(varName)) mopSet.add(varName); // (#4206)
             // Consumer-safety (#1897/#2837): when the var ALSO flows into a
             // CONCRETE nominal-struct-typed position (call/new arg, return,
             // assignment), the externref `$Object` rep would fail that

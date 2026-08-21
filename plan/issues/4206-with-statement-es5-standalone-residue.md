@@ -4,7 +4,7 @@ title: "`with` statement, ES5 standalone: 73-row residue reduced to 51; first IR
 status: ready
 sprint: current
 created: 2026-08-07
-updated: 2026-08-15
+updated: 2026-08-21
 priority: high
 horizon: xl
 feasibility: hard
@@ -71,6 +71,17 @@ func-budget-allow:
   # foreign-eval arms it sits between. The analysis is elsewhere
   # (declarations.ts::functionReturnsThroughWithScope); this is the dispatch.
   - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
+  # #4206 eval-reachable-literal slice (2026-08-21): +3 / +1 lines of WIRING
+  # only — one `collectEvalMutableNames(sourceFile)` call in the outer function
+  # and one `if (evalMutableNames.has(varName)) mopSet.add(varName)` beside the
+  # three existing `markStandalone*Targets` markers it joins. The whole analysis
+  # lives in the new leaf module
+  # src/codegen/declarations/eval-reachable-object-shape.ts. The marker line has
+  # to sit in that block: it feeds the SAME `mopSet` whose concrete-struct
+  # consumer guard immediately below is what keeps the promotion ABI-safe, so
+  # hoisting it elsewhere would bypass that guard.
+  - src/codegen/declarations/object-shape-widening.ts::collectGrowableObjectLiterals
+  - src/codegen/declarations/object-shape-widening.ts::scanStatements#2
 ---
 
 # #4206 — the `with` statement residue, correctly sized
@@ -836,3 +847,119 @@ CHECK#1 passes but CHECK#2 returns the outer `b` (`"a"`) instead of the second
 `S13.2.2_A17_T2/T3` and `A18_T1/T2` are a different subsystem again: they assign
 to **undeclared** globals (`__obj = …`, `getRight = …`) and `A18` uses
 `with (arguments)`. Out of reach without the implicit-global-binding work.
+
+## 2026-08-21 (later) — 10 of the 12 `language/statements/with` residue rows closed
+
+Measured on `claude/pull-from-upstream-zgdo0m` @ `88bd2ccf0e`, `--target
+standalone`, single-test in-process runner, QuickJS eval provider built locally
+(artifact `13c33e175f16`, adapter key `1429ec7ecf2163fd`). Row set: the 12
+`language/statements/with` non-passes in
+`benchmarks/results/test262-standalone-results-20260821-122045.jsonl`. All 12
+re-verified failing on that head before any edit.
+
+### Cluster D — a direct `eval` could mutate a literal the compiler had CLOSED (7 rows)
+
+`S12.10_A4_T{4,5,6}` and `S12.10_A5_T{1,2,3,6}` — all seven `fail` → `pass`.
+
+The membrane was NOT at fault, which is what the split below establishes. In a
+module with `eval`, `myObj` crosses to QuickJS as a live membrane wrapper and
+`__membrane_set` / `__membrane_delete` run the compiled object's own dynamic
+paths. What fails is the REPRESENTATION on the compiled side: a closed struct
+pins each field's storage type and its key set, so:
+
+| eval'd code, `var myObj = { p1: 'a' }` | observed |
+| --- | --- |
+| `with(myObj){ p1 = 'b' }` (string → string) | correct — this is why `A4_T1..T3` always passed |
+| `with(myObj){ p1 = {b:'hi'} }` | write silently DROPPED, `p1` stays `'a'` |
+| `myObj.p1 = {b:'hi'}` (no `with`) | stores **null** |
+| `with(myObj){ del = delete p1 }` | `del === true`, `'p1' in myObj` still true |
+
+Isolation: adding a syntactic `delete myObj.p1` under `if (false)` — which
+routes the literal to the open `$Object` via the existing
+`markStandaloneDeleteTargets` poison — makes every one of those cases behave
+correctly with no membrane change at all.
+
+Fix: `collectEvalMutableNames`
+(src/codegen/declarations/eval-reachable-object-shape.ts) joins the three
+existing `markStandalone*Targets` markers in
+`collectGrowableObjectLiterals`, so a var an `eval` can mutate is promoted to
+the open representation and inherits that block's concrete-struct consumer
+guard unchanged.
+
+The trigger is deliberately narrow — opening a literal costs the fixed-key
+`struct.get` fast path — and requires all four of: a direct by-name `eval`; a
+compile-time-known argument (string / substitution-free template); the variable
+occurring as an IDENTIFIER token in that text (scanned with `ts.createScanner`,
+so a name inside a nested string or comment does not count); and the text
+containing something that can mutate (`=`, a compound assignment, `++`/`--`,
+`delete`). **Declared residual:** a computed eval source (`eval(src)`) promotes
+nothing — it says nothing about which names it touches, and opening every
+literal in the module on its account was not worth the cost.
+
+Blast radius measured, not argued: all **538** currently-passing standalone rows
+whose source contains an `eval(<literal>)` were re-run — 538/538 still pass.
+
+### Cluster E — Tier-2 `with` bound a COPY of its target (3 rows)
+
+`S12.10_A3.5_T{1,2,4}` — all three `fail` → `pass`.
+
+`compileDynamicWithStatement` asked `compileExpression` for `externref`. For a
+nominal struct that routes through the #2358 ToPrimitive-boundary arm, which
+REIFIES (field-copies) a literal carrying `valueOf`/`toString` into a fresh
+`$Object`. §14.11.7 binds ToObject(target) — the same object — so every write
+made through the object environment record landed on the copy and was lost.
+
+It is silent in a way worth recording: the body's own read of the name answers
+the value it just wrote (the copy is consistent with itself), so only an
+observation of the ORIGINAL object shows the loss.
+
+Factor isolation (each row a separate compile+run):
+
+| shape | `o.p1` after `with (o) { p1 = 'x' }` |
+| --- | --- |
+| `{p1, valueOf: fn}` inside `for (k in o)` | `'a'` — WRONG |
+| `{p1, toString: fn}` inside `for (k in o)` | `'a'` — WRONG |
+| `{p1, foo: fn}` inside `for (k in o)` | `'x'` — ok (name-triggered, not fn-member-triggered) |
+| `{p1, n: 5}` inside `for (k in o)` | `'x'` — ok |
+| `{p1, valueOf: fn}` with NO loop | `'x'` — ok (still proves Tier-1) |
+
+So both factors are required: the enclosing `for…in` is what pushes the
+statement onto Tier-2, and `valueOf`/`toString` is what makes the Tier-2
+coercion copy.
+
+Fix: compile the target with NO expected type and convert the reference by hand
+(`extern.convert_any` for a `ref`/`ref_null`), so the record holds the live
+object. `__extern_get`/`__extern_set` already carry closed-struct arms for it.
+
+### Still failing — `S12.10_A5_T4` / `A5_T5`, and they advanced
+
+Both now delete correctly (`'p1' in myObj` is `false`) and fail one check
+later, on a defect that is NOT `with`-related and reproduces with a plain
+syntactic `delete`:
+
+```js
+var o = { p1: {a:'hello'}, del:false };
+delete o.p1;
+o.p1.a;            // returns undefined; must throw TypeError
+typeof o.p1;       // "object"; must be "undefined"
+```
+
+A member read off a deleted/absent property of an open `$Object` neither throws
+nor types as `undefined`. That is its own head — property-access on the open
+representation — and should not be filed against `with`.
+
+### `language/statements/function` — 25 rows re-verified, clustered, none taken
+
+All 25 reproduce on this head. Clustering (so the next lane does not re-derive
+it), with the two `with`-adjacent clusters already covered above:
+
+| cluster | rows | first cause |
+| --- | ---: | --- |
+| `f.prototype` / `prototype.constructor` object model | 4 | `S13.2.2_A1_T1/T2`, `S13.2_A4_T2`, `13.2-17-1` — overlaps the function-prototype lane, deliberately not taken here |
+| `new F()` whose ctor RETURNS a function | 3 | `S13.2.2_A8_T1/T2/T3` — `typeof new F()` is `"object"`, want `"function"`; this is #2071's area |
+| `arguments` extras lost on an INDIRECT call | 2 | `S13.2_A2_T1/T2` — `var g = F(); g("x")` reads `arguments[0]` as null when the callee has 0 formals; direct calls are fine |
+| `+` picks numeric when one operand is `arguments[i]` | 1 | `S13_A2_T2` — `(function(arg){return arg + arguments[1]})(1,"1")` is `2`, want `"11"`; `typeof arguments[1]` is already correctly `"string"`, so the vec is right and the OPERATOR is wrong |
+| implicit-global / `with (arguments)` | 4 | `S13.2.2_A17_T2/T3`, `A18_T1/T2` — unchanged from the earlier entry |
+| `var f = function(){}` hoists carrying its VALUE | 2 | `S13.2.2_A19_T7/T8`. Re-measured with no `with` anywhere: `typeof __func` before the declaration line answers `"function"`; `this.hasOwnProperty('__func')` answers `false`. Two separate heads (hoisting model; global-binding unification) |
+| unimplemented builtin | 1 | `S13.2.1_A5_T2` — `Math.sin` in standalone |
+| unclustered singles | 8 | `S13_A6_T1`, `S13.2.2_A5_T1`, `A2`, `A4_T2`, `S13_A15_T3`, `S13_A11_T4`, `13.2-18-1`, `S13.2.1_A6_T2` |
