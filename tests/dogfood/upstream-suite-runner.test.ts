@@ -229,6 +229,41 @@ ${UPSTREAM_TEST_EXPORTS}`;
     }
   }, 90_000);
 
+  it("supports Vitest global stubs and restores globals", async () => {
+    const root = mkdtempSync(join(tmpdir(), "js2-upstream-runner-"));
+    const generatedPath = join(root, "suite.ts");
+    const source = `${UPSTREAM_TEST_SHIM}
+QUnit.test("global stub", function () {
+  const key = "__js2_upstream_runner_global_stub";
+  expect(typeof vi.stubGlobal).toBe("function");
+  vi.stubGlobal(key, 42);
+  expect(globalThis[key]).toBe(42);
+  vi.unstubAllGlobals();
+  expect(globalThis[key]).toBeUndefined();
+});
+${UPSTREAM_TEST_EXPORTS}`;
+
+    try {
+      const previousNodeOptions = process.env.NODE_OPTIONS;
+      process.env.NODE_OPTIONS = [previousNodeOptions, "--import=tsx"].filter(Boolean).join(" ");
+      let result;
+      try {
+        result = await compileAndRunUpstreamModule({ generatedPath, source, timeoutMs: 60_000 });
+      } finally {
+        // biome-ignore lint/performance/noDelete: `process.env.X = undefined` sets the string "undefined" instead of unsetting the var
+        if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+        else process.env.NODE_OPTIONS = previousNodeOptions;
+      }
+      expect(result.native.statuses).toEqual([true]);
+      expect(result.native.errors).toEqual([""]);
+      expect(result.compile?.success).toBe(true);
+      expect(result.compile?.validates).toBe(true);
+      expect(result.wasm?.statuses).toEqual([true]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 90_000);
+
   it("forwards a package-selected Node platform to the isolated compiler worker", async () => {
     const root = mkdtempSync(join(tmpdir(), "js2-upstream-runner-"));
     const generatedPath = join(root, "suite.ts");

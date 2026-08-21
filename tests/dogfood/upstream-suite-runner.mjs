@@ -163,6 +163,7 @@ function __upstreamExpect(actual) {
   return positive;
 }
 const expect = __upstreamExpect;
+const __upstreamGlobalStubs = [];
 const vi = {
   fn(implementation) {
     function spy() {
@@ -183,6 +184,20 @@ const vi = {
     spy.mockRestore = function() { object[key] = original; };
     object[key] = spy;
     return spy;
+  },
+  stubGlobal(key, value) {
+    const name = String(key);
+    const hadOwn = Object.prototype.hasOwnProperty.call(globalThis, name);
+    __upstreamGlobalStubs.push({ name, hadOwn, previous: globalThis[name] });
+    globalThis[name] = value;
+  },
+  unstubAllGlobals() {
+    for (let index = __upstreamGlobalStubs.length - 1; index >= 0; index--) {
+      const stub = __upstreamGlobalStubs[index];
+      if (stub.hadOwn) globalThis[stub.name] = stub.previous;
+      else delete globalThis[stub.name];
+    }
+    __upstreamGlobalStubs.length = 0;
   },
   stubEnv(key, value) {
     if (globalThis.process && globalThis.process.env) globalThis.process.env[key] = String(value);

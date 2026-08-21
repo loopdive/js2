@@ -11,6 +11,7 @@
     "src/http-exception.test.ts",
     "src/request.test.ts",
     "src/helper/accepts/accepts.test.ts",
+    "src/helper/testing/index.test.ts",
     "src/middleware/powered-by/index.test.ts",
     "src/middleware/trailing-slash/index.test.ts",
     "src/utils/accept.test.ts",
