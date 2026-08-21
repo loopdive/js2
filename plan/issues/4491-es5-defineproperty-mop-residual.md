@@ -83,6 +83,16 @@ loc-budget-allow:
   # the Math value body in `ensureStandaloneBuiltinStaticMethodClosure` — see
   # the func-budget entry; the body lives in math-static-value-body.ts.
   - src/codegen/builtin-value-read.ts
+  # 2026-08-21 wave-4 lane J, slice J2 (+5): `Array.prototype.join`'s #3224
+  # beyond-the-backing arm rendered EVERY hole as "", but a hole INHERITS
+  # `Array.prototype[k]` and the read path already sees it — `x[1]` answered 1
+  # while `x.join()` answered "0,". The whole fallback body (gate, native
+  # registration, scratch local, the [[Get]] + ToString arm) lives in the NEW
+  # module src/codegen/array-join-proto-hole.ts; `compileArrayJoinNative` gains
+  # one import line, one arming call and the `else:` swap. The arming call has
+  # to be in this function — it must run BEFORE the existing `externToStrIdx`
+  # capture or that index shifts underneath it (#2043).
+  - src/codegen/array-methods.ts
 oracle-ratchet-allow:
   # 2026-08-21: one getTypeAtLocation in varBindingNeedsExternrefForUndefined's
   # new call arm — the same raw-checker idiom as the surrounding predicate;
@@ -119,6 +129,15 @@ coercion-sites-allow:
   # an extracted `Math.sin` coerces its argument exactly like an extracted
   # `Math.max` does. No ToNumber/ToString/ToPrimitive matrix is hand-rolled.
   - src/codegen/math-static-value-body.ts
+  # 2026-08-21 wave-4 lane J, slice J2: NOT new coercion vocabulary — the gate
+  # counts `__extern_toString` as +2 only because the call moved into a new
+  # file. It is the SAME runtime ToString the join fold's boxed-any arm already
+  # calls (`buildJoinBoxedElementToString`, array-join-element.ts) and the same
+  # one `String(a[i])` uses; the inherited-hole arm has to stringify identically
+  # to the backed-element arm or `x.join()` and `x[1] + ""` would disagree about
+  # one index. Nothing is hand-rolled — the nullish/undefined test reuses
+  # `__extern_is_undefined`, exactly as `joinEmptyElementTest` does.
+  - src/codegen/array-join-proto-hole.ts
 func-budget-allow:
   # 2026-08-21 defineProperties/create edge slice: the `Properties`-map entry
   # model gains a PASS-THROUGH arm (a map entry that is not an object literal)
@@ -2407,3 +2426,189 @@ So the boundary is: **the 4 rows are reachable only behind a `[[Prototype]]`
 representation change, and the whole ES5 standalone gap behind that change is
 those same 4 rows.** Worth doing when the `$Object` proto model is opened for
 another reason; not worth opening it for.
+
+## Wave-4 lane J — slice J1: the UNBACKABLE end of the array-index domain (2026-08-21)
+
+Base `da724268b0`, `--target standalone`, in-process `runTest262File` probe.
+
+### The defect
+
+`vec-index-domain.ts` (#4434) established the model the whole vec family now
+uses: `vec.length` is LOGICAL, the backing `$data` array may be shorter, and
+every index in `[capacity, length)` is a HOLE. The READ side
+(`vec-oob-read.ts`) and the `a.length = N` SETTER honour it. The element-STORE
+side and `new Array(n)` did not — both unconditionally sized the backing to the
+requested index/length, so three ordinary ES5 boundary idioms aborted the whole
+module with an **uncatchable Wasm trap**, not a wrong answer:
+
+| source                  | measured on base                                  |
+| ----------------------- | ------------------------------------------------- |
+| `x[2147483648] = 1`     | trap `array element access out of bounds`         |
+| `x[4294967294] = 1`     | trap `array element access out of bounds`         |
+| `new Array(4294967295)` | trap `requested new array is too large`           |
+| `x[k-2] = k`, k = 2**32 | trap `requested new array is too large`           |
+
+Two independent causes, both fixed:
+
+1. **The index comparisons were SIGNED.** The index local holds a u32 bit
+   pattern (index `2**32-2` arrives as `-2`), so `idx >= capacity` answered "no"
+   and `array.set` ran out of bounds; `idx + 1 > vec.length` answered "yes" for
+   an array whose length is already a huge u32, clobbering it downward.
+2. **A numeric-literal index above `i32.MAX` SATURATED.**
+   `tryEmitStaticI32Expression` refuses anything over `0x7fffffff` and the
+   generic `compileExpression(key, {kind:"i32"})` fallback lowers it through
+   `i32.trunc_sat_f64_s` → `2147483647`. That silently renamed the index:
+   `x[2147483648] = 1` set `length` to `2147483648` where §10.4.2.2 requires
+   `2147483649`, and `x[4294967294]` collapsed onto `x[2147483647]`'s slot.
+
+### The change
+
+New module `src/codegen/vec-sparse-index.ts` holds every body:
+the unbackable-index flag, the three guard-condition builders, the guarded
+element store, and the `new Array(n)` length/capacity split. The two call sites
+(`expressions/assignment.ts` vec arm, `expressions/new-indexed.ts` Array arm)
+gain dispatch only, and `array-nonindex-key.ts::compileElementIndexI32` gains
+one arm for the high numeric literal. **No LOC / func / coercion / oracle
+allowance was needed** — all four gates pass clean.
+
+The ceiling is `16777216`, numerically identical to `SAFE_GROW_CEILING` in
+`array-length-define.ts`, deliberately: an index write and a `length` write must
+not disagree about which lengths are backed.
+
+### Measured
+
+Rows flipped `fail → pass` (2 of the 4 in the bucket):
+
+| row                                        | before                             | after |
+| ------------------------------------------ | ---------------------------------- | ----- |
+| `built-ins/Array/S15.4.5.2_A1_T1`          | trap: element access out of bounds | PASS  |
+| `built-ins/Array/length/S15.4.2.2_A2.1_T1` | trap: new array too large          | PASS  |
+
+Control: **112 / 112 pass, zero regressions** — the passing neighbours of
+`Array/prototype/{join,push,pop,slice,indexOf,map,forEach,sort,splice}`,
+`Array/length`, `built-ins/Array`, `language/statements/for-in`, `Object/keys`
+and `JSON/stringify` (the 112 rows of a 196-candidate sweep that pass on base).
+Sparse-tail reads were separately verified: after `a[20000000] = 9` on a
+3-element array, `a.length` is `20000001` and `a[0]`, `a[5]`, `a[19999999]`,
+`a[20000000]` and the dynamic `a[i]` forms all answer correctly (no trap).
+
+### Deliberate trade
+
+A store at an index in `(16.7M, 2**32-2]` now LOSES its value (the slot becomes
+a hole) where before it allocated a backing that large and kept it. That
+exchanges a working-but-memory-hostile case for a whole class of terminal traps,
+and it matches the rule `array-length-define.ts` already applies to the same
+decision. No control row exercised it.
+
+### Declined in this bucket, with reasons
+
+- **`built-ins/Array/S15.4_A1.1_T10`** — needs genuine SPARSE element STORAGE:
+  it writes and then reads back `x[k-2]` for `k = 2, 4, …, 2**32`, so indices
+  `2147483646` and `4294967294` must round-trip a value. A hole cannot. This is
+  the value-representation wall, not a guard bug. It no longer traps at the
+  STORE; it now fails at the read of the unbacked index.
+- **`built-ins/Array/length/S15.4.5.2_A3_T4`** — blocked by a **pre-existing,
+  unrelated** module-scope defect that this slice did not introduce (verified by
+  file-copy A/B against `da724268b0`): at MODULE-GLOBAL scope, an out-of-range
+  index store combined with a `length` assignment corrupts ordinary element
+  reads.
+
+  ```js
+  var x = [0, 1, 2];
+  x[1];            // 1
+  x[100] = 7;
+  x.length = 2;
+  // …but with BOTH statements present in the module, the FIRST read above
+  // already answers `undefined` on base and after.
+  ```
+
+  The same code inside a function expression is correct, and either statement
+  alone is correct. Not diagnosed further — it is a separate carrier/lowering
+  choice for module-global arrays, outside this slice.
+
+## Wave-4 lane J — slice J2: a join HOLE may inherit `Array.prototype[k]` (2026-08-21)
+
+Base `1dfa99b78a` (slice J1), `--target standalone`.
+
+### The defect
+
+§23.1.3.18 step 4.b renders an ABSENT index as the empty string — but "absent"
+is `Get(O, ToString(k))`, a full [[Get]] **with the prototype walk**, not "this
+array's backing has no slot there". The #3224 bounds guard in
+`compileArrayJoinNative` conflated the two: every index past the physical
+backing joined as `""`, unconditionally. So the read path and `join` disagreed
+about the same index:
+
+```js
+Array.prototype[1] = 1;
+var x = [0]; x.length = 2;   // index 1 is a hole in x's backing
+x[1];                        // 1     — the #4159 routed read already walks the chain
+x.hasOwnProperty("1");       // false — correct, it is inherited
+x.join();                    // "0,"  — expected "0,1"
+x.toString();                // "0,"  — toString IS join
+```
+
+### The change
+
+New module `src/codegen/array-join-proto-hole.ts`: the gate, the native
+registration + scratch local (`ensureJoinProtoHoleLocal`), and the replacement
+`else` arm, which re-asks `__extern_get_idx` — the SAME prototype-aware indexed
+[[Get]] the routed element read uses, so the two cannot answer differently — and
+still renders `""` when the walk finds nothing.
+
+`compileArrayJoinNative` gains one import line, one arming call and the `else:`
+swap (+5 LOC, allowance recorded above). The arming call must be in that
+function: it has to run BEFORE the existing `externToStrIdx` capture or that
+index shifts underneath it (#2043).
+
+Gate: `ctx.standalone && ctx.protoIndexDirty` — the #4160 pre-scan flag, set
+only by a module that writes an INDEX onto `Array.prototype` /
+`Object.prototype`. With the flag clear, a hole cannot inherit anything, `""` is
+exactly right, and the fold is byte-identical. The arm also only replaces the
+`else` of a guard that already existed, so a DENSE array never reaches it.
+
+### Measured
+
+| row                                          | before | after |
+| -------------------------------------------- | ------ | ----- |
+| `built-ins/Array/prototype/toString/S15.4.4.2_A3_T1` | `"0,"` | PASS  |
+
+Controls, both file-copy A/B against `1dfa99b78a`:
+
+- The 112-row passing-neighbour set: **112 / 112, unchanged.**
+- **The exact blast radius** — all 150 files under `built-ins/Array/**` that
+  write `Array.prototype[…]` or `Object.prototype[…]`, i.e. every file that
+  turns this gate on: 65 pass after, 85 fail after. Running the 85 on base:
+  **85 / 85 also fail there** (no regression). Running the 65 on base: **64
+  pass, 1 fails** — and that one is `toString/S15.4.4.2_A3_T1`, the intended
+  flip. One row moved, in one direction.
+
+### Declined in the same family, with reasons
+
+- **`concat/S15.4.4.4_A3_T{1,2,3}`** — the same inheritance question for
+  `concat`, and a gate routing a typed vec receiver to the existing §23.1.3.1
+  loop (`array-concat-spec.ts`, prototype-aware via `__extern_get_idx`) was
+  built and measured. It advances all three (`arr[1]` goes `0 → 1`, which is
+  correct) but flips **none**, because each then needs one of two things this
+  slice does not deliver, so it was NOT kept:
+  - `A3_T1` asserts `arr.hasOwnProperty("1") === true` on the result. The loop
+    returns an `$ObjVec`, and `__hasOwnProperty` (object-runtime.ts) has arms
+    for `$Object` and the carrier bag but none for `$ObjVec` — measured
+    `c.hasOwnProperty("0") === false` while `0 in c === true` on a freshly
+    concatenated result.
+  - `A3_T2`/`A3_T3` assert `b[1] === undefined`. `b` is statically `number[]`,
+    so the read lowers to f64 and `undefined` arrives as `NaN`. That is the
+    value-representation wall, not a concat bug.
+- **`toLocaleString/S15.4.4.3_A{1_T1,3_T1}`** — `toLocaleString` is not aliased
+  "by accident": `array-methods.ts` routes `case "toLocaleString"` into
+  `compileArrayJoin` deliberately (#2863 Phase 2, "the locale-independent
+  default is the same comma-join"). §23.1.3.32 requires
+  `Invoke(element, "toLocaleString")` per element, which is a new fold, not a
+  gate — J2's hole arm does not help, since the elements here are present.
+- **`filter/15.4.4.20-9-b-{7,11,14,15}`**, **`toString/S15.4.4.2_A1_T2`**,
+  **`concat/S15.4.4.4_A1_T{2,4}`** — the f64-hole value-representation wall.
+  Direct measurement on `[0, , 2]` with `Array.prototype[1] = 1` set: the
+  callback receives `NaN` at index 1 and the index is COUNTED, because the array
+  is an f64 vec whose hole is a real `NaN`/`0` in the backing and
+  `__extern_has_idx` therefore answers 1. `$Hole` exists only for externref
+  vecs. Nothing above the value representation fixes these.

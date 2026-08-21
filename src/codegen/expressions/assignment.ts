@@ -11,6 +11,8 @@ import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
 import { emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3
 import { emitHoleToUndefined, holeSentinelInstrs } from "../array-holes.js";
+// prettier-ignore
+import { emitUnbackableIndexFlag, guardedElementSetInstrs, needsGapFillCondInstrs, needsGrowCondInstrs } from "../vec-sparse-index.js";
 import { tryEmitLinearU8ElementCompound, tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
 import { emitAnyAdd, emitModulo, emitToInt32, emitToUint8Clamp } from "../binary-ops.js";
 import { popBody, pushBody } from "../context/bodies.js";
@@ -5219,11 +5221,12 @@ function compileElementAssignment(
       kind: "i32",
     });
 
-    fctx.body.push({ op: "local.get", index: idxLocal });
-    fctx.body.push({ op: "local.get", index: dataLocal });
-    fctx.body.push({ op: "array.len" });
-    fctx.body.push({ op: "i32.ge_s" }); // idx >= capacity?
-
+    // (#4491 lane J) An index above the 16M allocation guard is UNBACKABLE: the
+    // flag gates the grow, the gap-fill and the `array.set`, and every index
+    // compare below turns UNSIGNED (the local holds a u32 bit pattern — index
+    // 2**32-2 arrives as `-2`). Full rationale in vec-sparse-index.ts.
+    const unbackedLocal = emitUnbackableIndexFlag(fctx, idxLocal);
+    fctx.body.push(...needsGrowCondInstrs(unbackedLocal, idxLocal, dataLocal));
     fctx.body.push({
       op: "if",
       blockType: { kind: "empty" },
@@ -5325,9 +5328,7 @@ function compileElementAssignment(
       fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 0 }); // current length
       fctx.body.push({ op: "local.set", index: gapOldLenLocal });
       // if (idx > length) array.fill(data, length, undefined, idx - length)
-      fctx.body.push({ op: "local.get", index: idxLocal });
-      fctx.body.push({ op: "local.get", index: gapOldLenLocal });
-      fctx.body.push({ op: "i32.gt_s" });
+      fctx.body.push(...needsGapFillCondInstrs(unbackedLocal, idxLocal, gapOldLenLocal));
       fctx.body.push({
         op: "if",
         blockType: { kind: "empty" },
@@ -5343,11 +5344,8 @@ function compileElementAssignment(
       });
     }
 
-    // array.set: data[idx] = val (using potentially grown data)
-    fctx.body.push({ op: "local.get", index: dataLocal });
-    fctx.body.push({ op: "local.get", index: idxLocal });
-    fctx.body.push({ op: "local.get", index: valLocal });
-    fctx.body.push({ op: "array.set", typeIdx: arrTypeIdx });
+    // array.set: data[idx] = val (skipped for an unbackable index).
+    fctx.body.push(...guardedElementSetInstrs(unbackedLocal, dataLocal, idxLocal, valLocal, arrTypeIdx));
 
     // Update length if idx+1 > current length:
     // if (idx + 1 > vec.length) vec.length = idx + 1
@@ -5356,7 +5354,7 @@ function compileElementAssignment(
     fctx.body.push({ op: "i32.add" });
     fctx.body.push({ op: "local.get", index: vecLocal });
     fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 0 }); // get length
-    fctx.body.push({ op: "i32.gt_s" });
+    fctx.body.push({ op: "i32.gt_u" });
     fctx.body.push({
       op: "if",
       blockType: { kind: "empty" },
