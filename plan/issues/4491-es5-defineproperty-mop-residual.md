@@ -2612,3 +2612,31 @@ Controls, both file-copy A/B against `1dfa99b78a`:
   is an f64 vec whose hole is a real `NaN`/`0` in the backing and
   `__extern_has_idx` therefore answers 1. `$Hole` exists only for externref
   vecs. Nothing above the value representation fixes these.
+
+## Wave-5 standing-team dispatch plan (2026-08-21, base `c3522cad12`)
+
+Model change by project-lead order: a STANDING team of four Opus lanes fed from
+the TaskList, instead of per-wave fire-and-forget dispatch. The tech-lead
+session files/updates the implementation plans here and in the sibling issue
+files, keeps the TaskList stocked, integrates each lane's worktree serially
+(gates as commit blockers), and re-measures.
+
+| lane | task | rows | plan seed |
+| --- | --- | ---: | --- |
+| T1 | transferred builtin calls — `Array.prototype.X.call(plainObj)`, `String.prototype.{split,slice,substring,trim}` on non-String receivers, transferred `String.fromCharCode` closure | 16 (`.tmp/wave5-T1.txt`) | lane J re-fenced 4 Array rows here (its filter/9-b-2 isolation proves the non-transferred core passes); #2875 sizes the String half as its own L-slice (split/concat reflective glue bodies); lane F measured the fromCharCode pair (value survives, `typeof` right, no wired closure body — needs a static-method-body slice + [[Construct]] refusal). transferred-native-proto-call.ts (wave-3 salvage) is the existing machinery to extend. |
+| T2 | Object descriptor/introspection residual — defineProperty (19), defineProperties (6), keys/gOPN/gOPD/freeze/isFrozen/valueOf/prototype | 60 (`.tmp/wave5-T2.txt`) | the wave-2/3 MOP slices closed everything whose cause lived in object-ops.ts/object-runtime-descriptors.ts; what remains is per-row: verify each against current head FIRST (list predates ~50 landed fixes), bucket by error, expect accessor-on-builtin-proto, global-object rows, arguments-object defines. |
+| T3 | harness-blocked rows (10) + instanceof (6) + assignment (5) | 21 (`.tmp/wave5-T3.txt`) | harness rows fail inside propertyHelper/compareArray machinery — fix the underlying primitive each one exercises, never the harness. instanceof: lane A landed boolean branding; residual is builtin-namespace-carrier edges. |
+| T4 | function-code (12) + annexB function-code (4) + statements/variable (3) + expressions in/addition/call/object (12) | 31 (`.tmp/wave5-T4.txt`) | function-code rows overlap the strict poison pills (provider-realm wall — measure and fence, don't fight) and arguments aliasing; annexB is sloppy-mode function semantics. |
+
+Known walls the team must NOT re-attempt without a design change (measured
+verdicts already on record above): f64-hole value representation ($Hole is
+externref-only), provider-realm carrier identity, [[Prototype]] slot typing
+($Object.$proto vs $NativeProto — priced at exactly 4 rows), toLocaleString
+per-element Invoke fold, `arguments` isArray branding, #2151 computed-key
+dispatch-model change.
+
+Owed follow-up issues surfaced by wave 4 (file when a lane touches the area):
+module-global array-carrier corruption (x[100]=7 + x.length=2 at module scope,
+lane J), $ObjVec arm for __hasOwnProperty (lane J's concat gate blocker),
+ToString-of-object user-toString dispatch (#1472, 6 rows + lane F's
+String()-vs-call divergence).
