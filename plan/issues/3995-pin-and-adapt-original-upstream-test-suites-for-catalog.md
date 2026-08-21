@@ -616,3 +616,14 @@ remaining 211 Wasm failures and six module-init runtime failures are compiler
 or runtime semantics; they are now scored rather than hidden as unavailable
 infrastructure. The full 120-file inventory and 2,058 deferred registrations
 remain explicit in the report.
+
+The same generic runner now exposes `it.skip`/`test.skip`, `todo`, and skipped
+suite registration semantics. This admits Hono's original Node-facing
+`utils/buffer.test.ts` and `utils/crypto.test.ts` without changing their
+callbacks. The compile worker also forwards the host's standard Web
+constructors when a suite explicitly selects the Node platform. The expanded
+18-file selection registers **311/311 native callbacks**, compiles 18 modules
+(17 validate), and scores **90/311 Wasm passes**; the two intentionally skipped
+upstream callbacks remain outside the denominator. The unresolved TextEncoder
+and crypto behavior is reported as Wasm compatibility failure, not relabeled as
+unavailable infrastructure. Deferred inventory is now 2,044 registrations.
