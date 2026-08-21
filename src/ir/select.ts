@@ -73,7 +73,7 @@ import { objectLiteralDataPropertyName } from "./property-key-fold.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
-import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "../codegen/async-static.js";
+import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "./async-static.js";
 import { closureSignatureEquals, type IrClassShape, type IrClosureSignature, type IrType } from "./nodes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";

@@ -1,6 +1,6 @@
 {
-  "generated": "2026-08-21T11:00:59.142Z",
-  "total": 94,
+  "generated": "2026-08-21T11:05:00.893Z",
+  "total": 92,
   "files": {
     "ir/analysis/i32-slots.ts": 2,
     "ir/backend/linear-integration.ts": 1,
@@ -11,7 +11,7 @@
     "ir/dynamic-number-lowering.ts": 3,
     "ir/fixed-literal-loop-proof.ts": 1,
     "ir/fmod-selection.ts": 2,
-    "ir/from-ast.ts": 6,
+    "ir/from-ast.ts": 5,
     "ir/i32-pure-bitwise.ts": 2,
     "ir/integration.ts": 41,
     "ir/math-runtime-providers.ts": 3,
@@ -20,7 +20,6 @@
     "ir/prepared-closure-support.ts": 5,
     "ir/prepared-component-sealing.ts": 3,
     "ir/prepared-vector-support.ts": 5,
-    "ir/remainder-fast-path.ts": 1,
-    "ir/select.ts": 1
+    "ir/remainder-fast-path.ts": 1
   }
 }
