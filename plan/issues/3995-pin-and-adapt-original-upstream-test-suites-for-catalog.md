@@ -709,3 +709,14 @@ source-hash check. A narrow namespace-import rewrite binds the static members
 used by the original tests; no callback body or expected result is rewritten.
 The two native snapshot cases remain harness-incompatible and the Wasm
 semantic failures remain visible in the scored report.
+
+## 2026-08-21 UUID common-suite CI checkpoint
+
+UUID's existing pinned v14.0.1 runner is now part of the shared
+`npm-small-upstream-suites.test.ts` package gate. The gate verifies the complete
+official ten-file inventory and, when `DOGFOOD_UUID_UPSTREAM_SUITE=1`, runs all
+**75/75 original callbacks** in both lanes: the Node oracle passes 75, all ten
+modules compile and validate, and Wasm scores **10 passed / 65 failed**. The
+failures remain visible compatibility findings (WebCrypto typed-array
+crossing, missing global `crypto`, UUID parsing/exception semantics, and the
+v3/v5 hash path); none are relabeled as unavailable infrastructure.

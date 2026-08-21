@@ -110,6 +110,12 @@ describe("small npm package upstream suites", () => {
       testFileCount: 256,
       registrationSites: 1761,
     });
+    expect(pin("uuid")).toMatchObject({
+      tag: "v14.0.1",
+      commit: "70177807e9229dfacde2038dc1e722f1828f358a",
+      testFiles: expect.any(Array),
+    });
+    expect(pin("uuid").testFiles).toHaveLength(10);
   });
 
   const clsxHeavy = process.env.DOGFOOD_CLSX_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -285,6 +291,19 @@ describe("small npm package upstream suites", () => {
     expect(report.extraction.unavailableInfra).toBe(3054);
     expect(report.compile).toMatchObject({ modules: 12, succeeded: 12, validated: 12 });
     expect(report.results).toMatchObject({ scored: 232, passed: 113, failed: 119, runtimeFailed: 0 });
+  });
+
+  const uuidHeavy = process.env.DOGFOOD_UUID_UPSTREAM_SUITE === "1" ? it : it.skip;
+  uuidHeavy("runs UUID's complete original runtime callback inventory", { timeout: 600_000 }, async () => {
+    const report = await run("uuid");
+    expect(report.extraction).toMatchObject({
+      upstreamTestsSeen: 75,
+      admitted: 75,
+      rejected: 0,
+    });
+    expect(report.results).toMatchObject({ nativePassed: 75, scored: 75, passed: 10, failed: 65 });
+    expect(report.compile).toMatchObject({ success: true, validates: true });
+    expect(report.compile.files).toHaveLength(10);
   });
 
   const tailwindcssHeavy = process.env.DOGFOOD_TAILWINDCSS_UPSTREAM_SUITE === "1" ? it : it.skip;
