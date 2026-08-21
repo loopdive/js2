@@ -643,3 +643,20 @@ expanded 19-file selection registers **316/316 native callbacks** (up from
 The five new callbacks still expose existing Hono route/object compiler
 failures; only the former `vi.stubGlobal is not a function` harness failure was
 removed. Deferred inventory is now 2,039 registrations.
+
+## 2026-08-21 Vitest environment-stub checkpoint
+
+The shared upstream shim now gives `vi.stubEnv` and `vi.unstubAllEnvs` real
+Vitest-style save/restore behavior. Each environment write records the prior
+own-property state and restores or deletes it in reverse order. A runner
+regression covers the contract without depending on a host-only process
+global.
+
+Hono's original `src/helper/dev/index.test.ts` is now admitted because its
+`NO_COLOR` setup/teardown no longer leaves the process environment mutated.
+The unchanged selection registers **324/324 native callbacks** (up from
+316/316), compiles all 20 modules (18 validate), and leaves the Wasm score at
+**90/324** while the two invalid modules remain compiler findings. Deferred
+inventory is now **2,031** registrations. The native oracle was run with
+`NO_COLOR` unset so the upstream color expectations are not contaminated by
+the local shell environment.
