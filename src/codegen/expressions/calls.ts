@@ -178,6 +178,8 @@ import {
   ensureArrayNativeProtoGlue,
   ensureDataViewNativeProtoGlue,
   ensureDateNativeProtoGlue,
+  ensureNumberNativeProtoGlue,
+  ensureBooleanNativeProtoGlue,
   ensureObjectNativeProtoGlue,
   ensureStringNativeProtoGlue,
   ensureGeneratorPrototypeNativeProtoGlue,
@@ -1100,7 +1102,15 @@ function tryEmitNativeProtoReflectiveCall(
     brand = ensureDataViewNativeProtoGlue(ctx); // (#3173)
   else if (ifaceName === "ArrayBuffer")
     brand = ensureArrayBufferNativeProtoGlue(ctx); // (#1595)
-  else if (ifaceName === "Date") brand = ensureDateNativeProtoGlue(ctx); // (#3219)
+  else if (ifaceName === "Date")
+    brand = ensureDateNativeProtoGlue(ctx); // (#3219)
+  // (#4582) `valueOf` ONLY — the other Number/Boolean members still refuse, and
+  // routing those here would turn today's answers into TypeErrors. Without this
+  // arm both fell to the legacy `.call` tail that drops `thisArg` and returns 0:
+  // `Boolean.prototype.valueOf.call(Object(true))` answered `false`, the Number
+  // twin `undefined` — silent wrong values, measured on base.
+  else if (member === "valueOf" && ifaceName === "Number") brand = ensureNumberNativeProtoGlue(ctx);
+  else if (member === "valueOf" && ifaceName === "Boolean") brand = ensureBooleanNativeProtoGlue(ctx);
   if (brand === undefined) return undefined;
 
   const glue = getNativeProtoBuiltinGlue(ctx, brand);
