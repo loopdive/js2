@@ -11,12 +11,26 @@
     "lib/utils/__tests__/arrayEqual.test.mjs",
     "lib/utils/__tests__/appendRuleName.test.mjs",
     "lib/utils/__tests__/containsString.test.mjs",
+    "lib/utils/__tests__/getSchemeFromUrl.test.mjs",
+    "lib/utils/__tests__/hasEmptyLine.test.mjs",
+    "lib/utils/__tests__/hasInterpolation.test.mjs",
     "lib/utils/__tests__/isCounterIncrementCustomIdentValue.test.mjs",
     "lib/utils/__tests__/isCounterResetCustomIdentValue.test.mjs",
+    "lib/utils/__tests__/isCustomMediaQuery.test.mjs",
     "lib/utils/__tests__/isCustomFunction.test.mjs",
+    "lib/utils/__tests__/isCustomProperty.test.mjs",
+    "lib/utils/__tests__/isCustomSelector.test.mjs",
+    "lib/utils/__tests__/isKeyframeSelector.test.mjs",
     "lib/utils/__tests__/isNonNegativeInteger.test.mjs",
     "lib/utils/__tests__/isOnlyWhitespace.test.mjs",
+    "lib/utils/__tests__/isNumbery.test.mjs",
+    "lib/utils/__tests__/isScssVariable.test.mjs",
     "lib/utils/__tests__/isSingleLineString.test.mjs",
+    "lib/utils/__tests__/isStandardSyntaxHexColor.test.mjs",
+    "lib/utils/__tests__/isStandardSyntaxKeyframesName.test.mjs",
+    "lib/utils/__tests__/isStandardSyntaxProperty.test.mjs",
+    "lib/utils/__tests__/isStandardSyntaxSelector.test.mjs",
+    "lib/utils/__tests__/isStandardSyntaxValue.test.mjs",
     "lib/utils/__tests__/isValidHex.test.mjs",
     "lib/utils/__tests__/isValidIdentifier.test.mjs",
     "lib/utils/__tests__/isVariable.test.mjs",
@@ -25,5 +39,5 @@
     "lib/utils/__tests__/ruleMessages.test.mjs",
     "lib/utils/__tests__/vendor.test.mjs"
   ],
-  "_note": "The complete lib/**/__tests__ inventory is verified. This adapter selects sixteen synchronous utility modules with local implementation imports and no filesystem, PostCSS, snapshot, plugin, or async runner requirements. Original callback bodies and inputs are unchanged; all other files remain explicit deferred inventory."
+  "_note": "The complete lib/**/__tests__ inventory is verified. This adapter selects thirty synchronous utility modules with local implementation imports and no filesystem, PostCSS, snapshot, plugin, or async runner requirements. Original callback bodies and inputs are unchanged; all other files remain explicit deferred inventory."
 }
