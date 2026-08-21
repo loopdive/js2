@@ -1,13 +1,13 @@
 ---
 id: 4594
 title: "STANDALONE: [[Construct]] ignores an object return — `new F()` answers `this` even when the constructor returns a different object (7 rows, one defect)"
-status: ready
+status: blocked
 sprint: current
 created: 2026-08-21
 updated: 2026-08-21
 priority: high
 horizon: m
-feasibility: medium
+feasibility: hard
 reasoning_effort: high
 task_type: bug
 area: codegen
@@ -53,3 +53,27 @@ programme. Do not bundle them.
   builtin is untouched.
 - Guard 551 clean; GC-lane suites relative to the merge base (constructor
   lowering is lane-shared).
+
+
+## 2026-08-21 — RECLASSIFIED: blocked on value representation, not a bounded fix
+
+The wave-2 function lane located the exact site, and it overturns this issue's
+"bounded constructor-lowering fix" framing:
+
+- `src/codegen/statements/control-flow.ts:341-366` — the construction result
+  dispatch.
+- **The runtime §10.2.1.3 step-13 probe already EXISTS**
+  (`construct-return-value.ts`; its header even names `S13.2.2_A8_T1/T2`) — but
+  it is only reached when the construction result is an **externref**.
+- The **nominal-struct arm decides statically** with `ref.test <own struct>` and
+  falls back to `this` in the else; its own comment records that a foreign
+  object "cannot be represented by the struct-typed `new` result".
+
+So the defect is confined to constructors whose `new` result is struct-typed,
+and closing it means **widening that result to externref** — a representation
+change with the usual blast radius (every consumer of the struct-typed result
+loses its static shape). That is #4464/value-representation territory.
+
+Recorded per the stop-and-report rule rather than forced. The 7 rows stay
+classified blocked-on-representation; whoever takes the widening should start
+from the existing probe, which is already correct for the externref arm.

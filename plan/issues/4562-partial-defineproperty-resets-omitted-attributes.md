@@ -125,3 +125,34 @@ Both lanes' conformance, GC-lane unit suites relative to the merge base, and the
 
 QuickJS-blocked counts measured alongside: `Object/defineProperty` 16 of 1131,
 `Function/prototype/bind` 9 of 100.
+
+## 2026-08-21 — standalone fix MEASURED and a composition finding
+
+Atomic base-vs-new (one script owning checkout/restore):
+
+| | base | new |
+| --- | --- | --- |
+| `built-ins/Object/defineProperty` (1131) | 1077 | 1077 (±0) |
+| `built-ins/Function` tree (509) | 265 | **268 (+3, 0 regressions)** |
+| 551-row guard | 551 | 551 |
+| js-host Function tree | 338 | 338 (±0) |
+
+js-host output verified **byte-for-byte identical** by compiled-binary hash
+(strong form: standalone hashes differ as they must, host hashes identical) —
+after the lane caught its own first attempt being vacuous (an un-awaited async
+`compile()` hashed the string "NO-BINARY" on every input; the tell was that the
+STANDALONE lane also read "identical", contradicting an already-measured delta).
+
+**Composition finding worth keeping:** the +3 are bind `instance-length-*` rows
+that set `Object.defineProperty(target, "length", {value})` and THEN bind. The
+old merge destroyed the target's own record, so the (already landed) bind-length
+seed read a mangled value. Fixing the merge input fixed the bind rows — i.e.
+**#4562 unblocked part of #4563's cluster, the reverse of the dependency
+direction the issues describe.**
+
+**Hardening added after measurement:** `__fninst_bag_owns` is reserved as a
+constant-0 placeholder until `fillFunctionInstanceProps` clears its checks. A
+placeholder answers "the bag never owns this key", which would re-fire the seed
+on every define and silently revert a second define — a wrong value rather than
+a missing one. `fillFnIntrinsicSeed` now refuses to fill while the placeholder
+stands, degrading to no seed.
