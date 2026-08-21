@@ -139,6 +139,26 @@ USER node
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
 ENV PATH=$PATH:/usr/local/share/npm-global/bin
 
+# Debian's /etc/profile HARDCODES PATH for non-root login shells, clobbering the
+# ENV PATH set above. Every LOGIN shell - which includes every ssh session and
+# any `bash -l` / `zsh -l`, and therefore anything tmux or ttyd starts that way -
+# then loses /usr/local/share/npm-global/bin, and `claude` / `pnpm` report
+# "command not found" despite being installed. profile.d is sourced after
+# /etc/profile has set PATH, so re-adding it there wins; zsh needs the explicit
+# hook because it does not read /etc/profile.d on its own.
+USER root
+RUN printf '%s\n' \
+      'case ":$PATH:" in' \
+      '  *":/usr/local/share/npm-global/bin:"*) ;;' \
+      '  *) PATH="$PATH:/usr/local/share/npm-global/bin" ;;' \
+      'esac' \
+      'export PATH' \
+      > /etc/profile.d/npm-global-path.sh && \
+    chmod 644 /etc/profile.d/npm-global-path.sh && \
+    mkdir -p /etc/zsh && \
+    echo '. /etc/profile.d/npm-global-path.sh' >> /etc/zsh/zshenv
+USER node
+
 # Set the default shell to zsh rather than sh
 ENV SHELL=/bin/zsh
 

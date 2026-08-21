@@ -72,6 +72,7 @@ import { emitJsonStringifyValue } from "./json-codec-native.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
+import { emitMathValueReadBody } from "./math-value-read.js"; // (#4565)
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureExternStrictEqHelper } from "./any-helpers.js";
 import { sameValueNumberOps } from "./same-value-number-ops.js";
 import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
@@ -1456,6 +1457,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
           ],
         },
       );
+    } else if (genericThrowBody && builtinName === "Math" && emitMathValueReadBody(ctx, closureFctx, propName)) {
     } else if (genericThrowBody) {
       // (#2984 Phase 3) Degrade-to-catchable body: a real TypeError instance +
       // `throw` — the EXACT helper the Phase-2 proto refusal bodies use,
