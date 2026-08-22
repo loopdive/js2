@@ -38,6 +38,7 @@ files:
   - tests/fixtures/deno-core-0.407.0/hello_world_usage.js
   - src/codegen/analysis/realm-global-structural-carrier.ts
   - src/codegen/expressions/calls-closures.ts
+  - src/codegen/expressions/calls-optional.ts
   - src/codegen/index.ts
   - src/codegen/statements/variables.ts
   - tests/helpers/deno-core-bootstrap-probe.ts
@@ -200,8 +201,13 @@ that exposed and then fixed two honest compiler boundaries:
 The exact pinned `00_primordials.js`, `00_infra.js`, `02_timers.js`,
 `01_core.js`, `mod.js`, and `hello_world_usage.js` sources now compile as one
 state-sharing standalone/`deno` program. The raw artifact is 3,975,227 bytes
-with SHA-256
+on the measured Darwin arm64 producer, with SHA-256
 `452d485bd70d7cb8d5d7958e0aebfddf71463a8cb9710de56dffc9ff23f50e85`.
+Raw Wasm layout is producer-platform-specific: the Linux x64 CI producer emits
+the same byte count and passes the same value checks with SHA-256
+`0738f4ca2b8852ee7262bd306efb70754dc4c7d5532288af2b16f46caca0eeda`.
+The regression test therefore pins the six source hashes, graph shape, imports,
+size, and behavior rather than one platform's raw-artifact digest.
 Target-gated standardized `try_table` lowering lets Wasmtime 47.0.3 precompile
 it to a distinct 62,035,464-byte target-specific artifact with SHA-256
 `05b75d7f1e46f92565c42e5a8a3e336983e7e2b0eecfe4889dadab9075988a5a`.
@@ -374,8 +380,11 @@ V8X_JS2WASM_DENO_CORE_AOT_MODULE=/private/tmp/deno-core-452d485b.cwasm \
 cargo run -p deno_core --example hello_world
 ```
 
-The current six-source raw bootstrap artifact is 3,975,227 bytes with SHA-256
+The current Darwin arm64 six-source raw bootstrap artifact is 3,975,227 bytes with SHA-256
 `452d485bd70d7cb8d5d7958e0aebfddf71463a8cb9710de56dffc9ff23f50e85`.
+Linux x64 CI emits the same byte count and semantic result with SHA-256
+`0738f4ca2b8852ee7262bd306efb70754dc4c7d5532288af2b16f46caca0eeda`;
+the raw binary digest is not treated as cross-platform canonical.
 The compiler-side proof boots it in two stores, reaches `42`/`43`/`44` twice,
 records two sums and six prints per store, and executes none of the seven
 deferred imports. Wasmtime precompilation passes 1/1 in 500.49 seconds and

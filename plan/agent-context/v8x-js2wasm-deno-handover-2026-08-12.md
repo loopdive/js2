@@ -34,8 +34,11 @@ follow-up is committed on that PR branch at the exact head recorded below.
 - Exact raw artifact: `/private/tmp/deno-core-host-ops.wasm`; the six pinned
   `00_primordials.js`, `00_infra.js`,
   `02_timers.js`, `01_core.js`, `mod.js`, and `hello_world_usage.js` sources
-  compile to 3,975,227 bytes with SHA-256
+  compile on the measured Darwin arm64 producer to 3,975,227 bytes with SHA-256
   `452d485bd70d7cb8d5d7958e0aebfddf71463a8cb9710de56dffc9ff23f50e85`.
+  Linux x64 CI produces the same size and behavior with SHA-256
+  `0738f4ca2b8852ee7262bd306efb70754dc4c7d5532288af2b16f46caca0eeda`;
+  raw layout is not cross-platform canonical.
 - Precompiled artifact: `/private/tmp/deno-core-452d485b.cwasm`, 62,035,464
   bytes with SHA-256
   `05b75d7f1e46f92565c42e5a8a3e336983e7e2b0eecfe4889dadab9075988a5a`.
@@ -276,8 +279,10 @@ pnpm exec vitest run \
 
 ## Last validation
 
-- Exact six-source compiler artifact: 3,975,227 raw bytes, SHA-256
+- Exact six-source compiler artifact on Darwin arm64: 3,975,227 raw bytes, SHA-256
   `452d485bd70d7cb8d5d7958e0aebfddf71463a8cb9710de56dffc9ff23f50e85`.
+  Linux x64 CI reports the same size and semantics with SHA-256
+  `0738f4ca2b8852ee7262bd306efb70754dc4c7d5532288af2b16f46caca0eeda`.
   Two stores reach `42`/`43`/`44`, commit two sums and six prints each, reproduce
   the exact `TypeError`/output, and call none of seven deferred imports.
 - Focused exact-bootstrap test: 1/1 passed. Focused realm-carrier regressions:

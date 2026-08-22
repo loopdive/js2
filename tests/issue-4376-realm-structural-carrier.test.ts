@@ -174,6 +174,79 @@ describe("#4376 — realm structural-object carrier", () => {
     expect((exports.test as () => number)()).toBe(4042);
   });
 
+  it("reuses the receiver captured by an optional carrier call", async () => {
+    const exports = await instantiate(`
+      type DenoLike = {
+        core?: {
+          value(): number;
+        };
+      };
+
+      let reads = 0;
+      const first: any = {};
+      first.value = (): number => 10;
+      const second: any = {};
+      second.value = (): number => 20;
+      const deno: any = {};
+      Object.defineProperty(deno, "core", {
+        get(): any {
+          reads++;
+          return reads === 1 ? first : second;
+        },
+      });
+      (globalThis as any).__optionalDenoCarrier = deno;
+
+      export function test(): number {
+        reads = 0;
+        const Deno = (globalThis as any).__optionalDenoCarrier as DenoLike;
+        return (Deno.core?.value() ?? -1) * 100 + reads;
+      }
+    `);
+
+    expect((exports.test as () => number)()).toBe(1001);
+  });
+
+  it("keeps nine-argument carrier calls on the typed field route", async () => {
+    const exports = await instantiate(`
+      type DenoLike = {
+        op(
+          a: number,
+          b: number,
+          c: number,
+          d: number,
+          e: number,
+          f: number,
+          g: number,
+          h: number,
+          i: number,
+        ): number;
+      };
+
+      const deno: any = {};
+      deno.op = function (
+        a: number,
+        b: number,
+        c: number,
+        d: number,
+        e: number,
+        f: number,
+        g: number,
+        h: number,
+        i: number,
+      ): number {
+        return a + b + c + d + e + f + g + h + i;
+      };
+      (globalThis as any).__wideDenoCarrier = deno;
+
+      export function test(): number {
+        const Deno = (globalThis as any).__wideDenoCarrier as DenoLike;
+        return Deno.op(1, 2, 3, 4, 5, 6, 7, 8, 9);
+      }
+    `);
+
+    expect((exports.test as () => number)()).toBe(45);
+  });
+
   it("finalizes Array.isArray over carriers registered by compileMulti", async () => {
     const exports = await instantiateMulti(
       {

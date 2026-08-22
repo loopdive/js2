@@ -74,6 +74,9 @@ import {
  */
 type FuncCandidate = { funcTypeIdx: number; structTypeIdx: number; returnType: ValType | null };
 
+/** `fillApplyClosure` only emits dynamic method dispatchers for arities 0..8. */
+const REALM_DYNAMIC_CALL_MAX_ARITY = 8;
+
 /**
  * TypeScript gives an unannotated JavaScript function that reads `arguments`
  * a synthetic trailing rest symbol in its checker signature. That symbol is
@@ -989,6 +992,7 @@ export function compileCallablePropertyCall(
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
   className: string,
+  precompiledReceiver?: { localIdx: number; type: ValType },
 ): InnerResult | undefined {
   const methodName = ts.isPrivateIdentifier(propAccess.name)
     ? "__priv_" + propAccess.name.text.slice(1)
@@ -1070,8 +1074,20 @@ export function compileCallablePropertyCall(
   // compiling the receiver, so the capture below rides the ONE evaluation.
   let bind: ObjectLiteralMethodReceiverBind | undefined;
 
+  const compileReceiver = (expectedType?: ValType): ValType | null => {
+    if (precompiledReceiver === undefined) {
+      return compileExpression(ctx, fctx, propAccess.expression, expectedType);
+    }
+    fctx.body.push({ op: "local.get", index: precompiledReceiver.localIdx });
+    if (expectedType !== undefined && !valTypesMatch(precompiledReceiver.type, expectedType)) {
+      coerceType(ctx, fctx, precompiledReceiver.type, expectedType);
+      return expectedType;
+    }
+    return precompiledReceiver.type;
+  };
+
   const compileCallableFieldValue = (): void => {
-    const recvResult = compileExpression(ctx, fctx, propAccess.expression);
+    const recvResult = compileReceiver();
     if (bind) {
       const recvType = recvResult === null || typeof recvResult === "symbol" ? undefined : recvResult;
       if (!recvType || !captureObjectLiteralMethodReceiver(fctx, recvType, bind)) bind = undefined;
@@ -1165,6 +1181,7 @@ export function compileCallablePropertyCall(
   if (
     (ctx.standalone || ctx.wasi) &&
     !expr.arguments.some((argument) => ts.isSpreadElement(argument)) &&
+    expr.arguments.length <= REALM_DYNAMIC_CALL_MAX_ARITY &&
     expressionDescendsFromRealmStructuralBinding(ctx, fctx, propAccess.expression)
   ) {
     const { newIdx: objVecNewIdx, pushIdx: objVecPushIdx } = ensureObjVecBuilders(ctx);
@@ -1173,7 +1190,7 @@ export function compileCallablePropertyCall(
     flushLateImportShifts(ctx, fctx);
     const externGetIdx = ctx.funcMap.get("__extern_get");
     if (externGetIdx !== undefined) {
-      const receiverType = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
+      const receiverType = compileReceiver({ kind: "externref" });
       if (receiverType === null) {
         fctx.body.push({ op: "ref.null.extern" });
       } else if (receiverType.kind !== "externref") {
