@@ -587,7 +587,7 @@ the probe is deliberately too small to be a corpus pass-rate claim.
 
 ## Harness-seam checkpoint (2026-08-22)
 
-The next infrastructure slice is prepared in a pending PR. The generated ReactDOM
+The next infrastructure slice is prepared in [PR #4775](https://github.com/loopdive/js2wasm/pull/4775). The generated ReactDOM
 setup now recognizes upstream `async function act(...)` declarations before
 injecting its fallback, so the native oracle no longer fails with duplicate
 `act` declarations. It also places setup after test-owned `document` bindings
