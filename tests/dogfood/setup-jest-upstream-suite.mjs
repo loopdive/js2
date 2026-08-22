@@ -17,6 +17,11 @@ const JEST_GET_TYPE_PIN = {
   sourceSha256: "568e74bbefa9a86accea3c9289cfb93568cd4354bc822650a0e203b03bca341d",
 };
 
+const JEST_UTIL_PIN = {
+  version: "30.4.1",
+  sourceSha256: "ef7320f8e85b76a67a65ec29e9c55e724b7a25de5b2aad75c3ed1c82a53cc7d4",
+};
+
 function resolveDetectNewlineSource(pin = DETECT_NEWLINE_PIN) {
   const workspaceNodeModules = resolve(HERE, "../../node_modules");
   const direct = join(workspaceNodeModules, "detect-newline/index.js");
@@ -76,6 +81,24 @@ function resolveJestGetTypeSource(suite, pin = JEST_GET_TYPE_PIN) {
   const sha256 = createHash("sha256").update(source).digest("hex");
   if (sha256 !== pin.sourceSha256) {
     throw new Error(`[dogfood] @jest/get-type source hash mismatch: expected ${pin.sourceSha256}, got ${sha256}`);
+  }
+  return { source, sha256 };
+}
+
+function resolveJestUtilFormatTimeSource(suite, pin = JEST_UTIL_PIN) {
+  const sourcePath = join(suite.root, "packages/jest-util/src/formatTime.ts");
+  if (!existsSync(sourcePath)) {
+    throw new Error(`[dogfood] Jest requires jest-util@${pin.version}; source is missing`);
+  }
+  const source = readFileSync(sourcePath, "utf8");
+  const packagePath = join(suite.root, "packages/jest-util/package.json");
+  const packageVersion = JSON.parse(readFileSync(packagePath, "utf8")).version;
+  if (packageVersion !== pin.version) {
+    throw new Error(`[dogfood] jest-util version mismatch: expected ${pin.version}, got ${packageVersion}`);
+  }
+  const sha256 = createHash("sha256").update(source).digest("hex");
+  if (sha256 !== pin.sourceSha256) {
+    throw new Error(`[dogfood] jest-util formatTime source hash mismatch: expected ${pin.sourceSha256}, got ${sha256}`);
   }
   return { source, sha256 };
 }
@@ -141,5 +164,32 @@ export function setupJestUpstreamSuite(options = {}) {
     ) + "\n",
   );
   writeFileSync(join(getTypeRoot, "index.ts"), getType.source);
+
+  // jest-jasmine2's queueRunner imports formatTime through the published
+  // package name. Materialize only that exact release-tag utility in a tiny
+  // ESM package adapter; its implementation remains the upstream source.
+  const utilPin = suite.pin.dependencies?.["jest-util"] ?? JEST_UTIL_PIN;
+  const util = resolveJestUtilFormatTimeSource(suite, utilPin);
+  const utilRoot = join(suite.root, "node_modules/jest-util");
+  mkdirSync(utilRoot, { recursive: true });
+  writeFileSync(
+    join(utilRoot, "package.json"),
+    JSON.stringify(
+      {
+        name: "jest-util",
+        version: utilPin.version,
+        type: "module",
+        main: "./index.ts",
+        exports: "./index.ts",
+        _sourceSha256: util.sha256,
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  writeFileSync(
+    join(utilRoot, "index.ts"),
+    'export { default as formatTime } from "../../packages/jest-util/src/formatTime.ts";\n',
+  );
   return suite;
 }

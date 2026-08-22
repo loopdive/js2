@@ -831,3 +831,20 @@ modules compile and validate, and Wasm scores **124/249**. The two original
 snapshot callbacks remain harness-incompatible and the 125 Wasm failures are
 scored compatibility findings. The remaining **3,037 registrations** from 228
 verified files remain explicitly reported as unavailable infrastructure.
+
+## 2026-08-22 Jest queue-runner package seam checkpoint
+
+The original `jest-jasmine2/src/__tests__/queueRunner.test.ts` file is now
+selected. Its `jest-util` package-name import is materialized as a
+hash-verified ESM adapter exposing the release-tag `formatTime` implementation;
+the six upstream callback bodies and timeout inputs are unchanged. The shared
+Jest transform also strips type-only named imports from the native CommonJS
+normalization path, so the Node oracle registers all six callbacks.
+
+The exact run now covers **257 callbacks across 14 selected files**: Node
+admits **255/255**, all 14 modules compile, 13 validate, and Wasm scores
+**124/255**. The queue-runner module's invalid Wasm is a compiler validation
+finding (`call_ref` received one argument but requires two), not unavailable
+package infrastructure; its six callbacks remain in the denominator and are
+reported as compiler-blocked. The remaining **3,031 registrations** from 227
+verified files remain explicitly reported as unavailable infrastructure.

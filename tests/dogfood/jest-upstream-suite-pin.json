@@ -21,7 +21,8 @@
     "packages/jest-diff/src/__tests__/escapeControlCharacters.test.ts",
     "packages/jest-config/src/__tests__/stringToBytes.test.ts",
     "packages/jest-jasmine2/src/__tests__/pTimeout.test.ts",
-    "packages/jest-matcher-utils/src/__tests__/Replaceable.test.ts"
+    "packages/jest-matcher-utils/src/__tests__/Replaceable.test.ts",
+    "packages/jest-jasmine2/src/__tests__/queueRunner.test.ts"
   ],
   "dependencies": {
     "detect-newline": {
@@ -31,7 +32,11 @@
     "@jest/get-type": {
       "version": "30.1.0",
       "sourceSha256": "568e74bbefa9a86accea3c9289cfb93568cd4354bc822650a0e203b03bca341d"
+    },
+    "jest-util": {
+      "version": "30.4.1",
+      "sourceSha256": "ef7320f8e85b76a67a65ec29e9c55e724b7a25de5b2aad75c3ed1c82a53cc7d4"
     }
   },
-  "_note": "The complete packages/**/__tests__ inventory is verified. The adapter runs the original Jest utility files against their matching release-tag TypeScript implementations, including jest-jasmine2's timer-driven pTimeout tests and jest-matcher-utils' Replaceable object/array/Map paths. Verified package-name seams cover @jest/get-type, detect-newline, node:util/types, and node:os; the shared runner supplies deterministic spies, fake timers, and cleanup between generated modules. Runner, snapshot, filesystem, worker, async, DOM, and larger package graphs remain explicit deferred coverage."
+  "_note": "The complete packages/**/__tests__ inventory is verified. The adapter runs the original Jest utility files against their matching release-tag TypeScript implementations, including jest-jasmine2's timer-driven pTimeout and queueRunner tests and jest-matcher-utils' Replaceable object/array/Map paths. Verified package-name seams cover @jest/get-type, jest-util's formatTime, detect-newline, node:util/types, and node:os; the shared runner supplies deterministic spies, fake timers, and cleanup between generated modules. Runner, snapshot, filesystem, worker, async, DOM, and larger package graphs remain explicit deferred coverage."
 }
