@@ -7083,6 +7083,16 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
 
   const handler: ProxyHandler<any> = {
     get(_t, key) {
+      // (#4618) Once preventExtensions materialized the key set onto the
+      // target (React dev's Object.freeze(element)), §10.5.8 requires [[Get]]
+      // to return SameValue as the target's non-configurable non-writable
+      // data property. Re-deriving the value below can mint a FRESH wrapper
+      // each read, which fails SameValue — serve the locked target's own
+      // value verbatim (prototype/dynamic keys still fall through).
+      if (!Reflect.isExtensible(_t)) {
+        const lockedDesc = Reflect.getOwnPropertyDescriptor(_t, key);
+        if (lockedDesc !== undefined && "value" in lockedDesc) return lockedDesc.value;
+      }
       const val = safeGetField(key);
       const primitiveValue = _nativePrimitiveToHost(val, currentExports());
       if (primitiveValue !== _MISS) return primitiveValue;
