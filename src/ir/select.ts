@@ -2673,6 +2673,24 @@ function dynamicUsesAreMoveOnly(
         if (!scanExpr(a, true)) return false;
         continue;
       }
+      // #2949 — the SYMMETRIC counterpart of the unbox arm above: a CONCRETE
+      // argument reaching a dynamic callee parameter crosses the same carrier
+      // boundary as a concrete equality operand, and the direct-call lowering
+      // already boxes it there through the canonical tag-aware boxer.
+      //
+      // Without this arm the scan demanded a dynamic-shaped operand at every
+      // dynamic parameter position, so a caller that merely HAS a dynamic
+      // binding of its own (which is what makes this scan run at all) was
+      // rejected for an argument that has nothing to do with that binding —
+      // e.g. Acorn's `isIdentifierStart(code, astral)` passing its proven-f64
+      // `code` to `isInAstralSet(code, set)`, whose own `code` is dynamic.
+      //
+      // Admission is exactly the operand family `boxConcreteToDynamic`
+      // accepts, so the claim can never withdraw on a missing box.
+      if (!argumentIsDynamic && expectedKind === "dynamic" && concreteDynamicAssignmentOperandIsBuildable(unwrap(a))) {
+        if (!scanExpr(a, false)) return false;
+        continue;
+      }
       if (!scanExpr(a, expectedKind === "dynamic")) return false;
     }
     return true;
@@ -8167,7 +8185,23 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (isUnrepresentableModuleBinding(expr)) {
       return shapeNo("expr-module-storage-unrepresentable", expr);
     }
-    if (scope.has(expr.text)) return true;
+    if (scope.has(expr.text)) {
+      // (#3522) A prepared nested class binding is a CONSTRUCTOR IDENTITY, not
+      // a first-class IR value. The class-declaration and `const C = class {…}`
+      // arms add the name to `scope` so the dedicated `new C(...)`,
+      // `C.staticMember` and `x instanceof C` arms can consume it — those arms
+      // resolve the binding themselves and never reach this generic identifier
+      // accept. Anything that DOES reach here is a bare value use
+      // (`const Alias = C;`, `return C;`, passing `C` as an argument), which
+      // `ir/from-ast` cannot represent: it reports
+      // "identifier \"C\" is not in scope" as a POST-CLAIM build error, after
+      // the class members have already been claimed and emitted — the exact
+      // split-ownership state R3 exists to prevent. Reject the owner here, at
+      // selection, so the whole class withdraws with it.
+      return currentPreparedClassBindingNames.has(expr.text)
+        ? shapeNo("expr-prepared-class-binding-value", expr)
+        : true;
+    }
     if (
       currentHostGlobalResolver !== null &&
       !localClasses.has(expr.text) &&

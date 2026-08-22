@@ -1097,6 +1097,44 @@ export function inferNumericReturnTypes(ctx: CodegenContext, sourceFile: ts.Sour
     }
   }
 
+  // (#4606) MIXED kernels — at least one boolean-valued `return` alongside at
+  // least one that is not — must not be promoted AT ALL. `isNumericExpr` counts
+  // `true`/`false`, `!x` and every comparison as numeric (they lower to i32), so
+  //
+  //     function m(x) { if (x > 5) return true; return x + 1; }
+  //
+  // proves "numeric" and gets an f64 result carrier. That is sound for
+  // arithmetic and WRONG for identity: the `true` arm crosses back out as the
+  // number 1, so `typeof m(9)` is "number" and `` `${m(9)}` `` is "1" where node
+  // says "boolean" / "true". #2795 already carved out the PURELY-boolean kernels
+  // (branded i32, so they box as JS booleans) — this is the remaining half of
+  // the same gap: a kernel that is neither purely numeric nor purely boolean has
+  // no single scalar carrier that preserves both, so it keeps its boxed
+  // (externref) carrier and the tag survives.
+  //
+  // Removal must be a FIXPOINT, not one pass: `isNumericExpr` admits a call to
+  // any member of `numeric`, so dropping `m` can invalidate a caller that was
+  // only numeric because `m` was. Re-running `isNumericExpr` against the shrunk
+  // set drops those too (the callee's own TS type is `any`, so the call arm's
+  // checker fallback answers false).
+  let mixedChanged = true;
+  let mixedSafety = numeric.size + 1;
+  while (mixedChanged && mixedSafety-- > 0) {
+    mixedChanged = false;
+    for (const fnName of [...numeric]) {
+      // Purely-boolean kernels keep #2795's branded-i32 carrier — their tag is
+      // already preserved, and nothing they call can have been dropped (a call
+      // arm is boolean only for a member of `boolean`, which never shrinks here).
+      if (boolean.has(fnName)) continue;
+      const info = fnInfo.get(fnName)!;
+      const mixed = info.returns.some((r) => isBooleanExpr(r));
+      if (mixed || !info.returns.every((r) => isNumericExpr(r, info.paramNames))) {
+        numeric.delete(fnName);
+        mixedChanged = true;
+      }
+    }
+  }
+
   const result = new Map<string, ValType>();
   for (const fnName of numeric) {
     result.set(fnName, boolean.has(fnName) ? { kind: "i32", boolean: true } : { kind: "f64" });

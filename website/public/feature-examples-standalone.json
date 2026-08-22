@@ -94,7 +94,7 @@
     {
       "name": "with statement",
       "testCategories": ["language/statements/with", "annexB/language/statements/with"],
-      "passCount": 143,
+      "passCount": 163,
       "totalCount": 181
     },
     {
@@ -111,7 +111,7 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 984,
+      "passCount": 996,
       "totalCount": 1177
     },
     {
@@ -144,13 +144,13 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4037,
+      "passCount": 4059,
       "totalCount": 4581
     },
     {
       "name": "Strings",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 1028,
+      "passCount": 1036,
       "totalCount": 1230
     },
     {
@@ -185,7 +185,7 @@
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1598,
+      "passCount": 1597,
       "totalCount": 1896
     },
     {
@@ -197,7 +197,7 @@
     {
       "name": "Object.defineProperty (full)",
       "testCategories": ["built-ins/Object/defineProperty"],
-      "passCount": 1090,
+      "passCount": 1104,
       "totalCount": 1131
     },
     {
@@ -251,7 +251,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 1826,
+      "passCount": 1829,
       "totalCount": 2486
     },
     {
@@ -282,7 +282,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 808,
+      "passCount": 807,
       "totalCount": 1955
     },
     {
@@ -294,7 +294,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 504,
+      "passCount": 500,
       "totalCount": 1106
     },
     {
@@ -306,7 +306,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 575,
+      "passCount": 577,
       "totalCount": 1072
     },
     {
@@ -378,7 +378,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 286,
+      "passCount": 284,
       "totalCount": 1048
     },
     {
@@ -588,7 +588,7 @@
     {
       "name": "escape() / unescape()",
       "testCategories": ["annexB/built-ins/escape", "annexB/built-ins/unescape"],
-      "passCount": 27,
+      "passCount": 25,
       "totalCount": 35
     },
     {

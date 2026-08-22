@@ -2,15 +2,15 @@
 id: 3520
 title: "IR-only R1: source-qualified unit identity and whole-program ABI map"
 status: in-progress
-assignee: ttraenkler/codex-r1
-claimed_by: codex-r1
+assignee: ttraenkler/fable-lead
+claimed_by: fable-lead
 claimed_at: 2026-07-21T20:23:19Z
-branch: codex/3520-c29-function-value-abi
-pr: 3799
+branch: claude/issue-3520-r1-completion
+pr: 4729
 last_merged_pr: 3798
 sprint: current
 created: 2026-07-21
-updated: 2026-07-30
+updated: 2026-08-21
 priority: critical
 horizon: l
 complexity: L
@@ -103,6 +103,7 @@ files:
   - src/codegen/closure-exports.ts
   - src/codegen/data-struct-host-bridge.ts
   - src/codegen/struct-field-exports.ts
+  - src/codegen/struct-field-accessor-abi.ts
   - src/codegen/program-abi-signatures.ts
   - src/codegen/program-abi-session.ts
   - src/codegen/program-abi-type-planning.ts
@@ -169,6 +170,7 @@ files:
   - tests/issue-3520-class-method-alias-abi.test.ts
   - tests/issue-3520-closure-host-bridge-abi.test.ts
   - tests/issue-3520-data-struct-host-bridge-abi.test.ts
+  - tests/issue-3520-struct-field-accessor-abi.test.ts
   - tests/issue-3520-module-init-callable-abi.test.ts
   - tests/issue-3520-source-callable-abi.test.ts
   - tests/issue-3520-type-class-abi.test.ts
@@ -1021,27 +1023,96 @@ Commit 3.3 and Commit 4 before R1 can close.
 
 ## Resume checkpoint
 
-- **Branch:** `symphony/3520-r1-planning-identity`
-- **Draft PR:** `#3496`
-- **Resume from:** the branch tip containing Stage 9 / Commit 3.2. The pushed
-  worktree is expected to be clean; no stash or local-only patch is required.
-- **First task:** replace the remaining source-function `byName` tables in
-  `src/ir/passes/inline-small.ts` and `src/ir/passes/monomorphize.ts` with
-  `IrUnitId`/callable-binding maps. Recursion detection, rewrite sites, clone
-  plans, and pass-output reconciliation must all use the same structural key.
-- **Then:** migrate integration verifier/error/pass bookkeeping to IDs, thread
-  support/import bindings through the backend ABI tables, and replace the
-  temporary exact-unit/support-to-legacy-label slot join with `ProgramAbiMap`
-  resolution. Only after those steps should R1 acceptance be reevaluated.
+**Superseded 2026-08-21.** The checkpoint below is the current one. The
+2026-07-21 checkpoint it replaced named a first-task chain
+(`inline-small` / `monomorphize` `byName` tables) that later merged slices
+already completed; it is preserved for history in the Commit 3.3 section.
+
+- **Branch:** `claude/issue-3520-r1-completion` (from `origin/main`
+  `540064dfb`). Prior lane branches `symphony/3520-*` and `codex/3520-c10..c33`
+  are all merged; `codex/3520-branded-instance-api` is a superseded
+  intermediate — `setInstance` is already on main. Do not adopt it.
+- **Resume from:** the branch tip. The worktree is clean; no stash or
+  local-only patch is required.
+- **Completed and verified on main (2026-08-21 re-measurement, not inherited):**
+  - `src/ir/passes/inline-small.ts` and `src/ir/passes/monomorphize.ts` are
+    fully `IrUnitId`-keyed. No `byName` table for source functions survives in
+    either; recursion sets, call-site counts, clone plans, provenance, and edit
+    tables all key on `unitId` / callable binding.
+  - Integration verifier/error/pass bookkeeping is ID-keyed
+    (`src/ir/integration-identity.ts`, `src/ir/integration.ts`). The residual
+    `legacyMatchName` uses are the deliberate validated one-to-one projection,
+    not independent name re-joins.
+  - Support/import bindings reach the backend ABI tables; a compilation-owned
+    `ProgramAbiSession` publishes one program map per module.
+- **Remaining, in order:**
+  1. **Retire the positional `retained-module-function` fallback.** This is the
+     concrete residue of "replace the temporary support-to-legacy-label slot
+     join with `ProgramAbiMap` resolution". Its derived ordinal IS the final
+     function index (`src/codegen/program-abi-callable-planning.ts`
+     `planRetained`), so identity moves whenever an unrelated import or
+     function is added or removed. C30–C34 each moved one family off it.
+     Measured on the five `SINGLE_HOST_ENTRIES` at `540064dfb`: **40** generic
+     rows; after C34, **15**. The 15 that remain, by family:
+     - `__sget_*`/`__sset_*`/`__shas_*`/`__sbool_*` — **done in C34**;
+     - `__\0js2_call_fn_method_argc_0..5` (6 rows) — the higher-arity method
+       dispatchers C31 explicitly deferred;
+     - `__async_resume_*` (2) and `__cb_0..3` (4) — async resume/callback
+       machinery;
+     - `__vec_from_extern_4` (1);
+     - `__math_reduce_trig` and `Math_atan` (2) — math support helpers.
+  2. Route the remaining direct `funcMap` / `structMap` / module-array /
+     display-name scans in concrete WasmGC, linear, and compatibility-slot
+     resolution through `LegacyAbiAdapter` (Commit 4 body).
+  3. Represent exports as explicit Program ABI aliases rather than emitting
+     them directly from legacy codegen.
+  4. Notify the production session from allocator replacement, dead-type
+     elimination, and compaction.
 - **Do not touch:** `benchmarks/results/test262-run.log` or
   `scripts/equivalence-baseline.json`. No local Test262 run is required for
   this checkpoint.
-- **Known unrelated control:** two #2956 L3 string/charCode fixtures remain
-  pre-existing failures; binding-affected linear cases and the 29-case
-  cross-backend suite pass.
-- **Not rerun after Stage 9:** the full equivalence gate and fallback/readiness
-  ratchets. Run them before declaring R1 complete; do not infer completion from
-  the focused matrices below.
+- **Known-base controls, re-measured 2026-08-21 (do NOT inherit the old
+  values):**
+  - The issue's own control command
+    (`tests/issue-1983-funcmap-collision.test.ts` + `tests/ir/inline-small.test.ts`)
+    is now **22/22 GREEN** on `540064dfb`. The "not expected green" note under
+    *Required completion evidence* is stale: the #1983 type-index and
+    inline-small harness failures it describes have been fixed on main.
+  - **17 of this issue's own 60 `tests/issue-3520-*.test.ts` files are RED on
+    current main**, 22 failing tests, and the failing file/test sets are
+    byte-identical on `540064dfb` and on this branch. They are main-side drift,
+    not regressions. The bulk are the C30–C33 five-entry census assertions
+    carrying 2026-07-30 denominators. Re-measured at `540064dfb` with an
+    exact `:role:` match:
+
+    | census figure           | C30–C33 asserts | main `540064dfb` |
+    | ----------------------- | --------------- | ---------------- |
+    | defined functions       | 166             | **139**          |
+    | retained-module-function| 45              | **40**           |
+    | vec-host-bridge         | 24              | 24               |
+    | closure-host-bridge     | 26              | **14**           |
+    | date-civil-support      | 1               | 1                |
+    | data-struct-host-bridge | 5               | **3**            |
+
+    The structural families are all still published — vec and date match
+    exactly; the closure and data counts moved because those entries emit
+    fewer dispatcher/classifier helpers than they did on 2026-07-30. Do **not**
+    simply overwrite the numbers: the closure `26 → 14` and data `5 → 3` moves
+    need a cause before they are re-asserted, or the anti-vacuity value of
+    those census tests is thrown away. Four further failures are semantic
+    drift:
+    `issue-3520-module-binding-class-identity` (a planning invariant no longer
+    raised), `issue-3520-lowering-plan-identity` (a capability violation now
+    thrown ahead of the expected stale-owner error),
+    `issue-3520-context-integration`, and
+    `issue-3520-integration-population-identity`. **Re-baselining these is
+    prerequisite work for any R1 acceptance claim** — the acceptance criteria
+    cannot be evaluated against a suite that does not run green.
+- **Vitest heap note:** the *Required completion evidence* command uses
+  `--poolOptions.forks.singleFork=true`, which puts all six files in one fork.
+  The repo pins forks to a 512 MB old space (`vitest.config.ts`), so the
+  command OOMs in that mode regardless of the change under test. Run it with
+  `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`.
 
 ### 2026-07-25 resume state
 
@@ -2823,6 +2894,96 @@ C33 closes exact retained ownership for these two data-struct host helpers, not
 R1. Per-field accessors and other support callable families remain on their
 existing ownership paths.
 
+### 2026-08-21 per-field host accessor ownership continuation (C34)
+
+The C34 continuation on `claude/issue-3520-r1-completion` moves the per-field
+host accessor family — the population C33 named as the next one — behind one
+canonical entry-source-owned role.
+
+- `__sget_<field>`, `__sset_<field>`, `__shas_<field>`, and `__sbool_<field>`
+  publish `struct-field-accessor` support bindings at callable role ordinal
+  **14**. Identity is `(entry source, "struct-field-accessor", ordinal)` with
+  `ordinal = fieldPosition * 4 + kind`, where `kind` is
+  `get:0 / set:1 / has:2 / bool:3` and `fieldPosition` is the field name's index
+  in the module's canonically **sorted** accessor field-name list. The
+  four-wide stride reserves one slot per kind per field, so no two fields can
+  overlap.
+- Two properties follow from deriving the ordinal that way, and both are
+  asserted rather than argued. The ordinal does not depend on the order the
+  emitters visited fields — reversing the input to
+  `structFieldAccessorFieldOrder` yields the identical order. And it does not
+  depend on the function's index: adding three unrelated exported functions
+  ahead of the accessors moves every final index while leaving all seven
+  accessor binding IDs unchanged. Under the generic
+  `retained-module-function` fallback the derived ordinal **is** the final
+  index, so that same shift used to rewrite the identity.
+- The display name stays a diagnostic label. `irSupportFuncRef` excludes it
+  from the binding key, proven directly: the same role and ordinal with a
+  deliberately unrelated label produce the identical `IrBindingId`, while a
+  different ordinal produces a different one. A same-spelled source function
+  therefore cannot occupy the role.
+- Recording is deliberately split from planning. `emitStructFieldGetters` and
+  `emitStructFieldSetters` wrap their bodies in a non-fatal `try`/`catch`, so a
+  `ProgramAbiInvariantError` raised inside them would be swallowed and the
+  compile would return a successful module whose accessor family had no owner —
+  the same failure mode C30 closed for the vec bridges. `recordStructFieldAccessor`
+  cannot throw; `observeStructFieldAccessorAbi` runs from
+  `eliminateDeadLayoutAndPlanProgramAbi`, after DCE has settled the layout and
+  before the generic sweep, so an eliminated accessor is simply absent instead
+  of claiming a slot that is gone.
+
+**Census, measured in fresh processes on both sides** (`readFileSync(entry) ->
+analyzeSource(source, entry) -> generateModule(ast, { experimentalIR: true,
+trackIrOutcomes: true })` over `SINGLE_HOST_ENTRIES`), base `origin/main`
+`540064dfb` versus this branch:
+
+| Measure                                      | base `540064dfb` | C34             |
+| -------------------------------------------- | ---------------- | --------------- |
+| defined functions                            | 139              | 139             |
+| generic `retained-module-function` rows      | 40               | **15**          |
+| `struct-field-accessor` rows                 | 0                | **25**          |
+| `vec-host-bridge` rows                       | 24               | 24              |
+| `closure-host-bridge` rows                   | 14               | 14              |
+| `date-civil-support` rows                    | 1                | 1               |
+| `data-struct-host-bridge` rows               | 3                | 3               |
+| terminal / emitted / unsupported / invariant | 37 / 32 / 5 / 0  | 37 / 32 / 5 / 0 |
+
+The 25 rows are **moved, not created**: defined-function count and every
+routing figure are unchanged. The 25 are the `async.ts` state-slot accessors
+(13 `__sget_*` + 12 `__sset_*`), which were 62.5 % of the remaining generic
+bucket.
+
+**Byte identity.** All five entries were emitted through `emitBinary` across
+`gc`, `standalone`, and `wasi` in both tracked and untracked lanes, on the base
+copies and on this branch: **all 30 sha256 digests match**, with zero compile
+failures on either side. This landing changes ownership only. `check:ir-only
+--policy=hybrid` and `check:ir-fallbacks --verbose` produce **byte-identical
+output** on base and branch (READY, 38 terminal / 38 emitted / 0 unsupported /
+0 invariants per lane; no unintended, post-claim, or module-level increase).
+
+**Validation.** The focused C34 suite passes **7/7**. The issue's expected-green
+gate command passes **66/66** (with `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`; see
+the resume checkpoint's heap note), cross-backend differential **29/29**, and
+the known-base control matrix **22/22** on both base and branch. Strict
+TypeScript, full Biome lint, Prettier, LOC budget, function budget,
+oracle ratchet (`+0 / +0`), and dead-export (**19 known / 0 new**) all pass.
+The full 62-file `issue-3520-*` + backend-contract + `#1899` matrix reports the
+**identical 17 failing files / 22 failing tests on base and on branch** — see
+the resume checkpoint for why those are main-side drift and why re-baselining
+them gates R1 acceptance. A six-file struct/host accessor regression sweep
+(`issue-1320-sget-host-box`, `anon-struct`, `issue-1821-delete-struct-fastpath`,
+`issue-2582-numeric-key-struct-read`, `arraybuffer-dataview`,
+`issue-2194-objlit-method-host-leak`) likewise reports the identical 10 failing
+tests on base and on branch; those are a pre-existing `string_constants`
+harness-wiring drift, not accessor behavior. The equivalence gate reports no new
+regressions on either side; the 12 baseline failures that now pass are
+pre-existing main-side drift and the baseline is deliberately left unchanged in
+this ownership-only slice.
+
+C34 closes exact retained ownership for the per-field host accessor family, not
+R1. The 15 remaining generic rows, the direct `funcMap`/`structMap`/module-array
+scans, and export aliasing are enumerated in the resume checkpoint.
+
 ### R1a validation evidence
 
 - Representative inventory denominator: **1 source / 2 classes / 12 allUnits /
@@ -2994,6 +3155,19 @@ and inline-small harness/expectation failures remain. Completion requires the
 exact test/failure set and diagnostics to match the pre-branch control, with no
 new failure. Do not combine it with the expected-green command or report the
 combined exit status as a green gate.
+
+**Correction, measured 2026-08-21 at `origin/main` `540064dfb`: this control is
+now GREEN at 22/22.** The #1983 type-index and inline-small harness failures it
+describes have since been fixed on main. The rule above still stands as
+written — match the pre-branch control exactly — but the expected control state
+is now "green on both sides", and a red control run today is a real finding, not
+the documented known base.
+
+**Heap note:** the expected-green command pins
+`--poolOptions.forks.singleFork=true`, which loads all six files into one fork.
+`vitest.config.ts` pins forks to a 512 MB old space, so the command OOMs in
+that mode independently of the change under test. Prefix it with
+`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`.
 
 The PR report must include the source/unit/class/binding denominators, a
 collision matrix, deterministic-order proof, old-vs-new telemetry diff, and
