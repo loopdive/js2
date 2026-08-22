@@ -15,8 +15,11 @@ goal: dogfood
 related: [1042, 1373b, 3958, 4616]
 loc-budget-allow:
   - src/codegen/async-cps.ts
+  - src/codegen/destructuring-params.ts
   - src/ir/prepared-callable-resolution.ts
   - src/runtime.ts
+func-budget-allow:
+  - src/codegen/destructuring-params.ts::destructureParamObjectExternref
 ---
 
 # react upstream suite: the async `it`-body / `act()` lane cluster
@@ -218,6 +221,22 @@ demote.
   instead of trapping (`typeof Fragment` = "object", `Fragment ===
   React.Fragment` false), which gates every switch-on-symbol/`$$typeof`
   comparison — the dominant "expected not null"/symbol buckets.
+
+- **2026-08-22 boxed-destructure store slice LANDED**: the externref
+  destructure lane stored a binding's extracted value with a plain
+  local.set into a slot that IS a ref cell (boxed spilled binding) — the
+  coercion cast the VALUE to the cell type (the 12-line trap above), and
+  where it validated, the cell stayed unwritten so captures read null
+  (A/B'd: base answers "symbol:null", fixed answers "symbol:6" on the
+  let-{n}+arrow-mutation shape). Stores now redirect to a value-typed
+  scratch and flush through the cell (boxedForInitStore convention). The
+  sym6 trap is now a CATCHABLE "Fragment is not defined" — the residual is
+  the OUTER pre-hoist not creating locals for BindingElements, so a
+  hoisted fn-decl's capture of a destructured name still misses at
+  hoist-compile time (plain consts pre-hoist fine, probe w8). Guards:
+  destructuring battery 49/49, jest 319/331, acorn 3518/3518, cookie
+  63740/63740 hold. Regression test:
+  `tests/issue-4618-boxed-destructure-store.test.ts` (1).
 
 ## Fix order
 
