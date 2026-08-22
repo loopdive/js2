@@ -3136,3 +3136,12 @@ if (writeArtifacts) {
   console.log("[npm-compat] skipped aggregate artifact writes");
   console.log(JSON.stringify({ ...summary, perfRows, perfHistory }, null, 2));
 }
+
+// (#4604) Every report is written at this point, but a timed-out upstream test
+// can leave live host timer chains behind (React's scheduler shim reschedules
+// `setTimeout(run, 0)` while render work remains), and those keep the event
+// loop — and therefore the CI step — alive indefinitely after the run is
+// complete. Unref'd so a clean drain still exits naturally and immediately;
+// the forced exit only fires when leaked handles would otherwise hang a
+// finished run. All artifact writes above are synchronous.
+setTimeout(() => process.exit(process.exitCode ?? 0), 10_000).unref();
