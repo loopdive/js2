@@ -4,7 +4,7 @@ title: "Run react-dom's own unit tests against compiled react-dom"
 status: in-progress
 sprint: current
 created: 2026-08-01
-updated: 2026-08-21
+updated: 2026-08-22
 priority: high
 horizon: m
 feasibility: medium
@@ -538,6 +538,25 @@ are production warning expectations, renderer semantics, and compiled
 component/function closures that still arrive as opaque host objects. ReactDOM
 compiled correctness therefore remains a separate follow-up, while this
 checkpoint makes the cross-package infrastructure explicit and measurable.
+
+## ReactDOM native-oracle singleton checkpoint (2026-08-22)
+
+The ReactDOM harness previously built its native oracle with the full compiled
+implementation source initialized, while `internal-test-utils` and the native
+package imports came from a separate host React/ReactDOM instance. That split
+made `createRoot` tests appear harness-incompatible (`container.firstChild`
+was empty) before the Wasm result could be compared. The native runner now
+keeps the compiled carriers uninitialized and routes React, ReactDOM,
+ReactDOM/client, server renderers, test-renderer, and noop renderer imports to
+the exact pinned host infrastructure. ReactDOM `act` can also prefer the
+host `flushSync` boundary, and the compile worker receives the same setting.
+
+A one-test-per-lane probe now scores the client and all server/Fizz lanes with
+zero native-oracle infrastructure failures. The remaining failures are real
+compiled-lane findings (for example the client `stateNode` carrier error and
+Fizz null dereferences), not an oracle mismatch. The full 1,923-test admitted
+corpus remains bounded by the existing project batches and is not claimed
+green.
 
 ## Permanent test reference
 
