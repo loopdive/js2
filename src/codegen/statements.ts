@@ -59,6 +59,7 @@ import { compileVariableStatement } from "./statements/variables.js";
 import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { coerceType } from "./type-coercion.js";
 import { compileClassExpression } from "./expressions/new-super.js";
+import { emitLazyClassObjectGet } from "./expressions/extern.js";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the existing public API surface
@@ -575,9 +576,24 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     // scope resolve to THIS declaration, not the first same-named one.
     const scopedSynthetic = ctx.anonClassExprNames.get(stmt);
     compileNestedClassDeclaration(ctx, fctx, stmt, scopedSynthetic);
-    if (scopedSynthetic !== undefined && stmt.name !== undefined) {
+    // Bind uniformly — the FIRST same-named declaration keeps its collection
+    // name but must also read through a scoped local, or its scope behaves
+    // differently from its duplicates'.
+    const scopedName =
+      scopedSynthetic ??
+      (stmt.name !== undefined && ctx.classObjectGlobals?.has(stmt.name.text) ? stmt.name.text : undefined);
+    if (scopedName !== undefined && stmt.name !== undefined) {
       const bindName = stmt.name.text;
-      const vt = compileClassExpression(ctx, fctx, stmt as unknown as ts.ClassExpression);
+      // Bind the SINGLETON class object (registered with the #4618 host
+      // [[Construct]] bridge — parent chain, mirror crossing), not the
+      // legacy ctor-value closure, so the scoped class behaves identically
+      // to a non-colliding declaration.
+      let vt: import("../ir/types.js").ValType | null = null;
+      if (emitLazyClassObjectGet(ctx, fctx, scopedName)) {
+        vt = { kind: "externref" };
+      } else {
+        vt = compileClassExpression(ctx, fctx, stmt as unknown as ts.ClassExpression);
+      }
       if (vt !== null) {
         if (vt.kind !== "externref") coerceType(ctx, fctx, vt, { kind: "externref" });
         let localIdx = fctx.localMap.get(bindName);
