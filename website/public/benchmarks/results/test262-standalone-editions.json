@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 8696,
-    "fail": 319,
+    "pass": 8712,
+    "fail": 303,
     "ce": 14,
     "skip": 0,
     "total": 9029,
@@ -48,12 +48,12 @@
   },
   {
     "edition": "ES2015",
-    "pass": 8134,
-    "fail": 2989,
-    "ce": 580,
+    "pass": 8143,
+    "fail": 2983,
+    "ce": 577,
     "skip": 1,
     "total": 11704,
-    "pct": 69,
+    "pct": 70,
     "features": [
       {
         "name": "destructuring-binding",
@@ -66,9 +66,9 @@
       },
       {
         "name": "generators",
-        "pass": 1829,
-        "fail": 344,
-        "ce": 313,
+        "pass": 1830,
+        "fail": 346,
+        "ce": 310,
         "skip": 0,
         "total": 2486,
         "pct": 74
@@ -76,16 +76,16 @@
       {
         "name": "default-parameters",
         "pass": 1330,
-        "fail": 165,
-        "ce": 57,
+        "fail": 166,
+        "ce": 56,
         "skip": 0,
         "total": 1552,
         "pct": 86
       },
       {
         "name": "TypedArray",
-        "pass": 457,
-        "fail": 552,
+        "pass": 458,
+        "fail": 551,
         "ce": 41,
         "skip": 0,
         "total": 1050,
@@ -93,8 +93,8 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 392,
-        "fail": 279,
+        "pass": 393,
+        "fail": 278,
         "ce": 123,
         "skip": 1,
         "total": 795,
@@ -102,12 +102,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 289,
-        "fail": 297,
+        "pass": 291,
+        "fail": 295,
         "ce": 23,
         "skip": 0,
         "total": 609,
-        "pct": 47
+        "pct": 48
       },
       {
         "name": "arrow-function",
@@ -427,8 +427,8 @@
       {
         "name": "super",
         "pass": 10,
-        "fail": 8,
-        "ce": 1,
+        "fail": 9,
+        "ce": 0,
         "skip": 0,
         "total": 19,
         "pct": 53
@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 675,
-    "fail": 753,
+    "pass": 676,
+    "fail": 752,
     "ce": 589,
     "skip": 18,
     "total": 2035,
@@ -1516,8 +1516,8 @@
     "features": [
       {
         "name": "BigInt",
-        "pass": 284,
-        "fail": 608,
+        "pass": 285,
+        "fail": 607,
         "ce": 156,
         "skip": 0,
         "total": 1048,
@@ -1525,12 +1525,12 @@
       },
       {
         "name": "TypedArray",
-        "pass": 123,
-        "fail": 486,
+        "pass": 124,
+        "fail": 485,
         "ce": 99,
         "skip": 0,
         "total": 708,
-        "pct": 17
+        "pct": 18
       },
       {
         "name": "dynamic-import",
@@ -1651,12 +1651,12 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 8,
-        "fail": 34,
+        "pass": 9,
+        "fail": 33,
         "ce": 9,
         "skip": 0,
         "total": 51,
-        "pct": 16
+        "pct": 18
       },
       {
         "name": "Reflect",
@@ -4268,9 +4268,9 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4145,
-    "fail": 1199,
-    "ce": 101,
+    "pass": 4151,
+    "fail": 1195,
+    "ce": 99,
     "skip": 0,
     "total": 5445,
     "pct": 76
