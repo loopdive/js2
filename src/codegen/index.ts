@@ -6920,6 +6920,56 @@ function emitExternrefClassMethodDispatch(ctx: CodegenContext, className: string
  * ref.test cascade. Getters remain self-only; methods additionally publish
  * their declared arity so the host can select an arity-specific bridge.
  */
+// (#4618) Shared tag-guard condition for class member dispatch arms — see the
+// classDispatchTagCondition closure in generateModule for the rationale
+// (same-layout sibling classes canonicalize to ONE WasmGC type; `ref.test`
+// alone matches both). Guards only when the entry's field layout collides
+// with another entry's; own tag plus descendant tags keep inherited-method
+// dispatch working.
+function classArmTagCondition(
+  ctx: CodegenContext,
+  entriesAll: readonly { structName: string }[],
+  structName: string,
+  typeIdx: number,
+  receiverLocal: number,
+): Instr[] | undefined {
+  const fields = ctx.structFields.get(structName);
+  if (!fields || fields.length === 0 || fields[0]!.name !== "__tag") return undefined;
+  const layoutSig = (n: string): string | undefined => {
+    const fs = ctx.structFields.get(n);
+    return fs?.map((f) => `${f.type.kind}:${(f.type as { typeIdx?: number }).typeIdx ?? ""}`).join(",");
+  };
+  const own = layoutSig(structName);
+  if (own === undefined) return undefined;
+  if (!entriesAll.some((e) => e.structName !== structName && layoutSig(e.structName) === own)) return undefined;
+  const ownTag = ctx.classTagMap.get(structName);
+  if (ownTag === undefined) return undefined;
+  const tags = [ownTag];
+  const isDescendantOf = (n: string): boolean => {
+    let cur: string | undefined = ctx.classParentMap.get(n);
+    const seen = new Set<string>();
+    while (cur !== undefined && !seen.has(cur)) {
+      if (cur === structName) return true;
+      seen.add(cur);
+      cur = ctx.classParentMap.get(cur);
+    }
+    return false;
+  };
+  for (const [childName, tag] of ctx.classTagMap) {
+    if (childName !== structName && isDescendantOf(childName) && !tags.includes(tag)) tags.push(tag);
+  }
+  const readTag: Instr[] = [
+    { op: "local.get", index: receiverLocal },
+    { op: "ref.cast", typeIdx },
+    { op: "struct.get", typeIdx, fieldIdx: 0 },
+  ];
+  const cond: Instr[] = [...readTag, { op: "i32.const", value: tags[0]! }, { op: "i32.eq" }];
+  for (const t of tags.slice(1)) {
+    cond.push(...readTag, { op: "i32.const", value: t }, { op: "i32.eq" }, { op: "i32.or" });
+  }
+  return cond;
+}
+
 function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number, keys: string[]): void {
   const mod = ctx.mod;
   const skipStruct = isSyntheticStructName;
@@ -6985,18 +7035,32 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
     {
       const funcIdx = ctx.numImportFuncs + mod.functions.length;
       let current: Instr[] = [{ op: "i32.const", value: 0 }];
-      const arm = (typeIdx: number, kind: number, tail: Instr[]): Instr[] => [
-        { op: "local.get", index: 1 },
-        { op: "ref.test", typeIdx },
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "i32" } },
-          then: [{ op: "i32.const", value: kind }],
-          else: tail,
-        },
-      ];
-      for (const e of methodEntries) current = arm(e.typeIdx, 1, current);
-      for (const e of getterEntries) current = arm(e.typeIdx, 2, current);
+      const allEntries = [...methodEntries, ...getterEntries];
+      const arm = (entry: KindEntry, kind: number, tail: Instr[]): Instr[] => {
+        const tagCond = classArmTagCondition(ctx, allEntries, entry.structName, entry.typeIdx, 1);
+        return [
+          { op: "local.get", index: 1 },
+          { op: "ref.test", typeIdx: entry.typeIdx },
+          ...(tagCond
+            ? ([
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "i32" } },
+                  then: tagCond,
+                  else: [{ op: "i32.const", value: 0 }],
+                },
+              ] satisfies Instr[])
+            : []),
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [{ op: "i32.const", value: kind }],
+            else: tail,
+          },
+        ];
+      };
+      for (const e of methodEntries) current = arm(e, 1, current);
+      for (const e of getterEntries) current = arm(e, 2, current);
       const exportName = `__member_kind_${key}`;
       mod.functions.push({
         name: exportName,
@@ -7016,9 +7080,20 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
       const funcIdx = ctx.numImportFuncs + mod.functions.length;
       let current: Instr[] = [{ op: "i32.const", value: -1 }];
       for (const e of methodEntries) {
+        const tagCond = classArmTagCondition(ctx, methodEntries, e.structName, e.typeIdx, 1);
         current = [
           { op: "local.get", index: 1 },
           { op: "ref.test", typeIdx: e.typeIdx },
+          ...(tagCond
+            ? ([
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "i32" } },
+                  then: tagCond,
+                  else: [{ op: "i32.const", value: 0 }],
+                },
+              ] satisfies Instr[])
+            : []),
           {
             op: "if",
             blockType: { kind: "val", type: { kind: "i32" } },
