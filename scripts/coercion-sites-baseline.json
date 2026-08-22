@@ -13,6 +13,7 @@
   "codegen/box-boolean-fuse.ts": 2,
   "codegen/builtin-ctor-callable.ts": 3,
   "codegen/builtin-value-read.ts": 6,
+  "codegen/carrier-to-primitive.ts": 4,
   "codegen/char-at-transfer.ts": 1,
   "codegen/class-to-primitive.ts": 1,
   "codegen/closed-method-dispatch.ts": 1,

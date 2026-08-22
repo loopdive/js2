@@ -178,6 +178,8 @@ import {
   ensureArrayNativeProtoGlue,
   ensureDataViewNativeProtoGlue,
   ensureDateNativeProtoGlue,
+  ensureNumberNativeProtoGlue,
+  ensureBooleanNativeProtoGlue,
   ensureObjectNativeProtoGlue,
   ensureStringNativeProtoGlue,
   ensureGeneratorPrototypeNativeProtoGlue,
@@ -317,7 +319,7 @@ import {
 } from "./calls-guards.js";
 import { reshapeSloppyPrimitiveThisArg } from "./sloppy-this-toobject.js"; // (#4246)
 import { planInlinedReceiver, releaseInlinedReceiver } from "./inlined-call-receiver.js"; // (#4246)
-import { seedBoundFunctionLengthOnStack } from "../bound-fn-meta.js"; // (#4562) §20.2.3.2 steps 5-8
+import { seedBoundFunctionMetaOnStack } from "../bound-fn-meta.js"; // (#4562/#4563) §20.2.3.2 steps 5-11
 import { buildHostCallFallbackArm, ensureHostCallFallbackImports, planHostCallFallback } from "./host-call-fallback.js";
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
 import {
@@ -1092,7 +1094,15 @@ function tryEmitNativeProtoReflectiveCall(
     if (resolveObjectToStringTag(ctx, expr.arguments[0]) !== undefined) return undefined;
   }
 
-  const brand = nativeProtoBrandForInterface(ctx, ifaceName);
+  let brand = nativeProtoBrandForInterface(ctx, ifaceName);
+  // (#4582) `valueOf` ONLY — the other Number/Boolean members still refuse, and
+  // routing those here would turn today's answers into TypeErrors. Without this
+  // arm both fell to the legacy `.call` tail that drops `thisArg` and returns 0:
+  // `Boolean.prototype.valueOf.call(Object(true))` answered `false`, the Number
+  // twin `undefined` — silent wrong values, measured on base.
+  if (brand === undefined && member === "valueOf" && ifaceName === "Number") brand = ensureNumberNativeProtoGlue(ctx);
+  else if (brand === undefined && member === "valueOf" && ifaceName === "Boolean")
+    brand = ensureBooleanNativeProtoGlue(ctx);
   if (brand === undefined) return undefined;
 
   const glue = getNativeProtoBuiltinGlue(ctx, brand);
@@ -2153,7 +2163,7 @@ function emitBoundFnValueFromLocals(
   fctx.body.push({ op: "ref.null.extern" }); // (#4241) $bag — no expandos at birth
   fctx.body.push({ op: "struct.new", typeIdx: bfIdx });
   fctx.body.push({ op: "extern.convert_any" });
-  seedBoundFunctionLengthOnStack(ctx, fctx, targetLocal, partialArgLocals.length); // (#4562) §20.2.3.2 steps 5-8
+  seedBoundFunctionMetaOnStack(ctx, fctx, targetLocal, partialArgLocals.length); // (#4562/#4563) §20.2.3.2 steps 5-11
 }
 
 export function compileFunctionBind(

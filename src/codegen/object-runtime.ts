@@ -160,7 +160,7 @@ import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
 import { buildObjectEnumerationHelpers } from "./object-runtime-enumeration.js"; // (#3274 wave-B) enumeration/array-like/object-static helper builders
 import { buildObjectPrototypeHelpers } from "./object-runtime-prototype.js"; // (#3274 wave-B) prototype-chain helper builders
 import * as fnctorArray from "./fnctor-array-prototype.js";
-import { isSyntheticStructName } from "./emit-helpers.js";
+import { isEnumerableOwnFieldName, isSyntheticStructName } from "./emit-helpers.js";
 import { isUserDeclaredStruct } from "./user-declared-structs.js"; // (#3920) user shape vs builtin carrier
 import {
   type ColdFieldLocation,
@@ -4419,6 +4419,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     const typeofNumberIdx = ctx.funcMap.get("__typeof_number")!;
     const typeofStringIdx = ctx.funcMap.get("__typeof_string")!;
     const typeofBooleanIdx = ctx.funcMap.get("__typeof_boolean")!;
+    const typeofUndefinedIdx = ctx.funcMap.get("__typeof_undefined")!;
+    const typeofBigintIdx = ctx.funcMap.get("__typeof_bigint")!;
     const typeofFunctionIdx = ctx.funcMap.get("__typeof_function")!;
 
     const typeErrorMessage = "Cannot convert object to primitive value";
@@ -4438,6 +4440,16 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // #1910/#1472 S2 — the boxed-primitive internal-slot $PropEntry (or null).
     const L_SLOT = 5;
 
+    // (#4564) `undefined` is a non-null `$AnyValue` singleton; rejecting it
+    // would incorrectly advance from `valueOf` to `toString`. BigInt is also a
+    // primitive result. Keep every runtime-tag predicate in one cascade.
+    const primitiveTypePredicates = [
+      typeofNumberIdx,
+      typeofBooleanIdx,
+      typeofStringIdx,
+      typeofUndefinedIdx,
+      typeofBigintIdx,
+    ];
     const returnIfPrimitive = (localIdx: number): Instr[] => [
       { op: "local.get", index: localIdx },
       { op: "ref.is_null" },
@@ -4446,27 +4458,15 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         blockType: { kind: "empty" },
         then: [{ op: "local.get", index: localIdx }, { op: "return" }],
       },
-      { op: "local.get", index: localIdx },
-      { op: "call", funcIdx: typeofNumberIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: localIdx }, { op: "return" }],
-      },
-      { op: "local.get", index: localIdx },
-      { op: "call", funcIdx: typeofBooleanIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: localIdx }, { op: "return" }],
-      },
-      { op: "local.get", index: localIdx },
-      { op: "call", funcIdx: typeofStringIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: localIdx }, { op: "return" }],
-      },
+      ...primitiveTypePredicates.flatMap((predicateIdx): Instr[] => [
+        { op: "local.get", index: localIdx },
+        { op: "call", funcIdx: predicateIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "local.get", index: localIdx }, { op: "return" }],
+        },
+      ]),
     ];
 
     const throwTypeError = (): Instr[] => [
@@ -7979,7 +7979,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
     const shapeFieldIdx = fields.findIndex((field) => field?.name === "$shape");
     const shapeId = ctx.shapeIdByStructName.get(structName);
     for (const field of fields) {
-      if (!field?.name || field.name.startsWith("$") || field.name.startsWith("__")) continue;
+      if (!isEnumerableOwnFieldName(field?.name)) continue;
       const presenceSlot = presenceSlotOf(fields, field.name);
       if (presenceSlot) {
         const typeDef = ctx.mod.types[typeIdx];
@@ -8299,7 +8299,7 @@ function collectClosedStructEnumerationEntries(ctx: CodegenContext): EnumShapeEn
 
     const byName = new Map<string, EnumOwnField>();
     for (const field of fields) {
-      if (!field?.name || field.name.startsWith("$") || field.name.startsWith("__")) continue;
+      if (!isEnumerableOwnFieldName(field?.name)) continue;
       const presenceSlot = presenceSlotOf(fields, field.name);
       byName.set(field.name, {
         name: field.name,

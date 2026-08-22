@@ -102,6 +102,27 @@ loc-budget-allow:
   # existing loops read. Both arms sit at fixed points in one long ordered
   # dispatch chain and cannot be hoisted without reordering it.
   - src/codegen/expressions/call-tail-dispatch.ts
+  # 2026-08-22 gate-visibility re-grant for PR #4768 (same stranded-grant
+  # class as #4723's b456e62394, which merged to main and then dropped out of
+  # this branch's frontmatter in the post-merge sync): growth originally
+  # granted in 2071/4206/2175 frontmatter whose doc edits are already on main,
+  # plus proto-index-store.ts (+60, the T10 constructor-fallthrough gate whose
+  # body is keyIsNotConstructorInstrs — dispatch and guard in the same module
+  # that owns the walk).
+  - src/codegen/declarations/object-shape-widening.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/proto-index-store.ts
+  - src/codegen/binary-ops.ts
+  - src/codegen/index.ts
+  - src/codegen/expressions/assignment.ts
+  # 2026-08-22, PR #4768 wave-6 dispatch wiring (under-ceiling at each lane's
+  # own base, over main's refreshed ceilings at PR scope): literals.ts +17
+  # (T11 elision marker at the literal site), expressions/identifiers.ts +13
+  # (T3 instanceof RHS + assigned-alias dispatch), statements/variables.ts +6
+  # (T12 redeclared-binding dispatch). All bodies live in the new modules.
+  - src/codegen/literals.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/statements/variables.ts
 oracle-ratchet-allow:
   # 2026-08-21: one getTypeAtLocation in varBindingNeedsExternrefForUndefined's
   # new call arm — the same raw-checker idiom as the surrounding predicate;
@@ -170,6 +191,16 @@ coercion-sites-allow:
   # hand-rolled.
   - src/codegen/string-fromcharcode-value-read.ts
 func-budget-allow:
+  # 2026-08-22 PR #4768: +4 dispatch in the T12 redeclared-binding arm.
+  - src/codegen/statements/variables.ts::compileVariableStatement
+  # 2026-08-22 gate-visibility re-grant for PR #4768, same stranded-grant
+  # cause as the loc entries above.
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/expressions/new-super.ts::compileNewFunctionDeclaration
+  - src/codegen/binary-ops.ts::compileBinaryExpression
+  - src/codegen/declarations/object-shape-widening.ts::collectGrowableObjectLiterals
+  - src/codegen/declarations/object-shape-widening.ts::scanStatements#2
+  - src/codegen/declarations.ts::compileDeclarations
   # 2026-08-22 wave-5 lane T3, §13.10.1 step-3 `instanceof` RHS evaluation.
   # +6, DISPATCH ONLY — the emitter is one exported call in the new subsystem
   # module instanceof-rhs-evaluation.ts. The two call sites are the function's
@@ -1173,6 +1204,89 @@ folds false), while the dynamic receiver path can observe it. This is a Date
 carrier own-storage/visibility and `compilePropertyIntrospection` convergence
 row, not a prototype-descriptor refusal row. #4504 explicitly excludes it from
 its nine-test denominator; retain it here for the next MOP/introspection slice.
+
+## 2026-08-21 wave-2 census + Implementation Plan
+
+Fresh corpus run on the merged integration tree (`d13f3859`): the **Object MOP
+lane is 78 rows** (`defineProperty` 36, `defineProperties` 11, `keys` 4,
+`Object.prototype` 6, `create`/gOPD/rest 21). Lane list:
+`.claude/worktrees/es5w2-obj-mop/.tmp/lane-tests.txt`.
+
+Top signatures: `Expected X, actually N` (5), `resultN !== true` (4),
+`arrObj.length SameValue` (3), `arrObj.hasOwnProperty !== true` (3),
+`arr.length SameValue` (3), `Object.prototype.isPrototypeOf not yet
+implemented` (2 — see #4480 R4 for the receiver-spelling mechanism and its
+two-lane evidence).
+
+### Plan (ordered)
+
+1. **Re-baseline**: lane list + 551-guard on the branch point, one process per
+   test for anything prototype-adjacent; record both before any edit.
+2. **Array-receiver descriptor rows first** (`arrObj.length` / index defines):
+   the #4426/#2668 vec-overlay work owns this shape; extend
+   `emitArraySetLengthValidation`'s deferral to the runtime for the remaining
+   §10.4.2.1 steps. Do NOT touch the signed-length representation (bucket E is
+   retired — ≥146 raw-i32 readers, a −1 sentinel at
+   `property-access-dispatch.ts` ~L2861; see #4556).
+3. **Accessor + attributes-only defines on plain objects**: the #4491
+   mirror→vec projection landed for reads; the residual is write-path
+   (`accessed !== true`, `resultN !== true` families). Follow the descriptor
+   table through `vec-descriptor-mirror.ts`.
+4. **Defer**: anything rooted in `Object.prototype.isPrototypeOf` receiver
+   spelling (#4480 R4) or function-intrinsic `length`/`name` (#4562) — note
+   and skip, both are owned elsewhere.
+
+Verification bar (all lanes, standing): guard 551/551 (re-baselined), vitest
+relative to merge base **including GC-lane suites**, prototype-write corpus
+isolated with frozen tree, budget gates earned before granted.
+
+## 2026-08-21 wave-2 FINAL (obj-MOP lane) — 0 → 6 of 78, all gates clean, no allowances
+
+Branch `es5w2-obj-mop`, 4 commits, merged to the integration branch; all 6 rows
+independently re-verified by the integrator on the merged tree.
+
+| commit | rows | defect |
+| --- | ---: | --- |
+| `7e0fac5a` | +3 | `isFrozen`/`isSealed` read a stored flags bit only `freeze`/`seal` ever set; §7.3.15 makes them COMPUTED predicates (`preventExtensions` alone can make an object frozen). Own-property walk added behind the bit as fast path, carrier bags excluded (a bag holds expandos, not elements). |
+| `dadeaaae` | +1 | a void closure answered `ref.null.extern` (`null`) across the dynamic `__call_fn_method_*` ABI; JS says `undefined`. `return null` / `return 5` controls unchanged. |
+| `cc057dd6` | +1 | the vec `hasOwnProperty` arm OR-ed an inline presence check with the native — a ONE-WAY RATCHET that could only turn false into true, so a delete tombstone could not veto the stale vec slot (`a.hasOwnProperty("0")` true while `0 in a` — the same native, different spelling — false). Native measured correct on all four cases; obsolete inline half deleted. |
+| `2c6217e1` | +1 | `""` treated as an absent property name rather than a real own key. |
+
+Verification: guard 551/551 on every slice; vitest base-relative 42→42 failing
+IDENTICAL set (56 files/517 tests incl. a 26-file GC-lane subset — the full
+equivalence dir OOMs the worker pool on this box, stated as a real limit);
+prototype-write corpus 120/121 both sides, same single pre-existing failure;
+both god-file growths paid by extraction, **no budget allowances**.
+
+### Two working changes REVERTED at zero rows (diagnosis retained)
+
+1. **`propertyIsEnumerable` on a vec index is compile-time folded to `false`**
+   for every array index — the dynamic-key spelling and gOPD both say true.
+   Extending the vec introspection arm fixes it; moved 0 rows in lane and 0 in
+   `built-ins/Object/prototype/propertyIsEnumerable/**` (13/16 both sides).
+2. **for-in over a vec ignores the enumerable bit.** For whoever takes it:
+   (a) the #4222 presence gate (`overlayRouteActive` + `__extern_has_idx`) is
+   FALSE in a module whose only descriptor op is `Object.defineProperties` —
+   measured `hasIdx=undefined`, so a filter hung off it is inert exactly where
+   the failing tests need it; (b) `__propertyIsEnumerable` must NOT be the
+   filter — it answers 0 for a TypedArray index and would silently empty
+   TypedArray for-in. The correct probe is gOPD-shaped: suppress only when the
+   descriptor EXISTS and `enumerable` is false (measured right on all six
+   shapes).
+
+### Remaining 72, classified
+
+- **Blocked**: 6 × `length` ≥ 2³¹ (retired bucket E/#4497); 7 × mapped-`arguments`
+  defineProperty writeback; 1 × sloppy-script `this` (module goal); 1 × DOM.
+- **Out of lane**: 6 × boxed valueOf (protos lane); 2 × `isPrototypeOf`
+  (#4480 R4).
+- **Root-caused, not fixed**: 3 × void-in-argument-position (branded i32 zero —
+  type-mapping change); 4 × accessor read site coercing to the getter's
+  statically-inferred return type after `{get: undefined}` (store+gOPD already
+  correct); 3 × the `hasOwnProperty` numeric-non-index fold needing the
+  reflection lane's P2; 3 × the vec enumerable filter above; 1 × Date
+  own-visibility.
+- **QuickJS/eval-blocked: ZERO rows in this lane.**
 
 ## 2026-08-21 void-in-argument-position slice (closes the void-undefined family)
 

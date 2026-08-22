@@ -243,6 +243,7 @@ import {
   numericProofOverridesMixedCarrier,
   widenedCarrierOracleFor,
 } from "./analysis/mixed-assignment-carrier.js";
+import { declarationReadsStructuralObjectFromRealmGlobal } from "./analysis/realm-global-structural-carrier.js";
 import { symbolBrand } from "./symbol-field-carrier.js";
 import { ensureDynReadHelpers, ensureDynMemberGet } from "./dyn-read.js"; // (#2580 M0) / (#3053 U0)
 import { collectClosureBaseWrapperTypeIdxs, buildClosureRefTestArms } from "./closure-classifier.js"; // (#2175 V2-S1)
@@ -8690,6 +8691,12 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     fillRuntimeEvalCallablePropertyGetArm(ctx);
     fillRuntimeEvalIntrinsicFunctionOwnProps(ctx); // (#4491 T7-B) — multi-source parity
 
+    // (#1904/#3731) Multi-source parity for the native Array.isArray
+    // predicate. Its reserve-time body is a fail-closed `false`; fill it only
+    // after every source has registered its array carriers, exactly as the
+    // single-source pipeline does above.
+    fillExternIsArray(ctx);
+
     // (#3495) `__extern_get_idx` is reserved while compiling standalone
     // numeric reads through an externref (for example `globalThis.logs[i]`).
     // Its eager body only knows `$Object`/`$ObjVec`; splice the per-element-kind
@@ -10719,6 +10726,10 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
     // the resolver aliasing `global.get/set $__mod_x` for every read/write of
     // the inner `x`, so the function mutated the module global instead.
     const varType = ctx.checker.getTypeAtLocation(decl);
+    const declaredWasmType = resolveWasmType(ctx, varType);
+    const realmStructuralCarrier =
+      (declaredWasmType.kind === "ref" || declaredWasmType.kind === "ref_null") &&
+      declarationReadsStructuralObjectFromRealmGlobal(ctx, fctx, decl);
     // (#1239 / #1433) Object literals carrying get/set accessor declarations,
     // or `[Symbol.dispose]` / `[Symbol.asyncDispose]` computed methods, are
     // routed through the JS-host plain-object (externref) path. The local
@@ -10802,7 +10813,7 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
     // value the slot must physically hold, so they stay absolute. A
     // mixed-assignment demotion does not — a positive unboxing proof outranks
     // it (see `numericProofOverridesMixedCarrier`).
-    const hardForcesExternref = initForcesExternref || forInTargetForcesExternref;
+    const hardForcesExternref = initForcesExternref || realmStructuralCarrier || forInTargetForcesExternref;
     const usageF64 = hardForcesExternref
       ? null
       : mixedAssignmentCarrier
@@ -11393,6 +11404,10 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
         // (free functions and, after #2641, class methods/ctors); __module_init
         // does NOT run it, so top-level let/const still become module globals.
         const varType = ctx.checker.getTypeAtLocation(decl);
+        const declaredWasmType = resolveWasmType(ctx, varType);
+        const realmStructuralCarrier =
+          (declaredWasmType.kind === "ref" || declaredWasmType.kind === "ref_null") &&
+          declarationReadsStructuralObjectFromRealmGlobal(ctx, fctx, decl);
         // #1120: pre-allocate as i32 if collectI32CoercedLocals tagged this
         // local — keeps the hoisted slot in sync with what compileVariableStatement
         // will use, avoiding a slot-type mismatch on first assignment.
@@ -11478,7 +11493,8 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
         const mixedCarrierProvenF64 = mixedAssignmentCarrier
           ? numericProofOverridesMixedCarrier(usageInferredLocalType(ctx, decl))
           : null;
-        const carrierForcesExternref = initForcesExternref || (mixedAssignmentCarrier && !mixedCarrierProvenF64);
+        const carrierForcesExternref =
+          initForcesExternref || realmStructuralCarrier || (mixedAssignmentCarrier && !mixedCarrierProvenF64);
         let wasmType: ValType = carrierForcesExternref
           ? { kind: "externref" }
           : mixedCarrierProvenF64

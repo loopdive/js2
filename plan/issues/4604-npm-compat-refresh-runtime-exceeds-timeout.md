@@ -83,6 +83,30 @@ same stale artifact.
   runs may still be coalesced by GitHub, but the active run is no longer a
   multi-hour serial bottleneck that repeatedly times out before publishing.
   The implementation is in [#4745](https://github.com/loopdive/js2wasm/pull/4745).
+- **S3 (this PR): the staleness guard.** A scheduled workflow
+  (`npm-compat-staleness.yml`, 6h cron) asserts the PRODUCT — the committed
+  `npm-compat.json` is younger than 12h — instead of any run's own success,
+  which is the gap that let this episode run >24h undetected (a run that never
+  publishes fails no gate; cancelled/superseded runs don't notify). Verdict
+  logic is pure and time-injected (`scripts/lib/npm-compat-freshness.mjs`,
+  pinned by `tests/npm-compat-freshness.test.ts`): anything short of a
+  parseable recent `generatedAt` — missing file, malformed JSON, absent or
+  future timestamp — is STALE. Read-only by design: it alerts, recovery stays
+  with the refresh workflow. Verified against the live episode: at
+  implementation time it reports `STALE — artifact is 33.2h old`.
+- **S4 (this PR): first matrix flight findings (run 770, id 32549785178).**
+  Five groups finished in 3–11 min — the split works. Two blockers surfaced:
+  (a) the `tools` group CRASHED at 33 min: `styled-components-upstream-suite.mjs`
+  wrote `.styled-components-upstream-suite-generated/styled-components-version.ts`
+  without creating the directory (ENOENT). The suite landed 2026-08-21 (#4726)
+  and no serial CI run ever reached it, so the first focused `--only` worker was
+  its first-ever execution. Fixed here with the eslint-suite `mkdirSync` idiom —
+  without this, EVERY run's tools group fails and the coordinator (correctly)
+  refuses to publish, so the dashboard can never heal.
+  (b) the `renderers` group (react-dom, jsdom, redux) ran >3h and was still
+  going at 06:57Z — react-dom's upstream suite dominates; group re-balancing /
+  bounding is follow-up for the roster owners (context: #4751 isolated the
+  ReactDOM server/Fizz batches the day before).
 
 ## Fix directions (pick during implementation)
 
@@ -111,5 +135,22 @@ same stale artifact.
 - [ ] The workflow's matrix runtime has headroom against its timeout; each
       package group emits a partial report and the coordinator refuses to
       publish if any expected package is missing or duplicated.
-- [ ] Staleness of the committed artifact is observable (guard or alert),
-      not only discoverable by manual audit.
+- [x] Staleness of the committed artifact is observable (guard or alert),
+      not only discoverable by manual audit — `npm-compat-staleness.yml` (S3).
+
+## 2026-08-22 follow-up — pending refreshes were still being cancelled
+
+The matrix split fixed the active-run timeout, but it did not eliminate the
+other GitHub Actions concurrency rule: `cancel-in-progress: false` protects the
+currently running job only. GitHub retains one pending run per group and
+cancels an older pending run when another push arrives. The run history after
+[#4745](https://github.com/loopdive/js2wasm/pull/4745) still shows this shape:
+the refresh for `3f8b6e6` was cancelled when the next main push queued
+`2860d72d`, even though the workflow declared `cancel-in-progress: false`.
+
+The follow-up in [#4755](https://github.com/loopdive/js2/pull/4755) keys
+push-triggered refreshes by `github.sha`. Every main commit therefore gets a
+runner instead of being silently replaced while pending; scheduled and manual
+runs continue to serialize on the branch ref. The promotion push uses
+`--force-with-lease` so concurrent SHA lanes cannot overwrite a newer
+promotion branch update. The workflow-shape test now pins both invariants.
