@@ -168,6 +168,15 @@ describe("#3520 C34 per-field host accessor Program ABI ownership", () => {
     expect(structFieldAccessorDerivedOrdinal(forward, "get", "y")).toBe(8);
     expect(structFieldAccessorDerivedOrdinal(forward, "get", "absent")).toBeUndefined();
 
+    // Elision invariance: dropping a field from the SURVIVING set must not be
+    // allowed to renumber its neighbours. `observeStructFieldAccessorAbi`
+    // derives the order from the pre-elision record for exactly this reason —
+    // deriving it from survivors would give `y` a different ordinal purely
+    // because `x` was eliminated.
+    const survivorsOnly = structFieldAccessorFieldOrder(["visible", "y"]);
+    expect(structFieldAccessorDerivedOrdinal(survivorsOnly, "get", "y")).toBe(4);
+    expect(structFieldAccessorDerivedOrdinal(forward, "get", "y")).toBe(8);
+
     // Every kind fits inside the reserved stride, so no two fields overlap.
     for (const kind of Object.values(STRUCT_FIELD_ACCESSOR_KIND)) {
       expect(kind).toBeLessThan(STRUCT_FIELD_ACCESSOR_KIND_STRIDE);
@@ -223,14 +232,23 @@ describe("#3520 C34 per-field host accessor Program ABI ownership", () => {
     expect(Buffer.from(emitBinary(tracked.module))).toEqual(Buffer.from(emitBinary(untracked.module)));
   });
 
-  it("moves the per-field accessor rows off generic ownership across the five host entries", () => {
-    let definedFunctions = 0;
-    let genericRows = 0;
+  /**
+   * Deliberately NOT an absolute-count census.
+   *
+   * The C30–C33 slices each pinned literal five-entry denominators (166 defined
+   * functions, 45 generic, 26 closure, …). Every one of those numbers has since
+   * drifted on main and those suites are red, which means they now report the
+   * playground corpus changing rather than the property they were written to
+   * defend. This asserts the invariant instead: whatever the corpus contains,
+   * every emitted per-field accessor is owned by the structural role and none
+   * is left on the positional fallback. The denominators themselves live in the
+   * issue file, where a stale number is a stale note rather than a red gate.
+   */
+  it("leaves no per-field accessor on generic ownership across the five host entries", () => {
+    const ACCESSOR_NAME = /^__(sget|sset|shas|sbool)_/;
+    let emittedAccessorFunctions = 0;
     let accessorRows = 0;
-    let terminalUnits = 0;
-    let emitted = 0;
-    let unsupported = 0;
-    let invariants = 0;
+    let genericAccessorRows = 0;
 
     for (const entry of SINGLE_HOST_ENTRIES) {
       const source = readFileSync(resolve(entry), "utf8");
@@ -242,31 +260,20 @@ describe("#3520 C34 per-field host accessor Program ABI ownership", () => {
           .map((error) => error.message)
           .join("\n")}`,
       ).toEqual([]);
-      definedFunctions += result.module.functions.length;
+      emittedAccessorFunctions += result.module.functions.filter((func) => ACCESSOR_NAME.test(func.name)).length;
       const entries = abiEntries(result);
-      genericRows += entries.filter((candidate) => candidate.id.includes(RETAINED_MODULE_FUNCTION_ROLE)).length;
-      accessorRows += entries.filter((candidate) => candidate.id.includes(STRUCT_FIELD_ACCESSOR_ROLE)).length;
-      for (const outcome of result.irOutcomes ?? []) {
-        terminalUnits++;
-        if (outcome.kind === "emitted") emitted++;
-        if (outcome.kind === "unsupported") unsupported++;
-        if (outcome.kind === "invariant") invariants++;
-      }
+      accessorRows += callableRowsForRole(entries, STRUCT_FIELD_ACCESSOR_ROLE).length;
+      genericAccessorRows += callableRowsForRole(entries, RETAINED_MODULE_FUNCTION_ROLE).filter((row) =>
+        ACCESSOR_NAME.test(row.displayName ?? ""),
+      ).length;
     }
 
-    // Measured on this branch and on its exact base (origin/main 540064dfb):
-    // the base census is 139 defined functions / 40 generic rows / 0 accessor
-    // rows. The 25 accessor rows are moved, not created — routing is untouched.
-    expect({ definedFunctions, genericRows, accessorRows }).toEqual({
-      definedFunctions: 139,
-      genericRows: 15,
-      accessorRows: 25,
-    });
-    expect({ terminalUnits, emitted, unsupported, invariants }).toEqual({
-      terminalUnits: 37,
-      emitted: 32,
-      unsupported: 5,
-      invariants: 0,
-    });
+    // Anti-vacuity: the corpus must actually contain accessors, or "none are
+    // generic" is trivially true. Measured at origin/main 540064dfb this is 25.
+    expect(emittedAccessorFunctions).toBeGreaterThan(0);
+    // Every emitted accessor has exactly one structural callable owner...
+    expect(accessorRows).toBe(emittedAccessorFunctions);
+    // ...and none of them is left on the positional fallback.
+    expect(genericAccessorRows).toBe(0);
   });
 });
