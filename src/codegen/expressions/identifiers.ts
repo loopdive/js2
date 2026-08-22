@@ -1326,7 +1326,15 @@ function compileIdentifierCore(
   if (
     !ctx.standalone &&
     !ctx.wasi &&
-    (name === "DisposableStack" || name === "AsyncDisposableStack" || name === "SuppressedError") &&
+    // (#4618) `console` referenced as a VALUE (not `console.m(...)` call
+    // position, which has its own intrinsic path): react's upstream tests do
+    // `spyOnDevAndProd(console, 'log')` — the null-externref fallback made
+    // `target[key]` throw inside the spy helper for all 7 StrictMode
+    // console-logs-logging tests. Same host-only resolution as the ERM ctors.
+    (name === "DisposableStack" ||
+      name === "AsyncDisposableStack" ||
+      name === "SuppressedError" ||
+      name === "console") &&
     !fctx.localMap.has(name) &&
     !(fctx.boxedCaptures?.has(name) ?? false) &&
     !ctx.classSet.has(name)

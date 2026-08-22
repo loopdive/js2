@@ -357,6 +357,22 @@ demote.
   buckets: "expected not null" 13, mock args/count 12, null-deref "at
   933:18" ×7 (ReactChildren), setState null 2.
 
+- **2026-08-22 bare `console` as a value — null-deref "at 933:18" ×7
+  RESOLVED (no score change yet)**: the ×7 bucket was NOT ReactChildren —
+  all 7 are ReactStrictMode "console logs logging" tests, and 933:18 is
+  `target[key]` in the shim's `__jestSpyOn`. Bare `console` in value
+  position (`spyOnDevAndProd(console, 'log')`) compiled to the
+  null-externref fallback. Fix: added `console` to the existing host-only
+  ERM-ctor identifier path in identifiers.ts
+  (`__extern_get(__get_globalThis(), name)`, gated !standalone/!wasi,
+  unshadowed). 3-line probe (.tmp/probe-console-val.mts): typeof console
+  null → "object". The 7 tests now progress into rendering and fail later
+  at "expected 0 toBe 1" — host react-dom does not invoke the compiled
+  class component's render (the wider host-instantiates-compiled-class
+  bucket; react stays 87/146). Guards: jest 315/349, acorn 3518/3518,
+  freeze/annexB regression tests hold. Regression test:
+  `tests/issue-4618-console-as-value.test.ts` (1).
+
 ## Fix order
 
 1. (c) first — it is a hard CE with a two-line repro and pins the IR
