@@ -230,4 +230,10 @@ behind-PR sweep excludes `ci/npm-compat-refresh` entirely. This makes the npm
 coordinator the only updater of its promotion branch and prevents both direct
 and indirect `pull_request:synchronize` cancellation churn.
 
+The generic `auto-refresh-prs` cron also excludes the exact
+`ci/npm-compat-refresh` head. Its two-hour stale-check heuristic is appropriate
+for ordinary behind pull requests, but it could otherwise rebase this bot-owned
+branch and emit the same cancelling `synchronize` event outside the npm
+coordinator.
+
 Implementation: [PR #4776](https://github.com/loopdive/js2/pull/4776).
