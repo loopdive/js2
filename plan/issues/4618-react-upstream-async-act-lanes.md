@@ -605,6 +605,16 @@ in-module reads (host-side detection is what react-dom needs).
   322/356, cookie 63740/63740, class battery 147/147. Regression test:
   `tests/issue-4618-scoped-same-name-classes.test.ts` (2).
 
+- **2026-08-22 scoped-class local binds the SINGLETON — react 87 → 88/146,
+  StrictMode filter 0/7 → 2/7**: binding the scoped class local to the
+  legacy ctor-value closure sent scoped classes down the lane without the
+  host [[Construct]] bridge; binding the emitLazyClassObjectGet SINGLETON
+  (bridge-registered) — uniformly, first declaration included — fixed
+  double-ctor and double-getDerivedStateFromProps outright and moved
+  state-updaters past its setState null-deref. Remaining in that filter:
+  the render-dispatch variants (count++ inside render never runs —
+  instance.render dispatch through the bridge for the batch shapes).
+
 ## Fix order
 
 1. (c) first — it is a hard CE with a two-line repro and pins the IR
