@@ -228,6 +228,29 @@ function identifierValueSymbol(ctx: CodegenContext, id: ts.Identifier): ts.Symbo
 }
 
 /**
+ * (#3505) True when a module-goal identifier read is undeclared for the
+ * reading module's environment record even though TypeScript may hand back a
+ * symbol: either no symbol resolves at all, or the resolution leaked through
+ * the shared global scope. TS treats an import/export-free input file as a
+ * global SCRIPT, so a bare name declared at another module file's top level
+ * resolves cross-file even though the multi pipeline links the files as
+ * distinct modules (test262 instn-uniq-env-rec: modules have distinct
+ * environment records). Declaration files (lib.d.ts, ambient env stubs)
+ * legitimately resolve cross-file and stay untouched, as do synthetic
+ * compiler-minted identifiers (no parent / no source position).
+ */
+function moduleGoalReadIsUndeclared(ctx: CodegenContext, id: ts.Identifier): boolean {
+  if (!ctx.sourceIsModule || id.parent === undefined || id.pos < 0) return false;
+  const valSym = identifierValueSymbol(ctx, id);
+  if (valSym === undefined) return true;
+  const decl = valSym.valueDeclaration ?? valSym.declarations?.[0];
+  if (!decl) return false;
+  const declFile = decl.getSourceFile();
+  if (declFile === id.getSourceFile() || declFile.isDeclarationFile) return false;
+  return (declFile as ts.SourceFile & { externalModuleIndicator?: ts.Node }).externalModuleIndicator === undefined;
+}
+
+/**
  * Static TDZ analysis: determine at compile time whether a let/const variable
  * access is guaranteed to be after initialization (safe) or before (TDZ violation).
  *
@@ -879,8 +902,13 @@ function compileIdentifierCore(
     return emitCapturedBoxGlobalRead(ctx, fctx, capturedBox);
   }
 
+  // (#3505) Graph-wide name-keyed registries (capturedGlobals, moduleGlobals,
+  // funcMap, classObjectGlobals, …) must not serve a read that is undeclared
+  // for THIS module's environment record — see moduleGoalReadIsUndeclared.
+  const unresolvedInModuleGoal = moduleGoalReadIsUndeclared(ctx, id);
+
   // Check captured globals (variables promoted from enclosing scope for callbacks)
-  const capturedIdx = ctx.capturedGlobals.get(name);
+  const capturedIdx = unresolvedInModuleGoal ? undefined : ctx.capturedGlobals.get(name);
   if (capturedIdx !== undefined) {
     // TDZ check: throw ReferenceError if let/const variable accessed before initialization
     // Apply static analysis — captured globals are often accessed from closures,
@@ -903,7 +931,7 @@ function compileIdentifierCore(
   }
 
   // Check module-level globals (top-level let/const declarations)
-  const moduleIdx = ctx.moduleGlobals.get(name);
+  const moduleIdx = unresolvedInModuleGoal ? undefined : ctx.moduleGlobals.get(name);
   if (moduleIdx !== undefined) {
     // TDZ check: throw ReferenceError if let/const variable accessed before initialization
     // Apply static analysis for module-level globals
@@ -1119,8 +1147,10 @@ function compileIdentifierCore(
   // as a closure, and BEFORE the `ref.null.extern` fallback so we beat the
   // null result.
   {
-    const resolvedClassName = ctx.classExprNameMap.get(name) ?? name;
-    if (ctx.classObjectGlobals?.has(resolvedClassName)) {
+    // (#3505) A foreign module's class must not resolve by bare name — see
+    // `unresolvedInModuleGoal`.
+    const resolvedClassName = unresolvedInModuleGoal ? undefined : (ctx.classExprNameMap.get(name) ?? name);
+    if (resolvedClassName !== undefined && ctx.classObjectGlobals?.has(resolvedClassName)) {
       if (emitLazyClassObjectGet(ctx, fctx, resolvedClassName)) {
         return { kind: "externref" };
       }
@@ -1311,7 +1341,7 @@ function compileIdentifierCore(
   // path (which would otherwise re-wrap the func index into a fresh closure,
   // ignoring the live value). Gated on the normally-empty set — byte-identical
   // for programs that never reassign a function declaration.
-  if (fctx.localMap.get(name) === undefined && ctx.liveFuncBindingGlobals?.has(name)) {
+  if (fctx.localMap.get(name) === undefined && !unresolvedInModuleGoal && ctx.liveFuncBindingGlobals?.has(name)) {
     const liveGlobalIdx = ctx.moduleGlobals.get(name);
     if (liveGlobalIdx !== undefined) {
       fctx.body.push({ op: "global.get", index: liveGlobalIdx });
@@ -1323,7 +1353,10 @@ function compileIdentifierCore(
   // expression (not called), wrap it in a closure struct so it can be stored
   // in a variable and later called via call_ref.
   // Only wrap user-defined functions (skip internal helpers and class constructors).
-  const funcRefIdx = ctx.funcMap.get(name);
+  // (#3505) A foreign module's function declaration must not resolve by bare
+  // name (funcMap is graph-wide) — skip the funcref-as-value arm so the read
+  // reaches the undeclared -> ReferenceError emission below.
+  const funcRefIdx = unresolvedInModuleGoal ? undefined : ctx.funcMap.get(name);
   // (#1809) Only wrap DEFINED functions (index >= numImportFuncs) in a funcref
   // closure. A host import (e.g. the ambient DOM global `resizeTo`/`resizeBy`
   // from lib.dom.d.ts) has no in-module body to forward to via `ref.func`, so
@@ -1410,9 +1443,16 @@ function compileIdentifierCore(
   // (spec §13.10.1 / §13.11.4 — operand evaluation precedes ToPrimitive in `==`).
   // However, known globals (Symbol, Object, Reflect, etc.) have TS symbols from
   // lib.d.ts and should use the fallback default instead.
+  // (#3505) A cross-file global-scope leak (see `unresolvedInModuleGoal`) is
+  // undeclared for this module's environment record even though TS handed back
+  // the other file's symbol — it must throw, not read a fallback default.
   const sym = identifierValueSymbol(ctx, id);
-  if (!sym) {
-    if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
+  if (!sym || unresolvedInModuleGoal) {
+    // (#3505) `unresolvedInModuleGoal` means the name statically IS another
+    // module's top-level binding, not a candidate runtime global — the
+    // runtime-eval binding pool is graph-wide and would hand that foreign
+    // binding back. Skip the dynamic read and throw.
+    if (!unresolvedInModuleGoal && (ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
       const dynamicGlobal = skipRuntimeEvalState
         ? emitRuntimeEvalGlobalRead(ctx, fctx, name, false)
         : emitRuntimeEvalBindingRead(ctx, fctx, name, false);
