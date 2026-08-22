@@ -15,6 +15,8 @@ es_edition: 5
 language_feature: relational-operators
 goal: es5
 related: [4515, 2059, 1374, 4163]
+coercion-sites-allow:
+  - src/codegen/carrier-to-primitive.ts
 origin: "2026-08-19 ES5 standalone push, language/expressions lane. Root-caused to the bottom and deliberately NOT landed at the end of a long session; this file is the implementable spec."
 ---
 
