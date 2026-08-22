@@ -82,6 +82,7 @@ same stale artifact.
   sum of all upstream suites. `cancel-in-progress` remains `false`: pending
   runs may still be coalesced by GitHub, but the active run is no longer a
   multi-hour serial bottleneck that repeatedly times out before publishing.
+  The implementation is in [#4745](https://github.com/loopdive/js2wasm/pull/4745).
 
 ## Fix directions (pick during implementation)
 
