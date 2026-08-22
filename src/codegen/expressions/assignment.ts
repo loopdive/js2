@@ -4,6 +4,7 @@
  */
 import { ts, forEachChild } from "../../ts-api.js";
 import { receiverIsRealmGlobalObject } from "../helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver
+import { tryEmitRealmGlobalElementWrite } from "../realm-global-element-write.js"; // (#4491 T4) its bracket twin
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import { integrityVarKey } from "../widened-var-key.js";
 import { PROP_FLAG_ACCESSOR, PROP_FLAG_WRITABLE } from "../object-ops.js";
@@ -11,6 +12,8 @@ import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
 import { emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3
 import { emitHoleToUndefined, holeSentinelInstrs } from "../array-holes.js";
+// prettier-ignore
+import { emitUnbackableIndexFlag, guardedElementSetInstrs, needsGapFillCondInstrs, needsGrowCondInstrs } from "../vec-sparse-index.js";
 import { tryEmitLinearU8ElementCompound, tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
 import { emitAnyAdd, emitModulo, emitToInt32, emitToUint8Clamp } from "../binary-ops.js";
 import { popBody, pushBody } from "../context/bodies.js";
@@ -4062,9 +4065,9 @@ function compilePropertyAssignment(
       fctx.body.push({ op: "local.get", index: vecTmp });
       fctx.body.push({ op: "local.get", index: newLenTmp });
       fctx.body.push({ op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 });
-      // Return the new length as the assignment expression result
+      // Assignment result — UNSIGNED widening (#4491, see array-length-define.ts).
       fctx.body.push({ op: "local.get", index: newLenTmp });
-      if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+      if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
       return ctx.fast ? { kind: "i32" } : { kind: "f64" };
     }
   }
@@ -4789,6 +4792,10 @@ function compileElementAssignment(
     }
   }
 
+  // (#4491 T4) Bracket twin of the #4500 Slice A dot arm; placed like it — after
+  // the runtime-state checks, before the struct lowerings. See its module.
+  const realmGlobalElemWrite = tryEmitRealmGlobalElementWrite(ctx, fctx, target, value);
+  if (realmGlobalElemWrite !== undefined) return realmGlobalElemWrite;
   // #1886 Slice B: linear-backed Uint8Array write `buf[i] = v` →
   // i32.store8(ptr+i, trunc(v)). Only fires for a registered linear-safe
   // buffer; any other target falls through to the GC element-assign path.
@@ -5219,11 +5226,12 @@ function compileElementAssignment(
       kind: "i32",
     });
 
-    fctx.body.push({ op: "local.get", index: idxLocal });
-    fctx.body.push({ op: "local.get", index: dataLocal });
-    fctx.body.push({ op: "array.len" });
-    fctx.body.push({ op: "i32.ge_s" }); // idx >= capacity?
-
+    // (#4491 lane J) An index above the 16M allocation guard is UNBACKABLE: the
+    // flag gates the grow, the gap-fill and the `array.set`, and every index
+    // compare below turns UNSIGNED (the local holds a u32 bit pattern — index
+    // 2**32-2 arrives as `-2`). Full rationale in vec-sparse-index.ts.
+    const unbackedLocal = emitUnbackableIndexFlag(fctx, idxLocal);
+    fctx.body.push(...needsGrowCondInstrs(unbackedLocal, idxLocal, dataLocal));
     fctx.body.push({
       op: "if",
       blockType: { kind: "empty" },
@@ -5325,9 +5333,7 @@ function compileElementAssignment(
       fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 0 }); // current length
       fctx.body.push({ op: "local.set", index: gapOldLenLocal });
       // if (idx > length) array.fill(data, length, undefined, idx - length)
-      fctx.body.push({ op: "local.get", index: idxLocal });
-      fctx.body.push({ op: "local.get", index: gapOldLenLocal });
-      fctx.body.push({ op: "i32.gt_s" });
+      fctx.body.push(...needsGapFillCondInstrs(unbackedLocal, idxLocal, gapOldLenLocal));
       fctx.body.push({
         op: "if",
         blockType: { kind: "empty" },
@@ -5343,11 +5349,8 @@ function compileElementAssignment(
       });
     }
 
-    // array.set: data[idx] = val (using potentially grown data)
-    fctx.body.push({ op: "local.get", index: dataLocal });
-    fctx.body.push({ op: "local.get", index: idxLocal });
-    fctx.body.push({ op: "local.get", index: valLocal });
-    fctx.body.push({ op: "array.set", typeIdx: arrTypeIdx });
+    // array.set: data[idx] = val (skipped for an unbackable index).
+    fctx.body.push(...guardedElementSetInstrs(unbackedLocal, dataLocal, idxLocal, valLocal, arrTypeIdx));
 
     // Update length if idx+1 > current length:
     // if (idx + 1 > vec.length) vec.length = idx + 1
@@ -5356,7 +5359,7 @@ function compileElementAssignment(
     fctx.body.push({ op: "i32.add" });
     fctx.body.push({ op: "local.get", index: vecLocal });
     fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 0 }); // get length
-    fctx.body.push({ op: "i32.gt_s" });
+    fctx.body.push({ op: "i32.gt_u" });
     fctx.body.push({
       op: "if",
       blockType: { kind: "empty" },

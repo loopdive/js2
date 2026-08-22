@@ -29,6 +29,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "./native-strings.js";
+import { STRING_EXOTIC_PUSH_KEYS_FN, stringExoticPushKeysPrologue } from "./string-exotic-own-props.js"; // (#4491) §10.4.3 own keys
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
@@ -329,13 +330,35 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
               },
               // 4.c: data↔accessor conversion. This is the DATA define path; if the
               // current entry is an accessor, converting it to data is forbidden.
-              ...eflBit(FLAG_ACCESSOR),
+              //
+              // (#4491) …but only when Desc is NOT generic. Step 4.c reads "If
+              // IsGenericDescriptor(Desc) is false and IsAccessorDescriptor(Desc)
+              // is not IsAccessorDescriptor(current)" — a descriptor that mentions
+              // neither [[Value]] nor [[Writable]] converts nothing, so
+              // `Object.defineProperty(o, k, {})` (and an attributes-only
+              // descriptor that agrees with the current attributes) over a
+              // non-configurable accessor is a legal no-op, not a TypeError.
+              // Steps 4.a/4.b above still reject a generic descriptor that asks
+              // for configurable:true or a different enumerable, and step 5's
+              // `keepAccessor` arm below already applies the generic case
+              // correctly — this only removes a throw that pre-empted it
+              // (`built-ins/Object/defineProperty/15.2.3.6-4-59`).
+              ...hfBit(HOST_HAS_VALUE),
+              ...hfBit(HOST_WRITABLE_SPECIFIED),
+              { op: "i32.or" },
               {
                 op: "if",
                 blockType: { kind: "empty" },
-                then: s4Throw(
-                  "TypeError: Cannot redefine property: cannot convert a non-configurable accessor to a data property",
-                ),
+                then: [
+                  ...eflBit(FLAG_ACCESSOR),
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: s4Throw(
+                      "TypeError: Cannot redefine property: cannot convert a non-configurable accessor to a data property",
+                    ),
+                  },
+                ],
               },
               // 4.d: both data, current non-writable (FLAG_WRITABLE clear) → reject
               // a writable:true request OR a value change (SameValue).
@@ -2997,8 +3020,15 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
   // returns symbols).
   //
   // params: 0=obj(externref)
-  // locals: 1=any 2=o 3=arr(ordered) 4=cap 5=i 6=e 7=vec
+  // locals: 1=any 2=o 3=arr(ordered) 4=cap 5=i 6=e 7=vec [8=boundaryResult] N=strexo
   {
+    // (#4491) The String-exotic flag local is APPENDED after the optional
+    // boundary local, so every index baked above stays valid.
+    const strExoticLocal = boundaryObjectGetOwnPropertyNamesIdx !== undefined ? 9 : 8;
+    // (#4491) MUST equal `FLAG_INTERNAL` in object-runtime.ts. Kept local
+    // rather than threaded through `ObjectDescriptorHelperState` so this whole
+    // slice is one contiguous region of this file (lane-C fence, 2026-08-21).
+    const FLAG_INTERNAL_SLOT = 0x10;
     const body: Instr[] = [
       { op: "call", funcIdx: objVecNewIdx },
       { op: "local.set", index: 7 },
@@ -3028,6 +3058,35 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
               op: "if",
               blockType: { kind: "empty" },
               then: [{ op: "local.get", index: 7 }, { op: "return" }],
+            },
+          ] satisfies Instr[])
+        : []),
+      // (#4491) §10.4.3 String-exotic own INDEX keys, derived from the
+      // [[StringData]] rather than stored as table entries. They are the lowest
+      // indices by construction, so they lead the OrdinaryOwnPropertyKeys
+      // order; `length` is a NON-index key and is appended after the table
+      // walk, gated on this same flag.
+      ...stringExoticPushKeysPrologue(ctx, 7, strExoticLocal),
+      // A PRIMITIVE string receiver has no table to walk, so the non-`$Object`
+      // arm below returns before the `length` tail can run. Emit it here for
+      // that shape only — the wrapper keeps the ordered tail.
+      ...(ctx.funcMap.get(STRING_EXOTIC_PUSH_KEYS_FN) !== undefined
+        ? ([
+            { op: "local.get", index: strExoticLocal },
+            { op: "local.get", index: 0 },
+            { op: "any.convert_extern" },
+            { op: "ref.test", typeIdx: objectTypeIdx },
+            { op: "i32.eqz" },
+            { op: "i32.and" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: 7 },
+                ...nativeStringLiteralInstrs(ctx, "length"),
+                { op: "extern.convert_any" },
+                { op: "call", funcIdx: objVecPushIdx },
+              ],
             },
           ] satisfies Instr[])
         : []),
@@ -3066,12 +3125,30 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
               { op: "local.tee", index: 6 },
               { op: "ref.is_null" },
               { op: "br_if", depth: 1 },
-              { op: "local.get", index: 7 },
+              // (#4491) A reserved INTERNAL slot is not an own property. The
+              // only one today is `[[PrimitiveValue]]`, and it leaked into
+              // every `Object.getOwnPropertyNames(new String(…))` answer
+              // (measured: `["[[PrimitiveValue]]"]`). `Object.keys` never saw
+              // it — its walk is `__obj_ordered`, which filters by
+              // [[Enumerable]] — so only this all-keys walk needs the guard.
               { op: "local.get", index: 6 },
               { op: "ref.as_non_null" },
-              { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
-              { op: "extern.convert_any" },
-              { op: "call", funcIdx: objVecPushIdx },
+              { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+              { op: "i32.const", value: FLAG_INTERNAL_SLOT },
+              { op: "i32.and" },
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: 7 },
+                  { op: "local.get", index: 6 },
+                  { op: "ref.as_non_null" },
+                  { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
+                  { op: "extern.convert_any" },
+                  { op: "call", funcIdx: objVecPushIdx },
+                ],
+              },
               { op: "local.get", index: 5 },
               { op: "i32.const", value: 1 },
               { op: "i32.add" },
@@ -3081,6 +3158,24 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
           },
         ],
       },
+      // (#4491) §10.4.3.6 — `length` is an own, non-enumerable property of a
+      // String exotic, and a NON-index string key, so it lands after the
+      // table's index entries (`str[5] = "de"` ⇒ `[…,"5","length"]`).
+      ...(ctx.funcMap.get(STRING_EXOTIC_PUSH_KEYS_FN) !== undefined
+        ? ([
+            { op: "local.get", index: strExoticLocal },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: 7 },
+                ...nativeStringLiteralInstrs(ctx, "length"),
+                { op: "extern.convert_any" },
+                { op: "call", funcIdx: objVecPushIdx },
+              ],
+            },
+          ] satisfies Instr[])
+        : []),
       { op: "local.get", index: 7 },
     ];
     registerNative(
@@ -3098,6 +3193,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         ...(boundaryObjectGetOwnPropertyNamesIdx !== undefined
           ? ([{ name: "boundaryResult", type: { kind: "externref" } }] as { name: string; type: ValType }[])
           : []),
+        { name: "strExotic", type: { kind: "i32" } },
       ],
       body,
     );

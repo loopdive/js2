@@ -80,6 +80,7 @@ import { countedPushIndexOfUnroll, emitArrayIndexOfScan } from "./array-indexof-
 import { compileArrayConcatExternHost, compileArrayMethodExtern } from "./array-method-host.js";
 // (#4446) The §23.1.3.1 host-free concat loop for dynamic operands.
 import { compileArrayConcatNativeSpec } from "./array-concat-spec.js";
+import { ensureJoinProtoHoleLocal, joinProtoHoleFallbackInstrs } from "./array-join-proto-hole.js";
 import { emitFuncRefAsClosure } from "./closures/funcref-as-closure.js";
 
 // (#3264) Array.prototype-borrow subsystem extracted to array-prototype-borrow.ts;
@@ -4413,6 +4414,8 @@ function compileArrayJoinNative(
   const needsRefToString =
     (elemType.kind === "ref" || elemType.kind === "ref_null") &&
     !isAnyStringSubtype(ctx, (elemType as { typeIdx: number }).typeIdx);
+  // (#4491 lane J) Armed FIRST so `externToStrIdx` is captured after its shifts.
+  const protoHoleVal = ensureJoinProtoHoleLocal(ctx, fctx);
   if (elemType.kind === "externref" || needsRefToString) {
     externToStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
     emptyElem = joinEmptyElementTest(ctx, fctx, () =>
@@ -4424,7 +4427,6 @@ function compileArrayJoinNative(
       return null;
     }
   }
-
   const vecTmp = allocLocal(fctx, `__njoin_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dataTmp = allocLocal(fctx, `__njoin_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const foldLocals = allocJoinFoldLocals(fctx, repr, "njoin");
@@ -4506,6 +4508,9 @@ function compileArrayJoinNative(
   // fold still iterates to the LOGICAL length, preserving the trailing empty
   // slots (`[1,2,3]; a.length=6; a.join(",")` === "1,2,3,,,"). No-op for dense
   // arrays (backing ≥ length ⇒ the guard is always true).
+  // (#4491 lane J) "beyond the backing" is not "absent" — a hole INHERITS
+  // `Array.prototype[k]`. Re-ask [[Get]]; see array-join-proto-hole.ts.
+  const protoHoleArm = joinProtoHoleFallbackInstrs(ctx, vecTmp, foldLocals.iTmp, protoHoleVal, anyStrTypeIdx);
   const joinBoundsCheckedElemToStr: Instr[] = [
     { op: "local.get", index: foldLocals.iTmp },
     { op: "local.get", index: dataTmp },
@@ -4515,7 +4520,7 @@ function compileArrayJoinNative(
       op: "if",
       blockType: { kind: "val", type: repr.resultType },
       then: elemToStr,
-      else: repr.literal(""),
+      else: protoHoleArm ?? repr.literal(""),
     },
   ];
   emitStringJoinFold(ctx, fctx, repr, foldLocals, joinBoundsCheckedElemToStr);
