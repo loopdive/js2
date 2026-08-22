@@ -1320,7 +1320,17 @@ function compileHostObjectAsStruct(
 export function objectLiteralSpreadTakesHostPath(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
   if (expr.properties.length === 0) return false;
   if (!expr.properties.some((p) => ts.isSpreadAssignment(p))) return false;
-  const spreadCtxType = ctx.checker.getContextualType(expr);
+  let spreadCtxType = ctx.checker.getContextualType(expr);
+  // (#4616) An OPTIONAL slot's contextual type is `T | undefined` (jest's
+  // `options = { …defaults, ...options }` param reassignment): the union's
+  // `getProperties()` is empty, which mis-read a perfectly concrete shape as
+  // "non-specific" and routed the literal to the host path — whose result
+  // then null-casted back into the struct-typed slot. Strip nullish
+  // constituents; a single object part left over is the concrete context.
+  if (spreadCtxType?.isUnion()) {
+    const parts = spreadCtxType.types.filter((p) => (p.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null)) === 0);
+    if (parts.length === 1) spreadCtxType = parts[0];
+  }
   const nonSpecificContext =
     !spreadCtxType ||
     (spreadCtxType.flags & ts.TypeFlags.Any) !== 0 ||
@@ -2434,6 +2444,99 @@ export function compileWidenedEmptyObject(
   return { kind: "ref", typeIdx: structTypeIdx };
 }
 
+/**
+ * (#4616) The struct-field "missing property" default — undefined sentinels so
+ * destructuring default-value checks can detect absence (f64: the sNaN
+ * sentinel matching emitDefaultValueCheck #866; externref: JS `undefined`, not
+ * ref.null.extern, because destructuring defaults fire only on `=== undefined`).
+ * Shared by the spread null-guard arms and the no-writer fallback below.
+ */
+function pushStructFieldDefault(ctx: CodegenContext, fctx: FunctionContext, fieldType: ValType): void {
+  if (fieldType.kind === "f64") {
+    fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
+    fctx.body.push({ op: "f64.reinterpret_i64" });
+  } else if (fieldType.kind === "externref") {
+    emitUndefined(ctx, fctx);
+  } else if (fieldType.kind === "eqref") {
+    fctx.body.push({ op: "ref.null.eq" });
+  } else if (fieldType.kind === "ref" || fieldType.kind === "ref_null") {
+    fctx.body.push({ op: "ref.null", typeIdx: fieldType.typeIdx });
+  } else {
+    fctx.body.push({ op: "i32.const", value: 0 });
+  }
+}
+
+/**
+ * (#4616) Block result type for the spread null-guard `if`: a bare `ref`
+ * field type is widened to `ref_null` so the null-arm's `ref.null` default
+ * validates (struct fields land as nullable refs in the emitted type section).
+ */
+function spreadGuardBlockType(fieldType: ValType): ValType {
+  if (fieldType.kind === "ref") return { kind: "ref_null", typeIdx: fieldType.typeIdx };
+  return fieldType;
+}
+
+/**
+ * (#4616) Read `fieldIdx` from a spread source struct with an ABSENT-slot
+ * fallback. A partial source (`{ ...defaults, ...options }` where `options`
+ * lacks some optional keys) stores the MISSING sentinel in the unset slots
+ * (externref: JS undefined; f64: the #866 sNaN), and §13.2.5.5
+ * CopyDataProperties copies only OWN PRESENT properties — so a sentinel read
+ * must keep the earlier writer's value, not clobber it. i32/ref slots carry
+ * no sentinel and read through unchanged (known residual: an absent optional
+ * boolean cannot be told from `false`).
+ */
+function spreadFieldReadWithAbsentFallback(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  src: { local: number; srcStructTypeIdx: number },
+  fieldIdx: number,
+  fieldType: ValType,
+  fallback: Instr[],
+): Instr[] {
+  const read: Instr[] = [
+    { op: "local.get", index: src.local },
+    { op: "struct.get", typeIdx: src.srcStructTypeIdx, fieldIdx },
+  ];
+  if (fieldType.kind === "externref") {
+    const isUndefIdx = ctx.funcMap.get("__extern_is_undefined");
+    if (isUndefIdx === undefined) return read;
+    const vTmp = allocTempLocal(fctx, { kind: "externref" });
+    const out: Instr[] = [
+      ...read,
+      { op: "local.tee", index: vTmp },
+      { op: "call", funcIdx: isUndefIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: fieldType },
+        then: fallback,
+        else: [{ op: "local.get", index: vTmp }],
+      },
+    ];
+    releaseTempLocal(fctx, vTmp);
+    return out;
+  }
+  if (fieldType.kind === "f64") {
+    const vTmp = allocTempLocal(fctx, { kind: "f64" });
+    const out: Instr[] = [
+      ...read,
+      { op: "local.tee", index: vTmp },
+      { op: "i64.reinterpret_f64" },
+      { op: "i64.const", value: 0x7ff00000deadc0den },
+      { op: "i64.eq" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: fieldType },
+        then: fallback,
+        else: [{ op: "local.get", index: vTmp }],
+      },
+    ];
+    releaseTempLocal(fctx, vTmp);
+    return out;
+  }
+  return read;
+}
+
 export function compileObjectLiteralForStruct(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2461,7 +2564,17 @@ export function compileObjectLiteralForStruct(
   for (let propIndex = 0; propIndex < expr.properties.length; propIndex++) {
     const prop = expr.properties[propIndex]!;
     if (ts.isSpreadAssignment(prop)) {
-      const srcType = ctx.checker.getTypeAtLocation(prop.expression);
+      let srcType = ctx.checker.getTypeAtLocation(prop.expression);
+      // (#4616) An optional-param source types as `T | undefined`; strip the
+      // nullish constituents so the struct resolution below sees the object
+      // shape (the runtime null case is handled by the ref.is_null guards in
+      // the field assembly — §13.2.5.5 skips a nullish source). Without this
+      // the source silently dropped from `spreadSources` and the spread
+      // contributed NOTHING (jest's `{ ...defaults, ...options }`).
+      if (srcType.isUnion()) {
+        const parts = srcType.types.filter((p) => (p.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null)) === 0);
+        if (parts.length === 1) srcType = parts[0]!;
+      }
       // (#2009 R3) An INLINE object-literal spread source (`{ ...{ x: 1 } }`)
       // is never independently declared, so its anonymous object type was never
       // registered as a struct — `resolveStructName` returns undefined, the
@@ -2491,6 +2604,13 @@ export function compileObjectLiteralForStruct(
         }
       }
     }
+  }
+  // (#4616) The absent-slot fallback below tests externref reads against the
+  // undefined singleton — register the helper BEFORE the field assembly so no
+  // mid-assembly late-import shift can strand arm indices.
+  if (spreadSources.length > 0) {
+    ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+    flushLateImportShifts(ctx, fctx);
   }
 
   // (#2009 R3b) Record this literal's field names in JS INSERTION order so the
@@ -2822,17 +2942,36 @@ export function compileObjectLiteralForStruct(
       }
     }
     if (overridingSpread) {
-      // (§13.2.5.5) The overridden named prop is still evaluated for its
-      // observable side effects, then its value is dropped — only a
-      // PropertyAssignment has an initializer to run (shorthand/method have
-      // none). The earlier duplicates were already evaluated+dropped above.
-      if (lastMatch && ts.isPropertyAssignment(lastMatch)) {
-        const overriddenType = compileExpression(ctx, fctx, lastMatch.initializer);
-        if (overriddenType) fctx.body.push({ op: "drop" });
-      }
+      // (#4616) A spread source can be NULLISH at runtime (`{ a: 1,
+      // ...options }` with `options` an optional param — jest's
+      // deepCyclicCopy) and §13.2.5.5 CopyDataProperties SKIPS a nullish
+      // source. An unguarded `struct.get` trapped un-catchably
+      // ("dereferencing a null pointer"). Guard on `ref.is_null`: null →
+      // keep the named writer's value (or the field default when the writer
+      // has no expressible value); non-null → the spread's field.
       const fieldIdx = overridingSpread.srcFields.findIndex((f) => f.name === field.name);
+      const namedTmp = allocTempLocal(fctx, field.type);
+      if (lastMatch && ts.isPropertyAssignment(lastMatch)) {
+        compileExpression(ctx, fctx, lastMatch.initializer, field.type);
+        fctx.body.push({ op: "local.set", index: namedTmp });
+      } else if (lastMatch && ts.isShorthandPropertyAssignment(lastMatch)) {
+        compileExpression(ctx, fctx, lastMatch.name, field.type);
+        fctx.body.push({ op: "local.set", index: namedTmp });
+      } else {
+        pushStructFieldDefault(ctx, fctx, field.type);
+        fctx.body.push({ op: "local.set", index: namedTmp });
+      }
       fctx.body.push({ op: "local.get", index: overridingSpread.local });
-      fctx.body.push({ op: "struct.get", typeIdx: overridingSpread.srcStructTypeIdx, fieldIdx });
+      fctx.body.push({ op: "ref.is_null" });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: spreadGuardBlockType(field.type) },
+        then: [{ op: "local.get", index: namedTmp }],
+        else: spreadFieldReadWithAbsentFallback(ctx, fctx, overridingSpread, fieldIdx, field.type, [
+          { op: "local.get", index: namedTmp },
+        ]),
+      });
+      releaseTempLocal(fctx, namedTmp);
       continue;
     }
     const prop =
@@ -2929,37 +3068,43 @@ export function compileObjectLiteralForStruct(
       compileExpression(ctx, fctx, shorthandProp.name, field.type);
       trackToPrimitiveClosureTypes(ctx, fctx, typeName, field, bodyLenBefore);
     } else {
-      // Check spread sources (last spread wins — JS semantics)
-      let found = false;
-      for (let si = spreadSources.length - 1; si >= 0; si--) {
-        const src = spreadSources[si]!;
-        const fieldIdx = src.srcFields.findIndex((f) => f.name === field.name);
-        if (fieldIdx >= 0) {
-          fctx.body.push({ op: "local.get", index: src.local });
-          fctx.body.push({ op: "struct.get", typeIdx: src.srcStructTypeIdx, fieldIdx });
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
+      // Check spread sources (last spread wins — JS semantics).
+      // (#4616) Each spread source can be NULLISH at runtime and §13.2.5.5
+      // CopyDataProperties skips a nullish source, so build the chain as
+      // nested runtime guards: last non-null source that has the field wins;
+      // all-null (or no source has it) falls to the default sentinel.
+      const defaultInstrs: Instr[] = [];
+      {
         // Default value for missing fields: use "undefined" sentinels so
         // destructuring default-value checks can detect missing properties.
         // f64 uses sNaN sentinel 0x7FF00000DEADC0DE (matches emitDefaultValueCheck #866).
         // externref uses JS undefined (via __get_undefined) not ref.null.extern,
         // because JS destructuring defaults fire only on `=== undefined`, not null.
-        if (field.type.kind === "f64") {
-          fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
-          fctx.body.push({ op: "f64.reinterpret_i64" });
-        } else if (field.type.kind === "externref") {
-          emitUndefined(ctx, fctx);
-        } else if (field.type.kind === "eqref") {
-          fctx.body.push({ op: "ref.null.eq" });
-        } else if (field.type.kind === "ref" || field.type.kind === "ref_null") {
-          fctx.body.push({ op: "ref.null", typeIdx: field.type.typeIdx });
-        } else {
-          fctx.body.push({ op: "i32.const", value: 0 });
-        }
+        const saved = fctx.body;
+        fctx.body = defaultInstrs;
+        pushStructFieldDefault(ctx, fctx, field.type);
+        fctx.body = saved;
       }
+      let chain: Instr[] = defaultInstrs;
+      for (let si = 0; si < spreadSources.length; si++) {
+        const src = spreadSources[si]!;
+        const fieldIdx = src.srcFields.findIndex((f) => f.name === field.name);
+        if (fieldIdx < 0) continue;
+        chain = [
+          { op: "local.get", index: src.local },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: spreadGuardBlockType(field.type) },
+            then: chain,
+            // structuredClone: the fallback re-embeds the inner chain, and the
+            // late-import shifter must never see the SAME instr object through
+            // two parent arrays (it would double-shift its funcIdx).
+            else: spreadFieldReadWithAbsentFallback(ctx, fctx, src, fieldIdx, field.type, structuredClone(chain)),
+          },
+        ];
+      }
+      fctx.body.push(...chain);
     }
   }
 

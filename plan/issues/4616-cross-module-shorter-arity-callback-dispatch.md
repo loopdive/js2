@@ -37,6 +37,7 @@ loc-budget-allow:
   - src/codegen/expressions/calls-guards.ts
   - src/codegen/struct-field-exports.ts
   - src/runtime.ts
+  - src/codegen/literals.ts
 func-budget-allow:
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
   - src/codegen/extern-declarations.ts::registerNodeBuiltinImports
@@ -51,6 +52,7 @@ func-budget-allow:
   - src/codegen/declarations/import-collector.ts::unifiedVisitNode
   - src/codegen/expressions/calls-guards.ts::isEvolvingAnyBinding
   - src/codegen/array-methods.ts::compileArrayMethodCall
+  - src/codegen/literals.ts::objectLiteralSpreadTakesHostPath
   - src/runtime.ts::_structFieldNamesRaw
 ---
 
@@ -268,3 +270,33 @@ reverse-struct-map — the 2 issue-3126 string[].find/findLast standalone
 misses fail identically on HEAD without these changes, pre-existing), Date
 (issue-2164/1343/1344/2678 — the one performance.now standalone failure is
 likewise pre-existing), equivalence date/to-primitive files (57 tests).
+
+## 2026-08-22 ninth slice — nullish/partial spread sources (jest deepCyclicCopy)
+
+jest's `deepCyclicCopy` (`options = { ...defaults, ...options }`, `options` an
+OPTIONAL param) exposed three defects in one line, all general:
+
+1. `objectLiteralSpreadTakesHostPath` read the contextual type `Opts |
+   undefined` as "non-specific" (a union's `getProperties()` is empty) and
+   routed the literal to the host path — whose externref result then
+   null-casted back into the struct-typed slot, so every later member read
+   threw. Nullish constituents are now stripped before the check.
+2. On the struct path, the spread-source `struct.get` had no null guard —
+   a runtime-undefined source trapped un-catchably ("dereferencing a null
+   pointer", the 5-test deepCyclicCopy trap cluster). §13.2.5.5
+   CopyDataProperties skips a nullish source; both the override arm and the
+   no-named-writer chain now guard on `ref.is_null` (multi-spread chains
+   fall through last→first→default).
+3. The spread-source TYPE resolution dropped `Opts | undefined` sources
+   entirely (resolveStructName fails on unions) — the spread contributed
+   NOTHING. Same nullish-strip applied; and a PARTIAL source's absent slots
+   (externref undefined-singleton / f64 #866 sNaN sentinels) no longer
+   clobber earlier writers (`spreadFieldReadWithAbsentFallback`). Known
+   residual: an absent optional i32 boolean is indistinguishable from
+   `false` (no sentinel in that rep).
+
+Regression tests: `tests/issue-4616-nullish-spread-source.test.ts` (2).
+Validation: jest 266 → 268/313 on the new wider suite (deepCyclicCopy 11→9);
+cookie 63740/63740 holds; spread battery green (#2009 ×1 "named-source
+spreads" and #2127 ×1 "data-property spread" fail identically WITHOUT these
+changes — pre-existing, A/B'd via stash).
