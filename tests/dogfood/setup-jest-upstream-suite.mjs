@@ -138,8 +138,13 @@ function adaptChalk(source) {
   // and keep the real ansi-styles package as the source of supported names.
   return `import ansiStyles from "ansi-styles";
 const format = (values) => values.length === 1 ? String(values[0]) : values.join(" ");
+const ansiStyle = (open, close) => (...values) => {
+  const value = format(values);
+  return value === "" ? value : open + value + close;
+};
 const attachStyles = (target) => {
   for (const name of Object.keys(ansiStyles)) {
+    if (name === "dim" || name === "reset") continue;
     const style = (...values) => format(values);
     Object.defineProperty(target, name, {value: style, enumerable: true});
     for (const nested of Object.keys(ansiStyles)) {
@@ -150,6 +155,11 @@ const attachStyles = (target) => {
 };
 const chalk = (...values) => format(values);
 attachStyles(chalk);
+// These two properties are used directly by jest-watcher's original
+// formatTestNameByPattern unit. Assign them explicitly: dynamic
+// Object.defineProperty calls do not preserve callable properties in WasmGC.
+chalk.dim = ansiStyle("\\u001b[2m", "\\u001b[22m");
+chalk.reset = ansiStyle("\\u001b[0m", "\\u001b[0m");
 chalk.visible = chalk;
 chalk.template = chalk;
 chalk.level = 0;
