@@ -25,6 +25,8 @@ loc-budget-allow:
   - src/codegen/expressions/calls.ts
   - src/codegen/object-runtime.ts
   - src/codegen/expressions/identifiers.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/property-access-dispatch.ts
   - src/codegen/context/types.ts
   - src/codegen/declarations/import-collector.ts
   - src/codegen/literals.ts
