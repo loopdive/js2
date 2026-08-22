@@ -3071,6 +3071,40 @@ export function compileArrowAsClosure(
     );
   }
 
+  // (#4616) §10.2.9 SetFunctionName for a NAMED function expression built as a
+  // closure value: stamp `.name` into the sidecar once at materialization, so
+  // dynamic `.name` reads (jest's convertDescriptorToString on table-driven
+  // function values) and the host bridge's Function.name both answer the
+  // declared name instead of undefined / the bridge's own name. Host lane
+  // only (the sidecar + __extern_set live in the JS runtime); anonymous
+  // arrows/function expressions are untouched — zero cost for the common case.
+  if (
+    !ctx.standalone &&
+    !ctx.wasi &&
+    ts.isFunctionExpression(arrow) &&
+    arrow.name !== undefined &&
+    arrow.name.text.length > 0
+  ) {
+    const setIdx = ensureLateImportShared(
+      ctx,
+      "__extern_set",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [],
+    );
+    flushLateImportShiftsShared(ctx, fctx);
+    if (setIdx !== undefined) {
+      addStringConstantGlobal(ctx, "name");
+      addStringConstantGlobal(ctx, arrow.name.text);
+      const selfLocal = allocLocal(fctx, `__clname_${fctx.locals.length}`, { kind: "ref", typeIdx: structTypeIdx });
+      fctx.body.push({ op: "local.tee", index: selfLocal });
+      fctx.body.push({ op: "extern.convert_any" });
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, "name"));
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, arrow.name.text));
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? setIdx });
+      fctx.body.push({ op: "local.get", index: selfLocal });
+    }
+  }
+
   return { kind: "ref", typeIdx: structTypeIdx };
 }
 

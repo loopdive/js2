@@ -50,6 +50,7 @@ func-budget-allow:
   - src/codegen/literals.ts::compileObjectLiteral
   - src/codegen/closures.ts::compileLiftedClosureBody
   - src/codegen/closures.ts::compileArrowAsCallback
+  - src/codegen/closures.ts::compileArrowAsClosure
   - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
   - src/codegen/declarations/import-collector.ts::unifiedVisitNode
   - src/codegen/expressions/calls-guards.ts::isEvolvingAnyBinding
@@ -364,3 +365,17 @@ Measured: jest 292/318 → 314/331 (Replaceable 15→17/17 and ALL 6 queueRunner
 tests flipped with it); cookie 63740/63740 and clsx 32/32 hold; ts7 clean;
 computed-property/object-literal-accessor/symbol guard battery green (33).
 Regression test: `tests/issue-4616-computed-symbol-key-local.test.ts` (1).
+
+## 2026-08-22 thirteenth slice — §10.2.9 name stamps at closure/class materialization (partial)
+
+`convertDescriptorToString(fn).name` read undefined for compiled function
+values crossing modules — the #3429 stamp only fired at specific
+host-delegated CALL sites. Now stamped ONCE at materialization (host lane):
+a NAMED function expression's closure stamps `.name` into its sidecar in
+compileArrowAsClosure, and the class-object singleton stamps the declared
+class name in emitLazyClassObjectGet (synthetic `__…` names excluded).
+jest convertDescriptorToString 9 → 10/11; the residual is the INLINE
+`class Named {}` VALUE (array-literal element — materializes via a different
+lane than the class-object singleton) and bare function-declaration `.name`
+reads (localName probe) — both still undefined, parked here. #3429 guards
+fail 4/4 identically on base (pre-existing).

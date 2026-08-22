@@ -421,6 +421,27 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
     initBody.push({ op: "call", funcIdx: registerClassFuncIdx });
   }
 
+  // (#4616) §10.2.9 SetFunctionName: stamp `.name` into the class object's
+  // sidecar once at singleton init, so a dynamic `.name` read in ANOTHER
+  // module (jest's convertDescriptorToString over a `class Named {}` value)
+  // answers the declared name instead of undefined. Host lane only; synthetic
+  // class names (`__…`) are never stamped.
+  if (!ctx.standalone && !ctx.wasi && !className.startsWith("__")) {
+    const setIdx = ctx.funcMap.get("__extern_set");
+    if (setIdx !== undefined) {
+      addStringConstantGlobal(ctx, "name");
+      addStringConstantGlobal(ctx, className);
+      const nameKeyIdx = ctx.stringGlobalMap.get("name");
+      const nameValIdx = ctx.stringGlobalMap.get(className);
+      if (nameKeyIdx !== undefined && nameValIdx !== undefined) {
+        initBody.push({ op: "global.get", index: classObjectGlobalIdx });
+        initBody.push({ op: "global.get", index: nameKeyIdx });
+        initBody.push({ op: "global.get", index: nameValIdx });
+        initBody.push({ op: "call", funcIdx: setIdx });
+      }
+    }
+  }
+
   // (#4371) Install the REAL compiled closures behind declared static-method
   // reads on a dynamically carried class object. The legacy registration above
   // provides the own-key/descriptor allowlist but its host bridge is only a
