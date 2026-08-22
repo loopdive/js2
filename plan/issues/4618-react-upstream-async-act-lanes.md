@@ -303,6 +303,22 @@ demote.
   identifier read consults funcMap/closureMap during the shadow window —
   probe w12 compiles in seconds, no suite needed.
 
+- **2026-08-22 duplicate-name matrix (seconds-fast probes w9/w13/w14/w15)**:
+  the "is not defined" needs BOTH ingredients — the hoisted fn-decl crossing
+  to HOST as a VALUE (`Host.take(ParentComponent)`) AND sibling test
+  functions. Matrix: single fn + host-crossing → OK (w9); duplicates +
+  DIRECT call → OK (w15); duplicates + host-crossing → ReferenceError from
+  the INTERPRETER's envLookup (src/interp/loop.ts — zero compile-time
+  miss/TDZ/hoist-fail emissions, all three instrumented; the value crossed
+  as an INTERPRETED-callback whose env lacks the binding); UNIQUE names but
+  two sibling exports each host-crossing → no error but the chained
+  `taken.f(1)` result silently degrades to NaN (w14). So the value
+  materialization of hoisted fn-decls interacts with BOTH the bare-name
+  registries and the runtime-eval/interp callback lane. Next owner: find
+  where a host-crossing fn-decl VALUE becomes an interp-backed callback
+  (\`__runtime_eval_unwrap_interpreted_callback\`) instead of a
+  \`__cb_\`/dynamic-bridge wrapper, and why sibling exports flip it.
+
 ## Fix order
 
 1. (c) first — it is a hard CE with a two-line repro and pins the IR
