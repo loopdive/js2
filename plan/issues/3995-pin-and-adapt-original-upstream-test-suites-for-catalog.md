@@ -802,6 +802,7 @@ is still draft-only until those gaps are either fixed or explicitly scoped in
 follow-up issue slices; they are compatibility findings, not unavailable
 infrastructure.
 
+<<<<<<< HEAD
 ## 2026-08-22 generic Node host dependency checkpoint
 
 The isolated upstream-suite worker previously forwarded only ten Node builtin
@@ -1151,3 +1152,23 @@ failures remain), all 34 modules compile and 33 validate, and Wasm scores
 remainder is **2,930 registrations** from 207 deferred files.
 
 Implementation: [PR #4773 — provide CommonJS path globals](https://github.com/loopdive/js2wasm/pull/4773).
+
+## 2026-08-22 Web-host TextEncoder/TextDecoder binding checkpoint
+
+The generic host compiler now registers `TextEncoder` and `TextDecoder` as
+synthetic extern classes when a JavaScript package uses the bare Web/Node
+globals without a DOM or Node declaration file. Their constructors, UTF-8
+methods, and standard read-only properties bind through the existing
+`extern_class` host boundary and the runtime's real Web constructors. Host-free
+WASI/standalone targets keep the native UTF-8 lowering and acquire no
+`TextEncoder_*`/`TextDecoder_*` imports.
+
+The regression covers both compilation and execution: a compiled
+`new TextEncoder().encode()` / `new TextDecoder().decode()` round trip returns
+the Node result and requests the expected host imports. This closes the
+concrete `TextEncoder is not defined` / `TextDecoder is not defined` runner
+failure observed in Hono's unchanged buffer and crypto tests. Any remaining
+Hono failures are scored compiler/runtime compatibility findings, not missing
+Web-global infrastructure.
+
+Implementation: [PR #4752](https://github.com/loopdive/js2/pull/4752).
