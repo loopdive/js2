@@ -22,6 +22,7 @@ import {
   resolvesToNonConstructableValue,
 } from "./non-constructable.js"; // (#4017)
 import { tryNonConstructableNewTarget } from "./new-non-constructable-value.js"; // (#4246)
+import { tryNewBuiltinStaticAlias } from "./new-builtin-static-alias.js"; // (#4491 wave-5 T6)
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import { fnctorBodyMayReturnForeignObject } from "../fnctor-foreign-return.js"; // (#2071)
@@ -3708,6 +3709,15 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   {
     const nonCtorValue = tryNonConstructableNewTarget(ctx, fctx, expr);
     if (nonCtorValue !== undefined) return nonCtorValue;
+  }
+
+  // (#4491 wave-5 T6) `new <alias-of-a-builtin-static>(…)` — a §10.3 built-in
+  // function object with no `[[Construct]]`. Placed after the #4246 arm (whose
+  // primitive/fresh-`new` facts can never describe a reified builtin closure)
+  // and before the unknown-constructor path that answered a null externref.
+  {
+    const builtinAliasNew = tryNewBuiltinStaticAlias(ctx, fctx, expr);
+    if (builtinAliasNew !== undefined) return builtinAliasNew;
   }
 
   // Handle `new (class { ... })()` — anonymous class expression in new

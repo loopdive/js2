@@ -147,6 +147,19 @@ coercion-sites-allow:
   # one index. Nothing is hand-rolled — the nullish/undefined test reuses
   # `__extern_is_undefined`, exactly as `joinEmptyElementTest` does.
   - src/codegen/array-join-proto-hole.ts
+  # 2026-08-22 wave-5 T6: NOT new coercion vocabulary — the gate counts
+  # `__any_to_f64` as +2 only because the calls sit in a new file. The pair
+  # `__any_from_extern` → `__any_to_f64` is the SAME engine ToNumber pipeline
+  # the variadic `Math.max`/`Math.min` value body in builtin-value-read.ts uses
+  # (and that wave-4 lane G already reused for `math-static-value-body.ts`), so
+  # a reified `String.fromCharCode` coerces each code-unit argument exactly like
+  # a reified `Math.max` coerces each of its. §22.1.2.1 requires
+  # ToUint16(ToNumber(arg)); using `__unbox_number` instead would answer NaN for
+  # every non-Number argument. The §7.1.8 ToUint16 step that follows is the
+  # verbatim f64-domain sequence already emitted by the `.apply` lane in
+  # call-builtin-static.ts — no ToString/ToPrimitive/equality matrix is
+  # hand-rolled.
+  - src/codegen/string-fromcharcode-value-read.ts
 func-budget-allow:
   # 2026-08-21 defineProperties/create edge slice: the `Properties`-map entry
   # model gains a PASS-THROUGH arm (a map entry that is not an object literal)
@@ -2747,6 +2760,198 @@ seed was low.
 **`Math.max` as a value works today only because its arguments survive the same
 mis-compiled slot by accident of being numbers.** Anyone touching the variadic
 convention should treat that as unowned behaviour, not as a working reference.
+
+---
+
+## Handover (T6, team-dev-4, 2026-08-22)
+
+**Status: DONE, integration-ready. Nothing in flight, no WIP.**
+
+- Worktree `/home/user/js2/.claude/worktrees/agent-a80e323da56cbb5eb`,
+  branch `worktree-agent-a80e323da56cbb5eb`, sha **`5697b697ab`**, one commit
+  on base `7dd91b7bad`. Not pushed, no PR (per the wave protocol).
+- **Rows flipped: 2** — `built-ins/String/fromCharCode/S15.5.3.2_A3_T2` and
+  `S15.5.3.2_A4`, both `fail → pass`. `S15.5.3.2_A1`/`_A2`/`_A3_T1` were
+  already passing at base and are NOT counted.
+- **Controls: 520 rows, base-vs-after by file-copy A/B — exactly 2 transitions
+  (the target rows), 0 `pass → anything`.** `Math.max`/`Math.min` value and
+  call rows were in the control set as required, and IMPROVED rather than
+  regressed (`var m = Math.max; m(5)` 0 → 5; `var n = Math.min; n(4,2,9)`
+  0 → 2 — both were already wrong at base).
+- **Gates all green** at the committed sha: `check-loc-budget`,
+  `check-func-budget`, `check-coercion-sites`, `check:oracle-ratchet`,
+  `biome lint`, `prettier --check`.
+- **Next steps for an integrator:** none required. If someone wants to
+  continue this line, the three deliberately-unattempted follow-ons are listed
+  under "Left open" at the end of the result section below — the most
+  valuable is `String.fromCodePoint` as a value (same module, needs the
+  §22.1.2.2 RangeError guard).
+- **Gotchas for anyone re-running the measurements in this container:**
+  1. The isolation harness rebuilds this worktree's `test262` symlink farm
+     between tool calls, pointing it at other (possibly dead) agent
+     worktrees. Re-link it **inside the same shell invocation** as the probe:
+     `rm -rf test262; ln -s /home/user/js2/test262 test262; npx tsx …`. A
+     mid-sweep clobber shows up as `THREW … ENOENT … harness/*.js`, which
+     looks exactly like a regression.
+  2. `runTest262File` reports a status, not stdout, so value probes have to
+     `throw new Error("RESULT:" + …)` to surface a computed value.
+
+Details, tables and the per-defect walkthrough are in the result section that
+follows.
+
+## Wave-5 T6 result — `String.fromCharCode` as a callable VALUE (2026-08-22, lane team-dev-4, base `7dd91b7bad`)
+
+**LANDED. Both target rows flipped, 0 regressions across 520 control rows.**
+The four coupled defects T1 diagnosed were all real; all four are fixed, plus
+the `[[Construct]]` refusal `S15.5.3.2_A4` needs. Every figure below is a run
+this lane executed on `--target standalone`, serial single-test probes,
+file-copy A/B against the base files (`.tmp/base-*.ts`), never `git stash`.
+
+| row | base `7dd91b7bad` | after |
+| --- | --- | --- |
+| `built-ins/String/fromCharCode/S15.5.3.2_A3_T2` | fail — `TypeError: Cannot access property on null or undefined` | **pass** |
+| `built-ins/String/fromCharCode/S15.5.3.2_A4` | fail — `new __fcc__func(…)` did not throw | **pass** |
+| `S15.5.3.2_A1`, `S15.5.3.2_A2`, `S15.5.3.2_A3_T1` | pass | pass (already passing at base — not counted as flips) |
+
+### T1's "Math.max works by numeric accident" was understated — it was already WRONG
+
+Re-measured on the base BEFORE any edit (`.tmp/probe/p2.js`, a `throw`-the-
+result probe because the runner reports status, not stdout):
+
+| probe | base | after | correct |
+| --- | --- | --- | --- |
+| `var m = Math.max; m(1,2,3)` | `3` | `3` | 3 |
+| `m(5)` | **`0`** | `5` | 5 |
+| `m()` | `-Infinity` | `-Infinity` | -Infinity |
+| `var n = Math.min; n(4,2,9)` | **`0`** | `2` | 2 |
+| `var f = String.fromCharCode; f(97)` | THREW | `"a"` | "a" |
+
+Argument 0 was destroyed and replaced by a null vec, which the fold read as
+`0`. `max(1,2,3)` survived only because `max(-Inf, 0, 2, 3) === 3`; `max(5)`
+and every `min` did not. So this slice **fixes** the Math value rows rather
+than risking them — but the risk direction the task named was right, and both
+`Math.max`/`Math.min` value AND call rows are in the control set below.
+
+### The five fixes
+
+1. **(a) Variadic body** — new module `src/codegen/string-fromcharcode-value-read.ts`.
+   `String.fromCharCode` now reifies on the SAME #2933 convention as
+   `Math.max`/`Math.min`: one `(ref null $vec_externref)` args param →
+   `externref`. All three therefore share ONE lifted func type, so the single
+   `ref.test` arm in `call-identifier.ts` serves them all and `call_ref` picks
+   the body from the funcref value. Per element:
+   `__any_from_extern` → `__any_to_f64` (engine ToNumber) → §7.1.8 ToUint16 in
+   the f64 domain → `__str_fromCharCode` → `__str_concat` fold. Null/empty vec
+   → `""` (§22.1.2.1). Degrades to the Phase-3 catchable-TypeError body when
+   the native-string or any-value substrate is unavailable.
+   `builtin-value-read.ts` gets dispatch wiring only.
+2. **(b) Plain-alias resolution** — new module
+   `src/codegen/builtin-static-plain-alias.ts`.
+   `resolveVariadicBuiltinStaticPlainAlias` recognises
+   `var f = String.fromCharCode` (the shape every Sputnik-era genericity test
+   uses), which `resolveBuiltinStaticBindingAlias` declines because it only
+   knows the destructuring spelling. **Scope is deliberately narrow: only the
+   variadic-convention statics** (`Math.max`, `Math.min`,
+   `String.fromCharCode` — `VARIADIC_VALUE_STATICS`). A fixed-arity static's
+   lib signature does not destroy its arguments, so widening this set would be
+   a behaviour change with no defect behind it and would move every such call
+   off today's foreign-callable fallback. Soundness gates: the namespace
+   identifier must be the ambient global, and neither the alias nor the
+   namespace may be written to anywhere in the file
+   (`identifierIsWrittenTo`, shared with the `isPrototypeOf` folds).
+3. **(c) argv-slot construction** — `call-identifier.ts`. On a
+   statically-known variadic-alias call, EVERY call-site argument now goes
+   down the extras path (boxed externref) instead of one of them being
+   coerced into the declared vec slot; the declared slot is padded so the
+   non-variadic candidate arms stay statically valid. Two supporting edits:
+   the padding loop now starts from `argLocals.length` rather than
+   `expr.arguments.length` (provably identical for every pre-existing shape,
+   since `argLocals.length === Math.min(expr.arguments.length, cpParamCnt)`),
+   and the variadic arm skips the positional pack.
+   **The non-obvious one:** once (b) lands, `matchedClosureInfo` IS the
+   variadic func type, so the ordinary positional candidate arm for that type
+   matched first and shadowed the variadic arm — `m(1,2,3)` answered
+   `-Infinity` (an empty fold). That duplicate arm is now dropped when the
+   variadic arm owns the func type. This cost one measured round-trip and is
+   the single thing a re-implementer is most likely to miss.
+4. **(d) ref-typed return recovery** — `call-identifier.ts`. The variadic arm
+   used to `drop` every non-`f64`/`i32`/`externref` return and push a default.
+   It now recovers a `ref`/`ref_null` result with `any.convert_extern` +
+   `ref.cast`/`ref.cast_null` (both pure, so the arm stays dead-arm-safe).
+   With (b) in place `sigRetWasm` comes from the closure and is already
+   `externref`, so this is belt-and-braces on the alias path — it is the arm
+   that matters for any future variadic builtin whose call site keeps a
+   ref-typed expectation.
+5. **`[[Construct]]` refusal** — new module
+   `src/codegen/expressions/new-builtin-static-alias.ts`, dispatched from
+   `new-super.ts` right after the #4246 arm. `new f(65,66)` on an alias of a
+   builtin static throws a real TypeError (§10.3 — no builtin static has
+   `[[Construct]]`). Measured at base: `new f(65,66)` and `new m(1,2)` both
+   evaluated to `object:null` with **no throw**. **Not attempted:** the DIRECT
+   spelling `new String.fromCharCode(…)` — equally non-constructable, but a
+   different callee shape; left out so this arm stays measurable in isolation.
+
+### Controls (base-vs-after, file-copy A/B, serial)
+
+| set | rows | base | after | delta |
+| --- | ---: | --- | --- | --- |
+| `String/fromCharCode` + `fromCodePoint` + `Math/{max,min,abs,floor,round}` + `Object/keys` + `Array/isArray` + `language/expressions/new` + `String/prototype/split` + `Function/prototype/{apply,call}` + `language/statements/function` + `Number/isInteger` + `JSON/stringify` + `String/prototype/{charCodeAt,concat}` | 282 | 226 pass / 53 fail / 3 CE | **228 pass** / 51 fail / 3 CE | **+2 pass, 0 pass→anything** |
+| `language/expressions/call` + `language/arguments-object` + `Array/prototype/{map,filter,forEach,reduce}` + `Function/prototype/bind` + `language/statements/function` + `String/prototype/replace` + `RegExp/property-escapes/generated` (the `fromCodePoint.apply` consumers) | 238 | 155 pass / 81 fail / 2 CE | 155 pass / 81 fail / 2 CE | **0 changed** |
+
+The only two transitions in 520 rows are the two target rows. (Eight
+`property-escapes` rows read `THREW` mid-sweep in one run: the isolation
+harness rebuilds this worktree's `test262` symlink farm between tool calls, so
+`harness/regExpUtils.js` vanished. Re-running those eight on the same tree
+gave `pass` ×8. Infrastructure, not codegen — relink `test262` inside the same
+shell invocation as the probe.)
+
+### Gates
+
+`check-loc-budget` ✓ · `check-func-budget` ✓ · `check-coercion-sites` ✓ ·
+`check:oracle-ratchet` ✓ · `biome lint` ✓ · `prettier --check` ✓ · `tsc`
+clean for the six touched files.
+
+- **oracle-ratchet** was FAILING at `ctxChecker 0→2` in
+  `builtin-static-plain-alias.ts`; fixed properly rather than granted —
+  `ctx.oracle.variableDeclarationOf` and `ctx.oracle.declarationsOf` answer
+  both queries, so the file now has zero raw-checker use.
+- **coercion-sites** needed a granted allowance (`__any_to_f64` +2 in the new
+  module) with dated rationale in this file's frontmatter — the same grant and
+  the same reason wave-4 lane G took for `math-static-value-body.ts`: it is the
+  engine ToNumber pipeline copied from the `Math.max` value body, not a
+  hand-rolled matrix. §22.1.2.1 requires ToUint16(ToNumber(arg)), so
+  `__unbox_number` would answer NaN for every non-Number argument.
+
+### Files touched
+
+| file | role |
+| --- | --- |
+| `src/codegen/string-fromcharcode-value-read.ts` | NEW — variadic body + `VARIADIC_VALUE_STATICS` |
+| `src/codegen/builtin-static-plain-alias.ts` | NEW — plain-alias resolver (oracle-only) |
+| `src/codegen/expressions/new-builtin-static-alias.ts` | NEW — `new <alias>` TypeError |
+| `src/codegen/builtin-value-read.ts` | dispatch wiring only (case + body arm + variadic publish) |
+| `src/codegen/expressions/call-identifier.ts` | call-site wiring: alias lookup, argv routing, arm skip, ref return |
+| `src/codegen/expressions/new-super.ts` | dispatch wiring only (one arm call) |
+
+### Left open (deliberately, with reasons)
+
+- `new String.fromCharCode(…)` — the direct spelling (see fix 5).
+- `String.fromCodePoint` as a callable value — the same shape, and the module
+  is written so a second case is a small addition, but §22.1.2.2 needs the
+  integral/`[0,0x10FFFF]` RangeError guard (the `.apply` lane in
+  `call-builtin-static.ts` has the exact sequence to copy) and no target row
+  demanded it. Not attempted, not measured.
+- Widening `VARIADIC_VALUE_STATICS` / the plain-alias resolver to fixed-arity
+  statics. Would move every `var k = Object.keys; k(o)` off the
+  foreign-callable `__apply_closure` fallback onto the closure signature. That
+  may well be an improvement; it is a separate change that needs its own
+  control run, and it was NOT measured here.
+- A genuinely dynamic variadic callee (`var m = cond ? Math.max : foo; m(1,2)`)
+  still packs the mis-compiled declared slot as argument 0 — the alias gate is
+  static. Unchanged from base, not a regression, and the general fix is the
+  rest-parameter-aware argument loop (`compileRestClosureArguments` already
+  exists in `calls-closures.ts` for real closures) rather than more special
+  cases.
 
 ---
 

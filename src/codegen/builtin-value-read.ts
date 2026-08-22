@@ -73,6 +73,10 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
 import { emitMathValueReadBody } from "./math-value-read.js"; // (#4565)
+import {
+  emitStringFromCharCodeValueBody,
+  prepareStringFromCharCodeValueRead,
+} from "./string-fromcharcode-value-read.js"; // (#4491 wave-5 T6)
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureExternStrictEqHelper } from "./any-helpers.js";
 import { sameValueNumberOps } from "./same-value-number-ops.js";
 import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
@@ -1011,6 +1015,39 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       returnType = { kind: "externref" };
       break;
     }
+    // (#4491 wave-5 T6) `String.fromCharCode` as a VALUE — genuinely VARIADIC
+    // (§22.1.2.1 takes a code-unit LIST). Reified on the SAME canonical variadic
+    // convention as `Math.max`/`Math.min` above — ONE `(ref null $vec_externref)`
+    // args param, `externref` result — so all three share ONE lifted func type
+    // and the single variadic dispatch arm in call-identifier.ts serves them
+    // all. Body lives in string-fromcharcode-value-read.ts. Falls through to the
+    // Phase-3 generic throw body when the native-string / any-value substrate is
+    // unavailable (identity + reflective `.name`/`.length` still work).
+    case "String.fromCharCode": {
+      addUnionImports(ctx);
+      if (!prepareStringFromCharCodeValueRead(ctx)) {
+        const genericArity = BUILTIN_STATIC_METHOD_ARITY[builtinName]?.[propName];
+        if (genericArity === undefined) return null;
+        paramTypes = [];
+        for (let i = 0; i < genericArity; i++) paramTypes.push({ kind: "externref" });
+        returnType = { kind: "externref" };
+        genericThrowBody = true;
+        break;
+      }
+      const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
+      if (getArrTypeIdxFromVec(ctx, vecTypeIdx) < 0) {
+        const genericArity = BUILTIN_STATIC_METHOD_ARITY[builtinName]?.[propName];
+        if (genericArity === undefined) return null;
+        paramTypes = [];
+        for (let i = 0; i < genericArity; i++) paramTypes.push({ kind: "externref" });
+        returnType = { kind: "externref" };
+        genericThrowBody = true;
+        break;
+      }
+      paramTypes = [{ kind: "ref_null", typeIdx: vecTypeIdx }];
+      returnType = { kind: "externref" };
+      break;
+    }
     // (#2963 Tier 2a) `Number.is{Integer,Finite,NaN,SafeInteger}` as first-class
     // VALUES. Fixed 1-arg predicates: the reified closure takes the boxed arg as
     // externref (the all-externref convention — coercion moves INSIDE the body)
@@ -1389,6 +1426,12 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
         { op: "local.get", index: accLocal },
         { op: "call", funcIdx: boxNumIdx },
       );
+    } else if (key === "String.fromCharCode" && !genericThrowBody) {
+      // (#4491 wave-5 T6) Variadic fold body. Params: 0=self, 1=argsVec.
+      const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
+      if (!emitStringFromCharCodeValueBody(ctx, closureFctx, vecTypeIdx, getArrTypeIdxFromVec(ctx, vecTypeIdx))) {
+        return null;
+      }
     } else if (
       (key === "Number.isInteger" ||
         key === "Number.isFinite" ||
@@ -1487,7 +1530,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
   // Math.min share the SAME lifted func type (one vec param → one `ref.test`
   // arm serves both; `call_ref` dispatches to the right body via the funcref
   // value). Idempotent — the wrapper types are cached per signature.
-  if ((key === "Math.max" || key === "Math.min") && !genericThrowBody) {
+  if ((key === "Math.max" || key === "Math.min" || key === "String.fromCharCode") && !genericThrowBody) {
     const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
     ctx.variadicBuiltinClosure = {
       funcTypeIdx: wrapperTypes.liftedFuncTypeIdx,
