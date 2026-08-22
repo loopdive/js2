@@ -12582,7 +12582,10 @@ assert._isSameValue = isSameValue;
           // method="call", args[0]=the vec's `__make_iterable` mirror — bracket
           // the dispatch so the mutation reaches the vec (silent no-op before).
           const mirrorSnaps = snapshotVecMirrors(dispatchRecv, wrappedArgs, exports);
-          const ret = fn.apply(dispatchRecv, wrappedArgs);
+          // WebAssembly.Function values are callable but do not necessarily
+          // expose Function.prototype.apply. Reflect.apply handles both native
+          // JS functions and exported Wasm callbacks.
+          const ret = Reflect.apply(fn, dispatchRecv, wrappedArgs);
           reconcileVecMirrors(mirrorSnaps, exports, _unwrapForHost);
           // (#1333) Annex B — RegExp.prototype.exec/test post-match slot update.
           if (
@@ -15645,6 +15648,27 @@ assert._isSameValue = isSameValue;
       // under Node (or any host that injects a `process` global). In other
       // environments (browser, standalone Wasm) these return safe defaults so
       // compiled programs do not crash on access.
+      if (name === "__get_process")
+        return () => {
+          if (typeof process !== "undefined") return process;
+          const stream = {
+            on() {
+              return this;
+            },
+            removeListener() {
+              return this;
+            },
+          };
+          return {
+            env: {},
+            platform: "",
+            arch: "",
+            argv: [],
+            stdout: stream,
+            stderr: stream,
+            [Symbol.toStringTag]: "process",
+          };
+        };
       if (name === "__get_process_argv")
         return () => (typeof process !== "undefined" && process.argv ? process.argv : []);
       if (name === "__get_process_env") return () => (typeof process !== "undefined" && process.env ? process.env : {});
@@ -15659,6 +15683,26 @@ assert._isSameValue = isSameValue;
         return () => (typeof process !== "undefined" && process.platform ? process.platform : "");
       if (name === "__get_process_arch")
         return () => (typeof process !== "undefined" && (process as any).arch ? (process as any).arch : "");
+      // Node-oriented libraries also use the standard EventEmitter surface on
+      // process.stdout/stderr (for example, watcher prompts subscribe to the
+      // resize event). Preserve the real stream in a JS host and provide a
+      // harmless no-op stream in browser/standalone hosts where no process
+      // exists, so reading the handle never turns into a null receiver trap.
+      if (name === "__get_process_stdout" || name === "__get_process_stderr")
+        return () => {
+          const streamName = name.endsWith("stdout") ? "stdout" : "stderr";
+          const stream = typeof process !== "undefined" ? (process as any)[streamName] : undefined;
+          return (
+            stream ?? {
+              on() {
+                return this;
+              },
+              removeListener() {
+                return this;
+              },
+            }
+          );
+        };
       if (name === "__process_exit")
         return (code: number) => {
           // f64 → integer exit code (NaN/Infinity → 0 per spec coercion).

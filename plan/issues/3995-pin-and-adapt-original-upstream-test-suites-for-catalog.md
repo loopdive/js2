@@ -1030,3 +1030,34 @@ admits **337/339** (the two existing diff-sequence snapshot-oracle failures),
 all 29 modules compile and 28 validate, and Wasm scores **238/337** with zero
 runtime failures. The unavailable-infrastructure remainder is **2,949
 registrations** from 212 deferred files.
+
+## 2026-08-22 Wasm callback and process compatibility checkpoint
+
+The next original unit was admitted without changing its test body:
+`packages/jest-watcher/src/lib/__tests__/prompt.test.ts`. Its four callbacks
+now pass in both lanes. The adapter also exposes the minimal Node `process`,
+`stdout`, and `stderr` surface used by the original prompt and globals tests.
+
+The Wasm runtime fix is generic: host-method dispatch now uses
+`Reflect.apply`, which supports `WebAssembly.Function` values that are
+callable but do not have a JavaScript `.apply` property. The Jest shim records
+spy calls in flat scalar/argument vectors; nested WasmGC vectors can be copied
+at a host boundary and otherwise report stale lengths. This keeps the matcher
+oracle backed by actual callback invocations rather than a cached or
+synthetic result.
+
+Exact unchanged run:
+
+```text
+DOGFOOD_JEST_UPSTREAM_SUITE=1 node --import tsx tests/dogfood/jest-upstream-suite.mjs --json
+```
+
+- 343 callbacks across 30 selected files; 211 files and 2,945 registrations remain deferred as unavailable infrastructure;
+- Node oracle: 341/343 registered callbacks pass (the two existing diff-sequence oracle failures remain);
+- compile: 30/30 modules succeed and 29/30 validate;
+- Wasm: 243/341 scored tests pass, 98 fail, 0 runtime failures;
+- the newly admitted `jest-watcher` prompt unit is 4/4 in Wasm.
+
+Focused Vitest, typecheck, issue-id, formatting, and diff checks remain the
+required follow-up gates. This is still a measured selected slice, not a claim
+that Jest's deferred runner, worker, DOM, or filesystem suites are complete.

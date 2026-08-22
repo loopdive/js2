@@ -67,6 +67,7 @@ import {
   defaultValueInstrs,
   emitGuardedFuncRefCast,
   emitGuardedRefCast,
+  getVecInfo,
   pushDefaultValue,
   pushParamSentinel,
 } from "../type-coercion.js";
@@ -1500,6 +1501,7 @@ export function compileIdentifierCall(
             structTypeIdx: number;
             returnType: ValType | null;
             paramTypes: ValType[];
+            hasRestParam?: boolean;
           };
           const funcCandidates: FuncCandidate[] = [
             {
@@ -1507,6 +1509,7 @@ export function compileIdentifierCall(
               structTypeIdx: matchedClosureInfo.structTypeIdx,
               returnType: matchedClosureInfo.returnType,
               paramTypes: matchedClosureInfo.paramTypes,
+              hasRestParam: matchedClosureInfo.hasRestParam,
             },
           ];
           const seenFuncTypeIdx = new Set<number>([matchedClosureInfo.funcTypeIdx]);
@@ -1520,6 +1523,7 @@ export function compileIdentifierCall(
                 structTypeIdx: alt.closureInfo.structTypeIdx,
                 returnType: alt.closureInfo.returnType,
                 paramTypes: alt.closureInfo.paramTypes,
+                hasRestParam: alt.closureInfo.hasRestParam,
               });
             }
           };
@@ -1532,17 +1536,22 @@ export function compileIdentifierCall(
             tryAltFuncType([]);
           }
           // Also scan closureInfoByTypeIdx for other matching-arity func types
+          const restFuncTypeIdxs = (ctx as unknown as { __restFuncTypeIdxs?: Set<number> }).__restFuncTypeIdxs;
           for (const [, info] of ctx.closureInfoByTypeIdx) {
             // JS ignores surplus call-site arguments. A JSDoc callback typedef
             // can declare two parameters while the actual function expression
             // declares one (Test262's typed-array harness does exactly this),
             // so retain shorter runtime signatures and marshal only their
             // formal prefix in the dispatch arm below.
-            if (info.paramTypes.length > sigParamCount) continue;
+            const hasRestParam = info.hasRestParam === true || restFuncTypeIdxs?.has(info.funcTypeIdx) === true;
+            const fixedParamCount = hasRestParam ? Math.max(0, info.paramTypes.length - 1) : info.paramTypes.length;
+            if (!hasRestParam && info.paramTypes.length > sigParamCount) continue;
+            if (hasRestParam && fixedParamCount > sigParamCount) continue;
+            const candidateParamTypes = hasRestParam ? info.paramTypes.slice(0, fixedParamCount) : info.paramTypes;
             if (seenFuncTypeIdx.has(info.funcTypeIdx)) continue;
             let paramsMatch = true;
-            for (let pi = 0; pi < info.paramTypes.length; pi++) {
-              if (!valTypesMatch(info.paramTypes[pi]!, sigParamWasmTypes[pi]!)) {
+            for (let pi = 0; pi < candidateParamTypes.length; pi++) {
+              if (!valTypesMatch(candidateParamTypes[pi]!, sigParamWasmTypes[pi]!)) {
                 paramsMatch = false;
                 break;
               }
@@ -1554,6 +1563,7 @@ export function compileIdentifierCall(
                 structTypeIdx: info.structTypeIdx,
                 returnType: info.returnType,
                 paramTypes: info.paramTypes,
+                hasRestParam,
               });
             }
           }
@@ -1714,7 +1724,14 @@ export function compileIdentifierCall(
             // (which traps on the null cast). Narrowly gated to Promise-executor
             // params so the #1941 dual-mode guarantee for ordinary callable
             // params is preserved.
-            (calleeMayBeHostCallable(ctx, expr.expression) || calleeIsPromiseExecutorParam(ctx, expr.expression));
+            (calleeMayBeHostCallable(ctx, expr.expression) ||
+              calleeIsPromiseExecutorParam(ctx, expr.expression) ||
+              // Captures explicitly marked as host-bound callback values stay
+              // externref by design. They may be real JS functions after a
+              // compiled method crosses the host boundary (Jest's Prompt
+              // callbacks are this shape), so retain the raw value and use
+              // the callable host arm when the Wasm-closure cast misses.
+              fctx.captureExternrefNames?.has(funcName) === true);
           const runtimeApplyFallback =
             rawCalleeLocal !== undefined &&
             (ctx.standalone || ctx.wasi) &&
@@ -1974,14 +1991,9 @@ export function compileIdentifierCall(
               // Exactness belongs solely to the funcref type; wrapper subtypes
               // are module-local allocation identities.
               const fcCallBody: Instr[] = [];
-              setCandidateArgc(
-                ctx,
-                fctx,
-                fcCallBody,
-                fc.paramTypes.length,
-                actualArgExternLocals,
-                expr.arguments.length,
-              );
+              const fcHasRest = fc.hasRestParam === true;
+              const fcFixedParamCount = fcHasRest ? Math.max(0, fc.paramTypes.length - 1) : fc.paramTypes.length;
+              setCandidateArgc(ctx, fctx, fcCallBody, fcFixedParamCount, actualArgExternLocals, expr.arguments.length);
               // Shared func types use canonical-root self. A private/named
               // closure func type still names its concrete self, so its arm
               // needs a concrete cast to remain statically call_ref-valid.
@@ -1993,8 +2005,27 @@ export function compileIdentifierCall(
                 fcCallBody.push({ op: "ref.cast", typeIdx: candidateSelfTypeIdx });
               }
               // Push args
-              for (let ai = 0; ai < fc.paramTypes.length; ai++) {
+              for (let ai = 0; ai < fcFixedParamCount; ai++) {
                 fcCallBody.push({ op: "local.get", index: argLocals[ai]! });
+              }
+              if (fcHasRest) {
+                const restType = fc.paramTypes[fcFixedParamCount]!;
+                const restTypeIdx =
+                  restType.kind === "ref" || restType.kind === "ref_null" ? restType.typeIdx : undefined;
+                const restInfo = restTypeIdx === undefined ? null : getVecInfo(ctx, restTypeIdx);
+                if (restTypeIdx === undefined || restInfo === null || restInfo.elemType.kind !== "externref") {
+                  // The candidate scan only admits externref vectors. Keep a
+                  // defensive escape hatch if a future metadata path violates
+                  // that invariant rather than emitting an invalid call_ref arm.
+                  continue;
+                }
+                const restCount = Math.max(0, expr.arguments.length - fcFixedParamCount);
+                fcCallBody.push({ op: "i32.const", value: restCount });
+                for (let ai = fcFixedParamCount; ai < expr.arguments.length; ai++) {
+                  fcCallBody.push({ op: "local.get", index: actualArgExternLocals[ai]! });
+                }
+                fcCallBody.push({ op: "array.new_fixed", typeIdx: restInfo.arrTypeIdx, length: restCount });
+                fcCallBody.push({ op: "struct.new", typeIdx: restTypeIdx });
               }
               // Push typed funcref and call
               fcCallBody.push({ op: "local.get", index: funcrefLocal });
