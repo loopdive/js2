@@ -12,6 +12,7 @@ import { loadReactUpstreamSuitePin } from "./setup-react-upstream-suite.mjs";
 // @ts-expect-error — .mjs dogfood harness has no declaration file
 import {
   createNativeRequire,
+  buildServerProjectFiles,
   isExpectedLateJsdomHostError,
   partitionProjectTests,
   partitionReactDomTestsForBuild,
@@ -145,6 +146,39 @@ describe("react-dom upstream suite", () => {
       ["b.js", ["b.js-0"]],
     ]);
     expect(batches.flatMap(({ tests }) => tests).map(({ id }) => id)).toEqual(input.map(({ id }) => id));
+  });
+
+  it("keeps server and Fizz batches in isolated project modules", () => {
+    const test = {
+      id: "serverTest",
+      file: "ReactDOMServer-test.js",
+      fullName: "server test",
+      prelude: "",
+      body: "expect(ReactDOMServer.renderToString(React.createElement('div'))).toBe('<div></div>');",
+      isAsync: false,
+    };
+    const legacy = buildServerProjectFiles({
+      reactSource: "exports.createElement = function () {};",
+      sharedSource: "exports.flushSync = function (callback) { return callback(); };",
+      serverSource: "exports.renderToString = function () { return '<div></div>'; };",
+      tests: [test],
+    });
+    expect(Object.keys(legacy).sort()).toEqual(["entry.ts", "react.ts", "scheduler.ts", "server.ts", "shared.ts"]);
+    expect(legacy["entry.ts"]).toContain('import { __serverExports } from "./server.ts";');
+    expect(legacy["entry.ts"]).toContain("export function upstreamTestCount() { return 1; }");
+    expect(legacy["server.ts"]).toContain("__serverExports");
+
+    const fizz = buildServerProjectFiles({
+      reactSource: "exports.createElement = function () {};",
+      sharedSource: "exports.flushSync = function (callback) { return callback(); };",
+      serverSource: "exports.unused = true;",
+      fizzSource: "exports.renderToReadableStream = function () {};",
+      tests: [test],
+      fizzPlatform: "node",
+    });
+    expect(Object.keys(fizz).sort()).toEqual(["entry.ts", "fizz.ts", "react.ts", "scheduler.ts", "shared.ts"]);
+    expect(fizz["entry.ts"]).toContain('import { __fizzExports } from "./fizz.ts";');
+    expect(fizz["entry.ts"]).toContain("__REACTDOM_FIZZ__");
   });
 
   // The pinned React checkout is a generated, network-backed fixture. Keep the
