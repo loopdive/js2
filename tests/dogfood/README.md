@@ -117,7 +117,7 @@ then compares its result with the same operation in native Node.
 | **clsx** (className joiner)             | #3748 | `dist/clsx.mjs`           | per-op string equality (see below — driver epilogue, not a raw export call) |
 | **cookie** (RFC-6265 parser/serializer) | #3751 | `dist/index.js`           | per-op JSON-normalized equality (direct export calls, no epilogue)          |
 | **eslint** (JavaScript linter)          | #1400 | `lib/api.js`              | bounded full-package compile/validate; `Linter.verify` API workload         |
-| **eslint selected upstream unit**       | #4293 | `lib/shared/deep-merge-arrays.js` | all 44 original cases from the matching source tag                    |
+| **eslint selected upstream unit**       | #3995 | five `lib/shared/*` utilities | all 158 original cases from the matching source tag                    |
 | **prettier** (code formatter)           | —     | `standalone.mjs`          | bounded package-entry compile/validate; runtime diff pending                |
 | **react** (UI library)                  | —     | `index.js`                | bounded package-entry compile/validate                                      |
 | **react upstream suite**                | —     | `cjs/react.production.js` | React's own real `packages/react/src/__tests__` unit tests                  |
@@ -393,8 +393,8 @@ correct `Linter.verify` behavior, and a timeout is not a pass.
 The package-entry timeout does not prevent smaller original units from exposing
 real runtime semantics. ESLint's npm tarball omits its tests, so the selected
 upstream-unit lane clones the exact `v10.0.3` source commit
-`bfce7eaa0ec5d6591fd247b7ff57b51e45fb88a1`, verifies it, and runs all 44 bodies
-from `tests/lib/shared/deep-merge-arrays.js` against the byte-verified published
+`bfce7eaa0ec5d6591fd247b7ff57b51e45fb88a1`, verifies it, and runs all 158
+bodies from five shared-utility files against the byte-verified published
 implementation:
 
 ```bash
@@ -402,13 +402,18 @@ pnpm run dogfood:eslint-upstream-suite
 DOGFOOD_ESLINT_UPSTREAM_SUITE=1 pnpm exec vitest run tests/dogfood/eslint-upstream-suite.test.ts
 ```
 
-Only the two CommonJS bindings are adapted: the package-relative implementation
-require points at the pinned npm payload, and `node:assert` is replaced by one
-deterministic `deepStrictEqual` shim shared by the Node and Wasm lanes. No test
-body is transcribed, rejected, or skipped. The current baseline is **44/44 in
-both Node and Wasm**. #4293 fixed the generic nested-array carrier bug exposed by
-the seven former divergences. The npm-compat card calls this a “selected
-upstream unit” so 44/44 can never be mistaken for ESLint's whole suite.
+The adapter keeps the original test bodies and changes only their bindings: the
+package-relative implementation require points at the pinned npm payload, and
+`node:assert`/Chai is replaced by one deterministic callable assertion plus a
+plain method object shared by the Node and Wasm lanes. The split is deliberate:
+Wasm does not preserve properties assigned onto a function value, while it does
+preserve methods on an ordinary object. No test body is transcribed, rejected,
+or silently skipped. The current measured slice is **158/158 in Node and
+50/158 in Wasm**; the deep-merge unit is **44/44 in both lanes**. The remaining
+Wasm failures are compiler/runtime mismatches in typed reference-array HOFs and
+serialization helpers, and remain visible in the per-file report. The
+npm-compat card calls this a “selected upstream unit” so these numbers can never
+be mistaken for ESLint's whole suite.
 
 ## jsdom (#3995)
 
