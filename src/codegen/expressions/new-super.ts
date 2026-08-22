@@ -2395,6 +2395,42 @@ function emitClassCtorValue(ctx: CodegenContext, fctx: FunctionContext, ctorName
   return { kind: "funcref" };
 }
 
+/**
+ * (#4616) §10.2.9 SetFunctionName for a NAMED class-expression VALUE (jest's
+ * convertDescriptorToString over `class Named {}` in a test table): stamp
+ * `.name` into the ctor value's sidecar once at the value-read site, so
+ * dynamic `.name` reads in other modules answer the declared name. Host lane
+ * only; a nameless class expression is a no-op.
+ */
+function stampClassExprName(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  vt: ValType | null,
+  displayName: string | undefined,
+): void {
+  if (vt === null || ctx.standalone || ctx.wasi) return;
+  if (displayName === undefined || displayName.length === 0) return;
+  if (vt.kind !== "externref" && vt.kind !== "ref" && vt.kind !== "ref_null") return;
+  const setIdx = ensureLateImport(
+    ctx,
+    "__extern_set",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (setIdx === undefined) return;
+  addStringConstantGlobal(ctx, "name");
+  addStringConstantGlobal(ctx, displayName);
+  const tmp = allocTempLocal(fctx, vt);
+  fctx.body.push({ op: "local.tee", index: tmp });
+  if (vt.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, "name"));
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, displayName));
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? setIdx });
+  fctx.body.push({ op: "local.get", index: tmp });
+  releaseTempLocal(fctx, tmp);
+}
+
 function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr: ts.ClassExpression): ValType | null {
   // §15.7.1: the class-expression name is in TDZ during its own `extends`
   // evaluation. `(class x extends x {})` must throw ReferenceError (#1594B).
@@ -2419,7 +2455,12 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
     const ctorName = `${syntheticName}_new`;
     const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)); // (#1983)
     if (funcIdx !== undefined) {
-      return emitClassCtorValue(ctx, fctx, ctorName, funcIdx);
+      const vt = emitClassCtorValue(ctx, fctx, ctorName, funcIdx);
+      // (#4616) §10.2.9 — same name stamp as the named-collection arm below;
+      // a NAMED class expression routinely lands here under its synthetic
+      // collection name, but its display name is the SOURCE name.
+      stampClassExprName(ctx, fctx, vt, expr.name?.text);
+      return vt;
     }
   }
 
@@ -2430,7 +2471,9 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
       const ctorName = `${className}_new`;
       const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)); // (#1983)
       if (funcIdx !== undefined) {
-        return emitClassCtorValue(ctx, fctx, ctorName, funcIdx);
+        const vt = emitClassCtorValue(ctx, fctx, ctorName, funcIdx);
+        stampClassExprName(ctx, fctx, vt, className);
+        return vt;
       }
     }
   }

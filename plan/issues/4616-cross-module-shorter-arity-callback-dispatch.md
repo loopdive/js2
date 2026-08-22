@@ -40,6 +40,7 @@ loc-budget-allow:
   - src/codegen/literals.ts
   - src/codegen/expressions/calls.ts
   - src/codegen/statements/variables.ts
+  - src/codegen/expressions/new-super.ts
 func-budget-allow:
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
   - src/codegen/extern-declarations.ts::registerNodeBuiltinImports
