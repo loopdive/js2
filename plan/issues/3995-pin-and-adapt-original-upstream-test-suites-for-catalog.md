@@ -3,7 +3,7 @@ id: 3995
 title: "npm-compat: pin and adapt original upstream test suites for catalog packages"
 status: ready
 created: 2026-07-30
-updated: 2026-08-21
+updated: 2026-08-22
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -742,3 +742,23 @@ direct named-import adapters or otherwise matching module-init execution
 semantics before this selection is made publishable. The experiment changes
 only adapter/pin infrastructure; it does not modify ESLint source or test
 expectations.
+
+## 2026-08-22 ESLint assertion-binding checkpoint
+
+The binding mismatch was narrowed to the assertion shim, not the published
+ESLint utility exports. The old shim attached `strictEqual`, `deepStrictEqual`,
+`isTrue`, and `isFalse` as properties on a callable function. Node observes
+those properties, but the Wasm function representation does not retain them;
+the result was a false **0/158** score even when the utility returned the right
+value. The adapter now keeps the callable assertion and exposes its methods on
+an ordinary object, with the generated source binding method calls to that
+object. The original callback bodies and inputs remain unchanged.
+
+Measured on the five-file selection: **158/158 native**, all five modules
+compile and validate, and **50/158 Wasm** currently pass. The deep-merge unit
+is restored to **44/44 Wasm**; the remaining failures are real compiler/runtime
+gaps in typed reference-array higher-order functions and serialization helpers,
+with per-file failure summaries retained in the generated report. The adapter
+is still draft-only until those gaps are either fixed or explicitly scoped in
+follow-up issue slices; they are compatibility findings, not unavailable
+infrastructure.

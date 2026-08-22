@@ -1,11 +1,11 @@
 // eslint@10.0.3 upstream-suite dogfood harness.
 //
 // ESLint's npm tarball omits its tests. This harness checks out the immutable
-// matching source tag, lifts every original body from the selected
-// deep-merge-arrays unit, and runs the same generated driver in Node and Wasm.
-// Only the two CommonJS require declarations are rebound: the implementation
-// comes from the byte-verified published package and node:assert is represented
-// by a deterministic deepStrictEqual shim that both lanes share.
+// matching source tag, lifts every original body from the selected shared-
+// utility units, and runs the same generated driver in Node and Wasm. CommonJS
+// assertion and implementation requires are rebound: the implementation comes
+// from the byte-verified published package and Chai/node:assert are represented
+// by a deterministic assertion shim that both lanes share.
 
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -25,6 +25,7 @@ const GENERATED_ROOT = join(HERE, ".eslint-upstream-suite", "generated");
 const DRIVER_SHIM = String.raw`
 let __eslintTotal = 0;
 let __eslintPassed = 0;
+let __eslintFailures = [];
 
 function __eslintDeepEqual(a, b) {
   if (a === b) return true;
@@ -50,27 +51,32 @@ function __eslintDeepEqual(a, b) {
 function __eslintAssert(value, message) {
   if (!value) throw new Error(message || "assertion failed");
 }
-__eslintAssert.strictEqual = function(actual, expected, message) {
-  if (actual !== expected) throw new Error(message || "strictEqual");
+// Keep the callable assertion separate from its methods. Assigning properties
+// to a function is not a portable Wasm representation: the JS host sees those
+// properties, while the compiled function value does not. The adapter rewrites
+// method calls to this plain object below, so both lanes use the same API.
+const __eslintAssertMethods = {
+  strictEqual(actual, expected, message) {
+    if (actual !== expected) throw new Error(message || "strictEqual");
+  },
+  deepStrictEqual(actual, expected, message) {
+    if (!__eslintDeepEqual(actual, expected)) throw new Error(message || "deepStrictEqual");
+  },
+  isTrue(actual, message) {
+    if (actual !== true) throw new Error(message || "isTrue");
+  },
+  isFalse(actual, message) {
+    if (actual !== false) throw new Error(message || "isFalse");
+  },
+  throws(body, expected, message) {
+    let error = null;
+    try { body(); } catch (caught) { error = caught; }
+    if (error === null) throw new Error(message || "throws");
+    if (expected && typeof expected === "function" && !(error instanceof expected)) {
+      throw new Error(message || "throws type");
+    }
+  },
 };
-__eslintAssert.deepStrictEqual = function(actual, expected, message) {
-  if (!__eslintDeepEqual(actual, expected)) throw new Error(message || "deepStrictEqual");
-};
-__eslintAssert.isTrue = function(actual, message) {
-  if (actual !== true) throw new Error(message || "isTrue");
-};
-__eslintAssert.isFalse = function(actual, message) {
-  if (actual !== false) throw new Error(message || "isFalse");
-};
-__eslintAssert.throws = function(body, expected, message) {
-  let error = null;
-  try { body(); } catch (caught) { error = caught; }
-  if (error === null) throw new Error(message || "throws");
-  if (expected && typeof expected === "function" && !(error instanceof expected)) {
-    throw new Error(message || "throws type");
-  }
-};
-const assert = __eslintAssert;
 
 function describe(_name, body) { body(); }
 function it(_name, body) {
@@ -79,7 +85,9 @@ function it(_name, body) {
     const result = body();
     if (result && typeof result.then === "function") throw new Error("async test not admitted");
     __eslintPassed++;
-  } catch (_error) {}
+  } catch (_error) {
+    if (__eslintFailures.length < 10) __eslintFailures.push({ name: String(_name), error: String(_error?.message ?? _error) });
+  }
 }
 `;
 
@@ -130,14 +138,22 @@ function generatedDriverSource(
       testSource = testSource.replace(new RegExp(`\\b${namespaceBinding}\\.${name}\\b`, "g"), name);
     }
   }
-  const replacement = namespaceBinding ? "" : declaration.replace(implementationRequirePattern, "");
-  testSource = replaceExactlyOnce(testSource, declaration, replacement, "implementation require");
+  // The generated driver imports the implementation as ESM above. Remove the
+  // original CommonJS declaration in every form, including destructuring
+  // (`const { foo } = require(...)`); leaving `= ;` behind makes the native
+  // oracle fail before it can register any callbacks.
+  testSource = replaceExactlyOnce(testSource, declaration, "", "implementation require");
+  testSource = testSource
+    .replace(/\bassert\.(strictEqual|deepStrictEqual|isTrue|isFalse|throws)\b/g, "__eslintAssertMethods.$1")
+    .replace(/\bassert\(/g, "__eslintAssert(");
   return [
     `import { ${implementationExports.join(", ")} } from ${JSON.stringify(implementationSpecifier)};`,
     DRIVER_SHIM,
     testSource,
     `export function eslintTotal() { return __eslintTotal; }
 export function eslintPassed() { return __eslintPassed; }
+export function eslintFailures() { return __eslintFailures; }
+export function eslintFailureSummary() { return __eslintFailures.map(item => item.name + ":" + item.error).join(" | "); }
 `,
   ].join("\n");
 }
@@ -149,7 +165,12 @@ function recordError(error) {
 function readDriverResults(exports) {
   const total = exports.eslintTotal();
   const passed = exports.eslintPassed();
-  return { total, passed, failed: total - passed };
+  return {
+    total,
+    passed,
+    failed: total - passed,
+    failureSummary: exports.eslintFailureSummary?.() ?? "",
+  };
 }
 
 function relativeModuleSpecifier(fromDirectory, target) {
