@@ -36,6 +36,7 @@ import {
 import { emitUndefinedExtern, ensureAnyHelpers, ensureWrapperTypes } from "./any-helpers.js";
 import { emitScriptGlobalFunctionBindings } from "./global-function-bindings.js"; // (#4394) §9.1.1.4.18
 import { emitScriptGlobalVarBindings } from "./global-var-bindings.js"; // (#4491 T4) §9.1.1.4.17
+import { isHoistedTopLevelVarName } from "./top-level-hoisted-var-names.js"; // (#4491 T3) pre-declaration writes
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
@@ -1202,7 +1203,14 @@ function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, st
 
 function shouldCollectTopLevelAssignment(ctx: CodegenContext, target: ts.Expression, operator: ts.SyntaxKind): boolean {
   const targetName = getAssignmentRootIdentifier(target);
-  const namedGlobal = targetName === "globalThis" || (!!targetName && ctx.moduleGlobals.has(targetName));
+  // (#4491 T3) `ctx.moduleGlobals` is filled by the SAME single pass that asks
+  // this question, so a write that precedes its own `var` declaration
+  // (`x = 1; … var x;`) saw an empty answer and the whole statement was
+  // dropped. The pre-scan supplies the order-independent fact; `var` only —
+  // see top-level-hoisted-var-names.ts for why `let`/`const` stay out.
+  const namedGlobal =
+    targetName === "globalThis" ||
+    (!!targetName && (ctx.moduleGlobals.has(targetName) || isHoistedTopLevelVarName(target, targetName)));
   return (
     namedGlobal ||
     (operator === ts.SyntaxKind.EqualsToken && isExactTopLevelClassAccessorWrite(ctx, target)) ||
