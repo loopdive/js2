@@ -619,6 +619,11 @@ This removes a module-lookup failure without claiming that the nested helper
 registration cases are a separate denominator; the extractor still reports
 the original direct upstream test records.
 
+The facade also has a compiled-Wasm smoke test: the generated module imports
+the helper factory, instantiates successfully, and exposes its server-render
+method. The full ReactDOM corpus remains unrerun because the pinned upstream
+checkout is unavailable offline in this worktree.
+
 ## Permanent test reference
 
 `tests/dogfood/react-dom-upstream-suite.test.ts` — pin/commit assertions run

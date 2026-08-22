@@ -181,6 +181,39 @@ return __js2ReactDOMServerIntegrationTestUtils;`)();
     }
   });
 
+  it("compiles the private server-helper facade into the Wasm test lane", async () => {
+    const dom = installReactTestEnvironment();
+    const installed = installReactUpstreamInfrastructure();
+    try {
+      const source = `${REACT_EXPECT_SHIM}
+export function checkServerHelper() {
+  var helper = __js2ReactDOMServerIntegrationTestUtils(function () {
+    return {
+      ReactDOM: {},
+      ReactDOMClient: {},
+      ReactDOMServer: { renderToString: function () { return "<div>x</div>"; } },
+    };
+  });
+  return typeof helper.serverRender === "function" ? 1 : 0;
+}`;
+      const result = await compile(source, {
+        fileName: "react-dom-server-helper-smoke.js",
+        skipSemanticDiagnostics: true,
+      });
+      expect(result.success).toBe(true);
+      if (!result.success || !result.binary) return;
+      const imports = result.importObject ?? {};
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      imports.__setExports?.(instance.exports);
+      imports.__setInstance?.(instance);
+      const compiled = wrapExports(instance.exports, { signatures: result.exportSignatures });
+      expect(compiled.checkServerHelper()).toBe(1);
+    } finally {
+      installed.cleanup();
+      dom.cleanup();
+    }
+  }, 90_000);
+
   it("provides scoped Jest module isolation to Node and compiled Wasm", async () => {
     const previousNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";
