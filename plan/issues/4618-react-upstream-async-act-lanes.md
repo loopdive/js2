@@ -14,6 +14,10 @@ language_feature: async, await, closures
 goal: dogfood
 related: [1042, 1373b, 3958, 4616]
 loc-budget-allow:
+  - src/codegen/function-body.ts
+  - src/codegen/registry/imports.ts
+  - src/codegen/closures.ts
+  - src/codegen/context/types.ts
   - src/codegen/annexb-cancel.ts
   - src/codegen/async-cps.ts
   - src/codegen/async-frame.ts
@@ -33,6 +37,9 @@ func-budget-allow:
   - src/codegen/statements/nested-declarations.ts::compileNestedClassDeclaration
   - src/codegen/expressions/extern.ts::emitLazyClassObjectGet
   - src/runtime.ts::_wrapForHost
+  - src/runtime.ts::<anonymous>#91
+  - src/codegen/declarations.ts::compileDeclarations
+  - src/codegen/function-body.ts::compileFunctionBody
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
@@ -682,6 +689,49 @@ in-module reads (host-side detection is what react-dom needs).
   4618 battery + #2669 21/21; issue-1712 1 failure identical on base
   (A/B'd). Regression test: cross-kind captures case in
   `tests/issue-4618-scoped-same-name-classes.test.ts` (5 total).
+
+- **2026-08-22 method-capture promotion hardened (3 defects, react holds
+  95/146)**: react's `componentDidMount(){ test = this }` family traced
+  end-to-end in the real per-file batch. Fixed:
+  (1) `promoteAccessorCapturesToGlobals`'s #2669 funcMap skip is name-keyed —
+  the shim's module-level `function test` blocked promotion of a shadowing
+  enclosing `let test`; the skip now yields when the local provably shadows a
+  module-level function (no `funcMapOwnerDecl`, not a hoisted value binding).
+  (2) The #2818 defer heuristic's `wouldPromote` carried the SAME veto — a
+  try-nested class under the collision compiled eagerly and promotion never
+  fired (`[promote-entry] refs=∅`). Same discrimination applied.
+  (3) Module-init compiles twice with `capturedGlobals` CLEARED between
+  passes, while class method bodies compile ONCE (bound to pass-1 globals) —
+  the re-compile's early return left the frame reading a fresh local while
+  methods wrote the pass-1 global. New `ctx.classMemberCaptureGlobals`
+  records each class's promoted globals at full compile (threaded out of
+  promoteAccessorCapturesToGlobals via `promotedRecord`) and the early
+  return re-binds them + syncs the fresh local; `ctx.capturedGlobalsOwner`
+  keeps sibling same-named bindings from silently reusing another frame's
+  global (mints fresh instead — an unguarded broad resync variant broke the
+  ES6Class `Outer`/`Foo` test and was replaced). Records ride the
+  fixupModuleGlobalIndices shift walk (an unshifted record hit "immutable
+  global cannot be assigned").
+  Regression tests: `tests/issue-4618-method-capture-promotion.test.ts` (2).
+  Guards: react 95/146 zero flips, jest 322/356, acorn 3518/3518, cookie
+  63740/63740, clsx 32/32; issue-2818/2029/1712 failures identical on base.
+  **Root cause of the remaining ~12 `Cannot access property on null` tests
+  PINNED but NOT yet fixed**: componentDidMount NEVER RUNS in the batch —
+  react-dom treats the class as a FUNCTION component because
+  `Test.prototype.isReactComponent` is false: `__register_class_parent`
+  received NULL (the static member lane's read of `React.Component` at the
+  declaration nulls in the batch while the body's own read answers an
+  object). Registration now stores the live container + key
+  (`__register_class_parent_ref`) and the mirror resolves lazily host-side —
+  but the container (the compiled `exports` struct behind
+  `require('react')`) exposes `Component` through NO host lane tried so far
+  (sidecar `__get_*`, `__sget_*` export probe, `_wrapForHost` proxy, plain
+  read all answer null/undefined). Next lead: find which store the compiled
+  `exports.Component = Component` write lands in for the batch module, or
+  resolve the parent compiled-side via a dedicated export instead of a host
+  read. The facade now installs even without a proto struct and treats a
+  NULL own-prop answer as a miss (the wasm-object proxy answers null, not
+  undefined) — both needed once the parent resolves.
 
 ## Fix order
 

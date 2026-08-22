@@ -215,6 +215,31 @@ export function compileNestedClassDeclaration(
       emitThrowTypeError(ctx, fctx, "Classes may not have a static property named 'prototype'");
       return;
     }
+    // (#4618) A RE-compile of the enclosing body reaches this early return
+    // with the method bodies already compiled — permanently bound to the
+    // FIRST pass's promoted capture globals. Module-init compiles twice
+    // (discovery + final emission) and `capturedGlobals` is CLEARED between
+    // passes, so re-running the promotion here would mint FRESH globals the
+    // methods never see (frame reads and method writes split stores —
+    // react's `componentDidMount(){ test = this }` stayed null). Re-bind the
+    // recorded pass-1 globals instead, sync each from this frame's fresh
+    // local, and route the frame through them.
+    const recorded = ctx.classMemberCaptureGlobals?.get(className);
+    if (recorded !== undefined) {
+      for (const [name, entry] of recorded) {
+        ctx.capturedGlobals.set(name, entry.globalIdx);
+        if (entry.widened) ctx.capturedGlobalsWidened.add(name);
+        else ctx.capturedGlobalsWidened.delete(name);
+        (ctx.capturedGlobalsOwner ??= new Map()).set(name, fctx);
+        const localIdx = fctx.localMap.get(name);
+        if (localIdx !== undefined) {
+          fctx.body.push({ op: "local.get", index: localIdx });
+          fctx.body.push({ op: "global.set", index: entry.globalIdx });
+          fctx.localMap.delete(name);
+          (fctx.promotedCaptureNames ??= new Set()).add(name);
+        }
+      }
+    }
     emitPreparedAccessorComputedNameEffects(ctx, fctx, decl);
     return;
   }
@@ -239,19 +264,26 @@ export function compileNestedClassDeclaration(
     // variables from the enclosing function scope. Also scan parameter-default
     // initializers so e.g. `method([x] = iter)` can resolve `iter` against the
     // enclosing function scope (#1161).
+    const promotedRecord = new Map<string, { globalIdx: number; widened: boolean }>();
     for (const member of decl.members) {
       if (ts.isMethodDeclaration(member) && member.body) {
         const paramInits = member.parameters.map((p) => p.initializer).filter((e): e is ts.Expression => !!e);
-        promoteAccessorCapturesToGlobals(ctx, fctx, member.body, paramInits);
+        promoteAccessorCapturesToGlobals(ctx, fctx, member.body, paramInits, promotedRecord);
       }
       if (ts.isConstructorDeclaration(member) && member.body) {
         const paramInits = member.parameters.map((p) => p.initializer).filter((e): e is ts.Expression => !!e);
-        promoteAccessorCapturesToGlobals(ctx, fctx, member.body, paramInits);
+        promoteAccessorCapturesToGlobals(ctx, fctx, member.body, paramInits, promotedRecord);
       }
       if ((ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) && member.body) {
         const paramInits = member.parameters.map((p) => p.initializer).filter((e): e is ts.Expression => !!e);
-        promoteAccessorCapturesToGlobals(ctx, fctx, member.body, paramInits);
+        promoteAccessorCapturesToGlobals(ctx, fctx, member.body, paramInits, promotedRecord);
       }
+    }
+    // (#4618) Names value-promoted from THIS frame for the member bodies:
+    // record them so a later re-compile pass (module-init pass 2 clears
+    // capturedGlobals) re-binds the SAME globals the compiled methods use.
+    if (promotedRecord.size > 0) {
+      (ctx.classMemberCaptureGlobals ??= new Map()).set(className, promotedRecord);
     }
 
     // Build funcByName map for compileClassBodies

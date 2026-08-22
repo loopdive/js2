@@ -392,6 +392,17 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
       }
     }
   }
+  // (#4618) Per-class member-capture records carry the pass-1 global index
+  // across module-init passes — same shift discipline as capturedBoxGlobals.
+  if (ctx.classMemberCaptureGlobals) {
+    for (const record of ctx.classMemberCaptureGlobals.values()) {
+      for (const entry of record.values()) {
+        if (entry.globalIdx >= threshold) {
+          entry.globalIdx += delta;
+        }
+      }
+    }
+  }
   shiftMap(ctx.staticProps);
   shiftMap(ctx.protoGlobals);
   shiftMap(ctx.classObjectGlobals); // (#1395) — same shift discipline as protoGlobals

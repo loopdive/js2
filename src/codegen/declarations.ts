@@ -2959,7 +2959,17 @@ export function compileDeclarations(
       // A name bound to a *user* function is a function reference, not a
       // captured variable (but a same-named wasm:js-string builtin import must
       // not block capture — discriminate by index, as promotion does).
-      if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) return false;
+      // (#4618) The check is name-keyed, so a MODULE-level `function test`
+      // used to veto deferral of a try-nested class whose method captures the
+      // enclosing scope's `let test` (react's `componentDidMount(){test=this}`
+      // under the shim's module `function test`) — the class compiled eagerly,
+      // promotion never fired, and the write was a silent no-op. Only a
+      // funcMap entry owned by a nested FunctionDeclaration is a true
+      // function reference here; a module-level function shadowed by the
+      // scope-local declaration (names.has(name) held above) is a capture.
+      if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) {
+        if (ctx.funcMapOwnerDecl.has(name)) return false;
+      }
       return true;
     };
     for (const member of decl.members) {
@@ -3349,6 +3359,7 @@ export function compileDeclarations(
     ctx.capturedGlobals.clear();
     ctx.capturedGlobalsWidened.clear();
     ctx.capturedBoxGlobals?.clear();
+    ctx.capturedGlobalsOwner?.clear();
     const initFctx: FunctionContext = {
       name: "__module_init",
       params: [],

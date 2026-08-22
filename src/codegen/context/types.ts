@@ -2729,6 +2729,25 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   classTagCounter: number;
   /** Map from class name → unique tag value (for instanceof support) */
   classTagMap: Map<string, number>;
+  /**
+   * (#4618) Per-class record of the capture globals its member bodies were
+   * compiled against. Module-init compiles twice (discovery + final emission)
+   * and `capturedGlobals` is CLEARED between passes, but class member bodies
+   * compile only ONCE — permanently bound to pass-1 globals. The re-compile's
+   * early-return re-binds these exact globals into `capturedGlobals` (and
+   * syncs the frame's fresh local into them) so frame reads and method writes
+   * share one store. Keyed by resolved class name → captured name →
+   * the pass-1 global index (+ widened flag).
+   */
+  classMemberCaptureGlobals?: Map<string, Map<string, { globalIdx: number; widened: boolean }>>;
+  /**
+   * (#4618) Which FunctionContext value-promoted each `capturedGlobals` name.
+   * `capturedGlobals` is name-keyed and not cleared between sibling callback
+   * bodies of one pass, so a same-named binding in a DIFFERENT function must
+   * mint a fresh global instead of silently reusing the sibling's. Entries
+   * are advisory (owners may be dead fctxs); compared by identity only.
+   */
+  capturedGlobalsOwner?: Map<string, FunctionContext>;
   /** Map from TS symbol name → synthetic class name for class expressions */
   classExprNameMap: Map<string, string>;
   /** Map from class AST node → synthetic class name (expressions and nested declarations). */

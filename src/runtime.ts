@@ -5601,6 +5601,49 @@ function _registerClassParentHandler(className: any, parentValue: any): void {
   _classDynamicParentsByName.set(className, parentValue);
 }
 
+/** (#4618) Lazy dynamic-parent registration for PROPERTY-ACCESS heritage
+ * (`class Test extends React.Component`): the compiled value read at the
+ * declaration statement can cross as null through the static member lane
+ * (observed in the react per-file batch), so the runtime stores the live
+ * container object + key and resolves `obj[key]` host-side, on demand, when
+ * the class mirror needs the parent. Memoized on first non-null resolve. */
+const _classDynamicParentLazy = new Map<string, () => any>();
+function _registerClassParentRefHandler(className: any, obj: any, key: any, exports?: Record<string, Function>): void {
+  if (typeof className !== "string" || className.length === 0) return;
+  if (obj == null || typeof key !== "string" || key.length === 0) return;
+  _classDynamicParentLazy.set(className, () => {
+    try {
+      // The container is often a RAW wasm struct (the compiled module's
+      // `exports` object): its props may live in the sidecar OR as real
+      // struct fields (`__sget_<key>` exports). Try the sidecar getter, then
+      // the full host MOP via the object wrapper, then a plain read.
+      let v = _resolveHostField(obj, key, exports);
+      if (v == null) {
+        const sget = exports?.[`__sget_${key}`];
+        if (typeof sget === "function") {
+          try {
+            v = sget(obj);
+          } catch {
+            /* wrong struct shape — fall through */
+          }
+        }
+      }
+      if (v == null && _isWasmStruct(obj)) {
+        const wrapped = _wrapForHost(obj, exports);
+        if (wrapped != null && wrapped !== obj) v = (wrapped as any)[key];
+      }
+      if (v == null) v = (obj as any)[key];
+      if (v != null) {
+        _classDynamicParentsByName.set(className, v);
+        _classDynamicParentLazy.delete(className);
+      }
+      return v;
+    } catch {
+      return undefined;
+    }
+  });
+}
+
 /**
  * (#1455) Registry of synthetic constructors for user classes that extend
  * host built-ins (`class Sub extends Map / Float32Array / WeakRef / ...`).
@@ -7671,8 +7714,12 @@ function _makeClassCtorMirrorForHost(
   // Resolve the parent's live prototype object lazily — the dynamic-parent
   // registration (`__register_class_parent`) runs at the class declaration
   // statement, which may execute after the mirror was built.
-  const resolveParent = (): any =>
-    _classFnctorParents.get(classObj) ?? (className !== "" ? _classDynamicParentsByName.get(className) : undefined);
+  const resolveParent = (): any => {
+    const viaFnctor = _classFnctorParents.get(classObj);
+    if (viaFnctor != null) return viaFnctor;
+    if (className === "") return undefined;
+    return _classDynamicParentsByName.get(className) ?? _classDynamicParentLazy.get(className)?.();
+  };
   const resolveParentProto = (): any => {
     const pf = resolveParent();
     if (pf == null) return undefined;
@@ -7684,18 +7731,27 @@ function _makeClassCtorMirrorForHost(
     return _getOrVivifyFnPrototype(pf, callbackState);
   };
   const protoStruct = _classProtoStructs.get(classObj);
-  if (protoStruct != null) {
-    const protoHost = _wrapForHost(protoStruct, exports);
+  // (#4618) Install the prototype facade even when the proto struct did not
+  // register (the react per-file batch crossed a null protoObj through the
+  // singleton init) — the parent chain alone is what react-dom's
+  // `prototype.isReactComponent` class-component detection needs.
+  {
+    const protoHost = protoStruct != null ? _wrapForHost(protoStruct, exports) : undefined;
     const facade = new Proxy(Object.create(null), {
       get(_ft, key) {
-        const own = (protoHost as any)[key];
-        if (own !== undefined) return _maybeWrapCallableUnknownArity(own, callbackState);
+        if (protoHost !== undefined) {
+          // (#4618) The wasm-object proxy answers NULL (not undefined) for a
+          // missing prop — treat both as a miss or the parent chain is never
+          // consulted and `prototype.isReactComponent` reads null.
+          const own = (protoHost as any)[key];
+          if (own !== undefined && own !== null) return _maybeWrapCallableUnknownArity(own, callbackState);
+        }
         const pp = resolveParentProto();
         if (pp == null) return undefined;
         return _maybeWrapCallableUnknownArity((pp as any)[key], callbackState);
       },
       has(_ft, key) {
-        if (key in (protoHost as any)) return true;
+        if (protoHost !== undefined && key in (protoHost as any)) return true;
         const pp = resolveParentProto();
         return pp != null ? key in (pp as any) : false;
       },
@@ -11555,6 +11611,10 @@ assert._isSameValue = isSameValue;
         };
       if (name === "__register_class_ctor") return _registerClassCtorHandler;
       if (name === "__register_class_parent") return _registerClassParentHandler;
+      if (name === "__register_class_parent_ref")
+        return function registerClassParentRef(n: any, o: any, k: any): void {
+          _registerClassParentRefHandler(n, o, k, callbackState?.getExports());
+        };
       if (name === "__unbox_string")
         return (s: any): any => {
           if (typeof s === "string") return s; // already a string primitive

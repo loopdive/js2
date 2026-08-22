@@ -663,6 +663,49 @@ export function emitRegisterDynamicClassParent(
   } else {
     compileStringLiteral(ctx, fctx, className);
   }
+  // (#4618) A PROPERTY-ACCESS heritage (react's `extends React.Component`)
+  // must be read through the dynamic MOP here: the static member lane can
+  // bind the name to a lazily-materialized carrier that is still null at
+  // this exact point (observed in the per-file react batch: the test body's
+  // own `React.Component` read answered an object while the registration's
+  // static read pushed null, so the mirror never chained the parent and
+  // react-dom treated every class component as a function component).
+  // (#4618) A PROPERTY-ACCESS heritage (react's `extends React.Component`)
+  // registers the live CONTAINER + KEY instead of the value: the compiled
+  // value read at this statement can cross as null through the static member
+  // lane (observed in the react per-file batch — the test body's own
+  // `React.Component` read answered an object while the registration pushed
+  // null, so the class mirror never chained the parent and react-dom treated
+  // every class component as a function component). The runtime resolves
+  // `obj[key]` host-side, lazily, when the mirror needs the parent.
+  if (ts.isPropertyAccessExpression(heritageExpr) && ts.isIdentifier(heritageExpr.name)) {
+    const refRegIdx = ensureLateImport(
+      ctx,
+      "__register_class_parent_ref",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [],
+    );
+    flushLateImportShifts(ctx, fctx);
+    if (refRegIdx !== undefined) {
+      const objT = compileExpression(ctx, fctx, heritageExpr.expression);
+      if (objT === null) {
+        fctx.body.push({ op: "drop" });
+        return;
+      }
+      coerceType(ctx, fctx, objT, { kind: "externref" });
+      // stack: [nameStr, obj] — now the key string
+      const propName = heritageExpr.name.text;
+      addStringConstantGlobal(ctx, propName);
+      const propIdx = ctx.stringGlobalMap.get(propName);
+      if (propIdx !== undefined && propIdx >= 0) {
+        fctx.body.push({ op: "global.get", index: propIdx });
+      } else {
+        compileStringLiteral(ctx, fctx, propName);
+      }
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__register_class_parent_ref") ?? refRegIdx });
+      return;
+    }
+  }
   const t = compileExpression(ctx, fctx, heritageExpr);
   if (t === null) {
     fctx.body.push({ op: "drop" });
