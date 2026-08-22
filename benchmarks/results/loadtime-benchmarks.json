@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-08-22T09:11:56.269Z",
+  "timestamp": "2026-08-22T13:51:04.340Z",
   "benchmarks": [
     {
       "name": "fib",
@@ -202,6 +202,36 @@
         },
         {
           "module": "env",
+          "name": "__js_array_new",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__js_array_new"
+          },
+          "paramCount": 0
+        },
+        {
+          "module": "env",
+          "name": "__call_function",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__unbox_number",
+          "kind": "func",
+          "intent": {
+            "type": "unbox",
+            "targetType": "number"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__box_number",
           "kind": "func",
           "intent": {
@@ -240,16 +270,6 @@
             "name": "__concat_4"
           },
           "paramCount": 4
-        },
-        {
-          "module": "env",
-          "name": "__unbox_number",
-          "kind": "func",
-          "intent": {
-            "type": "unbox",
-            "targetType": "number"
-          },
-          "paramCount": 1
         }
       ],
       "stringPool": [
@@ -485,6 +505,36 @@
         },
         {
           "module": "env",
+          "name": "__js_array_new",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__js_array_new"
+          },
+          "paramCount": 0
+        },
+        {
+          "module": "env",
+          "name": "__call_function",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__unbox_number",
+          "kind": "func",
+          "intent": {
+            "type": "unbox",
+            "targetType": "number"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__box_number",
           "kind": "func",
           "intent": {
@@ -523,16 +573,6 @@
             "name": "__concat_4"
           },
           "paramCount": 4
-        },
-        {
-          "module": "env",
-          "name": "__unbox_number",
-          "kind": "func",
-          "intent": {
-            "type": "unbox",
-            "targetType": "number"
-          },
-          "paramCount": 1
         }
       ],
       "stringPool": [
@@ -767,6 +807,36 @@
         },
         {
           "module": "env",
+          "name": "__js_array_new",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__js_array_new"
+          },
+          "paramCount": 0
+        },
+        {
+          "module": "env",
+          "name": "__call_function",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__unbox_number",
+          "kind": "func",
+          "intent": {
+            "type": "unbox",
+            "targetType": "number"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__box_number",
           "kind": "func",
           "intent": {
@@ -815,16 +885,6 @@
             "name": "__extern_method_call_1"
           },
           "paramCount": 3
-        },
-        {
-          "module": "env",
-          "name": "__unbox_number",
-          "kind": "func",
-          "intent": {
-            "type": "unbox",
-            "targetType": "number"
-          },
-          "paramCount": 1
         }
       ],
       "stringPool": [
@@ -1061,6 +1121,36 @@
         },
         {
           "module": "env",
+          "name": "__js_array_new",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__js_array_new"
+          },
+          "paramCount": 0
+        },
+        {
+          "module": "env",
+          "name": "__call_function",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__unbox_number",
+          "kind": "func",
+          "intent": {
+            "type": "unbox",
+            "targetType": "number"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__box_number",
           "kind": "func",
           "intent": {
@@ -1099,16 +1189,6 @@
             "name": "__concat_4"
           },
           "paramCount": 4
-        },
-        {
-          "module": "env",
-          "name": "__unbox_number",
-          "kind": "func",
-          "intent": {
-            "type": "unbox",
-            "targetType": "number"
-          },
-          "paramCount": 1
         }
       ],
       "stringPool": [
@@ -1355,6 +1435,36 @@
         },
         {
           "module": "env",
+          "name": "__js_array_new",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__js_array_new"
+          },
+          "paramCount": 0
+        },
+        {
+          "module": "env",
+          "name": "__call_function",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__unbox_number",
+          "kind": "func",
+          "intent": {
+            "type": "unbox",
+            "targetType": "number"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__box_number",
           "kind": "func",
           "intent": {
@@ -1393,16 +1503,6 @@
             "name": "__concat_4"
           },
           "paramCount": 4
-        },
-        {
-          "module": "env",
-          "name": "__unbox_number",
-          "kind": "func",
-          "intent": {
-            "type": "unbox",
-            "targetType": "number"
-          },
-          "paramCount": 1
         }
       ],
       "stringPool": [
@@ -1663,6 +1763,36 @@
         },
         {
           "module": "env",
+          "name": "__js_array_new",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__js_array_new"
+          },
+          "paramCount": 0
+        },
+        {
+          "module": "env",
+          "name": "__call_function",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__unbox_number",
+          "kind": "func",
+          "intent": {
+            "type": "unbox",
+            "targetType": "number"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__box_number",
           "kind": "func",
           "intent": {
@@ -1711,16 +1841,6 @@
             "name": "__concat_5"
           },
           "paramCount": 5
-        },
-        {
-          "module": "env",
-          "name": "__unbox_number",
-          "kind": "func",
-          "intent": {
-            "type": "unbox",
-            "targetType": "number"
-          },
-          "paramCount": 1
         }
       ],
       "stringPool": [
@@ -1990,6 +2110,36 @@
         },
         {
           "module": "env",
+          "name": "__js_array_new",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__js_array_new"
+          },
+          "paramCount": 0
+        },
+        {
+          "module": "env",
+          "name": "__call_function",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__unbox_number",
+          "kind": "func",
+          "intent": {
+            "type": "unbox",
+            "targetType": "number"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__box_number",
           "kind": "func",
           "intent": {
@@ -2038,16 +2188,6 @@
             "name": "__concat_7"
           },
           "paramCount": 7
-        },
-        {
-          "module": "env",
-          "name": "__unbox_number",
-          "kind": "func",
-          "intent": {
-            "type": "unbox",
-            "targetType": "number"
-          },
-          "paramCount": 1
         }
       ],
       "stringPool": [
