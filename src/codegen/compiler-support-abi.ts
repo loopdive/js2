@@ -277,6 +277,31 @@ function planEntrySourceFamilies(ctx: CodegenContext): void {
   }
 }
 
+/**
+ * Can this unit supply a deterministic whole-program order anchor?
+ *
+ * `hasKnownUnit` answers "the session knows this ID", which is NOT the same
+ * question: an inventoried unit can still lack a declaration anchor, and
+ * `structuralOrder.forUnit` raises `unknown-order-anchor` for it. Being
+ * unorderable is a ROUTING fact — the family simply stays on the generic
+ * fallback, exactly as it did before this role existed — so it must not turn a
+ * previously working compile into a hard failure. Every other invariant code is
+ * an ownership contradiction and is rethrown.
+ */
+function canOrderUnit(session: NonNullable<CodegenContext["programAbiSession"]>, unitId: IrUnitId): boolean {
+  try {
+    session.structuralOrder.forUnit(unitId, {
+      domain: "callable",
+      roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.asyncFrameMachinery,
+      derivedOrdinal: ASYNC_FRAME_MACHINERY_PART.resume,
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof ProgramAbiInvariantError && error.code === "unknown-order-anchor") return false;
+    throw error;
+  }
+}
+
 function planAsyncFrameMachinery(ctx: CodegenContext): void {
   const recorded = recordedAsyncFrameMachinery.get(ctx);
   if (!recorded || recorded.length === 0) return;
@@ -289,7 +314,7 @@ function planAsyncFrameMachinery(ctx: CodegenContext): void {
   const claimed = new Map<string, WasmFunction>();
   for (const record of recorded) {
     const unitId = unitIdByDeclaration.get(record.declaration);
-    if (unitId === undefined || !session.hasKnownUnit(unitId)) continue;
+    if (unitId === undefined || !session.hasKnownUnit(unitId) || !canOrderUnit(session, unitId)) continue;
     const slot = `${unitId}:${record.part}`;
     if (claimed.get(slot) === record.func) continue;
     claimed.set(slot, record.func);
