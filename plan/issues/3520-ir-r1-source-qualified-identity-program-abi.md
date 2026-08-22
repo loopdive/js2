@@ -3218,3 +3218,16 @@ The playground and generated load-time benchmark runtimes retain the complete
 callbacks through `setInstance`. Consumer execution coverage pins the authority
 census at raw `0`, mismatched-token `0`, and canonical branded `2`, then invokes
 a compiled callback after the same association is established.
+
+## 2026-08-22 lane handover (fable-lead)
+
+C34 (PR #4729) and its corrections (PR #4733, PR #4742) are merged; the
+`## Resume checkpoint` above is current. **An Opus agent is in flight at
+handover on branch `claude/issue-3520-c35-residue`** working the next
+slice: semantic owners for the 15 remaining generic
+`retained-module-function` rows (6 method dispatchers, 2 async resume,
+4 callbacks, 1 vec-from-extern, 2 math helpers) and the cause-first
+re-baseline of the 17 red `tests/issue-3520-*` census files. If no PR
+exists for that branch, check the agent worktrees under
+`/workspace/.claude/worktrees/agent-*` for its state before re-dispatching.
+Session-wide context: `plan/agent-context/fable-lead.md`.
