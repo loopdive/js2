@@ -51,6 +51,39 @@ function __upstreamSame(a, b) {
   if (typeof a !== "object") return false;
   if (a instanceof Date || b instanceof Date) return a instanceof Date && b instanceof Date && +a === +b;
   if (a instanceof RegExp || b instanceof RegExp) return a instanceof RegExp && b instanceof RegExp && String(a) === String(b);
+  const aIsArray = Array.isArray(a);
+  const bIsArray = Array.isArray(b);
+  if (aIsArray || bIsArray) {
+    if (!aIsArray || !bIsArray || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (!__upstreamSame(a[i], b[i])) return false;
+    return true;
+  }
+  const aIsSet = a instanceof Set;
+  const bIsSet = b instanceof Set;
+  if (aIsSet || bIsSet) {
+    if (!aIsSet || !bIsSet || a.size !== b.size) return false;
+    const unmatched = Array.from(b);
+    for (const value of a) {
+      const index = unmatched.findIndex((candidate) => __upstreamSame(value, candidate));
+      if (index < 0) return false;
+      unmatched.splice(index, 1);
+    }
+    return true;
+  }
+  const aIsMap = a instanceof Map;
+  const bIsMap = b instanceof Map;
+  if (aIsMap || bIsMap) {
+    if (!aIsMap || !bIsMap || a.size !== b.size) return false;
+    const unmatched = Array.from(b);
+    for (const [key, value] of a) {
+      const index = unmatched.findIndex(
+        (candidate) => __upstreamSame(key, candidate[0]) && __upstreamSame(value, candidate[1]),
+      );
+      if (index < 0) return false;
+      unmatched.splice(index, 1);
+    }
+    return true;
+  }
   if (typeof a.length === "number" || typeof b.length === "number") {
     if (typeof a.length !== "number" || typeof b.length !== "number" || a.length !== b.length) return false;
     for (let i = 0; i < a.length; i++) if (!__upstreamSame(a[i], b[i])) return false;
@@ -416,9 +449,6 @@ function describe(_name, body) {
   __upstreamBeforeAll.length = beforeAllCount;
   __upstreamAfterAll.length = afterAllCount;
 }
-function beforeEach(body) { __upstreamBeforeEach.push(body); }
-function beforeAll(body) { __upstreamBeforeAll.push(body); }
-function afterAll(body) { __upstreamAfterAll.push(body); }
 function __upstreamRegister(name, body) {
   const hooks = __upstreamBeforeEach.slice();
   const afterHooks = __upstreamAfterEach.slice();
@@ -454,16 +484,58 @@ function __upstreamRegister(name, body) {
     },
   });
 }
-function it(name, body) { __upstreamRegister(name, body); }
-function test(name, body) { __upstreamRegister(name, body); }
+function __upstreamRegisterTest(name, body) {
+  const validName = typeof name === "string" || typeof name === "number" || (typeof name === "function" && name.name);
+  if (!validName) {
+    const renderedName = typeof name === "function" && !name.name ? "() => {}" : String(name);
+    throw new Error("Invalid first argument, " + renderedName + ". It must be a named class, named function, number, or string.");
+  }
+  if (typeof body === "undefined") {
+    throw new Error(
+      "Missing second argument. It must be a callback function. Perhaps you want to use " +
+        String.fromCharCode(96) +
+        "test.todo" +
+        String.fromCharCode(96) +
+        " for a test placeholder.",
+    );
+  }
+  if (typeof body !== "function") {
+    throw new Error("Invalid second argument, " + String(body) + ". It must be a callback function.");
+  }
+  __upstreamRegister(name, body);
+}
+function it(name, body) { __upstreamRegisterTest(name, body); }
+function test(name, body) { __upstreamRegisterTest(name, body); }
 function __upstreamSkip() {}
+function __upstreamTodo(description) {
+  if (arguments.length !== 1 || typeof description !== "string") {
+    throw new Error("Todo must be called with only a description.");
+  }
+}
 it.skip = __upstreamSkip;
-it.todo = __upstreamSkip;
+it.todo = __upstreamTodo;
 test.skip = __upstreamSkip;
-test.todo = __upstreamSkip;
+test.todo = __upstreamTodo;
 describe.skip = __upstreamSkip;
 describe.todo = __upstreamSkip;
-function afterEach(body) { __upstreamAfterEach.push(body); }
+function __upstreamRegisterHook(body) {
+  if (typeof body !== "function") throw new Error("Invalid first argument. It must be a callback function.");
+}
+function afterEach(body) { __upstreamRegisterHook(body); __upstreamAfterEach.push(body); }
+function beforeEach(body) { __upstreamRegisterHook(body); __upstreamBeforeEach.push(body); }
+function beforeAll(body) { __upstreamRegisterHook(body); __upstreamBeforeAll.push(body); }
+function afterAll(body) { __upstreamRegisterHook(body); __upstreamAfterAll.push(body); }
+Object.defineProperty(globalThis, "beforeEach", { configurable: true, writable: true, value: function(body) { __upstreamRegisterHook(body); __upstreamBeforeEach.push(body); } });
+Object.defineProperty(globalThis, "beforeAll", { configurable: true, writable: true, value: function(body) { __upstreamRegisterHook(body); __upstreamBeforeAll.push(body); } });
+Object.defineProperty(globalThis, "afterEach", { configurable: true, writable: true, value: function(body) { __upstreamRegisterHook(body); __upstreamAfterEach.push(body); } });
+Object.defineProperty(globalThis, "afterAll", { configurable: true, writable: true, value: function(body) { __upstreamRegisterHook(body); __upstreamAfterAll.push(body); } });
+function __upstreamCallNamedHook(name, body) {
+  if (name === "beforeEach") return beforeEach(body);
+  if (name === "beforeAll") return beforeAll(body);
+  if (name === "afterEach") return afterEach(body);
+  if (name === "afterAll") return afterAll(body);
+  throw new Error("Unknown hook: " + String(name));
+}
 function __upstreamTableRows(strings, values) {
   const markers = [];
   let source = "";
@@ -499,7 +571,10 @@ function __upstreamEach(cases) {
   const tableRows = Array.isArray(cases) && cases.raw && values.length > 0 ? __upstreamTableRows(cases, values) : null;
   return function(name, body) {
     const sourceCases = tableRows || cases;
-    const expandRows = sourceCases.length > 0 && sourceCases.every(function(value) { return Array.isArray(value); });
+    let expandRows = sourceCases.length > 0;
+    for (let caseIndex = 0; caseIndex < sourceCases.length; caseIndex++) {
+      if (!Array.isArray(sourceCases[caseIndex])) { expandRows = false; break; }
+    }
     for (let index = 0; index < sourceCases.length; index++) {
       const sourceRow = sourceCases[index];
       const row = expandRows ? sourceRow : [sourceRow];
@@ -519,24 +594,59 @@ function __upstreamEach(cases) {
     }
   };
 }
+function __upstreamEachDirect(cases, name, body) {
+  let expandRows = cases.length > 0;
+  for (let caseIndex = 0; caseIndex < cases.length; caseIndex++) {
+    if (!Array.isArray(cases[caseIndex])) { expandRows = false; break; }
+  }
+  for (let index = 0; index < cases.length; index++) {
+    const sourceRow = cases[index];
+    const row = expandRows ? sourceRow : [sourceRow];
+    const displayName = String(name).replace(/%s/g, function() { return String(row[0]); });
+    it(displayName, function() {
+      if (row.length === 0) return body();
+      if (row.length === 1) return body(row[0]);
+      if (row.length === 2) return body(row[0], row[1]);
+      if (row.length === 3) return body(row[0], row[1], row[2]);
+      return body(row[0], row[1], row[2], row[3]);
+    });
+  }
+}
+function __upstreamDescribeEachDirect(cases, name, body) {
+  let expandRows = cases.length > 0;
+  for (let caseIndex = 0; caseIndex < cases.length; caseIndex++) {
+    if (!Array.isArray(cases[caseIndex])) { expandRows = false; break; }
+  }
+  for (let index = 0; index < cases.length; index++) {
+    const sourceRow = cases[index];
+    const row = expandRows ? sourceRow : [sourceRow];
+    if (row.length === 0) body();
+    else if (row.length === 1) body(row[0]);
+    else if (row.length === 2) body(row[0], row[1]);
+    else if (row.length === 3) body(row[0], row[1], row[2]);
+    else body(row[0], row[1], row[2], row[3]);
+  }
+}
 it.each = __upstreamEach;
 test.each = __upstreamEach;
-describe.each = function(cases) {
-  return function(name, body) {
-    const expandRows = cases.length > 0 && cases.every(function(value) { return Array.isArray(value); });
+function __upstreamDescribeEach(cases) {
+  return (name, body) => {
+    let expandRows = cases.length > 0;
+    for (let caseIndex = 0; caseIndex < cases.length; caseIndex++) {
+      if (!Array.isArray(cases[caseIndex])) { expandRows = false; break; }
+    }
     for (let index = 0; index < cases.length; index++) {
       const row = expandRows ? cases[index] : [cases[index]];
       const displayName = String(name).replace(/%s/g, function() { return String(row[0]); });
-      describe(displayName, function() {
-        if (row.length === 0) return body();
-        if (row.length === 1) return body(row[0]);
-        if (row.length === 2) return body(row[0], row[1]);
-        if (row.length === 3) return body(row[0], row[1], row[2]);
-        return body(row[0], row[1], row[2], row[3]);
-      });
+      if (row.length === 0) body();
+      else if (row.length === 1) body(row[0]);
+      else if (row.length === 2) body(row[0], row[1]);
+      else if (row.length === 3) body(row[0], row[1], row[2]);
+      else body(row[0], row[1], row[2], row[3]);
     }
   };
-};
+}
+describe.each = __upstreamDescribeEach;
 // Vitest's expectTypeOf is erased by TypeScript and only performs compile-time
 // checks. Keep the original calls executable without turning type assertions
 // into fake runtime coverage in either the Node or Wasm lane.
