@@ -102,6 +102,18 @@ loc-budget-allow:
   # existing loops read. Both arms sit at fixed points in one long ordered
   # dispatch chain and cannot be hoisted without reordering it.
   - src/codegen/expressions/call-tail-dispatch.ts
+  # 2026-08-22 gate-visibility re-grant (PR #4723): these five files' growth
+  # was granted in plan/issues/2071 / 4206 / 2175 frontmatter — but those doc
+  # edits already merged upstream via the earlier integration PR, so under
+  # CI's synthetic-merge base they are UNCHANGED and their grants are
+  # invisible to the #3131 change-set scan, while the granted source growth
+  # is still carried by this PR. Same grants, restated in a file this PR
+  # modifies; rationales live in the original issue files' frontmatter.
+  - src/codegen/declarations/object-shape-widening.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/binary-ops.ts
+  - src/codegen/index.ts
+  - src/codegen/expressions/assignment.ts
 oracle-ratchet-allow:
   # 2026-08-21: one getTypeAtLocation in varBindingNeedsExternrefForUndefined's
   # new call arm — the same raw-checker idiom as the surrounding predicate;
@@ -161,6 +173,16 @@ coercion-sites-allow:
   # hand-rolled.
   - src/codegen/string-fromcharcode-value-read.ts
 func-budget-allow:
+  # 2026-08-22 gate-visibility re-grant (PR #4723), same stranded-grant cause
+  # as the loc entries above: originally granted in 2071/4206/2175 frontmatter
+  # whose doc edits already merged upstream, leaving the grants invisible to
+  # the change-set scan while this PR still carries the granted growth.
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/expressions/new-super.ts::compileNewFunctionDeclaration
+  - src/codegen/binary-ops.ts::compileBinaryExpression
+  - src/codegen/declarations/object-shape-widening.ts::collectGrowableObjectLiterals
+  - src/codegen/declarations/object-shape-widening.ts::scanStatements#2
+  - src/codegen/declarations.ts::compileDeclarations
   # 2026-08-21 defineProperties/create edge slice: the `Properties`-map entry
   # model gains a PASS-THROUGH arm (a map entry that is not an object literal)
   # plus the reified-map construction. Already 724 LOC at base — the growth is
