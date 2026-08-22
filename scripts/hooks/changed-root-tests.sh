@@ -61,13 +61,15 @@ fi
 echo "changed-root-tests: running $count changed root test file(s):"
 printf '%s\n' "$changed"
 
-# (#3505 follow-up) NODE_OPTIONS reaches the vitest fork workers, whose default
-# old-space (~512MB observed on the CI runner) OOMs on test files that link the
-# standalone runtime-eval provider in-process (issue-3496: "Ineffective
-# mark-compacts near heap limit" killed the quality gate). 4GB fits both the
-# 7GB CI runners and dev boxes; single-fork keeps only one worker alive.
-NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=4096"
-export NODE_OPTIONS
+# (#3505 follow-up) vitest.config.ts pins each fork worker's old-space via an
+# explicit execArgv (default 512MB — which also overrides any NODE_OPTIONS),
+# and that OOMs on test files that link the standalone runtime-eval provider
+# in-process (issue-3496: "Ineffective mark-compacts near heap limit" killed
+# the quality gate twice). Raise it through the config's own env knob unless
+# the caller already chose a value. 4GB fits both the 7GB CI runners and dev
+# boxes; single-fork keeps only one worker alive.
+VITEST_FORK_MAX_OLD_SPACE_SIZE="${VITEST_FORK_MAX_OLD_SPACE_SIZE:-4096}"
+export VITEST_FORK_MAX_OLD_SPACE_SIZE
 
 # --dangerouslyIgnoreUnhandledErrors: a test file whose tests hold the worker's
 # event loop in long synchronous compiles (30-40s standalone compileMulti calls
