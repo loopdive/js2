@@ -32,7 +32,8 @@
     "packages/jest-core/src/__tests__/globals.test.ts",
     "packages/jest-jasmine2/src/__tests__/concurrent.test.ts",
     "packages/jest-haste-map/src/lib/__tests__/getPlatformExtension.test.js",
-    "packages/jest-config/src/__tests__/Defaults.test.ts"
+    "packages/jest-config/src/__tests__/Defaults.test.ts",
+    "packages/jest-watcher/src/lib/__tests__/formatTestNameByPattern.test.ts"
   ],
   "dependencies": {
     "detect-newline": {
@@ -76,5 +77,5 @@
       }
     }
   },
-  "_note": "The complete packages/**/__tests__ inventory is verified. The adapter runs the original Jest utility files against their matching release-tag TypeScript implementations, including jest-jasmine2's timer-driven pTimeout and queueRunner tests and jest-matcher-utils' Replaceable object/array/Map paths. Verified package-name seams cover @jest/get-type, jest-util's formatTime and convertDescriptorToString, detect-newline, chalk@4.1.2, ansi-styles, supports-color, has-flag, ci-info@4.4.0, jest-regex-util@30.4.0, node:util/types, node:os, and node:tty; the Jest config Defaults/getCacheDirectory adapters are generated beside pinned upstream files and leave the original test body and checkout untouched. The shared runner supplies deterministic spies, fake timers, and cleanup between generated modules. Runner, snapshot, filesystem, worker, async, DOM, and larger package graphs remain explicit deferred coverage."
+  "_note": "The complete packages/**/__tests__ inventory is verified. The adapter runs the original Jest utility files against their matching release-tag TypeScript implementations, including jest-jasmine2's timer-driven pTimeout and queueRunner tests and jest-matcher-utils' Replaceable object/array/Map paths. Verified package-name seams cover @jest/get-type, jest-util's formatTime and convertDescriptorToString, detect-newline, chalk@4.1.2, ansi-styles, supports-color, has-flag, ci-info@4.4.0, jest-regex-util@30.4.0, node:util/types, node:os, and node:tty; the Jest config Defaults/getCacheDirectory adapters are generated beside pinned upstream files and leave the original test body and checkout untouched. The shared runner supplies deterministic spies, fake timers, ANSI string snapshots, and cleanup between generated modules. Runner, filesystem, worker, async, DOM, and larger package graphs remain explicit deferred coverage."
 }

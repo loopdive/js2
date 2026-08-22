@@ -35,6 +35,8 @@ const __upstreamBareTimerAliases = { setTimeout, clearTimeout };
 const __upstreamTests = [];
 const __upstreamErrors = [];
 let __upstreamSnapshotMatcher = null;
+let __upstreamSnapshotEntries = null;
+let __upstreamSnapshotUsed = null;
 let __upstreamCurrentTestName = "";
 let __upstreamAssertion = 0;
 function __upstreamFail(message) { throw new Error(String(message || "Assertion failed")); }
@@ -120,6 +122,34 @@ function __upstreamThrownMatches(error, expected) {
   if (typeof expected === "function") return error instanceof expected || error.name === expected.name;
   return true;
 }
+function __upstreamNormalizeAnsi(value) {
+  return String(value)
+    .replace(/\u001b\[2m/g, "<dim>")
+    .replace(/\u001b\[22m/g, "</intensity>")
+    .replace(/\u001b\[0m/g, "</>");
+}
+function __upstreamInstallSnapshotMatcher(entries) {
+  __upstreamSnapshotEntries = entries;
+  __upstreamSnapshotUsed = [];
+}
+function __upstreamSnapshotMatches(actual) {
+  if (__upstreamSnapshotEntries === null || __upstreamSnapshotUsed === null) return false;
+  const current = String(__upstreamCurrentTestName);
+  const serialized = __upstreamNormalizeAnsi(actual);
+  const candidates = [];
+  for (let index = 0; index < __upstreamSnapshotEntries.length; index++) {
+    const name = String(__upstreamSnapshotEntries[index][0]);
+    if (__upstreamSnapshotUsed[index] || (name !== current && !name.endsWith(" " + current))) continue;
+    const expected = String(__upstreamSnapshotEntries[index][1]);
+    candidates.push(expected);
+    if (serialized === expected) {
+      __upstreamSnapshotUsed[index] = true;
+      return true;
+    }
+  }
+  if (candidates.length > 0) __upstreamFail("snapshot mismatch: " + serialized + " != " + candidates.join(" || "));
+  return false;
+}
 function __upstreamAsyncReject(actual, expected, label) {
   return Promise.resolve(actual).then(
     function() { __upstreamFail(label + " expected a rejected promise"); },
@@ -167,11 +197,13 @@ function __upstreamExpect(actual) {
     toBeInstanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected !== "function" || !(actual instanceof expected)) __upstreamFail("assertion " + n + " instance mismatch"); },
     instanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected !== "function" || !(actual instanceof expected)) __upstreamFail("assertion " + n + " instance mismatch"); },
     toMatchSnapshot() {
-      if (typeof __upstreamSnapshotMatcher !== "function") {
+      if (__upstreamSnapshotEntries === null && typeof __upstreamSnapshotMatcher !== "function") {
         __upstreamFail("snapshot assertion requires a package-specific snapshot adapter");
       }
       const n = ++__upstreamAssertion;
-      if (!__upstreamSnapshotMatcher(actual)) __upstreamFail("snapshot mismatch at assertion " + n);
+      const matched =
+        __upstreamSnapshotEntries !== null ? __upstreamSnapshotMatches(actual) : __upstreamSnapshotMatcher(actual);
+      if (!matched) __upstreamFail("snapshot mismatch at assertion " + n);
     },
     toThrow(expected) { const n = ++__upstreamAssertion; if (typeof actual !== "function" || !__upstreamThrownMatches(__upstreamThrown(actual), expected)) __upstreamFail("assertion " + n + " expected matching throw"); },
     toThrowError(expected) { const n = ++__upstreamAssertion; if (typeof actual !== "function" || !__upstreamThrownMatches(__upstreamThrown(actual), expected)) __upstreamFail("assertion " + n + " expected matching throw"); },

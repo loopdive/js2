@@ -973,3 +973,20 @@ the setup step and are deliberately not written back into the upstream clone,
 so a rerun cannot silently change the source under test.
 
 Implementation: [PR #4764](https://github.com/loopdive/js2/pull/4764).
+
+## 2026-08-22 Jest ANSI snapshot checkpoint
+
+The shared Jest runner now loads pinned string snapshots from each selected
+upstream `__snapshots__` file and matches them by the original test name. ANSI
+escape sequences are normalized to the same serializer markers used by Jest;
+the chalk adapter exposes explicit `dim` and `reset` styles, including the
+empty-string behavior, so callable properties survive WasmGC lowering. The
+original `jest-watcher/src/lib/__tests__/formatTestNameByPattern.test.ts` is
+now selected unchanged.
+
+The exact run covers **332 callbacks across 26 selected files**. Node admits
+**330/332**, all 26 modules compile and 25 validate, and Wasm scores
+**231/330** with zero runtime failures. The unavailable-infrastructure
+remainder is **2,956 registrations** from 215 deferred files. All 11 watcher
+snapshot callbacks pass in both lanes; the two existing Node-oracle failures
+remain the process-shape assertion and queue-runner validation finding.
