@@ -2,6 +2,12 @@
 
 import { describe, expect, it } from "vitest";
 import { loadOriginalHarnessTests } from "../scripts/test262-fyi-reader.mjs";
+// (#4162) The single sanctioned instantiation path for test262 binaries: the
+// FYI shim's `$262.evalScript` contains a direct `eval`, so a standalone
+// compile links the `js2wasm:runtime-eval` provider namespace (a linked Wasm
+// module, not a JS host import) — a bare `WebAssembly.instantiate(binary, {})`
+// fails on that import.
+import { instantiateTest262Module } from "../scripts/test262-import-object.mjs";
 import { compileMulti } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
@@ -45,7 +51,7 @@ async function instantiateWithPrelude(prelude: string) {
   );
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(result.imports).toEqual([]);
-  const { instance } = await WebAssembly.instantiate(result.binary, {});
+  const instance = await instantiateTest262Module(result.binary, {}, { target: "standalone" });
   return (instance.exports.score as () => number)();
 }
 
@@ -64,7 +70,7 @@ async function instantiateSimple(prelude: string, writer: string) {
     { allowJs: true, skipSemanticDiagnostics: true, target: "standalone" },
   );
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-  const { instance } = await WebAssembly.instantiate(result.binary, {});
+  const instance = await instantiateTest262Module(result.binary, {}, { target: "standalone" });
   return (instance.exports.score as () => number)();
 }
 
@@ -116,11 +122,15 @@ describe("#3496 — FYI harness initialization with module fixtures", () => {
       allowJs: true,
       skipSemanticDiagnostics: true,
       target: "standalone",
+      // (#4035) Standalone defaults to `hostBridge: "off"`, which strips the
+      // harness-side `__stdout_*` readout exports this test drains. The real
+      // runners pass "always" for exactly this reason.
+      hostBridge: "always",
     });
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(result.imports).toEqual([]);
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    const instance = await instantiateTest262Module(result.binary, {}, { target: "standalone" });
     const exports = instance.exports as Record<string, WebAssembly.ExportValue>;
     const prepare = exports.__stdout_prepare as () => number;
     const char = exports.__stdout_char as (index: number) => number;
