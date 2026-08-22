@@ -158,7 +158,7 @@ ${UPSTREAM_TEST_EXPORTS}`;
     const root = mkdtempSync(join(tmpdir(), "js2-upstream-runner-"));
     const generatedPath = join(root, "suite.ts");
     const source = `${UPSTREAM_TEST_SHIM}
-jest.useFakeTimers();
+jest.useFakeTimers().setSystemTime(100);
 test("fake timer", () => {
   let fired = 0;
   setTimeout(() => { fired += 1; }, 1000);
@@ -173,6 +173,8 @@ test("fake timer", () => {
   expect(jest.getTimerCount()).toBe(1);
   jest.clearAllTimers();
   expect(jest.getTimerCount()).toBe(0);
+  expect(jest.now()).toBe(1100);
+  expect(jest.getRealSystemTime() > 0).toBe(true);
 });
 ${UPSTREAM_TEST_EXPORTS}`;
 

@@ -279,7 +279,7 @@ function __upstreamRestoreAllMocks() {
 }
 let __upstreamFakeTimers = null;
 function __upstreamUseFakeTimers() {
-  if (__upstreamFakeTimers !== null) return;
+  if (__upstreamFakeTimers !== null) return jest;
   const timers = new Map();
   let nextTimerId = 1;
   let now = 0;
@@ -293,6 +293,7 @@ function __upstreamUseFakeTimers() {
     timers.delete(id);
   };
   __upstreamFakeTimers = { timers, fakeSetTimeout, fakeClearTimeout, get now() { return now; }, set now(value) { now = value; } };
+  return jest;
 }
 function __upstreamNextTimer() {
   if (__upstreamFakeTimers === null || __upstreamFakeTimers.timers.size === 0) return null;
@@ -359,8 +360,21 @@ function __upstreamRunOnlyPendingTimersAsync() {
 }
 function __upstreamUseRealTimers() {
   __upstreamRestoreAllMocks();
-  if (__upstreamFakeTimers === null) return;
+  if (__upstreamFakeTimers === null) return jest;
   __upstreamFakeTimers = null;
+  return jest;
+}
+function __upstreamSetSystemTime(value) {
+  if (__upstreamFakeTimers !== null) {
+    const timestamp = value instanceof Date ? value.getTime() : Number(value);
+    if (Number.isFinite(timestamp)) __upstreamFakeTimers.now = timestamp;
+  }
+}
+function __upstreamNow() {
+  return __upstreamFakeTimers === null ? Date.now() : __upstreamFakeTimers.now;
+}
+function __upstreamGetRealSystemTime() {
+  return Date.now();
 }
 // A number of Jest-owned packages publish their original tests with the Jest
 // global even when the selected unit only needs spies. Keep this small facade
@@ -382,6 +396,9 @@ const jest = {
   runOnlyPendingTimersAsync: __upstreamRunOnlyPendingTimersAsync,
   clearAllTimers: __upstreamClearAllTimers,
   getTimerCount: __upstreamGetTimerCount,
+  setSystemTime: __upstreamSetSystemTime,
+  now: __upstreamNow,
+  getRealSystemTime: __upstreamGetRealSystemTime,
   restoreAllMocks: __upstreamRestoreAllMocks,
 };
 const __upstreamBeforeEach = [];
