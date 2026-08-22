@@ -31,7 +31,8 @@
     "packages/jest-config/src/__tests__/parseShardPair.test.ts",
     "packages/jest-core/src/__tests__/globals.test.ts",
     "packages/jest-jasmine2/src/__tests__/concurrent.test.ts",
-    "packages/jest-haste-map/src/lib/__tests__/getPlatformExtension.test.js"
+    "packages/jest-haste-map/src/lib/__tests__/getPlatformExtension.test.js",
+    "packages/jest-config/src/__tests__/Defaults.test.ts"
   ],
   "dependencies": {
     "detect-newline": {
@@ -50,7 +51,30 @@
       "version": "4.1.2",
       "sourcePath": "source/index.js",
       "sourceSha256": "a7eda1e88414e0e3f050a09621a35e8d656550077da044606c16b053148f6459"
+    },
+    "jest-regex-util": {
+      "version": "30.4.0",
+      "files": {
+        "index.ts": "4d0717d1797d7579161e68c3bbb90a322f9ac9059a8fd6f1f4e249194bfb45ee"
+      }
+    },
+    "ci-info": {
+      "version": "4.4.0",
+      "sourcePath": "index.js",
+      "sourceSha256": "94772d86a718ebeefa1273918175b3816fa051a4d544ce565bcc53c58d5fc74f"
+    },
+    "jest-config": {
+      "version": "30.4.2",
+      "files": {
+        "getCacheDirectory.ts": "820d6a06b31ae243f1c6208f53882f7f4693487060f1303b3b10b3cf9a5a5a0b"
+      }
+    },
+    "jest-config-defaults": {
+      "version": "30.4.2",
+      "files": {
+        "Defaults.ts": "0110649a41319578e3e3ad8305a717089641ec6ca58aee048a8f7e7e55e837f2"
+      }
     }
   },
-  "_note": "The complete packages/**/__tests__ inventory is verified. The adapter runs the original Jest utility files against their matching release-tag TypeScript implementations, including jest-jasmine2's timer-driven pTimeout and queueRunner tests and jest-matcher-utils' Replaceable object/array/Map paths. Verified package-name seams cover @jest/get-type, jest-util's formatTime and convertDescriptorToString, detect-newline, chalk@4.1.2, ansi-styles, supports-color, has-flag, node:util/types, node:os, and node:tty; the shared runner supplies deterministic spies, fake timers, and cleanup between generated modules. Runner, snapshot, filesystem, worker, async, DOM, and larger package graphs remain explicit deferred coverage."
+  "_note": "The complete packages/**/__tests__ inventory is verified. The adapter runs the original Jest utility files against their matching release-tag TypeScript implementations, including jest-jasmine2's timer-driven pTimeout and queueRunner tests and jest-matcher-utils' Replaceable object/array/Map paths. Verified package-name seams cover @jest/get-type, jest-util's formatTime and convertDescriptorToString, detect-newline, chalk@4.1.2, ansi-styles, supports-color, has-flag, ci-info@4.4.0, jest-regex-util@30.4.0, node:util/types, node:os, and node:tty; the Jest config Defaults/getCacheDirectory adapters are generated beside pinned upstream files and leave the original test body and checkout untouched. The shared runner supplies deterministic spies, fake timers, and cleanup between generated modules. Runner, snapshot, filesystem, worker, async, DOM, and larger package graphs remain explicit deferred coverage."
 }

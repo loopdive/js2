@@ -128,11 +128,19 @@ function resolveJestImport(filePath, specifier) {
 function transformJestTest(source, filePath, generatedPath, { normalizeCjs = false } = {}) {
   let importIndex = 0;
   const namespaceReplacements = [];
+  const defaultsUnit = filePath.endsWith(join("jest-config", "src", "__tests__", "Defaults.test.ts"));
   let transformed = source.replace(
     /import\s+((?:[A-Za-z_$][\w$]*\s*,\s*)?(?:\*\s+as\s+[A-Za-z_$][\w$]*|\{[^}]+\}|[A-Za-z_$][\w$]*))\s+from\s+(["'])(\.\.?\/?[^"']*)\2;?/g,
     (_match, bindings, quote, specifier) => {
-      const target = resolveJestImport(filePath, specifier);
+      // The original defaults unit asserts the public `defaults` singleton,
+      // but importing the package index eagerly loads Jest's complete config
+      // graph. Keep the upstream test body unchanged and resolve this one
+      // named export to its defining module so unrelated package dependencies
+      // do not make the native oracle unavailable.
+      const directDefaults = defaultsUnit && specifier === "../" && bindings.replace(/\s/g, "") === "{defaults}";
+      const target = resolveJestImport(filePath, directDefaults ? "../Defaults.js2wasm" : specifier);
       const rewritten = moduleSpecifier(dirname(generatedPath), target);
+      if (directDefaults) return `import defaults from ${quote}${rewritten}${quote};`;
       const namespaceName = `__jestImport${importIndex++}`;
       // The compiler's internal-module namespace value is demand-driven,
       // while Jest's source tests use `import * as x` as a plain object.
@@ -205,7 +213,7 @@ function transformJestTest(source, filePath, generatedPath, { normalizeCjs = fal
 
 export async function runHarness({ quiet = false } = {}) {
   const log = quiet ? () => {} : (...values) => console.log(...values);
-  const suite = setupJestUpstreamSuite();
+  const suite = setupJestUpstreamSuite({ force: process.env.DOGFOOD_JEST_UPSTREAM_FORCE === "1" });
   const runs = [];
 
   log(`[dogfood] jest@${suite.pin.version} upstream ${suite.pin.tag} (${suite.pin.commit.slice(0, 12)})`);
