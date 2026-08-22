@@ -31,6 +31,8 @@ describe("React upstream test infrastructure", () => {
       expect(infrastructure.reactNoop?.createRoot).toBeTypeOf("function");
       expect(infrastructure.internalTestUtils?.act).toBeTypeOf("function");
       expect(infrastructure.shouldIgnoreConsoleError).toBeTypeOf("function");
+      expect(infrastructure.schedulerMock?.log).toBeTypeOf("function");
+      expect(infrastructure.schedulerMock?.unstable_flushAll).toBeTypeOf("function");
       expect(infrastructure.reactNativeRenderer?.version).toBe(infrastructure.react?.version);
       expect(infrastructure.reactJsxRuntime?.jsx).toBeTypeOf("function");
       expect(infrastructure.require("scheduler").unstable_now).toBeTypeOf("function");

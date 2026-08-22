@@ -624,6 +624,11 @@ the helper factory, instantiates successfully, and exposes its server-render
 method. The full ReactDOM corpus remains unrerun because the pinned upstream
 checkout is unavailable offline in this worktree.
 
+The upstream test-side `scheduler` import now resolves to the installed
+`scheduler/unstable_mock` capability, matching React's Jest preset and
+providing `log`/flush methods without changing the renderer's internal
+scheduler. The infrastructure test verifies both exports.
+
 ## Permanent test reference
 
 `tests/dogfood/react-dom-upstream-suite.test.ts` — pin/commit assertions run

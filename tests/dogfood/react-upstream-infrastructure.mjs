@@ -523,6 +523,11 @@ export function installReactUpstreamInfrastructure({ react, build = "production"
   const propTypes = readModule("prop-types");
   const webStreams = readModule("web-streams-polyfill/ponyfill") ?? readModule("web-streams-polyfill");
   const shouldIgnoreConsoleError = readModule("internal-test-utils/shouldIgnoreConsoleError") ?? (() => false);
+  // React's Jest preset aliases `scheduler` to the mock scheduler for
+  // upstream tests. The published renderer keeps its own scheduler wiring;
+  // this value is only the test-side dependency that provides log/flush
+  // assertions.
+  const schedulerMock = readModule("scheduler/unstable_mock") ?? readModule("scheduler");
   // React's create-react-class integration tests import both the already
   // configured public creator and the original three-argument factory. Keep
   // both host capabilities distinct: returning the configured creator from
@@ -583,6 +588,7 @@ export function installReactUpstreamInfrastructure({ react, build = "production"
     createReactClassFactory: createReactClassFactoryModule,
     internalTestUtils: createInternalTestUtils({ reactTestRenderer, reactDom, consumeConsole, preferReactDomAct }),
     shouldIgnoreConsoleError,
+    schedulerMock,
     webStreams,
     patchMessageChannel() {},
     // Node Fizz's upstream tests construct `stream.PassThrough` through a

@@ -1286,6 +1286,7 @@ function __js2RequireActual(name) {
   // upstream test reaches its assertion instead of failing at module lookup.
   if (name === "react/jsx-runtime") return __js2ReactInfra().reactJsxRuntime;
   if (name === "react/jsx-dev-runtime") return __js2ReactInfra().reactJsxDevRuntime;
+  if (name === "scheduler" || name === "scheduler/unstable_mock") return __js2ReactInfra().schedulerMock;
   if (name === "internal-test-utils") return __js2InternalTestUtils;
   if (name === "./utils/ReactDOMServerIntegrationTestUtils") return __js2ReactDOMServerIntegrationTestUtils;
   if (name === "./utils/IntersectionMocks") return __js2IntersectionMocks;
