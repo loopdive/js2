@@ -543,6 +543,21 @@ in-module reads (host-side detection is what react-dom needs).
   likely most "expected not null"/mock buckets), (2) the class-EXPRESSION
   value path (ReactES6Class 13), (3) spy/mock plumbing.
 
+- **2026-08-22 spy/mock plumbing MINIMALLY PINNED (probe
+  .tmp/probe-jestfn.mts)** — the shim's `__jestFn` shape compiled and its
+  mock called FROM THE HOST fails three ways: (i) `mock.mock.calls.push`
+  inside the mock body reads null — the fn-decl SELF-read (`mock.mock`)
+  does not see the sidecar prop written after the declaration
+  (`mock.mock = {calls: []}`), the #4616 fix-20 family but for an
+  arguments-reader with post-decl props; (ii) other arities die with
+  "__call_fn_0/__call_fn_1 not exported"; (iii) in the full harness the
+  installed console spy traps "illegal cast" in `__fn_tramp_mock_*` when a
+  HOST caller invokes it (probe-actlane2). This is the direct mechanism
+  behind react's "expected mock arguments" (7) / "mock call count" (5)
+  buckets and the StrictMode console-spy assertions. Next owner starts at
+  the self-read materialization for `function mock()` +
+  `Array.prototype.slice.call(arguments)` readers.
+
 ## Fix order
 
 1. (c) first — it is a hard CE with a two-line repro and pins the IR
