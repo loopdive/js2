@@ -967,6 +967,28 @@ function compileIdentifierCore(
     return { kind: "externref" };
   }
 
+  // Node's `process` is a host-owned global rather than a module binding.
+  // Keep a bare read on the same live host object used by the dedicated
+  // `process.*` property readers. This matters for code such as
+  // `Object.prototype.toString.call(process)`: synthesizing a Wasm object in
+  // the test shim makes callback-valued members (stdout.on/removeListener)
+  // opaque GC closures, while the real host process exposes ordinary JS
+  // functions. Lexical/module/captured shadows have already returned above.
+  if (
+    name === "process" &&
+    !ctx.standalone &&
+    !ctx.wasi &&
+    !fctx.localMap.has(name) &&
+    !(fctx.boxedCaptures?.has(name) ?? false) &&
+    !unresolvedInModuleGoal
+  ) {
+    const processIdx = ensureLateImport(ctx, "__get_process", [], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    if (processIdx !== undefined) fctx.body.push({ op: "call", funcIdx: processIdx });
+    else fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
+  }
+
   // A first-class read of the unshadowed global `%eval%` (`var indirect =
   // eval`) must produce the provider's callable, realm-stable intrinsic
   // marker. Syntactic direct/sequence calls are intercepted in calls.ts before

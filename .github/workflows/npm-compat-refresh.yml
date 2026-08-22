@@ -115,8 +115,17 @@ jobs:
             packages: acorn,marked,clsx,cookie
           - id: frontend
             packages: eslint,prettier,react
-          - id: renderers
-            packages: react-dom,jsdom,redux
+          # Keep the renderer suites in separate jobs. ReactDOM is the long
+          # pole; when it shared one 350-minute job with jsdom and Redux, the
+          # whole row was cancelled at the job timeout and the smaller suites
+          # never produced partial reports. Isolating the rows lets each
+          # package finish (or report its own timeout) independently.
+          - id: react-dom
+            packages: react-dom
+          - id: jsdom
+            packages: jsdom
+          - id: redux
+            packages: redux
           - id: libraries
             packages: hono,lodash,lodash-es,axios,uuid,moment
           - id: tools

@@ -142,14 +142,19 @@ function __upstreamInstallSnapshotMatcher(entries) {
 function __upstreamSnapshotMatches(actual) {
   if (__upstreamSnapshotEntries === null || __upstreamSnapshotUsed === null) return false;
   const current = String(__upstreamCurrentTestName);
-  const serialized = __upstreamNormalizeAnsi(actual);
+  const serialized = __upstreamNormalizeAnsi(
+    typeof __upstreamPrettyFormat === "function"
+      ? __upstreamPrettyFormat(actual, {escapeString: false})
+      : String(actual),
+  );
   const candidates = [];
   for (let index = 0; index < __upstreamSnapshotEntries.length; index++) {
     const name = String(__upstreamSnapshotEntries[index][0]);
     if (__upstreamSnapshotUsed[index] || (name !== current && !name.endsWith(" " + current))) continue;
     const expected = String(__upstreamSnapshotEntries[index][1]);
     candidates.push(expected);
-    if (serialized === expected) {
+    const stringSnapshotMatches = typeof actual === "string" && serialized === '"' + expected + '"';
+    if (serialized === expected || stringSnapshotMatches) {
       __upstreamSnapshotUsed[index] = true;
       return true;
     }
@@ -198,6 +203,7 @@ function __upstreamExpect(actual) {
     toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (!calls || calls.length === 0) __upstreamFail("assertion " + n + " expected spy to be called"); },
     toBeCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = __upstreamMockCalls(actual); let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
     toHaveBeenCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = __upstreamMockCalls(actual); let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
+    toHaveBeenLastCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = __upstreamMockCalls(actual); const last = calls && calls.length > 0 ? calls[calls.length - 1] : undefined; if (!__upstreamSame(last, expected)) __upstreamFail("assertion " + n + " expected matching last spy call"); },
     toHaveBeenCalledTimes(expected) { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (!calls || calls.length !== expected) __upstreamFail("assertion " + n + " spy call count mismatch"); },
     toHaveBeenCalledOnce() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (!calls || calls.length !== 1) __upstreamFail("assertion " + n + " spy call count mismatch"); },
     toBeCalledOnce() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (!calls || calls.length !== 1) __upstreamFail("assertion " + n + " spy call count mismatch"); },
@@ -257,6 +263,16 @@ const expect = __upstreamExpect;
 const __upstreamGlobalStubs = [];
 const __upstreamEnvStubs = [];
 const __upstreamSpies = [];
+const __upstreamSpyFunctions = [];
+// Keep scalar call counts in a flat host vector. Nested WasmGC vectors are
+// copied when stored in another host-like vector and do not receive later
+// writes from the callback closure.
+const __upstreamSpyCallCounts = [];
+const __upstreamSpyCallBases = [];
+const __upstreamSpyCallOwners = [];
+const __upstreamSpyCallStarts = [];
+const __upstreamSpyCallLengths = [];
+const __upstreamSpyCallValues = [];
 const __upstreamTimerSpies = { setTimeout: null, clearTimeout: null };
 let __upstreamSetTimeoutCallCount = 0;
 let __upstreamClearTimeoutCallCount = 0;
@@ -267,7 +283,27 @@ function __upstreamMockCalls(actual) {
   if (actual === __upstreamBareTimerAliases.clearTimeout) {
     return { length: __upstreamClearTimeoutCallCount };
   }
-  return actual && actual.mock && actual.mock.calls;
+  for (let index = 0; index < __upstreamSpyFunctions.length; index++) {
+    if (__upstreamSpyFunctions[index] === actual) {
+      const calls = [];
+      const base = __upstreamSpyCallBases[index] || 0;
+      for (let record = base; record < __upstreamSpyCallOwners.length; record++) {
+        if (__upstreamSpyCallOwners[record] !== index) continue;
+        const args = [];
+        const start = __upstreamSpyCallStarts[record] || 0;
+        const length = __upstreamSpyCallLengths[record] || 0;
+        for (let arg = 0; arg < length; arg++) args.push(__upstreamSpyCallValues[start + arg]);
+        calls.push(args);
+      }
+      return calls;
+    }
+  }
+  // Keep the live mock.calls vector on the spy itself. A WasmGC vector stored
+  // inside another host-like vector is copied at the boundary and then stops
+  // reflecting later callback invocations.
+  const directMock = actual && actual.mock;
+  if (directMock && directMock.calls) return directMock.calls;
+  return undefined;
 }
 function __upstreamRecordTimerSpy(key, args) {
   if (key === "setTimeout") __upstreamSetTimeoutCallCount++;
@@ -275,13 +311,27 @@ function __upstreamRecordTimerSpy(key, args) {
 }
 const vi = {
   fn(implementation) {
-    function spy() {
-      const args = Array.prototype.slice.call(arguments);
-      spy.mock.calls.push(args);
+    const spyIndex = __upstreamSpyFunctions.length;
+    __upstreamSpyCallCounts.push(0);
+    __upstreamSpyCallBases.push(__upstreamSpyCallOwners.length);
+    const callList = [];
+    function spy(...args) {
+      __upstreamSpyCallCounts[spyIndex] = (__upstreamSpyCallCounts[spyIndex] || 0) + 1;
+      __upstreamSpyCallOwners.push(spyIndex);
+      __upstreamSpyCallStarts.push(__upstreamSpyCallValues.length);
+      __upstreamSpyCallLengths.push(args.length);
+      for (let index = 0; index < args.length; index++) __upstreamSpyCallValues.push(args[index]);
+      callList.push(args);
       if (typeof implementation === "function") return implementation.apply(this, args);
     }
-    spy.mock = { calls: [] };
-    spy.mockClear = function() { spy.mock.calls.length = 0; return spy; };
+    __upstreamSpyFunctions.push(spy);
+    spy.mock = { calls: callList };
+    spy.mockClear = function() {
+      callList.length = 0;
+      __upstreamSpyCallCounts[spyIndex] = 0;
+      __upstreamSpyCallBases[spyIndex] = __upstreamSpyCallOwners.length;
+      return spy;
+    };
     spy.mockReturnValue = function(value) { implementation = function() { return value; }; return spy; };
     spy.mockImplementation = function(next) { implementation = next; return spy; };
     spy.mockRestore = function() {};
@@ -458,6 +508,12 @@ const jest = {
   spyOn: vi.spyOn,
   resetModules() {},
   doMock() {},
+  // The selected original units use isolateModules to make a fresh require
+  // boundary. Each compiled test file already runs in its own worker/module,
+  // so invoke the callback directly while preserving the public Jest seam.
+  isolateModules(callback) {
+    return callback();
+  },
   useFakeTimers: __upstreamUseFakeTimers,
   useRealTimers: __upstreamUseRealTimers,
   runAllTimers: __upstreamRunAllTimers,

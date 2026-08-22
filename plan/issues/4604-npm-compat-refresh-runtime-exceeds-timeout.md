@@ -154,3 +154,18 @@ runner instead of being silently replaced while pending; scheduled and manual
 runs continue to serialize on the branch ref. The promotion push uses
 `--force-with-lease` so concurrent SHA lanes cannot overwrite a newer
 promotion branch update. The workflow-shape test now pins both invariants.
+
+## 2026-08-22 renderer timeout follow-up
+
+The first matrix flight confirmed that the `renderers` row itself was the
+remaining timeout bottleneck: it serialized `react-dom`, `jsdom`, and `redux`
+behind one 350-minute job. Run 770's renderer job was cancelled at the job
+ceiling after the other groups had completed, so the smaller jsdom and Redux
+reports were discarded with the long ReactDOM run. The workflow now gives each
+renderer its own `fail-fast: false` matrix cell. A slow ReactDOM measurement can
+still be investigated in isolation, while jsdom and Redux can finish and
+upload their partial artifacts instead of being cancelled as collateral.
+
+Implementation: [PR #4767](https://github.com/loopdive/js2wasm/pull/4767) (the
+Jest infrastructure change and npm-compat reliability follow-up share the
+same branch checkpoint).

@@ -22,6 +22,12 @@ const JEST_UTIL_PIN = {
   sourceSha256: "ef7320f8e85b76a67a65ec29e9c55e724b7a25de5b2aad75c3ed1c82a53cc7d4",
 };
 
+const GRACEFUL_FS_PIN = {
+  version: "4.2.11",
+  sourceSha256: "7da35669b6b6b0e4aafee31674c033f2cebb0c8f9ae010f709dcc185d3f17786",
+  sourcePath: "graceful-fs.js",
+};
+
 const CHALK_DEPENDENCY_PINS = {
   chalk: {
     version: "4.1.2",
@@ -189,6 +195,54 @@ function adaptAnsiStyles(source) {
     throw new Error("[dogfood] ansi-styles source shape changed; refusing an unverified adapter");
   }
   return adapted;
+}
+
+function adaptAnsiStylesV5(source) {
+  const adapted = source
+    .replace(/^\s*["']use strict["'];?\s*/m, "")
+    .replace(/\/\/ Make the export immutable[\s\S]*$/, "export default assembleStyles();\n");
+  if (!adapted.includes("function assembleStyles()") || !adapted.includes("export default assembleStyles();")) {
+    throw new Error("[dogfood] ansi-styles 5 source shape changed; refusing an unverified adapter");
+  }
+  return adapted;
+}
+
+function adaptReactIs(source) {
+  const names = [
+    "ContextConsumer",
+    "ContextProvider",
+    "Element",
+    "ForwardRef",
+    "Fragment",
+    "Lazy",
+    "Memo",
+    "Portal",
+    "Profiler",
+    "StrictMode",
+    "Suspense",
+    "SuspenseList",
+    "isAsyncMode",
+    "isConcurrentMode",
+    "isContextConsumer",
+    "isContextProvider",
+    "isElement",
+    "isForwardRef",
+    "isFragment",
+    "isLazy",
+    "isMemo",
+    "isPortal",
+    "isProfiler",
+    "isStrictMode",
+    "isSuspense",
+    "isSuspenseList",
+    "isValidElementType",
+    "typeOf",
+  ];
+  if (!source.includes("exports.isElement") || !source.includes("function typeOf")) {
+    throw new Error("[dogfood] react-is source shape changed; refusing an unverified adapter");
+  }
+  const adapted = source.replace(/^\s*["']use strict["'];?\s*/gm, "").replace(/\bprocess\.env\b/g, "nodeProcess.env");
+  return `import * as nodeProcess from "node:process";\nconst exports = Object.create(null);\n${adapted}\n${names.map((name) => `export const ${name} = exports.${name};`).join("\n")}\nexport default exports;\n`;
 }
 
 function adaptDefaultCjs(source, exportName = "default") {
@@ -430,6 +484,37 @@ export function setupJestUpstreamSuite(options = {}) {
       'export { default as tryRealpath } from "../../packages/jest-util/src/tryRealpath.ts";\n',
   );
 
+  // jest-util's tryRealpath imports graceful-fs by package name. The upstream
+  // package is a CommonJS fs monkey-patch; pulling that implementation into
+  // the Wasm graph would add an unrelated retry/descriptor surface. Verify
+  // the exact pinned dependency bytes, then expose only the host capability
+  // this selected unit consumes through the existing node:fs provider. This
+  // keeps the dependency explicit and makes direct harness runs independent
+  // of Vitest's incidental NODE_PATH.
+  const gracefulFsPin = suite.pin.dependencies?.["graceful-fs"] ?? GRACEFUL_FS_PIN;
+  resolveInstalledPackageSource("graceful-fs", gracefulFsPin, gracefulFsPin.sourcePath);
+  const gracefulFsRoot = join(suite.root, "node_modules/graceful-fs");
+  mkdirSync(gracefulFsRoot, { recursive: true });
+  writeFileSync(
+    join(gracefulFsRoot, "package.json"),
+    JSON.stringify(
+      {
+        name: "graceful-fs",
+        version: gracefulFsPin.version,
+        type: "module",
+        main: "./index.ts",
+        exports: "./index.ts",
+        _sourceSha256: gracefulFsPin.sourceSha256,
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  writeFileSync(
+    join(gracefulFsRoot, "index.ts"),
+    'import * as nodeFs from "node:fs";\nexport const realpathSync = nodeFs.realpathSync;\nexport default nodeFs;\n',
+  );
+
   // jest-diff and jest-config import chalk by its published package name.
   // Pin the real chalk 4.1.2 source and its small dependency graph, then adapt
   // the package boundary for the no-color Jest unit lane. Chalk's prototype
@@ -437,7 +522,8 @@ export function setupJestUpstreamSuite(options = {}) {
   // callable/chained API used by the selected tests.
   const chalkPins = suite.pin.dependencies?.chalk ?? CHALK_DEPENDENCY_PINS.chalk;
   const chalk = resolveInstalledPackageSource("chalk", chalkPins, chalkPins.sourcePath);
-  const ansiStyles = resolveInstalledPackageSource("ansi-styles", CHALK_DEPENDENCY_PINS["ansi-styles"], "index.js");
+  const ansiStylesPin = suite.pin.dependencies?.["ansi-styles"] ?? CHALK_DEPENDENCY_PINS["ansi-styles"];
+  const ansiStyles = resolveInstalledPackageSource("ansi-styles", ansiStylesPin, ansiStylesPin.sourcePath);
   const supportsColor = resolveInstalledPackageSource(
     "supports-color",
     CHALK_DEPENDENCY_PINS["supports-color"],
@@ -452,6 +538,16 @@ export function setupJestUpstreamSuite(options = {}) {
   const cacheDirectory = resolveJestSource(suite, "jest-config", "getCacheDirectory.ts", cacheDirectoryPin);
   const defaultsPin = suite.pin.dependencies?.["jest-config-defaults"] ?? JEST_CONFIG_DEFAULTS_PIN;
   const defaults = resolveJestSource(suite, "jest-config", "Defaults.ts", defaultsPin);
+  const prettyFormatPin = suite.pin.dependencies?.["pretty-format"];
+  const prettyFormat = prettyFormatPin ? resolveJestSource(suite, "pretty-format", "index.ts", prettyFormatPin) : null;
+  const reactIs18Pin = suite.pin.dependencies?.["react-is-18"];
+  const reactIs18 = reactIs18Pin
+    ? resolveInstalledPackageSource("react-is", reactIs18Pin, reactIs18Pin.sourcePath)
+    : null;
+  const reactIs19Pin = suite.pin.dependencies?.["react-is-19"];
+  const reactIs19 = reactIs19Pin
+    ? resolveInstalledPackageSource("react-is", reactIs19Pin, reactIs19Pin.sourcePath)
+    : null;
 
   const writePackage = (name, version, files) => {
     const packageRoot = join(suite.root, "node_modules", name);
@@ -471,8 +567,9 @@ export function setupJestUpstreamSuite(options = {}) {
   writePackage("has-flag", CHALK_DEPENDENCY_PINS["has-flag"].version, {
     "index.ts": adaptHasFlag(hasFlag.source),
   });
-  writePackage("ansi-styles", CHALK_DEPENDENCY_PINS["ansi-styles"].version, {
-    "index.ts": adaptAnsiStyles(ansiStyles.source),
+  writePackage("ansi-styles", ansiStylesPin.version, {
+    "index.ts":
+      ansiStylesPin.version === "5.2.0" ? adaptAnsiStylesV5(ansiStyles.source) : adaptAnsiStyles(ansiStyles.source),
   });
   writePackage("supports-color", CHALK_DEPENDENCY_PINS["supports-color"].version, {
     "index.ts": adaptSupportsColor(supportsColor.source),
@@ -486,6 +583,17 @@ export function setupJestUpstreamSuite(options = {}) {
   writePackage("ci-info", ciInfoPin.version, {
     "index.ts": adaptCiInfo(ciInfo.source),
   });
+  if (prettyFormat && prettyFormatPin && reactIs18 && reactIs18Pin && reactIs19 && reactIs19Pin) {
+    writePackage("pretty-format", prettyFormatPin.version, {
+      "index.ts": 'export {default, format, plugins} from "../../packages/pretty-format/src/index.ts";\n',
+    });
+    writePackage("react-is-18", reactIs18Pin.version, {
+      "index.ts": adaptReactIs(reactIs18.source),
+    });
+    writePackage("react-is-19", reactIs19Pin.version, {
+      "index.ts": adaptReactIs(reactIs19.source),
+    });
+  }
   writeFileSync(
     join(suite.root, "packages/jest-config/src/getCacheDirectory.js2wasm.ts"),
     adaptGetCacheDirectory(cacheDirectory.source),
