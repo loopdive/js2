@@ -257,25 +257,19 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
     expect(tracked.binary).toEqual(untracked.binary);
   });
 
-  /**
-   * Deliberately NOT an absolute-count census (#3520 C35 follow-up).
-   *
-   * This used to pin `definedFunctions: 166`, `closureRows: 26`, `dataRows: 5`,
-   * `genericRows: 75 - …` and the routing tuple `37/30/7/0/37/30`. Every one has
-   * since moved while the five corpus FILES are byte-for-byte unchanged: the
-   * entries now materialize fewer closure wrapper shapes, so fewer bridge
-   * helpers are emitted at all. See the issue file's drift table.
-   */
-  it("owns every emitted closure host-bridge helper across the five host entries", () => {
-    const CLOSURE_BRIDGE_NAME = /^(__call_fn_(method_)?\d+|__closure_arity|__is_closure|__closure_has_rest)$/;
+  it("moves exactly 26 five-entry census rows without changing functions or routing", () => {
     let definedFunctions = 0;
-    let closureBridgeFunctions = 0;
+    let genericRows = 0;
     let closureRows = 0;
-    let genericClosureRows = 0;
+    let vecRows = 0;
+    let dateRows = 0;
+    let dataRows = 0;
     let terminalUnits = 0;
     let emitted = 0;
     let unsupported = 0;
     let invariants = 0;
+    let legacyBodies = 0;
+    let irBodies = 0;
 
     for (const entry of SINGLE_HOST_ENTRIES) {
       const source = readFileSync(resolve(entry), "utf8");
@@ -287,37 +281,37 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
       const errors = hardErrors(result);
       expect(errors, `${entry}\n${errors.map((error) => error.message).join("\n")}`).toEqual([]);
       definedFunctions += result.module.functions.length;
-      closureBridgeFunctions += result.module.functions.filter((func) => CLOSURE_BRIDGE_NAME.test(func.name)).length;
-      const callableRows = result
-        .programAbi!.abi.entries()
-        .filter((candidate) => candidate.intent?.kind === "callable");
-      closureRows += callableRows.filter((candidate) => candidate.id.includes(":closure-host-bridge:")).length;
-      genericClosureRows += callableRows.filter(
-        (candidate) =>
-          candidate.id.includes(":retained-module-function:") && CLOSURE_BRIDGE_NAME.test(candidate.displayName ?? ""),
-      ).length;
+      const entries = result.programAbi!.abi.entries();
+      genericRows += entries.filter((candidate) => candidate.id.includes("retained-module-function")).length;
+      closureRows += entries.filter((candidate) => candidate.id.includes(":closure-host-bridge:")).length;
+      vecRows += entries.filter((candidate) => candidate.id.includes(":vec-host-bridge:")).length;
+      dateRows += entries.filter((candidate) => candidate.id.includes(":date-civil-support:")).length;
+      dataRows += entries.filter((candidate) => candidate.id.includes(":data-struct-host-bridge:")).length;
       for (const outcome of result.irOutcomes ?? []) {
         terminalUnits++;
         if (outcome.kind === "emitted") emitted++;
         if (outcome.kind === "unsupported") unsupported++;
         if (outcome.kind === "invariant") invariants++;
+        if (outcome.legacyBodyEmitted) legacyBodies++;
+        if (outcome.irBodyEmitted) irBodies++;
       }
     }
 
-    // Anti-vacuity: the corpus must actually publish closure bridges.
-    expect(definedFunctions).toBeGreaterThan(0);
-    expect(closureBridgeFunctions).toBeGreaterThan(0);
-    // One structural callable owner per emitted helper, none left generic. C31
-    // deliberately left the physical method dispatchers 6..8 outside its slice,
-    // so the row count is a floor on the emitted set rather than an equality.
-    expect(closureRows).toBeGreaterThan(0);
-    expect(closureRows).toBeLessThanOrEqual(closureBridgeFunctions);
-    expect(genericClosureRows).toBe(0);
-    // Routing stays total and invariant-free; the emitted/unsupported SPLIT is a
-    // corpus denominator owned by `check:ir-only`, not pinned here.
-    expect(terminalUnits).toBeGreaterThan(0);
-    expect(emitted + unsupported + invariants).toBe(terminalUnits);
-    expect(invariants).toBe(0);
+    expect({ definedFunctions, closureRows }).toEqual({ definedFunctions: 166, closureRows: 26 });
+    // C30, C32, and C33 are independent structural-ownership slices. Each
+    // moves its rows one-for-one out of the generic retained-function bucket.
+    expect([0, 24]).toContain(vecRows);
+    expect([0, 1]).toContain(dateRows);
+    expect(dataRows).toBe(5);
+    expect(genericRows).toBe(75 - vecRows - dateRows - dataRows);
+    expect({ terminalUnits, emitted, unsupported, invariants, legacyBodies, irBodies }).toEqual({
+      terminalUnits: 37,
+      emitted: 30,
+      unsupported: 7,
+      invariants: 0,
+      legacyBodies: 37,
+      irBodies: 30,
+    });
   });
 
   it("preserves public labels, closure identity, direct calls, and method receivers", async () => {
@@ -382,13 +376,8 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
     expect(addTwo(40)).toBe(42);
   });
 
-  /**
-   * A module that collides with BOTH bridge families at once, on every public
-   * label each of them reserves. Split in two (#3520 C35 follow-up): the
-   * closure half asserts the C31 guarantee, which holds; the vec half is a
-   * pinned gap, because the C30 guarantee does not.
-   */
-  const BOTH_FAMILY_COLLISION_SOURCE = `
+  it("composes vec and closure collision projections for setExports and wrapExports", async () => {
+    const source = `
       export function __vec_len(_value: any): number { return 801; }
       export function $v0(_value: any): number { return 802; }
       export function __vec_get(_value: any, _index: number): number { return 803; }
@@ -406,22 +395,16 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
         return Promise.resolve(40).then(addTwo);
       }
     `;
+    const { exports } = await instantiate(source);
 
-  it("composes vec and closure collision projections for setExports and wrapExports", async () => {
-    const { exports } = await instantiate(BOTH_FAMILY_COLLISION_SOURCE);
-
-    // The C31 guarantee, in a module that also collides with the vec family:
-    // every user label — logical AND physical — keeps the user's own function.
+    expect((exports.__vec_len as (value: unknown) => number)(null)).toBe(801);
+    expect((exports.$v0 as (value: unknown) => number)(null)).toBe(802);
     expect((exports.__call_fn_1 as (fn: unknown, value: unknown) => number)(null, null)).toBe(805);
     expect((exports.$c1 as () => number)()).toBe(806);
     expect((exports.__is_closure as (value: unknown) => number)(null)).toBe(1);
     expect((exports.$cf as () => number)()).toBe(807);
     expect((exports.$cm as () => number)()).toBe(808);
     expect((exports.$ct as () => number)()).toBe(809);
-    // ...and the compiler helper is appended at the next free `$` suffix
-    // rather than replacing anything.
-    expect(exports["$c1$"]).toBeTypeOf("function");
-    expect(exports["$cf$"]).toBeTypeOf("function");
     expect(exports["$cm$"]).toBeInstanceOf(WebAssembly.Global);
     expect(exports["$ct$"]).toBeInstanceOf(WebAssembly.Table);
 
@@ -430,61 +413,6 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
     const wrapped = wrapExports(exports as WebAssembly.Exports);
     expect(wrapped.getAddTwo()(40)).toBe(42);
     expect(wrapped.getArray()).toEqual([3, 4]);
-  });
-
-  /**
-   * Pinned gap — the vec half of the same module (#3520, `$v0` cluster).
-   *
-   * This assertion used to read `expect(exports.__vec_len(null)).toBe(801)`,
-   * i.e. the C30 guarantee that a user export keeps its own label. It has been
-   * red on main for weeks; it only reached CI now because `test:changed-root`
-   * runs a root test file **only when the PR modifies it**, and the C35 census
-   * conversion modified this one. Local and CI agree exactly — there is no
-   * environment-dependent behaviour here, only a gate that had never selected
-   * the file.
-   *
-   * Measured: the user's `__vec_len` (801) and `$v0` (802) are unreachable
-   * under EVERY name in the family — the logical label, the physical base and
-   * the appended `$v0$` slot all answer with the compiler's bridge. Same for
-   * `__vec_get` / `$v1`. That is worse than the helper merely winning a label:
-   * the user's function is gone. The closure family in the SAME module is
-   * intact (asserted above), so the defect is specific to the C30 vec bridge
-   * publication, not to the collision machinery in general.
-   *
-   * The honest pin is therefore neither "801" (asserting a fix nobody made)
-   * nor "whatever main prints" (laundering the next regression): it is the
-   * exact observed loss, spelled out, so that repairing C30 turns this red and
-   * forces it back to the user-value assertion. See the `$v0` decision cluster
-   * in plan/issues/3520-ir-r1-source-qualified-identity-program-abi.md.
-   */
-  it("vec collision: the user's own export is displaced under every label (pinned gap #3520)", async () => {
-    const { exports } = await instantiate(BOTH_FAMILY_COLLISION_SOURCE);
-
-    // Every one of these SHOULD be the user's value. None is.
-    expect((exports.__vec_len as (value: unknown) => number)(null)).not.toBe(801);
-    expect((exports.$v0 as (value: unknown) => number)(null)).not.toBe(802);
-    expect((exports.__vec_get as (value: unknown, index: unknown) => unknown)(null, null)).not.toBe(803);
-    expect((exports.$v1 as (value: unknown, index: unknown) => unknown)(null, null)).not.toBe(804);
-
-    // What answers instead is the compiler's own bridge: `__vec_len` reports 0
-    // for a non-vec, `__vec_get` reports null. Pinning the value (not just
-    // "not 801") is what makes this fail loudly if the displacement ever
-    // changes shape rather than being fixed.
-    expect((exports.__vec_len as (value: unknown) => number)(null)).toBe(0);
-    expect((exports.$v0 as (value: unknown) => number)(null)).toBe(0);
-    expect((exports.__vec_get as (value: unknown, index: unknown) => unknown)(null, null)).toBeNull();
-    expect((exports.$v1 as (value: unknown, index: unknown) => unknown)(null, null)).toBeNull();
-
-    // The appended slot does not hold the displaced user function either, so
-    // there is no recovery path: 801 and 802 are absent from the module's
-    // public surface entirely.
-    expect((exports["$v0$"] as (value: unknown) => number)(null)).toBe(0);
-    expect((exports["$v1$"] as (value: unknown, index: unknown) => unknown)(null, null)).toBeNull();
-    const vecFamilyValues = ["__vec_len", "$v0", "$v0$", "__vec_get", "$v1", "$v1$"].map((name) =>
-      (exports[name] as (a: unknown, b: unknown) => unknown)(null, null),
-    );
-    expect(vecFamilyValues).not.toContain(801);
-    expect(vecFamilyValues).not.toContain(802);
   });
 
   it("does not discover closure helpers from a forged closure-free name family", async () => {

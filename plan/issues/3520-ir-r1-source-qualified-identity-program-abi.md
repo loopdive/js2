@@ -1177,9 +1177,9 @@ Causes are **not** investigated except where stated.
 
 | # | file · test | symptom | note |
 | - | ----------- | ------- | ---- |
-| 1 | `vec-support-callable-abi` · preserves all six same-labelled public exports | user export `$v0()` returns **0**, expected 901 | **pinned, see cluster below** |
-| 2 | `vec-support-callable-abi` · terminates all six prefix-only physical families | `$vN()` returns the bridge, expected 201..206 | **pinned, see cluster below** |
-| 3 | `closure-host-bridge-abi` · composes vec and closure collision projections | user export `__vec_len()` returns **0**, expected 801 | **pinned, see cluster below** |
+| 1 | `vec-support-callable-abi` · preserves all six same-labelled public exports | user export `$v0()` returns **0**, expected 901 | **still red, see cluster below** |
+| 2 | `vec-support-callable-abi` · terminates all six prefix-only physical families | `$vN()` returns the bridge, expected 201..206 | **still red, see cluster below** |
+| 3 | `closure-host-bridge-abi` · composes vec and closure collision projections | user export `__vec_len()` returns **0**, expected 801 | **still red, see cluster below** |
 | 4 | `lifted-program-abi` · publishes two lifted closures by exact provenance | expected row is `undefined` | lifted rows absent |
 | 5 | `lifted-program-abi` · does not reuse an empty same-labelled source slot | `ProgramAbiInvariantError: binding … was not planned` | lifted rows absent |
 | 6 | `monomorph-program-abi` · publishes clone ordinal zero | `[]` vs 2 expected rows | clone rows absent |
@@ -1207,10 +1207,20 @@ as a hypothesis for whoever picks them up.
 
 ### The `$v0` cluster — C30 vec export displacement (measured 2026-08-22)
 
-**Status: pinned red, not fixed.** Rows 1–3 are now explicit gap pins in the
-#4743 style — they assert the observed wrong behaviour, so repairing C30 turns
-them red and forces them back to the user-value assertions. They are NOT
-silenced.
+**Status: still red on main, untouched, not pinned.** C35 briefly converted rows
+1–3 into explicit gap pins in the #4743 style. That was **withdrawn** after a
+review objection, and the objection is right: #4743 pins a SELECTOR/BUCKET
+outcome (which lowering path a shape takes), whereas these assertions would have
+pinned a **wrong runtime value** — `expect(userFn()).toBe(0)` where 801 belongs.
+Encoding a miscompile as expected output is a different and worse thing than
+recording which bucket a shape lands in, and no amount of surrounding comment
+makes the assertion itself say "this is wrong".
+
+The two files are therefore back at their unmodified `main` state. Because
+`test:changed-root` selects only files a branch MODIFIES, leaving them untouched
+keeps them out of the gate — the same reason they were invisible before. The
+defect stays visible here, in prose, which is where it belongs until someone
+fixes C30.
 
 **What is wrong.** The C30 guarantee is: when a user already owns a bridge label
 or physical prefix, preserve every user export and append the compiler helper at
@@ -1259,10 +1269,14 @@ tables say it is, and what changed on 2026-08-22 was visibility, not behaviour.
 Anything that re-grounds this cluster should not repeat the nondeterminism
 reading.
 
-**Consequence for the gate.** Any future PR that so much as touches one of these
-three files re-enters the same trap. The pins keep `quality` green while the
-defect stands; they must be reverted to the user-value assertions as part of
-fixing C30.
+**Consequence for the gate — read this before editing these three files.** Any
+PR that so much as touches `issue-3520-closure-host-bridge-abi.test.ts` or
+`issue-3520-vec-support-callable-abi.test.ts` promotes their long-red tests into
+required `quality` in that same PR, and the only clean ways out are to fix C30 or
+to leave the files alone. **Do not resolve it by asserting the observed wrong
+values** — that was tried and withdrawn (see Status above). Whoever fixes C30
+gets these three back for free; until then they are the price of touching those
+files, and that price is the correct signal.
 - **Vitest heap note:** the *Required completion evidence* command uses
   `--poolOptions.forks.singleFork=true`, which puts all six files in one fork.
   The repo pins forks to a 512 MB old space (`vitest.config.ts`), so the
@@ -3434,6 +3448,34 @@ be recorded wholesale and still leave `Math_sin` with its intrinsic provider:
 at that seam "already owned" is exactly decided, using
 `session.locatorBindingId(func)` — the same predicate the generic sweep applies.
 
+**An ambiguous slot declines the role — it must not abort the compile (#2980).**
+C35's first cut assumed a second allocator object claiming one slot was always an
+ownership contradiction, and forwarded it so the session's plan-contract
+invariant would reject it. That assumption is false and it broke the #2980 guard
+suite: when the async host fallback fires, the SAME declaration is lowered twice
+and both lowerings' functions stay live. Measured on
+`tests/issue-2980-carrier-fallback.test.ts`'s own fixture, one
+`async function* g()` produces **two** `__async_resume_fg` objects, two
+`__async_step_fg_fulfill` and two `__async_step_fg_reject`, all live and all
+unowned — and the compile died with
+`ABI draft …:async-frame-machinery:0000000000000000 was observed with a
+different plan contract`.
+
+A unit with two rival machineries has no single owner to name, so the slot now
+DECLINES the role in a pre-pass (before any planning, so the outcome cannot
+depend on which record came first) and every claimant falls through to the
+generic sweep. That restores exactly the pre-C35 outcome for the shape — two
+generic `retained-module-function` rows, module builds — and nothing is hidden:
+the duplicate stays visible as those two rows. A slot re-recorded with the SAME
+object (an idempotent emitter re-entry) is not ambiguous and keeps its owner.
+Covered by a regression test asserting both halves, with the row count of 2
+doubling as its anti-vacuity floor.
+
+Worth flagging for whoever owns #2980: the module carries a **complete duplicate
+set** of async frame machinery for that shape — three extra live functions per
+affected async function. Whether the losing set is reachable was **not
+examined**; C35 only observes that both survive to the ABI seam.
+
 **Census, measured in fresh processes on both sides** (`readFileSync(entry) ->
 analyzeSource(source, entry) -> generateModule(ast, { experimentalIR: true,
 trackIrOutcomes: true })` over `SINGLE_HOST_ENTRIES`), base `origin/main`
@@ -3489,19 +3531,23 @@ the 4 that stay green are the pure table/helper assertions, which correctly do
 not depend on the wiring.
 
 **Suite delta.** Across all 61 `tests/issue-3520-*.test.ts` files: 22 failing
-tests in 17 files on `81edcbcaa`, **18 in 15** after the census conversions, then
-**15 in 13** after the `$v0` cluster was pinned (see that section). Every step is
-a subtraction of failing test names, with no new failure at any point. The 15
-that remain are itemised with verdicts in the *Remaining 18 red tests* table
-above; two of them look like compiler defects on main rather than stale
-expectations.
+tests in 17 files on `81edcbcaa`, **20 in 15** after C35. C35 converts the
+data-struct and date-civil census assertions (2 tests fixed) and touches nothing
+else in that population; the failing-test-name diff is a pure subtraction with no
+new failure. The 20 that remain are itemised with verdicts in the *Remaining 18
+red tests* table above — that table's 18 plus the two census assertions in the
+closure and vec files, which C35 no longer edits.
 
-**One consequence of the conversions is worth knowing before touching these
-files again.** `quality` runs `test:changed-root`, which executes a root test
-file **only when the branch modifies it**. Editing any long-red suite therefore
-promotes every pre-existing failure in that file into a required gate in the same
-PR — which is exactly what happened here with the `$v0` cluster, and is why those
-three tests are now explicit gap pins rather than a re-baseline.
+**Two census conversions were attempted and withdrawn.** The closure and vec
+files' census assertions were converted alongside the data/date ones, then
+reverted to their unmodified `main` state. `quality` runs `test:changed-root`,
+which executes a root test file **only when the branch modifies it** — so
+converting those two promoted their long-red `$v0` tests into required `quality`
+in this PR. The first attempt at unblocking that pinned the observed wrong
+values, which was correctly rejected on review (see the `$v0` cluster section).
+Leaving the two files untouched is the honest resolution: the census assertions
+there stay stale-red exactly as they are on `main`, and the defect stays
+documented rather than encoded as expected output.
 
 **What C35 does not do.** The `retained-module-function` code path stays in
 `planRetained` as the totality guarantee — the claim is that it carries no rows

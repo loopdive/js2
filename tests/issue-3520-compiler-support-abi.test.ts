@@ -23,6 +23,7 @@ import {
   programAbiCallableRoleOrdinalsAreDistinct,
 } from "../src/codegen/program-abi-planning.js";
 import { emitBinary } from "../src/emit/binary.js";
+import { compile } from "../src/index.js";
 import { irSupportFuncRef } from "../src/ir/callable-bindings.js";
 import { SELF_HOSTED_MATH } from "../src/stdlib/math.js";
 
@@ -265,6 +266,70 @@ export function c35ExtraThree(v: number): number { return v + 3; }
       result.module.functions.findIndex((func) => func.name.startsWith(prefix));
     expect(grown.module.functions.length).toBeGreaterThan(base.module.functions.length);
     expect(indexOfName(grown, "__vec_from_extern_")).not.toBe(indexOfName(base, "__vec_from_extern_"));
+  });
+
+  /**
+   * (#2980 guard regression) A unit whose machinery was lowered TWICE must
+   * decline the role, not abort the compile.
+   *
+   * When the #2980 async host fallback fires, the same declaration is lowered a
+   * second time and BOTH lowerings' functions stay live: measured on this
+   * fixture, one `async function* g()` yields two `__async_resume_fg` objects,
+   * two `__async_step_fg_fulfill` and two `__async_step_fg_reject`. C35's first
+   * cut treated the second claimant as an ownership contradiction and let the
+   * session's plan-contract invariant abort the compile — strictly worse than
+   * the behaviour it replaced, where both objects simply took generic
+   * `retained-module-function` owners and the module built.
+   *
+   * An ambiguous slot now declines the unit role and every claimant falls to
+   * the generic sweep, which still makes the function space total. This asserts
+   * both halves: the compile succeeds, AND the duplicate stays visible as
+   * generic rows rather than being silently absorbed.
+   */
+  it("declines the unit role when one unit's machinery was lowered twice (#2980 fallback)", async () => {
+    const source = `
+      let error = 1;
+      let callCount = 0;
+      var gen = async function* g() { callCount += 1; yield Promise.reject(error); yield 2; };
+      export function test(): number { const it: any = gen(); void it; return callCount; }
+    `;
+    // The exact shape and options the #2980 guard suite compiles. Before the
+    // ambiguous-slot fix this threw
+    // `ABI draft …:async-frame-machinery:0 was observed with a different plan
+    // contract` and the whole compile failed.
+    const result = await compile(source, { fileName: "t.ts", target: "standalone", nativeStrings: true });
+    expect(result.success, result.errors?.[0]?.message ?? "").toBe(true);
+
+    // Same fixture through `generateModule`, which publishes the Program ABI
+    // the public `compile` result does not carry.
+    const ast = analyzeSource(source, "t.ts");
+    const generated = generateModule(ast, {
+      experimentalIR: true,
+      trackIrOutcomes: true,
+      standalone: true,
+      nativeStrings: true,
+    });
+    expect(
+      hardErrors(generated),
+      hardErrors(generated)
+        .map((error) => error.message)
+        .join("\n"),
+    ).toEqual([]);
+    // The duplicate really is present — otherwise everything below is vacuous.
+    expect(generated.module.functions.filter((func) => func.name === "__async_resume_fg")).toHaveLength(2);
+
+    const entries = abiEntries(generated);
+    // Neither rival claims the unit role...
+    const asyncRows = callableRowsForRole(entries, ASYNC_FRAME_MACHINERY_ROLE).filter(
+      (row) => row.displayName === "__async_resume_fg",
+    );
+    expect(asyncRows).toEqual([]);
+    // ...and BOTH stay owned by the generic fallback, so the function space is
+    // still total — the pre-C35 outcome for this shape, restored.
+    const genericRows = callableRowsForRole(entries, RETAINED_MODULE_FUNCTION_ROLE).filter(
+      (row) => row.displayName === "__async_resume_fg",
+    );
+    expect(genericRows).toHaveLength(2);
   });
 
   it("keeps tracked and untracked binaries byte-identical", () => {

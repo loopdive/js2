@@ -240,6 +240,50 @@ function isLiveAndUnowned(ctx: CodegenContext, func: WasmFunction): boolean {
   return ctx.programAbiSession?.locatorBindingId(func) === undefined;
 }
 
+/**
+ * Slots that exactly ONE live allocator object claims, and the object claiming
+ * each — a pre-pass, so the decision cannot depend on which record came first.
+ *
+ * (#2980) A slot can legitimately be claimed TWICE. When the async host
+ * fallback fires, the same declaration is lowered a second time and BOTH
+ * lowerings' functions stay live in the module: measured on the #2980 guard
+ * fixtures, one `async function* g()` produces two `__async_resume_fg` objects,
+ * two `__async_step_fg_fulfill`, and two `__async_step_fg_reject`. The unit
+ * anchor cannot name an owner there — the unit has two rival machineries, not
+ * one — and C35's first cut treated that as an ownership contradiction and let
+ * the session's plan-contract invariant abort the compile. That is strictly
+ * worse than the behaviour it replaced: before this role existed both objects
+ * simply took generic `retained-module-function` owners and the module built.
+ *
+ * So an ambiguous slot DECLINES the role and every claimant falls through to
+ * the generic sweep, which still makes the function space total. Nothing is
+ * hidden: the duplicate remains visible as two generic rows, exactly as it was
+ * before C35. A slot re-recorded with the SAME object (an idempotent emitter
+ * re-entry) is not ambiguous and keeps its owner.
+ */
+function unambiguousSlotClaims<T>(
+  ctx: CodegenContext,
+  records: readonly T[],
+  slotOf: (record: T) => string | undefined,
+  funcOf: (record: T) => WasmFunction,
+): Map<string, WasmFunction> {
+  const candidates = new Map<string, Set<WasmFunction>>();
+  for (const record of records) {
+    const slot = slotOf(record);
+    if (slot === undefined) continue;
+    const func = funcOf(record);
+    if (!isLiveAndUnowned(ctx, func)) continue;
+    const claimants = candidates.get(slot) ?? new Set<WasmFunction>();
+    claimants.add(func);
+    candidates.set(slot, claimants);
+  }
+  const resolved = new Map<string, WasmFunction>();
+  for (const [slot, claimants] of candidates) {
+    if (claimants.size === 1) resolved.set(slot, [...claimants][0]!);
+  }
+  return resolved;
+}
+
 function planEntrySourceFamilies(ctx: CodegenContext): void {
   const recorded = recordedEntrySourceSupports.get(ctx);
   if (!recorded || recorded.length === 0) return;
@@ -248,20 +292,22 @@ function planEntrySourceFamilies(ctx: CodegenContext): void {
   const vecOrder = vecFromExternShapeOrder(
     recorded.filter((entry) => entry.role === VEC_FROM_EXTERN_ROLE).map((entry) => entry.shapeName ?? ""),
   );
+  const ordinalOf = (record: RecordedEntrySourceSupport): number =>
+    record.derivedOrdinal ?? (record.shapeName === undefined ? -1 : vecOrder.indexOf(record.shapeName));
+  const slotOf = (record: RecordedEntrySourceSupport): string | undefined => {
+    const derivedOrdinal = ordinalOf(record);
+    return derivedOrdinal < 0 ? undefined : `${record.role}:${derivedOrdinal}`;
+  };
+  const owners = unambiguousSlotClaims(ctx, recorded, slotOf, (record) => record.func);
+
   const planned: { readonly record: RecordedEntrySourceSupport; readonly derivedOrdinal: number }[] = [];
-  const claimed = new Map<string, WasmFunction>();
+  const emitted = new Set<string>();
   for (const record of recorded) {
-    const derivedOrdinal =
-      record.derivedOrdinal ?? (record.shapeName === undefined ? -1 : vecOrder.indexOf(record.shapeName));
-    if (derivedOrdinal < 0) continue;
-    const slot = `${record.role}:${derivedOrdinal}`;
-    // An identical re-record of the same exact object is inert. A SECOND object
-    // claiming one slot is a real ownership contradiction, so it is forwarded
-    // and the session's duplicate-order invariant rejects it.
-    if (claimed.get(slot) === record.func) continue;
-    claimed.set(slot, record.func);
-    if (!isLiveAndUnowned(ctx, record.func)) continue;
-    planned.push({ record, derivedOrdinal });
+    const slot = slotOf(record);
+    if (slot === undefined || emitted.has(slot)) continue;
+    if (owners.get(slot) !== record.func) continue;
+    emitted.add(slot);
+    planned.push({ record, derivedOrdinal: ordinalOf(record) });
   }
   planned.sort(
     (left, right) => left.record.roleOrdinal - right.record.roleOrdinal || left.derivedOrdinal - right.derivedOrdinal,
@@ -309,17 +355,26 @@ function planAsyncFrameMachinery(ctx: CodegenContext): void {
   const unitIdByDeclaration = ctx.irPlanningIdentityContext?.unitIdByDeclaration;
   if (!session || !unitIdByDeclaration) return;
 
+  const unitOf = (record: RecordedUnitSupport): IrUnitId | undefined => {
+    const unitId = unitIdByDeclaration.get(record.declaration);
+    if (unitId === undefined || !session.hasKnownUnit(unitId) || !canOrderUnit(session, unitId)) return undefined;
+    return unitId;
+  };
+  const slotOf = (record: RecordedUnitSupport): string | undefined => {
+    const unitId = unitOf(record);
+    return unitId === undefined ? undefined : `${unitId}:${record.part}`;
+  };
+  const owners = unambiguousSlotClaims(ctx, recorded, slotOf, (record) => record.func);
+
   const planned: { readonly unitId: IrUnitId; readonly part: AsyncFrameMachineryPart; readonly func: WasmFunction }[] =
     [];
-  const claimed = new Map<string, WasmFunction>();
+  const emitted = new Set<string>();
   for (const record of recorded) {
-    const unitId = unitIdByDeclaration.get(record.declaration);
-    if (unitId === undefined || !session.hasKnownUnit(unitId) || !canOrderUnit(session, unitId)) continue;
-    const slot = `${unitId}:${record.part}`;
-    if (claimed.get(slot) === record.func) continue;
-    claimed.set(slot, record.func);
-    if (!isLiveAndUnowned(ctx, record.func)) continue;
-    planned.push({ unitId, part: record.part, func: record.func });
+    const slot = slotOf(record);
+    if (slot === undefined || emitted.has(slot)) continue;
+    if (owners.get(slot) !== record.func) continue;
+    emitted.add(slot);
+    planned.push({ unitId: unitOf(record)!, part: record.part, func: record.func });
   }
   planned.sort(
     (left, right) =>
