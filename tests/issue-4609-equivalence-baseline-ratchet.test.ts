@@ -59,8 +59,8 @@ function knownFailures(): string[] {
 
 /**
  * Run the real gate over a synthetic merged shard report in which exactly one
- * test id failed. No vitest, no compile — this is the same set comparison CI's
- * "merge shard reports" job performs, against the same committed baseline.
+ * test id failed. No vitest, no compile — the same set comparison each CI
+ * `equivalence-shard` job performs, against the same committed baseline.
  */
 function gateVerdictFor(failingId: string): { status: number; output: string } {
   const dir = mkdtempSync(join(tmpdir(), "equiv-4609-"));
