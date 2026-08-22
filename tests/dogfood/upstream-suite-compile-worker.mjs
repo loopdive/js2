@@ -263,6 +263,7 @@ async function main() {
       statuses = Array.from(exports.runUpstreamTests(), (value) => Number(value) === 1);
       errors = Array.from(exports.upstreamTestErrors(), String);
     }
+    await exports.cleanupUpstreamTestEnvironment?.();
     emit({
       compile: { success: true, validates: true, durationMs, binaryBytes: result.binary.length, errors: [] },
       wasm: { count: Number(exports.upstreamTestCount()), statuses, errors },
