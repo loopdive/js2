@@ -544,6 +544,25 @@ adjacent family issues.
 Do not create a GitHub Issue for this work. This Markdown record remains the
 source of truth for ownership, acceptance, and handover.
 
+### Commit 2 — prepare/lower module init and make fallback one-pass
+
+- Extend from-AST lowering for every planned top-level entry and static intent.
+- Prepare/verify the complete unit before body emission and seal its runtime /
+  support intents.
+- Emit Prepared through IR once. When policy permits Unsupported fallback,
+  compile the direct body once after program preparation; remove the snapshot /
+  restore and first-pass discovery dependency.
+
+### Commit 3 — planned ABI/start wiring and overlay retirement
+
+- Allocate/resolve the init slot through `ProgramAbiMap` and drive Wasm start,
+  deferred-host export, standalone, and WASI adapters from invocation policy.
+- Remove flat-name slot discovery, legacy type-index parity patching, and both
+  direct-body passes from the Prepared route.
+- Delete obsolete module-init claim/patch queues only after parity and
+  anti-vacuity evidence is green. Keep the one-pass direct implementation for
+  temporary typed Unsupported policy until R9/R10.
+
 ## Resume checkpoint — measured remaining gap (2026-08-22)
 
 The Algorithms (#4323) and Calendar (#4395) transactions and the #4566
@@ -640,24 +659,6 @@ larger than this slice. The next slice in the issue's own order is gap 2
 (extend the selector past pure declarations), which is the prerequisite for
 gap 1 being worth attempting.
 
-### Commit 2 — prepare/lower module init and make fallback one-pass
-
-- Extend from-AST lowering for every planned top-level entry and static intent.
-- Prepare/verify the complete unit before body emission and seal its runtime /
-  support intents.
-- Emit Prepared through IR once. When policy permits Unsupported fallback,
-  compile the direct body once after program preparation; remove the snapshot /
-  restore and first-pass discovery dependency.
-
-### Commit 3 — planned ABI/start wiring and overlay retirement
-
-- Allocate/resolve the init slot through `ProgramAbiMap` and drive Wasm start,
-  deferred-host export, standalone, and WASI adapters from invocation policy.
-- Remove flat-name slot discovery, legacy type-index parity patching, and both
-  direct-body passes from the Prepared route.
-- Delete obsolete module-init claim/patch queues only after parity and
-  anti-vacuity evidence is green. Keep the one-pass direct implementation for
-  temporary typed Unsupported policy until R9/R10.
 
 ## File ownership and locks
 
