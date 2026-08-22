@@ -34,6 +34,7 @@ loc-budget-allow:
   - src/codegen/declarations.ts
   - src/codegen/statements/control-flow.ts
   - src/compiler.ts
+  - src/codegen/extern-declarations.ts
 func-budget-allow:
   - src/codegen/expressions/calls.ts::compileCallExpression
   - src/codegen/expressions/calls.ts::tryEmitInlineDynamicCall
