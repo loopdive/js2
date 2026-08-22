@@ -91,7 +91,9 @@ describe("npm-compat refresh matrix wiring", () => {
     const workflow = readFileSync(new URL("../.github/workflows/npm-compat-refresh.yml", import.meta.url), "utf8");
 
     expect(workflow).toContain("headRefOid");
-    expect(workflow).toContain("--paginate --slurp");
+    expect(workflow).toContain("--paginate");
+    expect(workflow).toContain("awk '{ total += $1 } END { print total + 0 }'");
+    expect(workflow).not.toContain("--slurp");
     expect(workflow).toContain("/commits/${PR_HEAD_SHA}/check-runs?per_page=100");
     expect(workflow).toContain("leaving its branch untouched to avoid cancelling CI");
     expect(workflow).toContain("Do not age this guard out");

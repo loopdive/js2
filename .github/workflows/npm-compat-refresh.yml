@@ -343,11 +343,13 @@ jobs:
           # surfaced by the staleness workflow and needs human intervention.
           ACTIVE_CHECKS="unreadable"
           if [ -n "$PR_HEAD_SHA" ]; then
-            ACTIVE_CHECKS="$(gh api \
-              --paginate --slurp \
+            if ! ACTIVE_CHECKS="$(gh api \
+              --paginate \
               "/repos/${GITHUB_REPOSITORY}/commits/${PR_HEAD_SHA}/check-runs?per_page=100" \
-              --jq '[.[].check_runs[] | select(.status == "queued" or .status == "in_progress")] | length' \
-              2>/dev/null || echo "unreadable")"
+              --jq '[.check_runs[] | select(.status == "queued" or .status == "in_progress")] | length' \
+              2>/dev/null | awk '{ total += $1 } END { print total + 0 }')"; then
+              ACTIVE_CHECKS="unreadable"
+            fi
           fi
           case "$ACTIVE_CHECKS" in
             unreadable)
