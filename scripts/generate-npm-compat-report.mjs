@@ -201,6 +201,10 @@ if (unknownPackages.length > 0 || selectedPackages.size === 0) {
   );
 }
 const focusedRun = selectedPackages.size !== PACKAGE_NAMES.length;
+const partialOutputPath = optionValue("--partial-output");
+if (partialOutputPath && !focusedRun) {
+  throw new Error("--partial-output requires a focused run via --only");
+}
 const writeArtifacts = !cliArgs.includes("--no-write") && !focusedRun;
 const inspectWatFunctions = optionValue("--inspect-wat")
   ?.split(",")
@@ -3049,6 +3053,33 @@ const summary = {
   packages,
 };
 
+// Focused matrix workers do not write aggregate artifacts: a partial report
+// must never replace the complete dashboard with one package group. They do
+// write a self-contained fragment for the coordinator job, which combines all
+// groups after the slow work has finished.
+if (partialOutputPath) {
+  mkdirSync(dirname(resolve(ROOT, partialOutputPath)), { recursive: true });
+  writeFileSync(
+    resolve(ROOT, partialOutputPath),
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        generatedAt: summary.generatedAt,
+        sourceRevision: currentRevision(),
+        summaryMeta: {
+          note: summary.note,
+          popularity: summary.popularity,
+          performanceMethodology: summary.performanceMethodology,
+        },
+        packages,
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  console.log(`[npm-compat] wrote partial report ${resolve(ROOT, partialOutputPath)}`);
+}
+
 function assertMeasuredOptimizationReceipts(packageRows) {
   for (const packageRow of packageRows) {
     for (const [laneName, lane] of Object.entries(packageRow.perf?.lanes ?? {})) {
@@ -3099,6 +3130,8 @@ if (writeArtifacts) {
   copyFileSync(HISTORY_RESULTS_PATH, HISTORY_PUBLIC_PATH);
   console.log(`[npm-compat] wrote ${HISTORY_RESULTS_PATH}`);
   console.log(`[npm-compat] wrote ${HISTORY_PUBLIC_PATH}`);
+} else if (partialOutputPath) {
+  console.log("[npm-compat] skipped aggregate artifact writes (partial report is ready for the coordinator)");
 } else {
   console.log("[npm-compat] skipped aggregate artifact writes");
   console.log(JSON.stringify({ ...summary, perfRows, perfHistory }, null, 2));
