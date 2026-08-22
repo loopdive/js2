@@ -16,14 +16,15 @@ follow-up is committed on that PR branch at the exact head recorded below.
 ## Exact stop point
 
 - Compiler branch: `codex/4376-deno-core-boot-vertical-slice`, with the #4376
-  implementation at `89ea611b4556a8f3b469d27213da12f6d6eadb10` and current
-  `origin/main` merged before publication.
+  implementation at `89ea611b4556a8f3b469d27213da12f6d6eadb10`, carrier hardening
+  at `9b7c9d0b2bb9c05a1b16d88dd0f4c1a0796615d6`, and current `origin/main`
+  merged before publication.
 - Historical merged commits: initial spike
   `f26d0bf23a59e89a23979f27ddf744e762a6b61f`, compiler ABI fix
   `35423bb9c1d4aa`, embedded runtime follow-up `3917c3caa3a63e`, and
   primordials bootstrap `b0386cbd5e5afd`.
 - v8x branch: `loopdive/v8x:codex/js2wasm-module-backend`, head
-  `3095ded9b69055ecc936109cf71d270d4acf6c79`.
+  `92b83ba654c852919f0b3c212f51db2db5ea02fe`.
 - PR base: `loopdive/js2wasm:main`
 - v8x pin: `v149.4.0-rc.4`, commit
   `22cf7342405794d6e1cd851aa43a9b3447654742`
@@ -50,7 +51,9 @@ follow-up is committed on that PR branch at the exact head recorded below.
   the exact serde `TypeError` and output.
 - Runtime prototype result: compiler-free Wasmtime 47.0.3 shares one Engine,
   direct-Rust host Linker, and cached Module/InstancePre for the trusted
-  `.cwasm` artifact. Two private stores/instances call the typed Rust
+  `.cwasm` artifact. Generic replay requires a SHA-256 sidecar binding the exact
+  entry/modules/source bytes and the exact precompiled bytes; missing, stale,
+  or mismatched bindings fail before deserialization. Two private stores/instances call the typed Rust
   `Deno.cwd()` bridge with exact fresh-instance call counts while the compiler
   path is deliberately absent.
 - Public-API result: v8x validates the exact pinned source hashes/order through
@@ -286,7 +289,7 @@ pnpm exec vitest run \
   Two stores reach `42`/`43`/`44`, commit two sums and six prints each, reproduce
   the exact `TypeError`/output, and call none of seven deferred imports.
 - Focused exact-bootstrap test: 1/1 passed. Focused realm-carrier regressions:
-  6/6 passed.
+  8/8 passed.
 - v8x raw-module precompile/bootstrap test: 1/1 passed in 500.49 seconds. The
   62,035,464-byte `.cwasm` has SHA-256
   `05b75d7f1e46f92565c42e5a8a3e336983e7e2b0eecfe4889dadab9075988a5a`.
@@ -294,6 +297,11 @@ pnpm exec vitest run \
   Promise/eval imports; none of the deferred imports executes.
 - Unchanged pinned `deno_core` at `1d4e6c1`: `cargo run` exits 0 and prints the
   exact six recorded lines through real Rust ops.
+- v8x js2wasm semantic integration: 11/11 nonignored tests passed. The exact
+  public Deno transaction again records six prints and two sums with a clean
+  outer `TryCatch`; `ContextState` is released before reentrant Wasmtime calls.
+- Generic AOT binding regressions reject a missing sidecar, a different graph,
+  different artifact bytes, and an output-path replacement before load.
 - Broader focused compiler/v8x/multi-file audit: 109/109 relevant tests passed.
   The five `issue-1472.test.ts` failures reproduce identically on pristine
   `origin/main` and are not regressions from this branch.

@@ -411,5 +411,7 @@ follow-ups and primordials bootstrap merged in
 tracked in
 [`loopdive/v8x#1`](https://github.com/loopdive/v8x/pull/1) from
 [`codex/js2wasm-module-backend`](https://github.com/loopdive/v8x/tree/codex/js2wasm-module-backend)
-through commit `3095ded9b69055ecc936109cf71d270d4acf6c79`, which adds the strict
-unchanged-`deno_core` proof on top of the earlier public `Script::Run` bridge.
+through commit `92b83ba654c852919f0b3c212f51db2db5ea02fe`, which adds the strict
+unchanged-`deno_core` proof, reentrancy-safe retained runtime, exact
+graph/artifact SHA-256 binding for generic AOT replay, and Windows module
+callback ABI correction on top of the earlier public `Script::Run` bridge.
