@@ -469,7 +469,18 @@ export function inferParamTypeFromCallSites(
                 // also has a proven-array call; ignoring the recursive value
                 // narrows `children` to a vec and destroys element arguments.
                 conflict = true;
-              } else {
+              } else if (!ts.isIdentifier(arg)) {
+                // (#4616 smoke regression) Scoped to NON-identifier `any`
+                // args. A plain identifier bound to an (untyped) local or
+                // enclosing param — the native-messaging framing core's
+                // `readFillExact(read, buf, …)` where `buf` is the caller's
+                // own untyped param — routinely carries the very type the
+                // OTHER call sites agreed on; flagging it withdrew the vec
+                // narrowing module-wide and the WASI byte path silently
+                // no-opped (node_fs/deno scale variants: ZERO output at every
+                // size). The clsx poison shapes (#4530) — `arguments[i]`,
+                // call results, member reads — are all non-identifiers and
+                // stay flagged.
                 sawOpaqueAnyArg = true;
               }
             } else if (isRecursiveCall(node)) {
@@ -581,7 +592,41 @@ export function inferParamTypeFromCallSites(
   // argument silently took the object branch with zero enumerable keys. Only
   // the trapping/misfolding ref narrowing is withdrawn; scalar narrowings keep
   // their existing coerce-don't-trap risk profile (same split as #2867 S2).
-  if (sawOpaqueAnyArg && type !== null && (type.kind === "ref" || type.kind === "ref_null")) {
+  // (#4616 smoke regression) The opaque-any withdrawal is scoped to
+  // SPECULATIVE narrowings on UNANNOTATED params. A param with an explicit
+  // concrete type annotation (`buf: Uint8Array` in the native-messaging
+  // framing core) is vouched for by the annotation — a violating call site is
+  // a TS type error, not a runtime wildcard — and withdrawing its refined vec
+  // rep degraded the WASI byte path to a silent no-op (the node_fs/deno scale
+  // variants emitted ZERO output at every size).
+  const paramHasConcreteAnnotation = (): boolean => {
+    let found = false;
+    const scan = (node: ts.Node): void => {
+      if (found) return;
+      if (ts.isFunctionDeclaration(node) && node.name?.text === funcName) {
+        const p = node.parameters[paramIndex];
+        // Syntactic check (no checker query): any explicit annotation other
+        // than the `any`/`unknown` keywords vouches for the param.
+        if (
+          p?.type !== undefined &&
+          p.type.kind !== ts.SyntaxKind.AnyKeyword &&
+          p.type.kind !== ts.SyntaxKind.UnknownKeyword
+        ) {
+          found = true;
+        }
+        return;
+      }
+      ts.forEachChild(node, scan);
+    };
+    scan(sourceFile);
+    return found;
+  };
+  if (
+    sawOpaqueAnyArg &&
+    type !== null &&
+    (type.kind === "ref" || type.kind === "ref_null") &&
+    !paramHasConcreteAnnotation()
+  ) {
     type = null;
   }
   // (#2867 S2) Soundness, same shape as the #3548 under-application rule: if the

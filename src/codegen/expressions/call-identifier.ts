@@ -2287,7 +2287,16 @@ export function compileIdentifierCall(
           }));
           const bridgeIdx = ensureLateImport(ctx, bridgeName, params, [{ kind: "externref" }]);
           flushLateImportShifts(ctx, fctx);
-          fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(bridgeName) ?? bridgeIdx });
+          const resolvedBridgeIdx = ctx.funcMap.get(bridgeName) ?? bridgeIdx;
+          if (resolvedBridgeIdx === undefined) {
+            // Import registration refused (strict no-host mode) — drop the
+            // already-pushed callee+args and degrade like the graceful
+            // null-callee fallback instead of calling an unresolved index.
+            for (let di = 0; di < expr.arguments.length + 1; di++) fctx.body.push({ op: "drop" });
+            fctx.body.push({ op: "ref.null.extern" });
+            return { kind: "externref" };
+          }
+          fctx.body.push({ op: "call", funcIdx: resolvedBridgeIdx });
           return { kind: "externref" };
         }
       }
