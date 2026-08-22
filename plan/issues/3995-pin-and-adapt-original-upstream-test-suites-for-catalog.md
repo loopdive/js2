@@ -815,6 +815,7 @@ compiler, validation, or runtime mismatches in the upstream suites remain
 scored as compatibility failures.
 
 Implementation: [PR #4756](https://github.com/loopdive/js2/pull/4756).
+
 ## 2026-08-22 Jest internal-package resolution checkpoint
 
 The Jest adapter now materializes the verified `@jest/get-type@30.1.0`
@@ -859,3 +860,60 @@ covers **260 callbacks across 15 selected files**: Node admits **258/258**, all
 queue-runner Wasm module remains a compiler validation finding, while the
 remaining **3,028 registrations** from 226 verified files remain explicitly
 reported as unavailable infrastructure.
+## 2026-08-22 Jest collection-matcher checkpoint
+
+The original `jest-jasmine2/src/__tests__/iterators.test.ts` and
+`itToTestAlias.test.ts` units are now selected without changing their source.
+The shared Jest matcher now distinguishes arrays from array-like objects and
+implements recursive Set/Map equality, matching the collection semantics those
+tests exercise. The exact run covers **242 callbacks across 15 selected
+files**: Node admits **240/240**, all 15 modules compile and validate, and Wasm
+scores **114/240**. The remaining **3,046 registrations** from 226 verified
+files remain explicitly reported as unavailable infrastructure; other Wasm
+failures remain compatibility findings rather than unavailable setup.
+
+## 2026-08-22 Jest registration-API checkpoint
+
+Three original `jest-jasmine2` units are now selected unchanged:
+`itTestError.test.ts`, `todoError.test.ts`, and `hooksError.test.ts`. The shared
+adapter now validates Jest test names and callbacks, implements the `it.todo` /
+`test.todo` argument contract, validates all four lifecycle hooks, and lowers
+Jest's curried `*.each(cases)(name, body)` registration shape to an equivalent
+direct registration call for Wasm. The hook-error unit's dynamic global hook
+lookup is routed through the same named hook functions; its assertion body and
+inputs remain upstream source.
+
+The exact run now covers **283 callbacks across 18 selected files**: Node admits
+**281/283**, all 18 modules compile and validate, and Wasm scores **195/281**.
+The remaining **3,005 registrations** from 223 verified files remain explicitly
+reported as unavailable infrastructure; Wasm failures are compatibility findings,
+not silently skipped tests.
+
+## 2026-08-22 Jest current-main rebase checkpoint
+
+After rebasing the registration-API slice over the landed package-resolution
+and queue-runner work, the exact inventory includes those two earlier files as
+well. It now covers **306 callbacks across 20 selected files**: Node admits
+**304/306**, all 20 modules compile and 19 validate (the queue-runner Wasm
+binary remains the known compiler validation finding), and Wasm scores
+**206/304**. The remaining **2,982 registrations** from 221 verified files are
+still explicitly reported as unavailable infrastructure.
+
+## 2026-08-22 Jest chalk and configuration-unit checkpoint
+
+The Jest checkout now resolves the real pinned `chalk@4.1.2` package name for
+upstream sources. Its installed source hash is verified before materialization;
+the adapter also wires the matching `ansi-styles@4.3.0`,
+`supports-color@7.2.0`, and `has-flag@4.0.0` package seams, including the
+`node:tty` host namespace. Chalk 4's prototype mutation currently lowers to an
+invalid Wasm GC cast, so the adapter preserves the level-0 callable and chained
+style API used by the Jest lane while leaving the color-model path explicitly
+deferred.
+
+The unchanged original `jest-config/src/__tests__/parseShardPair.test.ts` is
+now selected. The exact run covers **315 callbacks across 21 selected files**:
+Node admits **313/315**, all 21 modules compile and 20 validate, and Wasm
+scores **215/313** (98 compatibility failures, zero runtime failures). The
+remaining **2,973 registrations** from 220 verified files are explicitly
+reported as unavailable infrastructure. The nine new parse-shard callbacks
+pass in both lanes; no test body or expected input was rewritten.

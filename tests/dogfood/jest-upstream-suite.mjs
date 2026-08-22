@@ -24,6 +24,81 @@ function moduleSpecifier(fromDirectory, target) {
   return value;
 }
 
+function matchingParenthesis(source, openIndex) {
+  let depth = 0;
+  let quote = "";
+  let lineComment = false;
+  let blockComment = false;
+  for (let index = openIndex; index < source.length; index++) {
+    const character = source[index];
+    const next = source[index + 1];
+    if (lineComment) {
+      if (character === "\n" || character === "\r") lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (character === "*" && next === "/") {
+        blockComment = false;
+        index++;
+      }
+      continue;
+    }
+    if (quote) {
+      if (character === "\\") index++;
+      else if (character === quote) quote = "";
+      continue;
+    }
+    if (character === "/" && next === "/") {
+      lineComment = true;
+      index++;
+      continue;
+    }
+    if (character === "/" && next === "*") {
+      blockComment = true;
+      index++;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+      continue;
+    }
+    if (character === "(") depth++;
+    else if (character === ")") {
+      depth--;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function rewriteCurriedEachCalls(source) {
+  let output = "";
+  let cursor = 0;
+  const callPattern = /\b(describe|it|test)\.each\s*\(/g;
+  while (true) {
+    const match = callPattern.exec(source);
+    if (!match) break;
+    const firstOpen = callPattern.lastIndex - 1;
+    const firstClose = matchingParenthesis(source, firstOpen);
+    if (firstClose < 0) break;
+    let secondOpen = firstClose + 1;
+    while (/\s/.test(source[secondOpen] ?? "")) secondOpen++;
+    if (source[secondOpen] !== "(") {
+      callPattern.lastIndex = firstClose + 1;
+      continue;
+    }
+    const secondClose = matchingParenthesis(source, secondOpen);
+    if (secondClose < 0) break;
+    output += source.slice(cursor, match.index);
+    const helper = match[1] === "describe" ? "__upstreamDescribeEachDirect" : "__upstreamEachDirect";
+    const secondArguments = rewriteCurriedEachCalls(source.slice(secondOpen + 1, secondClose));
+    output += `${helper}(${source.slice(firstOpen + 1, firstClose)}, ${secondArguments})`;
+    cursor = secondClose + 1;
+    callPattern.lastIndex = cursor;
+  }
+  return output + source.slice(cursor);
+}
+
 function resolveJestImport(filePath, specifier) {
   const base = resolve(dirname(filePath), specifier);
   const candidates = [
@@ -117,7 +192,15 @@ function transformJestTest(source, filePath, generatedPath, { normalizeCjs = fal
     },
   );
   for (const { pattern, replacement } of namespaceReplacements) transformed = transformed.replace(pattern, replacement);
-  return transformed;
+  // Preserve the original registration callbacks but lower Jest's curried
+  // `*.each(cases)(name, body)` surface to a direct shim call. This avoids
+  // requiring the Wasm lane to materialize a temporary callable with a
+  // package-owned function property.
+  transformed = rewriteCurriedEachCalls(transformed);
+  // The original hook-error unit indexes the global object with a dynamic
+  // name. Resolve that standard Jest API through the same local hook wrappers
+  // so the Wasm lane does not depend on dynamic host-object property lookup.
+  return transformed.replace(/\bglobalThis\[fn\]\(el\)/g, "__upstreamCallNamedHook(fn, el)");
 }
 
 export async function runHarness({ quiet = false } = {}) {

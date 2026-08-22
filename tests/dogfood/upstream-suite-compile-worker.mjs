@@ -62,6 +62,7 @@ async function loadNodeHostDependencies() {
     "node:timers",
     "node:timers/promises",
     "node:tls",
+    "node:tty",
     "node:url",
     "node:util",
     "node:vm",

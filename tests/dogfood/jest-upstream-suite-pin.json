@@ -22,7 +22,13 @@
     "packages/jest-config/src/__tests__/stringToBytes.test.ts",
     "packages/jest-jasmine2/src/__tests__/pTimeout.test.ts",
     "packages/jest-matcher-utils/src/__tests__/Replaceable.test.ts",
-    "packages/jest-jasmine2/src/__tests__/queueRunner.test.ts"
+    "packages/jest-jasmine2/src/__tests__/queueRunner.test.ts",
+    "packages/jest-jasmine2/src/__tests__/iterators.test.ts",
+    "packages/jest-jasmine2/src/__tests__/itToTestAlias.test.ts",
+    "packages/jest-jasmine2/src/__tests__/itTestError.test.ts",
+    "packages/jest-jasmine2/src/__tests__/todoError.test.ts",
+    "packages/jest-jasmine2/src/__tests__/hooksError.test.ts",
+    "packages/jest-config/src/__tests__/parseShardPair.test.ts"
   ],
   "dependencies": {
     "detect-newline": {
@@ -36,7 +42,12 @@
     "jest-util": {
       "version": "30.4.1",
       "sourceSha256": "ef7320f8e85b76a67a65ec29e9c55e724b7a25de5b2aad75c3ed1c82a53cc7d4"
+    },
+    "chalk": {
+      "version": "4.1.2",
+      "sourcePath": "source/index.js",
+      "sourceSha256": "a7eda1e88414e0e3f050a09621a35e8d656550077da044606c16b053148f6459"
     }
   },
-  "_note": "The complete packages/**/__tests__ inventory is verified. The adapter runs the original Jest utility files against their matching release-tag TypeScript implementations, including jest-jasmine2's timer-driven pTimeout and queueRunner tests and jest-matcher-utils' Replaceable object/array/Map paths. Verified package-name seams cover @jest/get-type, jest-util's formatTime, detect-newline, node:util/types, and node:os; the shared runner supplies deterministic spies, fake timers, and cleanup between generated modules. Runner, snapshot, filesystem, worker, async, DOM, and larger package graphs remain explicit deferred coverage."
+  "_note": "The complete packages/**/__tests__ inventory is verified. The adapter runs the original Jest utility files against their matching release-tag TypeScript implementations, including jest-jasmine2's timer-driven pTimeout and queueRunner tests and jest-matcher-utils' Replaceable object/array/Map paths. Verified package-name seams cover @jest/get-type, jest-util's formatTime and convertDescriptorToString, detect-newline, chalk@4.1.2, ansi-styles, supports-color, has-flag, node:util/types, node:os, and node:tty; the shared runner supplies deterministic spies, fake timers, and cleanup between generated modules. Runner, snapshot, filesystem, worker, async, DOM, and larger package graphs remain explicit deferred coverage."
 }
