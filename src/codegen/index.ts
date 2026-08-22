@@ -312,7 +312,7 @@ import { fillTaCtorGetMetaArm } from "./ta-ctor-meta.js"; // `$__ta_ctor` name/l
 import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
 import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
 import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; // (#2875 w4-F)
-import { unshiftNativeProtoDeleteArm } from "./native-proto-delete.js"; // (#2875 w4-F)
+// import { unshiftNativeProtoDeleteArm } from "./native-proto-delete.js"; // (#2875 w4-F) — DISABLED, see call sites
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
@@ -5485,7 +5485,13 @@ export function generateModule(
     // getter-only RegExp member is a sloppy no-op, not a bag entry.
     unshiftRegExpAccessorSetGuard(ctx);
     // (#2875 w4-F) `delete <Builtin>.prototype.<m>` rewrites the member CSV.
-    unshiftNativeProtoDeleteArm(ctx);
+    // DISABLED 2026-08-22: measured net-negative — the arm's presence flipped
+    // ~17 rows to fail (the "<m> descriptor should be configurable" family and
+    // Number.prototype.toString routing) while flipping 3 delete-rows to pass.
+    // Bisect: pass at 723fd047ca, fail at da724268b0, pass again with only
+    // this call commented. Re-enable only with a fix for the descriptor
+    // side-effect and a control run over Object/defineProperty prop-desc rows.
+    // unshiftNativeProtoDeleteArm(ctx);
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
@@ -8657,7 +8663,13 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // getter-only RegExp member is a sloppy no-op, not a bag entry.
     unshiftRegExpAccessorSetGuard(ctx);
     // (#2875 w4-F) `delete <Builtin>.prototype.<m>` rewrites the member CSV.
-    unshiftNativeProtoDeleteArm(ctx);
+    // DISABLED 2026-08-22: measured net-negative — the arm's presence flipped
+    // ~17 rows to fail (the "<m> descriptor should be configurable" family and
+    // Number.prototype.toString routing) while flipping 3 delete-rows to pass.
+    // Bisect: pass at 723fd047ca, fail at da724268b0, pass again with only
+    // this call commented. Re-enable only with a fix for the descriptor
+    // side-effect and a control run over Object/defineProperty prop-desc rows.
+    // unshiftNativeProtoDeleteArm(ctx);
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
