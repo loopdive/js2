@@ -299,11 +299,13 @@ jobs:
       # group rebuilds that group and cancels its run — the same harm this whole
       # change removes, just relocated. So look before pushing.
       #
-      # FAIL-SAFE DIRECTION IS "PUSH ANYWAY". If the queue cannot be read we
-      # proceed: the harm of a wrong push is bounded (with
+      # The merge-queue gate remains fail-open: if the queue cannot be read we
+      # proceed, because the harm of a wrong push is bounded (with
       # `max_entries_to_build=1` the cancelled group contains only this PR), and
       # the harm of a wrong skip is the artifact freezing behind an unreadable
       # gate — which is #4130, the failure this repo has already paid for once.
+      # The current-head check gate below is deliberately fail-closed instead:
+      # an unreadable check state must not knowingly cancel the CI it protects.
       - name: Check whether the promotion PR is already in the merge queue
         id: queue_state
         env:
@@ -311,8 +313,15 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          PR_NUMBER="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$PROMOTION_BRANCH" \
-            --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+          PR_INFO="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$PROMOTION_BRANCH" \
+            --state open --json number,headRefOid \
+            --jq '.[0] | if . == null then empty else "\(.number) \(.headRefOid)" end' \
+            2>/dev/null || true)"
+          PR_NUMBER="${PR_INFO%% *}"
+          PR_HEAD_SHA="${PR_INFO#* }"
+          if [ "$PR_INFO" = "$PR_NUMBER" ]; then
+            PR_HEAD_SHA=""
+          fi
           echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
 
           if [ -z "$PR_NUMBER" ]; then
@@ -321,6 +330,44 @@ jobs:
             exit 0
           fi
           echo "Open promotion PR: #${PR_NUMBER}"
+
+          # Do not replace the promotion branch while its current PR checks are
+          # running. A force-update fires `pull_request:synchronize`; GitHub
+          # cancels the checks for the old head before starting checks for the
+          # new one. On a long npm-compat refresh cadence that turns every PR
+          # run into a moving target and can keep the artifact PR permanently
+          # pending. Let the current head finish; a later refresh will publish
+          # the newer measurement. Keep the bound finite so one wedged check
+          # cannot suppress updates forever (the staleness workflow is the
+          # product-level backstop).
+          CHECK_CUTOFF="$(date -u -d '-2 hours' +%Y-%m-%dT%H:%M:%SZ)"
+          ACTIVE_CHECKS="unreadable"
+          if [ -n "$PR_HEAD_SHA" ]; then
+            ACTIVE_CHECKS="$(gh api \
+              "/repos/${GITHUB_REPOSITORY}/commits/${PR_HEAD_SHA}/check-runs?per_page=100" \
+              --jq "[.check_runs[] | select((.status == \"queued\" or .status == \"in_progress\") and ((.started_at // .created_at // \"1970-01-01T00:00:00Z\") > \"${CHECK_CUTOFF}\"))] | length" \
+              2>/dev/null || echo "unreadable")"
+          fi
+          case "$ACTIVE_CHECKS" in
+            unreadable)
+              echo "::warning title=npm-compat-refresh::could not read checks for promotion PR #${PR_NUMBER}; leaving its branch untouched to avoid cancelling CI."
+              echo "skip=1" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+            ''|*[!0-9]*)
+              echo "::warning title=npm-compat-refresh::invalid active-check count (${ACTIVE_CHECKS}); leaving promotion PR #${PR_NUMBER} untouched."
+              echo "skip=1" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+            0)
+              echo "No recent checks are running on promotion PR #${PR_NUMBER}; continuing."
+              ;;
+            *)
+              echo "Promotion PR #${PR_NUMBER} has ${ACTIVE_CHECKS} recent check(s) in flight; leaving its branch untouched."
+              echo "skip=1" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
 
           QUEUED="$(gh api graphql -f query="
             query(\$owner: String!, \$name: String!) {
