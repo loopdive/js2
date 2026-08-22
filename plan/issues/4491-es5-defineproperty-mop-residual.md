@@ -114,6 +114,15 @@ oracle-ratchet-allow:
   # purity query, same rationale.
   - src/codegen/declarations.ts
 coercion-sites-allow:
+  # 2026-08-22 wave-6 lane T11: NOT a fresh ToString matrix. The f64
+  # absence-marker arm in `__extern_has_idx` must look the index up in the
+  # #3251 companion (an own accessor recorded there means the index is PRESENT
+  # even though the slot still holds the marker), and a companion is keyed by
+  # the DECIMAL INDEX STRING. `number_toString` is the sealed index-key
+  # formatter every other companion consult uses — `vec-overlay-presence.ts`,
+  # `fillDynamicForinVecArms`, `vec-overlay.ts` all call exactly this one. Using
+  # anything else would be the hand-rolled matrix the gate exists to prevent.
+  - src/codegen/vec-f64-hole-presence.ts
   # 2026-08-21 wave-3 lane C: NOT new coercion vocabulary — the missing half of
   # an existing pair. `compileLiftedClosureBody` already ensures `__box_number`
   # two lines above (param → arguments slot); the mapped REVERSE sync
@@ -177,6 +186,35 @@ func-budget-allow:
   # has to be here because it is the sibling of the externref gap-fill arm it
   # mirrors (#2773 S7) and shares its already-allocated vec/data/idx locals.
   - src/codegen/expressions/assignment.ts::compileElementAssignment
+  # 2026-08-22 wave-6 lane T11, f64-hole PRESENCE half. Every new BODY lives in
+  # the NEW module src/codegen/vec-f64-hole-presence.ts (the marker test, the
+  # read-boundary canonicalization, the per-carrier `__extern_has_idx` arms);
+  # the eight functions below gain only the branch that reaches it, and each
+  # branch has to be where it is:
+  #   compileArrayLiteral (+13)          — the elision arm is the only place
+  #     that knows an element is an OmittedExpression rather than an explicit
+  #     `undefined`; that distinction IS the slice.
+  #   _emitVecAccessExportsInner (+13)   — `__vec_get`'s f64 arm already tests
+  #     UNDEF_F64_BITS (#3315); it now tests both payloads, in place, sharing
+  #     the scratch local the existing arm allocates.
+  #   compileInOperator (+5)             — the typed-vec `in` route hands off to
+  #     `__extern_has_idx` exactly where the #4222 overlay route already does.
+  #   ensureNativeArrayHof (+5)          — one disjunct on the existing
+  #     `hasGateIdx` condition, next to `protoIndexDirty`/`forceHasProperty`.
+  #   fillDynamicForinVecArms (+5)       — one disjunct on `gateKeysOnPresence`,
+  #     plus the f64 marker map inside the `__extern_get_idx` box arm it builds.
+  #   compileElementAccessBody (+4)      — the two bounds-eliminated read arms,
+  #     siblings of the `emitHoleToUndefined` calls they sit beside.
+  #   compileArrayDestructuringAssignment (+2) / compileForOfArray (+1) — one
+  #     canonicalization call each, same read boundary.
+  - src/codegen/literals.ts::compileArrayLiteral
+  - src/codegen/vec-access-exports.ts::_emitVecAccessExportsInner
+  - src/codegen/binary-ops-in.ts::compileInOperator
+  - src/codegen/hof-native.ts::ensureNativeArrayHof
+  - src/codegen/object-runtime.ts::fillDynamicForinVecArms
+  - src/codegen/property-access.ts::compileElementAccessBody
+  - src/codegen/expressions/assignment.ts::compileArrayDestructuringAssignment
+  - src/codegen/statements/loops.ts::compileForOfArray
   # 2026-08-21 defineProperties/create edge slice: the `Properties`-map entry
   # model gains a PASS-THROUGH arm (a map entry that is not an object literal)
   # plus the reified-map construction. Already 724 LOC at base — the growth is
@@ -5261,3 +5299,279 @@ by a test.
   dereferencing a null pointer in __module_init` at `typeof after`. Pre-existing
   and byte-identical across the A/B — a different Annex-B arm (B.3.3.1 step 3.f
   on an already-existing var binding), not attempted here.
+
+## Wave-6 lane T11 — the f64-hole PRESENCE half (2026-08-22)
+
+Base `66c6a69afb` (the wave-6 integration head — T8-A's value half already
+landed), `--target standalone`, in-process `runTest262File`. Every number below
+is a run this lane executed. Both sides of every A/B come from the file-copy
+harness (`.tmp/ab/{base,new}/`, `.tmp/ab-use.sh`); the base copies were captured
+before the first edit, and `git stash` was never used.
+
+### What the value half left behind, measured on base
+
+`var x = []; x[0] = 0; x[3] = 3` (function scope) and the literal `[0, , 2]`:
+
+| query | grow-gap, base | elision, base | correct |
+| --- | --- | --- | --- |
+| `x[1] === undefined` | true ✓ | true ✓ | true |
+| `x.toString()` | `"0,,,3"` ✓ | `"0,,2"` ✓ | — |
+| `1 in x` | **true** | **true** | false |
+| `x.hasOwnProperty("1")` | false ✓ | false ✓ | false |
+| `Object.keys(x)` | **`0,1,2,3`** | **`0,1,2`** | `0,3` / `0,2` |
+| `forEach` visits | **4** | **3** | 2 / 2 |
+| `[0, , 2].filter(() => true).length` | — | **3** | 2 |
+
+After this slice every cell in those two columns is the `correct` one.
+
+### 1. A second sNaN payload
+
+`HOLE_F64_BITS = 0x7FF00000DEADC01E` next to `UNDEF_F64_BITS =
+0x7FF00000DEADC0DE` (`value-tags.ts`). Same signaling-NaN exponent, so T8-A's
+non-collision argument carries over verbatim: JS arithmetic only ever produces
+the quiet NaN `0x7FF8000000000000`.
+
+Produced at exactly two sites — an array-literal **elision**
+(`compileArrayLiteral`, both the `array.new_fixed` and the spread path) and the
+T8-A **grow-gap fill**. An explicit `undefined` element keeps
+`UNDEF_F64_BITS`; that fork IS the slice.
+
+### 2. Read-boundary canonicalization
+
+`HOLE → UNDEF` (new module `vec-f64-hole-presence.ts`) at the
+`emitHoleToUndefined` sites extended to f64 — `property-access.ts` ×3,
+`array-methods.ts` ×3 plus its six HOF element loads, `statements/loops.ts`,
+`expressions/assignment.ts` ×2 — plus the two dynamic chokepoints `__vec_get`
+(host boundary, which now tests BOTH payloads) and `__extern_get_idx`.
+
+This preserves `array-holes.ts`'s stated invariant — *a hole is never observed
+AS the marker* — which is what lets the ~28 existing `UNDEF_F64_BITS` observers
+stay untouched: they keep testing one bit pattern and never see the other.
+
+`__extern_get_idx` reads a hole through `idxMiss()`, the prototype consult an
+out-of-bounds index already used, not a flat `undefined` — §10.1.8.1
+OrdinaryGet, and it is what makes `filter/15.4.4.20-9-b-7` (a getter installed
+on `Array.prototype[1]` mid-iteration) answer `6.99` at the hole.
+
+### 3. One presence chokepoint, four consumers
+
+A per-carrier `ref.test`-guarded arm on `__extern_has_idx` per f64 vec carrier
+(shape copied from `fillExternGetIdxVecArms` / `fillHoleyArrayHasIdxArm`), and
+`in` (`binary-ops-in.ts`), `Object.keys` (`fillDynamicForinVecArms`) and
+`for…in` (`emitArrayForIn`) re-routed to it. `hasOwnProperty` already consulted
+it.
+
+Two properties keep the arm safe:
+
+- **It returns only when it positively identifies a hole.** Everything else
+  falls through to the body already there, so the arm can only turn a `true`
+  into a `false`, never the reverse.
+- **A hole is not the END of HasProperty.** §7.3.11 walks the prototype chain,
+  so the arm answers `protoIndexHasIdxInstrs` — the same consult the #3251
+  overlay's DELETED-index arm uses. A hole and a deleted index are the same
+  question.
+
+### 4. Hole-SKIPPING on the HOFs — the T8-A hazard, defused
+
+`forceHasProperty` is implied for the native `__hof_*` helpers whenever the
+module can hold a marker, and the STATIC inline loops join in: `shouldHoleSkip`
+accepts f64, and `reduce`/`reduceRight` — which #2001 S2 left folding every
+index — gain the gate.
+
+T8-A recorded that the value marker made arithmetic HOFs *loudly* wrong. Same
+program (`var a=[1,2,3]; a[6]=5;`, module hole-active), measured this lane:
+
+| expression | correct JS | T8-A (base) | after T11 |
+| --- | --- | --- | --- |
+| `a.reduce((s,x)=>s+x, 0)` | 11 | NaN | **11** ✓ |
+| `a.reduce((s,x)=>s*x, 1)` | 30 | NaN | **30** ✓ |
+| `a.forEach` visits | 4 | 7 | **4** ✓ |
+| `a.join(",")` | `"1,2,3,,,,5"` | ✓ | ✓ |
+| `a[4] === undefined` | true | ✓ | ✓ |
+| `Object.keys(a)` | `0,1,2,6` | `0,1,2,3,4,5,6` | **`0,1,2,6`** ✓ |
+| `4 in a` | false | true | **false** ✓ |
+
+NOT included: the no-initialValue **seed seek** (§23.1.3.24 step 6.b walks
+forward to the first PRESENT index). The seed still reads index 0 and maps a
+hole to `undefined`. That differs only when index 0 itself is a hole and no
+initial value is passed; it was already wrong before this slice.
+
+### The two things the control A/B caught that no probe would have
+
+Both were real regressions, both fixed on-branch, both worth recording because
+the next lane will meet the same shape.
+
+**(a) The marker means "nothing was WRITTEN here", not "no own property here".**
+`Object.defineProperty(arr, "1", {set: function(){}})` records an own ACCESSOR
+in the #3251 companion and writes nothing to the slot, so the marker is still
+sitting there while the index IS present. Nine rows — the whole "own or
+inherited accessor without a get function" family
+(`reduce`/`reduceRight` `15.4.4.2{1,2}-9-c-i-{18,20,22}`,
+`forEach/15.4.4.18-7-c-i-22`, `filter/15.4.4.20-9-b-5`) — went pass → fail. Two
+fixes, one per path:
+
+- the `__extern_has_idx` arm asks `__vec_overlay_lookup` + `__obj_find` first
+  and DECLINES whenever a companion entry exists for the index;
+- `shouldHoleSkip` gains a SECOND disqualifier for f64, `overlayRouteActive`.
+  `protoIndexDirty` (inherited from the externref case) only covers an
+  INHERITED index; an OWN accessor is invisible to a static own-slot test, and
+  `overlayRouteActive` is exactly the condition under which those reads take
+  the dynamic route that can see it.
+
+**(b) Making ONE presence path correct can break a row that passed because two
+wrong ones agreed.** `Object/keys/15.2.3.14-6-2` builds its expected list from
+`for…in` + `hasOwnProperty` and asserts it equals `Object.keys`. On base both
+sides answered `0..5` for `[1, 2, , 4, , 6]`. Fixing `Object.keys` alone broke
+the agreement — precisely the failure the T8 handover warned about. `for…in`
+joined the same chokepoint; all three now answer `0,1,3,5`.
+
+### Controls — file-copy A/B, both sides run on this head
+
+| control set | rows | base pass | after pass | changed |
+| --- | ---: | ---: | ---: | ---: |
+| dense-numeric — deterministic stride sample over `map`, `reduce`, `reduceRight`, `sort`, `join`, `push`, `pop`, `indexOf`, `lastIndexOf`, `slice`, `forEach`, `toString`, `concat`, `filter`, `Array/length` (pool 1,872 files) | 180 | 115 | **116** | 1 — `filter/15.4.4.20-9-b-11` fail → pass |
+| elision-bearing — every file under `built-ins/Array`, `language/expressions/array`, `Object/{defineProperties,keys}` whose body contains a literal elision | 162 | 60 | **62** | 2 — `filter/15.4.4.20-9-b-7`, `-11` fail → pass |
+| sparse-index-store — stride sample of the files that write a literal numeric index, excluding rows already in the other two sets | 150 | 69 | 69 | **0** |
+
+**Zero regressions; every change is a gain.** The two rows are the same
+`filter` pair counted once per set they belong to, so the union is +2.
+
+Perf sanity — `compileSource(…, { target: "standalone" })` on the numeric
+playground samples, module byte size AND sha-256 prefix:
+
+| sample | base | after |
+| --- | --- | --- |
+| `website/playground/examples/benchmarks/array.ts` | 54,651 · `3a6f5611…` | 54,651 · `3a6f5611…` |
+| `…/loop.ts` | 34,533 · `fe39bef0…` | 34,533 · `fe39bef0…` |
+| `…/fib.ts` | 34,192 · `2d204833…` | 34,192 · `2d204833…` |
+
+Byte-identical AND sha-identical. That took a third gate to achieve, and the
+lesson generalises: **`usesArrayHoles` says the program contains SOME elision,
+not that an f64 marker was ever minted.** `array.ts` set the flag without ever
+reaching an f64 elision, and `__vec_get` grew 19 bytes for a compare that could
+not fire. The FINALIZE-time consumers (`__vec_get`'s host-boundary map,
+`fillF64HoleHasIdxArms`) therefore read a narrower flag, `f64HoleMarkerEmitted`,
+set at the two sites that actually mint the payload. Body-compile-time consumers
+cannot use it — function compilation order is not source order, so a read of
+`a[i]` can be compiled before the literal that introduces the marker.
+
+Gates: `check-loc-budget` OK · `check-func-budget` OK (eight allowances, all
+dispatch-only, rationale in the frontmatter) · `check-coercion-sites` OK (one
+allowance: the companion consult keys on `number_toString`, the sealed
+index-key formatter) · `check:oracle-ratchet` OK (this slice makes no checker
+query).
+
+**Three rows are EXCLUDED from all three sets, and the exclusion is not
+cosmetic:** `lastIndexOf/length-near-integer-limit.js`,
+`reverse/length-exceeding-integer-limit-with-proxy.js`,
+`splice/create-species-length-exceeding-integer-limit.js`. These are the
+runner's known #1589A family — a `length` near 2**53 makes the search loop spin,
+and a synchronous Wasm loop blocks Node's event loop so `TEST_TIMEOUT_MS` can
+never fire. The first one silently ate a 58-minute blind sweep before it was
+identified. They are unrelated to holes; if you build a control set over
+`built-ins/Array`, exclude them or add them to `HANGING_TESTS`.
+
+### Target rows — verified on the merged head, then re-measured
+
+| row | base | after | note |
+| --- | --- | --- | --- |
+| `filter/15.4.4.20-9-b-7` | fail | **pass** | hole falls through to a `Array.prototype[1]` getter installed mid-iteration |
+| `filter/15.4.4.20-9-b-11` | fail | **pass** | hole + `delete Array.prototype[1]` |
+| `filter/15.4.4.20-9-b-14` | fail | fail | NOT a hole row — `[0,1,2,"last"]` is an externref carrier and the blocker is the `length` SHRINK (T5 family) |
+| `filter/15.4.4.20-9-b-15` | fail | fail | length-shrink again, and its residual is a CARRIER question: `arr` is `number[]`, so the proto getter's string `"prototype"` coerces to NaN in the f64 result vec |
+| `defineProperties/15.2.3.7-6-a-161` | **pass** | pass | already passing on the merged head — not a flip |
+| `concat/S15.4.4.4_A1_T2` | fail | fail | concat result element type drops a ref element — not a hole bug (T8 said the same) |
+| `concat/S15.4.4.4_A1_T4` | fail | fail | the SOURCE array is now fully correct (`x[0] === undefined`, `0 in x` false, `x.join()` `",1"`); the concat OUTPUT loses the marker — measured `arr.join()` `"NaN,1,NaN"`. The 2-arg concat path round-trips elements through a box, which canonicalizes the NaN payload. This is the T8 handover's next-step #2 ("extend the marker to the other gap producers — the concat result build"), deliberately a separate slice with its own control run |
+| `concat/S15.4.4.4_A3_T2` / `A3_T3` | fail | fail | need the `length` SETTER to fill shrunk/grown slots with the marker (T5 family), plus `hasOwnProperty` on the concat output. Not attempted |
+| `toString/S15.4.4.2_A1_T2` | fail | fail | still blocked on #2809 exactly where T8-A left it: `Array(undefined,1,null,3)` renders `",1,0,3"` — `null` in an f64 carrier, a representation question, not a hole |
+| `Array/S15.4_A1.1_T10` | fail | fail | the sparse-STORAGE wall at index 4294967294, priced by lane J. Untouched |
+| `pop/S15.4.4.6_A1.2_T1` | pass | **pass** | canary, stays green |
+| `shift/S15.4.4.9_A1.2_T1` | pass | **pass** | canary, stays green |
+
+### Known edges, stated so the next lane does not rediscover them
+
+- **The demand gate is `ctx.usesArrayHoles`** — the same pre-scan flag
+  `array-holes.ts` uses, set iff the module contains an array-literal elision.
+  Clear ⇒ no marker is produced anywhere ⇒ every consumer is a no-op and the
+  bytes are unchanged, dense-numeric kernel and the #1897 `struct.get` contract
+  included. **Consequence:** in a module with NO elision, an f64 grow-gap keeps
+  T8-A's `UNDEF_F64_BITS` and presence stays as it was (`1 in x` true).
+  Widening the gate to grow-gaps alone needs a pre-scan predicate that fires on
+  `a[i] = v` — which is every numeric benchmark — so the price would be paid in
+  the dense kernel. Deliberately not taken.
+- **`Float32Array` / `Float64Array` share the `f64` vec carrier** (the packed
+  storage table covers only the integer views). An element whose bits happen to
+  equal the marker — reachable only by writing raw bytes through an
+  ArrayBuffer — would answer absent. Same exposure `UNDEF_F64_BITS` already has
+  at `__vec_get`; not widened, not fixed.
+- **`hasOwnProperty` with a STRING-LITERAL key is wrong on an elision-bearing
+  array, on base and after.** Measured on `[1, 2, , 4, , 6]`:
+  `a.hasOwnProperty("3")` is `false` although index 3 holds `4`. The dynamic-key
+  form answers correctly. Two different code paths; the literal one is a
+  pre-existing defect this slice neither caused nor fixed.
+
+### Handover (T11, lane w6-t11, 2026-08-22)
+
+Branch `worktree-agent-ad111d1c7ba23417e`, worktree
+`/home/user/js2/.claude/worktrees/agent-ad111d1c7ba23417e`. Not pushed, no PR.
+
+**INTEGRATION-READY** — four commits on top of `66c6a69afb`, all four gates
+green, three control sets and the perf sanity measured on this head with zero
+regressions.
+
+| commit | what |
+| --- | --- |
+| `86baa6928f` | the four deliverables: `HOLE_F64_BITS`, read-boundary canonicalization, the `__extern_has_idx` arm + `in`/`Object.keys` re-route, HOF hole-skip |
+| `6b5e6246c4` | own-descriptor decline (the nine-row regression the control A/B caught) |
+| `18babd4dc2` | `for…in` joins the same chokepoint |
+| `4ea51e130b` | `f64HoleMarkerEmitted` — the narrower FINALIZE-time gate that restores byte-identical benchmarks |
+
+Files: `src/codegen/vec-f64-hole-presence.ts` (new — every new body),
+`value-tags.ts` (+1 constant), and dispatch-only wiring in `literals.ts`,
+`property-access.ts`, `array-methods.ts`, `object-runtime.ts`,
+`vec-access-exports.ts`, `binary-ops-in.ts`, `hof-native.ts`, `index.ts`,
+`expressions/assignment.ts`, `statements/loops.ts`, `vec-f64-hole-gap.ts`,
+`context/types.ts`.
+
+**Next steps, in value order**
+
+1. **Extend the marker to the remaining gap producers** — the `concat` result
+   build and the `length` SETTER (shrink-then-grow). Measured above: the concat
+   SOURCE is now fully correct and the OUTPUT is not, because the 2-arg concat
+   path round-trips elements through a box that canonicalizes the NaN payload.
+   That unblocks `concat/S15.4.4.4_A1_T4`, and with the length setter,
+   `A3_T2`/`A3_T3` and `filter/15.4.4.20-9-b-{14,15}`.
+2. **`hasOwnProperty` with a STRING-LITERAL key** answers `false` for a PRESENT
+   index on an elision-bearing array (`[1,2,,4,,6].hasOwnProperty("3")` is
+   `false`, base and after). The dynamic-key form is correct. Two different
+   paths; the literal one is a pre-existing defect and the only presence answer
+   still out of line.
+3. **`null` in an f64 carrier (#2809)** still blocks
+   `toString/S15.4.4.2_A1_T2` at check `#3.2` — unchanged from T8-A.
+
+**Do NOT re-attempt / read first**
+
+- Widening a hole-bearing literal to an externref vec — T8's measured −12.
+- Answering absence from the raw slot ALONE. An own accessor recorded in the
+  #3251 companion writes nothing to the slot; the arm must consult the
+  companion. Nine rows.
+- Fixing ONE presence path in isolation. `Object/keys/15.2.3.14-6-2` passed on
+  base because `for…in` and `Object.keys` were wrong in the same direction.
+- Three rows hang the in-process runner forever (a `length` near 2**53 spins a
+  search loop, and a synchronous Wasm loop blocks Node's event loop so
+  `TEST_TIMEOUT_MS` cannot fire): `lastIndexOf/length-near-integer-limit.js`,
+  `reverse/length-exceeding-integer-limit-with-proxy.js`,
+  `splice/create-species-length-exceeding-integer-limit.js`. Exclude them from
+  any `built-ins/Array` sweep.
+
+**Harness in this worktree** (`.tmp/`): `p.sh` wraps `run.mts` (one row) and
+`runlist.mts` (a list; writes `<out>.partial` incrementally and RE-LINKS
+`test262/` + `node_modules/` before every row). `ab-setup.sh` snapshots both
+sides, `ab-use.sh base|new` flips them, `run-side.sh`/`run-new2.sh` run a side,
+`cmp.mjs` diffs two result TSVs bucketed by control set, `bench-ab.sh` is the
+module-size/sha A/B, `wat-ab.sh` diffs the WAT when sizes move.
+
+**One process trap worth writing down:** `ab-use.sh base` overwrites the working
+tree, so ANY uncommitted edit is lost when you flip sides. It cost this lane
+three fixes and one full control run. Re-run `ab-setup.sh` immediately after
+every edit, and prefer committing before flipping.

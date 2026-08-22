@@ -10,6 +10,8 @@
  * change (prove-emit-identity IDENTICAL across gc/standalone/wasi).
  */
 import { ts } from "../ts-api.js";
+import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
+import { getArrTypeIdxFromVec } from "./registry/types.js"; // (#4491 T11)
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -326,7 +328,12 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       // knows about both — the same typed→dynamic hand-off #4159 made for
       // element reads/writes. Route-inactive modules keep the inline compare
       // byte-for-byte.
-      if (overlayRouteActive(ctx)) {
+      // (#4491 T11) An f64 carrier can hold the ABSENCE marker at an in-bounds
+      // index, so `numIdx < length` is not the HasProperty answer there either.
+      // Same hand-off, restricted to the carrier that can actually hold one, so
+      // every other vec keeps the inline compare byte-for-byte.
+      const f64HoleRoute = f64HolesActive(ctx) && vecCarrierElementIsF64(ctx, vecTypeIdx);
+      if (overlayRouteActive(ctx) || f64HoleRoute) {
         const hasIdxFn = ensureLateImport(
           ctx,
           "__extern_has_idx",
@@ -574,4 +581,13 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     fctx.body.push({ op: "i32.const", value: 0 });
     return { kind: "i32" };
   }
+}
+
+/** (#4491 T11) True iff the `__vec_*` struct at `vecTypeIdx` stores f64 elements. */
+function vecCarrierElementIsF64(ctx: CodegenContext, vecTypeIdx: number): boolean {
+  if (vecTypeIdx < 0) return false;
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+  if (arrTypeIdx < 0) return false;
+  const arrDef = ctx.mod.types[arrTypeIdx];
+  return arrDef?.kind === "array" && (arrDef.element as ValType).kind === "f64";
 }

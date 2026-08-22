@@ -144,6 +144,7 @@ import {
 import { reserveArrayToPrimitiveString } from "./array-to-primitive.js";
 import { holeTestInstrs } from "./array-holes.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
+import { f64HolesActive, f64HoleTestInstrs } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 // (#2106 S1) function-level-only cycle with any-helpers.ts (which imports
 // ensureObjectRuntime) — same tolerated shape as native-strings ↔ any-helpers.
 import { buildIsUndefinedExternBody, undefinedExternInstrs, undefinedSingletonActive } from "./any-helpers.js";
@@ -7777,11 +7778,40 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
     const generic = boxVecElementToExternref(ctx, elemType);
     return generic === null ? null : { getOp: "array.get", boxOps: generic };
   };
+  // (#4491 T11) The dynamic read chokepoint must honour the f64 ABSENCE marker:
+  // `__extern_get_idx` is what the native HOF loop, `(arr as any)[i]`, for-in
+  // and `Array.prototype.<m>.call` all read through, and boxing the raw bits
+  // through `__box_number` would hand a callback a sNaN NUMBER where the spec
+  // says `undefined`. Same discipline as the `$Hole` / `UNDEF_F64_BITS` maps in
+  // `__vec_get` (vec-access-exports.ts). Scratch f64 local appended after the
+  // eager body's locals; no-op unless the module can produce the marker.
+  // A hole reads through the PROTOTYPE CHAIN, not flat `undefined` — same
+  // `idxMiss()` an out-of-bounds index already uses, so `[0, , 2]` with
+  // `Array.prototype[1] = 1` reads `1` at the hole (§10.1.8.1 OrdinaryGet).
+  const f64HoleUndef = f64HolesActive(ctx) ? idxMiss() : undefined;
+  let f64HoleScratch = -1;
+  if (f64HoleUndef !== undefined) {
+    f64HoleScratch = 2 + fn.locals.length;
+    fn.locals.push({ name: "__f64hole_get_v", type: { kind: "f64" } });
+  }
   const vecArms: Instr[] = [];
   for (const { typeIdx, arrTypeIdx, elemType } of carriers) {
     const readBox = packedElemReadBox(elemType);
     if (readBox === null) continue; // unsupported element kind — leave to null fallback
-    const { getOp, boxOps } = readBox;
+    const { getOp } = readBox;
+    const boxOps =
+      f64HoleUndef !== undefined && elemType.kind === "f64"
+        ? ([
+            { op: "local.tee", index: f64HoleScratch },
+            ...f64HoleTestInstrs(),
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              then: f64HoleUndef.map((instr) => ({ ...instr })),
+              else: [{ op: "local.get", index: f64HoleScratch }, ...readBox.boxOps],
+            },
+          ] satisfies Instr[])
+        : readBox.boxOps;
     vecArms.push(
       { op: "local.get", index: 2 },
       { op: "ref.test", typeIdx },
@@ -9429,7 +9459,12 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
   // chokepoint the `in` operator and the HOF presence gates consult, so all
   // three agree about which indices exist. Route-inactive modules (the common
   // case) emit the unguarded push, byte-for-byte as before.
-  const gateKeysOnPresence = overlayRouteActive(ctx) && externHasIdxIdx !== undefined;
+  // (#4491 T11) …and the same gate is what makes `Object.keys` agree with `in`
+  // and `hasOwnProperty` about an f64 hole. Before this, the three disagreed:
+  // on `x=[]; x[0]=0; x[3]=3`, `in` said true, `hasOwnProperty` said false and
+  // `keys` listed `0,1,2,3`. All three now consult `__extern_has_idx`, which
+  // `fillF64HoleHasIdxArms` teaches about the absence marker.
+  const gateKeysOnPresence = (overlayRouteActive(ctx) || f64HolesActive(ctx)) && externHasIdxIdx !== undefined;
   /** `__objvec_push(out, ToString(i))`, presence-gated under the overlay route. */
   const pushKeyI = (outLocal: number, iLocal: number): Instr[] => {
     const push: Instr[] = [

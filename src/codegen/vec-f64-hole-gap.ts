@@ -65,7 +65,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
 import type { FunctionContext } from "./context/types.js";
-import { UNDEF_F64_BITS } from "./value-tags.js";
+import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js";
 
 /**
  * The `[oldLen, idx)` gap-fill for an f64-element vec whose backing has just
@@ -88,12 +88,20 @@ export function emitF64GapFillInstrs(
     arrTypeIdx: number;
     /** `needsGapFillCondInstrs(unbackedLocal, idxLocal, oldLenLocal)`. */
     gapCond: (oldLenLocal: number) => Instr[];
+    /**
+     * (#4491 T11) Which marker the gap carries. `UNDEF_F64_BITS` — the T8-A
+     * value-half answer — when the module cannot ask presence questions;
+     * `HOLE_F64_BITS` when it can, so `in` / `hasOwnProperty` / `Object.keys` /
+     * the HOF hole-skip can tell the gap from an explicit `undefined` element.
+     * The caller supplies it from `f64HolesActive(ctx)`.
+     */
+    markerBits?: bigint;
   },
 ): Instr[] {
   const markerLocal = allocLocal(fctx, `__gap_hole_${fctx.locals.length}`, { kind: "f64" });
   const oldLenLocal = allocLocal(fctx, `__gap_hole_len_${fctx.locals.length}`, { kind: "i32" });
   return [
-    { op: "i64.const", value: UNDEF_F64_BITS },
+    { op: "i64.const", value: opts.markerBits ?? UNDEF_F64_BITS },
     { op: "f64.reinterpret_i64" },
     { op: "local.set", index: markerLocal },
     { op: "local.get", index: opts.vecLocal },
@@ -134,11 +142,21 @@ export function f64JoinSentinelArm(
   },
 ): Instr[] {
   const elemLocal = allocLocal(fctx, `__njoin_f64_${fctx.locals.length}`, { kind: "f64" });
+  const bitsLocal = allocLocal(fctx, `__njoin_bits_${fctx.locals.length}`, { kind: "i64" });
   return [
     { op: "local.tee", index: elemLocal },
     { op: "i64.reinterpret_f64" },
+    // (#4491 T11) BOTH markers render `""` here: §23.1.3.18 step 4.b treats an
+    // absent index and an `undefined` element identically. Testing only the
+    // `undefined` payload would make a hole render "NaN" the moment T11 started
+    // marking gaps with the absence payload.
+    { op: "local.tee", index: bitsLocal },
     { op: "i64.const", value: UNDEF_F64_BITS },
     { op: "i64.eq" },
+    { op: "local.get", index: bitsLocal },
+    { op: "i64.const", value: HOLE_F64_BITS },
+    { op: "i64.eq" },
+    { op: "i32.or" },
     {
       op: "if",
       blockType: { kind: "val", type: opts.resultType },

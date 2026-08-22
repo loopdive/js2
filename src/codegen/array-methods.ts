@@ -13,6 +13,8 @@ import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
 import { probeCompiledType } from "./context/speculative.js";
 import { emitHoleToUndefined, holeTestInstrs, holeToUndefinedInstrs, joinEmptyElementTest } from "./array-holes.js";
+import { emitF64HoleToUndef, f64HolesActive, f64HoleTestInstrs, f64HoleToUndefFor } from "./vec-f64-hole-presence.js"; // (#4491 T11)
+import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4491 T11)
 import { f64JoinSentinelArm } from "./vec-f64-hole-gap.js"; // (#4491 T8)
 import { buildJoinBoxedElementToString, isAnyStringSubtype } from "./array-join-element.js"; // (#4560)
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
@@ -777,6 +779,8 @@ export function emitBoundsCheckedArrayGet(
   if (ctx?.usesArrayHoles && elementType.kind === "externref") {
     emitHoleToUndefined(ctx, fctx);
   }
+  // (#4491 T11) f64 twin of the same read boundary.
+  if (ctx) emitF64HoleToUndef(ctx, fctx, elementType);
 }
 
 /**
@@ -5426,7 +5430,9 @@ function buildClosureCallInstrs(
             { op: "local.get", index: loop.iTmp },
             { op: loop.getOp, typeIdx: arrTypeIdx },
           ] satisfies Instr[])),
-      ...(elemType.kind === "externref" && ctx.usesArrayHoles ? holeToUndefinedInstrs(ctx, fctx) : []),
+      ...(elemType.kind === "externref" && ctx.usesArrayHoles
+        ? holeToUndefinedInstrs(ctx, fctx)
+        : f64HoleToUndefFor(ctx, fctx, elemType)),
       ...elemCoerce,
     ],
     [
@@ -5465,7 +5471,9 @@ function buildClosureCallInstrs(
           // the callback — a visited hole must present as `undefined`, never the
           // sentinel struct (forEach/map/etc still VISIT holes in S1; S2 adds
           // the visit-skip). Gated on externref element + `usesArrayHoles`.
-          ...(elemType.kind === "externref" && ctx.usesArrayHoles ? holeToUndefinedInstrs(ctx, fctx) : []),
+          ...(elemType.kind === "externref" && ctx.usesArrayHoles
+            ? holeToUndefinedInstrs(ctx, fctx)
+            : f64HoleToUndefFor(ctx, fctx, elemType)),
           ...elemCoerce,
         ]
       : []),
@@ -5762,7 +5770,25 @@ function shouldHoleSkip(ctx: CodegenContext, elemType: ValType, vecTypeIdx?: num
   // flag erase the carrier's locally-proven HasProperty behaviour.  Generic
   // externref vecs retain the old global guard: they have no such proof.
   const isBrandedHoleyCarrier = vecTypeIdx !== undefined && isHoleyArrayType(ctx, vecTypeIdx);
-  return (isBrandedHoleyCarrier || (ctx.usesArrayHoles && !ctx.protoIndexDirty)) && elemType.kind === "externref";
+  if (isBrandedHoleyCarrier && elemType.kind === "externref") return true;
+  if (ctx.usesArrayHoles && !ctx.protoIndexDirty) {
+    if (elemType.kind === "externref") return true;
+    // (#4491 T11) f64 joins externref here. Without it the value half is
+    // LOUDLY wrong on arithmetic HOFs: `[1,2,3]` with `a[6]=5` reduced to NaN
+    // (the marker is a NaN) where the spec skips the gap and answers 11 / 30.
+    //
+    // TWO disqualifiers, not one. `protoIndexDirty` (shared with externref)
+    // covers an INHERITED index; `overlayRouteActive` covers an OWN one the
+    // slot cannot show — `Object.defineProperty(arr, "1", {set: …})` records
+    // an own accessor in the #3251 companion and writes nothing, so the marker
+    // is still in the slot while the index IS present. A static own-slot test
+    // cannot see that; the dynamic `__extern_has_idx` route can (it consults
+    // the companion), and `overlayRouteActive` is exactly the condition under
+    // which those reads take that route. Measured: without this, reduce and
+    // reduceRight 15.4.4.2{1,2}-9-c-i-{18,20,22} regressed.
+    return elemType.kind === "f64" && f64HolesActive(ctx) && !overlayRouteActive(ctx);
+  }
+  return false;
 }
 
 /**
@@ -5772,12 +5798,14 @@ function shouldHoleSkip(ctx: CodegenContext, elemType: ValType, vecTypeIdx?: num
  * (`usesArrayHoles`-gated) so the extra `array.get` is acceptable.
  * Stack: `[] → [i32]`.
  */
-function loadIsHoleInstrs(ctx: CodegenContext, loop: ArrayLoopLocals, arrTypeIdx: number): Instr[] {
+function loadIsHoleInstrs(ctx: CodegenContext, loop: ArrayLoopLocals, arrTypeIdx: number, elemType?: ValType): Instr[] {
   return [
     { op: "local.get", index: loop.dataTmp },
     { op: "local.get", index: loop.iTmp },
     { op: loop.getOp, typeIdx: arrTypeIdx },
-    ...holeTestInstrs(ctx), // any.convert_extern; ref.test $Hole → i32 (1 = hole)
+    // (#4491 T11) Per-carrier absence test: `ref.test $Hole` for externref, the
+    // sNaN bit compare for f64. Both leave i32 = 1 iff the slot is absent.
+    ...(elemType?.kind === "f64" ? f64HoleTestInstrs() : holeTestInstrs(ctx)),
   ];
 }
 
@@ -5799,7 +5827,7 @@ function gateHoleSkip(
 ): Instr[] {
   if (!shouldHoleSkip(ctx, elemType)) return inner;
   return [
-    ...loadIsHoleInstrs(ctx, loop, arrTypeIdx),
+    ...loadIsHoleInstrs(ctx, loop, arrTypeIdx, elemType),
     { op: "i32.eqz" }, // 1 = present (NOT hole)
     { op: "if", blockType: { kind: "empty" }, then: inner },
   ];
@@ -5823,7 +5851,7 @@ function gateHoleFlag(
 ): Instr[] {
   if (!shouldHoleSkip(ctx, elemType, vecTypeIdx)) return flagInner;
   return [
-    ...loadIsHoleInstrs(ctx, loop, arrTypeIdx),
+    ...loadIsHoleInstrs(ctx, loop, arrTypeIdx, elemType),
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "i32" } },
@@ -6222,6 +6250,7 @@ function compileArrayReduce(
     // test262 coverage relies on prototype-inherited indices; see the S2
     // boundary note. Keeping S1 fold/seed here for net-0.)
     if (ctx.usesArrayHoles && elemType.kind === "externref") emitHoleToUndefined(ctx, fctx);
+    emitF64HoleToUndef(ctx, fctx, elemType); // (#4491 T11) f64 twin
     // Coerce the seed element to the accumulator type (e.g. element externref
     // string → accumulator externref, or i32 element → f64 accumulator).
     coercionInstrs(ctx, elemType, accType, fctx).forEach((i) => fctx.body.push(i));
@@ -6241,7 +6270,9 @@ function compileArrayReduce(
       { op: "local.get", index: loop.dataTmp },
       { op: "local.get", index: loop.iTmp },
       { op: loop.getOp, typeIdx: arrTypeIdx },
-      ...(ctx.usesArrayHoles && elemType.kind === "externref" ? holeToUndefinedInstrs(ctx, fctx) : []),
+      ...(ctx.usesArrayHoles && elemType.kind === "externref"
+        ? holeToUndefinedInstrs(ctx, fctx)
+        : f64HoleToUndefFor(ctx, fctx, elemType)),
       ...elemCoerce,
     ];
     const indexLoad: Instr[] = [
@@ -6303,11 +6334,24 @@ function compileArrayReduce(
     ];
   }
 
-  // (#2001 S2 — reduce hole-skip DEFERRED, see the S2 boundary note.) reduce
-  // folds ALL indices (a hole reads `undefined` via the S1 map inside
-  // `callInstrs`), unchanged from pre-S2. Skipping regresses the
-  // prototype-inheritance test262 tests for no offsetting win.
-  const loopBody: Instr[] = [...loopExitCheck(loop), ...callInstrs, ...loopIncrement(loop)];
+  // (#2001 S2 left reduce folding ALL indices; #4491 T11 gates it.) §23.1.3.24
+  // step 8.b runs HasProperty before each fold step. The externref carrier
+  // could tolerate folding a hole (it read `undefined`, and `undefined` is
+  // rarely an additive/multiplicative identity by luck); the f64 carrier cannot
+  // — its marker is a NaN, so `[1,2,3]` with `a[6]=5` folded to NaN for BOTH
+  // sum and product. `shouldHoleSkip` keeps the `protoIndexDirty` exclusion
+  // that made S2 defer this: with an indexed prototype in play a bare own-slot
+  // skip is not chain-inclusive HasProperty.
+  //
+  // NOT included: the no-initialValue SEED seek (step 6.b walks forward to the
+  // first PRESENT index). The seed still reads index 0 and maps a hole to
+  // `undefined`. That only differs when index 0 itself is a hole and no initial
+  // value is passed; it was already wrong before this slice and is unchanged.
+  const loopBody: Instr[] = [
+    ...loopExitCheck(loop),
+    ...gateHoleSkip(ctx, loop, arrTypeIdx, elemType, callInstrs),
+    ...loopIncrement(loop),
+  ];
 
   emitArrayLoop(fctx, loopBody);
 
@@ -6434,6 +6478,7 @@ function compileArrayReduceRight(
     // (#2001 S2 — reduceRight hole-skip / last-present seed seek DEFERRED: its
     // test262 coverage relies on prototype-inherited indices; net-0 keeps S1.)
     if (ctx.usesArrayHoles && elemType.kind === "externref") emitHoleToUndefined(ctx, fctx);
+    emitF64HoleToUndef(ctx, fctx, elemType); // (#4491 T11) f64 twin
     // Coerce the seed element to the accumulator type (e.g. element externref
     // string → accumulator externref, or i32 element → f64 accumulator).
     coercionInstrs(ctx, elemType, accType, fctx).forEach((i) => fctx.body.push(i));
@@ -6460,7 +6505,9 @@ function compileArrayReduceRight(
             { op: "local.get", index: iTmp },
             { op: getOp, typeIdx: arrTypeIdx },
             // (#2001 S1) A `$Hole` element reaches the reducer as `undefined`.
-            ...(ctx.usesArrayHoles && elemType.kind === "externref" ? holeToUndefinedInstrs(ctx, fctx) : []),
+            ...(ctx.usesArrayHoles && elemType.kind === "externref"
+              ? holeToUndefinedInstrs(ctx, fctx)
+              : f64HoleToUndefFor(ctx, fctx, elemType)),
             ...elemCoerce,
           ] satisfies Instr[])
         : []),
@@ -6513,10 +6560,12 @@ function compileArrayReduceRight(
     ];
   }
 
-  // (#2001 S2 — reduceRight hole-skip DEFERRED, see the S2 boundary note.)
-  // Folds ALL indices (a hole reads `undefined` via the S1 map in `callInstrs`),
-  // unchanged from pre-S2 — skipping regresses the prototype-inheritance test262
-  // tests for no offsetting win.
+  // (#4491 T11) Same §23.1.3.25 step 9.b HasProperty gate as `reduce` above —
+  // and the same NaN-poisoning reason. This loop keeps its own hand-rolled
+  // locals rather than `ArrayLoopLocals`, so the gate is spelled out here
+  // instead of reusing `gateHoleSkip`; `callInstrs` has no escaping `br`, so
+  // wrapping it in an `if` leaves the surrounding depths untouched.
+  const holeGate = shouldHoleSkip(ctx, elemType);
   // Loop: while (i >= 0) { acc = cb(acc, data[i], i, arr); i--; }
   const loopBody: Instr[] = [
     // Exit check: if (i < 0) break
@@ -6525,7 +6574,16 @@ function compileArrayReduceRight(
     { op: "i32.lt_s" },
     { op: "br_if", depth: 1 },
     // Callback
-    ...callInstrs,
+    ...(holeGate
+      ? ([
+          { op: "local.get", index: dataTmp },
+          { op: "local.get", index: iTmp },
+          { op: getOp, typeIdx: arrTypeIdx },
+          ...(elemType.kind === "f64" ? f64HoleTestInstrs() : holeTestInstrs(ctx)),
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: callInstrs },
+        ] satisfies Instr[])
+      : callInstrs),
     // i--
     { op: "local.get", index: iTmp },
     { op: "i32.const", value: 1 },
@@ -6669,7 +6727,9 @@ function compileArrayFind(
   // returned matched element present `undefined`, never the sentinel. find still
   // VISITS the hole in S1 (S2 adds the skip). Pre-ensure done in setupArrayLoop.
   const findHoleMap: Instr[] =
-    ctx.usesArrayHoles && elemType.kind === "externref" ? holeToUndefinedInstrs(ctx, fctx) : [];
+    ctx.usesArrayHoles && elemType.kind === "externref"
+      ? holeToUndefinedInstrs(ctx, fctx)
+      : f64HoleToUndefFor(ctx, fctx, elemType);
 
   const loopBody: Instr[] = [
     ...loopExitCheck(loop),
@@ -6879,7 +6939,9 @@ function compileArrayFindLast(
   // (#2001 S1) Map a `$Hole` slot to `undefined` as the element is latched, so
   // both the callback and the returned element present `undefined`.
   const findLastHoleMap: Instr[] =
-    ctx.usesArrayHoles && elemType.kind === "externref" ? holeToUndefinedInstrs(ctx, fctx) : [];
+    ctx.usesArrayHoles && elemType.kind === "externref"
+      ? holeToUndefinedInstrs(ctx, fctx)
+      : f64HoleToUndefFor(ctx, fctx, elemType);
 
   const loopBody: Instr[] = [
     ...loopExitCheckReverse(loop),
