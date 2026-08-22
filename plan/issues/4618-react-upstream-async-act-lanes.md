@@ -762,6 +762,27 @@ in-module reads (host-side detection is what react-dom needs).
   use) and the whole ES6Class/CreateElement/JSXRuntime detection bucket
   (~20 tests) should open.
 
+- **2026-08-22 NaN-props residual: exhaustive lane hunt, reverted as
+  score-neutral.** After the detection fix the NaN/normalize-props tests run
+  their lifecycle but die on `expect(test.props.value)`: the instance's
+  `.props` VALUE read answers null/undefined while a host read of the same
+  object answers the sidecar object react-dom wrote. Four fallback layers
+  were implemented and measured (dispatcher struct-arm null→host fallback +
+  undefined-aware miss test; inline-IC decline under dynamic-heritage
+  classes; static fast-path fallback in emitNullGuardedStructGet; fix-48
+  style __tag guards on member-get field arms via a new
+  `classDynamicHeritageSet`): react stayed 97/146 with zero flips, and
+  runtime import tracing showed the whole p2/p3 read lane never calls ANY
+  host import — the read resolves entirely in-wasm through a lane none of
+  the four patches reach (the dispatcher WAS called per WAT but its
+  miss-fallback never fired at runtime; only ONE `__extern_get(…,"props")`
+  crossed per run). All four patches were REVERTED (uncommitted) as
+  unproven complexity; the probes stay in `.tmp/probe-nan.mts` (batch,
+  fully instrumented) and `.tmp/probe-fproto.mts`. Next session: trace the
+  resume fn's `$62` local flow around the `call $__get_member_props` site
+  in `.tmp/react-batch.wat` (~line 176223+) — the receiver feeding the
+  dispatcher, not the dispatcher itself, is now the suspect.
+
 ## Fix order
 
 1. (c) first — it is a hard CE with a two-line repro and pins the IR
