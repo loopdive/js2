@@ -252,14 +252,14 @@ describe("small npm package upstream suites", () => {
     const report = await run("styled-components");
     expect(report.extraction).toMatchObject({
       filesSeen: 41,
-      filesSelected: 3,
-      filesDeferred: 38,
-      testsRegistered: 6,
-      nativePassed: 6,
+      filesSelected: 4,
+      filesDeferred: 37,
+      testsRegistered: 9,
+      nativePassed: 9,
       nativeFailed: 0,
     });
-    expect(report.compile.modules).toBe(3);
-    expect(report.results.scored).toBe(6);
+    expect(report.compile.modules).toBe(4);
+    expect(report.results).toMatchObject({ scored: 9, passed: 9, failed: 0, runtimeFailed: 0 });
   });
 
   const webpackHeavy = process.env.DOGFOOD_WEBPACK_UPSTREAM_SUITE === "1" ? it : it.skip;
