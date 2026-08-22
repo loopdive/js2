@@ -69,10 +69,10 @@ on:
   # Backstop for a quiet main (no pushes ⇒ no push-triggered refresh).
   #
   # It is NOT a backstop against starvation by a busy main, which is what the
-  # original comment here claimed. Scheduled and manual runs share the branch
-  # group below and serialize. Push runs are keyed by their immutable commit
-  # instead, so a busy main cannot replace an older pending measurement before
-  # it gets a runner.
+  # original comment here claimed. Push runs are keyed by their immutable
+  # commit, while scheduled and manual runs are keyed by their own run IDs, so
+  # a busy main cannot replace an older pending measurement before it gets a
+  # runner.
   schedule:
     - cron: "0 */6 * * *"
   workflow_dispatch:
@@ -88,14 +88,14 @@ env:
 
 concurrency:
   # GitHub keeps only one pending run per concurrency group. A ref-only key
-  # therefore cancelled older pending push runs even with
-  # `cancel-in-progress: false` (the active run survived, but its predecessor
-  # never got a runner). Key pushes by SHA so every main commit has an
-  # independent measurement. Schedule and workflow_dispatch still share the
-  # branch ref and remain serialized.
-  group: npm-compat-refresh-${{ github.event_name == 'push' && github.sha || github.ref }}
-  # Never kill an active measurement. Promotion is freshness-checked and uses
-  # a lease-protected force push, so independent SHA lanes can safely race.
+  # therefore cancelled older pending push runs even with `cancel-in-progress: false`
+  # (the active run survived, but its predecessor never got a runner). Pushes
+  # are keyed by their immutable SHA; scheduled and manual runs also get a
+  # unique run-id suffix so a delayed measurement is never discarded while it
+  # waits for a runner. Promotion is freshness-checked and uses a
+  # lease-protected force push, so independent lanes can safely race.
+  group: npm-compat-refresh-${{ github.event_name == 'push' && github.sha || format('{0}-{1}', github.ref, github.run_id) }}
+  # Never kill an active measurement.
   cancel-in-progress: false
 
 jobs:
@@ -337,15 +337,16 @@ jobs:
           # new one. On a long npm-compat refresh cadence that turns every PR
           # run into a moving target and can keep the artifact PR permanently
           # pending. Let the current head finish; a later refresh will publish
-          # the newer measurement. Keep the bound finite so one wedged check
-          # cannot suppress updates forever (the staleness workflow is the
-          # product-level backstop).
-          CHECK_CUTOFF="$(date -u -d '-2 hours' +%Y-%m-%dT%H:%M:%SZ)"
+          # the newer measurement. Do not age this guard out: the refresh
+          # matrix itself has a 350-minute timeout, so a two-hour cutoff would
+          # knowingly cancel a valid long-running check. A genuinely wedged PR
+          # is surfaced by the staleness workflow and needs human intervention.
           ACTIVE_CHECKS="unreadable"
           if [ -n "$PR_HEAD_SHA" ]; then
             ACTIVE_CHECKS="$(gh api \
+              --paginate --slurp \
               "/repos/${GITHUB_REPOSITORY}/commits/${PR_HEAD_SHA}/check-runs?per_page=100" \
-              --jq "[.check_runs[] | select((.status == \"queued\" or .status == \"in_progress\") and ((.started_at // .created_at // \"1970-01-01T00:00:00Z\") > \"${CHECK_CUTOFF}\"))] | length" \
+              --jq '[.[].check_runs[] | select(.status == "queued" or .status == "in_progress")] | length' \
               2>/dev/null || echo "unreadable")"
           fi
           case "$ACTIVE_CHECKS" in
@@ -360,10 +361,10 @@ jobs:
               exit 0
               ;;
             0)
-              echo "No recent checks are running on promotion PR #${PR_NUMBER}; continuing."
+              echo "No checks are running on promotion PR #${PR_NUMBER}; continuing."
               ;;
             *)
-              echo "Promotion PR #${PR_NUMBER} has ${ACTIVE_CHECKS} recent check(s) in flight; leaving its branch untouched."
+              echo "Promotion PR #${PR_NUMBER} has ${ACTIVE_CHECKS} check(s) in flight; leaving its branch untouched."
               echo "skip=1" >> "$GITHUB_OUTPUT"
               exit 0
               ;;
