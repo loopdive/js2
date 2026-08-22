@@ -18,7 +18,10 @@ import {
 import { compileArrayJoinExtern, emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { tryCompileNativeDisposableStackAnyMethodCall } from "../disposable-runtime.js";
 import { noJsHost } from "../js-errors.js";
+import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { emitRuntimeEvalCarrierUnwrapAny } from "../runtime-eval-callable.js";
+import { expressionDescendsFromRealmStructuralBinding } from "../analysis/realm-global-structural-carrier.js";
 import { allocLocal } from "../context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import { addFuncType, addImport, localGlobalIdx, resolveWasmType } from "../index.js";
@@ -52,6 +55,7 @@ import {
 import { buildArgcExtrasSetupFromLocals } from "./argc-extras.js";
 import { tryCompileGetPrototypeOfIsPrototypeOf } from "./object-get-prototype-of.js";
 import { tryEmitStaticOrNativeIsPrototypeOf } from "../native-is-prototype-of.js";
+import { addStringConstantGlobal } from "../registry/imports.js";
 import type { ObjectLiteralMethodReceiverBind } from "../object-literal-method-receiver.js";
 import { sourceAssignsAliasedFunctionMember, sourceDefinesFunctionMember } from "../source-function-members.js";
 import {
@@ -1145,6 +1149,77 @@ export function compileCallablePropertyCall(
   for (let i = 0; i < sigParamCount; i++) {
     const paramType = ctx.checker.getTypeOfSymbol(sigParameters[i]!);
     sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+  }
+
+  // A structural contract asserted over a live realm-global capability keeps
+  // an open externref carrier (#4376). Its callable properties are likewise
+  // live JavaScript properties: the function installed at runtime need not use
+  // the wrapper ABI inferred from the erased TypeScript signature. Fetch the
+  // exact property value before evaluating arguments, retain the original
+  // receiver for `this`, and invoke through the native dynamic-closure bridge.
+  //
+  // This is intentionally restricted to the declaration-proven carrier above
+  // and fixed argument lists. Ordinary closed structs retain the typed
+  // call_ref path, while a dynamic spread stays on the existing fallback until
+  // it has a value-preserving ObjVec concat.
+  if (
+    (ctx.standalone || ctx.wasi) &&
+    !expr.arguments.some((argument) => ts.isSpreadElement(argument)) &&
+    expressionDescendsFromRealmStructuralBinding(ctx, fctx, propAccess.expression)
+  ) {
+    const { newIdx: objVecNewIdx, pushIdx: objVecPushIdx } = ensureObjVecBuilders(ctx);
+    const applyClosureIdx = reserveApplyClosure(ctx);
+    addStringConstantGlobal(ctx, methodName);
+    flushLateImportShifts(ctx, fctx);
+    const externGetIdx = ctx.funcMap.get("__extern_get");
+    if (externGetIdx !== undefined) {
+      const receiverType = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
+      if (receiverType === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+      } else if (receiverType.kind !== "externref") {
+        coerceType(ctx, fctx, receiverType, { kind: "externref" });
+      }
+      const receiverLocal = allocLocal(fctx, `__realm_call_recv_${fctx.locals.length}`, {
+        kind: "externref",
+      });
+      fctx.body.push({ op: "local.set", index: receiverLocal });
+
+      fctx.body.push({ op: "local.get", index: receiverLocal });
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? externGetIdx });
+      const calleeLocal = allocLocal(fctx, `__realm_call_fn_${fctx.locals.length}`, {
+        kind: "externref",
+      });
+      fctx.body.push({ op: "local.set", index: calleeLocal });
+
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_new") ?? objVecNewIdx });
+      const argsLocal = allocLocal(fctx, `__realm_call_args_${fctx.locals.length}`, {
+        kind: "externref",
+      });
+      fctx.body.push({ op: "local.set", index: argsLocal });
+      for (const argument of expr.arguments) {
+        fctx.body.push({ op: "local.get", index: argsLocal });
+        const argumentType = compileExpression(ctx, fctx, argument, { kind: "externref" });
+        if (argumentType === null) {
+          fctx.body.push({ op: "ref.null.extern" });
+        } else if (argumentType.kind !== "externref") {
+          coerceType(ctx, fctx, argumentType, { kind: "externref" });
+        }
+        fctx.body.push({
+          op: "call",
+          funcIdx: ctx.funcMap.get("__objvec_push") ?? objVecPushIdx,
+        });
+      }
+
+      fctx.body.push({ op: "local.get", index: calleeLocal });
+      fctx.body.push({ op: "local.get", index: receiverLocal });
+      fctx.body.push({ op: "local.get", index: argsLocal });
+      fctx.body.push({
+        op: "call",
+        funcIdx: ctx.funcMap.get("__apply_closure") ?? applyClosureIdx,
+      });
+      return { kind: "externref" };
+    }
   }
 
   // A synthetic wrapper derived from a field's call signature cannot encode
