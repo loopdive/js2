@@ -16,6 +16,7 @@ import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import {
   arrayLiteralEscapeWidensToExternref,
   objectLiteralIsStandaloneAnyObjectCarrier,
+  objectLiteralForcesHostPath,
   objectLiteralSpreadTakesHostPath,
   resolveComputedKeyExpression,
 } from "../literals.js";
@@ -759,6 +760,10 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
           (ts.isPropertyAssignment(p) && p.name !== undefined && ts.isComputedPropertyName(p.name)),
       );
       if (forcesHostObject) return { kind: "externref" };
+      // (#4616) Same lockstep as the main local-typing path: runtime computed
+      // keys (incl. symbols), disposal methods, and empty-string keys route the
+      // VALUE to the host plain-object path.
+      if (objectLiteralForcesHostPath(ctx, init)) return { kind: "externref" };
       if (objectLiteralSpreadTakesHostPath(ctx, init)) return { kind: "externref" };
     }
     if (isProxyConstruction(init)) return { kind: "externref" };
@@ -1703,24 +1708,18 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // (#1433) Same routing for `[Symbol.dispose]` / `[Symbol.asyncDispose]`
     // computed methods — they reach the JS-host plain-object path so the
     // native runtime can find the disposer under the real Symbol property.
+    // (#4616) Routes through the SAME predicate compileObjectLiteral's host
+    // gate uses (objectLiteralForcesHostPath — accessors, disposal methods,
+    // RUNTIME computed keys incl. symbols, empty-string keys) so the local's
+    // representation and the literal's value representation stay in lockstep.
+    // The previous inline check missed computed-key PropertyAssignments
+    // (`{ a: 1, [symbolKey]: 3 }`): the value built as a host object while an
+    // un-annotated local stayed struct-typed — the store null-cast and reads
+    // answered NULL (jest Replaceable "Type null is not support").
     const initIsAccessorLiteral =
       decl.initializer !== undefined &&
       ts.isObjectLiteralExpression(decl.initializer) &&
-      decl.initializer.properties.some((p) => {
-        if (ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) return true;
-        if (ts.isMethodDeclaration(p) && ts.isComputedPropertyName(p.name)) {
-          const inner = p.name.expression;
-          if (
-            ts.isPropertyAccessExpression(inner) &&
-            ts.isIdentifier(inner.expression) &&
-            inner.expression.text === "Symbol" &&
-            (inner.name.text === "dispose" || inner.name.text === "asyncDispose")
-          ) {
-            return true;
-          }
-        }
-        return false;
-      });
+      objectLiteralForcesHostPath(ctx, decl.initializer);
     // (#2804) A spread-containing object literal initializer that takes the host
     // plain-object path (no concrete contextual struct type — e.g.
     // `const b = { ...a, z: 3 }`) builds a host `$Object` (externref), NOT the

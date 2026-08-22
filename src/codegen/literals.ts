@@ -1317,6 +1317,34 @@ function compileHostObjectAsStruct(
   return { kind: "ref", typeIdx };
 }
 
+/**
+ * (#4616) The accessor/computed-key/disposal/empty-key HOST-PATH gate,
+ * extracted so the variable-declaration LOCAL TYPING (statements/variables.ts)
+ * can make the IDENTICAL decision — the #2804 lockstep discipline. Before
+ * this, a literal with a computed SYMBOL key (`{ a: 1, [symbolKey]: 3 }`)
+ * built a host plain object here while the un-annotated local stayed
+ * struct-typed, so the store null-cast and the value read back as NULL in
+ * the lifted-closure lanes (jest Replaceable "Type null is not support").
+ */
+export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  return (
+    expr.properties.length > 0 &&
+    (expr.properties.some((p) => ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) ||
+      _hasDisposalMethod(expr) ||
+      _hasRuntimeComputedKey(ctx, expr) ||
+      // (#4616, cookie parseCookie tests) An EMPTY-STRING key (`{ "": "bar" }`
+      // — a legal JS property) cannot be a struct field: the field-name
+      // plumbing (`__struct_field_names` comma join, `__sget_<name>` exports)
+      // degenerates on "", so the property silently vanished (Object.keys []
+      // and even the in-module read answered undefined). The host plain-object
+      // path stores it faithfully.
+      expr.properties.some(
+        (p) =>
+          (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) && resolvePropertyNameText(ctx, p) === "",
+      ))
+  );
+}
+
 export function objectLiteralSpreadTakesHostPath(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
   if (expr.properties.length === 0) return false;
   if (!expr.properties.some((p) => ts.isSpreadAssignment(p))) return false;
@@ -1568,22 +1596,7 @@ export function compileObjectLiteral(
   // only, so such a property (and the key expression's side effects) would
   // be silently dropped; the host plain-object path evaluates the key at
   // runtime.
-  if (
-    expr.properties.length > 0 &&
-    (expr.properties.some((p) => ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) ||
-      _hasDisposalMethod(expr) ||
-      _hasRuntimeComputedKey(ctx, expr) ||
-      // (#4616, cookie parseCookie tests) An EMPTY-STRING key (`{ "": "bar" }`
-      // — a legal JS property) cannot be a struct field: the field-name
-      // plumbing (`__struct_field_names` comma join, `__sget_<name>` exports)
-      // degenerates on "", so the property silently vanished (Object.keys []
-      // and even the in-module read answered undefined). The host plain-object
-      // path stores it faithfully.
-      expr.properties.some(
-        (p) =>
-          (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) && resolvePropertyNameText(ctx, p) === "",
-      ))
-  ) {
+  if (objectLiteralForcesHostPath(ctx, expr)) {
     return compileObjectLiteralWithAccessors(ctx, fctx, expr);
   }
 

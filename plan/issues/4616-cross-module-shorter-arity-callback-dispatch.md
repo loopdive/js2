@@ -39,6 +39,7 @@ loc-budget-allow:
   - src/runtime.ts
   - src/codegen/literals.ts
   - src/codegen/expressions/calls.ts
+  - src/codegen/statements/variables.ts
 func-budget-allow:
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
   - src/codegen/extern-declarations.ts::registerNodeBuiltinImports
@@ -347,3 +348,19 @@ object-keys / hasownproperty / object-create / unknown-field-fallback /
 arguments-object / #3116 green (issue-2130 ×3 pre-existing, stash-A/B
 identical). Regression test:
 `tests/issue-4616-null-proto-host-object-get.test.ts` (1).
+
+## 2026-08-22 twelfth slice — computed-key literal local typing lockstep (jest Replaceable + queueRunner)
+
+`{ a: 1, b: 2, [symbolKey]: 3 }` routes its VALUE to the host plain-object
+path (#2126 runtime computed key), but the un-annotated LOCAL's slot stayed
+struct-typed — the store null-cast, so in the lifted-closure it-lanes the
+whole literal read back as NULL (`new Replaceable(object)` → getType(null) →
+"Type null is not support"). The variable-declaration local typing (and the
+generator/async spill twin) now consult the SAME predicate as the literal
+routing — `objectLiteralForcesHostPath`, extracted from compileObjectLiteral's
+accessor/disposal/computed-key/empty-key gate (#2804 lockstep discipline).
+
+Measured: jest 292/318 → 314/331 (Replaceable 15→17/17 and ALL 6 queueRunner
+tests flipped with it); cookie 63740/63740 and clsx 32/32 hold; ts7 clean;
+computed-property/object-literal-accessor/symbol guard battery green (33).
+Regression test: `tests/issue-4616-computed-symbol-key-local.test.ts` (1).
