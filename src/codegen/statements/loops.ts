@@ -53,6 +53,10 @@ import {
   ensureAsyncIterator,
 } from "./destructuring.js";
 import { emitForInStaticUnroll } from "./for-in-static-unroll.js"; // (#4561)
+// (#4491 T9) a `new Date()` / `new RegExp()` receiver is a closed STRUCT but not a
+// closed SHAPE — it carries own properties in the #4008 bag, so it must enumerate
+// dynamically rather than unroll its declared (inherited, non-enumerable) members.
+import { forInReceiverIsDynamic } from "../builtin-instance-key-presence.js";
 import { blockLoop, restoreBlockScopedShadows, saveBlockScopedShadows, shiftLoopDepths } from "./shared.js";
 import {
   bodyHasMatchingCharRead,
@@ -3581,8 +3585,7 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     // `$Object` (so `__object_keys` would return empty) — those keep the
     // static-unroll path below, which is exact for a non-mutated closed shape.
     const recvWasmType = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(stmt.expression));
-    const isDynamicReceiver =
-      recvWasmType.kind === "externref" || recvWasmType.kind === "anyref" || recvWasmType.kind === "ref_extern";
+    const isDynamicReceiver = forInReceiverIsDynamic(ctx, recvWasmType);
     if (isDynamicReceiver) {
       ensureObjectRuntime(ctx);
       // #2964 — for-in must enumerate inherited enumerable keys too, so route

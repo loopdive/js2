@@ -48,7 +48,9 @@ import {
   tryEmitVecLengthDefineForDefineProperties,
 } from "./array-length-define.js";
 import { emitHasOwnPresence } from "./closed-struct-presence.js"; // (#3920) per-instance own-presence
-import { vecNamedKeyNeedsRuntime } from "./vec-named-key-presence.js"; // (#4062) array expando presence
+// (#4062 array bag / #4491 T9 Date+RegExp bag) a statically-known key may live in
+// a carrier bag the receiver's field list cannot see — route the folded `false`.
+import { carrierBagKeyNeedsRuntime } from "./builtin-instance-key-presence.js";
 import { isStaticDescWellFormed, isStaticallyNonObjectDescExpr } from "./descriptor-shape.js";
 // (#4479) the `Properties` MAP half of Object.defineProperties — key naming and
 // `$Object` materialization. Reasoning lives in that module's header.
@@ -5005,7 +5007,7 @@ export function compilePropertyIntrospection(
     // no part of the fold above can see — the vec's field list is
     // `["length","data"]`. Only a folded `0` is routed, so every affirmative
     // answer stays byte-identical. See vec-named-key-presence.ts.
-    if (vecNamedKeyNeedsRuntime(ctx, receiverWasm, staticKey, result)) {
+    if (carrierBagKeyNeedsRuntime(ctx, receiverWasm, staticKey, result)) {
       if (emitRuntimePropertyIntrospection(ctx, fctx, propAccess.expression, arg, isPropertyIsEnumerable)) {
         return { kind: "i32", boolean: true };
       }

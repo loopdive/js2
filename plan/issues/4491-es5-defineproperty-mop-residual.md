@@ -3426,3 +3426,103 @@ flips + cross-lane canaries by probe on the integrated tree, then the four
 gates CHAINED as command-&&-blockers before commit, push with tech-lead auth.
 Load discipline: serial probes, `uptime` before sweeps (the restart was
 overload-triggered), commit early in worktrees.
+
+### Handover (T9, `team-dev-7`, 2026-08-22)
+
+Base `7dd91b7bad`. Wave-5 T9 took the three items the T2 lane sized and
+diagnosed. **5 rows flipped, 2 commits, all four gates green on both.** Every
+row was re-verified on this head BEFORE any edit (the T2 diagnoses all still
+reproduced) and again after; both slices carry a file-copy A/B control run.
+
+| slice | sha | rows flipped | control |
+| --- | --- | --- | --- |
+| Date/RegExp expandos visible to `hasOwnProperty` / `in` / for-in | `435ecc8ad4` | `defineProperty/15.2.3.6-4-408`, `keys/15.2.3.14-6-5` | 88 rows, base 86/88 = after 86/88, 0 regressions |
+| `constructor` seeded into the #2175 companion | `8303b5a373` | `Error/prototype/constructor/prop-desc`, `Set/…/set-prototype-constructor`, `WeakSet/…/weakset-prototype-constructor` | 146 rows, base and after outputs BYTE-IDENTICAL (124/146), 0 regressions |
+
+#### Item 1 — `constructor` in the companion: the exclusion IS load-bearing, and the seed alone was not enough
+
+The `memberCsv` exclusion stays, and the reason is in #4200's own header, not
+just `native-proto.ts`'s one-liner: the glue CSVs drive a shared consumer that
+mints a brand-keyed **method closure** per member, so a CSV entry would make
+`Error.prototype.constructor` a callable refusal stub instead of the constructor
+object — while `gOPD(p,"constructor").value === p.constructor` is a corpus
+assertion. The companion is a **different table**, so seeding it is not blocked
+by that; `builtin-proto-constructor-seed.ts` installs the SAME #4200 carrier, so
+all three consumers agree by construction.
+
+**The half that was not in the T2 sizing, and without which the seed flips
+zero rows:** `native-proto-own-props.ts` answers `constructor` own
+**unconditionally from ES5**, so `propertyHelper.js`'s `isConfigurable`
+(`delete o[k]; return !hasOwnProperty(o, k)`) can never observe the delete. With
+the seed in and that list unchanged, all three rows failed with exactly
+*"constructor descriptor should be configurable"*. `constructor` now joins
+`seededNativeProtoDataMembersByBrand` for a brand whose seeder actually
+installed it, which routes the query to the companion; a brand with no carrier
+seeds none and keeps the unconditional arm.
+
+The T2 sizing said ~7 rows; the measured answer is **3**. `Date` and `Function`
+decline (no identity-stable carrier — `15.2.3.3-4-{34,116}` and
+`Date/prototype/constructor/prop-desc` stay #4200 follow-ups, and note
+`Date === null` is genuinely true on this head, so `Date.prototype.constructor
+=== Date` cannot hold until a carrier exists). `Iterator/prototype/constructor/
+prop-desc` wants an **accessor** pair (`typeof desc.get === "function"`), which
+the seeder does not install — same deferral as the #2175 accessor tier.
+
+#### Items 2+3 — the T2 diagnosis pointed at the wrong layer; correct it before re-using it
+
+T2 recorded these as a `carrier-bag-visibility.ts` gap ("there is no DATE
+carrier"). **That is not the defect.** `__is_closure_prop_carrier` has covered
+`__Date` / `__StandaloneRegExp` since #4008, and the RUNTIME is already right —
+measured on this head before any edit:
+
+| query | before | Node |
+| --- | --- | --- |
+| `d.prop1`, `Object.keys(d)`, `gOPN(d)`, `gOPD(d,"prop1")`, `Object.hasOwn(d,"prop1")` | correct | correct |
+| `f(d)` where `function f(x){return x.hasOwnProperty("prop1")}` | **`true`** | `true` |
+| `d.hasOwnProperty("prop1")` (statically-typed receiver) | **`false`** | `true` |
+| `"prop1" in d` (statically-typed receiver) | **`false`** | `true` |
+
+The `any`-typed spelling being RIGHT while the `Date`-typed spelling is WRONG is
+the whole discriminator: it is a **compile-time fold**, not a missing store.
+`compilePropertyIntrospection` / `compileInOperator` fold `structFieldNames ∪
+checker properties`, and `__Date`'s field list is `["timestamp"]`. This is #4062
+(`vec-named-key-presence.ts`) one receiver family further out; the new
+`builtin-instance-key-presence.ts` carries the same only-widens-a-FALSE safety
+argument that keeps it clear of the #4055-v1 −684.
+
+for-in was the same class: a `(ref $__Date)` is not externref/anyref, so
+`compileForInStatement` took the **static unroll**, which enumerated `Date`'s 44
+declared members — all inherited, all non-enumerable, i.e. exactly the set
+for-in must not yield — plus the `__@toPrimitive@64` CSV sentinel, and never the
+own expando. `__protoidx_forin_push` was NOT involved; that suspicion in the T2
+note can be dropped. The companion's `0xbd` flag word is correct
+(`enumerable:false`), which is why the 44 names could not have come from it.
+
+Files touched: `src/codegen/builtin-instance-key-presence.ts` (new),
+`builtin-proto-constructor-seed.ts` (new), `native-proto.ts`,
+`native-proto-own-props.ts`, `object-ops.ts`, `binary-ops-in.ts`,
+`statements/loops.ts`, `closure-props.ts`.
+
+Gotchas for the next lane in this area:
+
+- **`compileForInStatement`, `compileInOperator` and `compilePropertyIntrospection`
+  are all AT their #3400 ceiling.** The first cut of items 2+3 added a comment
+  and a second `if` at each site and failed the func-budget gate by +12/+6. The
+  fix was to merge both questions into one `carrierBagKeyNeedsRuntime` call and
+  move the rationale into the new module — net-zero lines at every site, no
+  allowance needed. Budget the wiring, not just the logic.
+- **A carrier emitter can shift `__defineProperty_value`.**
+  `emitBuiltinConstructorIdentity` / `emitBuiltinNamespaceObject` may register a
+  late import, which shifts every DEFINED func index — including the one
+  `ensureNativeProtoCompanionSeeder` captured before its member loop. The seed
+  arm runs FIRST and the loop re-reads the index afterwards.
+- **`delete <B>.prototype.<seeded method>` still does not retract
+  `hasOwnProperty`** — measured here, unchanged by this work: `delete
+  Number.prototype.toFixed` returns `true` and `gOPD` goes `undefined`, but
+  `hasOwnProperty("toFixed")` stays `true`. `__nproto_delete` rewrites the CSV
+  while the seeded-member ladder reads the companion, and the two disagree. Not
+  in scope here; it is the same shape as the `constructor` half above and
+  probably one fix.
+- The worktree's `test262/` symlink is recreated as a dead cross-worktree
+  symlink farm between Bash calls; re-link it in the SAME invocation as any
+  probe run.
