@@ -44,12 +44,6 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = join(HERE, "report", "react-dom-upstream-suite.json");
 const GENERATED_ROOT = join(HERE, ".react-dom-upstream-suite-impl");
 const PROJECT_ROOT = join(HERE, ".react-dom-upstream-suite-project");
-// Keep the complete upstream corpus observable without allowing a missing
-// browser/test dependency to consume the refresh job's entire wall-clock
-// budget. A timeout is reported on the individual test; it never removes the
-// test from extraction or the denominator silently.
-const DEFAULT_REACT_DOM_TEST_TIMEOUT_MS = 2_000;
-
 let nativeContextFile = "<setup>";
 let nativeContextTest = "<setup>";
 
@@ -373,16 +367,6 @@ function buildModuleSource(implementation, tests) {
   ].join("\n");
 }
 
-function buildServerModuleSource(implementation, tests, options = {}) {
-  return [
-    implementation,
-    REACT_EXPECT_SHIM,
-    `export function __reactDomServerInit() { __reactDomServerEnsureInit(); }`,
-    ...tests.map((test) => buildTestFunction(withReactDomSetup(test, { server: true, ...options }))),
-    LAST_ERROR_EXPORT,
-  ].join("\n");
-}
-
 function buildProjectModuleSource({ exportName, moduleName, imports, bindings = "", source }) {
   // The multi-file compiler currently publishes module-scope bindings in one
   // Wasm namespace. Keep the CJS export carrier top-level (so the large React
@@ -449,6 +433,92 @@ function buildProjectFiles({ reactSource, sharedSource, clientSource, tests }) {
         "var __REACTDOM_SHARED__ = __sharedExports;\n" +
         "var __SCHEDULER__ = __schedulerExports;",
       source: wireRequires(clientSource),
+    }),
+    "entry.ts": entry,
+  };
+}
+
+// Server-renderer batches use the same project shape as the client lane. Keep
+// the published renderer graphs in separate modules so a large Fizz test file
+// does not make the parent process synchronously compile a multi-megabyte
+// concatenation. The entry still contains the original extracted test bodies;
+// only the module wiring moves into the isolated project worker.
+export function buildServerProjectFiles({
+  reactSource,
+  sharedSource,
+  serverSource,
+  fizzSource = null,
+  tests,
+  fizzPlatform = null,
+}) {
+  const isFizz = fizzSource !== null;
+  const rendererSource = isFizz ? fizzSource : serverSource;
+  const rendererName = isFizz ? "fizz" : "server";
+  const rendererExport = isFizz ? "__fizzExports" : "__serverExports";
+  const rendererBinding = isFizz ? "__REACTDOM_FIZZ__" : "__REACTDOM_SERVER__";
+  const rendererImport = isFizz ? "__fizzExports" : "__serverExports";
+  const entry = [
+    'import { __reactExports } from "./react.ts";',
+    'import { __sharedExports } from "./shared.ts";',
+    `import { ${rendererImport} } from "./${rendererName}.ts";`,
+    'import { __schedulerExports } from "./scheduler.ts";',
+    "const __REACT__ = __reactExports;",
+    "const __REACTDOM_SHARED__ = __sharedExports;",
+    "const __REACTDOM__ = __sharedExports;",
+    `const ${rendererBinding} = ${rendererExport};`,
+    "const __SCHEDULER__ = __schedulerExports;",
+    "function __reactDomServerEnsureInit() {}",
+    REACT_EXPECT_SHIM,
+    `export function __reactDomServerInit() { __reactDomServerEnsureInit(); }`,
+    ...tests.map((test) =>
+      buildTestFunction(
+        withReactDomSetup(test, {
+          server: true,
+          fizz: isFizz,
+          fizzPlatform,
+        }),
+      ),
+    ),
+    LAST_ERROR_EXPORT,
+    `export function upstreamTestNames() { return [${tests.map((test) => JSON.stringify(test.id)).join(", ")}]; }`,
+    `export function upstreamTestCount() { return ${tests.length}; }`,
+  ].join("\n");
+  return {
+    "react.ts": buildProjectModuleSource({
+      exportName: "__reactExports",
+      moduleName: "react",
+      imports: "",
+      source: reactSource,
+    }),
+    "scheduler.ts": buildProjectModuleSource({
+      exportName: "__schedulerExports",
+      moduleName: "scheduler",
+      imports: "",
+      source: REACT_DOM_SCHEDULER_SHIM,
+    }),
+    "shared.ts": buildProjectModuleSource({
+      exportName: "__sharedExports",
+      moduleName: "shared",
+      imports:
+        'import { __reactExports } from "./react.ts";\n' + 'import { __schedulerExports } from "./scheduler.ts";',
+      bindings:
+        "var __REACT__ = __reactExports;\n" +
+        "var __SCHEDULER__ = __schedulerExports;\n" +
+        "var __REACTDOM_SHARED__ = __sharedExports;",
+      source: wireRequires(sharedSource),
+    }),
+    [`${rendererName}.ts`]: buildProjectModuleSource({
+      exportName: rendererExport,
+      moduleName: rendererName,
+      imports:
+        'import { __reactExports } from "./react.ts";\n' +
+        'import { __sharedExports } from "./shared.ts";\n' +
+        'import { __schedulerExports } from "./scheduler.ts";',
+      bindings:
+        "var __REACT__ = __reactExports;\n" +
+        "var __REACTDOM_SHARED__ = __sharedExports;\n" +
+        "var __SCHEDULER__ = __schedulerExports;",
+      source: wireRequires(rendererSource),
     }),
     "entry.ts": entry,
   };
@@ -577,14 +647,6 @@ async function runNativeByFile(implementation, tests, options = {}) {
   return results;
 }
 
-function withCompileTimeout(promise, timeoutMs, label) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs} ms`)), timeoutMs);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
-
 // Run original server-renderer tests against a separately published browser
 // bundle. This lane is intentionally independent from the client project
 // lane: server graphs have different host requirements and can compile to
@@ -621,7 +683,6 @@ async function runServerHarness({
     serverSource: isFizz ? "" : (serverSource ?? ""),
     fizzSource,
   });
-  const testTimeoutMs = Number(process.env.DOGFOOD_REACT_DOM_TEST_TIMEOUT_MS ?? DEFAULT_REACT_DOM_TEST_TIMEOUT_MS);
   const configuredCompileTimeout = Number(process.env.DOGFOOD_REACT_DOM_COMPILE_TIMEOUT_MS ?? 300_000);
   const compileTimeoutMs =
     Number.isFinite(configuredCompileTimeout) && configuredCompileTimeout > 0 ? configuredCompileTimeout : 300_000;
@@ -655,44 +716,56 @@ async function runServerHarness({
   const admitted = [];
   let totalCompileMs = 0;
   let totalBytes = 0;
+  let projectBatchIndex = 0;
 
   const compileGroup = async (file, groupTests, depth = 0) => {
-    const moduleSource = buildServerModuleSource(implementation, groupTests, {
-      fizz: isFizz,
-      fizzPlatform,
-    });
+    const generatedRoot = join(
+      PROJECT_ROOT,
+      `server-${lane.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-${projectBatchIndex++}`,
+    );
     const started = performance.now();
-    let result;
+    let isolated;
     try {
-      result = await withCompileTimeout(
-        compile(moduleSource, {
-          fileName: (moduleName ?? (isFizz ? "react-dom-server.browser.js" : "react-dom-server-legacy.browser.js"))
-            .replace(/^.*\//, "")
-            .replace(/\.production\.js$/, ".js"),
-          skipSemanticDiagnostics: true,
-          experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
-          sourceMap: true,
+      isolated = await compileProjectInWorker({
+        generatedRoot,
+        entryFile: "entry.ts",
+        files: buildServerProjectFiles({
+          reactSource,
+          sharedSource,
+          serverSource,
+          fizzSource: isFizz ? fizzSource : null,
+          tests: groupTests,
+          fizzPlatform,
         }),
-        compileTimeoutMs,
-        `compile server ${file}`,
-      );
+        timeoutMs: compileTimeoutMs,
+        workerEnv: {
+          DOGFOOD_INSTALL_JSDOM: "1",
+          DOGFOOD_NAMED_TEST_EXPORTS: "1",
+          ...(fizzPlatform === "node" ? { DOGFOOD_PLATFORM: "node", DOGFOOD_NODE_HOST_DEPS: "1" } : {}),
+        },
+      });
     } catch (error) {
-      result = { success: false, errors: [{ message: error instanceof Error ? error.message : String(error) }] };
+      isolated = {
+        compile: {
+          success: false,
+          validates: false,
+          durationMs: Math.round(performance.now() - started),
+          binaryBytes: 0,
+          errors: [{ message: error instanceof Error ? error.message : String(error) }],
+        },
+        wasm: null,
+      };
     }
-    const compileMs = Math.round(performance.now() - started);
+    const result = isolated?.compile ?? {};
+    const wasm = isolated?.wasm ?? null;
+    const compileMs = result.durationMs ?? Math.round(performance.now() - started);
     totalCompileMs += compileMs;
 
-    let validates = false;
-    let firstError = result?.errors?.[0]?.message ?? "no binary emitted";
-    if (result?.success && result.binary?.length) {
-      try {
-        await WebAssembly.compile(result.binary);
-        validates = true;
-        firstError = null;
-      } catch (error) {
-        firstError = error instanceof Error ? error.message : String(error);
-      }
-    }
+    const validates = result.validates === true;
+    const firstError =
+      result.errors?.[0]?.message ??
+      result.validationError ??
+      (result.timedOut ? `compile timeout after ${compileTimeoutMs}ms` : validates ? null : "no binary emitted");
 
     if (!validates && groupTests.length > 1 && depth < 6) {
       const middle = Math.ceil(groupTests.length / 2);
@@ -702,28 +775,15 @@ async function runServerHarness({
     }
 
     admitted.push(...groupTests);
-    let compiled = null;
-    if (validates) {
-      try {
-        const imports = result.importObject ?? {};
-        const { instance } = await WebAssembly.instantiate(result.binary, imports);
-        imports.setInstance?.(instance);
-        imports.__setInstance?.(instance);
-        instance.exports.__reactDomServerInit?.();
-        compiled = wrapExports(instance.exports, { signatures: result.exportSignatures });
-        totalBytes += result.binary.length;
-      } catch (error) {
-        firstError = `instantiate failed: ${error instanceof Error ? error.message : String(error)}`;
-      }
-    }
+    totalBytes += result.binaryBytes ?? 0;
 
     batchReports.push({
       file,
       tests: groupTests.length,
       compileMs,
-      binaryBytes: result?.binary?.length ?? 0,
-      imports: result?.imports?.map((entry) => `${entry.module}.${entry.name}`) ?? [],
-      compileSuccess: result?.success ?? false,
+      binaryBytes: result.binaryBytes ?? 0,
+      imports: result.imports?.map((entry) => `${entry.module}.${entry.name}`) ?? [],
+      compileSuccess: result.success ?? false,
       validates,
       firstError,
     });
@@ -742,12 +802,15 @@ async function runServerHarness({
         })
       ).map((entry) => [entry.id, entry]),
     );
-    for (const test of groupTests) {
+    for (let index = 0; index < groupTests.length; index++) {
+      const test = groupTests[index];
       runResults.set(test.id, {
         native: nativeResults.get(test.id) ?? {},
-        compiled,
+        validates,
         firstError,
-        sourceMap: result?.sourceMap,
+        wasmFatal: wasm?.fatal ?? null,
+        wasmStatus: wasm?.statuses?.[index] === true,
+        wasmError: wasm?.errors?.[index] ?? "",
       });
     }
   };
@@ -806,7 +869,7 @@ async function runServerHarness({
 
   const tests = [];
   for (const test of admitted) {
-    const { native, compiled, firstError, sourceMap } = runResults.get(test.id) ?? {};
+    const { native, validates, firstError, wasmFatal, wasmStatus, wasmError } = runResults.get(test.id) ?? {};
     const entry = {
       id: test.id,
       file: test.file,
@@ -819,23 +882,19 @@ async function runServerHarness({
       tests.push(entry);
       continue;
     }
-    if (!compiled) {
+    if (!validates) {
       entry.status = "skipped";
       entry.skippedReason = firstError ?? "binary did not instantiate";
       tests.push(entry);
       continue;
     }
-    try {
-      const value = await withCompileTimeout(compiled[test.id](), testTimeoutMs, `server ${test.fullName}`);
-      entry.compiledPassed = value === 1;
-      entry.status = value === 1 ? "pass" : "fail";
-      if (value !== 1) entry.compiledMessage = compiled.__react_last_error?.() ?? "";
-    } catch (error) {
+    if (wasmFatal) {
       entry.status = "trapped";
-      const stack = error instanceof Error ? (error.stack ?? error.message) : String(error);
-      const offsetMatch = /wasm-function\[\d+\]:0x([0-9a-f]+)/i.exec(stack);
-      const source = offsetMatch ? sourceAtWasmOffset(sourceMap, Number.parseInt(offsetMatch[1], 16)) : null;
-      entry.compiledMessage = `${stack}${source ? `\nsource ${source.source}:${source.line}:${source.column}` : ""}`;
+      entry.compiledMessage = wasmFatal;
+    } else {
+      entry.compiledPassed = wasmStatus === true;
+      entry.status = entry.compiledPassed ? "pass" : "fail";
+      if (!entry.compiledPassed) entry.compiledMessage = wasmError;
     }
     tests.push(entry);
   }
