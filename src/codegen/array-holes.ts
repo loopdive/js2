@@ -770,6 +770,26 @@ function isProtoMemberValueUse(node: ts.Node): boolean {
   if (!isBrandedBuiltinPrototypeExpr(node)) return false;
   const parent: ts.Node | undefined = node.parent;
   if (parent === undefined) return true;
+  // (#4492) `delete <Builtin>.prototype.<name>` is the ONE member-access parent
+  // the syntactic path does NOT handle. Recording a deleted OWN member needs the
+  // brand COMPANION seeded — `__nproto_hasown`'s seeded-member ladder asks the
+  // companion, and everything else falls to the immutable `$memberCsv` scan,
+  // which resurrects the member. Without arming, `delete` reported success and
+  // `hasOwnProperty` kept answering true.
+  //
+  // Measured, and it explains a pair that looked contradictory: `String/
+  // prototype/S15.5.4_A3` PASSED while `S15.5.4_A1` FAILED on the identical
+  // `delete String.prototype.toString; String.prototype.toString()` — because
+  // A3 happens to read `Object.prototype` as a VALUE one line earlier, which
+  // armed the flag by accident. A1 opens with the delete and armed nothing.
+  if (
+    (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+    unwrapExpr(parent.expression) === unwrapExpr(node) &&
+    parent.parent !== undefined &&
+    ts.isDeleteExpression(parent.parent)
+  ) {
+    return true;
+  }
   // Object-of-a-member-access ⇒ the syntactic path handles it; not a value use.
   if (
     (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
