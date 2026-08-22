@@ -37,7 +37,7 @@ import { setupReactDomImplementation, setupReactDomUpstreamSuite } from "./setup
 import { extractReactUpstreamTests } from "./react-upstream-extract.mjs";
 import { installReactTestEnvironment } from "./react-test-environment.mjs";
 import { installReactUpstreamInfrastructure } from "./react-upstream-infrastructure.mjs";
-import { REACT_EXPECT_SHIM, LAST_ERROR_EXPORT, buildTestFunction } from "./react-upstream-shim.mjs";
+import { REACT_EXPECT_SHIM, LAST_ERROR_EXPORT, buildTestFunction, withTimeout } from "./react-upstream-shim.mjs";
 import { compileProjectInWorker, compileSourceInWorker } from "./upstream-suite-runner.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -46,6 +46,19 @@ const GENERATED_ROOT = join(HERE, ".react-dom-upstream-suite-impl");
 const PROJECT_ROOT = join(HERE, ".react-dom-upstream-suite-project");
 let nativeContextFile = "<setup>";
 let nativeContextTest = "<setup>";
+
+// (#4604) Per-test watchdog, same contract as the React suite's
+// DOGFOOD_REACT_TEST_TIMEOUT_MS (#4683). The react-dom harness inherited the
+// React suite's extractor and shim but not its watchdog, so one upstream test
+// whose native run never settles (a Fizz stream await, an act whose scheduler
+// work never drains) hung the entire npm-compat generator with zero output —
+// refresh run 778's renderers group printed one marker line and was killed
+// 5h49m later. Read at call time so tests can override per-case.
+const DEFAULT_REACT_DOM_TEST_TIMEOUT_MS = 2_000;
+function testTimeoutMs() {
+  const configured = Number(process.env.DOGFOOD_REACT_DOM_TEST_TIMEOUT_MS ?? 0);
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_REACT_DOM_TEST_TIMEOUT_MS;
+}
 
 export function isExpectedLateJsdomHostError(error) {
   return error?.name === "NotFoundError" && error?.message === "The node to be removed is not a child of this node.";
@@ -616,7 +629,7 @@ async function runNative(implementation, tests, options = {}) {
       let value;
       let error = null;
       try {
-        value = await runners.tests[test.id]();
+        value = await withTimeout(runners.tests[test.id](), testTimeoutMs(), `native ${test.fullName}`);
       } catch (thrown) {
         error = thrown instanceof Error ? thrown.message : String(thrown);
       }
@@ -1677,7 +1690,7 @@ export async function runHarness({ quiet = false } = {}) {
     }
     let value;
     try {
-      value = await compiled[test.id]();
+      value = await withTimeout(compiled[test.id](), testTimeoutMs(), `compiled ${test.fullName}`);
     } catch (error) {
       entry.status = "trapped";
       const stack = error instanceof Error ? (error.stack ?? error.message) : String(error);
