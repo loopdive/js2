@@ -3720,7 +3720,7 @@ function preparedExactLexicalModuleInit(
     (!ctx.nativeStrings &&
       !ctx.standalone &&
       planning?.plan.invocation.target === "host" &&
-      planning.plan.invocation.kind === "wasm-start") ||
+      (planning.plan.invocation.kind === "wasm-start" || planning.plan.invocation.kind === "deferred-export")) ||
     (ctx.nativeStrings &&
       ctx.standalone &&
       ctx.targetProfile.semanticProviders === "native-first" &&

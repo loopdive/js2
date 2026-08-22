@@ -119,6 +119,28 @@ describe("React upstream test infrastructure", () => {
     }
   });
 
+  it("can use ReactDOM's flushSync boundary for ReactDOM unit tests", async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    const dom = installReactTestEnvironment();
+    const installed = installReactUpstreamInfrastructure({ preferReactDomAct: true });
+    try {
+      const { infrastructure } = installed;
+      const container = document.createElement("div");
+      const root = infrastructure.reactDomClient.createRoot(container);
+      await infrastructure.internalTestUtils.act(() => {
+        root.render(infrastructure.react.createElement("div", null, "ok"));
+      });
+      expect(container.firstChild?.textContent).toBe("ok");
+      root.unmount();
+    } finally {
+      installed.cleanup();
+      dom.cleanup();
+      if (previousNodeEnv === undefined) Reflect.deleteProperty(process.env, "NODE_ENV");
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
+
   it("provides scoped Jest module isolation to Node and compiled Wasm", async () => {
     const previousNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";
