@@ -2335,6 +2335,16 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
   if (!ts.isIdentifier(expr)) return false;
   const sym = ctx.checker.getSymbolAtLocation(expr);
   const decl = sym?.valueDeclaration;
+  // (#4616) A callable PARAM of a CLASS METHOD routinely receives a host
+  // function at runtime: an any-receiver dynamic method call marshals its
+  // arrow argument through the host bridge, and test harnesses hand methods
+  // host spies (jest.fn()). Replaceable.forEach's `cb(...)` nulled the
+  // wrapper cast and trapped call_ref un-catchably. Method params get the
+  // #1712 host arm; plain function params keep the #1941 gate so pure
+  // local-closure programs stay host-import-free.
+  if (decl && ts.isParameter(decl) && decl.parent !== undefined && ts.isMethodDeclaration(decl.parent)) {
+    return !ctx.standalone && !ctx.wasi;
+  }
   if (!decl || !ts.isVariableDeclaration(decl) || !decl.initializer) return false;
 
   // (#3432 follow-up) A declaration that SKIPPED the closure match-and-recast

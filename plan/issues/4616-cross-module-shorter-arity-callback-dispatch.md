@@ -38,6 +38,7 @@ loc-budget-allow:
   - src/codegen/struct-field-exports.ts
   - src/runtime.ts
   - src/codegen/literals.ts
+  - src/codegen/expressions/calls.ts
 func-budget-allow:
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
   - src/codegen/extern-declarations.ts::registerNodeBuiltinImports
@@ -53,6 +54,7 @@ func-budget-allow:
   - src/codegen/expressions/calls-guards.ts::isEvolvingAnyBinding
   - src/codegen/array-methods.ts::compileArrayMethodCall
   - src/codegen/literals.ts::objectLiteralSpreadTakesHostPath
+  - src/codegen/expressions/calls.ts::calleeMayBeHostCallable
   - src/runtime.ts::_structFieldNamesRaw
 ---
 
@@ -300,3 +302,24 @@ Validation: jest 266 → 268/313 on the new wider suite (deepCyclicCopy 11→9);
 cookie 63740/63740 holds; spread battery green (#2009 ×1 "named-source
 spreads" and #2127 ×1 "data-property spread" fail identically WITHOUT these
 changes — pre-existing, A/B'd via stash).
+
+## 2026-08-22 tenth slice — class-method callable params can be host functions (jest Replaceable)
+
+`Replaceable.forEach(cb)`'s `cb(...)` trapped un-catchably: a callable PARAM
+of a class method receives a HOST function whenever the method is invoked
+through an any-receiver dynamic dispatch (the arrow argument crosses the host
+bridge) or a harness passes a jest.fn() spy. The typed callable-param
+dispatch's guarded wrapper cast nulls for such a value and `call_ref` traps —
+exactly the foreign-callable class #1712/#2928 already solved, but the #1941
+gate (`calleeMayBeHostCallable`) excluded ALL parameters on the assumption
+they are "always wrapped into the closure struct". Method params now pass the
+gate in the gc host lane only; plain function params keep #1941's exclusion
+(pure local-closure programs stay host-import-free, dual-mode preserved —
+optimize-differential and #1712 guards green; the 6 illegal-cast-closures-585
+failures are pre-existing, stash-A/B identical).
+
+Regression test: `tests/issue-4616-method-param-host-callable.test.ts` (1).
+Also root-caused this slice, no code change: the docblock `index.test.ts`
+cluster (19) fails WORSE on pure origin/main src (17/39 vs this branch's
+20/39) — main-side fallout of the new upstream-suite "package resolution
+seams", not this branch's regression.
