@@ -25,6 +25,8 @@ loc-budget-allow:
   - src/codegen/expressions/calls.ts
   - src/codegen/object-runtime.ts
   - src/codegen/expressions/identifiers.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/property-access-dispatch.ts
   - src/codegen/context/types.ts
   - src/codegen/declarations/import-collector.ts
   - src/codegen/literals.ts
@@ -34,9 +36,12 @@ loc-budget-allow:
   - src/compiler.ts
 func-budget-allow:
   - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/expressions/calls.ts::tryEmitInlineDynamicCall
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
   - src/codegen/object-runtime.ts::fillApplyClosure
   - src/codegen/declarations/import-collector.ts::finalizeUnifiedCollector
   - src/codegen/closures.ts::compileArrowAsCallback
+  - src/codegen/closures.ts::compileLiftedClosureBody
   - src/codegen/closures/arrow-phases.ts::planClosureCaptures
   - src/codegen/expressions/identifiers.ts::compileIdentifierCore
   - src/codegen/context/create-context.ts::createCodegenContext
@@ -1030,3 +1035,83 @@ admits **337/339** (the two existing diff-sequence snapshot-oracle failures),
 all 29 modules compile and 28 validate, and Wasm scores **238/337** with zero
 runtime failures. The unavailable-infrastructure remainder is **2,949
 registrations** from 212 deferred files.
+
+## 2026-08-22 Wasm callback and process compatibility checkpoint
+
+The next original unit was admitted without changing its test body:
+`packages/jest-watcher/src/lib/__tests__/prompt.test.ts`. Its four callbacks
+now pass in both lanes. The adapter also exposes the minimal Node `process`,
+`stdout`, and `stderr` surface used by the original prompt and globals tests.
+
+The Wasm runtime fix is generic: host-method dispatch now uses
+`Reflect.apply`, which supports `WebAssembly.Function` values that are
+callable but do not have a JavaScript `.apply` property. The Jest shim records
+spy calls in flat scalar/argument vectors; nested WasmGC vectors can be copied
+at a host boundary and otherwise report stale lengths. This keeps the matcher
+oracle backed by actual callback invocations rather than a cached or
+synthetic result.
+
+Exact unchanged run:
+
+```text
+DOGFOOD_JEST_UPSTREAM_SUITE=1 node --import tsx tests/dogfood/jest-upstream-suite.mjs --json
+```
+
+- 343 callbacks across 30 selected files; 211 files and 2,945 registrations remain deferred as unavailable infrastructure;
+- Node oracle: 341/343 registered callbacks pass (the two existing diff-sequence oracle failures remain);
+- compile: 30/30 modules succeed and 29/30 validate;
+- Wasm: 243/341 scored tests pass, 98 fail, 0 runtime failures;
+- the newly admitted `jest-watcher` prompt unit is 4/4 in Wasm.
+
+Focused Vitest, typecheck, issue-id, formatting, and diff checks remain the
+required follow-up gates. This is still a measured selected slice, not a claim
+that Jest's deferred runner, worker, DOM, or filesystem suites are complete.
+
+Implementation: [PR #4767 — bridge WebAssembly callbacks in prompt tests](https://github.com/loopdive/js2wasm/pull/4767).
+
+## 2026-08-22 Jest Node-global and dependency-resolution checkpoint
+
+The next original release-tag unit, `jest-environment-node/src/__tests__/globals_cleanup_3.test.ts`, is now selected unchanged. It exercises the
+Node-global cleanup path using `Object.getOwnPropertyDescriptors` and passes in
+both the native oracle and compiled Wasm without a package-specific adapter.
+
+The same run exposed a real cross-lane infrastructure mismatch: Vitest's
+`NODE_PATH` supplied `graceful-fs` to Jest's queue-runner unit, while the direct
+npm-compat process did not. The adapter now verifies pinned `graceful-fs@4.2.11`
+bytes and materializes an explicit ESM host-capability package exposing the
+`node:fs` `realpathSync` surface consumed by Jest's upstream `tryRealpath`
+implementation. The original queue-runner callbacks therefore register in both
+lanes; the module's Wasm validation finding remains scored, not hidden.
+
+The exact unchanged run now covers **344 callbacks across 31 selected files**:
+Node admits **342/344**, all 31 modules compile and 30 validate, and Wasm
+scores **244/342** with zero runtime failures. The unavailable-infrastructure
+remainder is **2,944 registrations** from 210 deferred files. The two native
+oracle failures and 98 scored Wasm failures remain visible compatibility
+findings; this checkpoint does not reclassify them as infrastructure.
+
+Implementation remains on [PR #4767 — bridge WebAssembly callbacks in prompt tests](https://github.com/loopdive/js2wasm/pull/4767).
+
+## 2026-08-22 Jest pretty-format dependency checkpoint
+
+The original `jest-jasmine2/src/__tests__/expectationResultFactory.test.ts`
+unit is now selected unchanged. Its real `pretty-format@30.4.1` source is
+verified from the pinned Jest checkout and exposed through a package-resolution
+adapter. The adapter also verifies and materializes the published
+`ansi-styles@5.2.0`, `react-is@18.3.1`, and `react-is@19.2.8` sources as ESM
+package roots; the React-is adapters execute the pinned development bundles,
+not synthetic test results. Snapshot matching now uses the upstream
+pretty-format serializer for this unit and handles escaped backticks in Jest's
+original snapshot keys. Existing watcher snapshots continue to use their
+string serializer.
+
+The exact unchanged run covers **351 callbacks across 32 selected files**.
+Node admits **349/351** (the two existing diff-sequence oracle failures), all
+32 modules compile and 31 validate, and Wasm scores **245/349** with zero
+runtime failures. The unavailable-infrastructure remainder is **2,937
+registrations** from 209 deferred files. The newly admitted unit contributes
+one Wasm pass; its six remaining Wasm failures are genuine null-pointer
+runtime failures in the optional-property/error paths and are not reclassified
+as dependency infrastructure.
+
+Implementation remains on [PR #4767 — bridge WebAssembly callbacks in prompt tests](https://github.com/loopdive/js2wasm/pull/4767).

@@ -222,7 +222,7 @@ function isSymbolIteratorExpression(expr: ts.Expression): boolean {
   );
 }
 
-function isAssignedToSymbolIterator(fn: ts.ArrowFunction | ts.FunctionExpression): boolean {
+function isAssignedToSymbolIterator(fn: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration): boolean {
   let current: ts.Node | undefined = fn.parent;
   while (current && !ts.isSourceFile(current)) {
     if (
@@ -1403,7 +1403,9 @@ export function closureProvablyAfterLetDecl(
  * supplies `thisArg` via the `__current_this` global) misaligns. No-this
  * closures (all JS, incl. every test262 input) return the original — byte-identical.
  */
-export function runtimeParameters(arrow: ts.ArrowFunction | ts.FunctionExpression): readonly ts.ParameterDeclaration[] {
+export function runtimeParameters(
+  arrow: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration,
+): readonly ts.ParameterDeclaration[] {
   const ps = arrow.parameters;
   const first = ps.length > 0 ? ps[0]! : undefined;
   if (first && ts.isIdentifier(first.name) && first.name.escapedText === "this") {
@@ -1493,9 +1495,11 @@ function unboundClosureReturnsAValue(fn: ts.ArrowFunction | ts.FunctionExpressio
  */
 export function computeClosureWrapperSig(
   ctx: CodegenContext,
-  arrow: ts.ArrowFunction | ts.FunctionExpression,
-): { params: ValType[]; returnType: ValType | null } {
-  const isGenerator = ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined;
+  arrow: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration,
+): { params: ValType[]; returnType: ValType | null; hasRestParam: boolean } {
+  const isGenerator =
+    (ts.isFunctionExpression(arrow) || ts.isFunctionDeclaration(arrow)) && arrow.asteriskToken !== undefined;
+  const hasRestParam = runtimeParameters(arrow).some((param) => param.dotDotDotToken !== undefined);
 
   // (#4249) A foreign, never-bound declaration (an eval-inline splice) cannot be
   // asked ANY symbol-resolving question. Answer it syntactically instead — which
@@ -1503,10 +1507,11 @@ export function computeClosureWrapperSig(
   // every parameter is `any` (externref) and the return is externref iff the
   // body returns a value. Skipping the checker here is what keeps
   // `eval("o = {get foo(){…}}")` from taking down the whole compile.
-  if (declarationIsUnbound(arrow)) {
+  if (!ts.isFunctionDeclaration(arrow) && declarationIsUnbound(arrow)) {
     return {
       params: runtimeParameters(arrow).map(() => ({ kind: "externref" as const })),
       returnType: isGenerator || unboundClosureReturnsAValue(arrow) ? { kind: "externref" } : null,
+      hasRestParam,
     };
   }
 
@@ -1514,7 +1519,10 @@ export function computeClosureWrapperSig(
   const arrowParams: ValType[] = [];
   for (const p of runtimeParameters(arrow)) {
     const paramType = ctx.checker.getTypeAtLocation(p);
-    let wasmType = setAccessorParamIsDynamic(arrow) ? EXTERNREF_PARAM : resolveWasmType(ctx, paramType);
+    let wasmType =
+      !ts.isFunctionDeclaration(arrow) && setAccessorParamIsDynamic(arrow)
+        ? EXTERNREF_PARAM
+        : resolveWasmType(ctx, paramType);
     // An unannotated JavaScript parameter whose default is object-valued is
     // still structurally open: callers may supply any property bag. TypeScript
     // infers the default's exact closed shape, but using that shape as the Wasm
@@ -1584,10 +1592,10 @@ export function computeClosureWrapperSig(
       closureReturnType = widenClosureReturnForPreInitVar(ctx, arrow, resolveWasmTypeForClosureReturn(ctx, retType));
     }
   }
-  if (closureReturnType === null && isAssignedToSymbolIterator(arrow)) {
+  if (closureReturnType === null && !ts.isFunctionDeclaration(arrow) && isAssignedToSymbolIterator(arrow)) {
     closureReturnType = inferExplicitClosureReturnType(ctx, arrow);
   }
-  if (closureReturnType !== null) {
+  if (closureReturnType !== null && !ts.isFunctionDeclaration(arrow)) {
     const ctxType = ctx.checker.getContextualType(arrow);
     if (ctxType) {
       const ctxCallSigs = ctxType.getCallSignatures?.();
@@ -1600,7 +1608,7 @@ export function computeClosureWrapperSig(
     }
   }
 
-  return { params: arrowParams, returnType: closureReturnType };
+  return { params: arrowParams, returnType: closureReturnType, hasRestParam };
 }
 
 /**
@@ -2043,6 +2051,14 @@ export function compileLiftedClosureBody(
     // (with no other binding) to read that global. Named functions / methods
     // are NOT lifted here and keep `undefined`/globalObject `this`.
     readsCurrentThis: true,
+    // Captured callback parameters remain externrefs when a first-class
+    // closure is invoked from a compiled method. Preserve their names so the
+    // callable-parameter dispatcher can select the host-call arm for a real
+    // JS function (for example Jest's `jest.fn()`), instead of attempting a
+    // WasmGC closure cast on the raw externref.
+    captureExternrefNames: new Set(
+      captures.filter((capture) => capture.type.kind === "externref").map((capture) => capture.name),
+    ),
     // (#2681/#2686 A3) When this lifted closure is a fnctor PROTOTYPE method of an
     // approved-for-reconstruction fnctor (`F.prototype.m = fn` / aliased `var pp =
     // F.prototype; pp.m = fn`), pin its `this` receiver to `__fnctor_F` so the
