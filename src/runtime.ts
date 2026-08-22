@@ -5496,6 +5496,58 @@ function _getProtoMethodBridge(proto: object, name: string): Function {
 const _staticMethodNames = new WeakMap<object, string[]>();
 
 /**
+ * (#4618) Host-side [[Construct]] bridge for compiled classes. Populated by
+ * the `__register_class_ctor` host import at class-object singleton init:
+ * class object → its compiled `<Class>_new` constructor closure, prototype
+ * singleton struct, and fnctor-ancestor closure (the chain
+ * `Foo.prototype.isReactComponent` must answer through when a compiled
+ * `class Foo extends React.Component` reaches react-dom's shouldConstruct).
+ * `_wrapForHost` presents a registered class object as a constructible
+ * function mirror instead of the plain non-callable object proxy.
+ */
+const _classCtorClosures = new WeakMap<object, any>();
+const _classProtoStructs = new WeakMap<object, any>();
+const _classFnctorParents = new WeakMap<object, any>();
+// Dynamic `extends <value>` parents, registered by NAME at the declaration
+// statement (`__register_class_parent`) — the name-keyed twin of the
+// WeakMap above, matching the name-keyed class-object singleton. Last write
+// wins, which mirrors how a re-declared same-named class shadows.
+const _classDynamicParentsByName = new Map<string, any>();
+// Class name per class-object singleton, from the 5th __register_class_ctor
+// arg — the mirror's key into the dynamic-parent map and its `.name` source.
+const _classNamesByObj = new WeakMap<object, string>();
+
+/** (#4618) `__register_class_ctor` import: pair the class object with
+ * everything the host-side constructible mirror needs. Idempotent sets.
+ * Also drops any plain proxy an earlier initBody step (the #4616 `.name`
+ * stamp via __extern_set) may have cached for the class object, so the next
+ * crossing builds the constructible mirror — nothing escapes between those
+ * steps, both run inside the same singleton-init block. */
+function _registerClassCtorHandler(
+  classObj: any,
+  ctorClosure: any,
+  protoObj: any,
+  parentFnctor: any,
+  classNameArg: any,
+): void {
+  if (classObj == null || typeof classObj !== "object") return;
+  if (ctorClosure != null && typeof ctorClosure === "object") _classCtorClosures.set(classObj, ctorClosure);
+  if (protoObj != null && typeof protoObj === "object") _classProtoStructs.set(classObj, protoObj);
+  if (parentFnctor != null && typeof parentFnctor === "object") _classFnctorParents.set(classObj, parentFnctor);
+  if (typeof classNameArg === "string" && classNameArg.length > 0) _classNamesByObj.set(classObj, classNameArg);
+  _hostProxyCache.delete(classObj);
+}
+
+/** (#4618) `__register_class_parent` import: dynamic `extends <value>`
+ * parent, registered by name at the class declaration statement (see
+ * emitRegisterDynamicClassParent). */
+function _registerClassParentHandler(className: any, parentValue: any): void {
+  if (typeof className !== "string" || className.length === 0) return;
+  if (parentValue == null) return;
+  _classDynamicParentsByName.set(className, parentValue);
+}
+
+/**
  * (#1455) Registry of synthetic constructors for user classes that extend
  * host built-ins (`class Sub extends Map / Float32Array / WeakRef / ...`).
  * Populated lazily by the `__set_subclass_proto` host import: on first call
@@ -7519,9 +7571,160 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
   };
 
   const proxy = new Proxy(target, handler);
+  // (#4618) A registered class OBJECT must present as a constructible class
+  // mirror — react-dom's `new type(props, context)` on a compiled
+  // `class Foo extends React.Component`. The mirror delegates every property
+  // trap to the plain proxy built above; only call/construct/prototype differ.
+  if (_classCtorClosures.has(obj)) {
+    const mirror = _makeClassCtorMirrorForHost(obj, proxy, exports);
+    _hostProxyCache.set(obj, mirror);
+    _hostProxyReverse.set(mirror, obj);
+    return mirror;
+  }
   _hostProxyCache.set(obj, proxy);
   _hostProxyReverse.set(proxy, obj);
   return proxy;
+}
+
+/**
+ * (#4618) Constructible host mirror for a compiled class object. Modeled on
+ * `_wrapCallableForHost`: a Proxy over a real `function` target so
+ * `[[Construct]]` is installable and `typeof === "function"` holds.
+ * `construct` dispatches the registered `<Class>_new` closure; `apply` throws
+ * the §15.7 class-without-new TypeError; `fnTarget.prototype` (writable on an
+ * ordinary function, so no invariant conflict) is a chain-aware facade: own
+ * keys answer from the wrapped prototype struct, misses fall back to the
+ * fnctor ancestor's vivified `.prototype` so an inherited detection marker
+ * (react's `isReactComponent`) answers truthy.
+ */
+function _makeClassCtorMirrorForHost(
+  classObj: any,
+  propProxy: any,
+  exports: Record<string, Function> | undefined,
+): any {
+  const callbackState = { getExports: () => exports };
+  const meta = _wasmStructProps.get(classObj);
+  const sidecarName = _sidecarGet(classObj, "name");
+  const className =
+    _classNamesByObj.get(classObj) ??
+    (typeof meta?.name === "string" ? meta.name : typeof sidecarName === "string" ? sidecarName : "");
+  const fnTarget = function compiledClassTarget() {} as any;
+  try {
+    Object.defineProperty(fnTarget, "name", { value: className, configurable: true });
+  } catch {
+    /* best-effort */
+  }
+  // Resolve the parent's live prototype object lazily — the dynamic-parent
+  // registration (`__register_class_parent`) runs at the class declaration
+  // statement, which may execute after the mirror was built.
+  const resolveParent = (): any =>
+    _classFnctorParents.get(classObj) ?? (className !== "" ? _classDynamicParentsByName.get(className) : undefined);
+  const resolveParentProto = (): any => {
+    const pf = resolveParent();
+    if (pf == null) return undefined;
+    if (typeof pf === "function") return (pf as any).prototype;
+    if (typeof pf === "object" && _classProtoStructs.has(pf)) {
+      const pp = _classProtoStructs.get(pf);
+      return pp != null ? _wrapForHost(pp, exports) : undefined;
+    }
+    return _getOrVivifyFnPrototype(pf, callbackState);
+  };
+  const protoStruct = _classProtoStructs.get(classObj);
+  if (protoStruct != null) {
+    const protoHost = _wrapForHost(protoStruct, exports);
+    const facade = new Proxy(Object.create(null), {
+      get(_ft, key) {
+        const own = (protoHost as any)[key];
+        if (own !== undefined) return _maybeWrapCallableUnknownArity(own, callbackState);
+        const pp = resolveParentProto();
+        if (pp == null) return undefined;
+        return _maybeWrapCallableUnknownArity((pp as any)[key], callbackState);
+      },
+      has(_ft, key) {
+        if (key in (protoHost as any)) return true;
+        const pp = resolveParentProto();
+        return pp != null ? key in (pp as any) : false;
+      },
+    });
+    try {
+      fnTarget.prototype = facade;
+    } catch {
+      /* non-fatal — detection degrades, construction still works */
+    }
+  }
+  const handler: ProxyHandler<any> = {
+    apply() {
+      throw new TypeError(`Class constructor ${className} cannot be invoked without 'new'`);
+    },
+    construct(_t, args, _newTarget) {
+      const ctorClosure = _classCtorClosures.get(classObj);
+      const ctorFn = _maybeWrapCallableUnknownArity(ctorClosure, callbackState);
+      if (typeof ctorFn !== "function") {
+        throw new TypeError(`compiled class constructor ${className} bridge unavailable`);
+      }
+      const inst = ctorFn(...args);
+      if (inst != null && typeof inst === "object") {
+        // Tag the raw instance so `_resolveClassMember` treats it as a
+        // registered compiled-class instance (host-side `instance.render()`),
+        // and link the fnctor parent so inherited members resolve through the
+        // vivified `.prototype` chain (`_fnctorProtoLookup`).
+        const raw = _unwrapForHost(inst);
+        if (raw != null && typeof raw === "object" && _canBeWeakKey(raw)) {
+          if (className !== "" && !_userClassTags.has(raw)) _userClassTags.set(raw, className);
+          const pf = resolveParent();
+          if (pf != null && typeof pf === "object" && !_classProtoStructs.has(pf) && !_fnctorInstanceCtor.has(raw)) {
+            _fnctorInstanceCtor.set(raw, pf);
+          }
+        }
+        return _isWasmStruct(inst) ? _wrapForHost(inst, exports) : inst;
+      }
+      if (typeof inst === "function") return inst;
+      // [[Construct]] must return an object; a primitive result means the
+      // compiled ctor path degraded — surface an empty instance over a throw.
+      return {};
+    },
+    get(_t, key) {
+      if (key === "prototype") return fnTarget.prototype;
+      return (propProxy as any)[key];
+    },
+    set(_t, key, val) {
+      if (key === "prototype") {
+        fnTarget.prototype = val;
+        return true;
+      }
+      (propProxy as any)[key] = val;
+      return true;
+    },
+    has(_t, key) {
+      return key === "prototype" || key in (propProxy as any);
+    },
+    getOwnPropertyDescriptor(_t, key) {
+      if (key === "prototype" || key === "length" || key === "name") {
+        return Reflect.getOwnPropertyDescriptor(_t, key);
+      }
+      const d = Object.getOwnPropertyDescriptor(propProxy as any, key);
+      if (d) d.configurable = true;
+      return d;
+    },
+    defineProperty(_t, key, desc) {
+      return Reflect.defineProperty(propProxy as any, key, desc);
+    },
+    deleteProperty(_t, key) {
+      return Reflect.deleteProperty(propProxy as any, key);
+    },
+    ownKeys(_t) {
+      const keys = Reflect.ownKeys(propProxy as any);
+      // The function target's own non-configurable `prototype` must appear.
+      for (const required of Reflect.ownKeys(_t)) {
+        if (!keys.includes(required)) keys.push(required);
+      }
+      return keys;
+    },
+    getPrototypeOf() {
+      return Function.prototype;
+    },
+  };
+  return new Proxy(fnTarget, handler);
 }
 
 function _unwrapForHost(v: any): any {
@@ -11183,6 +11386,8 @@ assert._isSameValue = isSameValue;
           _sidecarSet(classObj, methodName, closure);
           _getSidecarDescs(classObj).set(methodName, _SC_DEFINED | _SC_WRITABLE | _SC_CONFIGURABLE);
         };
+      if (name === "__register_class_ctor") return _registerClassCtorHandler;
+      if (name === "__register_class_parent") return _registerClassParentHandler;
       if (name === "__unbox_string")
         return (s: any): any => {
           if (typeof s === "string") return s; // already a string primitive

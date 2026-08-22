@@ -21,10 +21,19 @@ import { noJsHost } from "../js-errors.js";
 import { tryEmitStaticOrNativeIsPrototypeOf } from "../native-is-prototype-of.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
 import { emitStandaloneClassProtoObject } from "../class-proto-object.js"; // (#3976) standalone proto as a real $Object
-import { classMemberFuncKey } from "../class-member-keys.js";
+import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.js";
 import { emitFuncRefAsClosure } from "../closures.js";
+import { emitCachedFuncClosureAccess } from "../closures/method-trampolines.js";
 import type { InnerResult } from "../shared.js";
-import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
+import {
+  coerceType,
+  compileExpression,
+  compileStringLiteral,
+  ensureLateImport,
+  flushLateImportShifts,
+  valTypesMatch,
+  VOID_RESULT,
+} from "../shared.js";
 import { pushDefaultValue } from "../type-coercion.js";
 import { getFuncParamTypes } from "./helpers.js";
 
@@ -485,6 +494,81 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
     }
   }
 
+  // (#4618) Register the compiled constructor closure + prototype + fnctor
+  // parent so the host proxy can present this class object as a CONSTRUCTIBLE
+  // function (react-dom's `new type(props, context)` on a compiled
+  // `class Foo extends React.Component`). The import is pre-registered in
+  // generateModule (never late-added here — initBody already holds baked call
+  // indices that an import shift would invalidate). Emitted inside initBody so
+  // it fires once, before the class object value can ever cross to the host.
+  const registerCtorIdx = ctx.funcMap.get("__register_class_ctor");
+  if (registerCtorIdx !== undefined) {
+    const ctorFullName = `${className}_new`;
+    const ctorIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorFullName));
+    if (ctorIdx !== undefined) {
+      const savedBody = fctx.body;
+      fctx.body = initBody;
+      ctx.liveBodies.add(savedBody);
+      try {
+        fctx.body.push({ op: "global.get", index: classObjectGlobalIdx });
+        const ctorClosureType = emitFuncRefAsClosure(ctx, fctx, ctorFullName, ctorIdx);
+        if (ctorClosureType === null) {
+          fctx.body.pop(); // unbalanced classObj push — abandon registration
+        } else {
+          fctx.body.push({ op: "extern.convert_any" });
+          // arg 2 — the prototype singleton (its own lazy-init nests cleanly).
+          if (!emitLazyProtoGet(ctx, fctx, className)) {
+            fctx.body.push({ op: "ref.null.extern" });
+          }
+          // arg 3 — the fnctor ancestor's canonical cached closure (the chain
+          // `Foo.prototype.isReactComponent` must answer through), or null.
+          const fnctorParent = fnctorAncestorOfClass(ctx, className);
+          const fnctorIdx = fnctorParent !== undefined ? ctx.funcMap.get(fnctorParent) : undefined;
+          let pushedParent = false;
+          if (fnctorParent !== undefined && fnctorIdx !== undefined) {
+            const closTy = emitCachedFuncClosureAccess(ctx, fctx, fnctorParent, fnctorIdx);
+            if (closTy !== null) {
+              fctx.body.push({ op: "extern.convert_any" });
+              pushedParent = true;
+            }
+          }
+          // Dynamic heritage (react's `class Foo extends React.Component`) is
+          // NOT evaluated here: compiling an arbitrary expression inside
+          // initBody corrupts the already-baked instruction stream (measured:
+          // the first class-value crossing produced a foreign struct). The
+          // declaration-statement site registers it instead — see
+          // emitRegisterDynamicClassParent, which is also the spec-correct
+          // `extends` evaluation point (§15.7.14 step 5).
+          if (!pushedParent) fctx.body.push({ op: "ref.null.extern" });
+          // arg 4 — the class NAME, so the runtime mirror can key the
+          // dynamic-parent lookup and stamp `.name` without relying on the
+          // (#4616) sidecar stamp having run.
+          addStringConstantGlobal(ctx, className);
+          const classNameGlobalIdx = ctx.stringGlobalMap.get(className);
+          if (classNameGlobalIdx !== undefined && classNameGlobalIdx >= 0) {
+            fctx.body.push({ op: "global.get", index: classNameGlobalIdx });
+          } else {
+            compileStringLiteral(ctx, fctx, className);
+          }
+          fctx.body.push({ op: "call", funcIdx: registerCtorIdx });
+          // The host may now dynamically invoke any of this class's instance
+          // methods (react-dom's `instance.render()` / lifecycle calls) —
+          // admit them to the #3123 member-dispatch export surface.
+          for (const m of ctx.classMethodNames.get(className) ?? []) {
+            ctx.hostDynamicClassMethodNames.add(m);
+          }
+          const accPrefix4618 = `${className}_`;
+          for (const acc of ctx.classAccessorSet) {
+            if (acc.startsWith(accPrefix4618)) ctx.hostDynamicClassMethodNames.add(acc.slice(accPrefix4618.length));
+          }
+        }
+      } finally {
+        fctx.body = savedBody;
+        ctx.liveBodies.delete(savedBody);
+      }
+    }
+  }
+
   // Emit: if global is null, init it; then get it.
   fctx.body.push({ op: "global.get", index: classObjectGlobalIdx });
   fctx.body.push({ op: "ref.is_null" });
@@ -496,6 +580,59 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
   });
   fctx.body.push({ op: "global.get", index: classObjectGlobalIdx });
   return true;
+}
+
+/**
+ * (#4618) Register a class's DYNAMIC parent value with the runtime, emitted at
+ * the class DECLARATION statement — the spec's `extends` evaluation point
+ * (§15.7.14 step 5), where every binding the heritage expression references is
+ * in scope. Applies only when the parent could not be resolved statically
+ * (no classParentMap entry — react's `class Foo extends React.Component`,
+ * where the parent is a PropertyAccess on an untyped module value). The
+ * runtime keys the registration by class NAME (matching the name-keyed
+ * class-object singleton) so the host-side constructible mirror can chain
+ * `Foo.prototype` misses to the live parent's prototype.
+ */
+export function emitRegisterDynamicClassParent(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  decl: ts.ClassDeclaration | ts.ClassExpression,
+  classNameOverride?: string,
+): void {
+  if (ctx.standalone || ctx.wasi) return;
+  const className = classNameOverride ?? decl.name?.text;
+  if (className === undefined || ctx.classParentMap.has(className)) return;
+  if (decl.heritageClauses === undefined) return;
+  let heritageExpr: ts.Expression | undefined;
+  for (const clause of decl.heritageClauses) {
+    if (clause.token !== ts.SyntaxKind.ExtendsKeyword || clause.types.length === 0) continue;
+    let expr: ts.Expression = clause.types[0]!.expression;
+    while (ts.isParenthesizedExpression(expr) || ts.isAsExpression(expr)) expr = expr.expression;
+    // A bare identifier parent that named a compiled class/builtin was
+    // resolved statically (classParentMap / builtin machinery); only a value
+    // parent the checker could not see reaches here.
+    heritageExpr = expr;
+    break;
+  }
+  if (heritageExpr === undefined) return;
+  const regIdx = ensureLateImport(ctx, "__register_class_parent", [{ kind: "externref" }, { kind: "externref" }], []);
+  flushLateImportShifts(ctx, fctx);
+  if (regIdx === undefined) return;
+  addStringConstantGlobal(ctx, className);
+  const nameIdx = ctx.stringGlobalMap.get(className);
+  if (nameIdx !== undefined && nameIdx >= 0) {
+    fctx.body.push({ op: "global.get", index: nameIdx });
+  } else {
+    compileStringLiteral(ctx, fctx, className);
+  }
+  const t = compileExpression(ctx, fctx, heritageExpr);
+  if (t === null || t === VOID_RESULT) {
+    fctx.body.push({ op: "drop" });
+    return;
+  }
+  coerceType(ctx, fctx, t, { kind: "externref" });
+  const finalRegIdx = ctx.funcMap.get("__register_class_parent") ?? regIdx;
+  fctx.body.push({ op: "call", funcIdx: finalRegIdx });
 }
 
 /**

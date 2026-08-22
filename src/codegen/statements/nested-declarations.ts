@@ -39,6 +39,7 @@ import {
   type NativeGeneratorCaptureParam,
 } from "../generators-native.js";
 import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "../expressions/helpers.js";
+import { emitRegisterDynamicClassParent } from "../expressions/extern.js";
 import { isForeignEvalNode } from "../expressions/eval-source.js";
 import {
   collectClassDeclaration,
@@ -198,6 +199,13 @@ export function compileNestedClassDeclaration(
     emitThrowReferenceError(ctx, fctx, `Cannot access '${decl.name.text}' before initialization`);
     return;
   }
+
+  // (#4618) Dynamic `extends <value>` parent (react's
+  // `class Foo extends React.Component`): evaluate the heritage expression
+  // here — the spec's ClassDefinitionEvaluation point, where its bindings are
+  // in scope — and register the live parent with the runtime so the host-side
+  // constructible class mirror can chain prototype misses through it.
+  emitRegisterDynamicClassParent(ctx, fctx, decl, className);
 
   const isDeferred = ctx.deferredClassBodies.has(className);
   // Skip if already collected AND not deferred (already fully compiled)

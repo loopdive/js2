@@ -2529,6 +2529,34 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             ctx.moduleInitStatements.push(stmt);
             continue;
           }
+          // (#4618) `F.prototype.m = …` — the react shape (the compiled react
+          // source's `Component.prototype.setState = …` /
+          // `Component.prototype.isReactComponent = {}` are top-level
+          // statements). The bare-identifier gate above deliberately excluded
+          // prototype chains, but that exclusion predates the #1712 vivified
+          // fnctor prototype: in host mode the write-arm inside a function
+          // body lands on the identity-stable vivified `F.prototype` object
+          // (measured: probe passes), so keeping the statement is the whole
+          // fix — the same collection-gap family as #2992/#3592/#3615/#3049.
+          if (
+            ts.isPropertyAccessExpression(receiver) &&
+            !ts.isPrivateIdentifier(receiver.name) &&
+            receiver.name.text === "prototype"
+          ) {
+            let protoRecv: ts.Expression = receiver.expression;
+            while (
+              ts.isParenthesizedExpression(protoRecv) ||
+              ts.isAsExpression(protoRecv) ||
+              ts.isNonNullExpression(protoRecv) ||
+              ts.isTypeAssertionExpression(protoRecv)
+            ) {
+              protoRecv = protoRecv.expression;
+            }
+            if (ts.isIdentifier(protoRecv) && ctx.topLevelFunctionNames.has(protoRecv.text)) {
+              ctx.moduleInitStatements.push(stmt);
+              continue;
+            }
+          }
           // (#4394) Host/GC counterpart of the standalone #3666 keep above:
           // the receiver is itself a function-valued own property of a
           // top-level function — `assert.deepEqual._compare = (function(){…})()`,

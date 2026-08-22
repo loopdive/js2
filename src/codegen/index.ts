@@ -4713,6 +4713,23 @@ export function generateModule(
         kind: "func",
         typeIdx: regStaticMethodTypeIdx,
       });
+      // (#4618) Pair the class object with its compiled constructor closure,
+      // prototype singleton, and fnctor parent so the host proxy can present
+      // the class as a constructible function (react-dom's `new type(props)`).
+      // Pre-registered here (not a late import) so the initBody instructions
+      // emitLazyClassObjectGet builds are never invalidated by an import shift.
+      const regClassCtorTypeIdx = addFuncType(
+        ctx,
+        [
+          { kind: "externref" },
+          { kind: "externref" },
+          { kind: "externref" },
+          { kind: "externref" },
+          { kind: "externref" },
+        ],
+        [],
+      );
+      addImport(ctx, "env", "__register_class_ctor", { kind: "func", typeIdx: regClassCtorTypeIdx });
     }
 
     // #1677 — reconcile native-string helper func indices before emitting more
@@ -8104,6 +8121,19 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
         kind: "func",
         typeIdx: regStaticMethodTypeIdx,
       });
+      // (#4618) Same class-ctor bridge registration as the single-source site.
+      const regClassCtorTypeIdx = addFuncType(
+        ctx,
+        [
+          { kind: "externref" },
+          { kind: "externref" },
+          { kind: "externref" },
+          { kind: "externref" },
+          { kind: "externref" },
+        ],
+        [],
+      );
+      addImport(ctx, "env", "__register_class_ctor", { kind: "func", typeIdx: regClassCtorTypeIdx });
     }
 
     // WASI target: check for DOM-only globals and emit compile errors

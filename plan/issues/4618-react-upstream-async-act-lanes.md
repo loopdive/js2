@@ -17,7 +17,10 @@ loc-budget-allow:
   - src/codegen/annexb-cancel.ts
   - src/codegen/async-cps.ts
   - src/codegen/async-frame.ts
+  - src/codegen/declarations.ts
   - src/codegen/destructuring-params.ts
+  - src/codegen/expressions/extern.ts
+  - src/codegen/index.ts
   - src/codegen/statements/nested-declarations.ts
   - src/ir/prepared-callable-resolution.ts
   - src/runtime.ts
@@ -27,7 +30,12 @@ func-budget-allow:
   - src/codegen/async-frame.ts::buildAsyncFrameInfo
   - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations
   - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
+  - src/codegen/statements/nested-declarations.ts::compileNestedClassDeclaration
+  - src/codegen/expressions/extern.ts::emitLazyClassObjectGet
   - src/runtime.ts::_wrapForHost
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # react upstream suite: the async `it`-body / `act()` lane cluster
@@ -372,6 +380,101 @@ demote.
   bucket; react stays 87/146). Guards: jest 315/349, acorn 3518/3518,
   freeze/annexB regression tests hold. Regression test:
   `tests/issue-4618-console-as-value.test.ts` (1).
+
+## Implementation Plan — host-instantiates-compiled-class (the S-class bridge)
+
+The dominant remaining react buckets ("expected not null" 13, "expected 0
+toBe 1" ×7, `instance.props` null-derefs ~10, setState null 2) share ONE
+seam: host react-dom receives a compiled `class Foo extends React.Component`
+as element.type and must (a) DETECT it as a class
+(`type.prototype.isReactComponent` truthy — chain walk to the fnctor
+parent's prototype), then (b) CONSTRUCT it (`new type(props, context)`).
+Today the class object crosses as a plain non-constructible `_wrapForHost`
+proxy: no `[[Construct]]`, `.prototype` undefined (probe
+.tmp/probe-hostclass*.mts: "Foo is not a constructor"). Measured secondary
+compiled-side gaps (separate defects, masked for render because react-dom
+assigns `instance.props` itself): `Foo.prototype.isReactComponent` is false
+even in-module; `super(props)` into a fnctor base does not run the base body.
+
+Slices (verified against current tree):
+
+1. **Codegen registration** — `src/codegen/expressions/extern.ts
+   emitLazyClassObjectGet` initBody (runs once at class-object singleton
+   init, exactly like the #4371 static-method block): emit
+   `__register_class_ctor(classObj, ctorClosure, protoObj, parentFnctor)`
+   where ctorClosure = `emitFuncRefAsClosure` over
+   `classMemberFuncKey(ctx, "<Class>_new")` (the alloc+init ctor used by
+   compiled `new`), protoObj = `emitLazyProtoGet` (nested lazy-init inside
+   initBody is fine), parentFnctor = `emitCachedFuncClosureAccess` over
+   `fnctorAncestorOfClass(ctx, className)` or ref.null.extern. Import
+   pre-registered in `src/codegen/index.ts` next to both
+   `__register_class_object` sites (4 externref params; host lane only) to
+   avoid late-import shifts against instructions already in initBody.
+2. **Runtime mirror** — `src/runtime.ts`: `_classCtorClosures` /
+   `_classProtoStructs` / `_classFnctorParents` WeakMaps + the import
+   handler next to `__register_class_static_method`. At the main
+   `_wrapForHost` return (`new Proxy(target, handler)` ~7521), a registered
+   class object instead returns a `_makeClassCtorMirrorForHost` proxy over
+   a real `function` target (modeled on `_wrapCallableForHost`): `construct`
+   trap dispatches the ctor closure via `_maybeWrapCallableUnknownArity`;
+   `apply` throws the §15.7 class-without-new TypeError; property traps
+   delegate to the inner proxy; `fnTarget.prototype` (writable → no
+   invariant conflict) is set to a chain-aware facade: own keys from the
+   wrapped proto struct, misses fall back to
+   `_getOrVivifyFnPrototype(parentFnctor)` so `isReactComponent` inherited
+   from the compiled `React.Component` fnctor answers truthy.
+3. **Validation** — probes: `new Foo(props)` from host works, `.marker`
+   set, `.render()` dispatches, `Foo.prototype.isReactComponent` truthy;
+   react suite (expect the class-component wall to move); guards jest
+   315/349, acorn 3518/3518, freeze battery, equivalence spot files.
+
+Instance-side inheritance needs NO new work: every ctor of a
+fnctor-descendant class already tail-emits `__register_fnctor_instance`, so
+`instance.setState` resolves through `_fnctorProtoLookup`.
+
+Out of scope for the first slice: class-extends-class host chains (register
+the parent classObj as a 5th arg later if needed), the compiled-side
+`super(props)`-into-fnctor gap, and `Foo.prototype.isReactComponent`
+in-module reads (host-side detection is what react-dom needs).
+
+**2026-08-22 S1+S2 LANDED (probe-level green; react suite unchanged at
+87/146 so far):**
+
+- `__register_class_ctor(classObj, ctor, proto, parent, name)` emitted in
+  emitLazyClassObjectGet's initBody (import PRE-registered in index.ts at
+  both `__register_class_object` sites — a late import here shifts baked
+  initBody call indices). Runtime `_makeClassCtorMirrorForHost`: mirror at
+  the main `_wrapForHost` return; construct dispatches the ctor closure and
+  tags instances (`_userClassTags` + `_fnctorInstanceCtor`) so host-side
+  `instance.render()` resolves through the #3123 member surface; the class's
+  instance method names are admitted to `ctx.hostDynamicClassMethodNames` so
+  those exports exist. `_hostProxyCache.delete(classObj)` at registration —
+  the #4616 name stamp can cache a plain proxy first.
+- **Dynamic heritage must NOT be compiled inside initBody** — measured: the
+  first class-value crossing produced a foreign struct. It is compiled at
+  the class DECLARATION statement instead (`emitRegisterDynamicClassParent`
+  → `__register_class_parent(name, value)`, name-keyed like the singleton;
+  also the spec's extends-evaluation point). Nested classes only for now —
+  top-level dynamic-extends classes still lack the chain (react's are all
+  nested; probe B top-level shape constructs + renders but irc=false).
+- **Top-level `F.prototype.m = …` was silently dropped from `__module_init`
+  in host mode** (declarations.ts #2671 keep-arm deliberately excluded
+  prototype chains — predates the #1712 vivified proto). React's whole
+  `Component.prototype.*` surface is such writes. Now kept; write lands on
+  the vivified proto (probe: in-module readBack 42, host read 42).
+- Probes: nested react shape fully green — typeof function,
+  `prototype.isReactComponent` true through the dynamic parent,
+  `new Foo(props)` works, `inst.render()` dispatches. Guards: jest 315/349,
+  acorn 3518/3518, cookie 63740/63740, clsx 32/32, class/fnctor/proto
+  battery 148/149 (1 pre-existing), equivalence class/proto/closure subset
+  64/66 (2 pre-existing, A/B'd on base via stash — solo session). Regression
+  test: `tests/issue-4618-host-class-ctor-bridge.test.ts` (2).
+- **React suite still 87/146**: class components now construct (the
+  `instance.props` null-deref singles bucket is gone) but render still does
+  not complete through react-dom's lifecycle — the count/mock buckets
+  ("expected 0 toBe 1" ×7, mock args 7, call count 5, "expected not null"
+  13) persist. Next: trace one StrictMode test's failure point inside
+  react-dom with the bridge live.
 
 ## Fix order
 
