@@ -1115,3 +1115,39 @@ runtime failures in the optional-property/error paths and are not reclassified
 as dependency infrastructure.
 
 Implementation remains on [PR #4767 — bridge WebAssembly callbacks in prompt tests](https://github.com/loopdive/js2wasm/pull/4767).
+
+## 2026-08-22 Jest `jest-util.isError` package seam checkpoint
+
+The original `jest-core/src/lib/__tests__/serializeToJSON.test.ts` unit is now
+selected unchanged. Its upstream implementation imports `isError` through the
+published `jest-util` package name; the adapter now verifies the pinned
+`jest-util@30.4.1` `isError.ts` bytes and exposes that real source alongside the
+existing `formatTime`, `convertDescriptorToString`, and `tryRealpath` exports.
+This fixes a genuine package-resolution gap in both the Node oracle and the
+compiled Wasm project. No test result is synthesized and the upstream test
+body is untouched.
+
+The exact unchanged run now covers **353 callbacks across 33 selected files**.
+Node admits **351/353** (the two existing diff-sequence snapshot-oracle
+failures remain), all 33 modules compile and 32 validate, and Wasm scores
+**247/351** with zero runtime failures. The unavailable-infrastructure
+remainder is **2,935 registrations** from 208 deferred files. Both newly
+admitted `serializeToJSON` callbacks pass in Node and Wasm.
+
+Implementation: [PR #4772 — expose the pinned `jest-util.isError` dependency](https://github.com/loopdive/js2wasm/pull/4772).
+
+## 2026-08-22 Jest CommonJS path-global checkpoint
+
+The original `jest-haste-map/src/lib/__tests__/fast_path.test.js` unit is now
+selected unchanged. Its CommonJS-compatible test body uses Node's
+`__dirname`; the generated ESM harness now supplies per-file `__dirname` and
+`__filename` bindings, matching the standard Node module surface without
+hard-coding a package result. All five callbacks pass in both lanes.
+
+The exact unchanged run now covers **358 callbacks across 34 selected files**.
+Node admits **356/358** (the two existing diff-sequence snapshot-oracle
+failures remain), all 34 modules compile and 33 validate, and Wasm scores
+**252/356** with zero runtime failures. The unavailable-infrastructure
+remainder is **2,930 registrations** from 207 deferred files.
+
+Implementation: [PR #4773 — provide CommonJS path globals](https://github.com/loopdive/js2wasm/pull/4773).
