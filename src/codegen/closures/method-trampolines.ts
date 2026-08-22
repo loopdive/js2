@@ -32,6 +32,7 @@ import {
   getOrCreateFuncRefWrapperTypes,
 } from "./funcref-wrapper-types.js";
 import { emitFuncRefAsClosure } from "./funcref-as-closure.js";
+import { normalizeOrdinaryFunctionConstructibility } from "./ordinary-fn-constructibility.js";
 import { observeProgramAbiFunctionValue } from "../program-abi-source-callable-planning.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
 import { ensureFnMetaSubtype, fnMetaSlot } from "../function-instance-meta.js";
@@ -1136,6 +1137,11 @@ export function emitCachedFuncClosureAccess(
   funcIdx: number,
   constructible = false,
 ): ValType | null {
+  // (#4491 T12) Constructibility is a property of the compiled function, not of
+  // how the reading site resolved the name — the cache global is shared, so a
+  // site-keyed answer allocates and casts unrelated struct types. See
+  // `ordinary-fn-constructibility.ts`.
+  constructible = normalizeOrdinaryFunctionConstructibility(ctx, funcName, constructible);
   const singleton = ensureFuncClosureSingleton(ctx, funcName, funcIdx, constructible);
   // A synthetic-name collision makes the canonical pair unavailable, but
   // legacy value-producing sites still need a closure on the stack (module

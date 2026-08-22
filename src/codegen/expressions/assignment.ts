@@ -12,6 +12,9 @@ import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
 import { emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3
 import { emitHoleToUndefined, holeSentinelInstrs } from "../array-holes.js";
+import { emitF64GapFillInstrs } from "../vec-f64-hole-gap.js"; // (#4491 T8)
+import { emitF64HoleToUndef, f64HolesActive } from "../vec-f64-hole-presence.js"; // (#4491 T11)
+import { HOLE_F64_BITS } from "../value-tags.js"; // (#4491 T11)
 // prettier-ignore
 import { emitUnbackableIndexFlag, guardedElementSetInstrs, needsGapFillCondInstrs, needsGrowCondInstrs } from "../vec-sparse-index.js";
 import { tryEmitLinearU8ElementCompound, tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
@@ -2240,6 +2243,7 @@ function compileArrayDestructuringAssignment(
           // An in-bounds `any[]` slot may hold the `$Hole` sentinel for a literal
           // elision (`[1, , 3]`); per Get it reads as `undefined`, so map it.
           if (elemType.kind === "externref" && ctx.usesArrayHoles) emitHoleToUndefined(ctx, fctx);
+          emitF64HoleToUndef(ctx, fctx, elemType); // (#4491 T11) f64 twin
           fctx.body.push({ op: "local.set", index: tmpElem });
           if (elemType.kind === "externref") {
             const undefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
@@ -2339,6 +2343,7 @@ function compileArrayDestructuringAssignment(
           fctx.body = [];
           emitElementGet(i);
           if (elemType.kind === "externref" && ctx.usesArrayHoles) emitHoleToUndefined(ctx, fctx);
+          emitF64HoleToUndef(ctx, fctx, elemType); // (#4491 T11) f64 twin
           fctx.body.push({ op: "local.set", index: tmpElem });
           if (elemType.kind === "externref") {
             const undefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
@@ -5361,6 +5366,26 @@ function compileElementAssignment(
           { op: "array.fill", typeIdx: arrTypeIdx },
         ],
       });
+    } else if (arrDef.element.kind === "f64") {
+      // (#4491 T8) The f64 twin of the gap-fill above: an f64 slot CAN hold an
+      // absence marker (the `UNDEF_F64_BITS` sNaN), so the gap no longer reads
+      // back as a real `0`. Body in `vec-f64-hole-gap.ts`.
+      const f64HoleGap = f64HolesActive(ctx);
+      if (f64HoleGap) ctx.f64HoleMarkerEmitted = true;
+      fctx.body.push(
+        ...emitF64GapFillInstrs(fctx, {
+          vecLocal,
+          dataLocal,
+          idxLocal,
+          vecTypeIdx: typeIdx,
+          arrTypeIdx,
+          gapCond: (oldLen) => needsGapFillCondInstrs(unbackedLocal, idxLocal, oldLen),
+          // (#4491 T11) A module that can ask presence questions marks the gap
+          // ABSENT; one that cannot keeps T8-A's `undefined` marker, so its
+          // bytes and behaviour are unchanged.
+          markerBits: f64HoleGap ? HOLE_F64_BITS : undefined,
+        }),
+      );
     }
 
     // array.set: data[idx] = val (skipped for an unbackable index).

@@ -84,6 +84,8 @@ import {
   type StandaloneWrapperConstructorName,
 } from "../standalone-wrapper-instanceof.js";
 import { tryEmitStandaloneGlobalFunctionIdentifier } from "../standalone-global-functions.js";
+import { evaluateInstanceOfRhsForEffects } from "../instanceof-rhs-evaluation.js"; // (#4491 T3) §13.10.1 step 3
+import { resolveBuiltinCtorAssignedAliasName } from "../builtin-ctor-assigned-alias.js"; // (#4491 T3)
 
 /**
  * #1473 — Build the set of `$Error_struct` `$tag` values compatible with an
@@ -2224,6 +2226,11 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // behind an alias so the builtin dispatch below is not skipped (host-free
   // only; gc/host keeps its runtime predicate). See native-ordinary-instanceof.ts.
   ctorName = resolveBuiltinCtorAliasName(ctx, expr.right, ctorName) ?? ctorName;
+  // (#4491 T3) …and the ASSIGNED alias — `OBJECT = Object; x instanceof OBJECT`.
+  // The declared-alias resolver above reads the binding's static type, which an
+  // implicit global does not have and a reassigned `var` widens to a union.
+  // See builtin-ctor-assigned-alias.ts for the uniform-write soundness argument.
+  ctorName = resolveBuiltinCtorAssignedAliasName(ctx, expr.right, ctorName) ?? ctorName;
 
   if (!ctorName) {
     return emitDynamicInstanceOf(ctx, fctx, expr);
@@ -2387,6 +2394,10 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     }
     const lt = compileExpression(ctx, fctx, expr.left);
     if (lt) fctx.body.push({ op: "drop" });
+    // (#4491 T3) §13.10.1 step 3 GetValues the RHS too — an undeclared name
+    // there is a ReferenceError, not a silent `false`. See
+    // instanceof-rhs-evaluation.ts.
+    evaluateInstanceOfRhsForEffects(ctx, fctx, expr.right);
     fctx.body.push({ op: "i32.const", value: 0 });
     return { kind: "i32" };
   }
@@ -2403,6 +2414,8 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   if (instanceofIdx === undefined) {
     const leftType = compileExpression(ctx, fctx, expr.left);
     if (leftType) fctx.body.push({ op: "drop" });
+    // (#4491 T3) …and here too — same §13.10.1 step-3 obligation.
+    evaluateInstanceOfRhsForEffects(ctx, fctx, expr.right);
     fctx.body.push({ op: "i32.const", value: 0 });
     return { kind: "i32" };
   }

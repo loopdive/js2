@@ -7,6 +7,7 @@ import { isNullablePrimitiveType, isStringType, isVoidType } from "../../checker
 import type { Instr, ValType } from "../../ir/types.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
+import { redeclarationWidenedLocalSlotType } from "../declarations/redeclared-var-widening.js";
 import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion } from "../context/types.js";
 import { emitCoercedLocalSet, noJsHost } from "../expressions/helpers.js";
 import { emitUndefined } from "../expressions/late-imports.js";
@@ -1907,8 +1908,13 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // verdict as the var hoister / let-const pre-hoister, so a reused
     // pre-hoisted slot and this cascade always agree. Applied only when the
     // cascade itself settled on externref — never overrides another inference.
+    // (#4491 wave-5 T4) A module `var` REDECLARED with a differently-tagged
+    // initializer had its global widened to externref; the module-init shadow
+    // local is the same binding and must not be narrowed back by the checker's
+    // (first-declaration) symbol type. See `redeclared-var-widening.ts`.
     const wasmType: ValType =
-      wasmTypeBase.kind === "externref" ? (resolveFnctorTypedBindingType(ctx, decl) ?? wasmTypeBase) : wasmTypeBase;
+      redeclarationWidenedLocalSlotType(ctx, decl) ??
+      (wasmTypeBase.kind === "externref" ? (resolveFnctorTypedBindingType(ctx, decl) ?? wasmTypeBase) : wasmTypeBase);
 
     // (#2814) Bug C: re-align a block-scoped let/const with its OWN pre-hoisted
     // slot. `saveBlockScopedShadows` removed this name's localMap (and TDZ-flag)

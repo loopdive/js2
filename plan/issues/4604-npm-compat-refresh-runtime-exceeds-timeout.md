@@ -214,3 +214,21 @@ than knowingly cancel CI; the generated measurement is retained as an
 artifact and the next scheduled/push run retries.
 
 Implementation: [PR #4774](https://github.com/loopdive/js2wasm/pull/4774).
+
+## 2026-08-22 follow-up — cancellation protections need to cover every updater
+
+The merged check guard still had two holes. First, a two-hour cutoff could
+reset a legitimate long-running promotion check even though the refresh matrix
+allows 350 minutes. Second, scheduled and manual refreshes shared one
+concurrency group, so GitHub could discard an older pending run even with
+`cancel-in-progress: false`. The generic `auto-refresh-prs` cron could also
+rebase the bot-owned promotion branch independently of the npm coordinator.
+
+The workflow now uses per-SHA keys for pushes and per-run keys for scheduled or
+manual refreshes, paginates every check-run page without aging the active-check
+guard out, and fails closed when the check API is unreadable. The generic
+behind-PR sweep excludes `ci/npm-compat-refresh` entirely. This makes the npm
+coordinator the only updater of its promotion branch and prevents both direct
+and indirect `pull_request:synchronize` cancellation churn.
+
+Implementation: [PR #4776](https://github.com/loopdive/js2/pull/4776).

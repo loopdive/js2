@@ -1548,6 +1548,24 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * order. Clear — the common case — keeps every array read byte-identical.
    */
   usesArrayHoles: boolean;
+  /**
+   * (#4491 T11) Set when a body actually EMITTED the f64 absence marker
+   * (`HOLE_F64_BITS`) — an array-literal elision in an f64 carrier, or the
+   * grow-gap fill. Strictly narrower than {@link usesArrayHoles}, which only
+   * says the program contains *some* elision: a module whose only elisions sit
+   * in `any[]`/`string[]` literals sets the flag above and never mints an f64
+   * marker.
+   *
+   * Readable ONLY by FINALIZE-time consumers (`__vec_get`'s host-boundary map,
+   * `fillF64HoleHasIdxArms`), which run after every body — a body-compile-time
+   * consumer must keep using `usesArrayHoles`, because function compilation
+   * order is not source order and the read of `a[i]` can precede the literal
+   * that introduces the marker.
+   *
+   * Measured: without this, `benchmarks/array.ts` grew 19 bytes in `__vec_get`
+   * for a compare that could never fire.
+   */
+  f64HoleMarkerEmitted?: boolean;
   /** Exact, escape-free `new Array(n)` declarations admitted to #4222's carrier. */
   holeyArrayDeclarations: Set<ts.VariableDeclaration>;
   /** Exact constructor nodes that materialize the dedicated sparse carrier. */
