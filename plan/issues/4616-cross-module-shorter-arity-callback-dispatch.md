@@ -404,3 +404,63 @@ jest 315/331 (95.2%). The 16 jest residuals, each pre-diagnosed:
 uuid (10/75) is #4383, CLAIMED by ttraenkler/codex since 2026-08-12 (claim
 ref verified; parallel implementation is a pre-dispatch BLOCKER). react-dom
 infra is the same lane's.
+
+## 2026-08-22 fourteenth slice — `process` host-global + named class-expression `.name`
+
+1. Bare `process` fell to the graceful-null default (`[object Null]`,
+   null-deref on `.pid`). It now rides the #3087 host-global materialization
+   lane (identifiers.ts) like `Buffer`. jest globals check-process passes.
+2. The slice-13 residual — INLINE `class Named {}` VALUES — is closed:
+   `stampClassExprName` (new-super.ts) stamps the declared name in BOTH arms
+   of `compileClassExpression` (synthetic-name arm from `expr.name`, the
+   named-collection arm from the collected className).
+   convertDescriptorToString 10 → 11/11.
+
+Measured: jest 315 → 317/331. Regression test:
+`tests/issue-4616-process-and-class-expr-name.test.ts` (2).
+
+## 2026-08-22 fifteenth slice — runtime internals survive a patched `Array.isArray`
+
+jest.spyOn(Array, 'isArray').mockImplementation(compiledClosure) turned BOTH
+deepCyclicCopy "does not keep the prototype by default" tests into
+"Maximum call stack size exceeded": the runtime's own conversion/trampoline
+helpers read the LIVE `Array.isArray`, so invoking the patch recursed
+spy → `__fn_tramp_spy` → arg conversion → patched isArray → spy. runtime.ts
+now snapshots `_nativeIsArray` at module load and every INTERNAL decision
+(37 sites) uses it; only the user-visible `__extern_is_array` lane still
+reads the live global, so the spy remains observable exactly where user code
+calls `Array.isArray`.
+
+Measured: jest 317 → 319/331 (deepCyclicCopy 7 → 5); cookie 63740/63740,
+clsx 32/32 hold; ts7 clean. Regression test:
+`tests/issue-4616-patched-isarray-recursion.test.ts` (1).
+
+## 2026-08-22 residual inventory after slices 5-15 (jest 113 → 319/331, react measured)
+
+Curated scoreboard: acorn 3518/3518 · cookie 63740/63740 · clsx 32/32 ·
+jest 319/331 (96.4%) · react 81/146 scored (126 harness-incompatible).
+The 12 jest residuals:
+
+- deepCyclicCopy (5): spy-in-accessor getter copy (null-deref via the spy
+  lane); prototype-identity MOP (`Object.getPrototypeOf(copy)` equal/unequal
+  assertions — 2 "unexpected equal value"); keepPrototype=true
+  `Object.create(Object.getPrototypeOf(o))` → "Cannot convert null to
+  object" (getPrototypeOf answers null for the compiled copy) ×2.
+- diff-sequences index (3): 1 expected-throw + 2 boolean-array toEqual
+  (the #2873-family order-sensitive residual, slice 3).
+- pTimeout (3): setTimeout/clearTimeout identity counting + async timers.
+- errorWithStack (1): Error.captureStackTrace invalid-argument family.
+
+react 63 fail buckets (single 13 MB module, 44 batches, validates):
+ReactChildren 18 · ReactES6Class 13 · ReactStrictMode 12 · ReactJSXRuntime 6 ·
+ReactCreateElement 5 · ReactElementClone 5 · JSXTransformIntegration 2 ·
+PureComponent 2. Top error shapes: "expected not null" (13), inner
+function-declaration `.name` reads undefined (probe: passing an inner
+function decl as a VALUE yields `function:undefined` — the slice-13 parked
+localName gap), "X is not defined" ReferenceErrors for test-body inner
+components (7), mock-arg/count mismatches (12), proxy ownKeys
+non-extensible trap (6), null setState (2).
+
+uuid (10/75) is #4383, CLAIMED by ttraenkler/codex since 2026-08-12 (claim
+ref re-verified 2026-08-22; parallel implementation is a pre-dispatch
+BLOCKER). react-dom infra is the same lane's.

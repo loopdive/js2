@@ -94,6 +94,13 @@ import {
 } from "./runtime/legacy-regexp.js";
 export { buildWasiPolyfill } from "./runtime/wasi-polyfill.js";
 
+// (#4616) Internal runtime decisions (arg conversion, deep equal, trampolines)
+// must survive a user-level patch of `Array.isArray` (jest.spyOn). A patched
+// isArray whose mockImplementation is a COMPILED closure otherwise recurses:
+// spy → trampoline → arg conversion → patched isArray → spy. Only the
+// user-visible `__extern_is_array` lane reads the live global.
+const _nativeIsArray = Array.isArray;
+
 /**
  * Portable require() for loading Node.js builtin modules (#1044).
  * Works in both CJS (require is global) and ESM (createRequire from node:module).
@@ -2830,7 +2837,7 @@ function _materializeIterable(
   callbackState?: { getExports: () => Record<string, Function> | undefined },
 ): any {
   if (iter == null) return iter;
-  if (Array.isArray(iter)) return iter;
+  if (_nativeIsArray(iter)) return iter;
   if (typeof iter !== "object") return iter;
   // (#1382) Check `_isWasmStruct` BEFORE `Symbol.iterator in iter` —
   // the `in` operator on an opaque WasmGC struct throws "WebAssembly
@@ -2947,7 +2954,7 @@ function _convertIterableForHost(
   // same output identity, mirroring `__make_iterable`'s guard.
   const memo = seen ?? new WeakMap<object, any>();
   if (memo.has(obj)) return memo.get(obj);
-  if (Array.isArray(obj)) {
+  if (_nativeIsArray(obj)) {
     // Pre-existing JS array — still walk for nested wasm structs so e.g.
     // `[[wasmStructKey, value]]` passed from JS works.
     const out: any[] = new Array(obj.length);
@@ -3957,7 +3964,7 @@ function _wasmToPlain(val: any, exports: Record<string, Function> | undefined, s
   // hence only ARROW params lost their fields. Recurse element-wise so the deep
   // copy reaches the structs. (A wasm vec is NOT a JS array — `Array.isArray`
   // is false for it — so this never double-handles the `__vec_get` path.)
-  if (Array.isArray(val)) {
+  if (_nativeIsArray(val)) {
     if (seen) {
       if (seen.has(val)) throw new TypeError("Converting circular structure to JSON");
       seen.add(val);
@@ -4082,7 +4089,7 @@ function _normaliseJsonReplacer(
   if (replacer == null) return { kind: "none" };
   if (typeof replacer === "number" && isNaN(replacer)) return { kind: "none" };
   if (typeof replacer === "function") return { kind: "fn", fn: replacer };
-  if (Array.isArray(replacer)) {
+  if (_nativeIsArray(replacer)) {
     return { kind: "list", keys: _buildJsonPropertyList(replacer) };
   }
   if (typeof replacer === "object" && _isWasmStruct(replacer)) {
@@ -4109,7 +4116,7 @@ function _normaliseJsonReplacer(
     const isVecFn = exports?.__is_vec;
     if (typeof isVecFn === "function" && isVecFn(replacer) === 1) {
       const asPlain = _wasmToPlain(replacer, exports);
-      if (Array.isArray(asPlain)) {
+      if (_nativeIsArray(asPlain)) {
         return { kind: "list", keys: _buildJsonPropertyList(asPlain) };
       }
     }
@@ -4138,7 +4145,7 @@ function _buildJsonPropertyList(arr: any[]): string[] {
 }
 
 function _liveIsArray(v: any, exports: Record<string, Function> | undefined): boolean {
-  if (Array.isArray(v)) return true;
+  if (_nativeIsArray(v)) return true;
   if (!_isWasmStruct(v) || !exports) return false;
   // (#3637) POSITIVE `__is_vec` discriminator. The old test was
   // "no named struct fields AND responds to `__vec_len`" — the second half is
@@ -4213,7 +4220,7 @@ function _hasReachableToJSON(v: any, exports: Record<string, Function> | undefin
   seen.add(v);
   // Plain JS object/array: enumerate own keys.
   if (!_isWasmStruct(v)) {
-    if (Array.isArray(v)) {
+    if (_nativeIsArray(v)) {
       for (let i = 0; i < v.length; i++) {
         if (_hasReachableToJSON(v[i], exports, seen)) return true;
       }
@@ -4367,7 +4374,7 @@ function _internalizeJSONProperty(
     const createDataProperty = (o: any, p: string, v: any): void => {
       Reflect.defineProperty(o, p, { value: v, writable: true, enumerable: true, configurable: true });
     };
-    if (Array.isArray(value)) {
+    if (_nativeIsArray(value)) {
       for (let i = 0; i < value.length; i++) {
         const elem = _internalizeJSONProperty(value, String(i), reviver, callbackState);
         if (elem === undefined) {
@@ -4538,7 +4545,7 @@ function _serializeJSONArray(
   const stepback = indent;
   const newIndent = indent + gap;
   let len: number;
-  if (Array.isArray(arr)) {
+  if (_nativeIsArray(arr)) {
     len = arr.length;
   } else {
     const vecLen = exports?.__vec_len;
@@ -6266,7 +6273,7 @@ function _nativeOpenObjectKeys(obj: any, exports: Record<string, Function> | und
   if (typeof keys !== "function") return [];
   try {
     const view = _wrapForHost(keys(obj), exports);
-    if (!Array.isArray(view)) return [];
+    if (!_nativeIsArray(view)) return [];
     const out: string[] = [];
     for (const key of view) if (typeof key === "string") out.push(key);
     return out;
@@ -7206,7 +7213,7 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       // those elements so `param.type` / `param.name` resolve through the proxy.
       // Genuine wasm vecs were already routed to `_wrapVecForHost` above; this
       // catches only true JS arrays the resolver returned directly.
-      if (Array.isArray(val) && liveExports) {
+      if (_nativeIsArray(val) && liveExports) {
         return _wrapHostArrayElems(val, liveExports);
       }
       // (#3051 Slice 3) Inherited `Object.prototype.toString` / `valueOf`
@@ -8104,7 +8111,7 @@ const JS_STRINGS_NATIVE_BUILTIN = true;
  *  Used by array method host imports that need a real JS array. */
 function _toJsArray(arr: any, exports: Record<string, Function> | undefined): any[] {
   if (arr == null) return [];
-  if (Array.isArray(arr)) return arr;
+  if (_nativeIsArray(arr)) return arr;
   if (exports) {
     const vecLen = exports.__vec_len;
     const vecGet = exports.__vec_get;
@@ -8154,7 +8161,7 @@ const VEC_UNWRAP_MAX_DEPTH = 64;
  */
 function _toJsArrayDeep(arr: any, exports: Record<string, Function> | undefined, maxDepth: number): any {
   if (arr == null) return arr;
-  if (Array.isArray(arr)) {
+  if (_nativeIsArray(arr)) {
     if (maxDepth <= 0) return arr;
     return arr.map((el) => _toJsArrayDeep(el, exports, maxDepth - 1));
   }
@@ -8911,7 +8918,7 @@ function _createBoundaryObjectImport(
     toNativeVector: _nativeBoundaryVector,
     readArguments: (args, exports) => {
       const rawArgs = _unwrapForHost(args);
-      if (Array.isArray(rawArgs)) {
+      if (_nativeIsArray(rawArgs)) {
         return Array.from(rawArgs, (value) => _nativeBoundaryToHost(_nativeDynamicFromHost(value, exports), exports));
       }
       const values: any[] = [];
@@ -10480,7 +10487,7 @@ assert._isSameValue = isSameValue;
           return Number(v);
         };
         return (obj: any) => {
-          if (obj == null || Array.isArray(obj)) return obj == null ? 0 : obj.length;
+          if (obj == null || _nativeIsArray(obj)) return obj == null ? 0 : obj.length;
           // Reading .length on an opaque wasmGC struct throws — resolve through
           // the #1629-safe own-descriptor reader (#983 sidecar + vec live length
           // + shape-gated struct field), then the inherited chain.
@@ -11435,7 +11442,7 @@ assert._isSameValue = isSameValue;
               }
             }
           }
-          if (Array.isArray(obj)) {
+          if (_nativeIsArray(obj)) {
             // #1454: Real arrays normally take a fast path, but if the user has
             // overridden Array.prototype[Symbol.iterator] (or installed an own
             // @@iterator on the array), spec §22.1.5 requires going through
@@ -11564,7 +11571,7 @@ assert._isSameValue = isSameValue;
       }
       if (name === "__extern_slice")
         return (arr: any, start: number) => {
-          if (Array.isArray(arr)) return arr.slice(start);
+          if (_nativeIsArray(arr)) return arr.slice(start);
           if (typeof arr === "string") return Array.from(arr).slice(start);
           // Handle WasmGC structs (tuples) — extract fields from index onwards
           if (_isWasmStruct(arr)) {
@@ -12402,7 +12409,7 @@ assert._isSameValue = isSameValue;
             if (method === "call" && wrappedArgs.length > 1) {
               const drained = _drainWasmClosureIterable(wrappedArgs[1], callbackState);
               if (drained !== null) wrappedArgs[1] = drained;
-            } else if (method === "apply" && Array.isArray(wrappedArgs[1]) && wrappedArgs[1].length > 0) {
+            } else if (method === "apply" && _nativeIsArray(wrappedArgs[1]) && wrappedArgs[1].length > 0) {
               const drained = _drainWasmClosureIterable(wrappedArgs[1][0], callbackState);
               if (drained !== null) wrappedArgs[1] = [drained, ...wrappedArgs[1].slice(1)];
             }
@@ -12908,7 +12915,7 @@ assert._isSameValue = isSameValue;
           // indexed properties. Only intercept when the length exceeds a threshold
           // where V8's spec walk would be impractical — for normal-sized receivers
           // V8's native is correct and faster than our defined-property iteration.
-          if (typeName === "Array" && !Array.isArray(wrappedReceiver) && wrappedReceiver != null) {
+          if (typeName === "Array" && !_nativeIsArray(wrappedReceiver) && wrappedReceiver != null) {
             const fast = _arrayProtoSparseFastPaths[methodName];
             if (fast) {
               const lenRaw = wrappedReceiver.length;
@@ -13304,7 +13311,7 @@ assert._isSameValue = isSameValue;
             // requires `IsCallable(F)` is false → throw TypeError.
             throw new TypeError("Function.prototype.bind called on non-callable");
           }
-          const partial: any[] = Array.isArray(argsArray) ? argsArray : [];
+          const partial: any[] = _nativeIsArray(argsArray) ? argsArray : [];
           return Function.prototype.bind.apply(callable, [thisArg, ...partial]);
         };
       // (#1337) Invoke an arbitrary callable externref with an arguments array.
@@ -13335,7 +13342,7 @@ assert._isSameValue = isSameValue;
           // (#3097/#3335) Host ctor target: compiled-ArrayBuffer vec structs
           // marshal to their canonical host ArrayBuffer; compiled ARRAY vec
           // structs materialize to real host Arrays (see __construct).
-          if (!_isWasmStruct(ctor) && Array.isArray(wrappedArgs)) {
+          if (!_isWasmStruct(ctor) && _nativeIsArray(wrappedArgs)) {
             wrappedArgs = wrappedArgs.map((a: any) => _marshalHostConstructArg(a, exports, callbackState, wrappedCtor));
           }
           if (!newTargetIsPresent && (newTarget === undefined || newTarget === null)) {
@@ -13384,7 +13391,7 @@ assert._isSameValue = isSameValue;
           // vec struct as a real host Array (`new TA(buffer, …)` / `new
           // TA(arr)` on an opaque struct builds a length-0 view). Compiled
           // callees keep raw structs — they re-enter Wasm.
-          if (!_isWasmStruct(callee) && Array.isArray(wrappedArgs)) {
+          if (!_isWasmStruct(callee) && _nativeIsArray(wrappedArgs)) {
             wrappedArgs = wrappedArgs.map((a: any) =>
               _marshalHostConstructArg(a, exports, callbackState, wrappedCallee),
             );
@@ -13444,7 +13451,7 @@ assert._isSameValue = isSameValue;
           // view (whose later `.set()` throws the uncatchable-classified
           // "offset is out of bounds"). A compiled-closure callee keeps raw
           // structs (re-enters Wasm).
-          if (!_isWasmStruct(callee) && Array.isArray(wrappedArgs)) {
+          if (!_isWasmStruct(callee) && _nativeIsArray(wrappedArgs)) {
             wrappedArgs = wrappedArgs.map((a: any) =>
               _marshalHostConstructArg(a, exports, callbackState, wrappedCallee),
             );
@@ -13614,7 +13621,7 @@ assert._isSameValue = isSameValue;
           // abrupt completions there must propagate (test262
           // errors-iterabletolist-failures).
           let errorsList: any[];
-          if (Array.isArray(errors)) {
+          if (_nativeIsArray(errors)) {
             errorsList = errors.slice();
           } else {
             let iter: any;
@@ -13642,7 +13649,7 @@ assert._isSameValue = isSameValue;
               const looksLikeVec = _isWasmVec(errors, exports);
               if (looksLikeVec) {
                 const materialized = _materializeIterable(errors, callbackState);
-                if (Array.isArray(materialized)) {
+                if (_nativeIsArray(materialized)) {
                   errorsList = materialized.slice();
                 } else {
                   throw new TypeError("AggregateError: errors argument is not iterable");
@@ -14182,12 +14189,12 @@ assert._isSameValue = isSameValue;
         };
       if (name === "__for_in_len")
         return (keys: any) => {
-          if (keys == null || !Array.isArray(keys)) return 0;
+          if (keys == null || !_nativeIsArray(keys)) return 0;
           return keys.length;
         };
       if (name === "__for_in_get")
         return (keys: any, i: number) => {
-          if (keys == null || !Array.isArray(keys)) return undefined;
+          if (keys == null || !_nativeIsArray(keys)) return undefined;
           return keys[i];
         };
       // (#3323) for-in over an ARRAY receiver: return the full
@@ -14264,7 +14271,7 @@ assert._isSameValue = isSameValue;
       // from JS; Promise.all/race/etc. need an iterable).
       const _vecToArray = (arr: any): any[] => {
         if (arr == null) return [];
-        if (Array.isArray(arr)) return arr;
+        if (_nativeIsArray(arr)) return arr;
         const exports = callbackState?.getExports();
         if (exports) {
           const vecLen = exports.__vec_len as Function | undefined;
@@ -14366,7 +14373,7 @@ assert._isSameValue = isSameValue;
           // Real JS Array — fast path. (#2671) Re-materialize only when some
           // element is a wasm-struct thenable (see _wrapThenableElement); the
           // overwhelmingly common all-plain case returns the array unchanged.
-          if (Array.isArray(iter)) {
+          if (_nativeIsArray(iter)) {
             let needsWrap = false;
             for (const v of iter) {
               if (v !== _wrapThenableElement(v)) {
@@ -14772,7 +14779,7 @@ assert._isSameValue = isSameValue;
           // the eager-at-creation side effects of the buffer lowering
           // (test262 dstr fixture: `var iter = function*(){ iterations += 1 }()`
           // must keep iterations === 0 until a resume).
-          if (buf !== null && buf !== undefined && !Array.isArray(buf)) {
+          if (buf !== null && buf !== undefined && !_nativeIsArray(buf)) {
             const st: {
               buf: any[];
               index: number;
@@ -15338,7 +15345,7 @@ assert._isSameValue = isSameValue;
             if (
               x == null ||
               typeof x !== "object" ||
-              Array.isArray(x) ||
+              _nativeIsArray(x) ||
               !_isWasmStruct(x) ||
               typeof vecLen !== "function" ||
               typeof vecGet !== "function" ||
@@ -15370,7 +15377,7 @@ assert._isSameValue = isSameValue;
               // to externref JS arrays) or an opaque vec struct — both must be
               // spread element-by-element, else the argument is appended whole
               // (#1969 — data loss → NaN).
-              if (Array.isArray(x)) {
+              if (_nativeIsArray(x)) {
                 for (let i = 0; i < x.length; i++) out.push(x[i]);
                 continue;
               }
@@ -15384,7 +15391,7 @@ assert._isSameValue = isSameValue;
               if (
                 x != null &&
                 typeof x === "object" &&
-                !Array.isArray(x) &&
+                !_nativeIsArray(x) &&
                 _isWasmStruct(x) &&
                 _isConcatSpreadable(x, callbackState)
               ) {
@@ -15415,7 +15422,7 @@ assert._isSameValue = isSameValue;
           // already a real JavaScript Array. __vec_len deliberately answers 0
           // for non-vec objects, so probing it as a WasmGC vec would discard the
           // receiver. Start from a shallow host-array copy instead.
-          if (Array.isArray(arr)) {
+          if (_nativeIsArray(arr)) {
             return applyConcat(arr.slice(), args);
           }
           if (typeof vecLen !== "function" || typeof vecGet !== "function") {
@@ -15440,7 +15447,7 @@ assert._isSameValue = isSameValue;
           // JS array: call native .join directly. Pass `undefined` (not the
           // string "undefined") when no separator was supplied so the spec's
           // default ',' takes effect.
-          if (Array.isArray(arr)) {
+          if (_nativeIsArray(arr)) {
             return sep === undefined || sep === null ? arr.join() : arr.join(String(sep));
           }
           // WasmGC vec: read via exports and join in JS.
@@ -16986,7 +16993,7 @@ function marshalTypedArrayArgs(
       out[i] = arg;
       continue;
     }
-    if (!ArrayBuffer.isView(arg) && !Array.isArray(arg)) {
+    if (!ArrayBuffer.isView(arg) && !_nativeIsArray(arg)) {
       throw new TypeError(`wrapExports: export "${exportName}" expects ${kind} for arg #${i}, got ${typeof arg}`);
     }
     const src = arg as ArrayLike<number>;
@@ -17216,7 +17223,7 @@ export function wrapExports(
         // (#1700) Uint8Array fidelity on the return side. The Wasm signature
         // is ambiguous (Uint8Array and number[] share `(ref null $Vec[f64])`)
         // so we wrap based on the TS-level metadata, not a runtime probe.
-        if (sig && sig.result === "uint8array" && Array.isArray(plain)) {
+        if (sig && sig.result === "uint8array" && _nativeIsArray(plain)) {
           return new Uint8Array(plain as number[]);
         }
         return plain;
