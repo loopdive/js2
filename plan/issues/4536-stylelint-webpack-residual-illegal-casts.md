@@ -101,3 +101,28 @@ same four compiler residuals remain (`arrayEqual`, the parameterized
 registrations** stay explicitly deferred as unavailable infrastructure rather
 than being silently omitted. The added files are local utility/reference
 modules; no test body or input was rewritten.
+
+## 2026-08-22 triage (curated-npm-tests lane, post-#4614/#4616)
+
+stylelint 104/108, webpack 13/16 after this session's fixes. The residuals:
+
+- **stylelint arrayEqual "handles arrays"** — `arrayEqual(a: unknown, b:
+  unknown)` + `Array.isArray` CFA narrowing + `a.every(...)`: the array-method
+  lane bakes one vec cast for the narrowed receiver; a different-carrier
+  argument traps "illegal cast". #4611-family (CFA-narrowed dynamic value
+  treated as a proven GC rep). A minimal reduction of exactly this shape is
+  BLOCKED by a separate pre-existing compile bug, reproduced on origin/main:
+  `Invalid JavaScript adapter manifest: duplicate adapter import
+  'env::__box_number' appears 2 times` (compile of a small module with
+  unknown-param isArray+every; worth its own issue).
+- **stylelint ruleMessages "message functions"** — `[undefined and undefined]`
+  in the output: rest/`arguments` forwarding drops the args of a
+  message-function call (related to the #4530 protocol family).
+- **stylelint vendor prefix ×2** — `null` instead of `"-moz-"`/`"color"`: a
+  string/regex op returns null through the boxed lane.
+- **webpack groupBy ×2** — illegal cast at `__call_fn_method_2`: callback
+  dispatch on `Array.prototype.filter/partition`-style HOF with a
+  cross-carrier receiver.
+- **webpack formatSize "undefined/NaN"** — `"0 bytes"` vs `"unknown size"`:
+  the `typeof size !== "number" || Number.isNaN(size)` guard misfolds for a
+  boxed undefined crossing the any lane (residual of the #4529 family).
