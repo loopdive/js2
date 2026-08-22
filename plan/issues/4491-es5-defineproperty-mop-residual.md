@@ -161,6 +161,14 @@ coercion-sites-allow:
   # hand-rolled.
   - src/codegen/string-fromcharcode-value-read.ts
 func-budget-allow:
+  # 2026-08-22 wave-5 lane T3, §13.10.1 step-3 `instanceof` RHS evaluation.
+  # +6, DISPATCH ONLY — the emitter is one exported call in the new subsystem
+  # module instanceof-rhs-evaluation.ts. The two call sites are the function's
+  # own conservative fall-through arms (`typeIdxs === undefined` and
+  # `instanceofIdx === undefined`); each must sit between the LHS drop and the
+  # `i32.const 0` terminal, because that IS the spec's evaluation order, so
+  # neither can be lifted out of the arm it guards.
+  - src/codegen/expressions/identifiers.ts::compileHostInstanceOf
   # 2026-08-22 wave-5 lane T8, f64-hole VALUE half: `compileElementAssignment`
   # gains ONE `else if (arrDef.element.kind === "f64")` arm (+14) that calls
   # `emitF64GapFillInstrs`. The whole body — the sNaN marker, the locals, the
@@ -2779,6 +2787,257 @@ seed was low.
 **`Math.max` as a value works today only because its arguments survive the same
 mis-compiled slot by accident of being numbers.** Anyone touching the variadic
 convention should treat that as unowned behaviour, not as a working reference.
+
+---
+
+## Wave-5 T3 result — harness + instanceof + assignment (2026-08-22, lane w5-t3)
+
+**Rows: 21 in `.tmp/wave5-T3.txt`. 1 already passing at base, 5 BLOCKED on
+infrastructure, 3 flipped by this lane, 11 priced below.** Every row was
+re-verified on this lane's own head before any edit; every figure is a run this
+lane executed, `--target standalone`, serial single-test probes, base-vs-after
+by file-copy A/B (`.tmp/ab/*.base.ts`), never `git stash`.
+
+| row | base | after |
+| --- | --- | --- |
+| `language/expressions/assignment/S11.13.1_A2.1_T1` | fail — `#1: x = 1; x === 1. Actual: 0` | **pass** |
+| `language/expressions/instanceof/S11.8.6_A2.1_T3` | fail — `Actual: [object Object]` | **pass** |
+| `language/expressions/instanceof/S11.8.6_A2.4_T4` | fail — `(OBJECT = Object, {}) instanceof OBJECT !== true` | **pass** |
+| `harness/deepEqual-primitives` | fail | **pass, then REVERTED — see "Symbol typeof" below** |
+| `language/expressions/instanceof/S11.8.6_A1` | pass | pass (already passing at base — not counted) |
+
+### Landed slice 1 — a top-level write that precedes its own `var` was DROPPED
+
+`shouldCollectTopLevelAssignment` (declarations.ts) decides whether to keep a
+top-level `x = 1` by asking `ctx.moduleGlobals.has("x")` — a set the SAME single
+pass over `sourceFile.statements` is still filling. So an assignment textually
+before its own `var x` was answered "not a module global" and the whole
+statement was dropped from `__module_init`. Tenth instance of the #3623
+silent-drop family; the shape was already on the allow-list, so what was missing
+is the FACT, not another arm.
+
+| probe | base | after |
+| --- | --- | --- |
+| `x = 1; if (x !== 1) throw …; var x = 1;` | `CHECK1 x=0 typeof=number` | `ALLOK x=1` |
+| `x = 1; var x;` (no initializer) | `NOINIT x=undefined` | still `undefined` — see residual below |
+
+The no-initializer probe is what rules OUT an "initializer ordering" reading:
+the statement is gone, not reordered.
+
+New module `src/codegen/top-level-hoisted-var-names.ts` pre-scans the file for
+names bound by a top-level `var` (hoisting through blocks / `if` / loops /
+`try` / `switch` / labels / `with`, stopping at every function and class
+boundary), cached per source file; declarations.ts gets one dispatch line.
+`let`/`const` are deliberately excluded — a write before those is a TDZ
+ReferenceError, so emitting the write would be a worse wrong answer than the
+current drop.
+
+**Controls:** 378 rows (assignment + instanceof + comma + statements/variable +
+global-code) 285 → 286, the single transition being the target row; a second
+220-row sample (statements/for + expressions/object + Object.defineProperty)
+IDENTICAL both sides.
+
+**Residual, NOT fixed:** `x = 1; var x;` still reads `undefined` after the
+write is collected — so a second defect sits behind this one: a `var` with NO
+initializer appears to re-store `undefined` over an existing binding, which
+§14.3.2.1 forbids (a redeclaration of an existing var binding performs no
+initialization). Not attempted here; it is a separate statement-emission
+question and no row in this lane's set depends on it.
+
+### Landed slice 2 — `instanceof`'s RHS was never evaluated (§13.10.1 step 3)
+
+`compileHostInstanceOf`'s conservative arms compile the LHS, drop it, and push
+`i32.const 0` without ever compiling the RHS. §13.10.1 evaluates the
+ShiftExpression and **GetValues** it, and GetValue on an unresolvable Reference
+is a ReferenceError.
+
+| probe | base | after |
+| --- | --- | --- |
+| `({}) instanceof UNDECLARED_XYZ` | `false`, no throw | ReferenceError ✓ |
+| `var v = UNDECLARED_ABC` | ReferenceError ✓ | unchanged |
+| `var w = UNDECLARED_DEF + 1` | ReferenceError ✓ | unchanged |
+
+So the identifier lowering already threw correctly everywhere the operand was
+actually compiled — only `instanceof`'s RHS was skipped. New module
+`src/codegen/instanceof-rhs-evaluation.ts`; two call sites in identifiers.ts,
+each between the LHS drop and the constant so the observable order is the
+spec's. **Controls:** the same 378-row set 286 → 287 (single transition = the
+target row), plus a 213-row instanceof-sensitive set
+(`Function.prototype[Symbol.hasInstance]`, class/subclass, Error, TypeError)
+IDENTICAL both sides.
+
+### Landed slice 3 — the ASSIGNED builtin-constructor alias
+
+`resolveBuiltinCtorAliasName` (native-ordinary-instanceof.ts, #2916) resolves a
+DECLARED alias from the binding's static type, whose lib.d.ts shape is the
+nominal `ObjectConstructor`. Two spellings have no such type to read:
+
+| spelling | base | after |
+| --- | --- | --- |
+| `var C = Object; o instanceof C` | `true` ✓ | `true` |
+| `OBJECT = Object; o instanceof OBJECT` (implicit global — no declaration) | **`false`** | **`true`** |
+| `var OBJECT = 0; OBJECT = Object; o instanceof OBJECT` (union type) | `false` | `false` — declines, by design |
+| `o instanceof (o2 = 0, Object)` (comma RHS) | `false` | `false` — out of shape |
+
+New module `src/codegen/builtin-ctor-assigned-alias.ts` answers a different
+question from the type-based one: not "what type does the checker give this
+binding" but "what values does this FILE ever write into this spelling". When
+every write supplies the SAME builtin constructor, the name holds that
+constructor at every point where it reads without throwing — a read before the
+first write is an unresolvable reference and throws ReferenceError instead. The
+scan disqualifies a spelling on a compound assign / `++` / `--` / `delete`, a
+parameter / catch / binding element / `for-in` loop variable, a function or
+class declaration, an initializer-less declaration, an assignment whose RHS is
+not a bare identifier, or two writes naming different builtins. Host-free only.
+
+**That is deliberately weaker than row three above**, which is why
+`S11.8.6_A2.4_T1` does not flip: its `var OBJECT = 0` contributes a
+second, non-constructor source, so the spelling is not uniform. `T1`'s CHECK#2
+needs something else again — the LHS spilled to a temp BEFORE the comma's
+leading operands run, then instanceof dispatched on the comma's LAST operand.
+Slice 2 makes those side effects happen in the right order; the answer still
+falls to the conservative `0`. Both are runtime-RHS problems, not static-fold
+problems.
+
+Flips `S11.8.6_A2.4_T4` fail → pass. **Controls:** the 378-row set 287 → 288
+(single transition = the target row); the 213-row instanceof-sensitive set and a
+200-row sample of `Object.prototype` + `Array.prototype.concat` + `Function`
+both IDENTICAL to the pre-slice run.
+
+### ATTEMPTED AND REVERTED — `typeof <symbol>` through a dynamic slot
+
+**This is a REAL defect with a complete diagnosis. It was implemented, measured,
+and then reverted because the fix cascades into the `$Object.$proto` wall. The
+next lane should start from these measurements, not re-derive them.**
+
+The defect: a symbol reaching `typeof` through a dynamic slot (a parameter, an
+`any` local, an object field) answers `"object"`. The compile-time fold answers
+`"symbol"`. That is the #2984 path-dependence class.
+
+| probe | base |
+| --- | --- |
+| `var s = Symbol(); typeof s` | `"symbol"` (fold) |
+| `(function (v) { return typeof v; })(s)` | **`"object"`** |
+| `(function (v) { return typeof v === "symbol"; })(s)` | **`false`** |
+| `(function (v) { switch (typeof v) { case "symbol": … } })(s)` | takes `default` |
+
+Two natives are missing the case, and there is **no `__typeof_symbol` predicate
+at all** — `object-runtime-proxy.ts` looks the name up in `ctx.funcMap`, but
+nothing ever registers it, so that lookup has always returned `undefined`:
+
+- `__typeof` (the MATERIALIZED tag; also what `typeof x === "symbol"` falls back
+  to comparing, since there is no predicate) classifies null / number / boolean
+  / bigint / string / function and falls through to `"object"`.
+- `__typeof_object` answers 1 for the `$Symbol` carrier, so a symbol is BOTH
+  not-a-symbol and an object. `native-object-family-instanceof.ts` already
+  documents this and subtracts the carrier at its own call site.
+
+**What it costs, measured:** upstream `deepEqual.js` routes on
+`switch (typeof value) { … case 'symbol': return true }` inside
+`isPrimitiveEquatable(value)` with `value` a parameter. Every symbol therefore
+missed the primitive arm, was admitted by `isObjectEquatable` (`typeof value
+=== 'object'`), and two DISTINCT symbols compared structurally EQUAL — so
+`harness/deepEqual-primitives.js`'s `assert.throws(Test262Error, … deepEqual(s1,
+s2))` saw no throw. A second symptom on the same row:
+`assert.deepEqual(s1, "Symbol()")` threw `TypeError: Reflect.ownKeys called on
+non-object` from the format path.
+
+**The two-arm fix works and was measured** (splice the `$Symbol` `ref.test` into
+`__typeof` → `"symbol"` and into `__typeof_object` → 0, at the same finalize
+point as the closure arms, keeping `hasSymbolCarrier` alive as its own reason to
+run the pass). On a 298-row control (built-ins/Symbol + expressions/typeof +
+gOPS/gOPN + all of harness/ + the T3 rows): **+2** (`harness/deepEqual-primitives`,
+`harness/verifyProperty-desc-is-not-object`), **−1**
+(`language/expressions/typeof/symbol.js`).
+
+**Why the −1, and why it is not a trade you may take.**
+`language/expressions/typeof/symbol.js` asserts BOTH `typeof Symbol() ===
+"symbol"` AND `typeof Object(Symbol()) === "object"`. It passed at base for the
+wrong reason: standalone `Object(sym)` returns the symbol UNCHANGED (the
+`isSymbolType` arm of `emitObjectCoercion` is gated `!noJsHost` and there is no
+standalone arm), and the runtime tag for everything unclassified was `"object"`.
+Teaching `typeof` the symbol tag makes that accident visible.
+
+**The wrapper fix was then implemented and ALSO reverted.** Building
+`Object(sym)` as the ordinary `$Object` + [[PrimitiveValue]] slot every other
+standalone wrapper uses (a `__new_Symbol_object` native next to `__new_String`,
+`"Symbol"` added to `StandaloneWrapperConstructorName`, and `"symbol"` added to
+`isPrimitiveObjectCoercionCall`) gives the right answers in isolation:
+
+| probe | after wrapper |
+| --- | --- |
+| `typeof Object(Symbol())` | `"object"` ✓ |
+| `Object(s1) === s1` | `false` ✓ |
+| `Object(s1) instanceof Symbol` | `true` ✓ |
+| `s1 instanceof Symbol` | `false` ✓ |
+| `Object(s1).valueOf() === s1` | `true` ✓ (statically-typed receiver) |
+| `Object(s1) instanceof Object` | `true` ✓ |
+
+…and still loses `deepEqual-primitives`, now with
+`TypeError: Object.prototype.valueOf is not yet implemented in --target
+standalone`. **Root cause of THAT, measured:** `__dyn_valueOf`
+(wrapper-valueof.ts) probes the receiver's `valueOf` PROPERTY first and only
+then the [[PrimitiveValue]] slot. Its docstring justifies that order with
+"standalone ships no `Boolean.prototype.valueOf` object, so an own `valueOf`
+and the intrinsic cannot both be present" — an assumption the symbol wrapper
+breaks: the lookup reaches a reified `Object.prototype.valueOf`, whose glue
+(`array-object-proto.ts` → `emitProtoMemberBodyRefusal`) is the catchable
+"not yet implemented" throw, and arm 1 calls it. `Object(1)` / `Object("a")`
+escape this only because a STATIC receiver-type arm answers them before
+`__dyn_valueOf` is reached.
+
+**So the honest ordering of the remaining work is:**
+
+1. the symbol wrapper needs `[[Prototype]] = Symbol.prototype`, which is the
+   known `$Object.$proto` vs `$NativeProto` wall — do not re-attempt without a
+   design change; or
+2. `__dyn_valueOf` is restructured to OWN-property → slot → inherited-property
+   → self (today: any-property → slot → self). That is spec-equivalent for
+   every case it handles now, since a wrapper never has an own `valueOf`, and
+   it is the smaller of the two. It changes a helper every dynamic `.valueOf()`
+   goes through, so it needs its own control run; or
+3. `Object.prototype.valueOf` gets a real wired body (§20.1.3.7 `ToObject(this)`
+   — for an object receiver, `this`) instead of the refusal. Cheap on its own
+   and useful beyond symbols, but on its own it does NOT fix `deepEqual`: arm 1
+   would then return the wrapper instead of the primitive.
+
+Sized **L, not S** — four coupled surfaces (typeof natives, `Object()`
+coercion, wrapper-instanceof, valueOf dispatch), the same shape T1 recorded for
+`String.fromCharCode` as a value. Nothing from this attempt is committed; the
+lane's tree is back to the two landed slices.
+
+### BLOCKED — 5 rows need the quickjs eval provider, which does not build
+
+`harness/assert-throws-same-realm`, `harness/asyncHelpers-throwsAsync-same-realm`,
+`harness/detachArrayBuffer-host-detachArrayBuffer`,
+`harness/wellKnownIntrinsicObjects`, `language/expressions/instanceof/S11.8.6_A6_T4`
+all fail with `JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not
+built`. `node scripts/build-quickjs-eval-provider.mjs` fails its
+`functionParityProbe` canary: returns **1**, expected 11 — i.e.
+`constructorIdentity = 0`, a QuickJS-created `new Function(…)` value has lost
+`.constructor === Function`. Verified by file-copy A/B (reverting the wave-5
+`%Function%` own-props commit's source changes) that this **predates** that
+commit. Because the adapter's cache key folds the compiler-bundle hash, ANY
+`src/` edit invalidates the cached adapter, so this blocks every eval-dependent
+row in every lane that touches the compiler. Routed to the lead as its own task.
+
+**Trap worth keeping:** the build script exits **0** when piped
+(`… | tail`) even though the canary threw — the shell reports `tail`'s status.
+Run it bare.
+
+### Per-row verdict for the 11 remaining failures
+
+| rows | blocker | verdict |
+| --- | --- | --- |
+| `harness/deepEqual-primitives` | symbol `typeof` (above) | measured, implemented, reverted — sized L |
+| `harness/deepEqual-mapset` | `assert.deepEqual(new Set(), new Set())` says `Expected Map {} to be structurally equal to Map {}` — two empty Sets compare unequal AND format as `Map` | not attempted; Set/Map structural comparison + `@@toStringTag`, own slice |
+| `harness/asyncHelpers-asyncTest-return-not-thenable` | `doneValues` all `false` where all `true` expected | async-harness, not attempted |
+| `harness/asyncHelpers-asyncTest-{returns-undefined,then-rejects,then-resolves}` | `Test262:AsyncTestFailure:Test262Error: [object Object]` | async-harness; the `[object Object]` payload means the failure reason itself does not stringify — worth fixing first, it is hiding the real errors |
+| `language/expressions/assignment/S11.13.1_A6_T{1,2}` | `x = (eval("var x;"), 1)` must PutValue through the reference created BEFORE the eval introduced a nearer binding | direct-eval var injection into the caller activation — the eval wall |
+| `language/expressions/assignment/S8.12.5_A2` | `var m = {1:"one"}; m[1] = 5` silently stores NOTHING: `typeof m[1]` still folds to `"string"` and the value reads `undefined` | **value-representation wall.** Measured separately: the key canonicalisation is FINE (`m["1"]`/`m[1]` are the same slot, and `{1:5}; q["1"]=7; q[1] === 7`). What fails is assigning a NUMBER into a property whose inferred type is `string` — `o.a = 5` and `p["a"] = 5` reproduce it identically on a plain key, so it is not index-specific |
+| `language/expressions/assignment/8.12.5-3-b_1` | `Array.prototype.reduce = function(){}` then `gOPD(Array.prototype,"reduce").value` still reads the original | builtin-prototype method PATCH; belongs with the T2 descriptor lane |
+| `language/expressions/instanceof/S11.8.6_A2.4_T1` | `var OBJECT = 0; (OBJECT = Object, {}) instanceof OBJECT` **and** `object instanceof (object = 0, Object)` | still failing — see slice 3 below for why each half declines |
+| `language/expressions/instanceof/S15.3.5.3_A3_T2` | `F = Function(); F.prototype = Object.prototype; ({}) instanceof F` | needs a RUNTIME read of `.prototype` off an arbitrary callable — `native-ordinary-instanceof.ts` already documents this as deliberately not covered |
 
 ---
 
