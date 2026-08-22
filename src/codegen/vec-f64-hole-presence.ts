@@ -76,11 +76,6 @@ export function f64HoleTestInstrs(): Instr[] {
   return [{ op: "i64.reinterpret_f64" }, { op: "i64.const", value: HOLE_F64_BITS }, { op: "i64.eq" }];
 }
 
-/** Push the absence marker onto the stack. */
-export function f64HoleValueInstrs(): Instr[] {
-  return [{ op: "i64.const", value: HOLE_F64_BITS }, { op: "f64.reinterpret_i64" }];
-}
-
 /**
  * `[f64] → [f64]` — the read-boundary canonicalization. A slot holding the
  * absence marker reads back as the *undefined* marker; every other bit pattern
