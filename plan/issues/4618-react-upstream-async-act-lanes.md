@@ -163,6 +163,30 @@ demote.
   body lane loses sibling CLASS declarations for its nested fn-decls,
   independent of CPS.
 
+- **2026-08-22 ROOT CAUSE of the react symbol buckets (in-module probes)**:
+  instrumenting the pinned ReactStrictMode test inside the real 13 MB module
+  (non-throwing expect probes; a throwing probe makes the test
+  harness-incompatible because the native oracle fails too) pinned the
+  failure to the SYMBOL CARRIER:
+  - `typeof Fragment` (from `const {Fragment} = React`) answers **"object"**
+    compiled vs "symbol" native;
+  - `Fragment === React.Fragment` is **false** compiled (each host-boundary
+    read mints a non-identical carrier) while a single read-chain stays
+    self-consistent (`createElement(Fragment, null).type === Fragment` is
+    true);
+  - a direct `ParentComponent({useFragment:true})` call — which routes
+    createElement(Fragment,…) — TRAPS with "dereferencing a null pointer".
+  Everything else in the test body resolves (pc/child/createElement all
+  `function` after the liveness slice). React's switch-on-type and
+  `$$typeof` identity checks are exactly re-read symbol comparisons, so
+  this one carrier defect plausibly underlies the "expected not null" (13),
+  symbol-check (3+2) and mock-comparison buckets. This is the #2610
+  symbol-as-any value-rep arc; #3961 fixed the struct-FIELD read-back but
+  deferred exactly this carrier canonicalization. Fix direction: ONE
+  canonical carrier per symbol id at every host-boundary read (a
+  Map<symbolId, carrier> in the runtime + the compiled `typeof` arm
+  answering "symbol" for it), or completing #2610.
+
 ## Fix order
 
 1. (c) first — it is a hard CE with a two-line repro and pins the IR
