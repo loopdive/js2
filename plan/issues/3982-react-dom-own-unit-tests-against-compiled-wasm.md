@@ -502,6 +502,8 @@ renderer/compiler behavior, not missing batching or DOM host setup.
 - [x] react-dom's published client module compiles to a valid Wasm module.
 - [x] The client corpus is split into independently validated project batches;
       a worker timeout cannot hide the remaining tests.
+- [x] Legacy server and Fizz batches use independently timed project workers;
+      their synchronous parent-process compile path is retired.
 - [x] The published browser server module has an independent valid Wasm lane.
 - [x] The published browser Fizz module has its own independent valid Wasm lane.
 - [x] The native oracle and compiled lane run under the same jsdom host setup.
@@ -557,6 +559,31 @@ compiled-lane findings (for example the client `stateNode` carrier error and
 Fizz null dereferences), not an oracle mismatch. The full 1,923-test admitted
 corpus remains bounded by the existing project batches and is not claimed
 green.
+
+## Server/Fizz worker-isolation checkpoint (2026-08-22)
+
+The legacy server and Fizz lanes now use the same isolated project worker as
+the client lane. Previously those lanes called the synchronous compiler in the
+parent process; a pathological renderer batch could therefore block the event
+loop and make the npm-compat refresh appear hung even though its Promise-based
+timeout was armed. Each server/Fizz batch now keeps React, shared renderer,
+scheduler, and the selected published server graph in separate project files,
+passes the jsdom (or Node Fizz) host setup to the worker, and records compile,
+validation, Wasm status, and per-test errors without concatenating the renderer
+again in the parent. Invalid batches still subdivide, so a timeout cannot erase
+the rest of the upstream denominator.
+
+The focused builder/partition tests and typecheck pass. A full corpus result is
+intentionally not claimed until the worker-backed run completes; the existing
+heavy test remains the authority for that measurement.
+
+A one-test-per-lane worker probe confirms the new accounting: the client,
+legacy server, node Fizz, and edge Fizz batches all emitted valid Wasm and
+reported their compiled result (0/1, 0/1, trapped during module init, and 0/1
+respectively). The browser Fizz batch hit the 300-second worker deadline and was
+reported as one implementation-invalid/skipped test rather than wedging the
+parent process. These are compiler/runtime findings, not missing host setup;
+the probe is deliberately too small to be a corpus pass-rate claim.
 
 ## Permanent test reference
 
