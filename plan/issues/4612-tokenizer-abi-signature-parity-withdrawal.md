@@ -1,7 +1,7 @@
 ---
 id: 4612
 title: "acorn tokenizer post-claim withdrawal: abi-signature-parity IR=182 vs legacy=151 on the runtime-dynamic lane"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-21
 priority: medium
@@ -19,6 +19,19 @@ origin: "#2949 census re-measurement (PR #4730): main acquired this withdrawal o
 # 2026-08-21 (gh CLI offline in this container; pr_scan=degraded). MCP
 # open-PR scan at reservation: open PRs 4732/4733 introduce no issue files
 # with ids near 4612.
+#
+# The fix adds ONE selector option (its doc comment carries the #4155
+# invariant-break rationale) and its one production call site. Both files are
+# the barrel/driver for their subsystem, but the option must be declared in
+# `IrSelectionOptions` and passed from the single `planIrCompilation` call —
+# there is no subsystem module either half could move to.
+loc-budget-allow:
+  - src/ir/select.ts
+  - src/codegen/index.ts
+# One line: the option is passed at the single `planIrCompilation` call site,
+# which lives inside `planIrOverlay`. Nothing to split out.
+func-budget-allow:
+  - src/codegen/index.ts::planIrOverlay
 ---
 
 # #4612 — `tokenizer` withdraws post-claim on ABI signature parity

@@ -401,6 +401,26 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    */
   readonly implicitParamUsesNumericVecAbi?: (parameter: ts.ParameterDeclaration) => boolean;
   /**
+   * (#4612) True when the LEGACY backend has ALREADY registered this
+   * unannotated position with a carrier the IR's `dynamic` cannot equal.
+   *
+   * The `dynamic` verdict below is only sound because the IR's dynamic carrier
+   * is by construction the same one legacy gives the same declaration
+   * (`resolvePositionType`'s dynamic arm in codegen/index.ts says so). #4155
+   * broke that equality for one family: legacy refines an unannotated position
+   * whose checker type is an approved-standalone function-style-constructor
+   * instance to that fnctor's reserved struct, which the IR — reading the
+   * propagated lattice, not the checker — never sees. Claiming such a position
+   * as dynamic guarantees a POST-claim `abi-signature-parity` withdrawal (plus
+   * a #3551 caller cascade); declining here keeps it a pre-claim decline.
+   *
+   * Pass a `ts.ParameterDeclaration` for a parameter position, or the owning
+   * declaration for the return position. Provided by the real-compile call
+   * site, which owns the registered legacy signatures; bare selector callers
+   * omit it and keep the historical behaviour.
+   */
+  readonly dynamicCarrierDivergesFromLegacy?: (position: ts.Node) => boolean;
+  /**
    * Standalone/WASI normally close claims over local callers. A production
    * planner may exempt a callee when its direct callable and IR overlay share
    * one fully certified ABI, making a legacy caller's pre-emitted call safe.
@@ -2334,7 +2354,12 @@ function resolveParamType(p: ts.ParameterDeclaration, mapped: LatticeType | unde
   // members don't participate in propagation (`entry` is undefined there) and
   // must keep the null rejection, not silently become dynamic-claimable.
   // Lattice `union` stays null: #2135's union rows own that shape.
-  if (mapped && (mapped.kind === "unknown" || mapped.kind === "dynamic")) return "dynamic";
+  // (#4612) …unless the legacy slot already carries a refined fnctor-instance
+  // struct here, in which case `dynamic` is a guaranteed post-claim parity
+  // withdrawal — decline instead. See `dynamicCarrierDivergesFromLegacy`.
+  if (mapped && (mapped.kind === "unknown" || mapped.kind === "dynamic")) {
+    return currentSelectionOptions?.dynamicCarrierDivergesFromLegacy?.(p) === true ? null : "dynamic";
+  }
   return null;
 }
 
@@ -2384,7 +2409,11 @@ function resolveReturnType(
   // #2949 slice 2 — same dynamic arm as `resolveParamType` (see the rationale
   // there). A dynamic return is claimable only when every return statement
   // returns a dynamic-typed MOVE (enforced by `dynamicUsesAreMoveOnly`).
-  if (mapped && (mapped.kind === "unknown" || mapped.kind === "dynamic")) return "dynamic";
+  // (#4612) …and only when legacy has not already registered this return slot
+  // with a refined fnctor-instance struct.
+  if (mapped && (mapped.kind === "unknown" || mapped.kind === "dynamic")) {
+    return currentSelectionOptions?.dynamicCarrierDivergesFromLegacy?.(fn) === true ? null : "dynamic";
+  }
   return null;
 }
 
