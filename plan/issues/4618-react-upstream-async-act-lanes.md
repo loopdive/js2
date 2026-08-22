@@ -557,6 +557,19 @@ in-module reads (host-side detection is what react-dom needs).
   buckets and the StrictMode console-spy assertions. Next owner starts at
   the self-read materialization for `function mock()` +
   `Array.prototype.slice.call(arguments)` readers.
+  **Sub-defect (i) FIXED same day**: prepareHoistedFunctionValueBindings
+  now routes an observed fn-decl with an UNSTABLE capture ABI through the
+  cyclic ref-cell strategy (cell identity fixed at entry, closure
+  materialized into it at the declaration statement) instead of skipping —
+  self-reads see post-decl props; compiled AND host invocations of the
+  mock are tracked (probe-jestfn3: count 1 → 2 across the boundary; was a
+  hard TypeError). Suites unchanged (react 87, jest 317/351 — the mock
+  buckets also need the await/act lane) but every __jestFn-shaped mock now
+  functions. 14 battery failures A/B'd identical on base. Regression test:
+  `tests/issue-4618-observed-fndecl-unstable-captures.test.ts`. Residual:
+  HOST-side `m.mock.calls` read still answers undefined (host wrapper
+  sidecar view of the cell-mediated closure), and the harness-level
+  "illegal cast in __fn_tramp_mock_*" (iii) is not yet re-measured.
 
 ## Fix order
 
