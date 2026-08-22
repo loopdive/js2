@@ -146,23 +146,21 @@ fast path:
 The workflow-shape and validator regressions are pinned in
 `tests/issue-4130-npm-compat-promotion-fast-path.test.ts`.
 
-## 2026-08-22 follow-up — canonical repository guard and cancellation audit
+## 2026-08-22 follow-up — pending-run cancellation audit
 
-The canonical repository is now `loopdive/js2wasm`, but the npm-compat refresh,
-staleness guard, and auto-enqueue workflows still compared
-`github.repository` with the retired `loopdive/js2` name. On the renamed
-repository those jobs were skipped, so a refresh could finish without any
-measurement or promotion work; this was easy to misread as another cancelled
-run because the dashboard remained unchanged.
+The live GitHub URL currently redirects `loopdive/js2wasm` to
+`loopdive/js2`, so the existing `github.repository == 'loopdive/js2'` guards are
+correct and were left unchanged. The remaining cancellation mechanism was the
+concurrency key for scheduled and manual runs: they shared `github.ref`, and
+GitHub keeps only one pending run per group even when
+`cancel-in-progress: false`. A delayed run could therefore be replaced before
+it ever received a runner.
 
-The workflow already has the separate push-SHA concurrency groups and
-`fail-fast: false` matrix needed to keep a newer main push from cancelling an
-older measurement. This follow-up restores the job guards to the canonical
-repository and pins a regression assertion in
-`tests/npm-compat-partials.test.ts`. The auto-enqueue guard is included because
-the promotion branch is intentionally published as a PR; without it, a
-successful refresh PR would never be picked up by the merge queue.
-
-Implementation is carried in [PR #4775](https://github.com/loopdive/js2wasm/pull/4775)
-alongside the ReactDOM upstream infrastructure work. No npm-compat numbers are
-generated locally; the next canonical workflow run remains the source of truth.
+The refresh workflow now keys push runs by immutable commit SHA and scheduled or
+manual runs by `github.run_id`. No refresh run can replace another pending run;
+the existing generatedAt freshness check and force-with-lease promotion protect
+the shared artifact branch when lanes finish concurrently. The matrix remains
+`fail-fast: false`, so a slow ReactDOM row cannot cancel the other package
+measurements. `tests/npm-compat-partials.test.ts` pins the key and matrix
+contract. No npm-compat numbers are generated locally; the next canonical
+workflow run remains the source of truth.

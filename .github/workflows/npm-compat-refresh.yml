@@ -88,7 +88,7 @@ env:
 
 concurrency:
   # GitHub keeps only one pending run per concurrency group. A ref-only key
-  # therefore cancelled older pending push runs even with `cancel-in-progress: false`
+  # therefore cancelled older pending runs even with `cancel-in-progress: false`
   # (the active run survived, but its predecessor never got a runner). Pushes
   # are keyed by their immutable SHA; scheduled and manual runs also get a
   # unique run-id suffix so a delayed measurement is never discarded while it
@@ -106,7 +106,7 @@ jobs:
   # other measurements or leave the coordinator without their artifacts.
   measure:
     name: Measure npm-compat (${{ matrix.id }})
-    if: github.repository == 'loopdive/js2wasm' && github.actor != 'github-actions[bot]'
+    if: github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
     strategy:
       fail-fast: false
       matrix:
@@ -172,7 +172,7 @@ jobs:
     # The `paths-ignore` filter above is what actually breaks the trigger loop
     # now (this job's own landing changes only artifact paths). The actor guard
     # is kept as a second, cheaper line against any OTHER bot push to main.
-    if: github.repository == 'loopdive/js2wasm' && github.actor != 'github-actions[bot]'
+    if: github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     # The coordinator only assembles reports and promotes them. The expensive
     # package work runs in the matrix above, so this retains the 350-minute

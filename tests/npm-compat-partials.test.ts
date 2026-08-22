@@ -64,8 +64,7 @@ describe("npm-compat refresh matrix wiring", () => {
   it("measures independent groups and assembles only after every group succeeds", () => {
     const workflow = readFileSync(new URL("../.github/workflows/npm-compat-refresh.yml", import.meta.url), "utf8");
 
-    expect(workflow).toContain("github.repository == 'loopdive/js2wasm'");
-    expect(workflow).not.toContain("github.repository == 'loopdive/js2'");
+    expect(workflow).toContain("github.repository == 'loopdive/js2'");
     expect(workflow).toContain("fail-fast: false");
     expect(workflow).toContain(
       "group: npm-compat-refresh-${{ github.event_name == 'push' && github.sha || format('{0}-{1}', github.ref, github.run_id) }}",
