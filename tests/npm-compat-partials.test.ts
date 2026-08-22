@@ -76,6 +76,7 @@ describe("npm-compat refresh matrix wiring", () => {
     expect(workflow).toContain("id: typescript");
     expect(workflow).toContain("id: react-dom");
     expect(workflow).toContain("packages: react-dom");
+    expect(workflow).toContain('DOGFOOD_REACT_DOM_PROJECT_CONCURRENCY: "2"');
     expect(workflow).not.toContain("id: renderers");
   });
 });

@@ -664,3 +664,26 @@ object receivers, but proven numeric and native-string carriers remain
 specialized. The complete real-wasmtime matrix (1/64/128/256 MiB across
 node_process, deno, wasi_p1, and node_fs) now passes. This is a compiler ABI
 fix, not a skipped or unavailable test.
+
+## Bounded project compilation checkpoint (2026-08-22)
+
+The client project lane was still compiling its 110 independent test batches
+serially. That made the worker deadline effective per batch but left the
+overall ReactDOM refresh vulnerable to the 350-minute GitHub Actions ceiling.
+The lane now uses a bounded two-worker compile pool (configurable with
+`DOGFOOD_REACT_DOM_PROJECT_CONCURRENCY`) and consumes the native oracle in the
+original source order. Compilation is pipelined with that oracle: while the
+shared host consumes one completed batch, the workers continue compiling later
+batches. Each batch still has its own isolated compiler deadline and remains
+visible in the report; only independent compilation is concurrent. The
+npm-compat workflow pins the pool to two workers to limit runner memory
+pressure. This addresses the remaining refresh-timeout path without reducing
+the upstream denominator or relabeling compiler failures as unavailable host
+infrastructure.
+
+The bounded pool and its fallback-to-two behavior have focused unit coverage;
+the 50-test probe observed both client batches dispatched to the two-worker
+pool, and the upstream suite harness tests remain green.
+
+Implementation: [PR #4771](https://github.com/loopdive/js2/pull/4771), stacked
+on the compiler boundary work in [PR #4769](https://github.com/loopdive/js2/pull/4769).

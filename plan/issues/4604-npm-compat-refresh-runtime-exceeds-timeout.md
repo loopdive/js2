@@ -212,3 +212,20 @@ cancellations. Keep this run as the acceptance probe: if ReactDOM itself
 reaches 350 minutes, the next slice must bound or subdivide the ReactDOM suite
 and publish an explicit `unavailableInfra` result rather than letting the
 workflow be killed without a partial report.
+
+## 2026-08-22 ReactDOM compile-pool follow-up
+
+The ReactDOM cell is now independently protected from the old renderer-group
+timeout, but its client project still contains 110 compile batches. They were
+being compiled one after another, so a valid but slow corpus could still reach
+the cell's 350-minute ceiling. The project lane now compiles those independent
+batches with two isolated workers and runs the shared native oracle in stable
+source order. The workflow pins the pool to two workers to keep memory bounded;
+each batch retains its own timeout and report entry. This reduces wall-clock
+time without dropping tests or converting compiler failures into
+`unavailableInfra`. Compilation is pipelined with the source-ordered native
+oracle, so the workers continue compiling later batches while the shared host
+consumes the next completed batch.
+
+Implementation: [PR #4771](https://github.com/loopdive/js2/pull/4771), stacked
+on the renderer/compiler baseline in [PR #4769](https://github.com/loopdive/js2/pull/4769).

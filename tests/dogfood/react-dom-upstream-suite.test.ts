@@ -16,6 +16,7 @@ import {
   isExpectedLateJsdomHostError,
   partitionProjectTests,
   partitionReactDomTestsForBuild,
+  projectCompileConcurrency,
 } from "./react-dom-upstream-suite.mjs";
 // @ts-expect-error — .mjs dogfood extractor has no declaration file
 import { extractReactUpstreamTests } from "./react-upstream-extract.mjs";
@@ -146,6 +147,13 @@ describe("react-dom upstream suite", () => {
       ["b.js", ["b.js-0"]],
     ]);
     expect(batches.flatMap(({ tests }) => tests).map(({ id }) => id)).toEqual(input.map(({ id }) => id));
+  });
+
+  it("keeps the project compile pool bounded and deterministic", () => {
+    expect(projectCompileConcurrency(0, "4")).toBe(0);
+    expect(projectCompileConcurrency(3, "1")).toBe(1);
+    expect(projectCompileConcurrency(3, "4")).toBe(3);
+    expect(projectCompileConcurrency(3, "not-a-number")).toBe(2);
   });
 
   it("keeps server and Fizz batches in isolated project modules", () => {
