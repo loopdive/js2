@@ -5,12 +5,12 @@ status: in-progress
 assignee: ttraenkler/fable-lead
 claimed_by: fable-lead
 claimed_at: 2026-07-21T20:23:19Z
-branch: claude/issue-3520-r1-completion
-pr: 4729
-last_merged_pr: 3798
+branch: claude/issue-3520-c35-residue
+pr: 4733
+last_merged_pr: 4733
 sprint: current
 created: 2026-07-21
-updated: 2026-08-21
+updated: 2026-08-22
 priority: critical
 horizon: l
 complexity: L
@@ -1039,15 +1039,16 @@ Commit 3.3 and Commit 4 before R1 can close.
 
 ## Resume checkpoint
 
-**Superseded 2026-08-21.** The checkpoint below is the current one. The
+**Superseded 2026-08-22 (C35).** The checkpoint below is the current one. The
 2026-07-21 checkpoint it replaced named a first-task chain
 (`inline-small` / `monomorphize` `byName` tables) that later merged slices
 already completed; it is preserved for history in the Commit 3.3 section.
 
-- **Branch:** `claude/issue-3520-r1-completion` (from `origin/main`
-  `540064dfb`). Prior lane branches `symphony/3520-*` and `codex/3520-c10..c33`
-  are all merged; `codex/3520-branded-instance-api` is a superseded
-  intermediate — `setInstance` is already on main. Do not adopt it.
+- **Branch:** `claude/issue-3520-c35-residue` (from `origin/main` `81edcbcaa`).
+  Prior lane branches `symphony/3520-*`, `codex/3520-c10..c33` and
+  `claude/issue-3520-r1-completion` (C34, PR #4729) are all merged;
+  `codex/3520-branded-instance-api` is a superseded intermediate — `setInstance`
+  is already on main. Do not adopt it.
 - **Resume from:** the branch tip. The worktree is clean; no stash or
   local-only patch is required.
 - **Completed and verified on main (2026-08-21 re-measurement, not inherited):**
@@ -1061,29 +1062,38 @@ already completed; it is preserved for history in the Commit 3.3 section.
     not independent name re-joins.
   - Support/import bindings reach the backend ABI tables; a compilation-owned
     `ProgramAbiSession` publishes one program map per module.
+- **Item 1 is DONE on the measured corpus (C35, 2026-08-22).** The positional
+  `retained-module-function` fallback carries **0** rows across the five
+  `SINGLE_HOST_ENTRIES`. Its derived ordinal IS the final function index
+  (`src/codegen/program-abi-callable-planning.ts` `planRetained`), so identity
+  moved whenever an unrelated import or function was added or removed; C30–C35
+  each took one family off it. Measured trajectory on those entries:
+  **40** (`540064dfb`) → **15** (after C34) → **0** (after C35). C35 moved the
+  last four families:
+
+  | family                              | role                          | anchor       | ordinal                             | rows |
+  | ----------------------------------- | ----------------------------- | ------------ | ----------------------------------- | ---- |
+  | `__\0js2_call_fn_method_argc_0..5`  | `closure-argc-dispatcher`     | entry source | dispatcher arity                    | 6    |
+  | `__async_resume_f*` + `__cb_<id>`   | `async-frame-machinery`       | async UNIT   | resume 0 / fulfill 1 / reject 2     | 6    |
+  | `__vec_from_extern_<n>`             | `vec-from-extern-materializer`| entry source | sorted PRE-elision vec STRUCT name  | 1    |
+  | `__math_reduce_trig`, `Math_atan`   | `stdlib-math-helper`          | entry source | index in a closed constant table    | 2    |
+
+  The fallback code path itself stays as the totality guarantee — a family with
+  no inventoried unit (a prepared/synthetic async body, say) still lands there
+  rather than borrowing another owner's anchor. "0 rows" is a property of this
+  corpus, not a proof that no program can produce one.
+
 - **Remaining, in order:**
-  1. **Retire the positional `retained-module-function` fallback.** This is the
-     concrete residue of "replace the temporary support-to-legacy-label slot
-     join with `ProgramAbiMap` resolution". Its derived ordinal IS the final
-     function index (`src/codegen/program-abi-callable-planning.ts`
-     `planRetained`), so identity moves whenever an unrelated import or
-     function is added or removed. C30–C34 each moved one family off it.
-     Measured on the five `SINGLE_HOST_ENTRIES` at `540064dfb`: **40** generic
-     rows; after C34, **15**. The 15 that remain, by family:
-     - `__sget_*`/`__sset_*`/`__shas_*`/`__sbool_*` — **done in C34**;
-     - `__\0js2_call_fn_method_argc_0..5` (6 rows) — the higher-arity method
-       dispatchers C31 explicitly deferred;
-     - `__async_resume_*` (2) and `__cb_0..3` (4) — async resume/callback
-       machinery;
-     - `__vec_from_extern_4` (1);
-     - `__math_reduce_trig` and `Math_atan` (2) — math support helpers.
-  2. Route the remaining direct `funcMap` / `structMap` / module-array /
+  1. Route the remaining direct `funcMap` / `structMap` / module-array /
      display-name scans in concrete WasmGC, linear, and compatibility-slot
      resolution through `LegacyAbiAdapter` (Commit 4 body).
-  3. Represent exports as explicit Program ABI aliases rather than emitting
+  2. Represent exports as explicit Program ABI aliases rather than emitting
      them directly from legacy codegen.
-  4. Notify the production session from allocator replacement, dead-type
+  3. Notify the production session from allocator replacement, dead-type
      elimination, and compaction.
+  4. **Clear the 18 remaining red `tests/issue-3520-*` tests** (15 files) before
+     any R1 acceptance claim — see the verdict table below. Four of them are
+     probable compiler defects on main, not test drift.
 - **Do not touch:** `benchmarks/results/test262-run.log` or
   `scripts/equivalence-baseline.json`. No local Test262 run is required for
   this checkpoint.
@@ -1094,36 +1104,112 @@ already completed; it is preserved for history in the Commit 3.3 section.
     is now **22/22 GREEN** on `540064dfb`. The "not expected green" note under
     *Required completion evidence* is stale: the #1983 type-index and
     inline-small harness failures it describes have been fixed on main.
-  - **17 of this issue's own 60 `tests/issue-3520-*.test.ts` files are RED on
-    current main**, 22 failing tests, and the failing file/test sets are
-    byte-identical on `540064dfb` and on this branch. They are main-side drift,
-    not regressions. The bulk are the C30–C33 five-entry census assertions
-    carrying 2026-07-30 denominators. Re-measured at `540064dfb` with an
-    exact `:role:` match:
+  - **Suite state, measured 2026-08-22 at `origin/main` `81edcbcaa`:** 22
+    failing tests in 17 of this issue's 61 `tests/issue-3520-*.test.ts` files
+    before C35, **18 in 15** after it. The diff of failing test NAMES is a pure
+    subtraction — the four census tests — with no new failure, so C35 introduced
+    none of what remains.
 
-    | census figure           | C30–C33 asserts | main `540064dfb` |
-    | ----------------------- | --------------- | ---------------- |
-    | defined functions       | 166             | **139**          |
-    | retained-module-function| 45              | **40**           |
-    | vec-host-bridge         | 24              | 24               |
-    | closure-host-bridge     | 26              | **14**           |
-    | date-civil-support      | 1               | 1                |
-    | data-struct-host-bridge | 5               | **3**            |
+### Five-entry census drift — measured figures and verdicts (2026-08-22)
 
-    The structural families are all still published — vec and date match
-    exactly; the closure and data counts moved because those entries emit
-    fewer dispatcher/classifier helpers than they did on 2026-07-30. Do **not**
-    simply overwrite the numbers: the closure `26 → 14` and data `5 → 3` moves
-    need a cause before they are re-asserted, or the anti-vacuity value of
-    those census tests is thrown away. Four further failures are semantic
-    drift:
-    `issue-3520-module-binding-class-identity` (a planning invariant no longer
-    raised), `issue-3520-lowering-plan-identity` (a capability violation now
-    thrown ahead of the expected stale-owner error),
-    `issue-3520-context-integration`, and
-    `issue-3520-integration-population-identity`. **Re-baselining these is
-    prerequisite work for any R1 acceptance claim** — the acceptance criteria
-    cannot be evaluated against a suite that does not run green.
+The C30–C33 slices each pinned literal five-entry denominators. Every one has
+moved. **The corpus is not the reason:** `git log` reports no commit touching
+any of the five `SINGLE_HOST_ENTRIES` files since before 2026-07-25, so those
+suites were reporting compiler evolution rather than the ownership property
+they were written to defend.
+
+| census figure             | C30–C33 asserts | main `81edcbcaa` | after C35 |
+| ------------------------- | --------------- | ---------------- | --------- |
+| defined functions         | 166             | **139**          | 139       |
+| retained-module-function  | 45              | **15**           | **0**     |
+| vec-host-bridge           | 24              | 24               | 24        |
+| closure-host-bridge       | 26              | **14**           | 14        |
+| date-civil-support        | 1               | 1                | 1         |
+| data-struct-host-bridge   | 5               | **3**            | 3         |
+| struct-field-accessor     | (C34)           | 25               | 25        |
+| closure-argc-dispatcher   | —               | —                | **6**     |
+| async-frame-machinery     | —               | —                | **6**     |
+| vec-from-extern-material. | —               | —                | **1**     |
+| stdlib-math-helper        | —               | —                | **2**     |
+| **total callable rows**   |                 | **237**          | **237**   |
+
+Routing, same corpus and options:
+
+| routing figure  | C30–C33 asserts | main `81edcbcaa` |
+| --------------- | --------------- | ---------------- |
+| terminal units  | 37              | 37               |
+| emitted         | 30              | **32**           |
+| unsupported     | 7               | **5**            |
+| invariants      | 0               | 0                |
+| legacy bodies   | 37              | **5**            |
+| IR bodies       | 30              | **32**           |
+
+**Causes, stated at the confidence they were measured:**
+
+- `legacy bodies 37 → 5` / `IR bodies 30 → 32` is the R-series moving terminal
+  bodies onto the IR path. Measured directly; this is the largest move and it is
+  the intended direction of the whole goal.
+- `closure-host-bridge 26 → 14` — measured mechanism, not a bisected commit. Per
+  entry the family is now `async.ts` 13, `calendar.ts` 1 (`__call_fn_0` alone),
+  `algorithms.ts`/`builtins.ts`/`classes.ts` 0. Every closure-bridge emitter
+  (`emitIsClosureExport`, `emitClosureArityExport`, `emitClosureHasRestExport`)
+  early-returns when `collectClosureBaseWrapperTypeIdxs` is empty, so an entry
+  that no longer materializes a closure wrapper shape publishes no bridge at
+  all. Consistent with the IR-body move above; **the specific commit was not
+  bisected.**
+- `data-struct-host-bridge 5 → 3` — same shape: `async.ts` publishes both
+  helpers, `classes.ts` only `__is_data_struct`, the other three none.
+- `defined functions 166 → 139` — the aggregate of the two above plus the IR
+  body move. **Not independently attributed.**
+
+**Verdict: the four census assertions are converted, not re-pinned.** Each now
+derives its denominator from the corpus (every emitted helper of that family has
+exactly one structural owner, none on the positional fallback, routing total and
+invariant-free, anti-vacuity floor). Re-pinning would have set up the fifth
+iteration of the same failure; #4733 made this argument for the C34 test and it
+applies unchanged. **The numbers above are the record — a stale note here, not a
+red gate.**
+
+### Remaining 18 red `tests/issue-3520-*` tests (2026-08-22)
+
+All pre-existing on `81edcbcaa`; none is caused by C35. Grouped by symptom.
+Causes are **not** investigated except where stated.
+
+| # | file · test | symptom | note |
+| - | ----------- | ------- | ---- |
+| 1 | `vec-support-callable-abi` · preserves all six same-labelled public exports | user export `$v0()` returns **0**, expected 901 | see below |
+| 2 | `vec-support-callable-abi` · terminates all six prefix-only physical families | `$v0()` returns **0**, expected 201 | see below |
+| 3 | `closure-host-bridge-abi` · composes vec and closure collision projections | returns **0**, expected 801 | see below |
+| 4 | `lifted-program-abi` · publishes two lifted closures by exact provenance | expected row is `undefined` | lifted rows absent |
+| 5 | `lifted-program-abi` · does not reuse an empty same-labelled source slot | `ProgramAbiInvariantError: binding … was not planned` | lifted rows absent |
+| 6 | `monomorph-program-abi` · publishes clone ordinal zero | `[]` vs 2 expected rows | clone rows absent |
+| 7 | `program-abi-type-remap` · post-DCE capture-ref signatures | `[]` vs 1 expected row | clone rows absent |
+| 8 | `class-member-alias-abi` · getter/setter/static aliases | expected row is `undefined` | alias rows absent |
+| 9 | `class-method-alias-abi` · transitive and overridden methods | expected row is `undefined` | alias rows absent |
+| 10 | `module-binding-class-identity` · same-named classes across sources | expected `IrPlanningIdentityInvariantError` not raised | invariant no longer raised |
+| 11 | `lowering-plan-identity` · stale host void callback owners | capability violation thrown ahead of the expected stale-owner error | ordering of two errors |
+| 12 | `callable-provider-abi` · prepares a required defined provider | expected throw did not happen | invariant no longer raised |
+| 13 | `callable-provider-abi` · production Math and remainder providers | `[]`, expected length 1 | provider row absent |
+| 14 | `context-integration` · one linear inventory | inventory built **2×**, expected 1 | |
+| 15 | `integration-population-identity` · exact declaration owners | `IrInvariantError: selected owner population (5) disagrees with projected owners (4)` | |
+| 16 | `module-init-callable-abi` · cumulative multi-source passes | missing `legacy-module-init-pass:1` entry | |
+| 17 | `support-callable-abi` · misleading support label | **IR fallback**: "planned support resolver probe did not preserve the exact allocator slot" | probable compiler defect |
+| 18 | `type-class-abi` · retained types and class layouts | **IR-first internal throw**: `Cannot read properties of undefined (reading 'kind')` on a class implicit constructor | probable compiler defect |
+
+Two clusters deserve escalation rather than re-baselining:
+
+- **Rows 1–3 (physical-alias collision).** A user function literally named `$v0`
+  — the reserved physical export base for the vec `len` bridge — now answers with
+  the helper's value instead of the user's. That is the C30/C31
+  collision-preservation guarantee (preserve every user export, append the
+  compiler helper at the next free `$` suffix) failing on main. It is a
+  user-visible wrong-answer, not a census.
+- **Rows 17–18.** An IR-first internal throw and a support-resolver slot failure
+  are compiler defects surfacing as IR fallbacks, not stale expectations.
+
+Rows 4–9 look like one cause (derived-unit / alias callable rows no longer
+published for these fixtures) but that was **not verified**; treat the grouping
+as a hypothesis for whoever picks them up.
 - **Vitest heap note:** the *Required completion evidence* command uses
   `--poolOptions.forks.singleFork=true`, which puts all six files in one fork.
   The repo pins forks to a 512 MB old space (`vitest.config.ts`), so the
@@ -3234,3 +3320,122 @@ The playground and generated load-time benchmark runtimes retain the complete
 callbacks through `setInstance`. Consumer execution coverage pins the authority
 census at raw `0`, mismatched-token `0`, and canonical branded `2`, then invokes
 a compiled callback after the same association is established.
+
+### 2026-08-22 residual support-family ownership continuation (C35)
+
+The C35 continuation on `claude/issue-3520-c35-residue` moves the last four
+families off the positional `retained-module-function` fallback, taking the
+generic bucket on the five `SINGLE_HOST_ENTRIES` from **15 to 0**. The families
+and their ordinal encodings live in one new leaf,
+`src/codegen/compiler-support-abi.ts`, at callable role ordinals **15–18**.
+
+- **`closure-argc-dispatcher` (15).** `__\0js2_call_fn_method_argc_<arity>`, the
+  wrapper that seeds `__argc` around a closure method dispatcher. Identity is
+  `(entry source, "closure-argc-dispatcher", arity)`. C31 deferred this family
+  explicitly; the arity is the one component of it that no import or dead-slot
+  compaction can move.
+- **`async-frame-machinery` (16).** `__async_resume_f<name>` and its two
+  microtask step adapters (`__cb_<id>` on the host settle backend,
+  `__async_step_f<name>_fulfill` / `_reject` on the native one). Anchored to the
+  async function's **own source unit** — `(unit, role, resume 0 / fulfill 1 /
+  reject 2)` — resolved through `ctx.irPlanningIdentityContext.unitIdByDeclaration`.
+  This is strictly stronger than a sorted entry-source ordinal: a second async
+  function elsewhere in the module cannot renumber the first. A prepared or
+  synthetic async body with no inventoried unit is left on the generic fallback
+  rather than borrowing another owner's anchor.
+- **`vec-from-extern-materializer` (17).** `__vec_from_extern_<vecTypeIdx>`.
+  Owned by the vec **struct name**, not by the numeric type index its label is
+  spelled with — `vecTypeIdx` is a position in the type space, so a dead-type
+  compaction moves it. The canonical order is computed over the **pre-elision**
+  record, following the R1a rule the C34 follow-up restated: deriving it from
+  survivors would make one materializer's ordinal depend on whether an unrelated
+  one was eliminated.
+- **`stdlib-math-helper` (18).** The self-hosted `Math_*` / `__math_reduce_trig`
+  bodies. Most already have an `intrinsic-provider` owner because the IR asked
+  for the intrinsic by name; the two that did not — `__math_reduce_trig` behind
+  `Math.sin` and `Math_atan` behind `Math.atan2` — are helpers pulled in as
+  **callees** of a requested intrinsic. The ordinal is an index into
+  `STDLIB_MATH_ABI_NAMES`, a closed constant derived from the stdlib builtin
+  definitions and sorted once. Because the table does not depend on module
+  content, neither elision nor unrelated growth can move an entry at all.
+
+**Recording is split from planning**, as in C34 and for the same reason: several
+of these emitters sit under non-fatal `try`/`catch` or fallback paths where a
+`ProgramAbiInvariantError` would be swallowed and the compile would return a
+successful module whose family had no owner. The `record*` functions cannot
+throw. `planCompilerSupportCallableAbi` runs from
+`eliminateDeadLayoutAndPlanProgramAbi` after DCE has settled the layout, and —
+unlike C34 — **last** among the registries, immediately before
+`programAbiCallables.planRetained()`. That ordering is what lets the Math family
+be recorded wholesale and still leave `Math_sin` with its intrinsic provider:
+at that seam "already owned" is exactly decided, using
+`session.locatorBindingId(func)` — the same predicate the generic sweep applies.
+
+**Census, measured in fresh processes on both sides** (`readFileSync(entry) ->
+analyzeSource(source, entry) -> generateModule(ast, { experimentalIR: true,
+trackIrOutcomes: true })` over `SINGLE_HOST_ENTRIES`), base `origin/main`
+`81edcbcaa` versus this branch:
+
+| Measure                                      | base `81edcbcaa` | C35             |
+| -------------------------------------------- | ---------------- | --------------- |
+| defined functions                            | 139              | 139             |
+| generic `retained-module-function` rows      | 15               | **0**           |
+| `closure-argc-dispatcher` rows               | 0                | **6**           |
+| `async-frame-machinery` rows                 | 0                | **6**           |
+| `vec-from-extern-materializer` rows          | 0                | **1**           |
+| `stdlib-math-helper` rows                    | 0                | **2**           |
+| `struct-field-accessor` rows                 | 25               | 25              |
+| `vec-host-bridge` rows                       | 24               | 24              |
+| `closure-host-bridge` rows                   | 14               | 14              |
+| `date-civil-support` rows                    | 1                | 1               |
+| `data-struct-host-bridge` rows               | 3                | 3               |
+| `imported-function` / `body` / `intrinsic-provider` | 80 / 46 / 27 | 80 / 46 / 27 |
+| **total callable rows**                      | **237**          | **237**         |
+| terminal / emitted / unsupported / invariant | 37 / 32 / 5 / 0  | 37 / 32 / 5 / 0 |
+
+The 15 rows are **moved, not created**: the callable-row total, the
+defined-function count, and every routing figure are unchanged, and
+`6 + 6 + 1 + 2 = 15` exactly accounts for the emptied generic bucket.
+
+**Byte identity.** All five entries were compiled through the public `compile`
+API across `gc`, `standalone`, and `wasi` in both tracked and untracked lanes,
+on the base copies and on this branch: **all 30 sha256 digests match**. (Note an
+unrelated pre-existing property the run exposed: `async.ts` in `gc` mode is
+**not** tracked/untracked byte-identical — it differs on the base too, so it is
+main-side, not C35.)
+
+**Gates.** `pnpm run check:ir-only` and `pnpm run check:ir-fallbacks -- --verbose`
+produce **byte-identical output** to the base run (`diff` exit 0 on both).
+Readiness stays READY at 38 terminal / 38 emitted / 0 unsupported / 0 invariants
+in both the host and standalone lanes. Strict typecheck, Prettier and Biome are
+green; the LOC and function budgets are granted in this file's frontmatter for
+the three call-site files.
+
+**Coverage.** `tests/issue-3520-compiler-support-abi.test.ts` (9 tests) proves,
+per role: label-not-key (a relabelled `irSupportFuncRef` is the same binding, a
+different ordinal is not), kind separation (four distinct role ordinals plus the
+#4033 distinctness guard), order independence (`vecFromExternShapeOrder` is
+emission-order-free; `STDLIB_MATH_ABI_NAMES` is sorted, deduplicated and closed
+over `SELF_HOSTED_MATH`), and index independence (appending three source
+functions to `async.ts` moves the final indices while every family's binding IDs
+are unchanged). It also asserts that each role owns only functions matching its
+own family's name shape — the mis-attribution a bare "none are generic" check
+cannot see — and that the generic bucket is empty corpus-wide.
+**Anti-vacuity: with `planCompilerSupportCallableAbi` disabled, 5 of the 9 fail**;
+the 4 that stay green are the pure table/helper assertions, which correctly do
+not depend on the wiring.
+
+**Suite delta.** Across all 61 `tests/issue-3520-*.test.ts` files: 22 failing
+tests in 17 files on `81edcbcaa`, **18 in 15** after C35. The diff of failing
+test names is a pure subtraction of the four converted census tests, with no new
+failure. The 18 that remain are itemised with verdicts in the *Remaining 18 red
+tests* table above; four of them look like compiler defects on main rather than
+stale expectations, and rows 1–3 there are a user-visible wrong-answer in the
+C30/C31 export-collision guarantee.
+
+**What C35 does not do.** The `retained-module-function` code path stays in
+`planRetained` as the totality guarantee — the claim is that it carries no rows
+on this corpus, not that no program can produce one. Items 1–3 of the resume
+checkpoint (`LegacyAbiAdapter` routing, exports as ABI aliases, session
+notification from allocator replacement / dead-type elimination / compaction)
+are untouched, and R1 acceptance still requires the red suite above to clear.
