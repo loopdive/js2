@@ -19,6 +19,7 @@ import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
 import { DATA_STRUCT_HOST_BRIDGE_ORDINAL, publishDataStructHostBridge } from "./data-struct-host-bridge.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { recordStructFieldAccessor } from "./struct-field-accessor-abi.js"; // (#3520 C34) structural ownership
 
 /**
  * Emit exported getter/setter helper functions so the JS runtime can read
@@ -103,13 +104,15 @@ export function emitStructFieldPresenceGetters(ctx: CodegenContext): void {
 
     const funcName = `__shas_${fieldName}`;
     const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
-    ctx.mod.functions.push({
+    const presenceFunc = {
       name: funcName,
       typeIdx,
       locals: [{ name: "__any", type: { kind: "anyref" } }],
       body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }, ...dispatch],
       exported: true,
-    } as WasmFunction);
+    } as WasmFunction;
+    ctx.mod.functions.push(presenceFunc);
+    recordStructFieldAccessor(ctx, "has", fieldName, presenceFunc);
     ctx.mod.exports.push({ name: funcName, desc: { kind: "func", index: funcIdx } });
   }
 }
@@ -127,13 +130,15 @@ export function emitStructFieldBooleanMarkers(ctx: CodegenContext): void {
   for (const fieldName of [...ctx.booleanPropertyNames].sort()) {
     const funcName = `__sbool_${fieldName}`;
     const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
-    ctx.mod.functions.push({
+    const markerFunc = {
       name: funcName,
       typeIdx,
       locals: [],
       body: [{ op: "i32.const", value: 1 }],
       exported: true,
-    } as WasmFunction);
+    } as WasmFunction;
+    ctx.mod.functions.push(markerFunc);
+    recordStructFieldAccessor(ctx, "bool", fieldName, markerFunc);
     ctx.mod.exports.push({ name: funcName, desc: { kind: "func", index: funcIdx } });
   }
 }
@@ -316,13 +321,15 @@ function _emitStructFieldGettersInner(ctx: CodegenContext): void {
     const locals: { name: string; type: ValType }[] = [{ name: "__any", type: { kind: "anyref" } }];
     if (useSentinel) locals.push({ name: "__sent_f64", type: { kind: "f64" } });
 
-    mod.functions.push({
+    const getterFunc = {
       name: funcName,
       typeIdx: getterTypeIdx,
       locals,
       body: funcBody,
       exported: true,
-    } as WasmFunction);
+    } as WasmFunction;
+    mod.functions.push(getterFunc);
+    recordStructFieldAccessor(ctx, "get", fieldName, getterFunc);
 
     mod.exports.push({
       name: funcName,
@@ -540,7 +547,7 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
       unboxSymbolIdx,
     );
 
-    mod.functions.push({
+    const setterFunc = {
       name: funcName,
       typeIdx: setterTypeIdx,
       locals: [
@@ -549,7 +556,9 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
       ],
       body: funcBody,
       exported: true,
-    } as WasmFunction);
+    } as WasmFunction;
+    mod.functions.push(setterFunc);
+    recordStructFieldAccessor(ctx, "set", fieldName, setterFunc);
 
     mod.exports.push({
       name: funcName,

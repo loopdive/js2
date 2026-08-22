@@ -1,9 +1,9 @@
 [
   {
     "edition": "ES5",
-    "pass": 8632,
-    "fail": 372,
-    "ce": 25,
+    "pass": 8696,
+    "fail": 319,
+    "ce": 14,
     "skip": 0,
     "total": 9029,
     "pct": 96,
@@ -48,9 +48,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 8122,
-    "fail": 2994,
-    "ce": 587,
+    "pass": 8134,
+    "fail": 2989,
+    "ce": 580,
     "skip": 1,
     "total": 11704,
     "pct": 69,
@@ -66,12 +66,12 @@
       },
       {
         "name": "generators",
-        "pass": 1826,
-        "fail": 347,
+        "pass": 1829,
+        "fail": 344,
         "ce": 313,
         "skip": 0,
         "total": 2486,
-        "pct": 73
+        "pct": 74
       },
       {
         "name": "default-parameters",
@@ -84,8 +84,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 461,
-        "fail": 548,
+        "pass": 457,
+        "fail": 552,
         "ce": 41,
         "skip": 0,
         "total": 1050,
@@ -102,27 +102,27 @@
       },
       {
         "name": "Symbol",
-        "pass": 290,
-        "fail": 294,
-        "ce": 25,
+        "pass": 289,
+        "fail": 297,
+        "ce": 23,
         "skip": 0,
         "total": 609,
-        "pct": 48
+        "pct": 47
       },
       {
         "name": "arrow-function",
         "pass": 392,
-        "fail": 40,
-        "ce": 8,
+        "fail": 42,
+        "ce": 6,
         "skip": 0,
         "total": 440,
         "pct": 89
       },
       {
         "name": "Proxy",
-        "pass": 133,
+        "pass": 134,
         "fail": 275,
-        "ce": 23,
+        "ce": 22,
         "skip": 0,
         "total": 431,
         "pct": 31
@@ -147,9 +147,9 @@
       },
       {
         "name": "Reflect",
-        "pass": 135,
-        "fail": 136,
-        "ce": 59,
+        "pass": 136,
+        "fail": 142,
+        "ce": 52,
         "skip": 0,
         "total": 330,
         "pct": 41
@@ -246,12 +246,12 @@
       },
       {
         "name": "iterator-chunking",
-        "pass": 4,
-        "fail": 49,
+        "pass": 7,
+        "fail": 46,
         "ce": 0,
         "skip": 0,
         "total": 53,
-        "pct": 8
+        "pct": 13
       },
       {
         "name": "Symbol.toStringTag",
@@ -292,8 +292,8 @@
       {
         "name": "new.target",
         "pass": 17,
-        "fail": 13,
-        "ce": 5,
+        "fail": 14,
+        "ce": 4,
         "skip": 0,
         "total": 35,
         "pct": 49
@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 677,
-    "fail": 751,
+    "pass": 675,
+    "fail": 753,
     "ce": 589,
     "skip": 18,
     "total": 2035,
@@ -1516,8 +1516,8 @@
     "features": [
       {
         "name": "BigInt",
-        "pass": 286,
-        "fail": 606,
+        "pass": 284,
+        "fail": 608,
         "ce": 156,
         "skip": 0,
         "total": 1048,
@@ -1525,12 +1525,12 @@
       },
       {
         "name": "TypedArray",
-        "pass": 126,
-        "fail": 483,
+        "pass": 123,
+        "fail": 486,
         "ce": 99,
         "skip": 0,
         "total": 708,
-        "pct": 18
+        "pct": 17
       },
       {
         "name": "dynamic-import",
@@ -1923,8 +1923,8 @@
   },
   {
     "edition": "ES2021",
-    "pass": 275,
-    "fail": 127,
+    "pass": 276,
+    "fail": 126,
     "ce": 70,
     "skip": 0,
     "total": 472,
@@ -1950,12 +1950,12 @@
       },
       {
         "name": "logical-assignment-operators",
-        "pass": 46,
-        "fail": 26,
+        "pass": 47,
+        "fail": 25,
         "ce": 0,
         "skip": 0,
         "total": 72,
-        "pct": 64
+        "pct": 65
       },
       {
         "name": "BigInt",
@@ -4250,12 +4250,12 @@
   },
   {
     "edition": "Proposals",
-    "pass": 367,
-    "fail": 2524,
+    "pass": 388,
+    "fail": 2503,
     "ce": 2127,
     "skip": 96,
     "total": 5114,
-    "pct": 7
+    "pct": 8
   },
   {
     "edition": "Unclassified (legacy)",
