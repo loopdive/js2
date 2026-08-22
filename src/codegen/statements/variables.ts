@@ -44,6 +44,7 @@ import {
   bindingHasMixedAssignmentCarrier,
   numericProofOverridesMixedCarrier,
 } from "../analysis/mixed-assignment-carrier.js";
+import { declarationReadsStructuralObjectFromRealmGlobal } from "../analysis/realm-global-structural-carrier.js";
 import { staticConstStringValues } from "../analysis/static-string-values.js";
 import { staticIntegerRange } from "../../ir/analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
@@ -1662,6 +1663,10 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     }
 
     const varType = ctx.checker.getTypeAtLocation(decl);
+    const declaredWasmType = resolveWasmType(ctx, varType);
+    const realmStructuralCarrier =
+      (declaredWasmType.kind === "ref" || declaredWasmType.kind === "ref_null") &&
+      declarationReadsStructuralObjectFromRealmGlobal(ctx, fctx, decl);
     // #1120: If this local has been detected as i32-coerced (every write
     // is wrapped in `| 0` or another bitwise int32 coercion), force its
     // Wasm type to i32. This must be checked BEFORE inferred-array logic
@@ -1850,51 +1855,53 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       // plain-fn capture and does not fire for uncaptured bindings).
       mixedAssignmentCarrier
         ? (mixedCarrierProvenF64 ?? { kind: "externref" as const })
-        : isProxyTargetBinding
+        : realmStructuralCarrier
           ? { kind: "externref" as const }
-          : fctx.forInIdentifierVars?.has(name)
+          : isProxyTargetBinding
             ? { kind: "externref" as const }
-            : fctx.fnctorWidenedLocals?.has(name)
+            : fctx.forInIdentifierVars?.has(name)
               ? { kind: "externref" as const }
-              : initIsAccessorLiteral ||
-                  initIsHostSpreadLiteral ||
-                  initIsGrowableObjectLiteral ||
-                  initIsProtoReceiverLiteral
+              : fctx.fnctorWidenedLocals?.has(name)
                 ? { kind: "externref" as const }
-                : initIsAnyObjectCarrier && anyObjectCarrierTypeIdx >= 0
-                  ? { kind: "ref_null" as const, typeIdx: anyObjectCarrierTypeIdx }
-                  : initIsPropertyDescriptorResult
-                    ? { kind: "externref" as const }
-                    : isI32CoercedLocal
-                      ? { kind: "i32" }
-                      : isI32SpecializedArray
-                        ? { kind: "ref_null" as const, typeIdx: getOrRegisterVecType(ctx, "i32", { kind: "i32" }) }
-                        : widenedTypeIdx !== undefined
-                          ? { kind: "ref_null" as const, typeIdx: widenedTypeIdx }
-                          : (escapeWidenedVecType ??
-                            taViewType ??
-                            subarraySubviewType ??
-                            inferredVecType ??
-                            standaloneRegExpMatchArrayType ??
-                            (decl.initializer && isStringMethodReturningHostArray(ctx, decl.initializer)
-                              ? { kind: "externref" as const }
-                              : decl.initializer && isPromiseHostCall(ctx, decl.initializer)
+                : initIsAccessorLiteral ||
+                    initIsHostSpreadLiteral ||
+                    initIsGrowableObjectLiteral ||
+                    initIsProtoReceiverLiteral
+                  ? { kind: "externref" as const }
+                  : initIsAnyObjectCarrier && anyObjectCarrierTypeIdx >= 0
+                    ? { kind: "ref_null" as const, typeIdx: anyObjectCarrierTypeIdx }
+                    : initIsPropertyDescriptorResult
+                      ? { kind: "externref" as const }
+                      : isI32CoercedLocal
+                        ? { kind: "i32" }
+                        : isI32SpecializedArray
+                          ? { kind: "ref_null" as const, typeIdx: getOrRegisterVecType(ctx, "i32", { kind: "i32" }) }
+                          : widenedTypeIdx !== undefined
+                            ? { kind: "ref_null" as const, typeIdx: widenedTypeIdx }
+                            : (escapeWidenedVecType ??
+                              taViewType ??
+                              subarraySubviewType ??
+                              inferredVecType ??
+                              standaloneRegExpMatchArrayType ??
+                              (decl.initializer && isStringMethodReturningHostArray(ctx, decl.initializer)
                                 ? { kind: "externref" as const }
-                                : // (#2615/#4397) Proxy and revocable-handle results are
-                                  // externref carriers in both provider profiles. A
-                                  // checker-derived struct slot would cast them to null
-                                  // before their MOP/result fields can be observed.
-                                  initIsProxy
+                                : decl.initializer && isPromiseHostCall(ctx, decl.initializer)
                                   ? { kind: "externref" as const }
-                                  : // (#1337/#4397) In a JS environment, both the
-                                    // compatibility exotic and native `$__bound_fn`
-                                    // are externref carriers, never the target struct.
-                                    decl.initializer &&
-                                      !ctx.standalone &&
-                                      !noJsHost(ctx) &&
-                                      isBindCarrierCall(decl.initializer)
+                                  : // (#2615/#4397) Proxy and revocable-handle results are
+                                    // externref carriers in both provider profiles. A
+                                    // checker-derived struct slot would cast them to null
+                                    // before their MOP/result fields can be observed.
+                                    initIsProxy
                                     ? { kind: "externref" as const }
-                                    : localTypeForDeclaration(ctx, varType, decl)));
+                                    : // (#1337/#4397) In a JS environment, both the
+                                      // compatibility exotic and native `$__bound_fn`
+                                      // are externref carriers, never the target struct.
+                                      decl.initializer &&
+                                        !ctx.standalone &&
+                                        !noJsHost(ctx) &&
+                                        isBindCarrierCall(decl.initializer)
+                                      ? { kind: "externref" as const }
+                                      : localTypeForDeclaration(ctx, varType, decl)));
     // (#2660 S3b) A provably-monomorphic `new F(...)` binding of an approved
     // fnctor gets the reserved struct slot instead of externref. Same (cached)
     // verdict as the var hoister / let-const pre-hoister, so a reused
