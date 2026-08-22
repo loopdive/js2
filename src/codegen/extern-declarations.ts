@@ -1289,6 +1289,7 @@ export function collectDeclaredGlobals(
   libFile: ts.SourceFile,
   userFile: ts.SourceFile,
   libIndex?: LibDeclIndex,
+  allUserFiles?: readonly ts.SourceFile[],
 ): void {
   // First collect identifiers referenced in user source
   const referencedNames = new Set<string>();
@@ -1329,8 +1330,43 @@ export function collectDeclaredGlobals(
     }
     forEachChild(node, collectRefs);
   };
-  for (const stmt of userFile.statements) {
-    forEachChild(stmt, collectRefs);
+  const bindingSourceFiles = allUserFiles ?? [userFile];
+  for (const sourceFile of bindingSourceFiles) {
+    for (const stmt of sourceFile.statements) {
+      forEachChild(stmt, collectRefs);
+    }
+  }
+
+  // Do not register a host global when the module owns a same-named top-level
+  // binding.  lib.dom has callable globals such as `dispatchEvent`; ReactDOM's
+  // package graph also defines an internal `dispatchEvent` helper.  Letting
+  // the ambient collector install `global_dispatchEvent` beside that module
+  // binding changes the closure value selected by `.bind` and turns a real
+  // function into a non-callable externref.  Nested bindings are resolved by
+  // their lexical local maps, so only module-scope declarations need this
+  // pre-pass exclusion.
+  const userModuleBindings = new Set<string>();
+  const addBindingName = (name: ts.BindingName): void => {
+    if (ts.isIdentifier(name)) userModuleBindings.add(name.text);
+    else
+      for (const element of name.elements)
+        if (!ts.isOmittedExpression(element) && element.name) addBindingName(element.name);
+  };
+  for (const sourceFile of bindingSourceFiles) {
+    for (const stmt of sourceFile.statements) {
+      if (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) {
+        if (stmt.name) userModuleBindings.add(stmt.name.text);
+      } else if (ts.isVariableStatement(stmt)) {
+        for (const decl of stmt.declarationList.declarations) addBindingName(decl.name);
+      } else if (ts.isImportDeclaration(stmt) && stmt.importClause) {
+        const clause = stmt.importClause;
+        if (clause.name) userModuleBindings.add(clause.name.text);
+        if (clause.namedBindings) {
+          if (ts.isNamespaceImport(clause.namedBindings)) userModuleBindings.add(clause.namedBindings.name.text);
+          else for (const specifier of clause.namedBindings.elements) userModuleBindings.add(specifier.name.text);
+        }
+      }
+    }
   }
 
   for (const stmt of libFile.statements) {
@@ -1338,7 +1374,7 @@ export function collectDeclaredGlobals(
     for (const decl of stmt.declarationList.declarations) {
       if (!ts.isIdentifier(decl.name)) continue;
       const name = decl.name.text;
-      if (!referencedNames.has(name)) continue; // only register used globals
+      if (!referencedNames.has(name) || userModuleBindings.has(name)) continue; // only register used, unshadowed globals
       if (ctx.declaredGlobals.has(name)) continue;
       // (#4218) Extern-class classification + declared-type class name:
       // syntactic on the lib path (`declare var document: Document` → the
@@ -1393,6 +1429,49 @@ export function collectDeclaredGlobals(
         // as `IrType.extern { className }` and dispatch member access on it.
         ctx.declaredGlobals.set(name, { type: { kind: "externref" }, funcIdx, className: declaredClassName });
       }
+    }
+  }
+
+  // Ambient browser/JS APIs such as `queueMicrotask`, `parseInt`, and
+  // `requestAnimationFrame` are declared as `declare function` rather than
+  // `declare var` in lib.dom/lib.es*.  Treat those declarations as first-class
+  // globals too.  Previously the checker knew their callable type (so
+  // `typeof queueMicrotask` folded to "function"), but identifier lowering had
+  // no value binding: assigning the function to a local produced a null
+  // externref and the eventual indirect call trapped.  Register the same
+  // cached host-global thunk used by declared variables so both direct and
+  // first-class calls observe the real host function.
+  for (const stmt of libFile.statements) {
+    if (!ts.isFunctionDeclaration(stmt) || !hasDeclareModifier(stmt) || !stmt.name) continue;
+    const name = stmt.name.text;
+    // Timer call sites have a dedicated callback-aware ABI. Do not also
+    // expose the lib.dom declarations as `global_<name>` externrefs in the
+    // multi-file path: that shadows the timer import and passes a Wasm
+    // closure directly to the host timer, so the callback can never run.
+    // queueMicrotask follows the same rule until its multi-file lowering is
+    // available; treating it as an ordinary host function has the same
+    // unwrapped-callback failure mode.
+    if (
+      name === "setTimeout" ||
+      name === "setInterval" ||
+      name === "clearTimeout" ||
+      name === "clearInterval" ||
+      name === "queueMicrotask"
+    ) {
+      continue;
+    }
+    if (!referencedNames.has(name) || userModuleBindings.has(name) || ctx.declaredGlobals.has(name)) continue;
+    // No JS host exists for standalone/WASI modules.  Keep the host-free
+    // behavior used by the variable-global path above.
+    if (ctx.strictNoHostImports || ctx.standalone || ctx.wasi) continue;
+    const importName = `global_${name}`;
+    if (!ctx.funcMap.has(importName)) {
+      const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
+      addImport(ctx, "env", importName, { kind: "func", typeIdx });
+    }
+    const funcIdx = ctx.funcMap.get(importName);
+    if (funcIdx !== undefined) {
+      ctx.declaredGlobals.set(name, { type: { kind: "externref" }, funcIdx });
     }
   }
 
@@ -1654,6 +1733,13 @@ const LIB_GLOBALS = new Set([
   "Element",
   "Node",
   "Event",
+  // Ambient callable globals are scanned alongside DOM constructors. These
+  // are declared as `function` in lib.dom rather than `var`, so without a
+  // trigger here their value bindings were never collected (for example
+  // ReactDOM's scheduler stores `queueMicrotask` before calling it).
+  "queueMicrotask",
+  "requestAnimationFrame",
+  "cancelAnimationFrame",
   // #1065 — ambient builtin constructors that need host-global resolution
   // for bare-identifier uses (e.g. `x.constructor === Array`). Call-site
   // fast paths intercept before identifier resolution runs.

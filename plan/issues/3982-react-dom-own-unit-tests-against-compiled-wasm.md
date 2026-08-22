@@ -623,3 +623,28 @@ follow-up findings; the full ReactDOM corpus still needs to be rerun after the
 compiler fix. No host API was silently marked unavailable.
 
 Implementation: [PR #4769](https://github.com/loopdive/js2wasm/pull/4769).
+
+## Host-graph compiler boundary checkpoint (2026-08-22)
+
+The follow-up compiler probe found two additional generic boundary problems in
+the multi-file ReactDOM graph:
+
+* Multi-source host files now receive the callback-aware timer shim without
+  rewriting their module imports. This keeps `setTimeout` and the scheduler's
+  stored `queueMicrotask` value callable from compiled Wasm while preserving
+  the standalone/WASI no-host-import policy.
+* Ambient callable globals are collected as host function values only when they
+  are referenced and not shadowed by a user module binding. An implicit-`any`
+  parameter used as an ordinary or computed property receiver stays an
+  `externref` carrier, preventing ReactDOM's scheduler root from being
+  specialized to a boolean or nominal object shape.
+
+Regression coverage is now **30/30** across the timer-shim and mutable-parameter
+ suites (both legacy and IR modes), with typecheck, formatting, and the IR
+ fallback gate passing. The exact ReactDOM upstream corpus is still not claimed
+ green: the remaining failure is scheduler work/`act` flush synchronization in
+ the compiled project graph, not a missing host API. The next owner should
+ resume from the worker-backed scheduler queue and Promise/microtask ordering;
+ no test-harness workaround or generated diagnostic source was shipped.
+
+Implementation remains in [PR #4769](https://github.com/loopdive/js2wasm/pull/4769).
