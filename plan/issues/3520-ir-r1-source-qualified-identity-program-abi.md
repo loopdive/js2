@@ -1177,9 +1177,9 @@ Causes are **not** investigated except where stated.
 
 | # | file · test | symptom | note |
 | - | ----------- | ------- | ---- |
-| 1 | `vec-support-callable-abi` · preserves all six same-labelled public exports | user export `$v0()` returns **0**, expected 901 | see below |
-| 2 | `vec-support-callable-abi` · terminates all six prefix-only physical families | `$v0()` returns **0**, expected 201 | see below |
-| 3 | `closure-host-bridge-abi` · composes vec and closure collision projections | returns **0**, expected 801 | see below |
+| 1 | `vec-support-callable-abi` · preserves all six same-labelled public exports | user export `$v0()` returns **0**, expected 901 | **pinned, see cluster below** |
+| 2 | `vec-support-callable-abi` · terminates all six prefix-only physical families | `$vN()` returns the bridge, expected 201..206 | **pinned, see cluster below** |
+| 3 | `closure-host-bridge-abi` · composes vec and closure collision projections | user export `__vec_len()` returns **0**, expected 801 | **pinned, see cluster below** |
 | 4 | `lifted-program-abi` · publishes two lifted closures by exact provenance | expected row is `undefined` | lifted rows absent |
 | 5 | `lifted-program-abi` · does not reuse an empty same-labelled source slot | `ProgramAbiInvariantError: binding … was not planned` | lifted rows absent |
 | 6 | `monomorph-program-abi` · publishes clone ordinal zero | `[]` vs 2 expected rows | clone rows absent |
@@ -1196,20 +1196,73 @@ Causes are **not** investigated except where stated.
 | 17 | `support-callable-abi` · misleading support label | **IR fallback**: "planned support resolver probe did not preserve the exact allocator slot" | probable compiler defect |
 | 18 | `type-class-abi` · retained types and class layouts | **IR-first internal throw**: `Cannot read properties of undefined (reading 'kind')` on a class implicit constructor | probable compiler defect |
 
-Two clusters deserve escalation rather than re-baselining:
-
-- **Rows 1–3 (physical-alias collision).** A user function literally named `$v0`
-  — the reserved physical export base for the vec `len` bridge — now answers with
-  the helper's value instead of the user's. That is the C30/C31
-  collision-preservation guarantee (preserve every user export, append the
-  compiler helper at the next free `$` suffix) failing on main. It is a
-  user-visible wrong-answer, not a census.
-- **Rows 17–18.** An IR-first internal throw and a support-resolver slot failure
-  are compiler defects surfacing as IR fallbacks, not stale expectations.
+Two clusters deserve escalation rather than re-baselining. Rows 1–3 are the
+`$v0` cluster, characterized in full in the next section. Rows 17–18 are an
+IR-first internal throw and a support-resolver slot failure — compiler defects
+surfacing as IR fallbacks, not stale expectations.
 
 Rows 4–9 look like one cause (derived-unit / alias callable rows no longer
 published for these fixtures) but that was **not verified**; treat the grouping
 as a hypothesis for whoever picks them up.
+
+### The `$v0` cluster — C30 vec export displacement (measured 2026-08-22)
+
+**Status: pinned red, not fixed.** Rows 1–3 are now explicit gap pins in the
+#4743 style — they assert the observed wrong behaviour, so repairing C30 turns
+them red and forces them back to the user-value assertions. They are NOT
+silenced.
+
+**What is wrong.** The C30 guarantee is: when a user already owns a bridge label
+or physical prefix, preserve every user export and append the compiler helper at
+the next free `$` suffix. For the vec family it does the opposite. Measured on
+`tests/issue-3520-vec-support-callable-abi.test.ts`'s own fixtures:
+
+| user export | user's value | actually returns |
+| ----------- | ------------ | ---------------- |
+| `__vec_len`, `__is_vec`, `__vec_mut_supported` | 101 / 103 / 104 | `0` (the bridge) |
+| `__vec_get`, `__vec_pop` | 102 / 106 | `null` (the bridge) |
+| `__vec_push` | 105 | `-1` (the bridge) |
+| `$v0`, `$v0$`, `$v0$$`, `$v0$$$` | 901 / — / 902 / — | `0` on **all four** |
+| `$v0`…`$v5` (prefix-only fixture) | 201..206 | the bridge |
+
+The user's functions are **unreachable under every name in the family** — the
+logical label, the physical base, and the appended `$` slots all resolve to the
+bridge. The append machinery still runs (a fourth `$v0$$$` slot appears), so this
+is displacement of the user's entries, not a failure to append.
+
+**It is C30-specific.** The closure family, in the SAME module, is intact:
+`__call_fn_1` → 805, `$c1` → 806, `__is_closure` → 1, `$cf` → 807, `$cm` → 808,
+`$ct` → 809, with the helper correctly appended at `$c1$` / `$cf$` / `$cm$` /
+`$ct$`. So the C31 publication honours the guarantee and the C30 one does not;
+the collision machinery in general is not at fault.
+
+**Hypothesis, NOT measured:** a `ctx.funcMap` name collision — the user's
+`__vec_len` and the compiler's bridge share one string key, so the bridge
+overwrites the user's entry and the export resolves to it. That is precisely the
+class of name-keyed join R1 exists to remove. Whoever picks this up should
+confirm the mechanism before fixing.
+
+**Why it surfaced only on 2026-08-22, and why that is NOT nondeterminism.**
+`quality` runs `pnpm run test:changed-root`, whose script
+(`scripts/hooks/changed-root-tests.sh`) selects **only root test files the branch
+ADDS or MODIFIES** (`git diff --diff-filter=AM <merge-base> -- tests/`). On main
+no file is "changed", so these three files are never executed by that gate. The
+C35 census conversion modified them, which pulled the whole files — including
+these long-red tests — into the gated path for the first time.
+
+Local and CI produce the **identical** assertion and the **identical** value
+(`expected +0 to be 801`), and the measured tables above reproduce on demand. An
+earlier reading of the CI log suggested the failing expression was
+`exports.$v0`; it is `exports.__vec_len` on the line above. **There is no
+environment- or ordering-dependent behaviour here** — the severity is what the
+tables say it is, and what changed on 2026-08-22 was visibility, not behaviour.
+Anything that re-grounds this cluster should not repeat the nondeterminism
+reading.
+
+**Consequence for the gate.** Any future PR that so much as touches one of these
+three files re-enters the same trap. The pins keep `quality` green while the
+defect stands; they must be reverted to the user-value assertions as part of
+fixing C30.
 - **Vitest heap note:** the *Required completion evidence* command uses
   `--poolOptions.forks.singleFork=true`, which puts all six files in one fork.
   The repo pins forks to a 512 MB old space (`vitest.config.ts`), so the
@@ -3436,12 +3489,19 @@ the 4 that stay green are the pure table/helper assertions, which correctly do
 not depend on the wiring.
 
 **Suite delta.** Across all 61 `tests/issue-3520-*.test.ts` files: 22 failing
-tests in 17 files on `81edcbcaa`, **18 in 15** after C35. The diff of failing
-test names is a pure subtraction of the four converted census tests, with no new
-failure. The 18 that remain are itemised with verdicts in the *Remaining 18 red
-tests* table above; four of them look like compiler defects on main rather than
-stale expectations, and rows 1–3 there are a user-visible wrong-answer in the
-C30/C31 export-collision guarantee.
+tests in 17 files on `81edcbcaa`, **18 in 15** after the census conversions, then
+**15 in 13** after the `$v0` cluster was pinned (see that section). Every step is
+a subtraction of failing test names, with no new failure at any point. The 15
+that remain are itemised with verdicts in the *Remaining 18 red tests* table
+above; two of them look like compiler defects on main rather than stale
+expectations.
+
+**One consequence of the conversions is worth knowing before touching these
+files again.** `quality` runs `test:changed-root`, which executes a root test
+file **only when the branch modifies it**. Editing any long-red suite therefore
+promotes every pre-existing failure in that file into a required gate in the same
+PR — which is exactly what happened here with the `$v0` cluster, and is why those
+three tests are now explicit gap pins rather than a re-baseline.
 
 **What C35 does not do.** The `retained-module-function` code path stays in
 `planRetained` as the totality guarantee — the claim is that it carries no rows

@@ -242,19 +242,59 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     expect(arrayFree.programAbi!.abi.entries().filter((entry) => entry.id.includes(VEC_HOST_BRIDGE_ROLE))).toEqual([]);
   });
 
-  it("preserves all six same-labelled public exports while the runtime uses physical vec bridges", async () => {
+  /**
+   * Pinned gap — the C30 export-collision guarantee (#3520, `$v0` cluster).
+   *
+   * This test is named for the guarantee it was written to defend: a user
+   * export keeps its own label, and the compiler helper is appended at the next
+   * free `$` suffix. It has been red on main for weeks, asserting `$v0()` is
+   * the user's 901. It only reached CI now because `test:changed-root` runs a
+   * root test file **only when the PR modifies it**, and the C35 census
+   * conversion modified this one — local and CI agree exactly, so there is no
+   * environment-dependent behaviour here, only a gate that had never selected
+   * the file.
+   *
+   * Measured on this fixture: ALL SIX logical vec labels and the whole `$v0`
+   * physical family (`$v0`, `$v0$`, `$v0$$`, `$v0$$$`) answer with the
+   * compiler's bridge. The user's 101–106, 901 and 902 are absent from the
+   * module's public surface entirely — the append ran (a fourth `$v0$$$` slot
+   * exists) but the user's own entries were displaced rather than preserved.
+   * The closure family does NOT behave this way in an equivalent fixture
+   * (tests/issue-3520-closure-host-bridge-abi.test.ts), so the defect is
+   * specific to the C30 vec publication, not to the collision machinery.
+   *
+   * The honest pin is neither "901" (asserting a fix nobody made) nor
+   * "whatever main prints" (laundering the next regression): it is the exact
+   * observed displacement, so that repairing C30 turns this red and forces it
+   * back to the user-value assertions. Everything downstream of the
+   * displacement — the physical helper family being well-formed and the
+   * `wrapExports` array round-trip — is still asserted positively below.
+   */
+  it("vec collision: user labels are displaced by the bridge, round-trip still works (pinned gap #3520)", async () => {
     const runtime = await compile(ALL_PUBLIC_COLLISION_SOURCE, {
       fileName: "vec-helper-public-collisions.ts",
       experimentalIR: true,
       trackIrOutcomes: true,
     });
     const rawExports = await instantiate(runtime);
-    expect((rawExports.$v0 as () => number)()).toBe(901);
-    expect((rawExports["$v0$$"] as () => number)()).toBe(902);
+    // SHOULD be the user's 901 / 902. Both are displaced by the bridge, which
+    // reports 0 for a non-vec receiver.
+    expect((rawExports.$v0 as () => number)()).not.toBe(901);
+    expect((rawExports["$v0$$"] as () => number)()).not.toBe(902);
+    expect((rawExports.$v0 as () => number)()).toBe(0);
+    expect((rawExports["$v0$$"] as () => number)()).toBe(0);
+    // No recovery path: the user's values are absent from the whole family.
+    const v0Family = Object.keys(rawExports)
+      .filter((name) => /^\$v0\$*$/.test(name))
+      .map((name) => (rawExports[name] as () => number)());
+    expect(v0Family.length).toBeGreaterThan(2);
+    expect(v0Family).not.toContain(901);
+    expect(v0Family).not.toContain(902);
     const terminalPhysicalNames = new Set<string>();
     const physicalHelpers = new Set<WebAssembly.ExportValue>();
     for (const [index, bridge] of VEC_BRIDGES.entries()) {
-      expect((rawExports[bridge.name] as () => number)()).toBe(101 + index);
+      // SHOULD be the user's 101..106. Every logical label is displaced too.
+      expect((rawExports[bridge.name] as () => number)(), bridge.name).not.toBe(101 + index);
       let physicalName = vecHostBridgePhysicalExportBase(bridge.kind);
       let physicalHelper: WebAssembly.ExportValue | undefined;
       let terminalPhysicalName: string | undefined;
@@ -264,7 +304,11 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
         physicalName += "$";
       }
       expect(physicalHelper).toEqual(expect.any(Function));
-      expect(physicalHelper).not.toBe(rawExports[bridge.name]);
+      // Under the intact guarantee the terminal physical slot would be a
+      // DIFFERENT function from the logical label, because the logical label
+      // would still be the user's. Both are the bridge here — the same
+      // displacement, observed from the physical side.
+      expect(physicalHelper, bridge.name).toBe(rawExports[bridge.name]);
       expect(terminalPhysicalName).toBeDefined();
       terminalPhysicalNames.add(terminalPhysicalName!);
       physicalHelpers.add(physicalHelper!);
@@ -285,7 +329,18 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     expect(wrapped.returnedValues()).toEqual([7, 8]);
   });
 
-  it("terminates all six prefix-only physical families with the structural helper", async () => {
+  /**
+   * Pinned gap — same C30 defect, physical-prefix-only variant (#3520, `$v0`
+   * cluster). See the note on the fixture above for why this only reached CI
+   * now and for the closure-family contrast that localizes the defect.
+   *
+   * Here the user owns only the six `$vN` physical bases (201..206) and never
+   * spells a logical `__vec_*` name. Measured: every `$vN` base is displaced by
+   * the bridge. What still holds — and is what this test's NAME is about — is
+   * the family termination: exactly one `$` suffix is appended per base, the
+   * appended slot is the logical helper, and nothing goes two deep.
+   */
+  it("vec collision: prefix-only bases are displaced, family still terminates (pinned gap #3520)", async () => {
     const runtime = await compile(PREFIX_ONLY_COLLISION_SOURCE, {
       fileName: "vec-helper-prefix-only-collisions.ts",
       experimentalIR: true,
@@ -294,7 +349,12 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     const rawExports = await instantiate(runtime);
     for (const [index, bridge] of VEC_BRIDGES.entries()) {
       const physicalBase = vecHostBridgePhysicalExportBase(bridge.kind);
-      expect((rawExports[physicalBase] as () => number)()).toBe(201 + index);
+      // SHOULD be the user's 201..206.
+      expect((rawExports[physicalBase] as () => number)(), physicalBase).not.toBe(201 + index);
+      // The bridge answers instead — and it is the SAME object the logical
+      // label resolves to, which is the displacement, stated directly.
+      expect(rawExports[physicalBase], physicalBase).toBe(rawExports[bridge.name]);
+      // Termination is intact: one appended suffix, nothing two deep.
       expect(rawExports[`${physicalBase}$`]).toBe(rawExports[bridge.name]);
       expect(rawExports[`${physicalBase}$$`]).toBeUndefined();
     }

@@ -382,8 +382,13 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
     expect(addTwo(40)).toBe(42);
   });
 
-  it("composes vec and closure collision projections for setExports and wrapExports", async () => {
-    const source = `
+  /**
+   * A module that collides with BOTH bridge families at once, on every public
+   * label each of them reserves. Split in two (#3520 C35 follow-up): the
+   * closure half asserts the C31 guarantee, which holds; the vec half is a
+   * pinned gap, because the C30 guarantee does not.
+   */
+  const BOTH_FAMILY_COLLISION_SOURCE = `
       export function __vec_len(_value: any): number { return 801; }
       export function $v0(_value: any): number { return 802; }
       export function __vec_get(_value: any, _index: number): number { return 803; }
@@ -401,16 +406,22 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
         return Promise.resolve(40).then(addTwo);
       }
     `;
-    const { exports } = await instantiate(source);
 
-    expect((exports.__vec_len as (value: unknown) => number)(null)).toBe(801);
-    expect((exports.$v0 as (value: unknown) => number)(null)).toBe(802);
+  it("composes vec and closure collision projections for setExports and wrapExports", async () => {
+    const { exports } = await instantiate(BOTH_FAMILY_COLLISION_SOURCE);
+
+    // The C31 guarantee, in a module that also collides with the vec family:
+    // every user label — logical AND physical — keeps the user's own function.
     expect((exports.__call_fn_1 as (fn: unknown, value: unknown) => number)(null, null)).toBe(805);
     expect((exports.$c1 as () => number)()).toBe(806);
     expect((exports.__is_closure as (value: unknown) => number)(null)).toBe(1);
     expect((exports.$cf as () => number)()).toBe(807);
     expect((exports.$cm as () => number)()).toBe(808);
     expect((exports.$ct as () => number)()).toBe(809);
+    // ...and the compiler helper is appended at the next free `$` suffix
+    // rather than replacing anything.
+    expect(exports["$c1$"]).toBeTypeOf("function");
+    expect(exports["$cf$"]).toBeTypeOf("function");
     expect(exports["$cm$"]).toBeInstanceOf(WebAssembly.Global);
     expect(exports["$ct$"]).toBeInstanceOf(WebAssembly.Table);
 
@@ -419,6 +430,61 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
     const wrapped = wrapExports(exports as WebAssembly.Exports);
     expect(wrapped.getAddTwo()(40)).toBe(42);
     expect(wrapped.getArray()).toEqual([3, 4]);
+  });
+
+  /**
+   * Pinned gap — the vec half of the same module (#3520, `$v0` cluster).
+   *
+   * This assertion used to read `expect(exports.__vec_len(null)).toBe(801)`,
+   * i.e. the C30 guarantee that a user export keeps its own label. It has been
+   * red on main for weeks; it only reached CI now because `test:changed-root`
+   * runs a root test file **only when the PR modifies it**, and the C35 census
+   * conversion modified this one. Local and CI agree exactly — there is no
+   * environment-dependent behaviour here, only a gate that had never selected
+   * the file.
+   *
+   * Measured: the user's `__vec_len` (801) and `$v0` (802) are unreachable
+   * under EVERY name in the family — the logical label, the physical base and
+   * the appended `$v0$` slot all answer with the compiler's bridge. Same for
+   * `__vec_get` / `$v1`. That is worse than the helper merely winning a label:
+   * the user's function is gone. The closure family in the SAME module is
+   * intact (asserted above), so the defect is specific to the C30 vec bridge
+   * publication, not to the collision machinery in general.
+   *
+   * The honest pin is therefore neither "801" (asserting a fix nobody made)
+   * nor "whatever main prints" (laundering the next regression): it is the
+   * exact observed loss, spelled out, so that repairing C30 turns this red and
+   * forces it back to the user-value assertion. See the `$v0` decision cluster
+   * in plan/issues/3520-ir-r1-source-qualified-identity-program-abi.md.
+   */
+  it("vec collision: the user's own export is displaced under every label (pinned gap #3520)", async () => {
+    const { exports } = await instantiate(BOTH_FAMILY_COLLISION_SOURCE);
+
+    // Every one of these SHOULD be the user's value. None is.
+    expect((exports.__vec_len as (value: unknown) => number)(null)).not.toBe(801);
+    expect((exports.$v0 as (value: unknown) => number)(null)).not.toBe(802);
+    expect((exports.__vec_get as (value: unknown, index: unknown) => unknown)(null, null)).not.toBe(803);
+    expect((exports.$v1 as (value: unknown, index: unknown) => unknown)(null, null)).not.toBe(804);
+
+    // What answers instead is the compiler's own bridge: `__vec_len` reports 0
+    // for a non-vec, `__vec_get` reports null. Pinning the value (not just
+    // "not 801") is what makes this fail loudly if the displacement ever
+    // changes shape rather than being fixed.
+    expect((exports.__vec_len as (value: unknown) => number)(null)).toBe(0);
+    expect((exports.$v0 as (value: unknown) => number)(null)).toBe(0);
+    expect((exports.__vec_get as (value: unknown, index: unknown) => unknown)(null, null)).toBeNull();
+    expect((exports.$v1 as (value: unknown, index: unknown) => unknown)(null, null)).toBeNull();
+
+    // The appended slot does not hold the displaced user function either, so
+    // there is no recovery path: 801 and 802 are absent from the module's
+    // public surface entirely.
+    expect((exports["$v0$"] as (value: unknown) => number)(null)).toBe(0);
+    expect((exports["$v1$"] as (value: unknown, index: unknown) => unknown)(null, null)).toBeNull();
+    const vecFamilyValues = ["__vec_len", "$v0", "$v0$", "__vec_get", "$v1", "$v1$"].map((name) =>
+      (exports[name] as (a: unknown, b: unknown) => unknown)(null, null),
+    );
+    expect(vecFamilyValues).not.toContain(801);
+    expect(vecFamilyValues).not.toContain(802);
   });
 
   it("does not discover closure helpers from a forged closure-free name family", async () => {
