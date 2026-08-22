@@ -524,7 +524,24 @@ in-module reads (host-side detection is what react-dom needs).
   EXPRESSIONS (ReactES6Class `Inner = class extends React.Component` in
   beforeEach) still on the legacy path, and StrictMode's console-spy mock
   assertions. Same staleness family may affect emitLazyProtoGet's own
-  captured `protoGlobalIdx` (unaudited).
+  captured `protoGlobalIdx` (unaudited). A second gated experiment —
+  compiling class-EXPRESSION values as the singleton — made element.type
+  cross as UNDEFINED; reverted, expressions stay on emitClassCtorValue.
+
+- **2026-08-22 StrictMode bucket ATTRIBUTED to the (a) await/act lane, not
+  classes**: the exact double-ctor StrictMode shape (class extends
+  React.Component + ctor count++ + <StrictMode> wrapper + flushSync render)
+  passes STANDALONE with the bridge (probe .tmp/probe-strictctor.mts:
+  count=1, correct for production). In the suite the same tests read
+  "expected 0 toBe 1" — the assertion runs BEFORE the un-awaited
+  `await act(() => root.render(...))` completes (defect (a), #1042 arc) —
+  and the one "expected 2 toBe 1" is the PREVIOUS test's deferred render
+  flushing into the next test's count. Host-side `new` on a
+  CAPTURE-carrying class also verified working (probe-classcapture2: ctor
+  and method writes both land in the boxed capture). Remaining react mass
+  therefore: (1) the #1042 await-act passthrough lane (StrictMode 7 +
+  likely most "expected not null"/mock buckets), (2) the class-EXPRESSION
+  value path (ReactES6Class 13), (3) spy/mock plumbing.
 
 ## Fix order
 
