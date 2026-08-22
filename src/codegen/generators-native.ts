@@ -2762,10 +2762,18 @@ export function nativeGeneratorInfoForDecl(
 ): NativeGeneratorInfo | undefined {
   const byName = ctx.nativeGenerators.get(name);
   if (byName && byName.decl === decl) return byName;
-  for (const info of ctx.nativeGenerators.values()) {
-    if (info.decl === decl) return info;
+  // Scan ONLY this name's shadow aliases — never other names' entries: one
+  // declaration may legitimately register under several names (e.g. a class
+  // method under its classMemberFuncKey and again under a different key from
+  // another emit site), and answering with a different-name info here would
+  // hand the caller a state machine whose funcMap/resume wiring belongs to
+  // the other name (measured: 617 class gen-method standalone tests broke on
+  // exactly that in the first cut of this fix).
+  for (let shadowIdx = 0; ; shadowIdx++) {
+    const alias = ctx.nativeGenerators.get(`${name} shadowed${shadowIdx}`);
+    if (!alias) return undefined;
+    if (alias.decl === decl) return alias;
   }
-  return undefined;
 }
 
 function ensureRegisteredNativeGenerator(ctx: CodegenContext, name: string): NativeGeneratorInfo | null {
