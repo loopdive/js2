@@ -1061,3 +1061,5 @@ DOGFOOD_JEST_UPSTREAM_SUITE=1 node --import tsx tests/dogfood/jest-upstream-suit
 Focused Vitest, typecheck, issue-id, formatting, and diff checks remain the
 required follow-up gates. This is still a measured selected slice, not a claim
 that Jest's deferred runner, worker, DOM, or filesystem suites are complete.
+
+Implementation: [PR #4767 — bridge WebAssembly callbacks in prompt tests](https://github.com/loopdive/js2wasm/pull/4767).
