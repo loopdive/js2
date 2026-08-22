@@ -20,7 +20,7 @@ import { PROGRAM_ABI_CALLABLE_ROLE } from "./program-abi-planning.js";
 import { addUnionImports } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { flushLateImportShifts } from "./shared.js";
-import { UNDEF_F64_BITS } from "./value-tags.js"; // (#3315)
+import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#3315, #4491 T11)
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js";
 import { guardVecElementRead } from "./vec-oob-read.js";
 
@@ -542,7 +542,17 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
       return gu !== undefined ? [{ op: "call", funcIdx: gu } as Instr] : undefined;
     })();
     const f64ScratchIdx = holeMapInVecGet ? 4 : 3;
+    // (#4491 T11) The ABSENCE-marker compare is gated on the marker having been
+    // EMITTED, not merely on the program containing some elision — a module
+    // whose only elisions sit in `any[]` literals sets `usesArrayHoles` and
+    // never mints an f64 marker. `__vec_get` is built at FINALIZE, after every
+    // body, so the narrower flag is readable here. Measured: without it
+    // `benchmarks/array.ts` grew 19 bytes for a compare that cannot fire.
+    const f64HoleMapInVecGet = ctx.f64HoleMarkerEmitted === true;
+    /** Second scratch, holding the reinterpreted bits so both payloads compare without re-reading. */
+    const bitsScratchIdx = f64ScratchIdx + 1;
     let usedF64Scratch = false;
+    let usedF64BitsScratch = false;
     const oobUndefinedInstrs = f64SentinelUndefInstrs?.map((instr) => ({ ...instr })) ?? [
       { op: "ref.null.extern" as const },
     ];
@@ -600,11 +610,25 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
         // (#3315) Sentinel-aware f64 box — see f64SentinelUndefInstrs above.
         if (f64SentinelUndefInstrs !== undefined) {
           usedF64Scratch = true;
+          // (#4491 T11) BOTH f64 markers leave as `undefined`: the value one
+          // (an explicit `undefined` element) and the absence one (a hole).
+          // The host cannot see the difference, and per Get neither may cross
+          // as a sNaN number.
+          if (f64HoleMapInVecGet) usedF64BitsScratch = true;
           boxInstrs = [
             { op: "local.tee", index: f64ScratchIdx },
             { op: "i64.reinterpret_f64" },
-            { op: "i64.const", value: UNDEF_F64_BITS },
-            { op: "i64.eq" },
+            ...(f64HoleMapInVecGet
+              ? ([
+                  { op: "local.tee", index: bitsScratchIdx },
+                  { op: "i64.const", value: UNDEF_F64_BITS },
+                  { op: "i64.eq" },
+                  { op: "local.get", index: bitsScratchIdx },
+                  { op: "i64.const", value: HOLE_F64_BITS },
+                  { op: "i64.eq" },
+                  { op: "i32.or" },
+                ] satisfies Instr[])
+              : ([{ op: "i64.const", value: UNDEF_F64_BITS }, { op: "i64.eq" }] satisfies Instr[])),
             {
               op: "if",
               blockType: { kind: "val", type: { kind: "externref" } },
@@ -697,6 +721,9 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
     // without it keep byte-identical `__vec_get` bodies.
     if (usedF64Scratch) {
       getLocals.push({ name: "__f64_scratch", type: { kind: "f64" } as ValType });
+      if (usedF64BitsScratch) {
+        getLocals.push({ name: "__f64_bits_scratch", type: { kind: "i64" } as ValType }); // (#4491 T11)
+      }
     }
     fillVecHostBridge(ctx, "get", getLocals, body);
   }

@@ -102,18 +102,36 @@ loc-budget-allow:
   # existing loops read. Both arms sit at fixed points in one long ordered
   # dispatch chain and cannot be hoisted without reordering it.
   - src/codegen/expressions/call-tail-dispatch.ts
-  # 2026-08-22 gate-visibility re-grant (PR #4723): these five files' growth
-  # was granted in plan/issues/2071 / 4206 / 2175 frontmatter — but those doc
-  # edits already merged upstream via the earlier integration PR, so under
-  # CI's synthetic-merge base they are UNCHANGED and their grants are
-  # invisible to the #3131 change-set scan, while the granted source growth
-  # is still carried by this PR. Same grants, restated in a file this PR
-  # modifies; rationales live in the original issue files' frontmatter.
+  # 2026-08-22 gate-visibility re-grant for PR #4768 (same stranded-grant
+  # class as #4723's b456e62394, which merged to main and then dropped out of
+  # this branch's frontmatter in the post-merge sync): growth originally
+  # granted in 2071/4206/2175 frontmatter whose doc edits are already on main,
+  # plus proto-index-store.ts (+60, the T10 constructor-fallthrough gate whose
+  # body is keyIsNotConstructorInstrs — dispatch and guard in the same module
+  # that owns the walk).
   - src/codegen/declarations/object-shape-widening.ts
   - src/codegen/expressions/new-super.ts
+  - src/codegen/proto-index-store.ts
   - src/codegen/binary-ops.ts
   - src/codegen/index.ts
   - src/codegen/expressions/assignment.ts
+  # 2026-08-22, PR #4768 wave-6 dispatch wiring (under-ceiling at each lane's
+  # own base, over main's refreshed ceilings at PR scope): literals.ts +17
+  # (T11 elision marker at the literal site), expressions/identifiers.ts +13
+  # (T3 instanceof RHS + assigned-alias dispatch), statements/variables.ts +6
+  # (T12 redeclared-binding dispatch). All bodies live in the new modules.
+  - src/codegen/literals.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/statements/variables.ts
+  # 2026-08-22, PR #4768 (wave-6 T11 presence half): +35 in object-runtime.ts
+  # — the per-carrier hole test in __extern_has_idx's vec arm and the presence
+  # chokepoint wiring that `in`/Object.keys/for-in route through. The bodies
+  # live in vec-f64-hole-presence.ts; this is the arm/dispatch share that must
+  # sit inside the runtime builder because it references the result-vector
+  # locals of the natives it splices into (same constraint as the #4491 lane B
+  # entry above). Surfaced only after #4723's post-merge baseline refresh
+  # reset the ceiling.
+  - src/codegen/object-runtime.ts
 oracle-ratchet-allow:
   # 2026-08-21: one getTypeAtLocation in varBindingNeedsExternrefForUndefined's
   # new call arm — the same raw-checker idiom as the surrounding predicate;
@@ -126,6 +144,15 @@ oracle-ratchet-allow:
   # purity query, same rationale.
   - src/codegen/declarations.ts
 coercion-sites-allow:
+  # 2026-08-22 wave-6 lane T11: NOT a fresh ToString matrix. The f64
+  # absence-marker arm in `__extern_has_idx` must look the index up in the
+  # #3251 companion (an own accessor recorded there means the index is PRESENT
+  # even though the slot still holds the marker), and a companion is keyed by
+  # the DECIMAL INDEX STRING. `number_toString` is the sealed index-key
+  # formatter every other companion consult uses — `vec-overlay-presence.ts`,
+  # `fillDynamicForinVecArms`, `vec-overlay.ts` all call exactly this one. Using
+  # anything else would be the hand-rolled matrix the gate exists to prevent.
+  - src/codegen/vec-f64-hole-presence.ts
   # 2026-08-21 wave-3 lane C: NOT new coercion vocabulary — the missing half of
   # an existing pair. `compileLiftedClosureBody` already ensures `__box_number`
   # two lines above (param → arguments slot); the mapped REVERSE sync
@@ -173,16 +200,61 @@ coercion-sites-allow:
   # hand-rolled.
   - src/codegen/string-fromcharcode-value-read.ts
 func-budget-allow:
-  # 2026-08-22 gate-visibility re-grant (PR #4723), same stranded-grant cause
-  # as the loc entries above: originally granted in 2071/4206/2175 frontmatter
-  # whose doc edits already merged upstream, leaving the grants invisible to
-  # the change-set scan while this PR still carries the granted growth.
+  # 2026-08-22 PR #4768: +4 dispatch in the T12 redeclared-binding arm.
+  - src/codegen/statements/variables.ts::compileVariableStatement
+  # 2026-08-22 gate-visibility re-grant for PR #4768, same stranded-grant
+  # cause as the loc entries above.
   - src/codegen/expressions/new-super.ts::compileNewExpression
   - src/codegen/expressions/new-super.ts::compileNewFunctionDeclaration
   - src/codegen/binary-ops.ts::compileBinaryExpression
   - src/codegen/declarations/object-shape-widening.ts::collectGrowableObjectLiterals
   - src/codegen/declarations/object-shape-widening.ts::scanStatements#2
   - src/codegen/declarations.ts::compileDeclarations
+  # 2026-08-22 wave-5 lane T3, §13.10.1 step-3 `instanceof` RHS evaluation.
+  # +6, DISPATCH ONLY — the emitter is one exported call in the new subsystem
+  # module instanceof-rhs-evaluation.ts. The two call sites are the function's
+  # own conservative fall-through arms (`typeIdxs === undefined` and
+  # `instanceofIdx === undefined`); each must sit between the LHS drop and the
+  # `i32.const 0` terminal, because that IS the spec's evaluation order, so
+  # neither can be lifted out of the arm it guards.
+  - src/codegen/expressions/identifiers.ts::compileHostInstanceOf
+  # 2026-08-22 wave-5 lane T8, f64-hole VALUE half: `compileElementAssignment`
+  # gains ONE `else if (arrDef.element.kind === "f64")` arm (+14) that calls
+  # `emitF64GapFillInstrs`. The whole body — the sNaN marker, the locals, the
+  # guarded `array.fill` — lives in the NEW module
+  # src/codegen/vec-f64-hole-gap.ts; this function keeps only the branch, which
+  # has to be here because it is the sibling of the externref gap-fill arm it
+  # mirrors (#2773 S7) and shares its already-allocated vec/data/idx locals.
+  - src/codegen/expressions/assignment.ts::compileElementAssignment
+  # 2026-08-22 wave-6 lane T11, f64-hole PRESENCE half. Every new BODY lives in
+  # the NEW module src/codegen/vec-f64-hole-presence.ts (the marker test, the
+  # read-boundary canonicalization, the per-carrier `__extern_has_idx` arms);
+  # the eight functions below gain only the branch that reaches it, and each
+  # branch has to be where it is:
+  #   compileArrayLiteral (+13)          — the elision arm is the only place
+  #     that knows an element is an OmittedExpression rather than an explicit
+  #     `undefined`; that distinction IS the slice.
+  #   _emitVecAccessExportsInner (+13)   — `__vec_get`'s f64 arm already tests
+  #     UNDEF_F64_BITS (#3315); it now tests both payloads, in place, sharing
+  #     the scratch local the existing arm allocates.
+  #   compileInOperator (+5)             — the typed-vec `in` route hands off to
+  #     `__extern_has_idx` exactly where the #4222 overlay route already does.
+  #   ensureNativeArrayHof (+5)          — one disjunct on the existing
+  #     `hasGateIdx` condition, next to `protoIndexDirty`/`forceHasProperty`.
+  #   fillDynamicForinVecArms (+5)       — one disjunct on `gateKeysOnPresence`,
+  #     plus the f64 marker map inside the `__extern_get_idx` box arm it builds.
+  #   compileElementAccessBody (+4)      — the two bounds-eliminated read arms,
+  #     siblings of the `emitHoleToUndefined` calls they sit beside.
+  #   compileArrayDestructuringAssignment (+2) / compileForOfArray (+1) — one
+  #     canonicalization call each, same read boundary.
+  - src/codegen/literals.ts::compileArrayLiteral
+  - src/codegen/vec-access-exports.ts::_emitVecAccessExportsInner
+  - src/codegen/binary-ops-in.ts::compileInOperator
+  - src/codegen/hof-native.ts::ensureNativeArrayHof
+  - src/codegen/object-runtime.ts::fillDynamicForinVecArms
+  - src/codegen/property-access.ts::compileElementAccessBody
+  - src/codegen/expressions/assignment.ts::compileArrayDestructuringAssignment
+  - src/codegen/statements/loops.ts::compileForOfArray
   # 2026-08-21 defineProperties/create edge slice: the `Properties`-map entry
   # model gains a PASS-THROUGH arm (a map entry that is not an object literal)
   # plus the reified-map construction. Already 724 LOC at base — the growth is
@@ -260,6 +332,17 @@ func-budget-allow:
   #    lives in the existing subsystem module arguments-object-mop.ts.
   - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
   - src/codegen/typeof-delete.ts::compileDeleteExpression
+  # 2026-08-22 wave-5 T4 slice T4-E: `"valueOf" in {}` answered false because
+  # standalone's `$Object.$proto` chain ends at null (%Object.prototype% is a
+  # `$NativeProto`, the priced representation wall) while the READ resolved it
+  # statically. The name set and the receiver-shape predicate both live in the
+  # NEW module src/codegen/object-proto-name-in.ts; `compileInOperator` grows
+  # by the two-line consult plus the comment that says why the fold is
+  # affirmative-only (+10). The consult must sit exactly where `has` is
+  # computed — one statement earlier and it would bypass the §13.10.1
+  # primitive-RHS TypeError, one later and the `__extern_has` route has already
+  # been chosen.
+  - src/codegen/binary-ops-in.ts::compileInOperator
 ---
 
 # #4491 — ES5 defineProperty/defineProperties/create MOP residual
@@ -2868,6 +2951,257 @@ convention should treat that as unowned behaviour, not as a working reference.
 
 ---
 
+## Wave-5 T3 result — harness + instanceof + assignment (2026-08-22, lane w5-t3)
+
+**Rows: 21 in `.tmp/wave5-T3.txt`. 1 already passing at base, 5 BLOCKED on
+infrastructure, 3 flipped by this lane, 11 priced below.** Every row was
+re-verified on this lane's own head before any edit; every figure is a run this
+lane executed, `--target standalone`, serial single-test probes, base-vs-after
+by file-copy A/B (`.tmp/ab/*.base.ts`), never `git stash`.
+
+| row | base | after |
+| --- | --- | --- |
+| `language/expressions/assignment/S11.13.1_A2.1_T1` | fail — `#1: x = 1; x === 1. Actual: 0` | **pass** |
+| `language/expressions/instanceof/S11.8.6_A2.1_T3` | fail — `Actual: [object Object]` | **pass** |
+| `language/expressions/instanceof/S11.8.6_A2.4_T4` | fail — `(OBJECT = Object, {}) instanceof OBJECT !== true` | **pass** |
+| `harness/deepEqual-primitives` | fail | **pass, then REVERTED — see "Symbol typeof" below** |
+| `language/expressions/instanceof/S11.8.6_A1` | pass | pass (already passing at base — not counted) |
+
+### Landed slice 1 — a top-level write that precedes its own `var` was DROPPED
+
+`shouldCollectTopLevelAssignment` (declarations.ts) decides whether to keep a
+top-level `x = 1` by asking `ctx.moduleGlobals.has("x")` — a set the SAME single
+pass over `sourceFile.statements` is still filling. So an assignment textually
+before its own `var x` was answered "not a module global" and the whole
+statement was dropped from `__module_init`. Tenth instance of the #3623
+silent-drop family; the shape was already on the allow-list, so what was missing
+is the FACT, not another arm.
+
+| probe | base | after |
+| --- | --- | --- |
+| `x = 1; if (x !== 1) throw …; var x = 1;` | `CHECK1 x=0 typeof=number` | `ALLOK x=1` |
+| `x = 1; var x;` (no initializer) | `NOINIT x=undefined` | still `undefined` — see residual below |
+
+The no-initializer probe is what rules OUT an "initializer ordering" reading:
+the statement is gone, not reordered.
+
+New module `src/codegen/top-level-hoisted-var-names.ts` pre-scans the file for
+names bound by a top-level `var` (hoisting through blocks / `if` / loops /
+`try` / `switch` / labels / `with`, stopping at every function and class
+boundary), cached per source file; declarations.ts gets one dispatch line.
+`let`/`const` are deliberately excluded — a write before those is a TDZ
+ReferenceError, so emitting the write would be a worse wrong answer than the
+current drop.
+
+**Controls:** 378 rows (assignment + instanceof + comma + statements/variable +
+global-code) 285 → 286, the single transition being the target row; a second
+220-row sample (statements/for + expressions/object + Object.defineProperty)
+IDENTICAL both sides.
+
+**Residual, NOT fixed:** `x = 1; var x;` still reads `undefined` after the
+write is collected — so a second defect sits behind this one: a `var` with NO
+initializer appears to re-store `undefined` over an existing binding, which
+§14.3.2.1 forbids (a redeclaration of an existing var binding performs no
+initialization). Not attempted here; it is a separate statement-emission
+question and no row in this lane's set depends on it.
+
+### Landed slice 2 — `instanceof`'s RHS was never evaluated (§13.10.1 step 3)
+
+`compileHostInstanceOf`'s conservative arms compile the LHS, drop it, and push
+`i32.const 0` without ever compiling the RHS. §13.10.1 evaluates the
+ShiftExpression and **GetValues** it, and GetValue on an unresolvable Reference
+is a ReferenceError.
+
+| probe | base | after |
+| --- | --- | --- |
+| `({}) instanceof UNDECLARED_XYZ` | `false`, no throw | ReferenceError ✓ |
+| `var v = UNDECLARED_ABC` | ReferenceError ✓ | unchanged |
+| `var w = UNDECLARED_DEF + 1` | ReferenceError ✓ | unchanged |
+
+So the identifier lowering already threw correctly everywhere the operand was
+actually compiled — only `instanceof`'s RHS was skipped. New module
+`src/codegen/instanceof-rhs-evaluation.ts`; two call sites in identifiers.ts,
+each between the LHS drop and the constant so the observable order is the
+spec's. **Controls:** the same 378-row set 286 → 287 (single transition = the
+target row), plus a 213-row instanceof-sensitive set
+(`Function.prototype[Symbol.hasInstance]`, class/subclass, Error, TypeError)
+IDENTICAL both sides.
+
+### Landed slice 3 — the ASSIGNED builtin-constructor alias
+
+`resolveBuiltinCtorAliasName` (native-ordinary-instanceof.ts, #2916) resolves a
+DECLARED alias from the binding's static type, whose lib.d.ts shape is the
+nominal `ObjectConstructor`. Two spellings have no such type to read:
+
+| spelling | base | after |
+| --- | --- | --- |
+| `var C = Object; o instanceof C` | `true` ✓ | `true` |
+| `OBJECT = Object; o instanceof OBJECT` (implicit global — no declaration) | **`false`** | **`true`** |
+| `var OBJECT = 0; OBJECT = Object; o instanceof OBJECT` (union type) | `false` | `false` — declines, by design |
+| `o instanceof (o2 = 0, Object)` (comma RHS) | `false` | `false` — out of shape |
+
+New module `src/codegen/builtin-ctor-assigned-alias.ts` answers a different
+question from the type-based one: not "what type does the checker give this
+binding" but "what values does this FILE ever write into this spelling". When
+every write supplies the SAME builtin constructor, the name holds that
+constructor at every point where it reads without throwing — a read before the
+first write is an unresolvable reference and throws ReferenceError instead. The
+scan disqualifies a spelling on a compound assign / `++` / `--` / `delete`, a
+parameter / catch / binding element / `for-in` loop variable, a function or
+class declaration, an initializer-less declaration, an assignment whose RHS is
+not a bare identifier, or two writes naming different builtins. Host-free only.
+
+**That is deliberately weaker than row three above**, which is why
+`S11.8.6_A2.4_T1` does not flip: its `var OBJECT = 0` contributes a
+second, non-constructor source, so the spelling is not uniform. `T1`'s CHECK#2
+needs something else again — the LHS spilled to a temp BEFORE the comma's
+leading operands run, then instanceof dispatched on the comma's LAST operand.
+Slice 2 makes those side effects happen in the right order; the answer still
+falls to the conservative `0`. Both are runtime-RHS problems, not static-fold
+problems.
+
+Flips `S11.8.6_A2.4_T4` fail → pass. **Controls:** the 378-row set 287 → 288
+(single transition = the target row); the 213-row instanceof-sensitive set and a
+200-row sample of `Object.prototype` + `Array.prototype.concat` + `Function`
+both IDENTICAL to the pre-slice run.
+
+### ATTEMPTED AND REVERTED — `typeof <symbol>` through a dynamic slot
+
+**This is a REAL defect with a complete diagnosis. It was implemented, measured,
+and then reverted because the fix cascades into the `$Object.$proto` wall. The
+next lane should start from these measurements, not re-derive them.**
+
+The defect: a symbol reaching `typeof` through a dynamic slot (a parameter, an
+`any` local, an object field) answers `"object"`. The compile-time fold answers
+`"symbol"`. That is the #2984 path-dependence class.
+
+| probe | base |
+| --- | --- |
+| `var s = Symbol(); typeof s` | `"symbol"` (fold) |
+| `(function (v) { return typeof v; })(s)` | **`"object"`** |
+| `(function (v) { return typeof v === "symbol"; })(s)` | **`false`** |
+| `(function (v) { switch (typeof v) { case "symbol": … } })(s)` | takes `default` |
+
+Two natives are missing the case, and there is **no `__typeof_symbol` predicate
+at all** — `object-runtime-proxy.ts` looks the name up in `ctx.funcMap`, but
+nothing ever registers it, so that lookup has always returned `undefined`:
+
+- `__typeof` (the MATERIALIZED tag; also what `typeof x === "symbol"` falls back
+  to comparing, since there is no predicate) classifies null / number / boolean
+  / bigint / string / function and falls through to `"object"`.
+- `__typeof_object` answers 1 for the `$Symbol` carrier, so a symbol is BOTH
+  not-a-symbol and an object. `native-object-family-instanceof.ts` already
+  documents this and subtracts the carrier at its own call site.
+
+**What it costs, measured:** upstream `deepEqual.js` routes on
+`switch (typeof value) { … case 'symbol': return true }` inside
+`isPrimitiveEquatable(value)` with `value` a parameter. Every symbol therefore
+missed the primitive arm, was admitted by `isObjectEquatable` (`typeof value
+=== 'object'`), and two DISTINCT symbols compared structurally EQUAL — so
+`harness/deepEqual-primitives.js`'s `assert.throws(Test262Error, … deepEqual(s1,
+s2))` saw no throw. A second symptom on the same row:
+`assert.deepEqual(s1, "Symbol()")` threw `TypeError: Reflect.ownKeys called on
+non-object` from the format path.
+
+**The two-arm fix works and was measured** (splice the `$Symbol` `ref.test` into
+`__typeof` → `"symbol"` and into `__typeof_object` → 0, at the same finalize
+point as the closure arms, keeping `hasSymbolCarrier` alive as its own reason to
+run the pass). On a 298-row control (built-ins/Symbol + expressions/typeof +
+gOPS/gOPN + all of harness/ + the T3 rows): **+2** (`harness/deepEqual-primitives`,
+`harness/verifyProperty-desc-is-not-object`), **−1**
+(`language/expressions/typeof/symbol.js`).
+
+**Why the −1, and why it is not a trade you may take.**
+`language/expressions/typeof/symbol.js` asserts BOTH `typeof Symbol() ===
+"symbol"` AND `typeof Object(Symbol()) === "object"`. It passed at base for the
+wrong reason: standalone `Object(sym)` returns the symbol UNCHANGED (the
+`isSymbolType` arm of `emitObjectCoercion` is gated `!noJsHost` and there is no
+standalone arm), and the runtime tag for everything unclassified was `"object"`.
+Teaching `typeof` the symbol tag makes that accident visible.
+
+**The wrapper fix was then implemented and ALSO reverted.** Building
+`Object(sym)` as the ordinary `$Object` + [[PrimitiveValue]] slot every other
+standalone wrapper uses (a `__new_Symbol_object` native next to `__new_String`,
+`"Symbol"` added to `StandaloneWrapperConstructorName`, and `"symbol"` added to
+`isPrimitiveObjectCoercionCall`) gives the right answers in isolation:
+
+| probe | after wrapper |
+| --- | --- |
+| `typeof Object(Symbol())` | `"object"` ✓ |
+| `Object(s1) === s1` | `false` ✓ |
+| `Object(s1) instanceof Symbol` | `true` ✓ |
+| `s1 instanceof Symbol` | `false` ✓ |
+| `Object(s1).valueOf() === s1` | `true` ✓ (statically-typed receiver) |
+| `Object(s1) instanceof Object` | `true` ✓ |
+
+…and still loses `deepEqual-primitives`, now with
+`TypeError: Object.prototype.valueOf is not yet implemented in --target
+standalone`. **Root cause of THAT, measured:** `__dyn_valueOf`
+(wrapper-valueof.ts) probes the receiver's `valueOf` PROPERTY first and only
+then the [[PrimitiveValue]] slot. Its docstring justifies that order with
+"standalone ships no `Boolean.prototype.valueOf` object, so an own `valueOf`
+and the intrinsic cannot both be present" — an assumption the symbol wrapper
+breaks: the lookup reaches a reified `Object.prototype.valueOf`, whose glue
+(`array-object-proto.ts` → `emitProtoMemberBodyRefusal`) is the catchable
+"not yet implemented" throw, and arm 1 calls it. `Object(1)` / `Object("a")`
+escape this only because a STATIC receiver-type arm answers them before
+`__dyn_valueOf` is reached.
+
+**So the honest ordering of the remaining work is:**
+
+1. the symbol wrapper needs `[[Prototype]] = Symbol.prototype`, which is the
+   known `$Object.$proto` vs `$NativeProto` wall — do not re-attempt without a
+   design change; or
+2. `__dyn_valueOf` is restructured to OWN-property → slot → inherited-property
+   → self (today: any-property → slot → self). That is spec-equivalent for
+   every case it handles now, since a wrapper never has an own `valueOf`, and
+   it is the smaller of the two. It changes a helper every dynamic `.valueOf()`
+   goes through, so it needs its own control run; or
+3. `Object.prototype.valueOf` gets a real wired body (§20.1.3.7 `ToObject(this)`
+   — for an object receiver, `this`) instead of the refusal. Cheap on its own
+   and useful beyond symbols, but on its own it does NOT fix `deepEqual`: arm 1
+   would then return the wrapper instead of the primitive.
+
+Sized **L, not S** — four coupled surfaces (typeof natives, `Object()`
+coercion, wrapper-instanceof, valueOf dispatch), the same shape T1 recorded for
+`String.fromCharCode` as a value. Nothing from this attempt is committed; the
+lane's tree is back to the two landed slices.
+
+### BLOCKED — 5 rows need the quickjs eval provider, which does not build
+
+`harness/assert-throws-same-realm`, `harness/asyncHelpers-throwsAsync-same-realm`,
+`harness/detachArrayBuffer-host-detachArrayBuffer`,
+`harness/wellKnownIntrinsicObjects`, `language/expressions/instanceof/S11.8.6_A6_T4`
+all fail with `JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not
+built`. `node scripts/build-quickjs-eval-provider.mjs` fails its
+`functionParityProbe` canary: returns **1**, expected 11 — i.e.
+`constructorIdentity = 0`, a QuickJS-created `new Function(…)` value has lost
+`.constructor === Function`. Verified by file-copy A/B (reverting the wave-5
+`%Function%` own-props commit's source changes) that this **predates** that
+commit. Because the adapter's cache key folds the compiler-bundle hash, ANY
+`src/` edit invalidates the cached adapter, so this blocks every eval-dependent
+row in every lane that touches the compiler. Routed to the lead as its own task.
+
+**Trap worth keeping:** the build script exits **0** when piped
+(`… | tail`) even though the canary threw — the shell reports `tail`'s status.
+Run it bare.
+
+### Per-row verdict for the 11 remaining failures
+
+| rows | blocker | verdict |
+| --- | --- | --- |
+| `harness/deepEqual-primitives` | symbol `typeof` (above) | measured, implemented, reverted — sized L |
+| `harness/deepEqual-mapset` | `assert.deepEqual(new Set(), new Set())` says `Expected Map {} to be structurally equal to Map {}` — two empty Sets compare unequal AND format as `Map` | not attempted; Set/Map structural comparison + `@@toStringTag`, own slice |
+| `harness/asyncHelpers-asyncTest-return-not-thenable` | `doneValues` all `false` where all `true` expected | async-harness, not attempted |
+| `harness/asyncHelpers-asyncTest-{returns-undefined,then-rejects,then-resolves}` | `Test262:AsyncTestFailure:Test262Error: [object Object]` | async-harness; the `[object Object]` payload means the failure reason itself does not stringify — worth fixing first, it is hiding the real errors |
+| `language/expressions/assignment/S11.13.1_A6_T{1,2}` | `x = (eval("var x;"), 1)` must PutValue through the reference created BEFORE the eval introduced a nearer binding | direct-eval var injection into the caller activation — the eval wall |
+| `language/expressions/assignment/S8.12.5_A2` | `var m = {1:"one"}; m[1] = 5` silently stores NOTHING: `typeof m[1]` still folds to `"string"` and the value reads `undefined` | **value-representation wall.** Measured separately: the key canonicalisation is FINE (`m["1"]`/`m[1]` are the same slot, and `{1:5}; q["1"]=7; q[1] === 7`). What fails is assigning a NUMBER into a property whose inferred type is `string` — `o.a = 5` and `p["a"] = 5` reproduce it identically on a plain key, so it is not index-specific |
+| `language/expressions/assignment/8.12.5-3-b_1` | `Array.prototype.reduce = function(){}` then `gOPD(Array.prototype,"reduce").value` still reads the original | builtin-prototype method PATCH; belongs with the T2 descriptor lane |
+| `language/expressions/instanceof/S11.8.6_A2.4_T1` | `var OBJECT = 0; (OBJECT = Object, {}) instanceof OBJECT` **and** `object instanceof (object = 0, Object)` | still failing — see slice 3 below for why each half declines |
+| `language/expressions/instanceof/S15.3.5.3_A3_T2` | `F = Function(); F.prototype = Object.prototype; ({}) instanceof F` | needs a RUNTIME read of `.prototype` off an arbitrary callable — `native-ordinary-instanceof.ts` already documents this as deliberately not covered |
+
+---
+
 ## Handover (T6, team-dev-4, 2026-08-22)
 
 **Status: DONE, integration-ready. Nothing in flight, no WIP.**
@@ -4219,3 +4553,1148 @@ pre-existing non-pass. The lane is integration-ready as it stands.
 - **The standalone baseline JSONL is stale enough to matter**: of 13 candidate
   rows, 2 already passed, and one control row it calls `pass` fails on base.
   Verify every row on your own HEAD, and base-check every control non-pass.
+
+## Implementation Plan (T8) — f64-hole value representation (2026-08-22, lane w5-t8)
+
+Base `6b513c7155`, `--target standalone`, in-process `runTest262File`. Every
+number below is a run this lane executed; the pre-edit copies
+(`.tmp/base-literals.ts`, `.tmp/base-assignment.ts`, `.tmp/base-array-methods.ts`)
+and both A/B result sets are in the worktree's `.tmp/`.
+
+### The wall is NOT (mainly) the literal elision
+
+The dispatch brief and the earlier lane-J verdict both frame this as
+"`[0, , 2]` in an f64 vec". Re-measuring each named row against its ACTUAL
+error says otherwise — only one of them is a literal elision at all:
+
+| row | measured failure on base | real cause |
+| --- | --- | --- |
+| `toString/S15.4.4.2_A1_T2` | `x=[]; x[0]=0; x[3]=3; x.toString()` → `"0,0,0,3"`, want `"0,,,3"` | **grow-gap**: `array.new_default` zero-fills the f64 backing, and `0` is a legal element |
+| `concat/S15.4.4.4_A3_T2` | `b[1]` is `0`, want `undefined` | same grow-gap |
+| `concat/S15.4.4.4_A1_T4` | `arr[2]` is `NaN`, want `undefined` | `undefined` in an f64 carrier is not observed at `SameValue` |
+| `concat/S15.4.4.4_A1_T2` | `arr[1]` is `NaN`, want an object | concat result element type drops a ref element — not a hole bug |
+| `Array/S15.4_A1.1_T10` | trap: `array element access out of bounds` | the sparse-STORAGE wall (index `4294967294`), already priced by lane J |
+| `filter/15.4.4.20-9-b-{7,11,14,15}` | callback sees `NaN` at the hole and the index is COUNTED | presence, not value |
+
+`array-holes.ts` states the scope limit in its own header ("typed `number[]`
+… never see a `$Hole`"), and `expressions/assignment.ts` states it from the
+other side, in the #2773 S7 gap-fill: *"Externref elements only: an f64/i32
+slot cannot hold either representation."* That sentence is the wall, written
+down. **For f64 it is false** — the compiler has had an f64 absence marker
+since #1024: `UNDEF_F64_BITS` (`value-tags.ts`), the SIGNALING NaN
+`0x7FF00000DEADC0DE`. JS arithmetic only ever yields the QUIET NaN
+`0x7FF8000000000000`, so it cannot collide, and ~28 observer sites already
+read it as `undefined`.
+
+### Behaviour of `var x=[]; x[0]=0; x[3]=3` on base (function scope, standalone)
+
+`toString "0,0,0,3"` · `join "0,0,0,3"` · `x[1] === 0` · `1 in x` true ·
+`hasOwnProperty("1")` false · `Object.keys` `0|1|2|3` · `forEach` visits 4.
+(Correct: `"0,,,3"` · `x[1] === undefined` · `1 in x` false · keys `0|3` ·
+forEach visits 2.)
+
+### The three options, measured
+
+**(b) Demote hole-bearing literals/arrays to externref vecs at collect time —
+MEASURED LOSER, and structurally so.** One-line spike in
+`compileArrayLiteral` (widen `elemWasm` to `externref` whenever any element is
+an `OmittedExpression`), which is the smallest possible form of the
+markStandalone*Targets pattern:
+
+| set | base | spike (b) |
+| --- | ---: | ---: |
+| 112 elision-bearing rows under `built-ins/Array`, `language/expressions/array`, `Object/{defineProperties,keys}` | **33 pass** | **21 pass** |
+
+Twelve regressions, one gain. Two independent reasons, and the second is fatal
+to the whole family:
+
+1. `var x = [0, , 2]` is statically `number[]`, so the element READ still
+   lowers to f64. The widened vec hands the read an externref, the `$Hole` maps
+   to `undefined`, and `undefined` coerced to f64 is `NaN` — so
+   `array[0] === undefined` went `true → false`
+   (`language/expressions/array/S11.1.4_A1.{4,5,6,7}`). The `string[]` and
+   object-array spellings were unaffected, which isolates it to the numeric
+   read boundary.
+2. **The construction site is not the authority on the representation.**
+   `resolveWasmType` is: every CONSUMER re-derives the carrier from the value's
+   TS type. A construction-site override desyncs producer and consumer. Proven
+   twice — once by (1), and again by a second spike that gave
+   `compileArrayConstructorCall` the null/undefined widening
+   `compileArrayLiteral` already has (`hasNullLiteral`): `Array(undefined,1,
+   null,3).toString()` went `",1,0,3" → "NaN,1,0,3"` — the producer widened,
+   the consumer did not, and the result got *worse*. `literals.ts` already
+   names this as the open decision, in the #2809 comment on that exact
+   function.
+
+   Widening only works where producer and consumer agree by construction —
+   which is why the existing `hasNullLiteral` / `hasObjectElem` widenings are
+   safe (they fire where TS itself infers a non-numeric element type) and a
+   hole-driven one is not (TS infers `number[]` for `[0, , 2]`).
+
+**(c) Presence bitmap** — declined without a spike, on two grounds that do not
+need one. It is strictly more state than a value marker (every grow, store,
+delete, length-set and copy must maintain it in lockstep), and it does not
+survive the carrier: a third struct field means a nominal subtype, so any code
+compiled against plain `$__vec_base` — which is most of the dynamic path —
+loses the bitmap silently. A value marker travels inside the element and cannot
+be lost. The one precedent for a nominal holey carrier (#4222's
+`$__holey_array` + `holey-array-presence.ts`) is deliberately narrow for
+exactly this reason: it is minted only for a proven `new Array(n)` → `.filter`
+path, and even there only `__extern_has_idx` knows about it.
+
+**(a) NaN-boxed marker — WINNER.** It is the only option where producer and
+consumer cannot disagree, because the marker rides inside the f64 value; it
+needs no type-system change, no struct change, no allocation; the grow path is
+where holes are actually created and it already emits an `array.fill` for the
+externref carrier; and it composes with the T5 case (a `length` shrink-then-grow
+leaves stale slots — filling them with the marker is the same one-line fill).
+
+Blast radius on the f64 fast path: **zero for dense numeric code**. The fill is
+inside the existing `needsGapFillCondInstrs` guard (`idx > length`), which is
+false at every step of `for (i…) a[i] = v` and of `push`, so the dense-fill and
+counted-push kernels emit byte-identical code. The #1897 `struct.get` contract
+is untouched — no field is added, moved, or retyped.
+
+### Value half vs presence half — the split, and why the marker must eventually fork
+
+`UNDEF_F64_BITS` means **undefined**, not **absent**. Reusing it gets every
+VALUE question right (`x[1] === undefined`, `join`/`toString` render `""` —
+which is also what an explicit `undefined` element renders, so the arm is right
+either way) and leaves every PRESENCE question wrong (`1 in x`,
+`Object.keys`, HOF hole-skip), because `x[1] = undefined` writes the same bits
+and must answer PRESENT.
+
+The presence half therefore needs a SECOND, distinct sNaN payload
+(`HOLE_F64_BITS`, e.g. `0x7FF00000DEADC01E`) plus:
+
+1. **Canonicalization at the vec read boundary** — `HOLE → UNDEF_F64_BITS` at
+   the ~8 sites that already call `emitHoleToUndefined` for externref
+   (`property-access.ts` 5717/5838, `statements/loops.ts` 1808,
+   `array-methods.ts` 777/6207/6419, `expressions/assignment.ts` 2242/2341),
+   extended to `element.kind === "f64"` under `ctx.usesArrayHoles`. This keeps
+   the "the sentinel is never observed AS the sentinel" invariant that
+   `array-holes.ts` already states, so none of the ~28 `UNDEF_F64_BITS`
+   observers need to change.
+2. **A per-carrier hole test in `__extern_has_idx`'s vec arm** — today that arm
+   answers on `i < length` alone (`array-filter-spec-access.ts` L105 says so).
+   The shape to copy is `fillExternGetIdxVecArms` (`object-runtime.ts` L7702),
+   which already walks `ctx.vecTypeMap` and emits one `ref.test`-guarded arm per
+   carrier; the f64 carriers get `array.get` + the bit compare, every other
+   carrier keeps today's answer.
+3. **`forceHasProperty` on the native HOFs when `ctx.usesArrayHoles`** — the
+   `hof-native.ts` switch that `ensureHoleyArrayFilter` already flips for the
+   #4222 carrier.
+
+That is the design; it is NOT this slice. It is a second slice with its own
+control run, and it should not start until the value half is landed and
+measured, because (1) is the piece that would otherwise silently change what
+~28 existing observers see.
+
+### Slice T8-A (this slice) — the value half
+
+New module `src/codegen/vec-f64-hole-gap.ts` owns both bodies; the two god-files
+get dispatch wiring only.
+
+1. `emitF64GapFillInstrs` — the f64 twin of the #2773 S7 gap-fill. Same
+   `needsGapFillCondInstrs` guard, same `array.fill`, `UNDEF_F64_BITS` in place
+   of the `undefined` externref. `expressions/assignment.ts` gains one `else if
+   (arrDef.element.kind === "f64")` arm + one import.
+2. `f64JoinSentinelArm` — §23.1.3.18 step 4.b for the marker inside
+   `compileArrayJoinNative`'s element fold. The JS-host `compileArrayJoin` has
+   had this since #1998 (`array-methods.ts` L4686); the standalone native fold
+   never grew it, so the same array joined as `"0,NaN,NaN,3"` host-free.
+   `array-methods.ts` gains the arm call + one import.
+
+Neither is gated on a new flag: the gap-fill fires only where a store grows past
+`length` (a state that was previously unrepresentable, so there is no prior
+behaviour to preserve), and the join arm fires only on a bit pattern that JS
+arithmetic cannot produce.
+
+### The one hazard the value half introduces, stated plainly
+
+Filling a gap with the marker changes an arithmetic HOF over a sparse array
+from **quietly** wrong to **loudly** wrong. Measured on
+`var a=[1,2,3]; a[6]=5;` (function scope, standalone):
+
+| expression | correct JS | base | after T8-A |
+| --- | --- | --- | --- |
+| `a.reduce((s,x)=>s+x, 0)` | 11 (holes skipped) | 11 (the gap `0`s are additive identity — right by luck) | NaN |
+| `a.reduce((s,x)=>s*x, 1)` | 30 | **0** | NaN |
+| `a.join(",")` | `"1,2,3,,,,5"` | `"1,2,3,0,0,0,5"` | `"1,2,3,,,,5"` ✓ |
+| `a[4] === undefined` | true | **false** | true ✓ |
+
+Neither column is spec-correct for the HOFs — only hole-SKIPPING is, and that
+is the presence half. The value half makes the failure visible instead of
+plausible. No row in the 292 measured here exercises it, but the next lane
+should know the trade before extending the marker to `push`, `concat` or the
+`length` setter.
+
+### Measured — slice T8-A
+
+Base `6b513c7155`. Every control is a FILE-COPY A/B (`.tmp/base-assignment.ts`,
+`.tmp/base-array-methods.ts` are the pre-edit copies) run on both sides on this
+head; no `git stash`.
+
+| row | before | after |
+| --- | --- | --- |
+| `built-ins/Array/prototype/pop/S15.4.4.6_A1.2_T1` | check #8: `x=[]; x[0]=0; x[3]=3; x.pop(); x[2]` is `0`, expected `undefined` | **PASS** |
+| `built-ins/Array/prototype/shift/S15.4.4.9_A1.2_T1` | same idiom, same check | **PASS** |
+| `built-ins/Array/prototype/toString/S15.4.4.2_A1_T2` | fails at check #2.2 (`x.toString()` is `"0,0,0,3"`) | still fails, now at check **#3.2** — two checks further on. Its remaining blocker is `Array(undefined,1,null,3)`, i.e. `null` in an f64 carrier, which is the #2809 representation question, not a hole. |
+
+Controls, all statuses compared row-for-row:
+
+| control set | base | after | changed |
+| --- | ---: | ---: | ---: |
+| 180 dense-numeric Array rows — a deterministic stride sample over `map`, `reduce`, `reduceRight`, `sort`, `join`, `push`, `pop`, `indexOf`, `lastIndexOf`, `slice`, `forEach`, `toString`, `concat`, `filter`, `Array/length` (1,872 files) | 117 | 117 | **0** |
+| 150 sparse-index-store rows — stride sample of the 508 files under `built-ins/Array` + `language/expressions/array` that write a literal numeric index, excluding rows already in the other two sets | 73 | **75** | **+2, both gains** |
+| 112 elision-bearing rows (`built-ins/Array`, `language/expressions/array`, `Object/{defineProperties,keys}`) | 33 | 33 | **0** |
+
+Perf sanity — `compileSource(…, { target: "standalone" })` on the numeric
+playground samples, module byte size:
+
+| sample | base | after |
+| --- | ---: | ---: |
+| `website/playground/examples/benchmarks/array.ts` | 54,651 | 54,651 |
+| `…/loop.ts` | 34,533 | 34,533 |
+| `…/fib.ts` | 34,192 | 34,192 |
+
+Byte-identical, which is the expected result rather than a lucky one: the fill
+is inside the `idx > length` guard, and none of these samples ever stores past
+`length`.
+
+Gates: `check-loc-budget` OK · `check-func-budget` OK (one new allowance,
+`compileElementAssignment`, rationale in the frontmatter) · `check-coercion-sites`
+OK · `check:oracle-ratchet` OK (this slice makes no checker query at all).
+
+### Presence is INCONSISTENT today, which is a design constraint for the next lane
+
+On the same `x=[]; x[0]=0; x[3]=3`, the three presence paths disagree with each
+other on base AND after:
+
+| query | answer | correct |
+| --- | --- | --- |
+| `1 in x` | true | false |
+| `x.hasOwnProperty("1")` | **false** | false ✓ |
+| `Object.keys(x)` | `0,1,2,3` | `0,3` |
+
+So `hasOwnProperty` already answers a gap correctly while `in` and `Object.keys`
+do not — they are three different code paths and only one of them consults
+anything hole-aware. The presence half must make them agree, not just fix `in`;
+a fix that moves `in` to `false` while `Object.keys` still lists the index would
+swap one inconsistency for another.
+
+### Handover (T8, lane w5-t8, 2026-08-22)
+
+Branch `worktree-agent-a499924a5d891dcc1`, worktree
+`/home/user/js2/.claude/worktrees/agent-a499924a5d891dcc1`. Not pushed, no PR.
+
+**INTEGRATION-READY** — commit `aace92530b`, all four gates green, three control
+sets measured on this head with zero regressions.
+
+| slice | rows | control |
+| --- | --- | --- |
+| T8-A f64 grow-gap marker + native-join step 4.b | `pop/S15.4.4.6_A1.2_T1`, `shift/S15.4.4.9_A1.2_T1` fail → **pass**; `toString/S15.4.4.2_A1_T2` advances #2.2 → #3.2 | 180 dense-numeric 117/117 identical · 150 sparse-store 73 → 75 · 112 elision 33/33 identical · benchmark modules byte-identical |
+
+Files: `src/codegen/vec-f64-hole-gap.ts` (new, both bodies),
+`src/codegen/expressions/assignment.ts` + `src/codegen/array-methods.ts`
+(dispatch only), plus the `func-budget-allow` entry for
+`compileElementAssignment`.
+
+**Next steps, in value order**
+
+1. **The presence half** — the three pieces are named above with their exact
+   sites. Do not start it as three separate slices: `in`, `hasOwnProperty` and
+   `Object.keys` already disagree with each other today, so a partial fix swaps
+   one inconsistency for another. It unblocks
+   `filter/15.4.4.20-9-b-{7,11,14,15}` and the T5-B `hasOwnProperty` widening.
+2. **Extend the marker to the other gap producers** — `push` past a gap, the
+   `concat` result build (`concat/S15.4.4.4_A3_T2` needs `b[1] === undefined`
+   on the concat OUTPUT), and the T5 length-shrink-then-grow stale slots. Each
+   is the same `array.fill` with the same marker; each needs its own control run
+   because of the arithmetic-HOF trade recorded above.
+3. **`null` in an f64 carrier** blocks `toString/S15.4.4.2_A1_T2` at its new
+   frontier (`Array(undefined,1,null,3)` → `",1,0,3"`). That is #2809's
+   representation question, NOT a hole — and the widening spike proves it cannot
+   be fixed at the construction site alone.
+
+**Do NOT re-attempt** (measured, above): widening a hole-bearing array literal
+or `Array(...)` call to an externref vec. Producer/consumer desync via
+`resolveWasmType`; −12 rows measured on the 112-row elision set.
+
+**Probe harness in this worktree**: `.tmp/run.mts <abs.js | rel-under-test262/test>`,
+`.tmp/runlist.mts <list> <out>`, `.tmp/p.sh` wraps both and RE-LINKS `test262/`
+and `node_modules/` first (`runlist.mts` also re-links before EVERY row — the
+harness clobbers the symlink mid-run, which fabricates ENOENT sweeps).
+`.tmp/wat.mts` is the compile-size sanity. Row lists: `t8-rows.txt`,
+`t8-elision-scan.txt`, `t8-control.txt`, `t8-sparse150.txt`; both sides of every
+A/B are in `.tmp/*.tsv`.
+
+## Wave-5 lane T4 — re-triage on integration head `6b513c7155` (2026-08-22)
+
+The stale 40-row list at `.tmp/wave5-T4.txt` was re-measured row-by-row on the
+merged head before any edit. **17/40 already passed** — the slice-T4-A/B/C flips
+plus, once the eval provider was available, the six §10.4.3 / §12.2.1
+strict-mode `eval` rows and `10.4.3-1-19-s`/`-19gs`/`-20-s`/`-20gs` that T7's
+provider-realm work had just turned green. Those 17 are NOT counted as flips.
+
+### Blocker found first: the QuickJS eval provider will not BUILD on this head
+
+`node scripts/build-quickjs-eval-provider.mjs` fails its own canary:
+
+```
+quickjs canary functionParityProbe() returned 1, expected 11
+(a QuickJS-created function lost %Function% constructor identity, …)
+```
+
+`1` decodes as `constructorIdentity=0, appliedGlobal=1` — `new Function(src)`
+returns a callable whose `.constructor` is not `%Function%`. It is the same
+defect the T4 rows `S10.2.1_A4_T2` (`f1().constructor.prototype` is `undefined`)
+and `10.4.3-1-83-s`/`-84-s` (`Function("…return f();")()` → `TypeError: not a
+function`) report, i.e. the **provider-realm carrier-identity wall** — T7's lane,
+fenced here rather than fought. It did NOT clear with `6b513c7155`.
+
+**Consequence for anyone measuring eval-dependent rows: a clean worktree cannot
+get an adapter at all**, because the build script writes the artifact only
+*after* the canary passes. Every eval row then reports `JS2WASM_EVAL_ENGINE=
+quickjs but the quickjs provider is not built`, which is indistinguishable from
+"the row fails". This lane unblocked measurement with a canary-free build
+(`.tmp/build-adapter-nocanary.mjs` — byte-identical adapter compile, no
+`verifyQuickjsProvider`); the numbers below are therefore real, but CI on this
+head would not produce the adapter.
+
+### Confirmed by measurement: the harness clobbers `test262/` MID-RUN
+
+The T7 lane's warning reproduced here: `test262/` was silently replaced by an
+empty directory between rows, producing `ENOENT … /test262/harness/assert.js`.
+The runner used for every number below repairs the symlink **before each row**
+and retries once on any ENOENT; the repair fired 4× inside a single 40-row
+sweep. A sweep without that repair fabricates failures.
+
+### Slice T4-D — a redeclared `var` silently DROPPED its initializer
+
+`var x = true; … var x = function () {};` is ONE binding. The checker types the
+symbol from the FUNCTION declaration, so the slot is `(ref null $closure)` and
+`coerceType` answers the boolean initializer with `ref.null`:
+
+```wat
+i32.const 1     ;; `true`
+drop            ;; thrown away
+ref.null 47
+global.set 7    ;; x := null
+```
+
+`typeof x` still folds to `"boolean"` from the checker type, so value and tag
+disagree and nothing errors. Measured on this head, `var b = true` followed by
+`var b = function () {}`:
+
+| probe | base | after |
+| --- | --- | --- |
+| `b === true` | **false** | true |
+| `b === false` (for `var b = false`) | **false** | true |
+| `b ? "T" : "F"` | **`"F"`** | `"T"` |
+| `String(b)` | **`"[object Object]"`** | `"true"` |
+| `typeof b` | `"boolean"` | `"boolean"` |
+| object-typed redeclaration (`var a = true; var a = {}`) | already correct | unchanged |
+
+This is the DECLARATION-vs-declaration half of #4204/#4206's rule: that analysis
+asks exactly the right question but only of `BinaryExpression` assignment nodes,
+and its own `collectModuleScopedVarsByName` keeps just the FIRST declaration per
+name — so the identical hazard arrives through a carrier the walk never visits.
+
+**Change.** New module `src/codegen/declarations/redeclared-var-widening.ts`
+(all new bodies; `declarations.ts` and `statements/variables.ts` get one dispatch
+line each). Widens to `externref` only when: module scope, ≥2 declarations of the
+name, at least one initializer tagged a specialized-slot primitive
+(`number`/`string`/`boolean`/`bigint` — reusing
+`HETEROGENEOUS_PRIMITIVE_SLOT_TAGS` rather than forking it), another
+declaration's tag differs, and no explicit TypeScript annotation (the annotation
+is the representation contract, the same carve-out #4204 makes). `mixed` counts
+as different, per #4206.
+
+The second dispatch line is not optional: the global and its `__module_init`
+shadow local are one binding. With only the global widened, the closure
+declaration allocates the local as `externref`, a LATER redeclaration re-enters
+the generic local path — where the checker still reports the SYMBOL's (first
+declaration's) `boolean` — and the retype ladder narrows the slot to `i32`. The
+already-emitted `local.tee; global.set` then fails module validation with
+`global.set[0] expected type externref, found local.tee of type i32`. Reduced by
+delta-debugging `S11.1.5_A2` to its three load-bearing checks (`var x = true` /
+`= function () {}` / `= this`).
+
+**Flips: 0 rows on their own.** `S11.1.5_A2` advances from CHECK#1 to CHECK#2 and
+still fails: `var object = {prop : x}` is redeclared 12 times with object
+literals whose *field* representations disagree, which this analysis (keyed on
+the top-level JS tag) does not see. Kept because it is a measured value-loss fix
+with an identical control, not because it moves a row — see "Left open".
+
+### Slice T4-E — `"valueOf" in {}` answered **false**
+
+§7.3.12 HasProperty is prototype-inclusive and every ordinary object's chain ends
+at %Object.prototype%, so its seven own names (§20.1.3) are `in` every object.
+Standalone answered `false` for all of them:
+
+| probe (`var o = {}`) | base | after |
+| --- | --- | --- |
+| `"valueOf" in o` | **false** | true |
+| `"toString" in o` | **false** | true |
+| `"hasOwnProperty" in o` | **false** | true |
+| `"nope" in o` | false | false |
+| `typeof o.valueOf` | `"function"` | `"function"` |
+
+The read and the presence test disagree because they take different routes:
+`o.valueOf` resolves statically against the checker's apparent type, while `in`
+folds from own struct fields and then asks the runtime `__extern_has`, which
+walks `$Object.$proto` — and an ordinary object's `$proto` is `null`, because
+%Object.prototype% is a `$NativeProto`, not an `$Object`. That is the
+`$Object.$proto` vs `$NativeProto` wall this file already prices. The failure is
+easy to miss because the spelling one reaches for when checking (`o.valueOf`) is
+the one that was never broken.
+
+**Change.** New module `src/codegen/object-proto-name-in.ts` carries the §20.1.3
+name set and the receiver-shape predicate; `binary-ops-in.ts` gets a two-line
+consult where `has` is computed. `in` does not need the prototype OBJECT, only
+its NAME SET, which is fixed by the spec — so this costs one membership test
+instead of the priced representation change.
+
+Deliberately bounded:
+
+- **Only `in`.** `hasOwnProperty` / `Object.hasOwn` / `propertyIsEnumerable` are
+  OWN-only by spec and are untouched — widening those is the #4017 −684 blast
+  radius recorded above.
+- **Affirmative-only.** It turns a wrong `false` into `true` and can never turn a
+  `true` into `false`.
+- **`for…in` cannot gain keys.** The enumerator builds its key list from
+  `__object_keys_forin` and only re-checks liveness with `__extern_has` (#2066),
+  so a name that was never enumerated cannot appear.
+- **Standalone-only**, so the js-host lane — where `__extern_has` already answers
+  correctly — stays byte-identical (the #1374 regression guard).
+- **A null-prototype receiver stays wrong, and was already wrong.** Measured on
+  base: `"toString" in Object.create(null)` ALREADY answered `true` via the
+  non-`$Object` boundary arm. The fold makes the ordinary receiver agree with the
+  exotic one rather than the reverse; it introduces no new disagreement.
+
+**Flip: `language/expressions/in/S8.12.6_A2_T1` FAIL → PASS.**
+
+### Measured, both slices together
+
+40-row T4 set: **17/40 base → 18/40 after**; the diff is exactly one row
+(`S8.12.6_A2_T1` fail→pass), 39 identical.
+
+Control: 75 neighbours weighted toward what these touch — 10
+`language/expressions/in`, 3 `delete`, 7 `for-in`, 11
+`built-ins/Object/prototype/{hasOwnProperty,isPrototypeOf,propertyIsEnumerable,
+toString,valueOf,toLocaleString}`, 9 other `built-ins/Object`, 7
+`expressions/object`, 7 `statements/variable`, plus assignment / addition /
+function / typeof / strict-equals / instanceof / with / switch / Array / String /
+Boolean / Function rows. **57/75 base, 57/75 after — identical set**, verified by
+file-copy A/B (never `git stash`). One listed path does not exist in this test262
+checkout and is reported as such rather than counted.
+
+### Left open, with the reason (measured, not assumed)
+
+- **`S11.1.5_A2`** — now fails at CHECK#2 instead of CHECK#1. `var object` is
+  redeclared 12× with object literals whose *field* representations disagree
+  (`{prop: boolean}` vs `{prop: Boolean-wrapper}` vs `{prop: function}`), and the
+  clash is invisible to a tag-level analysis: the checker reports `x` as
+  `boolean` at EVERY one of those literals, because a widened binding keeps its
+  first declaration's checker type. Closing it needs the object-literal FIELD
+  slot to widen when its initializer reads a representation-widened binding — the
+  `moduleGlobalIsDynamicButStaticallyPrimitive` idea applied to struct fields.
+  That is a shape-analysis change, not a seeding change.
+- **`S8.12.6_A2_T2` CHECK#2** — `Robin.prototype = __proto; "phylum" in new
+  Robin()`. Measured: `Robin.prototype === __proto` is **true** while
+  `Object.getPrototypeOf(r) === __proto` is **false**, and `r.phylum` still reads
+  `"avis"` (static route). So the per-fnctor prototype global is right and the
+  INSTANCE SEED loses it — `new F()` → `compileFnctorNewAsObject` →
+  `__object_create(F.prototype)`. The inline spelling
+  (`Robin2.prototype = {phylum:"avis"}`) answers `true` only because TS models
+  that literal in the instance type; its runtime `$proto` is equally wrong. Same
+  family as the priced `$proto` wall, one receiver further in.
+- **`S11.8.7_A2.4_T1`** — `(NUMBER = Number, "MAX_VALUE") in NUMBER`: presence on
+  a builtin CONSTRUCTOR object, a different substrate (namespace-object members)
+  from either slice above.
+- **`10.4.3-1-83-s` / `-84-s` / `S10.2.1_A4_T1` / `S10.2.1_A4_T2`** — the
+  provider-realm `%Function%` identity wall (T7). Fenced, not attempted; they are
+  the same defect the build canary reports.
+- **`10.4.3-1-103/104/106`** — sloppy-mode `ToObject(thisArg)` for a primitive
+  receiver (`(5).x` where the `Object.prototype` getter returns `this`).
+  Untouched by this lane.
+- **`10.4.3-1-102-s` / `-102gs`** — `illegal cast in __module_init` on
+  `"ab".replace("b", function(){…})`. Untouched.
+- **`annexB/language/function-code/*` (4 rows)** — B.3.3 sloppy block-level
+  function hoisting: 3 fail `illegal cast in f()`, 1 fails to VALIDATE
+  (`__call_fn_0`: `not enough arguments on the stack for call_ref`). A distinct
+  hoisting/closure-arity defect, sized beyond this slice.
+- **`expressions/call/11.2.3-3_3/_4/_8`** and
+  **`expressions/object/11.1.5-0-1/-0-2`** — untouched; the first three are
+  §13.3.6 TypeError shape, the last two are object-literal accessor ordering.
+
+### Wave-5 T4 addendum — measured diagnoses for the two biggest rows left open
+
+Both were reduced to a standalone repro on the committed head; neither is
+attempted here, and both are stated so the next lane does not have to re-find
+them.
+
+#### annexB `function-code` (4 rows) — a FunctionDeclaration binding cannot hold a non-function
+
+`annexB/language/function-code/block-decl-func-block-scoping` (and the
+`switch-case` / `switch-dflt` twins) fail with `RuntimeError: illegal cast in
+f()`. The body is §B.3.3's shape:
+
+```js
+{
+  function f() { initialBV = f; f = 123; currentBV = f; return "decl"; }
+}
+```
+
+`f = 123` writes a NUMBER into a binding whose Wasm slot is the closure struct.
+Measured, on this head:
+
+| shape | result |
+| --- | --- |
+| block-scoped `function f(){ … f = 123 … }` | **`RuntimeError: illegal cast`** — hard trap |
+| function-scoped `function g(){ g = 123; … }` | **silently ignored** — `typeof g` stays `"function"`, `g` still the closure |
+| function-scoped `function h(){…}; h = 7` | **silently ignored** — same |
+
+This is the same "one binding, two representations" family as slice T4-D, but
+for a **FunctionDeclaration** binding rather than a `var`, and at FUNCTION as
+well as module scope. Two consequences for whoever picks it up: the silent arm
+is the more dangerous one (no trap, wrong answer), and the widening analyses
+that exist today (#4204/#4206 and T4-D) all key on `ts.VariableDeclaration`, so
+none of them can see this declaration kind at all.
+
+The fourth row, `block-decl-func-skip-arguments`, is a different defect: the
+module does not VALIDATE — `Compiling function #515:"__call_fn_0" failed: not
+enough arguments on the stack for call_ref`.
+
+#### `expressions/call/11.2.3-3_{3,4,8}` — §13.3.6.1 evaluation order, and it only reproduces UNDER THE HARNESS
+
+The bare shapes are all correct on this head. `o.bar()`, `o.bar.gar()`,
+`p.n()` (a number-valued property) and `this.bar()` each throw a real
+`TypeError`, and an inline `(function(){ this.bar(foo()); })()` throws too.
+
+The rows still fail, and the reason is worth recording because it defeats the
+obvious probe:
+
+- **`11.2.3-3_3`** — the TypeError IS thrown, but `fooCalled` is `true`. §13.3.6.1
+  evaluates the callee reference before the arguments; this compiler evaluates
+  the arguments first, so `foo()` runs before `o.bar.gar`'s access throws. An
+  ordering change in call codegen, not a missing check.
+- **`11.2.3-3_4` and `_8`** — these report `Expected a TypeError but got a
+  Test262Error`, i.e. the call did NOT throw. Reproduced only when the callback
+  is handed to the ORIGINAL test262 `assert.throws` (`.tmp/probe/c8c.js`): the
+  identical body invoked through a local `runner(fn)`, through a parameter,
+  through an inline function-expression argument, or as an IIFE all throw
+  correctly. So the defect is in how the compiled harness's `assert.throws`
+  invokes its callback, not in the member-call check — and any probe that does
+  not go through the real harness will report the bug as absent.
+
+## Wave-6 lane T10 — the QuickJS provider build was DOWN: `constructor` leaked from `Object.prototype`'s companion (2026-08-22)
+
+**Symptom (operational blocker, not a conformance row).** On integration head
+`4f4bb249dd`, `npx tsx scripts/build-quickjs-eval-provider.mjs` exited **1**:
+
+```
+[quickjs-eval-provider] FAILED: Error: quickjs canary functionParityProbe()
+  returned 1, expected 11
+```
+
+`functionParityProbe` = `constructorIdentity * 10 + appliedGlobal`, so **1**
+means `appliedGlobal` was fine and `constructorIdentity` was **0** — a
+QuickJS-created `new Function(…)` value lost `%Function%` identity. Because the
+provider is the only way to build the adapter, every
+`JS2WASM_EVAL_ENGINE=quickjs` row for every lane was gated behind this.
+
+> Run the script **BARE**. Piped (`… | tail`) it reports `tail`'s status and a
+> thrown canary reads as success.
+
+### Diagnosis — measured, not inferred
+
+Diagnostic canaries compiled through the same linked pair
+(`.tmp/t10/harness.mjs`, adapter compile ≈3 s so iteration is cheap):
+
+| probe on `made = new Function("this.x = 1;")` | base `73c0a290c0` | head `4f4bb249dd` | spec |
+| --- | --- | --- | --- |
+| `made.constructor === Function` | 1 | **0** | 1 |
+| `made.constructor.name` | `"Function"` | **`"Object"`** | `"Function"` |
+| `made.constructor === Object` | 0 | **1** | 0 |
+
+So the answer did not go missing — it became **`Object`**.
+
+### Bisect
+
+`src/`-only file-copy A/B over the integration range (`.tmp/t10/atcommit.sh`,
+one `git checkout <sha> -- src/` per candidate, always restored):
+
+| src at | `functionParityProbe()` |
+| --- | --- |
+| `7dd91b7bad` (wave base) | 11 |
+| `73c0a290c0` (all upstream merges, pre-T9) | 11 |
+| **`de32ec84f5` (T9 — builtin-proto constructor seed)** | **1** |
+| `e707acd56a`, `6b513c7155`, `4f4bb249dd` | 1 |
+
+Narrowed **inside** `de32ec84f5` by per-file revert, then by an env-gated
+early-return in the seeder itself:
+
+| variant | reading |
+| --- | --- |
+| T9 with `src/codegen/native-proto.ts` reverted | 11 |
+| T9 with `pushCompanionConstructorSeed` disabled entirely | 11 |
+| T9 with the seed disabled **for the `Object` brand only** | 11 |
+| T9, seed on for `Object` | 1 |
+
+Also isolated **which module** matters: rebuilding only the ADAPTER with the
+seed and the canary without it gives 11 — so the defect is in the **caller /
+user module's** codegen, not the provider's.
+
+### Root cause
+
+T9 seeds `constructor` into the #2175 companion of every builtin prototype that
+has an identity-stable carrier. `Function` and `Date` **decline** (no carrier —
+that decline is deliberate and documented in
+`builtin-proto-constructor-seed.ts`), so their companions stay absent.
+
+`__protoidx_get_k` (#4176) models the prototype chain as exactly **two** levels:
+the receiver's brand companion, then `Object.prototype`'s. A closure receiver
+classifies as the `Function` brand, whose companion has no `constructor`, so the
+walk fell through and answered **`Object.prototype.constructor` = `Object`** —
+which T9 had just made reachable for the first time.
+
+That answer then propagated: `__closure_prop_get`'s miss consult is
+`__protoidx_get_r`, and the runtime-eval AOT callable carrier's property-get
+trampoline treats any **non-undefined** result from `__closure_prop_get` as
+final — so the `Object` it now returned **shadowed the carrier's own marker
+`constructor` field**, which is exactly where the provider realm's `%Function%`
+lives (`$RuntimeEvalInterpretedCallback` field 6).
+
+### Fix
+
+`src/codegen/proto-index-store.ts` — `constructor` never takes the
+`Object.prototype` FALLTHROUGH. New `keyIsNotConstructorInstrs` (fill-time,
+`nativeStringLiteralInstrs` + `__str_flatten`/`__str_equals`, and byte-identical
+`undefined` when those helpers are absent) is `i32.and`-ed into the existing
+second-probe guard in `fillGetKBody`.
+
+Justification is the spec, not the canary: **every** builtin prototype owns
+`constructor` (§19.2.3.1 / §20.2.3.1 / §22.1.3.1 / …), so for a receiver whose
+implicit prototype is any brand other than `Object` the nearer level always
+shadows `Object.prototype` — the two-level model simply has no way to say "the
+nearer level owns this key but has no companion". A **miss** is the correct
+answer there, and it hands the read back to each caller's own fallback (the
+carrier's marker metadata; #4442's `%Function%` arm for a statically
+function-typed receiver). `get_k` is reached only from `get_r` and `get_f`
+(numeric keys), so this one edit covers both entry points.
+
+Deliberately NOT changed: `__protoidx_has_k`. `"constructor" in f` is `true`
+per spec, and T9's seed made it answer `true` for the first time. Suppressing
+the fallthrough on the `has` side would regress it to `false`.
+
+### Measurements (all on this worktree, file-copy A/B, `--target standalone`)
+
+| set | base | with fix |
+| --- | --- | --- |
+| `functionParityProbe()` | 1 | **11** |
+| `npx tsx scripts/build-quickjs-eval-provider.mjs` (bare) | exit 1 | **exit 0**, canary-verified, 271,378 bytes |
+| T9's own flip rows + 13 `<B>.prototype.constructor` neighbours (15 rows) | 11 pass / 4 fail | **identical, 0 changed** |
+| eval-dependent controls — all `language/eval-code/indirect/*`, all `built-ins/eval/*`, 20 `language/eval-code/direct/*` (91 rows) | 82 pass / 9 fail | **identical, 0 changed** |
+| prototype-chain neighbours — `Object/prototype/hasOwnProperty`, `Object/getPrototypeOf`, `Object/prototype/isPrototypeOf`, `expressions/property-accessors`, `Function/prototype/bind` (70 rows) | 69 pass / 1 fail | **identical, 0 changed** |
+| `tests/issue-4176`, `issue-4160-proto-index-store`, `issue-4200`, `issue-4442` (67 tests) | 62 pass / 5 fail | **identical, 0 changed** |
+
+Net: **0 test262 rows flipped either way** — this is a build-unblock, not a
+conformance slice. New pin: `tests/issue-4491-proto-index-constructor-shadow.test.ts`
+(5 tests; the headline one measured **failing on base**, passing after).
+
+Gates green before commit: `check-loc-budget` · `check-func-budget` ·
+`check-coercion-sites` · `check:oracle-ratchet`.
+
+### Pre-existing failures found, NOT caused by this fix (both sides identical)
+
+- `tests/issue-4200.test.ts` — four `gOPD(<B>.prototype, "constructor") still
+  declines (no carrier)` guards now fail for `String` / `Number` / `Boolean` /
+  `Function`. T9's seed made three of those brands answer a descriptor; the
+  guards were written before it and were not updated. Someone owning #4200
+  should decide whether the guards or the seed are wrong.
+- `tests/issue-4176.test.ts` — `prepared IR for-in shares prototype-companion
+  enumeration`.
+- `built-ins/Error/prototype/constructor/S15.11.4.1_A1_T2.js`,
+  `Object/prototype/constructor/S15.2.4.1_A1_T2.js`,
+  `String/prototype/constructor/S15.5.4.1_A1_T2.js` — all
+  `TypeError: is not a constructor`; the seeded carrier is not [[Construct]]able.
+- `Date/prototype/constructor/prop-desc.js` — `Date` declines the seed, so the
+  descriptor is still absent.
+- `<array>.constructor === Array` is still **false** (the #4220 vec arm and the
+  companion entry are different objects). The T10 pin asserts only the property
+  this guard owns — that it is never `Object`.
+
+### Gotchas confirmed again
+
+- **`test262/` in an agent worktree is re-materialized between (and DURING)
+  tool calls**, and the target it is pointed at is another lane's worktree that
+  may already be gone. Six rows of one control sweep died mid-run as
+  `ENOENT … test262/harness/assert.js`. Relink **inside the same shell command
+  as the run**: `rm -rf test262 && ln -s /home/user/js2/test262 test262 && node …`.
+- **The adapter cache key is `sha256(adapterSource ∥ compilerBundleHash)`, and
+  under `tsx` the bundle hash is the literal `no-bundle`** — so in a dev
+  worktree the key does NOT move when `src/` changes, and a stale adapter is
+  silently reused. That is convenient for an A/B (both arms link the same
+  adapter, isolating the caller-module codegen), but it means a local
+  "the provider still builds" check proves nothing unless you delete the keyed
+  `.wasm` first.
+
+## Wave-6 lane T12 — assignment OVER a `function` declaration binding (2026-08-22)
+
+Integration head `bd868fe433` (`claude/es5-standalone-wave6`), `--target
+standalone`. The FunctionDeclaration analogue of slice T4-D, and the follow-up
+the T4 re-triage explicitly left: _"the widening analyses that exist today
+(#4204/#4206 and T4-D) all key on `ts.VariableDeclaration`, so none of them can
+see this declaration kind at all."_
+
+Every row below was re-measured on this head before any edit; the five
+`if-*-func-block-scoping` rows in the stale list ALREADY PASSED and are not
+counted as flips.
+
+### It is two defects, and they fail in opposite directions
+
+`function g() {}; g = 123;` is one binding assigned a number. Measured:
+
+| shape                                                       | before                                    | after                                                                        |
+| ----------------------------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------- |
+| module scope `function g(){}; g = 123` — `g === 123`        | **false**                                 | true                                                                         |
+| … `typeof g`                                                | **`"function"`**                          | `"number"`                                                                   |
+| … `String(g)`                                               | **`"function () { [native code] }"`**     | `"123"`                                                                      |
+| module scope, dynamic read (`after = g; look(after)`)       | **`"function"`**                          | `"number"`                                                                   |
+| §B.3.3 block scope `{ function f(){ f = 123; … } }`         | **`RuntimeError: illegal cast in f()`**   | correct (`initialBV()` `'decl'`, `currentBV` `123`, `varBinding()` `'decl'`) |
+| `function h(){}` never reassigned — `typeof h`              | `"function"`                              | `"function"` (unchanged)                                                     |
+
+The silent arm is the dangerous one: no trap, no diagnostic, wrong answer.
+
+### Slice T12-A — the trap: constructibility was decided PER READ SITE
+
+`getOrCreateConstructibleFuncRefWrapperTypes` mints a nominally distinct struct
+subtype (`__constructible_fn_wrap_N_struct`, one extra `$__constructible i32`)
+so IsConstructor can discriminate. The lazy closure singleton
+(`ensureFuncClosureSingleton`) caches by function NAME, but chose between that
+subtype and the plain wrapper from a boolean the CALLER passed. Reduced WAT for
+`block-decl-func-block-scoping`:
+
+```wat
+;; __module_init, at `varBinding = f`
+ref.func 391  i32.const 0  ref.null extern  global.get 355
+struct.new 243                 ;; __fn_wrap_10_struct__fnmeta  (PLAIN)
+global.set 354                 ;; $__fn_closure_f
+…
+;; inside $f, at `initialBV = f`
+global.get 354  any.convert_extern
+ref.cast (ref 240)             ;; __constructible_fn_wrap_11_struct → ILLEGAL CAST
+```
+
+The two sites disagree because TypeScript models the two bindings differently:
+inside `f`'s body the name resolves to the `FunctionDeclaration`
+(`identifiers.ts` passes `constructible = true`), while at the Annex-B
+web-compat VAR binding `identifierValueSymbol` answers `undefined` and the same
+site passes `false`. Whichever compiled first decided the allocation; the other
+decided the cast.
+
+`emitFuncRefAsClosure` already normalizes exactly this — #4437's own note says
+"constructibility belongs to the source function, not to whichever value read
+happened to materialize its cached capture struct first". The CACHED singleton
+path, which is the one ordinary identifier reads actually take, did not.
+
+**Change.** New module `src/codegen/closures/ordinary-fn-constructibility.ts`
+resolves the answer from `funcMapOwnerDecl` / `topLevelFunctionDeclarations`,
+i.e. from the compiled FUNCTION; `method-trampolines.ts`
+(`emitCachedFuncClosureAccess`) gets one normalization line. It only ever
+WIDENS `false → true`, and the constructible struct is a subtype of the plain
+wrapper, so every existing cast still succeeds.
+
+**Flips: 3 rows** — `annexB/language/function-code/{block-decl,switch-case,switch-dflt}-func-block-scoping`.
+
+### Slice T12-B — the silence: the top-level write was never collected
+
+`shouldCollectTopLevelAssignment` (`declarations.ts`) keeps a top-level write
+only when its root identifier is already in `ctx.moduleGlobals`. The global that
+backs a reassigned function binding is minted by
+`registerReassignedFunctionGlobals` (#2931, `index.ts`), which runs AFTER
+`collectDeclarations` — so the answer is "no" for EVERY such name under EVERY
+statement order, and the statement is dropped with no diagnostic. Confirmed by
+instrumenting the dispatcher: `g = 123;` never reaches
+`compileExpressionStatement`, let alone `compileAssignment`, and no
+`f64.const 123` appears anywhere in the emitted module.
+
+This is the #4491-T3 ordering hole with a different filler — and unlike the
+`var` case there is no source order under which it works, which is why it reads
+as "assignment over a function is ignored" rather than as a hoisting bug. It is
+the tenth member of the #3623 silent-drop family
+(`{1268, 2671, 2992, 3366, 3468, 3592, 3615, 3956, 4179, 4491-T3}`).
+
+**Change.** New module `src/codegen/top-level-assigned-function-names.ts`
+(pre-scan, mirroring `top-level-hoisted-var-names.ts`); `declarations.ts` gets
+one allow-list arm. **Bare-identifier targets only** — member writes rooted at a
+function (`F.p = …`, `F.prototype = …`) already have their own arms with their
+own host/standalone gating, and widening those through this predicate would
+change which member writes survive.
+
+### Slice T12-C — the fold: `typeof` still answered from the checker type
+
+With T12-B the VALUE is right and `g === 123` is true, but `typeof g` still
+folded to `"function"`. `moduleGlobalIsDynamicButStaticallyPrimitive` (#4204)
+exists for exactly this hazard — a widened binding keeps its declaration-derived
+checker type — but resolves binding identity with `variableDeclarationOf`, which
+answers only for a `ts.VariableDeclaration`.
+
+**Change.** New module
+`src/codegen/declarations/reassigned-function-binding-widening.ts`;
+`heterogeneous-scalar-var-widening.ts` gets one consult line. It keys on
+`ctx.liveFuncBindingGlobals` — already exactly "a function-declaration name
+reassigned somewhere in the realm", and the reason the `externref` global exists
+at all — and additionally requires the identifier to RESOLVE to that
+module-scope declaration, so a same-named function local cannot consult a global
+(#3364's failure mode). A function binding OUTSIDE that set keeps a fixed
+function value, so its checker type is sound and the fold stays correct; pinned
+by a test.
+
+### Measured
+
+- **Target set (10 rows):** 5/10 base → 8/10 after. The diff is exactly the
+  three `*-func-block-scoping` rows; the five `if-*` rows already passed and
+  `S11.1.5_A2` is unchanged (see below).
+- **Whole `annexB/language/{function-code,global-code}` — 312 rows, base vs
+  after by FILE-COPY A/B (never `git stash`):** **277 → 280**. The diff is those
+  same three rows and nothing else; the other 309 lines are byte-identical,
+  error text included.
+- **Control set (99 existing rows, each verified to exist in this checkout):**
+  72 rows weighted toward `statements/function`, `expressions/function`,
+  `expressions/assignment`, `expressions/typeof`, `expressions/new`,
+  `instanceof`, `expressions/object`, `statements/variable`, `global-code`,
+  `Function.prototype.{call,apply,bind,toString}`, `Reflect.construct`, array
+  callbacks, `switch` / `block` / `with` / `try`, plus 27 more after replacing
+  25 listed paths that do not exist here. **77/99 base, 77/99 after —
+  byte-identical output on both lists.**
+- **`tests/equivalence` — the 43-file function / closure / typeof / assignment /
+  `new` slice (321 cases), base vs after:** **317 passed | 4 failed on BOTH**,
+  the same four. Two are environmental (`new-non-constructor.test.ts` reads a
+  hardcoded `/workspace/test262/…` path that does not exist in this worktree);
+  two are the pre-existing `optional-direct-closure-call` `NaN` rows. The full
+  215-file suite OOMs in this container, as CLAUDE.md records — the subset was
+  chosen for what this lane touches, not for what fits.
+- **Gates**, green on the final state: `check-loc-budget`, `check-func-budget`,
+  `check-coercion-sites`, `check:oracle-ratchet`, `typecheck`, `prettier`,
+  `biome lint`. No new frontmatter allowance needed (+6/+8/+5 lines in three
+  existing files; every new body is in a new module).
+- Regression test `tests/issue-4491-function-binding-widening.test.ts` —
+  5 cases, **4 fail on base / 5 pass after**, verified by flipping the file
+  copies both ways.
+
+### Left open, measured rather than assumed
+
+- **`block-decl-func-skip-arguments` (the 4th annexB row)** — unchanged, and NOT
+  this defect. It fails to VALIDATE: `CompileError: Compiling function
+  #515:"__call_fn_0" failed: not enough arguments on the stack for call_ref
+  (need 2, got 1)`. Its body is `{ function arguments() {} }` inside three IIFEs
+  with different parameter shapes (simple / one named / rest) — the
+  `arguments`-shadowing case — so the failure is a closure-ARITY defect in the
+  generated dispatcher, not a binding-representation one. Byte-identical before
+  and after.
+- **`S11.1.5_A2`** — still fails at CHECK#2 (`var x = new Boolean(true); var
+  object = {prop : x}; object.prop === x`), exactly where T4-D left it. This
+  lane's machinery does not reach it: the clash is between _object-literal FIELD_
+  representations, and neither the function-binding widening nor the
+  constructibility normalization touches struct fields. T4-D's pricing stands —
+  it needs the field slot to widen when its initializer reads a
+  representation-widened binding, which is a shape analysis, not a seeding
+  change.
+- **`typeof` on a plain `var` that only a function writes still folds.** Probe:
+  `var currentBV;` … `currentBV = f` (inside `f`) … `typeof currentBV` answers
+  `"undefined"` while `currentBV === 123` is TRUE. The binding has no
+  initializer, so #4204 assigns it no tag and this lane's predicate does not
+  apply either. Harmless for the three flipped rows (they assert values, not
+  tags), but it is a live wrong answer of the same family.
+- **`String(after)` where `var after; after = g`** renders the function source
+  even though `after === 123`. The widening does not PROPAGATE: `after` is a
+  separate `var` whose checker type came from the function, and #4204 gives an
+  initializer-less binding no tag to widen from.
+- **18 `annexB/language/global-code/*-init` rows are unmeasurable on this head** —
+  they report `JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not
+  built`, the T10-owned canary breakage. They are identical before and after, so
+  they cannot hide a regression from this lane, but their verdict here is not
+  evidence about conformance.
+- **5 `if-*-func-existing-var-update` rows** fail with `RuntimeError:
+  dereferencing a null pointer in __module_init` at `typeof after`. Pre-existing
+  and byte-identical across the A/B — a different Annex-B arm (B.3.3.1 step 3.f
+  on an already-existing var binding), not attempted here.
+
+## Wave-6 lane T11 — the f64-hole PRESENCE half (2026-08-22)
+
+Base `66c6a69afb` (the wave-6 integration head — T8-A's value half already
+landed), `--target standalone`, in-process `runTest262File`. Every number below
+is a run this lane executed. Both sides of every A/B come from the file-copy
+harness (`.tmp/ab/{base,new}/`, `.tmp/ab-use.sh`); the base copies were captured
+before the first edit, and `git stash` was never used.
+
+### What the value half left behind, measured on base
+
+`var x = []; x[0] = 0; x[3] = 3` (function scope) and the literal `[0, , 2]`:
+
+| query | grow-gap, base | elision, base | correct |
+| --- | --- | --- | --- |
+| `x[1] === undefined` | true ✓ | true ✓ | true |
+| `x.toString()` | `"0,,,3"` ✓ | `"0,,2"` ✓ | — |
+| `1 in x` | **true** | **true** | false |
+| `x.hasOwnProperty("1")` | false ✓ | false ✓ | false |
+| `Object.keys(x)` | **`0,1,2,3`** | **`0,1,2`** | `0,3` / `0,2` |
+| `forEach` visits | **4** | **3** | 2 / 2 |
+| `[0, , 2].filter(() => true).length` | — | **3** | 2 |
+
+After this slice every cell in those two columns is the `correct` one.
+
+### 1. A second sNaN payload
+
+`HOLE_F64_BITS = 0x7FF00000DEADC01E` next to `UNDEF_F64_BITS =
+0x7FF00000DEADC0DE` (`value-tags.ts`). Same signaling-NaN exponent, so T8-A's
+non-collision argument carries over verbatim: JS arithmetic only ever produces
+the quiet NaN `0x7FF8000000000000`.
+
+Produced at exactly two sites — an array-literal **elision**
+(`compileArrayLiteral`, both the `array.new_fixed` and the spread path) and the
+T8-A **grow-gap fill**. An explicit `undefined` element keeps
+`UNDEF_F64_BITS`; that fork IS the slice.
+
+### 2. Read-boundary canonicalization
+
+`HOLE → UNDEF` (new module `vec-f64-hole-presence.ts`) at the
+`emitHoleToUndefined` sites extended to f64 — `property-access.ts` ×3,
+`array-methods.ts` ×3 plus its six HOF element loads, `statements/loops.ts`,
+`expressions/assignment.ts` ×2 — plus the two dynamic chokepoints `__vec_get`
+(host boundary, which now tests BOTH payloads) and `__extern_get_idx`.
+
+This preserves `array-holes.ts`'s stated invariant — *a hole is never observed
+AS the marker* — which is what lets the ~28 existing `UNDEF_F64_BITS` observers
+stay untouched: they keep testing one bit pattern and never see the other.
+
+`__extern_get_idx` reads a hole through `idxMiss()`, the prototype consult an
+out-of-bounds index already used, not a flat `undefined` — §10.1.8.1
+OrdinaryGet, and it is what makes `filter/15.4.4.20-9-b-7` (a getter installed
+on `Array.prototype[1]` mid-iteration) answer `6.99` at the hole.
+
+### 3. One presence chokepoint, four consumers
+
+A per-carrier `ref.test`-guarded arm on `__extern_has_idx` per f64 vec carrier
+(shape copied from `fillExternGetIdxVecArms` / `fillHoleyArrayHasIdxArm`), and
+`in` (`binary-ops-in.ts`), `Object.keys` (`fillDynamicForinVecArms`) and
+`for…in` (`emitArrayForIn`) re-routed to it. `hasOwnProperty` already consulted
+it.
+
+Two properties keep the arm safe:
+
+- **It returns only when it positively identifies a hole.** Everything else
+  falls through to the body already there, so the arm can only turn a `true`
+  into a `false`, never the reverse.
+- **A hole is not the END of HasProperty.** §7.3.11 walks the prototype chain,
+  so the arm answers `protoIndexHasIdxInstrs` — the same consult the #3251
+  overlay's DELETED-index arm uses. A hole and a deleted index are the same
+  question.
+
+### 4. Hole-SKIPPING on the HOFs — the T8-A hazard, defused
+
+`forceHasProperty` is implied for the native `__hof_*` helpers whenever the
+module can hold a marker, and the STATIC inline loops join in: `shouldHoleSkip`
+accepts f64, and `reduce`/`reduceRight` — which #2001 S2 left folding every
+index — gain the gate.
+
+T8-A recorded that the value marker made arithmetic HOFs *loudly* wrong. Same
+program (`var a=[1,2,3]; a[6]=5;`, module hole-active), measured this lane:
+
+| expression | correct JS | T8-A (base) | after T11 |
+| --- | --- | --- | --- |
+| `a.reduce((s,x)=>s+x, 0)` | 11 | NaN | **11** ✓ |
+| `a.reduce((s,x)=>s*x, 1)` | 30 | NaN | **30** ✓ |
+| `a.forEach` visits | 4 | 7 | **4** ✓ |
+| `a.join(",")` | `"1,2,3,,,,5"` | ✓ | ✓ |
+| `a[4] === undefined` | true | ✓ | ✓ |
+| `Object.keys(a)` | `0,1,2,6` | `0,1,2,3,4,5,6` | **`0,1,2,6`** ✓ |
+| `4 in a` | false | true | **false** ✓ |
+
+NOT included: the no-initialValue **seed seek** (§23.1.3.24 step 6.b walks
+forward to the first PRESENT index). The seed still reads index 0 and maps a
+hole to `undefined`. That differs only when index 0 itself is a hole and no
+initial value is passed; it was already wrong before this slice.
+
+### The two things the control A/B caught that no probe would have
+
+Both were real regressions, both fixed on-branch, both worth recording because
+the next lane will meet the same shape.
+
+**(a) The marker means "nothing was WRITTEN here", not "no own property here".**
+`Object.defineProperty(arr, "1", {set: function(){}})` records an own ACCESSOR
+in the #3251 companion and writes nothing to the slot, so the marker is still
+sitting there while the index IS present. Nine rows — the whole "own or
+inherited accessor without a get function" family
+(`reduce`/`reduceRight` `15.4.4.2{1,2}-9-c-i-{18,20,22}`,
+`forEach/15.4.4.18-7-c-i-22`, `filter/15.4.4.20-9-b-5`) — went pass → fail. Two
+fixes, one per path:
+
+- the `__extern_has_idx` arm asks `__vec_overlay_lookup` + `__obj_find` first
+  and DECLINES whenever a companion entry exists for the index;
+- `shouldHoleSkip` gains a SECOND disqualifier for f64, `overlayRouteActive`.
+  `protoIndexDirty` (inherited from the externref case) only covers an
+  INHERITED index; an OWN accessor is invisible to a static own-slot test, and
+  `overlayRouteActive` is exactly the condition under which those reads take
+  the dynamic route that can see it.
+
+**(b) Making ONE presence path correct can break a row that passed because two
+wrong ones agreed.** `Object/keys/15.2.3.14-6-2` builds its expected list from
+`for…in` + `hasOwnProperty` and asserts it equals `Object.keys`. On base both
+sides answered `0..5` for `[1, 2, , 4, , 6]`. Fixing `Object.keys` alone broke
+the agreement — precisely the failure the T8 handover warned about. `for…in`
+joined the same chokepoint; all three now answer `0,1,3,5`.
+
+### Controls — file-copy A/B, both sides run on this head
+
+| control set | rows | base pass | after pass | changed |
+| --- | ---: | ---: | ---: | ---: |
+| dense-numeric — deterministic stride sample over `map`, `reduce`, `reduceRight`, `sort`, `join`, `push`, `pop`, `indexOf`, `lastIndexOf`, `slice`, `forEach`, `toString`, `concat`, `filter`, `Array/length` (pool 1,872 files) | 180 | 115 | **116** | 1 — `filter/15.4.4.20-9-b-11` fail → pass |
+| elision-bearing — every file under `built-ins/Array`, `language/expressions/array`, `Object/{defineProperties,keys}` whose body contains a literal elision | 162 | 60 | **62** | 2 — `filter/15.4.4.20-9-b-7`, `-11` fail → pass |
+| sparse-index-store — stride sample of the files that write a literal numeric index, excluding rows already in the other two sets | 150 | 69 | 69 | **0** |
+
+**Zero regressions; every change is a gain.** The two rows are the same
+`filter` pair counted once per set they belong to, so the union is +2.
+
+Perf sanity — `compileSource(…, { target: "standalone" })` on the numeric
+playground samples, module byte size AND sha-256 prefix:
+
+| sample | base | after |
+| --- | --- | --- |
+| `website/playground/examples/benchmarks/array.ts` | 54,651 · `3a6f5611…` | 54,651 · `3a6f5611…` |
+| `…/loop.ts` | 34,533 · `fe39bef0…` | 34,533 · `fe39bef0…` |
+| `…/fib.ts` | 34,192 · `2d204833…` | 34,192 · `2d204833…` |
+
+Byte-identical AND sha-identical. That took a third gate to achieve, and the
+lesson generalises: **`usesArrayHoles` says the program contains SOME elision,
+not that an f64 marker was ever minted.** `array.ts` set the flag without ever
+reaching an f64 elision, and `__vec_get` grew 19 bytes for a compare that could
+not fire. The FINALIZE-time consumers (`__vec_get`'s host-boundary map,
+`fillF64HoleHasIdxArms`) therefore read a narrower flag, `f64HoleMarkerEmitted`,
+set at the two sites that actually mint the payload. Body-compile-time consumers
+cannot use it — function compilation order is not source order, so a read of
+`a[i]` can be compiled before the literal that introduces the marker.
+
+Gates: `check-loc-budget` OK · `check-func-budget` OK (eight allowances, all
+dispatch-only, rationale in the frontmatter) · `check-coercion-sites` OK (one
+allowance: the companion consult keys on `number_toString`, the sealed
+index-key formatter) · `check:oracle-ratchet` OK (this slice makes no checker
+query).
+
+**Three rows are EXCLUDED from all three sets, and the exclusion is not
+cosmetic:** `lastIndexOf/length-near-integer-limit.js`,
+`reverse/length-exceeding-integer-limit-with-proxy.js`,
+`splice/create-species-length-exceeding-integer-limit.js`. These are the
+runner's known #1589A family — a `length` near 2**53 makes the search loop spin,
+and a synchronous Wasm loop blocks Node's event loop so `TEST_TIMEOUT_MS` can
+never fire. The first one silently ate a 58-minute blind sweep before it was
+identified. They are unrelated to holes; if you build a control set over
+`built-ins/Array`, exclude them or add them to `HANGING_TESTS`.
+
+### Target rows — verified on the merged head, then re-measured
+
+| row | base | after | note |
+| --- | --- | --- | --- |
+| `filter/15.4.4.20-9-b-7` | fail | **pass** | hole falls through to a `Array.prototype[1]` getter installed mid-iteration |
+| `filter/15.4.4.20-9-b-11` | fail | **pass** | hole + `delete Array.prototype[1]` |
+| `filter/15.4.4.20-9-b-14` | fail | fail | NOT a hole row — `[0,1,2,"last"]` is an externref carrier and the blocker is the `length` SHRINK (T5 family) |
+| `filter/15.4.4.20-9-b-15` | fail | fail | length-shrink again, and its residual is a CARRIER question: `arr` is `number[]`, so the proto getter's string `"prototype"` coerces to NaN in the f64 result vec |
+| `defineProperties/15.2.3.7-6-a-161` | **pass** | pass | already passing on the merged head — not a flip |
+| `concat/S15.4.4.4_A1_T2` | fail | fail | concat result element type drops a ref element — not a hole bug (T8 said the same) |
+| `concat/S15.4.4.4_A1_T4` | fail | fail | the SOURCE array is now fully correct (`x[0] === undefined`, `0 in x` false, `x.join()` `",1"`); the concat OUTPUT loses the marker — measured `arr.join()` `"NaN,1,NaN"`. The 2-arg concat path round-trips elements through a box, which canonicalizes the NaN payload. This is the T8 handover's next-step #2 ("extend the marker to the other gap producers — the concat result build"), deliberately a separate slice with its own control run |
+| `concat/S15.4.4.4_A3_T2` / `A3_T3` | fail | fail | need the `length` SETTER to fill shrunk/grown slots with the marker (T5 family), plus `hasOwnProperty` on the concat output. Not attempted |
+| `toString/S15.4.4.2_A1_T2` | fail | fail | still blocked on #2809 exactly where T8-A left it: `Array(undefined,1,null,3)` renders `",1,0,3"` — `null` in an f64 carrier, a representation question, not a hole |
+| `Array/S15.4_A1.1_T10` | fail | fail | the sparse-STORAGE wall at index 4294967294, priced by lane J. Untouched |
+| `pop/S15.4.4.6_A1.2_T1` | pass | **pass** | canary, stays green |
+| `shift/S15.4.4.9_A1.2_T1` | pass | **pass** | canary, stays green |
+
+### Known edges, stated so the next lane does not rediscover them
+
+- **The demand gate is `ctx.usesArrayHoles`** — the same pre-scan flag
+  `array-holes.ts` uses, set iff the module contains an array-literal elision.
+  Clear ⇒ no marker is produced anywhere ⇒ every consumer is a no-op and the
+  bytes are unchanged, dense-numeric kernel and the #1897 `struct.get` contract
+  included. **Consequence:** in a module with NO elision, an f64 grow-gap keeps
+  T8-A's `UNDEF_F64_BITS` and presence stays as it was (`1 in x` true).
+  Widening the gate to grow-gaps alone needs a pre-scan predicate that fires on
+  `a[i] = v` — which is every numeric benchmark — so the price would be paid in
+  the dense kernel. Deliberately not taken.
+- **`Float32Array` / `Float64Array` share the `f64` vec carrier** (the packed
+  storage table covers only the integer views). An element whose bits happen to
+  equal the marker — reachable only by writing raw bytes through an
+  ArrayBuffer — would answer absent. Same exposure `UNDEF_F64_BITS` already has
+  at `__vec_get`; not widened, not fixed.
+- **`hasOwnProperty` with a STRING-LITERAL key is wrong on an elision-bearing
+  array, on base and after.** Measured on `[1, 2, , 4, , 6]`:
+  `a.hasOwnProperty("3")` is `false` although index 3 holds `4`. The dynamic-key
+  form answers correctly. Two different code paths; the literal one is a
+  pre-existing defect this slice neither caused nor fixed.
+
+### Handover (T11, lane w6-t11, 2026-08-22)
+
+Branch `worktree-agent-ad111d1c7ba23417e`, worktree
+`/home/user/js2/.claude/worktrees/agent-ad111d1c7ba23417e`. Not pushed, no PR.
+
+**INTEGRATION-READY** — four commits on top of `66c6a69afb`, all four gates
+green, three control sets and the perf sanity measured on this head with zero
+regressions.
+
+| commit | what |
+| --- | --- |
+| `86baa6928f` | the four deliverables: `HOLE_F64_BITS`, read-boundary canonicalization, the `__extern_has_idx` arm + `in`/`Object.keys` re-route, HOF hole-skip |
+| `6b5e6246c4` | own-descriptor decline (the nine-row regression the control A/B caught) |
+| `18babd4dc2` | `for…in` joins the same chokepoint |
+| `4ea51e130b` | `f64HoleMarkerEmitted` — the narrower FINALIZE-time gate that restores byte-identical benchmarks |
+
+Files: `src/codegen/vec-f64-hole-presence.ts` (new — every new body),
+`value-tags.ts` (+1 constant), and dispatch-only wiring in `literals.ts`,
+`property-access.ts`, `array-methods.ts`, `object-runtime.ts`,
+`vec-access-exports.ts`, `binary-ops-in.ts`, `hof-native.ts`, `index.ts`,
+`expressions/assignment.ts`, `statements/loops.ts`, `vec-f64-hole-gap.ts`,
+`context/types.ts`.
+
+**Next steps, in value order**
+
+1. **Extend the marker to the remaining gap producers** — the `concat` result
+   build and the `length` SETTER (shrink-then-grow). Measured above: the concat
+   SOURCE is now fully correct and the OUTPUT is not, because the 2-arg concat
+   path round-trips elements through a box that canonicalizes the NaN payload.
+   That unblocks `concat/S15.4.4.4_A1_T4`, and with the length setter,
+   `A3_T2`/`A3_T3` and `filter/15.4.4.20-9-b-{14,15}`.
+2. **`hasOwnProperty` with a STRING-LITERAL key** answers `false` for a PRESENT
+   index on an elision-bearing array (`[1,2,,4,,6].hasOwnProperty("3")` is
+   `false`, base and after). The dynamic-key form is correct. Two different
+   paths; the literal one is a pre-existing defect and the only presence answer
+   still out of line.
+3. **`null` in an f64 carrier (#2809)** still blocks
+   `toString/S15.4.4.2_A1_T2` at check `#3.2` — unchanged from T8-A.
+
+**Do NOT re-attempt / read first**
+
+- Widening a hole-bearing literal to an externref vec — T8's measured −12.
+- Answering absence from the raw slot ALONE. An own accessor recorded in the
+  #3251 companion writes nothing to the slot; the arm must consult the
+  companion. Nine rows.
+- Fixing ONE presence path in isolation. `Object/keys/15.2.3.14-6-2` passed on
+  base because `for…in` and `Object.keys` were wrong in the same direction.
+- Three rows hang the in-process runner forever (a `length` near 2**53 spins a
+  search loop, and a synchronous Wasm loop blocks Node's event loop so
+  `TEST_TIMEOUT_MS` cannot fire): `lastIndexOf/length-near-integer-limit.js`,
+  `reverse/length-exceeding-integer-limit-with-proxy.js`,
+  `splice/create-species-length-exceeding-integer-limit.js`. Exclude them from
+  any `built-ins/Array` sweep.
+
+**Harness in this worktree** (`.tmp/`): `p.sh` wraps `run.mts` (one row) and
+`runlist.mts` (a list; writes `<out>.partial` incrementally and RE-LINKS
+`test262/` + `node_modules/` before every row). `ab-setup.sh` snapshots both
+sides, `ab-use.sh base|new` flips them, `run-side.sh`/`run-new2.sh` run a side,
+`cmp.mjs` diffs two result TSVs bucketed by control set, `bench-ab.sh` is the
+module-size/sha A/B, `wat-ab.sh` diffs the WAT when sizes move.
+
+**One process trap worth writing down:** `ab-use.sh base` overwrites the working
+tree, so ANY uncommitted edit is lost when you flip sides. It cost this lane
+three fixes and one full control run. Re-run `ab-setup.sh` immediately after
+every edit, and prefer committing before flipping.
