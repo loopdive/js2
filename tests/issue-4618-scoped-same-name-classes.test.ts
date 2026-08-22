@@ -130,6 +130,30 @@ describe("#4618 same-named nested classes are scoped per declaration", () => {
     expect(out).toBe("fncount=1");
   });
 
+  it("a TOP-LEVEL function read as a value is not vetoed by a same-named nested class", async () => {
+    // (#4618) The funcref-as-value arm's classSet veto is name-keyed, so a
+    // nested `class Component` in ANY function vetoed value reads of the
+    // module-level `function Component` — react's own
+    // `exports.Component = Component` stored null under per-test class
+    // declarations, so `React.Component` (and every class-component
+    // detection) read back null. With no nested funcMap owner, a checker
+    // resolution to a top-level FunctionDeclaration now lifts the veto.
+    const exp = await run(`
+      function Component(this: any, props: any): any { (this as any).props = props; }
+      var exportsObj: any = {};
+      exportsObj.Component = Component;
+      export function other(): any {
+        class Component { m(): any { return 1; } }
+        return new Component().m();
+      }
+      export function t(): any {
+        const v: any = exportsObj.Component;
+        return v == null ? "NULL" : typeof v;
+      }`);
+    expect(exp.t!()).toBe("function");
+    expect(exp.other!()).toBe(1);
+  });
+
   it("a class named after its parent's property does not false-trip the TDZ check", async () => {
     const exp = await run(`
       const NS: any = { Component: function (this: any) {} };

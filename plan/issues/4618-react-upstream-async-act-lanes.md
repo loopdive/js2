@@ -733,6 +733,32 @@ in-module reads (host-side detection is what react-dom needs).
   NULL own-prop answer as a miss (the wasm-object proxy answers null, not
   undefined) — both needed once the parent resolves.
 
+- **2026-08-22 top-level-function classSet veto lifted (react holds 95, the
+  detection chain is one link from closing)**: `React.Component` READ NULL
+  inside the batch module — `typeof React.Component` says "object" (the
+  typeof lane answers statically) while the VALUE read was null, because the
+  funcref-as-value veto (`!classSet.has(name)`) is name-keyed and the
+  per-test `class Component` declarations vetoed value reads of react's own
+  top-level `function Component`, so `exports.Component = Component` stored
+  NULL. Fixed like fix 50: a checker resolution to a TOP-LEVEL
+  FunctionDeclaration with no nested funcMap owner lifts the veto (probe:
+  `.tmp/probe-cc.mts`, regression test added to
+  issue-4618-scoped-same-name-classes). `React.Component` now reads a
+  function batch-wide.
+  **Remaining broken link (traced, still open)**: react-dom STILL treats the
+  class as a function component. Runtime traces show `Component.prototype
+  .isReactComponent = {}` writes DO land in a sidecar proto, but the parent
+  value that reaches the mirror's lazy resolver (via the exports struct's
+  `__get_Component` sidecar getter) is a DIFFERENT closure identity — its
+  vivified proto lacks the write (`pfIsIrcProtoTarget=false`). Two closure
+  materializations of the same top-level function exist; neither
+  emitFuncRefAsClosure nor emitCachedFuncClosureAccess traces fire for the
+  reads, so the read lane is a third path (existingClosure/moduleGlobals
+  branch in identifiers.ts is the lead). Unify the identity (or route the
+  mirror's parent-proto through the SAME store the `F.prototype.m=` writes
+  use) and the whole ES6Class/CreateElement/JSXRuntime detection bucket
+  (~20 tests) should open.
+
 ## Fix order
 
 1. (c) first — it is a hard CE with a two-line repro and pins the IR

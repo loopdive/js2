@@ -1459,12 +1459,28 @@ function compileIdentifierCore(
   // the function crossed as a bare value with its capture writes lost. When
   // the funcMap entry is OWNED by the exact FunctionDeclaration this
   // reference resolves to (funcMapOwnerDecl), the collision is spurious.
+  const collisionValueDecl = ctx.classSet.has(name) ? identifierValueSymbol(ctx, id)?.valueDeclaration : undefined;
   const classNameCollision =
     ctx.classSet.has(name) &&
     !(
       funcRefIdx !== undefined &&
       ctx.funcMapOwnerDecl.get(name) !== undefined &&
-      identifierValueSymbol(ctx, id)?.valueDeclaration === ctx.funcMapOwnerDecl.get(name)
+      collisionValueDecl === ctx.funcMapOwnerDecl.get(name)
+    ) &&
+    // (#4618) A TOP-LEVEL `function Component` read as a value was ALSO
+    // vetoed by a sibling `class Component` anywhere in the module (react's
+    // own `exports.Component = Component` under per-test class declarations
+    // stored null, so `React.Component` and every class-component detection
+    // read back null). With no nested owner declaration the funcMap entry
+    // belongs to the top-level function; when the checker resolves this
+    // reference to exactly a top-level FunctionDeclaration, the collision
+    // is spurious.
+    !(
+      funcRefIdx !== undefined &&
+      ctx.funcMapOwnerDecl.get(name) === undefined &&
+      collisionValueDecl !== undefined &&
+      ts.isFunctionDeclaration(collisionValueDecl) &&
+      ts.isSourceFile(collisionValueDecl.parent)
     );
   if (
     funcRefIdx !== undefined &&
