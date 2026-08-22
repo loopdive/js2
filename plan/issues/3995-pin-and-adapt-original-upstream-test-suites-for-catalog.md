@@ -990,3 +990,16 @@ The exact run covers **332 callbacks across 26 selected files**. Node admits
 remainder is **2,956 registrations** from 215 deferred files. All 11 watcher
 snapshot callbacks pass in both lanes; the two existing Node-oracle failures
 remain the process-shape assertion and queue-runner validation finding.
+
+## 2026-08-22 Jest watcher scroll checkpoint
+
+The original `jest-watcher/src/lib/__tests__/scroll.test.ts` is now selected
+unchanged. It needs no package adapter: the existing runner and project
+resolver are sufficient for all five callbacks.
+
+The exact run now covers **337 callbacks across 27 selected files**. Node
+admits **335/337** (the two existing diff-sequence snapshot-oracle failures),
+all 27 modules compile and 26 validate, and Wasm scores **236/335** with zero
+runtime failures. The unavailable-infrastructure remainder is **2,951
+registrations** from 214 deferred files. All five scroll callbacks pass in
+both lanes.
