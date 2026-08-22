@@ -379,3 +379,27 @@ jest convertDescriptorToString 9 → 10/11; the residual is the INLINE
 lane than the class-object singleton) and bare function-declaration `.name`
 reads (localName probe) — both still undefined, parked here. #3429 guards
 fail 4/4 identically on base (pre-existing).
+
+
+## 2026-08-22 residual inventory after slices 5-13 (jest 113 → 315/331)
+
+Curated scoreboard: acorn 3518/3518 · cookie 63740/63740 · clsx 32/32 ·
+jest 315/331 (95.2%). The 16 jest residuals, each pre-diagnosed:
+
+- deepCyclicCopy (7): jest.fn()-in-accessor getter copy (null-deref via the
+  spy lane), and the keepPrototype family (`Object.create(getPrototypeOf(o))`
+  / `new (getPrototypeOf(arr).constructor)(n)` — prototype-chain MOP; 2 of
+  them stack-overflow through __call_fn_method recursion).
+- diff-sequences index (3): 1 expected-throw + 2 boolean-array toEqual
+  (the #2873-family order-sensitive residual documented in slice 3).
+- pTimeout (3): setTimeout/clearTimeout identity counting + async timers.
+- convertDescriptorToString (1): INLINE `class Named {}` VALUE (array-literal
+  element) — materializes via a lane the slice-13 class-object stamp does
+  not cover.
+- errorWithStack (1): Error.captureStackTrace invalid-argument family.
+- globals (1): `Object.prototype.toString.call(process)` → "[object Null]"
+  (host `process` toStringTag through the sandbox).
+
+uuid (10/75) is #4383, CLAIMED by ttraenkler/codex since 2026-08-12 (claim
+ref verified; parallel implementation is a pre-dispatch BLOCKER). react-dom
+infra is the same lane's.
