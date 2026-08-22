@@ -67,6 +67,8 @@ func-budget-allow:
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
   - src/runtime.ts::_safeSet
+  - src/codegen/expressions/calls-closures.ts::tryExternClassMethodOnAny
+  - src/codegen/declarations.ts::collectDeclarations
 ---
 
 # Run react-dom's own unit tests against compiled react-dom
