@@ -1573,6 +1573,33 @@ export function compileIdentifierCall(
             }
           }
 
+          // (#4616) JS ignores surplus call-site arguments, but a shorter-arity
+          // callback compiled in a LATER module is not yet in
+          // closureInfoByTypeIdx when this call site compiles, so the retention
+          // scan above cannot see it and the dispatch terminal threw TypeError
+          // — jest's diff-sequences declares `foundSubsequence(nCommon,
+          // aCommon, bCommon)` while every test passes a 1-param arrow (32
+          // tests trapped). Eagerly create the shorter-arity PREFIX wrapper
+          // types (same get-or-create family, so the later-compiled closure
+          // reuses the identical funcref type) — the per-candidate arm already
+          // marshals only the candidate's formal prefix and packs the surplus
+          // into `__extras_argv`.
+          for (let prefixArity = 0; prefixArity < sigParamCount; prefixArity++) {
+            const prefixParams = sigParamWasmTypes.slice(0, prefixArity);
+            for (const retVariant of [resultTypes, [{ kind: "externref" } as ValType], [] as ValType[]]) {
+              const alt = getOrCreateFuncRefWrapperTypes(ctx, prefixParams, retVariant);
+              if (alt && !seenFuncTypeIdx.has(alt.closureInfo.funcTypeIdx)) {
+                seenFuncTypeIdx.add(alt.closureInfo.funcTypeIdx);
+                funcCandidates.push({
+                  funcTypeIdx: alt.closureInfo.funcTypeIdx,
+                  structTypeIdx: alt.closureInfo.structTypeIdx,
+                  returnType: alt.closureInfo.returnType,
+                  paramTypes: alt.closureInfo.paramTypes,
+                });
+              }
+            }
+          }
+
           // Compile the callee to get the value on the stack
           const innerResultType = compileExpression(ctx, fctx, expr.expression);
 
