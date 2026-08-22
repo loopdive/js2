@@ -51,6 +51,32 @@ describe("#4618 host-side [[Construct]] on compiled classes", () => {
     expect((Foo as Record<string, unknown>).mark).toBe(42);
   });
 
+  it("2-method class: the singleton read survives mid-init string interning", async () => {
+    // Before the #4618 global-index fix, a class with TWO methods interned a
+    // string constant mid-initBody: string constants are IMPORTED globals, the
+    // shift repair updated the maps and reachable bodies but the detached
+    // initBody and a captured index const went stale — the lazy-init CHECKED
+    // the proto global but SET the class-object global, so every crossing
+    // returned the PROTO struct ("Foo is not a constructor" host-side).
+    const Foo: any = await runAndGrab(`
+      function Base(this: any, props: any) { (this as any).props = props; }
+      export function send(): any {
+        class Foo extends Base {
+          marker: string;
+          constructor(props: any) { super(props); this.marker = "m2"; }
+          getName(): any { return "n:" + String(this.marker); }
+          render(): any { return "r:" + String(this.marker); }
+        }
+        (globalThis as any).__grab4618t(Foo);
+        return 1;
+      }`);
+    expect(typeof Foo).toBe("function");
+    const inst = new Foo({});
+    expect(inst.marker).toBe("m2");
+    expect(inst.render()).toBe("r:m2");
+    expect(inst.getName()).toBe("n:m2");
+  });
+
   it("react shape: dynamic-parent class is constructible with chained detection marker", async () => {
     const Foo: any = await runAndGrab(`
       function Base(this: any, props: any) { (this as any).props = props; }

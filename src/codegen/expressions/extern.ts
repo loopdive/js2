@@ -380,13 +380,37 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
       ctx.classStaticMethodsCsvGlobal.set(className, csvGlobalIdx);
     }
   }
-  const classObjectGlobalIdx = ctx.classObjectGlobals.get(className)!;
+  // (#4618) Pre-intern EVERY string constant any block below may need, BEFORE
+  // a single instruction is baked. String constants are IMPORTED globals and
+  // an import prepends to the global index space — an intern that happens
+  // mid-build leaves every already-baked `global.get` off by one (measured
+  // via wasm-dis on a 2-method class: the lazy-init CHECKED the proto global
+  // but SET/registered the class-object global, so the read returned the
+  // PROTO struct and the host [[Construct]] bridge never matched).
+  if (!ctx.standalone && !ctx.wasi) {
+    addStringConstantGlobal(ctx, "name");
+    addStringConstantGlobal(ctx, className);
+    for (const m of ctx.classStaticMethodNames.get(className) ?? []) {
+      addStringConstantGlobal(ctx, m);
+    }
+  }
+  // (#4618) The class-object global index MUST be re-read at every push:
+  // string-constant interning inserts an IMPORTED global, and the shift
+  // repair updates ctx.classObjectGlobals plus every REACHABLE body — a
+  // captured const goes stale the moment any nested emission interns
+  // (measured via wasm-dis: the lazy-init checked the proto global but set
+  // the class-object global, so reads returned the PROTO struct).
+  const classObjIdx = (): number => ctx.classObjectGlobals!.get(className)!;
 
   // Build the init body: push default values for all fields, struct.new,
   // extern.convert_any, global.set. Same shape as emitLazyProtoGet — the
   // class object reuses the `$ClassName` struct type. Identity is provided
   // by the singleton global, not by struct shape.
+  // (#4618) Registered in liveBodies for the WHOLE construction window so
+  // the imported-global shift repair reaches instructions already baked
+  // into this (otherwise detached) array.
   const initBody: Instr[] = [];
+  ctx.liveBodies.add(initBody);
   for (const field of fields) {
     if (field.name === "__tag") {
       const tag = ctx.classTagMap.get(className) ?? 0;
@@ -419,13 +443,13 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
   }
   initBody.push({ op: "struct.new", typeIdx: structTypeIdx });
   initBody.push({ op: "extern.convert_any" });
-  initBody.push({ op: "global.set", index: classObjectGlobalIdx });
+  initBody.push({ op: "global.set", index: classObjIdx() });
 
   // Register static methods with the runtime's `_staticMethodNames`
   // allowlist so `Object.getOwnPropertyDescriptor(C, "m")` returns the
   // spec descriptor.
   if (registerClassFuncIdx !== undefined && csvGlobalIdx !== undefined) {
-    initBody.push({ op: "global.get", index: classObjectGlobalIdx });
+    initBody.push({ op: "global.get", index: classObjIdx() });
     initBody.push({ op: "global.get", index: csvGlobalIdx });
     initBody.push({ op: "call", funcIdx: registerClassFuncIdx });
   }
@@ -443,7 +467,7 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
       const nameKeyIdx = ctx.stringGlobalMap.get("name");
       const nameValIdx = ctx.stringGlobalMap.get(className);
       if (nameKeyIdx !== undefined && nameValIdx !== undefined) {
-        initBody.push({ op: "global.get", index: classObjectGlobalIdx });
+        initBody.push({ op: "global.get", index: classObjIdx() });
         initBody.push({ op: "global.get", index: nameKeyIdx });
         initBody.push({ op: "global.get", index: nameValIdx });
         initBody.push({ op: "call", funcIdx: setIdx });
@@ -475,7 +499,7 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
         const methodNameGlobalIdx = ctx.stringGlobalMap.get(methodName);
         if (methodNameGlobalIdx === undefined) continue;
 
-        fctx.body.push({ op: "global.get", index: classObjectGlobalIdx });
+        fctx.body.push({ op: "global.get", index: classObjIdx() });
         fctx.body.push({ op: "global.get", index: methodNameGlobalIdx });
         const closureType = emitFuncRefAsClosure(ctx, fctx, fullName, methodIdx);
         if (closureType === null) {
@@ -517,7 +541,7 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
       fctx.body = initBody;
       ctx.liveBodies.add(savedBody);
       try {
-        fctx.body.push({ op: "global.get", index: classObjectGlobalIdx });
+        fctx.body.push({ op: "global.get", index: classObjIdx() });
         const ctorClosureType = emitFuncRefAsClosure(ctx, fctx, ctorFullName, ctorIdx);
         if (ctorClosureType === null) {
           fctx.body.pop(); // unbalanced classObj push — abandon registration
@@ -580,8 +604,11 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
     }
   }
 
-  // Emit: if global is null, init it; then get it.
-  fctx.body.push({ op: "global.get", index: classObjectGlobalIdx });
+  // Emit: if global is null, init it; then get it. initBody is now embedded
+  // in fctx.body (reachable through the normal body walks) — release the
+  // explicit liveBodies registration.
+  ctx.liveBodies.delete(initBody);
+  fctx.body.push({ op: "global.get", index: classObjIdx() });
   fctx.body.push({ op: "ref.is_null" });
   fctx.body.push({
     op: "if",
@@ -589,7 +616,7 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
     then: initBody,
     else: [],
   });
-  fctx.body.push({ op: "global.get", index: classObjectGlobalIdx });
+  fctx.body.push({ op: "global.get", index: classObjIdx() });
   return true;
 }
 
