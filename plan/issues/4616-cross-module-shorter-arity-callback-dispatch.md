@@ -59,6 +59,10 @@ func-budget-allow:
   - src/codegen/literals.ts::objectLiteralSpreadTakesHostPath
   - src/codegen/expressions/calls.ts::calleeMayBeHostCallable
   - src/runtime.ts::_structFieldNamesRaw
+coercion-sites-allow:
+  # The cookie Date-constructor bridge must unbox the host-provided numeric
+  # timestamp before entering the existing date parser ABI.
+  - src/codegen/expressions/new-builtin-globals.ts
 ---
 
 # shorter-arity callbacks from later modules miss the funcref dispatch
@@ -510,4 +514,3 @@ rest arms or the closures.ts wrapper-sig change. Winning them back needs
 a joint look at 09d00a3c's rest lanes vs this branch's slice-17
 call-site rest expansion — flagged for the jest-arc owner; the two lanes
 are now actively colliding on the same seam (lane-partition escalation).
-
