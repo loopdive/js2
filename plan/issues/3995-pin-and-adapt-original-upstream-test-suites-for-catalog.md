@@ -1150,4 +1150,4 @@ failures remain), all 34 modules compile and 33 validate, and Wasm scores
 **252/356** with zero runtime failures. The unavailable-infrastructure
 remainder is **2,930 registrations** from 207 deferred files.
 
-Implementation remains on [PR #4772](https://github.com/loopdive/js2wasm/pull/4772).
+Implementation: [PR #4773 — provide CommonJS path globals](https://github.com/loopdive/js2wasm/pull/4773).
