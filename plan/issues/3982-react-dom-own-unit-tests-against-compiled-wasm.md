@@ -603,6 +603,13 @@ checks pass. The full upstream corpus has not been rerun, so no new pass-rate
 claim is made here; rerun it after the PR lands and keep renderer/compiler
 failures separate from unavailable-infrastructure counts.
 
+The native setup is also now explicit about its package carriers: when the
+oracle skips compiled initialization, `React`, `ReactDOM`, the client/server
+entries, and `act` bind to the installed pinned host singletons. The compiled
+lane continues to bind those names to its Wasm carriers. This closes the
+previous `flushSync`/undefined native-oracle failure mode without changing the
+implementation under test.
+
 ## Permanent test reference
 
 `tests/dogfood/react-dom-upstream-suite.test.ts` — pin/commit assertions run

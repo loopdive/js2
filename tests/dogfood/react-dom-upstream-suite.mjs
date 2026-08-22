@@ -299,22 +299,30 @@ export function reactDomTestSetup(
       lines.push(`var ${name} = ${expression};`);
     }
   };
-  binds("React", "__REACT__");
-  binds("ReactDOM", "__REACTDOM_SHARED__");
-  binds("ReactDOMClient", "__REACTDOM__");
-  binds("OuterReactDOMClient", "__REACTDOM__");
-  binds("InnerReactDOM", "{ flushSync: __REACTDOM_SHARED__.flushSync }");
-  binds("InnerReactDOMClient", "{ createRoot: __REACTDOM__.createRoot }");
-  if (server) binds("ReactDOMServer", "__REACTDOM_SERVER__");
+  const react = nativeHost ? "__js2ReactInfra().react" : "__REACT__";
+  const reactDom = nativeHost ? "__js2ReactInfra().reactDom" : "__REACTDOM_SHARED__";
+  const reactDomClient = nativeHost ? "__js2ReactInfra().reactDomClient" : "__REACTDOM__";
+  const reactDomServer = nativeHost ? "__js2ReactInfra().reactDomServer" : "__REACTDOM_SERVER__";
+  binds("React", react);
+  binds("ReactDOM", reactDom);
+  binds("ReactDOMClient", reactDomClient);
+  binds("OuterReactDOMClient", reactDomClient);
+  binds("InnerReactDOM", reactDom);
+  binds("InnerReactDOMClient", reactDomClient);
+  if (server) binds("ReactDOMServer", reactDomServer);
   if (fizz) {
-    binds("ReactDOMFizzServer", "__REACTDOM_FIZZ__");
-    binds("ReactDOMFizzStatic", "__REACTDOM_FIZZ__");
+    const fizzServer = nativeHost ? "__js2ReactInfra().reactDomServer" : "__REACTDOM_FIZZ__";
+    binds("ReactDOMFizzServer", fizzServer);
+    binds("ReactDOMFizzStatic", fizzServer);
   }
   const actDeclaration = /\b(let|var|const)\s+act\b/.exec(prelude);
   const actFunctionDeclaration = /\b(?:async\s+)?function\s+act\s*\(/.test(prelude);
+  const actHost = nativeHost ? "__js2ReactInfra().internalTestUtils.act" : null;
   if (actDeclaration && actDeclaration[1] === "const") {
     // Preserve an upstream const binding; the extractor's import rewrite owns
     // its value and assigning to it would turn a harness setup into a failure.
+  } else if (actDeclaration && actHost) {
+    lines.push(`act = ${actHost};`);
   } else if (actDeclaration) {
     lines.push(`${actDeclaration ? "act" : "var act"} = async function (callback) {
   var result;
@@ -322,6 +330,8 @@ export function reactDomTestSetup(
   if (result !== null && result !== undefined && typeof result.then === "function") await result;
   return result;
 };`);
+  } else if (!actFunctionDeclaration && actHost && /\bact\b/.test(testSource)) {
+    lines.push(`var act = ${actHost};`);
   } else if (!actFunctionDeclaration && /\bact\b/.test(testSource)) {
     lines.push(`var act = async function (callback) {
   var result;

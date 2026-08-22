@@ -161,6 +161,20 @@ describe("react-dom upstream suite", () => {
     expect(setup).toContain('typeof document !== "undefined"');
   });
 
+  it("binds the native oracle to host React singletons instead of uninitialized carriers", () => {
+    const setup = reactDomTestSetup(
+      "let React; let ReactDOM; let ReactDOMClient; let InnerReactDOM; let act;",
+      "ReactDOM.flushSync(() => {}); InnerReactDOM.flushSync(() => {}); act(() => {});",
+      { nativeHost: true },
+    );
+    expect(setup).toContain("React = __js2ReactInfra().react;");
+    expect(setup).toContain("ReactDOM = __js2ReactInfra().reactDom;");
+    expect(setup).toContain("ReactDOMClient = __js2ReactInfra().reactDomClient;");
+    expect(setup).toContain("InnerReactDOM = __js2ReactInfra().reactDom;");
+    expect(setup).toContain("act = __js2ReactInfra().internalTestUtils.act;");
+    expect(setup).not.toContain("__REACTDOM_SHARED__.flushSync");
+  });
+
   it("keeps server and Fizz batches in isolated project modules", () => {
     const test = {
       id: "serverTest",
