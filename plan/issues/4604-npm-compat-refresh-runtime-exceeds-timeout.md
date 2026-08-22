@@ -94,6 +94,19 @@ same stale artifact.
   future timestamp — is STALE. Read-only by design: it alerts, recovery stays
   with the refresh workflow. Verified against the live episode: at
   implementation time it reports `STALE — artifact is 33.2h old`.
+- **S4 (this PR): first matrix flight findings (run 770, id 32549785178).**
+  Five groups finished in 3–11 min — the split works. Two blockers surfaced:
+  (a) the `tools` group CRASHED at 33 min: `styled-components-upstream-suite.mjs`
+  wrote `.styled-components-upstream-suite-generated/styled-components-version.ts`
+  without creating the directory (ENOENT). The suite landed 2026-08-21 (#4726)
+  and no serial CI run ever reached it, so the first focused `--only` worker was
+  its first-ever execution. Fixed here with the eslint-suite `mkdirSync` idiom —
+  without this, EVERY run's tools group fails and the coordinator (correctly)
+  refuses to publish, so the dashboard can never heal.
+  (b) the `renderers` group (react-dom, jsdom, redux) ran >3h and was still
+  going at 06:57Z — react-dom's upstream suite dominates; group re-balancing /
+  bounding is follow-up for the roster owners (context: #4751 isolated the
+  ReactDOM server/Fizz batches the day before).
 
 ## Fix directions (pick during implementation)
 
