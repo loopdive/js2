@@ -627,7 +627,13 @@ in-module reads (host-side detection is what react-dom needs).
   arms (or class-qualified `__class_call_<Class>_<m>_<n>` dispatchers, the
   pattern the externref-backed path already uses) for classes that share a
   canonical layout. This gates the StrictMode render variants and likely
-  the ES6Class "expected not null" family.
+  the ES6Class "expected not null" family. Implementation caveat for the
+  tag-guard: a PARENT class's dispatch arm currently matches SUBCLASS
+  instances via ref.test subtyping (inherited-method dispatch) — guard each
+  arm with the class's tag PLUS all descendant tags (classParentMap walk),
+  or guard only within the same-layout conflict set, or a bare
+  `tag == ownTag` check will break `class Sub extends Base {}` inherited
+  calls.
 
 ## Fix order
 
