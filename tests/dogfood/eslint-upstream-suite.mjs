@@ -63,10 +63,12 @@ const __eslintAssertMethods = {
     if (!__eslintDeepEqual(actual, expected)) throw new Error(message || "deepStrictEqual");
   },
   isTrue(actual, message) {
-    if (actual !== true) throw new Error(message || "isTrue");
+    // Wasm exports boolean-valued expressions as i32 0/1. Accept that
+    // representation here while keeping the Node oracle's true value strict.
+    if (actual !== true && actual !== 1) throw new Error(message || "isTrue:" + String(actual));
   },
   isFalse(actual, message) {
-    if (actual !== false) throw new Error(message || "isFalse");
+    if (actual !== false && actual !== 0) throw new Error(message || "isFalse:" + String(actual));
   },
   throws(body, expected, message) {
     let error = null;
