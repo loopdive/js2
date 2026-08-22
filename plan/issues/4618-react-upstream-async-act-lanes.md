@@ -614,6 +614,20 @@ in-module reads (host-side detection is what react-dom needs).
   state-updaters past its setState null-deref. Remaining in that filter:
   the render-dispatch variants (count++ inside render never runs —
   instance.render dispatch through the bridge for the batch shapes).
+  **Root cause of the remaining render-dispatch failures PINNED (traced
+  end-to-end)**: with same-named sibling classes of IDENTICAL FIELD LAYOUT
+  in one module, WasmGC type canonicalization makes their struct types ONE
+  type — the member dispatchers' `ref.test` cascades (`__member_kind_*` /
+  `__class_call_*`) then match BOTH arms and the FIRST wins, so the
+  canonical class's instance dispatches to the SIBLING's method body
+  (probe-actlane5: canonical Foo's render — count++ — never runs; the
+  synthetic sibling's bare render runs instead; detection/construct/kind
+  all traced correct). The `__tag` field (ctx.classTagMap, struct field 0)
+  is the intended per-class disambiguator — the fix is tag-guarded dispatch
+  arms (or class-qualified `__class_call_<Class>_<m>_<n>` dispatchers, the
+  pattern the externref-backed path already uses) for classes that share a
+  canonical layout. This gates the StrictMode render variants and likely
+  the ES6Class "expected not null" family.
 
 ## Fix order
 

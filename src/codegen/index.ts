@@ -4730,6 +4730,12 @@ export function generateModule(
         [],
       );
       addImport(ctx, "env", "__register_class_ctor", { kind: "func", typeIdx: regClassCtorTypeIdx });
+      // (#4618) Dynamic `extends <value>` parent registration — pre-registered
+      // for the same reason as __register_class_ctor: its late add at a class
+      // DECLARATION statement shifts func indices after an earlier class's
+      // initBody baked its ctor-closure ref.func.
+      const regClassParentTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], []);
+      addImport(ctx, "env", "__register_class_parent", { kind: "func", typeIdx: regClassParentTypeIdx });
     }
 
     // #1677 — reconcile native-string helper func indices before emitting more
@@ -8134,6 +8140,12 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
         [],
       );
       addImport(ctx, "env", "__register_class_ctor", { kind: "func", typeIdx: regClassCtorTypeIdx });
+      // (#4618) Dynamic `extends <value>` parent registration — pre-registered
+      // for the same reason as __register_class_ctor: its late add at a class
+      // DECLARATION statement shifts func indices after an earlier class's
+      // initBody baked its ctor-closure ref.func.
+      const regClassParentTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], []);
+      addImport(ctx, "env", "__register_class_parent", { kind: "func", typeIdx: regClassParentTypeIdx });
     }
 
     // WASI target: check for DOM-only globals and emit compile errors
