@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-08-21T22:24:09.121Z",
+  "timestamp": "2026-08-22T04:31:58.556Z",
   "benchmarks": [
     {
       "name": "fib",
@@ -247,16 +247,6 @@
           "kind": "func",
           "intent": {
             "type": "unbox",
-            "targetType": "number"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__box_number",
-          "kind": "func",
-          "intent": {
-            "type": "box",
             "targetType": "number"
           },
           "paramCount": 1
@@ -540,16 +530,6 @@
           "kind": "func",
           "intent": {
             "type": "unbox",
-            "targetType": "number"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__box_number",
-          "kind": "func",
-          "intent": {
-            "type": "box",
             "targetType": "number"
           },
           "paramCount": 1
@@ -845,16 +825,6 @@
             "targetType": "number"
           },
           "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__box_number",
-          "kind": "func",
-          "intent": {
-            "type": "box",
-            "targetType": "number"
-          },
-          "paramCount": 1
         }
       ],
       "stringPool": [
@@ -1136,16 +1106,6 @@
           "kind": "func",
           "intent": {
             "type": "unbox",
-            "targetType": "number"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__box_number",
-          "kind": "func",
-          "intent": {
-            "type": "box",
             "targetType": "number"
           },
           "paramCount": 1
@@ -1440,16 +1400,6 @@
           "kind": "func",
           "intent": {
             "type": "unbox",
-            "targetType": "number"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__box_number",
-          "kind": "func",
-          "intent": {
-            "type": "box",
             "targetType": "number"
           },
           "paramCount": 1
@@ -1768,16 +1718,6 @@
           "kind": "func",
           "intent": {
             "type": "unbox",
-            "targetType": "number"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__box_number",
-          "kind": "func",
-          "intent": {
-            "type": "box",
             "targetType": "number"
           },
           "paramCount": 1
@@ -2105,16 +2045,6 @@
           "kind": "func",
           "intent": {
             "type": "unbox",
-            "targetType": "number"
-          },
-          "paramCount": 1
-        },
-        {
-          "module": "env",
-          "name": "__box_number",
-          "kind": "func",
-          "intent": {
-            "type": "box",
             "targetType": "number"
           },
           "paramCount": 1
