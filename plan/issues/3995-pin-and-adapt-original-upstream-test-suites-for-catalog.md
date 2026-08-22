@@ -1133,3 +1133,5 @@ failures remain), all 33 modules compile and 32 validate, and Wasm scores
 **247/351** with zero runtime failures. The unavailable-infrastructure
 remainder is **2,935 registrations** from 208 deferred files. Both newly
 admitted `serializeToJSON` callbacks pass in Node and Wasm.
+
+Implementation: [PR #4772 — expose the pinned `jest-util.isError` dependency](https://github.com/loopdive/js2wasm/pull/4772).
