@@ -162,6 +162,17 @@ function hasFixedPreparedParameters(parameters: readonly ts.ParameterDeclaration
  * contract and stay rejected above: their initializer runs at class-definition
  * time IN the containing frame, which is exactly the inertness this predicate
  * asserts.
+ *
+ * #3522 — STATIC METHODS are ordinary members of this family. A static
+ * method's definition evaluation is a method's: a body-bearing callable
+ * installed on the constructor object, with nothing running in the containing
+ * frame. The lowering and the callable ABI are proven at top level (a
+ * top-level class with a static method compiles once today). Admitting them
+ * here required ORDERING, not lowering: a class reached only through its
+ * static side is still fully materialized by `ClassRegistry.resolve`, which
+ * binds the source-owned `_init` callable for every class shape it resolves —
+ * see `prepareImplicitConstructorSupports`, which now pulls such a class into
+ * the pre-seal support population.
  */
 export function isBoundedPreparedNestedOrdinaryClass(declaration: ts.ClassDeclaration | ts.ClassExpression): boolean {
   if (declaration.heritageClauses?.length || hasDecorators(declaration) || declaration.members.length === 0) {
@@ -182,7 +193,14 @@ export function isBoundedPreparedNestedOrdinaryClass(declaration: ts.ClassDeclar
       }
       continue;
     }
-    if (isStatic) return false;
+    // (#3522) STATIC METHODS are inert in the containing frame exactly as
+    // instance methods are: ClassDefinitionEvaluation installs a body-bearing
+    // callable on the constructor object and runs none of it. Static FIELDS
+    // and static ACCESSORS stay rejected — a static field's initializer runs
+    // at class-definition time IN the containing frame (the inertness this
+    // predicate asserts), and a static accessor's descriptor is not part of
+    // the ordinary descriptor-by-name-and-kind path this family resolves.
+    if (isStatic && !ts.isMethodDeclaration(member)) return false;
     if (ts.isConstructorDeclaration(member)) {
       if (!member.body) continue; // Type-only overload signature.
       constructorCount++;
