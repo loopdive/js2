@@ -1057,3 +1057,22 @@ ${test.body}
 
 /** Reads back the message recorded by the most recent failing test. */
 export const LAST_ERROR_EXPORT = `export function __react_last_error() { return __lastError; }`;
+
+/**
+ * Watchdog for one awaited test execution, shared by the React-family suites.
+ *
+ * An upstream body can await a promise the harness can never settle (a Fizz
+ * stream that never completes, an `act` whose scheduler work never drains).
+ * Without this bound a single such test parks the whole npm-compat generator
+ * forever — the process prints nothing and never exits, which is
+ * indistinguishable from a crashed runner from CI's point of view. The
+ * timeout is a watchdog, not a selection filter: a timed-out test stays in
+ * the report as a failure or harness-incompatible result.
+ */
+export function withTimeout(value, timeoutMs, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs} ms`)), timeoutMs);
+  });
+  return Promise.race([Promise.resolve(value), timeout]).finally(() => clearTimeout(timer));
+}
