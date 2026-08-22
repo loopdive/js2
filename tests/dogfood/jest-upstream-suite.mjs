@@ -130,16 +130,19 @@ function readSnapshotEntries(filePath) {
   if (!existsSync(snapshotPath)) return [];
   const source = readFileSync(snapshotPath, "utf8");
   const entries = [];
-  const pattern = /exports\[`([^`]*)`\]\s*=\s*`([\s\S]*?)`;/g;
+  const pattern = /exports\[`((?:\\`|[^`])*)`\]\s*=\s*`([\s\S]*?)`;/g;
   for (const match of source.matchAll(pattern)) {
     const raw = match[2];
     let expected = raw;
     try {
       expected = JSON.parse(raw.trim());
     } catch {
-      // Non-JSON snapshots are left as their literal template value.
+      // Non-JSON snapshots (notably pretty-format's Object {...} form) are
+      // left as their literal template value without the snapshot delimiter's
+      // leading/trailing newline.
+      expected = raw.trim();
     }
-    entries.push([match[1].replace(/ \d+$/, ""), expected]);
+    entries.push([match[1].replace(/\\`/g, "`").replace(/ \d+$/, ""), expected]);
   }
   return entries;
 }
@@ -246,8 +249,13 @@ export async function runHarness({ quiet = false } = {}) {
     const snapshotSetup = snapshotEntries.length
       ? `__upstreamInstallSnapshotMatcher(${JSON.stringify(snapshotEntries)});`
       : "";
-    const source = `${UPSTREAM_TEST_SHIM}\n${snapshotSetup}\n${transformed}\n${UPSTREAM_TEST_EXPORTS}`;
-    const nativeSource = `${UPSTREAM_TEST_SHIM}\n${snapshotSetup}\n${nativeTransformed}\n${UPSTREAM_TEST_EXPORTS}`;
+    const snapshotFormatterImport = file.endsWith("expectationResultFactory.test.ts")
+      ? `import {format as __upstreamPrettyFormat} from ${JSON.stringify(
+          moduleSpecifier(dirname(generatedPath), join(suite.root, "node_modules/pretty-format/index.ts")),
+        )};`
+      : "";
+    const source = `${snapshotFormatterImport}\n${UPSTREAM_TEST_SHIM}\n${snapshotSetup}\n${transformed}\n${UPSTREAM_TEST_EXPORTS}`;
+    const nativeSource = `${snapshotFormatterImport}\n${UPSTREAM_TEST_SHIM}\n${snapshotSetup}\n${nativeTransformed}\n${UPSTREAM_TEST_EXPORTS}`;
     const result = await compileAndRunUpstreamModule({
       generatedPath,
       source,

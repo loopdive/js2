@@ -1086,3 +1086,27 @@ oracle failures and 98 scored Wasm failures remain visible compatibility
 findings; this checkpoint does not reclassify them as infrastructure.
 
 Implementation remains on [PR #4767 — bridge WebAssembly callbacks in prompt tests](https://github.com/loopdive/js2wasm/pull/4767).
+
+## 2026-08-22 Jest pretty-format dependency checkpoint
+
+The original `jest-jasmine2/src/__tests__/expectationResultFactory.test.ts`
+unit is now selected unchanged. Its real `pretty-format@30.4.1` source is
+verified from the pinned Jest checkout and exposed through a package-resolution
+adapter. The adapter also verifies and materializes the published
+`ansi-styles@5.2.0`, `react-is@18.3.1`, and `react-is@19.2.8` sources as ESM
+package roots; the React-is adapters execute the pinned development bundles,
+not synthetic test results. Snapshot matching now uses the upstream
+pretty-format serializer for this unit and handles escaped backticks in Jest's
+original snapshot keys. Existing watcher snapshots continue to use their
+string serializer.
+
+The exact unchanged run covers **351 callbacks across 32 selected files**.
+Node admits **349/351** (the two existing diff-sequence oracle failures), all
+32 modules compile and 31 validate, and Wasm scores **245/349** with zero
+runtime failures. The unavailable-infrastructure remainder is **2,937
+registrations** from 209 deferred files. The newly admitted unit contributes
+one Wasm pass; its six remaining Wasm failures are genuine null-pointer
+runtime failures in the optional-property/error paths and are not reclassified
+as dependency infrastructure.
+
+Implementation remains on [PR #4767 — bridge WebAssembly callbacks in prompt tests](https://github.com/loopdive/js2wasm/pull/4767).

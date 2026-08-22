@@ -142,14 +142,19 @@ function __upstreamInstallSnapshotMatcher(entries) {
 function __upstreamSnapshotMatches(actual) {
   if (__upstreamSnapshotEntries === null || __upstreamSnapshotUsed === null) return false;
   const current = String(__upstreamCurrentTestName);
-  const serialized = __upstreamNormalizeAnsi(actual);
+  const serialized = __upstreamNormalizeAnsi(
+    typeof __upstreamPrettyFormat === "function"
+      ? __upstreamPrettyFormat(actual, {escapeString: false})
+      : String(actual),
+  );
   const candidates = [];
   for (let index = 0; index < __upstreamSnapshotEntries.length; index++) {
     const name = String(__upstreamSnapshotEntries[index][0]);
     if (__upstreamSnapshotUsed[index] || (name !== current && !name.endsWith(" " + current))) continue;
     const expected = String(__upstreamSnapshotEntries[index][1]);
     candidates.push(expected);
-    if (serialized === expected) {
+    const stringSnapshotMatches = typeof actual === "string" && serialized === '"' + expected + '"';
+    if (serialized === expected || stringSnapshotMatches) {
       __upstreamSnapshotUsed[index] = true;
       return true;
     }
@@ -503,6 +508,12 @@ const jest = {
   spyOn: vi.spyOn,
   resetModules() {},
   doMock() {},
+  // The selected original units use isolateModules to make a fresh require
+  // boundary. Each compiled test file already runs in its own worker/module,
+  // so invoke the callback directly while preserving the public Jest seam.
+  isolateModules(callback) {
+    return callback();
+  },
   useFakeTimers: __upstreamUseFakeTimers,
   useRealTimers: __upstreamUseRealTimers,
   runAllTimers: __upstreamRunAllTimers,
