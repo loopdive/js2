@@ -11,21 +11,19 @@ record is
 [`#4376`](../issues/4376-v8x-js2wasm-deno-core-compatibility-spike.md).
 The baseline v8x backend is published in
 [`loopdive/v8x#1`](https://github.com/loopdive/v8x/pull/1); the strict-boot
-follow-up remains uncommitted on the dirty base recorded below.
+follow-up is committed on that PR branch at the exact head recorded below.
 
 ## Exact stop point
 
-- Compiler artifact worktree: detached at
-  `2860d72db402bf12361df9f4c9ec497d1d523c01` with the #4376 compiler/helper
-  changes still pending publication.
+- Compiler branch: `codex/4376-deno-core-boot-vertical-slice`, with the #4376
+  implementation at `89ea611b4556a8f3b469d27213da12f6d6eadb10` and current
+  `origin/main` merged before publication.
 - Historical merged commits: initial spike
   `f26d0bf23a59e89a23979f27ddf744e762a6b61f`, compiler ABI fix
   `35423bb9c1d4aa`, embedded runtime follow-up `3917c3caa3a63e`, and
   primordials bootstrap `b0386cbd5e5afd`.
-- v8x branch: `loopdive/v8x:codex/js2wasm-module-backend`, dirty base
-  `a9bd02d257a7a1c99f87e8d9b319abd69c230ed8`. The strict proof depends on
-  additional uncommitted v8x changes; record the final published SHA after
-  landing them.
+- v8x branch: `loopdive/v8x:codex/js2wasm-module-backend`, head
+  `3095ded9b69055ecc936109cf71d270d4acf6c79`.
 - PR base: `loopdive/js2wasm:main`
 - v8x pin: `v149.4.0-rc.4`, commit
   `22cf7342405794d6e1cd851aa43a9b3447654742`

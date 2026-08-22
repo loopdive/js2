@@ -402,6 +402,5 @@ follow-ups and primordials bootstrap merged in
 tracked in
 [`loopdive/v8x#1`](https://github.com/loopdive/v8x/pull/1) from
 [`codex/js2wasm-module-backend`](https://github.com/loopdive/v8x/tree/codex/js2wasm-module-backend)
-on dirty base `a9bd02d257a7a1c99f87e8d9b319abd69c230ed8`. The strict proof includes
-additional uncommitted v8x changes; record the final published SHA after those
-changes land rather than presenting the dirty tree as a release.
+through commit `3095ded9b69055ecc936109cf71d270d4acf6c79`, which adds the strict
+unchanged-`deno_core` proof on top of the earlier public `Script::Run` bridge.
