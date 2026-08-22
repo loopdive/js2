@@ -30,7 +30,8 @@
     "packages/jest-jasmine2/src/__tests__/hooksError.test.ts",
     "packages/jest-config/src/__tests__/parseShardPair.test.ts",
     "packages/jest-core/src/__tests__/globals.test.ts",
-    "packages/jest-jasmine2/src/__tests__/concurrent.test.ts"
+    "packages/jest-jasmine2/src/__tests__/concurrent.test.ts",
+    "packages/jest-haste-map/src/lib/__tests__/getPlatformExtension.test.js"
   ],
   "dependencies": {
     "detect-newline": {

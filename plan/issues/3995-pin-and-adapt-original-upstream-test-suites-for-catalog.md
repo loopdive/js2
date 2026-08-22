@@ -936,3 +936,14 @@ is retained as a compatibility failure rather than relabeled as unavailable
 infrastructure. The queue-runner module remains the sole invalid Wasm module.
 The remaining **2,969 registrations** from 218 verified files remain explicit
 unavailable infrastructure.
+
+The same checkpoint also admits the original
+`jest-haste-map/src/lib/__tests__/getPlatformExtension.test.js` utility unit.
+Its single callback passes in both lanes. The exact inventory is now **320
+callbacks across 24 selected files**: Node admits **318/320**, 24 modules
+compile and 23 validate, and Wasm scores **219/318**. The unavailable
+infrastructure remainder is **2,968 registrations** from 217 verified files.
+An exploratory `jest-config/src/__tests__/Defaults.test.ts` was not admitted:
+its original package graph requires the unmaterialized pinned `deepmerge`
+dependency, so the Node oracle could not register the callback. That remains a
+concrete dependency-resolution follow-up rather than a Wasm result.
