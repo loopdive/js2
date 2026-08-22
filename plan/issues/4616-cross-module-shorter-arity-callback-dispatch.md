@@ -435,6 +435,29 @@ Measured: jest 317 → 319/331 (deepCyclicCopy 7 → 5); cookie 63740/63740,
 clsx 32/32 hold; ts7 clean. Regression test:
 `tests/issue-4616-patched-isarray-recursion.test.ts` (1).
 
+## 2026-08-22 sixteenth slice — `Object.getPrototypeOf` on fnctor instances
+
+`Object.getPrototypeOf(new F())` (F a function expression) answered null:
+the `__getPrototypeOf` resolver only did the native read, blind to the
+fnctor instance→ctor `.prototype` link that [[Get]]/for-in already consult
+via `_structUserProto`. It now resolves the explicit `_wasmStructProto`
+record first, then vivifies the ctor prototype (`_getOrVivifyFnPrototype`),
+so getPrototypeOf(new F()) === F.prototype (§20.2.4.3) and
+`Object.create(getPrototypeOf(x))` round-trips.
+
+Suite score UNCHANGED (319/331) — the remaining deepCyclicCopy
+keepPrototype failures are a DIFFERENT defect, pinned by in-place suite
+instrumentation: `deepCyclicCopyArray(array: Array<T>)` has a vec-typed
+param ABI; with `Array.isArray` spied to lie, a fnctor-instance STRUCT is
+routed into it, the guarded vec cast nulls, and the module's inner
+`Object.getPrototypeOf(null)` throws "Cannot convert null to object". A
+fix needs param-ABI widening when a call site's argument is not provably
+an array (value-rep territory), not a runtime patch. Guards: acorn
+3518/3518 holds; #1712/#2739/#3123 battery and the
+#1462/#1472/#1516/#2026 getPrototypeOf battery fail identically on base
+(pre-existing, A/B'd via file-copy). Regression test:
+`tests/issue-4616-fnctor-getprototypeof.test.ts` (2).
+
 ## 2026-08-22 residual inventory after slices 5-15 (jest 113 → 319/331, react measured)
 
 Curated scoreboard: acorn 3518/3518 · cookie 63740/63740 · clsx 32/32 ·

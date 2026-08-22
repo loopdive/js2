@@ -12216,6 +12216,21 @@ assert._isSameValue = isSameValue;
           if (obj != null && typeof obj === "object" && _argumentsObjects.has(obj)) {
             return Object.prototype;
           }
+          // (#4616) A WasmGC struct's user-visible [[Prototype]] lives in the
+          // same two records the [[Get]]/for-in walks consult (§10.1.1 via
+          // _structUserProto): the explicit setPrototypeOf link, then the
+          // fnctor instance→ctor `.prototype` (vivified on demand, so
+          // `Object.getPrototypeOf(new F())` answers `F.prototype` even when
+          // that object was never touched). Native getPrototypeOf is blind to
+          // both — it sees an opaque null-proto object.
+          if (_isWasmStruct(obj) && _canBeWeakKey(obj)) {
+            if (_wasmStructProto.has(obj)) return _wasmStructProto.get(obj);
+            const fnctorCtor = _fnctorInstanceCtor.get(obj);
+            if (fnctorCtor != null) {
+              const proto = _getOrVivifyFnPrototype(fnctorCtor, callbackState);
+              if (proto != null) return proto;
+            }
+          }
           try {
             return Object.getPrototypeOf(obj);
           } catch (e) {
