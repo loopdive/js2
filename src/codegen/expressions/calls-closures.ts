@@ -1795,6 +1795,15 @@ export function tryExternClassMethodOnAny(
   // keep the historical first-match behavior.
   if (methodName === "slice" || methodName === "valueOf") return null;
 
+  // `createElement` is shared by React's CommonJS namespace and the DOM
+  // `Document` extern class.  An `any` receiver carries no evidence that it is
+  // a Document, so binding the first ambient match would turn
+  // `React.createElement(...)` into `Document_createElement` and discard the
+  // real receiver at the host boundary.  Typed Document receivers have
+  // already taken the exact extern-class path above; leave unknown receivers
+  // on the generic dynamic dispatcher so their runtime identity is preserved.
+  if (methodName === "createElement") return null;
+
   // (#1712) `replace` / `replaceAll` are core String.prototype methods, but
   // SEVERAL DOM extern classes also declare a `replace` (CSSStyleSheet.replace
   // takes one arg, DOMTokenList.replace takes two and returns a boolean). When

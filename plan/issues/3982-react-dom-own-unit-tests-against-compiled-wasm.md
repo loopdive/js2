@@ -594,3 +594,30 @@ always; the full run is gated behind `DOGFOOD_REACT_DOM_UPSTREAM=1`.
 pnpm run dogfood:react-dom-upstream-suite
 DOGFOOD_REACT_DOM_UPSTREAM=1 pnpm exec vitest run tests/dogfood/react-dom-upstream-suite.test.ts
 ```
+
+## Narrow compiler-fix checkpoint (2026-08-22)
+
+The next bounded probe found two compiler issues in the ReactDOM path rather
+than missing jsdom infrastructure:
+
+* An `any` receiver for `createElement` was being bound to the first ambient
+  `Document.createElement` extern method. That discarded the React namespace at
+  the host boundary. Unknown receivers now stay on the generic dynamic method
+  dispatcher; typed `Document` receivers retain the exact DOM extern path.
+* A mutable parameter inferred as an anonymous WasmGC object shape could be
+  reassigned to a different object shape. The generated guarded cast then
+  produced null on the next property read. Directly reassigned anonymous
+  object/reference parameters now use the universal `externref` carrier;
+  named/native carriers remain specialized.
+
+The fixes have focused coverage in
+`tests/issue-4373-js-property-call-arguments.test.ts` and
+`tests/issue-3982-react-dom-reassigned-ref-param.test.ts`. Both legacy and IR
+compiler modes pass (8/8 tests), typecheck and formatting pass, and the exact
+one-test legacy-server worker probe now compiles and validates a 1,230,619-byte
+module and reports 1/1 compiled tests passing (12.3 seconds). This is a bounded
+smoke result, not a claim that the 1,923-test admitted corpus is green.
+
+The browser Fizz timeout and Node Fizz module-init null remain separate
+follow-up findings; the full ReactDOM corpus still needs to be rerun after the
+compiler fix. No host API was silently marked unavailable.

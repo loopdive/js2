@@ -338,6 +338,59 @@ function restBindingOverridesToExternref(p: ts.ParameterDeclaration): boolean {
 
 const dynamicObjectParamsByFunction = new WeakMap<ts.FunctionDeclaration, ReadonlySet<string>>();
 
+// A call-site-inferred JavaScript parameter starts life as one nominal WasmGC
+// object shape. If the function assigns a different object-producing value to
+// that parameter, keeping the narrowed slot emits a guarded ref.cast and turns
+// a valid value into null when the shapes differ. ReactDOM's createRequest is
+// the large real-world instance: its render-state parameter is replaced by a
+// pending-segment object before the value is used. Keep this rule deliberately
+// narrow: only anonymous object/reference carriers and only a direct assignment
+// in this function body. Named/native carriers and scalar parameters retain
+// their existing specialized ABI.
+const reassignedReferenceParamsByFunction = new WeakMap<ts.FunctionDeclaration, ReadonlySet<string>>();
+
+function reassignedReferenceParams(ctx: CodegenContext, stmt: ts.FunctionDeclaration): ReadonlySet<string> {
+  const cached = reassignedReferenceParamsByFunction.get(stmt);
+  if (cached) return cached;
+  const parametersByName = new Map<string, ts.ParameterDeclaration>();
+  for (const parameter of stmt.parameters) {
+    if (ts.isIdentifier(parameter.name)) parametersByName.set(parameter.name.text, parameter);
+  }
+  const names = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (
+      node !== stmt &&
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node) ||
+        ts.isAccessor(node) ||
+        ts.isConstructorDeclaration(node))
+    ) {
+      return;
+    }
+    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
+      let target: ts.Expression = node.left;
+      while (
+        ts.isParenthesizedExpression(target) ||
+        ts.isAsExpression(target) ||
+        ts.isTypeAssertionExpression(target) ||
+        ts.isNonNullExpression(target)
+      ) {
+        target = target.expression;
+      }
+      if (ts.isIdentifier(target)) {
+        const parameter = parametersByName.get(target.text);
+        if (parameter && ctx.oracle.valueDeclarationOf(target) === parameter) names.add(target.text);
+      }
+    }
+    forEachChild(node, visit);
+  };
+  if (stmt.body) forEachChild(stmt.body, visit);
+  reassignedReferenceParamsByFunction.set(stmt, names);
+  return names;
+}
+
 /**
  * An implicit-any parameter used as the receiver of a computed property access
  * may be intentionally polymorphic. Specialising it from one call-site object
@@ -666,6 +719,23 @@ function lowerParamType(
         wasmType = inferred;
       }
     }
+  }
+  // (#3982) A reference narrowed to an anonymous object shape cannot safely
+  // remain in that nominal slot after a mutable parameter assignment. The
+  // body compiler would otherwise emit a guarded cast from the new shape back
+  // to the old one; a mismatch produces null and the next property read traps.
+  // Preserve JavaScript's dynamic reassignment semantics by using the universal
+  // externref carrier. Named/native carriers (strings, vectors, and class
+  // instances) keep their existing specialized ABI until a dedicated slice
+  // proves the corresponding mutation family safe.
+  const paramStructName =
+    wasmType.kind === "ref" || wasmType.kind === "ref_null" ? ctx.typeIdxToStructName.get(wasmType.typeIdx) : undefined;
+  if (
+    (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
+    paramStructName?.startsWith("__anon_") &&
+    reassignedReferenceParams(ctx, stmt).has(param.name.getText(sourceFile))
+  ) {
+    wasmType = { kind: "externref" };
   }
   // Runtime eval publishes top-level script functions through an externref
   // AOT-callable adapter. Structurally typed object parameters need the same
