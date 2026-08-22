@@ -791,6 +791,14 @@ function compileNestedFunctionDeclarationInScope(
     // which keeps lexical `this` capture — this branch only handles
     // `FunctionDeclaration`s.)
     if (name === "this" || name === "super") continue;
+    // (#4618) A sibling CLASS declaration resolves through the global class
+    // machinery (structMap/classSet + the lazy class-object singleton) inside
+    // the lifted body, exactly like a sibling function declaration. Capturing
+    // it as a VALUE reads the enclosing body's lazily-materialized
+    // class-object local — null unless something else already forced the
+    // singleton — so `new Child()` inside the nested fn constructed from
+    // null (react's ChildComponent family). Skip the value capture.
+    if (ctx.classSet.has(name) && isSiblingClassDeclarationName(stmt, name)) continue;
     const localIdx = fctx.localMap.get(name);
     if (localIdx === undefined) continue;
     // A real declaring-frame local wins over a same-named module funcMap entry.
@@ -2115,6 +2123,31 @@ export function hoistFunctionDeclarations(
 ): void {
   const isTopLevelHoist = _eagerBoxFuncNames === undefined;
   const eagerBoxFuncNames = _eagerBoxFuncNames ?? new Set<string>();
+  // (#4618) Pre-collect sibling CLASS declarations before compiling any
+  // hoisted function body. A hoisted fn routinely references a sibling class
+  // declared LATER in the same statement list (react's ParentComponent →
+  // ChildComponent); in the plain function-body lane the collection phase has
+  // already registered such classes, but a CLOSURE/callback/method body's
+  // classes were only collected when their statement executed — AFTER the
+  // hoist — so the fn body compiled `new Child()` through the graceful-null
+  // identifier fallback and constructed from null. collectClassDeclaration is
+  // guarded by structMap membership, so plain-lane double collection is a
+  // no-op.
+  if (isTopLevelHoist) {
+    for (const stmt of stmts) {
+      if (ts.isClassDeclaration(stmt) && stmt.name && !ctx.structMap.has(stmt.name.text)) {
+        try {
+          collectClassDeclaration(ctx, stmt);
+          // Bodies are NOT compiled here — mark deferred so the statement-
+          // position compileNestedClassDeclaration still fills ctor/method
+          // bodies (its structMap-membership early-return honors this flag).
+          ctx.deferredClassBodies.add(stmt.name.text);
+        } catch {
+          /* leave the statement-position compile to surface any real error */
+        }
+      }
+    }
+  }
   const existingDirectFuncNames = prepareHoistedFunctionBindings(ctx, fctx, stmts, _existingDirectFuncNames);
   // (#2068/#4013) Phase 0: reserve a correctly-typed bodyless funcMap slot for
   // every direct-sibling function BEFORE compiling any body. Without this a
@@ -3213,3 +3246,15 @@ export function emitArgumentsObject(
 // importing statements/nested-declarations.ts directly (cycle prevention).
 registerHoistFunctionDeclarations(hoistFunctionDeclarations);
 registerEmitArgumentsObject(emitArgumentsObject);
+
+/** (#4618) Is `name` declared as a sibling class DECLARATION in the nested
+ * fn-decl's own hoist scope (the statement list containing the fn)? */
+function isSiblingClassDeclarationName(stmt: ts.FunctionDeclaration, name: string): boolean {
+  const parent = stmt.parent;
+  const stmts = ts.isBlock(parent) || ts.isSourceFile(parent) ? parent.statements : undefined;
+  if (stmts === undefined) return false;
+  for (const sibling of stmts) {
+    if (ts.isClassDeclaration(sibling) && sibling.name?.text === name) return true;
+  }
+  return false;
+}

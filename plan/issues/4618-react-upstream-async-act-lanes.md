@@ -17,12 +17,15 @@ loc-budget-allow:
   - src/codegen/async-cps.ts
   - src/codegen/async-frame.ts
   - src/codegen/destructuring-params.ts
+  - src/codegen/statements/nested-declarations.ts
   - src/ir/prepared-callable-resolution.ts
   - src/runtime.ts
 func-budget-allow:
   - src/codegen/destructuring-params.ts::destructureParamObjectExternref
   - src/codegen/async-frame.ts::ensureAsyncResumeFunction
   - src/codegen/async-frame.ts::buildAsyncFrameInfo
+  - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
 ---
 
 # react upstream suite: the async `it`-body / `act()` lane cluster
@@ -259,6 +262,26 @@ demote.
   standalone probes. The 6-test tdz-reference-error battery fails
   IDENTICALLY with origin/main's src for every touched file (verified by
   file-copy A/B) — pre-existing, not this slice.
+
+- **2026-08-22 sibling-class pre-collection slice LANDED**: a hoisted
+  fn-decl in a CLOSURE body referencing a sibling class declared later in
+  the same list constructed from null — the plain lane pre-collects
+  classes in the collection phase, closure/callback/method bodies only
+  collected them at statement execution (after the fn body compiled
+  through the graceful-null fallback). hoistFunctionDeclarations now
+  pre-collects sibling class declarations at its top-level pass (marked
+  deferred so the statement-position compile still fills ctor/method
+  bodies — an eager collect without the deferred flag left method stubs
+  answering null). Probes w7 (sync + async dynamic dispatch) and cls1 all
+  answer A,B. Residual: the CPS variant (class capture used in a
+  POST-AWAIT call, probe vY with-class-capture) still answers null — the
+  resume-lane class value path, same family as the fn-decl value
+  rebinding. Also added (belt): sibling-class names are excluded from the
+  hoisted fn's VALUE-capture list (they resolve via the global class
+  machinery). Guards: class equivalence battery 24/24 + standalone class
+  guards 37/37, jest 319/331, acorn 3518/3518 hold; cookie/clsx verified
+  100% pre-restart. Regression test:
+  `tests/issue-4618-closure-sibling-class-capture.test.ts` (1).
 
 ## Fix order
 
