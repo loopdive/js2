@@ -98,6 +98,29 @@ demote.
 - `Cannot read properties of null (reading 'setState')` (2) —
   class-component `this` in the ES6-class bucket.
 
+## Progress
+
+- **(c) FIXED 2026-08-22** (on the #4728 branch): `preparedUnitProgramAbiBinding`
+  now DEFERS program-ABI planning when the unit's allocator slot is still an
+  unpatched placeholder (empty body, non-func typeIdx) instead of throwing —
+  the async parent reaches slot binding before Phase 3 lowers the lifted
+  nested body; the slot resolves by funcIdx and the Phase-3 patch lands in
+  place. A real function with a broken type still fails loudly. Guards:
+  ir-fallback gate OK, async equivalence 33/33, acorn 3518/3518, jest
+  319/331 hold. Regression test: `tests/issue-4618-async-nested-fn-decl.test.ts`.
+- **(a) diagnosis sharpened**: the callee DOES resume; the defect is the
+  CALLER's await — `await <variable>` (non-call operand, e.g. in the
+  runner's `const p = fn(); await p;` loop) is a PASSTHROUGH in the non-CPS
+  lane. Two-line repro: `for (const p of ps) { const v = await p; }` over
+  compiled-async promises yields "[object Promise]" per element. The
+  canonical `await act(...)` (call operand) chains correctly at depth 2
+  (probe vM) — depth 3 (`t → outer → inner`) still mis-unwraps.
+- **(b) narrowed**: a hoisted fn-decl capturing a const in a suspending
+  async arrow works when CALLED directly (probe vP: captured-ok). The loss
+  needs the react ingredient: the fn-decl passed as a VALUE into a member
+  call (React.createElement) — i.e. the host-callback/value materialization
+  lane compiled from a CPS-split body.
+
 ## Fix order
 
 1. (c) first — it is a hard CE with a two-line repro and pins the IR
