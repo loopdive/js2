@@ -148,6 +148,21 @@ demote.
   suspending body reads back null (`new Child()` → "Cannot read properties
   of null", probe vY with-class-capture).
 
+- **2026-08-22 later findings**: the harness-shaped probe (async export fn,
+  whole body in `try { … }`, fn-decl + `await act(...)` + post-await direct
+  call — probe w8) now passes end-to-end after the liveness slice. The
+  full react module STILL reports "ParentComponent is not defined"
+  unchanged, so the remaining ingredient is inside the 13 MB module itself
+  (JSX-transformed references through root.render/act chains, or
+  batch-scale effects) — next step is IN-PLACE instrumentation of the
+  generated react module, not more standalone probes. The class-capture
+  null is now pinned tighter: it needs DYNAMIC DISPATCH of the enclosing
+  closure (`register[0]()`), sync or async alike — direct calls work
+  (probe w7: async-arrow-direct OK, async/sync-arrow-dynamic both
+  "Cannot read properties of null") — i.e. the lifted/callback closure
+  body lane loses sibling CLASS declarations for its nested fn-decls,
+  independent of CPS.
+
 ## Fix order
 
 1. (c) first — it is a hard CE with a two-line repro and pins the IR
