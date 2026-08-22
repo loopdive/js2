@@ -378,6 +378,16 @@ const CLOSURE_SAFE_AMBIENT_GLOBALS = new Set([
   "AggregateError",
 ]);
 
+// These names are supplied by the Test262 realm/harness rather than being
+// ordinary compiler intrinsics.  A callback that captures one must remain on
+// the host callback path: inlining it into the ref-element lane would carry
+// compiler-owned Temporal values into the harness (or vice versa), making
+// methods such as `Duration.prototype.round` disappear.  The explicit deny
+// list is deliberately small; it keeps the generic host fallback for realm
+// objects while retaining the host-free fast path for callbacks that only use
+// normal JS builtins.
+const CLOSURE_UNSAFE_HOST_AMBIENTS = new Set(["Temporal", "TemporalHelpers", "Intl", "$262"]);
+
 /**
  * (#4616) May this ref-element HOF call take the closure lane in the gc HOST
  * profile? Only when the inline callback's body resolves every identifier to a
@@ -399,6 +409,10 @@ function hofRefElemClosureLaneSafe(ctx: CodegenContext, callExpr: ts.CallExpress
       const parent = node.parent;
       if (ts.isPropertyAccessExpression(parent) && parent.name === node) return;
       if ((ts.isPropertyAssignment(parent) || ts.isMethodDeclaration(parent)) && parent.name === node) return;
+      if (CLOSURE_UNSAFE_HOST_AMBIENTS.has(node.text)) {
+        safe = false;
+        return;
+      }
       if (CLOSURE_SAFE_AMBIENT_GLOBALS.has(node.text)) return;
       const decl = ctx.oracle.valueDeclarationOf(node);
       if (decl === undefined || decl.getSourceFile().isDeclarationFile) safe = false;
