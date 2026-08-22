@@ -1562,7 +1562,17 @@ export function compileObjectLiteral(
     expr.properties.length > 0 &&
     (expr.properties.some((p) => ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) ||
       _hasDisposalMethod(expr) ||
-      _hasRuntimeComputedKey(ctx, expr))
+      _hasRuntimeComputedKey(ctx, expr) ||
+      // (#4616, cookie parseCookie tests) An EMPTY-STRING key (`{ "": "bar" }`
+      // — a legal JS property) cannot be a struct field: the field-name
+      // plumbing (`__struct_field_names` comma join, `__sget_<name>` exports)
+      // degenerates on "", so the property silently vanished (Object.keys []
+      // and even the in-module read answered undefined). The host plain-object
+      // path stores it faithfully.
+      expr.properties.some(
+        (p) =>
+          (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) && resolvePropertyNameText(ctx, p) === "",
+      ))
   ) {
     return compileObjectLiteralWithAccessors(ctx, fctx, expr);
   }

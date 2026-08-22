@@ -35,6 +35,7 @@ func-budget-allow:
   - src/codegen/closures/callback-classification.ts::isHostCallbackArgument
   - src/codegen/registry/imports.ts::addUnionImports
   - src/codegen/literals.ts::compileObjectLiteralForStruct
+  - src/codegen/literals.ts::compileObjectLiteral
   - src/codegen/closures.ts::compileLiftedClosureBody
   - src/codegen/closures.ts::compileArrowAsCallback
 ---
