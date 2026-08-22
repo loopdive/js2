@@ -3039,7 +3039,8 @@ green on every changed file.
 Budget grants for this change-set are in this file's frontmatter, not in any
 `scripts/*-baseline.json`: `src/ir/select.ts` was already granted under
 `loc-budget-allow`, and `src/ir/select.ts::isPhase1Expr` is added under
-`func-budget-allow` (+13 LOC for the value-use guard). The reaching-set
+`func-budget-allow`. Both report the same **+16 LOC** for the value-use guard
+(`10040 → 10056`; `isPhase1Expr` `1072 → 1088`). The reaching-set
 extraction kept `prepareImplicitConstructorSupports` under its own 300-LOC cap
 without a grant.
 
