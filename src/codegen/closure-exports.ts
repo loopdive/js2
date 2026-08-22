@@ -30,6 +30,7 @@ import {
   PROGRAM_ABI_CALLABLE_ROLE,
   resolveProgramAbiSupportCallableHandle,
 } from "./program-abi-planning.js";
+import { recordClosureArgcDispatcher } from "./compiler-support-abi.js";
 import { DATA_STRUCT_HOST_BRIDGE_ORDINAL, publishDataStructHostBridge } from "./data-struct-host-bridge.js";
 import { definedFuncHandleOf } from "./func-space.js";
 import {
@@ -1404,13 +1405,19 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
     { op: "global.set", index: argcGlobalIdx },
     { op: "local.get", index: arity + 3 },
   );
-  ctx.mod.functions.push({
+  const argcFunc = {
     name: argcExportName,
     typeIdx: argcTypeIdx,
     locals: [{ name: "__result", type: { kind: "externref" } }],
     body: argcBody,
     exported: true,
-  } as WasmFunction);
+  } as WasmFunction;
+  ctx.mod.functions.push(argcFunc);
+  // (#3520 C35) The wrapper's Program ABI identity is `(entry source,
+  // "closure-argc-dispatcher", arity)`. C31 left this family on the positional
+  // fallback deliberately; the arity is the one component of it that no import
+  // or dead-slot compaction can move.
+  recordClosureArgcDispatcher(ctx, arity, argcFunc);
   ctx.mod.exports.push({
     name: argcExportName,
     desc: { kind: "func", index: argcFuncIdx },
