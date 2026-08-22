@@ -815,6 +815,7 @@ compiler, validation, or runtime mismatches in the upstream suites remain
 scored as compatibility failures.
 
 Implementation: [PR #4756](https://github.com/loopdive/js2/pull/4756).
+
 ## 2026-08-22 Jest internal-package resolution checkpoint
 
 The Jest adapter now materializes the verified `@jest/get-type@30.1.0`
@@ -859,3 +860,14 @@ covers **260 callbacks across 15 selected files**: Node admits **258/258**, all
 queue-runner Wasm module remains a compiler validation finding, while the
 remaining **3,028 registrations** from 226 verified files remain explicitly
 reported as unavailable infrastructure.
+## 2026-08-22 Jest collection-matcher checkpoint
+
+The original `jest-jasmine2/src/__tests__/iterators.test.ts` and
+`itToTestAlias.test.ts` units are now selected without changing their source.
+The shared Jest matcher now distinguishes arrays from array-like objects and
+implements recursive Set/Map equality, matching the collection semantics those
+tests exercise. The exact run covers **242 callbacks across 15 selected
+files**: Node admits **240/240**, all 15 modules compile and validate, and Wasm
+scores **114/240**. The remaining **3,046 registrations** from 226 verified
+files remain explicitly reported as unavailable infrastructure; other Wasm
+failures remain compatibility findings rather than unavailable setup.

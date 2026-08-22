@@ -51,6 +51,39 @@ function __upstreamSame(a, b) {
   if (typeof a !== "object") return false;
   if (a instanceof Date || b instanceof Date) return a instanceof Date && b instanceof Date && +a === +b;
   if (a instanceof RegExp || b instanceof RegExp) return a instanceof RegExp && b instanceof RegExp && String(a) === String(b);
+  const aIsArray = Array.isArray(a);
+  const bIsArray = Array.isArray(b);
+  if (aIsArray || bIsArray) {
+    if (!aIsArray || !bIsArray || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (!__upstreamSame(a[i], b[i])) return false;
+    return true;
+  }
+  const aIsSet = a instanceof Set;
+  const bIsSet = b instanceof Set;
+  if (aIsSet || bIsSet) {
+    if (!aIsSet || !bIsSet || a.size !== b.size) return false;
+    const unmatched = Array.from(b);
+    for (const value of a) {
+      const index = unmatched.findIndex((candidate) => __upstreamSame(value, candidate));
+      if (index < 0) return false;
+      unmatched.splice(index, 1);
+    }
+    return true;
+  }
+  const aIsMap = a instanceof Map;
+  const bIsMap = b instanceof Map;
+  if (aIsMap || bIsMap) {
+    if (!aIsMap || !bIsMap || a.size !== b.size) return false;
+    const unmatched = Array.from(b);
+    for (const [key, value] of a) {
+      const index = unmatched.findIndex(
+        (candidate) => __upstreamSame(key, candidate[0]) && __upstreamSame(value, candidate[1]),
+      );
+      if (index < 0) return false;
+      unmatched.splice(index, 1);
+    }
+    return true;
+  }
   if (typeof a.length === "number" || typeof b.length === "number") {
     if (typeof a.length !== "number" || typeof b.length !== "number" || a.length !== b.length) return false;
     for (let i = 0; i < a.length; i++) if (!__upstreamSame(a[i], b[i])) return false;

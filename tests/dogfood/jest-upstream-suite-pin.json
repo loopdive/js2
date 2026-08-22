@@ -22,7 +22,9 @@
     "packages/jest-config/src/__tests__/stringToBytes.test.ts",
     "packages/jest-jasmine2/src/__tests__/pTimeout.test.ts",
     "packages/jest-matcher-utils/src/__tests__/Replaceable.test.ts",
-    "packages/jest-jasmine2/src/__tests__/queueRunner.test.ts"
+    "packages/jest-jasmine2/src/__tests__/queueRunner.test.ts",
+    "packages/jest-jasmine2/src/__tests__/iterators.test.ts",
+    "packages/jest-jasmine2/src/__tests__/itToTestAlias.test.ts"
   ],
   "dependencies": {
     "detect-newline": {
