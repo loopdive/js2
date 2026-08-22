@@ -1032,7 +1032,11 @@ function compileIdentifierCore(
   if (
     !ctx.standalone &&
     !ctx.wasi &&
-    (taCtorKindOf(name) >= 0 || name === "BigInt64Array" || name === "BigUint64Array") &&
+    // (#4616-adjacent) `Buffer` rides the same host-global materialization:
+    // jest-util's deepCyclicCopy suite reads the bare Node global (`new
+    // Buffer/Buffer.from`), which otherwise fell to the null-extern default
+    // ("Buffer is not defined").
+    (taCtorKindOf(name) >= 0 || name === "BigInt64Array" || name === "BigUint64Array" || name === "Buffer") &&
     fctx.localMap.get(name) === undefined &&
     !(fctx.boxedCaptures?.has(name) ?? false) &&
     !ctx.classSet.has(name)
