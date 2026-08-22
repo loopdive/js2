@@ -32,6 +32,8 @@ import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) o
 // (#4062 array bag / #4491 T9 Date+RegExp bag) a statically-known key may live in
 // a carrier bag the receiver's field list cannot see — route the folded `false`.
 import { carrierBagKeyNeedsRuntime } from "./builtin-instance-key-presence.js";
+// (#4491 T4) %Object.prototype%'s own names are `in` every ordinary object.
+import { inReceiverIsObjectShaped, objectPrototypeInheritsInName } from "./object-proto-name-in.js";
 
 /**
  * (#3714) `emitThrowTypeError` pushes directly onto `fctx.body`; to nest its
@@ -389,7 +391,17 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // deleted keys).
     const growableReceiver =
       ctx.standalone && ts.isIdentifier(expr.right) && ctx.growableObjectLiteralVars.has(expr.right.text);
-    const has = !growableReceiver && (hasInStruct || tsTypeHasProperty);
+    // (#4491 wave-5 T4) §7.3.12 is prototype-inclusive and every ordinary
+    // object's chain ends at %Object.prototype%, but standalone's `$Object`
+    // chain ends at `null` (the priced `$Object.$proto` vs `$NativeProto`
+    // wall), so `"valueOf" in {}` folded FALSE while `typeof o.valueOf` was
+    // already `"function"`. Answer from the spec's fixed name set instead of
+    // the prototype object. Standalone-only so the js-host lane — where
+    // `__extern_has` already answers correctly — stays byte-identical.
+    // See `object-proto-name-in.ts`.
+    const inheritsFromObjectPrototype =
+      ctx.standalone && objectPrototypeInheritsInName(staticKey, inReceiverIsObjectShaped(rightWasm.kind));
+    const has = inheritsFromObjectPrototype || (!growableReceiver && (hasInStruct || tsTypeHasProperty));
     // (#1444) When RHS is externref/anyref AND static analysis came up empty
     // (no struct field, no TS-typed prop), the answer is NOT reliably false
     // — the host object may carry dynamic keys (e.g. regex `result.groups`).

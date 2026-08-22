@@ -123,6 +123,7 @@ import {
 } from "./program-abi-source-callable-planning.js";
 import { rebindWidenedArrayVecType } from "./declarations/array-rebind-element-widening.js";
 import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneous-scalar-var-widening.js";
+import { redeclarationWidenedModuleGlobalType } from "./declarations/redeclared-var-widening.js";
 import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
 import { emitModuleVarUndefinedSeeds } from "./declarations/module-var-undefined-seed.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
@@ -2128,6 +2129,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     return (
       rebindWidenedArrayVecType(ctx, sourceFile, decl) ??
       heterogeneousWidenedModuleGlobalType(ctx, sourceFile, decl) ??
+      // (#4491 wave-5 T4) `var x = true; … var x = function () {}` is ONE
+      // binding whose slot the checker types from the function declaration; the
+      // boolean initializer is then dropped and the slot holds null. The
+      // declaration-vs-declaration half of #4204's assignment rule.
+      redeclarationWidenedModuleGlobalType(ctx, sourceFile, decl) ??
       inferStandaloneRegExpMatchGlobalType(ctx, decl) ??
       resolveWasmType(ctx, varType)
     );

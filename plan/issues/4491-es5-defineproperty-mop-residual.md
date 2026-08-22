@@ -246,6 +246,17 @@ func-budget-allow:
   #    lives in the existing subsystem module arguments-object-mop.ts.
   - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
   - src/codegen/typeof-delete.ts::compileDeleteExpression
+  # 2026-08-22 wave-5 T4 slice T4-E: `"valueOf" in {}` answered false because
+  # standalone's `$Object.$proto` chain ends at null (%Object.prototype% is a
+  # `$NativeProto`, the priced representation wall) while the READ resolved it
+  # statically. The name set and the receiver-shape predicate both live in the
+  # NEW module src/codegen/object-proto-name-in.ts; `compileInOperator` grows
+  # by the two-line consult plus the comment that says why the fold is
+  # affirmative-only (+10). The consult must sit exactly where `has` is
+  # computed — one statement earlier and it would bypass the §13.10.1
+  # primitive-RHS TypeError, one later and the `__extern_has` route has already
+  # been chosen.
+  - src/codegen/binary-ops-in.ts::compileInOperator
 ---
 
 # #4491 — ES5 defineProperty/defineProperties/create MOP residual
@@ -4397,3 +4408,263 @@ harness clobbers the symlink mid-run, which fabricates ENOENT sweeps).
 `.tmp/wat.mts` is the compile-size sanity. Row lists: `t8-rows.txt`,
 `t8-elision-scan.txt`, `t8-control.txt`, `t8-sparse150.txt`; both sides of every
 A/B are in `.tmp/*.tsv`.
+
+## Wave-5 lane T4 — re-triage on integration head `6b513c7155` (2026-08-22)
+
+The stale 40-row list at `.tmp/wave5-T4.txt` was re-measured row-by-row on the
+merged head before any edit. **17/40 already passed** — the slice-T4-A/B/C flips
+plus, once the eval provider was available, the six §10.4.3 / §12.2.1
+strict-mode `eval` rows and `10.4.3-1-19-s`/`-19gs`/`-20-s`/`-20gs` that T7's
+provider-realm work had just turned green. Those 17 are NOT counted as flips.
+
+### Blocker found first: the QuickJS eval provider will not BUILD on this head
+
+`node scripts/build-quickjs-eval-provider.mjs` fails its own canary:
+
+```
+quickjs canary functionParityProbe() returned 1, expected 11
+(a QuickJS-created function lost %Function% constructor identity, …)
+```
+
+`1` decodes as `constructorIdentity=0, appliedGlobal=1` — `new Function(src)`
+returns a callable whose `.constructor` is not `%Function%`. It is the same
+defect the T4 rows `S10.2.1_A4_T2` (`f1().constructor.prototype` is `undefined`)
+and `10.4.3-1-83-s`/`-84-s` (`Function("…return f();")()` → `TypeError: not a
+function`) report, i.e. the **provider-realm carrier-identity wall** — T7's lane,
+fenced here rather than fought. It did NOT clear with `6b513c7155`.
+
+**Consequence for anyone measuring eval-dependent rows: a clean worktree cannot
+get an adapter at all**, because the build script writes the artifact only
+*after* the canary passes. Every eval row then reports `JS2WASM_EVAL_ENGINE=
+quickjs but the quickjs provider is not built`, which is indistinguishable from
+"the row fails". This lane unblocked measurement with a canary-free build
+(`.tmp/build-adapter-nocanary.mjs` — byte-identical adapter compile, no
+`verifyQuickjsProvider`); the numbers below are therefore real, but CI on this
+head would not produce the adapter.
+
+### Confirmed by measurement: the harness clobbers `test262/` MID-RUN
+
+The T7 lane's warning reproduced here: `test262/` was silently replaced by an
+empty directory between rows, producing `ENOENT … /test262/harness/assert.js`.
+The runner used for every number below repairs the symlink **before each row**
+and retries once on any ENOENT; the repair fired 4× inside a single 40-row
+sweep. A sweep without that repair fabricates failures.
+
+### Slice T4-D — a redeclared `var` silently DROPPED its initializer
+
+`var x = true; … var x = function () {};` is ONE binding. The checker types the
+symbol from the FUNCTION declaration, so the slot is `(ref null $closure)` and
+`coerceType` answers the boolean initializer with `ref.null`:
+
+```wat
+i32.const 1     ;; `true`
+drop            ;; thrown away
+ref.null 47
+global.set 7    ;; x := null
+```
+
+`typeof x` still folds to `"boolean"` from the checker type, so value and tag
+disagree and nothing errors. Measured on this head, `var b = true` followed by
+`var b = function () {}`:
+
+| probe | base | after |
+| --- | --- | --- |
+| `b === true` | **false** | true |
+| `b === false` (for `var b = false`) | **false** | true |
+| `b ? "T" : "F"` | **`"F"`** | `"T"` |
+| `String(b)` | **`"[object Object]"`** | `"true"` |
+| `typeof b` | `"boolean"` | `"boolean"` |
+| object-typed redeclaration (`var a = true; var a = {}`) | already correct | unchanged |
+
+This is the DECLARATION-vs-declaration half of #4204/#4206's rule: that analysis
+asks exactly the right question but only of `BinaryExpression` assignment nodes,
+and its own `collectModuleScopedVarsByName` keeps just the FIRST declaration per
+name — so the identical hazard arrives through a carrier the walk never visits.
+
+**Change.** New module `src/codegen/declarations/redeclared-var-widening.ts`
+(all new bodies; `declarations.ts` and `statements/variables.ts` get one dispatch
+line each). Widens to `externref` only when: module scope, ≥2 declarations of the
+name, at least one initializer tagged a specialized-slot primitive
+(`number`/`string`/`boolean`/`bigint` — reusing
+`HETEROGENEOUS_PRIMITIVE_SLOT_TAGS` rather than forking it), another
+declaration's tag differs, and no explicit TypeScript annotation (the annotation
+is the representation contract, the same carve-out #4204 makes). `mixed` counts
+as different, per #4206.
+
+The second dispatch line is not optional: the global and its `__module_init`
+shadow local are one binding. With only the global widened, the closure
+declaration allocates the local as `externref`, a LATER redeclaration re-enters
+the generic local path — where the checker still reports the SYMBOL's (first
+declaration's) `boolean` — and the retype ladder narrows the slot to `i32`. The
+already-emitted `local.tee; global.set` then fails module validation with
+`global.set[0] expected type externref, found local.tee of type i32`. Reduced by
+delta-debugging `S11.1.5_A2` to its three load-bearing checks (`var x = true` /
+`= function () {}` / `= this`).
+
+**Flips: 0 rows on their own.** `S11.1.5_A2` advances from CHECK#1 to CHECK#2 and
+still fails: `var object = {prop : x}` is redeclared 12 times with object
+literals whose *field* representations disagree, which this analysis (keyed on
+the top-level JS tag) does not see. Kept because it is a measured value-loss fix
+with an identical control, not because it moves a row — see "Left open".
+
+### Slice T4-E — `"valueOf" in {}` answered **false**
+
+§7.3.12 HasProperty is prototype-inclusive and every ordinary object's chain ends
+at %Object.prototype%, so its seven own names (§20.1.3) are `in` every object.
+Standalone answered `false` for all of them:
+
+| probe (`var o = {}`) | base | after |
+| --- | --- | --- |
+| `"valueOf" in o` | **false** | true |
+| `"toString" in o` | **false** | true |
+| `"hasOwnProperty" in o` | **false** | true |
+| `"nope" in o` | false | false |
+| `typeof o.valueOf` | `"function"` | `"function"` |
+
+The read and the presence test disagree because they take different routes:
+`o.valueOf` resolves statically against the checker's apparent type, while `in`
+folds from own struct fields and then asks the runtime `__extern_has`, which
+walks `$Object.$proto` — and an ordinary object's `$proto` is `null`, because
+%Object.prototype% is a `$NativeProto`, not an `$Object`. That is the
+`$Object.$proto` vs `$NativeProto` wall this file already prices. The failure is
+easy to miss because the spelling one reaches for when checking (`o.valueOf`) is
+the one that was never broken.
+
+**Change.** New module `src/codegen/object-proto-name-in.ts` carries the §20.1.3
+name set and the receiver-shape predicate; `binary-ops-in.ts` gets a two-line
+consult where `has` is computed. `in` does not need the prototype OBJECT, only
+its NAME SET, which is fixed by the spec — so this costs one membership test
+instead of the priced representation change.
+
+Deliberately bounded:
+
+- **Only `in`.** `hasOwnProperty` / `Object.hasOwn` / `propertyIsEnumerable` are
+  OWN-only by spec and are untouched — widening those is the #4017 −684 blast
+  radius recorded above.
+- **Affirmative-only.** It turns a wrong `false` into `true` and can never turn a
+  `true` into `false`.
+- **`for…in` cannot gain keys.** The enumerator builds its key list from
+  `__object_keys_forin` and only re-checks liveness with `__extern_has` (#2066),
+  so a name that was never enumerated cannot appear.
+- **Standalone-only**, so the js-host lane — where `__extern_has` already answers
+  correctly — stays byte-identical (the #1374 regression guard).
+- **A null-prototype receiver stays wrong, and was already wrong.** Measured on
+  base: `"toString" in Object.create(null)` ALREADY answered `true` via the
+  non-`$Object` boundary arm. The fold makes the ordinary receiver agree with the
+  exotic one rather than the reverse; it introduces no new disagreement.
+
+**Flip: `language/expressions/in/S8.12.6_A2_T1` FAIL → PASS.**
+
+### Measured, both slices together
+
+40-row T4 set: **17/40 base → 18/40 after**; the diff is exactly one row
+(`S8.12.6_A2_T1` fail→pass), 39 identical.
+
+Control: 75 neighbours weighted toward what these touch — 10
+`language/expressions/in`, 3 `delete`, 7 `for-in`, 11
+`built-ins/Object/prototype/{hasOwnProperty,isPrototypeOf,propertyIsEnumerable,
+toString,valueOf,toLocaleString}`, 9 other `built-ins/Object`, 7
+`expressions/object`, 7 `statements/variable`, plus assignment / addition /
+function / typeof / strict-equals / instanceof / with / switch / Array / String /
+Boolean / Function rows. **57/75 base, 57/75 after — identical set**, verified by
+file-copy A/B (never `git stash`). One listed path does not exist in this test262
+checkout and is reported as such rather than counted.
+
+### Left open, with the reason (measured, not assumed)
+
+- **`S11.1.5_A2`** — now fails at CHECK#2 instead of CHECK#1. `var object` is
+  redeclared 12× with object literals whose *field* representations disagree
+  (`{prop: boolean}` vs `{prop: Boolean-wrapper}` vs `{prop: function}`), and the
+  clash is invisible to a tag-level analysis: the checker reports `x` as
+  `boolean` at EVERY one of those literals, because a widened binding keeps its
+  first declaration's checker type. Closing it needs the object-literal FIELD
+  slot to widen when its initializer reads a representation-widened binding — the
+  `moduleGlobalIsDynamicButStaticallyPrimitive` idea applied to struct fields.
+  That is a shape-analysis change, not a seeding change.
+- **`S8.12.6_A2_T2` CHECK#2** — `Robin.prototype = __proto; "phylum" in new
+  Robin()`. Measured: `Robin.prototype === __proto` is **true** while
+  `Object.getPrototypeOf(r) === __proto` is **false**, and `r.phylum` still reads
+  `"avis"` (static route). So the per-fnctor prototype global is right and the
+  INSTANCE SEED loses it — `new F()` → `compileFnctorNewAsObject` →
+  `__object_create(F.prototype)`. The inline spelling
+  (`Robin2.prototype = {phylum:"avis"}`) answers `true` only because TS models
+  that literal in the instance type; its runtime `$proto` is equally wrong. Same
+  family as the priced `$proto` wall, one receiver further in.
+- **`S11.8.7_A2.4_T1`** — `(NUMBER = Number, "MAX_VALUE") in NUMBER`: presence on
+  a builtin CONSTRUCTOR object, a different substrate (namespace-object members)
+  from either slice above.
+- **`10.4.3-1-83-s` / `-84-s` / `S10.2.1_A4_T1` / `S10.2.1_A4_T2`** — the
+  provider-realm `%Function%` identity wall (T7). Fenced, not attempted; they are
+  the same defect the build canary reports.
+- **`10.4.3-1-103/104/106`** — sloppy-mode `ToObject(thisArg)` for a primitive
+  receiver (`(5).x` where the `Object.prototype` getter returns `this`).
+  Untouched by this lane.
+- **`10.4.3-1-102-s` / `-102gs`** — `illegal cast in __module_init` on
+  `"ab".replace("b", function(){…})`. Untouched.
+- **`annexB/language/function-code/*` (4 rows)** — B.3.3 sloppy block-level
+  function hoisting: 3 fail `illegal cast in f()`, 1 fails to VALIDATE
+  (`__call_fn_0`: `not enough arguments on the stack for call_ref`). A distinct
+  hoisting/closure-arity defect, sized beyond this slice.
+- **`expressions/call/11.2.3-3_3/_4/_8`** and
+  **`expressions/object/11.1.5-0-1/-0-2`** — untouched; the first three are
+  §13.3.6 TypeError shape, the last two are object-literal accessor ordering.
+
+### Wave-5 T4 addendum — measured diagnoses for the two biggest rows left open
+
+Both were reduced to a standalone repro on the committed head; neither is
+attempted here, and both are stated so the next lane does not have to re-find
+them.
+
+#### annexB `function-code` (4 rows) — a FunctionDeclaration binding cannot hold a non-function
+
+`annexB/language/function-code/block-decl-func-block-scoping` (and the
+`switch-case` / `switch-dflt` twins) fail with `RuntimeError: illegal cast in
+f()`. The body is §B.3.3's shape:
+
+```js
+{
+  function f() { initialBV = f; f = 123; currentBV = f; return "decl"; }
+}
+```
+
+`f = 123` writes a NUMBER into a binding whose Wasm slot is the closure struct.
+Measured, on this head:
+
+| shape | result |
+| --- | --- |
+| block-scoped `function f(){ … f = 123 … }` | **`RuntimeError: illegal cast`** — hard trap |
+| function-scoped `function g(){ g = 123; … }` | **silently ignored** — `typeof g` stays `"function"`, `g` still the closure |
+| function-scoped `function h(){…}; h = 7` | **silently ignored** — same |
+
+This is the same "one binding, two representations" family as slice T4-D, but
+for a **FunctionDeclaration** binding rather than a `var`, and at FUNCTION as
+well as module scope. Two consequences for whoever picks it up: the silent arm
+is the more dangerous one (no trap, wrong answer), and the widening analyses
+that exist today (#4204/#4206 and T4-D) all key on `ts.VariableDeclaration`, so
+none of them can see this declaration kind at all.
+
+The fourth row, `block-decl-func-skip-arguments`, is a different defect: the
+module does not VALIDATE — `Compiling function #515:"__call_fn_0" failed: not
+enough arguments on the stack for call_ref`.
+
+#### `expressions/call/11.2.3-3_{3,4,8}` — §13.3.6.1 evaluation order, and it only reproduces UNDER THE HARNESS
+
+The bare shapes are all correct on this head. `o.bar()`, `o.bar.gar()`,
+`p.n()` (a number-valued property) and `this.bar()` each throw a real
+`TypeError`, and an inline `(function(){ this.bar(foo()); })()` throws too.
+
+The rows still fail, and the reason is worth recording because it defeats the
+obvious probe:
+
+- **`11.2.3-3_3`** — the TypeError IS thrown, but `fooCalled` is `true`. §13.3.6.1
+  evaluates the callee reference before the arguments; this compiler evaluates
+  the arguments first, so `foo()` runs before `o.bar.gar`'s access throws. An
+  ordering change in call codegen, not a missing check.
+- **`11.2.3-3_4` and `_8`** — these report `Expected a TypeError but got a
+  Test262Error`, i.e. the call did NOT throw. Reproduced only when the callback
+  is handed to the ORIGINAL test262 `assert.throws` (`.tmp/probe/c8c.js`): the
+  identical body invoked through a local `runner(fn)`, through a parameter,
+  through an inline function-expression argument, or as an IIFE all throw
+  correctly. So the defect is in how the compiled harness's `assert.throws`
+  invokes its callback, not in the member-call check — and any probe that does
+  not go through the real harness will report the bug as absent.
