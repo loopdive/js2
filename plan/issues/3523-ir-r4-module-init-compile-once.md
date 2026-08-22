@@ -5,8 +5,8 @@ status: in-progress
 sprint: current
 created: 2026-07-21
 updated: 2026-08-22
-assignee: ttraenkler/fable-lead
-branch: claude/issue-3523-r4-module-init
+assignee: ttraenkler/codex-ir-lead
+branch: codex/3523-r4-statement-module-init
 priority: critical
 horizon: xl
 complexity: XL
@@ -658,6 +658,138 @@ paired with a control that must behave differently.
 larger than this slice. The next slice in the issue's own order is gap 2
 (extend the selector past pure declarations), which is the prerequisite for
 gap 1 being worth attempting.
+
+## 2026-08-22 next slice plan — exact scalar assignment statement
+
+This is the bounded implementation plan for gap 2 above. It was re-grounded on
+upstream `main` `2a6ed4eab0941591ba39678f4743c3268568d693` after the previous
+lane handover. The stale `ttraenkler/fable-lead` assignment had no live branch
+or registered worktree and is now reconciled to `ttraenkler/codex-ir-lead` on
+branch `codex/3523-r4-statement-module-init`. Open-PR and touched-issue-file
+scans found no competing #3523/#3142 implementation.
+
+### Measured base and exact target
+
+For the source `let total = 0; total = total + 1;`, selection already claims
+the synthetic module-init unit and the #3142 overlay genuinely emits the IR
+body. The remaining failure is only Prepared routing:
+
+- `collectModuleInitPopulation` contains one `VariableStatement` and one
+  `ExpressionStatement`;
+- the semantic plan contains one exact mutable-`let` binding intent and two
+  evaluations (`variable-initializer`, then `statement`); and
+- `preparedExactLexicalModuleInit` incorrectly requires
+  `bindings.length === population.length` and zips bindings, evaluations, and
+  statements by one ordinal.
+
+All five measured base modes compile successfully with one `emitted@patch`
+outcome, `legacyBodyEmitted: true`, `irBodyEmitted: true`, and exactly one
+`module-init-pass1` plus one `module-init-pass2` call. The raw/gzip/WAT sizes
+are host start **97/98/258**, host deferred **113/102/282**, standalone start
+**719/387/5825**, standalone deferred **735/397/5849**, and WASI
+**794/437/6256**.
+
+The candidate moves only the four already-supported host/standalone
+start/deferred adapters to one Prepared component with
+`legacyBodyEmitted: false`, `irBodyEmitted: true`, and zero calls to both direct
+passes. WASI remains the explicit unchanged overlay control
+(`legacy=1`, `IR=1`, pass1/pass2 `1/1`) until gap 3. This slice does not attempt
+the generic one-pass Unsupported fallback from gap 1.
+
+### Production change
+
+Keep the edit bounded to
+`src/codegen/index.ts::preparedExactLexicalModuleInit` (and its immediately
+adjacent evidence comment/type). The existing module-init inventory, semantic
+plan, selector, AST lowering, integration, Program ABI preallocation, and
+declaration routing already support this exact statement. Do not change
+`src/ir/module-init-plan.ts`, `src/ir/module-init.ts`, `src/ir/select.ts`,
+`src/ir/from-ast.ts`, `src/ir/integration.ts`, or
+`src/codegen/declarations.ts` in this slice.
+
+1. Reconcile the population and evaluation stream by evaluation ordinal while
+   consuming binding intents independently by `declarationOrdinal`. Keep the
+   existing parity requirements over the complete statement population.
+2. Preserve the current declaration policy exactly: one initialized,
+   single-Identifier `let` or `const`; exact range/kind/mutability/TDZ/global
+   and TDZ binding IDs; and one matching `variable-initializer` evaluation.
+3. Add one capability arm for
+   `ExpressionStatement(BinaryExpression(Identifier, EqualsToken,
+   BinaryExpression(Identifier, PlusToken, NumericLiteral)))`. Both
+   identifiers must resolve through `ctx.oracle.declarationsOf` to the same
+   earlier admitted source `VariableDeclaration`. Its binding must be a mutable
+   initialized `let` with the exact planned global binding ID. The matching
+   evaluation must be `kind: "statement"`, have the exact
+   source/statement ordinal and source range, carry no class ID or binding IDs,
+   and be consumed once in source order.
+4. Permit zero or more such assignments after admitted declarations without
+   folding them into an initializer. The declaration initializes storage and
+   transitions TDZ once; the later statement reads and writes the same Program
+   ABI global without touching TDZ again.
+5. Fail closed before preparation on const writes, `+=`/`++`, forward or
+   unknown targets, different-binding RHS, property/element LHS, aliases or
+   ambiguous declarations, calls/new/await/yield, non-numeric RHS, function or
+   class syntax, destructuring/`var`/multiple or missing initializers, plan
+   gaps/parity drift/live seeds, and every existing fast/WASI/strict-host or
+   incompatible-provider lane. A mismatch after successful preparation
+   remains an Invariant; it may not resurrect the overlay fallback.
+
+The predicate is structural and parameterized over the declaration and literal;
+`total` is a fixture label, never an allowlist. Any LOC/function growth must be
+factored into a bounded helper or granted in this issue frontmatter; shared
+baseline files are not edited.
+
+### Mutation-proof acceptance
+
+Extend `tests/issue-3523-ir-module-init-compile-once.test.ts`; keep
+`tests/issue-3142.test.ts` as an adjacent gate unless an existing invariant
+requires updating.
+
+- Assert the exact plan shape: one binding, two evaluations in source order,
+  first evaluation carrying the binding ID and second carrying none, with
+  aligned `2/2` planned/legacy parity.
+- Across host start/deferred and standalone start/deferred, require one
+  Prepared outcome, `legacy=false`, `IR=true`, a non-empty component ID, zero
+  post-claim errors, and the genuine `<module-init>` IR artifact. Started
+  lanes read `1` immediately. Deferred lanes throw on the exported read before
+  `__module_init`, then read `1`; later reads remain `1` because entry calls do
+  not rerun initialization. Do not claim repeated calls to the deferred init
+  export are idempotent.
+- With `JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY=1`, all four admitted
+  compiles must succeed. `total += 1`, a const target, a call RHS, and WASI must
+  reach the direct route and fail under the same poison, proving the seam is
+  live.
+- The observable value `1` is the statement mutation proof; initializer-only
+  behavior would return `0`. Temporarily disabling the new arm during review
+  must restore `legacy=1, IR=1` and make the poisoned positive fail. This is
+  review evidence, not a shipped environment switch.
+- Reuse `JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER` with the statement-bearing
+  source: the Prepared candidate must fail fatally with no publishable binary,
+  while an Unsupported control retains its normal route.
+- Pin fail-closed runtime/route controls for const assignment, `+=`, assignment
+  before declaration, a different-binding RHS, property LHS, local-call RHS,
+  `var`, destructuring, multiple declarations, and WASI.
+
+Compare base and candidate in fresh processes with identical source/options.
+Report the outcome tuple, pass1/pass2 counts, runtime/TDZ timing, raw/gzip/WAT,
+SHA-256, and deterministic repeat for each lane. Binary identity or shrinkage
+is not assumed: if allocation order changes, diff the initializer/start/export
+shape and explain it. Routing and runtime behavior are the acceptance bar.
+
+### Coordination and gates
+
+PR #4746 touches `src/codegen/index.ts`; it must land and this branch must
+rebase before the production edit/final validation. PR #4747 has no direct
+target-file overlap. The fast-`any[]` ABI slice #4615 may run in parallel only
+while it stays outside this module-init function.
+
+Run the focused #3523 + #3142 files first with
+`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`, then the issue's seven-file adjacent
+matrix. Run hybrid and strict IR-only reports, fallback, typecheck, lint,
+Prettier, LOC/function/oracle gates, and all **eight** equivalence shards in
+fresh processes. Require no new regression and do not rewrite shared Test262,
+equivalence, LOC, or function baselines. Full Test262 remains a merge-queue
+gate.
 
 
 ## File ownership and locks

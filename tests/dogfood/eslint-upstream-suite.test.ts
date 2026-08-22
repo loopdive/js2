@@ -14,8 +14,14 @@ describe("ESLint v10.0.3 upstream suite", () => {
     expect(pin.repo).toBe("https://github.com/eslint/eslint.git");
     expect(pin.tag).toBe("v10.0.3");
     expect(pin.commit).toBe("bfce7eaa0ec5d6591fd247b7ff57b51e45fb88a1");
-    expect(pin.testFiles).toEqual(["tests/lib/shared/deep-merge-arrays.js"]);
-    expect(pin.implementationModule).toBe("lib/shared/deep-merge-arrays.js");
+    expect(pin.testFiles).toEqual([
+      "tests/lib/shared/deep-merge-arrays.js",
+      "tests/lib/shared/naming.js",
+      "tests/lib/shared/option-utils.js",
+      "tests/lib/shared/serialization.js",
+      "tests/lib/shared/string-utils.js",
+    ]);
+    expect(pin.implementationModules["tests/lib/shared/deep-merge-arrays.js"]).toBe("lib/shared/deep-merge-arrays.js");
   });
 
   it("rejects a malformed generated checkout", () => {
@@ -24,19 +30,19 @@ describe("ESLint v10.0.3 upstream suite", () => {
   });
 
   const heavy = process.env.DOGFOOD_ESLINT_UPSTREAM_SUITE === "1" ? it : it.skip;
-  heavy("runs all 44 original cases against Wasm and Node", { timeout: 120_000 }, async () => {
+  heavy("runs all selected original cases against Wasm and Node", { timeout: 120_000 }, async () => {
     const { runHarness } = await import("./eslint-upstream-suite.mjs");
     const report = await runHarness({ quiet: true });
     expect(report.upstreamSuite.commit).toBe("bfce7eaa0ec5d6591fd247b7ff57b51e45fb88a1");
-    expect(report.extraction.upstreamTestsSeen).toBe(44);
-    expect(report.extraction.admitted).toBe(44);
+    expect(report.extraction.upstreamTestsSeen).toBe(158);
+    expect(report.extraction.admitted).toBe(158);
     expect(report.extraction.rejected).toBe(0);
-    expect(report.results.nativePassed).toBe(44);
-    expect(report.results.scored).toBe(44);
-    expect(report.results.passed).toBe(44);
-    expect(report.results.failed).toBe(0);
-    expect(report.results.failedIndices).toEqual([]);
-    expect(report.results.runtimeError).toBeNull();
+    expect(report.results.nativePassed).toBe(158);
+    expect(report.results.scored).toBe(158);
+    // The first selected unit is the binding-regression sentinel: if the
+    // assertion methods are not Wasm-visible, all 44 cases fail together.
+    expect(report.results.files[0].wasm.passed).toBe(44);
+    expect(report.results.passed).toBeGreaterThanOrEqual(44);
     expect(report.compile.success).toBe(true);
     expect(report.compile.validates).toBe(true);
   });

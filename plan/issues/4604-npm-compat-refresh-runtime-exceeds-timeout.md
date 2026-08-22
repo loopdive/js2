@@ -3,7 +3,7 @@ id: 4604
 title: "npm-compat refresh runtime exceeds its 180-min timeout — dashboard stale since 2026-08-20 18:45Z"
 status: in-progress
 created: 2026-08-21
-updated: 2026-08-21
+updated: 2026-08-22
 assignee: loopdive/claude
 priority: critical
 feasibility: medium
@@ -17,6 +17,10 @@ related: [3988, 4585, 4586, 4602]
 origin: "Check-in while verifying the acorn/clsx recovery (#4602): 39 consecutive npm-compat-refresh runs (683-721) have failed to publish; the last successful run is 682 (2026-08-20 18:45Z), which is exactly the snapshot still showing the pre-fix collapse on the website."
 files:
   - .github/workflows/npm-compat-refresh.yml
+  - scripts/generate-npm-compat-report.mjs
+  - scripts/lib/npm-compat-partials.mjs
+  - scripts/merge-npm-compat-partials.mjs
+  - tests/npm-compat-partials.test.ts
 ---
 
 # #4604 — npm-compat refresh runtime exceeds its timeout; dashboard stale >22h
@@ -64,11 +68,21 @@ same stale artifact.
 
 ## Status
 
-- **S1 landed (this PR): `timeout-minutes` 180 → 350.** Run 721's job record
+- **S1 landed previously: `timeout-minutes` 180 → 350.** Run 721's job record
   settled the diagnosis: its generate step was killed at exactly 180:00
   (16:09:17 → 19:09:01Z), promotion steps never reached — a pure timeout, the
   fourth in a row (700/705/714/721). 350 sits just under the 6h GitHub-hosted
   hard cap. The structural bound and the staleness alert below remain OPEN.
+- **S2 implemented in the follow-up workflow PR:** the serial package walk is
+  split into seven `fail-fast: false` matrix groups. Each worker writes a focused
+  report; a read-only coordinator validates the complete package set, merges
+  the rows/history, and only then enters the existing promotion path. A
+  package failure therefore cannot cancel sibling measurements, and the
+  active refresh wall clock is bounded by the slowest group rather than the
+  sum of all upstream suites. `cancel-in-progress` remains `false`: pending
+  runs may still be coalesced by GitHub, but the active run is no longer a
+  multi-hour serial bottleneck that repeatedly times out before publishing.
+  The implementation is in [#4745](https://github.com/loopdive/js2wasm/pull/4745).
 
 ## Fix directions (pick during implementation)
 
@@ -90,12 +104,12 @@ same stale artifact.
 
 ## Acceptance criteria
 
-- [ ] One `npm-compat-refresh` run completes end-to-end and its promotion PR
+- [ ] One matrix-based `npm-compat-refresh` run completes end-to-end and its promotion PR
       merges; the committed `npm-compat-perf.json` shows acorn and clsx
       standalone-dynamic recovered (acorn back in its ~0.10–0.15 band per
       #4602, clsx ~0.12–0.2).
-- [ ] The workflow's runtime has headroom against its timeout again (either a
-      raised timeout with measured margin, or a bounded/parallelized
-      generation).
+- [ ] The workflow's matrix runtime has headroom against its timeout; each
+      package group emits a partial report and the coordinator refuses to
+      publish if any expected package is missing or duplicated.
 - [ ] Staleness of the committed artifact is observable (guard or alert),
       not only discoverable by manual audit.
