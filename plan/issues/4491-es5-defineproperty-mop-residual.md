@@ -3731,3 +3731,149 @@ Gotchas for the next lane in this area:
 - The worktree's `test262/` symlink is recreated as a dead cross-worktree
   symlink farm between Bash calls; re-link it in the SAME invocation as any
   probe run.
+
+## Wave-5 lane T5 — slice T5-A: a module-global array literal was DISCARDED (2026-08-22)
+
+Base `7dd91b7bad`, `--target standalone`, in-process `runTest262File` probe.
+The follow-up wave-4 lane J owed as "module-global array-carrier corruption".
+
+### What was wrong — the initializer was never compiled
+
+`collectShapes` (shape-inference.ts) classifies a module-level variable as
+"array-like" when it sees BOTH a numeric-index write and a `length` write on
+it — built for `var obj: any = {}; obj.length = 3; obj[0] = 10;`.
+`applyShapeInference` then retypes that module global to a concrete vec struct,
+and the declaration site in `statements/variables.ts` seeded it with an EMPTY
+vec and `continue`d — **without compiling `decl.initializer` at all**.
+
+The two signals are also exactly what ordinary ES5 array code emits, so:
+
+```js
+var x = [0, 1, 2];
+x[4294967294] = 4294967294;   // numeric-index write
+x.length = 2;                 // "length" field write
+x[1];                         // 0 — the literal was thrown away
+```
+
+`[0, 1, 2]` was replaced by `{length: 0, data: array.new_default(4)}` and every
+element read answered the zero (or `NaN`, read into an f64 slot) — including
+reads that appear textually BEFORE both writes, since the substitution happens
+at the DECLARATION. Confirmed by WAT diff on the one-line A/B: with the `length`
+write the module init emits `i32.const 0 / i32.const 4 / array.new_default`,
+without it `f64.const 0 / f64.const 1 / f64.const 2 / array.new_fixed 3 3`.
+
+Measured isolations, all on this head, all reproducing lane J's report:
+
+| source (module scope)                    | `x[1]` before | after |
+| ---------------------------------------- | ------------- | ----- |
+| `x[100]=7; x.length=2`                   | `NaN` / `0`   | `1`   |
+| `x[3]=7; x.length=2`                     | `0`           | `1`   |
+| `x.length=2; x[100]=7` (order swapped)   | `0`           | `1`   |
+| `x[1]=9; x.length=2` (non-GROWING store) | `9` ✓         | `9`   |
+| `x[3]=7` alone                           | `1` ✓         | `1`   |
+| `x.length=2` alone                       | `1` ✓         | `1`   |
+| the whole thing in a function expression | `1` ✓         | `1`   |
+| `y.length=2` (length write on a SIBLING) | `1` ✓         | `1`   |
+
+The last four are why it never showed: `collectShapes` walks module scope only,
+and needs BOTH signals on the SAME name — so the shapes that got checked were
+the ones that were already right.
+
+### The change
+
+New module `src/codegen/shape-vec-literal-seed.ts` owns the seed.
+`emitShapeInferredVecInit` carries the literal's elements when the initializer
+is a non-empty array literal with no spread and no elision, by calling
+`compileArrayLiteral` with its `forcedElementType` parameter — which re-keys the
+literal through `getOrRegisterVecType` to the SAME `vecTypeIdx` the global was
+retyped to, so the seed cannot disagree with the global's declared type. Every
+other initializer keeps the empty-vec seed byte-identically.
+`statements/variables.ts` loses the inline emission and gains the call plus the
+`ctx.moduleGlobals.get(name)` re-read the generic arm next to it already does
+(compiling a literal can shift globals via `addStringConstantGlobal`).
+
+All four gates clean — no LOC / func / coercion / oracle allowance needed.
+
+### Measured
+
+| row | before | after |
+| --- | ------ | ----- |
+| `built-ins/Array/length/S15.4.5.2_A3_T4` | `x[1]` is `0`, expected `1` | **PASS** |
+
+Control, file-copy A/B against the base `variables.ts`: a 150-row deterministic
+sample of the 630 files under `built-ins/Array/{length,prototype/{join,push,pop,
+slice,indexOf,concat,toString}}`, `language/statements/for-in` and
+`built-ins/Object/keys` — **93/150 pass on base, 93/150 after, and all 150
+statuses identical row-for-row.** Zero regressions.
+
+### Declined in the same family, with reasons
+
+- **Spread and elision initializers** (`var x = [...a]` / `var x = [0, , 2]`)
+  keep the empty seed, i.e. they are still lossy. A spread needs the runtime
+  concat/grow machinery rather than a constant seed, and an elision is a HOLE
+  whose faithful representation is the f64-hole value-representation wall
+  (`$Hole` is externref-only) — seeding `0` there swaps one wrong answer for
+  another. Neither shape appears in the ES5 rows this slice targets.
+- **`built-ins/Array/S15.4_A1.1_T10`** — still the sparse-STORAGE wall lane J
+  priced (`x[k-2]` must round-trip a value at index `4294967294`). Verified
+  unchanged by this slice: same `array element access out of bounds` trap
+  before and after.
+
+## Handover (T5, team-dev-3, 2026-08-22)
+
+Branch `worktree-agent-abfb03fcc1e8b8df1`, worktree
+`/home/user/js2/.claude/worktrees/agent-abfb03fcc1e8b8df1`. Not pushed, no PR.
+
+**INTEGRATION-READY — gates green, control clean**
+
+| slice | rows | control |
+| --- | --- | --- |
+| T5-A module-global array-literal seed | `built-ins/Array/length/S15.4.5.2_A3_T4` fail → **pass** | 150 rows, 93/150 both sides, all 150 statuses identical |
+
+Files: `src/codegen/shape-vec-literal-seed.ts` (new),
+`src/codegen/statements/variables.ts` (dispatch only).
+
+**WIP — do NOT integrate as-is**
+
+| slice | state |
+| --- | --- |
+| T5-C prototype-installed ToPrimitive | behaviour verified (`String(q)` / `"" + q` on an `F.prototype.toString` instance; `slice/S15.5.4.13_A1_T5`'s first blocker cleared), gates green — but the 150-row ToString-terminal control moves `built-ins/Error/prototype/no-error-data` pass → fail with a compile-time REFUSAL. Needs the demand gate described in its section above. |
+
+Files: `src/codegen/proto-method-to-primitive.ts` (new),
+`src/codegen/class-to-primitive.ts` (wiring only). Its pre-edit copy is
+`.tmp/base-class-to-primitive.ts`, so reverting is one `cp`.
+
+**Reverted, with the measurement on record above**: the T5-B `hasOwnProperty`
+numeric-vec index widening — one row regresses, blocked by the f64-hole wall.
+The change itself was a single gate, `elemIsRef` → `vecInfo !== null`, in
+`compilePropertyIntrospection`; `.tmp/base-object-ops.ts` is the pre-edit copy.
+The literal-`toString` predicate half is likewise reverted;
+`.tmp/base-member-override-scan.ts` is its base copy.
+
+**Exact next steps, in value order**
+
+0. **Demand-gate the T5-C tail** (or revert it) — see its section. Until then
+   only T5-A is integrable.
+1. **The borrowed-method receiver-ToString path** — blocks
+   `slice/S15.5.4.13_A3_T4` and its charAt / charCodeAt / indexOf / lastIndexOf /
+   substring siblings (9 `__FACTORY.prototype` files under
+   `built-ins/String/prototype/`). Repro pair is already written:
+   `.tmp/probe/d3i.js` vs `.tmp/probe/d3j.js`. Find why the stored-borrowed-method
+   call does not demand `ensureAnyToStringHelper`.
+2. **The decline target for a literal-declared `toString`** — make the
+   non-static route answer the own slot instead of `null`, then re-apply the
+   predicate half (one function, ~20 lines, drafted and measured).
+3. **Length-shrink element deletion on an f64 vec** is the real blocker under
+   both T5-B and lane J's concat gate; both wait on the value representation.
+
+**Gotchas for the next lane in this worktree**
+
+- `test262/` is restored as an empty real directory by the harness after most
+  tool calls — `.tmp/p.sh` / `.tmp/rl.sh` re-link it on every invocation, so run
+  probes through those, never bare `npx tsx`.
+- `compileSource` rejects `{ standalone: true }`; use `{ target: "standalone" }`
+  (`.tmp/wat.mts` does).
+- Probe harness: `.tmp/run.mts <abs.js | path-under-test262/test>`,
+  `.tmp/runlist.mts <list> <out>`, `.tmp/cmp.mts <base> <after>`,
+  `.tmp/mk-control.mts` / `.tmp/mk-grep.mts` / `.tmp/sample.mts` to build row
+  lists. Every row list and both A/B result sets are left in `.tmp/`.

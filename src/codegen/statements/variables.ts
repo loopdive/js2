@@ -13,6 +13,7 @@ import { emitUndefined } from "../expressions/late-imports.js";
 import { needsTdzFlag, resolveWasmType, varBindingNeedsExternrefForUndefined } from "../index.js";
 import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
 import { widenedVarKeyFromDecl } from "../widened-var-key.js";
+import { emitShapeInferredVecInit } from "../shape-vec-literal-seed.js"; // (#4491) module-global array-carrier seed
 import {
   objectLiteralIsStandaloneAnyObjectCarrier,
   objectLiteralSpreadTakesHostPath,
@@ -1619,15 +1620,14 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // name) must bind to the local, so suppress the module-global store here.
     const moduleGlobalIdx = hasLocalShadow || !bindsModuleGlobal ? undefined : ctx.moduleGlobals.get(name);
     if (moduleGlobalIdx !== undefined) {
-      // Shape-inferred array-like: compile {} as empty vec struct
+      // Shape-inferred array-like: seed the vec carrier (#4491 — the seed
+      // CARRIES a `[…]` initializer's elements now; it used to discard them).
       const shapeInfo = ctx.shapeMap.get(name);
       if (shapeInfo && decl.initializer) {
-        // Create an empty vec struct: struct.new(length=0, data=array.new_default(4))
-        fctx.body.push({ op: "i32.const", value: 0 }); // length = 0
-        fctx.body.push({ op: "i32.const", value: 4 }); // initial capacity
-        fctx.body.push({ op: "array.new_default", typeIdx: shapeInfo.arrTypeIdx });
-        fctx.body.push({ op: "struct.new", typeIdx: shapeInfo.vecTypeIdx });
-        fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
+        emitShapeInferredVecInit(ctx, fctx, shapeInfo, decl.initializer);
+        // Re-read the index: compiling the initializer may shift globals via
+        // addStringConstantGlobal (same discipline as the generic arm below).
+        fctx.body.push({ op: "global.set", index: ctx.moduleGlobals.get(name) ?? moduleGlobalIdx });
         // Set TDZ flag to 1 (initialized)
         emitTdzInit(ctx, fctx, name);
         continue;
