@@ -947,3 +947,27 @@ An exploratory `jest-config/src/__tests__/Defaults.test.ts` was not admitted:
 its original package graph requires the unmaterialized pinned `deepmerge`
 dependency, so the Node oracle could not register the callback. That remains a
 concrete dependency-resolution follow-up rather than a Wasm result.
+
+## 2026-08-22 Jest defaults and Node-host seam checkpoint
+
+The original `jest-config/src/__tests__/Defaults.test.ts` callback is now
+admitted. Its assertion body is unchanged; the harness resolves its `defaults`
+named export directly to the defining upstream `Defaults.ts` module so the
+one-line unit does not eagerly load Jest's unrelated full config graph. The
+adapter verifies the pinned `jest-config@30.4.2` source hash, makes the helper's
+ambient `process` binding explicit, and uses the existing `node:os` namespace
+for the cache-directory temporary path. The original `ci-info@4.4.0` and
+`jest-regex-util@30.4.0` package seams are pinned and verified as well.
+
+The exact run now covers **321 callbacks across 25 selected files**. Node
+admits **319/321**, all 25 modules compile and 24 validate (queue-runner is
+still the sole validation finding), and Wasm scores **220/319** with zero
+runtime failures. The unavailable-infrastructure remainder is **2,967
+registrations** from 216 verified files. The earlier deepmerge blocker is
+superseded by this narrower public-entrypoint dependency seam; the old note is
+retained above as the prior measured checkpoint.
+
+The generated `Defaults.js2wasm.ts` and `getCacheDirectory.js2wasm.ts` files
+are adapter copies beside the pinned upstream sources. They are recreated by
+the setup step and are deliberately not written back into the upstream clone,
+so a rerun cannot silently change the source under test.
