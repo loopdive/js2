@@ -179,3 +179,16 @@ same change-set that carries this note:
 Verified 2026-08-21: the exact FYI record passes gc AND standalone through
 `runTest`, the vitest suite is 3/3, equivalence 8/8 shards no new regressions.
 
+## 2026-08-22 hotfix — decl-aware lookup scoped to same-name aliases
+
+PR #4740 merged with an over-broad `nativeGeneratorInfoForDecl`: it scanned
+EVERY registry entry by decl, so a declaration registered under several names
+(class method under its classMemberFuncKey plus a second key from another emit
+site) answered with the other name's state machine — 617 class gen-method
+standalone tests flipped pass→compile_error ('unresolved call target') in the
+merge_group, breaching the #2097 standalone floor. The follow-up PR scopes the
+scan to the requested name's bare key and its ' shadowedN' aliases. The
+`loc-budget-allow` / `func-budget-allow` entries above cover the +8 LOC this
+adds to generators-native.ts. Verified: the 5 named + 20 random of the 617
+flipped tests pass standalone again; equivalence spot-shards clean.
+
