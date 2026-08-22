@@ -1,6 +1,6 @@
 // styled-components 6.4.4 original synchronous utility-unit slice.
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -61,6 +61,11 @@ export async function runHarness({ quiet = false } = {}) {
   const suite = setupStyledComponentsUpstreamSuite();
   const runs = [];
   const versionFixturePath = join(GENERATED_ROOT, "styled-components-version.ts");
+  // First write into GENERATED_ROOT — a focused `--only` run (the #4604 matrix
+  // worker) starts from a clean checkout where nothing else has created it
+  // (mirrors eslint-upstream-suite.mjs). The serial path never reached this
+  // line in CI before the matrix split, which is how the gap shipped.
+  mkdirSync(GENERATED_ROOT, { recursive: true });
   writeFileSync(versionFixturePath, `globalThis.__VERSION__ = ${JSON.stringify(suite.pin.version)};\nexport {};\n`);
 
   log(`[dogfood] styled-components@${suite.pin.version} upstream ${suite.pin.tag} (${suite.pin.commit.slice(0, 12)})`);

@@ -13,6 +13,7 @@ import type { CodegenContext } from "./context/types.js";
 import { buildClosureRefTestArms, collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
 import { buildBuiltinCallableTestArm, hasBrandedBuiltinCarrier } from "./builtin-callable-brand.js";
 import { installCompiledClosureToStringArm } from "./coercion-engine.js";
+import { unshiftCarrierToPrimitiveArms, unshiftDateToStringArm } from "./carrier-to-primitive.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 
 /**
@@ -55,6 +56,11 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
  */
 export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   if (!ctx.nativeStrings) return;
+  // #4564: the Date half must not depend on any of the callable latches below.
+  // Both splices self-gate on their own finalized carrier types/helpers, so run
+  // them before the typeof-only early return.
+  unshiftCarrierToPrimitiveArms(ctx);
+  unshiftDateToStringArm(ctx);
   const baseTypeIdxs = collectClosureBaseWrapperTypeIdxs(ctx);
   const runtimeEvalCallbackTypeIdx = ctx.runtimeEvalInterpretedCallbackTypeIdx;
   const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;

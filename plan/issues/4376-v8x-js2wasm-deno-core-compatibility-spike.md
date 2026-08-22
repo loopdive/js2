@@ -199,13 +199,13 @@ that exposed and then fixed two honest compiler boundaries:
 
 The exact pinned `00_primordials.js`, `00_infra.js`, `02_timers.js`,
 `01_core.js`, `mod.js`, and `hello_world_usage.js` sources now compile as one
-state-sharing standalone/`deno` program. The raw artifact is 3,737,455 bytes
+state-sharing standalone/`deno` program. The raw artifact is 3,975,227 bytes
 with SHA-256
-`e000961469860b2c95fba49396ee44a481722f0b66d80fba482ed99b9f3ff63f`.
+`452d485bd70d7cb8d5d7958e0aebfddf71463a8cb9710de56dffc9ff23f50e85`.
 Target-gated standardized `try_table` lowering lets Wasmtime 47.0.3 precompile
-it to a distinct 58,561,696-byte target-specific artifact with SHA-256
-`61bc65fd26a5b8d493508e7656902a1cca932270e319300ee25681487cfbf417`.
-The ignored precompile/bootstrap test passes 1/1 in 464.92 seconds.
+it to a distinct 62,035,464-byte target-specific artifact with SHA-256
+`05b75d7f1e46f92565c42e5a8a3e336983e7e2b0eecfe4889dadab9075988a5a`.
+The ignored precompile/bootstrap test passes 1/1 in 500.49 seconds.
 
 The Node-side import emulator boots the raw module in two isolated stores.
 Both stores advance through wrapper/module/usage values `42`/`43`/`44`, commit
@@ -359,7 +359,7 @@ cargo test --no-default-features \
   --test js2wasm_spike
 
 V8X_JS2WASM_DENO_CORE_WASM=/private/tmp/deno-core-host-ops.wasm \
-V8X_JS2WASM_DENO_CORE_AOT_OUTPUT=/private/tmp/deno-core-e0009614.cwasm \
+V8X_JS2WASM_DENO_CORE_AOT_OUTPUT=/private/tmp/deno-core-452d485b.cwasm \
 cargo test --no-default-features \
   --features engine_js2wasm,simdutf,js2wasm_runtime_compile \
   --test js2wasm_spike \
@@ -370,17 +370,17 @@ With the pinned Deno workspace dependency redirected to v8x, the strict runtime
 proof is:
 
 ```sh
-V8X_JS2WASM_DENO_CORE_AOT_MODULE=/private/tmp/deno-core-e0009614.cwasm \
+V8X_JS2WASM_DENO_CORE_AOT_MODULE=/private/tmp/deno-core-452d485b.cwasm \
 cargo run -p deno_core --example hello_world
 ```
 
-The current six-source raw bootstrap artifact is 3,737,455 bytes with SHA-256
-`e000961469860b2c95fba49396ee44a481722f0b66d80fba482ed99b9f3ff63f`.
+The current six-source raw bootstrap artifact is 3,975,227 bytes with SHA-256
+`452d485bd70d7cb8d5d7958e0aebfddf71463a8cb9710de56dffc9ff23f50e85`.
 The compiler-side proof boots it in two stores, reaches `42`/`43`/`44` twice,
 records two sums and six prints per store, and executes none of the seven
-deferred imports. Wasmtime precompilation passes 1/1 in 464.92 seconds and
-produces a separate 58,561,696-byte `.cwasm` with SHA-256
-`61bc65fd26a5b8d493508e7656902a1cca932270e319300ee25681487cfbf417`.
+deferred imports. Wasmtime precompilation passes 1/1 in 500.49 seconds and
+produces a separate 62,035,464-byte `.cwasm` with SHA-256
+`05b75d7f1e46f92565c42e5a8a3e336983e7e2b0eecfe4889dadab9075988a5a`.
 The pinned unchanged Deno commit `1d4e6c1` then exits 0 with the exact six lines
 above through real Rust ops. Prior controls remain: the broader focused audit
 passed 109/109 relevant tests; five `issue-1472.test.ts` failures reproduced on

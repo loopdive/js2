@@ -36,12 +36,12 @@ follow-up remains uncommitted on the dirty base recorded below.
 - Exact raw artifact: `/private/tmp/deno-core-host-ops.wasm`; the six pinned
   `00_primordials.js`, `00_infra.js`,
   `02_timers.js`, `01_core.js`, `mod.js`, and `hello_world_usage.js` sources
-  compile to 3,737,455 bytes with SHA-256
-  `e000961469860b2c95fba49396ee44a481722f0b66d80fba482ed99b9f3ff63f`.
-- Precompiled artifact: `/private/tmp/deno-core-e0009614.cwasm`, 58,561,696
+  compile to 3,975,227 bytes with SHA-256
+  `452d485bd70d7cb8d5d7958e0aebfddf71463a8cb9710de56dffc9ff23f50e85`.
+- Precompiled artifact: `/private/tmp/deno-core-452d485b.cwasm`, 62,035,464
   bytes with SHA-256
-  `61bc65fd26a5b8d493508e7656902a1cca932270e319300ee25681487cfbf417`.
-  The exact precompile/bootstrap test passes 1/1 in 464.92 seconds.
+  `05b75d7f1e46f92565c42e5a8a3e336983e7e2b0eecfe4889dadab9075988a5a`.
+  The exact precompile/bootstrap test passes 1/1 in 500.49 seconds.
 - Import trace: exactly nine `v8x:deno` scalar imports plus seven deferred
   Promise/eval imports. The deferred imports are prelinked but not executed.
 - Compiler-side value proof: two isolated Node-hosted stores each advance
@@ -160,8 +160,8 @@ The two-store Node proof calls the Deno bridge exactly two sums and six prints
 per store while calling none of those seven deferred imports.
 
 Target-gated standardized `try_table` lowering retires the Wasmtime loader
-boundary. The 3,737,455-byte raw artifact precompiles under Wasmtime 47.0.3 to a
-separate 58,561,696-byte target artifact. v8x validates the exact sources,
+boundary. The 3,975,227-byte raw artifact precompiles under Wasmtime 47.0.3 to a
+separate 62,035,464-byte target artifact. v8x validates the exact sources,
 loads that artifact, binds its nine scalar imports to Rust, and the pinned
 unchanged `deno_core` process completes with exact output. The remaining
 integration boundaries are general shared object/function identity, module
@@ -235,7 +235,7 @@ cargo test --no-default-features \
   --test js2wasm_spike
 
 V8X_JS2WASM_DENO_CORE_WASM=/private/tmp/deno-core-host-ops.wasm \
-V8X_JS2WASM_DENO_CORE_AOT_OUTPUT=/private/tmp/deno-core-e0009614.cwasm \
+V8X_JS2WASM_DENO_CORE_AOT_OUTPUT=/private/tmp/deno-core-452d485b.cwasm \
 cargo test --no-default-features \
   --features engine_js2wasm,simdutf,js2wasm_runtime_compile \
   --test js2wasm_spike \
@@ -253,7 +253,7 @@ Then run:
 
 ```sh
 cargo check -p deno_core --example hello_world
-V8X_JS2WASM_DENO_CORE_AOT_MODULE=/private/tmp/deno-core-e0009614.cwasm \
+V8X_JS2WASM_DENO_CORE_AOT_MODULE=/private/tmp/deno-core-452d485b.cwasm \
 cargo run -p deno_core --example hello_world
 ```
 
@@ -278,15 +278,15 @@ pnpm exec vitest run \
 
 ## Last validation
 
-- Exact six-source compiler artifact: 3,737,455 raw bytes, SHA-256
-  `e000961469860b2c95fba49396ee44a481722f0b66d80fba482ed99b9f3ff63f`.
+- Exact six-source compiler artifact: 3,975,227 raw bytes, SHA-256
+  `452d485bd70d7cb8d5d7958e0aebfddf71463a8cb9710de56dffc9ff23f50e85`.
   Two stores reach `42`/`43`/`44`, commit two sums and six prints each, reproduce
   the exact `TypeError`/output, and call none of seven deferred imports.
 - Focused exact-bootstrap test: 1/1 passed. Focused realm-carrier regressions:
   6/6 passed.
-- v8x raw-module precompile/bootstrap test: 1/1 passed in 464.92 seconds. The
-  58,561,696-byte `.cwasm` has SHA-256
-  `61bc65fd26a5b8d493508e7656902a1cca932270e319300ee25681487cfbf417`.
+- v8x raw-module precompile/bootstrap test: 1/1 passed in 500.49 seconds. The
+  62,035,464-byte `.cwasm` has SHA-256
+  `05b75d7f1e46f92565c42e5a8a3e336983e7e2b0eecfe4889dadab9075988a5a`.
 - Import trace: exactly nine `v8x:deno` imports plus seven prelinked deferred
   Promise/eval imports; none of the deferred imports executes.
 - Unchanged pinned `deno_core` at `1d4e6c1`: `cargo run` exits 0 and prints the

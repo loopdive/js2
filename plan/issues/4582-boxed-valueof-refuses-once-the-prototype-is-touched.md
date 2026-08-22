@@ -15,6 +15,13 @@ es_edition: 5
 language_feature: boxed-primitives
 goal: es5
 related: [4580, 4119, 2742, 4163]
+# (#4582) Irreducible dispatch residue: the fix lives in the new subsystem
+# module src/codegen/boxed-proto-valueof.ts (~200 lines); what remains in the
+# two god-files is the import plus the member-dispatch arms that route to it,
+# which cannot live anywhere else.
+loc-budget-allow:
+  - src/codegen/array-object-proto.ts
+  - src/codegen/expressions/calls.ts
 origin: "2026-08-20, ES5 standalone push follow-up. Isolated from the `<Boxed>.prototype.valueOf` refusals recorded in #4580. A fix was attempted, measured to produce a WRONG ANSWER, and reverted — see below."
 ---
 

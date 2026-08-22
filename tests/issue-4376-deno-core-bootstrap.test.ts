@@ -54,8 +54,8 @@ describe("#4376 — unchanged deno_core bootstrap graph", () => {
       "mod.js": "0xcb8eac5051e421a4",
       "hello_world_usage.js": "0xd9c8b2cb5b20c3bc",
     });
-    expect(report.bytes).toBe(3_737_455);
-    expect(report.artifactSha256).toBe("e000961469860b2c95fba49396ee44a481722f0b66d80fba482ed99b9f3ff63f");
+    expect(report.bytes).toBe(3_975_227);
+    expect(report.artifactSha256).toBe("452d485bd70d7cb8d5d7958e0aebfddf71463a8cb9710de56dffc9ff23f50e85");
     expect(report.bridgeExports).toEqual([
       "__v8x_read_deno_immediate_info",
       "__v8x_read_deno_tick_info",

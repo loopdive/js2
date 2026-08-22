@@ -755,6 +755,28 @@ semantics before this selection is made publishable. The experiment changes
 only adapter/pin infrastructure; it does not modify ESLint source or test
 expectations.
 
+## 2026-08-22 Jest fake-timer infrastructure checkpoint
+
+The shared Jest/Vitest runner now provides deterministic `jest.useFakeTimers`,
+`jest.useRealTimers`, timer advancement/clearing, async timer aliases, clock
+inspection/setting, and spy cleanup. Fake timers are
+implemented in the test environment rather than replacing the harness's own
+clock, so Wasm async handoff and the Node oracle continue to make progress.
+Bare `setTimeout`/`clearTimeout` names route through the same fake queue, and
+timer spy matchers use a scalar call-count bridge because Wasm function
+properties are not a reliable storage location.
+
+The runner regression exercises scheduling, draining, spy observation, and
+cleanup in both lanes: **1/1 native**, the module compiles and validates, and
+**1/1 Wasm** passes. The unchanged original
+`jest-jasmine2/src/__tests__/pTimeout.test.ts` is now selected. Its **3/3**
+callbacks pass in the Node oracle, compile and validate, and are scored in
+Wasm; all three currently expose compiler/runtime async-function-reference
+failures rather than unavailable infrastructure. The Jest inventory is now
+**237 callbacks across 13 files**, with **235 admitted** and **109/235 Wasm**
+passes. The remaining **3,051 registrations** from 228 verified files remain
+explicitly reported as unavailable infrastructure.
+
 ## 2026-08-22 ESLint assertion-binding checkpoint
 
 The binding mismatch was narrowed to the assertion shim, not the published
@@ -774,3 +796,154 @@ with per-file failure summaries retained in the generated report. The adapter
 is still draft-only until those gaps are either fixed or explicitly scoped in
 follow-up issue slices; they are compatibility findings, not unavailable
 infrastructure.
+
+## 2026-08-22 generic Node host dependency checkpoint
+
+The isolated upstream-suite worker previously forwarded only ten Node builtin
+namespaces. The verified Hono and jsdom source inventories also import
+`node:fs`, `node:fs/promises`, `node:http`, `node:https`, `node:child_process`,
+`node:dns`, `node:vm`, `node:worker_threads`, and related platform modules.
+The host dependency surface is now expanded explicitly for opt-in
+`DOGFOOD_NODE_HOST_DEPS=1` runs, without changing the default web lane or
+standalone compilation. A regression fixture imports `node:fs`, reads its own
+generated source through the real host binding, and instantiates successfully
+through the worker. The same compiler path now removes only exact duplicate
+adapter descriptors (the fs call's numeric coercion used to emit two identical
+`__box_number` entries); descriptors that differ in arity or intent remain
+visible to strict manifest validation. This is host setup coverage only; any
+compiler, validation, or runtime mismatches in the upstream suites remain
+scored as compatibility failures.
+
+Implementation: [PR #4756](https://github.com/loopdive/js2/pull/4756).
+
+## 2026-08-22 Jest internal-package resolution checkpoint
+
+The Jest adapter now materializes the verified `@jest/get-type@30.1.0`
+workspace package in the pinned checkout's `node_modules`. The package metadata
+and source hash are checked against the release-tag source before the test
+starts; the implementation bytes are unchanged. This closes the real package
+name-resolution seam used by `jest-matcher-utils/src/Replaceable.ts` instead of
+rewriting that import to a relative path.
+
+The unchanged `Replaceable.test.ts` is now selected alongside the existing Jest
+utility slice. The verified 30.4.2 inventory registers **251 callbacks across
+13 files**: **249/249** admitted callbacks pass in the Node oracle, all 13
+modules compile and validate, and Wasm scores **124/249**. The two original
+snapshot callbacks remain harness-incompatible and the 125 Wasm failures are
+scored compatibility findings. The remaining **3,037 registrations** from 228
+verified files remain explicitly reported as unavailable infrastructure.
+
+## 2026-08-22 Jest queue-runner package seam checkpoint
+
+The original `jest-jasmine2/src/__tests__/queueRunner.test.ts` file is now
+selected. Its `jest-util` package-name import is materialized as a
+hash-verified ESM adapter exposing the release-tag `formatTime` implementation;
+the six upstream callback bodies and timeout inputs are unchanged. The shared
+Jest transform also strips type-only named imports from the native CommonJS
+normalization path, so the Node oracle registers all six callbacks.
+
+The exact run now covers **257 callbacks across 14 selected files**: Node
+admits **255/255**, all 14 modules compile, 13 validate, and Wasm scores
+**124/255**. The queue-runner module's invalid Wasm is a compiler validation
+finding (`call_ref` received one argument but requires two), not unavailable
+package infrastructure; its six callbacks remain in the denominator and are
+reported as compiler-blocked. The remaining **3,031 registrations** from 227
+verified files remain explicitly reported as unavailable infrastructure.
+
+## 2026-08-22 Jest merged-timer integration checkpoint
+
+After rebasing this package-resolution and queue-runner work onto the landed
+fake-timer infrastructure, the selected inventory includes both the original
+`pTimeout.test.ts` timer unit and `queueRunner.test.ts`. The exact run now
+covers **260 callbacks across 15 selected files**: Node admits **258/258**, all
+15 modules compile, 14 validate, and Wasm scores **120/258**. The one invalid
+queue-runner Wasm module remains a compiler validation finding, while the
+remaining **3,028 registrations** from 226 verified files remain explicitly
+reported as unavailable infrastructure.
+## 2026-08-22 Jest collection-matcher checkpoint
+
+The original `jest-jasmine2/src/__tests__/iterators.test.ts` and
+`itToTestAlias.test.ts` units are now selected without changing their source.
+The shared Jest matcher now distinguishes arrays from array-like objects and
+implements recursive Set/Map equality, matching the collection semantics those
+tests exercise. The exact run covers **242 callbacks across 15 selected
+files**: Node admits **240/240**, all 15 modules compile and validate, and Wasm
+scores **114/240**. The remaining **3,046 registrations** from 226 verified
+files remain explicitly reported as unavailable infrastructure; other Wasm
+failures remain compatibility findings rather than unavailable setup.
+
+## 2026-08-22 Jest registration-API checkpoint
+
+Three original `jest-jasmine2` units are now selected unchanged:
+`itTestError.test.ts`, `todoError.test.ts`, and `hooksError.test.ts`. The shared
+adapter now validates Jest test names and callbacks, implements the `it.todo` /
+`test.todo` argument contract, validates all four lifecycle hooks, and lowers
+Jest's curried `*.each(cases)(name, body)` registration shape to an equivalent
+direct registration call for Wasm. The hook-error unit's dynamic global hook
+lookup is routed through the same named hook functions; its assertion body and
+inputs remain upstream source.
+
+The exact run now covers **283 callbacks across 18 selected files**: Node admits
+**281/283**, all 18 modules compile and validate, and Wasm scores **195/281**.
+The remaining **3,005 registrations** from 223 verified files remain explicitly
+reported as unavailable infrastructure; Wasm failures are compatibility findings,
+not silently skipped tests.
+
+## 2026-08-22 Jest current-main rebase checkpoint
+
+After rebasing the registration-API slice over the landed package-resolution
+and queue-runner work, the exact inventory includes those two earlier files as
+well. It now covers **306 callbacks across 20 selected files**: Node admits
+**304/306**, all 20 modules compile and 19 validate (the queue-runner Wasm
+binary remains the known compiler validation finding), and Wasm scores
+**206/304**. The remaining **2,982 registrations** from 221 verified files are
+still explicitly reported as unavailable infrastructure.
+
+## 2026-08-22 Jest chalk and configuration-unit checkpoint
+
+The Jest checkout now resolves the real pinned `chalk@4.1.2` package name for
+upstream sources. Its installed source hash is verified before materialization;
+the adapter also wires the matching `ansi-styles@4.3.0`,
+`supports-color@7.2.0`, and `has-flag@4.0.0` package seams, including the
+`node:tty` host namespace. Chalk 4's prototype mutation currently lowers to an
+invalid Wasm GC cast, so the adapter preserves the level-0 callable and chained
+style API used by the Jest lane while leaving the color-model path explicitly
+deferred.
+
+The unchanged original `jest-config/src/__tests__/parseShardPair.test.ts` is
+now selected. The exact run covers **315 callbacks across 21 selected files**:
+Node admits **313/315**, all 21 modules compile and 20 validate, and Wasm
+scores **215/313** (98 compatibility failures, zero runtime failures). The
+remaining **2,973 registrations** from 220 verified files are explicitly
+reported as unavailable infrastructure. The nine new parse-shard callbacks
+pass in both lanes; no test body or expected input was rewritten.
+
+## 2026-08-22 Jest global-process and concurrent-registration checkpoint
+
+Two additional original release-tag units are now selected without changing
+their callback bodies: `jest-core/src/__tests__/globals.test.ts` and
+`jest-jasmine2/src/__tests__/concurrent.test.ts`. The generic Jest extractor
+also recognizes the original `test.concurrent.each(...)` registration form and
+routes it through the same per-callback runner; the compatibility lane scores
+results serially because it compares behavior, not Jest's worker scheduling.
+
+The exact run now covers **319 callbacks across 23 selected files**. Node
+admits **317/319**, all 23 modules compile and 22 validate, and Wasm scores
+**218/317**. All three concurrent callbacks pass in Wasm. The globals callback
+runs in both lanes but fails its original `[object process]` assertion because
+the current Wasm host exposes the process binding as a null-shaped value; this
+is retained as a compatibility failure rather than relabeled as unavailable
+infrastructure. The queue-runner module remains the sole invalid Wasm module.
+The remaining **2,969 registrations** from 218 verified files remain explicit
+unavailable infrastructure.
+
+The same checkpoint also admits the original
+`jest-haste-map/src/lib/__tests__/getPlatformExtension.test.js` utility unit.
+Its single callback passes in both lanes. The exact inventory is now **320
+callbacks across 24 selected files**: Node admits **318/320**, 24 modules
+compile and 23 validate, and Wasm scores **219/318**. The unavailable
+infrastructure remainder is **2,968 registrations** from 217 verified files.
+An exploratory `jest-config/src/__tests__/Defaults.test.ts` was not admitted:
+its original package graph requires the unmaterialized pinned `deepmerge`
+dependency, so the Node oracle could not register the callback. That remains a
+concrete dependency-resolution follow-up rather than a Wasm result.

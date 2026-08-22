@@ -53,7 +53,11 @@ export function buildClosureResultBoxing(
   // null through every dynamic consumer (measured: `Object.defineProperty(o,
   // "p", {get: function(){}}); o.p` answered null — 15.2.3.6-4-207 family, and
   // the same for any dynamically dispatched void method's result).
-  if (!returnType) return undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
+  // Return fresh instruction objects: this sequence is spliced into several
+  // dispatch arms, whose finalize walks remap instruction indices in place.
+  if (!returnType) {
+    return undefinedExternInstrs(ctx)?.map((instr) => ({ ...instr })) ?? [{ op: "ref.null.extern" }];
+  }
   if ((ctx.standalone || ctx.wasi) && isAnyValue(returnType, ctx)) {
     const anyToExternIdx = ensureAnyToExternHelper(ctx);
     return anyToExternIdx !== undefined ? [{ op: "call", funcIdx: anyToExternIdx }] : [{ op: "extern.convert_any" }];
