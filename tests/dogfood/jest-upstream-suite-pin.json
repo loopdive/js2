@@ -36,7 +36,10 @@
     "packages/jest-watcher/src/lib/__tests__/formatTestNameByPattern.test.ts",
     "packages/jest-watcher/src/lib/__tests__/scroll.test.ts",
     "packages/jest-haste-map/src/__tests__/get_mock_name.test.js",
-    "packages/jest-core/src/__tests__/FailedTestsCache.test.js"
+    "packages/jest-core/src/__tests__/FailedTestsCache.test.js",
+    "packages/jest-watcher/src/lib/__tests__/prompt.test.ts",
+    "packages/jest-environment-node/src/__tests__/globals_cleanup_3.test.ts",
+    "packages/jest-jasmine2/src/__tests__/expectationResultFactory.test.ts"
   ],
   "dependencies": {
     "detect-newline": {
@@ -50,6 +53,32 @@
     "jest-util": {
       "version": "30.4.1",
       "sourceSha256": "ef7320f8e85b76a67a65ec29e9c55e724b7a25de5b2aad75c3ed1c82a53cc7d4"
+    },
+    "graceful-fs": {
+      "version": "4.2.11",
+      "sourcePath": "graceful-fs.js",
+      "sourceSha256": "7da35669b6b6b0e4aafee31674c033f2cebb0c8f9ae010f709dcc185d3f17786"
+    },
+    "pretty-format": {
+      "version": "30.4.1",
+      "files": {
+        "index.ts": "b5bfcf02e9c1d011b5b7067bb2be3106f23cf223263319355353635936800856"
+      }
+    },
+    "ansi-styles": {
+      "version": "5.2.0",
+      "sourcePath": "index.js",
+      "sourceSha256": "c70399f5f872fefec57b56264e9ebb46905bd558e15c53632644afd0da0cede3"
+    },
+    "react-is-18": {
+      "version": "18.3.1",
+      "sourcePath": "cjs/react-is.development.js",
+      "sourceSha256": "f9740ad16de473fec0eef0532319f907a68d19531669e4be72fd64d551fef59b"
+    },
+    "react-is-19": {
+      "version": "19.2.8",
+      "sourcePath": "cjs/react-is.development.js",
+      "sourceSha256": "44314886ebca6d96bdb050470894181ee4d27ab04484153a6918700fdc4f97e3"
     },
     "chalk": {
       "version": "4.1.2",
@@ -80,5 +109,5 @@
       }
     }
   },
-  "_note": "The complete packages/**/__tests__ inventory is verified. The adapter runs the original Jest utility files against their matching release-tag TypeScript implementations, including jest-jasmine2's timer-driven pTimeout and queueRunner tests and jest-matcher-utils' Replaceable object/array/Map paths. Verified package-name seams cover @jest/get-type, jest-util's formatTime and convertDescriptorToString, detect-newline, chalk@4.1.2, ansi-styles, supports-color, has-flag, ci-info@4.4.0, jest-regex-util@30.4.0, node:util/types, node:os, and node:tty; the Jest config Defaults/getCacheDirectory adapters are generated beside pinned upstream files and leave the original test body and checkout untouched. The shared runner supplies deterministic spies, fake timers, ANSI string snapshots, array-aware object-subset assertions, and cleanup between generated modules. The original jest-watcher scroll, jest-haste-map get_mock_name, and jest-core FailedTestsCache units are also admitted without adapters. Runner, filesystem, worker, async, DOM, and larger package graphs remain explicit deferred coverage."
+  "_note": "The complete packages/**/__tests__ inventory is verified. The adapter runs the original Jest utility files against their matching release-tag TypeScript implementations, including jest-jasmine2's timer-driven pTimeout and queueRunner tests and jest-matcher-utils' Replaceable object/array/Map paths. Verified package-name seams cover @jest/get-type, jest-util's formatTime and convertDescriptorToString, detect-newline, chalk@4.1.2, ansi-styles, supports-color, has-flag, ci-info@4.4.0, jest-regex-util@30.4.0, node:util/types, node:os, and node:tty; the Jest config Defaults/getCacheDirectory adapters are generated beside pinned upstream files and leave the original test body and checkout untouched. The shared runner supplies deterministic spies, fake timers, ANSI string snapshots, array-aware object-subset assertions, and cleanup between generated modules. Its spy ledger uses flat scalar and argument vectors because nested WasmGC vectors can become stale across a host boundary. The original jest-watcher scroll, jest-watcher prompt, jest-haste-map get_mock_name, and jest-core FailedTestsCache units are also admitted without adapters. Runner, filesystem, worker, async, DOM, and larger package graphs remain explicit deferred coverage."
 }

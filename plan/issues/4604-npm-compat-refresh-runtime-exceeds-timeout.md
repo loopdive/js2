@@ -107,6 +107,30 @@ same stale artifact.
   going at 06:57Z — react-dom's upstream suite dominates; group re-balancing /
   bounding is follow-up for the roster owners (context: #4751 isolated the
   ReactDOM server/Fizz batches the day before).
+- **S5: the renderers group was not slow — it was HUNG, and this PR fixes the
+  hang class.** Run 778 (id 32559024885, job 96997622379) settled it: the
+  renderers worker printed exactly one line
+  (`[npm-compat] react-dom — package entry + react-dom's own upstream unit
+  tests...` at 07:14:03Z) and then NOTHING until the 350-min timeout kill at
+  13:03:44Z, leaving orphaned node/sh/esbuild processes. Every parallel
+  per-SHA run died identically, so the coordinator never gets a renderers
+  partial and the dashboard cannot heal. Root cause: the React suite added a
+  per-test watchdog in #4683 (`withTimeout`, 2s default,
+  `DOGFOOD_REACT_TEST_TIMEOUT_MS`) around both its native-oracle and
+  compiled-test awaits — but `react-dom-upstream-suite.mjs`, which reuses the
+  React suite's extractor and shim, **never inherited the watchdog**. Its
+  `runNative` awaited each test unbounded, so one upstream test whose native
+  run never settles (a Fizz stream await, an `act` whose scheduler work never
+  drains — the node/edge Fizz lanes are recent) parks the generator forever
+  with zero output. Fixed by moving `withTimeout` into the shared
+  `react-upstream-shim.mjs` and wrapping react-dom's native and legacy
+  compiled awaits (`DOGFOOD_REACT_DOM_TEST_TIMEOUT_MS`, default 2s; the
+  project-lane Wasm side was already bounded by the compile-worker kill).
+  Additionally the generator now arms an unref'd 10s forced-exit after its
+  final artifact writes: a timed-out test can leak live scheduler timer
+  chains (`setTimeout(run, 0)` reschedules while render work remains) that
+  would otherwise keep a FINISHED run's process — and its CI step — alive
+  indefinitely.
 
 ## Fix directions (pick during implementation)
 
@@ -154,3 +178,18 @@ runner instead of being silently replaced while pending; scheduled and manual
 runs continue to serialize on the branch ref. The promotion push uses
 `--force-with-lease` so concurrent SHA lanes cannot overwrite a newer
 promotion branch update. The workflow-shape test now pins both invariants.
+
+## 2026-08-22 renderer timeout follow-up
+
+The first matrix flight confirmed that the `renderers` row itself was the
+remaining timeout bottleneck: it serialized `react-dom`, `jsdom`, and `redux`
+behind one 350-minute job. Run 770's renderer job was cancelled at the job
+ceiling after the other groups had completed, so the smaller jsdom and Redux
+reports were discarded with the long ReactDOM run. The workflow now gives each
+renderer its own `fail-fast: false` matrix cell. A slow ReactDOM measurement can
+still be investigated in isolation, while jsdom and Redux can finish and
+upload their partial artifacts instead of being cancelled as collateral.
+
+Implementation: [PR #4767](https://github.com/loopdive/js2wasm/pull/4767) (the
+Jest infrastructure change and npm-compat reliability follow-up share the
+same branch checkpoint).
