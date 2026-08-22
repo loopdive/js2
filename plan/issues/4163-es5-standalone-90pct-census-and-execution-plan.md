@@ -307,3 +307,18 @@ therefore cannot see:
 A green guard is necessary, not sufficient. Pair it with the prototype-write
 corpus (`.tmp/guard-protowrite.txt`, run isolated), the project's unit suites
 **measured relative to the merge base**, and `check:test-vacuity-shapes`.
+
+### 5. A witness-variable probe can lie — a THROWING probe is decisive
+
+A wave-2 lane reported "the setter is never invoked" for accessors at array
+indices, steered a work plan onto it, then disproved it itself: the setter runs
+on all four receiver shapes. The original probe wrote to a captured outer `var`
+and read it back — and the WRITE-BACK was what failed (a captured literal field
+typed `string` receiving a number), so "the witness never changed" masqueraded
+as "the setter never ran".
+
+The decisive instrument for "does this callback/accessor RUN?" is a **throwing**
+probe: `set: function(){ throw new Error("ran") }`. It cannot be defeated by a
+value-representation defect in the witness path, because control flow is the
+signal. Use the throwing form first; use witness variables only after the
+throwing form has established that the code runs.

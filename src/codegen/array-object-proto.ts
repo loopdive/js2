@@ -38,6 +38,7 @@ import { emitArrayBufferProtoMemberBody, emitDataViewProtoMemberBody } from "./d
 import { emitDateProtoMemberBody } from "./expressions/builtins.js"; // (#3219) reflective Date getter bodies
 import { emitDateReflectiveSetterBody } from "./date-reflective-setters.js"; // (#3174) reflective Date setter/toISOString bodies
 import { allocLocal } from "./context/locals.js";
+import { emitBoxedProtoValueOfBody } from "./boxed-proto-valueof.js"; // (#4582)
 import { emitThisReceiverGuardConvert } from "./property-access.js";
 import { compileArraySliceFromVecLocal } from "./array-methods.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
@@ -900,6 +901,9 @@ function emitStringRequireObjectCoercible(ctx: CodegenContext, fctx: FunctionCon
  * `$__any_to_string` are functions (append-only, no index shift).
  */
 function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
+  // (#4582) `thisStringValue`, not a string OPERATION — boxed-proto-valueof.ts.
+  if (member === "valueOf")
+    return emitBoxedProtoValueOfBody(ctx, fctx, "String") ?? emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
   // (#2742) The superseded-wiring carve-out — see string-proto-tostring.ts.
   if (SUPERSEDED_BY_BORROWED_PATH.has(member)) return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
 
@@ -1749,12 +1753,16 @@ function makeGlue(
             // return null → fall through to the legacy path.
             name === "Date"
             ? (emitDateProtoMemberBody(c, fctx, member) ?? emitDateReflectiveSetterBody(c, fctx, member))
-            : // (#4491) `Object.prototype.isPrototypeOf` has a real answer — the
-              // §20.1.3.3 chain walk. Every other Object member still degrades
-              // to the catchable refusal (`toString`'s classifier lives inside
-              // it).
-              ((name === "Object" ? emitObjectProtoIsPrototypeOfBody(c, fctx, member) : null) ??
-              emitProtoMemberBodyRefusal(c, fctx, name, member)),
+            : // (#4582) `thisNumberValue` / `thisBooleanValue`; see the String twin above.
+              member === "valueOf" && (name === "Number" || name === "Boolean")
+              ? (emitBoxedProtoValueOfBody(c, fctx, name === "Number" ? "Number" : "Boolean") ??
+                emitProtoMemberBodyRefusal(c, fctx, name, member))
+              : // (#4491) `Object.prototype.isPrototypeOf` has a real answer — the
+                // §20.1.3.3 chain walk. Every other Object member still degrades
+                // to the catchable refusal (`toString`'s classifier lives inside
+                // it).
+                ((name === "Object" ? emitObjectProtoIsPrototypeOfBody(c, fctx, member) : null) ??
+                emitProtoMemberBodyRefusal(c, fctx, name, member)),
   };
 }
 

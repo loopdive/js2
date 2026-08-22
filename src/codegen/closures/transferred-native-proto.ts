@@ -39,20 +39,45 @@ export interface TransferredNativeReceiverEntry {
  * Both were per-member clones of one shape rule: every unlisted member stayed
  * silently wrong, and a third clone per member does not scale.
  *
- * A closure is eligible at call arity `N` iff it declares AT LEAST `N + 1`
- * params (the extra slot being `thisValue`). `>=` rather than `===` covers
- * UNDER-APPLICATION, which is the norm here rather than the exception: several
- * members carry an uncounted optional trailing arg (`indexOf`/`lastIndexOf`/
- * `includes`/`startsWith`/`endsWith` all get 2 slots via
- * `STRING_PROTO_METHOD_PARAM_SLOTS` while spec `length` is 1), so the ordinary
- * `s.indexOf(x)` call site supplies one fewer argument than the closure
- * declares. Missing trailing args are padded with the reflective ABI's
- * omitted-arg convention (`ref.null.extern`), which the member bodies already
- * test for alongside the #2106 undefined sentinel.
+ * A closure is eligible whenever it has the `thisValue` slot at all. The arg
+ * mapping in {@link buildTransferredNativeProtoCallInstrs} is already total in
+ * both directions:
  *
- * OVER-application is deliberately NOT claimed here: at arity > declared the
- * generic dispatch already owns the closure, and re-routing it would change
- * behaviour beyond the receiver bug this fixes.
+ *  - UNDER-application is the norm rather than the exception here. Several
+ *    members carry an uncounted optional trailing arg (`indexOf`/`lastIndexOf`/
+ *    `includes`/`startsWith`/`endsWith` all get 2 slots via
+ *    `STRING_PROTO_METHOD_PARAM_SLOTS` while spec `length` is 1), so the
+ *    ordinary `s.indexOf(x)` call site supplies one fewer argument than the
+ *    closure declares. Missing trailing args are padded with the reflective
+ *    ABI's omitted-arg convention (`ref.null.extern`), which the member bodies
+ *    already test for alongside the #2106 undefined sentinel.
+ *
+ *  - OVER-application drops the extra args, which is §10.2.1: a call with more
+ *    arguments than the function declares simply does not bind them.
+ *
+ * (#4492) Over-application USED to be excluded here, on the reasoning that "at
+ * arity > declared the generic dispatch already owns the closure, and
+ * re-routing it would change behaviour beyond the receiver bug this fixes".
+ * What that left in place is the SAME receiver bug this collector exists to
+ * fix, just past a per-member argument-count threshold — the generic dispatch
+ * has no `thisValue` slot, so it shifts every argument one place left and
+ * `thisValue` receives `arg0`. Measured on a `new Boolean` receiver
+ * (`ToString(this)` is `"false"`), each member breaking at exactly
+ * declared-slots + 1:
+ *
+ *     a.split = String.prototype.split;
+ *     a.split("l")            // ["fa","se"]   — correct
+ *     a.split("l", 9, 9)      // ["l"]         — `this` became "l"
+ *
+ *     a.concat = String.prototype.concat;
+ *     a.concat("X","Y","Z","W")      // "falseXYZW"  — correct
+ *     a.concat("X","Y","Z","W","V")  // "XYZWV"      — `this` became "X"
+ *
+ * Both are silent wrong VALUES, not throws. `String/prototype/split/
+ * arguments-are-boolean-expression-function-call-and-null-and-instance-is-
+ * boolean.js` is the test262 row: it passes three arguments to a 2-slot
+ * `split`, so the limit `0` landed in the separator slot and the result had one
+ * element instead of none.
  */
 export function collectTransferredNativeProtoReceivers(
   ctx: CodegenContext,
@@ -61,7 +86,9 @@ export function collectTransferredNativeProtoReceivers(
   const entries: TransferredNativeReceiverEntry[] = [];
   if (!ctx.nativeProtoReceiverClosureStructTypes) return entries;
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-    if (info.paramTypes.length < arity + 1) continue;
+    // At least the `thisValue` slot — the whole point of this arm. The arg
+    // mapping handles both under- and over-application (see the header).
+    if (info.paramTypes.length < 1) continue;
     if (!ctx.nativeProtoReceiverClosureStructTypes.has(typeIdx)) continue;
     // Only the per-(brand, member) META subtype carries the field-3 exact-identity
     // discriminator that the call arm re-checks after its structural `ref.test`.
