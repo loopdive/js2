@@ -374,6 +374,20 @@ function expect(actual) {
       toEqual: function (expected) {
         return Promise.resolve(actual).then(function (value) { __assert(__deepEqual(value, expected), "resolved value mismatch"); });
       },
+      not: {
+        toThrow: function () {
+          return Promise.resolve(actual).then(function (value) {
+            if (typeof value !== "function") return;
+            __assert(__captureThrow(value) === null, "expected resolved function not to throw");
+          });
+        },
+        toThrowError: function () {
+          return Promise.resolve(actual).then(function (value) {
+            if (typeof value !== "function") return;
+            __assert(__captureThrow(value) === null, "expected resolved function not to throw");
+          });
+        },
+      },
     }
   };
 }

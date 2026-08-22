@@ -144,20 +144,22 @@ describe("React upstream test infrastructure", () => {
     }
   });
 
-  it("implements Jest asymmetric object and array matchers in both shim lanes", () => {
+  it("implements Jest asymmetric and promise-negative matchers in both shim lanes", async () => {
     // The matcher implementation is embedded in each generated upstream test;
     // exercise it through the same source string rather than a host-only
     // assertion helper.
     // eslint-disable-next-line no-new-func
     const run = new Function(
       `${REACT_EXPECT_SHIM}
-return function () {
+return async function () {
   expect({ answer: 42, extra: true }).toEqual(expect.objectContaining({ answer: 42 }));
   expect(["a", "b", "c"]).toEqual(expect.arrayContaining(["c", "a"]));
+  await expect(Promise.resolve()).resolves.not.toThrow();
+  await expect(Promise.resolve(function () {})).resolves.not.toThrowError();
   return 1;
 };`,
     )();
-    expect(run()).toBe(1);
+    await expect(run()).resolves.toBe(1);
   });
 
   it("routes the private ReactDOM server helper through the selected module set", async () => {

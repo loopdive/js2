@@ -629,6 +629,11 @@ The upstream test-side `scheduler` import now resolves to the installed
 providing `log`/flush methods without changing the renderer's internal
 scheduler. The infrastructure test verifies both exports.
 
+The matcher shim also now covers the upstream `resolves.not.toThrow()` and
+`resolves.not.toThrowError()` forms. These are promise assertions over the
+test callback result, not a blanket exception suppressor; the focused test
+exercises both a fulfilled non-function and a fulfilled non-throwing function.
+
 ## Permanent test reference
 
 `tests/dogfood/react-dom-upstream-suite.test.ts` — pin/commit assertions run
