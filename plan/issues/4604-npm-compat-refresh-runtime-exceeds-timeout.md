@@ -131,6 +131,27 @@ same stale artifact.
   chains (`setTimeout(run, 0)` reschedules while render work remains) that
   would otherwise keep a FINISHED run's process — and its CI step — alive
   indefinitely.
+- **S6: the remaining budget-eater is subdivision-on-timeout, not a hang.**
+  Run 785 (id 32576730177) measured the S5 watchdog merge itself and its
+  react-dom group STILL died at exactly 350:00 (job 97040048748,
+  13:46:49 → 19:36:27Z) with the same single-line log. Two facts resolve the
+  contradiction: (a) the log is single-line **by design** — the generator ran
+  the suite with `quiet: true`, so batch progress was invisible and a bounded
+  slow run is indistinguishable from a hang; (b) a local smoke showed a
+  1-test browser-Fizz batch consuming the full 300s compile-worker timeout,
+  and `runServerHarness`'s `compileGroup` subdivided on ANY invalid result —
+  timeouts included — up to depth 6. Since every sub-batch repeats the same
+  multi-megabyte renderer graph, halving a timed-out batch re-pays the full
+  timeout per half: the ~60-test browser-Fizz file alone can burn up to
+  2^7−1 ≈ 127 attempts × 300s ≈ 10.6h of perfectly bounded compiles — more
+  than the entire 350-min job. Fix in this slice: (1) `compileGroup` no
+  longer subdivides when the worker timed out — one timeout is the verdict
+  for the whole group, its tests recorded as blocked with the timeout as
+  reason; (2) the refresh workflow sets `NPM_COMPAT_SUITE_LOGS=1` and the
+  generator honors it by running react-dom's suite non-quiet, so the next
+  timeout names the lane and batch it went to. All other groups were green
+  in run 785 (jsdom 4 min, redux 2 min, tools 46 min), so react-dom is the
+  sole remaining publisher-blocker.
 
 ## Fix directions (pick during implementation)
 
