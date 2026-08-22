@@ -38,6 +38,7 @@
     "packages/jest-haste-map/src/__tests__/get_mock_name.test.js",
     "packages/jest-core/src/__tests__/FailedTestsCache.test.js",
     "packages/jest-core/src/lib/__tests__/serializeToJSON.test.ts",
+    "packages/jest-haste-map/src/lib/__tests__/fast_path.test.js",
     "packages/jest-watcher/src/lib/__tests__/prompt.test.ts",
     "packages/jest-environment-node/src/__tests__/globals_cleanup_3.test.ts",
     "packages/jest-jasmine2/src/__tests__/expectationResultFactory.test.ts"
