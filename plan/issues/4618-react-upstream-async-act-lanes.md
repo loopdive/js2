@@ -15,11 +15,14 @@ goal: dogfood
 related: [1042, 1373b, 3958, 4616]
 loc-budget-allow:
   - src/codegen/async-cps.ts
+  - src/codegen/async-frame.ts
   - src/codegen/destructuring-params.ts
   - src/ir/prepared-callable-resolution.ts
   - src/runtime.ts
 func-budget-allow:
   - src/codegen/destructuring-params.ts::destructureParamObjectExternref
+  - src/codegen/async-frame.ts::ensureAsyncResumeFunction
+  - src/codegen/async-frame.ts::buildAsyncFrameInfo
 ---
 
 # react upstream suite: the async `it`-body / `act()` lane cluster
@@ -237,6 +240,25 @@ demote.
   destructuring battery 49/49, jest 319/331, acorn 3518/3518, cookie
   63740/63740 hold. Regression test:
   `tests/issue-4618-boxed-destructure-store.test.ts` (1).
+
+- **2026-08-22 TDZ-flag-cells slice LANDED**: TDZ flags were per-invocation
+  resume-fn LOCALS — the resume returns at every suspend and re-enters with
+  zeroed locals, so a flag flipped by a declaration in state k read 0 in
+  state k+1, and a hoisted fn-decl capturing the binding threw
+  "X is not defined" from its boxed flag param AFTER the declaration ran.
+  Flagged spilled bindings now persist TDZ state in i32 ref-cell frame
+  fields (entry creates each cell; the resume prologue re-binds it into
+  boxedTdzFlags/tdzFlagLocals — both emitLocalTdzInit and the call-site
+  flag prepend are already cell-aware). The 12-line sym6 repro now fully
+  passes: `symbol,true,viaFn=symbol,true` — destructured symbol keeps
+  typeof AND identity, directly and through the hoisted fn, across the
+  suspend. The legacy-lane shape (try + multi-await) also passes
+  small-scale — the react module's degradation persists at 81/146, so the
+  in-module ingredient is still unreproduced small; next owner: bisect the
+  generated react module (comment out test-body parts) rather than more
+  standalone probes. The 6-test tdz-reference-error battery fails
+  IDENTICALLY with origin/main's src for every touched file (verified by
+  file-copy A/B) — pre-existing, not this slice.
 
 ## Fix order
 
