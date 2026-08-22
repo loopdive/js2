@@ -283,6 +283,26 @@ demote.
   100% pre-restart. Regression test:
   `tests/issue-4618-closure-sibling-class-capture.test.ts` (1).
 
+- **2026-08-22 the react "is not defined" ROOT pinned — DUPLICATE fn-decl
+  NAMES across sibling test functions**: after the TDZ-cell + destructure
+  slices, re-running the in-module Fragment probes shows the symbol carrier
+  is FIXED in-module (the probe expect `t=symbol tag=[object Symbol]
+  str=Symbol(react.fragment) ctor=Symbol` now PASSES inside the real
+  module) and the test fails at the NEXT link: `root.render(<ParentComponent
+  …/>)` → "ParentComponent is not defined" at RUNTIME from the sandbox
+  dynamic-global lane (zero compile-time miss/TDZ emissions — instrumented
+  all three emitters). Minimal repro (probe w12/w13): TWO OR MORE export
+  async fns EACH declaring `function ParentComponent(){…}` + an act-arrow
+  referencing it — ALL of them throw, even the first. With unique names the
+  ReferenceError disappears. ReactStrictMode declares ParentComponent 3×,
+  ReactChildren declares ComponentRendering* families repeatedly — this is
+  the bare-name registry collision family (same disease as #4616 slice 16's
+  closureMap leakage), interacting with the #4456 shadow machinery: the
+  act-arrow's reference to the hoisted fn value resolves to NOTHING and
+  falls to the dynamic-global read. Next owner: trace where the arrow's
+  identifier read consults funcMap/closureMap during the shadow window —
+  probe w12 compiles in seconds, no suite needed.
+
 ## Fix order
 
 1. (c) first — it is a hard CE with a two-line repro and pins the IR
