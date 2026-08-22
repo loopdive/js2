@@ -3,10 +3,8 @@
   "assignee": "ttraenkler/codex",
   "requested_by": "ttraenkler/codex",
   "status": "in-progress",
-  "branch": "",
-  "reserved_at": "2026-08-22T03:05:46Z",
-  "claimed_at": "2026-08-22T03:05:46Z",
-  "updated_at": "2026-08-22T03:05:46Z",
-  "write_id": "95603-00h6t9gp",
-  "pr_scan": "ok"
+  "branch": "codex/4617-frontend-neutral-semantic-ir",
+  "claimed_at": "2026-08-22T03:05:57Z",
+  "updated_at": "2026-08-22T03:05:57Z",
+  "write_id": "96192-6hk617il"
 }
