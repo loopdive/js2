@@ -56,12 +56,26 @@ A stale known-failure entry is a masked regression channel: if one of these
 
 ### The measurement, and which `main` it belongs to
 
-**Base: `origin/main` @ `03bd58c04`** (`Merge pull request #4733`), the commit
-this branch was cut from. Eight shards, run one at a time
+Measured **twice**, because `main` moved mid-work:
+
+| run | base | why |
+| --- | --- | --- |
+| first | `03bd58c04` (`Merge pull request #4733`) | the commit this branch was cut from |
+| **final** | **`961cea04a`** | after PR #4736 landed — this is the base the branch actually carries |
+
+Both runs: eight shards, one at a time
 (`SHARD=i/8 node scripts/equivalence-gate.mjs`, single-fork,
 `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`) — the same per-shard invocation
 `ci.yml`'s `equivalence-shard` matrix uses, never the unsharded run (it OOMs a
-16 GB box). Per-shard partials merged and diffed against the baseline:
+16 GB box). Per-shard partials merged and diffed against the baseline.
+
+**The two runs are identical**: same 1,685 tests, same 1,661 passing, same 24
+failing — set membership, not just counts. So the numbers below hold for the
+final base, and PR #4736 moved nothing in this suite. CI's own eight
+`equivalence-shard` jobs on the PR head (base `961cea04a`) are green against
+the tightened baseline, which is a third, independent confirmation.
+
+The figures:
 
 | | count |
 | --- | --- |
@@ -73,6 +87,14 @@ this branch was cut from. Eight shards, run one at a time
 | failing tests **not** in the baseline (real regressions) | 0 |
 
 The count matches #4720's A/B exactly, and so does the membership.
+
+**One local-runner caveat worth knowing.** In the second run, shard 2 was
+`Terminated` (exit 143) partway through under box load and wrote **no**
+partial — and the loop kept going. Merging what was on disk then read as
+"1,481 tests, 4 baseline entries absent", which looks like four renamed tests
+rather than one missing shard. Re-running shard 2 alone restored the full
+1,685. If you merge shard partials by hand, check you have **eight** files
+before believing an "absent" count.
 
 ### The measured stale set (12) — all removed
 
@@ -101,7 +123,9 @@ Worth stating because it changes who owns what. PR #4736 (`#4606`/`#4607`
 carrier stringification) reports the same 8 as "newly fixed" in its own gate
 run, which reads as if that PR fixed them. It did not: they pass on **plain
 `03bd58c04`**, which does not contain #4736 — it was still open and `behind`
-while this was measured. #4736 also does not touch
+while that run happened. The post-#4736 run at `961cea04a` returns the
+identical set, which says the same thing from the other side. #4736 also does
+not touch
 `scripts/equivalence-baseline.json` (7 files, none of them the baseline), so
 there is no conflict in either direction; its gate was simply reporting the
 same pre-existing staleness this issue exists to clear.
@@ -181,10 +205,10 @@ scores a supplied set).
 
 ## Acceptance criteria
 
-- [x] Measured stale set recorded here — 12, listed above, measured on
-      `origin/main` @ `03bd58c04`.
+- [x] Measured stale set recorded here — 12, listed above, measured at
+      `03bd58c04` and re-measured identically at the final base `961cea04a`.
 - [x] Baseline tightened by exactly that set (36 → 24); equivalence gate
-      green on the measured run and on all 8 shards at base.
+      green on both merged runs and on CI's 8 shards at the final base.
 - [x] Mutation proof recorded: `typeof`'s symbol arm broken → the gate names
       a removed entry as a REGRESSION and exits 1; the same input exited 0
       before the tightening.
