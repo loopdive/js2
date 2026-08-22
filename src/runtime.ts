@@ -2935,12 +2935,25 @@ function _drainWasmClosureIterable(
  * exported as a top-level helper so the `extern_class` constructor path can
  * use it directly (without going through the host import).
  */
-function _convertIterableForHost(obj: any, exports: Record<string, Function> | undefined): any {
+function _convertIterableForHost(
+  obj: any,
+  exports: Record<string, Function> | undefined,
+  seen?: WeakMap<object, any>,
+): any {
   if (obj == null || typeof obj !== "object") return obj;
+  // (#4616) A cyclic structure (a vec whose mirror array contains itself —
+  // `a.push(a)` crossing into `new Set(a)`) recursed until "Maximum call
+  // stack size exceeded". Track in-flight conversions and hand the cycle the
+  // same output identity, mirroring `__make_iterable`'s guard.
+  const memo = seen ?? new WeakMap<object, any>();
+  if (memo.has(obj)) return memo.get(obj);
   if (Array.isArray(obj)) {
     // Pre-existing JS array — still walk for nested wasm structs so e.g.
     // `[[wasmStructKey, value]]` passed from JS works.
-    return obj.map((v) => _convertIterableForHost(v, exports));
+    const out: any[] = new Array(obj.length);
+    memo.set(obj, out);
+    for (let i = 0; i < obj.length; i++) out[i] = _convertIterableForHost(obj[i], exports, memo);
+    return out;
   }
   // Only convert if this is a wasm-opaque struct. Plain JS objects with
   // Symbol.iterator (Maps, Sets, generators, ...) pass through.
@@ -2958,9 +2971,10 @@ function _convertIterableForHost(obj: any, exports: Record<string, Function> | u
       const isNumeric = parts.every((p: string) => /^_\d+$/.test(p));
       if (isNumeric) {
         const arr: any[] = new Array(parts.length);
+        memo.set(obj, arr);
         for (let i = 0; i < parts.length; i++) {
           const getter = exports[`__sget_${parts[i]}`] as Function | undefined;
-          arr[i] = getter ? _convertIterableForHost(getter(obj), exports) : undefined;
+          arr[i] = getter ? _convertIterableForHost(getter(obj), exports, memo) : undefined;
         }
         return arr;
       }
@@ -2979,8 +2993,9 @@ function _convertIterableForHost(obj: any, exports: Record<string, Function> | u
       const len = vecLen(obj) as number;
       if (typeof len === "number" && len >= 0) {
         const arr: any[] = new Array(len);
+        memo.set(obj, arr);
         for (let i = 0; i < len; i++) {
-          arr[i] = _convertIterableForHost(vecGet(obj, i), exports);
+          arr[i] = _convertIterableForHost(vecGet(obj, i), exports, memo);
         }
         return arr;
       }
@@ -15073,6 +15088,13 @@ assert._isSameValue = isSameValue;
         // `any` slots, while refreshing preserves mutations made on the Wasm
         // representation since the previous host observation (#3368).
         const convertedArrays = new WeakMap<object, any[]>();
+        // (#4616, jest deepCyclicCopy 'handles cyclic dependencies') The memo
+        // reuses the mirror ARRAY OBJECT but re-ran the fill on every entry, so
+        // a self-referencing vec (arr[0] === arr) recursed until "Maximum call
+        // stack size exceeded". While a fill is in flight, a nested crossing of
+        // the same struct returns the (partially filled) mirror — the cycle
+        // lands on the same array identity, matching JS semantics.
+        const convertInFlight = new WeakSet<object>();
         const convertToJS = (obj: any): any => {
           if (obj == null || typeof obj !== "object") return obj;
           // (#1438) `obj[Symbol.iterator]` throws "WebAssembly objects are
@@ -15097,10 +15119,16 @@ assert._isSameValue = isSameValue;
               if (isNumeric) {
                 const arr = convertedArrays.get(obj) ?? [];
                 convertedArrays.set(obj, arr);
-                arr.length = parts.length;
-                for (let i = 0; i < parts.length; i++) {
-                  const getter = exports[`__sget_${parts[i]}`] as Function | undefined;
-                  arr[i] = getter ? convertToJS(getter(obj)) : undefined;
+                if (convertInFlight.has(obj)) return arr;
+                convertInFlight.add(obj);
+                try {
+                  arr.length = parts.length;
+                  for (let i = 0; i < parts.length; i++) {
+                    const getter = exports[`__sget_${parts[i]}`] as Function | undefined;
+                    arr[i] = getter ? convertToJS(getter(obj)) : undefined;
+                  }
+                } finally {
+                  convertInFlight.delete(obj);
                 }
                 return arr;
               }
@@ -15127,15 +15155,21 @@ assert._isSameValue = isSameValue;
             if (typeof len === "number" && len >= 0) {
               const arr = convertedArrays.get(obj) ?? [];
               convertedArrays.set(obj, arr);
-              // (#3603 S1) Record mirror → vec so a host mutation of this array
-              // is replayed onto the vec instead of being silently dropped.
-              registerVecMirror(arr, obj);
-              arr.length = len;
-              for (let i = 0; i < len; i++) {
-                arr[i] = convertToJS(vecGet(obj, i));
+              if (convertInFlight.has(obj)) return arr;
+              convertInFlight.add(obj);
+              try {
+                // (#3603 S1) Record mirror → vec so a host mutation of this array
+                // is replayed onto the vec instead of being silently dropped.
+                registerVecMirror(arr, obj);
+                arr.length = len;
+                for (let i = 0; i < len; i++) {
+                  arr[i] = convertToJS(vecGet(obj, i));
+                }
+                // (#2761 B) Surface set-like own props (`arr.size/has/keys`).
+                _copyVecSidecarOntoArray(obj, arr, exports);
+              } finally {
+                convertInFlight.delete(obj);
               }
-              // (#2761 B) Surface set-like own props (`arr.size/has/keys`).
-              _copyVecSidecarOntoArray(obj, arr, exports);
               return arr;
             }
           }

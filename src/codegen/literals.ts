@@ -4465,6 +4465,34 @@ export function compileArrayLiteral(
           elemWasm = { kind: "externref" };
         }
       } else if (
+        (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
+        (() => {
+          // (#4616, clsx `[[fn], 'world']`) VEC-FIRST mirror of the widenings
+          // around it: element 0 is a nested array, so the first-element
+          // heuristic picks that vec type for the whole literal — and a later
+          // STRING element is then coerced string→vec, i.e. split into its
+          // char array ("world" reads back as "w,o,r,l,d"; clsx joined it as
+          // "w o r l d"). If any element's own static type is not that same
+          // vec shape, widen the carrier to externref so each element keeps
+          // its identity.
+          const td = ctx.mod.types[(elemWasm as { typeIdx: number }).typeIdx];
+          const tn = td && "name" in td ? (td as { name?: string }).name : undefined;
+          return tn !== undefined && (tn.startsWith("__vec_") || tn.startsWith("__arr_") || tn === "__vec_base");
+        })()
+      ) {
+        const hasNonVecElem = expr.elements.some((el) => {
+          if (ts.isOmittedExpression(el) || _isUndefinedLike(el) || ts.isSpreadElement(el)) return false;
+          if (ts.isArrayLiteralExpression(el)) return false;
+          // Oracle-fact scan (#1930): an array/tuple-shaped element keeps the
+          // vec carrier (vec→vec coercion handles element-type divergence);
+          // any other shape — string, number, function, object — must widen.
+          const fact = ctx.oracle.typeFactOf(el);
+          return fact.kind !== "array" && fact.kind !== "tuple";
+        });
+        if (hasNonVecElem) {
+          elemWasm = { kind: "externref" };
+        }
+      } else if (
         ctx.nativeStrings &&
         ctx.anyStrTypeIdx >= 0 &&
         (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&

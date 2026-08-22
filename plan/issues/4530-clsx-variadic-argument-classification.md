@@ -124,8 +124,13 @@ in-module `toVal` misclassification this issue's plan step 1 predicted.
 
 Regression tests: `tests/issue-4530-import-alias-calls.test.ts` (3 tests).
 
-**Residual (1/32)**: `functions` assertion 3 — `fn(foo, 'hello', [[fn], 'world'])`
-returns "hello w o r l d": the string element of the heterogeneous nested
-array literal `[[fn], 'world']` is stored as a char vec. That is the
-mixed-array carrier family tracked by #4531/#3979, not a variadic
-classification defect.
+**Residual (1/32) — FIXED 2026-08-22, clsx now 32/32**: `functions` assertion
+3 — `fn(foo, 'hello', [[fn], 'world'])` returned "hello w o r l d": the
+first-element heuristic in `compileArrayLiteral` picked the nested array's
+VEC type for the whole literal, so the string element was coerced string→vec
+(char split). Added the vec-first widening arm alongside the existing
+numeric-first (#786/#4394) and string-first (#2190/#2190b) mirrors: a
+vec-first literal with any non-vec element widens its carrier to externref.
+Homogeneous nested-array literals keep their vec (guarded). Regression test:
+`tests/issue-4530-vec-first-string-widening.test.ts` (2). Guards green:
+#786 ×2, #1021, #2190, #2190b, #3532, #3979, #4531 (88 tests).
