@@ -758,7 +758,7 @@ expectations.
 ## 2026-08-22 Jest fake-timer infrastructure checkpoint
 
 The shared Jest/Vitest runner now provides deterministic `jest.useFakeTimers`,
-`jest.useRealTimers`, `jest.runAllTimers`, and spy cleanup. Fake timers are
+`jest.useRealTimers`, timer advancement/clearing, async timer aliases, and spy cleanup. Fake timers are
 implemented in the test environment rather than replacing the harness's own
 clock, so Wasm async handoff and the Node oracle continue to make progress.
 Bare `setTimeout`/`clearTimeout` names route through the same fake queue, and

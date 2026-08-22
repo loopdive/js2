@@ -280,29 +280,82 @@ function __upstreamRestoreAllMocks() {
 let __upstreamFakeTimers = null;
 function __upstreamUseFakeTimers() {
   if (__upstreamFakeTimers !== null) return;
-  const realSetTimeout = globalThis.setTimeout;
-  const realClearTimeout = globalThis.clearTimeout;
   const timers = new Map();
   let nextTimerId = 1;
+  let now = 0;
   const fakeSetTimeout = function(callback, delay) {
     const id = nextTimerId++;
-    timers.set(id, { callback, delay: Number(delay) || 0 });
+    const normalizedDelay = Math.max(0, Number(delay) || 0);
+    timers.set(id, { callback, at: now + normalizedDelay });
     return id;
   };
   const fakeClearTimeout = function(id) {
     timers.delete(id);
   };
-  __upstreamFakeTimers = { realSetTimeout, realClearTimeout, timers, fakeSetTimeout, fakeClearTimeout };
+  __upstreamFakeTimers = { timers, fakeSetTimeout, fakeClearTimeout, get now() { return now; }, set now(value) { now = value; } };
+}
+function __upstreamNextTimer() {
+  if (__upstreamFakeTimers === null || __upstreamFakeTimers.timers.size === 0) return null;
+  let next = null;
+  for (const [id, entry] of __upstreamFakeTimers.timers) {
+    if (next === null || entry.at < next.entry.at || (entry.at === next.entry.at && id < next.id)) {
+      next = { id, entry };
+    }
+  }
+  return next;
+}
+function __upstreamRunTimer(next) {
+  if (__upstreamFakeTimers === null || next === null) return;
+  if (!__upstreamFakeTimers.timers.has(next.id)) return;
+  __upstreamFakeTimers.timers.delete(next.id);
+  __upstreamFakeTimers.now = Math.max(__upstreamFakeTimers.now, next.entry.at);
+  next.entry.callback();
 }
 function __upstreamRunAllTimers() {
   if (__upstreamFakeTimers === null) return;
   let guard = 10000;
   while (__upstreamFakeTimers.timers.size > 0) {
     if (--guard < 0) throw new Error("fake timer queue exceeded 10000 callbacks");
-    const entry = __upstreamFakeTimers.timers.entries().next().value;
-    __upstreamFakeTimers.timers.delete(entry[0]);
-    entry[1].callback();
+    __upstreamRunTimer(__upstreamNextTimer());
   }
+}
+function __upstreamAdvanceTimersByTime(milliseconds) {
+  if (__upstreamFakeTimers === null) return;
+  const target = __upstreamFakeTimers.now + Math.max(0, Number(milliseconds) || 0);
+  let guard = 10000;
+  while (__upstreamFakeTimers.timers.size > 0) {
+    if (--guard < 0) throw new Error("fake timer queue exceeded 10000 callbacks");
+    const next = __upstreamNextTimer();
+    if (next === null || next.entry.at > target) break;
+    __upstreamRunTimer(next);
+  }
+  __upstreamFakeTimers.now = target;
+}
+function __upstreamRunOnlyPendingTimers() {
+  if (__upstreamFakeTimers === null) return;
+  const pending = Array.from(__upstreamFakeTimers.timers.keys());
+  for (const id of pending) {
+    const entry = __upstreamFakeTimers.timers.get(id);
+    if (entry !== undefined) __upstreamRunTimer({ id, entry });
+  }
+}
+function __upstreamClearAllTimers() {
+  if (__upstreamFakeTimers !== null) __upstreamFakeTimers.timers.clear();
+}
+function __upstreamGetTimerCount() {
+  return __upstreamFakeTimers === null ? 0 : __upstreamFakeTimers.timers.size;
+}
+function __upstreamRunAllTimersAsync() {
+  __upstreamRunAllTimers();
+  return Promise.resolve();
+}
+function __upstreamAdvanceTimersByTimeAsync(milliseconds) {
+  __upstreamAdvanceTimersByTime(milliseconds);
+  return Promise.resolve();
+}
+function __upstreamRunOnlyPendingTimersAsync() {
+  __upstreamRunOnlyPendingTimers();
+  return Promise.resolve();
 }
 function __upstreamUseRealTimers() {
   __upstreamRestoreAllMocks();
@@ -322,6 +375,13 @@ const jest = {
   useFakeTimers: __upstreamUseFakeTimers,
   useRealTimers: __upstreamUseRealTimers,
   runAllTimers: __upstreamRunAllTimers,
+  runAllTimersAsync: __upstreamRunAllTimersAsync,
+  advanceTimersByTime: __upstreamAdvanceTimersByTime,
+  advanceTimersByTimeAsync: __upstreamAdvanceTimersByTimeAsync,
+  runOnlyPendingTimers: __upstreamRunOnlyPendingTimers,
+  runOnlyPendingTimersAsync: __upstreamRunOnlyPendingTimersAsync,
+  clearAllTimers: __upstreamClearAllTimers,
+  getTimerCount: __upstreamGetTimerCount,
   restoreAllMocks: __upstreamRestoreAllMocks,
 };
 const __upstreamBeforeEach = [];

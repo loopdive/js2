@@ -161,12 +161,18 @@ ${UPSTREAM_TEST_EXPORTS}`;
 jest.useFakeTimers();
 test("fake timer", () => {
   let fired = 0;
-  const timer = setTimeout(() => { fired += 1; }, 1000);
+  setTimeout(() => { fired += 1; }, 1000);
   expect(fired).toBe(0);
-  jest.runAllTimers();
+  expect(jest.getTimerCount()).toBe(1);
+  jest.advanceTimersByTime(999);
+  expect(fired).toBe(0);
+  jest.advanceTimersByTime(1);
   expect(fired).toBe(1);
   expect(setTimeout).toHaveBeenCalled();
-  clearTimeout(timer);
+  setTimeout(() => { fired += 1; }, 2000);
+  expect(jest.getTimerCount()).toBe(1);
+  jest.clearAllTimers();
+  expect(jest.getTimerCount()).toBe(0);
 });
 ${UPSTREAM_TEST_EXPORTS}`;
 
