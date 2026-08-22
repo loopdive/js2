@@ -245,6 +245,9 @@ export async function runHarness({ quiet = false } = {}) {
     const original = readFileSync(filePath, "utf-8");
     const transformed = transformJestTest(original, filePath, generatedPath);
     const nativeTransformed = transformJestTest(original, filePath, generatedPath, { normalizeCjs: true });
+    const nodeModuleBindings = /\b__dirname\b|\b__filename\b/.test(original)
+      ? `const __dirname = ${JSON.stringify(dirname(filePath))};\nconst __filename = ${JSON.stringify(filePath)};`
+      : "";
     const snapshotEntries = readSnapshotEntries(filePath);
     const snapshotSetup = snapshotEntries.length
       ? `__upstreamInstallSnapshotMatcher(${JSON.stringify(snapshotEntries)});`
@@ -254,8 +257,8 @@ export async function runHarness({ quiet = false } = {}) {
           moduleSpecifier(dirname(generatedPath), join(suite.root, "node_modules/pretty-format/index.ts")),
         )};`
       : "";
-    const source = `${snapshotFormatterImport}\n${UPSTREAM_TEST_SHIM}\n${snapshotSetup}\n${transformed}\n${UPSTREAM_TEST_EXPORTS}`;
-    const nativeSource = `${snapshotFormatterImport}\n${UPSTREAM_TEST_SHIM}\n${snapshotSetup}\n${nativeTransformed}\n${UPSTREAM_TEST_EXPORTS}`;
+    const source = `${nodeModuleBindings}\n${snapshotFormatterImport}\n${UPSTREAM_TEST_SHIM}\n${snapshotSetup}\n${transformed}\n${UPSTREAM_TEST_EXPORTS}`;
+    const nativeSource = `${nodeModuleBindings}\n${snapshotFormatterImport}\n${UPSTREAM_TEST_SHIM}\n${snapshotSetup}\n${nativeTransformed}\n${UPSTREAM_TEST_EXPORTS}`;
     const result = await compileAndRunUpstreamModule({
       generatedPath,
       source,
