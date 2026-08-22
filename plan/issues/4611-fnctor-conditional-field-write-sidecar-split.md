@@ -1,7 +1,8 @@
 ---
 id: 4611
 title: "fnctor: conditional ctor field write lands in the host sidecar while reads take the struct-field fast path — acorn ranges/comments families (24 tests)"
-status: in-progress
+status: done
+completed: 2026-08-22
 sprint: current
 created: 2026-08-21
 updated: 2026-08-21
@@ -23,8 +24,12 @@ files:
 # function is the #2664 dispatcher entry and cannot shrink here.
 loc-budget-allow:
   - src/codegen/expressions/assignment.ts
+  - src/codegen/declarations/param-return-inference.ts
+  - src/runtime.ts
 func-budget-allow:
   - src/codegen/expressions/assignment.ts::tryEmitPinnedStructMemberSet
+  - src/codegen/declarations/param-return-inference.ts::inferParamTypeFromCallSites
+  - src/runtime.ts::resolveImport
 ---
 
 # fnctor conditional ctor writes split a field across three storages
@@ -128,3 +133,37 @@ REMAINING (this issue stays open): the 6 onComment-family failures —
 `array length mismatch N !== 0`; comment pushes into the options-held array
 land in a storage the harness reader never consults. Separate reduction
 needed (push-into-`this.options.<arr>` shape, not a ctor field write).
+
+## 2026-08-22 checkpoint — onComment family fixed; acorn 3518/3518 (100%)
+
+The remaining 6 failures were TWO more general defects, neither the field
+split:
+
+1. **Checker-narrowed dynamic member reads poisoned param inference.**
+   `getOptions` stores the user's onComment ARRAY on an open `{}` object;
+   `pushComment(options, options.onComment)` is the only call site, and TS's
+   `isArray(...)` guard flow-narrows that LOCATION to `any[]`, so
+   `inferParamTypeFromCallSites` pinned the param (and the closure capture
+   slot) to the GC vec type. The captured HOST array guarded-cast to null and
+   the closure's `array.push(comment)` threw on the null vec — swallowed by
+   `__extern_method_call`, so comments read back empty. Fix
+   (param-return-inference.ts): a GC-ref claim from a property/element-access
+   argument is trusted only when the receiver's DECLARED shape
+   (oracle propertyFactOf/elementFactOf) vouches for it; a CFA-only narrowing
+   marks the site opaque and the #4530 withdrawal clears the ref.
+2. **Struct values stored on plain host objects were invisible to native JS.**
+   With `locations: true`, `comment.loc = new SourceLocation(...)` stored the
+   raw WasmGC struct on the host comment object; the suite driver reads
+   `comment.loc.start` with plain property access → `{}`/undefined. Fix
+   (runtime.ts, all four __extern_set/__extern_set_strict arms — by-name AND
+   intent-based): a non-callable wasm struct landing on a PLAIN host object is
+   stored as its `_wrapForHost` proxy view. Gated on live exports and
+   `__is_closure !== 1` (pre-instantiation defineProperties descriptors and
+   closure values keep the raw/callable forms).
+
+acorn official suite: 3494 → 3512 (ranges) → 3514 (onComment collection) →
+**3518/3518 (100%)** (loc marshalling). Guards green: #2867 S2, #3548, #4530,
+#1443, #860, plus tests/issue-4611-host-struct-value-view.test.ts (new).
+The 12 local failures in issue-2841/issue-3051 reproduce byte-identically on
+pure origin/main src — pre-existing local-env, not this change (verified by
+full-src A/B).

@@ -487,6 +487,33 @@ export function inferParamTypeFromCallSites(
             // native scalar from being inferred out of it.
             if ((argType.flags & ~(ts.TypeFlags.Void | ts.TypeFlags.Undefined)) === 0) sawNullishArg = true;
             const wasmType = resolveWasmType(ctx, argType);
+            // (#4611) A GC-ref claim sourced from a DYNAMIC member read is only
+            // as strong as the receiver's DECLARED shape. Acorn's
+            // `pushComment(options, options.onComment)`: `options` is an open
+            // `{}` object, so the read compiles to `__extern_get` (externref,
+            // any host value), but TS's `isArray(options.onComment)` guard
+            // flow-narrows the LOCATION to `any[]` and the vec narrowing here
+            // pinned the param — a HOST array capture then guarded-cast to
+            // null and the closure's push trapped (swallowed by the method
+            // bridge; acorn's onComment family read back empty). When the
+            // declared property/element fact cannot vouch for the type, treat
+            // the site as opaque — the #4530 withdrawal below then keeps any
+            // ref agreement from other sites from surviving it.
+            if (wasmType.kind === "ref" || wasmType.kind === "ref_null") {
+              let declaredFact: { kind: string } | undefined;
+              if (ts.isPropertyAccessExpression(arg) && !ts.isPrivateIdentifier(arg.name)) {
+                declaredFact = ctx.oracle.propertyFactOf(arg.expression, arg.name.text);
+              } else if (ts.isElementAccessExpression(arg)) {
+                declaredFact = ctx.oracle.elementFactOf(arg.expression);
+              }
+              if (
+                declaredFact !== undefined &&
+                (declaredFact.kind === "any" || declaredFact.kind === "unknown" || declaredFact.kind === "unresolvable")
+              ) {
+                sawOpaqueAnyArg = true;
+                return;
+              }
+            }
             if (agreed === null) {
               agreed = wasmType;
             } else if (agreed.kind !== wasmType.kind) {

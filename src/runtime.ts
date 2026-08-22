@@ -10314,6 +10314,27 @@ assert._isSameValue = isSameValue;
           if (typeof wrappedVal === "function" && key === "exec" && obj !== null && typeof obj === "object") {
             wrappedVal = _wrapExecReturnForHost(wrappedVal, callbackState);
           }
+          // (#4611) A non-callable WasmGC struct stored onto a PLAIN HOST object
+          // lives in host-land: native JS reads it directly (no _safeGet), so a
+          // raw struct's fields are invisible (acorn `comment.loc = new
+          // SourceLocation(...)` marshalled as `{}`). Present the live proxy
+          // view instead; wasm-struct receivers keep the raw canonical value in
+          // their sidecar (readers wrap on the way out).
+          {
+            const wrapExports = callbackState?.getExports();
+            if (
+              wrappedVal !== null &&
+              typeof wrappedVal === "object" &&
+              _isWasmStruct(wrappedVal) &&
+              obj !== null &&
+              typeof obj === "object" &&
+              !_isWasmStruct(obj) &&
+              wrapExports !== undefined &&
+              (wrapExports.__is_closure as ((v: any) => number) | undefined)?.(wrappedVal) !== 1
+            ) {
+              wrappedVal = _wrapForHost(wrappedVal, wrapExports);
+            }
+          }
           _safeSet(obj, key, wrappedVal, undefined, callbackState);
         };
       // (#2017) Strict-mode property write — identical to `__extern_set` except a
@@ -10333,6 +10354,23 @@ assert._isSameValue = isSameValue;
           // (Slice 3) Widened to any object receiver — see __extern_set.
           if (typeof wrappedVal === "function" && key === "exec" && obj !== null && typeof obj === "object") {
             wrappedVal = _wrapExecReturnForHost(wrappedVal, callbackState);
+          }
+          // (#4611) See __extern_set: surface a struct value's live proxy view
+          // when it lands on a plain host object.
+          {
+            const wrapExports = callbackState?.getExports();
+            if (
+              wrappedVal !== null &&
+              typeof wrappedVal === "object" &&
+              _isWasmStruct(wrappedVal) &&
+              obj !== null &&
+              typeof obj === "object" &&
+              !_isWasmStruct(obj) &&
+              wrapExports !== undefined &&
+              (wrapExports.__is_closure as ((v: any) => number) | undefined)?.(wrappedVal) !== 1
+            ) {
+              wrappedVal = _wrapForHost(wrappedVal, wrapExports);
+            }
           }
           _safeSet(obj, key, wrappedVal, undefined, callbackState, /* strict */ true);
         };
@@ -16170,6 +16208,32 @@ assert._isSameValue = isSameValue;
         if (typeof wrappedVal === "function" && key === "exec" && obj instanceof RegExp) {
           wrappedVal = _wrapExecReturnForHost(wrappedVal, callbackState);
         }
+        // (#4611) A non-callable WasmGC struct stored onto a PLAIN HOST object
+        // lives in host-land: native JS reads it directly (no _safeGet), so a
+        // raw struct's fields are invisible (acorn `comment.loc = new
+        // SourceLocation(...)` marshalled as `{}`). Present the live proxy
+        // view instead; wasm-struct receivers keep the raw canonical value in
+        // their sidecar (readers wrap on the way out).
+        {
+          // Gated on live exports: pre-instantiation (module-init descriptor
+          // objects) the callable wrap above cannot run either, and a proxy in
+          // place of a raw closure struct breaks Object.defineProperties'
+          // getter re-wrapping. A closure struct is left raw for the same
+          // reason.
+          const wrapExports = callbackState?.getExports();
+          if (
+            wrappedVal !== null &&
+            typeof wrappedVal === "object" &&
+            _isWasmStruct(wrappedVal) &&
+            obj !== null &&
+            typeof obj === "object" &&
+            !_isWasmStruct(obj) &&
+            wrapExports !== undefined &&
+            (wrapExports.__is_closure as ((v: any) => number) | undefined)?.(wrappedVal) !== 1
+          ) {
+            wrappedVal = _wrapForHost(wrappedVal, wrapExports);
+          }
+        }
         _safeSet(obj, key, wrappedVal, undefined, callbackState);
       };
     case "extern_set_strict":
@@ -16187,6 +16251,28 @@ assert._isSameValue = isSameValue;
         // native RegExp protocol can read the compiled result object.
         if (typeof wrappedVal === "function" && key === "exec" && obj instanceof RegExp) {
           wrappedVal = _wrapExecReturnForHost(wrappedVal, callbackState);
+        }
+        // (#4611) See extern_set: surface a struct value's live proxy view when
+        // it lands on a plain host object.
+        {
+          // Gated on live exports: pre-instantiation (module-init descriptor
+          // objects) the callable wrap above cannot run either, and a proxy in
+          // place of a raw closure struct breaks Object.defineProperties'
+          // getter re-wrapping. A closure struct is left raw for the same
+          // reason.
+          const wrapExports = callbackState?.getExports();
+          if (
+            wrappedVal !== null &&
+            typeof wrappedVal === "object" &&
+            _isWasmStruct(wrappedVal) &&
+            obj !== null &&
+            typeof obj === "object" &&
+            !_isWasmStruct(obj) &&
+            wrapExports !== undefined &&
+            (wrapExports.__is_closure as ((v: any) => number) | undefined)?.(wrappedVal) !== 1
+          ) {
+            wrappedVal = _wrapForHost(wrappedVal, wrapExports);
+          }
         }
         _safeSet(obj, key, wrappedVal, undefined, callbackState, /* strict */ true);
       };
