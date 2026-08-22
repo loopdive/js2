@@ -330,3 +330,78 @@ durable; re-derive from the line reference above if it has aged out).
 object defines `toString` gets the constant instead of its own method — and
 should be fixed on its own merits, with its own before/after, rather than
 smuggled into a conformance batch.
+
+## 2026-08-21 wave-2 census + Implementation Plan (protos lane)
+
+Fresh corpus on the merged tree: the **builtin-prototypes lane is 96 rows** —
+`String.prototype` 22, `Array.prototype` 20, `RegExp.prototype` 9,
+`language/literals/regexp` 4, plus Number/Boolean/Date/Error/global/annexB
+singles and 4 boxed-`valueOf` rows (#4582). Lane list:
+`.claude/worktrees/es5w2-protos/.tmp/lane-tests.txt`.
+
+Top signatures: `Unsupported dynamic regular expression pattern` (3),
+`newArr.length SameValue` (3), async-harness `[object Object]` (3),
+`Cannot access property on null or undefined` (2), inherited-index reads (2),
+`__split[N]` (2).
+
+### Plan (ordered)
+
+1. Re-baseline lane + guard; prototype-write corpus baseline isolated.
+2. **#4582 boxed `valueOf`** — the spec records a REVERTED wrong-answer attempt.
+   Read it first: verify what param 1 actually holds on the boxed-brand glue
+   before trusting the documented ABI, and note String never reaches the shared
+   fallback (`emitStringProtoMemberBody` claims it and refuses). A wrong value
+   is a failure; the refusal stays until the value is proven right. 4 rows.
+3. **`delete <NativeProto>.<member>`** (#4492 finding, ~8 rows): `936f382`
+   fixed the INDEX side via `protoIndexOwnViewSubstituteInstrs`; the NAMED
+   member side needs the same three-op agreement (has/gOPD/delete).
+4. **Array inherited-index + borrowed-HOF rows**: #4556 buckets B/H — the
+   documented `proto-index-store.ts` boundary. Attempt only with the consult-
+   order asymmetry in mind (`__extern_method_call` honours overrides for
+   memberless builtins, ignores them for membered ones — #4556 records it).
+5. **RegExp dynamic-pattern rows**: classify first; "Unsupported dynamic
+   regular expression pattern" may be an engine gap, not a dispatch bug.
+
+
+## 2026-08-21 wave-2 corrections (protos lane, measured)
+
+- **Finding 1 is STALE**: 3 of its ~8 `delete <NativeProto>.<member>` rows
+  already pass at the wave-2 branch point (`Number/prototype/S15.7.3.1_A2_T1`,
+  `S15.7.4_A1`, `String/prototype/S15.5.4_A3`) — `936f382` landed after that
+  census. The lever was really 2 open + 3 accessor-blocked; **both open rows are
+  now closed** (`7b8410`: a `DeleteExpression` parent arms `protoMemberDirty`,
+  which the member-value-use carve-out at `array-holes.ts:559` wrongly withheld —
+  the syntactic path cannot record a deletion, and `__nproto_hasown`'s
+  `$memberCsv` fallback resurrected the name).
+- **The RegExp A9 rows (3) are BLOCKED on the accessor tier, not open**:
+  `global`/`ignoreCase`/`multiline` are getter-kind; the companion seeder skips
+  accessors deliberately, and `native-proto.ts` records that seeding them
+  regresses the §22.2.6 `SameValue(this, %RegExp.prototype%)` identity read via
+  a mechanism its own doc marks UNIDENTIFIED. Needs the accessor tier as a
+  separate slice.
+- The census contradiction (`S15.5.4_A3` passing while `_A1` failed on identical
+  code) is explained: A3 reads `Object.prototype` as a value one line earlier
+  and armed the flag by accident.
+- New three-op disagreement found and deliberately not shipped → **#4596**
+  (gOPD compile-time synthesis ignores a runtime delete).
+
+## 2026-08-21 — bucket B/H survey (protos lane; surveyed, deliberately not attempted)
+
+The remaining Array rows split three ways, none a small slice:
+
+- **(a) live-prototype element visibility** (`Array.prototype[1] = 1` then
+  `concat`/`toString`/`toLocaleString`) — the documented `array-holes.ts`
+  boundary: a flat vec cannot re-check HasProperty against a live prototype per
+  element. Exactly what `936f382` measured and left.
+- **(b) heterogeneous-array value representation** (`[0].concat(obj, arr, -1,
+  true, "NaN")` returns NaN for the object element) — value-rep lane, not a
+  prototype problem.
+- **(c) `x.concat = Array.prototype.concat; x.concat(…)`** — `concat` has no
+  reflective Array body, and the refusal is INCONSISTENT: the `.call` form says
+  the honest "not yet callable as a value in --target standalone" while the
+  stored-slot form says a misleading "Cannot access property on null or
+  undefined". Minimum fix: make the stored-slot form reach the same honest
+  refusal.
+
+The consult-order asymmetry (Finding: `__extern_method_call` honours an
+override for `join` but not `toString`) was NOT touched by any wave-2 change.

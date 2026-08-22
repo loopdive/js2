@@ -336,3 +336,31 @@ unreachable), and the real implementation — `__any_lt/gt/le/ge` in
 `any-eq-helpers.ts` — is the numeric branch of §7.2.12 only. Full spec, the
 "no cheap subset" finding, and why the #1374 landmine does not apply to that
 route: **#4564**.
+
+## 2026-08-21 wave-2 reclassification (coercion lane, measured on the fixed tree)
+
+The wave-2 plan's step-2/3/4 hypotheses did not survive measurement:
+
+- **`language/types/object` (12 rows) is NOT ToPrimitive-adjacent.** Four
+  unrelated mechanisms: (a) `"valueOf" in {}` false — the `in` operator does not
+  consult `Object.prototype`, which standalone does not materialize (4 rows,
+  incl. `expressions/in`); (b) `this.x = f; x()` global-binding identity
+  (`S8.6.2_A5_T1..T4`); (c) prototype-chain reads (`S8.6.2_A1/A2/A8`) — protos
+  lane's territory; (d) `__map.foo` reading `null` where NaN is expected.
+- **The instanceof residue (5 rows) is blocked one level ABOVE #4480 R3**: with
+  a reassigned binding (`var O = 0; O = Object`), the #4484 guard fires and
+  routes to `tryEmitNativeDynamicInstanceOf`, which hits its deliberate
+  conservative-`false` arm (`native-dynamic-instanceof.ts:451`) because a
+  runtime constructor VALUE cannot be resolved to its prototype. Needs the
+  #4480-family substrate (a real `.prototype` per function / materialized
+  `Object.prototype`).
+- **"Scope chain disturbed": 5-of-6 `with` split CONFIRMED** (T5-T9 → #4206).
+  **T3 is not a scope bug**: the hoisted `var x = 1` sits after the `return`,
+  the number-typed slot is read before its initializer, and the NaN-for-
+  undefined convention surfaces — NaN where the row asserts `undefined`. Fixing
+  it needs flow-sensitive slot widening (#4204 machinery) — representation
+  level, reported not built.
+
+Converging theme across (a), the instanceof arm, and the protos rows: **the
+un-materialized builtin prototype substrate (#4480 family)** is now the single
+largest identified blocker class in the language-core residue.

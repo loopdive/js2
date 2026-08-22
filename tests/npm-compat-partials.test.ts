@@ -65,6 +65,10 @@ describe("npm-compat refresh matrix wiring", () => {
     const workflow = readFileSync(new URL("../.github/workflows/npm-compat-refresh.yml", import.meta.url), "utf8");
 
     expect(workflow).toContain("fail-fast: false");
+    expect(workflow).toContain(
+      "group: npm-compat-refresh-${{ github.event_name == 'push' && github.sha || github.ref }}",
+    );
+    expect(workflow).toMatch(/concurrency:[\s\S]*?cancel-in-progress: false/);
     expect(workflow).toContain("needs: measure");
     expect(workflow).toContain("--partial-output");
     expect(workflow).toContain("actions/download-artifact@v7");

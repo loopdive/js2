@@ -69,11 +69,10 @@ on:
   # Backstop for a quiet main (no pushes ⇒ no push-triggered refresh).
   #
   # It is NOT a backstop against starvation by a busy main, which is what the
-  # original comment here claimed. A cron run lands in the same concurrency
-  # group as every push run, so under `cancel-in-progress: true` it was
-  # cancelled just like the rest — the "guaranteed upper bound on staleness" was
-  # never guaranteed by anything. That is now handled where it belongs, by not
-  # cancelling in-progress runs at all.
+  # original comment here claimed. Scheduled and manual runs share the branch
+  # group below and serialize. Push runs are keyed by their immutable commit
+  # instead, so a busy main cannot replace an older pending measurement before
+  # it gets a runner.
   schedule:
     - cron: "0 */6 * * *"
   workflow_dispatch:
@@ -88,28 +87,21 @@ env:
   PROMOTION_BRANCH: ci/npm-compat-refresh
 
 concurrency:
-  group: npm-compat-refresh-${{ github.ref }}
-  # MUST be false. The refresh remains long-lived; main can merge more often
-  # than it runs. With
-  # `cancel-in-progress: true` every run was killed mid-flight by the next push —
-  # 6 of the first 7 runs were `cancelled` and the artifact never moved off its
-  # first snapshot. The original reasoning ("a cancelled run is always superseded
-  # by one publishing a strictly fresher artifact") only holds when the job is
-  # SHORTER than the merge interval; here the superseding run is cancelled too,
-  # forever. The 6h cron was supposed to backstop that and cannot: it lands in
-  # this same concurrency group and is cancelled by the next push like anything
-  # else.
-  #
-  # `false` is not "let runs pile up": GitHub keeps at most ONE pending run per
-  # group and cancels older pending ones, so this is bounded at one running plus
-  # one queued — finish the current measurement, coalesce everything that arrived
-  # while it ran.
+  # GitHub keeps only one pending run per concurrency group. A ref-only key
+  # therefore cancelled older pending push runs even with
+  # `cancel-in-progress: false` (the active run survived, but its predecessor
+  # never got a runner). Key pushes by SHA so every main commit has an
+  # independent measurement. Schedule and workflow_dispatch still share the
+  # branch ref and remain serialized.
+  group: npm-compat-refresh-${{ github.event_name == 'push' && github.sha || github.ref }}
+  # Never kill an active measurement. Promotion is freshness-checked and uses
+  # a lease-protected force push, so independent SHA lanes can safely race.
   cancel-in-progress: false
 
 jobs:
   # The package runners are independent. Running them as a matrix changes the
   # wall clock from the sum of every upstream suite to the slowest group, so a
-  # busy main can finish a refresh before the next queued run supersedes it.
+  # busy main can finish a refresh without a newer push cancelling its lane.
   # `fail-fast: false` is intentional: one flaky package must not cancel the
   # other measurements or leave the coordinator without their artifacts.
   measure:
@@ -123,8 +115,17 @@ jobs:
             packages: acorn,marked,clsx,cookie
           - id: frontend
             packages: eslint,prettier,react
-          - id: renderers
-            packages: react-dom,jsdom,redux
+          # Keep the renderer suites in separate jobs. ReactDOM is the long
+          # pole; when it shared one 350-minute job with jsdom and Redux, the
+          # whole row was cancelled at the job timeout and the smaller suites
+          # never produced partial reports. Isolating the rows lets each
+          # package finish (or report its own timeout) independently.
+          - id: react-dom
+            packages: react-dom
+          - id: jsdom
+            packages: jsdom
+          - id: redux
+            packages: redux
           - id: libraries
             packages: hono,lodash,lodash-es,axios,uuid,moment
           - id: tools
@@ -479,14 +480,18 @@ jobs:
           # see the note at the end of this job).
           git commit -q --no-verify -m "chore(ci): refresh npm-compat artifacts"
 
-          # `--force` on purpose, and no replay loop. This is a bot-owned branch
-          # that nothing else authors; the five-attempt replay existed only
-          # because pushing to `main` races every other merge. Whatever is on
-          # the branch is a SUPERSEDED measurement (or an `auto-refresh-prs`
-          # merge of main into it), and the commit we just built is main's tip
-          # plus the newest artifacts — so overwriting is always the right
-          # answer and can never lose work.
-          git push --no-verify --force deploykey "HEAD:refs/heads/${PROMOTION_BRANCH}"
+          # Pushes for different main SHAs now run in independent workflow
+          # groups, so two coordinators can reach this point together. Keep
+          # the bot-owned branch race-safe: a lease failure means another run
+          # won the update between our fetch and push. Its freshness check will
+          # publish the newer measurement, so this older run can finish cleanly
+          # without overwriting it.
+          LEASE_SHA="$(git rev-parse "refs/remotes/deploykey/${PROMOTION_BRANCH}" 2>/dev/null || printf '%040d' 0)"
+          if ! git push --no-verify --force-with-lease="refs/heads/${PROMOTION_BRANCH}:${LEASE_SHA}" \
+            deploykey "HEAD:refs/heads/${PROMOTION_BRANCH}"; then
+            echo "A concurrent refresh already updated ${PROMOTION_BRANCH}; leaving its newer artifact in place."
+            exit 0
+          fi
           echo "Pushed npm-compat artifacts measured at ${SOURCE_SHA} to ${PROMOTION_BRANCH}."
           echo "published=1" >> "$GITHUB_OUTPUT"
 

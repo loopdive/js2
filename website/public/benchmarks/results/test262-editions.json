@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 7702,
-    "fail": 1319,
+    "pass": 7698,
+    "fail": 1323,
     "ce": 8,
     "skip": 0,
     "total": 9029,
@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9140,
-    "fail": 2460,
+    "pass": 9141,
+    "fail": 2459,
     "ce": 103,
     "skip": 1,
     "total": 11704,
@@ -66,12 +66,12 @@
       },
       {
         "name": "generators",
-        "pass": 1951,
-        "fail": 505,
+        "pass": 1952,
+        "fail": 504,
         "ce": 30,
         "skip": 0,
         "total": 2486,
-        "pct": 78
+        "pct": 79
       },
       {
         "name": "default-parameters",
@@ -1063,8 +1063,8 @@
   {
     "edition": "ES2018",
     "pass": 3492,
-    "fail": 1293,
-    "ce": 38,
+    "fail": 1294,
+    "ce": 37,
     "skip": 0,
     "total": 4823,
     "pct": 72,
@@ -1072,8 +1072,8 @@
       {
         "name": "async-iteration",
         "pass": 2566,
-        "fail": 1211,
-        "ce": 33,
+        "fail": 1212,
+        "ce": 32,
         "skip": 0,
         "total": 3810,
         "pct": 67

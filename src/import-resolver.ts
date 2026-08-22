@@ -224,6 +224,10 @@ const NODE_BUILTIN_FN_TYPED_STUBS: Record<
   os: {
     platform: { params: "", returns: "any", passthrough: "" },
     release: { params: "", returns: "any", passthrough: "" },
+    // Jest's original config defaults unit uses os.tmpdir() while building its
+    // cache directory. Keep the named-import route on the same host adapter as
+    // platform/release instead of exposing a null generic stub.
+    tmpdir: { params: "", returns: "any", passthrough: "" },
   },
 };
 

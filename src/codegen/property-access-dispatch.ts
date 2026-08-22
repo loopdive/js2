@@ -1734,6 +1734,11 @@ export function tryGlobalThisAndProcessRead(
       else if (procProp === "env") hostImport = "__get_process_env";
       else if (procProp === "platform") hostImport = "__get_process_platform";
       else if (procProp === "arch") hostImport = "__get_process_arch";
+      // The stream handles are ordinary externrefs. Keep the getter separate
+      // from the fd-based `write` lowering so Node-oriented libraries can use
+      // the standard EventEmitter surface (`stdout.on`/`removeListener`) too.
+      else if (procProp === "stdout") hostImport = "__get_process_stdout";
+      else if (procProp === "stderr") hostImport = "__get_process_stderr";
       if (hostImport !== undefined) {
         const idx = ensureLateImport(ctx, hostImport, [], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);

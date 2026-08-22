@@ -12582,7 +12582,7 @@ assert._isSameValue = isSameValue;
           // method="call", args[0]=the vec's `__make_iterable` mirror — bracket
           // the dispatch so the mutation reaches the vec (silent no-op before).
           const mirrorSnaps = snapshotVecMirrors(dispatchRecv, wrappedArgs, exports);
-          const ret = fn.apply(dispatchRecv, wrappedArgs);
+          const ret = Reflect.apply(fn, dispatchRecv, wrappedArgs);
           reconcileVecMirrors(mirrorSnaps, exports, _unwrapForHost);
           // (#1333) Annex B — RegExp.prototype.exec/test post-match slot update.
           if (
@@ -15636,15 +15636,13 @@ assert._isSameValue = isSameValue;
       // String.fromCharCode / String.fromCodePoint host imports
       if (name === "String_fromCharCode") return (code: number) => String.fromCharCode(code);
       if (name === "String_fromCodePoint") return (code: number) => String.fromCodePoint(code);
-      // String comparison (lexicographic ordering)
       if (name === "string_compare") return (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-      // ToUint32 for Math.clz32/imul — spec-correct conversion
-      // (x >>> 0) applies the ToUint32 abstract operation per ES spec
       if (name === "__toUint32") return (x: number) => x >>> 0;
-      // (#1490) Node.js process.* host imports — only meaningful when running
-      // under Node (or any host that injects a `process` global). In other
-      // environments (browser, standalone Wasm) these return safe defaults so
-      // compiled programs do not crash on access.
+      // prettier-ignore
+      const emptyProcessStream = { on() { return this; }, removeListener() { return this; } };
+      if (name === "__get_process")
+        // prettier-ignore
+        return () => typeof process !== "undefined" ? process : { env: {}, platform: "", arch: "", argv: [], stdout: emptyProcessStream, stderr: emptyProcessStream, [Symbol.toStringTag]: "process" };
       if (name === "__get_process_argv")
         return () => (typeof process !== "undefined" && process.argv ? process.argv : []);
       if (name === "__get_process_env") return () => (typeof process !== "undefined" && process.env ? process.env : {});
@@ -15659,6 +15657,8 @@ assert._isSameValue = isSameValue;
         return () => (typeof process !== "undefined" && process.platform ? process.platform : "");
       if (name === "__get_process_arch")
         return () => (typeof process !== "undefined" && (process as any).arch ? (process as any).arch : "");
+      // prettier-ignore
+      if (name === "__get_process_stdout" || name === "__get_process_stderr") return () => typeof process !== "undefined" ? (process as any)[name.endsWith("stdout") ? "stdout" : "stderr"] ?? emptyProcessStream : emptyProcessStream;
       if (name === "__process_exit")
         return (code: number) => {
           // f64 → integer exit code (NaN/Infinity → 0 per spec coercion).

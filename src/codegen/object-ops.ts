@@ -4689,15 +4689,31 @@ export function compilePropertyIntrospection(
     // `provesDenseLiteralOwnIndex` constant fold above and the legacy path
     // below, exactly as before.
     if (elemIsRef && keyArg && staticKey !== null && _isCanonicalArrayIndexString(staticKey)) {
-      const recv = compileExpression(ctx, fctx, propAccess.expression);
-      if (recv === null) return null;
-      if (recv.kind === "ref" || recv.kind === "ref_null") {
-        fctx.body.push({ op: "extern.convert_any" });
-      } else if (recv.kind !== "externref") {
-        coerceType(ctx, fctx, recv, { kind: "externref" });
+      // (#4491) The runtime native is now the WHOLE answer. This arm used to
+      // compute `present := index < length AND data[index] != null` inline and OR
+      // it with the native, because at the time `__hasOwnProperty` could not see a
+      // vec's DENSE elements at all and answered `false` for
+      // `Object.keys(o).hasOwnProperty("0")`.
+      //
+      // It can now, and the OR became a one-way ratchet that could only ever turn
+      // `false` into `true`. A DELETED index is exactly the case that breaks:
+      // `delete a[0]` records a `FLAG_DELETED_INDEX` tombstone in the companion
+      // overlay and leaves the vec slot holding its old value, so the inline test
+      // still reported the index present and the tombstone could not veto it —
+      // `a.hasOwnProperty("0")` answered `true` while `0 in a` and
+      // `Object.hasOwn(a, "0")` (the same native, different spelling) both
+      // answered `false`.
+      //
+      // Measured on a string vec before removing the inline half: dense-live
+      // true, deleted false, out-of-range false, `defineProperty`-on-empty true —
+      // the native is correct on all four, including the sidecar case the OR was
+      // originally protecting.
+      const recvLocal = allocLocal(fctx, `__hop_arr_${fctx.locals.length}`, receiverWasm);
+      const recv = compileExpression(ctx, fctx, propAccess.expression, receiverWasm);
+      if (recv && (recv.kind === "ref" || recv.kind === "ref_null")) {
+        fctx.body.push({ op: "ref.as_non_null" });
       }
-      const keyT = compileExpression(ctx, fctx, keyArg, { kind: "externref" });
-      if (keyT && keyT.kind !== "externref") coerceType(ctx, fctx, keyT, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: recvLocal });
       const hopIdx2 = ensureLateImport(
         ctx,
         "__hasOwnProperty",
@@ -4707,12 +4723,12 @@ export function compilePropertyIntrospection(
       flushLateImportShifts(ctx, fctx);
       if (hopIdx2 !== undefined) {
         fctx.body.push({ op: "call", funcIdx: hopIdx2 });
-        return { kind: "i32", boolean: true };
+      } else {
+        // No native available — drop the args and answer absent.
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "i32.const", value: 0 });
       }
-      // No predicate available — drop the args and keep the pre-#4491 "absent".
-      fctx.body.push({ op: "drop" });
-      fctx.body.push({ op: "drop" });
-      fctx.body.push({ op: "i32.const", value: 0 });
       return { kind: "i32", boolean: true };
     }
     // (#4491) A NON-index static key on an array receiver — "4294967295"
