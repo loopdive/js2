@@ -684,3 +684,6 @@ infrastructure.
 The bounded pool and its fallback-to-two behavior have focused unit coverage;
 the 50-test probe observed both client batches dispatched to the two-worker
 pool, and the upstream suite harness tests remain green.
+
+Implementation: [PR #4771](https://github.com/loopdive/js2/pull/4771), stacked
+on the compiler boundary work in [PR #4769](https://github.com/loopdive/js2/pull/4769).

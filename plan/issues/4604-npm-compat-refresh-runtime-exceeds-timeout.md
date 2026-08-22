@@ -226,3 +226,6 @@ time without dropping tests or converting compiler failures into
 `unavailableInfra`. Compilation is pipelined with the source-ordered native
 oracle, so the workers continue compiling later batches while the shared host
 consumes the next completed batch.
+
+Implementation: [PR #4771](https://github.com/loopdive/js2/pull/4771), stacked
+on the renderer/compiler baseline in [PR #4769](https://github.com/loopdive/js2/pull/4769).
