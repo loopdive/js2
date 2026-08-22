@@ -153,6 +153,11 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Measure package group
+        env:
+          # (#4604) Keep react-dom's per-batch [dogfood] progress lines in the
+          # job log. Two full runs were lost to a silent single-line log where
+          # a 350-min timeout and a hang were indistinguishable.
+          NPM_COMPAT_SUITE_LOGS: "1"
         run: |
           set -euo pipefail
           pnpm run generate:npm-compat -- \

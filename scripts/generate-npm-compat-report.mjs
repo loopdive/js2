@@ -2754,7 +2754,15 @@ if (!perfOnly && selectedPackages.has("react-dom")) {
   console.log("[npm-compat] react-dom — package entry + react-dom's own upstream unit tests...");
   const reactDomEntry = NPM_COMPAT_CATALOG.find((entry) => entry.name === "react-dom");
   const reactDomReport = await runNpmCompatCatalogHarness("react-dom", { quiet: true });
-  const reactDomSuite = await runConfiguredUpstreamSuite("react-dom", { quiet: true });
+  // (#4604) react-dom is the roster's largest suite by an order of magnitude
+  // and has twice burned a whole CI run with `quiet: true` hiding all
+  // progress — a 350-min timeout and a genuine hang produce the same
+  // single-line log. NPM_COMPAT_SUITE_LOGS=1 (set by npm-compat-refresh.yml)
+  // keeps its per-batch [dogfood] lines so the job log shows which lane and
+  // batch the clock went to.
+  const reactDomSuite = await runConfiguredUpstreamSuite("react-dom", {
+    quiet: process.env.NPM_COMPAT_SUITE_LOGS !== "1",
+  });
   const reactDomImplementationReport = {
     ...reactDomReport,
     // The package-entry probe only compiles the small environment selector.

@@ -850,7 +850,16 @@ async function runServerHarness({
       result.validationError ??
       (result.timedOut ? `compile timeout after ${compileTimeoutMs}ms` : validates ? null : "no binary emitted");
 
-    if (!validates && groupTests.length > 1 && depth < 6) {
+    // (#4604) Subdivide only on a genuine invalid result, never on a worker
+    // TIMEOUT. Each batch's compile cost is dominated by the multi-megabyte
+    // renderer graph that every sub-batch repeats, so halving a timed-out
+    // batch re-pays the full timeout per half: a 60-test Fizz file whose graph
+    // cannot compile inside the deadline would burn up to 2^7-1 attempts ×
+    // 300s ≈ 10.6h of bounded compiles — alone exceeding the refresh job's
+    // 350-min budget (run 785, job 97040048748, killed at exactly 350:00 with
+    // the graphs still compiling). One timeout is the verdict for the whole
+    // group; its tests are recorded as blocked with the timeout as reason.
+    if (!validates && !result.timedOut && groupTests.length > 1 && depth < 6) {
       const middle = Math.ceil(groupTests.length / 2);
       await compileGroup(file, groupTests.slice(0, middle), depth + 1);
       await compileGroup(file, groupTests.slice(middle), depth + 1);
