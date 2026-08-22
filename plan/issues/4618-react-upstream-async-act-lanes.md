@@ -27,6 +27,7 @@ func-budget-allow:
   - src/codegen/async-frame.ts::buildAsyncFrameInfo
   - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations
   - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
+  - src/runtime.ts::_wrapForHost
 ---
 
 # react upstream suite: the async `it`-body / `act()` lane cluster
@@ -337,6 +338,24 @@ demote.
   throw (found by instrumenting emitAnnexBUnboundReferenceError). The
   chained `Host.take(fn).f(n)` NaN degradation (w14) remains a separate
   open defect.
+
+- **2026-08-22 ownKeys/gOPD proxy invariants under `Object.freeze(element)`
+  — react 85 → 87/146**: react dev builds freeze every element; freeze on a
+  `_wrapForHost` proxy calls [[PreventExtensions]], which the handler did
+  not trap, so the EMPTY proxy target got locked while `ownKeys` still
+  reported the wasm object's keys — "'ownKeys' on proxy: trap returned
+  extra keys but proxy target is non-extensible" (§10.5.11, 6 tests). Fix
+  1: a `preventExtensions` trap that first materializes every
+  `collectKeys()` key onto the target (via the handler's own gOPD +
+  `Object.defineProperty`), marks the obj in `_wasmNonExtensibleObjs`, then
+  locks the target. Fix 2 (follow-on §10.5.5 violations, 3 tests): once the
+  target is non-extensible, `getOwnPropertyDescriptor` serves the target's
+  descriptors verbatim instead of re-deriving them. Guards: freeze/seal
+  battery 32/39 — the 7 failures pre-exist on base runtime.ts (A/B'd);
+  jest 315/349 and acorn 3518/3518 hold. Regression test:
+  `tests/issue-4618-proxy-freeze-invariants.test.ts` (1). Remaining react
+  buckets: "expected not null" 13, mock args/count 12, null-deref "at
+  933:18" ×7 (ReactChildren), setState null 2.
 
 ## Fix order
 

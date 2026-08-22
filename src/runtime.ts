@@ -7343,6 +7343,15 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       // reflection operation. Do not let the host proxy resurrect it during
       // Object.assign/object spread enumeration.
       if (isTombstoned(key)) return undefined;
+      // (#4618) Once preventExtensions materialized the key set onto the
+      // target (React dev's Object.freeze(element)), the §10.5.5 invariants
+      // require the trap's answers to MATCH the locked target exactly — a
+      // synthesized configurable descriptor for a now-non-configurable key
+      // throws "'getOwnPropertyDescriptor' on proxy: trap returned
+      // descriptor…". Serve the target's own descriptor verbatim.
+      if (!Reflect.isExtensible(_t)) {
+        return Reflect.getOwnPropertyDescriptor(_t, key);
+      }
       // (#3479) Registered class-OBJECT static method — return the spec
       // descriptor the direct `__getOwnPropertyDescriptor` path already produces
       // (_readOwnDescriptor:4381 → {writable:true, enumerable:false,
@@ -7474,6 +7483,28 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
         /* */
       }
       return true;
+    },
+    // (#4618) React dev freezes elements/props (`Object.freeze(element)`)
+    // through this proxy. The default trap would preventExtensions the EMPTY
+    // backing target, after which the `ownKeys` trap (which reports the
+    // struct's live keys) violates the §10.5.11 invariant — V8 throws
+    // "'ownKeys' on proxy: trap returned extra keys but proxy target is
+    // non-extensible" on the NEXT enumeration. Materialize every currently
+    // visible key onto the target FIRST, so the locked target carries the
+    // exact key set the traps report.
+    preventExtensions(t) {
+      for (const key of collectKeys()) {
+        if (Object.prototype.hasOwnProperty.call(t, key)) continue;
+        const desc = handler.getOwnPropertyDescriptor?.(t, key);
+        if (desc === undefined) continue;
+        try {
+          Object.defineProperty(t, key, desc);
+        } catch {
+          /* best-effort — an unmaterializable key keeps prior behavior */
+        }
+      }
+      _wasmNonExtensibleObjs.add(obj);
+      return Reflect.preventExtensions(t);
     },
   };
 
