@@ -14,6 +14,7 @@ language_feature: async, await, closures
 goal: dogfood
 related: [1042, 1373b, 3958, 4616]
 loc-budget-allow:
+  - src/codegen/annexb-cancel.ts
   - src/codegen/async-cps.ts
   - src/codegen/async-frame.ts
   - src/codegen/destructuring-params.ts
@@ -318,6 +319,24 @@ demote.
   where a host-crossing fn-decl VALUE becomes an interp-backed callback
   (\`__runtime_eval_unwrap_interpreted_callback\`) instead of a
   \`__cb_\`/dynamic-bridge wrapper, and why sibling exports flip it.
+
+- **2026-08-22 the "is not defined" bucket FIXED — react 81 → 85/146 (first
+  score movement)**: `annexBReadEscapesFunctionScope`'s intervening-scope
+  walk (`boundByInterveningScope`, annexb-cancel.ts) did not count a
+  block-level FUNCTION DECLARATION as a lexical binding of its block
+  (§14.2.3), so a read inside `try { function ParentComponent(){…} … }` was
+  condemned by a SAME-NAMED Annex B site in a DIFFERENT sibling function
+  and compiled to an unconditional "X is not defined" throw — every copy
+  threw, even the first (probe w12/w13; unique names → no error, w14). The
+  walk now counts sibling block fn-decls. ReactChildren 18 → 14. Guards:
+  annexB battery 55/56 (the 1 pre-existing on base, A/B'd), jest 315/349,
+  acorn 3518/3518, cookie 63740/63740 hold. Regression test:
+  `tests/issue-4618-annexb-sibling-fn-name.test.ts` (1). The earlier
+  "interp-callback" attribution was wrong — the ReferenceError text matched
+  interp/loop.ts by coincidence; the real emitter was the Annex-B unbound
+  throw (found by instrumenting emitAnnexBUnboundReferenceError). The
+  chained `Host.take(fn).f(n)` NaN degradation (w14) remains a separate
+  open defect.
 
 ## Fix order
 
