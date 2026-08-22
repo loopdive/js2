@@ -1003,3 +1003,16 @@ all 27 modules compile and 26 validate, and Wasm scores **236/335** with zero
 runtime failures. The unavailable-infrastructure remainder is **2,951
 registrations** from 214 deferred files. All five scroll callbacks pass in
 both lanes.
+
+## 2026-08-22 Jest haste-map mock-name checkpoint
+
+The original `jest-haste-map/src/__tests__/get_mock_name.test.js` is now
+selected unchanged. Its `node:path` import is already covered by the host
+namespace, so no package-specific adapter is needed; the callback passes in
+both lanes.
+
+The exact run now covers **338 callbacks across 28 selected files**. Node
+admits **336/338** (the two existing diff-sequence snapshot-oracle failures),
+all 28 modules compile and 27 validate, and Wasm scores **237/336** with zero
+runtime failures. The unavailable-infrastructure remainder is **2,950
+registrations** from 213 deferred files.
