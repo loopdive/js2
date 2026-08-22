@@ -20,6 +20,9 @@ const JEST_GET_TYPE_PIN = {
 const JEST_UTIL_PIN = {
   version: "30.4.1",
   sourceSha256: "ef7320f8e85b76a67a65ec29e9c55e724b7a25de5b2aad75c3ed1c82a53cc7d4",
+  files: {
+    "isError.ts": "119ebfd40f2f3552bff9e699149832c8fce37acc45e2b30e2f47e72b872e2e3d",
+  },
 };
 
 const GRACEFUL_FS_PIN = {
@@ -460,6 +463,10 @@ export function setupJestUpstreamSuite(options = {}) {
   // ESM package adapter; its implementation remains the upstream source.
   const utilPin = suite.pin.dependencies?.["jest-util"] ?? JEST_UTIL_PIN;
   const util = resolveJestUtilFormatTimeSource(suite, utilPin);
+  resolveJestSource(suite, "jest-util", "isError.ts", {
+    version: utilPin.version,
+    files: utilPin.files ?? JEST_UTIL_PIN.files,
+  });
   const utilRoot = join(suite.root, "node_modules/jest-util");
   mkdirSync(utilRoot, { recursive: true });
   writeFileSync(
@@ -481,6 +488,7 @@ export function setupJestUpstreamSuite(options = {}) {
     join(utilRoot, "index.ts"),
     'export { default as formatTime } from "../../packages/jest-util/src/formatTime.ts";\n' +
       'export { default as convertDescriptorToString } from "../../packages/jest-util/src/convertDescriptorToString.ts";\n' +
+      'export { isError } from "../../packages/jest-util/src/isError.ts";\n' +
       'export { default as tryRealpath } from "../../packages/jest-util/src/tryRealpath.ts";\n',
   );
 
