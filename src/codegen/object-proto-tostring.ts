@@ -642,6 +642,33 @@ export function resolveObjectToStringTag(ctx: CodegenContext, argExpr: ts.Expres
   const callSigs = nn.getCallSignatures?.();
   if (callSigs && callSigs.length > 0) return "Function";
 
+  // (#4491 wave-5 T7) …and the AMBIENT `Function` interface, which has NO call
+  // signature in lib.d.ts (it declares `apply`/`call`/`bind`, not a signature),
+  // so the arm above misses it. That is exactly the type of everything the
+  // runtime-eval provider hands back as a callable — `Function(src)`,
+  // `new Function(src)`, an eval-returned function — plus any `: Function`
+  // annotation. Measured on base, standalone: `Object.prototype.toString
+  // .call(Function("a", "return a"))` answered `[object Object]` (it fell all
+  // the way to the `resolveWasmType` externref arm's step-13 default), while
+  // `typeof` on the same value already answered `"function"` — so the module
+  // contradicted itself about one value. `built-ins/Function/S15.3.5_A1_T1.js`
+  // and `_T2.js` are that contradiction verbatim.
+  //
+  // `deferOrStandalone`, not an unconditional return: in HOST mode a value of
+  // this type may be a genuine host function the real `Object.prototype
+  // .toString` already tags correctly, and a `Function`-typed binding is the
+  // one shape a test is most likely to point at `Function.prototype` (whose
+  // own §20.2.3 tag the `.prototype` arm above already resolves). Keeping host
+  // on its existing route makes this slice standalone-only by construction.
+  //
+  // The same three symbol names `isFunctionValuedReceiverType`
+  // (function-intrinsic-carrier.ts) accepts, for the same reason: `Function`
+  // is what `new Function(…)` is typed as, and `CallableFunction` /
+  // `NewableFunction` are its `strictBindCallApply` variants.
+  if (symName === "Function" || symName === "CallableFunction" || symName === "NewableFunction") {
+    return deferOrStandalone("Function");
+  }
+
   // Bare primitives (string / number / boolean *types*, not wrapper objects) →
   // §20.1.3.6 boxes them to the matching wrapper tag. Host resolves this
   // precisely; standalone emits the static tag.

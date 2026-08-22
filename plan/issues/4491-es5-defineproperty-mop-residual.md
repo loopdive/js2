@@ -3400,10 +3400,23 @@ prices at exactly 4 rows — not the provider seam. **Non-goal for T7.**
 
 | # | slice | rows | verdict |
 | --- | --- | ---: | --- |
-| A | §20.1.3.6 tag for a `Function`-typed receiver | 3 | LANDED |
-| B | `%Function%` own-property surface (`hasOwnProperty` / `delete`) | 3 | LANDED |
+| A | §20.1.3.6 tag for a `Function`-typed receiver | 3 | LANDED — see the correction directly below |
+| B | `%Function%` own-property surface (`hasOwnProperty` / `delete`) | 3 | LANDED — see the correction directly below |
 | C | provider-box re-hydration (RegExp + Array [[Prototype]] / brand) | 10 | NOT ATTEMPTED — priced below, blast radius exceeds the row count |
 | D | strict `caller` poison pills (`15.3.5.4_2-*gs`) | 5 | NOT ATTEMPTED — composes C-class work with strict-mode `caller` |
+
+> **Correction (team-dev-5, 2026-08-22): the two "LANDED" verdicts above named
+> a worktree that no longer exists.** The lane that wrote this plan
+> (`worktree-agent-a2b0a2cc453cd1af2`) was lost in the container restart. Only
+> the plan text survived, and only because it rode into `a83b809a3b` — a
+> team-dev-2 T2 fix commit whose diff also carried 241 lines of this issue
+> file. No commit implements slices A or B: `git log --grep=4491` has none, and
+> all three slice-A rows still FAILED when re-measured on `7dd91b7bad`. The
+> design below is sound and was re-implemented against it verbatim; see
+> "Wave-5 lane T7 result" at the end of this section for the re-landing and its
+> controls. General lesson for this file: **a plan section's verdict column
+> describes the lane that wrote it, not `main` and not your branch — verify
+> with `git log` plus a probe on your own HEAD before trusting it.**
 
 **Slice A — the tag.** `Object.prototype.toString.call(<Function-typed value>)`
 answered `[object Object]`. The cause is not the runtime classifier (which
@@ -3877,3 +3890,227 @@ The literal-`toString` predicate half is likewise reverted;
   `.tmp/runlist.mts <list> <out>`, `.tmp/cmp.mts <base> <after>`,
   `.tmp/mk-control.mts` / `.tmp/mk-grep.mts` / `.tmp/sample.mts` to build row
   lists. Every row list and both A/B result sets are left in `.tmp/`.
+
+---
+
+## Wave-5 lane T7 result — slices A + B re-landed (team-dev-5, 2026-08-22)
+
+Base `7dd91b7bad`, worktree `agent-a5b44a9cd1ef5cff0`. This lane implements the
+T7 plan above; that plan's own implementation was lost with its worktree (see
+the correction note under its slice table). Everything here is a fresh
+measurement on this base with the real `runTest262File`, `--target standalone`,
+the quickjs provider ACTIVE on every run (tier line
+`QUICKJS (artifact 073742801ba7, adapter key 1429ec7ecf2163fd)`).
+
+### Row set re-verified on HEAD before any edit
+
+Of the 13 candidate rows pulled from the standalone baseline, **2 already
+passed** on this base and are not counted as flips:
+`built-ins/Function/prototype/S15.3.4_A1.js` and
+`built-ins/Function/15.3.5.4_2-14gs.js`. That second one matters for the plan's
+arithmetic: slice D was sized at **5** poison-pill rows, and the whole
+`15.3.5.4_2-*gs` family now has exactly **one** failing member
+(`-8gs`). Slice D is a 1-row residual today, not a 5-row one.
+
+### Flipped
+
+| row | base | after |
+| --- | --- | --- |
+| `built-ins/Function/S15.3.5_A1_T1.js` | fail | **pass** |
+| `built-ins/Function/S15.3.5_A1_T2.js` | fail | **pass** |
+| `built-ins/Object/prototype/toString/Object.prototype.toString.call-function.js` | fail | **pass** |
+| `built-ins/Function/S15.3.3_A1.js` | fail | **pass** |
+| `built-ins/Function/S15.3.3_A3.js` | fail | **pass** |
+| `built-ins/Function/prototype/S15.3.3.1_A3.js` | fail | **pass** |
+
+Slice A is the first three, slice B the last three. Measured independently: the
+slice-A-only build flipped exactly its three and left the slice-B rows failing.
+
+### What each slice actually changed
+
+**A** — one arm in `resolveObjectToStringTag` (`object-proto-tostring.ts`)
+recognising the ambient `Function` / `CallableFunction` / `NewableFunction`
+symbols, through `deferOrStandalone` so host output is untouched. The value's
+own `typeof` already said `"function"`; the fold said `[object Object]`, so the
+module contradicted itself about one value.
+
+**B** — new module `runtime-eval-intrinsic-own-props.ts` (203 lines) splices a
+`$RuntimeEvalInterpretedCallback` arm, gated on `kind = INTRINSIC_FUNCTION`,
+onto `__hasOwnProperty`, `__object_hasOwn` and `__delete_property` — all three
+`(externref, externref) -> i32`, which is why one emitter serves them.
+`src/codegen/index.ts` gets four lines of finalize wiring next to
+`fillRuntimeEvalCallablePropertyGetArm`, and nothing else.
+
+Two details worth carrying forward:
+
+- **`delete` shipped in the same change as visibility** (#4010's ordering law).
+  `verifyNotConfigurable` is `delete obj[name]` followed by `hasOwnProperty`,
+  so visibility without a matching `delete` answer reads as
+  `configurable: true`. §20.2.2 makes `Function.prototype`
+  `configurable: false`, so the arm answers `false` for that key.
+- **`length` / `name` are deliberately NOT claimed by the delete arm.** They are
+  `configurable: true`, and the marker has no store to record a tombstone in, so
+  a `delete` answering `true` would leave the key visible — the same
+  two-surfaces-disagree defect the slice exists to remove. Stated residual:
+  `delete Function.length` does not remove it. `Object.getOwnPropertyDescriptor(
+  Function, "length")` was already correct on base
+  (`built-ins/Function/length/15.3.3.2-1.js` passes) and is untouched.
+
+### Correction to the plan's slice-B framing
+
+The plan lists `gOPD` as part of the missing surface. Measured: it is **not**
+missing. `Object.getOwnPropertyDescriptor(Function, "length")` already returns
+`{value: 1, writable: false, enumerable: false, configurable: true}` on base —
+that is why `Function/length/15.3.3.2-1.js` passes. Only `hasOwnProperty` /
+`__object_hasOwn` / `delete` were blind to the marker.
+
+### Declined, with the measurement that prices it
+
+- **A GENERIC marker's own `prototype`** (`Function(src).hasOwnProperty(
+  "prototype")` → `false`, `f.prototype` → `undefined`,
+  `Object.getOwnPropertyNames(f)` → `length,name`). §20.2.1.1 says it should
+  exist, but nothing can hand it back: every field of
+  `$RuntimeEvalInterpretedCallback` is immutable, so a lazily-minted prototype
+  object needs a **mutable slot on a struct type shared structurally with the
+  separately compiled provider module** — a cross-module ABI change that also
+  invalidates the adapter cache key for every lane. One row
+  (`Function/prototype/S15.3.5.2_A1_T1.js`). Claiming `prototype` in
+  `hasOwnProperty` without minting the object would make the two surfaces
+  disagree, so it is not a cheaper half-measure.
+- **`Object.getPrototypeOf(f) === Function.prototype`** → `false`. Confirmed
+  the plan's own correction: this is the `$Object.$proto` vs `$NativeProto`
+  wall, not a provider defect. `Object.getPrototypeOf(f)` answers **`null`**
+  today, and `%Function.prototype%` exists as TWO objects by design —
+  `emitFunctionPrototypeObjectSingleton` (array-object-proto.ts) mints the
+  proto-CHAIN target as a plain `$Object`, explicitly "distinct from the
+  `Function` `$NativeProto` glue used for `Function.prototype.<member>` VALUE
+  reads", which is what a bare `Function.prototype` read yields. So returning
+  the chain singleton would not make the `===` true. Already priced at 4 rows in
+  the wave-5 table; out of T7's scope.
+- **Slice C (box re-hydration).** Re-measured and the plan's verdict stands. An
+  eval-returned RegExp crosses as the #4245 mirrored box: `typeof` `object`,
+  `Object.getOwnPropertyNames` → `lastIndex` only, `source`/`global` →
+  `undefined`, `r.test("abbc")` → `TypeError: called value is not a function`,
+  tag `[object Object]`. **Probe hygiene note for whoever takes this:** a
+  LITERAL `eval("/ab+c/gi")` is folded at compile time and does not exercise the
+  seam at all — it answers `source` `ab+c` and `test` `true` while `flags`
+  reads `3` (the raw internal bitmask) and `global` is `undefined`. Only a
+  non-constant source (`eval(src + "")`) reaches the box. Measuring the folded
+  form would price this slice as nearly-working when it is not.
+
+### Controls
+
+| control set | rows | slice A build | slice A+B build |
+| --- | --- | --- | --- |
+| `built-ins/Object/prototype/toString/`, `Function/prototype/{call,apply}/`, `built-ins/eval/`, `language/eval-code/`, the `Function` top level and `Function/prototype` top level — every row the standalone baseline calls `pass` | 597 | 596 pass, 1 non-pass | 596 pass, 1 non-pass (same row) |
+
+Both builds were swept in full; the two runs are identical row-for-row.
+
+The single non-pass is `built-ins/Object/prototype/toString/prop-desc.js`
+("toString descriptor should be configurable"), and it is **pre-existing, not
+collateral**: re-measured on base `7dd91b7bad` with both slices reverted by file
+copy, it fails identically. The stale standalone baseline calls it `pass`, which
+is exactly why every control non-pass gets a base run rather than a shrug.
+
+The set was chosen to cover both blast radii: slice A changes a fold every
+`Object.prototype.toString.call` site consults, and slice B changes three
+`__*` natives in **every module that links the provider**, which is what the
+`built-ins/eval` + `language/eval-code` half is there to exercise.
+
+**Harness note that cost this lane two runs, recorded because it silently
+fabricates failures:** the agent worktree's `test262/` is periodically
+re-materialized by the harness as a tree of symlinks into a DIFFERENT (often
+dead) agent worktree, mid-run. The tail of a sweep then reports `THREW … ENOENT`
+for rows that are fine. Repairing the symlink once at process start is not
+enough — the runner script must re-check it before every row, and the sweep must
+be launched as a harness-managed background task rather than a detached
+`nohup … &`.
+
+---
+
+## Handover (T7, team-dev-5, 2026-08-22)
+
+Worktree `agent-a5b44a9cd1ef5cff0`, branch
+`worktree-agent-a5b44a9cd1ef5cff0`, base `7dd91b7bad`.
+
+### Doc-only vs re-implemented — read this first
+
+The `## Implementation Plan (T7)` section earlier in this file is **entirely
+doc-only with respect to `main` and to every live branch.** Its author's
+worktree died in the restart; the text survives only because it rode into
+`a83b809a3b`, a team-dev-2 fix commit whose diff also carried 241 lines of this
+issue file. Concretely:
+
+| plan slice | plan says | actual state after this lane |
+| --- | --- | --- |
+| A — §20.1.3.6 tag | "LANDED" | **doc-only there; re-implemented here** (commit `9f2718120b`) |
+| B — `%Function%` own-key surface | "LANDED" | **doc-only there; re-implemented here** (commit `9f2718120b`) |
+| C — provider-box re-hydration | "NOT ATTEMPTED" | still not attempted; verdict re-measured and upheld |
+| D — poison pills | "NOT ATTEMPTED", 5 rows | still not attempted; **re-counted as 1 row**, not 5 |
+
+The plan's *design* was correct and was followed verbatim; only its verdict
+column was false. Its two measured corrections to wave-4 lane G (the
+`call`/`apply` `_A1_T*` rows being the `[[Prototype]]`-slot wall, not the
+provider seam) were re-verified here and stand.
+
+### Done, measured, gates green
+
+One commit: **`9f2718120b`** — `fix(#4491): provider-realm %Function% answers
+its own tag and own keys (T7 A+B)`. Integration-ready. All four required gates
+run clean on it (`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`), plus lint-staged prettier/biome.
+
+**6 rows flipped**, each verified fail→pass on this base:
+`built-ins/Function/{S15.3.5_A1_T1,S15.3.5_A1_T2,S15.3.3_A1,S15.3.3_A3}`,
+`built-ins/Function/prototype/S15.3.3.1_A3`,
+`built-ins/Object/prototype/toString/Object.prototype.toString.call-function`.
+
+Files touched:
+
+- `src/codegen/object-proto-tostring.ts` (+27) — slice A, one arm in
+  `resolveObjectToStringTag`.
+- `src/codegen/runtime-eval-intrinsic-own-props.ts` (new, 203) — slice B, the
+  whole body.
+- `src/codegen/index.ts` (+9) — finalize wiring only, both the single-source and
+  multi-source paths, next to `fillRuntimeEvalCallablePropertyGetArm`.
+
+### In flight at wrap-up
+
+**Nothing.** No uncommitted `src/` changes, and both 597-row control sweeps
+(slice-A-only and slice-A+B) ran to completion at 596/597 with the same single
+pre-existing non-pass. The lane is integration-ready as it stands.
+
+### Exact next steps, in the order they pay
+
+1. **Slice D, now a 1-row residual** — only `built-ins/Function/15.3.5.4_2-8gs.js`
+   still fails in that family (`-14gs` passes on this base; the plan's "5 rows"
+   is stale). Diagnose before budgeting anything: it may not need the seam work
+   the plan assumed.
+3. **Slice C stays parked.** Its blocker is one step earlier than the box: the
+   caller's realm object exposes no `RegExp` for the adapter to mint through
+   (`Function("return this;")()` → `typeof G.Array` `"function"`, `typeof
+   G.RegExp` `"undefined"`), and fixing it invalidates the quickjs adapter cache
+   key for every lane. Use a NON-constant eval source when probing it — a literal
+   `eval("/ab+c/gi")` is constant-folded and never reaches the seam.
+4. **Do not** try to make `Function(src).hasOwnProperty("prototype")` true
+   without also minting the prototype object; see the "Declined" list above for
+   why the half-measure is worse than the current answer.
+
+### Gotchas for the next lane in this area
+
+- **`test262/` in an agent worktree is re-materialized mid-run** (see the
+  harness note above). Re-check the symlink before every row; launch sweeps as
+  harness-managed background tasks.
+- **The pre-commit chain times out at 2 min.** Use
+  `SKIP_SLOW_PRECOMMIT=1 git commit …` (never `--no-verify`), and keep the
+  checklist `✓` **on the command line** — the hook reads the command text, so a
+  `-F <file>` message whose `✓` is inside the file is rejected.
+- **`.test262-cache/` is per-worktree.** Copy the `quickjs-eval-adapter-*.wasm`
+  and `quickjs-artifact-*` entries from `/home/user/js2/.test262-cache/`, and
+  expect to rebuild anyway (`npx tsx scripts/build-quickjs-eval-provider.mjs`)
+  — the adapter key is derived from compiler source, so any `src/` edit that
+  changes it forces a ~3 s rebuild. Without it the provider is INACTIVE and
+  every row in this area probes the wrong thing.
+- **The standalone baseline JSONL is stale enough to matter**: of 13 candidate
+  rows, 2 already passed, and one control row it calls `pass` fails on base.
+  Verify every row on your own HEAD, and base-check every control non-pass.

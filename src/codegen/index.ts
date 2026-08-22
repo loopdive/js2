@@ -250,6 +250,9 @@ import {
   ensureRuntimeEvalAotCallableCarrierTypes,
   fillRuntimeEvalCallablePropertyGetArm,
 } from "./runtime-eval-callable.js";
+// (#4491 wave-5 T7 slice B) §20.2.2 own-key surface of the provider-realm
+// `%Function%` marker — see runtime-eval-intrinsic-own-props.ts.
+import { fillRuntimeEvalIntrinsicFunctionOwnProps } from "./runtime-eval-intrinsic-own-props.js";
 import { ensureNativeIteratorRuntime, fillNativeIteratorLateArms } from "./iterator-native.js";
 import { emitResizableAbExports } from "./dataview-native.js"; // (#3058)
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
@@ -5638,6 +5641,11 @@ export function generateModule(
     // properties (for example assert.throws). Install this after every other
     // __extern_get fill so the carrier delegates directly to its owner module.
     fillRuntimeEvalCallablePropertyGetArm(ctx);
+    // (#4491 T7-B) …and the §20.2.2 own-key surface of the `%Function%` marker
+    // the same boundary hands back for a bare `Function` read. Same finalize
+    // point for the same reason: the marker type index exists only once a
+    // boundary site has minted it.
+    fillRuntimeEvalIntrinsicFunctionOwnProps(ctx);
 
     // (#2358 #10) Fill the reserved `__array_to_primitive_string` body now that
     // `__extern_length`/`__extern_get_idx` (filled just above) and the native
@@ -8579,6 +8587,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     inlineCallDispatchSites(ctx);
     inlineFlatStrCallSites(ctx); // (#4157) flatten/equals site fast paths — rationale in flat-str-ic.ts
     fillRuntimeEvalCallablePropertyGetArm(ctx);
+    fillRuntimeEvalIntrinsicFunctionOwnProps(ctx); // (#4491 T7-B) — multi-source parity
 
     // (#3495) `__extern_get_idx` is reserved while compiling standalone
     // numeric reads through an externref (for example `globalThis.logs[i]`).
