@@ -194,6 +194,17 @@ export function isEvolvingAnyBinding(ctx: CodegenContext, callee: ts.Expression)
   // An initializer commits the widened declared type only when the initializer
   // itself is non-callable; anything else (including `any`) stays untouched.
   const initFact = ctx.oracle.typeFactOf(init);
+  // (#4616) `let x = null; … x = function(){…}; x()` — the deferred-init
+  // idiom (cookie's `__upstreamSnapshotMatcher`). A NULLISH initializer on a
+  // MUTABLE unannotated binding commits nothing: TS infers the literal
+  // `null`/`undefined` type and closure-crossing flow analysis reports it at
+  // the call site even after a function was assigned. Only `const` makes a
+  // nullish initializer a real commitment.
+  if (initFact.kind === "null" || initFact.kind === "undefined") {
+    const list = decl.parent;
+    const isConst = ts.isVariableDeclarationList(list) && (list.flags & ts.NodeFlags.Const) !== 0;
+    if (!isConst) return true;
+  }
   return !NEVER_CALLABLE_FACT_KINDS.has(initFact.kind) && !isFreshlyConstructedNonCallable(ctx, init, initFact.kind);
 }
 

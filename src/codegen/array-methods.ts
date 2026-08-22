@@ -333,6 +333,79 @@ function refElemHofCallbackIsClosure(ctx: CodegenContext, fctx: FunctionContext,
   );
 }
 
+/**
+ * (#4616) Globals with dedicated native codegen arms — safe inside a lifted
+ * closure body. Anything else that resolves to NO user-source declaration is
+ * assumed to be a host-provided ambient (TemporalHelpers, harness globals, …)
+ * that only the __make_callback host lane can see; see the #2838 note on
+ * hofElemKindOk for the 212-test regression that taught us this.
+ */
+const CLOSURE_SAFE_AMBIENT_GLOBALS = new Set([
+  "Math",
+  "JSON",
+  "Object",
+  "Array",
+  "String",
+  "Number",
+  "Boolean",
+  "Date",
+  "RegExp",
+  "Symbol",
+  "Promise",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "console",
+  "NaN",
+  "Infinity",
+  "undefined",
+  "parseInt",
+  "parseFloat",
+  "isNaN",
+  "isFinite",
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "EvalError",
+  "ReferenceError",
+  "URIError",
+  "AggregateError",
+]);
+
+/**
+ * (#4616) May this ref-element HOF call take the closure lane in the gc HOST
+ * profile? Only when the inline callback's body resolves every identifier to a
+ * user-source declaration or a native-codegen builtin — a body needing a
+ * host-only ambient global must stay on the host-callback fallback (which is a
+ * silent no-op for ref-element receivers, the pre-existing #3126 residual, but
+ * never *wrong* for the widened set). Identifier callbacks are safe: the probe
+ * in refElemHofCallbackIsClosure already proved they are compiled closures.
+ */
+function hofRefElemClosureLaneSafe(ctx: CodegenContext, callExpr: ts.CallExpression): boolean {
+  const cbArg = callExpr.arguments[0];
+  if (cbArg === undefined) return true;
+  if (!ts.isArrowFunction(cbArg) && !ts.isFunctionExpression(cbArg)) return true;
+  let safe = true;
+  const visit = (node: ts.Node): void => {
+    if (!safe) return;
+    if (ts.isIdentifier(node)) {
+      // Skip non-value positions: property names, declaration names.
+      const parent = node.parent;
+      if (ts.isPropertyAccessExpression(parent) && parent.name === node) return;
+      if ((ts.isPropertyAssignment(parent) || ts.isMethodDeclaration(parent)) && parent.name === node) return;
+      if (CLOSURE_SAFE_AMBIENT_GLOBALS.has(node.text)) return;
+      const decl = ctx.oracle.valueDeclarationOf(node);
+      if (decl === undefined || decl.getSourceFile().isDeclarationFile) safe = false;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(cbArg.body);
+  return safe;
+}
+
 // ── Guarded funcref cast (ref.test before ref.cast to avoid illegal cast traps) ──
 export function guardedFuncRefCastInstrs(fctx: FunctionContext, funcTypeIdx: number): Instr[] {
   const tmpFunc = allocLocal(fctx, `__gfc_${fctx.locals.length}`, { kind: "funcref" } as ValType);
@@ -1637,8 +1710,11 @@ export function compileArrayMethodCall(
     et.kind === "i32" ||
     et.kind === "externref" ||
     ((et.kind === "ref" || et.kind === "ref_null") &&
-      (ctx.standalone || ctx.wasi) &&
-      refElemHofCallbackIsClosure(ctx, fctx, callExpr));
+      refElemHofCallbackIsClosure(ctx, fctx, callExpr) &&
+      // (#4616) gc HOST lane: widen only for callbacks whose body is free of
+      // host-only ambient globals — the #2838 Temporal hazard. The standalone/
+      // wasi lanes keep their unconditional widening (no host globals exist).
+      (ctx.standalone || ctx.wasi || hofRefElemClosureLaneSafe(ctx, callExpr)));
 
   let result: ValType | null | undefined;
   switch (methodName) {

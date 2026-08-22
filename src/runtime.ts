@@ -3076,6 +3076,37 @@ const _PRIM_ABSENT: typeof _MISS = _MISS;
  * For hint "number"/"default", valueOf is checked before toString.
  * Returns the primitive value, or undefined if no conversion found.
  */
+/**
+ * (#4616, cookie Expires family) ToPrimitive for the compiler-owned WasmGC
+ * Date carrier. `+d` / `d1 - d2` / `String(d)` on an any-typed `$Date`
+ * funneled through the generic ToPrimitive protocols and fell to the NaN /
+ * "[object Object]" defaults, so every Date equality/order comparison in the
+ * parse-set-cookie corpus (and jest's diff `expires` toEqual) failed.
+ * §21.4.4.45: hint "number" → the timestamp; "string"/"default" → the date
+ * string. Mirrors tryCallWasmDateHostMethod's carrier protocol. Returns
+ * `_MISS` when the value is not the Date carrier.
+ */
+function _wasmDateToPrimitive(
+  raw: any,
+  hint: "number" | "string" | "default",
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): any | typeof _MISS {
+  if (raw == null || typeof raw !== "object" || !_isWasmStruct(raw)) return _MISS;
+  const dexps = callbackState?.getExports();
+  const isDate = dexps?.["__\0js2_is_date"] as ((value: unknown) => number) | undefined;
+  const dateValue = dexps?.["__\0js2_date_value"] as ((value: unknown) => bigint) | undefined;
+  if (typeof isDate !== "function" || typeof dateValue !== "function") return _MISS;
+  try {
+    if (isDate(raw) !== 1) return _MISS;
+    const invalidTimestamp = -0x8000000000000000n;
+    const ts = dateValue(raw);
+    const ms = ts === invalidTimestamp ? NaN : Number(ts);
+    return hint === "number" ? ms : new Date(ms).toString();
+  } catch {
+    return _MISS;
+  }
+}
+
 function _toPrimitive(
   obj: any,
   hint: "number" | "string" | "default",
@@ -3084,6 +3115,12 @@ function _toPrimitive(
   // Unwrap host proxy to raw WasmGC struct for sidecar lookups (#1090).
   // Proxies are created by _wrapForHost and _hostProxyReverse maps them back.
   const raw = _hostProxyReverse.get(obj) ?? obj;
+  // (#4616, cookie Expires family) The compiler-owned WasmGC Date carrier —
+  // see _wasmDateToPrimitive.
+  {
+    const dateMs = _wasmDateToPrimitive(raw, hint, callbackState);
+    if (dateMs !== _MISS) return dateMs;
+  }
   // 1. Check Symbol.toPrimitive (sidecar and real symbol)
   // Note: user-thrown errors from sidecar methods must propagate per spec
   // (#983) — tests rely on `assert.throws` seeing the original throw.
@@ -3391,6 +3428,11 @@ function _hostToPrimitive(
 
   // Check Symbol.toPrimitive via real JS property access (goes through proxy if applicable)
   const raw = _hostProxyReverse.get(obj) ?? obj;
+  // (#4616) WasmGC Date carrier — see _wasmDateToPrimitive.
+  {
+    const dateMs = _wasmDateToPrimitive(raw, hint, callbackState);
+    if (dateMs !== _MISS) return dateMs;
+  }
   const exotic = obj[Symbol.toPrimitive];
   if (exotic !== undefined && exotic !== null) {
     if (typeof exotic === "function") {
@@ -3656,7 +3698,10 @@ function _structFieldNamesRaw(obj: any, exports: Record<string, Function> | unde
   if (csv == null || typeof csv !== "string" || csv === "") return null;
   let names = _csvSplitCache.get(csv);
   if (!names) {
-    names = csv.split(",");
+    // (#4616) Codegen escapes commas INSIDE a field name as U+0001 (see
+    // escapeStructFieldNameForCsv) so the join/split round-trip is lossless
+    // for keys like cookie's "Expires=Sun, 26 Jul …" snapshot table.
+    names = csv.split(",").map((n) => (n.indexOf("\u0001") >= 0 ? n.split("\u0001").join(",") : n));
     _csvSplitCache.set(csv, names);
   }
   return names;
@@ -16188,6 +16233,21 @@ assert._isSameValue = isSameValue;
         // legacy branch below is reachable only if that pass half-emitted;
         // it is kept so such a module keeps its pre-#3486 bytes rather than
         // silently losing `vec.constructor === Array`.
+        // (#4616, jest getType 'date') The compiler-owned WasmGC Date carrier
+        // must report `.constructor === Date` — jest-get-type classifies via
+        // exactly that identity check. Same carrier protocol as
+        // _wasmDateToPrimitive / tryCallWasmDateHostMethod.
+        if (key === "constructor" && obj != null && _isWasmStruct(obj)) {
+          const dexps = callbackState?.getExports();
+          const isDate = dexps?.["__\0js2_is_date"] as ((v: any) => number) | undefined;
+          if (typeof isDate === "function") {
+            try {
+              if (isDate(obj) === 1) return (globalSandbox as { Date?: DateConstructor } | undefined)?.Date ?? Date;
+            } catch {
+              /* not the Date carrier — fall through */
+            }
+          }
+        }
         if (key === "constructor" && obj != null && _isWasmStruct(obj)) {
           const exports = callbackState?.getExports();
           const isVec = exports?.__is_vec as ((v: any) => number) | undefined;

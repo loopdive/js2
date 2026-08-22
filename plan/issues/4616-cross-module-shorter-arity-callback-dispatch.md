@@ -28,6 +28,15 @@ loc-budget-allow:
   - src/import-resolver.ts
   - src/codegen/closures.ts
   - src/codegen/function-declaration-observation.ts
+  # cookie-suite root causes (slices 5-8 below): Date-ctor dynamic dispatch,
+  # ref-elem HOF host-lane widening, deferred-init non-callable fold,
+  # field-name CSV comma escaping.
+  - src/codegen/expressions/new-builtin-globals.ts
+  - src/codegen/declarations/import-collector.ts
+  - src/codegen/array-methods.ts
+  - src/codegen/expressions/calls-guards.ts
+  - src/codegen/struct-field-exports.ts
+  - src/runtime.ts
 func-budget-allow:
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
   - src/codegen/extern-declarations.ts::registerNodeBuiltinImports
@@ -38,6 +47,11 @@ func-budget-allow:
   - src/codegen/literals.ts::compileObjectLiteral
   - src/codegen/closures.ts::compileLiftedClosureBody
   - src/codegen/closures.ts::compileArrowAsCallback
+  - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
+  - src/codegen/declarations/import-collector.ts::unifiedVisitNode
+  - src/codegen/expressions/calls-guards.ts::isEvolvingAnyBinding
+  - src/codegen/array-methods.ts::compileArrayMethodCall
+  - src/runtime.ts::_structFieldNamesRaw
 ---
 
 # shorter-arity callbacks from later modules miss the funcref dispatch
@@ -197,3 +211,60 @@ value import, platform-correct (reads the real `os.EOL`). jest-docblock
 21 → 39/39; jest suite 145 → 162/232. Guards green: #1044, #1792, #1794,
 #2699 (class bindings keep extern-class stubs, fn bindings their
 `__nodefn__` wrappers; member registration skips names already bound).
+
+## 2026-08-22 fifth-eighth slices — cookie 63671 → 63740/63740 (100%)
+
+Cookie's last 69 upstream failures dissected into FOUR independent compiler
+bugs, each general (nothing cookie-specific), each with a committed reduction
+in `tests/issue-4616-cookie-suite-fixes.test.ts` (4 tests) plus
+`tests/issue-4616-date-carrier-toprimitive.test.ts` (2 tests):
+
+5. **`new Date(x)` with a dynamic single arg ToNumbered strings to NaN**
+   (§21.4.2.1 wants ToPrimitive-then-branch). parseSetCookie's untyped
+   `new Date(val)` produced an invalid date, `Number.isFinite(date.valueOf())`
+   gated `expires` out of every parsed Set-Cookie. Fix: host-lane runtime
+   dispatch in new-builtin-globals.ts — `__typeof_string(arg)` ? call
+   `__date_parse_host` : `__unbox_number` (both registered up front:
+   import-collector now also sets `dateParseHostNeeded` for
+   any/unknown/union-with-string single args; `isDynamicMaybeStringArg` uses
+   `ctx.oracle.typeFactOf`). Standalone/wasi keep prior behavior.
+   Also landed (earlier, same family): the `$Date` carrier now answers the
+   generic ToPrimitive protocols — `_wasmDateToPrimitive` wired into BOTH
+   `_toPrimitive` and `_hostToPrimitive` (the `__to_primitive` env import
+   funnel), and the dynamic `constructor` read answers host `Date`
+   (jest-get-type 'date'; `+d1 === +d2` on carriers).
+6. **Array HOFs on typed ref-element receivers silently no-opped in the gc
+   HOST lane** — `hofElemKindOk` declined (`ctx.standalone || ctx.wasi` gate)
+   and the generic fallback compiled `__extern_get(recv, "forEach")` + drops.
+   `Object.entries(top).forEach(([domain, values]) => …)` registered ZERO
+   corpus tests (52 admitted tests never ran; runner marks index-misaligned
+   tails failed with null errors — that's what "failed, wasmError: None"
+   means). Fix: widen the gate to the host lane, guarded by
+   `hofRefElemClosureLaneSafe` — closure lane only when the callback body
+   resolves every identifier to a user-source declaration or a
+   native-codegen builtin (`CLOSURE_SAFE_AMBIENT_GLOBALS`), preserving the
+   #2838 Temporal host-global hazard (212-test regression) as host-callback.
+7. **`let x = null; … x = function(){…}; x()` compiled to an unconditional
+   TypeError** — the #4221 non-callable fold's `isEvolvingAnyBinding`
+   treated a nullish INITIALIZER as a type commitment even on a mutable
+   binding; the harness's `__upstreamSnapshotMatcher(actual)` threw
+   "is not a function" on every snapshot assertion. Fix: a nullish
+   initializer on a non-`const` unannotated binding is the deferred-init
+   idiom — no fold.
+8. **Struct field names CONTAINING commas corrupted the `__struct_field_names`
+   CSV** — the snapshot table's cookie-string keys ("Expires=Sun, 26 Jul …")
+   made the host's `split(",")` re-derive phantom names: dynamic AND
+   literal-key reads answered undefined. Fix: codegen escapes "," inside a
+   name as U+0001 (`escapeStructFieldNameForCsv`, applied to the legacy and
+   shape-id CSVs); `_structFieldNamesRaw` unescapes after the split. The
+   `__sget_/__shas_/__sset_` export names keep the raw name.
+
+Validation: cookie upstream 63740/63740 (from 63671); jest 215/232 (deep-MOP
+deepCyclicCopy 11 + index 3 + convertDescriptorToString 1 + errorWithStack 1
+remain, all pre-diagnosed clusters); acorn 3518/3518 and clsx 32/32 hold.
+Guard batteries green: HOF (issue-3126 + array-prototype-methods +
+array-callback-three-params + array-of-structs + object-keys +
+reverse-struct-map — the 2 issue-3126 string[].find/findLast standalone
+misses fail identically on HEAD without these changes, pre-existing), Date
+(issue-2164/1343/1344/2678 — the one performance.now standalone failure is
+likewise pre-existing), equivalence date/to-primitive files (57 tests).
