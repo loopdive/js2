@@ -242,7 +242,6 @@ import {
   defaultValueInstrs,
   emitGuardedFuncRefCast,
   emitGuardedRefCast,
-  getVecInfo,
   pushDefaultValue,
   pushParamSentinel,
 } from "../type-coercion.js";
@@ -259,6 +258,7 @@ import {
   compileClosureCall,
   compileGetterCallable,
   compileObjectPrototypeFallback,
+  runtimeSignatureParameters,
   tryExternClassMethodOnAny,
 } from "./calls-closures.js";
 import { compileOptionalCallExpression } from "./calls-optional.js";
@@ -339,6 +339,7 @@ import { compileBuiltinStaticCall, tryCompileFromCharCodeFamilyReflective } from
 import { compileNamespaceStaticCall } from "./call-namespace-static.js";
 import { compileReceiverMethodCall } from "./call-receiver-method.js";
 import { compileTailDispatch } from "./call-tail-dispatch.js";
+import { tryEmitRealmGlobalMemberCall } from "./realm-global-member-call.js"; // (#4491)
 import {
   emitNativeGeneratorToVec,
   nativeGeneratorInfoForForOfSubject,
@@ -1093,25 +1094,15 @@ function tryEmitNativeProtoReflectiveCall(
     if (resolveObjectToStringTag(ctx, expr.arguments[0]) !== undefined) return undefined;
   }
 
-  // Map the lib interface → builtin brand. Array<T> / ReadonlyArray<T> / Object.
-  let brand: number | undefined;
-  if (ifaceName === "Array" || ifaceName === "ReadonlyArray") brand = ensureArrayNativeProtoGlue(ctx);
-  else if (ifaceName === "Object") brand = ensureObjectNativeProtoGlue(ctx);
-  else if (ifaceName === "String")
-    brand = ensureStringNativeProtoGlue(ctx); // (#2875)
-  else if (ifaceName === "DataView")
-    brand = ensureDataViewNativeProtoGlue(ctx); // (#3173)
-  else if (ifaceName === "ArrayBuffer")
-    brand = ensureArrayBufferNativeProtoGlue(ctx); // (#1595)
-  else if (ifaceName === "Date")
-    brand = ensureDateNativeProtoGlue(ctx); // (#3219)
+  let brand = nativeProtoBrandForInterface(ctx, ifaceName);
   // (#4582) `valueOf` ONLY — the other Number/Boolean members still refuse, and
   // routing those here would turn today's answers into TypeErrors. Without this
   // arm both fell to the legacy `.call` tail that drops `thisArg` and returns 0:
   // `Boolean.prototype.valueOf.call(Object(true))` answered `false`, the Number
   // twin `undefined` — silent wrong values, measured on base.
-  else if (member === "valueOf" && ifaceName === "Number") brand = ensureNumberNativeProtoGlue(ctx);
-  else if (member === "valueOf" && ifaceName === "Boolean") brand = ensureBooleanNativeProtoGlue(ctx);
+  if (brand === undefined && member === "valueOf" && ifaceName === "Number") brand = ensureNumberNativeProtoGlue(ctx);
+  else if (brand === undefined && member === "valueOf" && ifaceName === "Boolean")
+    brand = ensureBooleanNativeProtoGlue(ctx);
   if (brand === undefined) return undefined;
 
   const glue = getNativeProtoBuiltinGlue(ctx, brand);
@@ -1133,10 +1124,15 @@ function tryEmitNativeProtoReflectiveCall(
  * user-arg list is just `[thisArg]`, threaded into the closure's lone `this`
  * param). Returns the result ValType, or `undefined` to fall through.
  */
-function emitReflectiveNativeProtoClosureCall(
+export function emitReflectiveNativeProtoClosureCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  expr: ts.CallExpression,
+  /**
+   * (#2875) Argument SOURCE, not necessarily the syntactic call — only
+   * `.arguments` is read. `transferred-native-proto-call.ts` supplies a
+   * synthesized `[thisArg, …userArgs]` list whose elements are all real nodes.
+   */
+  expr: { readonly arguments: readonly ts.Expression[] },
   receiver: ts.Expression,
   brand: number,
   member: string,
@@ -3390,10 +3386,10 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
   //     no index inconsistency (the declaration loop already relies on this).
   {
     const seenFnNodes = new Set<ts.Node>();
-    const usedAsValueFn = (node: ts.FunctionExpression | ts.ArrowFunction | ts.FunctionDeclaration): void => {
+    const usedAsValueFn = (node: ts.FunctionExpression | ts.ArrowFunction): void => {
       if (seenFnNodes.has(node)) return;
       seenFnNodes.add(node);
-      const { params, returnType, hasRestParam } = computeClosureWrapperSig(ctx, node);
+      const { params, returnType } = computeClosureWrapperSig(ctx, node);
       // (#2939) Restrict pre-registration to the ALL-EXTERNREF callback shape
       // (externref params + externref/void return). This is exactly the harness
       // callback shape (`function(TA, makeCtorArg)` — `any` params) — the whole
@@ -3407,47 +3403,21 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
       // the invalid-Wasm CE and keeps the fix's blast radius to the harness
       // class. (Inner numeric-param callbacks like `findLastIndex(fn)` dispatch
       // via the array-method path, never this inline dispatcher.)
-      const fixedParams = hasRestParam ? params.slice(0, -1) : params;
-      const restType = hasRestParam ? params[params.length - 1] : undefined;
-      const restInfo =
-        hasRestParam && restType && (restType.kind === "ref" || restType.kind === "ref_null")
-          ? getVecInfo(ctx, restType.typeIdx)
-          : null;
-      // A rest closure's final Wasm formal is its internal externref vector,
-      // not a positional callback argument. Pre-register that signature too;
-      // the dynamic call emitter packs the trailing values into the vector.
-      // Keep the speculative lane narrow: numeric/ref-valued rest elements
-      // still wait for their value site, while the generic JS callback shape
-      // (all fixed formals + externref rest) is representation-safe.
-      const allExternref =
-        fixedParams.every((p) => p.kind === "externref") &&
-        (!hasRestParam || (restInfo !== null && restInfo.elemType.kind === "externref"));
+      const allExternref = params.every((p) => p.kind === "externref");
       const externrefOrVoidReturn = returnType === null || returnType.kind === "externref";
       if (!allExternref || !externrefOrVoidReturn) return;
-      const wrapper = getOrCreateFuncRefWrapperTypes(ctx, params, returnType ? [returnType] : []);
-      if (hasRestParam && wrapper) {
-        // The Wasm signature alone cannot distinguish a rest vector from an
-        // ordinary vector parameter. Record the source-level rest shape for
-        // compile-order candidates; a later concrete closure entry carries
-        // the same flag and is preferred by the dedupe below.
-        const restTypes = ((ctx as unknown as { __restFuncTypeIdxs?: Set<number> }).__restFuncTypeIdxs ??= new Set());
-        restTypes.add(wrapper.closureInfo.funcTypeIdx);
-      }
+      getOrCreateFuncRefWrapperTypes(ctx, params, returnType ? [returnType] : []);
     };
     const visitFns = (node: ts.Node): void => {
-      if (ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isFunctionDeclaration(node)) {
+      if (ts.isFunctionExpression(node) || ts.isArrowFunction(node)) {
         const p = node.parent;
         const isCallArg = p && ts.isCallExpression(p) && p.arguments.some((a) => a === node);
         const isVarInit = p && ts.isVariableDeclaration(p) && p.initializer === node;
-        const isRestDeclaration =
-          ts.isFunctionDeclaration(node) &&
-          node.name !== undefined &&
-          node.parameters.some((param) => param.dotDotDotToken !== undefined);
         // A generator function-expression's value is a Generator object, not a
         // plain closure the inline dispatcher marshals; skip (its wrapper type
         // is externref-returning and harmless, but leave it to the value site).
         const isGen = ts.isFunctionExpression(node) && node.asteriskToken !== undefined;
-        if ((isCallArg || isVarInit || isRestDeclaration) && !isGen) usedAsValueFn(node);
+        if ((isCallArg || isVarInit) && !isGen) usedAsValueFn(node);
       }
       ts.forEachChild(node, visitFns);
     };
@@ -3644,16 +3614,6 @@ export function tryEmitInlineDynamicCall(
 
   const allCandidates: Cand[] = [];
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-    const restFuncTypeIdxs = (ctx as unknown as { __restFuncTypeIdxs?: Set<number> }).__restFuncTypeIdxs;
-    const hasRestParam = info.hasRestParam === true || restFuncTypeIdxs?.has(info.funcTypeIdx) === true;
-    // A pre-registered wrapper has no source ClosureInfo yet, so recover the
-    // rest marker from the source pre-scan. Concrete capturing closures carry
-    // the marker directly on their own entry.
-    const candidateInfo: ClosureInfo =
-      hasRestParam && info.hasRestParam !== true ? { ...info, hasRestParam: true } : info;
-    const fixedParamCount = hasRestParam
-      ? Math.max(0, candidateInfo.paramTypes.length - 1)
-      : candidateInfo.paramTypes.length;
     // (#2923) JS §7.3.14: a call whose arg count differs from the callee's
     // declared param count still INVOKES the callee — extra args are ignored,
     // missing params are `undefined`. The per-candidate dispatch arm below
@@ -3688,44 +3648,26 @@ export function tryEmitInlineDynamicCall(
     // silent no-op, so the promise never settled (resolve-settled-*-self).
     // Void candidates needing a non-externref pad stay excluded
     // (conservative: their pad values are NaN/0/typed-null guesses).
-    if (!hasRestParam && candidateInfo.paramTypes.length > arity && candidateInfo.returnType === null) {
+    if (info.paramTypes.length > arity && info.returnType === null) {
       let padsAllExternref = true;
-      for (let i = arity; i < candidateInfo.paramTypes.length; i++) {
-        if (candidateInfo.paramTypes[i]!.kind !== "externref") {
+      for (let i = arity; i < info.paramTypes.length; i++) {
+        if (info.paramTypes[i]!.kind !== "externref") {
           padsAllExternref = false;
           break;
         }
       }
       if (!padsAllExternref) continue;
     }
-    if (hasRestParam) {
-      const restType = candidateInfo.paramTypes[fixedParamCount];
-      const restInfo =
-        restType && (restType.kind === "ref" || restType.kind === "ref_null")
-          ? getVecInfo(ctx, restType.typeIdx)
-          : null;
-      if (restInfo === null || restInfo.elemType.kind !== "externref") continue;
-      if (candidateInfo.returnType === null && fixedParamCount > arity) {
-        let padsAllExternref = true;
-        for (let i = arity; i < fixedParamCount; i++) {
-          if (candidateInfo.paramTypes[i]!.kind !== "externref") {
-            padsAllExternref = false;
-            break;
-          }
-        }
-        if (!padsAllExternref) continue;
-      }
-    }
-    if (!supported(candidateInfo.returnType)) continue;
+    if (!supported(info.returnType)) continue;
     let ok = true;
-    for (const p of candidateInfo.paramTypes) {
+    for (const p of info.paramTypes) {
       if (!supported(p)) {
         ok = false;
         break;
       }
     }
     if (!ok) continue;
-    allCandidates.push({ structTypeIdx: typeIdx, info: candidateInfo });
+    allCandidates.push({ structTypeIdx: typeIdx, info });
   }
 
   // (#3031) Standalone Proxy [[Call]] arm gate — §0.1 ladder step 1: a Proxy
@@ -3758,17 +3700,13 @@ export function tryEmitInlineDynamicCall(
 
   // Dedupe by funcTypeIdx — concrete subtypes share funcTypeIdx with their
   // base wrapper; one dispatch arm per unique funcref type is enough.
-  const candidatesByFuncType = new Map<number, Cand>();
+  const seenFuncType = new Set<number>();
+  const candidates: Cand[] = [];
   for (const c of allCandidates) {
-    const previous = candidatesByFuncType.get(c.info.funcTypeIdx);
-    // Prefer a concrete rest-aware entry over the speculative base wrapper
-    // with the same funcref signature. The runtime value is the concrete
-    // subtype, but both entries share its lifted function type.
-    if (previous === undefined || (c.info.hasRestParam === true && previous.info.hasRestParam !== true)) {
-      candidatesByFuncType.set(c.info.funcTypeIdx, c);
-    }
+    if (seenFuncType.has(c.info.funcTypeIdx)) continue;
+    seenFuncType.add(c.info.funcTypeIdx);
+    candidates.push(c);
   }
-  const candidates = [...candidatesByFuncType.values()];
   // Emit exact-arity arms first (most-specific), then padded over-arity arms,
   // so a value that satisfies an exact wrapper takes that arm before a
   // wider, undefined-padded one.
@@ -4080,9 +4018,7 @@ export function tryEmitInlineDynamicCall(
 
     const callBody: Instr[] = [];
 
-    const restParam = cand.info.hasRestParam === true;
-    const fixedParamCount = restParam ? Math.max(0, cand.info.paramTypes.length - 1) : cand.info.paramTypes.length;
-    appendDynamicCandidateArgcSetup(ctx, fctx, callBody, fixedParamCount, argLocals, arity);
+    appendDynamicCandidateArgcSetup(ctx, fctx, callBody, cand.info.paramTypes.length, argLocals, arity);
     // Self arg: anyref → the concrete struct type this funcref expects.
     callBody.push({ op: "local.get", index: anyLocal });
     callBody.push({ op: "ref.cast", typeIdx: selfTypeIdx });
@@ -4092,7 +4028,7 @@ export function tryEmitInlineDynamicCall(
     // missing trailing formals (i >= arity) are padded with `undefined`
     // (#820/#1543) so the lifted method applies its default / runs the
     // spec-mandated destructure of the default value.
-    for (let i = 0; i < fixedParamCount; i++) {
+    for (let i = 0; i < cand.info.paramTypes.length; i++) {
       const pType = cand.info.paramTypes[i]!;
       if (i >= arity) {
         // Missing arg → `undefined`. For ref/ref_null formals there is no
@@ -4133,30 +4069,6 @@ export function tryEmitInlineDynamicCall(
       } else if (pType.kind === "ref" || pType.kind === "ref_null") {
         callBody.push({ op: "any.convert_extern" });
         callBody.push({ op: "ref.cast", typeIdx: (pType as { typeIdx: number }).typeIdx });
-      }
-    }
-
-    if (restParam) {
-      // A source `...args` formal is represented by a GC vector in the lifted
-      // Wasm signature. The dynamic call site has already evaluated every
-      // positional argument into externref locals, so materialize the
-      // trailing slice directly as the vector expected by the closure.
-      const restType = cand.info.paramTypes[fixedParamCount]!;
-      const restTypeIdx = restType.kind === "ref" || restType.kind === "ref_null" ? restType.typeIdx : undefined;
-      const restInfo = restTypeIdx === undefined ? null : getVecInfo(ctx, restTypeIdx);
-      if (restTypeIdx === undefined || restInfo === null || restInfo.elemType.kind !== "externref") {
-        // Candidate filtering above should make this unreachable. Do not emit
-        // a guessed cast if metadata is ever inconsistent; let the next arm
-        // (or the host/default fallback) handle the value instead.
-        continue;
-      } else {
-        const restCount = Math.max(0, arity - fixedParamCount);
-        callBody.push({ op: "i32.const", value: restCount });
-        for (let i = fixedParamCount; i < arity; i++) {
-          callBody.push({ op: "local.get", index: argLocals[i]! });
-        }
-        callBody.push({ op: "array.new_fixed", typeIdx: restInfo.arrTypeIdx, length: restCount });
-        callBody.push({ op: "struct.new", typeIdx: restTypeIdx });
       }
     }
 
@@ -6928,6 +6840,18 @@ function compileCallExpression(
     return { kind: "externref" };
   }
 
+  // (#4491) `this.f(…)` / `this["f"](…)` where `f` is a `var`-declared script
+  // global. Must run BEFORE the receiver-type method dispatch below: that arm
+  // resolves the member against the checker's `typeof globalThis` struct, which
+  // has no field for a `var` global, and its resolved-method-is-null guard turns
+  // the miss into `TypeError: called value is not a function`. The member READ
+  // has answered from the module global since #4500 Slice A; this is the CALL
+  // twin. Narrowly gated (see the module), so every other call is unchanged.
+  {
+    const realmGlobalCall = tryEmitRealmGlobalMemberCall(ctx, fctx, expr);
+    if (realmGlobalCall !== undefined) return realmGlobalCall;
+  }
+
   // Handle property access calls: console.log, Math.xxx, extern methods
   if (ts.isPropertyAccessExpression(expr.expression)) {
     const propAccess = expr.expression;
@@ -8674,13 +8598,18 @@ function compileExpressionCallee(
   if (callSigs && callSigs.length > 0) {
     const sig = callSigs[0]!;
 
-    // Look for a matching closure type
-    const sigParamCount = sig.parameters.length;
+    // Look for a matching closure type. (#4491) `runtimeSignatureParameters`
+    // drops the synthetic `(...args: any[])` the checker gives a JS function
+    // that reads `arguments` — it has no formal slot in the compiled callee, and
+    // counting it here nulls the coerced argument and mis-reports `__argc`
+    // (`__FUNC()(__JEDI)` in S13.2_A2_T1).
+    const runtimeSigParams = runtimeSignatureParameters(sig);
+    const sigParamCount = runtimeSigParams.length;
     const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
     const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
     const sigParamWasmTypes: ValType[] = [];
     for (let i = 0; i < sigParamCount; i++) {
-      const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
+      const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
       sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
     }
 
@@ -9261,6 +9190,25 @@ export function emitDynamicCombinatorArg(
     notIterLocal,
     rejectReason,
   });
+}
+
+/**
+ * (#2875) Lib INTERFACE name (`String`, `Array`, …) → the registered
+ * `$NativeProto` brand whose member closures model that prototype, ensuring the
+ * glue on the way. `undefined` for an interface with no wired glue.
+ *
+ * Shared with `transferred-native-proto-call.ts` so the two spellings of the
+ * same operation — `String.prototype.m.call(x)` and `x.m = String.prototype.m;
+ * x.m()` — resolve the same brand by construction rather than by coincidence.
+ */
+export function nativeProtoBrandForInterface(ctx: CodegenContext, ifaceName: string): number | undefined {
+  if (ifaceName === "Array" || ifaceName === "ReadonlyArray") return ensureArrayNativeProtoGlue(ctx);
+  if (ifaceName === "Object") return ensureObjectNativeProtoGlue(ctx);
+  if (ifaceName === "String") return ensureStringNativeProtoGlue(ctx); // (#2875)
+  if (ifaceName === "DataView") return ensureDataViewNativeProtoGlue(ctx); // (#3173)
+  if (ifaceName === "ArrayBuffer") return ensureArrayBufferNativeProtoGlue(ctx); // (#1595)
+  if (ifaceName === "Date") return ensureDateNativeProtoGlue(ctx); // (#3219)
+  return undefined;
 }
 
 export { compileCallExpression, compileIIFE, compileOptionalCallExpression };

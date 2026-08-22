@@ -14,6 +14,7 @@ import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
+import { coerceType } from "./type-coercion.js";
 
 /**
  * (#4555) Is `ident` the `arguments` binding of a function that HAS an
@@ -124,6 +125,80 @@ export function emitArgumentsTypeofComparison(
   return true;
 }
 
+/** Locals holding a runtime `arguments[<expr>]` delete key as an array index. */
+export interface DynamicArgumentsDeleteIndex {
+  /** i32 — the truncated index; only meaningful when `isIndexLocal` is 1. */
+  readonly indexLocal: number;
+  /** i32 flag — the key round-tripped through a non-negative integer. */
+  readonly isIndexLocal: number;
+}
+
+/**
+ * Is this a `delete arguments[…]` whose every index is UNMAPPED, so clearing
+ * the backing vec slot is the whole observable effect?
+ *
+ * A zero-formal function still gets a `mappedArgsInfo` record (its
+ * [[ParameterMap]] is simply empty), and the old `fctx.mappedArgsInfo` bail
+ * treated that as "mapped" and skipped the writeback — which is why
+ * `function __func(){ delete arguments[i]; }` never cleared anything. Functions
+ * that DO have formals keep the old behaviour: their mapped indices are
+ * handled by the §10.4.4.5 arm in the delete driver, which severs the
+ * param↔arguments map as well as clearing the slot.
+ */
+function isUnmappedArgumentsElementDelete(
+  fctx: FunctionContext,
+  inner: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+): boolean {
+  if ((fctx.mappedArgsInfo?.paramCount ?? 0) > 0) return false;
+  return (
+    ts.isElementAccessExpression(inner) && ts.isIdentifier(inner.expression) && inner.expression.text === "arguments"
+  );
+}
+
+/**
+ * Materialize a runtime `delete arguments[k]` key as an array index, BEFORE the
+ * `__delete_property` import is resolved — a late import registered after that
+ * funcIdx is captured would shift it out from under the already-planned call.
+ * Returns `undefined` when this delete needs no dynamic index (a literal index,
+ * a non-`arguments` receiver, or a function with real formals).
+ *
+ * The externref→f64 step goes through `coerceType`, the single coercion engine:
+ * a key can be a boxed number, a numeric string, or something that is not an
+ * index at all, and picking a raw unbox here would hand-roll that decision.
+ */
+export function prepareDynamicArgumentsDeleteIndex(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  inner: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  keyLocal: number,
+): DynamicArgumentsDeleteIndex | undefined {
+  if (!isUnmappedArgumentsElementDelete(fctx, inner) || !ts.isElementAccessExpression(inner)) return undefined;
+  const idxArg = inner.argumentExpression;
+  if (ts.isNumericLiteral(idxArg) || ts.isStringLiteral(idxArg)) return undefined;
+  if (fctx.localMap.get("arguments") === undefined) return undefined;
+
+  const numLocal = allocLocal(fctx, `__del_args_key_f64_${fctx.locals.length}`, { kind: "f64" });
+  const indexLocal = allocLocal(fctx, `__del_args_key_i32_${fctx.locals.length}`, { kind: "i32" });
+  const isIndexLocal = allocLocal(fctx, `__del_args_key_ok_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "local.get", index: keyLocal });
+  coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" }, "number");
+  fctx.body.push(
+    { op: "local.tee", index: numLocal },
+    { op: "i32.trunc_sat_f64_s" },
+    { op: "local.tee", index: indexLocal },
+    // `f64(trunc(v)) === v` rejects NaN (a non-numeric key) and any fraction.
+    { op: "f64.convert_i32_s" },
+    { op: "local.get", index: numLocal },
+    { op: "f64.eq" },
+    { op: "local.get", index: indexLocal },
+    { op: "i32.const", value: 0 },
+    { op: "i32.ge_s" },
+    { op: "i32.and" },
+    { op: "local.set", index: isIndexLocal },
+  );
+  return { indexLocal, isIndexLocal };
+}
+
 /**
  * A strict or non-simple-parameter function has an *unmapped* `arguments`
  * object, so it intentionally has no `mappedArgsInfo`. Its backing value is
@@ -141,13 +216,13 @@ export function emitPropertyDeleteWithUnmappedArgumentsWriteback(
   fctx: FunctionContext,
   inner: ts.PropertyAccessExpression | ts.ElementAccessExpression,
   delIdx: number,
+  dynamicIndex?: DynamicArgumentsDeleteIndex,
 ): void {
   fctx.body.push({ op: "call", funcIdx: delIdx });
   if (
-    fctx.mappedArgsInfo ||
+    !isUnmappedArgumentsElementDelete(fctx, inner) ||
     !ts.isElementAccessExpression(inner) ||
-    !ts.isIdentifier(inner.expression) ||
-    inner.expression.text !== "arguments"
+    !ts.isIdentifier(inner.expression)
   ) {
     return;
   }
@@ -155,7 +230,12 @@ export function emitPropertyDeleteWithUnmappedArgumentsWriteback(
   const idxArg = inner.argumentExpression;
   const idxText = ts.isNumericLiteral(idxArg) ? idxArg.text : ts.isStringLiteral(idxArg) ? idxArg.text : undefined;
   const argIndex = idxText !== undefined ? Number(idxText) : NaN;
-  if (!Number.isInteger(argIndex) || argIndex < 0) return;
+  const hasStaticIndex = Number.isInteger(argIndex) && argIndex >= 0;
+  // (#4491) `delete arguments[i]` with a RUNTIME index — `S13_A11_T4` loops
+  // `for (var i = 0; i < arguments.length; i++) delete arguments[i]` — has no
+  // literal to fold, so the static arm below never fired and the vec slot kept
+  // its value while `typeof arguments[i]` was expected to answer "undefined".
+  if (!hasStaticIndex && dynamicIndex === undefined) return;
 
   const argsLocalIdx = fctx.localMap.get("arguments");
   if (argsLocalIdx === undefined) return;
@@ -175,10 +255,13 @@ export function emitPropertyDeleteWithUnmappedArgumentsWriteback(
   const undefLocal = allocLocal(fctx, `__del_args_undef_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: undefLocal });
 
+  const pushIndex: Instr = hasStaticIndex
+    ? { op: "i32.const", value: argIndex }
+    : { op: "local.get", index: dynamicIndex!.indexLocal };
   const clearIfInBounds: Instr[] = [
     { op: "local.get", index: argsLocalIdx },
     { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
-    { op: "i32.const", value: argIndex },
+    pushIndex,
     { op: "i32.gt_u" },
     {
       op: "if",
@@ -186,13 +269,22 @@ export function emitPropertyDeleteWithUnmappedArgumentsWriteback(
       then: [
         { op: "local.get", index: argsLocalIdx },
         { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
-        { op: "i32.const", value: argIndex },
+        pushIndex,
         { op: "local.get", index: undefLocal },
         { op: "array.set", typeIdx: arrTypeIdx },
       ],
       else: [],
     },
   ];
+  // A runtime key only names an array index when it round-trips through a
+  // non-negative integer; anything else ("foo", 1.5, a Symbol) leaves the vec
+  // untouched and keeps the generic delete's own answer.
+  const guardedClear: Instr[] = hasStaticIndex
+    ? clearIfInBounds
+    : [
+        { op: "local.get", index: dynamicIndex!.isIndexLocal },
+        { op: "if", blockType: { kind: "empty" }, then: clearIfInBounds, else: [] },
+      ];
 
   fctx.body.push({ op: "local.get", index: resultLocal });
   fctx.body.push({
@@ -203,9 +295,9 @@ export function emitPropertyDeleteWithUnmappedArgumentsWriteback(
         ? [
             { op: "local.get", index: argsLocalIdx },
             { op: "ref.is_null" },
-            { op: "if", blockType: { kind: "empty" }, then: [], else: clearIfInBounds },
+            { op: "if", blockType: { kind: "empty" }, then: [], else: guardedClear },
           ]
-        : clearIfInBounds,
+        : guardedClear,
     else: [],
   });
   fctx.body.push({ op: "local.get", index: resultLocal });

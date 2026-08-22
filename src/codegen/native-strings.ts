@@ -7,6 +7,7 @@
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { ensureAnyValueType } from "./any-helpers.js";
+import { ensureDateAnyToStringHelper } from "./date-any-to-string.js"; // (#4491 T4-B)
 import { emitNativeHtmlWrapperHelpers } from "./html-wrapper-native.js";
 import { emitStrSearchHelpers } from "./native-strings-search.js";
 import { emitStrCaseHelpers } from "./native-strings-transform.js";
@@ -417,6 +418,14 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
   const errToStrIdx = ensureErrorToStringHelper(ctx);
   const errStructTypeIdx = errToStrIdx !== undefined ? ctx.errorStructTypeIdx : -1;
 
+  // (#4491 T4-B) …and the §21.4.4.41 Date arm, on the same discipline and for
+  // the same reason: a `__Date` is a nominal struct, so it reaches this
+  // terminal's generic "[object Object]" while the statically-resolved
+  // `d.toString()` renders correctly. `undefined` when the module never built a
+  // Date (or has no native strings), which leaves the terminal byte-identical.
+  const dateToStrIdx = ensureDateAnyToStringHelper(ctx);
+  const dateStructTypeIdx = dateToStrIdx !== undefined ? (ctx.structMap.get("__Date") ?? -1) : -1;
+
   // number_toString returns an externref that is really a `ref $AnyString` in
   // native-strings mode; convert it back with any.convert_extern + ref.cast.
   const numToStrIdx = ctx.funcMap.get("number_toString");
@@ -554,7 +563,7 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
   // objects per use) because the ref is loaded twice (test + call) — aliasing
   // one instr array into two tree positions double-shifts funcIdx fields when
   // post-codegen passes walk the tree (the #1448 corruption class).
-  const objectOrErrorTag = (loadRef: () => Instr[]): Instr[] =>
+  const objectOrErrorTagInner = (loadRef: () => Instr[]): Instr[] =>
     errToStrIdx !== undefined && errStructTypeIdx >= 0
       ? [
           ...loadRef(),
@@ -567,6 +576,27 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
           },
         ]
       : objectTag(loadRef);
+
+  // (#4491 T4-B) The Date arm sits OUTSIDE the error arm, same factory
+  // discipline. `d.toString()` is folded statically to `__date_format_string`;
+  // every DYNAMIC spelling (`String(d)`, `"" + d`, `d + d`, a template
+  // substitution) arrived here and answered "[object Object]" — one value, two
+  // renderings, and the spelling one reaches for when checking is the correct
+  // one. `__date_any_to_string` calls that same formatter, so the two cannot
+  // drift.
+  const objectOrErrorTag = (loadRef: () => Instr[]): Instr[] =>
+    dateToStrIdx !== undefined && dateStructTypeIdx >= 0
+      ? [
+          ...loadRef(),
+          { op: "ref.test", typeIdx: dateStructTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: strRef },
+            then: [...loadRef(), { op: "call", funcIdx: dateToStrIdx }],
+            else: objectOrErrorTagInner(loadRef),
+          },
+        ]
+      : objectOrErrorTagInner(loadRef);
 
   // #1910/#1472 S2 — recover the string for an externref that is tagged as a
   // string (tag 5) but is NOT actually a `$AnyString`. The generic

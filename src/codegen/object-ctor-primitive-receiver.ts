@@ -47,6 +47,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+import { bindingIsSingleAssignment } from "./single-assignment-binding.js";
 
 /**
  * Names that are ASSIGNED, updated, or bound more than once anywhere in a
@@ -122,7 +123,14 @@ function traceToProducer(ctx: CodegenContext, expr: ts.Expression): ts.Expressio
       continue;
     }
     if (!ts.isIdentifier(cur)) return cur;
-    if (rebindingNames(cur.getSourceFile()).has(cur.text)) return undefined;
+    // (#4491 wave-5 T2) The name-level scan below is kept as a cheap PREFILTER:
+    // a spelling nothing writes needs no checker work at all. When the spelling
+    // IS written somewhere, ask the sharper per-BINDING question rather than
+    // rejecting — in test262 the harness is concatenated into this same source
+    // file, so short spellings (`a`, `obj`, `x`) are written by harness
+    // parameters in every single file and the name-level answer is always
+    // "poisoned". See single-assignment-binding.ts.
+    if (rebindingNames(cur.getSourceFile()).has(cur.text) && !bindingIsSingleAssignment(ctx, cur)) return undefined;
     const init = ctx.oracle.variableInitializerOf(cur);
     if (init === undefined) return undefined;
     cur = init;

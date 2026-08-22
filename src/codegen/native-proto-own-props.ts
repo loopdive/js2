@@ -176,8 +176,11 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
     // A seeded DATA method is no longer an immutable CSV fact: its companion
     // entry is the real own property and can be replaced or deleted. Resolve
     // those keys through the companion before the historical CSV shortcut.
-    // Accessors and `constructor` deliberately fall through because neither is
-    // seeded yet and their existing synthesized paths remain authoritative.
+    // Accessors deliberately fall through — they are not seeded, and their
+    // existing synthesized path remains authoritative. (#4491 T9) `constructor`
+    // is in this ladder for a brand whose seeder installed it (one with an
+    // identity-stable carrier); a brand with no carrier seeds none and keeps the
+    // unconditional ES5 arm below.
     ...(protoOwnRecvIdx === undefined || objectHasOwnIdx === undefined
       ? []
       : [...seededDataMembers.entries()].flatMap(([brand, members]) => [

@@ -72,6 +72,8 @@
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { withSpeculativeCompile } from "./context/speculative.js";
 import { BUILTIN_CTOR_ARITY, NUMBER_CONSTANT_VALUES, tryEnsureNativeProtoBrand } from "./builtin-value-read.js";
+import { ensureStandaloneBuiltinStaticMethodClosure } from "./property-access.js";
+import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -93,6 +95,7 @@ const EXTRA_CTOR_ARITY: Record<string, number> = { AggregateError: 2 };
  * attributes default to false per CompletePropertyDescriptor §6.2.6.4).
  */
 const HOST_FLAG_CONFIGURABLE = 0x04;
+const HOST_FLAG_WRITABLE = 0x01;
 
 /**
  * (#4234) Per-ctor NUMERIC own data constants to seed alongside
@@ -117,6 +120,36 @@ const HOST_FLAG_CONFIGURABLE = 0x04;
  */
 const CTOR_NUMERIC_CONSTANTS: Record<string, Record<string, number>> = {
   Number: NUMBER_CONSTANT_VALUES,
+};
+
+/**
+ * (#2875 wave-4 lane F) Per-ctor STATIC METHOD names to seed alongside
+ * `length`/`name`/`prototype`, `{ [[Writable]]: true, [[Enumerable]]: false,
+ * [[Configurable]]: true }` (§17 — the attributes every builtin function-valued
+ * own property carries).
+ *
+ * `builtin-static-gopd.ts` already synthesizes exactly this descriptor for a
+ * SYNTACTIC `gOPD(String, "fromCharCode")`, and measured on this branch's base
+ * it answers `{value: <function>, w:true, e:false, c:true}` — but
+ * `String.hasOwnProperty("fromCharCode")` answered **`false`** on the very same
+ * build, because presence goes through the runtime carrier and the carrier had
+ * only `length`/`name`/`prototype`. A descriptor that exists while
+ * `hasOwnProperty` says the property does not is worse than either answer alone;
+ * seeding closes that disagreement, and the value is the SAME per-(builtin,
+ * method) singleton both the descriptor and a plain `String.fromCharCode` read
+ * yield (`ensureStandaloneBuiltinStaticMethodClosure`).
+ *
+ * **String-only, deliberately.** Seeding materializes one singleton closure per
+ * listed method at carrier-init time, so widening this to every entry of
+ * `BUILTIN_STATIC_METHOD_ARITY` would pull in ~30 closures for `Math` and ~24
+ * for `Object` on any module that merely mentions the identifier as a value —
+ * the #4232 §5 cost-regression shape this file's header already warns about.
+ * `String` has three, and is the only receiver with a measured row
+ * (`built-ins/String/fromCharCode/S15.5.3.2_A1`). Same reasoning as #4234's
+ * Number-only constants above; widening needs its own cost measurement.
+ */
+const CTOR_STATIC_METHODS: Record<string, readonly string[]> = {
+  String: ["fromCharCode", "fromCodePoint", "raw"],
 };
 
 /**
@@ -195,20 +228,43 @@ export function pushBuiltinCtorOwnPropSeed(
   // singleton (identical to the syntactic `<Ctor>.prototype` read). Ctors with
   // no registered brand keep only `length`/`name`.
   const brand = tryEnsureNativeProtoBrand(ctx, builtinName);
-  if (brand === undefined) return;
-  // Speculative: `emitLazyNativeProtoGet` may decline, and it can allocate
-  // locals / late imports before doing so. A raw `body.length = mark` would undo
-  // only the body and strand those — hence the #1919 transactional helper, which
-  // rolls back body + locals + imports + errors together. On decline the body is
-  // left exactly as it was after `name` (stack-neutral).
-  withSpeculativeCompile(ctx, fctx, () => {
-    fctx.body.push({ op: "local.get", index: objLocal });
-    addStringConstantGlobal(ctx, "prototype");
-    for (const instr of stringConstantExternrefInstrs(ctx, "prototype")) fctx.body.push(instr);
-    if (!emitLazyNativeProtoGet(ctx, fctx, brand)) return { commit: false, value: undefined };
-    fctx.body.push({ op: "f64.const", value: 0 });
-    fctx.body.push({ op: "call", funcIdx: defineIdx });
-    fctx.body.push({ op: "drop" });
-    return { commit: true, value: undefined };
-  });
+  if (brand !== undefined) {
+    // Speculative: `emitLazyNativeProtoGet` may decline, and it can allocate
+    // locals / late imports before doing so. A raw `body.length = mark` would undo
+    // only the body and strand those — hence the #1919 transactional helper, which
+    // rolls back body + locals + imports + errors together. On decline the body is
+    // left exactly as it was after `name` (stack-neutral).
+    withSpeculativeCompile(ctx, fctx, () => {
+      fctx.body.push({ op: "local.get", index: objLocal });
+      addStringConstantGlobal(ctx, "prototype");
+      for (const instr of stringConstantExternrefInstrs(ctx, "prototype")) fctx.body.push(instr);
+      if (!emitLazyNativeProtoGet(ctx, fctx, brand)) return { commit: false, value: undefined };
+      fctx.body.push({ op: "f64.const", value: 0 });
+      fctx.body.push({ op: "call", funcIdx: defineIdx });
+      fctx.body.push({ op: "drop" });
+      return { commit: true, value: undefined };
+    });
+  }
+
+  // (#2875 w4-F) Static METHODS — { w:true, e:false, c:true }, value = the
+  // per-(builtin, method) singleton. Seeded LAST so `getOwnPropertyNames`
+  // reports `length, name, prototype, fromCharCode, …`, the creation order a
+  // conforming host reports. Each is speculative: the closure may decline (no
+  // wired body / missing prerequisite), and declining must leave the body
+  // stack-neutral rather than stranding a half-pushed define call.
+  for (const method of CTOR_STATIC_METHODS[builtinName] ?? []) {
+    withSpeculativeCompile(ctx, fctx, () => {
+      const closure = ensureStandaloneBuiltinStaticMethodClosure(ctx, builtinName, method);
+      if (!closure) return { commit: false, value: undefined };
+      fctx.body.push({ op: "local.get", index: objLocal });
+      addStringConstantGlobal(ctx, method);
+      for (const instr of stringConstantExternrefInstrs(ctx, method)) fctx.body.push(instr);
+      fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure));
+      fctx.body.push({ op: "extern.convert_any" });
+      fctx.body.push({ op: "f64.const", value: HOST_FLAG_WRITABLE | HOST_FLAG_CONFIGURABLE });
+      fctx.body.push({ op: "call", funcIdx: defineIdx });
+      fctx.body.push({ op: "drop" });
+      return { commit: true, value: undefined };
+    });
+  }
 }

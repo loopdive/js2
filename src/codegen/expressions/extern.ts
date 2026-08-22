@@ -664,7 +664,7 @@ export function emitRegisterDynamicClassParent(
     compileStringLiteral(ctx, fctx, className);
   }
   const t = compileExpression(ctx, fctx, heritageExpr);
-  if (t === null || t === VOID_RESULT) {
+  if (t === null) {
     fctx.body.push({ op: "drop" });
     return;
   }

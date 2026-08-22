@@ -76,6 +76,7 @@ import {
   emitBuiltinNamespaceObject,
   isBuiltinConstructorIdentityName,
 } from "./builtin-static-globals.js";
+import { tryEmitPrimitiveStringConstructorRead } from "./string-primitive-constructor.js"; // (#2875 w4-F)
 import { tryCompileNativeDisposableStackAnyDisposedGet } from "./disposable-runtime.js";
 import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
 import { tryEmitDerivedLengthLocal } from "./derived-split-scalar.js";
@@ -483,6 +484,10 @@ export function tryConstructorPrototypeIdentity(
     }
   }
 
+  // (#2875 w4-F) `<primitive string>.constructor` → the same carrier as above.
+  const psc = tryEmitPrimitiveStringConstructorRead(ctx, fctx, expr, propName);
+  if (psc !== undefined) return psc;
+
   // (#3177) Standalone `.constructor` on a TYPEDARRAY-typed receiver —
   // `Uint16Array.prototype.constructor` (the `.prototype` read's TS type IS the
   // instance type) and `sample.constructor` for a statically-typed view — → the
@@ -796,7 +801,7 @@ export function tryBufferViewAttributeReads(
           },
         ],
       });
-      if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+      if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
       return ctx.fast ? { kind: "i32" } : { kind: "f64" };
     }
   }
@@ -2821,7 +2826,7 @@ export function tryLengthAndNameReads(
             // type has `length` at field 0, so the matched concrete type works.
             const vecIdx = (concreteType as { typeIdx: number }).typeIdx;
             fctx.body.push({ op: "struct.get", typeIdx: vecIdx, fieldIdx: 0 });
-            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
           },
           () => {
             // [externref] → __extern_length (genuine host receiver / real JS array)
@@ -2845,7 +2850,7 @@ export function tryLengthAndNameReads(
       if (shapeInfo) {
         compileExpression(ctx, fctx, expr.expression);
         fctx.body.push({ op: "struct.get", typeIdx: shapeInfo.vecTypeIdx, fieldIdx: 0 });
-        if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+        if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
         return ctx.fast ? { kind: "i32" } : { kind: "f64" };
       }
     }
@@ -2883,7 +2888,7 @@ export function tryLengthAndNameReads(
               fctx.body.push({ op: "local.get", index: localIdx });
               fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
             }
-            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
             return ctx.fast ? { kind: "i32" } : { kind: "f64" };
           }
         }
@@ -2934,7 +2939,7 @@ export function tryLengthAndNameReads(
               { op: "local.get", index: anyTmpIdx },
               { op: "ref.cast", typeIdx: vecTypeIdx },
               { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
-              ...(ctx.fast ? [] : ([{ op: "f64.convert_i32_s" }] satisfies Instr[])),
+              ...(ctx.fast ? [] : ([{ op: "f64.convert_i32_u" }] satisfies Instr[])),
               { op: "local.set", index: lenTmp2 },
             ],
             else: fallbackInstrs2,
@@ -2966,7 +2971,7 @@ export function tryLengthAndNameReads(
             exprTypeDef.fields[1]?.name === "data"
           ) {
             fctx.body.push({ op: "struct.get", typeIdx: exprTypeIdx, fieldIdx: 0 });
-            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
             return ctx.fast ? { kind: "i32" } : { kind: "f64" };
           }
           const lenTmp = allocLocal(fctx, `__len_tmp_${fctx.locals.length}`, { kind: "anyref" });
@@ -2981,14 +2986,14 @@ export function tryLengthAndNameReads(
               { op: "local.get", index: lenTmp },
               { op: "ref.cast", typeIdx: vecTypeIdx },
               { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
-              ...(ctx.fast ? [] : ([{ op: "f64.convert_i32_s" }] satisfies Instr[])),
+              ...(ctx.fast ? [] : ([{ op: "f64.convert_i32_u" }] satisfies Instr[])),
             ],
             else: [{ op: ctx.fast ? "i32.const" : "f64.const", value: 0 }],
           });
           return lenResult;
         }
         fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 }); // get length from vec
-        if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+        if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
         return ctx.fast ? { kind: "i32" } : { kind: "f64" };
       }
     }
@@ -3009,7 +3014,7 @@ export function tryLengthAndNameReads(
         const typeDef = ctx.mod.types[vecTypeIdx];
         if (typeDef?.kind === "struct" && typeDef.fields[0]?.name === "length" && typeDef.fields[1]?.name === "data") {
           fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
-          if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+          if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
           return ctx.fast ? { kind: "i32" } : { kind: "f64" };
         }
       }

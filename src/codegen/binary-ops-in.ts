@@ -29,7 +29,9 @@ import { coerceType, compileExpression, flushLateImportShifts } from "./shared.j
 import { inRhsIsExclusivelyPrimitive } from "./binary-ops.js";
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js"; // (#4484) reassigned-binding guard
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
-import { vecNamedKeyNeedsRuntime } from "./vec-named-key-presence.js"; // (#4062) array expando presence
+// (#4062 array bag / #4491 T9 Date+RegExp bag) a statically-known key may live in
+// a carrier bag the receiver's field list cannot see — route the folded `false`.
+import { carrierBagKeyNeedsRuntime } from "./builtin-instance-key-presence.js";
 
 /**
  * (#3714) `emitThrowTypeError` pushes directly onto `fctx.body`; to nest its
@@ -400,7 +402,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // the bag is invisible to both. `__extern_has`'s vec arm consults the #3251
     // overlay and the #3537 bag, so routing makes `in` agree with the read — and
     // only a folded `false` is routed, so no affirmative answer moves.
-    const vecNamedKeyRoute = !has && vecNamedKeyNeedsRuntime(ctx, rightWasm, staticKey, 0);
+    const vecNamedKeyRoute = !has && carrierBagKeyNeedsRuntime(ctx, rightWasm, staticKey, 0);
     if (!has && (rightWasm.kind === "externref" || rightWasm.kind === "anyref" || vecNamedKeyRoute)) {
       const hasIdx = ensureLateImport(
         ctx,
