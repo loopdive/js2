@@ -409,6 +409,45 @@ export function runUpstreamTest() { return storage ? 1 : 0; }
     }
   }, 90_000);
 
+  it("supplies filesystem and secondary Node namespaces to opted-in suites", async () => {
+    const root = mkdtempSync(join(tmpdir(), "js2-upstream-runner-"));
+    const generatedPath = join(root, "suite.ts");
+    const source = `
+import { readFileSync } from "node:fs";
+import * as os from "node:os";
+export function upstreamTestCount() { return 1; }
+export function upstreamTestNames() { return ["fs call"] as any; }
+export function upstreamTestErrors() { return [""] as any; }
+export function runUpstreamTest() {
+  return readFileSync(${JSON.stringify(generatedPath)}, "utf8").length > 0 && os !== undefined ? 1 : 0;
+}
+`;
+
+    try {
+      const previousNodeOptions = process.env.NODE_OPTIONS;
+      process.env.NODE_OPTIONS = [previousNodeOptions, "--import=tsx"].filter(Boolean).join(" ");
+      let result;
+      try {
+        result = await compileAndRunUpstreamModule({
+          generatedPath,
+          source,
+          timeoutMs: 60_000,
+          workerEnv: { DOGFOOD_NODE_HOST_DEPS: "1" },
+        });
+      } finally {
+        // biome-ignore lint/performance/noDelete: `process.env.X = undefined` sets the string "undefined" instead of unsetting the var
+        if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+        else process.env.NODE_OPTIONS = previousNodeOptions;
+      }
+      expect(result.native.statuses).toEqual([true]);
+      expect(result.compile?.success).toBe(true);
+      expect(result.compile?.validates).toBe(true);
+      expect(result.wasm?.statuses).toEqual([true]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 90_000);
+
   it("reports deferred upstream registrations as unavailable infrastructure", () => {
     const report = summarizeUpstreamRuns({
       name: "fixture",

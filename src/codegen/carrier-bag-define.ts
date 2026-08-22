@@ -59,6 +59,7 @@
  */
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { fnIntrinsicSeedInstrs } from "./fn-intrinsic-seed.js"; // (#4562) intrinsic length/name record
 
 /** Reserved helper names owned by `closure-props.ts` (#3468). */
 const IS_CLOSURE_PROP_CARRIER = "__is_closure_prop_carrier";
@@ -116,7 +117,7 @@ export function defineCarrierBagEnsureInstrs(ctx: CodegenContext, recvLocalIdx: 
  */
 export function defineCarrierBagSubstitutionArm(
   ctx: CodegenContext,
-  opts: { recvLocalIdx: number; anyLocalIdx: number; bagLocalIdx: number; fallback: Instr[] },
+  opts: { recvLocalIdx: number; anyLocalIdx: number; bagLocalIdx: number; keyLocalIdx: number; fallback: Instr[] },
 ): Instr[] | undefined {
   const ensure = defineCarrierBagEnsureInstrs(ctx, opts.recvLocalIdx);
   if (ensure === undefined) return undefined;
@@ -125,6 +126,12 @@ export function defineCarrierBagSubstitutionArm(
     { op: "local.tee", index: opts.bagLocalIdx },
     { op: "ref.is_null" },
     { op: "if", blockType: { kind: "empty" }, then: opts.fallback },
+    // (#4562) A function's intrinsic `length`/`name` is not a bag entry, so
+    // §10.1.6.3 would see `current` undefined and rebuild the record from the
+    // partial descriptor alone — losing every omitted field, including the
+    // value itself when `value` is what was omitted. Materialise it first and
+    // the unchanged merge below has the input it was always missing.
+    ...fnIntrinsicSeedInstrs(ctx, opts.recvLocalIdx, opts.bagLocalIdx, opts.keyLocalIdx),
     // Bag present — re-point the applier's `$Object` receiver at it.
     { op: "local.get", index: opts.bagLocalIdx },
     { op: "any.convert_extern" },

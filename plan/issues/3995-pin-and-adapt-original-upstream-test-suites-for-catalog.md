@@ -774,3 +774,22 @@ with per-file failure summaries retained in the generated report. The adapter
 is still draft-only until those gaps are either fixed or explicitly scoped in
 follow-up issue slices; they are compatibility findings, not unavailable
 infrastructure.
+
+## 2026-08-22 generic Node host dependency checkpoint
+
+The isolated upstream-suite worker previously forwarded only ten Node builtin
+namespaces. The verified Hono and jsdom source inventories also import
+`node:fs`, `node:fs/promises`, `node:http`, `node:https`, `node:child_process`,
+`node:dns`, `node:vm`, `node:worker_threads`, and related platform modules.
+The host dependency surface is now expanded explicitly for opt-in
+`DOGFOOD_NODE_HOST_DEPS=1` runs, without changing the default web lane or
+standalone compilation. A regression fixture imports `node:fs`, reads its own
+generated source through the real host binding, and instantiates successfully
+through the worker. The same compiler path now removes only exact duplicate
+adapter descriptors (the fs call's numeric coercion used to emit two identical
+`__box_number` entries); descriptors that differ in arity or intent remain
+visible to strict manifest validation. This is host setup coverage only; any
+compiler, validation, or runtime mismatches in the upstream suites remain
+scored as compatibility failures.
+
+Implementation: [PR #4756](https://github.com/loopdive/js2/pull/4756).
