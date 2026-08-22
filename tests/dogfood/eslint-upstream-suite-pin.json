@@ -2,7 +2,26 @@
   "repo": "https://github.com/eslint/eslint.git",
   "tag": "v10.0.3",
   "commit": "bfce7eaa0ec5d6591fd247b7ff57b51e45fb88a1",
-  "testFiles": ["tests/lib/shared/deep-merge-arrays.js"],
-  "implementationModule": "lib/shared/deep-merge-arrays.js",
-  "_note": "ESLint's published npm tarball omits its unit tests. This pin acquires the exact source revision matching eslint@10.0.3 and runs every original test body in the selected deep-merge-arrays unit file against the byte-verified published implementation. The file is an honest first upstream slice, not a claim about ESLint's entire test suite."
+  "testFiles": [
+    "tests/lib/shared/deep-merge-arrays.js",
+    "tests/lib/shared/naming.js",
+    "tests/lib/shared/option-utils.js",
+    "tests/lib/shared/serialization.js",
+    "tests/lib/shared/string-utils.js"
+  ],
+  "implementationModules": {
+    "tests/lib/shared/deep-merge-arrays.js": "lib/shared/deep-merge-arrays.js",
+    "tests/lib/shared/naming.js": "lib/shared/naming.js",
+    "tests/lib/shared/option-utils.js": "lib/shared/option-utils.js",
+    "tests/lib/shared/serialization.js": "lib/shared/serialization.js",
+    "tests/lib/shared/string-utils.js": "lib/shared/string-utils.js"
+  },
+  "implementationExports": {
+    "tests/lib/shared/deep-merge-arrays.js": ["deepMergeArrays"],
+    "tests/lib/shared/naming.js": ["normalizePackageName", "getShorthandName", "getNamespaceFromTerm"],
+    "tests/lib/shared/option-utils.js": ["containsDifferentProperty"],
+    "tests/lib/shared/serialization.js": ["isSerializable"],
+    "tests/lib/shared/string-utils.js": ["upperCaseFirst", "getGraphemeCount"]
+  },
+  "_note": "ESLint's published npm tarball omits its unit tests. This pin acquires the exact source revision matching eslint@10.0.3 and runs every original test body in five self-contained shared-utility unit files against the byte-verified published implementations. Chai and node:assert are represented by one deterministic assertion shim shared by Node and Wasm; rule, parser, filesystem, and dependency-heavy suites remain outside this bounded slice."
 }
