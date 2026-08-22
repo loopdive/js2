@@ -509,6 +509,23 @@ in-module reads (host-side detection is what react-dom needs).
   cost an hour: the react test environment captures console.error — use
   process.stderr.write for runtime-side instrumentation under the harness.
 
+- **2026-08-22 the 2-method divergence ROOT-CAUSED and fixed — global-index
+  staleness in emitLazyClassObjectGet**: string constants are IMPORTED
+  globals; an intern mid-initBody (name stamp / static names / bridge name
+  arg) shifts the global index space. `fixupModuleGlobalIndices` repairs
+  maps + reachable bodies, but initBody is DETACHED during construction
+  and `classObjectGlobalIdx` was a captured const — wasm-dis showed the
+  lazy-init checking the PROTO global while setting the CLASS-OBJECT
+  global; every crossing returned the proto struct. Fixed by pre-interning
+  + liveBodies-registering initBody + per-push index re-reads. The
+  2-method react shape now renders through host react-dom (probe
+  "DIV:foo", was NULL); regression test extended (bridge test 3 cases).
+  React stays 87/146 — the suite's failing class tests are class
+  EXPRESSIONS (ReactES6Class `Inner = class extends React.Component` in
+  beforeEach) still on the legacy path, and StrictMode's console-spy mock
+  assertions. Same staleness family may affect emitLazyProtoGet's own
+  captured `protoGlobalIdx` (unaudited).
+
 ## Fix order
 
 1. (c) first — it is a hard CE with a two-line repro and pins the IR
