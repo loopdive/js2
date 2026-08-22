@@ -898,3 +898,22 @@ well. It now covers **306 callbacks across 20 selected files**: Node admits
 binary remains the known compiler validation finding), and Wasm scores
 **206/304**. The remaining **2,982 registrations** from 221 verified files are
 still explicitly reported as unavailable infrastructure.
+
+## 2026-08-22 Jest chalk and configuration-unit checkpoint
+
+The Jest checkout now resolves the real pinned `chalk@4.1.2` package name for
+upstream sources. Its installed source hash is verified before materialization;
+the adapter also wires the matching `ansi-styles@4.3.0`,
+`supports-color@7.2.0`, and `has-flag@4.0.0` package seams, including the
+`node:tty` host namespace. Chalk 4's prototype mutation currently lowers to an
+invalid Wasm GC cast, so the adapter preserves the level-0 callable and chained
+style API used by the Jest lane while leaving the color-model path explicitly
+deferred.
+
+The unchanged original `jest-config/src/__tests__/parseShardPair.test.ts` is
+now selected. The exact run covers **315 callbacks across 21 selected files**:
+Node admits **313/315**, all 21 modules compile and 20 validate, and Wasm
+scores **215/313** (98 compatibility failures, zero runtime failures). The
+remaining **2,973 registrations** from 220 verified files are explicitly
+reported as unavailable infrastructure. The nine new parse-shard callbacks
+pass in both lanes; no test body or expected input was rewritten.
