@@ -183,6 +183,24 @@ function __upstreamAsyncResolve(actual, matcher, expected, hasExpected, label) {
     },
   );
 }
+function __upstreamNormalizeInlineSnapshot(value) {
+  return String(value)
+    .trim()
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n")
+    .replace(/,\n([}\]])/g, "\n$1");
+}
+function __upstreamInlineSnapshotValue(value) {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (value === undefined) return "undefined";
+  try {
+    const serialized = JSON.stringify(value, null, 2);
+    return serialized === undefined ? String(value) : serialized;
+  } catch {
+    return String(value);
+  }
+}
 function __upstreamExpect(actual) {
   const positive = {
     toBe(expected) { const n = ++__upstreamAssertion; if (!Object.is(actual, expected)) __upstreamFail("assertion " + n + " toBe: " + __upstreamValue(actual) + " != " + __upstreamValue(expected)); },
@@ -198,7 +216,8 @@ function __upstreamExpect(actual) {
     toHaveProperty(expected) { const n = ++__upstreamAssertion; if (actual == null || !(expected in Object(actual))) __upstreamFail("assertion " + n + " missing property " + String(expected)); },
     toMatchObject(expected) { const n = ++__upstreamAssertion; if (!__upstreamSubset(actual, expected)) __upstreamFail("assertion " + n + " object subset mismatch"); },
     toMatch(expected) { const n = ++__upstreamAssertion; const value = String(actual); if (expected instanceof RegExp ? !expected.test(value) : !value.includes(String(expected))) __upstreamFail("assertion " + n + " pattern mismatch"); },
-    toMatchInlineSnapshot(expected) { const n = ++__upstreamAssertion; const value = typeof actual === "string" ? JSON.stringify(actual) : String(actual); if (value !== String(expected).trim()) __upstreamFail("assertion " + n + " inline snapshot mismatch: " + value + " != " + String(expected).trim()); },
+    toMatchInlineSnapshot(expected) { const n = ++__upstreamAssertion; const value = __upstreamNormalizeInlineSnapshot(__upstreamInlineSnapshotValue(actual)); const snapshot = __upstreamNormalizeInlineSnapshot(expected); if (value !== snapshot) __upstreamFail("assertion " + n + " inline snapshot mismatch: " + value + " != " + snapshot); },
+    toBeGreaterThan(expected) { const n = ++__upstreamAssertion; if (!(actual > expected)) __upstreamFail("assertion " + n + " expected greater value"); },
     toBeCalled() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (!calls || calls.length === 0) __upstreamFail("assertion " + n + " expected spy to be called"); },
     toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (!calls || calls.length === 0) __upstreamFail("assertion " + n + " expected spy to be called"); },
     toBeCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = __upstreamMockCalls(actual); let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
@@ -229,13 +248,17 @@ function __upstreamExpect(actual) {
     toBeNull() { const n = ++__upstreamAssertion; if (actual === null) __upstreamFail("assertion " + n + " unexpectedly null"); },
     toBeTruthy() { const n = ++__upstreamAssertion; if (actual) __upstreamFail("assertion " + n + " unexpectedly truthy"); },
     toBeFalsy() { const n = ++__upstreamAssertion; if (!actual) __upstreamFail("assertion " + n + " unexpectedly falsey"); },
+    toMatchInlineSnapshot(expected) { const n = ++__upstreamAssertion; const value = __upstreamNormalizeInlineSnapshot(__upstreamInlineSnapshotValue(actual)); const snapshot = __upstreamNormalizeInlineSnapshot(expected); if (value === snapshot) __upstreamFail("assertion " + n + " unexpectedly matched inline snapshot"); },
     toBeInstanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected === "function" && actual instanceof expected) __upstreamFail("assertion " + n + " unexpected instance"); },
     instanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected === "function" && actual instanceof expected) __upstreamFail("assertion " + n + " unexpected instance"); },
     toBeCalled() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
     toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
     toHaveBeenCalledOnce() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (calls && calls.length === 1) __upstreamFail("assertion " + n + " unexpected spy call"); },
-    toThrow() { const n = ++__upstreamAssertion; if (typeof actual !== "function" || __upstreamThrown(actual) !== null) __upstreamFail("assertion " + n + " unexpected throw"); },
-    toThrowError() { const n = ++__upstreamAssertion; if (typeof actual !== "function" || __upstreamThrown(actual) !== null) __upstreamFail("assertion " + n + " unexpected throw"); },
+    toBeCalled() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
+    toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
+    toHaveBeenCalledOnce() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (calls && calls.length === 1) __upstreamFail("assertion " + n + " unexpected spy call"); },
+    toThrow(expected) { const n = ++__upstreamAssertion; const error = typeof actual === "function" ? __upstreamThrown(actual) : new Error("not callable"); if (error !== null && (expected === undefined || __upstreamThrownMatches(error, expected))) __upstreamFail("assertion " + n + " unexpected throw"); },
+    toThrowError(expected) { const n = ++__upstreamAssertion; const error = typeof actual === "function" ? __upstreamThrown(actual) : new Error("not callable"); if (error !== null && (expected === undefined || __upstreamThrownMatches(error, expected))) __upstreamFail("assertion " + n + " unexpected throw"); },
   };
   // Vitest/Jest promise assertions are part of the upstream test contract,
   // not optional syntax. Attach rejection handlers immediately so a rejected
@@ -1084,6 +1107,7 @@ export function summarizeUpstreamRuns({ name, pin, testFiles, selectedFiles, run
       testFiles: testFiles.length,
       testFilePaths: testFiles,
       registrationSites: pin.registrationSites,
+      selectedRegistrationSites: pin.selectedRegistrationSites ?? null,
       selectedFiles,
     },
     extraction: {
@@ -1142,7 +1166,16 @@ export function summarizeUpstreamRuns({ name, pin, testFiles, selectedFiles, run
   }
   const registrationSites = Number(pin.registrationSites);
   if (Number.isFinite(registrationSites)) {
-    report.extraction.deferredRegistrations = Math.max(0, registrationSites - report.extraction.testsRegistered);
+    // `testsRegistered` may include expanded `test.each`/`it.each` cases and
+    // therefore cannot be compared directly with the static call-site count.
+    // An adapter can provide the number of static sites it selected so the
+    // report keeps deferred host infrastructure visible without inventing a
+    // negative or zero deferred count after table expansion.
+    const selectedRegistrationSites = Number(pin.selectedRegistrationSites);
+    const registeredForInventory = Number.isFinite(selectedRegistrationSites)
+      ? selectedRegistrationSites
+      : report.extraction.testsRegistered;
+    report.extraction.deferredRegistrations = Math.max(0, registrationSites - registeredForInventory);
     report.extraction.unavailableInfra = report.extraction.deferredRegistrations;
   }
   report.compile.details = runs.map((run) => ({

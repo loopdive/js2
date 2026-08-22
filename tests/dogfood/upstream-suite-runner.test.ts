@@ -254,6 +254,8 @@ QUnit.test("matcher aliases", function () {
   expect(called).toHaveBeenCalledWith("value");
   expect("plain").not.instanceOf(ErrorCtor);
   expect("plain").not.toBeInstanceOf(ErrorCtor);
+  expect(() => { throw new Error("different message"); }).not.toThrow("expected message");
+  expect(() => {}).not.toThrow("expected message");
 });
 ${UPSTREAM_TEST_EXPORTS}`;
 
@@ -536,7 +538,13 @@ export function runUpstreamTest() {
   it("reports deferred upstream registrations as unavailable infrastructure", () => {
     const report = summarizeUpstreamRuns({
       name: "fixture",
-      pin: { repo: "https://example.test/fixture", tag: "v1", commit: "abc", registrationSites: 5 },
+      pin: {
+        repo: "https://example.test/fixture",
+        tag: "v1",
+        commit: "abc",
+        registrationSites: 5,
+        selectedRegistrationSites: 2,
+      },
       testFiles: ["a.test.ts", "b.test.ts"],
       selectedFiles: ["a.test.ts"],
       runs: [
