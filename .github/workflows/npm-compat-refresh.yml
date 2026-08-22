@@ -333,14 +333,14 @@ jobs:
 
           # Do not replace the promotion branch while its current PR checks are
           # running. A force-update fires `pull_request:synchronize`; GitHub
-          # cancels the checks for the old head before starting checks for the
-          # new one. On a long npm-compat refresh cadence that turns every PR
-          # run into a moving target and can keep the artifact PR permanently
-          # pending. Let the current head finish; a later refresh will publish
-          # the newer measurement. Do not age this guard out: the refresh
-          # matrix itself has a 350-minute timeout, so a two-hour cutoff would
-          # knowingly cancel a valid long-running check. A genuinely wedged PR
-          # is surfaced by the staleness workflow and needs human intervention.
+          # cancels the checks for the old head before starting a new one. On a
+          # long npm-compat refresh cadence that turns every PR run into a
+          # moving target and can keep the artifact PR permanently pending.
+          # Let the current head finish; a later refresh will publish the newer
+          # measurement. Do not age this guard out: the refresh matrix itself
+          # has a 350-minute timeout, so a two-hour cutoff would knowingly
+          # cancel a valid long-running check. A genuinely wedged PR is
+          # surfaced by the staleness workflow and needs human intervention.
           ACTIVE_CHECKS="unreadable"
           if [ -n "$PR_HEAD_SHA" ]; then
             ACTIVE_CHECKS="$(gh api \
