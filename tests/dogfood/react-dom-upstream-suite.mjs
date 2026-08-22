@@ -1024,7 +1024,13 @@ async function runProjectHarness({
   let totalBytes = 0;
 
   try {
-    const compiledBatches = Array(projectBatches.length);
+    const batchReady = Array.from({ length: projectBatches.length }, () => {
+      let resolve;
+      const promise = new Promise((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    });
     const workerCount = projectCompileConcurrency(projectBatches.length);
     log(`[dogfood]   client project: ${projectBatches.length} batches, ${workerCount} compile workers`);
     let nextBatchIndex = 0;
@@ -1033,11 +1039,11 @@ async function runProjectHarness({
         const batchIndex = nextBatchIndex++;
         if (batchIndex >= projectBatches.length) return;
         const { file, tests: batchTests } = projectBatches[batchIndex];
-        const files = buildProjectFiles({ reactSource, sharedSource, clientSource, tests: batchTests });
         const generatedRoot = join(PROJECT_ROOT, `batch-${batchIndex}`);
         const started = performance.now();
         let isolated;
         try {
+          const files = buildProjectFiles({ reactSource, sharedSource, clientSource, tests: batchTests });
           isolated = await compileProjectInWorker({
             generatedRoot,
             entryFile: "entry.ts",
@@ -1073,51 +1079,57 @@ async function runProjectHarness({
           compile.errors?.[0]?.message ??
           compile.validationError ??
           (compile.timedOut ? `compile timeout after ${timeoutMs}ms` : compile.success ? null : "no binary emitted");
-        compiledBatches[batchIndex] = { file, batchTests, compile, wasm, compileError };
+        const batch = { file, batchTests, compile, wasm, compileError };
+        batchReady[batchIndex].resolve(batch);
         log(
           `[dogfood]   client project ${file.replace(/^.*\//, "")}: ${batchTests.length} tests, ` +
             `${compile.validates === true ? "valid" : `INVALID — ${String(compileError).slice(0, 70)}`}`,
         );
       }
     };
-    await Promise.all(Array.from({ length: workerCount }, () => compileBatch()));
+    const compileWorkers = Promise.all(Array.from({ length: workerCount }, () => compileBatch()));
 
-    // The compiled Wasm results are independent, but the native oracle uses a
-    // shared jsdom/React host. Consume batches in source order so scheduler
-    // callbacks and late host errors remain deterministic.
-    for (const batch of compiledBatches) {
-      if (!batch) continue;
-      const { file, batchTests, compile, wasm, compileError } = batch;
-      const validates = compile.validates === true;
-      totalCompileMs += compile.durationMs ?? 0;
-      totalBytes += compile.binaryBytes ?? 0;
+    // Compilation and the native oracle are pipelined: later independent
+    // batches keep compiling while the shared host consumes the next batch.
+    // The oracle itself remains strictly source-ordered, so scheduler
+    // callbacks and late host errors stay deterministic.
+    try {
+      for (const { promise } of batchReady) {
+        const { file, batchTests, compile, wasm, compileError } = await promise;
+        const validates = compile.validates === true;
+        totalCompileMs += compile.durationMs ?? 0;
+        totalBytes += compile.binaryBytes ?? 0;
 
-      nativeContextFile = file;
-      const nativeResults = new Map((await runNative(implementation, batchTests)).map((entry) => [entry.id, entry]));
-      const statuses = wasm?.statuses ?? [];
-      const wasmErrors = wasm?.errors ?? [];
-      for (let index = 0; index < batchTests.length; index++) {
-        const test = batchTests[index];
-        const native = nativeResults.get(test.id) ?? {};
-        runResults.set(test.id, {
-          native,
+        nativeContextFile = file;
+        const nativeResults = new Map((await runNative(implementation, batchTests)).map((entry) => [entry.id, entry]));
+        const statuses = wasm?.statuses ?? [];
+        const wasmErrors = wasm?.errors ?? [];
+        for (let index = 0; index < batchTests.length; index++) {
+          const test = batchTests[index];
+          const native = nativeResults.get(test.id) ?? {};
+          runResults.set(test.id, {
+            native,
+            validates,
+            compileError,
+            wasmFatal: wasm?.fatal ?? null,
+            wasmStatus: statuses[index] === true,
+            wasmError: wasmErrors[index] ?? "",
+          });
+        }
+        batchReports.push({
+          file,
+          tests: batchTests.length,
+          compileMs: compile.durationMs ?? 0,
+          binaryBytes: compile.binaryBytes ?? 0,
+          imports: compile.imports ?? [],
+          compileSuccess: compile.success === true,
           validates,
-          compileError,
-          wasmFatal: wasm?.fatal ?? null,
-          wasmStatus: statuses[index] === true,
-          wasmError: wasmErrors[index] ?? "",
+          firstError: compileError,
         });
       }
-      batchReports.push({
-        file,
-        tests: batchTests.length,
-        compileMs: compile.durationMs ?? 0,
-        binaryBytes: compile.binaryBytes ?? 0,
-        imports: compile.imports ?? [],
-        compileSuccess: compile.success === true,
-        validates,
-        firstError: compileError,
-      });
+    } finally {
+      // Do not leave compiler workers behind if the shared native oracle throws.
+      await compileWorkers;
     }
   } finally {
     // A scheduler callback can outlive the final test body. Keep the host error

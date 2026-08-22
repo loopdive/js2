@@ -223,4 +223,6 @@ batches with two isolated workers and runs the shared native oracle in stable
 source order. The workflow pins the pool to two workers to keep memory bounded;
 each batch retains its own timeout and report entry. This reduces wall-clock
 time without dropping tests or converting compiler failures into
-`unavailableInfra`.
+`unavailableInfra`. Compilation is pipelined with the source-ordered native
+oracle, so the workers continue compiling later batches while the shared host
+consumes the next completed batch.
