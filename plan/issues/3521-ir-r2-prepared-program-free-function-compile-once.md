@@ -1115,3 +1115,18 @@ discard failed-only plans on abort while retaining one canonical provider for a
 healthy component that shares it. Keeping a dead import or weakening the
 missing-locator invariant does not satisfy this parent issue's transaction
 acceptance.
+
+## 2026-08-22 lane handover (fable-lead)
+
+Claimed to ttraenkler/fable-lead on the assignment ref (the prior lane is
+dead). Not started this session. **Recommended first slice for the next
+dispatch: the linked-lane late-preparation gap** measured by PR #4732 and
+recorded in #2949's "linked-lane preparation gap" section — the #2949
+runtime-dynamic acorn driver compiled as a multi-source project
+(`compileProject`) emits **1/43** versus 31/43 inline, with **21 units
+selector-accepted but absent from the prepared selection** at
+`late-preparation-unsupported` and no recorded preparation failure. The gap
+is in final-context preparation (`reconcileIrOverlayOutcomes` bookkeeping),
+i.e. this issue's territory jointly with #3520's identity records, and
+fixing it makes every claim #2949 has banked visible on the linked lane.
+Session-wide context: `plan/agent-context/fable-lead.md`.

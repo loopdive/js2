@@ -51,7 +51,7 @@ on:
     #
     # That matters because the measurement includes perf timings, which differ
     # on every run — so every run publishes something. Without this filter each
-    # landing would trigger the next refresh, forever: a 24-minute runner and a
+    # landing would trigger the next refresh, forever: a long-lived runner and a
     # merge-queue entry every ~25 minutes, in perpetuity.
     #
     # `paths-ignore` is evaluated against the union of files changed by the
@@ -89,7 +89,8 @@ env:
 
 concurrency:
   group: npm-compat-refresh-${{ github.ref }}
-  # MUST be false. This job takes ~24 min; main merges more often than that. With
+  # MUST be false. The refresh remains long-lived; main can merge more often
+  # than it runs. With
   # `cancel-in-progress: true` every run was killed mid-flight by the next push —
   # 6 of the first 7 runs were `cancelled` and the artifact never moved off its
   # first snapshot. The original reasoning ("a cancelled run is always superseded
@@ -106,24 +107,76 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The package runners are independent. Running them as a matrix changes the
+  # wall clock from the sum of every upstream suite to the slowest group, so a
+  # busy main can finish a refresh before the next queued run supersedes it.
+  # `fail-fast: false` is intentional: one flaky package must not cancel the
+  # other measurements or leave the coordinator without their artifacts.
+  measure:
+    name: Measure npm-compat (${{ matrix.id }})
+    if: github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: core
+            packages: acorn,marked,clsx,cookie
+          - id: frontend
+            packages: eslint,prettier,react
+          - id: renderers
+            packages: react-dom,jsdom,redux
+          - id: libraries
+            packages: hono,lodash,lodash-es,axios,uuid,moment
+          - id: tools
+            packages: webpack,jest,styled-components,stylelint,three,lit
+          - id: tailwind
+            packages: tailwindcss
+          - id: typescript
+            packages: typescript
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          submodules: false
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Measure package group
+        run: |
+          set -euo pipefail
+          pnpm run generate:npm-compat -- \
+            --only "${{ matrix.packages }}" \
+            --partial-output "$RUNNER_TEMP/npm-compat-${{ matrix.id }}.json"
+
+      - name: Upload package-group report
+        uses: actions/upload-artifact@v6
+        with:
+          name: npm-compat-partial-${{ matrix.id }}
+          path: ${{ runner.temp }}/npm-compat-${{ matrix.id }}.json
+          if-no-files-found: error
+          retention-days: 14
+
   refresh:
+    needs: measure
     # The `paths-ignore` filter above is what actually breaks the trigger loop
     # now (this job's own landing changes only artifact paths). The actor guard
     # is kept as a second, cheaper line against any OTHER bot push to main.
     if: github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
-    # (#4604) 180 was outgrown by the upstream-suite roster: on 2026-08-21 four
-    # consecutive runs (700/705/714/721) died un-published — run 721's generate
-    # step was killed at exactly 180:00 with the promotion steps never reached,
-    # and the artifact stayed stale >24h while the acorn/clsx recovery
-    # (#4578/#4586/#4602) was already on main. 350 sits just under the 6h
-    # GitHub-hosted hard cap and nearly doubles the budget; the STRUCTURAL
-    # bound (per-package matrix or per-package time budgets, plus a staleness
-    # alert) is #4604's remaining scope — this raise is its immediate-unblock
-    # slice, not the fix. The sibling rule to #3988's "never cancel-in-progress
-    # a job longer than its trigger interval" applies: never let this job's
-    # runtime outgrow its own timeout, because a timeout kill and a
-    # supersession cancel produce the same stale artifact.
+    # The coordinator only assembles reports and promotes them. The expensive
+    # package work runs in the matrix above, so this retains the 350-minute
+    # ceiling as a final safety bound without making one serial job the
+    # availability bottleneck (#4604).
     timeout-minutes: 350
     environment: baseline-promote
     permissions:
@@ -139,10 +192,9 @@ jobs:
         shell: bash
         run: echo "source_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
-      # Single job, unlike benchmark-refresh's measure/promote split. That split
-      # exists because it also runs on PRs, where untrusted code must never
-      # reach write credentials. This workflow never runs on a PR, so everything
-      # it executes is already main's own trusted code.
+      # This job only assembles trusted worker output and performs promotion.
+      # The workers already checked out the same immutable source revision and
+      # do not receive write credentials.
       - uses: actions/checkout@v5
         with:
           ref: ${{ steps.refs.outputs.source_sha }}
@@ -155,20 +207,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # (#4130) The "capture the COMMITTED artifact's age before regenerating"
-      # step that used to sit here is GONE. It existed for exactly one consumer:
-      # the `--stale-after-hours` floor in the merge-queue gate, which asked
-      # "how old is the artifact main is currently serving" and could only be
-      # answered before this job overwrote the file. There is no gate and no
-      # floor on this path any more, so there is nothing to feed. The freshness
-      # invariant that DOES survive — never overwrite a newer artifact with an
-      # older measurement — is enforced in the publish step below by comparing
-      # `generatedAt` values, which is a different question.
-      - name: Regenerate the npm-compat artifacts
-        # No `--only`: a focused run never writes, because a partial file would
-        # drop the other packages. Refreshing anything means regenerating all of
-        # it (#3988).
-        run: pnpm run generate:npm-compat
+      - name: Download package-group reports
+        uses: actions/download-artifact@v7
+        with:
+          pattern: npm-compat-partial-*
+          path: ${{ runner.temp }}/npm-compat-partials
+          merge-multiple: true
+
+      - name: Assemble the npm-compat artifacts
+        run: node scripts/merge-npm-compat-partials.mjs "$RUNNER_TEMP/npm-compat-partials"
 
       # Refuse to publish an empty or truncated artifact. A generator that exits
       # 0 having written nothing useful would otherwise blank the dashboard, and
@@ -238,7 +285,7 @@ jobs:
       # adopting the app instead), so a `secrets.AUTO_ENQUEUE_TOKEN || ...`
       # fallback would silently select the broken path.
       #
-      # Minted HERE, after the ~24-minute generation, because an installation
+      # Minted HERE, after matrix generation, because an installation
       # token expires in one hour.
       - name: Mint a GitHub App token for the promotion PR
         id: app-token
@@ -329,7 +376,7 @@ jobs:
           git fetch deploykey "$PROMOTION_BRANCH" || true
 
           # Do NOT gate on "did main advance". It always advances — the job runs
-          # ~24 min and main merges faster than that — so the sha-equality guard
+          # matrix generation and main merges faster than that — so the sha-equality guard
           # this replaces deferred EVERY completed run to "a newer run", while
           # `cancel-in-progress` was killing those newer runs. The two composed
           # into a livelock: the artifact sat on its first snapshot for 9 hours
@@ -370,7 +417,7 @@ jobs:
 
           # Stash the generated artifacts OUTSIDE the work tree, then replay them
           # onto whatever main is now. The commit cannot be built on SOURCE_SHA:
-          # main has advanced during the ~24 min measurement, so the PR would
+          # main has advanced during matrix measurement, so the PR would
           # open behind main and immediately need a refresh. This is the step
           # that actually makes a long-running measurement publishable.
           STAGE="$(mktemp -d)"
@@ -391,7 +438,7 @@ jobs:
 
           # The perf-history artifact ACCUMULATES; the other two are snapshots.
           # Ours was derived from main as of SOURCE_SHA, so a run published
-          # during the ~24-minute measurement — still pending in the open
+          # during matrix measurement — still pending in the open
           # promotion PR, or already landed on main — is missing from it, and a
           # force-push of the branch would delete it. Union before committing so
           # this branch is only ever additive. Idempotent by measurement
@@ -422,7 +469,7 @@ jobs:
           # and neither hook can do its job. The sibling `benchmark-refresh` is
           # immune only structurally — its promote job is separate and never
           # runs `pnpm install`, so no hook is installed. This workflow is
-          # deliberately a SINGLE job and has to opt out explicitly. Running
+          # deliberately a single coordinator job and has to opt out explicitly. Running
           # either check over generated JSON artifacts would be meaningless.
           #
           # NO `[skip ci]`. The PR now NEEDS its checks to run to become CLEAN;
