@@ -41,6 +41,33 @@ function __isObject(value) {
 
 function __deepEqual(a, b) {
   if (__objectIs(a, b)) return true;
+  if (b !== null && b !== undefined && typeof b === "object") {
+    if (b.__js2ObjectContaining !== undefined) {
+      var objectExpected = b.__js2ObjectContaining;
+      if (!__isObject(a)) return false;
+      var objectKeys = Object.keys(objectExpected);
+      for (var objectIndex = 0; objectIndex < objectKeys.length; objectIndex++) {
+        var objectKey = objectKeys[objectIndex];
+        if (!__deepEqual(a[objectKey], objectExpected[objectKey])) return false;
+      }
+      return true;
+    }
+    if (b.__js2ArrayContaining !== undefined) {
+      if (!Array.isArray(a)) return false;
+      var arrayExpected = b.__js2ArrayContaining;
+      for (var arrayIndex = 0; arrayIndex < arrayExpected.length; arrayIndex++) {
+        var found = false;
+        for (var actualIndex = 0; actualIndex < a.length; actualIndex++) {
+          if (__deepEqual(a[actualIndex], arrayExpected[arrayIndex])) {
+            found = true;
+            break;
+          }
+        }
+        if (!found) return false;
+      }
+      return true;
+    }
+  }
   if (!__isObject(a) || !__isObject(b)) return false;
   var aIsArray = Array.isArray(a);
   var bIsArray = Array.isArray(b);
@@ -351,6 +378,18 @@ function expect(actual) {
   };
 }
 
+// Jest exposes asymmetric matchers as static helpers on expect. Keep their
+// marker objects inside the same literal matcher implementation so
+// toEqual(expect.objectContaining(...)) and
+// toEqual(expect.arrayContaining(...)) behave identically in the native
+// oracle and compiled Wasm lanes.
+expect.objectContaining = function (value) {
+  return { __js2ObjectContaining: value };
+};
+expect.arrayContaining = function (value) {
+  return { __js2ArrayContaining: value };
+};
+
 function __recordError(error) {
   __lastError = __messageOf(error);
   return 0;
@@ -455,6 +494,9 @@ var jest = {
   mock: function (name, factory) {
     __jestMocks[name] = typeof factory === "function" ? factory : function () { return factory; };
   },
+  unmock: function (name) {
+    delete __jestMocks[name];
+  },
   requireActual: function (name) { return __js2IsolatedModule(name, __js2RequireActual(name)); },
   restoreAllMocks: function () {
     for (var i = 0; i < __jestSpies.length; i++) __jestSpies[i].mockRestore();
@@ -463,6 +505,7 @@ var jest = {
   runAllTimers: function () { return Promise.resolve(); },
   useFakeTimers: function () {},
   useRealTimers: function () {},
+  setTimeout: function () {},
   advanceTimersByTime: function () {},
 };
 
@@ -900,6 +943,7 @@ function __js2AssertConsole(kind, expected) {
 
 function patchMessageChannel() {}
 function spyOnDevAndProd(target, key) { return jest.spyOn(target, key); }
+function spyOnDev(target, key) { return jest.spyOn(target, key); }
 function gate(callbackOrName) {
   if (typeof callbackOrName === "string") {
     return callbackOrName === "enableFragmentRefs" ? false : false;

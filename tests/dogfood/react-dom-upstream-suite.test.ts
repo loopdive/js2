@@ -16,6 +16,7 @@ import {
   isExpectedLateJsdomHostError,
   partitionProjectTests,
   partitionReactDomTestsForBuild,
+  reactDomTestSetup,
 } from "./react-dom-upstream-suite.mjs";
 // @ts-expect-error — .mjs dogfood extractor has no declaration file
 import { extractReactUpstreamTests } from "./react-upstream-extract.mjs";
@@ -146,6 +147,18 @@ describe("react-dom upstream suite", () => {
       ["b.js", ["b.js-0"]],
     ]);
     expect(batches.flatMap(({ tests }) => tests).map(({ id }) => id)).toEqual(input.map(({ id }) => id));
+  });
+
+  it("does not shadow upstream act functions or read a test-owned document early", () => {
+    const setup = reactDomTestSetup(
+      ["let React;", "let document;", "async function act(callback) { return callback(); }"].join("\n"),
+      "act(() => document.body);",
+      { server: true, fizz: true },
+    );
+    expect(setup).toContain("document.body.textContent");
+    expect(setup).not.toContain("var act = async function");
+    expect(setup).not.toContain("act = async function");
+    expect(setup).toContain('typeof document !== "undefined"');
   });
 
   it("keeps server and Fizz batches in isolated project modules", () => {

@@ -275,8 +275,16 @@ function buildServerImplementationSource({ reactSource, sharedSource, serverSour
   ].join("\n");
 }
 
-function reactDomTestSetup(prelude, testSource = prelude, { server = false, fizz = false, nativeHost = false } = {}) {
-  const lines = [`document.body.textContent = "";`];
+export function reactDomTestSetup(
+  prelude,
+  testSource = prelude,
+  { server = false, fizz = false, nativeHost = false } = {},
+) {
+  // Some upstream server/Fizz files own a lexical `document` binding and
+  // initialize it from a fresh JSDOM instance in beforeEach. Reading that
+  // binding from the harness setup used to throw in its temporal dead-zone
+  // (or read undefined before beforeEach assigned it).
+  const lines = [`if (typeof document !== "undefined" && document && document.body) document.body.textContent = "";`];
   if (!nativeHost) lines.unshift(`${server ? "__reactDomServerEnsureInit" : "__reactDomEnsureInit"}();`);
   const binds = (name, expression) => {
     const declaration = new RegExp(`\\b(let|var|const)\\s+${name}\\b`).exec(prelude);
@@ -303,11 +311,19 @@ function reactDomTestSetup(prelude, testSource = prelude, { server = false, fizz
     binds("ReactDOMFizzStatic", "__REACTDOM_FIZZ__");
   }
   const actDeclaration = /\b(let|var|const)\s+act\b/.exec(prelude);
+  const actFunctionDeclaration = /\b(?:async\s+)?function\s+act\s*\(/.test(prelude);
   if (actDeclaration && actDeclaration[1] === "const") {
     // Preserve an upstream const binding; the extractor's import rewrite owns
     // its value and assigning to it would turn a harness setup into a failure.
-  } else if (actDeclaration || /\bact\b/.test(testSource)) {
+  } else if (actDeclaration) {
     lines.push(`${actDeclaration ? "act" : "var act"} = async function (callback) {
+  var result;
+  __REACTDOM_SHARED__.flushSync(function () { result = callback(); });
+  if (result !== null && result !== undefined && typeof result.then === "function") await result;
+  return result;
+};`);
+  } else if (!actFunctionDeclaration && /\bact\b/.test(testSource)) {
+    lines.push(`var act = async function (callback) {
   var result;
   __REACTDOM_SHARED__.flushSync(function () { result = callback(); });
   if (result !== null && result !== undefined && typeof result.then === "function") await result;
@@ -328,6 +344,7 @@ const SETUP_BINDINGS = [
   "ReactDOMFizzServer",
   "ReactDOMFizzStatic",
   "act",
+  "document",
 ];
 
 // A React test often assigns host globals in its beforeEach before declaring

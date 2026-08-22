@@ -585,6 +585,24 @@ reported as one implementation-invalid/skipped test rather than wedging the
 parent process. These are compiler/runtime findings, not missing host setup;
 the probe is deliberately too small to be a corpus pass-rate claim.
 
+## Harness-seam checkpoint (2026-08-22)
+
+The next infrastructure slice is prepared in a pending PR. The generated ReactDOM
+setup now recognizes upstream `async function act(...)` declarations before
+injecting its fallback, so the native oracle no longer fails with duplicate
+`act` declarations. It also places setup after test-owned `document` bindings
+and guards the initial body cleanup, which lets Fizz/JSDOM tests initialize
+their own document instead of failing in the temporal dead-zone.
+
+The shared Jest shim now supplies `unmock`, `setTimeout`, `spyOnDev`, and the
+`expect.objectContaining`/`expect.arrayContaining` asymmetric matchers. These
+are test-runner capabilities, not production React behavior; both the native
+oracle and compiled lane use the same shim. Focused ReactDOM and React
+infrastructure tests, typecheck, issue-ID validation, formatting, and diff
+checks pass. The full upstream corpus has not been rerun, so no new pass-rate
+claim is made here; rerun it after the PR lands and keep renderer/compiler
+failures separate from unavailable-infrastructure counts.
+
 ## Permanent test reference
 
 `tests/dogfood/react-dom-upstream-suite.test.ts` — pin/commit assertions run

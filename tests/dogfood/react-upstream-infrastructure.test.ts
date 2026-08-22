@@ -141,6 +141,22 @@ describe("React upstream test infrastructure", () => {
     }
   });
 
+  it("implements Jest asymmetric object and array matchers in both shim lanes", () => {
+    // The matcher implementation is embedded in each generated upstream test;
+    // exercise it through the same source string rather than a host-only
+    // assertion helper.
+    // eslint-disable-next-line no-new-func
+    const run = new Function(
+      `${REACT_EXPECT_SHIM}
+return function () {
+  expect({ answer: 42, extra: true }).toEqual(expect.objectContaining({ answer: 42 }));
+  expect(["a", "b", "c"]).toEqual(expect.arrayContaining(["c", "a"]));
+  return 1;
+};`,
+    )();
+    expect(run()).toBe(1);
+  });
+
   it("provides scoped Jest module isolation to Node and compiled Wasm", async () => {
     const previousNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";
