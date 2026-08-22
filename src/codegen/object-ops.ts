@@ -48,9 +48,7 @@ import {
   tryEmitVecLengthDefineForDefineProperties,
 } from "./array-length-define.js";
 import { emitHasOwnPresence } from "./closed-struct-presence.js"; // (#3920) per-instance own-presence
-// (#4062 array bag / #4491 T9 Date+RegExp bag) a statically-known key may live in
-// a carrier bag the receiver's field list cannot see — route the folded `false`.
-import { carrierBagKeyNeedsRuntime } from "./builtin-instance-key-presence.js";
+import { carrierBagKeyNeedsRuntime } from "./builtin-instance-key-presence.js"; // (#4062) + (#4491 T9) vec/Date/RegExp expando presence
 import { isStaticDescWellFormed, isStaticallyNonObjectDescExpr } from "./descriptor-shape.js";
 // (#4479) the `Properties` MAP half of Object.defineProperties — key naming and
 // `$Object` materialization. Reasoning lives in that module's header.
@@ -853,89 +851,7 @@ function emitInheritedTrueDescriptorDefineProperty(
   );
 }
 
-/**
- * (#4491) §10.4.4.2 step 5.b.i — the parameter write owed by a define that the
- * inline mapped fast path declined.
- *
- * `emitMappedArgValueDefine` handles the shapes it can lower inline (it writes
- * the slot AND the linked parameter). Every other data define on a mapped index
- * — `writable: false`, or any index whose descriptor already lives in the
- * runtime sidecar — falls through to the generic define, which writes only the
- * arguments slot. The linked formal parameter was then left at its old value:
- * `(function (a) { Object.defineProperty(arguments, "0", { value: 20, writable:
- * false }); return a; })(0)` answered 0, not 20.
- *
- * The core records the debt HERE rather than the wrapper re-deriving the
- * fast-path predicate, so the two can never disagree about which defines the
- * inline path took. Saved/restored around the core call, since compiling the
- * descriptor can itself contain a nested `Object.defineProperty`.
- */
-type PendingMappedArgSync = { info: NonNullable<FunctionContext["mappedArgsInfo"]>; argIndex: number };
-let pendingMappedArgSync: PendingMappedArgSync | null = null;
-
-/**
- * Emit step 5.b.i for the case above, AFTER the define has stored the value in
- * the arguments slot: read that slot back — it is exactly `Desc.[[Value]]`, so
- * the descriptor expression is evaluated once — and push it into the linked
- * parameter. Net stack effect is zero, so the define's own result stays on top.
- */
-function emitMappedArgValueSyncAfterDefine(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  pending: PendingMappedArgSync,
-): void {
-  const { info, argIndex } = pending;
-  const valLocal = allocLocal(fctx, `__mappedarg_defval_${fctx.locals.length}`, { kind: "externref" });
-  const idxLocal = allocLocal(fctx, `__mappedarg_defidx_${fctx.locals.length}`, { kind: "i32" });
-
-  // Under-applied calls build a vec shorter than the formal count, so the slot
-  // is not guaranteed to exist; an absent slot has no mapping to update.
-  fctx.body.push({ op: "local.get", index: info.argsLocalIdx });
-  fctx.body.push({ op: "struct.get", typeIdx: info.vecTypeIdx, fieldIdx: 0 });
-  fctx.body.push({ op: "i32.const", value: argIndex });
-  fctx.body.push({ op: "i32.gt_u" });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "empty" },
-    then: [
-      { op: "local.get", index: info.argsLocalIdx },
-      { op: "struct.get", typeIdx: info.vecTypeIdx, fieldIdx: 1 },
-      { op: "i32.const", value: argIndex },
-      { op: "array.get", typeIdx: info.arrTypeIdx },
-      { op: "local.set", index: valLocal },
-      { op: "i32.const", value: argIndex },
-      { op: "local.set", index: idxLocal },
-    ],
-    else: [
-      // Out of range: point the runtime index at a slot no parameter matches.
-      { op: "i32.const", value: -1 },
-      { op: "local.set", index: idxLocal },
-    ],
-  });
-
-  // The define already applied step 5.b.ii while parsing the descriptor, and
-  // `emitMappedArgReverseSync` skips severed indices. Re-open the link for the
-  // duration of this emission so the two steps land in spec order.
-  const severed = info.unmappedIndices?.delete(argIndex) ?? false;
-  emitMappedArgReverseSync(ctx, fctx, idxLocal, valLocal);
-  if (severed) info.unmappedIndices?.add(argIndex);
-}
-
 export function compileObjectDefineProperty(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  expr: ts.CallExpression,
-): ValType | null {
-  const saved = pendingMappedArgSync;
-  pendingMappedArgSync = null;
-  const result = compileObjectDefinePropertyCore(ctx, fctx, expr);
-  const pending = pendingMappedArgSync;
-  pendingMappedArgSync = saved;
-  if (pending !== null) emitMappedArgValueSyncAfterDefine(ctx, fctx, pending);
-  return result;
-}
-
-function compileObjectDefinePropertyCore(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
@@ -1331,9 +1247,6 @@ function compileObjectDefinePropertyCore(
       const info = fctx.mappedArgsInfo;
       const isAccessor =
         getNode !== undefined || setNode !== undefined || getExpr !== undefined || setExpr !== undefined;
-      // (#4491) Whether the index is mapped as this define BEGINS — read before
-      // the step-5.b.ii sever below, since step 5.b.i still applies to it.
-      const wasMapped = !(info.unmappedIndices?.has(argIndex) ?? false);
       const breaksLink = isAccessor || descWritable === false;
       if (breaksLink) {
         (info.unmappedIndices ??= new Set<number>()).add(argIndex);
@@ -1375,25 +1288,9 @@ function compileObjectDefinePropertyCore(
         getExpr === undefined &&
         setExpr === undefined &&
         descWritable !== false && // writable:false freezes — handled by the drop path below
-        !isFrozen &&
-        // (#4491) …and only while the opaque vec slot is still the authority for
-        // this index. Once a define has been routed to the runtime the sidecar
-        // descriptor is, and a slot-only write would desync the two.
-        !(info.runtimeDefinedIndices?.has(argIndex) ?? false);
+        !isFrozen;
       if (isPureDataValueDefine) {
         return emitMappedArgValueDefine(ctx, fctx, info, argIndex, valueExpr!);
-      }
-      // Everything else falls through to the generic define, which records a
-      // real descriptor for this index.
-      (info.runtimeDefinedIndices ??= new Set<number>()).add(argIndex);
-      // …and writes only the arguments SLOT. §10.4.4.2 step 5.b.i additionally
-      // requires `Map.[[Set]]` — the linked formal parameter — for a data
-      // descriptor with an explicit [[Value]] on an index that was still mapped
-      // when this define started. The wrapper emits it after the define, so the
-      // value is read back from the slot (evaluated once) and the step-5.b.ii
-      // sever above cannot pre-empt it.
-      if (!isAccessor && valueExpr !== undefined && wasMapped) {
-        pendingMappedArgSync = { info, argIndex };
       }
     }
   }
@@ -4665,29 +4562,6 @@ export function compilePropertyIntrospection(
       fctx.body.push({ op: "i32.const", value: 1 });
       return { kind: "i32", boolean: true };
     }
-    // (#4491 wave-5 T2) A canonical INDEX key on a REFERENCE-element vec.
-    //
-    // #2746 answered this statically: `present := index < length && data[index]
-    // != null`, OR-ed with the native predicate to catch sidecar additions. The
-    // bounds half rests on "a hole is a distinguishable `ref.null`", and that is
-    // no longer true — `delete arr[0]` records the hole by flagging the #3251
-    // COMPANION entry and leaves the vec slot alone, so the static half read
-    // `present = 1` and the OR made it unconditionally true. Measured:
-    //
-    //   var a = ["x", "y"]; delete a[0];
-    //   a.hasOwnProperty("0")   // true — while `0 in a`, `for…in`,
-    //                           // getOwnPropertyNames and gOPD all said absent
-    //
-    // The native predicate alone is now correct in every direction (its #4010
-    // S3 vec prologue consults `__vec_gopd` then the bag). Verified through an
-    // opaque receiver, which forces exactly that path: present index true,
-    // out-of-bounds false, deleted index false, `Object.defineProperty`-added
-    // index true, numeric-element arrays likewise. So the static bounds
-    // computation is dropped rather than patched — it can only re-derive what
-    // the predicate already knows, and this is the second way it has been
-    // wrong. NUMERIC-element vecs are untouched: they keep the
-    // `provesDenseLiteralOwnIndex` constant fold above and the legacy path
-    // below, exactly as before.
     if (elemIsRef && keyArg && staticKey !== null && _isCanonicalArrayIndexString(staticKey)) {
       // (#4491) The runtime native is now the WHOLE answer. This arm used to
       // compute `present := index < length AND data[index] != null` inline and OR
@@ -4720,6 +4594,10 @@ export function compilePropertyIntrospection(
         [{ kind: "externref" }, { kind: "externref" }],
         [{ kind: "i32" }],
       );
+      fctx.body.push({ op: "local.get", index: recvLocal });
+      fctx.body.push({ op: "extern.convert_any" });
+      const keyT = compileExpression(ctx, fctx, keyArg, { kind: "externref" });
+      if (keyT && keyT.kind !== "externref") coerceType(ctx, fctx, keyT, { kind: "externref" });
       flushLateImportShifts(ctx, fctx);
       if (hopIdx2 !== undefined) {
         fctx.body.push({ op: "call", funcIdx: hopIdx2 });
