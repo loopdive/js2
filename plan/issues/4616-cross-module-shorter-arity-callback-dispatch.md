@@ -23,10 +23,15 @@ loc-budget-allow:
   - src/codegen/extern-declarations.ts
   - src/codegen/expressions/identifiers.ts
   - src/codegen/context/types.ts
+  - src/codegen/closures/callback-classification.ts
+  - src/codegen/registry/imports.ts
+  - src/import-resolver.ts
 func-budget-allow:
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
   - src/codegen/extern-declarations.ts::registerNodeBuiltinImports
   - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  - src/codegen/closures/callback-classification.ts::isHostCallbackArgument
+  - src/codegen/registry/imports.ts::addUnionImports
 ---
 
 # shorter-arity callbacks from later modules miss the funcref dispatch
@@ -123,6 +128,51 @@ adapter — harness gap). jest suite 163 → 191/232. acorn 3518/3518, cookie
 63670/63740, clsx 31/32 all hold. The "dropped call/__make_callback" WAT
 finding above was an artifact of a broken relative import in the probe copy —
 the original module resolves `diff` fine.
+
+## 2026-08-22 fourth slice — the `test.each` call-of-call idiom (isError cluster)
+
+The 20 `%p` failures in jest-util/expect-utils `isError.test.ts` are the
+harness shim idiom `test.each(cases)(name, body)`, which hit three defects:
+
+1. **Host-callback misclassification on call-of-call** — for an arrow argument
+   whose callee is a CallExpression (`each(cases)(name, arrow)`),
+   `isHostCallbackArgument` had no carve-out and returned true; the arrow was
+   wrapped in `__make_callback`, the receiving closure's guarded root cast
+   nulled, `call_ref` trapped. Fix: when `ctx.oracle.signatureOf(directCallee)`
+   shows the invoked value is callable, it is a compiled closure — closure path
+   (mirrors the #1300 identifier carve-out).
+2. **Declared-rest callback param compiled as one positional VEC slot** —
+   `body: (...args: unknown[]) => void` made `body(row)` coerce its single arg
+   INTO a vec and match only a `(vec)->void` wrapper no fixed-arity arrow can
+   satisfy. Fix (call-identifier lane): expand the rest slot to one externref
+   per call-site arg **+2** (a table callback can declare more formals than one
+   site passes — extras read `undefined`), so the declared/prefix candidates
+   match fixed-arity callbacks. A true rest-compiled closure still gets surplus
+   args via `__argc`/`__extras_argv`.
+3. **Duplicate `env::__box_number` adapter import** — `ensureLateImport`
+   registered the helper individually, then a vec→vec coercion's
+   `addUnionImports` blindly re-added the whole family; the module linked but
+   the adapter-manifest validator refused it ("duplicate adapter import ...
+   appears 2 times"). Fix: `addUnionImport` wrapper skips names already bound
+   to an import (their pre-`importsBefore` indices sit below the shift range,
+   so delta bookkeeping is unchanged).
+
+**The isError cluster's ACTUAL blocker was simpler**: `import {isNativeError}
+from 'node:util/types'` — `util/types` was missing from `NODE_BUILTIN_MODULES`
+(import-resolver.ts), so jest-util's `isError` (which delegates to it —
+`Error.isError` is absent on Node 22) bound to nothing and every call threw
+"null is not a function". One set entry fixes 0/20 → 20/20 (the runtime
+adapter `require()`s the specifier verbatim, same as stream/web,
+fs/promises). The three call-of-call fixes above are real and guarded by
+`issue-4616-test-each-idiom.test.ts`, but were not what isError needed.
+
+Still open in this family: reading `.each` off the function object
+(`(test as any).each([..])(..)`) dispatches through the host bridge's
+`__call_fn_method_N`, whose per-entry arm HARD-casts an externref arg to a
+concrete vec param (`externToClosureParamRef`) — a wasm vec marshalled to a JS
+array on the way out fails that cast ("illegal cast", un-catchable). Repro:
+`.tmp/probe-each12.mts` case 4/5. Needs a guarded cast + vec materializer in
+closure-exports.ts, or arg-identity preservation in the dynamic bridge.
 
 ## Acceptance criteria
 

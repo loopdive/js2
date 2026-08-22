@@ -1493,6 +1493,34 @@ export function compileIdentifierCall(
           sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
         }
 
+        // (#4616) A REAL declared rest param (`body: (...args: unknown[]) =>
+        // void` — jest's `test.each` callback) resolved to one positional VEC
+        // slot here, so `body(row)` coerced its single argument INTO a vec and
+        // matched only a `(vec) -> void` wrapper that no fixed-arity arrow can
+        // satisfy — the actual 1-param arrow's funcref failed every candidate.
+        // JS rest semantics at the CALL SITE are positional: expand the rest
+        // slot to one externref per remaining call-site argument so the
+        // candidates (declared shape + the shorter-arity prefixes below) match
+        // fixed-arity callbacks. A true rest-compiled closure still receives
+        // surplus args via the `__argc`/`__extras_argv` protocol.
+        const lastSigParamDecl = lastSigParam?.valueDeclaration;
+        const sigHasDeclaredRest =
+          !builtinAliasInfo &&
+          lastSigParamDecl !== undefined &&
+          ts.isParameter(lastSigParamDecl) &&
+          lastSigParamDecl.dotDotDotToken !== undefined;
+        if (sigHasDeclaredRest && sigParamWasmTypes.length > 0) {
+          sigParamWasmTypes.pop();
+          // Two slots beyond the call-site count: a callback may declare MORE
+          // formals than this site passes (`body(row)` driving a `(x, y) =>`
+          // table callback — the extra formals read `undefined`), and the
+          // matched/prefix candidates plus the arg-padding below only cover
+          // arities up to this list's length.
+          while (sigParamWasmTypes.length < Math.max(expr.arguments.length, 1) + 2) {
+            sigParamWasmTypes.push({ kind: "externref" });
+          }
+        }
+
         // Eagerly create the closure wrapper types for this signature so the
         // lookup succeeds even when no actual closure with this signature has
         // been compiled yet (compilation order issue).
@@ -1574,7 +1602,7 @@ export function compileIdentifierCall(
             // declares one (Test262's typed-array harness does exactly this),
             // so retain shorter runtime signatures and marshal only their
             // formal prefix in the dispatch arm below.
-            if (info.paramTypes.length > sigParamCount) continue;
+            if (info.paramTypes.length > sigParamWasmTypes.length) continue;
             if (seenFuncTypeIdx.has(info.funcTypeIdx)) continue;
             let paramsMatch = true;
             for (let pi = 0; pi < info.paramTypes.length; pi++) {
@@ -1605,7 +1633,7 @@ export function compileIdentifierCall(
           // reuses the identical funcref type) — the per-candidate arm already
           // marshals only the candidate's formal prefix and packs the surplus
           // into `__extras_argv`.
-          for (let prefixArity = 0; prefixArity < sigParamCount; prefixArity++) {
+          for (let prefixArity = 0; prefixArity < sigParamWasmTypes.length; prefixArity++) {
             const prefixParams = sigParamWasmTypes.slice(0, prefixArity);
             for (const retVariant of [resultTypes, [{ kind: "externref" } as ValType], [] as ValType[]]) {
               const alt = getOrCreateFuncRefWrapperTypes(ctx, prefixParams, retVariant);

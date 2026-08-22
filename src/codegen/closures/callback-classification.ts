@@ -155,6 +155,18 @@ export function isHostCallbackArgument(node: ts.Node, ctx: CodegenContext): bool
     let directCallee: ts.Expression = parent.expression;
     while (ts.isParenthesizedExpression(directCallee)) directCallee = directCallee.expression;
     if (ts.isFunctionExpression(directCallee) || ts.isArrowFunction(directCallee)) return false;
+    // (#4616) Call-of-call: `factory(cases)(name, body)` — jest's `test.each`
+    // idiom. The value being invoked is the CLOSURE the inner call returned;
+    // its compiled body consumes the argument as a WasmGC closure struct.
+    // Classifying the arrow as a host callback wrapped it in `__make_callback`
+    // (a JS function externref), the receiver's guarded root cast nulled, and
+    // the `call_ref` trapped "dereferencing a null pointer" (the 20-test
+    // jest-util/expect-utils isError `test.each` cluster). When the checker
+    // can see the invoked value is callable, it is a compiled closure — use
+    // the closure-struct path, mirroring the #1300 identifier carve-out.
+    if (ts.isCallExpression(directCallee) && ctx.oracle.signatureOf(directCallee) !== undefined) {
+      return false;
+    }
     // Check if the callee is a user-defined function — if so, NOT a host callback
     if (ts.isIdentifier(parent.expression)) {
       const calleeName = parent.expression.text;
