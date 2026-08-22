@@ -1,7 +1,7 @@
 {
-  "generated": "2026-08-21",
+  "generated": "2026-08-22",
   "threshold": 1500,
-  "totalCeiling": 676121,
+  "totalCeiling": 676210,
   "files": {
     "src/codegen-linear/index.ts": 5816,
     "src/codegen-linear/runtime.ts": 4444,
@@ -59,7 +59,7 @@
     "src/codegen/object-runtime.ts": 10771,
     "src/codegen/parse-number-native.ts": 1924,
     "src/codegen/program-abi-session.ts": 3600,
-    "src/codegen/property-access-dispatch.ts": 4527,
+    "src/codegen/property-access-dispatch.ts": 4549,
     "src/codegen/property-access.ts": 5929,
     "src/codegen/proto-index-store.ts": 1562,
     "src/codegen/regexp-standalone.ts": 4802,

@@ -3638,6 +3638,35 @@ export function compileDeclarations(
     // `__module_init`, and the host will invoke it explicitly. And under
     // `deferTopLevelInit` (#2796) the JS host calls the exported `__module_init`
     // directly after `setExports`.
+
+    // (#3523 R4 invariant 7) A Prepared module initializer must be reached by
+    // exactly ONE startup adapter. The two non-WASI adapters are mutually
+    // exclusive by construction above, but they are wired from `ctx` flags in
+    // two separate statements, so a future edit could install both (init runs
+    // twice: once during instantiation, once when the host calls the export) or
+    // neither (top-level code never runs, and every read trips its TDZ guard).
+    // Neither failure is visible in the emitted body, so reconcile the actual
+    // wiring against the planned policy here and fail closed. Only the Prepared
+    // route is asserted: the direct route keeps its established behavior until
+    // the typed Unsupported policy is retired.
+    if (skipModuleInitBody && !ctx.wasi) {
+      if (process.env.JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER === "1") {
+        // Anti-vacuity seam: install the adapter the planned policy did NOT
+        // choose, so the reconciliation below has a real violation to catch.
+        if (exportModuleInit) ctx.mod.startFuncIdx = initFuncIdx;
+        else ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: initFuncIdx } });
+      }
+      const startsOnInstantiation = ctx.mod.startFuncIdx === initFuncIdx;
+      const exportedAliases = ctx.mod.exports.filter(
+        (entry) => entry.name === "__module_init" && entry.desc.kind === "func" && entry.desc.index === initFuncIdx,
+      ).length;
+      const adapters = (startsOnInstantiation ? 1 : 0) + exportedAliases;
+      if (adapters !== 1 || exportedAliases !== (exportModuleInit ? 1 : 0)) {
+        throw new Error(
+          `prepared module initializer must have exactly one startup adapter (start=${startsOnInstantiation}, exports=${exportedAliases}, planned=${exportModuleInit ? "deferred-export" : "wasm-start"})`,
+        );
+      }
+    }
   }
 
   // (#2138) Names whose legacy body was skipped under IR-first; undefined on
