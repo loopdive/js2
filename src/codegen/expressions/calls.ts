@@ -2975,6 +2975,47 @@ export function functionExprBodyReferencesOwnName(fn: ts.FunctionExpression): bo
   return found;
 }
 
+/**
+ * (#4614) Statically resolve `ns.member(...)` through a NamespaceImport of a
+ * compiled sibling module to the equivalent named call. Returns undefined to
+ * decline (not a namespace-import receiver, external/ambient module, or a
+ * non-function export) — the caller falls through to the legacy lanes.
+ */
+function tryNamespaceImportMemberCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): InnerResult | undefined {
+  if (!ts.isPropertyAccessExpression(expr.expression)) return undefined;
+  const access = expr.expression;
+  if (!ts.isIdentifier(access.expression) || ts.isPrivateIdentifier(access.name)) return undefined;
+  const nsDecl = ctx.oracle.valueDeclarationOf(access.expression);
+  if (nsDecl === undefined || !ts.isNamespaceImport(nsDecl)) return undefined;
+  // The export symbol of `export function f` carries the FunctionDeclaration
+  // directly; deeper re-export chains resolve to the intermediate specifier
+  // and decline here (fail-closed to the legacy lane).
+  const memberDecl = ctx.oracle.valueDeclarationOf(access.name);
+  if (
+    memberDecl === undefined ||
+    !ts.isFunctionDeclaration(memberDecl) ||
+    memberDecl.name === undefined ||
+    memberDecl.body === undefined
+  ) {
+    return undefined;
+  }
+  const targetName = memberDecl.name;
+  // The target must be a function this program actually compiled — an
+  // unmapped name means the module was consumed externally (host require,
+  // deferred entry) and the legacy lane's answer stands.
+  if (!ctx.funcMap.has(targetName.text)) return undefined;
+  const synthetic = ts.factory.createCallExpression(targetName, expr.typeArguments, expr.arguments);
+  ts.setTextRange(synthetic, expr);
+  // A factory node has no parent chain, so `getSourceFile()` on it (position
+  // maps, diagnostics) crashes — anchor it where the original call sits.
+  (synthetic as { parent?: ts.Node }).parent = expr.parent;
+  return compileCallExpression(ctx, fctx, synthetic as ts.CallExpression);
+}
+
 function compileOptionalDirectCall(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression): InnerResult {
   const callee = expr.expression as ts.Identifier;
   const calleeType = compileExpression(ctx, fctx, callee);
@@ -6251,6 +6292,21 @@ function compileCallExpression(
   // the matching `__jsx_runtime_*` host import. Extracted to calls-guards.ts (#742).
   {
     const r = tryJsxRuntimeCall(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+
+  // (#4614) `ns.f(args)` where `ns` is a NamespaceImport of a COMPILED sibling
+  // module. The namespace binding has no runtime value (it compiled to
+  // `ref.null extern`), so the generic method lane became
+  // `__extern_method_call(null, "f", …)` — every call through `import * as`
+  // threw (cookie's vitest harness: 65/63740). Namespace member access is
+  // statically resolvable per ESM semantics: resolve the alias to the target
+  // FunctionDeclaration and re-enter as the equivalent named call, which
+  // carries the full identifier-call lowering (arguments protocol, rest,
+  // dispatch). Ambient/external declarations (no body) and non-function
+  // exports decline to the legacy lane.
+  {
+    const r = tryNamespaceImportMemberCall(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
 

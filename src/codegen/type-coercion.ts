@@ -2444,7 +2444,22 @@ export function coerceType(
     // Build else-branch: when cast fails, construct from JS object if possible
     let elseBranch: Instr[];
     if (vecInfo) {
-      elseBranch = buildVecFromExternref(ctx, fctx, tmpExternLocal, toIdx, vecInfo);
+      // (#4614) A NULL input must stay `ref.null $vec` — `ref.test` answers
+      // false for null, so without this guard the materializer built an EMPTY
+      // vec out of nothing (`__extern_length(null)` → 0) and
+      // `flag ? rows() : null` bound to a vec slot read back as a TRUTHY
+      // zero-length array: cookie's `tableRows || cases` then selected the
+      // phantom empty table and every it.each registration vanished.
+      elseBranch = [
+        { op: "local.get", index: tmpExternLocal },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "ref_null", typeIdx: toIdx } },
+          then: [{ op: "ref.null", typeIdx: toIdx }],
+          else: buildVecFromExternref(ctx, fctx, tmpExternLocal, toIdx, vecInfo),
+        },
+      ];
     } else {
       // Check if the target is a tuple struct — if so, try converting from any known vec type
       const tupleFields = getTupleFields(ctx, toIdx);
