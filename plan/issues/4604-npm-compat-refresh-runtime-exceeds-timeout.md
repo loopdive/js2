@@ -113,3 +113,19 @@ same stale artifact.
       publish if any expected package is missing or duplicated.
 - [ ] Staleness of the committed artifact is observable (guard or alert),
       not only discoverable by manual audit.
+
+## 2026-08-22 follow-up — pending refreshes were still being cancelled
+
+The matrix split fixed the active-run timeout, but it did not eliminate the
+other GitHub Actions concurrency rule: `cancel-in-progress: false` protects the
+currently running job only. GitHub retains one pending run per group and
+cancels an older pending run when another push arrives. The run history after
+[#4745](https://github.com/loopdive/js2wasm/pull/4745) still shows this shape:
+the refresh for `3f8b6e6` was cancelled when the next main push queued
+`2860d72d`, even though the workflow declared `cancel-in-progress: false`.
+
+The follow-up change keys push-triggered refreshes by `github.sha`. Every main commit therefore gets a
+runner instead of being silently replaced while pending; scheduled and manual
+runs continue to serialize on the branch ref. The promotion push uses
+`--force-with-lease` so concurrent SHA lanes cannot overwrite a newer
+promotion branch update. The workflow-shape test now pins both invariants.
