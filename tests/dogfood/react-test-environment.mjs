@@ -4,7 +4,7 @@ import { JSDOM } from "jsdom";
 // jsdom.  Keep this list explicit: copying every property from `window` would
 // overwrite Node's process/timer globals and make the native oracle differ
 // from the host used by the compiler.
-const DOM_GLOBALS = [
+export const DOM_GLOBALS = [
   "window",
   "self",
   "document",

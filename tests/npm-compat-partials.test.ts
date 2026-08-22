@@ -64,6 +64,8 @@ describe("npm-compat refresh matrix wiring", () => {
   it("measures independent groups and assembles only after every group succeeds", () => {
     const workflow = readFileSync(new URL("../.github/workflows/npm-compat-refresh.yml", import.meta.url), "utf8");
 
+    expect(workflow).toContain("github.repository == 'loopdive/js2wasm'");
+    expect(workflow).not.toContain("github.repository == 'loopdive/js2'");
     expect(workflow).toContain("fail-fast: false");
     expect(workflow).toContain(
       "group: npm-compat-refresh-${{ github.event_name == 'push' && github.sha || format('{0}-{1}', github.ref, github.run_id) }}",
@@ -74,6 +76,16 @@ describe("npm-compat refresh matrix wiring", () => {
     expect(workflow).toContain("actions/download-artifact@v7");
     expect(workflow).toContain("scripts/merge-npm-compat-partials.mjs");
     expect(workflow).toContain("id: typescript");
+  });
+
+  it("keeps the renamed repository guards active for refresh promotion", () => {
+    const refresh = readFileSync(new URL("../.github/workflows/npm-compat-refresh.yml", import.meta.url), "utf8");
+    const staleness = readFileSync(new URL("../.github/workflows/npm-compat-staleness.yml", import.meta.url), "utf8");
+    const enqueue = readFileSync(new URL("../.github/workflows/auto-enqueue.yml", import.meta.url), "utf8");
+
+    for (const workflow of [refresh, staleness, enqueue]) {
+      expect(workflow).toContain("github.repository == 'loopdive/js2'");
+    }
   });
 
   it("does not force-update a promotion PR while its checks are in flight", () => {

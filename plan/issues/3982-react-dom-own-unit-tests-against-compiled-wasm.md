@@ -634,6 +634,16 @@ The matcher shim also now covers the upstream `resolves.not.toThrow()` and
 test callback result, not a blanket exception suppressor; the focused test
 exercises both a fulfilled non-function and a fulfilled non-throwing function.
 
+The compile worker now builds the web-lane import object from the same explicit
+JSDOM globals used by the parent harness instead of falling back to the
+compiler's hermetic empty import object. This makes the worker's `document`,
+`window`, and DOM constructor receivers observable and keeps the node and web
+lanes on an explicit host boundary. Simple document receiver controls pass
+through the worker. The remaining upstream CSS/edge failures still receive an
+empty object at the compiled renderer boundary, so they remain compiler/runtime
+findings rather than being hidden by a fake document; no renderer pass-rate
+claim is made.
+
 ## Node Fizz module-initialization checkpoint (2026-08-22)
 
 The Node Fizz graph exposed one more genuine host seam. Its published CommonJS

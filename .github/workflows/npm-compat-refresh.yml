@@ -106,7 +106,7 @@ jobs:
   # other measurements or leave the coordinator without their artifacts.
   measure:
     name: Measure npm-compat (${{ matrix.id }})
-    if: github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+    if: github.repository == 'loopdive/js2wasm' && github.actor != 'github-actions[bot]'
     strategy:
       fail-fast: false
       matrix:
@@ -172,7 +172,7 @@ jobs:
     # The `paths-ignore` filter above is what actually breaks the trigger loop
     # now (this job's own landing changes only artifact paths). The actor guard
     # is kept as a second, cheaper line against any OTHER bot push to main.
-    if: github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+    if: github.repository == 'loopdive/js2wasm' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     # The coordinator only assembles reports and promotes them. The expensive
     # package work runs in the matrix above, so this retains the 350-minute
