@@ -848,3 +848,14 @@ finding (`call_ref` received one argument but requires two), not unavailable
 package infrastructure; its six callbacks remain in the denominator and are
 reported as compiler-blocked. The remaining **3,031 registrations** from 227
 verified files remain explicitly reported as unavailable infrastructure.
+
+## 2026-08-22 Jest merged-timer integration checkpoint
+
+After rebasing this package-resolution and queue-runner work onto the landed
+fake-timer infrastructure, the selected inventory includes both the original
+`pTimeout.test.ts` timer unit and `queueRunner.test.ts`. The exact run now
+covers **260 callbacks across 15 selected files**: Node admits **258/258**, all
+15 modules compile, 14 validate, and Wasm scores **120/258**. The one invalid
+queue-runner Wasm module remains a compiler validation finding, while the
+remaining **3,028 registrations** from 226 verified files remain explicitly
+reported as unavailable infrastructure.

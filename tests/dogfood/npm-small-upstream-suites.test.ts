@@ -282,8 +282,8 @@ describe("small npm package upstream suites", () => {
     const report = await run("jest");
     expect(report.extraction).toMatchObject({
       filesSeen: 241,
-      filesSelected: 14,
-      filesDeferred: 227,
+      filesSelected: 15,
+      filesDeferred: 226,
       testsRegistered: 260,
       nativePassed: 258,
       nativeFailed: 2,
