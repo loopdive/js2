@@ -4668,3 +4668,155 @@ obvious probe:
   correctly. So the defect is in how the compiled harness's `assert.throws`
   invokes its callback, not in the member-call check — and any probe that does
   not go through the real harness will report the bug as absent.
+
+## Wave-6 lane T10 — the QuickJS provider build was DOWN: `constructor` leaked from `Object.prototype`'s companion (2026-08-22)
+
+**Symptom (operational blocker, not a conformance row).** On integration head
+`4f4bb249dd`, `npx tsx scripts/build-quickjs-eval-provider.mjs` exited **1**:
+
+```
+[quickjs-eval-provider] FAILED: Error: quickjs canary functionParityProbe()
+  returned 1, expected 11
+```
+
+`functionParityProbe` = `constructorIdentity * 10 + appliedGlobal`, so **1**
+means `appliedGlobal` was fine and `constructorIdentity` was **0** — a
+QuickJS-created `new Function(…)` value lost `%Function%` identity. Because the
+provider is the only way to build the adapter, every
+`JS2WASM_EVAL_ENGINE=quickjs` row for every lane was gated behind this.
+
+> Run the script **BARE**. Piped (`… | tail`) it reports `tail`'s status and a
+> thrown canary reads as success.
+
+### Diagnosis — measured, not inferred
+
+Diagnostic canaries compiled through the same linked pair
+(`.tmp/t10/harness.mjs`, adapter compile ≈3 s so iteration is cheap):
+
+| probe on `made = new Function("this.x = 1;")` | base `73c0a290c0` | head `4f4bb249dd` | spec |
+| --- | --- | --- | --- |
+| `made.constructor === Function` | 1 | **0** | 1 |
+| `made.constructor.name` | `"Function"` | **`"Object"`** | `"Function"` |
+| `made.constructor === Object` | 0 | **1** | 0 |
+
+So the answer did not go missing — it became **`Object`**.
+
+### Bisect
+
+`src/`-only file-copy A/B over the integration range (`.tmp/t10/atcommit.sh`,
+one `git checkout <sha> -- src/` per candidate, always restored):
+
+| src at | `functionParityProbe()` |
+| --- | --- |
+| `7dd91b7bad` (wave base) | 11 |
+| `73c0a290c0` (all upstream merges, pre-T9) | 11 |
+| **`de32ec84f5` (T9 — builtin-proto constructor seed)** | **1** |
+| `e707acd56a`, `6b513c7155`, `4f4bb249dd` | 1 |
+
+Narrowed **inside** `de32ec84f5` by per-file revert, then by an env-gated
+early-return in the seeder itself:
+
+| variant | reading |
+| --- | --- |
+| T9 with `src/codegen/native-proto.ts` reverted | 11 |
+| T9 with `pushCompanionConstructorSeed` disabled entirely | 11 |
+| T9 with the seed disabled **for the `Object` brand only** | 11 |
+| T9, seed on for `Object` | 1 |
+
+Also isolated **which module** matters: rebuilding only the ADAPTER with the
+seed and the canary without it gives 11 — so the defect is in the **caller /
+user module's** codegen, not the provider's.
+
+### Root cause
+
+T9 seeds `constructor` into the #2175 companion of every builtin prototype that
+has an identity-stable carrier. `Function` and `Date` **decline** (no carrier —
+that decline is deliberate and documented in
+`builtin-proto-constructor-seed.ts`), so their companions stay absent.
+
+`__protoidx_get_k` (#4176) models the prototype chain as exactly **two** levels:
+the receiver's brand companion, then `Object.prototype`'s. A closure receiver
+classifies as the `Function` brand, whose companion has no `constructor`, so the
+walk fell through and answered **`Object.prototype.constructor` = `Object`** —
+which T9 had just made reachable for the first time.
+
+That answer then propagated: `__closure_prop_get`'s miss consult is
+`__protoidx_get_r`, and the runtime-eval AOT callable carrier's property-get
+trampoline treats any **non-undefined** result from `__closure_prop_get` as
+final — so the `Object` it now returned **shadowed the carrier's own marker
+`constructor` field**, which is exactly where the provider realm's `%Function%`
+lives (`$RuntimeEvalInterpretedCallback` field 6).
+
+### Fix
+
+`src/codegen/proto-index-store.ts` — `constructor` never takes the
+`Object.prototype` FALLTHROUGH. New `keyIsNotConstructorInstrs` (fill-time,
+`nativeStringLiteralInstrs` + `__str_flatten`/`__str_equals`, and byte-identical
+`undefined` when those helpers are absent) is `i32.and`-ed into the existing
+second-probe guard in `fillGetKBody`.
+
+Justification is the spec, not the canary: **every** builtin prototype owns
+`constructor` (§19.2.3.1 / §20.2.3.1 / §22.1.3.1 / …), so for a receiver whose
+implicit prototype is any brand other than `Object` the nearer level always
+shadows `Object.prototype` — the two-level model simply has no way to say "the
+nearer level owns this key but has no companion". A **miss** is the correct
+answer there, and it hands the read back to each caller's own fallback (the
+carrier's marker metadata; #4442's `%Function%` arm for a statically
+function-typed receiver). `get_k` is reached only from `get_r` and `get_f`
+(numeric keys), so this one edit covers both entry points.
+
+Deliberately NOT changed: `__protoidx_has_k`. `"constructor" in f` is `true`
+per spec, and T9's seed made it answer `true` for the first time. Suppressing
+the fallthrough on the `has` side would regress it to `false`.
+
+### Measurements (all on this worktree, file-copy A/B, `--target standalone`)
+
+| set | base | with fix |
+| --- | --- | --- |
+| `functionParityProbe()` | 1 | **11** |
+| `npx tsx scripts/build-quickjs-eval-provider.mjs` (bare) | exit 1 | **exit 0**, canary-verified, 271,378 bytes |
+| T9's own flip rows + 13 `<B>.prototype.constructor` neighbours (15 rows) | 11 pass / 4 fail | **identical, 0 changed** |
+| eval-dependent controls — all `language/eval-code/indirect/*`, all `built-ins/eval/*`, 20 `language/eval-code/direct/*` (91 rows) | 82 pass / 9 fail | **identical, 0 changed** |
+| prototype-chain neighbours — `Object/prototype/hasOwnProperty`, `Object/getPrototypeOf`, `Object/prototype/isPrototypeOf`, `expressions/property-accessors`, `Function/prototype/bind` (70 rows) | 69 pass / 1 fail | **identical, 0 changed** |
+| `tests/issue-4176`, `issue-4160-proto-index-store`, `issue-4200`, `issue-4442` (67 tests) | 62 pass / 5 fail | **identical, 0 changed** |
+
+Net: **0 test262 rows flipped either way** — this is a build-unblock, not a
+conformance slice. New pin: `tests/issue-4491-proto-index-constructor-shadow.test.ts`
+(5 tests; the headline one measured **failing on base**, passing after).
+
+Gates green before commit: `check-loc-budget` · `check-func-budget` ·
+`check-coercion-sites` · `check:oracle-ratchet`.
+
+### Pre-existing failures found, NOT caused by this fix (both sides identical)
+
+- `tests/issue-4200.test.ts` — four `gOPD(<B>.prototype, "constructor") still
+  declines (no carrier)` guards now fail for `String` / `Number` / `Boolean` /
+  `Function`. T9's seed made three of those brands answer a descriptor; the
+  guards were written before it and were not updated. Someone owning #4200
+  should decide whether the guards or the seed are wrong.
+- `tests/issue-4176.test.ts` — `prepared IR for-in shares prototype-companion
+  enumeration`.
+- `built-ins/Error/prototype/constructor/S15.11.4.1_A1_T2.js`,
+  `Object/prototype/constructor/S15.2.4.1_A1_T2.js`,
+  `String/prototype/constructor/S15.5.4.1_A1_T2.js` — all
+  `TypeError: is not a constructor`; the seeded carrier is not [[Construct]]able.
+- `Date/prototype/constructor/prop-desc.js` — `Date` declines the seed, so the
+  descriptor is still absent.
+- `<array>.constructor === Array` is still **false** (the #4220 vec arm and the
+  companion entry are different objects). The T10 pin asserts only the property
+  this guard owns — that it is never `Object`.
+
+### Gotchas confirmed again
+
+- **`test262/` in an agent worktree is re-materialized between (and DURING)
+  tool calls**, and the target it is pointed at is another lane's worktree that
+  may already be gone. Six rows of one control sweep died mid-run as
+  `ENOENT … test262/harness/assert.js`. Relink **inside the same shell command
+  as the run**: `rm -rf test262 && ln -s /home/user/js2/test262 test262 && node …`.
+- **The adapter cache key is `sha256(adapterSource ∥ compilerBundleHash)`, and
+  under `tsx` the bundle hash is the literal `no-bundle`** — so in a dev
+  worktree the key does NOT move when `src/` changes, and a stale adapter is
+  silently reused. That is convenient for an A/B (both arms link the same
+  adapter, isolating the caller-module codegen), but it means a local
+  "the provider still builds" check proves nothing unless you delete the keyed
+  `.wasm` first.
