@@ -1135,3 +1135,19 @@ remainder is **2,935 registrations** from 208 deferred files. Both newly
 admitted `serializeToJSON` callbacks pass in Node and Wasm.
 
 Implementation: [PR #4772 — expose the pinned `jest-util.isError` dependency](https://github.com/loopdive/js2wasm/pull/4772).
+
+## 2026-08-22 Jest CommonJS path-global checkpoint
+
+The original `jest-haste-map/src/lib/__tests__/fast_path.test.js` unit is now
+selected unchanged. Its CommonJS-compatible test body uses Node's
+`__dirname`; the generated ESM harness now supplies per-file `__dirname` and
+`__filename` bindings, matching the standard Node module surface without
+hard-coding a package result. All five callbacks pass in both lanes.
+
+The exact unchanged run now covers **358 callbacks across 34 selected files**.
+Node admits **356/358** (the two existing diff-sequence snapshot-oracle
+failures remain), all 34 modules compile and 33 validate, and Wasm scores
+**252/356** with zero runtime failures. The unavailable-infrastructure
+remainder is **2,930 registrations** from 207 deferred files.
+
+Implementation remains on [PR #4772](https://github.com/loopdive/js2wasm/pull/4772).
