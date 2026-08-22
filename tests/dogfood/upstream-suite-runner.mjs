@@ -14,6 +14,24 @@ export const UPSTREAM_TEST_SHIM = String.raw`
 // the alias explicit in both the native and Wasm lanes instead of treating a
 // missing Node compatibility global as a package failure.
 var global = globalThis;
+// Some original Jest units pass the timer globals as bare identifiers. Keep
+// those names live through globalThis so fake-timer installation and spy
+// replacement update the same host function in both Node and Wasm lanes.
+function setTimeout(callback, delay) {
+  if (__upstreamFakeTimers !== null) {
+    __upstreamRecordTimerSpy("setTimeout", [callback, delay]);
+    return __upstreamFakeTimers.fakeSetTimeout(callback, delay);
+  }
+  return globalThis.setTimeout(callback, delay);
+}
+function clearTimeout(timer) {
+  if (__upstreamFakeTimers !== null) {
+    __upstreamRecordTimerSpy("clearTimeout", [timer]);
+    return __upstreamFakeTimers.fakeClearTimeout(timer);
+  }
+  return globalThis.clearTimeout(timer);
+}
+const __upstreamBareTimerAliases = { setTimeout, clearTimeout };
 const __upstreamTests = [];
 const __upstreamErrors = [];
 let __upstreamSnapshotMatcher = null;
@@ -106,13 +124,13 @@ function __upstreamExpect(actual) {
     toMatchObject(expected) { const n = ++__upstreamAssertion; if (!__upstreamSubset(actual, expected)) __upstreamFail("assertion " + n + " object subset mismatch"); },
     toMatch(expected) { const n = ++__upstreamAssertion; const value = String(actual); if (expected instanceof RegExp ? !expected.test(value) : !value.includes(String(expected))) __upstreamFail("assertion " + n + " pattern mismatch"); },
     toMatchInlineSnapshot(expected) { const n = ++__upstreamAssertion; const value = typeof actual === "string" ? JSON.stringify(actual) : String(actual); if (value !== String(expected).trim()) __upstreamFail("assertion " + n + " inline snapshot mismatch: " + value + " != " + String(expected).trim()); },
-    toBeCalled() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length === 0) __upstreamFail("assertion " + n + " expected spy to be called"); },
-    toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length === 0) __upstreamFail("assertion " + n + " expected spy to be called"); },
-    toBeCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = actual && actual.mock && actual.mock.calls; let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
-    toHaveBeenCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = actual && actual.mock && actual.mock.calls; let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
-    toHaveBeenCalledTimes(expected) { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length !== expected) __upstreamFail("assertion " + n + " spy call count mismatch"); },
-    toHaveBeenCalledOnce() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length !== 1) __upstreamFail("assertion " + n + " spy call count mismatch"); },
-    toBeCalledOnce() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length !== 1) __upstreamFail("assertion " + n + " spy call count mismatch"); },
+    toBeCalled() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (!calls || calls.length === 0) __upstreamFail("assertion " + n + " expected spy to be called"); },
+    toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (!calls || calls.length === 0) __upstreamFail("assertion " + n + " expected spy to be called"); },
+    toBeCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = __upstreamMockCalls(actual); let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
+    toHaveBeenCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = __upstreamMockCalls(actual); let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
+    toHaveBeenCalledTimes(expected) { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (!calls || calls.length !== expected) __upstreamFail("assertion " + n + " spy call count mismatch"); },
+    toHaveBeenCalledOnce() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (!calls || calls.length !== 1) __upstreamFail("assertion " + n + " spy call count mismatch"); },
+    toBeCalledOnce() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (!calls || calls.length !== 1) __upstreamFail("assertion " + n + " spy call count mismatch"); },
     toBeInstanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected !== "function" || !(actual instanceof expected)) __upstreamFail("assertion " + n + " instance mismatch"); },
     instanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected !== "function" || !(actual instanceof expected)) __upstreamFail("assertion " + n + " instance mismatch"); },
     toMatchSnapshot() {
@@ -135,9 +153,9 @@ function __upstreamExpect(actual) {
     toBeFalsy() { const n = ++__upstreamAssertion; if (!actual) __upstreamFail("assertion " + n + " unexpectedly falsey"); },
     toBeInstanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected === "function" && actual instanceof expected) __upstreamFail("assertion " + n + " unexpected instance"); },
     instanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected === "function" && actual instanceof expected) __upstreamFail("assertion " + n + " unexpected instance"); },
-    toBeCalled() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
-    toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
-    toHaveBeenCalledOnce() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (calls && calls.length === 1) __upstreamFail("assertion " + n + " unexpected spy call"); },
+    toBeCalled() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
+    toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
+    toHaveBeenCalledOnce() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (calls && calls.length === 1) __upstreamFail("assertion " + n + " unexpected spy call"); },
     toThrow() { const n = ++__upstreamAssertion; if (typeof actual !== "function" || __upstreamThrown(actual) !== null) __upstreamFail("assertion " + n + " unexpected throw"); },
     toThrowError() { const n = ++__upstreamAssertion; if (typeof actual !== "function" || __upstreamThrown(actual) !== null) __upstreamFail("assertion " + n + " unexpected throw"); },
   };
@@ -166,6 +184,23 @@ function __upstreamExpect(actual) {
 const expect = __upstreamExpect;
 const __upstreamGlobalStubs = [];
 const __upstreamEnvStubs = [];
+const __upstreamSpies = [];
+const __upstreamTimerSpies = { setTimeout: null, clearTimeout: null };
+let __upstreamSetTimeoutCallCount = 0;
+let __upstreamClearTimeoutCallCount = 0;
+function __upstreamMockCalls(actual) {
+  if (actual === __upstreamBareTimerAliases.setTimeout) {
+    return { length: __upstreamSetTimeoutCallCount };
+  }
+  if (actual === __upstreamBareTimerAliases.clearTimeout) {
+    return { length: __upstreamClearTimeoutCallCount };
+  }
+  return actual && actual.mock && actual.mock.calls;
+}
+function __upstreamRecordTimerSpy(key, args) {
+  if (key === "setTimeout") __upstreamSetTimeoutCallCount++;
+  else if (key === "clearTimeout") __upstreamClearTimeoutCallCount++;
+}
 const vi = {
   fn(implementation) {
     function spy() {
@@ -183,7 +218,20 @@ const vi = {
   spyOn(object, key) {
     const original = object[key];
     const spy = vi.fn(function() { return original.apply(this, arguments); });
-    spy.mockRestore = function() { object[key] = original; };
+    spy.mockRestore = function() {
+      object[key] = original;
+      if (__upstreamTimerSpies[key] === spy) __upstreamTimerSpies[key] = null;
+    };
+    const bareAlias = __upstreamBareTimerAliases[key];
+    if (bareAlias !== undefined) {
+      bareAlias.mock = spy.mock;
+      bareAlias.mockClear = spy.mockClear;
+      bareAlias.mockRestore = spy.mockRestore;
+      __upstreamTimerSpies[key] = spy;
+      if (key === "setTimeout") __upstreamSetTimeoutCallCount = 0;
+      else if (key === "clearTimeout") __upstreamClearTimeoutCallCount = 0;
+    }
+    __upstreamSpies.push({ object, key, original, spy });
     object[key] = spy;
     return spy;
   },
@@ -218,6 +266,116 @@ const vi = {
     __upstreamEnvStubs.length = 0;
   },
 };
+function __upstreamRestoreAllMocks() {
+  for (let index = __upstreamSpies.length - 1; index >= 0; index--) {
+    const spy = __upstreamSpies[index];
+    spy.spy.mockRestore();
+  }
+  __upstreamSpies.length = 0;
+  __upstreamTimerSpies.setTimeout = null;
+  __upstreamTimerSpies.clearTimeout = null;
+  __upstreamSetTimeoutCallCount = 0;
+  __upstreamClearTimeoutCallCount = 0;
+}
+let __upstreamFakeTimers = null;
+function __upstreamUseFakeTimers() {
+  if (__upstreamFakeTimers !== null) return jest;
+  const timers = new Map();
+  let nextTimerId = 1;
+  let now = 0;
+  const fakeSetTimeout = function(callback, delay) {
+    const id = nextTimerId++;
+    const normalizedDelay = Math.max(0, Number(delay) || 0);
+    timers.set(id, { callback, at: now + normalizedDelay });
+    return id;
+  };
+  const fakeClearTimeout = function(id) {
+    timers.delete(id);
+  };
+  __upstreamFakeTimers = { timers, fakeSetTimeout, fakeClearTimeout, get now() { return now; }, set now(value) { now = value; } };
+  return jest;
+}
+function __upstreamNextTimer() {
+  if (__upstreamFakeTimers === null || __upstreamFakeTimers.timers.size === 0) return null;
+  let next = null;
+  for (const [id, entry] of __upstreamFakeTimers.timers) {
+    if (next === null || entry.at < next.entry.at || (entry.at === next.entry.at && id < next.id)) {
+      next = { id, entry };
+    }
+  }
+  return next;
+}
+function __upstreamRunTimer(next) {
+  if (__upstreamFakeTimers === null || next === null) return;
+  if (!__upstreamFakeTimers.timers.has(next.id)) return;
+  __upstreamFakeTimers.timers.delete(next.id);
+  __upstreamFakeTimers.now = Math.max(__upstreamFakeTimers.now, next.entry.at);
+  next.entry.callback();
+}
+function __upstreamRunAllTimers() {
+  if (__upstreamFakeTimers === null) return;
+  let guard = 10000;
+  while (__upstreamFakeTimers.timers.size > 0) {
+    if (--guard < 0) throw new Error("fake timer queue exceeded 10000 callbacks");
+    __upstreamRunTimer(__upstreamNextTimer());
+  }
+}
+function __upstreamAdvanceTimersByTime(milliseconds) {
+  if (__upstreamFakeTimers === null) return;
+  const target = __upstreamFakeTimers.now + Math.max(0, Number(milliseconds) || 0);
+  let guard = 10000;
+  while (__upstreamFakeTimers.timers.size > 0) {
+    if (--guard < 0) throw new Error("fake timer queue exceeded 10000 callbacks");
+    const next = __upstreamNextTimer();
+    if (next === null || next.entry.at > target) break;
+    __upstreamRunTimer(next);
+  }
+  __upstreamFakeTimers.now = target;
+}
+function __upstreamRunOnlyPendingTimers() {
+  if (__upstreamFakeTimers === null) return;
+  const pending = Array.from(__upstreamFakeTimers.timers.keys());
+  for (const id of pending) {
+    const entry = __upstreamFakeTimers.timers.get(id);
+    if (entry !== undefined) __upstreamRunTimer({ id, entry });
+  }
+}
+function __upstreamClearAllTimers() {
+  if (__upstreamFakeTimers !== null) __upstreamFakeTimers.timers.clear();
+}
+function __upstreamGetTimerCount() {
+  return __upstreamFakeTimers === null ? 0 : __upstreamFakeTimers.timers.size;
+}
+function __upstreamRunAllTimersAsync() {
+  __upstreamRunAllTimers();
+  return Promise.resolve();
+}
+function __upstreamAdvanceTimersByTimeAsync(milliseconds) {
+  __upstreamAdvanceTimersByTime(milliseconds);
+  return Promise.resolve();
+}
+function __upstreamRunOnlyPendingTimersAsync() {
+  __upstreamRunOnlyPendingTimers();
+  return Promise.resolve();
+}
+function __upstreamUseRealTimers() {
+  __upstreamRestoreAllMocks();
+  if (__upstreamFakeTimers === null) return jest;
+  __upstreamFakeTimers = null;
+  return jest;
+}
+function __upstreamSetSystemTime(value) {
+  if (__upstreamFakeTimers !== null) {
+    const timestamp = value instanceof Date ? value.getTime() : Number(value);
+    if (Number.isFinite(timestamp)) __upstreamFakeTimers.now = timestamp;
+  }
+}
+function __upstreamNow() {
+  return __upstreamFakeTimers === null ? Date.now() : __upstreamFakeTimers.now;
+}
+function __upstreamGetRealSystemTime() {
+  return Date.now();
+}
 // A number of Jest-owned packages publish their original tests with the Jest
 // global even when the selected unit only needs spies. Keep this small facade
 // backed by the same deterministic implementation as vi; package adapters can
@@ -228,6 +386,20 @@ const jest = {
   spyOn: vi.spyOn,
   resetModules() {},
   doMock() {},
+  useFakeTimers: __upstreamUseFakeTimers,
+  useRealTimers: __upstreamUseRealTimers,
+  runAllTimers: __upstreamRunAllTimers,
+  runAllTimersAsync: __upstreamRunAllTimersAsync,
+  advanceTimersByTime: __upstreamAdvanceTimersByTime,
+  advanceTimersByTimeAsync: __upstreamAdvanceTimersByTimeAsync,
+  runOnlyPendingTimers: __upstreamRunOnlyPendingTimers,
+  runOnlyPendingTimersAsync: __upstreamRunOnlyPendingTimersAsync,
+  clearAllTimers: __upstreamClearAllTimers,
+  getTimerCount: __upstreamGetTimerCount,
+  setSystemTime: __upstreamSetSystemTime,
+  now: __upstreamNow,
+  getRealSystemTime: __upstreamGetRealSystemTime,
+  restoreAllMocks: __upstreamRestoreAllMocks,
 };
 const __upstreamBeforeEach = [];
 const __upstreamAfterEach = [];
@@ -500,6 +672,10 @@ export function runUpstreamTests(): number[] {
   return statuses;
 }
 export function upstreamTestErrors(): string[] { return __upstreamErrors; }
+export function cleanupUpstreamTestEnvironment(): void {
+  if (typeof jest.useRealTimers === "function") jest.useRealTimers();
+  if (typeof jest.restoreAllMocks === "function") jest.restoreAllMocks();
+}
 `;
 
 function errorText(error) {
@@ -543,6 +719,7 @@ async function runNative(generatedPath, source) {
     statuses.push(...Array.from(module.runUpstreamTests(), (value) => Number(value) === 1));
     errors.push(...Array.from(module.upstreamTestErrors(), String));
   }
+  module.cleanupUpstreamTestEnvironment?.();
   return {
     count,
     names: Array.from(module.upstreamTestNames(), String),
