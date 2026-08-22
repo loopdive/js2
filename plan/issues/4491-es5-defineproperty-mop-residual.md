@@ -123,6 +123,15 @@ loc-budget-allow:
   - src/codegen/literals.ts
   - src/codegen/expressions/identifiers.ts
   - src/codegen/statements/variables.ts
+  # 2026-08-22, PR #4768 (wave-6 T11 presence half): +35 in object-runtime.ts
+  # — the per-carrier hole test in __extern_has_idx's vec arm and the presence
+  # chokepoint wiring that `in`/Object.keys/for-in route through. The bodies
+  # live in vec-f64-hole-presence.ts; this is the arm/dispatch share that must
+  # sit inside the runtime builder because it references the result-vector
+  # locals of the natives it splices into (same constraint as the #4491 lane B
+  # entry above). Surfaced only after #4723's post-merge baseline refresh
+  # reset the ceiling.
+  - src/codegen/object-runtime.ts
 oracle-ratchet-allow:
   # 2026-08-21: one getTypeAtLocation in varBindingNeedsExternrefForUndefined's
   # new call arm — the same raw-checker idiom as the surrounding predicate;
