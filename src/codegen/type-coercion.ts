@@ -1151,10 +1151,9 @@ export function buildVecFromExternMaterializer(ctx: CodegenContext, vecTypeIdx: 
     exported: false,
   };
   pushDefinedFunc(ctx, funcIdx, materializer);
-  // (#3520 C35) Own the materializer by its vec SHAPE, not by the numeric type
-  // index its label is spelled with: `vecTypeIdx` is a position in the type
-  // space, so a dead-type compaction moves it. The struct name is the semantic
-  // key, and the canonical order is derived from the pre-elision record.
+  // (#3520 C35) Owned by the vec SHAPE, not the numeric type index its label is
+  // spelled with — `vecTypeIdx` is a position in the type space, so a dead-type
+  // compaction moves it. See compiler-support-abi.ts for the ordinal encoding.
   const shapeName = (ctx.mod.types[vecTypeIdx] as { name?: string } | undefined)?.name;
   if (shapeName) recordVecFromExternMaterializer(ctx, shapeName, materializer);
   ctx.funcMap.set(name, funcIdx);

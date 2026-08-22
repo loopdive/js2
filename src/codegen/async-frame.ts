@@ -1585,12 +1585,9 @@ export function ensureAsyncResumeFunction(
     exported: false,
   };
   pushDefinedFunc(ctx, resumeFuncIdx, resumePlaceholder);
-  // (#3520 C35) The resume function and its two step adapters are owned by the
-  // async function's OWN source unit — `(unit, "async-frame-machinery", part)`.
-  // A per-unit anchor is stronger than an entry-source ordinal here: a second
-  // async function elsewhere in the module cannot renumber this one. The body is
-  // filled into `resumePlaceholder` in place further down, so the recorded
-  // allocator object stays the exact one the module keeps.
+  // (#3520 C35) Owned by the async function's OWN unit, not the entry source:
+  // a second async function cannot renumber this one. `resumePlaceholder` is
+  // filled in place below, so the recorded object is the one the module keeps.
   recordAsyncFrameMachinery(ctx, info.decl, "resume", resumePlaceholder);
 
   const stepFulfillFuncIdx = mintDefinedFunc(ctx);
