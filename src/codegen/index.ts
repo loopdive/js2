@@ -324,6 +324,7 @@ import { fillErrorPropHelpers } from "./error-props.js"; // (#4098) native Error
 import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
 import { fillProtoIndexStore } from "./proto-index-store.js"; // (#4160) prototype-index companions
 import { fillHoleyArrayHasIdxArm } from "./holey-array-presence.js"; // (#4222) nominal sparse carrier
+import { fillF64HoleHasIdxArms } from "./vec-f64-hole-presence.js"; // (#4491 T11) f64 absence marker
 import { finalizeFunctionPoisonPillCalls } from "./function-poison-pill.js";
 import { fillDataViewConstructProtoArm, fillTaDynViewMopArms } from "./ta-dyn-mop.js"; // (#3177/#3371) native view prototype arms
 import { fillObjVecReflectionHelpers } from "./objvec-array-proto.js"; // (#3666) RegExp indices Array reflection
@@ -5633,6 +5634,12 @@ export function generateModule(
     // This runs after every other dynamic-reader fill so no generic arm gains
     // `$Hole` semantics.
     fillHoleyArrayHasIdxArm(ctx);
+    // (#4491 T11) f64 absence-marker presence arms. Must run AFTER
+    // `fillExternGetIdxVecArms` (which locates its splice point by the eager
+    // preamble shape) and after `fillProtoIndexStore`; it prepends at body[0]
+    // and only ever RETURNS 0 for a slot that literally holds the marker, so
+    // taking the front slot cannot shadow another receiver's answer.
+    fillF64HoleHasIdxArms(ctx);
 
     // (#802 Slices B+C) Mint the struct-proto natives and prepend the
     // marked-root dispatch arms into `__object_setPrototypeOf` /
@@ -8727,6 +8734,12 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // see the single-source comment). No-op unless reserved.
     fillProtoIndexStore(ctx);
     fillHoleyArrayHasIdxArm(ctx);
+    // (#4491 T11) f64 absence-marker presence arms. Must run AFTER
+    // `fillExternGetIdxVecArms` (which locates its splice point by the eager
+    // preamble shape) and after `fillProtoIndexStore`; it prepends at body[0]
+    // and only ever RETURNS 0 for a slot that literally holds the marker, so
+    // taking the front slot cannot shadow another receiver's answer.
+    fillF64HoleHasIdxArms(ctx);
     // Emit __vec_get / __vec_len exports for runtime iterator fallback.
     emitVecAccessExports(ctx);
 
