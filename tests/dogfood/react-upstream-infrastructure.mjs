@@ -522,6 +522,7 @@ export function installReactUpstreamInfrastructure({ react, build = "production"
   });
   const propTypes = readModule("prop-types");
   const webStreams = readModule("web-streams-polyfill/ponyfill") ?? readModule("web-streams-polyfill");
+  const shouldIgnoreConsoleError = readModule("internal-test-utils/shouldIgnoreConsoleError") ?? (() => false);
   // React's create-react-class integration tests import both the already
   // configured public creator and the original three-argument factory. Keep
   // both host capabilities distinct: returning the configured creator from
@@ -581,6 +582,7 @@ export function installReactUpstreamInfrastructure({ react, build = "production"
     createReactClass,
     createReactClassFactory: createReactClassFactoryModule,
     internalTestUtils: createInternalTestUtils({ reactTestRenderer, reactDom, consumeConsole, preferReactDomAct }),
+    shouldIgnoreConsoleError,
     webStreams,
     patchMessageChannel() {},
     // Node Fizz's upstream tests construct `stream.PassThrough` through a

@@ -30,6 +30,7 @@ describe("React upstream test infrastructure", () => {
       expect(infrastructure.reactNoop?.render).toBeTypeOf("function");
       expect(infrastructure.reactNoop?.createRoot).toBeTypeOf("function");
       expect(infrastructure.internalTestUtils?.act).toBeTypeOf("function");
+      expect(infrastructure.shouldIgnoreConsoleError).toBeTypeOf("function");
       expect(infrastructure.reactNativeRenderer?.version).toBe(infrastructure.react?.version);
       expect(infrastructure.reactJsxRuntime?.jsx).toBeTypeOf("function");
       expect(infrastructure.require("scheduler").unstable_now).toBeTypeOf("function");
@@ -155,6 +156,29 @@ return function () {
 };`,
     )();
     expect(run()).toBe(1);
+  });
+
+  it("routes the private ReactDOM server helper through the selected module set", async () => {
+    const previous = globalThis.__js2ReactUpstreamInfrastructure;
+    const dom = installReactTestEnvironment();
+    const installed = installReactUpstreamInfrastructure();
+    try {
+      // eslint-disable-next-line no-new-func
+      const factory = new Function(`${REACT_EXPECT_SHIM}
+return __js2ReactDOMServerIntegrationTestUtils;`)();
+      const helper = factory(() => ({
+        ReactDOM: installed.infrastructure.reactDom,
+        ReactDOMClient: installed.infrastructure.reactDomClient,
+        ReactDOMServer: { renderToString: () => "<div>from-selected-renderer</div>" },
+      }));
+      helper.resetModules();
+      const node = await helper.serverRender({ type: "div" });
+      expect(node?.textContent).toBe("from-selected-renderer");
+    } finally {
+      installed.cleanup();
+      dom.cleanup();
+      expect(globalThis.__js2ReactUpstreamInfrastructure).toBe(previous);
+    }
   });
 
   it("provides scoped Jest module isolation to Node and compiled Wasm", async () => {

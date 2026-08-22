@@ -610,6 +610,15 @@ lane continues to bind those names to its Wasm carriers. This closes the
 previous `flushSync`/undefined native-oracle failure mode without changing the
 implementation under test.
 
+The private upstream `./utils/ReactDOMServerIntegrationTestUtils` dependency is
+now available through the same explicit shim. Its rendering helpers receive
+the test's `initModules()` result, so server/client calls stay on the selected
+Wasm module set; only the JSDOM document and PassThrough stream sink are host
+capabilities. A focused regression renders through the selected helper module.
+This removes a module-lookup failure without claiming that the nested helper
+registration cases are a separate denominator; the extractor still reports
+the original direct upstream test records.
+
 ## Permanent test reference
 
 `tests/dogfood/react-dom-upstream-suite.test.ts` — pin/commit assertions run
