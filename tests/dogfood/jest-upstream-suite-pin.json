@@ -37,6 +37,7 @@
     "packages/jest-watcher/src/lib/__tests__/scroll.test.ts",
     "packages/jest-haste-map/src/__tests__/get_mock_name.test.js",
     "packages/jest-core/src/__tests__/FailedTestsCache.test.js",
+    "packages/jest-core/src/lib/__tests__/serializeToJSON.test.ts",
     "packages/jest-watcher/src/lib/__tests__/prompt.test.ts",
     "packages/jest-environment-node/src/__tests__/globals_cleanup_3.test.ts",
     "packages/jest-jasmine2/src/__tests__/expectationResultFactory.test.ts"
@@ -52,7 +53,10 @@
     },
     "jest-util": {
       "version": "30.4.1",
-      "sourceSha256": "ef7320f8e85b76a67a65ec29e9c55e724b7a25de5b2aad75c3ed1c82a53cc7d4"
+      "sourceSha256": "ef7320f8e85b76a67a65ec29e9c55e724b7a25de5b2aad75c3ed1c82a53cc7d4",
+      "files": {
+        "isError.ts": "119ebfd40f2f3552bff9e699149832c8fce37acc45e2b30e2f47e72b872e2e3d"
+      }
     },
     "graceful-fs": {
       "version": "4.2.11",
