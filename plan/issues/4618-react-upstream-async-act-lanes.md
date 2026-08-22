@@ -803,6 +803,21 @@ in-module reads (host-side detection is what react-dom needs).
   battery 35/36 (#1712 pre-existing). Regression tests:
   `tests/issue-4618-host-callable-dispatch-fallback.test.ts` (2).
 
+- **2026-08-22 instance-props residual PINNED PRECISELY (runtime-traced)**:
+  react-dom's `instance.props = props` write DOES reach the object wrapper's
+  set trap → `_safeSet` → the `__sset_props` writeback — which returns **0**
+  (no dispatch arm matches the instance's runtime type), because a
+  dynamic-heritage class like `class Test extends React.Component` declares
+  NO own `props` field — the value can only live in the host sidecar. The
+  compiled read (`this.props` in render / `test.props` in the assertion)
+  ref.test-matches an UNRELATED same-canonical-layout struct's arm and
+  answers that arm's slot. Fix direction for next session: for
+  dynamic-heritage classes, route instance member reads through the sidecar
+  lane end-to-end (the four reverted read-fallback layers each missed the
+  actually-executing lane — instrument the resume fn's local flow first,
+  don't re-guess). This gates the 9-test ES6Class "expected not null"
+  family + the NaN/normalize-props family.
+
 ## Fix order
 
 1. (c) first — it is a hard CE with a two-line repro and pins the IR
