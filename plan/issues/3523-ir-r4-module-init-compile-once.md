@@ -4,7 +4,9 @@ title: "IR-only R4: typed ordered module-init compile-once ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-12
+updated: 2026-08-22
+assignee: ttraenkler/fable-lead
+branch: claude/issue-3523-r4-module-init
 priority: critical
 horizon: xl
 complexity: XL
@@ -541,6 +543,102 @@ adjacent family issues.
 
 Do not create a GitHub Issue for this work. This Markdown record remains the
 source of truth for ownership, acceptance, and handover.
+
+## Resume checkpoint — measured remaining gap (2026-08-22)
+
+The Algorithms (#4323) and Calendar (#4395) transactions and the #4566
+standalone continuation have all landed. The bounded five-entry playground
+census is now **38/38 IR-emitted terminals, 0 legacy bodies, 0 Unsupported,
+0 Invariant on BOTH the single-host and standalone lanes**, and
+`check:ir-only --policy=ir-only` is `READY`. That census is the *bounded
+playground* population; it is not the generic R4 claim, and the numbers below
+are the reason.
+
+### What the census does not show
+
+Compiling representative module shapes directly and reading the terminal
+outcome plus the `module-init-pass1` / `module-init-pass2` phase counters (the
+exact direct-body compile count) gives the honest picture. Measured on
+`origin/main` @ `34e102dc8`:
+
+| Source shape | host-start | host-deferred | standalone | wasi |
+| --- | --- | --- | --- | --- |
+| `const memo = new Map()` | direct 0 · legacy 0 · IR 1 | direct 2 · legacy 1 · IR 1 | direct 0 · legacy 0 · IR 1 | direct 2 · legacy 1 · IR 1 |
+| `let v = 7` + TDZ reads | direct 0 · legacy 0 · IR 1 | direct 2 · legacy 1 · IR 1 | direct 0 · legacy 0 · IR 1 | direct 2 · legacy 1 · IR 1 |
+| `let total = 0; total = total + 1;` | direct 2 · legacy 1 · IR 1 | (same) | (same) | (same) |
+| class + static field/block | direct 2 · legacy 1 · IR 0 (`static-class-initialization`) | (same) | (same) | (same) |
+| `const greeting = "hi"` | direct 2 · legacy 1 · IR 0 (`body-shape-rejected`) | (same) | (same) | (same) |
+| top-level `var` | direct 2 · legacy 1 · IR 0 (`body-shape-rejected`) | (same) | (same) | (same) |
+| function-only / empty | direct 0 · **no module-init outcome row at all** | (same) | (same) | (same) |
+
+Five distinct gaps fall out, in the order R4's own landing sequence wants them:
+
+1. **Every typed Unsupported module-init still compiles the direct body
+   TWICE** (`pass1` + `pass2`), in every mode. AC 3 requires exactly one, and
+   ordering invariant 6 says restoring two passes is forbidden. This is the
+   single largest remaining item and the riskiest: `pass1` exists to populate
+   `closureMap` for module-level arrows before any function body compiles, so
+   removing it depends on R2/R3's unit inventory genuinely having replaced that
+   discovery purpose. Not attempted in this slice.
+2. **A module-init that is IR-*patched* but not IR-*owned* records
+   `legacy=1, ir=1`** — the #3142 overlay. The `let total = 0; total = …`
+   shape is the common case. The exact-lexical selector admits only a gap-free
+   run of initialized `let`/`const` declarations, so any executable *statement*
+   drops to the overlay. Closing this means extending the selector past
+   declarations, which is Commit 2's first bullet.
+3. **WASI has no prepared adapter at all** (`ctx.wasi` is an outright
+   rejection in `preparedExactLexicalModuleInit`). Admitting it is not a gate
+   flip: `applyModuleInitGuard` *mutates* the `__module_init` body after
+   emission to add the idempotency guard, which a sealed Prepared body must not
+   accept. This needs the invocation-policy-driven adapter of Commit 3, not a
+   selector change.
+4. **An empty / type-only / function-only module records no terminal outcome
+   row.** The *plan* correctly says `executable: false`, but the outcome ledger
+   is silent, so AC 7 ("counters reconcile for executable *and empty* modules")
+   and anti-vacuity item 7 are both open. `IrObservedOutcome` has no
+   non-executable kind, so adding one touches the union and every consumer
+   (`check-ir-only`, the route audit, policy evaluation) and moves the census
+   denominators — worth doing deliberately, not as a side effect.
+5. **Class declarations are still excluded from the module-init population**
+   (`collectModuleInitPopulation`, `src/ir/module-init.ts:12-24`), so static
+   fields/blocks cannot be represented at their class evaluation position and
+   the terminal is `static-class-initialization`-Unsupported. This is R3/#3522
+   territory and is deliberately left to that lane.
+
+### Landed in this slice
+
+Gap 3's *host* half — the deferred-export adapter — plus the invocation
+reconciliation invariant:
+
+- `preparedExactLexicalModuleInit` now admits the host `deferred-export`
+  invocation kind alongside `wasm-start`. The standalone lane already admitted
+  it, so the export-alias publication in `preallocateModuleInitCallable` and
+  the `skipModuleInitBody` branch of the export wiring are shared machinery.
+  Measured effect: the two admitted shapes above move from
+  `direct 2 · legacy 1 · IR 1` to `direct 0 · legacy 0 · IR 1` under
+  `deferTopLevelInit`.
+- The Prepared route reconciles the adapter it actually wired against the
+  planned invocation policy and fails closed (ordering invariant 7). The two
+  non-WASI adapters are mutually exclusive by construction but are wired from
+  `ctx` flags in separate statements, and neither a double-wire (init runs
+  twice) nor a missing wire (every binding stays in TDZ) is visible in the
+  emitted body.
+
+Observable behavior is unchanged — an A/B against the base file gives identical
+runtime results in both host modes. TDZ elision remains gated on `wasm-start`
+alone, so the deferred lane keeps its guards, per #4566. The playground census
+is unmoved at 38/38.
+
+Anti-vacuity: the direct-body poison seam proves `direct=0` *positively* (an
+admitted module compiles with `compileModuleInitBody` poisoned; an unsupported
+one fails), and a new `JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER` seam proves the
+new invariant is reachable rather than trivially true. Every assertion is
+paired with a control that must behave differently.
+
+**R4 is not complete.** Gaps 1, 2, 4 and 5 above are untouched, and each is
+larger than this slice. The next slice in the issue's own order is gap 2
+(extend the selector past pure declarations), which is the prerequisite for
+gap 1 being worth attempting.
 
 ### Commit 2 — prepare/lower module init and make fallback one-pass
 
