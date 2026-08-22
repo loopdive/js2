@@ -279,3 +279,49 @@ Measured after the fix; array/`arguments`-exotic rows (44) are excluded as
 | 1 | `15.2.3.6-4-625gs` — global `this.prop` precedence | global-object lane. |
 | 21 | long tail of one-offs (`15.2.3.6-3-123`, `-4-21`, `-59`, `-408`, `-410`, `-570`, `-584`, `-589`, `-622`, `create/15.2.3.5-4-263`, `defineProperties/15.2.3.7-5-b-8`, `property-description-must-be-an-object-not-symbol`, `gOPD/15.2.3.3-4-116`, `defineProperty/15.2.3.6-3-138`, …) | no single dominant cause; needs per-row triage. |
 | 28 | `JS2WASM_EVAL_ENGINE=quickjs` provider not built | **environment, not the compiler.** Constant across base and after; the default engine is `quickjs` and the artifact is absent in an agent worktree. Build it (`node scripts/build-quickjs-eval-provider.mjs`) or sweep with `JS2WASM_EVAL_ENGINE=interpreter` to see these rows at all. |
+
+## Fresh residual map (2026-08-16, baseline 7,893/8,115 — 43 rows for the next slice)
+
+- `built-ins/Object/S15.2.1.1_A2_T11.js` :: Test262Error: The value of n_obj.constructor is expected to equal the 
+- `built-ins/Object/S15.2.2.1_A2_T2.js` :: TypeError: n_obj is not a function
+- `built-ins/Object/S15.2.2.1_A2_T5.js` :: Test262Error: n_obj.getFullYear() must return 1978 Expected SameValue(
+- `built-ins/Object/S15.2.2.1_A2_T6.js` :: TypeError: n_obj is not a function
+- `built-ins/Object/S15.2.2.1_A2_T7.js` :: Test262Error: The value of n_obj.constructor is expected to equal the 
+- `built-ins/Object/create/15.2.3.5-4-15.js` :: Test262Error: result !== true
+- `built-ins/Object/defineProperties/15.2.3.7-2-16.js` :: Test262Error: result !== true
+- `built-ins/Object/defineProperties/15.2.3.7-6-a-113.js` :: illegal cast [in __closure_62() ← __closure_57 ← __call_fn_method_3 ← 
+- `built-ins/Object/defineProperties/15.2.3.7-6-a-179.js` :: Test262Error: arr.length Expected SameValue(«0», «4294967295») to be t
+- `built-ins/Object/defineProperties/15.2.3.7-6-a-183.js` :: Test262Error: arr[1] Expected SameValue(«2», «"abc"») to be true
+- `built-ins/Object/defineProperties/15.2.3.7-6-a-204.js` :: Test262Error: Expected obj[0] to equal 101, actually 0
+- `built-ins/Object/defineProperties/15.2.3.7-6-a-231.js` :: Test262Error: Expected obj[1] to be writable, but was not.
+- `built-ins/Object/defineProperty/15.2.3.6-3-123.js` :: dereferencing a null pointer [in __module_init()]
+- `built-ins/Object/defineProperty/15.2.3.6-3-138.js` :: Test262Error: typeof (obj.property) Expected SameValue(«"number"», «"u
+- `built-ins/Object/defineProperty/15.2.3.6-4-117.js` :: illegal cast [in __closure_62() ← __closure_57 ← __call_fn_method_3 ← 
+- `built-ins/Object/defineProperty/15.2.3.6-4-183.js` :: Test262Error: arrObj.length Expected SameValue(«0», «4294967295») to b
+- `built-ins/Object/defineProperty/15.2.3.6-4-195.js` :: Test262Error: Expected obj[0] to equal 13, actually 0
+- `built-ins/Object/defineProperty/15.2.3.6-4-21.js` :: TypeError: TypeError: Getter/setter must be a function
+- `built-ins/Object/defineProperty/15.2.3.6-4-243-1.js` :: Test262Error: Expected obj[1] to equal 3, actually 0
+- `built-ins/Object/defineProperty/15.2.3.6-4-243-2.js` :: Test262Error: Expected a TypeError to be thrown but no exception was t
+- `built-ins/Object/defineProperty/15.2.3.6-4-292-1.js` :: Test262Error: Expected a === 20, actually 0
+- `built-ins/Object/defineProperty/15.2.3.6-4-293-2.js` :: Test262Error: Expected "a === 10", actually 0
+- `built-ins/Object/defineProperty/15.2.3.6-4-293-3.js` :: Test262Error: Expected "a === 10", actually 0
+- `built-ins/Object/defineProperty/15.2.3.6-4-294-1.js` :: Test262Error: Expected "a === 10", actually 0
+- `built-ins/Object/defineProperty/15.2.3.6-4-295-1.js` :: Test262Error: Expected "a === 10", actually 0
+- `built-ins/Object/defineProperty/15.2.3.6-4-296-1.js` :: Test262Error: Expected "a === 10", actually 0
+- `built-ins/Object/defineProperty/15.2.3.6-4-589.js` :: Test262Error: teamMeeting.startTime Expected SameValue(«NaN», «Invalid
+- `built-ins/Object/defineProperty/15.2.3.6-4-622.js` :: TypeError: Cannot convert undefined or null to object
+- `built-ins/Object/defineProperty/S15.2.3.6_A1.js` :: standalone target emitted host imports: env::Document_createElement (#
+- `built-ins/Object/freeze/15.2.3.9-2-a-11.js` :: Test262Error: 0 descriptor should not be writable; 0 descriptor should
+- `built-ins/Object/freeze/15.2.3.9-2-a-12.js` :: Test262Error: 0 value should be a
+- `built-ins/Object/freeze/15.2.3.9-2-a-14.js` :: Test262Error: 0 descriptor should not be writable; 0 descriptor should
+- `built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-116.js` :: Test262Error: desc.writable Expected SameValue(«undefined», «true») to
+- `built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-34.js` :: Test262Error: desc.value Expected SameValue(«undefined», «[object Obje
+- `built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-4.js` :: Test262Error: desc.writable Expected SameValue(«undefined», «true») to
+- `built-ins/Object/getOwnPropertyNames/15.2.3.4-4-1.js` :: Test262Error: result1[expResult[p1]] !== true
+- `built-ins/Object/keys/15.2.3.14-5-13.js` :: Test262Error: arr.length Expected SameValue(«9999», «4») to be true
+- `built-ins/Object/keys/15.2.3.14-5-a-4.js` :: Test262Error: typeof array[0] Expected SameValue(«"string"», «"undefin
+- `built-ins/Object/preventExtensions/15.2.3.10-2.js` :: Test262Error: o2 Expected SameValue(«0», «[object Object]») to be true
+- `built-ins/Object/preventExtensions/15.2.3.10-3-5.js` :: Test262Error: typeof strObj[0] Expected SameValue(«"string"», «"undefi
+- `built-ins/Object/prototype/S15.2.4_A1_T2.js` :: Test262Error: The result of evaluating (e instanceof TypeError) is exp
+- `built-ins/Object/prototype/constructor/S15.2.4.1_A1_T2.js` :: TypeError: is not a constructor
+- `built-ins/Object/prototype/valueOf/S15.2.4.4_A14.js` :: Test262Error: (1, Object.prototype.valueOf)() throws a TypeError excep
