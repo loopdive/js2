@@ -49,3 +49,11 @@ to catch at the carrier level.
 - [ ] Driver back to zero post-claim withdrawals, emitted count not
       reduced (currently 31/42).
 - [ ] `check:ir-fallbacks` / `check:ir-only` unchanged.
+
+## 2026-08-22 lane handover (fable-lead)
+
+**An Opus agent is in flight at handover on branch
+`claude/issue-4612-tokenizer-abi-parity`** (claimed opus-4612): enumerating
+the 31-entry signature delta, bisecting `fd679233f..main` if needed, and
+either restoring parity or recording a legacy-under-count verdict. If no PR
+exists for that branch, check the agent worktrees before re-dispatching.
