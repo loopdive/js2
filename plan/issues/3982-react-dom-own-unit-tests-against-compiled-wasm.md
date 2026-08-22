@@ -651,3 +651,16 @@ Regression coverage is now **30/30** across the timer-shim and mutable-parameter
  no test-harness workaround or generated diagnostic source was shipped.
 
 Implementation remains in [PR #4769](https://github.com/loopdive/js2wasm/pull/4769).
+
+## Primitive callback ABI regression checkpoint (2026-08-22)
+
+The real-wasmtime native-messaging smoke caught a regression in the generic
+property-receiver rule: the untyped `onData(chunk)` callback in the Node
+process adapter uses `chunk.length` and `chunk.charCodeAt`, and was being
+widened from the compiler's proven native-string carrier to `externref`. The
+resulting callback ABI did not match the host and produced zero output even
+for a 1 MiB frame. Ordinary property access still widens nominal/dynamic
+object receivers, but proven numeric and native-string carriers remain
+specialized. The complete real-wasmtime matrix (1/64/128/256 MiB across
+node_process, deno, wasi_p1, and node_fs) now passes. This is a compiler ABI
+fix, not a skipped or unavailable test.

@@ -804,6 +804,20 @@ function lowerParamType(
         inferredTypeIdx === undefined ? undefined : ctx.typeIdxToStructName.get(inferredTypeIdx);
       const inferredIndexedCarrier =
         inferredStructName?.startsWith("__vec_") || inferredStructName?.startsWith("__arr_");
+      // An ordinary property access is also how an untyped string/number
+      // parameter is observed (`chunk.length`, `chunk.charCodeAt(i)`).  The
+      // dynamic-object guard must not erase that primitive inference: doing so
+      // changes the callback ABI to externref and breaks the standalone WASI
+      // stdin reactor, whose `onData(chunk)` callback receives a native string.
+      // Computed/nominal object accesses still remain on the universal carrier;
+      // only primitive scalars and the compiler's native-string carrier are
+      // safe to keep specialized here.
+      const inferredPrimitiveCarrier =
+        inferred.kind === "f64" ||
+        inferred.kind === "f32" ||
+        inferred.kind === "i32" ||
+        inferred.kind === "i64" ||
+        ((inferred.kind === "ref" || inferred.kind === "ref_null") && inferred.typeIdx === ctx.anyStrTypeIdx);
       const inferredEscapingAnonymousObject =
         inferredStructName?.startsWith("__anon_") === true && functionDeclarationEscapesAsValue(ctx, stmt, sourceFile);
       // A call-site object literal is only one observed shape of an untyped JS
@@ -815,7 +829,7 @@ function lowerParamType(
       // A computed-access parameter likewise stays dynamic unless inference
       // proved the indexed vec/array family rather than one incidental object.
       if (
-        !(needsDynamicObjectCarrier && !inferredIndexedCarrier) &&
+        !(needsDynamicObjectCarrier && !inferredIndexedCarrier && !inferredPrimitiveCarrier) &&
         !(ctx.standalone && inferredStructName?.startsWith("__anon_")) &&
         !inferredEscapingAnonymousObject
       ) {
