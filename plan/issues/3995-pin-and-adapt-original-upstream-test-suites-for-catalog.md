@@ -791,3 +791,5 @@ adapter descriptors (the fs call's numeric coercion used to emit two identical
 visible to strict manifest validation. This is host setup coverage only; any
 compiler, validation, or runtime mismatches in the upstream suites remain
 scored as compatibility failures.
+
+Implementation: [PR #4756](https://github.com/loopdive/js2/pull/4756).
