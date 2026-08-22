@@ -570,6 +570,18 @@ in-module reads (host-side detection is what react-dom needs).
   HOST-side `m.mock.calls` read still answers undefined (host wrapper
   sidecar view of the cell-mediated closure), and the harness-level
   "illegal cast in __fn_tramp_mock_*" (iii) is not yet re-measured.
+  **Spy-on-host-object protocol FIXED same day (jest 317 → 322/356; first
+  StrictMode pass in the filter run)**: the spy stored on `console` crossed
+  as the BARE dynamic bridge, dropping the sidecar (`console.log.mock` /
+  `.mockRestore` undefined; `.call` missing broke the platform-capability
+  console adapter). Fixes: bridge stamps live accessors for the mock
+  protocol (gated on a sidecar carrying `mock` — the ungated variant AND a
+  mirror-on-every-path variant EACH broke acorn to 3/3518, both reverted);
+  the callable wrapper's get serves %Function.prototype% members; extern_get
+  resolves props through a bridge's raw closure; extern_set/strict store the
+  prop-delegating mirror for prop-carrying closures landing on HOST objects.
+  Guards: acorn 3518/3518, cookie 63740/63740, react 87/146 hold. Regression
+  test: `tests/issue-4618-spy-bridge-protocol.test.ts`.
 
 ## Fix order
 

@@ -2019,6 +2019,46 @@ function _wrapWasmClosureUnknownArity(
   if (closure != null && typeof closure === "object") {
     _wasmClosureDynamicWrapperCache.set(closure, wrapped);
     _wasmClosureWrapperTargets.set(wrapped, closure);
+    // (#4618) Surface the closure's OWN sidecar props on the bridge as live
+    // non-enumerable accessors (jest's mock fn: `.mock` / `.mockRestore` /
+    // `.mockImplementation`). Without this, a spy stored on a host object
+    // (`spyOn(console,'log')`) read back through the generic member
+    // dispatcher answered undefined for every prop and the mock protocol
+    // threw. Reads delegate live to the sidecar, so later reassignments
+    // (`mockImplementation`) stay visible; keys added AFTER bridge creation
+    // are not mirrored (the jest shim assigns all protocol keys up front).
+    // Scoped to the jest mock PROTOCOL shape (a sidecar carrying `mock`) —
+    // stamping every prop-carrying closure was measured to break acorn
+    // wholesale (its parser closures rely on the propless bridge surface).
+    const sidecarProps0 = _wasmStructProps.get(closure);
+    const sidecarProps =
+      sidecarProps0 && Object.prototype.hasOwnProperty.call(sidecarProps0, "mock") ? sidecarProps0 : undefined;
+    if (sidecarProps) {
+      for (const k of Object.keys(sidecarProps)) {
+        if (k === "name" || k === "length" || k === "prototype") continue;
+        if (Object.prototype.hasOwnProperty.call(wrapped, k)) continue;
+        try {
+          Object.defineProperty(wrapped, k, {
+            get: () => {
+              const sv = _sidecarGet(closure, k);
+              if (sv !== null && typeof sv === "object" && _isWasmStruct(sv)) {
+                const callable = _maybeWrapCallableUnknownArity(sv, callbackState);
+                if (callable !== sv) return callable;
+                return _wrapForHost(sv, callbackState?.getExports());
+              }
+              return sv;
+            },
+            set: (nv) => {
+              _sidecarSet(closure, k, nv);
+            },
+            enumerable: false,
+            configurable: true,
+          });
+        } catch {
+          /* best-effort — a frozen wrapper keeps the propless behavior */
+        }
+      }
+    }
   }
   return wrapped;
 }
@@ -7890,7 +7930,18 @@ function _wrapCallableForHost(
     // `_wrapForHost` proxy so `.prototype`, `.name`, static members, `has`,
     // `ownKeys`, descriptors, etc. behave identically to a non-callable wrap.
     get(_t, key, _recv) {
-      return (propProxy as any)[key];
+      const v = (propProxy as any)[key];
+      if (v !== undefined) return v;
+      // (#4618) The Function protocol must survive the delegation: a host
+      // caller doing `spy.call(target, x)` (platform capability adapters,
+      // Function.prototype.apply chains) reads `.call` off the mirror; the
+      // struct delegate has no such key. Serve %Function.prototype% members —
+      // invoked as `mirror.call(...)`, `this` binds to the mirror, so the
+      // apply trap still runs the compiled body.
+      if (typeof key === "string" && key in Function.prototype) {
+        return (Function.prototype as unknown as Record<string, unknown>)[key];
+      }
+      return v;
     },
     set(_t, key, val) {
       (propProxy as any)[key] = val;
@@ -10572,6 +10623,25 @@ assert._isSameValue = isSameValue;
           }
           const val = _safeGet(obj, key, callbackState);
           if (val !== undefined) return val;
+          // (#4618) A property read off a BARE closure bridge (the plain host
+          // function `_wrapWasmClosureUnknownArity` mints): the bridge drops
+          // the closure's sidecar surface, so `console.log.mock` /
+          // `console.log.mockRestore` after `spyOn(console,'log')` answered
+          // undefined. Resolve through the bridge's registered raw closure.
+          if (typeof obj === "function") {
+            const rawClosure4618 = _wasmClosureWrapperTargets.get(obj);
+            if (rawClosure4618 !== undefined) {
+              const sv = _sidecarGet(rawClosure4618, key);
+              if (sv !== undefined) {
+                if (sv !== null && typeof sv === "object" && _isWasmStruct(sv)) {
+                  const callable = _maybeWrapCallableUnknownArity(sv, callbackState);
+                  if (callable !== sv) return callable;
+                  return _wrapForHost(sv, callbackState?.getExports());
+                }
+                return sv;
+              }
+            }
+          }
           // (#1712) `<fn>.prototype` on a Wasm closure struct: auto-vivify an
           // identity-stable real JS object in the closure's sidecar so
           // prototype-method writes, Object.defineProperties, and
@@ -10681,6 +10751,39 @@ assert._isSameValue = isSameValue;
           if (typeof wrappedVal === "function" && key === "exec" && obj !== null && typeof obj === "object") {
             wrappedVal = _wrapExecReturnForHost(wrappedVal, callbackState);
           }
+          // (#4618) A closure that CARRIES its own sidecar props (jest's mock
+          // fn: `.mock` / `.mockRestore` / `.mockImplementation`) stored onto
+          // a HOST object must present that surface to later reads — the bare
+          // dynamic bridge above is a plain function that drops them, so
+          // `console.log.mockRestore()` after `spyOn(console,'log')` threw
+          // "mockRestore is not a function". Store the prop-delegating
+          // callable mirror instead (the #3051 Slice-3 discriminator).
+          // Scoped to HOST-object stores only — upgrading every closure
+          // crossing was measured to break acorn wholesale.
+          if (
+            typeof wrappedVal === "function" &&
+            val !== null &&
+            typeof val === "object" &&
+            _isWasmStruct(val) &&
+            obj !== null &&
+            typeof obj === "object" &&
+            !_isWasmStruct(obj)
+          ) {
+            const scOwn4618 = _wasmStructProps.get(val);
+            let carriesOwnProps4618 = _wasmStructAccessors.has(val);
+            if (!carriesOwnProps4618 && scOwn4618) {
+              for (const k of Object.keys(scOwn4618)) {
+                if (k !== "name" && k !== "length") {
+                  carriesOwnProps4618 = true;
+                  break;
+                }
+              }
+            }
+            if (carriesOwnProps4618) {
+              const mirror4618 = _wrapCallableForHost(val, callbackState);
+              if (typeof mirror4618 === "function") wrappedVal = mirror4618;
+            }
+          }
           // (#4611) A non-callable WasmGC struct stored onto a PLAIN HOST object
           // lives in host-land: native JS reads it directly (no _safeGet), so a
           // raw struct's fields are invisible (acorn `comment.loc = new
@@ -10721,6 +10824,39 @@ assert._isSameValue = isSameValue;
           // (Slice 3) Widened to any object receiver — see __extern_set.
           if (typeof wrappedVal === "function" && key === "exec" && obj !== null && typeof obj === "object") {
             wrappedVal = _wrapExecReturnForHost(wrappedVal, callbackState);
+          }
+          // (#4618) A closure that CARRIES its own sidecar props (jest's mock
+          // fn: `.mock` / `.mockRestore` / `.mockImplementation`) stored onto
+          // a HOST object must present that surface to later reads — the bare
+          // dynamic bridge above is a plain function that drops them, so
+          // `console.log.mockRestore()` after `spyOn(console,'log')` threw
+          // "mockRestore is not a function". Store the prop-delegating
+          // callable mirror instead (the #3051 Slice-3 discriminator).
+          // Scoped to HOST-object stores only — upgrading every closure
+          // crossing was measured to break acorn wholesale.
+          if (
+            typeof wrappedVal === "function" &&
+            val !== null &&
+            typeof val === "object" &&
+            _isWasmStruct(val) &&
+            obj !== null &&
+            typeof obj === "object" &&
+            !_isWasmStruct(obj)
+          ) {
+            const scOwn4618 = _wasmStructProps.get(val);
+            let carriesOwnProps4618 = _wasmStructAccessors.has(val);
+            if (!carriesOwnProps4618 && scOwn4618) {
+              for (const k of Object.keys(scOwn4618)) {
+                if (k !== "name" && k !== "length") {
+                  carriesOwnProps4618 = true;
+                  break;
+                }
+              }
+            }
+            if (carriesOwnProps4618) {
+              const mirror4618 = _wrapCallableForHost(val, callbackState);
+              if (typeof mirror4618 === "function") wrappedVal = mirror4618;
+            }
           }
           // (#4611) See __extern_set: surface a struct value's live proxy view
           // when it lands on a plain host object.
