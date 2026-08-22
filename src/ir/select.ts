@@ -8185,7 +8185,23 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (isUnrepresentableModuleBinding(expr)) {
       return shapeNo("expr-module-storage-unrepresentable", expr);
     }
-    if (scope.has(expr.text)) return true;
+    if (scope.has(expr.text)) {
+      // (#3522) A prepared nested class binding is a CONSTRUCTOR IDENTITY, not
+      // a first-class IR value. The class-declaration and `const C = class {…}`
+      // arms add the name to `scope` so the dedicated `new C(...)`,
+      // `C.staticMember` and `x instanceof C` arms can consume it — those arms
+      // resolve the binding themselves and never reach this generic identifier
+      // accept. Anything that DOES reach here is a bare value use
+      // (`const Alias = C;`, `return C;`, passing `C` as an argument), which
+      // `ir/from-ast` cannot represent: it reports
+      // "identifier \"C\" is not in scope" as a POST-CLAIM build error, after
+      // the class members have already been claimed and emitted — the exact
+      // split-ownership state R3 exists to prevent. Reject the owner here, at
+      // selection, so the whole class withdraws with it.
+      return currentPreparedClassBindingNames.has(expr.text)
+        ? shapeNo("expr-prepared-class-binding-value", expr)
+        : true;
+    }
     if (
       currentHostGlobalResolver !== null &&
       !localClasses.has(expr.text) &&

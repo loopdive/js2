@@ -83,6 +83,65 @@ function sameValType(left: ValType, right: ValType): boolean {
  * as an exact parent-init chain. Initialized instance fields and host-backed
  * construction remain direct until their complete contracts are represented.
  */
+/**
+ * Every class an owner unit's own body materializes, and whose implicit
+ * constructor this pass may therefore prepare.
+ *
+ * Two reaching forms, both resolved through the oracle and both restricted to
+ * the owner's OWN body (the walk stops at any nested executable or class, whose
+ * units carry their own entry in `ownerUnitIds`):
+ *
+ *   - `new <Identifier>(...)`, the construction form; and
+ *   - (#3522) a STATIC MEMBER ACCESS `<Identifier>.member` on a class that
+ *     carries a static member. A class reached only through its static side is
+ *     materialized by the lowering exactly like a constructed one:
+ *     `ClassRegistry.resolve` binds the source-owned `_init` callable for every
+ *     class shape it resolves, not only for the ones a `new` reaches. With no
+ *     `new` anywhere in the transaction that binding was planned lazily DURING
+ *     lowering, after the static component had sealed — the measured
+ *     "ABI draft …class-implicit-constructor…:body would mutate sealed prepared
+ *     scope …class-static-method…" invariant. Reaching the class here plans its
+ *     support pair in the SAME planning phase as its static member, before the
+ *     seal; nothing about the seal itself moves.
+ *
+ * The static form is restricted to classes that actually carry a static member,
+ * so every pre-existing static-free shape keeps the exact `new`-only population.
+ */
+function collectPreparedImplicitConstructorClasses(input: {
+  readonly ctx: CodegenContext;
+  readonly sourceFile: ts.SourceFile;
+  readonly ownerUnitIds: ReadonlySet<IrUnitId>;
+  readonly identityPlan: IrOverlayIdentityPlan;
+}): Set<ImplicitConstructorClass> {
+  const referencedClassDeclarations = new Set<ImplicitConstructorClass>();
+  const admit = (expression: ts.Identifier, requireStaticMember: boolean): void => {
+    for (const declaration of input.ctx.oracle.declarationsOf(expression)) {
+      const owner = implicitConstructorClassForDeclaration(declaration);
+      if (
+        owner &&
+        (!requireStaticMember || owner.members.some(hasStaticModifier)) &&
+        isAdmissibleImplicitConstructorClass(owner, input.sourceFile)
+      ) {
+        referencedClassDeclarations.add(owner);
+      }
+    }
+  };
+  for (const ownerUnitId of input.ownerUnitIds) {
+    const root = input.identityPlan.identityContext.declarationByUnitId.get(ownerUnitId);
+    if (!root) continue;
+    const visit = (node: ts.Node): void => {
+      if (node !== root && (ts.isFunctionLike(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node))) {
+        return;
+      }
+      if (ts.isNewExpression(node) && ts.isIdentifier(node.expression)) admit(node.expression, false);
+      if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)) admit(node.expression, true);
+      ts.forEachChild(node, visit);
+    };
+    visit(root);
+  }
+  return referencedClassDeclarations;
+}
+
 export function prepareImplicitConstructorSupports(input: {
   readonly ctx: CodegenContext;
   readonly sourceFile: ts.SourceFile;
@@ -91,26 +150,7 @@ export function prepareImplicitConstructorSupports(input: {
   readonly classShapes: ReadonlyMap<string, IrClassShape>;
   readonly classShapesById: ReadonlyMap<IrClassId, IrClassShape>;
 }): ReadonlySet<IrUnitId> {
-  const referencedClassDeclarations = new Set<ImplicitConstructorClass>();
-  for (const ownerUnitId of input.ownerUnitIds) {
-    const root = input.identityPlan.identityContext.declarationByUnitId.get(ownerUnitId);
-    if (!root) continue;
-    const visit = (node: ts.Node): void => {
-      if (node !== root && (ts.isFunctionLike(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node))) {
-        return;
-      }
-      if (ts.isNewExpression(node) && ts.isIdentifier(node.expression)) {
-        for (const declaration of input.ctx.oracle.declarationsOf(node.expression)) {
-          const owner = implicitConstructorClassForDeclaration(declaration);
-          if (owner && isAdmissibleImplicitConstructorClass(owner, input.sourceFile)) {
-            referencedClassDeclarations.add(owner);
-          }
-        }
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(root);
-  }
+  const referencedClassDeclarations = collectPreparedImplicitConstructorClasses(input);
 
   // A synthesized derived constructor forwards to its exact parent `_init`.
   // Pull every local ancestor into the support-preparation population so a

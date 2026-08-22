@@ -381,12 +381,35 @@ export function isStringType(type: ts.Type): boolean {
   if ((type.flags & ts.TypeFlags.String) !== 0 || (type.flags & ts.TypeFlags.StringLiteral) !== 0) {
     return true;
   }
+  // (#4607) A UNION whose every constituent is a string literal is a string —
+  // and `typeof x` is exactly that shape: TS types it as the 8-member union
+  // `"string" | "number" | … | "function"`. Without this the predicate answers
+  // `false` for every `typeof` result, so `(typeof u).length` misses the
+  // string-`length` arm and falls through to the dynamic member-get, which in
+  // native-string mode reads a vec `$length` field off a `$AnyString` and
+  // answers `NaN`. `mapTsTypeToWasm` already lowers such a union to exactly the
+  // same ValType as a plain `string` (every constituent maps to `externref`, so
+  // the all-same-kind arm returns `externref`), so recognizing it here does not
+  // introduce a type/carrier disagreement anywhere.
+  if (isStringLiteralUnion(type)) return true;
   // Also recognize the String wrapper object type (e.g. from `new String("x")`)
   if ((type.flags & ts.TypeFlags.Object) !== 0) {
     const sym = type.getSymbol();
     if (sym && sym.name === "String") return true;
   }
   return false;
+}
+
+/**
+ * (#4607) True for a union type whose constituents are ALL string/string-literal
+ * types (e.g. `"a" | "b"`, or the `typeof` operator's own 8-member union).
+ * Deliberately strict: one non-string constituent (`"a" | 0`, `string | null`)
+ * makes it false, so the heterogeneous-union carriers are untouched.
+ */
+function isStringLiteralUnion(type: ts.Type): boolean {
+  if (!type.isUnion()) return false;
+  if (type.types.length === 0) return false;
+  return type.types.every((part) => (part.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral)) !== 0);
 }
 
 /** Check if a ts.Type represents the Number wrapper object (e.g. `new Number(1)`) */

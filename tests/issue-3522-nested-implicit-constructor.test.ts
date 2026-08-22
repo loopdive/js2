@@ -272,11 +272,16 @@ describe("#3522 nested implicit-constructor negative boundaries", () => {
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
-  it("keeps a nested class with a static member direct", async () => {
+  // (#3522) A static METHOD is no longer a boundary — the static-member slice
+  // admits it, and `tests/issue-3522-nested-class-static.test.ts` owns that
+  // positive family. The boundary MOVED to the static ACCESSOR: its descriptor
+  // is not on the ordinary descriptor-by-name-and-kind path this family
+  // resolves, so it must still withdraw the whole owner.
+  it("keeps a nested class with a static ACCESSOR direct", async () => {
     const result = await compile(
       `
       export function run(): number {
-        class Box { get(): number { return 42; } static k(): number { return 1; } }
+        class Box { get(): number { return 42; } static get k(): number { return 1; } }
         return new Box().get();
       }
       `,
