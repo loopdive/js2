@@ -33,6 +33,12 @@ describe("React upstream test infrastructure", () => {
       expect(infrastructure.shouldIgnoreConsoleError).toBeTypeOf("function");
       expect(infrastructure.schedulerMock?.log).toBeTypeOf("function");
       expect(infrastructure.schedulerMock?.unstable_flushAll).toBeTypeOf("function");
+      expect(infrastructure.nodeUtil?.TextEncoder).toBeTypeOf("function");
+      expect(infrastructure.nodeTextEncoder?.encode).toBeTypeOf("function");
+      expect(infrastructure.nodeAsyncHooks?.AsyncLocalStorage).toBeTypeOf("function");
+      expect(infrastructure.nodeAsyncLocalStorage?.run).toBeTypeOf("function");
+      expect(infrastructure.nodeCrypto?.createHash).toBeTypeOf("function");
+      expect(infrastructure.nodeStream?.PassThrough).toBeTypeOf("function");
       expect(infrastructure.reactNativeRenderer?.version).toBe(infrastructure.react?.version);
       expect(infrastructure.reactJsxRuntime?.jsx).toBeTypeOf("function");
       expect(infrastructure.require("scheduler").unstable_now).toBeTypeOf("function");

@@ -175,10 +175,18 @@ function sourceAtWasmOffset(sourceMapJson, wasmOffset) {
 // rewired to the in-module values rather than stubbed, so what runs is the
 // published implementation wired to the published implementation.
 function wireRequires(source) {
-  return source
-    .replace(/require\(\s*['"]react['"]\s*\)/g, "__REACT__")
-    .replace(/require\(\s*['"]react-dom['"]\s*\)/g, "__REACTDOM_SHARED__")
-    .replace(/require\(\s*['"]scheduler['"]\s*\)/g, "__SCHEDULER__");
+  return (
+    source
+      .replace(/require\(\s*['"]react['"]\s*\)/g, "__REACT__")
+      .replace(/require\(\s*['"]react-dom['"]\s*\)/g, "__REACTDOM_SHARED__")
+      .replace(/require\(\s*['"]scheduler['"]\s*\)/g, "__SCHEDULER__")
+      // These two constructors are read through Node namespace objects in the
+      // published Fizz bundle. Constructing them through a dynamic Wasm member
+      // loses the host class identity, so obtain the real per-worker instances
+      // from the explicit infrastructure capability instead.
+      .replace(/new\s+util\.TextEncoder\(\)/g, "__js2NodeTextEncoder()")
+      .replace(/new\s+async_hooks\.AsyncLocalStorage\(\)/g, "__js2NodeAsyncLocalStorage()")
+  );
 }
 
 const REACT_DOM_SCHEDULER_SHIM = `
@@ -416,7 +424,42 @@ function buildProjectModuleSource({ exportName, moduleName, imports, bindings = 
   // modules made importers observe the wrong (usually empty) object.
   const carrier = `__${moduleName}Exports`;
   const wiredSource = source.replace(/\bexports\b/g, carrier);
-  return `${imports}\nconst ${carrier} = {};\n${bindings}\n${wiredSource}\nexport { ${carrier} as ${exportName} };\n`;
+  // Implementation modules are evaluated before the entry module. Their
+  // published CommonJS graphs can therefore not use the entry's Jest `require`
+  // shim: its mock table has not been initialized yet. Resolve the remaining
+  // package/Node dependencies through the worker-installed host capability
+  // surface instead. React/ReactDOM/scheduler imports are already rewired by
+  // `wireRequires`; this local resolver only handles declared host modules such
+  // as `util`, `crypto`, `async_hooks`, and `stream` in Node Fizz.
+  const moduleRequire =
+    `function __js2ModuleRequire(name) {\n` +
+    `  var infrastructure = globalThis.__js2ReactUpstreamInfrastructure;\n` +
+    `  if (infrastructure === undefined || infrastructure === null || typeof infrastructure.require !== "function")\n` +
+    `    throw new Error("React upstream implementation dependency is unavailable: " + name);\n` +
+    // Node's builtin namespace objects are host modules. Expose the members
+    // used by the published Fizz graph as plain capability records so dynamic
+    // property reads (notably new util.TextEncoder and new
+    // async_hooks.AsyncLocalStorage) retain their host constructor identity.
+    `  if (name === "util") return infrastructure.nodeUtil;\n` +
+    `  if (name === "async_hooks") return infrastructure.nodeAsyncHooks;\n` +
+    `  if (name === "crypto") return infrastructure.nodeCrypto;\n` +
+    `  if (name === "stream") return infrastructure.nodeStream;\n` +
+    `  return infrastructure.require(name);\n` +
+    `}\n` +
+    `function __js2NodeTextEncoder() { return globalThis.__js2ReactUpstreamInfrastructure.nodeTextEncoder; }\n` +
+    `function __js2NodeAsyncLocalStorage() { return globalThis.__js2ReactUpstreamInfrastructure.nodeAsyncLocalStorage; }\n` +
+    `var require = __js2ModuleRequire;\n` +
+    // Node's published Fizz graph reads these globals at module scope. The
+    // compiler otherwise treats an unqualified queueMicrotask as an unresolved
+    // identifier and emits a ReferenceError before the entry shim can run.
+    `var queueMicrotask = globalThis.queueMicrotask;\n` +
+    `var setImmediate = globalThis.setImmediate;\n` +
+    `var clearImmediate = globalThis.clearImmediate;\n` +
+    `var Buffer = globalThis.Buffer;\n` +
+    `var URL = globalThis.URL;\n` +
+    `var TextEncoder = globalThis.TextEncoder;\n` +
+    `var TextDecoder = globalThis.TextDecoder;`;
+  return `${imports}\nconst ${carrier} = {};\n${bindings}\n${moduleRequire}\n${wiredSource}\nexport { ${carrier} as ${exportName} };\n`;
 }
 
 // Keep each published CJS implementation file in its own project module.

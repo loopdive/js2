@@ -1330,7 +1330,12 @@ function __js2RequireActual(name) {
 }
 
 function require(name) {
-  if (__jestMocks[name]) return __js2IsolatedModule(name, __jestMocks[name]());
+  // Published implementation modules are evaluated before the entry module
+  // initializes the Jest mock table. Their top-level Node require calls
+  // must still reach the explicit host dependency resolver; an early access
+  // to __jestMocks[name] would otherwise trap during module initialization.
+  if (__jestMocks !== undefined && __jestMocks !== null && __jestMocks[name])
+    return __js2IsolatedModule(name, __jestMocks[name]());
   return __js2IsolatedModule(name, __js2RequireActual(name));
 }
 `;

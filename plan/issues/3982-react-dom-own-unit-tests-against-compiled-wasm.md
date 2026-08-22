@@ -634,6 +634,27 @@ The matcher shim also now covers the upstream `resolves.not.toThrow()` and
 test callback result, not a blanket exception suppressor; the focused test
 exercises both a fulfilled non-function and a fulfilled non-throwing function.
 
+## Node Fizz module-initialization checkpoint (2026-08-22)
+
+The Node Fizz graph exposed one more genuine host seam. Its published CommonJS
+module is evaluated before the lifted test entry, so top-level
+`require("util")`, `require("async_hooks")`, `require("crypto")`, and
+`require("stream")` could reach the entry's not-yet-initialized Jest resolver.
+The project-module resolver now uses the worker's explicit infrastructure
+capability, and the worker exposes the real host records plus a per-worker
+`TextEncoder` and `AsyncLocalStorage`. `queueMicrotask`, `setImmediate`,
+`Buffer`, `URL`, and the encoder globals are declared in the implementation
+module scope as well. This is host setup only; React and the Fizz renderer
+remain the compiled package graph.
+
+The controls are measurable: an implementation-only Node Fizz project now
+validates and instantiates, a no-op test and a type/export probe each pass, and
+the real upstream `ReactDOMFizzServer › should call renderToPipeableStream`
+test now reaches the renderer. It then fails with a compiled renderer null
+pointer in `createRequest`, rather than a module-init or unavailable-infra
+error. The bounded one-test-per-lane smoke therefore still has zero native-host
+errors; this slice does not claim a renderer pass or a full-corpus pass rate.
+
 ## Permanent test reference
 
 `tests/dogfood/react-dom-upstream-suite.test.ts` — pin/commit assertions run
