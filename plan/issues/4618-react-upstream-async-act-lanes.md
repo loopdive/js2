@@ -14,6 +14,7 @@ language_feature: async, await, closures
 goal: dogfood
 related: [1042, 1373b, 3958, 4616]
 loc-budget-allow:
+  - src/codegen/closure-exports.ts
   - src/codegen/property-access-dispatch.ts
   - src/codegen/function-body.ts
   - src/codegen/registry/imports.ts
@@ -30,6 +31,7 @@ loc-budget-allow:
   - src/ir/prepared-callable-resolution.ts
   - src/runtime.ts
 func-budget-allow:
+  - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
   - src/codegen/property-access-dispatch.ts::tryIdentifierNamespaceAndStaticReceiverRead
   - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
   - src/codegen/destructuring-params.ts::destructureParamObjectExternref
@@ -782,6 +784,24 @@ in-module reads (host-side detection is what react-dom needs).
   resume fn's `$62` local flow around the `call $__get_member_props` site
   in `.tmp/react-batch.wat` (~line 176223+) — the receiver feeding the
   dispatcher, not the dispatcher itself, is now the suspect.
+
+- **2026-08-22 unmatched-callable dispatch host fallback — react 97 →
+  109/146 (the whole ReactChildren mock bucket, +12, zero flips)**: the
+  `__call_fn_N` / `__call_fn_method_N` dispatchers terminated in a bare
+  `ref.null.extern` when the callee matched no closure-struct arm — but a
+  callable that crossed the host boundary and came back (react's
+  `Children.forEach(children, callback, ctx)` passes the callback through
+  an extern method call; the compiled wrapper's
+  `forEachFunc.apply(this, arguments)` then dispatched a genuine HOST
+  function) was silently dropped. Standalone repro chain:
+  `.tmp/probe-applyargs.mts` D/F (object-literal method wrapper → 0 hits;
+  `count`'s identical wrapper worked because its callback stayed a wasm
+  closure). New `hostCallableFallbackTerminal` in closure-exports.ts emits
+  `__call_function_<arity>(fn, thisArg, args…)` for a non-null unmatched
+  callee (host lane, arity ≤ 4; null keeps the old null answer).
+  Guards: jest 322/356, acorn 3518/3518, cookie/clsx 100%, dispatch
+  battery 35/36 (#1712 pre-existing). Regression tests:
+  `tests/issue-4618-host-callable-dispatch-fallback.test.ts` (2).
 
 ## Fix order
 
