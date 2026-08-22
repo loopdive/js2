@@ -187,6 +187,38 @@ demote.
   Map<symbolId, carrier> in the runtime + the compiled `typeof` arm
   answering "symbol" for it), or completing #2610.
 
+- **2026-08-22 the symbol bucket's EXACT trigger, small-scale repro found**:
+  `typeof React.Fragment` DIRECT is "symbol" and self-`===` holds — the
+  degradation is ONLY the DESTRUCTURED binding (`const {Fragment} = React`)
+  in a suspending async body whose name is ALSO referenced by a hoisted
+  fn-decl (the ref-CELL spill lane). Twelve-line repro, TRAPS today
+  (pre-existing — file-copy A/B against pre-liveness async-cps.ts produces
+  the identical binary):
+
+  ```ts
+  const REACT_FRAGMENT_TYPE = Symbol.for("react.fragment");
+  var exports_obj: any = {}; exports_obj.Fragment = REACT_FRAGMENT_TYPE;
+  const NS: any = exports_obj;
+  async function act(cb: any): Promise<any> { return await cb(); }
+  export async function t(): Promise<string> {
+    const {Fragment} = NS;
+    function Parent(): any { return Fragment; }
+    await act(() => 1);
+    return typeof Fragment + "," + String(Fragment === NS.Fragment);
+  }
+  // RuntimeError: dereferencing a null pointer at __async_resume_ft
+  ```
+
+  Without the named-nested reference the same shape passes (plain spill —
+  probe sym5), and without destructuring it passes (probe sym6 minus
+  pattern). So the BindingElement + ref-cell + suspend combination is the
+  broken lane: entry creates the cell (async-frame.ts ~2683) but the
+  DESTRUCTURING declaration's init/read path doesn't flow through it. In
+  react's bigger layout the same lane degrades to an object carrier
+  instead of trapping (`typeof Fragment` = "object", `Fragment ===
+  React.Fragment` false), which gates every switch-on-symbol/`$$typeof`
+  comparison — the dominant "expected not null"/symbol buckets.
+
 ## Fix order
 
 1. (c) first — it is a hard CE with a two-line repro and pins the IR
