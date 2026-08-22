@@ -24,7 +24,7 @@ import {
 import { tryCompileAnnexBModuleBlockFnEvaluation } from "./annexb-global-live-binding.js";
 import { emitCachedFuncClosureAccess } from "./closures.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
-import { getLocalType } from "./context/locals.js";
+import { allocLocal, getLocalType } from "./context/locals.js";
 import { attachSourcePos, getSourcePos } from "./context/source-pos.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { compileExpression, registerCompileStatement } from "./shared.js";
@@ -58,6 +58,7 @@ import {
 import { compileVariableStatement } from "./statements/variables.js";
 import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { coerceType } from "./type-coercion.js";
+import { compileClassExpression } from "./expressions/new-super.js";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the existing public API surface
@@ -565,7 +566,25 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
   // ClassDeclaration in statement position (e.g., inside for loops, if blocks,
   // switch cases, labeled statements, try/catch/finally, etc.)
   if (ts.isClassDeclaration(stmt)) {
-    compileNestedClassDeclaration(ctx, fctx, stmt);
+    // (#4618) A nested class whose name collided with a class in another
+    // scope was collected under a per-site synthetic identity (see
+    // collectClassesFromStatements). Compile it under that identity and bind
+    // the scoped class VALUE to a same-named LOCAL, exactly like
+    // `const Foo = class {…}` — locals outrank the name-keyed
+    // classObjectGlobals read, so `new Foo()` / `createElement(Foo)` in this
+    // scope resolve to THIS declaration, not the first same-named one.
+    const scopedSynthetic = ctx.anonClassExprNames.get(stmt);
+    compileNestedClassDeclaration(ctx, fctx, stmt, scopedSynthetic);
+    if (scopedSynthetic !== undefined && stmt.name !== undefined) {
+      const bindName = stmt.name.text;
+      const vt = compileClassExpression(ctx, fctx, stmt as unknown as ts.ClassExpression);
+      if (vt !== null) {
+        if (vt.kind !== "externref") coerceType(ctx, fctx, vt, { kind: "externref" });
+        let localIdx = fctx.localMap.get(bindName);
+        if (localIdx === undefined) localIdx = allocLocal(fctx, bindName, { kind: "externref" });
+        fctx.body.push({ op: "local.set", index: localIdx });
+      }
+    }
     return;
   }
 

@@ -1331,9 +1331,43 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       // registration for these shapes. (#1287)
       const isAmbient = hasDeclareModifier(stmt) || stmt.getSourceFile().isDeclarationFile;
       if (ts.isClassDeclaration(stmt) && stmt.name && !isAmbient) {
-        collectClassDeclaration(ctx, stmt);
-        // Register class declaration .name
-        ctx.functionNameMap.set(stmt.name.text, stmt.name.text);
+        // (#4618) A NESTED class declaration whose name is already taken by a
+        // class in ANOTHER scope must get its own identity — collection is
+        // name-keyed and collectClassDeclaration's structMap guard silently
+        // no-ops the duplicate, so react's per-test `class Foo extends
+        // React.Component { … }` re-declarations all bound to the FIRST
+        // test's compiled class (probe: two fns each declaring `class Foo`,
+        // the second's methods answered the first's bodies). Mint the same
+        // per-site synthetic identity class EXPRESSIONS already use; the
+        // statement-position compile binds the scoped VALUE to a local.
+        let nestedDuplicate = false;
+        if (ctx.classSet.has(stmt.name.text) || ctx.structMap.has(stmt.name.text)) {
+          let owner: ts.Node | undefined = stmt.parent;
+          while (owner && !ts.isFunctionLike(owner) && !ts.isSourceFile(owner)) owner = owner.parent;
+          nestedDuplicate = !!owner && !ts.isSourceFile(owner);
+        }
+        if (nestedDuplicate && !ctx.anonClassExprNames.has(stmt)) {
+          const syntheticName = `__anonClass_${stmt.name.text}_${ctx.anonTypeCounter++}`;
+          ctx.anonClassExprNames.set(stmt, syntheticName);
+          collectClassDeclaration(ctx, stmt, syntheticName);
+          // Bodies are compiled at the statement position — without the
+          // deferred flag its structMap-membership early-return would leave
+          // every method a stub returning null.
+          ctx.deferredClassBodies.add(syntheticName);
+          // collectClassDeclaration maps the TS symbol name to the synthetic
+          // GLOBALLY (classExprNameMap) — correct for the one-per-name
+          // `const C = class {}` shape, but for a same-named class in another
+          // scope it would hijack every OTHER scope's reads of that name.
+          // Scoping is provided by the statement-position LOCAL binding.
+          if (ctx.classExprNameMap.get(stmt.name.text) === syntheticName) {
+            ctx.classExprNameMap.delete(stmt.name.text);
+          }
+          ctx.functionNameMap.set(syntheticName, stmt.name.text);
+        } else if (!nestedDuplicate) {
+          collectClassDeclaration(ctx, stmt);
+          // Register class declaration .name
+          ctx.functionNameMap.set(stmt.name.text, stmt.name.text);
+        }
       } else if (ts.isVariableStatement(stmt) && !isAmbient) {
         for (const decl of stmt.declarationList.declarations) {
           if (ts.isIdentifier(decl.name) && decl.initializer && ts.isClassExpression(decl.initializer)) {

@@ -36,6 +36,8 @@ func-budget-allow:
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/statements.ts::compileStatementInner
 ---
 
 # react upstream suite: the async `it`-body / `act()` lane cluster
@@ -582,6 +584,26 @@ in-module reads (host-side detection is what react-dom needs).
   prop-delegating mirror for prop-carrying closures landing on HOST objects.
   Guards: acorn 3518/3518, cookie 63740/63740, react 87/146 hold. Regression
   test: `tests/issue-4618-spy-bridge-protocol.test.ts`.
+
+- **2026-08-22 same-named nested class DECLARATIONS silently shared ONE
+  compiled identity — FIXED**: collection is name-keyed and the structMap
+  guard no-oped duplicates, so react's per-test `class Foo extends
+  React.Component` re-declarations all bound to the FIRST test's class
+  (probe: two fns each declaring `class Foo`, the second answered the
+  first's methods). Duplicates now mint the per-site synthetic identity
+  class EXPRESSIONS use (collection: declarations.ts; statement compile
+  binds the scoped VALUE to a same-named local; identity resolution via
+  declaration node in class-expression-identity.ts + new-super's
+  boundClassExpressionName walk now accept ClassDeclaration nodes;
+  deferredClassBodies flag required or methods stay null stubs). En route:
+  `class Component extends React.Component` false-tripped the §15.7.1
+  own-name TDZ check on the property NAME (6 tests briefly regressed to
+  "Cannot access 'Component' before initialization") — the walk now skips
+  property-access NAME positions. React test outcomes unchanged at 87/146
+  (the same-named-class tests also sit behind the await/act lane), but the
+  wrong-class binding was real everywhere. Guards: acorn 3518/3518, jest
+  322/356, cookie 63740/63740, class battery 147/147. Regression test:
+  `tests/issue-4618-scoped-same-name-classes.test.ts` (2).
 
 ## Fix order
 

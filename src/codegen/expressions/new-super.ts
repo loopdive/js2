@@ -2360,7 +2360,15 @@ function classExtendsReferencesOwnName(expr: ts.ClassExpression): boolean {
       let found = false;
       const visit = (node: ts.Node): void => {
         if (found) return;
-        if (ts.isIdentifier(node) && node.text === ownName) {
+        // (#4618) The NAME of a property access is not a binding reference:
+        // `class Component extends React.Component` reads `React`, never the
+        // class's own TDZ binding — counting it threw a spurious
+        // "Cannot access 'Component' before initialization".
+        if (
+          ts.isIdentifier(node) &&
+          node.text === ownName &&
+          !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node)
+        ) {
           found = true;
           return;
         }
@@ -3933,7 +3941,10 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     for (const declaration of boundSymbol?.getDeclarations() ?? []) {
       const initializer = ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
       const candidate = initializer ? unwrapNewTarget(initializer) : declaration;
-      if (!ts.isClassExpression(candidate)) continue;
+      // (#4618) A nested class DECLARATION whose name collided with a class
+      // in another scope carries a per-site synthetic identity too — resolve
+      // it by declaration node exactly like an anonymous class expression.
+      if (!ts.isClassExpression(candidate) && !ts.isClassDeclaration(candidate)) continue;
       const syntheticName = ctx.anonClassExprNames.get(candidate);
       if (syntheticName && ctx.classSet.has(syntheticName)) {
         boundClassExpressionName = syntheticName;
