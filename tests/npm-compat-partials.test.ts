@@ -66,7 +66,7 @@ describe("npm-compat refresh matrix wiring", () => {
 
     expect(workflow).toContain("fail-fast: false");
     expect(workflow).toContain(
-      "group: npm-compat-refresh-${{ github.event_name == 'push' && github.sha || github.ref }}",
+      "group: npm-compat-refresh-${{ github.event_name == 'push' && github.sha || format('{0}-{1}', github.ref, github.run_id) }}",
     );
     expect(workflow).toMatch(/concurrency:[\s\S]*?cancel-in-progress: false/);
     expect(workflow).toContain("needs: measure");
@@ -80,9 +80,18 @@ describe("npm-compat refresh matrix wiring", () => {
     const workflow = readFileSync(new URL("../.github/workflows/npm-compat-refresh.yml", import.meta.url), "utf8");
 
     expect(workflow).toContain("headRefOid");
+    expect(workflow).toContain("--paginate --slurp");
     expect(workflow).toContain("/commits/${PR_HEAD_SHA}/check-runs?per_page=100");
     expect(workflow).toContain("leaving its branch untouched to avoid cancelling CI");
-    expect(workflow).toContain("CHECK_CUTOFF");
+    expect(workflow).toContain("Do not age this guard out");
+    expect(workflow).not.toContain("CHECK_CUTOFF");
     expect(workflow).toContain('echo "skip=1" >> "$GITHUB_OUTPUT"');
+  });
+
+  it("keeps the generic behind-PR sweep away from the npm promotion branch", () => {
+    const autoRefresh = readFileSync(new URL("../.github/workflows/auto-refresh-prs.yml", import.meta.url), "utf8");
+
+    expect(autoRefresh).toContain("headRefName");
+    expect(autoRefresh).toContain('select(.headRefName != "ci/npm-compat-refresh")');
   });
 });
