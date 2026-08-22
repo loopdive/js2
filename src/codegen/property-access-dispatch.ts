@@ -3408,6 +3408,28 @@ export function tryStringLengthIteratorAndExternClassReads(
       }
     }
     const recvType = compileExpression(ctx, fctx, expr.expression);
+    // (#4607) An `externref` receiver in JS-HOST mode + `nativeStrings` may be a
+    // real JS string, not a GC one — e.g. the `__typeof` host helper's result,
+    // which reaches this arm now that `typeof`'s string-literal-union type is
+    // recognised as a string. The externref → `$AnyString` coercion below is a
+    // CHECKED cast that yields `ref.null` on a miss, so the unconditional
+    // `struct.get` TRAPS on a host string (it answered a silently-wrong `NaN`
+    // via the dynamic path before). Read it through a runtime `ref.test`
+    // instead: GC string → the native `len` field, host string → the host
+    // `__extern_length` import. Standalone/WASI cannot produce a host string
+    // here, so its #1797 coercion path is untouched.
+    if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && recvType?.kind === "externref" && !ctx.standalone && !ctx.wasi) {
+      const externLengthIdx = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
+      flushLateImportShifts(ctx, fctx);
+      if (externLengthIdx !== undefined) {
+        emitGuardedNativeStringLength(ctx, fctx, (recvExternLocal) => [
+          { op: "local.get", index: recvExternLocal },
+          { op: "call", funcIdx: externLengthIdx },
+          { op: "i32.trunc_sat_f64_s" },
+        ]);
+        return { kind: "i32" };
+      }
+    }
     if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
       // The receiver must be a `$AnyString` ref before reading its `len`
       // field. Some string producers (e.g. the native Error `.name`/`.message`
