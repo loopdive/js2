@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-22T08:20:14.878Z",
-  "baseline_generated_at": "2026-08-22T08:20:14.878Z",
-  "baseline_sha": "4feb990a1baa2bff53eb62954eabce0fdf021103",
+  "timestamp": "2026-08-22T10:57:32.759Z",
+  "baseline_generated_at": "2026-08-22T10:57:32.759Z",
+  "baseline_sha": "a2aa72db473744111f5bd08dfd55a3f3d27e5551",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -11,22 +11,22 @@
   "summary": {
     "total": 43621,
     "pass": 31553,
-    "fail": 8676,
+    "fail": 8677,
     "compile_error": 3367,
-    "compile_timeout": 6,
+    "compile_timeout": 5,
     "skip": 19,
-    "compilable": 40229,
+    "compilable": 40230,
     "host_free_pass": 31553,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 42535,
         "pass": 30574,
-        "fail": 8590,
+        "fail": 8591,
         "compile_error": 3346,
-        "compile_timeout": 6,
+        "compile_timeout": 5,
         "skip": 19,
-        "compilable": 39164,
+        "compilable": 39165,
         "host_free_pass": 30574,
         "stale": 0,
         "label": "ECMAScript current standard"
@@ -58,11 +58,11 @@
       "official": {
         "total": 43621,
         "pass": 31553,
-        "fail": 8676,
+        "fail": 8677,
         "compile_error": 3367,
-        "compile_timeout": 6,
+        "compile_timeout": 5,
         "skip": 19,
-        "compilable": 40229,
+        "compilable": 40230,
         "host_free_pass": 31553,
         "stale": 0,
         "label": "standard + annex_b (default)"
@@ -70,11 +70,11 @@
       "full": {
         "total": 48735,
         "pass": 31941,
-        "fail": 11179,
+        "fail": 11180,
         "compile_error": 5494,
-        "compile_timeout": 6,
+        "compile_timeout": 5,
         "skip": 115,
-        "compilable": 43120,
+        "compilable": 43121,
         "host_free_pass": 31941,
         "stale": 0,
         "label": "standard + annex_b + proposals"
@@ -84,22 +84,22 @@
   "official_summary": {
     "total": 43621,
     "pass": 31553,
-    "fail": 8676,
+    "fail": 8677,
     "compile_error": 3367,
-    "compile_timeout": 6,
+    "compile_timeout": 5,
     "skip": 19,
-    "compilable": 40229,
+    "compilable": 40230,
     "host_free_pass": 31553,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
     "pass": 31941,
-    "fail": 11179,
+    "fail": 11180,
     "compile_error": 5494,
-    "compile_timeout": 6,
+    "compile_timeout": 5,
     "skip": 115,
-    "compilable": 43120,
+    "compilable": 43121,
     "host_free_pass": 31941,
     "stale": 0
   },
@@ -140,11 +140,11 @@
     "standard": {
       "total": 42535,
       "pass": 30574,
-      "fail": 8590,
+      "fail": 8591,
       "compile_error": 3346,
-      "compile_timeout": 6,
+      "compile_timeout": 5,
       "skip": 19,
-      "compilable": 39164,
+      "compilable": 39165,
       "host_free_pass": 30574,
       "stale": 0
     }
@@ -990,9 +990,9 @@
       "name": "language/expressions",
       "path": "language/expressions",
       "pass": 8376,
-      "fail": 1537,
+      "fail": 1538,
       "compile_error": 1170,
-      "compile_timeout": 1,
+      "compile_timeout": 0,
       "skip": 18,
       "total": 11102,
       "host_free_pass": 8376
@@ -1286,11 +1286,11 @@
           "Proposals": 4450
         },
         "sample_files": [
-          "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
+          "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
-          "test/built-ins/Temporal/Duration/prototype/round/subclassing-ignored.js"
+          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::CSSNumericValue_equals (##)",
@@ -1325,15 +1325,15 @@
           "ES2027": 101
         },
         "sample_files": [
-          "test/built-ins/AsyncDisposableStack/prototype/move/sets-state-to-disposed.js",
           "test/built-ins/AsyncDisposableStack/prototype/move/not-a-constructor.js",
-          "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
+          "test/built-ins/AsyncDisposableStack/prototype/move/sets-state-to-disposed.js",
           "test/built-ins/AsyncDisposableStack/instance-extensible.js",
+          "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.dispose-property-not-callable.js"
         ],
         "sample_signatures": [
-          "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_get_disposed, env::AsyncDisposableStack_move, env::AsyncDisposableStack_new (##)",
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_new (##)",
+          "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_get_disposed, env::AsyncDisposableStack_move, env::AsyncDisposableStack_new (##)",
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_new, env::AsyncDisposableStack_use (##)",
           "assertion_fail:Test262Error: [object Object] should be an own property",
           "type_error:TypeError: Cannot access property on null or undefined at #:#"
@@ -1724,7 +1724,7 @@
           "test/built-ins/DataView/byteOffset-validated-against-initial-buffer-length.js",
           "test/built-ins/Reflect/setPrototypeOf/target-is-symbol-throws.js",
           "test/built-ins/AggregateError/newtarget-proto-fallback.js",
-          "test/built-ins/Reflect/Symbol.toStringTag.js"
+          "test/built-ins/Reflect/set/return-false-if-target-is-not-writable.js"
         ],
         "sample_signatures": [
           "other:L#:## Codegen error: Reflect.set with an explicit receiver argument is not yet supported in --target standalone (##); the receiver would be silently dropped and accessor setters would write to the target instead of the receiver.",
@@ -2209,15 +2209,15 @@
         },
         "sample_files": [
           "test/built-ins/Date/value-symbol-to-prim-return-prim.js",
-          "test/built-ins/Date/S15.9.3.1_A3_T4.2.js",
           "test/built-ins/Date/prototype/Symbol.toPrimitive/hint-string-first-invalid.js",
+          "test/built-ins/Date/S15.9.3.1_A3_T4.2.js",
           "test/built-ins/Date/prototype/setMinutes/arg-ms-to-number.js",
           "test/built-ins/Date/prototype/toJSON/to-primitive-symbol.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected SameValue(«NaN», «#») to be true",
-          "assertion_fail:Test262Error: x1.toString() must return \"[object Date]\" Expected SameValue(«\"Sun Dec # # #:#:# GMT+# (Coordinated Universal Time)\"», «\"[object Date]\"») to be true",
           "type_error:TypeError: Cannot read properties of undefined (reading 'call')",
+          "assertion_fail:Test262Error: x1.toString() must return \"[object Date]\" Expected SameValue(«\"Sun Dec # # #:#:# GMT+# (Coordinated Universal Time)\"», «\"[object Date]\"») to be true",
           "assertion_fail:Test262Error: \"this\" value Expected SameValue(«[object Object]», «[object Object]») to be true",
           "assertion_fail:Test262Error: Expected SameValue(«undefined», «false») to be true"
         ]
@@ -2382,7 +2382,7 @@
           "type_error:TypeError: Cannot convert undefined or null to object",
           "assertion_fail:Test262Error: Expected SameValue(«[object Object]», «undefined») to be true",
           "type_error:TypeError: Symbol.prototype.valueOf is not yet implemented in --target standalone",
-          "assertion_fail:Test262Error: hint: number Expected a TypeError to be thrown but no exception was thrown at all"
+          "assertion_fail:Test262Error: Expected SameValue(«undefined», «null») to be true"
         ]
       },
       {
@@ -2480,9 +2480,9 @@
         "count": 498,
         "statuses": {
           "pass": 0,
-          "fail": 488,
+          "fail": 489,
           "compile_error": 9,
-          "compile_timeout": 1,
+          "compile_timeout": 0,
           "skip": 0,
           "total": 498,
           "host_free_pass": 0
@@ -2771,27 +2771,27 @@
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 40,
           "type_error": 4,
+          "assertion_fail": 40,
           "other": 9,
           "illegal_cast": 1,
           "null_deref": 2
         },
         "by_edition": {
-          "ES2027": 13,
           "ES5": 24,
+          "ES2027": 13,
           "ES2015": 21
         },
         "sample_files": [
-          "test/language/statements/using/syntax/using-invalid-assignment-statement-body-for-of.js",
           "test/language/statements/function/13.2-18-1.js",
+          "test/language/statements/using/syntax/using-invalid-assignment-statement-body-for-of.js",
           "test/language/comments/S7.4_A5.js",
           "test/language/statements/await-using/syntax/await-using-allowed-at-top-level-of-module.js",
           "test/language/statements/function/S13_A2_T2.js"
         ],
         "sample_signatures": [
-          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "type_error:TypeError: Cannot destructure 'null' or 'undefined'",
+          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "compile_timeout:timeout (10s)",
           "other:L#:## 'await using' declarations are not allowed at the top level of scripts",
           "assertion_fail:Test262Error: ##: x === \"#\". Actual: x ===#"
@@ -3044,8 +3044,8 @@
           "Unclassified (untagged)": 2
         },
         "sample_files": [
-          "test/built-ins/NativeErrors/URIError/prototype/message.js",
           "test/built-ins/NativeErrors/TypeError/prototype/message.js",
+          "test/built-ins/NativeErrors/URIError/prototype/message.js",
           "test/language/expressions/function/arguments-with-arguments-lex.js",
           "test/built-ins/Error/the-initial-value-of-errorprototypemessage-is-the-empty-string.js",
           "test/built-ins/NativeErrors/RangeError/prototype/message.js"
