@@ -56,6 +56,7 @@ func-budget-allow:
   - src/codegen/class-bodies.ts::compileClassBodiesInner
   - src/codegen/index.ts::emitIteratorMethodExport
   - src/runtime.ts::<anonymous>#89
+  - src/codegen/extern-declarations.ts::registerBuiltinExternClasses
 ---
 # npm-compat: pin and adapt original upstream test suites for catalog packages
 
