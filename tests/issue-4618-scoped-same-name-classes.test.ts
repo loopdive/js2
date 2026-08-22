@@ -64,3 +64,48 @@ describe("#4618 same-named nested classes are scoped per declaration", () => {
     expect(exp.t2!()).toBe("ok2");
   });
 });
+
+describe("#4618 same-layout sibling classes dispatch host-side by tag", () => {
+  it("host method calls on instances of same-shaped same-named classes hit the right bodies", async () => {
+    // Same field LAYOUT → one canonical WasmGC type → a bare ref.test arm
+    // matched both; the first class's instance ran the sibling's method.
+    const grabbed: unknown[] = [];
+    (globalThis as Record<string, unknown>).__grab4618sc = (v: unknown) => {
+      grabbed.push(v);
+    };
+    const result = await compile(
+      `
+      export function a(): any {
+        class Foo { m(): any { return "A"; } }
+        (globalThis as any).__grab4618sc(Foo);
+        return 1;
+      }
+      export function b(): any {
+        class Foo { m(): any { return "B"; } }
+        (globalThis as any).__grab4618sc(Foo);
+        return 1;
+      }`,
+      { testRuntime: true, fileName: "issue-4618-tag-dispatch.ts", skipSemanticDiagnostics: true },
+    );
+    expect(result.success).toBe(true);
+    const importObject = (result as { importObject?: WebAssembly.Imports }).importObject ?? {};
+    const { instance } = await WebAssembly.instantiate(result.binary!, importObject);
+    (importObject as { __setInstance?: (i: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    const exp = wrapExports(instance, {
+      signatures: (result as { exportSignatures?: unknown }).exportSignatures,
+    }) as Record<string, () => unknown>;
+    exp.a!();
+    exp.b!();
+    const [ClassA, ClassB] = grabbed as [
+      new () => Record<string, () => unknown>,
+      new () => Record<string, () => unknown>,
+    ];
+    // host-side [[Construct]] through the #4618 bridge tags the instances,
+    // and the tag-guarded dispatch arms pick each class's OWN method body.
+    const ia = new ClassA();
+    const ib = new ClassB();
+    expect(typeof ia.m).toBe("function");
+    expect(ia.m!()).toBe("A");
+    expect(ib.m!()).toBe("B");
+  });
+});

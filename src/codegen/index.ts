@@ -6293,6 +6293,58 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
   const dispatchTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], "$call_method_type");
 
   // Helper to emit a method dispatch export
+  // (#4618) Same-shaped same-named sibling classes canonicalize to ONE WasmGC
+  // struct type, so a bare `ref.test` dispatch arm matches BOTH classes'
+  // instances and the first arm wins — the canonical class's instance ran the
+  // SIBLING's method body (react's per-test `class Foo` re-declarations).
+  // When an entry's layout collides with another entry's, guard its arm with
+  // the `__tag` field: own tag plus every DESCENDANT's tag (a parent's arm
+  // must keep matching subclass instances for inherited-method dispatch).
+  // Returns undefined — zero byte change — when no collision exists.
+  const classDispatchTagCondition = (
+    entriesAll: readonly { structName: string }[],
+    structName: string,
+    typeIdx: number,
+    receiverLocal: number,
+  ): Instr[] | undefined => {
+    const fields = ctx.structFields.get(structName);
+    if (!fields || fields.length === 0 || fields[0]!.name !== "__tag") return undefined;
+    const layoutSig = (n: string): string | undefined => {
+      const fs = ctx.structFields.get(n);
+      return fs?.map((f) => `${f.type.kind}:${(f.type as { typeIdx?: number }).typeIdx ?? ""}`).join(",");
+    };
+    const own = layoutSig(structName);
+    if (own === undefined) return undefined;
+    const conflict = entriesAll.some((e) => e.structName !== structName && layoutSig(e.structName) === own);
+    if (!conflict) return undefined;
+    const ownTag = ctx.classTagMap.get(structName);
+    if (ownTag === undefined) return undefined;
+    const tags = [ownTag];
+    const isDescendantOf = (n: string): boolean => {
+      let cur: string | undefined = ctx.classParentMap.get(n);
+      const seen = new Set<string>();
+      while (cur !== undefined && !seen.has(cur)) {
+        if (cur === structName) return true;
+        seen.add(cur);
+        cur = ctx.classParentMap.get(cur);
+      }
+      return false;
+    };
+    for (const [childName, tag] of ctx.classTagMap) {
+      if (childName !== structName && isDescendantOf(childName) && !tags.includes(tag)) tags.push(tag);
+    }
+    const readTag: Instr[] = [
+      { op: "local.get", index: receiverLocal },
+      { op: "ref.cast", typeIdx },
+      { op: "struct.get", typeIdx, fieldIdx: 0 },
+    ];
+    const cond: Instr[] = [...readTag, { op: "i32.const", value: tags[0]! }, { op: "i32.eq" }];
+    for (const t of tags.slice(1)) {
+      cond.push(...readTag, { op: "i32.const", value: t }, { op: "i32.eq" }, { op: "i32.or" });
+    }
+    return cond;
+  };
+
   const emitMethodDispatch = (
     methodSuffix: string,
     exportName: string,
@@ -6624,9 +6676,22 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
       }
       // externref: no conversion needed
 
+      const tagCond = classMember
+        ? classDispatchTagCondition(entries, entry.structName, entry.typeIdx, receiverAnyLocal)
+        : undefined;
       current = [
         { op: "local.get", index: receiverAnyLocal },
         { op: "ref.test", typeIdx: entry.typeIdx },
+        ...(tagCond
+          ? ([
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "i32" } },
+                then: tagCond,
+                else: [{ op: "i32.const", value: 0 }],
+              },
+            ] satisfies Instr[])
+          : []),
         {
           op: "if",
           blockType: { kind: "val", type: { kind: "externref" } },
@@ -6839,6 +6904,7 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
   const skipStruct = isSyntheticStructName;
 
   type KindEntry = {
+    structName: string;
     typeIdx: number;
     funcIdx: number;
     resultType: ValType | undefined;
@@ -6873,14 +6939,14 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
       if (!isGetter && restInfo) {
         if (!ctx.hostDynamicClassMethodNames.has(memberKey)) continue;
         const resultType: ValType | undefined = funcType.results.length > 0 ? funcType.results[0]! : undefined;
-        entries.push({ typeIdx, funcIdx, resultType, paramTypes: funcType.params, isRest: true });
+        entries.push({ structName, typeIdx, funcIdx, resultType, paramTypes: funcType.params, isRest: true });
         continue;
       }
       if ((isGetter || !ctx.hostDynamicClassMethodNames.has(memberKey)) && funcType.params.length !== 1) continue;
       if (funcType.params.length < 1) continue;
       if (funcType.params.slice(1).some((param) => !supportsHostClassBridgeParam(param))) continue;
       const resultType: ValType | undefined = funcType.results.length > 0 ? funcType.results[0]! : undefined;
-      entries.push({ typeIdx, funcIdx, resultType, paramTypes: funcType.params });
+      entries.push({ structName, typeIdx, funcIdx, resultType, paramTypes: funcType.params });
     }
     return entries;
   };

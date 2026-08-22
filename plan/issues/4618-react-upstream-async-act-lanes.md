@@ -634,6 +634,17 @@ in-module reads (host-side detection is what react-dom needs).
   or guard only within the same-layout conflict set, or a bare
   `tag == ownTag` check will break `class Sub extends Base {}` inherited
   calls.
+  **IMPLEMENTED same day — react 88 → 91/146, StrictMode filter 3/7**: the
+  `__class_call_*` cascade arms in emitMethodDispatch are now tag-guarded
+  (own tag + descendant tags via classParentMap walk) whenever the entry's
+  field layout collides with another entry's — zero byte change otherwise.
+  The kind/arity discriminators (emitClassMemberKindExports, separate
+  function scope) are NOT yet guarded — a wrong-arm `kind` answer is
+  behaviorally benign today (both arms answer "method") but an arity
+  mismatch between same-layout siblings could still mis-select; follow-up
+  if a shape surfaces. Guards: acorn 3518/3518, jest 322/356, cookie
+  63740/63740, clsx 32/32; the 16 issue-1712 battery failures are
+  identical on base (A/B'd).
 
 ## Fix order
 
