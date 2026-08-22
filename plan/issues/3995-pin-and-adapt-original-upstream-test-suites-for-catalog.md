@@ -917,3 +917,33 @@ scores **215/313** (98 compatibility failures, zero runtime failures). The
 remaining **2,973 registrations** from 220 verified files are explicitly
 reported as unavailable infrastructure. The nine new parse-shard callbacks
 pass in both lanes; no test body or expected input was rewritten.
+
+## 2026-08-22 Jest global-process and concurrent-registration checkpoint
+
+Two additional original release-tag units are now selected without changing
+their callback bodies: `jest-core/src/__tests__/globals.test.ts` and
+`jest-jasmine2/src/__tests__/concurrent.test.ts`. The generic Jest extractor
+also recognizes the original `test.concurrent.each(...)` registration form and
+routes it through the same per-callback runner; the compatibility lane scores
+results serially because it compares behavior, not Jest's worker scheduling.
+
+The exact run now covers **319 callbacks across 23 selected files**. Node
+admits **317/319**, all 23 modules compile and 22 validate, and Wasm scores
+**218/317**. All three concurrent callbacks pass in Wasm. The globals callback
+runs in both lanes but fails its original `[object process]` assertion because
+the current Wasm host exposes the process binding as a null-shaped value; this
+is retained as a compatibility failure rather than relabeled as unavailable
+infrastructure. The queue-runner module remains the sole invalid Wasm module.
+The remaining **2,969 registrations** from 218 verified files remain explicit
+unavailable infrastructure.
+
+The same checkpoint also admits the original
+`jest-haste-map/src/lib/__tests__/getPlatformExtension.test.js` utility unit.
+Its single callback passes in both lanes. The exact inventory is now **320
+callbacks across 24 selected files**: Node admits **318/320**, 24 modules
+compile and 23 validate, and Wasm scores **219/318**. The unavailable
+infrastructure remainder is **2,968 registrations** from 217 verified files.
+An exploratory `jest-config/src/__tests__/Defaults.test.ts` was not admitted:
+its original package graph requires the unmaterialized pinned `deepmerge`
+dependency, so the Node oracle could not register the callback. That remains a
+concrete dependency-resolution follow-up rather than a Wasm result.

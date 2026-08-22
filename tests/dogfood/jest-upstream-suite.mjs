@@ -74,7 +74,7 @@ function matchingParenthesis(source, openIndex) {
 function rewriteCurriedEachCalls(source) {
   let output = "";
   let cursor = 0;
-  const callPattern = /\b(describe|it|test)\.each\s*\(/g;
+  const callPattern = /\b(describe|it|test)(?:\.concurrent)?\.each\s*\(/g;
   while (true) {
     const match = callPattern.exec(source);
     if (!match) break;
