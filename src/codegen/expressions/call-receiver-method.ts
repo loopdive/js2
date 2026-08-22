@@ -45,7 +45,7 @@ import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } f
 import { tryCompileHostStringPredicate } from "../host-string-prefix-suffix.js";
 import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
 import { effectiveLocalCarrier } from "../analysis/mixed-assignment-carrier.js";
-import { staticIntegerRange } from "../analysis/static-numeric-range.js";
+import { staticIntegerRange } from "../../ir/analysis/static-numeric-range.js";
 import {
   emitArrayBufferResize,
   emitArrayBufferSlice,
@@ -3144,10 +3144,10 @@ export function compileReceiverMethodCall(
     // real `TypeError`. Declining routes it to the stored-member closure arm,
     // whose brand preamble does that (the expando-named half of the same rows,
     // `d.myToString = …`, already threw before this change).
-    //
-    // Receiver-precise (`sourceOverridesMethodOnReceiver`): a module that does
-    // not override `toString` on this binding compiles byte-identically.
-    !(ctx.standalone && sourceOverridesMethodOnReceiver(propAccess.expression, "toString"))
+    // Receiver-precise (`sourceOverridesMethodOnReceiver`): a module that does not
+    // override `toString` on this binding compiles byte-identically. (#4482: `ctx`
+    // widens "this binding" to a `new A(…)` binding whose ctor installs the slot.)
+    !(ctx.standalone && sourceOverridesMethodOnReceiver(propAccess.expression, "toString", ctx))
   ) {
     // #1463 — `someFn.toString()` where `someFn` is a top-level function
     // declaration → return the captured source text directly. Must happen

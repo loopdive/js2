@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "../../ts-api.js";
 import type { TypeOracle } from "../../checker/oracle.js";
-import { loopBodyMutatesIndexOrArray } from "../statements/loop-analysis.js";
+import { loopBodyMutatesIndexOrArray } from "./loop-shape.js";
 
 export interface StaticIntegerRangeContext {
   readonly oracle: Pick<TypeOracle, "variableDeclarationOf">;

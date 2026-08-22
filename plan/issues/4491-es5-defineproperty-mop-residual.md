@@ -25,7 +25,44 @@ loc-budget-allow:
   # — +284 -> +134; the residual is call-site wiring that must live in the
   # runtime barrel at the host-import boundary.
   - src/runtime.ts
+  # 2026-08-20 honest-carrier slice: emitRuntimeDescriptorGet keeps externref
+  # in standalone (accessor results are runtime state; narrowing to the
+  # checker's f64 turned a get:undefined redefine's canonical undefined into
+  # NaN — 15.2.3.6-4-498/516/534/552 measured fail→pass).
+  - src/codegen/property-access.ts
+  # 2026-08-21 void-undefined slice: typeof unsound-fold guard for runtime
+  # accessor keys (typeof-delete.ts), void-typed binding slot widening
+  # (declarations.ts moduleGlobalWasmType arm).
+  - src/codegen/typeof-delete.ts
+  - src/codegen/declarations.ts
+  # 2026-08-21 defineProperties/create edge slice (buckets Q + R): the
+  # `Object.prototype.isPrototypeOf` reflective body is dispatched from
+  # `makeGlue`'s Object arm (array-object-proto.ts, +6) and the `for…in`
+  # [[Enumerable]] gate joins the existing #4222 presence gate
+  # (statements/loops.ts, +26). Both bodies live in NEW modules
+  # (object-proto-is-prototype-of.ts, vec-index-enumerable.ts); only the
+  # dispatch/wiring is in the big files.
+  - src/codegen/array-object-proto.ts
+  - src/codegen/statements/loops.ts
+oracle-ratchet-allow:
+  # 2026-08-21: one getTypeAtLocation in varBindingNeedsExternrefForUndefined's
+  # new call arm — the same raw-checker idiom as the surrounding predicate;
+  # the query is a TypeFlags test (void/undefined purity) the oracle does not
+  # express.
+  - src/codegen/index.ts
+  # 2026-08-21 (regression fix): the module-global consult was narrowed to an
+  # INLINE void-call check in moduleGlobalWasmType (the full predicate's
+  # void-0/#4206 arms regressed the filter harness family) — same TypeFlags
+  # purity query, same rationale.
+  - src/codegen/declarations.ts
 func-budget-allow:
+  # 2026-08-21 defineProperties/create edge slice: the `Properties`-map entry
+  # model gains a PASS-THROUGH arm (a map entry that is not an object literal)
+  # plus the reified-map construction. Already 724 LOC at base — the growth is
+  # in the existing `stableDescriptorMapEntries` IIFE, which cannot be split out
+  # without also moving the stability visitor it closes over.
+  - src/codegen/object-ops.ts::compileObjectDefineProperties
+  - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
   - src/codegen/object-ops.ts::compilePropertyIntrospection
 ---
@@ -689,3 +726,293 @@ both god-file growths paid by extraction, **no budget allowances**.
   reflection lane's P2; 3 × the vec enumerable filter above; 1 × Date
   own-visibility.
 - **QuickJS/eval-blocked: ZERO rows in this lane.**
+
+## 2026-08-21 void-in-argument-position slice (closes the void-undefined family)
+
+**Root cause.** `inferParamTypeFromCallSites` narrowed an implicit-`any`
+parameter from the TS type of the argument at each call site. For a purely-void
+argument — `verifyEqualTo(arrObj, "0", getFunc())` where `getFunc` returns
+nothing — `mapTsTypeToWasm` answers `i32` ("void → no result, handled in
+codegen"). That answer is a lowering convention for a *result slot*, not a claim
+that the argument is the number `0`, but the inference took it literally: the
+harness parameter got an `i32` slot, the void call padded it with `i32.const 0`,
+and the deprecated `verifyEqualTo` reported `Expected obj[0] to equal 0,
+actually undefined` — with the **expected** side wrong, not the actual one.
+
+**Fix** (`src/codegen/declarations/param-return-inference.ts`, +21 LOC, exactly
+the shape of the #4555 under-application rule right above it): record a call
+site whose argument type is exclusively `Void | Undefined`, and withdraw the
+narrowing when the agreed type is a native scalar (`f64`/`i32`/`i64`) — those
+have no encoding of `undefined`. The parameter stays on its resolved
+`externref`, whose default value already IS the canonical undefined
+(`pushDefaultValue` → `emitUndefinedValue` → the #2106 `$undefined` singleton in
+standalone). The withdrawal is per parameter POSITION, so a numeric kernel with
+a void argument in some other slot is untouched, and annotated parameters never
+reach this inference at all.
+
+**Measured** (serial single-test standalone probes, before/after on the same
+worktree):
+
+| test                                          | before | after |
+| --------------------------------------------- | ------ | ----- |
+| `Object/defineProperty/15.2.3.6-4-207.js`     | fail   | pass  |
+| `Object/defineProperty/15.2.3.6-4-208.js`     | fail   | pass  |
+| `Object/defineProperty/15.2.3.6-4-312.js`     | fail   | pass  |
+| `Object/defineProperty/15.2.3.6-4-570.js`     | pass   | pass  |
+| `Object/defineProperty/15.2.3.6-4-498.js`     | pass   | pass  |
+
+Two 12- and 17-test control batches (arguments-object, function statements,
+call/void expressions, Math/Array/Object/String/parseInt built-ins, and 12
+`verifyEqualTo(..., getFunc())` defineProperty rows that already passed) are
+**byte-identical before and after** — no regressions in the sample.
+
+**Residuals deliberately NOT taken in this slice:**
+
+- `15.2.3.6-4-195.js` still fails, but no longer on the void value — its
+  `verifyEqualTo` now passes and it stops at `Expected obj[0] to be writable,
+  but was not`. That is inherited-accessor `[[Set]]` dispatch, a different row.
+- `[1, getFunc()]` — a void element mixed with numbers types the array
+  `number[]` after the type mapper's union rule ("`T | undefined` for primitives
+  → just use `T`"), so the element lands as `f64 0`. Pure `undefined[]`/`void[]`
+  is already correct (#2806). Changing the union rule would move every
+  `number | undefined` slot in the compiler and is out of scope here.
+
+## 2026-08-21 bucket D re-triage + the uint32 `length` VALUE slice
+
+**Bucket D was 26 rows in the 2026-08-15 triage; on this head it is 10.** Every
+row in the file set that mentions a 2^32-boundary literal
+(`built-ins/Object/define{Property,Properties}`, `built-ins/Array{,/length}`,
+35 files) was re-run serially against my own HEAD before touching anything —
+several had already been carried by the session's earlier slices (`15.2.3.6-4-
+{184,185,186}`, `15.2.3.7-6-a-{180,181,182}`, `-{149,152,153}`,
+`15.2.3.6-4-{153,156,157}` all pass now).
+
+The 10 reproducing rows split into **three unrelated defects**, not one:
+
+| part | rows | defect |
+| ---- | ---- | ------ |
+| **D-L** `length` **VALUE** in `[2^31, 2^32-1]` | `defineProperty/15.2.3.6-4-{154,155}`, `defineProperties/15.2.3.7-6-a-{150,151}`, `Array/length/15.4.5.1-3.d-3`, `Array/S15.4.5.2_A3_T3` | this slice (4 of 6 landed; 2 blocked, below) |
+| **D-I** array **INDEX** at 2^32-2 must bump `length` to 2^32-1 | `defineProperty/15.2.3.6-4-183`, `defineProperties/15.2.3.7-6-a-179` | #4497 — needs the `vec-index-domain.ts` ceiling raised from 2^31-1 |
+| **D-A** allocation | `Array/S15.4.5.2_A1_T1`, `Array/length/S15.4.5.2_A3_T4`, `Array/length/S15.4.2.2_A2.1_T1` | #4498 — `new Array(2^32-1)` / `x[2^31]=1` trap ("requested new array is too large" / "array element access out of bounds") |
+
+(`Array/length/define-own-prop-length-overflow-realm.js` is eval-rooted and
+cannot be validated here — no QuickJS provider on this box, per #4163.)
+
+### Root cause of D-L: an explicit bail, not a truncation
+
+`vec-overlay.ts`'s native `__vec_dp_value` `"length"` arm (the standalone
+ArraySetLength) carried
+
+```
+// u ≥ 2^31 → legacy no-op (i32 vec length cannot represent it)
+```
+
+and **returned the receiver untouched**. So
+`Object.defineProperty(arr, "length", {value: 2**32-2})` answered `0` — a wrong
+answer with no error, invisible to every gate.
+
+The premise is false in the direction that matters. STORING elements at such an
+index does need sparse arrays; carrying the uint32 length VALUE does not — the
+`$__vec_base` length field round-trips the whole u32 domain as a bit pattern,
+and the readers that can observe a length ≥ 2^31 already widen it with
+`f64.convert_i32_u` (the `__extern_get` `"length"` arm in `object-runtime.ts`,
+added by the `vec-length-set.ts` slice, which had already made the *dynamic*
+`arr.length = n` store unsigned). The define arm was the odd one out.
+
+**Fix** (`src/codegen/vec-overlay.ts`, +38 −2): replace the bail with a
+sparse-length arm — the same §10.1.6.3 `__vec_dp_value` legality delegate as the
+in-range path (so a non-writable / non-configurable `length` still refuses),
+then `vec.length = i32.trunc_sat_f64_u(u)`. The element machinery is skipped
+deliberately: a length ≥ 2^31 is unbackable, so it is always a grow into sparse
+territory with no real elements to create — exactly what the static
+`maybeEmitVecLengthDefine` does above its own 16M ceiling. It also *cannot* use
+the shrink loop below it, whose `i32.lt_s` against a newLen with a negative bit
+pattern never terminates.
+
+### Measured (serial single-test standalone probes, file-copy A/B on one head)
+
+| set | files | base | branch | up | down |
+| --- | ----: | ---: | -----: | -: | ---: |
+| boundary candidates (every 2^32-literal file in the 4 dirs) | 35 | 23 pass | 27 pass | **4** | **0** |
+| control: `Array/length/**` + `defineProperty/15.2.3.6-4-1*` + `defineProperties/15.2.3.7-6-a-1[4-9]*` | 204 | 186 pass | 191 pass | **5** | **0** |
+| blast radius: seeded-120 sample of `built-ins/**/{name,length}.js` (the propertyHelper population) + 60 `push`/`pop`/`splice` | 180 | 103 pass | 103 pass | 0 | **0** |
+
+Flips: `defineProperty/15.2.3.6-4-{154,155}`,
+`defineProperties/15.2.3.7-6-a-{150,151}`, and — not predicted —
+`defineProperty/15.2.3.6-4-116` ("length descriptor should be writable"), which
+reads the descriptor back through the same companion the arm now populates.
+
+Gates: `check:loc-budget`, `check:func-budget`, `check:coercion-sites`,
+`check:oracle-ratchet` all OK (the `vec-overlay.ts` / `fillVecOverlayHelpers`
+grants in this file's frontmatter cover it). `tsc` shows no error in any touched
+file (510 pre-existing errors, 482 of them TS2591).
+
+### BLOCKED sub-item — the two assignment-form rows
+
+`Array/length/15.4.5.1-3.d-3` and `Array/S15.4.5.2_A3_T3` are the same defect on
+the plain `arr.length = n` ASSIGNMENT form, and they need **two** one-word
+changes, only one of which is in reach:
+
+1. `emitArraySetLengthValidation` (`array-length-define.ts`) ends
+   `i32.trunc_sat_f64_s` — signed, so a validated `2**32-1` SATURATES to
+   2147483647. Its comment reads this as needing sparse arrays; per the argument
+   above that is the wrong diagnosis, and `_u` is the fix. (Same for the
+   assignment-expression result widening in `expressions/assignment.ts`.)
+2. The STATIC `.length` READ of a vec receiver widens with
+   `f64.convert_i32_s` — **`src/codegen/property-access-dispatch.ts` ~L2985**
+   (verified by disassembling the emitted module: `$run` is
+   `f64.convert_i32_s (struct.get $15 0 …)`). That file is held by another lane
+   right now, so this slice does not touch it.
+
+Both edits were **implemented and measured, then REVERTED**, because half of the
+pair is worse than neither: with the unsigned store and the signed read,
+`[].length = 2**32-1` answers **-1** where it used to answer 2147483647 — still
+failing, no test won, and a behaviour change on every `arr.length = <≥2^31>`
+with no way to validate it to green from here. Measured state of the pair, so
+the next attempt does not re-derive it:
+
+| probe | base | store `_u` only | store + read `_u` |
+| ----- | ---- | --------------- | ----------------- |
+| `var a=[]; a.length=2**32-1; a.length` | 2147483647 | −1 | (expected 4294967295 — unverified, read not touched) |
+
+**Whoever holds `property-access-dispatch.ts` next: make the vec `length` read
+`f64.convert_i32_u`, then flip the two truncations above.** Lengths below 2^31 —
+every ordinary array — encode identically under either signedness, so the change
+is inert outside the boundary band.
+
+## 2026-08-21 defineProperties descriptor-map + Object.create edges (buckets Q, R)
+
+**Method.** Every file in `built-ins/Object/defineProperties` (632) and
+`built-ins/Object/create` (320) — 952 rows — run serially through
+`runTest262File(..., "standalone")`, A/B against the identical 952 rows with the
+change reverted by file copy (`.tmp/probe/ab.sh`, base copies captured at the
+first edit). Plus 279 paired CONTROL rows: all of `language/statements/for-in`,
+`built-ins/Object/{keys,getOwnPropertyNames}`, and 89 of
+`built-ins/Object/getOwnPropertyDescriptor`.
+
+**Result: 1,231 paired rows, 5 fail→pass, 0 pass→fail.**
+
+| test | before | after |
+| ---- | ------ | ----- |
+| `create/15.2.3.5-3-1.js` | fail | **pass** |
+| `create/15.2.3.5-4-1.js` | fail | **pass** |
+| `defineProperties/15.2.3.7-6-a-198.js` | fail | **pass** |
+| `defineProperties/15.2.3.7-6-a-203.js` | fail | **pass** |
+| `defineProperties/15.2.3.7-6-a-209.js` | fail | **pass** |
+
+### The buckets were much smaller than the triage estimated
+
+Bucket Q was estimated at ~18 rows and R at ~13. Measured on this head, the two
+directories together hold **19 non-passing rows**, of which **3 are
+`JS2WASM_EVAL_ENGINE=quickjs` infrastructure blocks** — the provider does not
+build in this container (`scripts/quickjs-artifact/build.sh` needs clang-18 +
+network; the compiler-rt fetch returns non-gzip), the #4163 finding — so **16
+are real**. Several rows in the 2026-08-20 gap list already pass on this head
+(e.g. `create/15.2.3.5-4-263`, the get-only accessor descriptor). Bucket sizes
+derived from error TEXT overstate; re-verify before scoping.
+
+### Root causes fixed
+
+1. **`Object.prototype.isPrototypeOf` had no reflective body**
+   (`object-proto-is-prototype-of.ts`, new). `makeGlue`'s `Object` arm sent
+   every member but `toString` to `emitObjectProtoOrRefusal`, so a *called*
+   `isPrototypeOf` threw "not yet implemented in --target standalone". The
+   compile-time folds in `native-is-prototype-of.ts` only fire for a receiver
+   written literally as `<Ctor>.prototype`; the ordinary `b.isPrototypeOf(d)` on
+   a constructed instance resolves the member off `Object.prototype` and lands
+   on the reflective CLOSURE. The body routes to the existing `__isPrototypeOf`
+   chain walk and boxes with `__box_boolean` (so `r === true` holds, not
+   `1 !== true`). Both late imports are ensured BEFORE any instruction is
+   emitted — a mid-body late import would shift this body's already-emitted
+   `call`, and the shift fixer only repairs `ctx.currentFunc`.
+   Probe controls, all correct: `Object.prototype.isPrototypeOf({})` true,
+   `Array.prototype.isPrototypeOf([1,2])` true / `({})` false, own chain true,
+   reverse false, self false, primitive/`undefined`/`null` arg false, 2-deep
+   chain true, `typeof` `boolean`.
+
+2. **A `Properties` map in a VARIABLE with non-literal entries refused**
+   (`object-ops.ts`). `stableDescriptorMapEntries` (#3782) required every entry
+   initializer to BE an object literal; `var properties = { "0": descObj }`
+   declined, the closed WasmGC struct reached the native plural applier, and it
+   threw `[SITE-PROPS-BAG-NOT-AUTHORITATIVE]`. Such an entry is now modelled as
+   a PASS-THROUGH, and a map containing one is reified into a real `$Object`
+   through the existing `compileDescriptorMapAsDynamicObject` builder rather
+   than expanded per key — the native applier is the only path with
+   ToPropertyDescriptor's conflict/callable checks and it preserves
+   §20.1.2.3.1's gather-all-then-define-all order. An all-literal map with no
+   merged field write keeps the pre-existing per-key expansion untouched, so
+   the paths that already worked emit exactly what they did.
+   Note the pre-existing limitation this did NOT change: the stability visitor
+   treats a SECOND read of the map variable as instability, so
+   `Object.defineProperties(a, props); Object.defineProperties(b, props)`
+   declines both.
+
+3. **`for…in` enumerated array indices whose descriptor says
+   `enumerable: false`** (`vec-index-enumerable.ts`, new). The descriptor was
+   already recorded correctly — `getOwnPropertyDescriptor(a,"0")` reads
+   `1001/true/false/true` — only the enumeration disagreed, because
+   `emitArrayForIn`'s native lane walks `"0" … "length-1"` unconditionally. The
+   new native answers from the #3251 overlay companion and joins the existing
+   #4222 presence gate inside the loop's `$continue` block (same `br_if 0`
+   shape, so the user body's break/continue depths are untouched). Reserve-then-
+   fill like `__vec_overlay_push_keys`, because `__vec_overlay_lookup` is only
+   minted at finalize; a skipped fill degrades to the placeholder `1`, i.e. the
+   previous answer. Demand gated on `vecOwnKeysDirty`, so a module that never
+   mentions a descriptor/own-key builtin gets no native, no call, no local.
+
+### Diagnosed but NOT taken — with the measurement, so it is not re-derived
+
+- **`defineProperty/15.2.3.6-3-138` is NOT an inherited-accessor
+  ToPropertyDescriptor bug.** The dispatch brief named it as a §8.10.5 step-5.a
+  prototype-walk failure. Measured, `__desc_has_own` already does the full
+  §7.3.12 chain walk (#4163) and `"value" in child` answers `true`. The real
+  condition is on the RECEIVER: `Object.defineProperty(o, K, desc)` where `o`
+  is a compiler-CLOSED struct that already has a declared field `K` and `desc`
+  is anything other than an INLINE object literal writes the descriptor into
+  the dynamic store while the static `o.K` read still returns the struct field.
+  Sweep (`.tmp/probe/pa.js`, `pb.js`), one program, standalone:
+  | receiver | descriptor | `o.p` after |
+  | -------- | ---------- | ----------- |
+  | `{}` | constructed instance w/ own `value` | 42 ✅ |
+  | `{q:1}` | constructed instance w/ own `value` | 42 ✅ |
+  | `{p:120}` | INLINE `{value:42}` | 42 ✅ |
+  | `{p:120}` | `var dsc = {value:42,w/e/c:true}` | **120** ❌ |
+  | `{p:120}` | constructed instance | **120** ❌ |
+  The descriptor CARRIER (constructed instance, inherited field, set-only
+  accessor) is irrelevant — only receiver-shape × descriptor-spelling matters.
+  One row in the current red set; the fix belongs with the sidecar/struct-field
+  convergence work, not here.
+- **`defineProperties/15.2.3.7-6-a-{204,231}` are the typed-lane/aliasing gap,
+  not descriptor gaps.** `p5`/`r2` show the accessor at index `"0"` installs,
+  invokes, and reports the right descriptor when read directly. What fails is
+  reading it back through anything but the original identifier
+  (`.tmp/probe/s3.js`, one program):
+  `arr[0]` → 101 ✅ · `var idx=0; arr[idx]` → 101 ✅ ·
+  `var alias = arr; alias[0]` → **0** ❌ · `f(arr,0)` (param monomorphized to
+  the vec) → **0** ❌ · `f(arr,0)` (polymorphic param) → **undefined** ❌ ·
+  `f.call(null,arr,0)` → **undefined** ❌ · `f(arr,"verifySetter")` →
+  **undefined** ❌ while `arr["verifySetter"]` → 100 ✅.
+  That is #4159's own subject (a `propertyHelper.js` parameter on the typed
+  lane) plus an ALIAS leak the #4159 note does not mention: the route is keyed
+  on the identifier, so `var alias = arr` escapes it. Needs its own slice.
+- **`defineProperties/15.2.3.7-6-a-183` is a value-representation row.**
+  `arr=[1,2,3]` is a `__vec_f64`; `defineProperties(arr,{"1":{value:"abc"}})`
+  cannot store a string in it. Control: the same define with `length` still
+  writable also leaves `arr[1] === 2`, and `arr[1] = "zzz"` gives `NaN` — so
+  the non-writable `length` in the test is a red herring.
+- **`defineProperties/15.2.3.7-2-16` and `create/15.2.3.5-4-15` need the
+  ARGUMENTS object, not the descriptor map.** Both assert
+  `'[object Arguments]' === Object.prototype.toString.call(this)` inside a
+  getter on the `Properties` object. Measured (`.tmp/probe/q3.js`): an
+  arguments object here tags `[object Object]`, reports `length: 0` for
+  `new Fun(1,2)`, and `Object.defineProperty(args,"bar",{...})` lands nowhere
+  (`hasOwnProperty` false, `gOPD` null) while a plain `args.foo = 7` expando
+  works. Three separate gaps upstream of anything `defineProperties` can fix.
+- **`Object.keys` / `getOwnPropertyNames` still enumerate a non-enumerable
+  array index** (`Object.keys(a)` → `["0"]` for the fix-3 array). They reach the
+  key list through `__vec_overlay_push_keys` and the `__object_keys` vec arm —
+  different wiring, no row in this bucket asserting it, and widening both at
+  once would make one regression indistinguishable from the other.
+- `15.2.3.7-6-a-{150,151,179}` remain #4497 (the 2^32 `length` boundary);
+  `15.2.3.7-6-a-113` is an `Array.prototype.length` value read inside a closure
+  (`illegal cast`), a builtin-prototype-value row.

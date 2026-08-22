@@ -117,7 +117,7 @@ import {
   type NativeStringLiteralMaterialization,
   type StringEncoding,
 } from "../codegen/native-string-literals.js";
-import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../codegen/regexp-runtime-contract.js";
+import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
 import { ensureStandaloneRegExpCarrierTestHelper } from "../codegen/regexp-standalone.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../codegen/registry/imports.js";
 import { emitWasiErrorConstructor } from "../codegen/registry/error-types.js";
@@ -296,6 +296,7 @@ import {
   type IrSelection,
 } from "./select.js";
 import { verifyIrFunction } from "./verify.js";
+import { irModuleDeclarations } from "./declared-types.js";
 import { prepareIrRuntimeManifest, type PreparedIrRuntimeManifest } from "./intrinsic-support.js";
 import { attachIrExternSupport } from "./extern-support.js";
 import { attachIrGeneratorSupport, collectAttachedGeneratorProviders } from "./generator-support.js";
@@ -2186,6 +2187,11 @@ export function compileIrPathFunctions(
   }
 
   // 2c. Re-run hygiene on functions the inline pass actually rewrote; verify.
+  // (#4605) The module IS in scope here, so the verifier gets its declared
+  // signatures — a call site whose arity or result carrier contradicts the
+  // callee's own declaration is caught even when it is the only reference to
+  // that callee in its function.
+  const declsAfterInline = irModuleDeclarations(modOut);
   const afterInline: BuiltFn[] = [];
   for (let i = 0; i < afterHygiene.length; i++) {
     const before = afterHygiene[i]!;
@@ -2200,7 +2206,7 @@ export function compileIrPathFunctions(
       }
       const changed = after !== before.fn;
       const final = changed ? runHygienePasses(after, allocRegistry) : after;
-      const verifyErrors = verifyIrFunction(final);
+      const verifyErrors = verifyIrFunction(final, undefined, declsAfterInline);
       if (verifyErrors.length > 0) {
         throw new IrInvariantError(
           "verifier-failure",
@@ -2467,6 +2473,9 @@ export function compileIrPathFunctions(
   // (usually a no-op but cheap).
   // -------------------------------------------------------------------------
   const readyForLower: BuiltFn[] = [];
+  // (#4605) Same declared-signature check as after inlining, re-derived after
+  // monomorphization: clones are new units with their own declarations.
+  const declsAfterTU = irModuleDeclarations(modAfterTU);
 
   for (const fn of modAfterTU.functions) {
     const before = afterInlineByUnitId.get(fn.unitId);
@@ -2491,7 +2500,7 @@ export function compileIrPathFunctions(
           ? batchStringConcat(hygienic, allocRegistry, 8)
           : hygienic;
       const final = batched === hygienic ? hygienic : runHygienePasses(batched, allocRegistry);
-      const verifyErrors = verifyIrFunction(final);
+      const verifyErrors = verifyIrFunction(final, undefined, declsAfterTU);
       if (verifyErrors.length > 0) {
         throw new IrInvariantError(
           "verifier-failure",

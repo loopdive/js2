@@ -2,7 +2,8 @@ import { performance } from "node:perf_hooks";
 import { readFileSync } from "node:fs";
 
 import { compile, compileProject } from "../../src/index.ts";
-import { wrapExports } from "../../src/runtime.ts";
+import { buildCompiledImports, wrapExports } from "../../src/runtime.ts";
+import { getWebHostConstructors } from "../../src/runtime/web-host-constructors.ts";
 
 const generatedPath = process.argv[2];
 const mode = process.argv[3] ?? "project";
@@ -29,8 +30,45 @@ function errorText(error, instance) {
   return text;
 }
 
+async function loadNodeHostDependencies() {
+  const { createRequire } = await import("node:module");
+  const require = createRequire(import.meta.url);
+  const dependencies = Object.create(null);
+  // Resolve both the namespace-qualified import and the exported class/function
+  // names. This keeps the worker generic for upstream suites that use a small
+  // Node builtin surface without replacing any package implementation.
+  for (const moduleName of [
+    "node:async_hooks",
+    "node:assert",
+    "node:buffer",
+    "node:crypto",
+    "node:events",
+    "node:os",
+    "node:stream",
+    "node:timers",
+    "node:url",
+    "node:util",
+  ]) {
+    try {
+      const namespace = require(moduleName);
+      dependencies[moduleName] = namespace;
+      dependencies[moduleName.slice(5)] = namespace;
+      Object.assign(dependencies, namespace);
+    } catch {
+      // Optional builtins remain subject to the compiler's normal diagnostic.
+    }
+  }
+  // Node exposes the WHATWG encoding/stream constructors globally, but the
+  // compiled adapter resolves extern classes from the explicit dependency
+  // map. Forward the same host constructors so upstream Node tests can use
+  // TextEncoder/TextDecoder and related Web APIs without a package shim.
+  Object.assign(dependencies, getWebHostConstructors());
+  return dependencies;
+}
+
 async function main() {
   const started = performance.now();
+  const platform = process.env.DOGFOOD_PLATFORM ?? "web";
   // ReactDOM's original tests execute against Jest's jsdom environment. The
   // compiler worker is a separate process, so the parent harness's globals do
   // not cross the process boundary. Install the same explicit browser-global
@@ -42,7 +80,10 @@ async function main() {
     installReactTestEnvironment();
     const { createRequire } = await import("node:module");
     const workerRequire = createRequire(import.meta.url);
-    installReactUpstreamInfrastructure({ react: workerRequire("react") });
+    installReactUpstreamInfrastructure({
+      react: workerRequire("react"),
+      preferReactDomAct: process.env.DOGFOOD_REACT_DOM_ACT === "1",
+    });
   }
   let result;
   try {
@@ -50,7 +91,7 @@ async function main() {
       allowJs: true,
       skipSemanticDiagnostics: true,
       target: "gc",
-      platform: "web",
+      platform,
       experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
       // The upstream compatibility lane only needs the binary. WAT is a
       // diagnostic artifact and can become quadratic for large generated
@@ -70,7 +111,7 @@ async function main() {
             skipSemanticDiagnostics: true,
             experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
             sourceMap: true,
-            platform: "web",
+            platform,
             deferTopLevelInit: true,
           })
         : await compileProject(generatedPath, projectOptions);
@@ -123,7 +164,10 @@ async function main() {
   }
 
   try {
-    const imports = result.importObject ?? {};
+    const imports =
+      platform === "node" || process.env.DOGFOOD_NODE_HOST_DEPS === "1"
+        ? buildCompiledImports(result, await loadNodeHostDependencies())
+        : (result.importObject ?? {});
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
     imports.setInstance?.(instance);
     imports.__setInstance?.(instance);

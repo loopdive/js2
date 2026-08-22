@@ -81,7 +81,12 @@ export function tryNonConstructableNewTarget(
   // no position and therefore no checker symbol, so it looks exactly like an
   // undeclared name — this arm would turn every such rewrite into a
   // ReferenceError.
-  if (ts.isIdentifier(callee) && !nodeIsSynthesized(callee) && ctx.oracle.isUnresolvableIdentifier(callee)) {
+  if (
+    ts.isIdentifier(callee) &&
+    !nodeIsSynthesized(callee) &&
+    !isInsideWithStatementBody(callee) &&
+    ctx.oracle.isUnresolvableIdentifier(callee)
+  ) {
     const unresolvedType = compileExpression(ctx, fctx, callee);
     if (unresolvedType) fctx.body.push({ op: "drop" });
     for (const arg of expr.arguments ?? []) {
@@ -127,6 +132,32 @@ export function tryNonConstructableNewTarget(
  */
 function nodeIsSynthesized(node: ts.Node): boolean {
   return node.pos < 0 || node.end < 0;
+}
+
+/**
+ * (#3025) Is `node` lexically inside a `with` STATEMENT's body?
+ *
+ * The unresolvable-identifier arm above reads "the checker knows no binding for
+ * this name" as "no binding exists, so `new name()` must throw". Inside a `with`
+ * body that inference is invalid: TypeScript deliberately declines to resolve
+ * bare identifiers there (it cannot model the Object Environment Record), so
+ * `getSymbolAtLocation` answers `undefined` for names that DO resolve — even for
+ * a `var` declared in the very same block:
+ *
+ *     with (myObj) { var f = function () { … }; var obj = new f(); }
+ *
+ * `f` looked unresolvable, so every `S12.10_A1.8_T*` / `S12.10_A3.8_T*` threw
+ * `TypeError: f is not a constructor` instead of constructing. The `with` target
+ * itself may also supply the name at runtime. Declining here costs nothing: the
+ * ordinary `new` dispatch still runs, and a name that genuinely resolves to
+ * nothing raises its own ReferenceError from the identifier lowering.
+ */
+function isInsideWithStatementBody(node: ts.Node): boolean {
+  for (let cur: ts.Node | undefined = node; cur !== undefined; cur = cur.parent) {
+    const parent: ts.Node | undefined = cur.parent;
+    if (parent !== undefined && ts.isWithStatement(parent) && parent.statement === cur) return true;
+  }
+  return false;
 }
 
 function describeNewTarget(callee: ts.Expression, factKind: string): string {

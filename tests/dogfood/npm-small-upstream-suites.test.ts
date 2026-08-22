@@ -110,6 +110,12 @@ describe("small npm package upstream suites", () => {
       testFileCount: 256,
       registrationSites: 1761,
     });
+    expect(pin("uuid")).toMatchObject({
+      tag: "v14.0.1",
+      commit: "70177807e9229dfacde2038dc1e722f1828f358a",
+      testFiles: expect.any(Array),
+    });
+    expect(pin("uuid").testFiles).toHaveLength(10);
   });
 
   const clsxHeavy = process.env.DOGFOOD_CLSX_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -154,15 +160,15 @@ describe("small npm package upstream suites", () => {
     const report = await run("axios");
     expect(report.extraction).toMatchObject({
       filesSeen: 49,
-      filesSelected: 25,
-      filesDeferred: 24,
-      testsRegistered: 170,
-      nativePassed: 170,
+      filesSelected: 33,
+      filesDeferred: 16,
+      testsRegistered: 231,
+      nativePassed: 231,
       nativeFailed: 0,
     });
-    expect(report.compile).toMatchObject({ modules: 25, succeeded: 25, validated: 25 });
-    expect(report.results).toMatchObject({ scored: 170 });
-    expect(report.results.passed).toBeGreaterThanOrEqual(16);
+    expect(report.compile).toMatchObject({ modules: 33, succeeded: 33, validated: 33 });
+    expect(report.results).toMatchObject({ scored: 231 });
+    expect(report.results.passed).toBeGreaterThanOrEqual(21);
   });
 
   const prettierHeavy = process.env.DOGFOOD_PRETTIER_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -198,14 +204,14 @@ describe("small npm package upstream suites", () => {
     const report = await run("stylelint");
     expect(report.extraction).toMatchObject({
       filesSeen: 281,
-      filesSelected: 5,
-      filesDeferred: 276,
-      testsRegistered: 9,
-      nativePassed: 9,
+      filesSelected: 30,
+      filesDeferred: 251,
+      testsRegistered: 108,
+      nativePassed: 108,
       nativeFailed: 0,
     });
-    expect(report.compile).toMatchObject({ modules: 5, succeeded: 5, validated: 5 });
-    expect(report.results.scored).toBe(9);
+    expect(report.compile).toMatchObject({ modules: 30, succeeded: 30, validated: 30 });
+    expect(report.results).toMatchObject({ scored: 108, passed: 104, failed: 4, runtimeFailed: 0 });
   });
 
   const threeHeavy = process.env.DOGFOOD_THREE_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -246,14 +252,14 @@ describe("small npm package upstream suites", () => {
     const report = await run("styled-components");
     expect(report.extraction).toMatchObject({
       filesSeen: 41,
-      filesSelected: 3,
-      filesDeferred: 38,
-      testsRegistered: 6,
-      nativePassed: 6,
+      filesSelected: 4,
+      filesDeferred: 37,
+      testsRegistered: 9,
+      nativePassed: 9,
       nativeFailed: 0,
     });
-    expect(report.compile.modules).toBe(3);
-    expect(report.results.scored).toBe(6);
+    expect(report.compile.modules).toBe(4);
+    expect(report.results).toMatchObject({ scored: 9, passed: 9, failed: 0, runtimeFailed: 0 });
   });
 
   const webpackHeavy = process.env.DOGFOOD_WEBPACK_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -272,18 +278,32 @@ describe("small npm package upstream suites", () => {
   });
 
   const jestHeavy = process.env.DOGFOOD_JEST_UPSTREAM_SUITE === "1" ? it : it.skip;
-  jestHeavy("runs Jest's original get-type units", { timeout: 600_000 }, async () => {
+  jestHeavy("runs Jest's selected original utility units", { timeout: 600_000 }, async () => {
     const report = await run("jest");
     expect(report.extraction).toMatchObject({
       filesSeen: 241,
-      filesSelected: 2,
-      filesDeferred: 239,
-      testsRegistered: 32,
-      nativePassed: 32,
-      nativeFailed: 0,
+      filesSelected: 12,
+      filesDeferred: 229,
+      testsRegistered: 234,
+      nativePassed: 232,
+      nativeFailed: 2,
     });
-    expect(report.compile.modules).toBe(2);
-    expect(report.results.scored).toBe(32);
+    expect(report.extraction.unavailableInfra).toBe(3054);
+    expect(report.compile).toMatchObject({ modules: 12, succeeded: 12, validated: 12 });
+    expect(report.results).toMatchObject({ scored: 232, passed: 113, failed: 119, runtimeFailed: 0 });
+  });
+
+  const uuidHeavy = process.env.DOGFOOD_UUID_UPSTREAM_SUITE === "1" ? it : it.skip;
+  uuidHeavy("runs UUID's complete original runtime callback inventory", { timeout: 600_000 }, async () => {
+    const report = await run("uuid");
+    expect(report.extraction).toMatchObject({
+      upstreamTestsSeen: 75,
+      admitted: 75,
+      rejected: 0,
+    });
+    expect(report.results).toMatchObject({ nativePassed: 75, scored: 75, passed: 10, failed: 65 });
+    expect(report.compile).toMatchObject({ success: true, validates: true });
+    expect(report.compile.files).toHaveLength(10);
   });
 
   const tailwindcssHeavy = process.env.DOGFOOD_TAILWINDCSS_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -302,17 +322,18 @@ describe("small npm package upstream suites", () => {
   });
 
   const typescriptHeavy = process.env.DOGFOOD_TYPESCRIPT_UPSTREAM_SUITE === "1" ? it : it.skip;
-  typescriptHeavy("runs TypeScript's original base64 unit", { timeout: 600_000 }, async () => {
+  typescriptHeavy("runs TypeScript's original base64 and bigint units", { timeout: 600_000 }, async () => {
     const report = await run("typescript");
     expect(report.extraction).toMatchObject({
       filesSeen: 256,
-      filesSelected: 1,
-      filesDeferred: 255,
-      testsRegistered: 1,
-      nativePassed: 1,
+      filesSelected: 3,
+      filesDeferred: 253,
+      testsRegistered: 11,
+      nativePassed: 11,
       nativeFailed: 0,
     });
-    expect(report.compile.modules).toBe(1);
-    expect(report.results.scored).toBe(1);
+    expect(report.extraction.unavailableInfra).toBe(1750);
+    expect(report.compile).toMatchObject({ modules: 3, succeeded: 3, validated: 3 });
+    expect(report.results.scored).toBe(11);
   });
 });

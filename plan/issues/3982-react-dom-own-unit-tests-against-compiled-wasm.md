@@ -4,7 +4,7 @@ title: "Run react-dom's own unit tests against compiled react-dom"
 status: in-progress
 sprint: current
 created: 2026-08-01
-updated: 2026-08-20
+updated: 2026-08-22
 priority: high
 horizon: m
 feasibility: medium
@@ -472,6 +472,24 @@ Conservative extraction now admits **2,001/2,003** ReactDOM tests; the only
 rejections are the two upstream `.skip` tests. This changes reachability and
 host setup, not the renderer's compiled behavior score.
 
+## Project-batching checkpoint (2026-08-21)
+
+The client project lane no longer places the entire selected corpus in one
+entry module. `partitionProjectTests` groups tests by their original upstream
+file and splits only oversized files at a bounded entry-source size (800,000
+characters by default, configurable with
+`DOGFOOD_REACT_DOM_PROJECT_BATCH_CHARS`). Each batch is compiled in its own
+worker invocation and every test keeps its native result, Wasm result, and
+compile/validation error in the report. A timeout or invalid batch therefore
+cannot erase the rest of the denominator.
+
+The bounded unchanged-corpus probe with 50 client tests produced two valid
+project batches in 88.2 seconds: all 50 compiled and reached the runner, zero
+were blocked before Wasm execution, 49 were native-oracle-incompatible, and one
+was scored (0/1). A forced five-batch probe with a 1,000-character limit also
+validated all five batches with zero skipped tests. The remaining failures are
+renderer/compiler behavior, not missing batching or DOM host setup.
+
 ## Acceptance criteria
 
 - [x] The corpus is react-dom's own test sources at a verified commit shared
@@ -482,6 +500,8 @@ host setup, not the renderer's compiled behavior score.
 - [x] The implementation is compiled alone and reported by name with the
       compiler's own message when it fails.
 - [x] react-dom's published client module compiles to a valid Wasm module.
+- [x] The client corpus is split into independently validated project batches;
+      a worker timeout cannot hide the remaining tests.
 - [x] The published browser server module has an independent valid Wasm lane.
 - [x] The published browser Fizz module has its own independent valid Wasm lane.
 - [x] The native oracle and compiled lane run under the same jsdom host setup.
@@ -518,6 +538,25 @@ are production warning expectations, renderer semantics, and compiled
 component/function closures that still arrive as opaque host objects. ReactDOM
 compiled correctness therefore remains a separate follow-up, while this
 checkpoint makes the cross-package infrastructure explicit and measurable.
+
+## ReactDOM native-oracle singleton checkpoint (2026-08-22)
+
+The ReactDOM harness previously built its native oracle with the full compiled
+implementation source initialized, while `internal-test-utils` and the native
+package imports came from a separate host React/ReactDOM instance. That split
+made `createRoot` tests appear harness-incompatible (`container.firstChild`
+was empty) before the Wasm result could be compared. The native runner now
+keeps the compiled carriers uninitialized and routes React, ReactDOM,
+ReactDOM/client, server renderers, test-renderer, and noop renderer imports to
+the exact pinned host infrastructure. ReactDOM `act` can also prefer the
+host `flushSync` boundary, and the compile worker receives the same setting.
+
+A one-test-per-lane probe now scores the client and all server/Fizz lanes with
+zero native-oracle infrastructure failures. The remaining failures are real
+compiled-lane findings (for example the client `stateNode` carrier error and
+Fizz null dereferences), not an oracle mismatch. The full 1,923-test admitted
+corpus remains bounded by the existing project batches and is not claimed
+green.
 
 ## Permanent test reference
 

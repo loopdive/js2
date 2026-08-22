@@ -46,7 +46,7 @@ import {
   functionBodyReferencesThis,
 } from "./closures.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
-import { addFunctionOwnLocals } from "./binding-info.js"; // (#2103) memoized own-locals oracle
+import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
@@ -143,6 +143,7 @@ export {
   collectGrowableObjectLiterals,
 } from "./declarations/object-shape-widening.js";
 export {
+  bindingAwareNumericCallEvidence,
   inferBindingAwareNumericReturnTypes,
   inferImplicitAnyParamType,
   inferNumericReturnTypes,
@@ -486,6 +487,118 @@ export function functionReturnsDynamicObjectCarrier(stmt: ts.FunctionDeclaration
   return false;
 }
 
+const withScopedReturnByFunction = new WeakMap<ts.FunctionDeclaration, boolean>();
+
+/**
+ * (#3025 / #4206) Detect a function whose RETURN VALUE can come out of a `with`
+ * scope, e.g.
+ *
+ *     var x = 0;
+ *     var myObj = { x: "obj" };
+ *     function f1() { with (myObj) { return x; } }   // must return "obj"
+ *
+ * The TS checker does not model `with`: it resolves the `return x` to the OUTER
+ * `var x = 0` and infers `f1(): number`. Codegen then pins the wasm result to
+ * `f64` and coerces the routed string field to a number — `f1()` yields `NaN`
+ * instead of `"obj"` (test262 S10.2.2_A1_T5..T9). Both `with` tiers are affected:
+ * Tier-1 reads the struct field, Tier-2 reads the object property, and either way
+ * the value's runtime type is whatever the OBJECT holds, not what the checker
+ * guessed from the shadowed outer binding.
+ *
+ * So the return type is not statically knowable here: widen it to `externref`
+ * (the "any" carrier) and let the ordinary boxing/coercion path carry the value.
+ *
+ * Deliberately narrow, so no function that does not actually return through a
+ * `with` pays for it:
+ *   - an EXPLICIT return annotation wins (the author pinned it on purpose);
+ *   - only `return <expr>` statements lexically inside a `with` STATEMENT of
+ *     *this* function count — nested functions have their own signature and are
+ *     scanned when they are registered;
+ *   - the returned expression must mention at least one identifier, since only a
+ *     name can be routed through an object environment record (`return 1` cannot).
+ *
+ * The check is TRANSITIVE through a direct `return callee(...)`, because the
+ * checker's misinference propagates the same way:
+ *
+ *     function f1() { function f2() { with (myObj) { return x; } } return f2(); }
+ *
+ * `f2` widens by the rule above, but the checker still types `f1(): number` from
+ * the shadowed `var x = 0` — so `f1` must widen too (S10.2.2_A1_T5..T8). Only a
+ * bare `return name(...)` whose callee resolves to a function DECLARATION is
+ * followed; anything indirect keeps its inferred type.
+ */
+export function functionReturnsThroughWithScope(
+  ctx: CodegenContext,
+  stmt: ts.FunctionDeclaration,
+  seen: Set<ts.FunctionDeclaration> = new Set(),
+): boolean {
+  if (!stmt.body || stmt.type) return false;
+  const cached = withScopedReturnByFunction.get(stmt);
+  if (cached !== undefined) return cached;
+  if (seen.has(stmt)) return false; // recursive call cycle — not evidence either way
+  seen.add(stmt);
+
+  const isOwnFunctionBoundary = (node: ts.Node): boolean =>
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isAccessor(node) ||
+    ts.isConstructorDeclaration(node);
+
+  let mentionsIdentifier = false;
+  const scanForIdentifier = (node: ts.Node): void => {
+    if (mentionsIdentifier) return;
+    if (ts.isIdentifier(node)) {
+      mentionsIdentifier = true;
+      return;
+    }
+    forEachChild(node, scanForIdentifier);
+  };
+
+  let found = false;
+  // Inside a `with` body: any `return <expr>` naming something is a candidate.
+  const visitWithBody = (node: ts.Node): void => {
+    if (found) return;
+    if (isOwnFunctionBoundary(node)) return;
+    if (ts.isReturnStatement(node) && node.expression) {
+      mentionsIdentifier = false;
+      scanForIdentifier(node.expression);
+      if (mentionsIdentifier) {
+        found = true;
+        return;
+      }
+    }
+    forEachChild(node, visitWithBody);
+  };
+  // Outside a `with`: this function's own `with` statements, plus the
+  // transitive `return callee()` hop described above.
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (isOwnFunctionBoundary(node)) return;
+    if (ts.isWithStatement(node)) {
+      visitWithBody(node.statement);
+      if (found) return;
+    }
+    if (ts.isReturnStatement(node) && node.expression) {
+      let returned: ts.Expression = node.expression;
+      while (ts.isParenthesizedExpression(returned)) returned = returned.expression;
+      if (ts.isCallExpression(returned) && ts.isIdentifier(returned.expression)) {
+        const callee = ctx.oracle.valueDeclarationOf(returned.expression);
+        if (callee && ts.isFunctionDeclaration(callee) && functionReturnsThroughWithScope(ctx, callee, seen)) {
+          found = true;
+          return;
+        }
+      }
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(stmt.body, visit);
+
+  withScopedReturnByFunction.set(stmt, found);
+  return found;
+}
+
 /**
  * (#3268) Lower a single non-rest function parameter to its Wasm ValType.
  * Consolidates the four byte-identical per-parameter lowering blocks
@@ -752,9 +865,16 @@ function registerBodylessFunctionDeclaration(
     }
     const rUnwrapped = isAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
     const isImplicitAnyReturn = (rUnwrapped.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    const inferredNumericRet = inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
+    const withScopedReturn = functionReturnsThroughWithScope(ctx, stmt);
+    const inferredNumericRet = withScopedReturn
+      ? null
+      : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
     if (inferredNumericRet) {
       results = [inferredNumericRet];
+    } else if (withScopedReturn) {
+      // The checker's return type came from the SHADOWED outer binding; the real
+      // value is whatever the `with` receiver holds. Carry it as `any`.
+      results = [{ kind: "externref" }];
     } else {
       results = isVoidType(rUnwrapped)
         ? []
@@ -1457,9 +1577,17 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // return type if every param is numeric and the body is a pure
         // numeric kernel (catches e.g. recursive `function fib(n) {...}`).
         const isImplicitAnyReturn = (rUnwrapped.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-        const inferredNumericRet = inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
+        const withScopedReturn = functionReturnsThroughWithScope(ctx, stmt);
+        const inferredNumericRet = withScopedReturn
+          ? null
+          : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
         if (inferredNumericRet) {
           results = [inferredNumericRet];
+        } else if (withScopedReturn) {
+          // See `functionReturnsThroughWithScope`: the checker resolved the
+          // returned name against the SHADOWED outer binding, so the inferred
+          // type describes the wrong value. Carry it as `any`.
+          results = [{ kind: "externref" }];
         } else {
           results = isVoidType(rUnwrapped)
             ? []
@@ -1959,6 +2087,26 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // that gives the slot its `undefined` at `__module_init` entry.
     if (ts.isIdentifier(decl.name) && withBodyHoistedModuleVarNames(sourceFile).has(decl.name.text)) {
       return { kind: "externref" };
+    }
+    // (#4491 lane) A module global initialized from a PURELY-VOID call
+    // (`var r = voidFn()`) holds the value `undefined`, which a void-derived
+    // f64 slot turns into 0 — `voidFn() === undefined` then answered false
+    // (the propertyHelper harness compares against a void helper's result
+    // constantly). ONLY the call arm — this deliberately does NOT reuse the
+    // full `varBindingNeedsExternrefForUndefined` predicate the function-local
+    // slot typing consults: its `void 0`-initializer and #4206
+    // pre-init-observed arms were tuned for locals, and widening module
+    // globals on those arms regressed Array.prototype.filter's harness shapes
+    // (15.4.4.20-9-2/-3/-4/-6, bisected to exactly this consult).
+    {
+      let init = decl.initializer;
+      while (init && ts.isParenthesizedExpression(init)) init = init.expression;
+      if (init !== undefined && ts.isCallExpression(init)) {
+        const callType = ctx.checker.getTypeAtLocation(init);
+        if ((callType.flags & ~(ts.TypeFlags.Undefined | ts.TypeFlags.Void)) === 0) {
+          return { kind: "externref" };
+        }
+      }
     }
     // #1914 — `var m = re.exec(s)` under standalone gets the precise
     // match-vec ref type so indexed reads stay on the static vec path
@@ -3490,6 +3638,35 @@ export function compileDeclarations(
     // `__module_init`, and the host will invoke it explicitly. And under
     // `deferTopLevelInit` (#2796) the JS host calls the exported `__module_init`
     // directly after `setExports`.
+
+    // (#3523 R4 invariant 7) A Prepared module initializer must be reached by
+    // exactly ONE startup adapter. The two non-WASI adapters are mutually
+    // exclusive by construction above, but they are wired from `ctx` flags in
+    // two separate statements, so a future edit could install both (init runs
+    // twice: once during instantiation, once when the host calls the export) or
+    // neither (top-level code never runs, and every read trips its TDZ guard).
+    // Neither failure is visible in the emitted body, so reconcile the actual
+    // wiring against the planned policy here and fail closed. Only the Prepared
+    // route is asserted: the direct route keeps its established behavior until
+    // the typed Unsupported policy is retired.
+    if (skipModuleInitBody && !ctx.wasi) {
+      if (process.env.JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER === "1") {
+        // Anti-vacuity seam: install the adapter the planned policy did NOT
+        // choose, so the reconciliation below has a real violation to catch.
+        if (exportModuleInit) ctx.mod.startFuncIdx = initFuncIdx;
+        else ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: initFuncIdx } });
+      }
+      const startsOnInstantiation = ctx.mod.startFuncIdx === initFuncIdx;
+      const exportedAliases = ctx.mod.exports.filter(
+        (entry) => entry.name === "__module_init" && entry.desc.kind === "func" && entry.desc.index === initFuncIdx,
+      ).length;
+      const adapters = (startsOnInstantiation ? 1 : 0) + exportedAliases;
+      if (adapters !== 1 || exportedAliases !== (exportModuleInit ? 1 : 0)) {
+        throw new Error(
+          `prepared module initializer must have exactly one startup adapter (start=${startsOnInstantiation}, exports=${exportedAliases}, planned=${exportModuleInit ? "deferred-export" : "wasm-start"})`,
+        );
+      }
+    }
   }
 
   // (#2138) Names whose legacy body was skipped under IR-first; undefined on

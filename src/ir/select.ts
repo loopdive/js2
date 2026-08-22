@@ -68,12 +68,13 @@ export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
+import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { objectLiteralDataPropertyName } from "./property-key-fold.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
-import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "../codegen/async-static.js";
+import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "./async-static.js";
 import { closureSignatureEquals, type IrClassShape, type IrClosureSignature, type IrType } from "./nodes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
@@ -1017,13 +1018,12 @@ export function planIrCompilation(
   //     masks (e.g. `joinNums` in `algorithms.ts` under wasi). Keep the
   //     conservative caller-direction demotion there until those callee
   //     bodies are rejected up front by the body-shape work (#2856/#2857).
-  // -------------------------------------------------------------------------
-  const demoteOnLegacyCaller = options?.jsHostExterns !== true;
+  // (#4521) The policy lives in ./legacy-caller-policy.ts, shared with select-identity.ts.
+  const demoteOnLegacyCaller = demoteOnLegacyCallerPolicy(options);
   // #3214 A+B1 — B0 made an exact FunctionTypeNode source boundary use the
-  // canonical externref callable ABI in both front-ends.  Host mode can now use
-  // the same caller-direction relaxation for callable-param functions as for
-  // scalar leaves. Standalone/WASI retain the conservative closure until B1 is
-  // explicitly implemented for their carrier/runtime.
+  // canonical externref callable ABI in both front-ends, so host mode uses the
+  // same caller-direction relaxation for callable-param functions as for
+  // scalar leaves; standalone/WASI retain the conservative closure until B1.
   const { callers, callees, hasExternalCall } = buildLocalCallGraph(declByName, localClasses);
 
   const claimed = new Set(individuallyClaimed);
@@ -1419,7 +1419,7 @@ let currentStandaloneDomCapability: IrStandaloneDomCapabilityPlan | null = null;
  * resolver was supplied at all).
  */
 function armHostGlobalResolvers(sourceFile: ts.SourceFile, options: IrSelectionOptions | undefined): void {
-  const deferred = hostExternCapability(options?.jsHostExterns === true) === "defer";
+  const deferred = hostExternCapability(jsHostExternsEnabled(options)) === "defer";
   const resolver = options?.resolveHostGlobal ?? null;
   currentHostGlobalResolver = resolver && !deferred ? resolver : null;
   currentDeferredHostGlobalResolver = resolver && deferred ? resolver : null;
@@ -1427,8 +1427,8 @@ function armHostGlobalResolvers(sourceFile: ts.SourceFile, options: IrSelectionO
   currentStandaloneDomCapability =
     candidate &&
     candidate.sourceFile === sourceFile &&
-    domSurfaceCapability(options?.jsHostExterns === true, true) !== "defer" &&
-    options?.jsHostExterns !== true
+    domSurfaceCapability(jsHostExternsEnabled(options), true) !== "defer" &&
+    !jsHostExternsEnabled(options)
       ? candidate
       : null;
 }
@@ -2671,6 +2671,24 @@ function dynamicUsesAreMoveOnly(
       }
       if (currentDynamicRuntimeBuildable && argumentIsDynamic && expectedKind === "f64") {
         if (!scanExpr(a, true)) return false;
+        continue;
+      }
+      // #2949 — the SYMMETRIC counterpart of the unbox arm above: a CONCRETE
+      // argument reaching a dynamic callee parameter crosses the same carrier
+      // boundary as a concrete equality operand, and the direct-call lowering
+      // already boxes it there through the canonical tag-aware boxer.
+      //
+      // Without this arm the scan demanded a dynamic-shaped operand at every
+      // dynamic parameter position, so a caller that merely HAS a dynamic
+      // binding of its own (which is what makes this scan run at all) was
+      // rejected for an argument that has nothing to do with that binding —
+      // e.g. Acorn's `isIdentifierStart(code, astral)` passing its proven-f64
+      // `code` to `isInAstralSet(code, set)`, whose own `code` is dynamic.
+      //
+      // Admission is exactly the operand family `boxConcreteToDynamic`
+      // accepts, so the claim can never withdraw on a missing box.
+      if (!argumentIsDynamic && expectedKind === "dynamic" && concreteDynamicAssignmentOperandIsBuildable(unwrap(a))) {
+        if (!scanExpr(a, false)) return false;
         continue;
       }
       if (!scanExpr(a, expectedKind === "dynamic")) return false;
@@ -6463,7 +6481,7 @@ function certifiedHostIndirectEval(
   const shape = exactIndirectEvalStatement(expr);
   if (
     !shape ||
-    currentSelectionOptions?.jsHostExterns !== true ||
+    !jsHostExternsEnabled(currentSelectionOptions) ||
     currentSelectionOptions?.supportsHostIndirectEval !== true ||
     !selectorSeesAmbientBinding(shape.evalIdentifier) ||
     (scope?.has("eval") ?? false) ||
@@ -8167,7 +8185,23 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (isUnrepresentableModuleBinding(expr)) {
       return shapeNo("expr-module-storage-unrepresentable", expr);
     }
-    if (scope.has(expr.text)) return true;
+    if (scope.has(expr.text)) {
+      // (#3522) A prepared nested class binding is a CONSTRUCTOR IDENTITY, not
+      // a first-class IR value. The class-declaration and `const C = class {…}`
+      // arms add the name to `scope` so the dedicated `new C(...)`,
+      // `C.staticMember` and `x instanceof C` arms can consume it — those arms
+      // resolve the binding themselves and never reach this generic identifier
+      // accept. Anything that DOES reach here is a bare value use
+      // (`const Alias = C;`, `return C;`, passing `C` as an argument), which
+      // `ir/from-ast` cannot represent: it reports
+      // "identifier \"C\" is not in scope" as a POST-CLAIM build error, after
+      // the class members have already been claimed and emitted — the exact
+      // split-ownership state R3 exists to prevent. Reject the owner here, at
+      // selection, so the whole class withdraws with it.
+      return currentPreparedClassBindingNames.has(expr.text)
+        ? shapeNo("expr-prepared-class-binding-value", expr)
+        : true;
+    }
     if (
       currentHostGlobalResolver !== null &&
       !localClasses.has(expr.text) &&

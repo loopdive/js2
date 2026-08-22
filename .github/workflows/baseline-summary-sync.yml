@@ -44,6 +44,9 @@ concurrency:
 
 jobs:
   sync:
+    # The summary sync writes the canonical repository's main branch and uses
+    # its baseline-promote environment. Forks have neither resource.
+    if: github.repository == 'loopdive/js2'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: baseline-promote

@@ -1,0 +1,21 @@
+{
+  "generated": "2026-08-21T19:36:10.550Z",
+  "total": 83,
+  "files": {
+    "ir/backend/linear-integration.ts": 1,
+    "ir/calendar-selection-support.ts": 1,
+    "ir/closure-struct-registry.ts": 3,
+    "ir/compiler-timer-shim-preparation.ts": 4,
+    "ir/dynamic-number-lowering.ts": 3,
+    "ir/fmod-selection.ts": 1,
+    "ir/from-ast.ts": 3,
+    "ir/i32-pure-bitwise.ts": 1,
+    "ir/integration.ts": 41,
+    "ir/math-runtime-providers.ts": 3,
+    "ir/number-to-string-provider.ts": 6,
+    "ir/prepared-callable-resolution.ts": 3,
+    "ir/prepared-closure-support.ts": 5,
+    "ir/prepared-component-sealing.ts": 3,
+    "ir/prepared-vector-support.ts": 5
+  }
+}

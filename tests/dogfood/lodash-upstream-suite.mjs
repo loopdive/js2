@@ -8,7 +8,7 @@ import { setupNpmCompatCatalogPackage } from "./npm-compat-catalog.mjs";
 import { setupLodashUpstreamSuite } from "./setup-lodash-upstream-suite.mjs";
 import {
   UPSTREAM_TEST_EXPORTS,
-  UPSTREAM_TEST_SHIM,
+  UPSTREAM_TEST_SHIM_NODE,
   cliUpstreamHarness,
   compileAndRunUpstreamModule,
   summarizeUpstreamRuns,
@@ -30,6 +30,47 @@ function extractModule(source, name) {
   return source.slice(start, next < 0 ? source.length : next);
 }
 
+// The monolithic QUnit file initializes a small set of shared fixtures before
+// registering any modules.  The selected module slices intentionally keep the
+// original callbacks verbatim, so reproduce only the fixtures those slices
+// reach for rather than silently turning a missing fixture into a compiler
+// failure.  These helpers are test infrastructure, not alternate Lodash
+// implementations: the callbacks still call the selected published methods
+// through `_` in both Node and Wasm.
+const LODASH_UPSTREAM_FIXTURES = String.raw`
+var LARGE_ARRAY_SIZE = 200;
+var MAX_INTEGER = 1.7976931348623157e+308;
+var MAX_ARRAY_LENGTH = 4294967295;
+var arrayProto = Array.prototype;
+var slice = arrayProto.slice;
+var args = (function () { return arguments; }(1, 2, 3));
+var Symbol = typeof globalThis.Symbol === "function" ? globalThis.Symbol : undefined;
+var Map = typeof globalThis.Map === "function" ? globalThis.Map : undefined;
+var symbol = Symbol ? Symbol("a") : undefined;
+var falsey = [, null, undefined, false, 0, NaN, ""];
+var empties = [[], {}].concat(falsey.slice(1));
+var stubTrue = function () { return true; };
+var stubFalse = function () { return false; };
+var stubString = function () { return ""; };
+var realm = {};
+var isNpm = true;
+var lodashStable = {
+  map: function (values, iteratee) {
+    var result = [];
+    for (var index = 0; index < values.length; index++) result.push(iteratee(values[index], index, values));
+    return result;
+  },
+  every: function (values, predicate) {
+    for (var index = 0; index < values.length; index++) if (!predicate(values[index], index, values)) return false;
+    return true;
+  }
+};
+function skipAssert(assert, count) {
+  count = count || 1;
+  while (count--) assert.ok(true, "test skipped");
+}
+`;
+
 export async function runHarness({ quiet = false, packageName = "lodash" } = {}) {
   if (packageName !== "lodash" && packageName !== "lodash-es") {
     throw new Error(`[dogfood] lodash upstream suite expects lodash or lodash-es, received ${packageName}`);
@@ -50,13 +91,23 @@ export async function runHarness({ quiet = false, packageName = "lodash" } = {})
   const source = [
     ...methodImports,
     `const _ = { ${methodNames.join(", ")} };`,
-    UPSTREAM_TEST_SHIM,
+    LODASH_UPSTREAM_FIXTURES,
+    UPSTREAM_TEST_SHIM_NODE,
     ...slices,
     UPSTREAM_TEST_EXPORTS,
   ].join("\n");
 
   log(`[dogfood] ${packageName}@${packageSetup.version} upstream ${suite.pin.tag} (${suite.pin.commit.slice(0, 12)})`);
-  const result = await compileAndRunUpstreamModule({ generatedPath, source, timeoutMs: 300_000 });
+  // Lodash's modular published files are CommonJS and resolve their internal
+  // helpers through `require`. Compile this adapter with the Node platform so
+  // that host-facing CommonJS bindings are installed instead of the browser
+  // platform's null placeholder. The test source and callbacks remain exact.
+  const result = await compileAndRunUpstreamModule({
+    generatedPath,
+    source,
+    timeoutMs: 300_000,
+    workerEnv: { DOGFOOD_PLATFORM: "node" },
+  });
   const runs = [{ file: basename(suite.sourcePath), result }];
   const report = summarizeUpstreamRuns({
     name: `${packageName}@${packageSetup.version}`,

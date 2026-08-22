@@ -44,6 +44,11 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = join(HERE, "report", "react-dom-upstream-suite.json");
 const GENERATED_ROOT = join(HERE, ".react-dom-upstream-suite-impl");
 const PROJECT_ROOT = join(HERE, ".react-dom-upstream-suite-project");
+// Keep the complete upstream corpus observable without allowing a missing
+// browser/test dependency to consume the refresh job's entire wall-clock
+// budget. A timeout is reported on the individual test; it never removes the
+// test from extraction or the denominator silently.
+const DEFAULT_REACT_DOM_TEST_TIMEOUT_MS = 2_000;
 
 let nativeContextFile = "<setup>";
 let nativeContextTest = "<setup>";
@@ -263,11 +268,9 @@ function buildServerImplementationSource({ reactSource, sharedSource, serverSour
   ].join("\n");
 }
 
-function reactDomTestSetup(prelude, testSource = prelude, { server = false, fizz = false } = {}) {
-  const lines = [
-    `${server ? "__reactDomServerEnsureInit" : "__reactDomEnsureInit"}();`,
-    `document.body.textContent = "";`,
-  ];
+function reactDomTestSetup(prelude, testSource = prelude, { server = false, fizz = false, nativeHost = false } = {}) {
+  const lines = [`document.body.textContent = "";`];
+  if (!nativeHost) lines.unshift(`${server ? "__reactDomServerEnsureInit" : "__reactDomEnsureInit"}();`);
   const binds = (name, expression) => {
     const declaration = new RegExp(`\\b(let|var|const)\\s+${name}\\b`).exec(prelude);
     if (declaration && declaration[1] !== "const") {
@@ -451,11 +454,37 @@ function buildProjectFiles({ reactSource, sharedSource, clientSource, tests }) {
   };
 }
 
+/**
+ * Partition the client corpus by upstream file and bounded entry-source size.
+ *
+ * `compileProject` keeps the large published implementation in imported
+ * modules, but the entry still contains every lifted test body. A single
+ * 1,261-test entry can therefore spend the whole worker deadline in codegen
+ * before any test gets a chance to run. Keep each source file's Jest-style
+ * lifecycle together where possible, and split only oversized files. The
+ * caller records every batch, so a timeout or invalid batch remains visible
+ * instead of shrinking the denominator.
+ */
+export function partitionProjectTests(tests, maxChars = 800_000) {
+  const batches = [];
+  const byFile = new Map();
+  for (const test of tests) {
+    const fileTests = byFile.get(test.file) ?? [];
+    fileTests.push(test);
+    byFile.set(test.file, fileTests);
+  }
+  for (const [file, fileTests] of byFile) {
+    for (const chunk of splitBySize(fileTests, maxChars)) batches.push({ file, tests: chunk });
+  }
+  return batches;
+}
+
 function buildNativeRunners(implementation, tests, options = {}) {
   const { server = false } = options;
   const init = server ? "__reactDomServerEnsureInit()" : "__reactDomEnsureInit()";
   const source = [
     implementation,
+    options.nativeHost ? "var __js2NativeHost = true;" : "",
     REACT_EXPECT_SHIM,
     ...tests.map((test) => buildTestFunction(withReactDomSetup(test, options), { exported: false })),
     `return { init: function () { ${init}; }, __lastError: function () { return __lastError; }, tests: { ${tests
@@ -466,11 +495,51 @@ function buildNativeRunners(implementation, tests, options = {}) {
   return new Function("require", source);
 }
 
+// The native oracle must use the same pinned React object and the same
+// cross-package renderer instances as the host infrastructure. Passing
+// createRequire() directly gives react-dom a second React singleton, so
+// createRoot/act tests either render nothing or fail before their assertions.
+// Keep these dependencies explicit: they are the native counterpart of the
+// compiled lane's __js2RequireActual() facades, not a test-result shortcut.
+export function createNativeRequire() {
+  const nativeRequire = createRequire(import.meta.url);
+  const infrastructure = globalThis.__js2ReactUpstreamInfrastructure;
+  return (name) => {
+    if (name === "react") return infrastructure?.react ?? nativeRequire(name);
+    if (name === "react-dom") return infrastructure?.reactDom ?? nativeRequire(name);
+    if (name === "react-dom/client") return infrastructure?.reactDomClient ?? nativeRequire(name);
+    if (name === "react-dom/server") return infrastructure?.reactDomServer ?? nativeRequire(name);
+    if (name === "react-test-renderer") return infrastructure?.reactTestRenderer ?? nativeRequire(name);
+    if (name === "react-noop-renderer") {
+      if (!infrastructure?.reactNoop) throw new Error("ReactDOM upstream noop renderer infrastructure is unavailable");
+      return infrastructure.reactNoop;
+    }
+    if (name === "react-native-renderer") {
+      if (!infrastructure?.reactNativeRenderer)
+        throw new Error("ReactDOM upstream native renderer infrastructure is unavailable");
+      return infrastructure.reactNativeRenderer;
+    }
+    if (name === "internal-test-utils") {
+      if (!infrastructure?.internalTestUtils)
+        throw new Error("ReactDOM upstream internal test utilities are unavailable");
+      return infrastructure.internalTestUtils;
+    }
+    if (name === "react/jsx-runtime") return infrastructure?.reactJsxRuntime ?? nativeRequire(name);
+    if (name === "react/jsx-dev-runtime") return infrastructure?.reactJsxDevRuntime ?? nativeRequire(name);
+    if (name === "react-dom/test-utils") {
+      if (!infrastructure?.internalTestUtils)
+        throw new Error("ReactDOM upstream test-utils infrastructure is unavailable");
+      return { act: infrastructure.internalTestUtils.act };
+    }
+    return nativeRequire(name);
+  };
+}
+
 async function runNative(implementation, tests, options = {}) {
   try {
-    const nativeRequire = createRequire(import.meta.url);
-    const runners = buildNativeRunners(implementation, tests, options)(nativeRequire);
-    runners.init();
+    const nativeOptions = { ...options, nativeHost: true };
+    const runners = buildNativeRunners(implementation, tests, nativeOptions)(createNativeRequire());
+    if (!nativeOptions.nativeHost) runners.init();
     const out = [];
     for (const test of tests) {
       nativeContextTest = test.id;
@@ -552,7 +621,7 @@ async function runServerHarness({
     serverSource: isFizz ? "" : (serverSource ?? ""),
     fizzSource,
   });
-  const testTimeoutMs = Number(process.env.DOGFOOD_REACT_DOM_TEST_TIMEOUT_MS ?? 10_000);
+  const testTimeoutMs = Number(process.env.DOGFOOD_REACT_DOM_TEST_TIMEOUT_MS ?? DEFAULT_REACT_DOM_TEST_TIMEOUT_MS);
   const configuredCompileTimeout = Number(process.env.DOGFOOD_REACT_DOM_COMPILE_TIMEOUT_MS ?? 300_000);
   const compileTimeoutMs =
     Number.isFinite(configuredCompileTimeout) && configuredCompileTimeout > 0 ? configuredCompileTimeout : 300_000;
@@ -859,41 +928,111 @@ async function runProjectHarness({
 }) {
   const configuredTimeout = Number(process.env.DOGFOOD_REACT_DOM_COMPILE_TIMEOUT_MS ?? 300_000);
   const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 300_000;
-  const files = buildProjectFiles({ reactSource, sharedSource, clientSource, tests: selectedTests });
-  const started = performance.now();
-  const isolated = await compileProjectInWorker({
-    generatedRoot: PROJECT_ROOT,
-    entryFile: "entry.ts",
-    files,
-    timeoutMs,
-    workerEnv: { DOGFOOD_INSTALL_JSDOM: "1", DOGFOOD_NAMED_TEST_EXPORTS: "1" },
-  });
-  const compile = isolated?.compile ?? {
-    success: false,
-    validates: false,
-    durationMs: Math.round(performance.now() - started),
-    binaryBytes: 0,
-    errors: [{ message: "compile worker returned no result" }],
-  };
-  const wasm = isolated?.wasm ?? null;
+  const configuredBatchChars = Number(process.env.DOGFOOD_REACT_DOM_PROJECT_BATCH_CHARS ?? 800_000);
+  const batchChars = Number.isFinite(configuredBatchChars) && configuredBatchChars > 0 ? configuredBatchChars : 800_000;
+  const projectBatches = partitionProjectTests(selectedTests, batchChars);
   const nativeHostErrors = [];
   const disposeNativeHostErrorBoundary = installNativeHostErrorBoundary(nativeHostErrors);
-  const nativeResults = new Map(
-    (await runNativeByFile(implementation, selectedTests)).map((entry) => [entry.id, entry]),
-  );
-  await new Promise((resolve) => setTimeout(resolve, 200));
-  disposeNativeHostErrorBoundary();
+  const batchReports = [];
+  const runResults = new Map();
+  let totalCompileMs = 0;
+  let totalBytes = 0;
 
-  const compileError =
-    compile.errors?.[0]?.message ??
-    compile.validationError ??
-    (compile.timedOut ? `compile timeout after ${timeoutMs}ms` : compile.success ? null : "no binary emitted");
-  const implementationInvalid =
-    compile.validates === true ? null : { error: compileError, compileMs: compile.durationMs ?? 0 };
-  const statuses = wasm?.statuses ?? [];
-  const wasmErrors = wasm?.errors ?? [];
-  const tests = selectedTests.map((test, index) => {
-    const native = nativeResults.get(test.id) ?? {};
+  try {
+    for (let batchIndex = 0; batchIndex < projectBatches.length; batchIndex++) {
+      const { file, tests: batchTests } = projectBatches[batchIndex];
+      const files = buildProjectFiles({ reactSource, sharedSource, clientSource, tests: batchTests });
+      const generatedRoot = join(PROJECT_ROOT, `batch-${batchIndex}`);
+      const started = performance.now();
+      let isolated;
+      try {
+        isolated = await compileProjectInWorker({
+          generatedRoot,
+          entryFile: "entry.ts",
+          files,
+          timeoutMs,
+          workerEnv: {
+            DOGFOOD_INSTALL_JSDOM: "1",
+            DOGFOOD_NAMED_TEST_EXPORTS: "1",
+            DOGFOOD_REACT_DOM_ACT: "1",
+          },
+        });
+      } catch (error) {
+        isolated = {
+          compile: {
+            success: false,
+            validates: false,
+            durationMs: Math.round(performance.now() - started),
+            binaryBytes: 0,
+            errors: [{ message: error instanceof Error ? error.message : String(error) }],
+          },
+          wasm: null,
+        };
+      }
+      const compile = isolated?.compile ?? {
+        success: false,
+        validates: false,
+        durationMs: Math.round(performance.now() - started),
+        binaryBytes: 0,
+        errors: [{ message: "compile worker returned no result" }],
+      };
+      const wasm = isolated?.wasm ?? null;
+      const compileError =
+        compile.errors?.[0]?.message ??
+        compile.validationError ??
+        (compile.timedOut ? `compile timeout after ${timeoutMs}ms` : compile.success ? null : "no binary emitted");
+      const validates = compile.validates === true;
+      totalCompileMs += compile.durationMs ?? 0;
+      totalBytes += compile.binaryBytes ?? 0;
+
+      nativeContextFile = file;
+      const nativeResults = new Map((await runNative(implementation, batchTests)).map((entry) => [entry.id, entry]));
+      const statuses = wasm?.statuses ?? [];
+      const wasmErrors = wasm?.errors ?? [];
+      for (let index = 0; index < batchTests.length; index++) {
+        const test = batchTests[index];
+        const native = nativeResults.get(test.id) ?? {};
+        runResults.set(test.id, {
+          native,
+          validates,
+          compileError,
+          wasmFatal: wasm?.fatal ?? null,
+          wasmStatus: statuses[index] === true,
+          wasmError: wasmErrors[index] ?? "",
+        });
+      }
+      batchReports.push({
+        file,
+        tests: batchTests.length,
+        compileMs: compile.durationMs ?? 0,
+        binaryBytes: compile.binaryBytes ?? 0,
+        imports: compile.imports ?? [],
+        compileSuccess: compile.success === true,
+        validates,
+        firstError: compileError,
+      });
+      log(
+        `[dogfood]   client project ${file.replace(/^.*\//, "")}: ${batchTests.length} tests, ` +
+          `${validates ? "valid" : `INVALID — ${String(compileError).slice(0, 70)}`}`,
+      );
+    }
+  } finally {
+    // A scheduler callback can outlive the final test body. Keep the host error
+    // boundary installed until all project batches have had one macrotask.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    disposeNativeHostErrorBoundary();
+  }
+
+  const tests = selectedTests.map((test) => {
+    const result = runResults.get(test.id) ?? {
+      native: {},
+      validates: false,
+      compileError: "project batch did not produce a result",
+      wasmFatal: null,
+      wasmStatus: false,
+      wasmError: "",
+    };
+    const native = result.native;
     const entry = {
       id: test.id,
       file: test.file,
@@ -903,16 +1042,16 @@ async function runProjectHarness({
     };
     if (!entry.nativePassed) {
       entry.status = "harness-incompatible";
-    } else if (implementationInvalid) {
+    } else if (!result.validates) {
       entry.status = "skipped";
-      entry.skippedReason = compileError ?? "binary did not compile";
-    } else if (wasm?.fatal) {
+      entry.skippedReason = result.compileError ?? "binary did not compile";
+    } else if (result.wasmFatal) {
       entry.status = "trapped";
-      entry.compiledMessage = wasm.fatal;
+      entry.compiledMessage = result.wasmFatal;
     } else {
-      entry.compiledPassed = statuses[index] === true;
-      entry.status = entry.compiledPassed ? "pass" : "fail";
-      if (!entry.compiledPassed) entry.compiledMessage = wasmErrors[index] ?? "";
+      entry.compiledPassed = result.wasmStatus;
+      entry.status = result.wasmStatus ? "pass" : "fail";
+      if (!result.wasmStatus) entry.compiledMessage = result.wasmError;
     }
     return entry;
   });
@@ -920,16 +1059,24 @@ async function runProjectHarness({
   const passed = tests.filter((test) => test.status === "pass").length;
   const harnessIncompatible = tests.filter((test) => test.status === "harness-incompatible").length;
   const implementationInvalidTests = tests.filter((test) => test.status === "skipped").length;
+  const invalidBatches = batchReports.filter((batch) => !batch.validates);
+  const implementationInvalid =
+    batchReports.length > 0 && invalidBatches.length === batchReports.length
+      ? { error: invalidBatches[0].firstError ?? "no project batch validated", compileMs: totalCompileMs }
+      : null;
   report.compile = {
-    success: compile.success === true,
-    durationMs: compile.durationMs ?? 0,
-    binaryBytes: compile.binaryBytes ?? 0,
-    batches: [{ file: "react-dom-project", tests: selectedTests.length, ...compile }],
-    invalidBatches: compile.validates === true ? 0 : 1,
+    success: batchReports.length > 0 && batchReports.every((batch) => batch.compileSuccess),
+    durationMs: totalCompileMs,
+    binaryBytes: totalBytes,
+    batches: batchReports,
+    invalidBatches: invalidBatches.length,
     implementationInvalid,
     quarantined: [],
   };
-  report.validation = { validates: compile.validates === true, firstError: compileError };
+  report.validation = {
+    validates: invalidBatches.length === 0,
+    firstError: invalidBatches[0]?.firstError ?? null,
+  };
   report.results = {
     scored: scored.length,
     passed,
@@ -944,7 +1091,7 @@ async function runProjectHarness({
       `${passed}/${scored.length} executed upstream react-dom tests pass against compiled Wasm ` +
       `(${report.extraction.admitted} of ${report.extraction.upstreamTestsSeen} upstream tests admitted; ` +
       `${harnessIncompatible} need infrastructure the harness cannot supply; ` +
-      `${implementationInvalidTests} blocked before Wasm execution)` +
+      `${implementationInvalidTests} blocked before Wasm execution; ${batchReports.length} project batches)` +
       (implementationInvalid ? " — react-dom's project does not compile to a valid module" : ""),
     passRatePct: scored.length ? Number(((passed / scored.length) * 100).toFixed(2)) : 0,
     upstreamTestsSeen: report.extraction.upstreamTestsSeen,
@@ -955,13 +1102,13 @@ async function runProjectHarness({
     harnessIncompatible,
     implementationInvalidTests,
     nativeHostErrors: nativeHostErrors.length,
-    compileMs: compile.durationMs ?? 0,
-    binaryBytes: compile.binaryBytes ?? 0,
-    batches: 1,
-    invalidBatches: compile.validates === true ? 0 : 1,
+    compileMs: totalCompileMs,
+    binaryBytes: totalBytes,
+    batches: batchReports.length,
+    invalidBatches: invalidBatches.length,
     implementationInvalid: implementationInvalid !== null,
     implementationError: implementationInvalid?.error ?? null,
-    binaryValidates: compile.validates === true,
+    binaryValidates: report.validation.validates,
   };
   mkdirSync(dirname(REPORT_PATH), { recursive: true });
   writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
@@ -970,13 +1117,13 @@ async function runProjectHarness({
   return report;
 }
 
-function splitBySize(tests) {
+function splitBySize(tests, maxChars = MAX_BATCH_CHARS) {
   const chunks = [];
   let current = [];
   let size = 0;
   for (const test of tests) {
     const cost = test.prelude.length + test.body.length + 200;
-    if (current.length > 0 && size + cost > MAX_BATCH_CHARS) {
+    if (current.length > 0 && size + cost > maxChars) {
       chunks.push(current);
       current = [];
       size = 0;
@@ -1002,7 +1149,11 @@ export async function runHarness({ quiet = false } = {}) {
   const reactSource = readFileSync(reactModulePath, "utf-8");
   const implementationPin = setupReactDomImplementation({ build });
   const localRequire = createRequire(import.meta.url);
-  const hostInfrastructure = installReactUpstreamInfrastructure({ react: localRequire(reactModulePath), build });
+  const hostInfrastructure = installReactUpstreamInfrastructure({
+    react: localRequire(reactModulePath),
+    build,
+    preferReactDomAct: true,
+  });
   const installedReactDom = localRequire("react-dom/package.json");
   if (installedReactDom.version !== implementationPin.version) {
     throw new Error(

@@ -11,11 +11,25 @@
 //
 // Two rules, both narrow on purpose:
 //
-//   R1  The dialect may be imported from exactly ONE place in the core:
+//   R1  The dialect may be imported from exactly ONE place in the REPO:
 //       `src/ir/nodes.ts`, which assembles the `IrInstr` union and re-exports
 //       the dialect's names so existing importers are unaffected. Any other
-//       core file reaching into `dialect/` means the boundary has stopped
-//       meaning anything.
+//       file reaching into `dialect/` means the boundary has stopped meaning
+//       anything.
+//
+//       R1 scans **all of `src/`**, not just `src/ir/` (#4552 finding D1). The
+//       first cut walked `src/ir/` only, which made the rule enforceable inside
+//       the IR tree and merely true-by-luck outside it: adding
+//       `import type { IrInstrAwait } from "../ir/dialect/js.js"` to
+//       `src/codegen/peephole.ts` passed the gate with exit 0. `nodes.ts` is
+//       documented as the only legitimate importer repo-wide, so the walk has
+//       to match that claim — a boundary a consumer can step around is not a
+//       boundary. This also settles #4552 §1's "should the gate assert the
+//       converse?" question: core files legitimately *reference* dialect kinds
+//       (verifiers and lowerers dispatch over the whole union — that is the
+//       union edge working as designed); the enforceable converse is exactly
+//       "no import path to the dialect except `nodes.ts`", which is R1 at full
+//       scope.
 //
 //   R2  Every name the dialect declares must be re-exported by `nodes.ts`.
 //       The split is a declaration move, not an API change: 54 files import
@@ -31,7 +45,12 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
-const IR_DIR = "src/ir";
+// `--src <dir>` repoints every path at a synthetic tree, which is what
+// `tests/issue-4552-ir-dialect-gate-scope.test.ts` uses to prove the gate
+// FAILS on an out-of-IR import without planting one in the real `src/`.
+const srcArg = process.argv.indexOf("--src");
+const SRC_DIR = srcArg === -1 ? "src" : process.argv[srcArg + 1];
+const IR_DIR = path.join(SRC_DIR, "ir");
 const DIALECT_DIR = path.join(IR_DIR, "dialect");
 const UNION_HOST = path.join(IR_DIR, "nodes.ts");
 
@@ -49,13 +68,27 @@ function walk(dir) {
 const failures = [];
 
 // ── R1: only nodes.ts may import the dialect ──────────────────────────────
-const importsDialect = /from\s+"[^"]*\bdialect\/[^"]*"/;
-for (const file of walk(IR_DIR)) {
+// Matching is RESOLUTION-based, not a `dialect/` substring test: a relative
+// specifier is resolved against the importing file's directory and flagged only
+// if it lands inside `src/ir/dialect/`. At repo scope a substring test would
+// also flag any unrelated future `…/dialect/…` path, and the point of widening
+// the walk is to catch real edges to THIS dialect, not to claim the word.
+const importFrom = /from\s+"([^"]*)"/;
+
+/** Does this import specifier, seen in `file`, reach into the JS dialect? */
+function reachesDialect(specifier, file) {
+  if (!specifier.startsWith(".")) return false; // no aliases resolve here today
+  const resolved = path.resolve(path.dirname(file), specifier);
+  return resolved.startsWith(path.resolve(DIALECT_DIR) + path.sep);
+}
+
+for (const file of walk(SRC_DIR)) {
   if (file.startsWith(DIALECT_DIR + path.sep) || file === DIALECT_DIR) continue;
   if (path.normalize(file) === path.normalize(UNION_HOST)) continue;
   const text = readFileSync(file, "utf8");
   for (const [i, line] of text.split("\n").entries()) {
-    if (importsDialect.test(line)) {
+    const m = importFrom.exec(line);
+    if (m && reachesDialect(m[1], file)) {
       failures.push(
         `${file}:${i + 1}: imports the JS dialect. Only ${UNION_HOST} may — it is the ` +
           "single core->dialect edge (the IrInstr union + re-exports). Import from " +
@@ -74,8 +107,11 @@ const dialectFiles = (() => {
   }
 })();
 
-if (dialectFiles.length === 0) {
-  console.log("IR dialect gate: no src/ir/dialect/ yet — nothing to check.");
+// `failures.length === 0` is part of the condition so a "no dialect yet" tree
+// cannot swallow an R1 hit: specifier resolution does not require the target to
+// exist, so an import of a deleted dialect is still a reportable violation.
+if (dialectFiles.length === 0 && failures.length === 0) {
+  console.log(`IR dialect gate: no ${DIALECT_DIR}/ yet — nothing to check.`);
   process.exit(0);
 }
 
@@ -87,7 +123,7 @@ for (const file of dialectFiles) {
   }
 }
 
-const hostText = readFileSync(UNION_HOST, "utf8");
+const hostText = dialectFiles.length > 0 ? readFileSync(UNION_HOST, "utf8") : "";
 const reExported = new Set();
 for (const block of hostText.matchAll(/export type \{([^}]*)\} from "\.\/dialect\/[^"]*"/g)) {
   for (const name of block[1].split(",")) {
@@ -115,5 +151,5 @@ if (failures.length > 0) {
 
 console.log(
   `IR dialect gate: OK — ${declared.size} dialect declaration(s) re-exported by ${UNION_HOST}; ` +
-    "no other core file imports the dialect.",
+    `no other file under ${SRC_DIR}/ imports the dialect.`,
 );

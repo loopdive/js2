@@ -10,7 +10,8 @@
   "selectedFiles": [
     "packages/styled-components/src/utils/test/addUnitIfNeeded.test.ts",
     "packages/styled-components/src/utils/test/escape.test.ts",
+    "packages/styled-components/src/utils/test/generateAlphabeticName.test.ts",
     "packages/styled-components/src/utils/test/hyphenateStyleName.test.ts"
   ],
-  "_note": "The complete styled-components source-unit inventory is verified. This first adapter runs three original dependency-light synchronous utility files against their matching release-tag source implementations. React, DOM, snapshot, SSR, Stylis, build-time constant, and larger object-graph files remain explicit deferred inventory."
+  "_note": "The complete styled-components source-unit inventory is verified. This adapter runs four original dependency-light synchronous utility files against their matching release-tag source implementations. React, DOM, snapshot, SSR, Stylis, build-time constant, and larger object-graph files remain explicit deferred inventory."
 }

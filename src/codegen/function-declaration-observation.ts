@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
-import { addFunctionOwnLocals } from "./binding-info.js";
+import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { annexBDeclaringRange, annexBUpdatesExistingVarBinding } from "./annexb-cancel.js";

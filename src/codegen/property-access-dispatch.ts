@@ -34,6 +34,7 @@ import {
 import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-field-carrier.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
 import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
+import { functionPrototypeMemberSpecLength } from "./function-prototype-callable.js"; // (§20.2.3)
 import { emitSymbolDescLoad, ensureNativeSymbolBoundaryBridge, usesNativeSymbolProvider } from "./symbol-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { rollbackSpeculative, snapshotSpeculative } from "./context/speculative.js";
@@ -127,6 +128,7 @@ import {
 } from "./shared.js";
 import { tryEmitJsonParsePropertyAccess } from "./json-standalone.js";
 import { resolveReceiverStruct } from "./fnctor-escape-gate.js";
+import { foreignReturnFunctionNames, typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#2071)
 import { findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split
 import { findFnctorLayoutStructsForField, findFnctorResidStructsForField } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts — vote seam
 import { tryCompileTemporalPropertyAccess } from "./temporal-native.js";
@@ -2557,6 +2559,17 @@ export function tryLengthAndNameReads(
     // externref / __extern_get path so the host-bound function's actual
     // `.length` is read.
     const isBindResult = isBindResultExpr(ctx, expr.expression);
+    // (§20.2.3) `<callable>.{apply,call,bind,toString}.length` — the spec arity,
+    // which `lib.es5.d.ts` does not spell (`apply`'s `argArray?` is optional
+    // there, so the §15.1.5 prefix walk answers 1 for a member the spec pins
+    // at 2). Table + gate live in function-prototype-callable.ts.
+    if (!isBindResult) {
+      const specLength = functionPrototypeMemberSpecLength(ctx, expr.expression);
+      if (specLength !== undefined) {
+        fctx.body.push({ op: "f64.const", value: specLength });
+        return { kind: "f64" };
+      }
+    }
     const callSigs = objType.getCallSignatures?.();
     const constructSigs2 = objType.getConstructSignatures?.();
     const lengthSigs =
@@ -3390,6 +3403,28 @@ export function tryStringLengthIteratorAndExternClassReads(
       }
     }
     const recvType = compileExpression(ctx, fctx, expr.expression);
+    // (#4607) An `externref` receiver in JS-HOST mode + `nativeStrings` may be a
+    // real JS string, not a GC one — e.g. the `__typeof` host helper's result,
+    // which reaches this arm now that `typeof`'s string-literal-union type is
+    // recognised as a string. The externref → `$AnyString` coercion below is a
+    // CHECKED cast that yields `ref.null` on a miss, so the unconditional
+    // `struct.get` TRAPS on a host string (it answered a silently-wrong `NaN`
+    // via the dynamic path before). Read it through a runtime `ref.test`
+    // instead: GC string → the native `len` field, host string → the host
+    // `__extern_length` import. Standalone/WASI cannot produce a host string
+    // here, so its #1797 coercion path is untouched.
+    if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && recvType?.kind === "externref" && !ctx.standalone && !ctx.wasi) {
+      const externLengthIdx = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
+      flushLateImportShifts(ctx, fctx);
+      if (externLengthIdx !== undefined) {
+        emitGuardedNativeStringLength(ctx, fctx, (recvExternLocal) => [
+          { op: "local.get", index: recvExternLocal },
+          { op: "call", funcIdx: externLengthIdx },
+          { op: "i32.trunc_sat_f64_s" },
+        ]);
+        return { kind: "i32" };
+      }
+    }
     if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
       // The receiver must be a `$AnyString` ref before reading its `len`
       // field. Some string producers (e.g. the native Error `.name`/`.message`
@@ -3873,11 +3908,22 @@ export function finalizeStructAndDynamicMemberGet(
   // (e.g., properties on Object, {}, undefined, or dynamically-typed values).
   // Determine the expected result type from the TS checker at the access site.
   const accessType = ctx.checker.getTypeAtLocation(expr);
-  const accessWasm = symbolBrand(accessType, widenBooleanDynamicAccess(accessType, resolveWasmType(ctx, accessType)));
+  // (#2071) A foreign-return-capable fnctor instance has no trustworthy static
+  // shape (§10.2.1.3 step 13 may substitute an arbitrary object), so the
+  // member's checker type may not narrow the dynamic read — an f64 access type
+  // here would drag an overriding object's "A" through __unbox_number to NaN.
+  // The receiver already resolves externref (resolveWasmType degrade); this
+  // keeps the RESULT representation equally honest.
+  const foreignReturnReceiver = (ctx.standalone || ctx.wasi) && typeIsForeignReturnFnctorInstance(objType);
+  const accessWasm: ValType = foreignReturnReceiver
+    ? { kind: "externref" }
+    : symbolBrand(accessType, widenBooleanDynamicAccess(accessType, resolveWasmType(ctx, accessType)));
 
   // For struct types with the property, try to compile the object and do struct.get
   // but NEVER for class struct types — their fields are fixed at collection time
-  if (typeName && !ctx.classSet.has(typeName)) {
+  // — and never for a foreign-return fnctor instance (#2071): its checker shape
+  // may not describe the runtime value at all, so no field auto-registration.
+  if (typeName && !ctx.classSet.has(typeName) && !foreignReturnReceiver) {
     // typeName was already resolved above but field was not found;
     // try auto-registering the property from the TS type
     const props = objType.getProperties?.();
@@ -3976,7 +4022,10 @@ export function finalizeStructAndDynamicMemberGet(
       // NaN. The dispatch may still use its struct fast arms; only its result
       // representation stays honest.
       const preserveDynamicResultCarrier =
-        ts.isIdentifier(expr.expression) && ctx.externrefAccessorVars.has(expr.expression.text);
+        (ts.isIdentifier(expr.expression) && ctx.externrefAccessorVars.has(expr.expression.text)) ||
+        // (#2071) same honesty rule for a foreign-return fnctor instance: a
+        // same-named struct field's f64 vote must not re-narrow the read.
+        foreignReturnReceiver;
       const getIdx = ensureLateImport(
         ctx,
         "__extern_get",
@@ -4107,6 +4156,28 @@ export function finalizeStructAndDynamicMemberGet(
             // BOTH finders, which de-narrows exactly like the cold fix above.
             for (const lay of findFnctorLayoutStructsForField(ctx, propName)) fieldKinds.add(lay.fieldType.kind);
             for (const resid of findFnctorResidStructsForField(ctx, propName)) fieldKinds.add(resid.fieldType.kind);
+            // (#2071) A foreign-return ctor's struct is a bad narrowing
+            // witness: the same prop name is typically ALSO written to the
+            // object the ctor RETURNS (that is the §10.2.1.3 override
+            // pattern), and that object's props live on the open `$Object` —
+            // an externref carrier this finder can't see. Same seam as the
+            // #3927 hidden-carrier fixes above: contribute externref, which
+            // de-narrows (measured: `obj.prop` holding "A" was narrowed to
+            // the fnctor field's f64 and answered NaN, S13.2.2_A15_T2 shape).
+            if ((ctx.standalone || ctx.wasi) && !fieldKinds.has("externref")) {
+              const sfForeign = expr.getSourceFile();
+              const foreignNames = sfForeign === undefined ? undefined : foreignReturnFunctionNames(sfForeign);
+              if (foreignNames !== undefined && foreignNames.size > 0) {
+                const foreignIdxs = new Set<number>();
+                for (const nm of foreignNames) {
+                  const ti = ctx.structMap.get(`__fnctor_${nm}`);
+                  if (ti !== undefined) foreignIdxs.add(ti);
+                }
+                if (structCandidates.some((c) => foreignIdxs.has(c.structTypeIdx))) {
+                  fieldKinds.add("externref");
+                }
+              }
+            }
             // (#2864 wave-2 S1) The #2979 generator-sentinel exception, which
             // every OTHER consumer of this candidate set already carries
             // (`fillMemberGetDispatch`'s sentinel-aware box, `planGeneric`'s

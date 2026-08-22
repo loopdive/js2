@@ -46,13 +46,15 @@ export function buildClosureResultBoxing(
   returnType: ValType | null,
   boxNumberIdx: number | undefined,
 ): Instr[] {
-  // (#4491) A void closure contributes no value — the ABI still owes one
-  // externref, and in JS that value is `undefined`, never `null`. Emitting
-  // `ref.null.extern` made a void getter reached through this ABI answer a value
-  // that is `=== null` and stringifies "null", while the same void function's
-  // direct call and an ordinary missing-property read both answer `undefined`.
-  // A FACTORY (fresh Instr objects per call): the result is spliced into every
-  // dispatch arm, and a shared array gets double-remapped by the finalize walks.
+  // A void closure contributes no value — the ABI still owes one externref,
+  // and it owes the CANONICAL undefined (the #2106 singleton when active), not
+  // a bare null: a getter body with no return statement must read back as
+  // `undefined` (§6.2.5.5), but the raw `ref.null.extern` printed/compared as
+  // null through every dynamic consumer (measured: `Object.defineProperty(o,
+  // "p", {get: function(){}}); o.p` answered null — 15.2.3.6-4-207 family, and
+  // the same for any dynamically dispatched void method's result).
+  // Return fresh instruction objects: this sequence is spliced into several
+  // dispatch arms, whose finalize walks remap instruction indices in place.
   if (!returnType) {
     return undefinedExternInstrs(ctx)?.map((instr) => ({ ...instr })) ?? [{ op: "ref.null.extern" }];
   }

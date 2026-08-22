@@ -152,6 +152,7 @@ import { tryCompileStrictFunctionPoisonAssignment } from "../function-poison-pil
 import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
 import { emitToPropertyKeyOnce } from "./computed-member-reference.js";
+import { inheritedSetAffectsKey } from "../inherited-set-gate.js"; // (#4602) per-key #4504 gate
 
 /**
  * Emit a null/undefined guard for an externref-typed destructuring source.
@@ -4289,7 +4290,7 @@ function compilePropertyAssignment(
   // This runs before either receiver or RHS is emitted, preserving evaluation
   // order and leaving the direct physical fast path for a present slot in the
   // dispatcher/runtime itself.
-  if (ctx.standalone && ctx.inheritedSetDescriptorDirty && presenceSlot !== undefined) {
+  if (ctx.standalone && inheritedSetAffectsKey(ctx, fieldName) && presenceSlot !== undefined) {
     return compilePropertyAssignmentExternSet(ctx, fctx, target, value, fieldName);
   }
 

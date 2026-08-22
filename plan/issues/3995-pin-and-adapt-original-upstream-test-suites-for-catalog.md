@@ -3,7 +3,7 @@ id: 3995
 title: "npm-compat: pin and adapt original upstream test suites for catalog packages"
 status: ready
 created: 2026-07-30
-updated: 2026-08-20
+updated: 2026-08-22
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -395,6 +395,18 @@ explicit deferred inventory. The npm-compat generator invokes the adapter
 directly so the merge-only refresh publishes numeric results and cannot fall
 back to `adapter pending`.
 
+## 2026-08-22 styled-components utility expansion
+
+The styled-components adapter now includes the original
+`generateAlphabeticName.test.ts` utility file and registers **9/9** callbacks
+across four dependency-light utility files. Native Node and Wasm both pass all
+9 callbacks. The shared upstream assertion shim now supports the string form
+of Vitest's `toMatchInlineSnapshot`, and the adapter provides the pinned
+release version fixture used by styled-components' build-time `__VERSION__`
+constant. The remaining 37 files and 659 registrations stay visible as
+unavailable infrastructure; React, DOM, snapshot, SSR, Stylis, and larger
+object-graph coverage is not counted as passing.
+
 ## 2026-08-14 Jest get-type slice
 
 Jest 30.4.2 now verifies all 241 matching files under
@@ -598,3 +610,167 @@ The long landing-four-lane CI probe in this work was changed to await its
 child process instead of blocking Vitest's worker heartbeat; the focused core
 probe passes locally. Keep this CI plumbing in PR #4660 and treat the Lit
 compiler gaps in #3977/#3978/#3979/#3980 as the next independent work item.
+
+## 2026-08-21 shared matcher infrastructure checkpoint
+
+The shared upstream assertion shim now implements Vitest's `instanceOf` and
+`toBeInstanceOf` aliases in both positive and negated form, plus the positive
+`toBeCalled` and `toHaveBeenCalled` spy aliases. These are generic runner
+features, covered by `upstream-suite-runner.test.ts`; they are not Hono-specific
+rewrites. Before this change Hono's `utils/body.test.ts` was incorrectly
+classified as harness-incompatible because the native oracle could not call
+`expect(value).not.instanceOf(...)`.
+
+Rerunning the unchanged 16-file Hono selection after the shim fix produced
+**297/297 native callbacks** (previously 296/297 with one harness error), all
+16 modules compiled, 15 validated, and **86/297 Wasm callbacks passed**. The
+remaining 211 Wasm failures and six module-init runtime failures are compiler
+or runtime semantics; they are now scored rather than hidden as unavailable
+infrastructure. The full 120-file inventory and 2,058 deferred registrations
+remain explicit in the report.
+
+The same generic runner now exposes `it.skip`/`test.skip`, `todo`, and skipped
+suite registration semantics. This admits Hono's original Node-facing
+`utils/buffer.test.ts` and `utils/crypto.test.ts` without changing their
+callbacks. The compile worker also forwards the host's standard Web
+constructors when a suite explicitly selects the Node platform. The expanded
+18-file selection registers **311/311 native callbacks**, compiles 18 modules
+(17 validate), and scores **90/311 Wasm passes**; the two intentionally skipped
+upstream callbacks remain outside the denominator. The unresolved TextEncoder
+and crypto behavior is reported as Wasm compatibility failure, not relabeled as
+unavailable infrastructure. Deferred inventory is now 2,044 registrations.
+
+## 2026-08-21 Vitest global-stub infrastructure checkpoint
+
+The shared upstream shim now implements Vitest's generic `vi.stubGlobal` and
+`vi.unstubAllGlobals` contract. Each stub records whether the global was an
+own property and restores or deletes it in reverse order, so upstream tests can
+temporarily install browser/platform globals without leaking state into later
+callbacks. The runner regression test exercises the complete install/restore
+cycle in both Node and Wasm.
+
+Hono's unchanged `src/helper/testing/index.test.ts` is now admitted. The
+expanded 19-file selection registers **316/316 native callbacks** (up from
+311/311), compiles 19 modules (18 validate), and records **90/316 Wasm passes**.
+The five new callbacks still expose existing Hono route/object compiler
+failures; only the former `vi.stubGlobal is not a function` harness failure was
+removed. Deferred inventory is now 2,039 registrations.
+
+## 2026-08-21 Vitest environment-stub checkpoint
+
+The shared upstream shim now gives `vi.stubEnv` and `vi.unstubAllEnvs` real
+Vitest-style save/restore behavior. Each environment write records the prior
+own-property state and restores or deletes it in reverse order. A runner
+regression covers the contract without depending on a host-only process
+global.
+
+Hono's original `src/helper/dev/index.test.ts` is now admitted because its
+`NO_COLOR` setup/teardown no longer leaves the process environment mutated.
+The unchanged selection registers **324/324 native callbacks** (up from
+316/316), compiles all 20 modules (18 validate), and leaves the Wasm score at
+**90/324** while the two invalid modules remain compiler findings. Deferred
+inventory is now **2,031** registrations. The native oracle was run with
+`NO_COLOR` unset so the upstream color expectations are not contaminated by
+the local shell environment.
+
+## 2026-08-21 Jest module-isolation infrastructure checkpoint
+
+The React/ReactDOM upstream shim now implements `jest.isolateModules()`. Each
+isolated callback gets a fresh namespace object for every required module, the
+same namespace is reused for repeated requires within that callback, and the
+outer registry is restored when the callback returns. This supplies the
+identity contract used by ReactDOM's original selective-hydration and event-
+propagation tests without mutating Node's process-wide require cache or
+rewriting either test.
+
+The new regression exercises the exact contract in both the native oracle and
+compiled Wasm: two isolated `react-dom/client` requires are distinct, each is
+distinct from the outer namespace, and repeated outer requires remain stable.
+The remaining ReactDOM implementation/compile blockers are unchanged; this
+checkpoint removes a harness gap so those original callbacks can be scored as
+soon as their published graph validates.
+
+The same host surface now supplies React's original `IntersectionMocks` helper:
+observer registration and teardown, simulated intersection entries, and
+`getBoundingClientRect`/`getClientRects` stubs. `IntersectionObserver` is also
+registered in the generic Web-host constructor table so compiled code sees the
+same host class at module instantiation. The host behavior is covered directly
+in Node and the compiled regression verifies the observer registration path.
+
+The same build-time environment now supplies React's stable-package selectors
+(`__VARIANT__` and `__EXPERIMENTAL__`) as `false`, and exposes the published
+ReactDOM `HTMLNodeType` constants to the original tests. These are Jest/build
+bindings, not package behavior; defining them prevents avoidable native
+oracle failures while keeping the stable, non-experimental test branch.
+
+## 2026-08-21 Jest utility-suite infrastructure checkpoint
+
+The Jest adapter now admits four additional original release-tag test files:
+`diff-sequences`, `jest-docblock`, `jest-diff`'s control-character utility, and
+`jest-config`'s `stringToBytes` utility. The verified 30.4.2 checkout therefore
+registers **234 callbacks across 12 files** (232/234 pass in the Node oracle),
+and all 12 generated modules compile and validate. The Wasm lane passes
+**113/232 native-compatible callbacks**; the other 119 remain scored failures,
+not unavailable tests. The remaining **3,054 registrations** are explicitly
+reported as unavailable infrastructure from the other 229 verified test files.
+
+The missing `node:os` builtin is now in the generic Node host dependency set.
+`jest-docblock`'s `detect-newline@3.1.0` CommonJS dependency is materialized
+from the installed, lockfile-pinned source as an ESM adapter with a version and
+source-hash check. A narrow namespace-import rewrite binds the static members
+used by the original tests; no callback body or expected result is rewritten.
+The two native snapshot cases remain harness-incompatible and the Wasm
+semantic failures remain visible in the scored report.
+
+## 2026-08-21 UUID common-suite CI checkpoint
+
+UUID's existing pinned v14.0.1 runner is now part of the shared
+`npm-small-upstream-suites.test.ts` package gate. The gate verifies the complete
+official ten-file inventory and, when `DOGFOOD_UUID_UPSTREAM_SUITE=1`, runs all
+**75/75 original callbacks** in both lanes: the Node oracle passes 75, all ten
+modules compile and validate, and Wasm scores **10 passed / 65 failed**. The
+failures remain visible compatibility findings (WebCrypto typed-array
+crossing, missing global `crypto`, UUID parsing/exception semantics, and the
+v3/v5 hash path); none are relabeled as unavailable infrastructure.
+
+## 2026-08-22 ESLint expansion handoff
+
+The shipped ESLint adapter remains the one-file `deep-merge-arrays.js` slice:
+the unchanged upstream callbacks register and pass **44/44** in both the Node
+oracle and Wasm lanes, and its module compiles and validates.
+
+A local infrastructure experiment extracted five original ESLint v10.0.3
+utility files (`deep-merge-arrays.js`, `naming.js`, `option-utils.js`,
+`serialization.js`, and `string-utils.js`). The native oracle registered and
+passed **158/158** callbacks, and all five modules compiled and validated.
+The generalized adapter is intentionally published only as a draft: its Wasm
+binding/import strategy causes registration mismatches (including 0/59, 0/18,
+and 4/23 registered callbacks in three files) and does not reproduce the
+native result set. No Wasm score claim should be made for this experiment, and
+the mismatches must not be relabeled as unavailable infrastructure.
+
+Follow-up work should preserve the per-file original test bodies while using
+direct named-import adapters or otherwise matching module-init execution
+semantics before this selection is made publishable. The experiment changes
+only adapter/pin infrastructure; it does not modify ESLint source or test
+expectations.
+
+## 2026-08-22 ESLint assertion-binding checkpoint
+
+The binding mismatch was narrowed to the assertion shim, not the published
+ESLint utility exports. The old shim attached `strictEqual`, `deepStrictEqual`,
+`isTrue`, and `isFalse` as properties on a callable function. Node observes
+those properties, but the Wasm function representation does not retain them;
+the result was a false **0/158** score even when the utility returned the right
+value. The adapter now keeps the callable assertion and exposes its methods on
+an ordinary object, with the generated source binding method calls to that
+object. The original callback bodies and inputs remain unchanged.
+
+Measured on the five-file selection: **158/158 native**, all five modules
+compile and validate, and **50/158 Wasm** currently pass. The deep-merge unit
+is restored to **44/44 Wasm**; the remaining failures are real compiler/runtime
+gaps in typed reference-array higher-order functions and serialization helpers,
+with per-file failure summaries retained in the generated report. The adapter
+is still draft-only until those gaps are either fixed or explicitly scoped in
+follow-up issue slices; they are compatibility findings, not unavailable
+infrastructure.
