@@ -36,9 +36,12 @@ loc-budget-allow:
   - src/compiler.ts
 func-budget-allow:
   - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/expressions/calls.ts::tryEmitInlineDynamicCall
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
   - src/codegen/object-runtime.ts::fillApplyClosure
   - src/codegen/declarations/import-collector.ts::finalizeUnifiedCollector
   - src/codegen/closures.ts::compileArrowAsCallback
+  - src/codegen/closures.ts::compileLiftedClosureBody
   - src/codegen/closures/arrow-phases.ts::planClosureCaptures
   - src/codegen/expressions/identifiers.ts::compileIdentifierCore
   - src/codegen/context/create-context.ts::createCodegenContext
