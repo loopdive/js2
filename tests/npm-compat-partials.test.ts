@@ -75,4 +75,14 @@ describe("npm-compat refresh matrix wiring", () => {
     expect(workflow).toContain("scripts/merge-npm-compat-partials.mjs");
     expect(workflow).toContain("id: typescript");
   });
+
+  it("does not force-update a promotion PR while its checks are in flight", () => {
+    const workflow = readFileSync(new URL("../.github/workflows/npm-compat-refresh.yml", import.meta.url), "utf8");
+
+    expect(workflow).toContain("headRefOid");
+    expect(workflow).toContain("/commits/${PR_HEAD_SHA}/check-runs?per_page=100");
+    expect(workflow).toContain("leaving its branch untouched to avoid cancelling CI");
+    expect(workflow).toContain("CHECK_CUTOFF");
+    expect(workflow).toContain('echo "skip=1" >> "$GITHUB_OUTPUT"');
+  });
 });
