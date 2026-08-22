@@ -64,6 +64,22 @@ The full generated diff-sequences test module STILL fails its callback tests
 Both need the wrapper-family/order investigation (why a cast to the wrapper
 ROOT can null for a same-program closure), not more candidate seeding.
 
+WAT finding (2026-08-22, dstest2 probe): in the FULL generated module, a
+`diff(a.length, b.length, arrow1, arrow2)` call site compiles to TWO
+`__make_callback(id, closure)` registrations and NO call at all — the arrows
+were classified as HOST callback arguments (`isHostCallbackArgument`:
+`funcMap.get("diff")` misses — the alias registration maps the local default-
+import name only in some module layouts — and the #1300 checker
+`getCallSignatures` fallback apparently also missed here), and the callee
+itself resolved to nothing, so the whole call was dropped. `isCommon` call
+count measured 0. The SAME import + call shape in a small two-module
+reduction compiles to a direct `diffSequence` call and passes. So the
+residual is: (a) why `diff` resolves in small modules but not inside the
+63-test generated module (suspect: compile order of the alias registration
+vs the __diag/test bodies, or prelude interference), and (b) the
+order-sensitive wrapper-root null in the layout where the call DOES go
+through (`__call_fn_method_1` dynamic chain).
+
 ## Acceptance criteria
 
 - [x] Cross-module shorter-arity callback reduction round-trips.
