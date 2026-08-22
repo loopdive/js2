@@ -1,4 +1,4 @@
-// Jest 30.4.2 original @jest/get-type and @jest/util unit slice.
+// Jest 30.4.2 original utility unit slice.
 
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";

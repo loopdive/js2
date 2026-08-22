@@ -815,3 +815,19 @@ compiler, validation, or runtime mismatches in the upstream suites remain
 scored as compatibility failures.
 
 Implementation: [PR #4756](https://github.com/loopdive/js2/pull/4756).
+## 2026-08-22 Jest internal-package resolution checkpoint
+
+The Jest adapter now materializes the verified `@jest/get-type@30.1.0`
+workspace package in the pinned checkout's `node_modules`. The package metadata
+and source hash are checked against the release-tag source before the test
+starts; the implementation bytes are unchanged. This closes the real package
+name-resolution seam used by `jest-matcher-utils/src/Replaceable.ts` instead of
+rewriting that import to a relative path.
+
+The unchanged `Replaceable.test.ts` is now selected alongside the existing Jest
+utility slice. The verified 30.4.2 inventory registers **251 callbacks across
+13 files**: **249/249** admitted callbacks pass in the Node oracle, all 13
+modules compile and validate, and Wasm scores **124/249**. The two original
+snapshot callbacks remain harness-incompatible and the 125 Wasm failures are
+scored compatibility findings. The remaining **3,037 registrations** from 228
+verified files remain explicitly reported as unavailable infrastructure.

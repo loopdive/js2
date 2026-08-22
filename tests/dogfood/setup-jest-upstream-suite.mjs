@@ -12,6 +12,11 @@ const DETECT_NEWLINE_PIN = {
   sourceSha256: "7306f2ecc168c9e20be4a2a3d44a0dad59ea21dc0bf4cd41ea85829bc79e2c18",
 };
 
+const JEST_GET_TYPE_PIN = {
+  version: "30.1.0",
+  sourceSha256: "568e74bbefa9a86accea3c9289cfb93568cd4354bc822650a0e203b03bca341d",
+};
+
 function resolveDetectNewlineSource(pin = DETECT_NEWLINE_PIN) {
   const workspaceNodeModules = resolve(HERE, "../../node_modules");
   const direct = join(workspaceNodeModules, "detect-newline/index.js");
@@ -57,6 +62,24 @@ export function adaptDetectNewline(source) {
   return adapted;
 }
 
+function resolveJestGetTypeSource(suite, pin = JEST_GET_TYPE_PIN) {
+  const sourcePath = join(suite.root, "packages/jest-get-type/src/index.ts");
+  if (!existsSync(sourcePath)) {
+    throw new Error(`[dogfood] Jest requires @jest/get-type@${pin.version}; source is missing`);
+  }
+  const source = readFileSync(sourcePath, "utf8");
+  const packagePath = join(suite.root, "packages/jest-get-type/package.json");
+  const packageVersion = JSON.parse(readFileSync(packagePath, "utf8")).version;
+  if (packageVersion !== pin.version) {
+    throw new Error(`[dogfood] @jest/get-type version mismatch: expected ${pin.version}, got ${packageVersion}`);
+  }
+  const sha256 = createHash("sha256").update(source).digest("hex");
+  if (sha256 !== pin.sourceSha256) {
+    throw new Error(`[dogfood] @jest/get-type source hash mismatch: expected ${pin.sourceSha256}, got ${sha256}`);
+  }
+  return { source, sha256 };
+}
+
 export function setupJestUpstreamSuite(options = {}) {
   const suite = setupPinnedUpstreamSuite({
     here: HERE,
@@ -92,5 +115,31 @@ export function setupJestUpstreamSuite(options = {}) {
     ) + "\n",
   );
   writeFileSync(join(dependencyRoot, "index.ts"), adaptDetectNewline(dependency.source));
+
+  // The selected jest-matcher-utils unit imports @jest/get-type by its
+  // published package name. A source checkout has the workspace package but
+  // no installed workspace links, so materialize a verified ESM package root
+  // in the checkout's node_modules. The implementation bytes remain the
+  // pinned upstream source; only the package-resolution seam is supplied.
+  const getTypePin = suite.pin.dependencies?.["@jest/get-type"] ?? JEST_GET_TYPE_PIN;
+  const getType = resolveJestGetTypeSource(suite, getTypePin);
+  const getTypeRoot = join(suite.root, "node_modules/@jest/get-type");
+  mkdirSync(getTypeRoot, { recursive: true });
+  writeFileSync(
+    join(getTypeRoot, "package.json"),
+    JSON.stringify(
+      {
+        name: "@jest/get-type",
+        version: getTypePin.version,
+        type: "module",
+        main: "./index.ts",
+        exports: "./index.ts",
+        _sourceSha256: getType.sha256,
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  writeFileSync(join(getTypeRoot, "index.ts"), getType.source);
   return suite;
 }

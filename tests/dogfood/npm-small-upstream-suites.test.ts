@@ -282,15 +282,15 @@ describe("small npm package upstream suites", () => {
     const report = await run("jest");
     expect(report.extraction).toMatchObject({
       filesSeen: 241,
-      filesSelected: 13,
-      filesDeferred: 228,
-      testsRegistered: 237,
-      nativePassed: 235,
+      filesSelected: 14,
+      filesDeferred: 227,
+      testsRegistered: 254,
+      nativePassed: 252,
       nativeFailed: 2,
     });
-    expect(report.extraction.unavailableInfra).toBe(3051);
-    expect(report.compile).toMatchObject({ modules: 13, succeeded: 13, validated: 13 });
-    expect(report.results).toMatchObject({ scored: 235, passed: 109, failed: 126, runtimeFailed: 0 });
+    expect(report.extraction.unavailableInfra).toBe(3034);
+    expect(report.compile).toMatchObject({ modules: 14, succeeded: 14, validated: 14 });
+    expect(report.results).toMatchObject({ scored: 252, passed: 120, failed: 132, runtimeFailed: 0 });
   });
 
   const uuidHeavy = process.env.DOGFOOD_UUID_UPSTREAM_SUITE === "1" ? it : it.skip;
