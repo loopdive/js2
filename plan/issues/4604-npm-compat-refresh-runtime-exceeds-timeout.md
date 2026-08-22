@@ -124,7 +124,8 @@ cancels an older pending run when another push arrives. The run history after
 the refresh for `3f8b6e6` was cancelled when the next main push queued
 `2860d72d`, even though the workflow declared `cancel-in-progress: false`.
 
-The follow-up change keys push-triggered refreshes by `github.sha`. Every main commit therefore gets a
+The follow-up in [#4755](https://github.com/loopdive/js2/pull/4755) keys
+push-triggered refreshes by `github.sha`. Every main commit therefore gets a
 runner instead of being silently replaced while pending; scheduled and manual
 runs continue to serialize on the branch ref. The promotion push uses
 `--force-with-lease` so concurrent SHA lanes cannot overwrite a newer
