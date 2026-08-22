@@ -62,6 +62,7 @@ import {
 } from "./async-cps.js";
 import { ensureNativeGeneratorResultType } from "./generators-native.js";
 import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js"; // (#3178) canonical undefined for the done-result value
+import { recordAsyncFrameMachinery } from "./compiler-support-abi.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3 / #2710) stable-regime minting
 import { buildNativeAwaitClassification, buildNativeAwaitSuspendArm } from "./prepared-native-async-await.js";
 import {
@@ -1584,17 +1585,26 @@ export function ensureAsyncResumeFunction(
     exported: false,
   };
   pushDefinedFunc(ctx, resumeFuncIdx, resumePlaceholder);
+  // (#3520 C35) The resume function and its two step adapters are owned by the
+  // async function's OWN source unit — `(unit, "async-frame-machinery", part)`.
+  // A per-unit anchor is stronger than an entry-source ordinal here: a second
+  // async function elsewhere in the module cannot renumber this one. The body is
+  // filled into `resumePlaceholder` in place further down, so the recorded
+  // allocator object stays the exact one the module keeps.
+  recordAsyncFrameMachinery(ctx, info.decl, "resume", resumePlaceholder);
 
   const stepFulfillFuncIdx = mintDefinedFunc(ctx);
   info.stepFulfillFuncIdx = stepFulfillFuncIdx;
   ctx.funcMap.set(stepFulfillName, stepFulfillFuncIdx);
-  pushDefinedFunc(ctx, stepFulfillFuncIdx, {
+  const stepFulfillFunc: WasmFunction = {
     name: stepFulfillName,
     typeIdx: stepTypeIdx,
     locals: buildStepAdapterLocals(info),
     body: buildStepAdapterBody(info, resumeFuncIdx, /*reject*/ false),
     exported: info.host,
-  });
+  };
+  pushDefinedFunc(ctx, stepFulfillFuncIdx, stepFulfillFunc);
+  recordAsyncFrameMachinery(ctx, info.decl, "stepFulfill", stepFulfillFunc);
   // Host backend: the `__make_callback` host bridge dispatches by the exported
   // `__cb_<id>` NAME, so the adapters need real export entries (the `exported`
   // flag alone only opts into the module-init guard). The late-import shift
@@ -1610,13 +1620,15 @@ export function ensureAsyncResumeFunction(
   const stepRejectFuncIdx = mintDefinedFunc(ctx);
   info.stepRejectFuncIdx = stepRejectFuncIdx;
   ctx.funcMap.set(stepRejectName, stepRejectFuncIdx);
-  pushDefinedFunc(ctx, stepRejectFuncIdx, {
+  const stepRejectFunc: WasmFunction = {
     name: stepRejectName,
     typeIdx: stepTypeIdx,
     locals: buildStepAdapterLocals(info),
     body: buildStepAdapterBody(info, resumeFuncIdx, /*reject*/ true),
     exported: info.host,
-  });
+  };
+  pushDefinedFunc(ctx, stepRejectFuncIdx, stepRejectFunc);
+  recordAsyncFrameMachinery(ctx, info.decl, "stepReject", stepRejectFunc);
   if (info.host) {
     ctx.mod.exports.push({
       name: stepRejectName,

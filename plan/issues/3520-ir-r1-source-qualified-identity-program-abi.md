@@ -183,6 +183,12 @@ files:
   - tests/issue-1899-funcidx-authority.test.ts
 loc-budget-allow:
   - src/codegen/closure-exports.ts
+  # C35 adds one record-at-emit hook per residual support family. The identity
+  # logic lives in the new leaf `src/codegen/compiler-support-abi.ts`; what
+  # lands in these two god-files is the call plus the object-literal extraction
+  # the exact-allocator record needs.
+  - src/codegen/async-frame.ts
+  - src/codegen/type-coercion.ts
   - src/codegen/data-struct-host-bridge.ts
   - src/codegen/struct-field-exports.ts
   - src/codegen/index.ts
@@ -212,6 +218,16 @@ oracle-ratchet-allow:
 # inside the same already-wide change would obscure parity review; #3399 owns
 # their mechanical decomposition after this checkpoint lands.
 func-budget-allow:
+  # C35: +6 lines to record the argc wrapper's exact allocator object. The
+  # wrapper is emitted at the tail of this function and its identity is the
+  # dispatcher arity, so extracting it would separate the record from the only
+  # place the arity is in scope.
+  - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
+  # C35: +8 lines to name the three async-frame allocator objects (resume and
+  # both step adapters) so their exact identities can be recorded. The three
+  # reservations must stay in one function — the resume slot must be minted
+  # before the adapters that bake its index.
+  - src/codegen/async-frame.ts::ensureAsyncResumeFunction
   - src/ir/integration.ts::compileIrPathFunctions
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
