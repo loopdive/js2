@@ -646,6 +646,29 @@ in-module reads (host-side detection is what react-dom needs).
   63740/63740, clsx 32/32; the 16 issue-1712 battery failures are
   identical on base (A/B'd).
 
+- **2026-08-22 cross-KIND name hijack fixed — react 91 → 94/146**: the
+  classObjectGlobals identifier branch resolved by NAME, so `class Foo`
+  anywhere in the module made every same-named identifier read the class
+  singleton — including a sibling scope's `function Foo()` (react's
+  StrictMode batch declares a class in one test, a function in the next;
+  the function crossed to the host as the class mirror and was never
+  callable as itself). The branch now verifies CHECKER identity
+  (`ctx.oracle.valueDeclarationOf`): a class/class-expression declaration
+  re-resolves through its per-site synthetic (anonClassExprNames); a
+  function/arrow/parameter/variable declaration OPTS OUT and falls through
+  to the normal identifier lanes. Guards: acorn 3518/3518, jest 322/356,
+  cookie 63740/63740, clsx 32/32, 4618 battery 10/10. Regression test
+  added to `tests/issue-4618-scoped-same-name-classes.test.ts` (cross-kind
+  grab: F() === "fn").
+  **Residual pinned (capture-loss family, probe-crossasync fncount=0)**:
+  routing is fixed, but a `function Foo()` declared in an ASYNC body whose
+  sibling scope has the same-named class builds a BARE closure without its
+  captures — boxed `count` writes go nowhere. Lead: the act-arrow's
+  closures.ts skip-condition (~L3400) checks
+  `fctx.hoistedFunctionValueBindings?.has(name)` on the ARROW's fctx while
+  the binding lives on the DECLARING fctx — the arrow never captures the
+  sibling fn-decl when `ctx.funcMap.has(name)`.
+
 ## Fix order
 
 1. (c) first — it is a hard CE with a two-line repro and pins the IR

@@ -45,6 +45,46 @@ describe("#4618 same-named nested classes are scoped per declaration", () => {
     expect(exp.b!()).toBe("B");
   });
 
+  it("a same-named FUNCTION in a sibling scope is not hijacked by the class singleton", async () => {
+    // (#4618) The classObjectGlobals identifier branch resolved by NAME, so a
+    // `class Foo` anywhere in the module made every same-named identifier —
+    // including a sibling scope's `function Foo()` — read the class object.
+    // react's StrictMode batch declares `class Foo` in one test and
+    // `function Foo()` in the next; the function crossed to the host as the
+    // class mirror and was never callable as itself. The branch now verifies
+    // checker identity: a function/parameter/variable declaration opts out.
+    const grabbed: unknown[] = [];
+    (globalThis as Record<string, unknown>).__grab4618ck = (v: unknown) => {
+      grabbed.push(v);
+    };
+    const result = await compile(
+      `
+      export function a(): any {
+        class Foo { m(): any { return "class"; } }
+        (globalThis as any).__grab4618ck(Foo);
+        return 1;
+      }
+      export function b(): any {
+        function Foo(): any { return "fn"; }
+        (globalThis as any).__grab4618ck(Foo);
+        return 1;
+      }`,
+      { testRuntime: true, fileName: "issue-4618-cross-kind.ts", skipSemanticDiagnostics: true },
+    );
+    expect(result.success).toBe(true);
+    const importObject = (result as { importObject?: WebAssembly.Imports }).importObject ?? {};
+    const { instance } = await WebAssembly.instantiate(result.binary!, importObject);
+    (importObject as { __setInstance?: (i: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    const exp = wrapExports(instance, {
+      signatures: (result as { exportSignatures?: unknown }).exportSignatures,
+    }) as Record<string, () => unknown>;
+    exp.a!();
+    exp.b!();
+    const [, F] = grabbed as [unknown, () => unknown];
+    expect(typeof F).toBe("function");
+    expect(F()).toBe("fn");
+  });
+
   it("a class named after its parent's property does not false-trip the TDZ check", async () => {
     const exp = await run(`
       const NS: any = { Component: function (this: any) {} };

@@ -1178,7 +1178,32 @@ function compileIdentifierCore(
   {
     // (#3505) A foreign module's class must not resolve by bare name — see
     // `unresolvedInModuleGoal`.
-    const resolvedClassName = unresolvedInModuleGoal ? undefined : (ctx.classExprNameMap.get(name) ?? name);
+    let resolvedClassName = unresolvedInModuleGoal ? undefined : (ctx.classExprNameMap.get(name) ?? name);
+    // (#4618) Checker-verified identity: a bare name is not a binding. A
+    // nested FUNCTION named like a class elsewhere (react's StrictMode batch
+    // declares `class Foo` in one test and `function Foo()` in the next) was
+    // hijacked into the class singleton here — createElement received the
+    // CLASS object and the function component never ran. When the checker
+    // resolves this identifier to a declaration, take the class arm only if
+    // that declaration IS a class; a per-site synthetic (scoped duplicate
+    // declaration) resolves through its own node.
+    if (resolvedClassName !== undefined && ctx.classObjectGlobals?.has(resolvedClassName)) {
+      const decl = ctx.oracle.valueDeclarationOf(id);
+      if (decl !== undefined) {
+        if (ts.isClassDeclaration(decl) || ts.isClassExpression(decl)) {
+          const scoped = ctx.anonClassExprNames.get(decl);
+          if (scoped !== undefined && ctx.classObjectGlobals.has(scoped)) resolvedClassName = scoped;
+        } else if (
+          ts.isFunctionDeclaration(decl) ||
+          ts.isFunctionExpression(decl) ||
+          ts.isArrowFunction(decl) ||
+          ts.isParameter(decl) ||
+          ts.isVariableDeclaration(decl)
+        ) {
+          resolvedClassName = undefined;
+        }
+      }
+    }
     if (resolvedClassName !== undefined && ctx.classObjectGlobals?.has(resolvedClassName)) {
       if (emitLazyClassObjectGet(ctx, fctx, resolvedClassName)) {
         return { kind: "externref" };
