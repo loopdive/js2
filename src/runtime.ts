@@ -1840,8 +1840,18 @@ function _drainNativePromiseBoundary(
 function _wrapWasmClosureUnknownArity(
   closure: any,
   callbackState?: { getExports: () => Record<string, Function> | undefined },
+  // (#4618) true = the class-ctor mirror's own construct/apply dispatch —
+  // must get the RAW bridge, not the mirror (infinite recursion otherwise).
+  rawDispatch = false,
 ): ((...args: any[]) => any) | null {
   if (closure != null && typeof closure === "object") {
+    // (#4618) A registered class ctor VALUE presents as the constructible
+    // class mirror on every host path — a second (plain dynamic-bridge)
+    // representation breaks `element.type === Component` identity.
+    if (!rawDispatch && _classCtorClosures.has(closure)) {
+      const mirror = _wrapForHost(closure, callbackState?.getExports());
+      if (typeof mirror === "function") return mirror;
+    }
     const cached = _wasmClosureDynamicWrapperCache.get(closure);
     if (cached) return cached as (...args: any[]) => any;
   }
@@ -2205,6 +2215,10 @@ function _maybeWrapCallableUnknownArity(
   if (!callbackState) return val;
   const exports = callbackState.getExports();
   if (!exports) return val;
+  // (#4618) A registered class ctor VALUE (class expression) presents as the
+  // constructible class mirror on every crossing path, not the plain
+  // closure bridge — _wrapForHost builds/caches the mirror.
+  if (_classCtorClosures.has(val)) return _wrapForHost(val, exports);
   const isClosureFn = exports.__is_closure as ((v: any) => number) | undefined;
   if (typeof isClosureFn !== "function") return val;
   try {
@@ -7653,12 +7667,25 @@ function _makeClassCtorMirrorForHost(
     }
   }
   const handler: ProxyHandler<any> = {
-    apply() {
-      throw new TypeError(`Class constructor ${className} cannot be invoked without 'new'`);
+    apply(_t, thisArg, args) {
+      // Not the spec's class-without-new TypeError: react's legacy
+      // module-pattern fallback (and pre-bridge behavior) CALLS a component
+      // it failed to detect as a class. Dispatching the ctor closure keeps
+      // those paths working; detection failures degrade instead of throwing.
+      const ctorClosure = _classCtorClosures.get(classObj);
+      const fn = _wrapWasmClosureUnknownArity(ctorClosure, callbackState, true);
+      if (typeof fn !== "function") {
+        throw new TypeError(`Class constructor ${className} cannot be invoked without 'new'`);
+      }
+      return fn.apply(thisArg, args);
     },
     construct(_t, args, _newTarget) {
       const ctorClosure = _classCtorClosures.get(classObj);
-      const ctorFn = _maybeWrapCallableUnknownArity(ctorClosure, callbackState);
+      // Dispatch the raw closure directly — for a class EXPRESSION the ctor
+      // closure IS the registered class object, so the generic wrap would
+      // return this very mirror (whose `apply` throws the class-without-new
+      // TypeError). `_wrapWasmClosureUnknownArity` is the underlying bridge.
+      const ctorFn = _wrapWasmClosureUnknownArity(ctorClosure, callbackState, true);
       if (typeof ctorFn !== "function") {
         throw new TypeError(`compiled class constructor ${className} bridge unavailable`);
       }
@@ -7770,6 +7797,10 @@ function _wrapCallableForHost(
 ): any {
   if (closure == null || typeof closure !== "object") return closure;
   if (!_isWasmStruct(closure)) return closure;
+  // (#4618) A registered class ctor VALUE presents as the constructible class
+  // mirror on EVERY host path — a second (callable-wrapper) representation
+  // breaks `element.type === Component` identity.
+  if (_classCtorClosures.has(closure)) return _wrapForHost(closure, callbackState?.getExports());
   const cached = _hostCallableCache.get(closure);
   if (cached) return cached;
 

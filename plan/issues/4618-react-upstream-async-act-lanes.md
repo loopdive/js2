@@ -476,6 +476,39 @@ in-module reads (host-side detection is what react-dom needs).
   13) persist. Next: trace one StrictMode test's failure point inside
   react-dom with the bridge live.
 
+- **2026-08-22 bridge hardening + e2e findings (react holds 87, jest 315)**:
+  probe-driven E2E (real harness react-dom): a compiled
+  `class Inner extends Base { render() }` DECLARATION renders THROUGH host
+  react-dom end-to-end (`.tmp/probe-render3.mts` → "DIV:foo") — the bridge
+  works for the simple declaration shape. Landed hardening: (a) extern.ts —
+  pre-hoist `__new_plain_object` before the ctor `ref.func` bake and
+  re-resolve the `__register_class_ctor` call index at push time
+  (emitLazyProtoGet's late import shifts indices; flush repairs call sites
+  in tracked bodies but NOT a captured index variable or an already-baked
+  ref.func); (b) runtime — the mirror presents on ALL closure-wrap paths
+  (`_maybeWrapCallableUnknownArity` / `_wrapCallableForHost` /
+  `_wrapWasmClosureUnknownArity`, with a rawDispatch bypass for the mirror's
+  own construct/apply), and `apply` dispatches the ctor closure instead of
+  throwing (react's legacy module-pattern fallback CALLS an undetected
+  class; pre-bridge behavior).
+  **Found + REVERTED as a net regression (react 87→79)**: registering
+  class-EXPRESSION ctor values (`Inner = class extends React.Component` —
+  the ReactES6Class beforeEach shape) with the bridge broke 8
+  `expect(element.type).toBe(Component)` identity tests — element.type
+  wraps as the mirror while the direct read produces a different host
+  function (a "[native code]"-stringifying bound/bridge fn), and unifying
+  three wrap chokepoints did NOT close it. Class EXPRESSIONS therefore
+  remain on the legacy callable-wrapper path (§10.2.2 ordinary construct)
+  — the emitRegisterClassExprBridge helper was removed with the experiment;
+  see this entry for its design if resumed. Separately measured residual:
+  a 2-method class DECLARATION's value crossing reaches the host as a
+  struct that is NOT the registered singleton (traced: registration stores
+  obj#2, every crossing wraps other structs) — cause not yet located
+  (suspect a second representation from the escape-gate/value-read path,
+  NOT IR: JS2WASM_LOG_IR_FALLBACKS shows claimed=0). Debugging note that
+  cost an hour: the react test environment captures console.error — use
+  process.stderr.write for runtime-side instrumentation under the harness.
+
 ## Fix order
 
 1. (c) first — it is a hard CE with a two-line repro and pins the IR

@@ -504,8 +504,15 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
   const registerCtorIdx = ctx.funcMap.get("__register_class_ctor");
   if (registerCtorIdx !== undefined) {
     const ctorFullName = `${className}_new`;
-    const ctorIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorFullName));
-    if (ctorIdx !== undefined) {
+    const ctorIdx0 = ctx.funcMap.get(classMemberFuncKey(ctx, ctorFullName));
+    if (ctorIdx0 !== undefined) {
+      // Pre-hoist the import emitLazyProtoGet will need, BEFORE any ref.func
+      // is baked below — flushLateImportShifts repairs call sites in tracked
+      // bodies but a ref.func baked ahead of an import add stays stale (the
+      // promise-subclass registration learned the same lesson).
+      ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, fctx);
+      const ctorIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorFullName)) ?? ctorIdx0;
       const savedBody = fctx.body;
       fctx.body = initBody;
       ctx.liveBodies.add(savedBody);
@@ -550,7 +557,11 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
           } else {
             compileStringLiteral(ctx, fctx, className);
           }
-          fctx.body.push({ op: "call", funcIdx: registerCtorIdx });
+          // Re-resolve at push time: emitLazyProtoGet above late-adds
+          // `__new_plain_object`, shifting every func index after the value
+          // captured at block entry (measured: the stale call index sent the
+          // registration to a NEIGHBORING import for 2-method classes).
+          fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__register_class_ctor") ?? registerCtorIdx });
           // The host may now dynamically invoke any of this class's instance
           // methods (react-dom's `instance.render()` / lifecycle calls) —
           // admit them to the #3123 member-dispatch export surface.
