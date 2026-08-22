@@ -3321,6 +3321,16 @@ callbacks through `setInstance`. Consumer execution coverage pins the authority
 census at raw `0`, mismatched-token `0`, and canonical branded `2`, then invokes
 a compiled callback after the same association is established.
 
+## 2026-08-22 lane handover (fable-lead)
+
+C34 (PR #4729) and its corrections (PR #4733, PR #4742) are merged; the
+`## Resume checkpoint` above is current. The Opus slice that was in flight at
+handover on branch `claude/issue-3520-c35-residue` is **PR #4747** (C35): it
+gives the 15 remaining generic `retained-module-function` rows semantic owners
+and re-baselines four of the red census files. Its results are recorded below
+and in the drift / red-test tables above. Session-wide context:
+`plan/agent-context/fable-lead.md`.
+
 ### 2026-08-22 residual support-family ownership continuation (C35)
 
 The C35 continuation on `claude/issue-3520-c35-residue` moves the last four
