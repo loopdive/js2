@@ -621,3 +621,5 @@ smoke result, not a claim that the 1,923-test admitted corpus is green.
 The browser Fizz timeout and Node Fizz module-init null remain separate
 follow-up findings; the full ReactDOM corpus still needs to be rerun after the
 compiler fix. No host API was silently marked unavailable.
+
+Implementation: [PR #4769](https://github.com/loopdive/js2wasm/pull/4769).
