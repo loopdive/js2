@@ -1,9 +1,10 @@
 ---
 id: 4612
 title: "acorn tokenizer post-claim withdrawal: abi-signature-parity IR=182 vs legacy=151 on the runtime-dynamic lane"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-21
+completed: 2026-08-22
 priority: medium
 horizon: m
 feasibility: medium
@@ -213,8 +214,12 @@ The return-type gate is evaluated before the body-shape gate, which is why
 | `check:ir-fallbacks` | OK — no unintended/post-claim/module-level increases |
 | `check:ir-only` | READY — 38 IR bodies, 0 legacy bodies, 0 invariants |
 | `check:linear-ir` | OK — compiled=8 (baseline 8), buckets unchanged |
+| equivalence gate, 8 shards (never unsharded) | 8/8 `No new equivalence regressions` |
+| #2949 / #2660 / #4155 / #3536 / #3551 / #3471 / #3341 / #3521 / #2773 suites | 366 pass, 20 fail — failure set BYTE-IDENTICAL to the parent commit (all pre-existing on main; measured by running the same set against a file-copy revert of the three touched sources) |
 | `typecheck` | clean |
 | `biome lint` (changed files) | clean |
+
+All of the above re-run after merging `origin/main` at `f85705cee`.
 
 ### Tests
 
