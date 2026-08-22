@@ -1,7 +1,7 @@
 // Jest 30.4.2 original utility unit slice.
 
-import { readFileSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { setupJestUpstreamSuite } from "./setup-jest-upstream-suite.mjs";
@@ -125,6 +125,25 @@ function resolveJestImport(filePath, specifier) {
   return target;
 }
 
+function readSnapshotEntries(filePath) {
+  const snapshotPath = join(dirname(filePath), "__snapshots__", `${basename(filePath)}.snap`);
+  if (!existsSync(snapshotPath)) return [];
+  const source = readFileSync(snapshotPath, "utf8");
+  const entries = [];
+  const pattern = /exports\[`([^`]*)`\]\s*=\s*`([\s\S]*?)`;/g;
+  for (const match of source.matchAll(pattern)) {
+    const raw = match[2];
+    let expected = raw;
+    try {
+      expected = JSON.parse(raw.trim());
+    } catch {
+      // Non-JSON snapshots are left as their literal template value.
+    }
+    entries.push([match[1].replace(/ \d+$/, ""), expected]);
+  }
+  return entries;
+}
+
 function transformJestTest(source, filePath, generatedPath, { normalizeCjs = false } = {}) {
   let importIndex = 0;
   const namespaceReplacements = [];
@@ -223,8 +242,12 @@ export async function runHarness({ quiet = false } = {}) {
     const original = readFileSync(filePath, "utf-8");
     const transformed = transformJestTest(original, filePath, generatedPath);
     const nativeTransformed = transformJestTest(original, filePath, generatedPath, { normalizeCjs: true });
-    const source = `${UPSTREAM_TEST_SHIM}\n${transformed}\n${UPSTREAM_TEST_EXPORTS}`;
-    const nativeSource = `${UPSTREAM_TEST_SHIM}\n${nativeTransformed}\n${UPSTREAM_TEST_EXPORTS}`;
+    const snapshotEntries = readSnapshotEntries(filePath);
+    const snapshotSetup = snapshotEntries.length
+      ? `__upstreamInstallSnapshotMatcher(${JSON.stringify(snapshotEntries)});`
+      : "";
+    const source = `${UPSTREAM_TEST_SHIM}\n${snapshotSetup}\n${transformed}\n${UPSTREAM_TEST_EXPORTS}`;
+    const nativeSource = `${UPSTREAM_TEST_SHIM}\n${snapshotSetup}\n${nativeTransformed}\n${UPSTREAM_TEST_EXPORTS}`;
     const result = await compileAndRunUpstreamModule({
       generatedPath,
       source,
