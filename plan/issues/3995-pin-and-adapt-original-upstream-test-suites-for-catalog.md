@@ -1016,3 +1016,17 @@ admits **336/338** (the two existing diff-sequence snapshot-oracle failures),
 all 28 modules compile and 27 validate, and Wasm scores **237/336** with zero
 runtime failures. The unavailable-infrastructure remainder is **2,950
 registrations** from 213 deferred files.
+
+## 2026-08-22 Jest array-subset matcher checkpoint
+
+The shared `toMatchObject` implementation now handles arrays with Jest's
+same-length element-by-element subset semantics. This admits the original
+`jest-core/src/__tests__/FailedTestsCache.test.js` unchanged; its expected
+array of failed test paths now matches the real returned test objects in both
+lanes.
+
+The exact run now covers **339 callbacks across 29 selected files**. Node
+admits **337/339** (the two existing diff-sequence snapshot-oracle failures),
+all 29 modules compile and 28 validate, and Wasm scores **238/337** with zero
+runtime failures. The unavailable-infrastructure remainder is **2,949
+registrations** from 212 deferred files.

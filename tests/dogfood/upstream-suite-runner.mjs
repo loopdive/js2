@@ -102,6 +102,13 @@ function __upstreamSame(a, b) {
 function __upstreamSubset(actual, expected) {
   if (Object.is(actual, expected)) return true;
   if (actual == null || expected == null || typeof expected !== "object") return false;
+  if (Array.isArray(actual) || Array.isArray(expected)) {
+    if (!Array.isArray(actual) || !Array.isArray(expected) || actual.length !== expected.length) return false;
+    for (let index = 0; index < expected.length; index++) {
+      if (!__upstreamSubset(actual[index], expected[index])) return false;
+    }
+    return true;
+  }
   const keys = Object.keys(expected);
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
