@@ -154,6 +154,31 @@ describe("#4618 same-named nested classes are scoped per declaration", () => {
     expect(exp.other!()).toBe(1);
   });
 
+  it("F.prototype writes/reads on a top-level function are not hijacked by a same-named class", async () => {
+    // (#4618) `.prototype` dispatch is display-name keyed: with a nested
+    // `class F` anywhere in the module, `F.prototype` on the TOP-LEVEL
+    // `function F` routed into the CLASS's proto singleton — the write
+    // `F.prototype.mark = 1` landed in the class store while dynamic reads
+    // (`obj.F.prototype.mark`) used the fn sidecar. react's
+    // `Component.prototype.isReactComponent = {}` split the same way, so
+    // react-dom never detected compiled class components. The class arms now
+    // yield when the receiver checker-resolves to a function-like decl.
+    const exp = await run(`
+      function F(this: any): any {}
+      (F as any).prototype.mark = 1;
+      var obj: any = {};
+      obj.F = F;
+      export function other(): any {
+        class F { m(): any { return 1; } }
+        return new F().m();
+      }
+      export function t(): any {
+        return String((F as any).prototype.mark) + "|" + String(obj.F.prototype.mark) + "|" + String(obj.F === F);
+      }`);
+    expect(exp.t!()).toBe("1|1|true");
+    expect(exp.other!()).toBe(1);
+  });
+
   it("a class named after its parent's property does not false-trip the TDZ check", async () => {
     const exp = await run(`
       const NS: any = { Component: function (this: any) {} };

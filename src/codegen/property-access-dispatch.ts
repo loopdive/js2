@@ -2064,7 +2064,26 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       ctx.classExprNameMap.get(objName) ??
       (constructReturnType ? exactClassExpressionTypeName(ctx, constructReturnType) : undefined) ??
       objName;
+    // (#4618) The bare-name fallback is name-keyed: a top-level
+    // `function F` under a NESTED `class F` anywhere in the module routed
+    // `F.prototype` (read AND the module-init `F.prototype.mark = …` write
+    // receiver) into the CLASS's proto singleton, while dynamic reads of the
+    // same function's `.prototype` used the fn sidecar — react's
+    // `Component.prototype.isReactComponent = {}` landed in the wrong store.
+    // When resolution fell through to the bare name, require the checker to
+    // NOT resolve the identifier to a function-like declaration.
+    let bareNameIsNonClass = false;
     if (ctx.classSet.has(resolvedClass)) {
+      const vSym = ctx.checker.getSymbolAtLocation(skipTransparentExpressions(expr.expression));
+      const vDecl = vSym?.valueDeclaration;
+      if (
+        vDecl !== undefined &&
+        (ts.isFunctionDeclaration(vDecl) || ts.isFunctionExpression(vDecl) || ts.isArrowFunction(vDecl))
+      ) {
+        bareNameIsNonClass = true;
+      }
+    }
+    if (ctx.classSet.has(resolvedClass) && !bareNameIsNonClass) {
       const __r = emitClassStaticMemberRead(ctx, fctx, resolvedClass, propName);
       if (__r !== PA_FALLTHROUGH) return __r;
     }
@@ -3721,17 +3740,34 @@ export function finalizeStructAndDynamicMemberGet(
     }
 
     // Handle .prototype on class instances — return prototype singleton
+    // (#4618) `typeName` is checker-DISPLAY-name keyed: a top-level
+    // `function F` under a nested `class F` anywhere in the module routed
+    // `F.prototype` — including the react shape's module-init
+    // `Component.prototype.isReactComponent = {}` write receiver — into the
+    // CLASS's proto singleton while dynamic reads of the same function's
+    // `.prototype` used the fn sidecar (split stores). Yield when the
+    // receiver resolves to a function-like declaration.
     if (propName === "prototype" && ctx.classSet.has(typeName)) {
-      // Compile and drop the object expression
-      const objResult = compileExpression(ctx, fctx, expr.expression);
-      if (objResult) {
-        fctx.body.push({ op: "drop" });
-      }
-      if (emitLazyProtoGet(ctx, fctx, typeName)) {
+      const protoRecvDecl = ctx.checker.getSymbolAtLocation(
+        skipTransparentExpressions(expr.expression),
+      )?.valueDeclaration;
+      const receiverIsFunctionDecl =
+        protoRecvDecl !== undefined &&
+        (ts.isFunctionDeclaration(protoRecvDecl) ||
+          ts.isFunctionExpression(protoRecvDecl) ||
+          ts.isArrowFunction(protoRecvDecl));
+      if (!receiverIsFunctionDecl) {
+        // Compile and drop the object expression
+        const objResult = compileExpression(ctx, fctx, expr.expression);
+        if (objResult) {
+          fctx.body.push({ op: "drop" });
+        }
+        if (emitLazyProtoGet(ctx, fctx, typeName)) {
+          return { kind: "externref" };
+        }
+        fctx.body.push({ op: "ref.null.extern" });
         return { kind: "externref" };
       }
-      fctx.body.push({ op: "ref.null.extern" });
-      return { kind: "externref" };
     }
 
     // (#2101a R5) Own-field READ on an externref-backed Error subclass. The

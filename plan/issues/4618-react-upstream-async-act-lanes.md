@@ -14,6 +14,7 @@ language_feature: async, await, closures
 goal: dogfood
 related: [1042, 1373b, 3958, 4616]
 loc-budget-allow:
+  - src/codegen/property-access-dispatch.ts
   - src/codegen/function-body.ts
   - src/codegen/registry/imports.ts
   - src/codegen/closures.ts
@@ -29,6 +30,8 @@ loc-budget-allow:
   - src/ir/prepared-callable-resolution.ts
   - src/runtime.ts
 func-budget-allow:
+  - src/codegen/property-access-dispatch.ts::tryIdentifierNamespaceAndStaticReceiverRead
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
   - src/codegen/destructuring-params.ts::destructureParamObjectExternref
   - src/codegen/async-frame.ts::ensureAsyncResumeFunction
   - src/codegen/async-frame.ts::buildAsyncFrameInfo
