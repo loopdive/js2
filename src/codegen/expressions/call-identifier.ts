@@ -1297,8 +1297,29 @@ export function compileIdentifierCall(
       if (uncurriedCall !== undefined) return uncurriedCall;
     }
 
+    // (#4616) A callee bound as a PARAMETER never registers in `closureMap`
+    // (only variable/assignment bindings do), so a by-name hit here is
+    // cross-scope leakage: jest's diff-sequences declares the param
+    // `foundSubsequence: FoundSubsequence` (3-arity) while an unrelated test
+    // file's local `const foundSubsequence = () => {}` registered a 0-arity
+    // info under the same bare name. The call then dispatched as a
+    // single-candidate 0-arg call_ref whose guarded funcref cast nulls for
+    // every real callback → un-catchable "dereferencing a null pointer"
+    // (32 diff-sequences tests). The param must use the typed callable-param
+    // dispatch below, which builds arity/return candidates from the DECLARED
+    // signature.
+    // Destructured bindings (`const {foundSubsequence} = callbacks[0]`) leak
+    // the same way: `registerClosureBindingInfo` only keys VariableDeclaration
+    // identifiers and assignment targets, so a BindingElement's by-name hit is
+    // always some OTHER binding's info.
+    const calleeBindingDecl = ctx.oracle.valueDeclarationOf(expr.expression);
+    const calleeIsParameterBinding =
+      calleeBindingDecl !== undefined && (ts.isParameter(calleeBindingDecl) || ts.isBindingElement(calleeBindingDecl));
     let closureInfo =
-      isLocallyShadowed || nestedBindingVisible || (!hasVisibleClosureStorage && ctx.funcMap.has(funcName))
+      isLocallyShadowed ||
+      nestedBindingVisible ||
+      calleeIsParameterBinding ||
+      (!hasVisibleClosureStorage && ctx.funcMap.has(funcName))
         ? undefined
         : ctx.closureMap.get(funcName);
 

@@ -87,10 +87,47 @@ vs the __diag/test bodies, or prelude interference), and (b) the
 order-sensitive wrapper-root null in the layout where the call DOES go
 through (`__call_fn_method_1` dynamic chain).
 
+## 2026-08-22 third slice — ROOT CAUSE of the diff-sequences trap: closureMap bare-name leakage
+
+The "wrapper-family/order investigation" above was a red herring (a binary
+type-section parse bug produced a phantom "four parentless roots" claim — a
+corrected parser that exactly consumes the section shows exactly ONE root, so
+the #2873 single-root invariant HOLDS). The real defect, pinned by decoding
+the trap pc (0xcecf → `call_ref` on a null funcref, matched func type =
+`(ref null $root) -> void`, 0 user params):
+
+`ctx.closureMap` is keyed by BARE NAME across the whole linked module graph.
+The upstream tests declare local noops `const foundSubsequence = () => {}`;
+`compileLiftedClosureBody`/`registerClosureBindingInfo` registered that
+0-arity ClosureInfo under the bare name. The UNRELATED 3-arity function
+PARAMETER `foundSubsequence` in `diffSequence` then hit that entry by name
+(`localBindingShadowsCapturingFunction` only guards against `funcMap`
+collisions), compiled both its calls as single-candidate 0-arg `call_ref`
+(all 3 args packed as extras), and the guarded funcref cast nulled for every
+real callback. `emitNullCheckThrow`'s guarded-cast backup arm deliberately
+does NOT throw when the pre-cast value is non-nullish ("wrong struct type —
+don't throw"), so execution fell through to `call_ref` with a NULL funcref →
+un-catchable "dereferencing a null pointer". The same leak hit the inner
+wrapper arrow's call through the DESTRUCTURED `const {foundSubsequence} =
+callbacks[...]` binding (a `BindingElement`).
+
+Fix (call-identifier.ts): a callee whose `oracle.valueDeclarationOf` is a
+`Parameter` or `BindingElement` never takes the by-name `closureMap` entry —
+those binding kinds never register there, so any hit is another binding's
+info. They fall through to the typed callable-param dispatch, which builds
+candidates (incl. the slice-1 arity prefixes) from the DECLARED signature.
+
+Measured: diff-sequences module 15 → 43/48 (all null-deref traps gone;
+residual: 1 expected-throw, 2 boolean-array toEqual, 2 need a snapshot
+adapter — harness gap). jest suite 163 → 191/232. acorn 3518/3518, cookie
+63670/63740, clsx 31/32 all hold. The "dropped call/__make_callback" WAT
+finding above was an artifact of a broken relative import in the probe copy —
+the original module resolves `diff` fine.
+
 ## Acceptance criteria
 
 - [x] Cross-module shorter-arity callback reduction round-trips.
-- [ ] jest diff-sequences upstream file ≥ 40/48.
+- [x] jest diff-sequences upstream file ≥ 40/48 (43/48).
 
 ## 2026-08-22 second slice — node-builtin NAMED imports are member reads
 
