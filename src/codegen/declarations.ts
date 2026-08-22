@@ -37,6 +37,7 @@ import { emitUndefinedExtern, ensureAnyHelpers, ensureWrapperTypes } from "./any
 import { emitScriptGlobalFunctionBindings } from "./global-function-bindings.js"; // (#4394) §9.1.1.4.18
 import { emitScriptGlobalVarBindings } from "./global-var-bindings.js"; // (#4491 T4) §9.1.1.4.17
 import { isHoistedTopLevelVarName } from "./top-level-hoisted-var-names.js"; // (#4491 T3) pre-declaration writes
+import { isAssignmentOverTopLevelFunctionName } from "./top-level-assigned-function-names.js"; // (#4491 T12)
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
@@ -1214,6 +1215,13 @@ function shouldCollectTopLevelAssignment(ctx: CodegenContext, target: ts.Express
     (!!targetName && (ctx.moduleGlobals.has(targetName) || isHoistedTopLevelVarName(target, targetName)));
   return (
     namedGlobal ||
+    // (#4491 T12) The FunctionDeclaration half of the same ordering hole: the
+    // module global that backs a reassigned function binding is minted by
+    // `registerReassignedFunctionGlobals` (#2931), which runs AFTER this pass —
+    // so `namedGlobal` is false for EVERY such name under every statement order
+    // and `function g(){}; g = 123;` was dropped outright. Bare-identifier
+    // targets only; see top-level-assigned-function-names.ts.
+    isAssignmentOverTopLevelFunctionName(target) ||
     (operator === ts.SyntaxKind.EqualsToken && isExactTopLevelClassAccessorWrite(ctx, target)) ||
     createsGlobalObjectBinding(target, ctx.sloppyImplicitGlobals)
   );

@@ -4820,3 +4820,185 @@ Gates green before commit: `check-loc-budget` · `check-func-budget` ·
   adapter, isolating the caller-module codegen), but it means a local
   "the provider still builds" check proves nothing unless you delete the keyed
   `.wasm` first.
+
+## Wave-6 lane T12 — assignment OVER a `function` declaration binding (2026-08-22)
+
+Integration head `bd868fe433` (`claude/es5-standalone-wave6`), `--target
+standalone`. The FunctionDeclaration analogue of slice T4-D, and the follow-up
+the T4 re-triage explicitly left: _"the widening analyses that exist today
+(#4204/#4206 and T4-D) all key on `ts.VariableDeclaration`, so none of them can
+see this declaration kind at all."_
+
+Every row below was re-measured on this head before any edit; the five
+`if-*-func-block-scoping` rows in the stale list ALREADY PASSED and are not
+counted as flips.
+
+### It is two defects, and they fail in opposite directions
+
+`function g() {}; g = 123;` is one binding assigned a number. Measured:
+
+| shape                                                       | before                                    | after                                                                        |
+| ----------------------------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------- |
+| module scope `function g(){}; g = 123` — `g === 123`        | **false**                                 | true                                                                         |
+| … `typeof g`                                                | **`"function"`**                          | `"number"`                                                                   |
+| … `String(g)`                                               | **`"function () { [native code] }"`**     | `"123"`                                                                      |
+| module scope, dynamic read (`after = g; look(after)`)       | **`"function"`**                          | `"number"`                                                                   |
+| §B.3.3 block scope `{ function f(){ f = 123; … } }`         | **`RuntimeError: illegal cast in f()`**   | correct (`initialBV()` `'decl'`, `currentBV` `123`, `varBinding()` `'decl'`) |
+| `function h(){}` never reassigned — `typeof h`              | `"function"`                              | `"function"` (unchanged)                                                     |
+
+The silent arm is the dangerous one: no trap, no diagnostic, wrong answer.
+
+### Slice T12-A — the trap: constructibility was decided PER READ SITE
+
+`getOrCreateConstructibleFuncRefWrapperTypes` mints a nominally distinct struct
+subtype (`__constructible_fn_wrap_N_struct`, one extra `$__constructible i32`)
+so IsConstructor can discriminate. The lazy closure singleton
+(`ensureFuncClosureSingleton`) caches by function NAME, but chose between that
+subtype and the plain wrapper from a boolean the CALLER passed. Reduced WAT for
+`block-decl-func-block-scoping`:
+
+```wat
+;; __module_init, at `varBinding = f`
+ref.func 391  i32.const 0  ref.null extern  global.get 355
+struct.new 243                 ;; __fn_wrap_10_struct__fnmeta  (PLAIN)
+global.set 354                 ;; $__fn_closure_f
+…
+;; inside $f, at `initialBV = f`
+global.get 354  any.convert_extern
+ref.cast (ref 240)             ;; __constructible_fn_wrap_11_struct → ILLEGAL CAST
+```
+
+The two sites disagree because TypeScript models the two bindings differently:
+inside `f`'s body the name resolves to the `FunctionDeclaration`
+(`identifiers.ts` passes `constructible = true`), while at the Annex-B
+web-compat VAR binding `identifierValueSymbol` answers `undefined` and the same
+site passes `false`. Whichever compiled first decided the allocation; the other
+decided the cast.
+
+`emitFuncRefAsClosure` already normalizes exactly this — #4437's own note says
+"constructibility belongs to the source function, not to whichever value read
+happened to materialize its cached capture struct first". The CACHED singleton
+path, which is the one ordinary identifier reads actually take, did not.
+
+**Change.** New module `src/codegen/closures/ordinary-fn-constructibility.ts`
+resolves the answer from `funcMapOwnerDecl` / `topLevelFunctionDeclarations`,
+i.e. from the compiled FUNCTION; `method-trampolines.ts`
+(`emitCachedFuncClosureAccess`) gets one normalization line. It only ever
+WIDENS `false → true`, and the constructible struct is a subtype of the plain
+wrapper, so every existing cast still succeeds.
+
+**Flips: 3 rows** — `annexB/language/function-code/{block-decl,switch-case,switch-dflt}-func-block-scoping`.
+
+### Slice T12-B — the silence: the top-level write was never collected
+
+`shouldCollectTopLevelAssignment` (`declarations.ts`) keeps a top-level write
+only when its root identifier is already in `ctx.moduleGlobals`. The global that
+backs a reassigned function binding is minted by
+`registerReassignedFunctionGlobals` (#2931, `index.ts`), which runs AFTER
+`collectDeclarations` — so the answer is "no" for EVERY such name under EVERY
+statement order, and the statement is dropped with no diagnostic. Confirmed by
+instrumenting the dispatcher: `g = 123;` never reaches
+`compileExpressionStatement`, let alone `compileAssignment`, and no
+`f64.const 123` appears anywhere in the emitted module.
+
+This is the #4491-T3 ordering hole with a different filler — and unlike the
+`var` case there is no source order under which it works, which is why it reads
+as "assignment over a function is ignored" rather than as a hoisting bug. It is
+the tenth member of the #3623 silent-drop family
+(`{1268, 2671, 2992, 3366, 3468, 3592, 3615, 3956, 4179, 4491-T3}`).
+
+**Change.** New module `src/codegen/top-level-assigned-function-names.ts`
+(pre-scan, mirroring `top-level-hoisted-var-names.ts`); `declarations.ts` gets
+one allow-list arm. **Bare-identifier targets only** — member writes rooted at a
+function (`F.p = …`, `F.prototype = …`) already have their own arms with their
+own host/standalone gating, and widening those through this predicate would
+change which member writes survive.
+
+### Slice T12-C — the fold: `typeof` still answered from the checker type
+
+With T12-B the VALUE is right and `g === 123` is true, but `typeof g` still
+folded to `"function"`. `moduleGlobalIsDynamicButStaticallyPrimitive` (#4204)
+exists for exactly this hazard — a widened binding keeps its declaration-derived
+checker type — but resolves binding identity with `variableDeclarationOf`, which
+answers only for a `ts.VariableDeclaration`.
+
+**Change.** New module
+`src/codegen/declarations/reassigned-function-binding-widening.ts`;
+`heterogeneous-scalar-var-widening.ts` gets one consult line. It keys on
+`ctx.liveFuncBindingGlobals` — already exactly "a function-declaration name
+reassigned somewhere in the realm", and the reason the `externref` global exists
+at all — and additionally requires the identifier to RESOLVE to that
+module-scope declaration, so a same-named function local cannot consult a global
+(#3364's failure mode). A function binding OUTSIDE that set keeps a fixed
+function value, so its checker type is sound and the fold stays correct; pinned
+by a test.
+
+### Measured
+
+- **Target set (10 rows):** 5/10 base → 8/10 after. The diff is exactly the
+  three `*-func-block-scoping` rows; the five `if-*` rows already passed and
+  `S11.1.5_A2` is unchanged (see below).
+- **Whole `annexB/language/{function-code,global-code}` — 312 rows, base vs
+  after by FILE-COPY A/B (never `git stash`):** **277 → 280**. The diff is those
+  same three rows and nothing else; the other 309 lines are byte-identical,
+  error text included.
+- **Control set (99 existing rows, each verified to exist in this checkout):**
+  72 rows weighted toward `statements/function`, `expressions/function`,
+  `expressions/assignment`, `expressions/typeof`, `expressions/new`,
+  `instanceof`, `expressions/object`, `statements/variable`, `global-code`,
+  `Function.prototype.{call,apply,bind,toString}`, `Reflect.construct`, array
+  callbacks, `switch` / `block` / `with` / `try`, plus 27 more after replacing
+  25 listed paths that do not exist here. **77/99 base, 77/99 after —
+  byte-identical output on both lists.**
+- **`tests/equivalence` — the 43-file function / closure / typeof / assignment /
+  `new` slice (321 cases), base vs after:** **317 passed | 4 failed on BOTH**,
+  the same four. Two are environmental (`new-non-constructor.test.ts` reads a
+  hardcoded `/workspace/test262/…` path that does not exist in this worktree);
+  two are the pre-existing `optional-direct-closure-call` `NaN` rows. The full
+  215-file suite OOMs in this container, as CLAUDE.md records — the subset was
+  chosen for what this lane touches, not for what fits.
+- **Gates**, green on the final state: `check-loc-budget`, `check-func-budget`,
+  `check-coercion-sites`, `check:oracle-ratchet`, `typecheck`, `prettier`,
+  `biome lint`. No new frontmatter allowance needed (+6/+8/+5 lines in three
+  existing files; every new body is in a new module).
+- Regression test `tests/issue-4491-function-binding-widening.test.ts` —
+  5 cases, **4 fail on base / 5 pass after**, verified by flipping the file
+  copies both ways.
+
+### Left open, measured rather than assumed
+
+- **`block-decl-func-skip-arguments` (the 4th annexB row)** — unchanged, and NOT
+  this defect. It fails to VALIDATE: `CompileError: Compiling function
+  #515:"__call_fn_0" failed: not enough arguments on the stack for call_ref
+  (need 2, got 1)`. Its body is `{ function arguments() {} }` inside three IIFEs
+  with different parameter shapes (simple / one named / rest) — the
+  `arguments`-shadowing case — so the failure is a closure-ARITY defect in the
+  generated dispatcher, not a binding-representation one. Byte-identical before
+  and after.
+- **`S11.1.5_A2`** — still fails at CHECK#2 (`var x = new Boolean(true); var
+  object = {prop : x}; object.prop === x`), exactly where T4-D left it. This
+  lane's machinery does not reach it: the clash is between _object-literal FIELD_
+  representations, and neither the function-binding widening nor the
+  constructibility normalization touches struct fields. T4-D's pricing stands —
+  it needs the field slot to widen when its initializer reads a
+  representation-widened binding, which is a shape analysis, not a seeding
+  change.
+- **`typeof` on a plain `var` that only a function writes still folds.** Probe:
+  `var currentBV;` … `currentBV = f` (inside `f`) … `typeof currentBV` answers
+  `"undefined"` while `currentBV === 123` is TRUE. The binding has no
+  initializer, so #4204 assigns it no tag and this lane's predicate does not
+  apply either. Harmless for the three flipped rows (they assert values, not
+  tags), but it is a live wrong answer of the same family.
+- **`String(after)` where `var after; after = g`** renders the function source
+  even though `after === 123`. The widening does not PROPAGATE: `after` is a
+  separate `var` whose checker type came from the function, and #4204 gives an
+  initializer-less binding no tag to widen from.
+- **18 `annexB/language/global-code/*-init` rows are unmeasurable on this head** —
+  they report `JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not
+  built`, the T10-owned canary breakage. They are identical before and after, so
+  they cannot hide a regression from this lane, but their verdict here is not
+  evidence about conformance.
+- **5 `if-*-func-existing-var-update` rows** fail with `RuntimeError:
+  dereferencing a null pointer in __module_init` at `typeof after`. Pre-existing
+  and byte-identical across the A/B — a different Annex-B arm (B.3.3.1 step 3.f
+  on an already-existing var binding), not attempted here.
