@@ -1456,6 +1456,7 @@ export function compileIdentifierCall(
         // stayed right while `arguments[0]` read back `null` (S13.2_A2_T1).
         const runtimeSigParams = runtimeSignatureParameters(sig);
         const sigParamCount = builtinAliasInfo?.paramTypes.length ?? runtimeSigParams.length;
+        const lastSigParam = sig.parameters[sig.parameters.length - 1];
         const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
         const sigRetWasm =
           builtinAliasInfo?.returnType ?? (isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType));

@@ -2713,8 +2713,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   classTagMap: Map<string, number>;
   /** Map from TS symbol name → synthetic class name for class expressions */
   classExprNameMap: Map<string, string>;
-  /** Map from ClassExpression AST node → synthetic class name */
-  anonClassExprNames: Map<ts.ClassExpression, string>;
+  /** Map from class AST node → synthetic class name (expressions and nested declarations). */
+  anonClassExprNames: Map<ts.ClassExpression | ts.ClassDeclaration, string>;
   /** Map from function/class identifier → its ES-spec .name string value */
   functionNameMap: Map<string, string>;
   /** Whether to attach source positions for source map generation */
