@@ -121,6 +121,29 @@ demote.
   call (React.createElement) — i.e. the host-callback/value materialization
   lane compiled from a CPS-split body.
 
+- **NEW pinned defect (d), FIXED 2026-08-22**: the any-receiver first-match
+  extern binding routes a WasmGC-STRUCT receiver into the generic
+  `<Class>_<method>` host shim under a colliding ambient method name —
+  `el.type()` on a struct with a closure-valued `type` field bound
+  `env.CSSNumericValue_type`, whose shim read only `self[m] ?? sidecar`
+  (both blind to struct fields) and silently answered undefined. The shim
+  now resolves through `_resolveHostField` + `_maybeWrapCallableUnknownArity`
+  (the same struct-aware path __extern_method_call uses). Regression test:
+  `tests/issue-4618-extern-shim-struct-receiver.test.ts`. Did NOT move the
+  react score (react reads `.type` as a property, not a call) — the
+  misbinding class is real regardless (any struct-receiver method whose
+  name collides with an ambient DOM member).
+- **(b) minimal repro found (probe w3)**: hoisted fn-decl `Parent` reading a
+  body const `Fragment`, ALSO referenced by an inner arrow (the act
+  callback), then called directly in the RESUMED segment → ReferenceError
+  "Fragment is not defined" from inside Parent's compiled body. Without the
+  inner-arrow reference the same shape works (probes vZ/w2) — the arrow
+  flips Parent's capture classification so the CPS spill/remap
+  (`referencedInNamedNested` → ref-cell) misses Fragment. Additional
+  sub-defect: a CLASS declaration captured by the hoisted fn-decl in a
+  suspending body reads back null (`new Child()` → "Cannot read properties
+  of null", probe vY with-class-capture).
+
 ## Fix order
 
 1. (c) first — it is a hard CE with a two-line repro and pins the IR

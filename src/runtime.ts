@@ -9553,7 +9553,24 @@ function resolveImport(
       const invokeMethod = (self: any, args: any[]): any => {
         if (self == null) return undefined;
         // Method call — check sidecar if direct method missing
-        const fn = self[m] ?? _sidecarGet(self, m);
+        let fn = self[m] ?? _sidecarGet(self, m);
+        // (#4618) The any-receiver first-match binding (tryExternClassMethodOnAny)
+        // routes WasmGC-STRUCT receivers here under a colliding ambient method
+        // name (react's `element.type()` bound `CSSNumericValue_type`). An
+        // opaque `self[m]` read and the sidecar both miss the struct's typed
+        // FIELDS, and a stored raw closure struct is not yet callable — so the
+        // call silently answered undefined. Resolve through the same
+        // struct-aware field reader __extern_method_call uses, then wrap.
+        if (typeof fn !== "function") {
+          if (_isWasmStruct(self)) {
+            const resolved = _unwrapForHost(_resolveHostField(self, m, callbackState?.getExports()));
+            const wrapped = _maybeWrapCallableUnknownArity(resolved, callbackState);
+            if (typeof wrapped === "function") fn = wrapped;
+          } else if (_isWasmStruct(fn)) {
+            const wrapped = _maybeWrapCallableUnknownArity(fn, callbackState);
+            if (typeof wrapped === "function") fn = wrapped;
+          }
+        }
         if (typeof fn === "function") {
           // (#1332) Wrap wasmGC-struct args via _wrapForHost so a native
           // prototype method (e.g. RegExp.prototype.exec/test) can ToString
