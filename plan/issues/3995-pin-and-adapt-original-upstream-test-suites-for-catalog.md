@@ -803,7 +803,6 @@ is still draft-only until those gaps are either fixed or explicitly scoped in
 follow-up issue slices; they are compatibility findings, not unavailable
 infrastructure.
 
-<<<<<<< HEAD
 ## 2026-08-22 generic Node host dependency checkpoint
 
 The isolated upstream-suite worker previously forwarded only ten Node builtin
