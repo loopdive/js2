@@ -323,3 +323,27 @@ Also root-caused this slice, no code change: the docblock `index.test.ts`
 cluster (19) fails WORSE on pure origin/main src (17/39 vs this branch's
 20/39) — main-side fallout of the new upstream-suite "package resolution
 seams", not this branch's regression.
+
+## 2026-08-22 eleventh slice — null-proto host objects vs the __sget probe (jest-docblock 20 → 39/39)
+
+The docblock cluster was NOT main-side seams fallout after all (that theory
+died when the in-place instrumentation ran — earlier "parse returns null"
+findings were an artifact of copying the generated spec to a directory where
+its RELATIVE import silently resolved to nothing). Real root:
+`__extern_get` classified a genuine `Object.create(null)` HOST object as
+struct-ish from its null prototype alone — the direct read was skipped and
+the `__sget_<key>` struct-getter probe answered its miss-DEFAULT. The jest
+harness's `{ length: count }` mock-call literals emit `__sget_length`, so
+`pragmas.length` answered 0 (a number) and `__upstreamSame` took its array
+arm on every docblock toEqual. Both `__extern_get` variants (resolveImport
+and the pooled `extern_get` case — the pooled one was ALSO missing the
+`_isWasmStruct` gate on the probe block the primary already had) now gate on
+`_isWasmStruct`, whose extensibility+opaqueness probe classifies null-proto
+host objects correctly.
+
+Measured: jest-docblock spec 20 → 39/39; jest suite 269/313 → 292/318
+(docblock now fully admitted); cookie 63740/63740 holds. Guards: ts7 clean,
+object-keys / hasownproperty / object-create / unknown-field-fallback /
+arguments-object / #3116 green (issue-2130 ×3 pre-existing, stash-A/B
+identical). Regression test:
+`tests/issue-4616-null-proto-host-object-get.test.ts` (1).

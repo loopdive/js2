@@ -10241,7 +10241,15 @@ assert._isSameValue = isSameValue;
           }
           if (obj != null && typeof obj === "object") {
             try {
-              if (Object.getPrototypeOf(obj) !== null && key in Object(obj)) {
+              // (#4616) Gate the direct read on the REAL struct discriminator,
+              // not a bare null-prototype test: a genuine `Object.create(null)`
+              // host object (jest-docblock's pragmas) was skipped here, fell to
+              // the `__sget_<key>` struct-getter probe below, and read back the
+              // getter's miss-default — `pragmas.length` answered 0 whenever
+              // any module struct had a `length` field, flipping __upstreamSame
+              // into its array arm. `_isWasmStruct` classifies null-proto host
+              // objects correctly (extensibility + opaqueness probe).
+              if (!_isWasmStruct(obj) && key in Object(obj)) {
                 const v = obj[key];
                 // (#3097) Exit-boundary un-marshal: a canonical host
                 // ArrayBuffer (minted at the construct bridge for a compiled
@@ -16118,7 +16126,9 @@ assert._isSameValue = isSameValue;
       return (obj: any, key: any) => {
         if (obj != null && typeof obj === "object") {
           try {
-            if (Object.getPrototypeOf(obj) !== null && key in Object(obj)) {
+            // (#4616) Same gate as the primary __extern_get: see the comment
+            // there — a null-proto HOST object must take the direct read.
+            if (!_isWasmStruct(obj) && key in Object(obj)) {
               const v = obj[key];
               // (#3097) Exit-boundary un-marshal: a canonical host ArrayBuffer
               // (minted at the construct bridge for a compiled buffer struct)
@@ -16152,6 +16162,13 @@ assert._isSameValue = isSameValue;
         } catch {
           return undefined;
         }
+        // (#4616) The struct-getter fallback below is for OPAQUE WasmGC
+        // receivers only — mirror the primary __extern_get's `_isWasmStruct`
+        // gate. A genuine null-proto HOST object (Object.create(null)) used to
+        // reach the `__sget_<key>` probe and read back the getter's
+        // miss-default (`pragmas.length` → 0 whenever any module struct had a
+        // `length` field).
+        if (!_isWasmStruct(obj)) return undefined;
         const sc = _wasmStructProps.get(obj);
         const descs = _wasmPropDescs.get(obj);
         const flags = descs?.get(_normalizeDescKey(key));
