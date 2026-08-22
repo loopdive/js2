@@ -153,6 +153,11 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Measure package group
+        env:
+          # ReactDOM's project lane has many independent compile batches. Keep
+          # two compiler workers active so the long pole finishes before the
+          # job ceiling without exhausting the runner's memory.
+          DOGFOOD_REACT_DOM_PROJECT_CONCURRENCY: "2"
         run: |
           set -euo pipefail
           pnpm run generate:npm-compat -- \
