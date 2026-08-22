@@ -487,3 +487,27 @@ non-extensible trap (6), null setState (2).
 uuid (10/75) is #4383, CLAIMED by ttraenkler/codex since 2026-08-12 (claim
 ref re-verified 2026-08-22; parallel implementation is a pre-dispatch
 BLOCKER). react-dom infra is the same lane's.
+
+## 2026-08-22 cross-lane regression note — main's 09d00a3c broke 6 tests this branch had fixed
+
+After merging origin/main (through f2802c33) into the #4728 branch, jest
+reads 315/349: the denominator widened 331 → 349 (main's runner admitted
+prompt/expectationResultFactory/queueRunner files; 16 of the new tests
+fail), and SIX tests this branch had fixed regressed to "dereferencing a
+null pointer" traps: Replaceable object/array/map forEach +
+nonenumerable (the slice-12/28 wins) and deepCyclicCopy keepPrototype ×2
+(the slice-15 wins). Verified: all six fail IDENTICALLY on PURE main src
+(git checkout f2802c33 -- src → 225/349), so they are main-side breakage
+from 09d00a3c ("fix(jest): bridge wasm callbacks in upstream prompt
+tests", codex lane) — its rest-param candidate machinery
+(`__restFuncTypeIdxs` pre-scan in calls.ts + rest-packing dispatch arms)
+composes with the callback dispatch these tests exercise. NOT a
+merge_group risk for #4728 (the regression gate diffs against main,
+where they already fail; this branch is +90 vs main's 225). Disabling
+the candidate-scan rest admission alone does NOT recover them (A/B'd:
+same 315/349) — the breakage is in the calls.ts dynamic-call-emitter
+rest arms or the closures.ts wrapper-sig change. Winning them back needs
+a joint look at 09d00a3c's rest lanes vs this branch's slice-17
+call-site rest expansion — flagged for the jest-arc owner; the two lanes
+are now actively colliding on the same seam (lane-partition escalation).
+
