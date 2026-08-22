@@ -13,6 +13,10 @@ area: codegen, runtime, async
 language_feature: async, await, closures
 goal: dogfood
 related: [1042, 1373b, 3958, 4616]
+loc-budget-allow:
+  - src/codegen/async-cps.ts
+  - src/ir/prepared-callable-resolution.ts
+  - src/runtime.ts
 ---
 
 # react upstream suite: the async `it`-body / `act()` lane cluster
