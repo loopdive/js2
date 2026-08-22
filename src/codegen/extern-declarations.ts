@@ -1570,9 +1570,28 @@ export function registerNodeBuiltinImports(ctx: CodegenContext, builtins: NodeBu
     }
     const funcIdx = ctx.funcMap.get(importName);
     if (funcIdx !== undefined) {
-      // Register as a declared global so identifier resolution picks it up
-      ctx.declaredGlobals.set(builtin.localName, { type: { kind: "externref" }, funcIdx });
-      ctx.nodeBuiltinGlobals.set(builtin.localName, funcIdx);
+      // (#4616-adjacent, jest-docblock) NAMED bindings are MEMBER reads, not
+      // the module object. Binding `import { EOL } from 'os'` to the module
+      // thunk made `EOL` read the whole `os` module (string-concatenated as
+      // "[object Object]"). Register each named binding with its member name;
+      // the identifier read emits `__extern_get(__node_<mod>(), member)`.
+      if (builtin.namedBindings !== undefined && builtin.namedBindings.length > 0) {
+        for (const member of builtin.namedBindings) {
+          if (ctx.declaredGlobals.has(member)) continue;
+          ctx.declaredGlobals.set(member, { type: { kind: "externref" }, funcIdx, member });
+          ctx.nodeBuiltinGlobals.set(member, funcIdx);
+        }
+        // A default import alongside the named list still binds the module
+        // object under its own name.
+        if (!builtin.namedBindings.includes(builtin.localName) && !ctx.declaredGlobals.has(builtin.localName)) {
+          ctx.declaredGlobals.set(builtin.localName, { type: { kind: "externref" }, funcIdx });
+          ctx.nodeBuiltinGlobals.set(builtin.localName, funcIdx);
+        }
+      } else {
+        // Register as a declared global so identifier resolution picks it up
+        ctx.declaredGlobals.set(builtin.localName, { type: { kind: "externref" }, funcIdx });
+        ctx.nodeBuiltinGlobals.set(builtin.localName, funcIdx);
+      }
     }
   }
 }

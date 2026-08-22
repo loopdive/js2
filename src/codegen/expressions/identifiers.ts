@@ -1063,6 +1063,28 @@ function compileIdentifierCore(
   const globalInfo = ctx.declaredGlobals.get(name);
   if (globalInfo) {
     fctx.body.push({ op: "call", funcIdx: globalInfo.funcIdx });
+    // (#4616-adjacent) A node-builtin NAMED binding is a MEMBER of the module
+    // object the thunk returns (`import { EOL } from 'os'` reads `os.EOL`),
+    // not the module itself.
+    if (globalInfo.member !== undefined) {
+      const getIdx = ensureLateImport(
+        ctx,
+        "__extern_get",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (getIdx !== undefined) {
+        addStringConstantGlobal(ctx, globalInfo.member);
+        const strGlobalIdx = ctx.stringGlobalMap.get(globalInfo.member);
+        if (strGlobalIdx !== undefined) {
+          fctx.body.push({ op: "global.get", index: strGlobalIdx });
+        } else {
+          fctx.body.push({ op: "ref.null.extern" });
+        }
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+      }
+    }
     return globalInfo.type;
   }
 

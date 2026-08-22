@@ -16,10 +16,17 @@ goal: npm-library-support
 related: [4614, 2873, 1131]
 files:
   - src/codegen/expressions/call-identifier.ts
+  - src/codegen/extern-declarations.ts
+  - src/codegen/expressions/identifiers.ts
 loc-budget-allow:
   - src/codegen/expressions/call-identifier.ts
+  - src/codegen/extern-declarations.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/context/types.ts
 func-budget-allow:
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/extern-declarations.ts::registerNodeBuiltinImports
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
 ---
 
 # shorter-arity callbacks from later modules miss the funcref dispatch
@@ -84,3 +91,16 @@ through (`__call_fn_method_1` dynamic chain).
 
 - [x] Cross-module shorter-arity callback reduction round-trips.
 - [ ] jest diff-sequences upstream file ≥ 40/48.
+
+## 2026-08-22 second slice — node-builtin NAMED imports are member reads
+
+jest-docblock's 18 failures were `import { EOL } from 'os'` binding the local
+name to the `__node_os` MODULE thunk (`registerNodeBuiltinImports` registers
+`localName` = first named binding), so `${EOL}` concatenated
+"[object Object]". Named bindings now register per-member (`declaredGlobals`
+gained `member?`), and the identifier read emits
+`__extern_get(__node_<mod>(), member)` — general for any named node-builtin
+value import, platform-correct (reads the real `os.EOL`). jest-docblock
+21 → 39/39; jest suite 145 → 162/232. Guards green: #1044, #1792, #1794,
+#2699 (class bindings keep extern-class stubs, fn bindings their
+`__nodefn__` wrappers; member registration skips names already bound).
