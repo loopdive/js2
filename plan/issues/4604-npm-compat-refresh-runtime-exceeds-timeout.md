@@ -83,6 +83,17 @@ same stale artifact.
   runs may still be coalesced by GitHub, but the active run is no longer a
   multi-hour serial bottleneck that repeatedly times out before publishing.
   The implementation is in [#4745](https://github.com/loopdive/js2wasm/pull/4745).
+- **S3 (this PR): the staleness guard.** A scheduled workflow
+  (`npm-compat-staleness.yml`, 6h cron) asserts the PRODUCT — the committed
+  `npm-compat.json` is younger than 12h — instead of any run's own success,
+  which is the gap that let this episode run >24h undetected (a run that never
+  publishes fails no gate; cancelled/superseded runs don't notify). Verdict
+  logic is pure and time-injected (`scripts/lib/npm-compat-freshness.mjs`,
+  pinned by `tests/npm-compat-freshness.test.ts`): anything short of a
+  parseable recent `generatedAt` — missing file, malformed JSON, absent or
+  future timestamp — is STALE. Read-only by design: it alerts, recovery stays
+  with the refresh workflow. Verified against the live episode: at
+  implementation time it reports `STALE — artifact is 33.2h old`.
 
 ## Fix directions (pick during implementation)
 
@@ -111,8 +122,8 @@ same stale artifact.
 - [ ] The workflow's matrix runtime has headroom against its timeout; each
       package group emits a partial report and the coordinator refuses to
       publish if any expected package is missing or duplicated.
-- [ ] Staleness of the committed artifact is observable (guard or alert),
-      not only discoverable by manual audit.
+- [x] Staleness of the committed artifact is observable (guard or alert),
+      not only discoverable by manual audit — `npm-compat-staleness.yml` (S3).
 
 ## 2026-08-22 follow-up — pending refreshes were still being cancelled
 
