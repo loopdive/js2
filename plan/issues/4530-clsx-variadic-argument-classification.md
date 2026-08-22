@@ -134,3 +134,21 @@ vec-first literal with any non-vec element widens its carrier to externref.
 Homogeneous nested-array literals keep their vec (guarded). Regression test:
 `tests/issue-4530-vec-first-string-widening.test.ts` (2). Guards green:
 #786 ×2, #1021, #2190, #2190b, #3532, #3979, #4531 (88 tests).
+
+## 2026-08-22 — opaque-any withdrawal SCOPED DOWN (native-messaging smoke regression)
+
+The withdrawal's any-typed IDENTIFIER arm broke the `native-messaging smoke`
+required check on every head of PR #4728: in the bun-bundled
+(annotation-stripped) framing core, `readFillExact(read, buf, …)` passes a
+plain identifier bound to the caller's own untyped param. Flagging it
+withdrew the `Uint8Array` vec narrowing module-wide and the WASI byte path
+silently no-opped — node_fs/deno scale variants emitted ZERO output at every
+size (bisected by cumulative file-revert against the first PR commit; main's
+CLI produced a working module from the identical bundle).
+
+Scope now: only NON-identifier `any` args flag opacity — `arguments[i]`,
+call results, member reads, i.e. every poison shape this issue actually
+fixed — and a param with an explicit non-`any` annotation never withdraws.
+Verified: scale test passes all 4 variants at 1/64/128/256 MiB under
+wasmtime v46.0.1; clsx 32/32, acorn 3518/3518, #4530/#4611/#2867 guards
+green.
