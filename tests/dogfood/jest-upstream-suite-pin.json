@@ -24,7 +24,10 @@
     "packages/jest-matcher-utils/src/__tests__/Replaceable.test.ts",
     "packages/jest-jasmine2/src/__tests__/queueRunner.test.ts",
     "packages/jest-jasmine2/src/__tests__/iterators.test.ts",
-    "packages/jest-jasmine2/src/__tests__/itToTestAlias.test.ts"
+    "packages/jest-jasmine2/src/__tests__/itToTestAlias.test.ts",
+    "packages/jest-jasmine2/src/__tests__/itTestError.test.ts",
+    "packages/jest-jasmine2/src/__tests__/todoError.test.ts",
+    "packages/jest-jasmine2/src/__tests__/hooksError.test.ts"
   ],
   "dependencies": {
     "detect-newline": {

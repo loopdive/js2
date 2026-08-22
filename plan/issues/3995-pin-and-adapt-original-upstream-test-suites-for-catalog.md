@@ -871,3 +871,30 @@ files**: Node admits **240/240**, all 15 modules compile and validate, and Wasm
 scores **114/240**. The remaining **3,046 registrations** from 226 verified
 files remain explicitly reported as unavailable infrastructure; other Wasm
 failures remain compatibility findings rather than unavailable setup.
+
+## 2026-08-22 Jest registration-API checkpoint
+
+Three original `jest-jasmine2` units are now selected unchanged:
+`itTestError.test.ts`, `todoError.test.ts`, and `hooksError.test.ts`. The shared
+adapter now validates Jest test names and callbacks, implements the `it.todo` /
+`test.todo` argument contract, validates all four lifecycle hooks, and lowers
+Jest's curried `*.each(cases)(name, body)` registration shape to an equivalent
+direct registration call for Wasm. The hook-error unit's dynamic global hook
+lookup is routed through the same named hook functions; its assertion body and
+inputs remain upstream source.
+
+The exact run now covers **283 callbacks across 18 selected files**: Node admits
+**281/283**, all 18 modules compile and validate, and Wasm scores **195/281**.
+The remaining **3,005 registrations** from 223 verified files remain explicitly
+reported as unavailable infrastructure; Wasm failures are compatibility findings,
+not silently skipped tests.
+
+## 2026-08-22 Jest current-main rebase checkpoint
+
+After rebasing the registration-API slice over the landed package-resolution
+and queue-runner work, the exact inventory includes those two earlier files as
+well. It now covers **306 callbacks across 20 selected files**: Node admits
+**304/306**, all 20 modules compile and 19 validate (the queue-runner Wasm
+binary remains the known compiler validation finding), and Wasm scores
+**206/304**. The remaining **2,982 registrations** from 221 verified files are
+still explicitly reported as unavailable infrastructure.
