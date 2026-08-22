@@ -2588,6 +2588,13 @@ export function compileLiftedClosureBody(
     // the body, so the default-return tail below is a no-op.
     emitAsyncClosureBody(ctx, liftedFctx, arrow, asyncDecision);
   } else if (ts.isBlock(body)) {
+    // (#4616) Mirror the function-body lane: without the hoist pre-pass a
+    // nested `function spy() { spy.mock... }` inside a METHOD/closure body
+    // (jest's `vi.fn`) gets no stable value binding, so every self-read
+    // re-materialized a fresh struct and the spy's own `mock` property read
+    // answered undefined. hoistFunctionDeclarations reserves forward slots
+    // AND prepares identity-observed value bindings.
+    hoistFunctionDeclarations(ctx, liftedFctx, body.statements);
     for (const stmt of body.statements) {
       compileStatement(ctx, liftedFctx, stmt);
     }
@@ -3596,6 +3603,11 @@ export function compileArrowAsCallback(
 
   let exprBodyHasReturnValue = false;
   if (ts.isBlock(body)) {
+    // (#4616) Same hoist pre-pass as the lifted-closure/function-body lanes:
+    // an object-literal METHOD body (jest's `vi.fn`) declaring a nested
+    // `function spy()` that self-references as a value needs the stable
+    // identity binding, or each self-read re-materializes a fresh struct.
+    hoistFunctionDeclarations(ctx, cbFctx, body.statements);
     for (const stmt of body.statements) {
       compileStatement(ctx, cbFctx, stmt);
     }

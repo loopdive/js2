@@ -26,12 +26,17 @@ loc-budget-allow:
   - src/codegen/closures/callback-classification.ts
   - src/codegen/registry/imports.ts
   - src/import-resolver.ts
+  - src/codegen/closures.ts
+  - src/codegen/function-declaration-observation.ts
 func-budget-allow:
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
   - src/codegen/extern-declarations.ts::registerNodeBuiltinImports
   - src/codegen/expressions/identifiers.ts::compileIdentifierCore
   - src/codegen/closures/callback-classification.ts::isHostCallbackArgument
   - src/codegen/registry/imports.ts::addUnionImports
+  - src/codegen/literals.ts::compileObjectLiteralForStruct
+  - src/codegen/closures.ts::compileLiftedClosureBody
+  - src/codegen/closures.ts::compileArrowAsCallback
 ---
 
 # shorter-arity callbacks from later modules miss the funcref dispatch

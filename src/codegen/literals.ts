@@ -14,6 +14,7 @@
  */
 
 import ts from "typescript";
+import { hoistFunctionDeclarations } from "./statements/nested-declarations.js";
 import { isStringType, isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
 import {
@@ -3552,6 +3553,12 @@ export function compileObjectLiteralForStruct(
         methodFctx.body.push({ op: "local.get", index: pendingThrowLocal });
         methodFctx.body.push({ op: "call", funcIdx: createGenIdx });
       } else if (prop.body) {
+        // (#4616) Hoist pre-pass, mirroring the function-body/closure lanes: a
+        // nested `function spy()` self-referencing as a value inside a struct-
+        // lowered object-literal METHOD (jest's `vi.fn`) needs the stable
+        // identity binding, or each self-read materializes a fresh struct and
+        // `spy.mock` reads back undefined in every spy body.
+        hoistFunctionDeclarations(ctx, methodFctx, prop.body.statements);
         for (const stmt of prop.body.statements) {
           compileStatement(ctx, methodFctx, stmt);
         }

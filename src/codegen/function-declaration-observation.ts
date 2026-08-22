@@ -336,8 +336,29 @@ function hasStableFunctionValueCaptureAbi(fctx: FunctionContext, decl: ts.Functi
     if (ts.isIdentifier(node) && isRuntimeIdentifierReference(node) && !ownLocals.has(node.text)) {
       const localIdx = fctx.localMap.get(node.text);
       if (localIdx !== undefined) {
+        // (#4616) Entry-hoisted materialization is safe whenever the captured
+        // slot's VALUE is already final at function entry:
+        //   - numeric scalars (the historical rule),
+        //   - the enclosing function's own PARAMS (bound before any statement
+        //     runs — jest's vi.fn `spy` captures the `implementation` param;
+        //     without a stable binding every self-read inside spy's body
+        //     re-materialized a fresh struct, so `spy.mock` written on the
+        //     invoked instance answered undefined in every spy body),
+        //   - boxed capture CELLS (`__ref_cell_*` refs — a mutated capture
+        //     shares the cell, whose identity is fixed at entry even though
+        //     its contents change).
+        const isParamSlot = localIdx < fctx.params.length;
         const type = getLocalType(fctx, localIdx);
-        if (!type || (type.kind !== "i32" && type.kind !== "i64" && type.kind !== "f32" && type.kind !== "f64")) {
+        const isRefCellSlot =
+          type !== undefined &&
+          type !== null &&
+          (type.kind === "ref" || type.kind === "ref_null") &&
+          fctx.boxedCaptures?.has(node.text) === true;
+        if (
+          !isParamSlot &&
+          !isRefCellSlot &&
+          (!type || (type.kind !== "i32" && type.kind !== "i64" && type.kind !== "f32" && type.kind !== "f64"))
+        ) {
           stable = false;
           return;
         }
