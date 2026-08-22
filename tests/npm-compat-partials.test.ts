@@ -74,5 +74,8 @@ describe("npm-compat refresh matrix wiring", () => {
     expect(workflow).toContain("actions/download-artifact@v7");
     expect(workflow).toContain("scripts/merge-npm-compat-partials.mjs");
     expect(workflow).toContain("id: typescript");
+    expect(workflow).toContain("id: react-dom");
+    expect(workflow).toContain("packages: react-dom");
+    expect(workflow).not.toContain("id: renderers");
   });
 });
