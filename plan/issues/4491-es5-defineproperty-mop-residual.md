@@ -3374,3 +3374,55 @@ Untouched walls confirmed on this lane: the global-object rows
 (`15.2.3.3-4-4` reads `Object.getOwnPropertyDescriptor(this, "eval")`),
 the `arguments`-object freeze family (`freeze/15.2.3.9-2-a-{11,12,14}`),
 and `S15.2.3.6_A1` (needs `document.createElement`).
+
+## Tech-lead handover (2026-08-22, session js2-d3, branch `claude/pull-from-upstream-zgdo0m`)
+
+**Where the number stands.** Last full ES5 acceptance measurement: 8,726/9,029
+(96.64%), zero session-attributable regressions (the one loss,
+`RegExp/S15.10.4.1_A5_T9`, is a pre-existing upstream flake). Landed after that
+measurement and not yet re-measured: waves 4–5 integrations totalling
+~60 further flips (lanes E/F/H/I/J + T1/T2/T4-A/B/C) → estimated ~8,786
+(~97.3%). Next session should re-run the scoped ES5 measurement
+(`TEST262_PATH_FILTER_FILE` of the ES5 list, `VITEST_FORK_MAX_OLD_SPACE_SIZE=3072`,
+`TEST262_TARGET=standalone`) and rebuild the remaining-rows list — the previous
+result files were lost to a container restart; the method is in this file's
+wave sections.
+
+**Delivery state.** Everything integrated is on this branch and in upstream PR
+loopdive/js2#4723 (ready-for-review, auto-merge enabled, in the merge queue
+with PR-level checks green at `330f843`). Fork main was checkpointed once via
+ttraenkler/js2#16 (merged); policy since: no fork PRs, upstream only.
+
+**CAUTION — plan sections vs landed code.** A container restart (2026-08-22
+~00:30 UTC) destroyed seven in-flight lane worktrees. Some doc sections in this
+file rode into integration commits while their CODE died with the restart — the
+`## Implementation Plan (T7)` section's "LANDED" markers are the confirmed
+case. Trust `git log` + a probe on current HEAD, never a doc claim alone.
+
+**In flight at handover (wave-5 standing lanes, wrap-up ordered).** T5
+(module-global array carrier, $ObjVec hasOwnProperty, #1472 ToString), T6
+(fromCharCode-as-value — four coupled defects, diagnosis in the Wave-5 T1
+section), T7 (provider-realm carrier identity — re-implementation against the
+existing plan section), T9 (constructor seed + Date carrier + builtin-instance
+for-in). Each lane writes its own `## Handover (T<N>, …)` section here on
+wrap-up; unmerged lane branches are pushed as `wave5/T<N>-handover` with draft
+PRs.
+
+**Queued, not started.** T3 (harness/instanceof/assignment, ~21 rows), T4
+remainder (~23 rows, re-triage), T8 (f64-hole value representation — design
+task, options table in the task description). Row lists under `.tmp/` are
+STALE (pre-session baseline) — verify-before-edit is mandatory.
+
+**The walls that cap short-term progress** (all measured, see the wave
+sections): provider-realm carrier identity (~33 rows, T7's plan),
+f64 holes (~15 rows, T8), $Object.$proto vs $NativeProto (4 rows, priced),
+toLocaleString per-element Invoke, arguments isArray branding, #2151
+computed-key dispatch, split-decl fnctor, #2071 foreign-return residue.
+
+**Integration protocol that worked** (9 lanes, zero regressions shipped):
+agents never push; diff base..final in their worktree, `git apply --reject`,
+hand-merge issue-file hunks (watch duplicate YAML frontmatter keys), re-verify
+flips + cross-lane canaries by probe on the integrated tree, then the four
+gates CHAINED as command-&&-blockers before commit, push with tech-lead auth.
+Load discipline: serial probes, `uptime` before sweeps (the restart was
+overload-triggered), commit early in worktrees.
