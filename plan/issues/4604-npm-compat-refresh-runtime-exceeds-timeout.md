@@ -230,3 +230,5 @@ guard out, and fails closed when the check API is unreadable. The generic
 behind-PR sweep excludes `ci/npm-compat-refresh` entirely. This makes the npm
 coordinator the only updater of its promotion branch and prevents both direct
 and indirect `pull_request:synchronize` cancellation churn.
+
+Implementation: [PR #4776](https://github.com/loopdive/js2/pull/4776).
