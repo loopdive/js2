@@ -12,6 +12,7 @@ import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
 import { emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3
 import { emitHoleToUndefined, holeSentinelInstrs } from "../array-holes.js";
+import { emitF64GapFillInstrs } from "../vec-f64-hole-gap.js"; // (#4491 T8)
 // prettier-ignore
 import { emitUnbackableIndexFlag, guardedElementSetInstrs, needsGapFillCondInstrs, needsGrowCondInstrs } from "../vec-sparse-index.js";
 import { tryEmitLinearU8ElementCompound, tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
@@ -5347,6 +5348,20 @@ function compileElementAssignment(
           { op: "array.fill", typeIdx: arrTypeIdx },
         ],
       });
+    } else if (arrDef.element.kind === "f64") {
+      // (#4491 T8) The f64 twin of the gap-fill above: an f64 slot CAN hold an
+      // absence marker (the `UNDEF_F64_BITS` sNaN), so the gap no longer reads
+      // back as a real `0`. Body in `vec-f64-hole-gap.ts`.
+      fctx.body.push(
+        ...emitF64GapFillInstrs(fctx, {
+          vecLocal,
+          dataLocal,
+          idxLocal,
+          vecTypeIdx: typeIdx,
+          arrTypeIdx,
+          gapCond: (oldLen) => needsGapFillCondInstrs(unbackedLocal, idxLocal, oldLen),
+        }),
+      );
     }
 
     // array.set: data[idx] = val (skipped for an unbackable index).

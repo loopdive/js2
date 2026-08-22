@@ -13,6 +13,7 @@ import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
 import { probeCompiledType } from "./context/speculative.js";
 import { emitHoleToUndefined, holeTestInstrs, holeToUndefinedInstrs, joinEmptyElementTest } from "./array-holes.js";
+import { f64JoinSentinelArm } from "./vec-f64-hole-gap.js"; // (#4491 T8)
 import { buildJoinBoxedElementToString, isAnyStringSubtype } from "./array-join-element.js"; // (#4560)
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
@@ -4482,10 +4483,26 @@ function compileArrayJoinNative(
     elemToStr.push({ op: "ref.cast", typeIdx: anyStrTypeIdx });
   } else if (isNumeric && numToStrIdx !== undefined) {
     if (elemType.kind !== "f64") elemToStr.push({ op: "f64.convert_i32_s" });
-    elemToStr.push({ op: "call", funcIdx: numToStrIdx });
-    // number_toString returns the native string boxed as externref.
-    elemToStr.push({ op: "any.convert_extern" });
-    elemToStr.push({ op: "ref.cast", typeIdx: anyStrTypeIdx });
+    const numToStrChain: Instr[] = [
+      { op: "call", funcIdx: numToStrIdx },
+      // number_toString returns the native string boxed as externref.
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: anyStrTypeIdx },
+    ];
+    if (elemType.kind === "f64") {
+      // (#4491 T8) §23.1.3.18 step 4.b for the f64 absence marker — the arm the
+      // host-lane `compileArrayJoin` has had since #1998 and this native fold
+      // never grew, so `[]; x[0]=0; x[3]=3` joined as "0,NaN,NaN,3".
+      elemToStr.push(
+        ...f64JoinSentinelArm(fctx, {
+          resultType: repr.resultType,
+          emptyLiteral: repr.literal(""),
+          numberToString: numToStrChain,
+        }),
+      );
+    } else {
+      elemToStr.push(...numToStrChain);
+    }
   } else if (elemType.kind === "externref" || needsRefToString) {
     // #2505-family + (#4560): a boxed-any element (`any[]`, `new Array(N)`
     // holes) and a non-string GC-ref element both stringify through the runtime

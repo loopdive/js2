@@ -161,6 +161,14 @@ coercion-sites-allow:
   # hand-rolled.
   - src/codegen/string-fromcharcode-value-read.ts
 func-budget-allow:
+  # 2026-08-22 wave-5 lane T8, f64-hole VALUE half: `compileElementAssignment`
+  # gains ONE `else if (arrDef.element.kind === "f64")` arm (+14) that calls
+  # `emitF64GapFillInstrs`. The whole body — the sNaN marker, the locals, the
+  # guarded `array.fill` — lives in the NEW module
+  # src/codegen/vec-f64-hole-gap.ts; this function keeps only the branch, which
+  # has to be here because it is the sibling of the externref gap-fill arm it
+  # mirrors (#2773 S7) and shares its already-allocated vec/data/idx locals.
+  - src/codegen/expressions/assignment.ts::compileElementAssignment
   # 2026-08-21 defineProperties/create edge slice: the `Properties`-map entry
   # model gains a PASS-THROUGH arm (a map entry that is not an object literal)
   # plus the reified-map construction. Already 724 LOC at base — the growth is
@@ -4114,3 +4122,278 @@ pre-existing non-pass. The lane is integration-ready as it stands.
 - **The standalone baseline JSONL is stale enough to matter**: of 13 candidate
   rows, 2 already passed, and one control row it calls `pass` fails on base.
   Verify every row on your own HEAD, and base-check every control non-pass.
+
+## Implementation Plan (T8) — f64-hole value representation (2026-08-22, lane w5-t8)
+
+Base `6b513c7155`, `--target standalone`, in-process `runTest262File`. Every
+number below is a run this lane executed; the pre-edit copies
+(`.tmp/base-literals.ts`, `.tmp/base-assignment.ts`, `.tmp/base-array-methods.ts`)
+and both A/B result sets are in the worktree's `.tmp/`.
+
+### The wall is NOT (mainly) the literal elision
+
+The dispatch brief and the earlier lane-J verdict both frame this as
+"`[0, , 2]` in an f64 vec". Re-measuring each named row against its ACTUAL
+error says otherwise — only one of them is a literal elision at all:
+
+| row | measured failure on base | real cause |
+| --- | --- | --- |
+| `toString/S15.4.4.2_A1_T2` | `x=[]; x[0]=0; x[3]=3; x.toString()` → `"0,0,0,3"`, want `"0,,,3"` | **grow-gap**: `array.new_default` zero-fills the f64 backing, and `0` is a legal element |
+| `concat/S15.4.4.4_A3_T2` | `b[1]` is `0`, want `undefined` | same grow-gap |
+| `concat/S15.4.4.4_A1_T4` | `arr[2]` is `NaN`, want `undefined` | `undefined` in an f64 carrier is not observed at `SameValue` |
+| `concat/S15.4.4.4_A1_T2` | `arr[1]` is `NaN`, want an object | concat result element type drops a ref element — not a hole bug |
+| `Array/S15.4_A1.1_T10` | trap: `array element access out of bounds` | the sparse-STORAGE wall (index `4294967294`), already priced by lane J |
+| `filter/15.4.4.20-9-b-{7,11,14,15}` | callback sees `NaN` at the hole and the index is COUNTED | presence, not value |
+
+`array-holes.ts` states the scope limit in its own header ("typed `number[]`
+… never see a `$Hole`"), and `expressions/assignment.ts` states it from the
+other side, in the #2773 S7 gap-fill: *"Externref elements only: an f64/i32
+slot cannot hold either representation."* That sentence is the wall, written
+down. **For f64 it is false** — the compiler has had an f64 absence marker
+since #1024: `UNDEF_F64_BITS` (`value-tags.ts`), the SIGNALING NaN
+`0x7FF00000DEADC0DE`. JS arithmetic only ever yields the QUIET NaN
+`0x7FF8000000000000`, so it cannot collide, and ~28 observer sites already
+read it as `undefined`.
+
+### Behaviour of `var x=[]; x[0]=0; x[3]=3` on base (function scope, standalone)
+
+`toString "0,0,0,3"` · `join "0,0,0,3"` · `x[1] === 0` · `1 in x` true ·
+`hasOwnProperty("1")` false · `Object.keys` `0|1|2|3` · `forEach` visits 4.
+(Correct: `"0,,,3"` · `x[1] === undefined` · `1 in x` false · keys `0|3` ·
+forEach visits 2.)
+
+### The three options, measured
+
+**(b) Demote hole-bearing literals/arrays to externref vecs at collect time —
+MEASURED LOSER, and structurally so.** One-line spike in
+`compileArrayLiteral` (widen `elemWasm` to `externref` whenever any element is
+an `OmittedExpression`), which is the smallest possible form of the
+markStandalone*Targets pattern:
+
+| set | base | spike (b) |
+| --- | ---: | ---: |
+| 112 elision-bearing rows under `built-ins/Array`, `language/expressions/array`, `Object/{defineProperties,keys}` | **33 pass** | **21 pass** |
+
+Twelve regressions, one gain. Two independent reasons, and the second is fatal
+to the whole family:
+
+1. `var x = [0, , 2]` is statically `number[]`, so the element READ still
+   lowers to f64. The widened vec hands the read an externref, the `$Hole` maps
+   to `undefined`, and `undefined` coerced to f64 is `NaN` — so
+   `array[0] === undefined` went `true → false`
+   (`language/expressions/array/S11.1.4_A1.{4,5,6,7}`). The `string[]` and
+   object-array spellings were unaffected, which isolates it to the numeric
+   read boundary.
+2. **The construction site is not the authority on the representation.**
+   `resolveWasmType` is: every CONSUMER re-derives the carrier from the value's
+   TS type. A construction-site override desyncs producer and consumer. Proven
+   twice — once by (1), and again by a second spike that gave
+   `compileArrayConstructorCall` the null/undefined widening
+   `compileArrayLiteral` already has (`hasNullLiteral`): `Array(undefined,1,
+   null,3).toString()` went `",1,0,3" → "NaN,1,0,3"` — the producer widened,
+   the consumer did not, and the result got *worse*. `literals.ts` already
+   names this as the open decision, in the #2809 comment on that exact
+   function.
+
+   Widening only works where producer and consumer agree by construction —
+   which is why the existing `hasNullLiteral` / `hasObjectElem` widenings are
+   safe (they fire where TS itself infers a non-numeric element type) and a
+   hole-driven one is not (TS infers `number[]` for `[0, , 2]`).
+
+**(c) Presence bitmap** — declined without a spike, on two grounds that do not
+need one. It is strictly more state than a value marker (every grow, store,
+delete, length-set and copy must maintain it in lockstep), and it does not
+survive the carrier: a third struct field means a nominal subtype, so any code
+compiled against plain `$__vec_base` — which is most of the dynamic path —
+loses the bitmap silently. A value marker travels inside the element and cannot
+be lost. The one precedent for a nominal holey carrier (#4222's
+`$__holey_array` + `holey-array-presence.ts`) is deliberately narrow for
+exactly this reason: it is minted only for a proven `new Array(n)` → `.filter`
+path, and even there only `__extern_has_idx` knows about it.
+
+**(a) NaN-boxed marker — WINNER.** It is the only option where producer and
+consumer cannot disagree, because the marker rides inside the f64 value; it
+needs no type-system change, no struct change, no allocation; the grow path is
+where holes are actually created and it already emits an `array.fill` for the
+externref carrier; and it composes with the T5 case (a `length` shrink-then-grow
+leaves stale slots — filling them with the marker is the same one-line fill).
+
+Blast radius on the f64 fast path: **zero for dense numeric code**. The fill is
+inside the existing `needsGapFillCondInstrs` guard (`idx > length`), which is
+false at every step of `for (i…) a[i] = v` and of `push`, so the dense-fill and
+counted-push kernels emit byte-identical code. The #1897 `struct.get` contract
+is untouched — no field is added, moved, or retyped.
+
+### Value half vs presence half — the split, and why the marker must eventually fork
+
+`UNDEF_F64_BITS` means **undefined**, not **absent**. Reusing it gets every
+VALUE question right (`x[1] === undefined`, `join`/`toString` render `""` —
+which is also what an explicit `undefined` element renders, so the arm is right
+either way) and leaves every PRESENCE question wrong (`1 in x`,
+`Object.keys`, HOF hole-skip), because `x[1] = undefined` writes the same bits
+and must answer PRESENT.
+
+The presence half therefore needs a SECOND, distinct sNaN payload
+(`HOLE_F64_BITS`, e.g. `0x7FF00000DEADC01E`) plus:
+
+1. **Canonicalization at the vec read boundary** — `HOLE → UNDEF_F64_BITS` at
+   the ~8 sites that already call `emitHoleToUndefined` for externref
+   (`property-access.ts` 5717/5838, `statements/loops.ts` 1808,
+   `array-methods.ts` 777/6207/6419, `expressions/assignment.ts` 2242/2341),
+   extended to `element.kind === "f64"` under `ctx.usesArrayHoles`. This keeps
+   the "the sentinel is never observed AS the sentinel" invariant that
+   `array-holes.ts` already states, so none of the ~28 `UNDEF_F64_BITS`
+   observers need to change.
+2. **A per-carrier hole test in `__extern_has_idx`'s vec arm** — today that arm
+   answers on `i < length` alone (`array-filter-spec-access.ts` L105 says so).
+   The shape to copy is `fillExternGetIdxVecArms` (`object-runtime.ts` L7702),
+   which already walks `ctx.vecTypeMap` and emits one `ref.test`-guarded arm per
+   carrier; the f64 carriers get `array.get` + the bit compare, every other
+   carrier keeps today's answer.
+3. **`forceHasProperty` on the native HOFs when `ctx.usesArrayHoles`** — the
+   `hof-native.ts` switch that `ensureHoleyArrayFilter` already flips for the
+   #4222 carrier.
+
+That is the design; it is NOT this slice. It is a second slice with its own
+control run, and it should not start until the value half is landed and
+measured, because (1) is the piece that would otherwise silently change what
+~28 existing observers see.
+
+### Slice T8-A (this slice) — the value half
+
+New module `src/codegen/vec-f64-hole-gap.ts` owns both bodies; the two god-files
+get dispatch wiring only.
+
+1. `emitF64GapFillInstrs` — the f64 twin of the #2773 S7 gap-fill. Same
+   `needsGapFillCondInstrs` guard, same `array.fill`, `UNDEF_F64_BITS` in place
+   of the `undefined` externref. `expressions/assignment.ts` gains one `else if
+   (arrDef.element.kind === "f64")` arm + one import.
+2. `f64JoinSentinelArm` — §23.1.3.18 step 4.b for the marker inside
+   `compileArrayJoinNative`'s element fold. The JS-host `compileArrayJoin` has
+   had this since #1998 (`array-methods.ts` L4686); the standalone native fold
+   never grew it, so the same array joined as `"0,NaN,NaN,3"` host-free.
+   `array-methods.ts` gains the arm call + one import.
+
+Neither is gated on a new flag: the gap-fill fires only where a store grows past
+`length` (a state that was previously unrepresentable, so there is no prior
+behaviour to preserve), and the join arm fires only on a bit pattern that JS
+arithmetic cannot produce.
+
+### The one hazard the value half introduces, stated plainly
+
+Filling a gap with the marker changes an arithmetic HOF over a sparse array
+from **quietly** wrong to **loudly** wrong. Measured on
+`var a=[1,2,3]; a[6]=5;` (function scope, standalone):
+
+| expression | correct JS | base | after T8-A |
+| --- | --- | --- | --- |
+| `a.reduce((s,x)=>s+x, 0)` | 11 (holes skipped) | 11 (the gap `0`s are additive identity — right by luck) | NaN |
+| `a.reduce((s,x)=>s*x, 1)` | 30 | **0** | NaN |
+| `a.join(",")` | `"1,2,3,,,,5"` | `"1,2,3,0,0,0,5"` | `"1,2,3,,,,5"` ✓ |
+| `a[4] === undefined` | true | **false** | true ✓ |
+
+Neither column is spec-correct for the HOFs — only hole-SKIPPING is, and that
+is the presence half. The value half makes the failure visible instead of
+plausible. No row in the 292 measured here exercises it, but the next lane
+should know the trade before extending the marker to `push`, `concat` or the
+`length` setter.
+
+### Measured — slice T8-A
+
+Base `6b513c7155`. Every control is a FILE-COPY A/B (`.tmp/base-assignment.ts`,
+`.tmp/base-array-methods.ts` are the pre-edit copies) run on both sides on this
+head; no `git stash`.
+
+| row | before | after |
+| --- | --- | --- |
+| `built-ins/Array/prototype/pop/S15.4.4.6_A1.2_T1` | check #8: `x=[]; x[0]=0; x[3]=3; x.pop(); x[2]` is `0`, expected `undefined` | **PASS** |
+| `built-ins/Array/prototype/shift/S15.4.4.9_A1.2_T1` | same idiom, same check | **PASS** |
+| `built-ins/Array/prototype/toString/S15.4.4.2_A1_T2` | fails at check #2.2 (`x.toString()` is `"0,0,0,3"`) | still fails, now at check **#3.2** — two checks further on. Its remaining blocker is `Array(undefined,1,null,3)`, i.e. `null` in an f64 carrier, which is the #2809 representation question, not a hole. |
+
+Controls, all statuses compared row-for-row:
+
+| control set | base | after | changed |
+| --- | ---: | ---: | ---: |
+| 180 dense-numeric Array rows — a deterministic stride sample over `map`, `reduce`, `reduceRight`, `sort`, `join`, `push`, `pop`, `indexOf`, `lastIndexOf`, `slice`, `forEach`, `toString`, `concat`, `filter`, `Array/length` (1,872 files) | 117 | 117 | **0** |
+| 150 sparse-index-store rows — stride sample of the 508 files under `built-ins/Array` + `language/expressions/array` that write a literal numeric index, excluding rows already in the other two sets | 73 | **75** | **+2, both gains** |
+| 112 elision-bearing rows (`built-ins/Array`, `language/expressions/array`, `Object/{defineProperties,keys}`) | 33 | 33 | **0** |
+
+Perf sanity — `compileSource(…, { target: "standalone" })` on the numeric
+playground samples, module byte size:
+
+| sample | base | after |
+| --- | ---: | ---: |
+| `website/playground/examples/benchmarks/array.ts` | 54,651 | 54,651 |
+| `…/loop.ts` | 34,533 | 34,533 |
+| `…/fib.ts` | 34,192 | 34,192 |
+
+Byte-identical, which is the expected result rather than a lucky one: the fill
+is inside the `idx > length` guard, and none of these samples ever stores past
+`length`.
+
+Gates: `check-loc-budget` OK · `check-func-budget` OK (one new allowance,
+`compileElementAssignment`, rationale in the frontmatter) · `check-coercion-sites`
+OK · `check:oracle-ratchet` OK (this slice makes no checker query at all).
+
+### Presence is INCONSISTENT today, which is a design constraint for the next lane
+
+On the same `x=[]; x[0]=0; x[3]=3`, the three presence paths disagree with each
+other on base AND after:
+
+| query | answer | correct |
+| --- | --- | --- |
+| `1 in x` | true | false |
+| `x.hasOwnProperty("1")` | **false** | false ✓ |
+| `Object.keys(x)` | `0,1,2,3` | `0,3` |
+
+So `hasOwnProperty` already answers a gap correctly while `in` and `Object.keys`
+do not — they are three different code paths and only one of them consults
+anything hole-aware. The presence half must make them agree, not just fix `in`;
+a fix that moves `in` to `false` while `Object.keys` still lists the index would
+swap one inconsistency for another.
+
+### Handover (T8, lane w5-t8, 2026-08-22)
+
+Branch `worktree-agent-a499924a5d891dcc1`, worktree
+`/home/user/js2/.claude/worktrees/agent-a499924a5d891dcc1`. Not pushed, no PR.
+
+**INTEGRATION-READY** — commit `aace92530b`, all four gates green, three control
+sets measured on this head with zero regressions.
+
+| slice | rows | control |
+| --- | --- | --- |
+| T8-A f64 grow-gap marker + native-join step 4.b | `pop/S15.4.4.6_A1.2_T1`, `shift/S15.4.4.9_A1.2_T1` fail → **pass**; `toString/S15.4.4.2_A1_T2` advances #2.2 → #3.2 | 180 dense-numeric 117/117 identical · 150 sparse-store 73 → 75 · 112 elision 33/33 identical · benchmark modules byte-identical |
+
+Files: `src/codegen/vec-f64-hole-gap.ts` (new, both bodies),
+`src/codegen/expressions/assignment.ts` + `src/codegen/array-methods.ts`
+(dispatch only), plus the `func-budget-allow` entry for
+`compileElementAssignment`.
+
+**Next steps, in value order**
+
+1. **The presence half** — the three pieces are named above with their exact
+   sites. Do not start it as three separate slices: `in`, `hasOwnProperty` and
+   `Object.keys` already disagree with each other today, so a partial fix swaps
+   one inconsistency for another. It unblocks
+   `filter/15.4.4.20-9-b-{7,11,14,15}` and the T5-B `hasOwnProperty` widening.
+2. **Extend the marker to the other gap producers** — `push` past a gap, the
+   `concat` result build (`concat/S15.4.4.4_A3_T2` needs `b[1] === undefined`
+   on the concat OUTPUT), and the T5 length-shrink-then-grow stale slots. Each
+   is the same `array.fill` with the same marker; each needs its own control run
+   because of the arithmetic-HOF trade recorded above.
+3. **`null` in an f64 carrier** blocks `toString/S15.4.4.2_A1_T2` at its new
+   frontier (`Array(undefined,1,null,3)` → `",1,0,3"`). That is #2809's
+   representation question, NOT a hole — and the widening spike proves it cannot
+   be fixed at the construction site alone.
+
+**Do NOT re-attempt** (measured, above): widening a hole-bearing array literal
+or `Array(...)` call to an externref vec. Producer/consumer desync via
+`resolveWasmType`; −12 rows measured on the 112-row elision set.
+
+**Probe harness in this worktree**: `.tmp/run.mts <abs.js | rel-under-test262/test>`,
+`.tmp/runlist.mts <list> <out>`, `.tmp/p.sh` wraps both and RE-LINKS `test262/`
+and `node_modules/` first (`runlist.mts` also re-links before EVERY row — the
+harness clobbers the symlink mid-run, which fabricates ENOENT sweeps).
+`.tmp/wat.mts` is the compile-size sanity. Row lists: `t8-rows.txt`,
+`t8-elision-scan.txt`, `t8-control.txt`, `t8-sparse150.txt`; both sides of every
+A/B are in `.tmp/*.tsv`.
