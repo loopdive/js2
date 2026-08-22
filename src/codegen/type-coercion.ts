@@ -6,8 +6,9 @@
  * Contains: coerceType, pushDefaultValue, defaultValueInstrs, coercionInstrs.
  */
 
-import type { ArrayTypeDef, Instr, StructTypeDef, TypeDef, ValType } from "../ir/types.js";
+import type { ArrayTypeDef, Instr, StructTypeDef, TypeDef, ValType, WasmFunction } from "../ir/types.js";
 import { coercionPlan } from "./coercion-plan.js";
+import { recordVecFromExternMaterializer } from "./compiler-support-abi.js";
 import { boxToAny, UNDEF_F64_BITS } from "./value-tags.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
@@ -1142,13 +1143,19 @@ export function buildVecFromExternMaterializer(ctx: CodegenContext, vecTypeIdx: 
 
   const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [resultType], "$vec_from_extern_type");
   const funcIdx = mintDefinedFunc(ctx);
-  pushDefinedFunc(ctx, funcIdx, {
+  const materializer: WasmFunction = {
     name,
     typeIdx,
     locals: fctx.locals,
     body,
     exported: false,
-  });
+  };
+  pushDefinedFunc(ctx, funcIdx, materializer);
+  // (#3520 C35) Owned by the vec SHAPE, not the numeric type index its label is
+  // spelled with — `vecTypeIdx` is a position in the type space, so a dead-type
+  // compaction moves it. See compiler-support-abi.ts for the ordinal encoding.
+  const shapeName = (ctx.mod.types[vecTypeIdx] as { name?: string } | undefined)?.name;
+  if (shapeName) recordVecFromExternMaterializer(ctx, shapeName, materializer);
   ctx.funcMap.set(name, funcIdx);
   (ctx.vecFromExternMap ??= new Map<number, string>()).set(vecTypeIdx, name);
   return name;
