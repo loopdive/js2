@@ -3363,6 +3363,36 @@ function tryEmitRealmGlobalModuleGlobalRead(
   return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
 }
 
+/**
+ * (#4491) The BRACKET spelling of the #4500 Slice A arm above — `this["p"]` /
+ * `globalThis["p"]` where `p` is a `var`-declared script global.
+ *
+ * §13.3.3 makes the two spellings the same [[Get]], and the compiler's own
+ * global-object model makes them disagree: the dot form has read the module
+ * global since Slice A, while the bracket form kept falling to the
+ * `typeof globalThis` struct and answered `undefined`. Measured on this head:
+ *
+ *     var count = 0;   this.count      // 0          — Slice A
+ *     var count = 0;   this["count"]   // undefined  — this arm
+ *
+ * Only a key the compiler can resolve to a fixed string qualifies; a genuinely
+ * dynamic key (`this[k]`) keeps the existing dynamic read, which consults the
+ * real global object. Declining is byte-identical.
+ */
+function tryEmitRealmGlobalModuleGlobalElementRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.ElementAccessExpression,
+): ValType | undefined {
+  if (!receiverIsRealmGlobalObject(ctx, fctx, expr.expression)) return undefined;
+  const key = resolveComputedKeyExpression(ctx, expr.argumentExpression);
+  if (key === undefined) return undefined;
+  const globalIdx = ctx.moduleGlobals.get(key);
+  if (globalIdx === undefined) return undefined;
+  fctx.body.push({ op: "global.get", index: globalIdx });
+  return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
+}
+
 export function compilePropertyAccess(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -4373,6 +4403,11 @@ export function compileElementAccess(
 
   const functionPoisonResult = tryCompileFunctionPoisonRead(ctx, fctx, expr);
   if (functionPoisonResult !== undefined) return functionPoisonResult;
+
+  // (#4491) `this["p"]` / `globalThis["p"]` on a `var`-declared script global —
+  // the bracket twin of the #4500 Slice A dot arm.
+  const realmGlobalElementRead = tryEmitRealmGlobalModuleGlobalElementRead(ctx, fctx, expr);
+  if (realmGlobalElementRead !== undefined) return realmGlobalElementRead;
 
   const jsonParseElementType = tryEmitJsonParseElementAccess(ctx, fctx, expr);
   if (jsonParseElementType !== undefined) return jsonParseElementType;

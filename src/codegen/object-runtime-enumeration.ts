@@ -32,6 +32,7 @@ import { bagKeysTail, buildBagPushKeys } from "./carrier-bag-visibility.js"; // 
 // (#4160) prototype-index companion consult for the vec OOB Has (resolves to
 // `undefined` unless `ctx.standalone && ctx.protoIndexDirty` reserved it).
 import { protoIndexForInPushInstrs, protoIndexHasIdxInstrs } from "./proto-index-store.js";
+import { stringExoticPushKeysPrologue } from "./string-exotic-own-props.js"; // (#4491) §10.4.3 own index keys
 
 /**
  * Everything the enumeration/array-like/object-static block reads from the
@@ -252,6 +253,8 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       // vec = __objvec_new()
       { op: "call", funcIdx: objVecNewIdx },
       { op: "local.set", index: 7 },
+      // (#4491) §10.4.3 String-exotic own INDEX keys — see the native's doc.
+      ...stringExoticPushKeysPrologue(ctx, 7),
       // any = any.convert_extern(obj); if !$Object → an explicitly admitted
       // JS-owned object's own enumerable keys, otherwise the native carrier
       // bag's keys (or the empty vec).
@@ -388,6 +391,11 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       { op: "local.set", index: 7 },
       { op: "call", funcIdx: newPlainObjectIdx },
       { op: "local.set", index: 8 },
+      // (#4491) Same §10.4.3 index keys as `__object_keys` above, and it MUST
+      // move in lockstep with it — `Object/keys/15.2.3.14-6-3` asserts the two
+      // agree on a String object, so teaching only one turns a vacuous
+      // both-empty pass into a real mismatch.
+      ...stringExoticPushKeysPrologue(ctx, 7),
       // any = any.convert_extern(obj); if !$Object → the carrier bag's keys, else empty (#4010 S3)
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },

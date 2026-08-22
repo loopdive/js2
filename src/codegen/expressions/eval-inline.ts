@@ -1934,7 +1934,12 @@ export function emitStandaloneIndirectEvalRuntime(
 ): ValType | undefined {
   if (!ctx.standalone) return undefined;
   if (args.length === 0) {
-    fctx.body.push({ op: "ref.null.extern" });
+    // (#2875 w4-F) §19.2.1.1 step 2 — `eval()` passes `undefined`, not a String,
+    // so PerformEval returns it unchanged. `ref.null.extern` is `null`, a
+    // DIFFERENT value: measured, `String(eval())` read `"null"` and `typeof
+    // eval()` read `"object"` while `eval(undefined)` already read `"undefined"`
+    // (probe `test262/test/probe/f-und.js`).
+    emitUndefined(ctx, fctx);
     return { kind: "externref" };
   }
 

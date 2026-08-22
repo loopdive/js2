@@ -1175,6 +1175,17 @@ export interface FunctionContext {
      * index is additionally added to `unmappedIndices`.)
      */
     nonWritableIndices?: Set<number>;
+    /**
+     * Argument indices whose `Object.defineProperty(arguments, "<i>", …)` was
+     * routed to the RUNTIME define (#4491) — an accessor, a `writable:false`
+     * data descriptor, or any shape the inline mapped fast path declines. That
+     * route records a real descriptor in the sidecar, which from then on is the
+     * authority for the index; the inline fast path writes only the opaque vec
+     * slot, so taking it afterwards would leave the two disagreeing (a later
+     * `{value: 20}` updated `arguments[0]` while `getOwnPropertyDescriptor`
+     * still reported the old value). Consulted by the fast-path predicate.
+     */
+    runtimeDefinedIndices?: Set<number>;
   };
   /**
    * #1210: bindings detected as `let s = ""; for (...) s += <expr>` builders
@@ -3925,6 +3936,16 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
        * keeps the historical `(ref $Struct)` ABI byte-identically.
        */
       resultIsExtern?: boolean;
+      /**
+       * (fnctor-ctor-arguments.ts) The synthesized ctor materializes an
+       * `arguments` object, so its call sites must publish over-supplied
+       * arguments through `__extras_argv`/`__argc` instead of dropping them.
+       * Cached with the ctor because the CACHE-HIT arm emits the call site
+       * without ever seeing the declaration: a second `new F(…)` that forgot
+       * this fact silently passed the builder's protocol-speaking callee a
+       * stale/empty extras vector.
+       */
+      readsArguments?: boolean;
     }
   >;
   /**
