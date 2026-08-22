@@ -71,6 +71,8 @@ value for that member even though the namespace route was available. Added
 classification/host-value test above. This keeps the package test on the
 same real Node host boundary; no Jest test body or expected value was changed.
 
+Implementation: [PR #4764](https://github.com/loopdive/js2/pull/4764).
+
 - **`node:fs/promises`** — the `/` in the module name breaks the
   `__nodefn__<module>__<fn>` identifier scheme (would emit an invalid
   `__nodefn__fs/promises__readFile` declaration). Needs slash-sanitisation

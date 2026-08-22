@@ -971,3 +971,5 @@ The generated `Defaults.js2wasm.ts` and `getCacheDirectory.js2wasm.ts` files
 are adapter copies beside the pinned upstream sources. They are recreated by
 the setup step and are deliberately not written back into the upstream clone,
 so a rerun cannot silently change the source under test.
+
+Implementation: [PR #4764](https://github.com/loopdive/js2/pull/4764).
