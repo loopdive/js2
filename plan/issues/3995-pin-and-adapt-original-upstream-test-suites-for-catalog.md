@@ -947,3 +947,86 @@ An exploratory `jest-config/src/__tests__/Defaults.test.ts` was not admitted:
 its original package graph requires the unmaterialized pinned `deepmerge`
 dependency, so the Node oracle could not register the callback. That remains a
 concrete dependency-resolution follow-up rather than a Wasm result.
+
+## 2026-08-22 Jest defaults and Node-host seam checkpoint
+
+The original `jest-config/src/__tests__/Defaults.test.ts` callback is now
+admitted. Its assertion body is unchanged; the harness resolves its `defaults`
+named export directly to the defining upstream `Defaults.ts` module so the
+one-line unit does not eagerly load Jest's unrelated full config graph. The
+adapter verifies the pinned `jest-config@30.4.2` source hash, makes the helper's
+ambient `process` binding explicit, and uses the existing `node:os` namespace
+for the cache-directory temporary path. The original `ci-info@4.4.0` and
+`jest-regex-util@30.4.0` package seams are pinned and verified as well.
+
+The exact run now covers **321 callbacks across 25 selected files**. Node
+admits **319/321**, all 25 modules compile and 24 validate (queue-runner is
+still the sole validation finding), and Wasm scores **220/319** with zero
+runtime failures. The unavailable-infrastructure remainder is **2,967
+registrations** from 216 verified files. The earlier deepmerge blocker is
+superseded by this narrower public-entrypoint dependency seam; the old note is
+retained above as the prior measured checkpoint.
+
+The generated `Defaults.js2wasm.ts` and `getCacheDirectory.js2wasm.ts` files
+are adapter copies beside the pinned upstream sources. They are recreated by
+the setup step and are deliberately not written back into the upstream clone,
+so a rerun cannot silently change the source under test.
+
+Implementation: [PR #4764](https://github.com/loopdive/js2/pull/4764).
+
+## 2026-08-22 Jest ANSI snapshot checkpoint
+
+The shared Jest runner now loads pinned string snapshots from each selected
+upstream `__snapshots__` file and matches them by the original test name. ANSI
+escape sequences are normalized to the same serializer markers used by Jest;
+the chalk adapter exposes explicit `dim` and `reset` styles, including the
+empty-string behavior, so callable properties survive WasmGC lowering. The
+original `jest-watcher/src/lib/__tests__/formatTestNameByPattern.test.ts` is
+now selected unchanged.
+
+The exact run covers **332 callbacks across 26 selected files**. Node admits
+**330/332**, all 26 modules compile and 25 validate, and Wasm scores
+**231/330** with zero runtime failures. The unavailable-infrastructure
+remainder is **2,956 registrations** from 215 deferred files. All 11 watcher
+snapshot callbacks pass in both lanes; the two existing Node-oracle failures
+remain the process-shape assertion and queue-runner validation finding.
+
+## 2026-08-22 Jest watcher scroll checkpoint
+
+The original `jest-watcher/src/lib/__tests__/scroll.test.ts` is now selected
+unchanged. It needs no package adapter: the existing runner and project
+resolver are sufficient for all five callbacks.
+
+The exact run now covers **337 callbacks across 27 selected files**. Node
+admits **335/337** (the two existing diff-sequence snapshot-oracle failures),
+all 27 modules compile and 26 validate, and Wasm scores **236/335** with zero
+runtime failures. The unavailable-infrastructure remainder is **2,951
+registrations** from 214 deferred files. All five scroll callbacks pass in
+both lanes.
+
+## 2026-08-22 Jest haste-map mock-name checkpoint
+
+The original `jest-haste-map/src/__tests__/get_mock_name.test.js` is now
+selected unchanged. Its `node:path` import is already covered by the host
+namespace, so no package-specific adapter is needed; the callback passes in
+both lanes.
+
+The exact run now covers **338 callbacks across 28 selected files**. Node
+admits **336/338** (the two existing diff-sequence snapshot-oracle failures),
+all 28 modules compile and 27 validate, and Wasm scores **237/336** with zero
+runtime failures. The unavailable-infrastructure remainder is **2,950
+registrations** from 213 deferred files.
+
+## 2026-08-22 Jest array-subset matcher checkpoint
+
+The shared `toMatchObject` implementation now handles arrays with Jest's
+same-length element-by-element subset semantics. This admits the original
+`jest-core/src/__tests__/FailedTestsCache.test.js` unchanged; its expected
+array of failed test paths now matches the real returned test objects in both
+lanes.
+
+The exact run now covers **339 callbacks across 29 selected files**. Node
+admits **337/339** (the two existing diff-sequence snapshot-oracle failures),
+all 29 modules compile and 28 validate, and Wasm scores **238/337** with zero
+runtime failures. The unavailable-infrastructure remainder is **2,949
+registrations** from 212 deferred files.

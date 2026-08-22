@@ -45,6 +45,33 @@ const CHALK_DEPENDENCY_PINS = {
   },
 };
 
+const JEST_REGEX_UTIL_PIN = {
+  version: "30.4.0",
+  files: {
+    "index.ts": "4d0717d1797d7579161e68c3bbb90a322f9ac9059a8fd6f1f4e249194bfb45ee",
+  },
+};
+
+const CI_INFO_PIN = {
+  version: "4.4.0",
+  sourceSha256: "94772d86a718ebeefa1273918175b3816fa051a4d544ce565bcc53c58d5fc74f",
+  sourcePath: "index.js",
+};
+
+const JEST_CONFIG_CACHE_DIRECTORY_PIN = {
+  version: "30.4.2",
+  files: {
+    "getCacheDirectory.ts": "820d6a06b31ae243f1c6208f53882f7f4693487060f1303b3b10b3cf9a5a5a0b",
+  },
+};
+
+const JEST_CONFIG_DEFAULTS_PIN = {
+  version: "30.4.2",
+  files: {
+    "Defaults.ts": "0110649a41319578e3e3ad8305a717089641ec6ca58aee048a8f7e7e55e837f2",
+  },
+};
+
 function resolveInstalledPackageSource(name, pin, relativePath) {
   const workspaceNodeModules = resolve(HERE, "../../node_modules");
   const packageRoot = name.startsWith("@") ? name.replace("/", "+") : name;
@@ -80,6 +107,26 @@ function resolveInstalledPackageSource(name, pin, relativePath) {
   return { source, sha256 };
 }
 
+function resolveJestSource(suite, packageDirectory, relativePath, pin) {
+  const sourcePath = join(suite.root, "packages", packageDirectory, "src", relativePath);
+  if (!existsSync(sourcePath)) {
+    throw new Error(`[dogfood] Jest requires ${packageDirectory}/${relativePath}; source is missing`);
+  }
+  const source = readFileSync(sourcePath, "utf8");
+  const packagePath = join(suite.root, "packages", packageDirectory, "package.json");
+  const packageVersion = JSON.parse(readFileSync(packagePath, "utf8")).version;
+  if (packageVersion !== pin.version) {
+    throw new Error(`[dogfood] ${packageDirectory} version mismatch: expected ${pin.version}, got ${packageVersion}`);
+  }
+  const sha256 = createHash("sha256").update(source).digest("hex");
+  if (sha256 !== pin.files[relativePath]) {
+    throw new Error(
+      `[dogfood] ${packageDirectory}/${relativePath} source hash mismatch: expected ${pin.files[relativePath]}, got ${sha256}`,
+    );
+  }
+  return { source, sha256 };
+}
+
 function adaptChalk(source) {
   if (!source.includes("class ChalkClass") || !source.includes("module.exports = chalk")) {
     throw new Error("[dogfood] chalk source shape changed; refusing an unverified adapter");
@@ -91,8 +138,13 @@ function adaptChalk(source) {
   // and keep the real ansi-styles package as the source of supported names.
   return `import ansiStyles from "ansi-styles";
 const format = (values) => values.length === 1 ? String(values[0]) : values.join(" ");
+const ansiStyle = (open, close) => (...values) => {
+  const value = format(values);
+  return value === "" ? value : open + value + close;
+};
 const attachStyles = (target) => {
   for (const name of Object.keys(ansiStyles)) {
+    if (name === "dim" || name === "reset") continue;
     const style = (...values) => format(values);
     Object.defineProperty(target, name, {value: style, enumerable: true});
     for (const nested of Object.keys(ansiStyles)) {
@@ -103,6 +155,11 @@ const attachStyles = (target) => {
 };
 const chalk = (...values) => format(values);
 attachStyles(chalk);
+// These two properties are used directly by jest-watcher's original
+// formatTestNameByPattern unit. Assign them explicitly: dynamic
+// Object.defineProperty calls do not preserve callable properties in WasmGC.
+chalk.dim = ansiStyle("\\u001b[2m", "\\u001b[22m");
+chalk.reset = ansiStyle("\\u001b[0m", "\\u001b[0m");
 chalk.visible = chalk;
 chalk.template = chalk;
 chalk.level = 0;
@@ -162,6 +219,43 @@ function adaptSupportsColor(source) {
     .replace("const hasFlag = require('has-flag');", 'import hasFlag from "has-flag";')
     .replace(/\bprocess\b/g, "nodeProcess")
     .replace(/module\.exports\s*=\s*\{/, "export default {");
+}
+
+function adaptCiInfo(source) {
+  if (!source.includes("exports.isCI = !!(")) {
+    throw new Error("[dogfood] ci-info source shape changed; refusing an unverified adapter");
+  }
+  // Defaults only reads isCI. Preserve that upstream signal from the Node
+  // host without importing ci-info's vendor table into this focused graph.
+  return 'import * as nodeProcess from "node:process";\nexport const isCI = nodeProcess.env.CI !== "false" && Boolean(nodeProcess.env.CI || nodeProcess.env.CONTINUOUS_INTEGRATION || nodeProcess.env.BUILD_ID || nodeProcess.env.RUN_ID);\n';
+}
+
+function adaptGetCacheDirectory(source) {
+  if (!source.includes("const {getuid} = process;") || !source.includes("getuid.call(process)")) {
+    throw new Error("[dogfood] Jest getCacheDirectory source shape changed; refusing an unverified adapter");
+  }
+  // The original helper uses the ambient Node `process` global. Make that
+  // dependency explicit so the existing node:process host binding supplies
+  // it in the compiled test worker.
+  return source
+    .replace(
+      "import {tmpdir} from 'node:os';",
+      'import * as nodeOs from "node:os";\nimport * as nodeProcess from "node:process";',
+    )
+    .replace("import {tryRealpath} from 'jest-util';\n", "")
+    .replace("const {getuid} = process;", "const {getuid} = nodeProcess;")
+    .replace("getuid.call(process)", "getuid.call(nodeProcess)")
+    .replace("tryRealpath(tmpdir())", "nodeOs.tmpdir()");
+}
+
+function adaptDefaults(source) {
+  if (!source.includes("import getCacheDirectory from './getCacheDirectory';")) {
+    throw new Error("[dogfood] Jest Defaults source shape changed; refusing an unverified adapter");
+  }
+  return source.replace(
+    "import getCacheDirectory from './getCacheDirectory';",
+    "import getCacheDirectory from './getCacheDirectory.js2wasm';",
+  );
 }
 
 function resolveDetectNewlineSource(pin = DETECT_NEWLINE_PIN) {
@@ -332,7 +426,8 @@ export function setupJestUpstreamSuite(options = {}) {
   writeFileSync(
     join(utilRoot, "index.ts"),
     'export { default as formatTime } from "../../packages/jest-util/src/formatTime.ts";\n' +
-      'export { default as convertDescriptorToString } from "../../packages/jest-util/src/convertDescriptorToString.ts";\n',
+      'export { default as convertDescriptorToString } from "../../packages/jest-util/src/convertDescriptorToString.ts";\n' +
+      'export { default as tryRealpath } from "../../packages/jest-util/src/tryRealpath.ts";\n',
   );
 
   // jest-diff and jest-config import chalk by its published package name.
@@ -349,6 +444,14 @@ export function setupJestUpstreamSuite(options = {}) {
     "index.js",
   );
   const hasFlag = resolveInstalledPackageSource("has-flag", CHALK_DEPENDENCY_PINS["has-flag"], "index.js");
+  const regexUtilPin = suite.pin.dependencies?.["jest-regex-util"] ?? JEST_REGEX_UTIL_PIN;
+  const regexUtil = resolveJestSource(suite, "jest-regex-util", "index.ts", regexUtilPin);
+  const ciInfoPin = suite.pin.dependencies?.["ci-info"] ?? CI_INFO_PIN;
+  const ciInfo = resolveInstalledPackageSource("ci-info", ciInfoPin, ciInfoPin.sourcePath);
+  const cacheDirectoryPin = suite.pin.dependencies?.["jest-config"] ?? JEST_CONFIG_CACHE_DIRECTORY_PIN;
+  const cacheDirectory = resolveJestSource(suite, "jest-config", "getCacheDirectory.ts", cacheDirectoryPin);
+  const defaultsPin = suite.pin.dependencies?.["jest-config-defaults"] ?? JEST_CONFIG_DEFAULTS_PIN;
+  const defaults = resolveJestSource(suite, "jest-config", "Defaults.ts", defaultsPin);
 
   const writePackage = (name, version, files) => {
     const packageRoot = join(suite.root, "node_modules", name);
@@ -377,5 +480,16 @@ export function setupJestUpstreamSuite(options = {}) {
   writePackage("chalk", chalkPins.version, {
     "index.ts": adaptChalk(chalk.source),
   });
+  writePackage("jest-regex-util", regexUtilPin.version, {
+    "index.ts": regexUtil.source,
+  });
+  writePackage("ci-info", ciInfoPin.version, {
+    "index.ts": adaptCiInfo(ciInfo.source),
+  });
+  writeFileSync(
+    join(suite.root, "packages/jest-config/src/getCacheDirectory.js2wasm.ts"),
+    adaptGetCacheDirectory(cacheDirectory.source),
+  );
+  writeFileSync(join(suite.root, "packages/jest-config/src/Defaults.js2wasm.ts"), adaptDefaults(defaults.source));
   return suite;
 }
