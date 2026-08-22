@@ -194,24 +194,23 @@ Implementation: [PR #4767](https://github.com/loopdive/js2wasm/pull/4767) (the
 Jest infrastructure change and npm-compat reliability follow-up share the
 same branch checkpoint).
 
-## 2026-08-22 follow-up — promotion checks were being cancelled by refreshes
+## 2026-08-22 follow-up — promotion checks must never be cancelled by refresh
 
-The SHA-keyed measurement groups stopped newer pushes from cancelling pending
-refresh runs, but a second race remained at promotion. When the reusable
-`ci/npm-compat-refresh` branch already had an open PR, the coordinator checked
-only whether that PR was in the merge queue. If its current `CI` checks were
-still queued or running, the coordinator force-updated the branch anyway. The
-resulting `pull_request:synchronize` event cancelled the checks for the old
-head and started a new set, so frequent refreshes could keep the promotion PR
-permanently pending.
+The SHA-keyed measurement groups prevent newer main pushes from replacing an
+older pending refresh, but a second cancellation race remained at promotion.
+When the reusable `ci/npm-compat-refresh` branch already had an open pull
+request, the coordinator checked only whether it was in the merge queue. It
+could then force-update that branch while the pull request's current checks
+were queued or running. GitHub emits `pull_request:synchronize` for that push
+and cancels the checks for the old head before starting a new set; frequent
+refreshes could therefore keep the artifact pull request permanently pending.
 
-The workflow now reads check-runs for the promotion PR's current head and
-leaves the branch untouched while any recent check is queued or in progress.
-The guard has a two-hour bound so a wedged check cannot suppress publication
-forever; the staleness workflow remains the product-level alert. If the check
-API is unreadable, the safe action is also to leave the branch untouched rather
-than knowingly cancel CI; the generated measurement is retained as an
-artifact and the next scheduled/push run retries.
+The workflow now reads all check-run pages for the promotion pull request's
+current head and leaves the branch untouched while any check is active. The
+guard is intentionally not aged out: the refresh matrix has a 350-minute
+timeout, so a two-hour cutoff would still cancel a legitimate long run. A
+wedged pull request is retained for diagnosis and surfaced by the staleness
+workflow instead of being repeatedly reset.
 
 Implementation: [PR #4774](https://github.com/loopdive/js2wasm/pull/4774).
 
@@ -230,5 +229,11 @@ guard out, and fails closed when the check API is unreadable. The generic
 behind-PR sweep excludes `ci/npm-compat-refresh` entirely. This makes the npm
 coordinator the only updater of its promotion branch and prevents both direct
 and indirect `pull_request:synchronize` cancellation churn.
+
+The generic `auto-refresh-prs` cron also excludes the exact
+`ci/npm-compat-refresh` head. Its two-hour stale-check heuristic is appropriate
+for ordinary behind pull requests, but it could otherwise rebase this bot-owned
+branch and emit the same cancelling `synchronize` event outside the npm
+coordinator.
 
 Implementation: [PR #4776](https://github.com/loopdive/js2/pull/4776).
