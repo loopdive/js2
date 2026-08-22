@@ -40,6 +40,7 @@ loc-budget-allow:
   - src/codegen/declarations.ts
   - src/codegen/declarations/object-shape-widening.ts
   - src/codegen/extern-declarations.ts
+  - src/import-resolver.ts
 oracle-ratchet-allow:
   - src/codegen/declarations/object-shape-widening.ts
   - src/codegen/index.ts
