@@ -1063,3 +1063,26 @@ required follow-up gates. This is still a measured selected slice, not a claim
 that Jest's deferred runner, worker, DOM, or filesystem suites are complete.
 
 Implementation: [PR #4767 — bridge WebAssembly callbacks in prompt tests](https://github.com/loopdive/js2wasm/pull/4767).
+
+## 2026-08-22 Jest Node-global and dependency-resolution checkpoint
+
+The next original release-tag unit, `jest-environment-node/src/__tests__/globals_cleanup_3.test.ts`, is now selected unchanged. It exercises the
+Node-global cleanup path using `Object.getOwnPropertyDescriptors` and passes in
+both the native oracle and compiled Wasm without a package-specific adapter.
+
+The same run exposed a real cross-lane infrastructure mismatch: Vitest's
+`NODE_PATH` supplied `graceful-fs` to Jest's queue-runner unit, while the direct
+npm-compat process did not. The adapter now verifies pinned `graceful-fs@4.2.11`
+bytes and materializes an explicit ESM host-capability package exposing the
+`node:fs` `realpathSync` surface consumed by Jest's upstream `tryRealpath`
+implementation. The original queue-runner callbacks therefore register in both
+lanes; the module's Wasm validation finding remains scored, not hidden.
+
+The exact unchanged run now covers **344 callbacks across 31 selected files**:
+Node admits **342/344**, all 31 modules compile and 30 validate, and Wasm
+scores **244/342** with zero runtime failures. The unavailable-infrastructure
+remainder is **2,944 registrations** from 210 deferred files. The two native
+oracle failures and 98 scored Wasm failures remain visible compatibility
+findings; this checkpoint does not reclassify them as infrastructure.
+
+Implementation remains on [PR #4767 — bridge WebAssembly callbacks in prompt tests](https://github.com/loopdive/js2wasm/pull/4767).

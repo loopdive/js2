@@ -22,6 +22,12 @@ const JEST_UTIL_PIN = {
   sourceSha256: "ef7320f8e85b76a67a65ec29e9c55e724b7a25de5b2aad75c3ed1c82a53cc7d4",
 };
 
+const GRACEFUL_FS_PIN = {
+  version: "4.2.11",
+  sourceSha256: "7da35669b6b6b0e4aafee31674c033f2cebb0c8f9ae010f709dcc185d3f17786",
+  sourcePath: "graceful-fs.js",
+};
+
 const CHALK_DEPENDENCY_PINS = {
   chalk: {
     version: "4.1.2",
@@ -428,6 +434,37 @@ export function setupJestUpstreamSuite(options = {}) {
     'export { default as formatTime } from "../../packages/jest-util/src/formatTime.ts";\n' +
       'export { default as convertDescriptorToString } from "../../packages/jest-util/src/convertDescriptorToString.ts";\n' +
       'export { default as tryRealpath } from "../../packages/jest-util/src/tryRealpath.ts";\n',
+  );
+
+  // jest-util's tryRealpath imports graceful-fs by package name. The upstream
+  // package is a CommonJS fs monkey-patch; pulling that implementation into
+  // the Wasm graph would add an unrelated retry/descriptor surface. Verify
+  // the exact pinned dependency bytes, then expose only the host capability
+  // this selected unit consumes through the existing node:fs provider. This
+  // keeps the dependency explicit and makes direct harness runs independent
+  // of Vitest's incidental NODE_PATH.
+  const gracefulFsPin = suite.pin.dependencies?.["graceful-fs"] ?? GRACEFUL_FS_PIN;
+  resolveInstalledPackageSource("graceful-fs", gracefulFsPin, gracefulFsPin.sourcePath);
+  const gracefulFsRoot = join(suite.root, "node_modules/graceful-fs");
+  mkdirSync(gracefulFsRoot, { recursive: true });
+  writeFileSync(
+    join(gracefulFsRoot, "package.json"),
+    JSON.stringify(
+      {
+        name: "graceful-fs",
+        version: gracefulFsPin.version,
+        type: "module",
+        main: "./index.ts",
+        exports: "./index.ts",
+        _sourceSha256: gracefulFsPin.sourceSha256,
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  writeFileSync(
+    join(gracefulFsRoot, "index.ts"),
+    'import * as nodeFs from "node:fs";\nexport const realpathSync = nodeFs.realpathSync;\nexport default nodeFs;\n',
   );
 
   // jest-diff and jest-config import chalk by its published package name.
