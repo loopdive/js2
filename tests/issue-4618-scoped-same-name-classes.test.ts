@@ -85,6 +85,51 @@ describe("#4618 same-named nested classes are scoped per declaration", () => {
     expect(F()).toBe("fn");
   });
 
+  it("a sibling-scope function keeps its CAPTURES despite a same-named class (async callback lane)", async () => {
+    // (#4618) `classSet` is name-keyed, so a class named Foo anywhere in the
+    // module vetoed the funcref-as-value arm for a sibling scope's
+    // `function Foo()` — inside a host callback the read fell through to the
+    // graceful default and Foo crossed as a bare value whose captured-count
+    // writes went nowhere (react StrictMode: fncount stayed 0). The veto now
+    // yields when funcMapOwnerDecl proves the funcMap entry IS the declaration
+    // this reference resolves to.
+    (globalThis as Record<string, unknown>).__act4618cl = async (cb: () => void) => {
+      cb();
+    };
+    let stored: (() => unknown) | null = null;
+    (globalThis as Record<string, unknown>).__ce4618cl = (fn: () => unknown) => {
+      stored = fn;
+    };
+    (globalThis as Record<string, unknown>).__invoke4618cl = () => (stored ? stored() : "no-stored");
+    const result = await compile(
+      `
+      export async function drive(): Promise<any> {
+        let count = 0;
+        class Foo { render(): any { count++; return null; } }
+        return "cls=" + String(count);
+      }
+      export async function drive2(): Promise<any> {
+        const act: any = (globalThis as any).__act4618cl;
+        let count = 0;
+        function Foo(): any { count++; return null; }
+        await act(() => { (globalThis as any).__ce4618cl(Foo); });
+        (globalThis as any).__invoke4618cl();
+        return "fncount=" + String(count);
+      }`,
+      { testRuntime: true, fileName: "issue-4618-cross-kind-captures.ts", skipSemanticDiagnostics: true },
+    );
+    expect(result.success).toBe(true);
+    const importObject = (result as { importObject?: WebAssembly.Imports }).importObject ?? {};
+    const { instance } = await WebAssembly.instantiate(result.binary!, importObject);
+    (importObject as { __setInstance?: (i: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    const exp = wrapExports(instance, {
+      signatures: (result as { exportSignatures?: unknown }).exportSignatures,
+    }) as Record<string, () => Promise<unknown>>;
+    const out = await exp.drive2!();
+    expect(stored).not.toBeNull();
+    expect(out).toBe("fncount=1");
+  });
+
   it("a class named after its parent's property does not false-trip the TDZ check", async () => {
     const exp = await run(`
       const NS: any = { Component: function (this: any) {} };

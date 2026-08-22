@@ -668,6 +668,20 @@ in-module reads (host-side detection is what react-dom needs).
   `fctx.hoistedFunctionValueBindings?.has(name)` on the ARROW's fctx while
   the binding lives on the DECLARING fctx — the arrow never captures the
   sibling fn-decl when `ctx.funcMap.has(name)`.
+  **Capture-loss residual FIXED same day — react 94 → 95/146.** The
+  closures.ts lead was wrong: the callback DID capture `count` correctly in
+  both A/B probe variants (traced — the skip on `Foo` is fine because
+  `count` rides the transitive-capture walk). The real defect was
+  downstream in identifiers.ts's funcref-as-value arm: its
+  `!ctx.classSet.has(name)` veto is NAME-keyed, so the class Foo anywhere
+  in the module vetoed the arm for the sibling FUNCTION Foo — the read
+  fell to the graceful default, crossing a bare value whose capture writes
+  went nowhere. The veto now yields when `ctx.funcMapOwnerDecl.get(name)`
+  IS the declaration the reference resolves to (checker identity).
+  Guards: acorn 3518/3518, jest 322/356, cookie 63740/63740, clsx 32/32,
+  4618 battery + #2669 21/21; issue-1712 1 failure identical on base
+  (A/B'd). Regression test: cross-kind captures case in
+  `tests/issue-4618-scoped-same-name-classes.test.ts` (5 total).
 
 ## Fix order
 

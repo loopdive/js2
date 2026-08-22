@@ -1453,11 +1453,24 @@ function compileIdentifierCore(
     const valDecl = valSym?.valueDeclaration;
     return !(valDecl !== undefined && ts.isFunctionDeclaration(valDecl));
   };
+  // (#4618) `classSet` is name-keyed, so a class named `Foo` ANYWHERE in the
+  // module used to veto the funcref-as-value arm for a sibling scope's
+  // `function Foo()` too — the read fell through to the graceful default and
+  // the function crossed as a bare value with its capture writes lost. When
+  // the funcMap entry is OWNED by the exact FunctionDeclaration this
+  // reference resolves to (funcMapOwnerDecl), the collision is spurious.
+  const classNameCollision =
+    ctx.classSet.has(name) &&
+    !(
+      funcRefIdx !== undefined &&
+      ctx.funcMapOwnerDecl.get(name) !== undefined &&
+      identifierValueSymbol(ctx, id)?.valueDeclaration === ctx.funcMapOwnerDecl.get(name)
+    );
   if (
     funcRefIdx !== undefined &&
     definedFuncAt(ctx, funcRefIdx) !== undefined &&
     !isInternalHelperName() &&
-    !ctx.classSet.has(name)
+    !classNameCollision
   ) {
     const valueDecl = identifierValueSymbol(ctx, id)?.valueDeclaration;
     const isOrdinaryFunctionDecl =
