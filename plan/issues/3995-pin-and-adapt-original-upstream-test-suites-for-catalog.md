@@ -3,7 +3,7 @@ id: 3995
 title: "npm-compat: pin and adapt original upstream test suites for catalog packages"
 status: ready
 created: 2026-07-30
-updated: 2026-08-21
+updated: 2026-08-22
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -395,6 +395,18 @@ explicit deferred inventory. The npm-compat generator invokes the adapter
 directly so the merge-only refresh publishes numeric results and cannot fall
 back to `adapter pending`.
 
+## 2026-08-22 styled-components utility expansion
+
+The styled-components adapter now includes the original
+`generateAlphabeticName.test.ts` utility file and registers **9/9** callbacks
+across four dependency-light utility files. Native Node and Wasm both pass all
+9 callbacks. The shared upstream assertion shim now supports the string form
+of Vitest's `toMatchInlineSnapshot`, and the adapter provides the pinned
+release version fixture used by styled-components' build-time `__VERSION__`
+constant. The remaining 37 files and 659 registrations stay visible as
+unavailable infrastructure; React, DOM, snapshot, SSR, Stylis, and larger
+object-graph coverage is not counted as passing.
+
 ## 2026-08-14 Jest get-type slice
 
 Jest 30.4.2 now verifies all 241 matching files under
@@ -720,3 +732,45 @@ modules compile and validate, and Wasm scores **10 passed / 65 failed**. The
 failures remain visible compatibility findings (WebCrypto typed-array
 crossing, missing global `crypto`, UUID parsing/exception semantics, and the
 v3/v5 hash path); none are relabeled as unavailable infrastructure.
+
+## 2026-08-22 ESLint expansion handoff
+
+The shipped ESLint adapter remains the one-file `deep-merge-arrays.js` slice:
+the unchanged upstream callbacks register and pass **44/44** in both the Node
+oracle and Wasm lanes, and its module compiles and validates.
+
+A local infrastructure experiment extracted five original ESLint v10.0.3
+utility files (`deep-merge-arrays.js`, `naming.js`, `option-utils.js`,
+`serialization.js`, and `string-utils.js`). The native oracle registered and
+passed **158/158** callbacks, and all five modules compiled and validated.
+The generalized adapter is intentionally published only as a draft: its Wasm
+binding/import strategy causes registration mismatches (including 0/59, 0/18,
+and 4/23 registered callbacks in three files) and does not reproduce the
+native result set. No Wasm score claim should be made for this experiment, and
+the mismatches must not be relabeled as unavailable infrastructure.
+
+Follow-up work should preserve the per-file original test bodies while using
+direct named-import adapters or otherwise matching module-init execution
+semantics before this selection is made publishable. The experiment changes
+only adapter/pin infrastructure; it does not modify ESLint source or test
+expectations.
+
+## 2026-08-22 ESLint assertion-binding checkpoint
+
+The binding mismatch was narrowed to the assertion shim, not the published
+ESLint utility exports. The old shim attached `strictEqual`, `deepStrictEqual`,
+`isTrue`, and `isFalse` as properties on a callable function. Node observes
+those properties, but the Wasm function representation does not retain them;
+the result was a false **0/158** score even when the utility returned the right
+value. The adapter now keeps the callable assertion and exposes its methods on
+an ordinary object, with the generated source binding method calls to that
+object. The original callback bodies and inputs remain unchanged.
+
+Measured on the five-file selection: **158/158 native**, all five modules
+compile and validate, and **50/158 Wasm** currently pass. The deep-merge unit
+is restored to **44/44 Wasm**; the remaining failures are real compiler/runtime
+gaps in typed reference-array higher-order functions and serialization helpers,
+with per-file failure summaries retained in the generated report. The adapter
+is still draft-only until those gaps are either fixed or explicitly scoped in
+follow-up issue slices; they are compatibility findings, not unavailable
+infrastructure.
