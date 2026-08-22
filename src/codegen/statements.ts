@@ -576,12 +576,13 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     // scope resolve to THIS declaration, not the first same-named one.
     const scopedSynthetic = ctx.anonClassExprNames.get(stmt);
     compileNestedClassDeclaration(ctx, fctx, stmt, scopedSynthetic);
-    // Bind uniformly — the FIRST same-named declaration keeps its collection
-    // name but must also read through a scoped local, or its scope behaves
-    // differently from its duplicates'.
-    const scopedName =
-      scopedSynthetic ??
-      (stmt.name !== undefined && ctx.classObjectGlobals?.has(stmt.name.text) ? stmt.name.text : undefined);
+    // Only synthetic nested duplicates need a local singleton binding.  The
+    // ordinary class-declaration path intentionally keeps its historical
+    // module/class binding: eagerly materialising every class object here
+    // changes module-init ordering and can hand the host a half-initialised
+    // prototype (the Test262 class-elements cluster exposed this as
+    // "Cannot convert undefined or null to object").
+    const scopedName = scopedSynthetic;
     if (scopedName !== undefined && stmt.name !== undefined) {
       const bindName = stmt.name.text;
       // Bind the SINGLETON class object (registered with the #4618 host
