@@ -755,6 +755,27 @@ semantics before this selection is made publishable. The experiment changes
 only adapter/pin infrastructure; it does not modify ESLint source or test
 expectations.
 
+## 2026-08-22 Jest fake-timer infrastructure checkpoint
+
+The shared Jest/Vitest runner now provides deterministic `jest.useFakeTimers`,
+`jest.useRealTimers`, `jest.runAllTimers`, and spy cleanup. Fake timers are
+implemented in the test environment rather than replacing the harness's own
+clock, so Wasm async handoff and the Node oracle continue to make progress.
+Bare `setTimeout`/`clearTimeout` names route through the same fake queue, and
+timer spy matchers use a scalar call-count bridge because Wasm function
+properties are not a reliable storage location.
+
+The runner regression exercises scheduling, draining, spy observation, and
+cleanup in both lanes: **1/1 native**, the module compiles and validates, and
+**1/1 Wasm** passes. The unchanged original
+`jest-jasmine2/src/__tests__/pTimeout.test.ts` is now selected. Its **3/3**
+callbacks pass in the Node oracle, compile and validate, and are scored in
+Wasm; all three currently expose compiler/runtime async-function-reference
+failures rather than unavailable infrastructure. The Jest inventory is now
+**237 callbacks across 13 files**, with **235 admitted** and **109/235 Wasm**
+passes. The remaining **3,051 registrations** from 228 verified files remain
+explicitly reported as unavailable infrastructure.
+
 ## 2026-08-22 ESLint assertion-binding checkpoint
 
 The binding mismatch was narrowed to the assertion shim, not the published
