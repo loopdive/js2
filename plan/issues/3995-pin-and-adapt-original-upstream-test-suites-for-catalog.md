@@ -755,6 +755,28 @@ semantics before this selection is made publishable. The experiment changes
 only adapter/pin infrastructure; it does not modify ESLint source or test
 expectations.
 
+## 2026-08-22 Jest fake-timer infrastructure checkpoint
+
+The shared Jest/Vitest runner now provides deterministic `jest.useFakeTimers`,
+`jest.useRealTimers`, timer advancement/clearing, async timer aliases, clock
+inspection/setting, and spy cleanup. Fake timers are
+implemented in the test environment rather than replacing the harness's own
+clock, so Wasm async handoff and the Node oracle continue to make progress.
+Bare `setTimeout`/`clearTimeout` names route through the same fake queue, and
+timer spy matchers use a scalar call-count bridge because Wasm function
+properties are not a reliable storage location.
+
+The runner regression exercises scheduling, draining, spy observation, and
+cleanup in both lanes: **1/1 native**, the module compiles and validates, and
+**1/1 Wasm** passes. The unchanged original
+`jest-jasmine2/src/__tests__/pTimeout.test.ts` is now selected. Its **3/3**
+callbacks pass in the Node oracle, compile and validate, and are scored in
+Wasm; all three currently expose compiler/runtime async-function-reference
+failures rather than unavailable infrastructure. The Jest inventory is now
+**237 callbacks across 13 files**, with **235 admitted** and **109/235 Wasm**
+passes. The remaining **3,051 registrations** from 228 verified files remain
+explicitly reported as unavailable infrastructure.
+
 ## 2026-08-22 ESLint assertion-binding checkpoint
 
 The binding mismatch was narrowed to the assertion shim, not the published
@@ -793,3 +815,47 @@ compiler, validation, or runtime mismatches in the upstream suites remain
 scored as compatibility failures.
 
 Implementation: [PR #4756](https://github.com/loopdive/js2/pull/4756).
+## 2026-08-22 Jest internal-package resolution checkpoint
+
+The Jest adapter now materializes the verified `@jest/get-type@30.1.0`
+workspace package in the pinned checkout's `node_modules`. The package metadata
+and source hash are checked against the release-tag source before the test
+starts; the implementation bytes are unchanged. This closes the real package
+name-resolution seam used by `jest-matcher-utils/src/Replaceable.ts` instead of
+rewriting that import to a relative path.
+
+The unchanged `Replaceable.test.ts` is now selected alongside the existing Jest
+utility slice. The verified 30.4.2 inventory registers **251 callbacks across
+13 files**: **249/249** admitted callbacks pass in the Node oracle, all 13
+modules compile and validate, and Wasm scores **124/249**. The two original
+snapshot callbacks remain harness-incompatible and the 125 Wasm failures are
+scored compatibility findings. The remaining **3,037 registrations** from 228
+verified files remain explicitly reported as unavailable infrastructure.
+
+## 2026-08-22 Jest queue-runner package seam checkpoint
+
+The original `jest-jasmine2/src/__tests__/queueRunner.test.ts` file is now
+selected. Its `jest-util` package-name import is materialized as a
+hash-verified ESM adapter exposing the release-tag `formatTime` implementation;
+the six upstream callback bodies and timeout inputs are unchanged. The shared
+Jest transform also strips type-only named imports from the native CommonJS
+normalization path, so the Node oracle registers all six callbacks.
+
+The exact run now covers **257 callbacks across 14 selected files**: Node
+admits **255/255**, all 14 modules compile, 13 validate, and Wasm scores
+**124/255**. The queue-runner module's invalid Wasm is a compiler validation
+finding (`call_ref` received one argument but requires two), not unavailable
+package infrastructure; its six callbacks remain in the denominator and are
+reported as compiler-blocked. The remaining **3,031 registrations** from 227
+verified files remain explicitly reported as unavailable infrastructure.
+
+## 2026-08-22 Jest merged-timer integration checkpoint
+
+After rebasing this package-resolution and queue-runner work onto the landed
+fake-timer infrastructure, the selected inventory includes both the original
+`pTimeout.test.ts` timer unit and `queueRunner.test.ts`. The exact run now
+covers **260 callbacks across 15 selected files**: Node admits **258/258**, all
+15 modules compile, 14 validate, and Wasm scores **120/258**. The one invalid
+queue-runner Wasm module remains a compiler validation finding, while the
+remaining **3,028 registrations** from 226 verified files remain explicitly
+reported as unavailable infrastructure.

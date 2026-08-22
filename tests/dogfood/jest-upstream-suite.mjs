@@ -1,4 +1,4 @@
-// Jest 30.4.2 original @jest/get-type and @jest/util unit slice.
+// Jest 30.4.2 original utility unit slice.
 
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -80,9 +80,20 @@ function transformJestTest(source, filePath, generatedPath, { normalizeCjs = fal
       }
       if (!normalizeCjs) return `import ${bindings} from ${quote}${rewritten}${quote};`;
       const normalized = `${namespaceName}.default?.default ?? ${namespaceName}.default ?? ${namespaceName}`;
+      const runtimeNamed = (named) => {
+        if (!named.startsWith("{")) return named;
+        const members = named
+          .slice(1, -1)
+          .split(",")
+          .map((member) => member.trim())
+          .filter((member) => member && !member.startsWith("type "));
+        return members.length > 0 ? `{ ${members.join(", ")} }` : "";
+      };
       if (bindings.startsWith("{")) {
+        const named = runtimeNamed(bindings);
         return (
-          `import * as ${namespaceName} from ${quote}${rewritten}${quote};\n` + `const ${bindings} = ${normalized};`
+          `import * as ${namespaceName} from ${quote}${rewritten}${quote};` +
+          (named ? `\nconst ${named} = ${normalized};` : "")
         );
       }
       if (bindings.startsWith("* as ")) {
@@ -92,11 +103,11 @@ function transformJestTest(source, filePath, generatedPath, { normalizeCjs = fal
       const comma = bindings.indexOf(",");
       if (comma >= 0) {
         const defaultName = bindings.slice(0, comma).trim();
-        const named = bindings.slice(comma + 1).trim();
+        const named = runtimeNamed(bindings.slice(comma + 1).trim());
         return (
           `import * as ${namespaceName} from ${quote}${rewritten}${quote};\n` +
-          `const ${defaultName} = ${normalized};\n` +
-          `const ${named} = ${normalized};`
+          `const ${defaultName} = ${normalized};` +
+          (named ? `\nconst ${named} = ${normalized};` : "")
         );
       }
       return (
