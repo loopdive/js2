@@ -92,3 +92,7 @@ stay clean; js-host untouched.
    element type, `BigInt(string)`.
 5. **Acceptance for phase 1-2**: `harness/deepEqual-primitives-bigint.js`
    passes standalone; no js-host byte change; standalone floor unaffected.
+
+## Permanent repro
+
+`test262/test/harness/deepEqual-primitives-bigint.js` (standalone lane via `pnpm run test:262` / `runTest262File`).
