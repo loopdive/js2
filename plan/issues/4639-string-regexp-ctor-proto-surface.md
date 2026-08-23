@@ -274,6 +274,26 @@ answer, routes through the same spliced helper, and uses both receiver kinds
 (`Math`, a namespace with no own `prototype`; `String`, a ctor that has
 one). Measured `false|true` on both arms.
 
+**The guard was reworked after applying dev-4637's DELETE-THE-INTERACTION
+test to it.** Their test is better than my revert rule for the cross-lane
+case and needs neither branch: *delete the interaction the pin is named for
+and see whether the answer moves.* Applied here, the question was not
+deletable but was fatal in the same way — the guard's entire value rests on
+"this routes through the `__object_hasOwn` dev-4637 splices", and its first
+cut used the SYNTACTIC `Math.hasOwnProperty("prototype")`, i.e. exactly the
+receiver+literal-key shape a compile-time fold would claim. If it folds, the
+guard never reaches the helper and guards nothing — green whatever their arm
+does. Rather than prove the fold does not happen, the pin is now written so
+it cannot matter: the receiver comes out of an array indexed by a
+loop-carried counter. Measured unfoldable form, `false|true|false`, green on
+BOTH arms; base partition unchanged at 6 fail / 8 pass.
+
+The three assertions point in different directions on purpose — that is what
+makes bundling them safe, against the hazard dev-4637 hit (a negative control
+bundled with a positive, where a build wrong on both still totals correctly).
+`false|true|false` is position-sensitive with unequal values, so neither a
+blanket-`true` nor a blanket-`false` build satisfies it.
+
 **Harness gate hazard — the suite exits 0 with ZERO coverage when
 `test262/harness/assert.js` is absent.** `describe.skipIf(!TEST262)` reports
 "14 skipped", exit 0. Hit live during this work: a run right after restoring
