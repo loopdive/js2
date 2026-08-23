@@ -287,6 +287,7 @@ is always the first.
 | standalone 60-sample (`sa-sample.txt`) | — | **60 / 60** |
 | standalone 90-file regression list (`regr-list.txt`) | — | **90 / 90** |
 | js-host 60-sample (`host-sample.txt`) | — | **59 / 60** |
+| `scripts/equivalence-gate.mjs` (unsharded) | — | **24 failing / 1661 passing, 24 known-failures in baseline — no new regressions** |
 
 (The two standalone samples are 100 % after, which cannot hide a regression
 against any base ≤ 100 %. The js-host sample's one failure is the pre-existing
