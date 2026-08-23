@@ -423,7 +423,40 @@ clean (`src/ir/backend/wasmgc-emitter.ts` passes a variable block type).
 
 ## Verification floor (every issue, before `status: done`)
 
-- Scoped standalone sweep over the issue's directory before AND after, from
+**SCALE THE SWEEP TO BLAST RADIUS — always (project-lead directive,
+2026-08-23).** The floor is not a fixed row count. Measured that day: the box
+has 4 cores, four lanes sweeping at once drove load to 13–15, and one row cost
+**~20 s instead of ~4 s** — so a 4,000-row two-arm sweep took ~4.5 h for a
+change whose fixes were written in the first hour, and the contention itself
+manufactured three false flips/regressions that then cost re-runs. An oversized
+sweep is not extra rigour; it buys nothing and corrupts what it measures.
+
+Size it from what your diff can actually reach:
+
+| what you changed | sweep |
+| --- | --- |
+| a new leaf module, or one arm behind an existing gate | the directories its call sites reach — often 1–3, low hundreds of rows |
+| a shared helper or driver several arms call | those arms' directories, plus the one family most likely to regress |
+| a signature, carrier, ABI or type-resolution rule | wide — this is the case the big sweep exists for |
+
+Rules that make the cut honest:
+
+- **State what you dropped and why.** A reasoned scope cut is a floor; a silent
+  one is a gap. Name the directories you did not sweep.
+- **Never drop a directory that tests one of your own fixes.** Measured the
+  same day: a lead-written drop list (from directory names) would have removed
+  the only directory testing one of a lane's four root fixes, and the lane was
+  right to refuse it. Read your diff, not the directory names — and push back
+  when the two disagree.
+- **The merge queue re-validates the WHOLE corpus on the merged state.** Your
+  sweep exists to catch YOUR regressions early and cheaply, not to prove global
+  safety — that is already someone else's job, and duplicating it wastes hours
+  the campaign needs elsewhere.
+- Everything below still applies at whatever size you choose: before AND after
+  arms, per-file flip list, **zero regressions**, and every apparent flip and
+  regression serially re-verified before it enters a report.
+
+- Scoped standalone sweep over the chosen scope before AND after, from
   your own runs; per-file flip list; **zero regressions**.
 - The issue's named pin suites green (`npm test -- <files>`); skip-and-say-so
   if a pin file doesn't exist on your base.
