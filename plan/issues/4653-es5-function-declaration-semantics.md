@@ -255,14 +255,17 @@ trap), and a first after-sweep that I aborted because I had file-copy-reverted
 the source mid-run for a pin sensitivity check — a sweep whose base moved under
 it is not a measurement.
 
-**Pins** — `tests/issue-4653.test.ts`, 17 tests, `npm test -- tests/issue-4653.test.ts`:
+**Pins** — `tests/issue-4653.test.ts`, 20 tests, `npm test -- tests/issue-4653.test.ts`:
 
-- on this branch: **17 passed**;
+- on this branch: **20 passed**;
 - on base, by file-copy revert of exactly the three modified files: **3 failed,
-  14 passed** — and the three failures are precisely the three positive pins
-  that guard E, F and D. Every negative control and every `it.fails` residual
-  pin answers identically on both arms, which is what makes the three failures
-  attributable to this change-set rather than to the revert.
+  14 passed** (of the 17 pins that existed at the time of that A/B — three
+  runtime-eval pins were added afterwards, see residual **R**, and they are
+  `it.fails`/positive controls that this change-set does not touch) — and the
+  three failures are precisely the three positive pins that guard E, F and D.
+  Every negative control and every `it.fails` residual pin answers identically
+  on both arms, which is what makes the three failures attributable to this
+  change-set rather than to the revert.
 
 The second E pin (a two-level own name yielded once) and the non-enumerable
 shadow pin pass on BOTH arms: they guard the half of the shadow write that the
@@ -311,11 +314,48 @@ Nine rows remain, each with a measured root and an owner. None is a guess.
   evaluates to `undefined`. That is why the row reports `[object Object]`: the
   test's own `throw new Test262Error(…)` then runs inside the `try` and is caught
   as "the exception". The spec answer is a TypeError from §7.3.14 Call step 1.
-- **R `Function(p, body)`** (`S13.2.2_A8_T3`) — the minted function does not bind
-  its declared parameters: `++arg` throws `ReferenceError: arg is not defined`.
-  Measured identically for `new Function("arg","return ++arg;")`,
-  `Function("arg", …)` and `Function.call(null, "arg", …)`, so the root is the
-  MINT, not the receiver or the `.call` transfer. Runtime-eval lane.
+- **R `Function(p, body)`** (`S13.2.2_A8_T3`) — **CORRECTED 2026-08-23 after
+  dev-4515 flagged an adjacent eval finding; the first write-up of this row was
+  an inference restated as a measurement and it was WRONG.** It is *not* "the
+  minted function does not bind its declared parameters" — `new Function("p",
+  "return p;")(7)` answers **7**, so the parameter is bound. The measured rule is:
+
+  > An **update expression (`++`/`--`)** applied to a name that is **LOCAL to the
+  > eval'd / `Function`-minted code** — an eval-local `var`, or a `Function`
+  > parameter — throws `ReferenceError: <name> is not defined`, but **only when
+  > the eval/mint sits inside an enclosing FUNCTION**. At module top level the
+  > same code works. Compound assignment (`x = x + 1`) works everywhere, a plain
+  > read works everywhere, and `++` on an **outer** binding works everywhere.
+
+  Discriminator table, all standalone, this branch (`.tmp/probes/ev{1,2,3,4}.js`):
+
+  | shape | inside a function | at module top level |
+  | --- | --- | --- |
+  | `eval("n + 1")`, outer read | ✓ 1 | ✓ |
+  | `eval("if (a<3) { a=7; }")`, outer in IF test | ✓ 7 | — |
+  | `eval("while (d<3) { d++; }")`, OUTER + `++` | ✓ 3 | ✓ 3 |
+  | `eval("var i=0; i++; i")`, local + `++`, no loop | **THROW** `i` | ✓ 1 |
+  | `eval("var j=0; j=j+1; j")`, local + `=` | ✓ 1 | ✓ |
+  | `eval("var k=0; while(k<1){k=k+1;} k")`, local + `=` | ✓ 1 | ✓ 1 |
+  | `eval("var m=0; while(m<1){m++;} m")`, local + `++` | **THROW** `m` | ✓ 1 |
+  | `eval("var q=0; for(q=0;q<3;q++){} q")`, local + `++` | **THROW** `q` | — |
+  | `new Function("p","return p;")(7)` | ✓ 7 | — |
+  | `new Function("p","return p+1;")(1)` | ✓ 2 | — |
+  | `new Function("p","p=p+1; return p;")(1)` | ✓ 2 | — |
+  | `new Function("p","p++; return p;")(1)` | **THROW** `p` | — |
+  | `new Function("","var z=0; z++; return z;")()` | **THROW** `z` | — |
+
+  So `for` vs `while` is irrelevant, the loop is irrelevant (the no-loop case
+  throws), and outer-vs-local is **inverted** from the first reading: OUTER
+  works, LOCAL throws. `S13.2.2_A8_T3` matches exactly — `Function.call(this,
+  "arg", "return ++arg;")` is `++` on a mint-local parameter inside the enclosing
+  `var __func = function(arg1, arg2){…}`. Owner: the runtime-eval lane.
+
+  **Not reproduced:** dev-4515 reports `var n = 0; eval("while(n<3){ n++; }")`
+  throwing on the merged campaign tip (`8794ab2c9` + their commit). On MY base
+  (`c42bdbe3e` + this branch) that exact shape **passes in both contexts** — it
+  is the OUTER-binding row above. Per the brief's third-arm rule I can only say
+  it does not reproduce here; whether their tip differs is theirs to measure.
 - **M `fun.prototype` own-ness** (`13.2-18-1`) — **owner #4491**, with evidence: a
   function EXPRESSION has no own `prototype` property under the live descriptor
   MOP. With an accessor installed on `Function.prototype.prototype`,
