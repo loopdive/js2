@@ -237,9 +237,17 @@ describe("npm-compat refresh matrix wiring", () => {
     expect(refresh).not.toContain("id: typescript");
     expect(refresh).not.toContain("id: renderers");
 
-    // Two lanes, each promoting on its own cadence.
-    expect(refresh).toContain("needs.measure-fast.result != 'cancelled'");
-    expect(refresh).toContain("needs.measure-slow.result != 'cancelled'");
+    // Two lanes, each promoting on its own cadence — and NEITHER gated on the
+    // measure job's aggregate result. A matrix job reports `cancelled` when ANY
+    // row cancels, so gating on it made one superseded package discard every
+    // other package's completed work: run 822 (2026-08-23) threw away lit's
+    // successful 29-minute measurement because react-dom's row was cancelled
+    // 17 minutes in. The coordinator recognises "this lane measured nothing"
+    // itself, by counting partial reports.
+    expect(refresh).not.toContain("needs.measure-fast.result != 'cancelled'");
+    expect(refresh).not.toContain("needs.measure-slow.result != 'cancelled'");
+    expect(promote).toContain("Stop if this lane produced no measurements");
+    expect(promote).toContain("steps.partials.outputs.count != '0'");
     expect(refresh).toContain("uses: ./.github/workflows/npm-compat-promote.yml");
     expect(refresh).toContain("--partial-output");
     expect(refresh).toContain("if-no-files-found: warn");
