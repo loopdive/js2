@@ -33,12 +33,17 @@ import {
 } from "../async-scheduler.js";
 import { isSupportedBuiltinStaticProperty, resolveBuiltinNamespaceValueName } from "../builtin-static-globals.js";
 import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.js";
-import { reserveClosedMethodDispatch, reserveClosedMethodDispatchVararg } from "../closed-method-dispatch.js";
+import {
+  buildCallSiteNullishReceiverGuard, // (#4656) callee-reference-before-arguments
+  callSiteNullishReceiverGuardApplies,
+  reserveClosedMethodDispatch,
+  reserveClosedMethodDispatchVararg,
+} from "../closed-method-dispatch.js";
 import { compileArrowAsClosure, computeClosureWrapperSig } from "../closures.js";
 import { tryEmitDirectTwinCall } from "../typed-this.js"; // (#3683 S3) direct-call devirtualization
 import { undefinedExternInstrs } from "../any-helpers.js"; // (#3683 S3b) arity-padding sentinel
 import { pushBody } from "../context/bodies.js";
-import { allocLocal } from "../context/locals.js";
+import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
 import { tryEmitFixedHostMethodCall } from "../fixed-host-method-call.js";
@@ -407,6 +412,16 @@ function tryCompileLateFnctorPrototypeMethodCall(
     coerceType(ctx, fctx, recvType, { kind: "externref" });
   } else if (recvType === null) {
     fctx.body.push({ op: "ref.null.extern" });
+  }
+  // (#4656) §13.3.6.1 callee-reference-before-arguments — see
+  // `buildCallSiteNullishReceiverGuard` for why a callee-side guard cannot get
+  // this order right. The receiver is on the stack here, so `local.tee` into a
+  // POOLED temp keeps it there and costs no per-site local.
+  if (callSiteNullishReceiverGuardApplies(ctx, methodName)) {
+    const guardTmp = allocTempLocal(fctx, { kind: "externref" });
+    fctx.body.push({ op: "local.tee", index: guardTmp });
+    fctx.body.push(...buildCallSiteNullishReceiverGuard(ctx, guardTmp, methodName));
+    releaseTempLocal(fctx, guardTmp);
   }
   if (!ctx.standalone && !ctx.wasi) {
     // Keep one receiver copy for `this`, then resolve the current method value
@@ -3745,6 +3760,14 @@ export function compileReceiverMethodCall(
         } else if (recvType === null) {
           fctx.body.push({ op: "ref.null.extern" });
         }
+        // (#4656) §13.3.6.1 callee-reference-before-arguments — this is the arm
+        // `11.2.3-3_3` takes. See `buildCallSiteNullishReceiverGuard`.
+        if (callSiteNullishReceiverGuardApplies(ctx, methodName)) {
+          const guardTmp = allocTempLocal(fctx, { kind: "externref" });
+          fctx.body.push({ op: "local.tee", index: guardTmp });
+          fctx.body.push(...buildCallSiteNullishReceiverGuard(ctx, guardTmp, methodName));
+          releaseTempLocal(fctx, guardTmp);
+        }
         // Each argument compiled and boxed to externref (the dispatcher unboxes
         // to the method's declared param type per candidate struct).
         for (const arg of dispatchArgs) {
@@ -4114,6 +4137,10 @@ export function compileReceiverMethodCall(
           }
           const recvLocal = allocLocal(fctx, `__emc_recv_${fctx.locals.length}`, { kind: "externref" });
           fctx.body.push({ op: "local.set", index: recvLocal });
+
+          // (#4656) Same §13.3.6.1 ordering fix for the generic
+          // `__extern_method_call` arm; the receiver already has a local here.
+          fctx.body.push(...buildCallSiteNullishReceiverGuard(ctx, recvLocal, methodName));
 
           // Build args array
           fctx.body.push({ op: "call", funcIdx: arrNewIdx });
