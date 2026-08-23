@@ -810,15 +810,26 @@ their fix on a module shape they did not write (`deferTopLevelInit: true`,
   `executed == total`; and when they disagree you **read the skipped names**,
   which also catches the right number of skips from the WRONG set — something no
   count can see.
-- **Those names are `--reporter=verbose` only** — measured here by skipping all
-  22 tests with a no-match `-t`: verbose prints 22 `↓` lines with full paths,
-  while `--reporter=basic` and the default print a single file-level
-  `↓ tests/… (22 tests | 22 skipped)` and no names. This lane's own per-file
-  loops use `--reporter=basic`, i.e. exactly the reporter that hides them.
-- **Exit status lies in both directions.** dev-4653 measured a run printing
-  `Tests 23 passed (23)` beside `Errors 1 error` that **exited 1** with every
-  test passing. All of the above is adopted in
-  `plan/method/es5-standalone-agent-brief.md`.
+- **It is a three-rung ladder, and only the top rung needs verbose** (this
+  lane's first framing — "our loops use `--reporter=basic`, the one that hides
+  the names" — read as an indictment of working tooling; dev-4491 measured that
+  the counts are reporter-independent). Rung 1, the aggregate line, every
+  reporter: something was lost. Rung 2, `↓ <file> (N tests | N skipped)`,
+  default and basic: which FILE. Rung 3, per-test `↓` paths, verbose only:
+  which TESTS. Nothing existing needs re-plumbing; climb to verbose for rung 3
+  alone.
+- **Rung 2 lists only files skipped in their ENTIRETY** — measured here and not
+  previously stated by anyone: `vitest run <pin> <equivalence> -t "labelled
+  block" --reporter=basic` printed `Tests 1 passed | 30 skipped (31)` plus
+  `↓ tests/equivalence/in-operator-edge-cases.test.ts (9 tests | 9 skipped)`,
+  naming the wholly-dead file — while the pin file, with 21 of its 22 tests
+  skipped, got **no `↓` line at all**. So rung 2 is blind to partial loss inside
+  a file, which is precisely the partial-`skipIf` case rung 3 exists for.
+- **Exit status is uncorrelated with the outcome, one measured instance each
+  way.** dev-4653: `Tests 23 passed (23)` beside `Errors 1 error`, **exit 1**,
+  everything passing. dev-4491: `Tests 22 passed | 36 skipped (58)` from a dead
+  `CompilerPool` worker, **exit 0**, thirty-six tests never executed. All of the
+  above is adopted in `plan/method/es5-standalone-agent-brief.md`.
 - **A survey run entirely at module top level is blind to any defect gated on
   "inside an enclosing function"** — and worse, it mis-attributes the one case
   that does surface, because that case looks like the odd one out. See the
