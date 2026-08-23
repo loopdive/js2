@@ -25,10 +25,18 @@ loc-budget-allow:
   #                                sites, which it must follow.
   #   array-object-proto.ts +4   — one import + the `toString` arm in the
   #                                `makeGlue` ladder, beside its `valueOf` twin.
+  #   new-builtin-globals.ts +3  — one import + the ToBooleanArg hand-off line
+  #                                (the arm's BODY was extracted to
+  #                                `new-boolean-tobooleanarg.ts`; this is the
+  #                                residual dispatch). On the branch alone the
+  #                                file stayed under the cap; the merged wave
+  #                                crosses it by these 3 lines (CI run
+  #                                32619219148 on PR #4781).
   - src/codegen/expressions/calls.ts
   - src/codegen/expressions/call-receiver-method.ts
   - src/codegen/index.ts
   - src/codegen/array-object-proto.ts
+  - src/codegen/expressions/new-builtin-globals.ts
 coercion-sites-allow:
   # These two modules IMPLEMENT spec coercion operations; they do not hand-roll
   # one at a call site, which is what the gate exists to stop.
