@@ -41,23 +41,29 @@ name: Refresh npm-compat
 # refresh.yml` and `refresh-baseline.yml` still push to main directly and still
 # call it (see the class-coverage test in tests/issue-3915-*.test.ts).
 on:
-  # Driven from MAIN on a schedule, not from PR-merge pushes (stakeholder,
-  # 2026-08-23). The per-merge `push` trigger predates the `resolve` job: back
-  # then a run measured its trigger sha, so each merge needed its own run.
-  # Now every run pins refs/heads/main at START, so a push-triggered run
-  # measured nothing a scheduled run would not — it only added queue noise
-  # (and needed a paths-ignore filter to keep the promotion landing from
-  # re-triggering the workflow forever; that whole loop-breaker is gone with
-  # the trigger).
-  #
-  # Cadence: the cron is HOURLY, and the single concurrency group coalesces —
-  # while a ~3-4h measurement is active, hourly entries collapse into at most
-  # ONE pending run, which starts the moment the active run finishes and pins
-  # the main of THAT moment. Net effect: back-to-back serial measurements of
-  # the freshest main, exactly one in flight, no idle gap longer than an hour
-  # after a quiet spell.
-  schedule:
-    - cron: "0 * * * *"
+  # Driven by merges to MAIN — no cron (stakeholder, 2026-08-23). The rule:
+  # if a refresh is already running, the push queues the next run; further
+  # merges REPLACE the queued run while it waits (the single concurrency
+  # group below keeps only the latest pending run); when the active run
+  # finishes, exactly ONE queued run starts — and the `resolve` job pins
+  # refs/heads/main at that moment, so it measures the latest main, not the
+  # sha of whichever merge happened to survive the queue.
+  push:
+    branches: [main]
+    # DO NOT re-trigger on our OWN landing. The measurement includes perf
+    # timings, which differ on every run — so every run publishes something.
+    # Without this filter each promotion landing would queue the next refresh,
+    # forever: a 9-runner measurement permanently in flight with no new
+    # compiler content to measure. `paths-ignore` is evaluated against the
+    # union of files changed by the push, so a merge that ALSO carries real
+    # work still triggers, and it is evaluated before a runner is allocated.
+    paths-ignore:
+      - "benchmarks/results/npm-compat.json"
+      - "benchmarks/results/npm-compat-perf.json"
+      - "benchmarks/results/npm-compat-history.json"
+      - "website/public/benchmarks/results/npm-compat.json"
+      - "website/public/benchmarks/results/npm-compat-perf.json"
+      - "website/public/benchmarks/results/npm-compat-history.json"
   workflow_dispatch:
 
 permissions:
@@ -213,10 +219,9 @@ jobs:
 
   refresh:
     needs: [resolve, measure]
-    # The trigger loop (a promotion landing re-triggering the workflow) is
-    # structurally gone: the workflow has NO push trigger any more — only the
-    # hourly schedule and manual dispatch. The actor guard is kept as a cheap
-    # belt-and-suspenders line all the same.
+    # The `paths-ignore` filter on the push trigger breaks the promotion loop
+    # (our own landing changes only artifact paths). The actor guard is kept
+    # as a second, cheaper line against any OTHER bot push to main.
     # Matrix failures are data-quality signals, not a reason to discard the
     # successful groups. The merge step carries missing groups forward from
     # the committed snapshot and marks them stale. A cancelled matrix cannot
