@@ -135,7 +135,8 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
      verification must include running each lane's suite there.
    - The merge check reads the run's **counts**, never its exit status —
      and the exit status is UNCORRELATED with the outcome in both
-     directions — one measured instance of each, same session:
+     directions — and both inversions were measured on the SAME suite, so
+     "different suites, different causes" does not explain it away:
      **exit 1 with `23 passed (23)`, everything green** (the failure being
      vitest's own `onTaskUpdate` RPC timeout, no test involved), and
      **exit 0 with `22 passed | 36 skipped (58)`**, thirty-six tests never
