@@ -1915,12 +1915,21 @@ export function compileArrayMethodCall(
       break;
     case "reduce":
       result = hofElemKindOk(elemType)
-        ? compileArrayReduce(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        ? compileArrayReduce(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, receiverIsExternref)
         : undefined;
       break;
     case "reduceRight":
       result = hofElemKindOk(elemType)
-        ? compileArrayReduceRight(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        ? compileArrayReduceRight(
+            ctx,
+            fctx,
+            methodAccess,
+            callExpr,
+            vecTypeIdx,
+            arrTypeIdx,
+            elemType,
+            receiverIsExternref,
+          )
         : undefined;
       break;
     case "forEach": {
@@ -1940,34 +1949,52 @@ export function compileArrayMethodCall(
         result = elemType;
       } else {
         result = hofElemKindOk(elemType)
-          ? compileArrayFind(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+          ? compileArrayFind(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, receiverIsExternref)
           : undefined;
       }
       break;
     }
     case "findIndex":
       result = hofElemKindOk(elemType)
-        ? compileArrayFindIndex(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        ? compileArrayFindIndex(
+            ctx,
+            fctx,
+            methodAccess,
+            callExpr,
+            vecTypeIdx,
+            arrTypeIdx,
+            elemType,
+            receiverIsExternref,
+          )
         : undefined;
       break;
     case "findLast":
       result = hofElemKindOk(elemType)
-        ? compileArrayFindLast(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        ? compileArrayFindLast(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, receiverIsExternref)
         : undefined;
       break;
     case "findLastIndex":
       result = hofElemKindOk(elemType)
-        ? compileArrayFindLastIndex(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        ? compileArrayFindLastIndex(
+            ctx,
+            fctx,
+            methodAccess,
+            callExpr,
+            vecTypeIdx,
+            arrTypeIdx,
+            elemType,
+            receiverIsExternref,
+          )
         : undefined;
       break;
     case "some":
       result = hofElemKindOk(elemType)
-        ? compileArraySome(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        ? compileArraySome(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, receiverIsExternref)
         : undefined;
       break;
     case "every":
       result = hofElemKindOk(elemType)
-        ? compileArrayEvery(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        ? compileArrayEvery(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, receiverIsExternref)
         : undefined;
       break;
     case "toReversed":
@@ -6438,6 +6465,7 @@ function compileArrayReduce(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.reduce")) {
@@ -6457,7 +6485,7 @@ function compileArrayReduce(
   const redInitIsRef = callExpr.arguments.length >= 2 && initArgIsReference(ctx, callExpr.arguments[1]!);
   const accType = resolveReduceAccType(setup, numKind, redInitIsRef);
 
-  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "red");
+  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "red", receiverIsExternref);
   const accTmp = allocLocal(fctx, `__arr_red_acc_${fctx.locals.length}`, accType);
 
   // Compile initial value or use arr[0] as default
@@ -6606,6 +6634,7 @@ function compileArrayReduceRight(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.reduceRight")) {
@@ -6650,7 +6679,21 @@ function compileArrayReduceRight(
   const logicalLenTmp = allocLocal(fctx, `__arr_rr_loglen_${fctx.locals.length}`, { kind: "i32" });
   const iTmp = allocLocal(fctx, `__arr_rr_i_${fctx.locals.length}`, { kind: "i32" });
 
-  compileExpression(ctx, fctx, propAccess.expression);
+  const rrReceiverType = compileExpression(
+    ctx,
+    fctx,
+    propAccess.expression,
+    receiverIsExternref ? { kind: "externref" } : undefined,
+  );
+  // (#4536) Externref-carried receiver (e.g. a default-parameter `arr = []`
+  // whose argument crossed the closure ABI as a `__make_iterable` mirror):
+  // materialize back into the native vec instead of ref.cast-trapping. Same
+  // arm as setupArrayLoop's #3996 handling.
+  if (receiverIsExternref && rrReceiverType?.kind === "externref") {
+    const externTmp = allocLocal(fctx, `__arr_rr_extern_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: externTmp });
+    fctx.body.push(...buildVecFromExternref(ctx, fctx, externTmp, vecTypeIdx, { arrTypeIdx, elemType }));
+  }
   fctx.body.push({ op: "local.tee", index: vecTmp });
   emitReceiverNullGuard(ctx, fctx, vecTmp);
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -6899,6 +6942,7 @@ function compileArrayFind(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.find")) {
@@ -6911,7 +6955,7 @@ function compileArrayFind(
 
   const elemTmpLocal = allocLocal(fctx, `__arr_find_el_${fctx.locals.length}`, elemType);
 
-  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "find");
+  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "find", receiverIsExternref);
 
   const callAndCheck = buildCallAndCheck(
     ctx,
@@ -7008,6 +7052,7 @@ function compileArrayFindIndex(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.findIndex")) {
@@ -7018,7 +7063,7 @@ function compileArrayFindIndex(
   const setup = setupArrayCallback(ctx, fctx, callExpr, "findIndex", "fi", undefined, 1);
   if (!setup) return null;
 
-  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "fi");
+  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "fi", receiverIsExternref);
 
   const callAndCheck = buildCallAndCheck(
     ctx,
@@ -7078,8 +7123,9 @@ function setupArrayLoopReverse(
   arrTypeIdx: number,
   elemType: ValType,
   tag: string,
+  receiverIsExternref = false,
 ): ArrayLoopLocals {
-  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, tag);
+  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, tag, receiverIsExternref);
   // i = len - 1 (setupArrayLoop left it at 0).
   fctx.body.push({ op: "local.get", index: loop.lenTmp });
   fctx.body.push({ op: "i32.const", value: 1 });
@@ -7122,6 +7168,7 @@ function compileArrayFindLast(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.findLast")) {
     fctx.body.push({ op: "unreachable" });
@@ -7133,7 +7180,16 @@ function compileArrayFindLast(
 
   const elemTmpLocal = allocLocal(fctx, `__arr_findLast_el_${fctx.locals.length}`, elemType);
 
-  const loop = setupArrayLoopReverse(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "findLast");
+  const loop = setupArrayLoopReverse(
+    ctx,
+    fctx,
+    propAccess,
+    vecTypeIdx,
+    arrTypeIdx,
+    elemType,
+    "findLast",
+    receiverIsExternref,
+  );
 
   const callAndCheck = buildCallAndCheck(
     ctx,
@@ -7222,6 +7278,7 @@ function compileArrayFindLastIndex(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.findLastIndex")) {
     fctx.body.push({ op: "unreachable" });
@@ -7231,7 +7288,16 @@ function compileArrayFindLastIndex(
   const setup = setupArrayCallback(ctx, fctx, callExpr, "findLastIndex", "fli", undefined, 1);
   if (!setup) return null;
 
-  const loop = setupArrayLoopReverse(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "fli");
+  const loop = setupArrayLoopReverse(
+    ctx,
+    fctx,
+    propAccess,
+    vecTypeIdx,
+    arrTypeIdx,
+    elemType,
+    "fli",
+    receiverIsExternref,
+  );
 
   const callAndCheck = buildCallAndCheck(
     ctx,
@@ -7289,6 +7355,7 @@ function compileArraySome(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.some")) {
@@ -7299,7 +7366,7 @@ function compileArraySome(
   const setup = setupArrayCallback(ctx, fctx, callExpr, "some", "some", undefined, 1);
   if (!setup) return null;
 
-  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "some");
+  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "some", receiverIsExternref);
 
   const callAndCheck = buildCallAndCheck(
     ctx,
@@ -7354,6 +7421,7 @@ function compileArrayEvery(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.every")) {
@@ -7364,7 +7432,7 @@ function compileArrayEvery(
   const setup = setupArrayCallback(ctx, fctx, callExpr, "every", "evr", undefined, 1);
   if (!setup) return null;
 
-  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "evr");
+  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "evr", receiverIsExternref);
 
   const callAndCheck = buildCallAndCheck(
     ctx,

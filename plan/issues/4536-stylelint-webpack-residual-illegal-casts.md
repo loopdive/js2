@@ -1,10 +1,10 @@
 ---
 id: 4536
 title: "stylelint arrayEqual + webpack groupBy/formatSize residuals: illegal casts on mixed-element compares and NaN branch — 5 tests"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-16
-updated: 2026-08-21
+updated: 2026-08-23
 priority: low
 horizon: s
 feasibility: medium
@@ -14,6 +14,11 @@ area: codegen
 language_feature: arrays, closures
 goal: npm-library-support
 related: [3995, 4531, 4303]
+budget_allowance: "granted 2026-08-23 — curated-npm lane, tuple/host-boundary fix slice on PR #4728"
+loc-budget-allow:
+  - src/codegen/property-access.ts
+func-budget-allow:
+  - src/codegen/property-access.ts::compileElementAccessBody
 files:
   - tests/dogfood/stylelint-upstream-suite.mjs
   - tests/dogfood/webpack-upstream-suite.mjs
@@ -126,3 +131,45 @@ stylelint 104/108, webpack 13/16 after this session's fixes. The residuals:
 - **webpack formatSize "undefined/NaN"** — `"0 bytes"` vs `"unknown size"`:
   the `typeof size !== "number" || Number.isNaN(size)` guard misfolds for a
   boxed undefined crossing the any lane (residual of the #4529 family).
+
+## 2026-08-23 fix slice (curated-npm-tests lane) — webpack 15/16, stylelint 105/108
+
+Root cause of the webpack groupBy pair was NOT the HOF callback dispatch — it
+was the JSDoc tuple typing. `@returns {[T[], T[]]}` lowers the reduce
+accumulator to a fixed tuple struct `{_0, _1}`, and three defects stacked:
+
+1. **Dynamic tuple index compiled to `undefined` silently** —
+   `groups[fn(v) ? 0 : 1]` hit property-access.ts's "tuple element access
+   requires a numeric literal index" arm (demoted in JS mode), so `.push` ran
+   on undefined → the host threw "Cannot read properties of null". Fixed: a
+   HOMOGENEOUS tuple (all fields one ValType) lowers a dynamic index to an i32
+   `struct.get` ladder. Mixed-type tuples keep the literal requirement.
+2. **Tuple structs crossing to host read as `{_0:…,_1:…}`** — `Array.isArray`
+   false, `.length` 0, so the upstream `toStrictEqual` shim mismatched even
+   with correct contents. Fixed in the runtime: `__extern_is_array`,
+   `__extern_length`, and `_wrapForHost` now present tuple-shaped structs
+   (all fields `_N`, probed via `_tupleFieldCount`) as arrays — same
+   semantics `_convertIterableForHost` (#1438) already applied for Map/Set
+   construction.
+3. **Vec-typed closure params trapped on host arrays in dynamic dispatch** —
+   `externToClosureParamRef` (closure-exports.ts) emitted a bare `ref.cast`;
+   a JSDoc-typed `(arr = [], fn)` closure reached via `__call_fn_method_2`
+   with a raw JS array arg trapped. Fixed: vec params route through the
+   #2831 `__vec_from_extern_<vecTypeIdx>` materializer (same-rep short
+   circuit, host arrays materialized). Also plumbed `receiverIsExternref`
+   through `compileArrayReduce`/`reduceRight`/`find*`/`some`/`every` →
+   `setupArrayLoop`'s #3996 arm (reduce previously ignored the flag —
+   direct-call default-param `arr = []` shapes trapped the same way).
+
+Measured: webpack 13 → **15/16** (groupBy ×2 fixed; formatSize NaN residual
+remains). stylelint 104 → **105/108** — the `arrayEqual` "handles arrays"
+illegal cast healed as collateral of fix 3 (its `a.every(...)` receiver
+crossed the same bridge). Regression test:
+`tests/issue-4536-tuple-dynamic-index-array-identity.test.ts` (verbatim
+upstream shape via compileProject, both tests fail on base). Tuple-family
+guard tests (issue-1158/1161/1182/1314/1431/1451, illegal-cast-vec-tuple-648)
+A/B'd identical on base (the 648 file + one 1451 case fail on base too —
+pre-existing, `link` options iterability + object-rest default NaN).
+
+Remaining #4536 residuals: webpack formatSize NaN (`"0 bytes"` vs
+`"unknown size"`), stylelint ruleMessages arg forwarding, stylelint vendor ×2.

@@ -22,6 +22,7 @@ import {
 } from "./closures/transferred-native-proto.js";
 import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import { ensureAnyToExternHelper, isAnyValue } from "./any-helpers.js";
+import { buildVecFromExternMaterializer } from "./type-coercion.js";
 import { buildClosureResultBoxing } from "./closures/result-boxing.js";
 import { buildMethodDispatchPrologue } from "./closures/method-dispatch-prologue.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
@@ -425,7 +426,23 @@ function needsExternToAnyForClosureParam(paramType: ValType): boolean {
  * `anyref`/`eqref` params need no cast. Caller must have checked
  * `needsExternToAnyForClosureParam(paramType)` first.
  */
-function externToClosureParamRef(paramType: ValType): Instr[] {
+function externToClosureParamRef(ctx: CodegenContext, paramType: ValType): Instr[] {
+  // (#4536) A vec-typed closure param (e.g. `arr = []` typing the lifted
+  // signature with a native vec) can receive a HOST array externref through
+  // this dynamic bridge — `ArrayHelpers.groupBy([1,2,3], fn)` crossing via
+  // `__extern_method_call` hands the raw JS array in. A bare `ref.cast` then
+  // traps (illegal cast). Route vec params through the #2831 materializer
+  // `__vec_from_extern_<vecTypeIdx>` instead: same-rep vecs short-circuit via
+  // its internal `ref.test`, host arrays are materialized into a fresh vec.
+  if (paramType.kind === "ref" || paramType.kind === "ref_null") {
+    const helperName = buildVecFromExternMaterializer(ctx, paramType.typeIdx);
+    const helperIdx = helperName !== undefined ? ctx.funcMap.get(helperName) : undefined;
+    if (helperIdx !== undefined) {
+      const ops: Instr[] = [{ op: "call", funcIdx: helperIdx }];
+      if (paramType.kind === "ref") ops.push({ op: "ref.as_non_null" });
+      return ops;
+    }
+  }
   const ops: Instr[] = [{ op: "any.convert_extern" }];
   if (paramType.kind === "ref") {
     ops.push({ op: "ref.cast", typeIdx: paramType.typeIdx });
@@ -673,7 +690,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
           // ref domain so the subsequent `call_ref` typechecks. In
           // `wasm:js-string` (gc) mode string params ARE externref, so this
           // branch is skipped and the arg passes raw.
-          ops.push(...externToClosureParamRef(paramType));
+          ops.push(...externToClosureParamRef(ctx, paramType));
         }
         // externref param: no conversion
       }
@@ -1161,7 +1178,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
           // WasmGC struct ref, e.g. a native-strings `string`) needs the host
           // externref lowered into the internal ref domain before `call_ref`.
           // Skipped in gc mode where string params are already externref.
-          ops.push(...externToClosureParamRef(paramType));
+          ops.push(...externToClosureParamRef(ctx, paramType));
         }
       }
       // The widened dispatcher receives a real JS `undefined` carrier in each

@@ -2646,11 +2646,6 @@ function _tryWasmVecMutation(
   let mirrorArr: unknown[] | undefined;
   if (!_isWasmStruct(rawVec)) {
     const source = vecForMirror(rawVec);
-    if (process.env.JS2WASM_DEBUG_MIRROR) {
-      process.stderr.write(
-        `[mirror-mut] method=${method} isArr=${Array.isArray(rawVec)} source=${source === undefined ? "none" : "found"}\n`,
-      );
-    }
     if (source === undefined || !_isWasmStruct(source)) return { handled: false };
     mirrorArr = rawVec as unknown[];
     rawVec = source;
