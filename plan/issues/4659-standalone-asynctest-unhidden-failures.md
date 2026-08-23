@@ -74,3 +74,21 @@ npx tsx .tmp/run-standalone-list.mts   # LIST=<the ten paths>
 ```
 with `scripts/build-quickjs-eval-provider.mjs` built first, or the four
 provider-dependent harness tests fail spuriously.
+
+## Permanent repro
+
+Representative test262 paths, standalone lane
+(`tests/test262-runner.ts` `runTest262File(..., "standalone")`):
+
+- `test262/test/built-ins/Array/fromAsync/this-non-constructor.js` —
+  `Array.fromAsync` unimplemented in `--target standalone` (4 of the ten).
+- `test262/test/built-ins/Promise/allSettled/resolve-element-function-name.js` —
+  the `Promise.{all,allSettled}` keyed-combinator gap (2 of the ten).
+- `test262/test/language/expressions/dynamic-import/assignment-expression/import-meta.js` —
+  standalone dynamic import, already owned by #3494 (1 of the ten).
+- `test262/test/language/statements/for-await-of/head-lhs-async-of.js` —
+  the async-carrier substrate group: `for await` settlement observation,
+  `await using`, async-iterator close (3 of the ten).
+
+All ten pass again if the `param-return-inference.ts` catch-var widening alone
+is reverted, which is the evidence that none is caused by #4630.

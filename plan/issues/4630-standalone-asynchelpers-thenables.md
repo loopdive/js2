@@ -384,3 +384,21 @@ value fails `ref.test $Promise`.
    the trap test at minimum stops trapping (its pass additionally requires
    #4634); 20-test standalone sample over `built-ins/Promise/**`
    baseline-pass tests shows 0 regressions.
+
+## Permanent repro
+
+- `test262/test/harness/asyncHelpers-asyncTest-return-not-thenable.js` — the
+  item-A target, standalone lane (`tests/test262-runner.ts`
+  `runTest262File(..., "standalone")`). Failed with `[false×6]` before this
+  slice; passes after, taking the standalone `test/harness/` category to
+  **116/116**.
+- `test262/test/harness/asyncHelpers-asyncTest-returns-undefined.js`,
+  `asyncHelpers-asyncTest-then-rejects.js`,
+  `asyncHelpers-asyncTest-then-resolves.js` — the first slice's targets, same
+  lane, and the regression guard for the `globalThis.$DONE` shadow machinery.
+- `test262/test/harness/asyncHelpers-throwsAsync-same-realm.js` — the second
+  slice's target (the async void-Promise eager wrap).
+
+Run the whole category with the quickjs eval provider built
+(`npx tsx scripts/build-quickjs-eval-provider.mjs`); without it four tests fail
+spuriously as "provider is not built" and the count reads 112.
