@@ -13,6 +13,26 @@ task_type: bug
 area: codegen
 goal: test262-conformance
 lane: B
+trap-growth-allow:
+  count: 16
+  reason: "Stale-baseline reclassification carried from merged PR #4794 (realm shim #4634): createRealm().global became a narrowed forwarding object, so 16 cross-realm tests that were ALREADY failing (all baseline fail) null-deref instead of failing an assertion. The js2wasm-baselines JSONL has not re-promoted since, so every queued PR sees the same +15/16 null_deref growth it did not cause. Named per #3596; failure-flavour reclassification only - no baseline-pass test traps."
+  tests:
+    - test/built-ins/AsyncFunction/proto-from-ctor-realm.js
+    - test/built-ins/AsyncGeneratorFunction/proto-from-ctor-realm-prototype.js
+    - test/built-ins/AsyncGeneratorFunction/proto-from-ctor-realm.js
+    - test/built-ins/Function/internals/Call/class-ctor-realm.js
+    - test/built-ins/Function/internals/Construct/derived-return-val-realm.js
+    - test/built-ins/Function/internals/Construct/derived-this-uninitialized-realm.js
+    - test/built-ins/GeneratorFunction/proto-from-ctor-realm-prototype.js
+    - test/built-ins/GeneratorFunction/proto-from-ctor-realm.js
+    - test/built-ins/Proxy/apply/arguments-realm.js
+    - test/built-ins/Proxy/construct/arguments-realm.js
+    - test/language/eval-code/indirect/realm.js
+    - test/language/expressions/async-generator/eval-body-proto-realm.js
+    - test/language/expressions/generators/eval-body-proto-realm.js
+    - test/language/expressions/tagged-template/cache-realm.js
+    - test/language/types/reference/get-value-prop-base-primitive-realm.js
+    - test/language/types/reference/put-value-prop-base-primitive-realm.js
 files:
   - src/codegen/expressions/undeclared-callee.ts
   - src/codegen/expressions/dynamic-function-ctor-value.ts
