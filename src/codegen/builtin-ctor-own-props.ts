@@ -150,6 +150,17 @@ const CTOR_NUMERIC_CONSTANTS: Record<string, Record<string, number>> = {
  */
 const CTOR_STATIC_METHODS: Record<string, readonly string[]> = {
   String: ["fromCharCode", "fromCodePoint", "raw"],
+  // (#4491 wave-4) `Date` joins on the SAME cost argument the String-only note
+  // above makes, not against it: `Date` has exactly THREE statics
+  // (`BUILTIN_STATIC_METHOD_ARITY.Date = {now, parse, UTC}`), the same order of
+  // magnitude as String's three — not `Math`'s ~30 or `Object`'s ~24. The
+  // measured row is `defineProperty/15.2.3.6-4-622`
+  // (`verifyProperty(Date, "now", {writable, enumerable, configurable})`),
+  // which failed at `__hasOwnProperty(Date, "now")` → "now should be an own
+  // property" while `gOPN(Date)` reported only `length, name, prototype`.
+  // Widening to a receiver with tens of statics still needs its own cost
+  // measurement.
+  Date: ["now", "parse", "UTC"],
 };
 
 /**
