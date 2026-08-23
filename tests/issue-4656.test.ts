@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// (#4656) Two ES5 standalone defects fixed, and five MEASURED residuals whose
-// roots this lane corrected rather than inherited.
+// (#4656) Three ES5 standalone defects fixed, and three MEASURED residuals
+// whose roots this lane corrected rather than inherited.
 //
 // FIXED
 //   1. An equality whose operand is a VOID-typed call was not compared at all.
@@ -17,6 +17,14 @@
 //      callable test can misfire; a POSITIVE primitive brand cannot. Fixed in
 //      `resolved-callee-guard.ts`. Row:
 //      `language/expressions/call/11.2.3-3_4.js`.
+//   3. `o.bar.gar(foo())` threw the RIGHT TypeError at the WRONG time: every
+//      guard we had lived inside a CALLEE, and a callee cannot see its
+//      arguments un-evaluated. §13.3.6.1 evaluates the callee reference first,
+//      so the same predicate is now emitted at the call site, where the
+//      receiver is already in a local and the argument list is not yet
+//      compiled. Fixed in `closed-method-dispatch.ts`
+//      (`buildCallSiteNullishReceiverGuard`) + `call-receiver-method.ts`. Row:
+//      `language/expressions/call/11.2.3-3_3.js`.
 //
 // RESIDUALS are `it.fails` and each carries POSITIVE CONTROLS chosen so the
 // suite claims the SPECIFIC root, not the general area (brief methodology 8).
@@ -259,32 +267,34 @@ describe("#4656 R1 — %Function.prototype% members are not reachable as a dynam
   });
 });
 
-describe("#4656 R2 — a function-valued prototype does not carry %Function.prototype%", () => {
-  const body = `
-    var P: any = Function();
-    P.own = "OWN";
-    function FACTORY() {}
-    (FACTORY as any).prototype = P;
-    var inst: any = new (FACTORY as any)();
-    return (typeof inst.apply === "function") ? 1 : 0;
-  `;
-
+/**
+ * R2 is the only block here that MINTS from a body string (`Function()`), so it
+ * is the only one with a tier problem — and the problem is specifically that an
+ * `it.fails` cannot survive it. Under the refusal provider the mint THROWS, and
+ * a throw makes `it.fails` pass; the pin would then be green for a reason that
+ * has nothing to do with `%Function.prototype%`, which is exactly the defect
+ * brief methodology 8 names. There is no assertion that distinguishes the two,
+ * so the honest move is to SKIP the block on that tier and say so — with the
+ * refusal itself pinned below so the skip is auditable rather than silent.
+ */
+describe.skipIf(REFUSAL_TIER)("#4656 R2 — a function-valued prototype does not carry %Function.prototype%", () => {
   it.fails("RESIDUAL `FACTORY.prototype = Function(); typeof (new FACTORY()).apply` is undefined", async () => {
-    if (REFUSAL_TIER) {
-      // The mint reaches the provider and throws there — an `it.fails` that
-      // passed for THAT reason would be the exact defect methodology 8 is
-      // about, so make the tier arm assert the real (spec) answer instead.
-      expect(await run(body)).toBe(1);
-      return;
-    }
-    expect(await run(body)).toBe(1);
+    expect(
+      await run(`
+        var P: any = Function();
+        P.own = "OWN";
+        function FACTORY() {}
+        (FACTORY as any).prototype = P;
+        var inst: any = new (FACTORY as any)();
+        return (typeof inst.apply === "function") ? 1 : 0;
+      `),
+    ).toBe(1);
   });
 
   // Controls: the prototype LINK itself works, and the Object.prototype
   // companion is reachable through it. So R2's miss is R1's miss, reached one
   // link further out — not a broken link.
   it("CONTROL an OWN property of the function-valued prototype reads through", async () => {
-    if (REFUSAL_TIER) return;
     expect(
       await run(`
         var P: any = Function();
@@ -298,7 +308,6 @@ describe("#4656 R2 — a function-valued prototype does not carry %Function.prot
   });
 
   it("CONTROL %Object.prototype%.toString IS reachable through the same link", async () => {
-    if (REFUSAL_TIER) return;
     expect(
       await run(`
         var P: any = Function();
@@ -311,11 +320,26 @@ describe("#4656 R2 — a function-valued prototype does not carry %Function.prot
   });
 });
 
-describe("#4656 R3 — argument evaluation precedes the callee-reference TypeError", () => {
+describe.runIf(REFUSAL_TIER)("#4656 R2 tier — why the block above is skipped here", () => {
+  it("the refusal provider rejects the mint, so R2 is unmeasurable on this tier", async () => {
+    await expect(
+      run(`
+        var P: any = Function();
+        function FACTORY() {}
+        (FACTORY as any).prototype = P;
+        var inst: any = new (FACTORY as any)();
+        return (typeof inst.apply === "function") ? 1 : 0;
+      `),
+    ).rejects.toThrow();
+  });
+});
+
+describe("#4656 F3 — the callee-reference TypeError precedes argument evaluation", () => {
   // `language/expressions/call/11.2.3-3_3.js`: `o.bar.gar(foo())` must throw
-  // while EVALUATING `o.bar.gar`, so `foo()` never runs. We throw the right
-  // error, at the wrong time.
-  it.fails("RESIDUAL `o.bar.gar(foo())` must not evaluate `foo()`", async () => {
+  // while EVALUATING `o.bar.gar`, so `foo()` never runs. Base threw the RIGHT
+  // error at the WRONG time (`fooCalled` was 1). Verified to fail on base by
+  // file-copy revert of `closed-method-dispatch.ts` + `call-receiver-method.ts`.
+  it("`o.bar.gar(foo())` must not evaluate `foo()` (base: it did)", async () => {
     expect(
       await run(`
         var fooCalled = 0;
@@ -327,13 +351,42 @@ describe("#4656 R3 — argument evaluation precedes the callee-reference TypeErr
     ).toBe(0);
   });
 
-  it("CONTROL the TypeError itself IS thrown", async () => {
+  it("the TypeError itself is still thrown (passes on BOTH arms)", async () => {
     expect(
       await run(`
         function foo() { return 0; }
         var o: any = {};
         var threw = 0;
         try { o.bar.gar(foo()); } catch (e) { threw = (e instanceof TypeError) ? 2 : 1; }
+        return threw;
+      `),
+    ).toBe(2);
+  });
+
+  // The guard must not over-throw. `undefined` here is a RECEIVER that is
+  // nullish, which is the only predicate the guard tests — a live receiver
+  // whose method is merely absent keeps its pre-existing answer, and a live
+  // receiver with a real method still calls it.
+  it("CONTROL a live receiver's method still runs, and its arguments still evaluate", async () => {
+    expect(
+      await run(`
+        var calls = 0;
+        function bump() { calls = calls + 1; return 2; }
+        var o: any = { k: function (n: number) { return n + 40; } };
+        var v = o.k(bump());
+        return v * 10 + calls;
+      `),
+    ).toBe(421);
+  });
+
+  it("CONTROL a nullish receiver reached through a LOOP-carried value still throws", async () => {
+    expect(
+      await run(`
+        var box: any[] = [{ k: function () { return 1; } }, undefined];
+        var i = 0;
+        for (var n = 0; n < 1; n++) { i = i + 1; }
+        var threw = 0;
+        try { box[i].k(); } catch (e) { threw = (e instanceof TypeError) ? 2 : 1; }
         return threw;
       `),
     ).toBe(2);
