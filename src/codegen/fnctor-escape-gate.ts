@@ -595,7 +595,14 @@ function classifyUse(
   // `new Boolean` and `new Error(message?: any)` all declare) classifies
   // dynamic; a TYPED constructor parameter stays neutral, so a typed user class
   // cannot be moved off its struct by this.
-  if (ts.isCallExpression(parent) || ts.isNewExpression(parent)) {
+  //
+  // STANDALONE-ONLY, the same narrowest-site wiring the #4394 `throw` clause
+  // above uses. The gc/host lane reduces a nominal struct through the host
+  // `_hostToPrimitive`, so it does not have this defect, and widening the
+  // classification there would move representation choices in a lane this
+  // change-set did not measure. Keeping it host-free means the host emit is
+  // byte-identical.
+  if (ts.isCallExpression(parent) || (ts.isNewExpression(parent) && standalone === true)) {
     const argIdx = (parent.arguments ?? ([] as readonly ts.Expression[])).indexOf(useNode);
     if (argIdx >= 0) {
       // (#4163) ANY argument of a builtin `Object.*` / `Reflect.*` namespace

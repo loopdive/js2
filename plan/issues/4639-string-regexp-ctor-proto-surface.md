@@ -1,10 +1,11 @@
 ---
 id: 4639
 title: "ES5 standalone: String/RegExp constructor+prototype surface — new String(obj) ToPrimitive, proto.constructor as ctor, RegExp flags as proto accessors, builtin static expando CE (~37 rows)"
-status: ready
+status: in-review
 sprint: current
 created: 2026-08-23
 updated: 2026-08-23
+assignee: dev-4639
 priority: high
 horizon: m
 feasibility: medium
@@ -104,3 +105,173 @@ func-budget-allow:
    built-ins/RegExp{,/prototype} + literals/regexp before/after (own
    runs); pins 4465/4481/4619/4621/4426 suites green; pins
    tests/issue-4639.test.ts; zero regressions.
+
+## Root cause
+
+Four independent defects, each isolated by an A/B on this branch's base
+(`81445abf7`). Every number below is from a run I executed on
+`--target standalone` through `runTest262File`.
+
+### C1 — `new String(obj)` never ran the object's `toString`
+
+Not in the wrapper lowering. `classifyUse` in
+`src/codegen/fnctor-escape-gate.ts` decides whether a fnctor instance keeps
+its bespoke nominal struct or is reified as an open `$Object`. Its
+"argument of a call whose parameter is `any`/`unknown` ⇒ dynamic" clause is
+gated on `ts.isCallExpression(parent)` — which is **false for a
+`NewExpression`**. So no CONSTRUCTOR argument was ever classified at all,
+and every such instance stayed a closed struct.
+
+Downstream the two shapes diverge: `__extern_toString` → `__to_primitive`
+reduces a `$Object` through OrdinaryToPrimitive (so an INHERITED
+`F.prototype.toString` runs), but hands a nominal struct to
+`__class_to_primitive`, whose per-struct `__call_toString` dispatcher is
+built from struct FIELDS and `<Struct>_toString` funcs and therefore has no
+entry for a PROTOTYPE-assigned method — it answers null, and the tail
+renders the canonical `"[object Object]"`.
+
+The measurement that pins it, in ONE module and on the SAME instance:
+
+```js
+function F() {}
+F.prototype.toString = function () { return "tostr"; };
+var o = new F();
+String(o)          // "tostr"            — `(value?: any)` ⇒ dynamic ⇒ $Object
+new String(o)      // "[object Object]"  — never classified ⇒ closed struct
+```
+
+and it is per-VALUE, not per-module: adding `String(other)` for a
+**different** instance leaves `new String(o)` wrong (measured
+`"tostr|15"`), while `String(o)` on the same instance makes it right
+(`"tostr|5"`).
+
+### C2 — `<Builtin>.<unknownProp>` was a compile error
+
+`tryIdentifierNamespaceAndStaticReceiverRead` resolves a builtin static read
+through a ladder of compile-time folds and then calls
+`reportUnsupportedStandaloneBuiltinValueRead`, which fails the WHOLE FILE.
+Reads the spec answers in one hop landed there:
+`Function.prototype.indicator = 1; String.indicator` (an inherited read
+across `String`'s [[Prototype]], §20.2.3) and `Math.NaN` (a property `Math`
+simply does not have).
+
+### C6a — a `Function`-typed replacement was in NEITHER `replace` arm
+
+`Oracle.factOfType` classifies an object type by NAME (`BUILTIN_NAMES`)
+**before** it looks for call signatures, and lib.d.ts's `Function` interface
+declares none (it declares `apply`/`call`/`bind`). So `Function(…)`'s result
+— which §20.2.1.1 makes a callable — answered `false` from
+`isCallableReplacement` AND `false` from `isPlainToStringReplacement`, i.e.
+the "neither arm ⇒ keep the refusal" hole, for a value that is provably
+callable.
+
+### C6b — a VOID replacer contributed JS `null`, and a nullish SEARCH value an empty needle
+
+`buildReplacerCallInstrs` pushed `ref.null.extern` for a replacer with no
+Wasm result. Standalone distinguishes `null` from `undefined` regardless of
+the #2106 flag (see `canonicalUndefinedExternInstrs`), so that is the null
+VALUE, not `undefined`. Separately, `emitArgAsNativeString` on a `null`
+search value left the needle empty/absent, so `__str_indexOf` answered -1.
+Measured together: `"gnulluna".replace("null", function(){})` came back
+**unchanged**, where a conforming engine answers `"gundefineduna"`.
+
+## Fix
+
+| # | file | change |
+| - | ---- | ------ |
+| C1 | `src/codegen/fnctor-escape-gate.ts` | `classifyUse` admits a `NewExpression` argument to the any/unknown-parameter clause. **Standalone-gated** (`standalone === true`), the same narrowest-site wiring #4394's `throw` clause uses — the gc/host lane reduces a nominal struct through the host `_hostToPrimitive` and does not have this defect, so its emit stays byte-identical. |
+| C2 | `src/codegen/builtin-static-expando.ts` (new), spliced ahead of the refusal in `property-access-dispatch.ts` | the ordinary [[Get]]: the builtin's identity-stable carrier (own props, `__object_hasOwn`-gated so a genuine own `undefined` does not fall through to the prototype), then its [[Prototype]] — %Function.prototype% for a ctor, %Object.prototype% for a namespace. |
+| C6a | `src/codegen/string-proto-replace.ts` | `isCallableReplacement` accepts `{kind:"builtin", name:"Function"}`. Not a weakening: `Function` is the one builtin name whose instances all have [[Call]] by definition; every other builtin fact still answers `false`. |
+| C6b | `src/codegen/regex-replace-fn.ts`, `src/codegen/string-search-value.ts` | `canonicalUndefinedExternInstrs` for a void replacer; a statically null/undefined search value emits the literal text `"null"`/`"undefined"` (§22.1.3.19 step 3's `ToString`). |
+
+**Absent-not-wrong, C2.** A `propName` that names a real builtin STATIC
+METHOD (`BUILTIN_STATIC_METHOD_ARITY`) but reached the refusal — i.e. its
+closure could not be reified — KEEPS the loud refusal. That read has a
+genuine function value the spec requires, and answering `undefined` for it
+would be a silent wrong answer, which is worse than a compile error.
+
+**A `$Object` → `$NativeProto` [[Prototype]] link does not carry expandos.**
+Measured on the base: `Object.setPrototypeOf(o, Function.prototype)` then
+`o.indicator` answers `undefined` even with `Function.prototype.indicator = 1`
+set — `__extern_get`'s chain walk does not cross into a `$NativeProto`'s
+companion table. That is why C2 does a direct one-hop read instead of
+pointing the carrier's [[Prototype]] at the intrinsic; making the walk cross
+is a change to the object MOP and belongs to its own issue.
+
+## Test Results
+
+All figures are from runs I executed in this worktree, standalone lane,
+`runTest262File`, quickjs eval provider linked
+(`JS2WASM_QUICKJS_ARTIFACT_DIR=…/quickjs-artifact-2e2d7736713beeda`).
+
+**The issue's 37-row list (`.tmp/lane-C-stringregexp.txt`), base → after,
+single-threaded both arms:** `0/37 → 5/37`.
+
+| row | base | after |
+| --- | ---- | ----- |
+| `built-ins/String/S15.5.3_A2_T2` | compile_error | **pass** |
+| `built-ins/RegExp/S15.10.5_A2_T2` | compile_error | **pass** |
+| `built-ins/RegExp/prototype/exec/S15.10.6.2_A4_T7` | compile_error | **pass** |
+| `built-ins/String/S15.5.2.1_A1_T10` | fail | **pass** |
+| `built-ins/String/prototype/replace/S15.5.4.11_A1_T6` | compile_error | **pass** |
+| `built-ins/String/prototype/replace/S15.5.4.11_A1_T5` | compile_error | fail (CE class cleared) |
+
+So **4 of the 5 named compile_errors are gone** (C2's three + one of C6's
+two), and the fifth is now a runtime failure. That is the CE→runtime
+minimum the plan asked for on the CE class.
+
+**Scoped regression A/B, both arms my own runs, 335 rows:** `320/335 →
+323/335`, **zero regressions**. The list
+(`.tmp/rows-ab.txt`) is every ES≤5 row under `built-ins/String/*.js`
+(85, the whole ctor/ToString surface), every ES≤5
+`built-ins/String/prototype/{replace,split}/**` (139, the C6 blast radius),
+a stride-4 sample of `built-ins/String/prototype/{substring,slice,concat,trim}/**`,
+a stride-8 sample of `built-ins/RegExp/*.js`, and all
+`built-ins/RegExp/prototype/*.js`.
+
+**Scope honesty — this is NOT the full `built-ins/String` +
+`built-ins/RegExp` sweep the verification floor asks for.** That is 1,228
+ES≤5 rows, and a first attempt measured **50 rows in 11 minutes** with two
+workers (≈4.5 rows/min: three sibling agent lanes were sweeping the same
+4-core box, 1-minute load average 9.4). Both arms would have been ~9 hours
+of wall clock. The 335-row list above is the subset chosen for blast-radius
+coverage rather than for size, and the uncovered remainder is
+`built-ins/RegExp` depth (my diffs touch RegExp only through C2's static
+read, which is `compile_error`-only and cannot regress a passing row) and
+`built-ins/String/prototype` methods other than the six listed.
+
+**Pin suites green (my runs):** `tests/issue-4465` 20/20,
+`tests/issue-4481` 42/42, `tests/issue-4619` 23/23, `tests/issue-4621`
+27/27, `tests/issue-4639` 12/12 (and the tier-dependent row green again
+under `JS2WASM_EVAL_ENGINE=interpreter`). **`tests/issue-4426.test.ts` does
+not exist on this base** — there is no 4426 pin file to run; the nearest
+sibling, `tests/issue-2885.test.ts` (the witness the C4 wall is recorded
+against), is green 5/5.
+
+**Host-lane equivalence (per-file, never batched):**
+`tests/equivalence/wrapper-constructors` 8/8,
+`tests/equivalence/tostring-valueof` 7/7,
+`tests/equivalence/string-methods` 42/42,
+`tests/equivalence/regexp-methods` 22/22.
+
+**Gates green (my runs):** `check:loc-budget`, `check:func-budget` (both via
+the frontmatter allowances above), `check:oracle-ratchet`,
+`check:coercion-sites`, `check:dead-exports`, `check:ir-fallbacks`,
+`check:host-import-policy`, `check:stack-balance`,
+`check:codegen-fallbacks`, `check:harness-compile-budget`.
+
+## Residuals — with owners
+
+The acceptance bar was **≥15 of ~30 in-scope rows flipped**. Five flipped.
+Below is every family that did not, with what it actually needs, so the next
+lane does not re-derive it.
+
+| family | rows | why it did not land |
+| ------ | ---- | ------------------- |
+| **C1 rest** | `S15.5.2.1_A1_T11`, `S15.5.2.1_A1_T8`, `S15.5.1.1_A1_T8`, `slice/S15.5.4.13_A3_T4`, `S15.5.5.1_A5` (5) | Each is a DIFFERENT receiver family from the fnctor instance C1 fixes. T11/T8 are a **callable** with own/inherited `valueOf`/`toString`, not a `$Object`. `S15.5.1.1_A1_T8` needs `String(arr)` to honour a REPLACED `Array.prototype.toString` (today `tryEmitArrayToStringNative` intercepts it). `slice/A3_T4` is a BORROWED `String.prototype.slice` whose receiver is the instance — the escape gate classifies a method-call receiver `neutral`. `S15.5.5.1_A5` needs `__to_primitive` to stop short-circuiting on the wrapper's [[PrimitiveValue]] slot when the wrapper carries an OWN `valueOf`/`toString`; that is a hot-path edit to the core runtime and was deliberately not attempted without capacity to sweep every wrapper consumer. |
+| **C3 — `<B>.prototype.constructor` as a CONSTRUCTOR** | `String/prototype/constructor/S15.5.4.1_A1_T2`, `RegExp/prototype/S15.10.6.1_A1_T2` (2) | The `.constructor` VALUE read is right (it is the identity-stable carrier); the carrier has no [[Construct]] arm. Routing `new <alias>(…)` back to `new <Builtin>(…)` needs either a `ctorNameOverride` threaded through `tryCompileBuiltinGlobalNew` (which keys on `expr.expression.text` in ~20 places) or a per-builtin arm; `new RegExp` additionally lives in `regexp-standalone.ts`, a separate subsystem keyed on the syntactic shape. Not started. |
+| **C4 — RegExp flags as proto accessors** | `global/S15.10.7.2_A9`, `ignoreCase/S15.10.7.3_A9`, `multiline/S15.10.7.4_A9` (3) | **PRIOR FAILED ATTEMPT — do not repeat the obvious fix.** The rows need `delete RegExp.prototype.global` to be OBSERVABLE, which requires the flag ACCESSORS to be authoritative in the brand companion. `ensureNativeProtoCompanionSeeder` (native-proto.ts) records that seeding getters flips `tests/issue-2885.test.ts` "plain read `RegExp.prototype.global` is undefined" from pass to FAIL, by a mechanism its own note calls unidentified — the divergence is between the INLINE and MATERIALIZED read paths, not receiver binding. Start there, not from a receiver theory. |
+| **C5 — dynamic-pattern refusals** | `S15.10.2.8_A3_T15/T16`, `annexB/RegExp-control-escape-russian-letter` (3) | The runtime pattern compiler's grammar cannot take the input (T15/T16 build a 200-deep nested-capture pattern). Raising the limit is work inside the emitted regex compiler in `regexp-standalone.ts`; the refusal is already deferred to first USE (#4439), so `.source`/`.flags` reads are unaffected. Not started. |
+| **C6 rest** | `replace/S15.5.4.11_A1_T5`, `A1_T9`, `split/argument-is-regexp-and-instance-is-number`, `split/instance-is-math`, `split/separator-regexp-limit-string-via-eval`, `concat/S15.5.4.6_A2` (6) | T5 is now `fail`, not `compile_error`: the subject comes back unchanged, so the needle still misses on the OPAQUE (`Function()`-minted) replacer path specifically — the identical shape with an in-module `function(){}` is correct after C6b, so the remaining gap is in `replacer-apply-bridge.ts`, not in the search value. T9 needs the §22.1.3.19 replacer ARG types (it renders `NaN` — the position argument reaches `a1+a2+a3` as a number, so the args are not the spec's `« matched, position, string »` strings). `split/instance-is-math` needs `ToString(Math)` to answer `"[object Math]"` (@@toStringTag on the namespace carrier + an `Object.prototype.toString`-shaped tail); `trim/15.5.4.20-2-51`, listed below, is the same class one level out (an ARGUMENTS object stringifying as an array). |
+| **C7 — regexp-literal 65k-eval** | `S7.8.5_A{1.1,1.4,2.1,2.4}_T2`, `annexB` leading/trailing escape (6 in my row list; the issue's header says 7 — I did not reconcile which row it counted seventh) | **Re-verified, wall holds.** `annexB/RegExp-leading-escape-BMP` still fails on `Code unit: 0` single-threaded, i.e. runtime-eval throughput, exactly as #4621 measured. Owner: runtime-eval-throughput. One caution for the next measurer: under 3-worker parallel load the same row reports `compilation timeout (19489.6ms)` instead — that is LOAD NOISE, not a second defect; re-run single-threaded before believing a status change on this family. |
+| **not in any family** | `RegExp/S15.10.4.1_A6_T1`, `RegExp/prototype/exec/S15.10.6.2_A4_T11`, `RegExp/S15.10.2_A1_T1`, `String/S15.5.1.1_A1_T9`, `slice/S15.5.4.13_A1_T5`, `substring/S15.5.4.15_A1_T5`, `trim/15.5.4.20-2-51` (7) | The last two are `Function.prototype.toString is not yet implemented in --target standalone` — **dev-4637's lane** (#4442 Function-surface), declined here by the coordination rule. `S15.5.1.1_A1_T9` is `String(this)` at global scope with a global `toString`, i.e. a global-object receiver. `A6_T1`/`A4_T11` were not triaged. |
