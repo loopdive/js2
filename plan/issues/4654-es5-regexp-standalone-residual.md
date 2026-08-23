@@ -315,19 +315,73 @@ so the key is stable; distinct regexps may share a source, so buckets are
 confirmed with the same `===` comparisons the scan used, and the degenerate
 all-same-source case is no worse than the scan it replaces.
 
-With it, the same file **passes in 194.6 s** (22.1 s compile + 172.1 s execute),
-box load ~12 on 4 cores — 2.63 ms per eval over ~65,500 evals, flat against the
-2.53 ms/eval measured at N=12,800. Flat marginal cost is the point: the curve is
-linear, not quadratic. The residual 2.6 ms/eval is the membrane's **pre-existing
-per-eval cost** — an eval returning a NUMBER, which publishes nothing at all,
-measured 2.28–2.73 ms/eval on the same build — so the reconstruction's own
-marginal cost is now indistinguishable from zero.
+The index needed two more properties before it held, and both were found by
+measurement rather than by reading:
 
-**What this costs CI, stated plainly:** on base these six files abort on
-iteration 0 and cost nothing. Passing them means actually running 65,536 evals
-each, ~3 min per file on this box. That is inherent to the tests, not to the
-fix; but it is new wall-clock in the test262 shards and the lead should know the
-shape of it before this lands.
+- **an MRU row, checked before the bucket probe.** The index's degenerate case
+  is a loop that evaluates the SAME pattern text every iteration: every row
+  lands in one bucket and the bucket scan is the linear scan again.
+- **chaining instead of open addressing.** Duplicate keys are normal (distinct
+  regexps may share a source) and in an open-addressed table they build one
+  long primary CLUSTER — the MRU rescues the LOOKUP, but every INSERT still
+  probes to the end of the run and every rehash re-inserts N rows into it.
+
+Measured on `.tmp/evalbench2.mts` (26 sources cycled, so N/26 rows per bucket —
+the degenerate shape), against the same loop evaluating a NUMBER as the control:
+
+| build                          | N=3,200        | N=12,800       |
+| ------------------------------ | -------------- | -------------- |
+| number result (control, floor) | 1.412 ms/eval  | 1.396 ms/eval  |
+| open-addressed index           | 2.913          | 5.401          |
+| + MRU row                      | 1.479          | 2.326          |
+| + chained buckets (shipped)    | **1.268**      | **1.900**      |
+
+The control being FLAT is what makes the other rows readable: the membrane's
+own per-eval cost does not grow, so everything above the control is the index.
+
+End to end on `language/literals/regexp/S7.8.5_A1.1_T2.js`, all three runs mine:
+
+| build                        | result                          |
+| ---------------------------- | ------------------------------- |
+| partition only               | still running at **16 min**, killed (load 13–17) |
+| + content index              | **pass, 194.6 s** (22.1 compile + 172.1 execute), load ~12 |
+| + MRU + chaining (shipped)   | **pass, 127.9 s** (19.9 compile + 107.6 execute), load ~9 |
+
+107.6 s of execute over ~65,500 evals is **1.64 ms/eval**, against a membrane
+floor of ~1.40. The reconstruction's own marginal cost is now within ~0.25
+ms/eval of publishing nothing at all.
+
+### ⚠ What this costs CI — a decision for the lead, not something I can settle here
+
+On base these six files abort on iteration 0 and cost ~750–920 ms each (that is
+literally their weight in `tests/test262-slow-tests-standalone.json` today).
+Passing them means actually running 65,536 membrane evals each. Two runner
+limits matter, both read out of the source rather than assumed:
+
+- `TEST_TIMEOUT_MS = 15000` (`tests/test262-runner.ts`) is compared **only
+  against COMPILE time** (`if (compileMs > timeoutMs)`); execution time is
+  never checked against it. So the ~108 s execute is not reported as a timeout.
+  Compile for these files is ~20 s on this contended box but well under 15 s on
+  a quiet one, which is why they run at all today.
+- **`IT_TIMEOUT_MS = 90000`** (`tests/test262-shared.ts`) is vitest's per-test
+  timeout in the sharded runner, and its own comment says a test that blows it
+  is killed **without a jsonl row** — "the run silently under-reports its own
+  denominator". At 1.64 ms/eval these files need ~108 s of execute. A faster,
+  quieter CI runner may come in under 90 s; a loaded pool will not, and the
+  failure mode is a MISSING row, not a failing one.
+
+Options, in the order I would rank them:
+
+1. Raise `TEST262_IT_TIMEOUT_MS` for the standalone lane in the sharded
+   workflow (env-only; the 90 s default stays for every other lane).
+2. Seed the six files' weights in `tests/test262-slow-tests-standalone.json`
+   from the measured after-arm numbers so weighted sharding gives them room —
+   the file is regenerated from a baseline, but a baseline cannot learn a
+   timing for a row that was killed before it produced one.
+3. Attack the ~1.4 ms/eval membrane floor itself. That is the only option that
+   makes these cheap rather than merely affordable, and it is a separate issue:
+   it is the pre-existing per-eval cost of a QuickJS crossing, unrelated to
+   regexps (measured with an eval that returns a number and publishes nothing).
 
 ## Test Results
 
