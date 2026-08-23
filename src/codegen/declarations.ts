@@ -2382,6 +2382,33 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           return { kind: "externref" };
         }
       }
+      // (#4491 wave-4) `var g = undefined` — the LITERAL undefined identifier.
+      // `resolveWasmType(undefined)` is i32 ("void → no result"), a lowering
+      // convention for a RESULT, not a claim that this binding holds the
+      // number 0. Measured on this base, standalone:
+      //   `var g = undefined; ({get: g}).get === undefined` → FALSE
+      //     (the slot stored `i32.const 0`, boxed to `ref.i31 0`), while
+      //   `var g2;        ({get: g2}).get === undefined` → true.
+      // Two wave-4 rows root here: `Object.defineProperty(o, "foo", {get: getter})`
+      // with `var getter = undefined` threw "Getter/setter must be a function"
+      // (§6.2.5.6 accepts an undefined half), and `var o2 = undefined; o2 =
+      // Object.preventExtensions(o)` read back `0` instead of the object.
+      //
+      // Scoped to the `undefined` IDENTIFIER resolving to the global binding —
+      // NOT the general "declared type is purely undefined/void" rule the
+      // comment above warns about, and NOT the `void 0` arm (which is what
+      // regressed the filter harness shapes). A binding written `= undefined`
+      // states the value at the source; a binding that merely TYPES as
+      // undefined (an optional read, a delete-sentinel) does not, and keeps
+      // its numeric slot.
+      if (
+        init !== undefined &&
+        ts.isIdentifier(init) &&
+        init.text === "undefined" &&
+        ctx.oracle.valueDeclarationOf(init) === undefined
+      ) {
+        return { kind: "externref" };
+      }
     }
     // #1914 — `var m = re.exec(s)` under standalone gets the precise
     // match-vec ref type so indexed reads stay on the static vec path
