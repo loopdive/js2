@@ -354,16 +354,59 @@ describe("#4653 residuals — measured, not fixed here", () => {
     ).toBe(null);
   });
 
-  // ROW S13.2.2_A8_T3. A `Function(params…, body)` product does not bind its
-  // declared parameters: `++arg` throws ReferenceError. Measured identically for
-  // `new Function("arg","return ++arg;")`, `Function(...)` and
-  // `Function.call(null, ...)`, so the root is the mint, not the receiver.
-  // Owner: the runtime-eval lane.
-  it.fails("(#4653 residual, runtime-eval) `Function(p, body)` binds its parameter", async () => {
+  // ROW S13.2.2_A8_T3. CORRECTED: the parameter IS bound —
+  // `new Function("p","return p;")(7)` answers 7, and `p = p + 1` works. What
+  // throws is an UPDATE expression (`++`/`--`) on a name LOCAL to the eval'd /
+  // minted code (an eval-local `var`, or a Function parameter), and only when
+  // the mint sits inside an enclosing FUNCTION; at module top level the same
+  // code works, and `++` on an OUTER binding works everywhere. Full
+  // discriminator table in the issue file. Owner: the runtime-eval lane.
+  it.fails("(#4653 residual, runtime-eval) `++` on a mint-LOCAL name resolves", async () => {
     expect(
       await runScript(`
-        var g = new Function("arg", "return ++arg;");
-        if (g(1) !== 2) throw new Error("g(1) === " + String(g(1)));
+        function host() { return new Function("p", "p++; return p;")(1); }
+        if (host() !== 2) throw new Error("host() === " + String(host()));
+      `),
+    ).toBe(null);
+  });
+
+  // Same root, eval spelling — an eval-LOCAL `var` incremented inside an
+  // enclosing function. No loop is involved, which is what rules out the
+  // "loop-test position" reading.
+  it.fails("(#4653 residual, runtime-eval) `++` on an eval-LOCAL var resolves", async () => {
+    expect(
+      await runScript(`
+        function host() { return eval("var i = 0; i++; i"); }
+        if (host() !== 1) throw new Error("host() === " + String(host()));
+      `),
+    ).toBe(null);
+  });
+
+  // POSITIVE CONTROLS for the corrected root — these must PASS, and they are
+  // what makes the two `it.fails` above a claim about `++`-on-a-local rather
+  // than about eval scope in general. If a future fix "repairs" these by
+  // widening something, the pair above should flip, not these.
+  it("binds a Function parameter for a plain read and for `p = p + 1`", async () => {
+    expect(
+      await runScript(`
+        function host() {
+          if (new Function("p", "return p;")(7) !== 7) throw new Error("plain read");
+          if (new Function("p", "return p + 1;")(1) !== 2) throw new Error("read + add");
+          if (new Function("p", "p = p + 1; return p;")(1) !== 2) throw new Error("compound assign");
+          if (new Function("x", "y", "return y;")(1, 2) !== 2) throw new Error("two params");
+          return 1;
+        }
+        if (host() !== 1) throw new Error("host() === " + String(host()));
+      `),
+    ).toBe(null);
+  });
+
+  it("increments an OUTER binding from inside an eval, in a loop test", async () => {
+    expect(
+      await runScript(`
+        var d = 0;
+        function host() { eval("while (d < 3) { d++; }"); return d; }
+        if (host() !== 3) throw new Error("d === " + String(host()));
       `),
     ).toBe(null);
   });
