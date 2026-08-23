@@ -42,6 +42,8 @@ loc-budget-allow:
   - src/codegen/statements/variables.ts
   - src/codegen/expressions/new-super.ts
 func-budget-allow:
+  - src/runtime.ts::resolveImport
+  - src/runtime.ts::<anonymous>#92
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
   - src/codegen/extern-declarations.ts::registerNodeBuiltinImports
   - src/codegen/expressions/identifiers.ts::compileIdentifierCore
@@ -626,3 +628,29 @@ sample (array/closure/let-const) green.
   assertion-level (prototype identity `toBe`, spy-count reads through the
   vec-copy-at-boundary caveat, `Error.captureStackTrace` args,
   diff-sequences numeric mismatches).
+
+## 2026-08-23 merge_group regression triage (post-#4728 merge) — two #4616 slices
+
+Two of the three Temporal regression classes in merge_group run 32618016516
+trace to #4616 slices (see #4618's triage section for the third):
+
+1. **fedb4486 (fix 56, member-access dynamic `new`)** — the admission accepted
+   `new Temporal.PlainDateTime(...)`: `Temporal` is UNDECLARED, so the member
+   types error-`any` and passed the fact check; the `__construct_closure` lane
+   then compiled the base identifier as an undeclared-identifier
+   ReferenceError throw at module init ("Temporal is not defined", the
+   156-file "other" bucket). Fixed: a member callee whose base identifier has
+   NO value declaration keeps the legacy host-new lane (deferred failure —
+   the assert.throws(TypeError) Temporal files pass exactly as before).
+2. **03934689 (item 2, ref-elem HOF widening)** — `hofRefElemClosureLaneSafe`
+   admitted `Object.entries(x).forEach(([unit, inc]) => …)` bodies capturing
+   an OUTER error-`any` host value (`earlier.until(...)`); the native lane
+   mis-threaded the tuple elements and the expected RangeError never fired
+   (the pass→fail slice). Fixed: an outer-declared identifier whose typeFact
+   is any/unknown vetoes the native lane (bindings declared inside the
+   callback keep it — cookie's 63740/63740 depends on that and holds).
+
+Validation on the follow-up branch: 30-file random Temporal sample has 0
+status diffs vs pre-merge main; the named regression files pass; class/elements
+25-file sample 25/25; full branch regression battery 19/19; cookie/webpack/
+stylelint/clsx/jest suites re-measured green at the fixed counts.
