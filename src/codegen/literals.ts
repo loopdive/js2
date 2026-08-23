@@ -2216,7 +2216,12 @@ export function compileSymbolCall(ctx: CodegenContext, fctx: FunctionContext, ar
   }
   // Push the symbol id (the counter) as the result.
   fctx.body.push({ op: "global.get", index: counterIdx });
-  return { kind: "i32" };
+  // (#3505 harness) Carry the symbol BRAND on the i32 id so any-channel
+  // coercions box via __box_symbol (interned $Symbol carrier), not
+  // __box_number — unbranded, `typeof t(Symbol())` through an any param
+  // answered "number" and defineProperty/sameValue treated symbols as
+  // numbers whenever the checker type was not consulted.
+  return { kind: "i32", symbol: true };
 }
 
 /**
