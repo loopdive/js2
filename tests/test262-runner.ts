@@ -2315,18 +2315,6 @@ let $262 = {
       (buf as any).__detached__ = true;
     };
     realm.gc = function (): void {};
-    // (#3505 harness) Same-realm discrimination: a "foreign realm" error
-    // constructor must be a DISTINCT function identity whose instances'
-    // .constructor is NOT the local one, so assert.throws(TypeError, () => {
-    // throw new realmGlobal.TypeError(); }) rejects it (harness
-    // assert-throws-same-realm / asyncHelpers-throwsAsync-same-realm).
-    realm.Error = function Error(msg: any) { (this as any).message = msg; };
-    realm.TypeError = function TypeError(msg: any) { (this as any).message = msg; };
-    realm.RangeError = function RangeError(msg: any) { (this as any).message = msg; };
-    realm.SyntaxError = function SyntaxError(msg: any) { (this as any).message = msg; };
-    realm.ReferenceError = function ReferenceError(msg: any) { (this as any).message = msg; };
-    realm.EvalError = function EvalError(msg: any) { (this as any).message = msg; };
-    realm.URIError = function URIError(msg: any) { (this as any).message = msg; };
     return realm;
   },
   agent: {

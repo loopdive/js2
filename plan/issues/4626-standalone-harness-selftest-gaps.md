@@ -17,14 +17,16 @@ files:
   - src/codegen/object-ops.ts
   - src/codegen/typeof-natives-finalize.ts
   - src/codegen/literals.ts
-  - tests/test262-runner.ts
+  - src/codegen/expressions/new-super.ts
 loc-budget-allow:
   - src/codegen/object-ops.ts
   - src/codegen/typeof-natives-finalize.ts
   - src/codegen/literals.ts
+  - src/codegen/expressions/new-super.ts
 func-budget-allow:
   - src/codegen/object-ops.ts::emitStandaloneDefinePropertyKeyToString
   - src/codegen/typeof-natives-finalize.ts::fillStandaloneTypeofClosureArms
+  - src/codegen/expressions/new-super.ts::tryCompileNativeConstructFromValue
 ---
 
 # #4626 — Standalone test262 `harness/` self-test gaps
@@ -58,18 +60,43 @@ Root causes fixed:
    arms at the same finalize pass as the closure arms.
 3. **`Symbol()` result was an unbranded i32** (`literals.ts`): any-channel
    coercions boxed it via `__box_number`. Now carries `symbol: true` so
-   `coerceType` routes through `__box_symbol`.
-4. **Runner realm shim** (`tests/test262-runner.ts`): `createRealm()` now
-   exposes distinct per-realm error constructors, the prerequisite for the
-   same-realm discrimination tests (see remaining gaps — not sufficient
-   alone).
+   `coerceType` routes through `__box_symbol` — gated to the native-symbol
+   lanes (`usesNativeSymbolProvider`) after the 2026-08-23 park: branding it
+   in the js-host lane routed mid-emission coercions through
+   `ensureLateImport(__box_symbol)`, a late host-import insertion that shifts
+   baked function indices (#608/#794 hazard).
+4. ~~Runner realm shim~~ **REVERTED after a merge_group park (2026-08-23,
+   run 32620945052)**: giving `createRealm()` named function-expression error
+   constructors (`function TypeError(msg) {…}`) put builtin-shadowing fnctor
+   NAMES into the `$262` preamble compiled into EVERY `needs262` test module.
+   The name-keyed fnctor machinery then resolved `new TypeError(...)` in test
+   code to the shim's fnctor — 367 js-host regressions with wasm-hash change
+   (216 "invalid Wasm binary", `e instanceof TypeError` false, Temporal
+   buckets >50). Any future realm shim must use NON-shadowing spellings
+   (e.g. `realm.TypeError = makeRealmCtor("TypeError")`).
 
 Verified: 45-test standalone sample over symbol/typeof/defineProperty
 baseline-pass tests — 0 regressions; all 8 baseline-pass `createRealm`
 tests still pass; equivalence shards spot-checked clean; js-host harness
 untouched (its own 17 failures unchanged, none new).
 
-## Remaining standalone failures (12) — root causes surveyed
+## Fixed in the second slice
+
+- `testTypedArray-conversions.js` — the #3981 ordinary-[[Construct]] arm
+  (`tryCompileNativeConstructFromValue`, `new-super.ts`) claimed
+  `new TA(...)` for an any-typed callee BEFORE the #2872 dynamic-TA arm ever
+  ran, constructing a plain native object (`.length` 0, `.fill` "called value
+  is not a function"). Fixed with a runtime `ref.test $__ta_ctor` two-arm
+  inside that arm (gated on `noJsHost && moduleUsesDynTaView`): a TA-ctor
+  callee routes through `emitTaDynCtorConstructFromLocals`; every other value
+  keeps the ordinary-construct driver byte-for-byte.
+
+Residual found while reducing (NOT one of the 16, deferred): the DECLARED
+alias form `var TA = Int8Array; new TA([5])` misreads the array argument as a
+length (`.length` 5) — a different (builtin-alias) arm; the harness shape is
+the param form, which is fixed.
+
+## Remaining standalone failures (11) — root causes surveyed
 
 | Test(s) | Gap |
 | --- | --- |
@@ -77,7 +104,7 @@ untouched (its own 17 failures unchanged, none new).
 | deepEqual-mapset | Set/Map member dispatch through `any` (`.size`, `Symbol.iterator`, `.next()` all missing → trap/false) |
 | compare-array-symbol | symbol[] elements are raw i32 ids in `$__arr_i32`; `map.call(arr, String)` renders the id number |
 | deepEqual-primitives-bigint | BigInt standalone (`env::__new_BigInt` host-import refusal) |
-| assert-throws-same-realm, (throwsAsync-same-realm) | `.constructor` on an instance of a user fn NAMED like a builtin resolves to the BUILTIN by name; plus a null-deref in the full-harness assembly |
+| assert-throws-same-realm, (throwsAsync-same-realm) | needs a realm shim with distinct error-ctor identities (see revert note above — must not shadow builtin names) plus `.constructor` identity |
 | wellKnownIntrinsicObjects | `%Array%` intrinsic identity (`Object.is(Array, intrinsic)`) |
-| detachArrayBuffer-host | `$262.detachArrayBuffer` error-shape mismatch |
-| testTypedArray-conversions | "called value is not a function" in the conversions harness |
+| detachArrayBuffer-host | `err.constructor` on a Test262Error thrown by a BARE `throw new Test262Error(...)` inside an object-literal method loses fnctor identity (resolves to a generic closure; `throw (new …)` and `throw <var>` both work — the escape-gate/lowering divergence is syntactic) |
+| testTypedArray-conversions | FIXED (second slice, above) |
