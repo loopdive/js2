@@ -37,6 +37,22 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
    delta you report must come from runs YOU executed. A figure inherited from
    an artifact and restated as a measurement is the campaign's most-repeated
    documented defect.
+
+   **One snapshot per touched file, and check `git diff --stat` before each
+   arm (2026-08-23, dev-4491).** Restoring only ONE snapshot when your change
+   spans two files silently measures a HYBRID tree — half your change, half
+   the base — and nothing in the run announces it. The cheap detector is
+   `git diff --stat` immediately before each arm: if it names a different
+   number of files than your change touches, you have a partial restore. That
+   count mismatch is the only reason the one measured instance was caught.
+
+   **Branch-update merges use a PLAIN `git merge <ref>` — never `--ff-only`.**
+   `pre-merge.sh` treats `--ff-only` as the legacy merge-TO-main path and
+   refuses it without a fresh test-proof artifact, so a lane pulling the
+   campaign tip into its own feature branch gets blocked and may be tempted to
+   `--no-verify` past a gate doing its job. The documented protocol is a plain
+   merge anyway (CLAUDE.md: "Dev merges `origin/main` INTO their branch —
+   `git merge origin/main` (not rebase)"). Use the right form; do not bypass.
 3. **One probe per compiled module where identity matters** (in-process
    pollution confound, #3673). Isolate and re-run anomalous batch results.
 4. **Absent-not-wrong.** A new arm that cannot be certain about a dynamic
