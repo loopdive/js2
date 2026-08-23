@@ -4597,6 +4597,32 @@ export function compileArrayLiteral(
     if (hasDynamicOrCallableElement) {
       elemWasm = { kind: "externref" };
     }
+    // (#4632) A `symbol`-typed element must not collapse into the numeric i32
+    // vec: the id would lose its brand per element, so a reflective consumer
+    // (`Array.prototype.map.call(arr, String)` in the test262 compareArray
+    // formatter) rendered the raw counter ("[101]") instead of
+    // "[Symbol(desc)]". Force the externref carrier vec — the element compile
+    // below runs with an externref hint, and the expressions.ts ESSymbolLike
+    // arm boxes each id via `__box_symbol` (interned `$Symbol`), which every
+    // reflective reader (String, typeof, sameValue, symbol-keying) already
+    // understands. Native-symbol lanes only; the js-host lane keeps its vec
+    // selection byte-identical (the 2026-08-23 park precedent for brand leaks).
+    if (process.env.JS2_SYM_DEBUG)
+      console.error(
+        "[arr-lit]",
+        expr.getText().slice(0, 30),
+        "elemWasm=",
+        elemWasm.kind,
+        "symLike=",
+        (firstElemType.flags & ts.TypeFlags.ESSymbolLike) !== 0,
+      );
+    if (
+      usesNativeSymbolProvider(ctx) &&
+      elemWasm.kind === "i32" &&
+      (firstElemType.flags & ts.TypeFlags.ESSymbolLike) !== 0
+    ) {
+      elemWasm = { kind: "externref" };
+    }
     // (#2021) The first element's class type can be a SUBTYPE of the array's
     // declared element type — e.g. `const a: Shape[] = [new Circle(), new
     // Shape()]` derives `(ref $Circle)` from element 0, but a later `new

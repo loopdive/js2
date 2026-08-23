@@ -354,6 +354,7 @@ export function inferParamTypeFromCallSites(
   // seed) resolved it — an OPAQUE argument that can hold any runtime value.
   // See the ref-narrowing withdrawal rule below.
   let sawOpaqueAnyArg = false;
+  let sawCatchVarArg = false;
 
   const isRecursiveCall = (call: ts.CallExpression | ts.NewExpression): boolean => {
     const target = ctx.oracle.valueDeclarationOf(call.expression);
@@ -482,6 +483,24 @@ export function inferParamTypeFromCallSites(
                 // call results, member reads — are all non-identifiers and
                 // stay flagged.
                 sawOpaqueAnyArg = true;
+              } else {
+                // (#4630) EXCEPTION to the trusted-identifier rule: a
+                // CATCH-CLAUSE binding can hold ANY thrown value, so it is
+                // never evidence that this param matches the other sites'
+                // agreement. The asyncHelpers harness's
+                // `catch (e) { sink(e) }` next to `sink("fulfilled")` agreed
+                // on native-string; the thrown TypeError then coerced to a
+                // null string ref and `err instanceof TypeError` read null.
+                // Recorded SEPARATELY from sawOpaqueAnyArg: the general
+                // ref-withdrawal it triggers also killed closure/promise ref
+                // narrowings the async harness plumbing depends on (11
+                // throwsAsync-* standalone regressions) — a catch var only
+                // poisons the NATIVE-STRING agreement, where the coercion
+                // nulls silently instead of coercing.
+                const argDecl = ctx.oracle.variableDeclarationOf(arg);
+                if (argDecl && ts.isVariableDeclaration(argDecl) && ts.isCatchClause(argDecl.parent)) {
+                  sawCatchVarArg = true;
+                }
               }
             } else if (isRecursiveCall(node)) {
               conflict = true;
@@ -628,6 +647,21 @@ export function inferParamTypeFromCallSites(
     !paramHasConcreteAnnotation()
   ) {
     type = null;
+  }
+  // (#4630) A catch-clause binding withdraws ONLY a native-string agreement —
+  // see the flag's comment at the recording site.
+  if (
+    sawCatchVarArg &&
+    type !== null &&
+    (type.kind === "ref" || type.kind === "ref_null") &&
+    !paramHasConcreteAnnotation()
+  ) {
+    // NATIVE-STRING agreements only: withdrawing struct-ref agreements too
+    // (the obvious general rule) regressed 11 throwsAsync-* harness tests —
+    // widening `$DONE`'s param cascades into the standalone async/.then
+    // lowering. A struct-ref agreement + catch var (the return-not-thenable
+    // shape) therefore still mis-coerces; recorded as a residual on #4630.
+    if ((type as { typeIdx?: number }).typeIdx === ctx.anyStrTypeIdx) type = null;
   }
   // (#2867 S2) Soundness, same shape as the #3548 under-application rule: if the
   // function ALSO escapes as a value, callers exist that this scan never saw, so

@@ -71,15 +71,18 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
-import { WRAPPER_PRIMITIVE_KEY } from "./object-runtime.js";
+import { FLAG_INTERNAL, WRAPPER_PRIMITIVE_KEY } from "./object-runtime.js";
 import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitThrowTypeError } from "./expressions/helpers.js";
+import { definedFuncAt } from "./func-space.js"; // (#4631) dyn valueOf arm fill
 import { registerNativeProtoType } from "./native-proto.js"; // (#4619) arm 3's type, eagerly
 
 /** `$PropEntry.$value` field index (object-runtime.ts layout). */
 const ENTRY_VALUE = 1;
+/** `$PropEntry.$flags` field index (object-runtime.ts layout). */
+const ENTRY_FLAGS = 2;
 /** `$NativeProto` field indices (native-proto.ts layout). */
 const NP_BRAND = 0;
 const NP_IS_CLASS = 1;
@@ -325,4 +328,138 @@ export function emitWrapperThisValueBody(
   // on every path that reaches here.
   emitThrowTypeError(ctx, fctx, `${brandName}.prototype.${member} requires that 'this' be a ${brandName}`);
   return { kind: "externref" };
+}
+
+/**
+ * (#4631) Finalize fill: the BIGINT wrapper arm of `__dyn_valueOf`
+ * (wrapper-valueof.ts) — the dispatcher that actually lowers a zero-arg
+ * `<any>.valueOf()` call.
+ *
+ * ## Which dispatcher, and how that was established
+ *
+ * `a.valueOf()` on an `any` receiver does NOT go through
+ * `__extern_method_call`, nor through an `__extern_get` + apply pair at the
+ * call site. `tryEmitValueOfFallback` (expressions/valueof-fallback.ts)
+ * intercepts the shape `<expr>.valueOf()` with zero arguments BEFORE the
+ * generic dynamic method-call lowering and routes it to the single-argument
+ * native `__dyn_valueOf`. Confirmed empirically for
+ * `function anyv(v){return v} anyv(Object(1n)).valueOf()` by returning a
+ * distinct native-string sentinel from each of that helper's four exits: the
+ * program observed `A4631_APPLY`, i.e. the helper's arm 1.
+ *
+ * ## Why arm 1 answered wrongly for a bigint wrapper
+ *
+ * Arm 1 is `m = __extern_get(recv, "valueOf")` → `__apply_closure(m, recv,
+ * [])`. For a Number/String/Boolean wrapper `m` is the brand's minted
+ * `__proto_method_<brand>_valueOf` closure, which returns the
+ * `[[PrimitiveValue]]` slot — right answer. A BigInt wrapper has no minted
+ * brand closure, so `m` resolved to the Object-brand `valueOf` (return
+ * `this`), and arm 2 — the slot read that WOULD have been right — is only
+ * reached when `m` is null. The receiver came back instead of `1n`, which
+ * renders in a test262 diff as an object-vs-bigint mismatch
+ * (`harness/deepEqual-primitives-bigint.js`, leg `deepEqual(Object(1n), 1n)`).
+ *
+ * ## The arm
+ *
+ * Prepended to the helper body, so it runs BEFORE the property probe:
+ *
+ *     recv is $Object
+ *       ∧ no OWN "valueOf" (an own property still shadows — §21.1.3.7 is only
+ *         the INHERITED intrinsic)
+ *       ∧ the reserved FLAG_INTERNAL `[[PrimitiveValue]]` slot is present
+ *       ∧ that slot's VALUE is the native bigint carrier
+ *     ⇒ return the slot value.
+ *
+ * The last conjunct is what keeps this from re-ordering anything that works
+ * today: a Number/String/Boolean slot fails the `ref.test`, falls through, and
+ * keeps resolving through the proto walk exactly as before — so a program that
+ * REPLACES `Number.prototype.valueOf` still wins over the slot. Only the brand
+ * with no proto closure to walk to changes behaviour. A module with no bigint
+ * carrier type (`nativeBigIntTypeIdx < 0`) or no `__dyn_valueOf` emits nothing.
+ */
+export function fillBigIntDynValueOfArm(ctx: CodegenContext): void {
+  const objTypes = ctx.objectRuntimeTypes;
+  const dynValueOfIdx = ctx.funcMap.get("__dyn_valueOf");
+  const objFindIdx = ctx.funcMap.get("__obj_find");
+  if (!objTypes || dynValueOfIdx === undefined || objFindIdx === undefined) return;
+  if (ctx.nativeBigIntTypeIdx < 0) return;
+  const fn = definedFuncAt(ctx, dynValueOfIdx);
+  if (!fn) return;
+  const marker = ctx as unknown as { __bigintDynValueOfArmFilled?: boolean };
+  if (marker.__bigintDynValueOfArmFilled) return;
+  marker.__bigintDynValueOfArmFilled = true;
+
+  const { objectTypeIdx, propEntryTypeIdx } = objTypes;
+  addStringConstantGlobal(ctx, WRAPPER_PRIMITIVE_KEY);
+  addStringConstantGlobal(ctx, "valueOf");
+  // The helper declares param 0 + locals 1..3; append our own entry local
+  // rather than reusing `e`, which arm 2 also writes.
+  const entryLocal = 1 + fn.locals.length;
+  fn.locals.push({ name: "__bdvo_e", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } });
+
+  const castObj = (): Instr[] => [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: objectTypeIdx },
+  ];
+  const slotValue = (): Instr[] => [
+    { op: "local.get", index: entryLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: ENTRY_VALUE },
+  ];
+
+  fn.body.splice(
+    0,
+    0,
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: objectTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        // An OWN `valueOf` shadows the intrinsic — leave the call alone.
+        ...castObj(),
+        ...stringConstantExternrefInstrs(ctx, "valueOf"),
+        { op: "call", funcIdx: objFindIdx },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...castObj(),
+            ...stringConstantExternrefInstrs(ctx, WRAPPER_PRIMITIVE_KEY),
+            { op: "call", funcIdx: objFindIdx },
+            { op: "local.tee", index: entryLocal },
+            { op: "ref.is_null" },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: entryLocal },
+                { op: "ref.as_non_null" },
+                { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: ENTRY_FLAGS },
+                { op: "i32.const", value: FLAG_INTERNAL },
+                { op: "i32.and" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    ...slotValue(),
+                    { op: "ref.test", typeIdx: ctx.nativeBigIntTypeIdx },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [...slotValue(), { op: "extern.convert_any" }, { op: "return" }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  );
 }
