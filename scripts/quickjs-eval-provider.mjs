@@ -602,9 +602,11 @@ var qjsBoxLast: any[] = [];
 var qjsMirroredRows: number[] = [];
 
 /** (#4654) The reverse scan's two partitions — rows whose exposed value is a
- *  RegExp, and every other row. See \`qjsHandleOf\` for why the split is by that
- *  predicate specifically. Classification is by construction and never changes:
- *  a row's exposed value is fixed at push time. */
+ *  RegExp, and every other row. Classification is by construction and never
+ *  changes: a row's exposed value is fixed at push time. \`qjsRowsOther\` is
+ *  what the reverse scan walks; \`qjsRowsRe\` is walked only to rebuild the
+ *  content index below, because the RegExp partition is the one that EXPLODES
+ *  (one row per loop iteration) and must never be scanned. */
 var qjsRowsRe: number[] = [];
 var qjsRowsOther: number[] = [];
 
@@ -719,6 +721,143 @@ function qjsHashRehash(): void {
   }
 }
 
+// -------------------------- reverse index over the RegExp partition (#4654) --
+//
+// WHY A SECOND INDEX. The forward direction (realm handle -> row) is keyed by
+// the JSValue payload pointer above. The REVERSE direction (compiled value ->
+// row) has no such key: identity in the compiled subset is reference identity
+// and nothing exposes a hash for it. The first cut of this fix therefore only
+// PARTITIONED the scan, on the reasoning that "the values that reach
+// \`qjsHandleOf\` on the hot path are the caller's globals, and none of them is a
+// RegExp".
+//
+// That reasoning was wrong, and wrong in a way worth naming: it generalised
+// from a bench whose eval result was a FUNCTION-LOCAL. The six files this issue
+// exists for write
+//
+//     for (var cu = 0; cu <= 0xffff; ++cu) { ... var pattern = eval("/" + xx + "/"); ... }
+//
+// where \`pattern\` is a MODULE-LEVEL var, so the reconstructed RegExp is pushed
+// back in as a global on every subsequent iteration — and the partition it
+// probes is precisely the one that grows by one row per iteration. Partitioning
+// alone left the quadratic exactly where it was for the real corpus; the bench
+// could not see it because it held that axis fixed.
+//
+// THE KEY. A regexp's \`source\` is immutable for the life of the object, so a
+// bounded hash of it is a stable bucket key. It is NOT an identity — two
+// distinct regexps can share a source — so this is an open-addressed MULTIMAP:
+// duplicate keys are stored side by side and the probe confirms with the same
+// \`===\` comparisons the scan used. Buckets are near-singleton for the shape
+// that matters (each iteration compiles a different one-code-unit pattern), and
+// the degenerate case (N regexps sharing one source) is no worse than the
+// linear scan it replaces.
+//
+// The index is AUTHORITATIVE for the RegExp partition — a miss returns "not
+// registered" without falling back to a scan. It can be, because every row that
+// enters \`qjsRowsRe\` is inserted here in the same statement. A fallback scan
+// would reintroduce the quadratic on exactly the miss-heavy shape (a compiled
+// regexp global that never crossed) that motivated the index.
+
+/** Bucket key + 1 for the entry in this slot; 0 when empty. */
+var qjsReKeys: number[] = [];
+/** Registry row + 1 for the entry in this slot; 0 when empty. */
+var qjsReVals: number[] = [];
+var qjsReMask: number = 0;
+var qjsReCount: number = 0;
+
+/**
+ * Bounded content hash of a regexp's \`source\`. Bounded because this runs once
+ * per regexp-valued global per eval and a pattern may be long; the tail beyond
+ * the prefix only costs collisions, which the \`===\` confirmation resolves.
+ * Length participates so that prefixes of one another separate.
+ */
+function qjsReContentKey(re: any): number {
+  let src: any = "";
+  try {
+    src = (re as any).source;
+  } catch (e) {
+    src = "";
+  }
+  if (typeof src !== "string") src = "";
+  const s: string = src as string;
+  let h: number = (s.length + 1) | 0;
+  const n: number = s.length < 32 ? s.length : 32;
+  for (let i = 0; i < n; i += 1) {
+    h = (h ^ (s.charCodeAt(i) as number)) | 0;
+    h = (h + ((h << 5) | 0)) | 0;
+    h = (h ^ (h >>> 7)) | 0;
+  }
+  return h & 0x7fffffff;
+}
+
+/** Insert without a load check. Duplicates are intentional — see the note. */
+function qjsReInsertRaw(key: number, rowPlusOne: number): void {
+  let i: number = qjsHashOf(key) & qjsReMask;
+  while ((qjsReKeys[i] as number) !== 0) {
+    i = (i + 1) & qjsReMask;
+  }
+  qjsReKeys[i] = key + 1;
+  qjsReVals[i] = rowPlusOne;
+  qjsReCount += 1;
+}
+
+/** Grow (or build) the table and re-insert every RegExp-partition row. */
+function qjsReRehash(): void {
+  let cap: number = qjsReMask + 1;
+  if (cap < 16) cap = 16;
+  while (cap < (qjsRowsRe.length + 2) * 4) cap = cap * 2;
+  qjsReKeys = [];
+  qjsReVals = [];
+  for (let i = 0; i < cap; i += 1) {
+    qjsReKeys.push(0);
+    qjsReVals.push(0);
+  }
+  qjsReMask = cap - 1;
+  qjsReCount = 0;
+  for (let k = 0; k < qjsRowsRe.length; k += 1) {
+    const r: number = qjsRowsRe[k] as number;
+    const ex: any = qjsBoxExposed[r];
+    const tg: any = qjsBoxTargets[r];
+    if (ex instanceof RegExp) qjsReInsertRaw(qjsReContentKey(ex), r + 1);
+    if (tg instanceof RegExp && tg !== ex) qjsReInsertRaw(qjsReContentKey(tg), r + 1);
+  }
+}
+
+/**
+ * Index the row that was JUST appended to \`qjsRowsRe\`. On a rehash the row is
+ * picked up by the walk above rather than inserted twice — which is why the
+ * caller must push to \`qjsRowsRe\` before calling this.
+ */
+function qjsReIndexRow(row: number): void {
+  if ((qjsReCount + 2) * 2 > qjsReMask + 1) {
+    qjsReRehash();
+    return;
+  }
+  const ex: any = qjsBoxExposed[row];
+  const tg: any = qjsBoxTargets[row];
+  if (ex instanceof RegExp) qjsReInsertRaw(qjsReContentKey(ex), row + 1);
+  if (tg instanceof RegExp && tg !== ex) qjsReInsertRaw(qjsReContentKey(tg), row + 1);
+}
+
+/** The registry row exposing \`value\`/\`target\` as a RegExp, or -1. */
+function qjsFindReRow(value: any, target: any): number {
+  if (qjsReMask === 0) return -1;
+  const probe: any = value instanceof RegExp ? value : target;
+  const key: number = qjsReContentKey(probe);
+  let i: number = qjsHashOf(key) & qjsReMask;
+  while ((qjsReKeys[i] as number) !== 0) {
+    if ((qjsReKeys[i] as number) === key + 1) {
+      const r: number = (qjsReVals[i] as number) - 1;
+      if (qjsBoxTargets[r] === target) return r;
+      if (qjsBoxExposed[r] === target) return r;
+      if (qjsBoxTargets[r] === value) return r;
+      if (qjsBoxExposed[r] === value) return r;
+    }
+    i = (i + 1) & qjsReMask;
+  }
+  return -1;
+}
+
 /** Append one non-mirrored registry row (identity seeds, callable boxes). */
 function qjsPushBoxRow(handle: number, target: any, exposed: any, mirror: number): void {
   qjsBoxHandles.push(handle);
@@ -734,6 +873,7 @@ function qjsPushBoxRow(handle: number, target: any, exposed: any, mirror: number
   // in practice this is the reconstruction arm and nothing else.
   if (exposed instanceof RegExp || target instanceof RegExp) {
     qjsRowsRe.push(row);
+    qjsReIndexRow(row);
   } else {
     qjsRowsOther.push(row);
   }
@@ -776,25 +916,34 @@ function qjsFindBoxIndex(c: number, h: number): number {
  */
 function qjsHandleOf(value: any): number {
   const target: any = __runtime_eval_unwrap_interpreted_callback(value);
-  // (#4654) PARTITIONED, not shortened. Identity is object reference identity,
-  // which the compiled subset gives no hash for — \`Map\` is not a way out, it is
-  // measured LINEAR here (6.8 µs/lookup at 500 entries, 480 µs at 32,000). So
-  // the scan stays, and what changes is WHAT it has to walk.
+  // (#4654) SPLIT, and only one half is still a scan. Identity in the compiled
+  // subset is reference identity, for which nothing exposes a hash — \`Map\` is
+  // not a way out either, it is measured LINEAR here (6.8 µs/lookup at 500
+  // entries, 480 µs at 32,000). What makes the split work is that the two
+  // halves have different growth:
   //
-  // The population that explodes in an eval LOOP is the reconstructed RegExps:
-  // one row per iteration, 65,536 of them in
-  // \`language/literals/regexp/S7.8.5_*_T2\`. The values that actually reach this
-  // function on the hot path are the caller's GLOBALS, pushed once per global
-  // per eval — and none of them is a RegExp. Splitting the row list by that one
-  // predicate lets the globals push skip the whole exploding population without
-  // giving up a single answer: a RegExp still finds its row, in the RegExp list.
-  // Measured contribution before the split (bench module, N evals, 16 extra
-  // object globals): 11.2 s → 68.2 s at N=3200, while the same loop whose eval
-  // returns a NUMBER — which pushes no row at all — moved 4.70 s → 5.43 s. The
-  // cost was globals × rows, i.e. exactly this scan.
-  const list: number[] = value instanceof RegExp ? qjsRowsRe : qjsRowsOther;
-  for (let k = 0; k < list.length; k += 1) {
-    const i: number = list[k] as number;
+  //  - The REGEXP partition is the one this issue's arm makes explode: one row
+  //    per reconstructed regexp, 65,536 of them in a
+  //    \`language/literals/regexp/S7.8.5_*_T2\` loop, and its \`var pattern\` is
+  //    module-level so each one is pushed back in as a global on every later
+  //    iteration. It is answered by the content index (\`qjsFindReRow\`) and is
+  //    NEVER walked. The index is authoritative, so a miss is an answer.
+  //  - Everything else — realm bindings, seam arguments, intrinsic seeds,
+  //    mirrored boxes — keeps the original scan verbatim, over a list this
+  //    change does not touch. Its own growth (a box per published plain object)
+  //    is the pre-existing #4245 behaviour and is out of scope here.
+  //
+  // Measured contribution of the reverse direction before the split (bench
+  // module, N evals, 16 extra object globals): 11.2 s → 68.2 s at N=3200, while
+  // the same loop whose eval returns a NUMBER — which pushes no row at all —
+  // moved 4.70 s → 5.43 s. The cost was globals × rows, i.e. exactly this scan.
+  if (value instanceof RegExp || target instanceof RegExp) {
+    const r: number = qjsFindReRow(value, target);
+    if (r < 0) return 0;
+    return qjsBoxHandles[r] as number;
+  }
+  for (let k = 0; k < qjsRowsOther.length; k += 1) {
+    const i: number = qjsRowsOther[k] as number;
     if (qjsBoxTargets[i] === target) return qjsBoxHandles[i] as number;
     if (qjsBoxExposed[i] === target) return qjsBoxHandles[i] as number;
     if (qjsBoxTargets[i] === value) return qjsBoxHandles[i] as number;
