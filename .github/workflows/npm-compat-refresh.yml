@@ -87,18 +87,52 @@ env:
   PROMOTION_BRANCH: ci/npm-compat-refresh
 
 concurrency:
-  # GitHub keeps only one pending run per concurrency group. A ref-only key
-  # therefore cancelled older pending runs even with `cancel-in-progress: false`
-  # (the active run survived, but its predecessor never got a runner). Pushes
-  # are keyed by their immutable SHA; scheduled and manual runs also get a
-  # unique run-id suffix so a delayed measurement is never discarded while it
-  # waits for a runner. Promotion is freshness-checked and uses a
-  # lease-protected force push, so independent lanes can safely race.
-  group: npm-compat-refresh-${{ github.event_name == 'push' && github.sha || format('{0}-{1}', github.ref, github.run_id) }}
-  # Never kill an active measurement.
+  # ONE measurement at a time, coalesced to the freshest main (stakeholder,
+  # 2026-08-23). Per-SHA groups made every push its own group, so a busy main
+  # ran FOUR ~4-hour, 9-runner measurements in parallel (runs 807-810), each
+  # of an intermediate sha whose artifact was superseded before it finished.
+  #
+  # A single group serializes: one run active, and GitHub keeps only the
+  # LATEST pending run — older pending runs are superseded (shown as
+  # "cancelled" without ever starting). That used to be treated as a lost
+  # measurement, which is why the per-SHA keys existed; it no longer is,
+  # because the `resolve` job below pins the checkout to main HEAD **at run
+  # start** rather than the trigger sha. Whatever run survives the queue
+  # measures a main that CONTAINS every superseded trigger, so discarding
+  # queued predecessors is lossless by construction. Promotion stays
+  # freshness-checked with a lease-protected force push.
+  group: npm-compat-refresh
+  # Never kill an ACTIVE measurement — only queued ones coalesce.
   cancel-in-progress: false
 
 jobs:
+  # Pin main HEAD ONCE, at run start, for every job in this run. Runs no
+  # longer measure their trigger sha: a run that sat queued behind a 4-hour
+  # predecessor would otherwise measure a main that is hours stale on
+  # arrival, and coalescing queued runs (see `concurrency` above) would lose
+  # measurements. Resolving here makes the surviving run measure the newest
+  # main and keeps all nine matrix rows plus the coordinator on ONE immutable
+  # revision even while main advances mid-run.
+  resolve:
+    name: Resolve latest main
+    if: github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.head.outputs.sha }}
+    steps:
+      - name: Resolve main HEAD
+        id: head
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha=$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | cut -f1)
+          if [ -z "$sha" ]; then echo "could not resolve refs/heads/main" >&2; exit 1; fi
+          echo "resolved main HEAD: $sha (trigger was ${GITHUB_SHA})"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
   # The package runners are independent. Running them as a matrix changes the
   # wall clock from the sum of every upstream suite to the slowest group, so a
   # busy main can finish a refresh without a newer push cancelling its lane.
@@ -106,6 +140,7 @@ jobs:
   # other measurements or leave the coordinator without their artifacts.
   measure:
     name: Measure npm-compat (${{ matrix.id }})
+    needs: resolve
     if: github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
     strategy:
       fail-fast: false
@@ -151,7 +186,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.resolve.outputs.sha }}
           fetch-depth: 1
           submodules: false
           persist-credentials: false
@@ -194,7 +229,7 @@ jobs:
           retention-days: 14
 
   refresh:
-    needs: measure
+    needs: [resolve, measure]
     # The `paths-ignore` filter above is what actually breaks the trigger loop
     # now (this job's own landing changes only artifact paths). The actor guard
     # is kept as a second, cheaper line against any OTHER bot push to main.
@@ -202,7 +237,7 @@ jobs:
     # successful groups. The merge step carries missing groups forward from
     # the committed snapshot and marks them stale. A cancelled matrix cannot
     # be trusted because it may have no artifacts at all.
-    if: always() && needs.measure.result != 'cancelled' && github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+    if: always() && needs.resolve.result == 'success' && needs.measure.result != 'cancelled' && github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     # The coordinator only assembles reports and promotes them. The expensive
     # package work runs in the matrix above, so this retains the 350-minute
@@ -221,7 +256,9 @@ jobs:
       - name: Resolve immutable source revision
         id: refs
         shell: bash
-        run: echo "source_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+        # The run-wide pin from the `resolve` job — NOT the trigger sha. All
+        # nine measure rows checked out this same revision.
+        run: echo "source_sha=${{ needs.resolve.outputs.sha }}" >> "$GITHUB_OUTPUT"
 
       # This job only assembles trusted worker output and performs promotion.
       # The workers already checked out the same immutable source revision and
