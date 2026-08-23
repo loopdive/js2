@@ -336,9 +336,28 @@ three anchor rows in `.tmp/before-final.jsonl` carry the exact base errors
   flips false→true (`.tmp/p1.js`).
 - `typeof (new F())` where F returns a function: `"object"` → `"function"`
   (`.tmp/p6.js`).
-- `f.hasOwnProperty("prototype")` for a user function: false → true
-  (`.tmp/p13.js`). The test262 row for this (`S15.3.5.2_A1_T1`) uses
+- `f.hasOwnProperty("prototype")` **and** `Object.hasOwn(f, "prototype")` for a
+  user function: false → true — measured both arms, `.tmp/p19.js`, base `188` vs
+  after `191` (the delta is exactly those two bits; every other bit in the probe
+  is identical). The test262 row for this (`S15.3.5.2_A1_T1`) uses
   `new Function("", null)` and stays a residual.
+
+  **PRECONDITION, and it is narrower than the sentence above reads on its own
+  (corrected 2026-08-23 after a cross-check prompted by dev-4639).** The A4 arm
+  is emitted only when `hasClosurePrototypeEdges(ctx)` is true, i.e. when the
+  module actually REACHES `f.prototype` — a `.prototype` read or a `new f()`
+  somewhere in the file — because that is what populates
+  `ctx.fnctorPrototypeObject` and lets `collectPrototypeEdges` pair a prototype
+  global with the function's value singleton. Measured: `.tmp/p18.js` (same
+  program, `f` read as a value but **no** `.prototype` read anywhere) gives
+  `188` on BOTH arms — the arm is absent entirely, and `f.hasOwnProperty(
+  "prototype")` stays false. The earlier `.tmp/p13.js` A/B (27 → 31) happened to
+  satisfy the precondition via its `typeof f.prototype` line, so reporting it as
+  an unconditional "for a user function" overstated the scope. This is the #2660
+  M3 edge's own documented limitation ("a function with a prototype global but no
+  singleton VALUE global was never read as a value, so no runtime consumer can
+  hold it"), inherited rather than introduced — but it belongs in the claim, not
+  only in the module it comes from.
 
 ### Pins
 
@@ -437,3 +456,50 @@ runtime-eval lane, not in this issue's proto-representation scope, and changing
 the decode blind would alter every interpreted return's value model without a
 sweep to cover it. **Declined here; owner: runtime-eval (#4624 family).** It is
 the cause of `built-ins/String/prototype/replace/S15.5.4.11_A1_T5`.
+
+## Cross-lane contact points (for whoever merges second)
+
+Raised with dev-4639 (#4639) while both branches were open. Recorded here because
+one of them is a surface **neither** lane had on its list.
+
+### 1. `__object_hasOwn` — a real contact point, measured clean
+
+dev-4639's C2 arm (`src/codegen/builtin-static-expando.ts`) calls
+`__object_hasOwn(carrier, key)` on a builtin CONSTRUCTOR carrier, and concluded
+there was no intersection with this issue on the grounds that #4637 touches
+`__object_create` / `__object_setPrototypeOf` / `__isPrototypeOf` /
+`__getPrototypeOf`. **The conclusion is right; the premise is not.** The A4 arm
+(`spliceClosurePrototypeEdgeHasOwn`) splices into **`__hasOwnProperty` AND
+`__object_hasOwn`** — so C2's helper is one this issue does modify.
+
+Why it is safe, measured rather than argued (`.tmp/p17.js` / `.tmp/p18.js`,
+both arms, base vs `f6d98fd07`, identical `60` and `188`): the spliced arm fires
+only when the key is the interned literal `"prototype"` **and**
+`__closure_proto_of(recv)` is non-null — an `ref.eq` identity match against the
+`__fn_closure_<name>` / `__class_<Name>` singletons. A builtin constructor
+carrier is not one of those, so the arm declines and C2's answer is byte-for-byte
+unchanged. `Array` / `String` / `Object` `.hasOwnProperty("prototype")` and
+`Object.hasOwn(<same>, "prototype")` are identical on both arms, as is the
+negative control `Array.hasOwnProperty("zzz")`.
+
+**The condition under which that stops holding, so it is not re-derived later:**
+if C2 ever asks `__object_hasOwn(recv, "prototype")` where `recv` IS an
+edge-bearing closure or class-object singleton, this arm answers `1` **first**,
+before C2's own logic. That is the spec answer (§20.2.4.2), but it is this
+issue's answer, not C2's.
+
+### 2. `classifyUse` widening (dev-4639 C1) — re-measure after both land
+
+dev-4639 widened `classifyUse` in `src/codegen/fnctor-escape-gate.ts` so a
+`NewExpression` ARGUMENT classifies `dynamic` (standalone only). That changes
+which `new F()` sites become open `$Object`s — and this issue's A1 arm fires
+exactly at `__object_create`, i.e. only at sites that already reconstruct. So the
+two read the same representation choice from opposite ends.
+
+The interaction is expected to be **additive** (more sites reconstructing ⇒ more
+instances whose function-valued prototype now links), not contradictory — but
+that is a prediction, not a measurement, and neither lane measured the combined
+tree. Whoever merges second should run, at minimum: this issue's
+`tests/issue-4637.test.ts` + the six flipped rows in the list above, and
+dev-4639's `tests/issue-4639.test.ts` (12 pins, ~95 s) + their five flipped rows.
+Do not carry either lane's before/after numbers across the merge.
