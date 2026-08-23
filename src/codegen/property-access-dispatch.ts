@@ -2074,8 +2074,7 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
     // NOT resolve the identifier to a function-like declaration.
     let bareNameIsNonClass = false;
     if (ctx.classSet.has(resolvedClass)) {
-      const vSym = ctx.checker.getSymbolAtLocation(skipTransparentExpressions(expr.expression));
-      const vDecl = vSym?.valueDeclaration;
+      const vDecl = ctx.oracle.valueDeclarationOf(skipTransparentExpressions(expr.expression));
       if (
         vDecl !== undefined &&
         (ts.isFunctionDeclaration(vDecl) || ts.isFunctionExpression(vDecl) || ts.isArrowFunction(vDecl))
@@ -3748,9 +3747,7 @@ export function finalizeStructAndDynamicMemberGet(
     // `.prototype` used the fn sidecar (split stores). Yield when the
     // receiver resolves to a function-like declaration.
     if (propName === "prototype" && ctx.classSet.has(typeName)) {
-      const protoRecvDecl = ctx.checker.getSymbolAtLocation(
-        skipTransparentExpressions(expr.expression),
-      )?.valueDeclaration;
+      const protoRecvDecl = ctx.oracle.valueDeclarationOf(skipTransparentExpressions(expr.expression));
       const receiverIsFunctionDecl =
         protoRecvDecl !== undefined &&
         (ts.isFunctionDeclaration(protoRecvDecl) ||

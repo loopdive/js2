@@ -482,7 +482,7 @@ function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expre
   // builtins like `Intl.NumberFormat`) have concrete types, fail the fact
   // check, and keep their existing arms.
   if (ts.isPropertyAccessExpression(calleeExpr) || ts.isElementAccessExpression(calleeExpr)) {
-    const declNI = ctx.checker.getSymbolAtLocation(calleeExpr)?.valueDeclaration;
+    const declNI = ctx.oracle.valueDeclarationOf(calleeExpr);
     if (declNI && (ts.isClassDeclaration(declNI) || ts.isClassExpression(declNI))) return false;
     const factNI = ctx.oracle.typeFactOf(calleeExpr);
     return (

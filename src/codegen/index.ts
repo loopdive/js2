@@ -11713,18 +11713,19 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
         // lifted signature/closure struct, so materializing it cast the
         // retyped slot to the old field type (impossible cast → trap in every
         // jest `vi.fn` spy).
+        // (Gated to the empty-initializer shape only — the statement lane's
+        // additional Array<any> arm needs a raw `getTypeArguments` query the
+        // oracle ratchet (#1930/#3273) forbids adding here, and the evolving
+        // divergence this fixes only arises from the `[]` initializer.)
         let hoistInferredArrayVecType: ValType | null = null;
         if (varType.flags & ts.TypeFlags.Object) {
           const arrSym = (varType as ts.TypeReference).symbol ?? varType.symbol;
-          if (arrSym?.name === "Array") {
-            const typeArgs = ctx.checker.getTypeArguments(varType as ts.TypeReference);
-            const isInitiallyEmptyArray =
-              decl.initializer !== undefined &&
-              ts.isArrayLiteralExpression(decl.initializer) &&
-              decl.initializer.elements.length === 0;
-            if (isInitiallyEmptyArray || (typeArgs?.[0] && typeArgs[0].flags & ts.TypeFlags.Any)) {
-              hoistInferredArrayVecType = inferArrayVecType(ctx, decl);
-            }
+          const isInitiallyEmptyArray =
+            decl.initializer !== undefined &&
+            ts.isArrayLiteralExpression(decl.initializer) &&
+            decl.initializer.elements.length === 0;
+          if (arrSym?.name === "Array" && isInitiallyEmptyArray) {
+            hoistInferredArrayVecType = inferArrayVecType(ctx, decl);
           }
         }
         let wasmType: ValType = carrierForcesExternref
