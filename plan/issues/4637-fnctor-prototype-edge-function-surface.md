@@ -570,10 +570,20 @@ The shape where C1's lever actually acts is the ARGUMENT-ONLY one — `new G()`
 appears solely as a `new` argument, every read goes through `h.wrapped`, so no
 other dynamic use can classify the instance. Measured `.tmp/p22.js`, **both arms
 `2`**: only `instanceof` holds, the A1 arm does not fire, because the site never
-reconstructs. Pinned as `CROSS-LANE PREDICTION (dev-4639 C1 x A1)`, `it.fails`,
-with a falsifiable statement: C1 should make this site reconstruct and flip it to
-the spec answer `31`. **If C1 lands and it is still red, the two changes did not
-compose, and that is the finding.**
+reconstructs. Pinned as `CROSS-LANE PREDICTION (dev-4639 C1 x A1)`, `it.fails`, and now
+**decomposed into two separately observable halves** — dev-4639's measurement of
+`G.prototype === P` on their branch confirms the FIRST half and only the first:
+
+| bits | assertion | who has to fire | observed |
+| ---- | --------- | --------------- | -------- |
+| 1 | `G.prototype === P` | C1 alone | **confirmed by dev-4639** on `issue-4639` |
+| 2 | `instanceof` | neither — already true | true on both arms here |
+| 4 \| 8 \| 16 | `isPrototypeOf`, inherited read, `getPrototypeOf` | the A1 arm, at the site C1 newly classifies | **unobserved** |
+
+So the sharpened prediction: **C1 alone takes this shape from `2` to `3`;
+C1 + A1 composed takes it to `31`.** If both land and the pin sits at `3` rather
+than `31`, the site got classified but the A1 arm did not link its
+function-valued prototype — the halves did not compose, and that is the finding.
 
 **The anomaly in that shape, isolated — and it is PRE-EXISTING.**
 `G.prototype === P` reads false there, unlike every other A1 case. dev-4639 ran
@@ -593,9 +603,24 @@ Measured directly instead (`.tmp/p23.js`, three shapes in one module, both arms)
 
 So it is a property of the ARG-ONLY instantiation shape — not of function-valued
 prototypes, not of declaration-vs-expression, and **not introduced by this
-branch**. Still not diagnosed; the point of the isolation was to establish
-provenance, which is what a regression claim needs, and it is now settled by a
-two-arm measurement rather than by either lane's inference.
+branch**.
+
+**And there is a THIRD state neither lane's arm-pair could represent.** dev-4639
+then measured (their run, not this agent's): the reading is false on the campaign
+tip and **true on `issue-4639`**, returning to false with **only**
+`fnctor-escape-gate.ts` reverted. So it is *pre-existing on the tip AND fixed by
+C1*.
+
+Both measurements were correct and both conclusions were wrong, for one shared
+reason: **a tip-vs-own-branch A/B cannot express "pre-existing, and fixed by the
+other lane."** This lane's arms were tip-vs-here → identical → "unaffected";
+theirs was their-branch-only → true → "introduced by yours". Neither pair
+contained the other lane's change. That is a **campaign-level methodology gap**,
+not a mistake either lane made: with sibling lanes branching from one tip, a
+two-arm A/B answers "did I change this" and is structurally silent on "did
+someone else fix it". Where a cross-lane interaction is in play, the third arm —
+the sibling's branch — has to be measured by whoever owns it, and cited as
+theirs.
 
 > **PREDICTION ANSWERED (lead, 2026-08-23, at merge):** on the combined
 > campaign tree — BOTH lanes merged (#4639's C1 widening + this branch's A1

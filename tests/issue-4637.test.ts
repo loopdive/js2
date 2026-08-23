@@ -215,13 +215,24 @@ describe("#4637 A1 — a function value in the `.prototype` slot", () => {
     // fire, because the site never reconstructs. Base and branch agree, which is
     // exactly why it belongs here as a PREDICTION rather than as a result.
     //
-    // The prediction, stated so it is falsifiable: C1 classifies a
-    // `NewExpression` ARGUMENT as `dynamic`, which should make this site
-    // escape-gate-approved, reconstruct it as an open `$Object`, and let the A1
-    // arm link its function-valued prototype — flipping this to the spec answer
-    // `31`. **If C1 lands and this pin is still red, the two changes did not
-    // compose and that is the finding.** If it goes green, delete the
-    // `it.fails` and keep it as an ordinary pin.
+    // The prediction, stated so it is falsifiable — and now decomposed into two
+    // SEPARATELY OBSERVABLE halves, because dev-4639 measured the first one on
+    // their branch (their run, not this agent's):
+    //
+    //   bit 1  `G.prototype === P`   — C1 ALONE fixes this. Measured by
+    //          dev-4639 on `issue-4639`: false on the tip, true on their branch,
+    //          and back to false with ONLY `fnctor-escape-gate.ts` reverted.
+    //   bit 2  `instanceof`          — already true on both arms here.
+    //   bits 4|8|16  `isPrototypeOf`, the inherited read, `getPrototypeOf`
+    //          — these need the A1 arm in THIS branch to fire at the site C1
+    //          newly classifies. Nobody has observed them yet.
+    //
+    // So the sharpened prediction: C1 alone should take this shape from `2` to
+    // `3`; C1 + A1 composed should take it to `31`. **If both land and this pin
+    // sits at 3 rather than 31, the halves did not compose — the site got
+    // classified but the A1 arm did not link its function-valued prototype, and
+    // THAT is the finding.** If it reaches 31, delete the `it.fails` and keep it
+    // as an ordinary pin.
     //
     // NOT diagnosed, and deliberately not guessed at: `G.prototype === P` also
     // reads false in this shape, which the other A1 cases do not. It is
@@ -236,7 +247,12 @@ describe("#4637 A1 — a function value in the `.prototype` slot", () => {
     // function-valued prototypes and not of declaration-vs-expression.
     // dev-4639 read it as "introduced by your branch" from a RECONSTRUCTED
     // version of this shape; the A/B above is the direct measurement and
-    // supersedes that inference.
+    // supersedes that inference. They then measured the THIRD state neither
+    // arm-pair could represent: pre-existing on the tip AND **fixed by C1**
+    // (their run — tip false, `issue-4639` true, false again with only
+    // `fnctor-escape-gate.ts` reverted). Both readings are correct; "pre-existing
+    // AND fixed by the other lane" is simply not expressible in a tip-vs-own-
+    // branch A/B, which is the blind spot, not either measurement.
     expect(
       await runModule(
         `function P(){}
