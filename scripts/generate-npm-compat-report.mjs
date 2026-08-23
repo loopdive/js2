@@ -67,7 +67,7 @@ import { runHarness as runWebpackUpstreamSuite } from "../tests/dogfood/webpack-
 import { runHarness as runJestUpstreamSuite } from "../tests/dogfood/jest-upstream-suite.mjs";
 import { runHarness as runTailwindcssUpstreamSuite } from "../tests/dogfood/tailwindcss-upstream-suite.mjs";
 import { runHarness as runTypescriptUpstreamSuite } from "../tests/dogfood/typescript-upstream-suite.mjs";
-import { NPM_COMPAT_CATALOG, NPM_COMPAT_CATALOG_NAMES } from "../tests/dogfood/npm-compat-catalog.mjs";
+import { NPM_COMPAT_ALL_PACKAGE_NAMES, NPM_COMPAT_CATALOG } from "../tests/dogfood/npm-compat-catalog.mjs";
 import { runNpmCompatCatalogHarness } from "../tests/dogfood/npm-compat-catalog-harness.mjs";
 import { NPM_COMPAT_UPSTREAM_SOURCES } from "../tests/dogfood/npm-compat-upstream-sources.mjs";
 
@@ -98,9 +98,7 @@ import { summarizePlaygroundFiles } from "./lib/npm-compat-playground.mjs";
 import { renderHarnessThrownText } from "./lib/wasm-exn-render.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const PACKAGE_NAMES = [
-  ...new Set(["acorn", "marked", "clsx", "cookie", "eslint", "prettier", "react", ...NPM_COMPAT_CATALOG_NAMES]),
-];
+const PACKAGE_NAMES = [...NPM_COMPAT_ALL_PACKAGE_NAMES];
 const UPSTREAM_SUITE_RUNNERS = new Map([
   ["acorn", runAcornOfficialSuite],
   ["axios", runAxiosUpstreamSuite],

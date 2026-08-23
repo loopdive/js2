@@ -63,7 +63,8 @@
     "integrity": "sha512-0prMI+hvBbPjsWnxDLxlCGyM8PN6UuWjEUCYmZhO67xIV9Xasa/r/vDnq+Xyq4Lo27g8QSbO5YzARu0D1Sps3g==",
     "entryModule": "package/index.js",
     "shape": "cjs-project",
-    "issue": 1033
+    "issue": 1033,
+    "longPole": true
   },
   {
     "name": "jsdom",
@@ -190,7 +191,8 @@
     "shasum": "93579885e51a20a772c68482a34706fe1636e8f0",
     "integrity": "sha512-fycuvZg/hkpozL00lm1pEJH5nN/lr9ZXd6mJI2HSN4+Bzc+LDNdEApJ6HFbPkdFNHLvOplIIuJvxkS4XUxqirw==",
     "entryModule": "package/index.js",
-    "shape": "esm-project"
+    "shape": "esm-project",
+    "longPole": true
   },
   {
     "name": "tailwindcss",
