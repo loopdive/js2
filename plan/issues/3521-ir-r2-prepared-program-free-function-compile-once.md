@@ -1893,3 +1893,24 @@ projection/lowering path that reuses them. Until that seam is proven, R2 stays
 `needs-runtime-replay`/fail-closed and the frozen composite plus all prior
 failure evidence remain unchanged. Static issue-plan checkpoints may land
 independently; no runtime replay is authorized by this checkpoint.
+
+### 2026-08-23 Luna architecture result — exact ABI seam required
+
+The existing reservation/layout is in `linear-type-reservations.ts`, while
+constructor synthesis and its hidden capture/identity parameter are in
+`expressions/new-super.ts` and `fnctor-constructor-identity.ts`. The current
+`fnctor-typed-instances.ts` path exposes only the reserved `ref_null` carrier;
+it does not provide an IR constructor or field operation. In particular,
+`fnctor-ctor-param-types.ts` deliberately does not infer string/reference
+fields, so this fixture's `Parser.input` is currently an `externref` field.
+
+The implementation must therefore add an identity-bearing, backend-neutral
+`fnctor.new`/`fnctor.get` seam (or an exactly equivalent existing abstraction),
+with resolver validation against the declaration identity, escape gate, reserved
+type/layout, and synthesized constructor map. It must either prove a native
+string field ABI or add a bounded field-to-string conversion before using
+native `slice`. A checker-shaped anonymous object, raw `ref_null` override, or
+selector-only admission is invalid. Unsupported captures, `arguments`, foreign
+returns, aliases, rebinding, cross-source collisions, and parser escape remain
+fail-closed. The focused test collection is still deferred; no source edit or
+runtime result is claimed by this checkpoint.
