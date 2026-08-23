@@ -215,6 +215,8 @@ const EVAL_REGEXP_SOURCE = `
   }
 
   var re: any = null;
+  /** Module-level ON PURPOSE — see \`loopProbe\`. */
+  var pattern: any = null;
   var minted = 0;
   try {
     re = (0, eval)(joinSource(["globalThis.laneRe = /a", "b/gi"]));
@@ -251,6 +253,49 @@ const EVAL_REGEXP_SOURCE = `
       return ((s as string).length as number) * 1000 + ((s as string).charCodeAt(0) as number);
     } catch (e) { return -2; }
   }
+  /**
+   * THE SHAPE THE SEVEN ROWS HAVE, and the one the registry index exists for.
+   * \`pattern\` is MODULE-LEVEL, so each reconstructed RegExp is pushed back INTO
+   * the realm as a global on every later iteration — which is the reverse
+   * lookup, on the partition that grows by one row per iteration. A
+   * function-local result never exercises this and is what let a
+   * partition-only fix read as sufficient (#4654 record, "Correction").
+   *
+   * Returns the number of iterations whose \`source\` was right, or \`-(i + 1)\`
+   * for the first that was not. Cost is deliberately NOT asserted here: a
+   * wall-clock bound would flake under this box's load, and the timing that
+   * matters is recorded in the issue.
+   */
+  export function loopProbe(n: number): number {
+    var ok = 0;
+    for (var i = 0; i < n; i += 1) {
+      var unit: number = 97 + (i % 26);
+      var xx: any = String.fromCharCode(unit);
+      pattern = (0, eval)(joinSource(["globalThis.lastLoopRe = /", xx as string, "/"]));
+      var s: any = pattern.source;
+      if (s === undefined) return -(i + 1);
+      if (((s as string).length as number) !== 1) return -(i + 1);
+      if (((s as string).charCodeAt(0) as number) !== unit) return -(i + 1);
+      ok += 1;
+    }
+    return ok;
+  }
+
+  /**
+   * The REVERSE direction, executed rather than asserted: the realm compares
+   * its own retained object against the compiled \`pattern\` pushed back in as a
+   * global. True only if \`qjsHandleOf\` resolved the compiled RegExp to the
+   * SAME realm handle — i.e. the content index answered. A miss would mint a
+   * fresh wrapper and this would be false, with nothing else observably wrong.
+   * Run AFTER \`loopProbe\`, so the index is populated rather than empty.
+   */
+  export function loopReverseIdentityProbe(): number {
+    try {
+      var r: any = (0, eval)(joinSource(["globalThis.lastLoopRe ", "=== pattern"]));
+      return (r === true) ? 1 : 0;
+    } catch (e) { return -1; }
+  }
+
   /** A realm object that is NOT a regexp must still cross as the mirrored box. */
   export function plainBoxProbe(): number {
     try {
@@ -328,6 +373,17 @@ describe.skipIf(!quickjsEnabled)("#4654 — a RegExp crossing OUT of runtime eva
 
   it("a non-RegExp object still crosses as the mirrored box (no scope creep)", () => {
     expect(ex.plainBoxProbe!()).toBe(41);
+  });
+
+  it("the seven rows' LOOP shape: a module-level result answers `source` every time", () => {
+    // 64 iterations is enough to populate the registry well past the initial
+    // table capacity (16) and force two rehashes.
+    expect(ex.loopProbe!(64)).toBe(64);
+  });
+
+  it("…and the compiled RegExp pushed back IN resolves to the same realm object", () => {
+    expect(ex.loopProbe!(64)).toBe(64);
+    expect(ex.loopReverseIdentityProbe!()).toBe(1);
   });
 });
 
