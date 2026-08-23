@@ -95,6 +95,28 @@ provider (`npx tsx scripts/build-quickjs-eval-provider.mjs`, falling back to
 `JS2WASM_EVAL_ENGINE=interpreter`), and confirm a known eval-dependent row
 runs before trusting the numbers.
 
+## Environment trap: STALE `scripts/compiler-bundle.mjs` poisons every eval-tier A/B (2026-08-23, dev-4647)
+
+The quickjs eval ADAPTER is a js2wasm-compiled artifact, and
+`loadProviderCompiler` prefers the prebuilt, GITIGNORED
+`scripts/compiler-bundle.mjs` over live `src/`. The adapter cache key is
+sha256(adapter source ∥ bundle hash) — it hashes the BUNDLE, so a stale
+bundle produces a **self-consistent cache HIT**: the build script reports
+"adapter cache HIT + linked-pair verification" while handing you an
+adapter compiled by a compiler that may be WEEKS behind your tree.
+Measured 2026-08-23: the shared cache's adapter was 8 days / 3 waves
+stale; rebuilding the bundle + adapter with ZERO source change flipped 12
+`built-ins/Function` SyntaxError-family rows green. Both directions are
+live: a stale-adapter base OVERSTATES your flips (rows your change never
+touched read as yours) and can HIDE a real regression (a truly-passing
+row reads "already failing on base").
+
+Before ANY eval-dependent A/B or sweep:
+`pnpm run build:compiler-bundle && npx tsx scripts/build-quickjs-eval-provider.mjs`
+— on BOTH arms if the arms differ in compiler source. A cache HIT is not
+freshness; check the bundle's mtime against your base commit date. CI is
+unaffected (it rebuilds per run).
+
 ## Environment trap: the worktree `test262/` symlink farm + the GITLINK hazard
 
 The isolation layer rebuilds a fresh worktree's `test262/` as a symlink farm
