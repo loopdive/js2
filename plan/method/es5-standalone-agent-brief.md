@@ -81,18 +81,37 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
      either lane could run would have compiled the combination. Cross-lane
      hazards are only visible on the combined tree — the lead's merge
      verification must include running each lane's suite there.
-   - The merge check confirms the run says **N passed** — never that it
-     exited 0. **Any mechanism that selects zero tests reports the same
-     green**, and there are now four measured ones: a `describe.skipIf`
-     gate; a suite that spins its own `CompilerPool` whose worker cannot
-     start (below); a `-t` filter that matches nothing — **`vitest -t` is a
-     REGEX**, so `-t "f + 1 must agree"` requires two spaces and selects
-     zero (2026-08-23, dev-4491, on a file with no `skipIf` in it at all);
-     and a path/glob that matches no file. The reader's defence is the
-     same for all four, which is why they are one rule: read the counts and
-     require N > 0. `21 skipped` beside `1 failed` is what tells you a
-     filter has finally bitten. Escape `+ ( ) [ ] . * ?` in `-t`, or match
-     on a plain substring of the test name.
+   - The merge check reads the run's **counts**, never its exit status —
+     and the check is **N == the number of tests the file declares**, not
+     `N > 0` (2026-08-23, dev-4491's calibration). Five measured ways a run
+     lies, all caught by that one comparison:
+     - `N == 0`, reported green: a `describe.skipIf` gate; a suite that
+       spins its own `CompilerPool` whose worker cannot start (below); a
+       path/glob matching no file; and a `-t` filter matching nothing —
+       **`vitest -t` is a REGEX**, so `-t "f + 1 must agree"` requires two
+       spaces and selects zero, on a file with no `skipIf` in it at all.
+       Escape `+ ( ) [ ] . * ?`, or match a plain substring.
+     - `0 < N < declared`: vitest's own RPC dropping task updates under
+       load (`[vitest-worker]: Timeout calling "onTaskUpdate"`). `N > 0`
+       passes a run that lost half its tests; only the equality catches it.
+     `21 skipped` beside `1 failed` is the tell for the first group.
+     Establish the declared count independently before trusting the
+     summary — `grep -cE '^\s+it(\.fails)?\(' <file>` is the cheap version,
+     and it is a floor, not a census (it misses `it.each`, `test(`, and
+     generated cases).
+   - **Contention fakes the ABSENCE of failure as well as its presence.** A
+     run can print `22 passed` beside `Errors 1 error` where the error is
+     that RPC timeout and no test is involved. Read what the error IS. In
+     the measured case the tally equalled the file's declared 22, so
+     nothing had been lost — which is exactly the comparison above doing
+     its job, and is why an `Errors` line is not by itself a verdict.
+   - **A pipe can hide the line that would have told you.** Several
+     result-bearing runs were filtered inline through
+     `grep -E "✓|×|passed|failed|skipped"`, which does not match `Errors N
+     error` — so those runs cannot retrospectively be cleared of the RPC
+     case (dev-4491, self-audit; the totals matched the declared counts, so
+     the conclusions stood). Same defect class as the `-t` regex: a filter
+     that removes the evidence of its own unreliability.
 
 ## Environment trap: fresh worktrees have NO .test262-cache (#4484 finding)
 
