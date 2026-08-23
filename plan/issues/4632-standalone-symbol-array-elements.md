@@ -23,6 +23,11 @@ loc-budget-allow:
 func-budget-allow:
   - src/codegen/symbol-native.ts::fillSymbolAnyToStringArm
   - src/codegen/literals.ts::compileArrayLiteral
+coercion-sites-allow:
+  # The fill SPLICES an arm INTO __any_to_string itself (the single coercion
+  # terminal), it does not hand-roll a parallel ToString matrix — the name
+  # reference is the splice target lookup.
+  - src/codegen/symbol-native.ts
 status-note: implemented (compare-array-symbol passes standalone)
 ---
 
