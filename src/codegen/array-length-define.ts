@@ -487,11 +487,23 @@ function exceedsSafeGrowCeiling(descExpr: ts.ObjectLiteralExpression): boolean {
  *   - `-0`        → passes, and it must: `ToUint32(-0)` is `0`, and the spec
  *                   compares with Number `!==`, under which `-0 !== 0` is false
  *
- * KNOWN GAP (#4222 leftover): the surviving truncation is SIGNED, so a
- * validated length above 2^31-1 still clamps to i32 max
- * (`built-ins/Array/length/15.4.5.1-3.d-3` wants 4294967295 and gets
- * 2147483647). A wider truncation would not help — the vec cannot be that
- * long; representing such a length needs genuinely sparse arrays.
+ * (#4491, 2026-08-21) The truncation is UNSIGNED. It was signed, which clamped
+ * every validated length above 2^31-1 to i32 max
+ * (`built-ins/Array/length/15.4.5.1-3.d-3` wanted 4294967295 and got
+ * 2147483647). The old comment diagnosed that as needing genuinely sparse
+ * arrays; that is false in the direction that matters. STORING elements at such
+ * an index needs sparse arrays — CARRYING the uint32 length VALUE does not: the
+ * `$__vec_base` length field round-trips the whole u32 domain as a bit pattern,
+ * and every reader that can observe a length >= 2^31 widens it back with
+ * `f64.convert_i32_u` (the `__extern_get` "length" arm in `object-runtime.ts`,
+ * the dynamic store in `vec-length-set.ts`, the `__vec_dp_value` sparse-length
+ * arm in `vec-overlay.ts`, and — since this slice — the STATIC vec `.length`
+ * read in `property-access-dispatch.ts`). Lengths below 2^31 encode identically
+ * under either signedness, so this is inert outside the boundary band.
+ *
+ * The two halves are a PAIR and must move together: an unsigned store with a
+ * signed read answers −1 where it used to answer 2147483647 (measured; see the
+ * "BLOCKED sub-item" table in `plan/issues/4491-…md`, which is now closed).
  */
 export function emitArraySetLengthValidation(ctx: CodegenContext, fctx: FunctionContext): void {
   const lenValTmp = allocLocal(fctx, `__arr_len_set_v_${fctx.locals.length}`, { kind: "f64" });
@@ -514,5 +526,5 @@ export function emitArraySetLengthValidation(ctx: CodegenContext, fctx: Function
     then: buildThrowJsErrorInstrs(ctx, "RangeError", "Invalid array length", { flush: fctx }),
   });
   fctx.body.push({ op: "local.get", index: lenValTmp });
-  fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+  fctx.body.push({ op: "i32.trunc_sat_f64_u" });
 }

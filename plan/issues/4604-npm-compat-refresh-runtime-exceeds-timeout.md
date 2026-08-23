@@ -131,6 +131,27 @@ same stale artifact.
   chains (`setTimeout(run, 0)` reschedules while render work remains) that
   would otherwise keep a FINISHED run's process — and its CI step — alive
   indefinitely.
+- **S6: the remaining budget-eater is subdivision-on-timeout, not a hang.**
+  Run 785 (id 32576730177) measured the S5 watchdog merge itself and its
+  react-dom group STILL died at exactly 350:00 (job 97040048748,
+  13:46:49 → 19:36:27Z) with the same single-line log. Two facts resolve the
+  contradiction: (a) the log is single-line **by design** — the generator ran
+  the suite with `quiet: true`, so batch progress was invisible and a bounded
+  slow run is indistinguishable from a hang; (b) a local smoke showed a
+  1-test browser-Fizz batch consuming the full 300s compile-worker timeout,
+  and `runServerHarness`'s `compileGroup` subdivided on ANY invalid result —
+  timeouts included — up to depth 6. Since every sub-batch repeats the same
+  multi-megabyte renderer graph, halving a timed-out batch re-pays the full
+  timeout per half: the ~60-test browser-Fizz file alone can burn up to
+  2^7−1 ≈ 127 attempts × 300s ≈ 10.6h of perfectly bounded compiles — more
+  than the entire 350-min job. Fix in this slice: (1) `compileGroup` no
+  longer subdivides when the worker timed out — one timeout is the verdict
+  for the whole group, its tests recorded as blocked with the timeout as
+  reason; (2) the refresh workflow sets `NPM_COMPAT_SUITE_LOGS=1` and the
+  generator honors it by running react-dom's suite non-quiet, so the next
+  timeout names the lane and batch it went to. All other groups were green
+  in run 785 (jsdom 4 min, redux 2 min, tools 46 min), so react-dom is the
+  sole remaining publisher-blocker.
 
 ## Fix directions (pick during implementation)
 
@@ -229,3 +250,46 @@ consumes the next completed batch.
 
 Implementation: [PR #4771](https://github.com/loopdive/js2/pull/4771), stacked
 on the renderer/compiler baseline in [PR #4769](https://github.com/loopdive/js2/pull/4769).
+## 2026-08-22 follow-up — promotion checks must never be cancelled by refresh
+
+The SHA-keyed measurement groups prevent newer main pushes from replacing an
+older pending refresh, but a second cancellation race remained at promotion.
+When the reusable `ci/npm-compat-refresh` branch already had an open pull
+request, the coordinator checked only whether it was in the merge queue. It
+could then force-update that branch while the pull request's current checks
+were queued or running. GitHub emits `pull_request:synchronize` for that push
+and cancels the checks for the old head before starting a new set; frequent
+refreshes could therefore keep the artifact pull request permanently pending.
+
+The workflow now reads all check-run pages for the promotion pull request's
+current head and leaves the branch untouched while any check is active. The
+guard is intentionally not aged out: the refresh matrix has a 350-minute
+timeout, so a two-hour cutoff would still cancel a legitimate long run. A
+wedged pull request is retained for diagnosis and surfaced by the staleness
+workflow instead of being repeatedly reset.
+
+Implementation: [PR #4774](https://github.com/loopdive/js2wasm/pull/4774).
+
+## 2026-08-22 follow-up — cancellation protections need to cover every updater
+
+The merged check guard still had two holes. First, a two-hour cutoff could
+reset a legitimate long-running promotion check even though the refresh matrix
+allows 350 minutes. Second, scheduled and manual refreshes shared one
+concurrency group, so GitHub could discard an older pending run even with
+`cancel-in-progress: false`. The generic `auto-refresh-prs` cron could also
+rebase the bot-owned promotion branch independently of the npm coordinator.
+
+The workflow now uses per-SHA keys for pushes and per-run keys for scheduled or
+manual refreshes, paginates every check-run page without aging the active-check
+guard out, and fails closed when the check API is unreadable. The generic
+behind-PR sweep excludes `ci/npm-compat-refresh` entirely. This makes the npm
+coordinator the only updater of its promotion branch and prevents both direct
+and indirect `pull_request:synchronize` cancellation churn.
+
+The generic `auto-refresh-prs` cron also excludes the exact
+`ci/npm-compat-refresh` head. Its two-hour stale-check heuristic is appropriate
+for ordinary behind pull requests, but it could otherwise rebase this bot-owned
+branch and emit the same cancelling `synchronize` event outside the npm
+coordinator.
+
+Implementation: [PR #4776](https://github.com/loopdive/js2/pull/4776).

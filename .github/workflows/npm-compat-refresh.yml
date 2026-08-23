@@ -69,10 +69,10 @@ on:
   # Backstop for a quiet main (no pushes ⇒ no push-triggered refresh).
   #
   # It is NOT a backstop against starvation by a busy main, which is what the
-  # original comment here claimed. Scheduled and manual runs share the branch
-  # group below and serialize. Push runs are keyed by their immutable commit
-  # instead, so a busy main cannot replace an older pending measurement before
-  # it gets a runner.
+  # original comment here claimed. Push runs are keyed by their immutable
+  # commit, while scheduled and manual runs are keyed by their own run IDs, so
+  # a busy main cannot replace an older pending measurement before it gets a
+  # runner.
   schedule:
     - cron: "0 */6 * * *"
   workflow_dispatch:
@@ -88,14 +88,14 @@ env:
 
 concurrency:
   # GitHub keeps only one pending run per concurrency group. A ref-only key
-  # therefore cancelled older pending push runs even with
-  # `cancel-in-progress: false` (the active run survived, but its predecessor
-  # never got a runner). Key pushes by SHA so every main commit has an
-  # independent measurement. Schedule and workflow_dispatch still share the
-  # branch ref and remain serialized.
-  group: npm-compat-refresh-${{ github.event_name == 'push' && github.sha || github.ref }}
-  # Never kill an active measurement. Promotion is freshness-checked and uses
-  # a lease-protected force push, so independent SHA lanes can safely race.
+  # therefore cancelled older pending runs even with `cancel-in-progress: false`
+  # (the active run survived, but its predecessor never got a runner). Pushes
+  # are keyed by their immutable SHA; scheduled and manual runs also get a
+  # unique run-id suffix so a delayed measurement is never discarded while it
+  # waits for a runner. Promotion is freshness-checked and uses a
+  # lease-protected force push, so independent lanes can safely race.
+  group: npm-compat-refresh-${{ github.event_name == 'push' && github.sha || format('{0}-{1}', github.ref, github.run_id) }}
+  # Never kill an active measurement.
   cancel-in-progress: false
 
 jobs:
@@ -158,6 +158,10 @@ jobs:
           # two compiler workers active so the long pole finishes before the
           # job ceiling without exhausting the runner's memory.
           DOGFOOD_REACT_DOM_PROJECT_CONCURRENCY: "2"
+          # (#4604) Keep react-dom's per-batch [dogfood] progress lines in the
+          # job log. Two full runs were lost to a silent single-line log where
+          # a 350-min timeout and a hang were indistinguishable.
+          NPM_COMPAT_SUITE_LOGS: "1"
         run: |
           set -euo pipefail
           pnpm run generate:npm-compat -- \
@@ -304,11 +308,13 @@ jobs:
       # group rebuilds that group and cancels its run — the same harm this whole
       # change removes, just relocated. So look before pushing.
       #
-      # FAIL-SAFE DIRECTION IS "PUSH ANYWAY". If the queue cannot be read we
-      # proceed: the harm of a wrong push is bounded (with
+      # The merge-queue gate remains fail-open: if the queue cannot be read we
+      # proceed, because the harm of a wrong push is bounded (with
       # `max_entries_to_build=1` the cancelled group contains only this PR), and
       # the harm of a wrong skip is the artifact freezing behind an unreadable
       # gate — which is #4130, the failure this repo has already paid for once.
+      # The current-head check gate below is deliberately fail-closed instead:
+      # an unreadable check state must not knowingly cancel the CI it protects.
       - name: Check whether the promotion PR is already in the merge queue
         id: queue_state
         env:
@@ -316,8 +322,15 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          PR_NUMBER="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$PROMOTION_BRANCH" \
-            --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+          PR_INFO="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$PROMOTION_BRANCH" \
+            --state open --json number,headRefOid \
+            --jq '.[0] | if . == null then empty else "\(.number) \(.headRefOid)" end' \
+            2>/dev/null || true)"
+          PR_NUMBER="${PR_INFO%% *}"
+          PR_HEAD_SHA="${PR_INFO#* }"
+          if [ "$PR_INFO" = "$PR_NUMBER" ]; then
+            PR_HEAD_SHA=""
+          fi
           echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
 
           if [ -z "$PR_NUMBER" ]; then
@@ -326,6 +339,47 @@ jobs:
             exit 0
           fi
           echo "Open promotion PR: #${PR_NUMBER}"
+
+          # Do not replace the promotion branch while its current PR checks are
+          # running. A force-update fires `pull_request:synchronize`; GitHub
+          # cancels the checks for the old head before starting a new one. On a
+          # long npm-compat refresh cadence that turns every PR run into a
+          # moving target and can keep the artifact PR permanently pending.
+          # Let the current head finish; a later refresh will publish the newer
+          # measurement. Do not age this guard out: the refresh matrix itself
+          # has a 350-minute timeout, so a two-hour cutoff would knowingly
+          # cancel a valid long-running check. A genuinely wedged PR is
+          # surfaced by the staleness workflow and needs human intervention.
+          ACTIVE_CHECKS="unreadable"
+          if [ -n "$PR_HEAD_SHA" ]; then
+            if ! ACTIVE_CHECKS="$(gh api \
+              --paginate \
+              "/repos/${GITHUB_REPOSITORY}/commits/${PR_HEAD_SHA}/check-runs?per_page=100" \
+              --jq '[.check_runs[] | select(.status == "queued" or .status == "in_progress")] | length' \
+              2>/dev/null | awk '{ total += $1 } END { print total + 0 }')"; then
+              ACTIVE_CHECKS="unreadable"
+            fi
+          fi
+          case "$ACTIVE_CHECKS" in
+            unreadable)
+              echo "::warning title=npm-compat-refresh::could not read checks for promotion PR #${PR_NUMBER}; leaving its branch untouched to avoid cancelling CI."
+              echo "skip=1" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+            ''|*[!0-9]*)
+              echo "::warning title=npm-compat-refresh::invalid active-check count (${ACTIVE_CHECKS}); leaving promotion PR #${PR_NUMBER} untouched."
+              echo "skip=1" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+            0)
+              echo "No checks are running on promotion PR #${PR_NUMBER}; continuing."
+              ;;
+            *)
+              echo "Promotion PR #${PR_NUMBER} has ${ACTIVE_CHECKS} check(s) in flight; leaving its branch untouched."
+              echo "skip=1" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
 
           QUEUED="$(gh api graphql -f query="
             query(\$owner: String!, \$name: String!) {

@@ -45,7 +45,7 @@ import { coerceType, compileExpression } from "../shared.js";
 import { emitCachedFuncClosureExternref } from "../closures/method-trampolines.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
-import { addStringConstantGlobal } from "../registry/imports.js";
+import { addStringConstantGlobal, localGlobalIdx } from "../registry/imports.js";
 
 /**
  * (#4480 S1) Is `sym` an ORDINARY function — a plain, non-generator, non-async
@@ -243,6 +243,59 @@ function getOrMintFnctorProtoGlobal(ctx: CodegenContext, fnctorName: string): nu
 const CONSTRUCTOR_FLAGS = 0x01 | 0x04;
 
 /**
+ * (#4491) The `var F = function(){}` half of the `constructor` back-ref.
+ *
+ * §13.2 step 10 does not care HOW the function object was produced, but this
+ * compiler does: a top-level `function F(){}` is read through the
+ * `__fn_closure_<F>` singleton, while `var F = function(){}` is read out of a
+ * module global holding a separately-built closure. Installing the singleton for
+ * the second shape would publish a DIFFERENT function object and make the
+ * observable identity assertion false; installing the module global publishes
+ * the very value the identifier read yields, so the identity holds by
+ * construction.
+ *
+ * Measured before the change (`--target standalone`): `function __func(){}`
+ * already satisfied `__func.prototype.constructor === __func`, while
+ * `var __gunc = function(){}` answered `[object Object]` — the bare prototype
+ * object, i.e. the property was simply absent and the read walked on.
+ *
+ * Declines (leaving the property absent, never wrong) unless:
+ *  - the binding really is `var F = <function expression>` — a re-assignable
+ *    name whose declaration is something else must not have its own initializer
+ *    published as a constructor; and
+ *  - a module global actually backs it, since a function-local `var F =
+ *    function(){}` has no stable global to read and its prototype global is
+ *    shared across activations.
+ */
+function moduleGlobalConstructorInstallInstrs(
+  ctx: CodegenContext,
+  fnctorName: string,
+  ownerDecl: ts.Node | undefined,
+  protoGlobalIdx: number,
+): Instr[] | undefined {
+  // A name this compiler DID resolve to a declaration is not this shape: the
+  // caller's own arm owns the `function F(){}` case, and any other declaration
+  // kind must not have its binding published as a constructor.
+  if (ownerDecl !== undefined) return undefined;
+  if (ctx.topLevelFunctionNames.has(fnctorName)) return undefined;
+  const valueGlobalIdx = ctx.moduleGlobals.get(fnctorName);
+  if (valueGlobalIdx === undefined) return undefined;
+  if (ctx.mod.globals[localGlobalIdx(ctx, valueGlobalIdx)]?.type.kind !== "externref") return undefined;
+  ensureObjectRuntime(ctx);
+  const defineIdx = ctx.funcMap.get("__defineProperty_value");
+  if (defineIdx === undefined) return undefined;
+  addStringConstantGlobal(ctx, "constructor");
+  return [
+    { op: "global.get", index: protoGlobalIdx },
+    ...stringConstantExternrefInstrs(ctx, "constructor"),
+    { op: "global.get", index: valueGlobalIdx },
+    { op: "f64.const", value: CONSTRUCTOR_FLAGS },
+    { op: "call", funcIdx: defineIdx },
+    { op: "drop" }, // the helper returns its target
+  ];
+}
+
+/**
  * (#4480 S1) The instructions that install `F.prototype.constructor = F` onto
  * the just-minted prototype `$Object` held in the prototype global `g`, or
  * `undefined` when this module cannot resolve a STABLE function value for `F`.
@@ -297,7 +350,16 @@ function fnctorConstructorInstallInstrs(
   // future widening of the singleton path would silently break.
   const ownerDecl: ts.Node | undefined =
     ctx.funcMapOwnerDecl.get(fnctorName) ?? ctx.topLevelFunctionDeclarations.get(fnctorName);
-  if (ownerDecl === undefined || !ts.isFunctionDeclaration(ownerDecl)) return undefined;
+  if (ownerDecl === undefined || !ts.isFunctionDeclaration(ownerDecl)) {
+    // (#4491) `var F = function(){}` — the shape the note above scopes out. It
+    // has no `__fn_closure_<F>` singleton, but it does have something just as
+    // identity-stable and strictly CLOSER to the observable: the module global
+    // the ordinary `F` identifier read itself returns. Installing that value
+    // makes `F.prototype.constructor === F` true BY CONSTRUCTION — the two
+    // sides are the same `global.get` — rather than plausible-but-different,
+    // which is the trade this helper refuses.
+    return moduleGlobalConstructorInstallInstrs(ctx, fnctorName, ownerDecl, protoGlobalIdx);
+  }
   const funcIdx = ctx.funcMap.get(fnctorName);
   if (funcIdx === undefined || funcIdx < ctx.numImportFuncs) return undefined;
   ensureObjectRuntime(ctx);

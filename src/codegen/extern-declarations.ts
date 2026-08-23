@@ -370,6 +370,49 @@ export function registerBuiltinExternClasses(ctx: CodegenContext): void {
     });
   }
 
+  // TextEncoder / TextDecoder are Web and Node globals, but JavaScript
+  // packages frequently use them without importing a DOM or Node declaration
+  // file.  In that case the checker has no nominal class to hand to the
+  // normal extern collector and `new TextEncoder()` used to compile as a
+  // null/undefined value.  Register the small host surface synthetically so
+  // the existing extern-class constructor and method dispatch can bind the
+  // real constructors supplied by `getWebHostConstructors()` in runtime.ts.
+  // Host-free targets deliberately keep the native UTF-8 lowering and must
+  // not acquire TextEncoder_* imports (#1752/#1780).
+  if (!ctx.nativeStrings && !ctx.strictNoHostImports) {
+    if (!ctx.externClasses.has("TextEncoder")) {
+      const methods = new Map<string, { params: ValType[]; results: ValType[]; requiredParams: number }>();
+      methods.set("encode", externMethod(1)); // encode(input?) -> Uint8Array
+      methods.set("encodeInto", externMethod(2)); // encodeInto(input, destination) -> result
+      ctx.externClasses.set("TextEncoder", {
+        importPrefix: "TextEncoder",
+        namespacePath: [],
+        className: "TextEncoder",
+        constructorParams: [],
+        methods,
+        properties: new Map([["encoding", { type: { kind: "externref" }, readonly: true }]]),
+      });
+    }
+    if (!ctx.externClasses.has("TextDecoder")) {
+      const methods = new Map<string, { params: ValType[]; results: ValType[]; requiredParams: number }>();
+      methods.set("decode", externMethod(2)); // decode(input?, options?) -> string
+      ctx.externClasses.set("TextDecoder", {
+        importPrefix: "TextDecoder",
+        namespacePath: [],
+        className: "TextDecoder",
+        // label? and options? are both optional; null padding is stripped by
+        // the generic extern_class constructor adapter in runtime.ts.
+        constructorParams: [{ kind: "externref" }, { kind: "externref" }],
+        methods,
+        properties: new Map([
+          ["encoding", { type: { kind: "externref" }, readonly: true }],
+          ["fatal", { type: { kind: "externref" }, readonly: true }],
+          ["ignoreBOM", { type: { kind: "externref" }, readonly: true }],
+        ]),
+      });
+    }
+  }
+
   // #1238 — synthetic ExternClassInfo for String and Array.
   //
   // String and Array are JS built-ins, not declared classes (`declare class

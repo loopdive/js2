@@ -33,6 +33,8 @@ import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { emitHoleSentinel } from "./array-holes.js"; // (#2001 S1)
+import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
+import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4491 T11)
 import { ensureStrToCharVecHelper, stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitStandaloneIterableMaterialize } from "./iterator-native.js"; // (#3100 S5)
 import { popBody, pushBody } from "./context/bodies.js";
@@ -4618,8 +4620,17 @@ export function compileArrayLiteral(
     for (const el of expr.elements) {
       // For holes and explicit undefined in f64 context, emit sNaN sentinel
       // so destructuring default checks trigger correctly (#1024).
+      // (#4491 T11) The two are no longer the same sentinel: an ELISION is
+      // absent (`HOLE_F64_BITS`), an explicit `undefined` element is present
+      // and holds `undefined` (`UNDEF_F64_BITS`). They agree on every value
+      // question — the read boundary maps hole→undef — and disagree on `in` /
+      // `hasOwnProperty` / `Object.keys` / the HOF skip, which is the whole
+      // point. Gated: without the pre-scan flag no marker forks, so a module
+      // with no elision is byte-identical.
       if (elemWasm.kind === "f64" && _isUndefinedLike(el)) {
-        fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
+        const absent = ts.isOmittedExpression(el) && f64HolesActive(ctx);
+        if (absent) ctx.f64HoleMarkerEmitted = true;
+        fctx.body.push({ op: "i64.const", value: absent ? HOLE_F64_BITS : UNDEF_F64_BITS });
         fctx.body.push({ op: "f64.reinterpret_i64" });
       } else if (elemWasm.kind === "externref" && ts.isOmittedExpression(el)) {
         // (#2001 S1) An array-literal elision (`[1, , 3]`) in an `any[]` /
@@ -5104,6 +5115,12 @@ export function compileArrayLiteral(
         // externref-element vec → store the `$Hole` sentinel, matching the
         // no-spread path. Gated on externref; typed vecs are untouched.
         emitHoleSentinel(ctx, fctx);
+      } else if (elemWasm.kind === "f64" && ts.isOmittedExpression(el) && f64HolesActive(ctx)) {
+        ctx.f64HoleMarkerEmitted = true;
+        // (#4491 T11) Same for the f64 carrier: the spread path must agree with
+        // the `array.new_fixed` path above about what an elision stores.
+        fctx.body.push({ op: "i64.const", value: HOLE_F64_BITS });
+        fctx.body.push({ op: "f64.reinterpret_i64" });
       } else {
         compileExpression(ctx, fctx, el, elemWasm);
       }

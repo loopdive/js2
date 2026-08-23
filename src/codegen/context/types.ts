@@ -1175,6 +1175,17 @@ export interface FunctionContext {
      * index is additionally added to `unmappedIndices`.)
      */
     nonWritableIndices?: Set<number>;
+    /**
+     * Argument indices whose `Object.defineProperty(arguments, "<i>", …)` was
+     * routed to the RUNTIME define (#4491) — an accessor, a `writable:false`
+     * data descriptor, or any shape the inline mapped fast path declines. That
+     * route records a real descriptor in the sidecar, which from then on is the
+     * authority for the index; the inline fast path writes only the opaque vec
+     * slot, so taking it afterwards would leave the two disagreeing (a later
+     * `{value: 20}` updated `arguments[0]` while `getOwnPropertyDescriptor`
+     * still reported the old value). Consulted by the fast-path predicate.
+     */
+    runtimeDefinedIndices?: Set<number>;
   };
   /**
    * #1210: bindings detected as `let s = ""; for (...) s += <expr>` builders
@@ -1537,6 +1548,24 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * order. Clear — the common case — keeps every array read byte-identical.
    */
   usesArrayHoles: boolean;
+  /**
+   * (#4491 T11) Set when a body actually EMITTED the f64 absence marker
+   * (`HOLE_F64_BITS`) — an array-literal elision in an f64 carrier, or the
+   * grow-gap fill. Strictly narrower than {@link usesArrayHoles}, which only
+   * says the program contains *some* elision: a module whose only elisions sit
+   * in `any[]`/`string[]` literals sets the flag above and never mints an f64
+   * marker.
+   *
+   * Readable ONLY by FINALIZE-time consumers (`__vec_get`'s host-boundary map,
+   * `fillF64HoleHasIdxArms`), which run after every body — a body-compile-time
+   * consumer must keep using `usesArrayHoles`, because function compilation
+   * order is not source order and the read of `a[i]` can precede the literal
+   * that introduces the marker.
+   *
+   * Measured: without this, `benchmarks/array.ts` grew 19 bytes in `__vec_get`
+   * for a compare that could never fire.
+   */
+  f64HoleMarkerEmitted?: boolean;
   /** Exact, escape-free `new Array(n)` declarations admitted to #4222's carrier. */
   holeyArrayDeclarations: Set<ts.VariableDeclaration>;
   /** Exact constructor nodes that materialize the dedicated sparse carrier. */
@@ -3917,6 +3946,16 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
        * keeps the historical `(ref $Struct)` ABI byte-identically.
        */
       resultIsExtern?: boolean;
+      /**
+       * (fnctor-ctor-arguments.ts) The synthesized ctor materializes an
+       * `arguments` object, so its call sites must publish over-supplied
+       * arguments through `__extras_argv`/`__argc` instead of dropping them.
+       * Cached with the ctor because the CACHE-HIT arm emits the call site
+       * without ever seeing the declaration: a second `new F(…)` that forgot
+       * this fact silently passed the builder's protocol-speaking callee a
+       * stale/empty extras vector.
+       */
+      readsArguments?: boolean;
     }
   >;
   /**

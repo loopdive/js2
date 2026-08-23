@@ -251,6 +251,9 @@ import {
   ensureRuntimeEvalAotCallableCarrierTypes,
   fillRuntimeEvalCallablePropertyGetArm,
 } from "./runtime-eval-callable.js";
+// (#4491 wave-5 T7 slice B) §20.2.2 own-key surface of the provider-realm
+// `%Function%` marker — see runtime-eval-intrinsic-own-props.ts.
+import { fillRuntimeEvalIntrinsicFunctionOwnProps } from "./runtime-eval-intrinsic-own-props.js";
 import { ensureNativeIteratorRuntime, fillNativeIteratorLateArms } from "./iterator-native.js";
 import { emitResizableAbExports } from "./dataview-native.js"; // (#3058)
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
@@ -308,6 +311,8 @@ import { fillVecLengthDynamicArms } from "./vec-length-set.js";
 import { fillTaCtorGetMetaArm } from "./ta-ctor-meta.js"; // `$__ta_ctor` name/length meta arm
 import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
 import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
+import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; // (#2875 w4-F)
+// import { unshiftNativeProtoDeleteArm } from "./native-proto-delete.js"; // (#2875 w4-F) — DISABLED, see call sites
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
@@ -319,6 +324,7 @@ import { fillErrorPropHelpers } from "./error-props.js"; // (#4098) native Error
 import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
 import { fillProtoIndexStore } from "./proto-index-store.js"; // (#4160) prototype-index companions
 import { fillHoleyArrayHasIdxArm } from "./holey-array-presence.js"; // (#4222) nominal sparse carrier
+import { fillF64HoleHasIdxArms } from "./vec-f64-hole-presence.js"; // (#4491 T11) f64 absence marker
 import { finalizeFunctionPoisonPillCalls } from "./function-poison-pill.js";
 import { fillDataViewConstructProtoArm, fillTaDynViewMopArms } from "./ta-dyn-mop.js"; // (#3177/#3371) native view prototype arms
 import { fillObjVecReflectionHelpers } from "./objvec-array-proto.js"; // (#3666) RegExp indices Array reflection
@@ -5475,6 +5481,17 @@ export function generateModule(
     // declared ladder to the bag miss-arm, so the two compose without overlap.
     fillClosedStructExternSetArms(ctx);
     fillFnctorPrototypeDispatchArms(ctx);
+    // (#2875 w4-F) LAST __extern_set prologue: a runtime-keyed write to a
+    // getter-only RegExp member is a sloppy no-op, not a bag entry.
+    unshiftRegExpAccessorSetGuard(ctx);
+    // (#2875 w4-F) `delete <Builtin>.prototype.<m>` rewrites the member CSV.
+    // DISABLED 2026-08-22: measured net-negative — the arm's presence flipped
+    // ~17 rows to fail (the "<m> descriptor should be configurable" family and
+    // Number.prototype.toString routing) while flipping 3 delete-rows to pass.
+    // Bisect: pass at 723fd047ca, fail at da724268b0, pass again with only
+    // this call commented. Re-enable only with a fix for the descriptor
+    // side-effect and a control run over Object/defineProperty prop-desc rows.
+    // unshiftNativeProtoDeleteArm(ctx);
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
@@ -5617,6 +5634,12 @@ export function generateModule(
     // This runs after every other dynamic-reader fill so no generic arm gains
     // `$Hole` semantics.
     fillHoleyArrayHasIdxArm(ctx);
+    // (#4491 T11) f64 absence-marker presence arms. Must run AFTER
+    // `fillExternGetIdxVecArms` (which locates its splice point by the eager
+    // preamble shape) and after `fillProtoIndexStore`; it prepends at body[0]
+    // and only ever RETURNS 0 for a slot that literally holds the marker, so
+    // taking the front slot cannot shadow another receiver's answer.
+    fillF64HoleHasIdxArms(ctx);
 
     // (#802 Slices B+C) Mint the struct-proto natives and prepend the
     // marked-root dispatch arms into `__object_setPrototypeOf` /
@@ -5633,6 +5656,11 @@ export function generateModule(
     // properties (for example assert.throws). Install this after every other
     // __extern_get fill so the carrier delegates directly to its owner module.
     fillRuntimeEvalCallablePropertyGetArm(ctx);
+    // (#4491 T7-B) …and the §20.2.2 own-key surface of the `%Function%` marker
+    // the same boundary hands back for a bare `Function` read. Same finalize
+    // point for the same reason: the marker type index exists only once a
+    // boundary site has minted it.
+    fillRuntimeEvalIntrinsicFunctionOwnProps(ctx);
 
     // (#2358 #10) Fill the reserved `__array_to_primitive_string` body now that
     // `__extern_length`/`__extern_get_idx` (filled just above) and the native
@@ -8631,6 +8659,17 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // declared ladder to the bag miss-arm, so the two compose without overlap.
     fillClosedStructExternSetArms(ctx);
     fillFnctorPrototypeDispatchArms(ctx);
+    // (#2875 w4-F) LAST __extern_set prologue: a runtime-keyed write to a
+    // getter-only RegExp member is a sloppy no-op, not a bag entry.
+    unshiftRegExpAccessorSetGuard(ctx);
+    // (#2875 w4-F) `delete <Builtin>.prototype.<m>` rewrites the member CSV.
+    // DISABLED 2026-08-22: measured net-negative — the arm's presence flipped
+    // ~17 rows to fail (the "<m> descriptor should be configurable" family and
+    // Number.prototype.toString routing) while flipping 3 delete-rows to pass.
+    // Bisect: pass at 723fd047ca, fail at da724268b0, pass again with only
+    // this call commented. Re-enable only with a fix for the descriptor
+    // side-effect and a control run over Object/defineProperty prop-desc rows.
+    // unshiftNativeProtoDeleteArm(ctx);
 
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
@@ -8662,6 +8701,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     inlineCallDispatchSites(ctx);
     inlineFlatStrCallSites(ctx); // (#4157) flatten/equals site fast paths — rationale in flat-str-ic.ts
     fillRuntimeEvalCallablePropertyGetArm(ctx);
+    fillRuntimeEvalIntrinsicFunctionOwnProps(ctx); // (#4491 T7-B) — multi-source parity
 
     // (#1904/#3731) Multi-source parity for the native Array.isArray
     // predicate. Its reserve-time body is a fail-closed `false`; fill it only
@@ -8694,6 +8734,12 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // see the single-source comment). No-op unless reserved.
     fillProtoIndexStore(ctx);
     fillHoleyArrayHasIdxArm(ctx);
+    // (#4491 T11) f64 absence-marker presence arms. Must run AFTER
+    // `fillExternGetIdxVecArms` (which locates its splice point by the eager
+    // preamble shape) and after `fillProtoIndexStore`; it prepends at body[0]
+    // and only ever RETURNS 0 for a slot that literally holds the marker, so
+    // taking the front slot cannot shadow another receiver's answer.
+    fillF64HoleHasIdxArms(ctx);
     // Emit __vec_get / __vec_len exports for runtime iterator fallback.
     emitVecAccessExports(ctx);
 

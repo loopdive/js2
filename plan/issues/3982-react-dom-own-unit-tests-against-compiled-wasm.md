@@ -588,6 +588,86 @@ reported as one implementation-invalid/skipped test rather than wedging the
 parent process. These are compiler/runtime findings, not missing host setup;
 the probe is deliberately too small to be a corpus pass-rate claim.
 
+## Harness-seam checkpoint (2026-08-22)
+
+The next infrastructure slice is prepared in [PR #4775](https://github.com/loopdive/js2wasm/pull/4775). The generated ReactDOM
+setup now recognizes upstream `async function act(...)` declarations before
+injecting its fallback, so the native oracle no longer fails with duplicate
+`act` declarations. It also places setup after test-owned `document` bindings
+and guards the initial body cleanup, which lets Fizz/JSDOM tests initialize
+their own document instead of failing in the temporal dead-zone.
+
+The shared Jest shim now supplies `unmock`, `setTimeout`, `spyOnDev`, and the
+`expect.objectContaining`/`expect.arrayContaining` asymmetric matchers. These
+are test-runner capabilities, not production React behavior; both the native
+oracle and compiled lane use the same shim. Focused ReactDOM and React
+infrastructure tests, typecheck, issue-ID validation, formatting, and diff
+checks pass. The full upstream corpus has not been rerun, so no new pass-rate
+claim is made here; rerun it after the PR lands and keep renderer/compiler
+failures separate from unavailable-infrastructure counts.
+
+The native setup is also now explicit about its package carriers: when the
+oracle skips compiled initialization, `React`, `ReactDOM`, the client/server
+entries, and `act` bind to the installed pinned host singletons. The compiled
+lane continues to bind those names to its Wasm carriers. This closes the
+previous `flushSync`/undefined native-oracle failure mode without changing the
+implementation under test.
+
+The private upstream `./utils/ReactDOMServerIntegrationTestUtils` dependency is
+now available through the same explicit shim. Its rendering helpers receive
+the test's `initModules()` result, so server/client calls stay on the selected
+Wasm module set; only the JSDOM document and PassThrough stream sink are host
+capabilities. A focused regression renders through the selected helper module.
+This removes a module-lookup failure without claiming that the nested helper
+registration cases are a separate denominator; the extractor still reports
+the original direct upstream test records.
+
+The facade also has a compiled-Wasm smoke test: the generated module imports
+the helper factory, instantiates successfully, and exposes its server-render
+method. The full ReactDOM corpus remains unrerun because the pinned upstream
+checkout is unavailable offline in this worktree.
+
+The upstream test-side `scheduler` import now resolves to the installed
+`scheduler/unstable_mock` capability, matching React's Jest preset and
+providing `log`/flush methods without changing the renderer's internal
+scheduler. The infrastructure test verifies both exports.
+
+The matcher shim also now covers the upstream `resolves.not.toThrow()` and
+`resolves.not.toThrowError()` forms. These are promise assertions over the
+test callback result, not a blanket exception suppressor; the focused test
+exercises both a fulfilled non-function and a fulfilled non-throwing function.
+
+The compile worker now builds the web-lane import object from the same explicit
+JSDOM globals used by the parent harness instead of falling back to the
+compiler's hermetic empty import object. This makes the worker's `document`,
+`window`, and DOM constructor receivers observable and keeps the node and web
+lanes on an explicit host boundary. Simple document receiver controls pass
+through the worker. The remaining upstream CSS/edge failures still receive an
+empty object at the compiled renderer boundary, so they remain compiler/runtime
+findings rather than being hidden by a fake document; no renderer pass-rate
+claim is made.
+
+## Node Fizz module-initialization checkpoint (2026-08-22)
+
+The Node Fizz graph exposed one more genuine host seam. Its published CommonJS
+module is evaluated before the lifted test entry, so top-level
+`require("util")`, `require("async_hooks")`, `require("crypto")`, and
+`require("stream")` could reach the entry's not-yet-initialized Jest resolver.
+The project-module resolver now uses the worker's explicit infrastructure
+capability, and the worker exposes the real host records plus a per-worker
+`TextEncoder` and `AsyncLocalStorage`. `queueMicrotask`, `setImmediate`,
+`Buffer`, `URL`, and the encoder globals are declared in the implementation
+module scope as well. This is host setup only; React and the Fizz renderer
+remain the compiled package graph.
+
+The controls are measurable: an implementation-only Node Fizz project now
+validates and instantiates, a no-op test and a type/export probe each pass, and
+the real upstream `ReactDOMFizzServer › should call renderToPipeableStream`
+test now reaches the renderer. It then fails with a compiled renderer null
+pointer in `createRequest`, rather than a module-init or unavailable-infra
+error. The bounded one-test-per-lane smoke therefore still has zero native-host
+errors; this slice does not claim a renderer pass or a full-corpus pass rate.
+
 ## Permanent test reference
 
 `tests/dogfood/react-dom-upstream-suite.test.ts` — pin/commit assertions run

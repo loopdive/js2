@@ -53,6 +53,7 @@ import {
   compileCallableElementAccessCall,
   compileClosureCall,
   emitMatchedClosureCallArguments, // (#4394) rest-aware matched-closure args
+  runtimeSignatureParameters, // (#4491) drops the synthetic `arguments` rest
 } from "./calls-closures.js";
 import { tsSignatureHasRest } from "./closure-sig-match.js"; // (#4394)
 import {
@@ -1634,12 +1635,14 @@ export function compileTailDispatch(
       // aware) — the old kind-only scan picked whichever same-arity closure
       // registered first; a wrong ref-result typeIdx makes the guarded funcref
       // cast below null → call_ref trap (standalone deepEqual-* family).
-      const sigParamCount = sig.parameters.length;
+      // (#4491) Drop the checker's synthetic `arguments`-derived rest symbol.
+      const runtimeSigParams = runtimeSignatureParameters(sig);
+      const sigParamCount = runtimeSigParams.length;
       const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
       const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
       const sigParamWasmTypes: ValType[] = [];
       for (let i = 0; i < sigParamCount; i++) {
-        const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
+        const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
         sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
       }
 
@@ -1759,12 +1762,14 @@ export function compileTailDispatch(
     if (callSigs && callSigs.length > 0) {
       const sig = callSigs[0]!;
 
-      const sigParamCount = sig.parameters.length;
+      // (#4491) See the sibling site above.
+      const runtimeSigParams = runtimeSignatureParameters(sig);
+      const sigParamCount = runtimeSigParams.length;
       const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
       const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
       const sigParamWasmTypes: ValType[] = [];
       for (let i = 0; i < sigParamCount; i++) {
-        const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
+        const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
         sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
       }
 

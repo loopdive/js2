@@ -7,12 +7,14 @@ import { isNullablePrimitiveType, isStringType, isVoidType } from "../../checker
 import type { Instr, ValType } from "../../ir/types.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
+import { redeclarationWidenedLocalSlotType } from "../declarations/redeclared-var-widening.js";
 import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion } from "../context/types.js";
 import { emitCoercedLocalSet, noJsHost } from "../expressions/helpers.js";
 import { emitUndefined } from "../expressions/late-imports.js";
 import { needsTdzFlag, resolveWasmType, varBindingNeedsExternrefForUndefined } from "../index.js";
 import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
 import { widenedVarKeyFromDecl } from "../widened-var-key.js";
+import { emitShapeInferredVecInit } from "../shape-vec-literal-seed.js"; // (#4491) module-global array-carrier seed
 import {
   objectLiteralIsStandaloneAnyObjectCarrier,
   objectLiteralSpreadTakesHostPath,
@@ -1620,15 +1622,14 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // name) must bind to the local, so suppress the module-global store here.
     const moduleGlobalIdx = hasLocalShadow || !bindsModuleGlobal ? undefined : ctx.moduleGlobals.get(name);
     if (moduleGlobalIdx !== undefined) {
-      // Shape-inferred array-like: compile {} as empty vec struct
+      // Shape-inferred array-like: seed the vec carrier (#4491 — the seed
+      // CARRIES a `[…]` initializer's elements now; it used to discard them).
       const shapeInfo = ctx.shapeMap.get(name);
       if (shapeInfo && decl.initializer) {
-        // Create an empty vec struct: struct.new(length=0, data=array.new_default(4))
-        fctx.body.push({ op: "i32.const", value: 0 }); // length = 0
-        fctx.body.push({ op: "i32.const", value: 4 }); // initial capacity
-        fctx.body.push({ op: "array.new_default", typeIdx: shapeInfo.arrTypeIdx });
-        fctx.body.push({ op: "struct.new", typeIdx: shapeInfo.vecTypeIdx });
-        fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
+        emitShapeInferredVecInit(ctx, fctx, shapeInfo, decl.initializer);
+        // Re-read the index: compiling the initializer may shift globals via
+        // addStringConstantGlobal (same discipline as the generic arm below).
+        fctx.body.push({ op: "global.set", index: ctx.moduleGlobals.get(name) ?? moduleGlobalIdx });
         // Set TDZ flag to 1 (initialized)
         emitTdzInit(ctx, fctx, name);
         continue;
@@ -1895,8 +1896,13 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // verdict as the var hoister / let-const pre-hoister, so a reused
     // pre-hoisted slot and this cascade always agree. Applied only when the
     // cascade itself settled on externref — never overrides another inference.
+    // (#4491 wave-5 T4) A module `var` REDECLARED with a differently-tagged
+    // initializer had its global widened to externref; the module-init shadow
+    // local is the same binding and must not be narrowed back by the checker's
+    // (first-declaration) symbol type. See `redeclared-var-widening.ts`.
     const wasmType: ValType =
-      wasmTypeBase.kind === "externref" ? (resolveFnctorTypedBindingType(ctx, decl) ?? wasmTypeBase) : wasmTypeBase;
+      redeclarationWidenedLocalSlotType(ctx, decl) ??
+      (wasmTypeBase.kind === "externref" ? (resolveFnctorTypedBindingType(ctx, decl) ?? wasmTypeBase) : wasmTypeBase);
 
     // (#2814) Bug C: re-align a block-scoped let/const with its OWN pre-hoisted
     // slot. `saveBlockScopedShadows` removed this name's localMap (and TDZ-flag)

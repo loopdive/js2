@@ -8,6 +8,7 @@
  * fill arm) and `expressions/calls.ts` (inline-arrow closure-compile gate).
  */
 import type { Instr, ValType } from "../ir/types.js";
+import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { undefinedExternInstrs } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -134,8 +135,13 @@ export function ensureNativeArrayHof(
   // behaviour of flag-CLEAR modules is #3185/#2001 scope, deliberately not
   // widened here.
   const PRESENCE_SENSITIVE = new Set(["forEach", "map", "filter", "some", "every", "reduce", "reduceRight"]);
+  // (#4491 T11) …and a module with an array-literal elision needs the same
+  // gate for the f64 ABSENCE marker: without it an arithmetic HOF over a sparse
+  // array is LOUDLY wrong (`[1,2,3]` with `a[6]=5` reduces to NaN instead of
+  // skipping the gap). `f64HolesActive` is a pre-scan flag fixed before any
+  // body compiles, so the flag-clear helper body stays byte-identical.
   const hasGateIdx =
-    (ctx.protoIndexDirty || options.forceHasProperty === true) &&
+    (ctx.protoIndexDirty || options.forceHasProperty === true || f64HolesActive(ctx)) &&
     PRESENCE_SENSITIVE.has(methodName) &&
     externHasIdxIdx !== undefined
       ? externHasIdxIdx

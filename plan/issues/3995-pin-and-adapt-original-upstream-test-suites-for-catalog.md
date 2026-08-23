@@ -34,6 +34,7 @@ loc-budget-allow:
   - src/codegen/declarations.ts
   - src/codegen/statements/control-flow.ts
   - src/compiler.ts
+  - src/codegen/extern-declarations.ts
 func-budget-allow:
   - src/codegen/expressions/calls.ts::compileCallExpression
   - src/codegen/expressions/calls.ts::tryEmitInlineDynamicCall
@@ -55,6 +56,7 @@ func-budget-allow:
   - src/codegen/class-bodies.ts::compileClassBodiesInner
   - src/codegen/index.ts::emitIteratorMethodExport
   - src/runtime.ts::<anonymous>#89
+  - src/codegen/extern-declarations.ts::registerBuiltinExternClasses
 ---
 # npm-compat: pin and adapt original upstream test suites for catalog packages
 
@@ -1115,3 +1117,85 @@ runtime failures in the optional-property/error paths and are not reclassified
 as dependency infrastructure.
 
 Implementation remains on [PR #4767 — bridge WebAssembly callbacks in prompt tests](https://github.com/loopdive/js2wasm/pull/4767).
+
+## 2026-08-22 Jest `jest-util.isError` package seam checkpoint
+
+The original `jest-core/src/lib/__tests__/serializeToJSON.test.ts` unit is now
+selected unchanged. Its upstream implementation imports `isError` through the
+published `jest-util` package name; the adapter now verifies the pinned
+`jest-util@30.4.1` `isError.ts` bytes and exposes that real source alongside the
+existing `formatTime`, `convertDescriptorToString`, and `tryRealpath` exports.
+This fixes a genuine package-resolution gap in both the Node oracle and the
+compiled Wasm project. No test result is synthesized and the upstream test
+body is untouched.
+
+The exact unchanged run now covers **353 callbacks across 33 selected files**.
+Node admits **351/353** (the two existing diff-sequence snapshot-oracle
+failures remain), all 33 modules compile and 32 validate, and Wasm scores
+**247/351** with zero runtime failures. The unavailable-infrastructure
+remainder is **2,935 registrations** from 208 deferred files. Both newly
+admitted `serializeToJSON` callbacks pass in Node and Wasm.
+
+Implementation: [PR #4772 — expose the pinned `jest-util.isError` dependency](https://github.com/loopdive/js2wasm/pull/4772).
+
+## 2026-08-22 Jest CommonJS path-global checkpoint
+
+The original `jest-haste-map/src/lib/__tests__/fast_path.test.js` unit is now
+selected unchanged. Its CommonJS-compatible test body uses Node's
+`__dirname`; the generated ESM harness now supplies per-file `__dirname` and
+`__filename` bindings, matching the standard Node module surface without
+hard-coding a package result. All five callbacks pass in both lanes.
+
+The exact unchanged run now covers **358 callbacks across 34 selected files**.
+Node admits **356/358** (the two existing diff-sequence snapshot-oracle
+failures remain), all 34 modules compile and 33 validate, and Wasm scores
+**252/356** with zero runtime failures. The unavailable-infrastructure
+remainder is **2,930 registrations** from 207 deferred files.
+
+Implementation: [PR #4773 — provide CommonJS path globals](https://github.com/loopdive/js2wasm/pull/4773).
+
+## 2026-08-22 Web-host TextEncoder/TextDecoder binding checkpoint
+
+The generic host compiler now registers `TextEncoder` and `TextDecoder` as
+synthetic extern classes when a JavaScript package uses the bare Web/Node
+globals without a DOM or Node declaration file. Their constructors, UTF-8
+methods, and standard read-only properties bind through the existing
+`extern_class` host boundary and the runtime's real Web constructors. Host-free
+WASI/standalone targets keep the native UTF-8 lowering and acquire no
+`TextEncoder_*`/`TextDecoder_*` imports.
+
+The regression covers both compilation and execution: a compiled
+`new TextEncoder().encode()` / `new TextDecoder().decode()` round trip returns
+the Node result and requests the expected host imports. This closes the
+concrete `TextEncoder is not defined` / `TextDecoder is not defined` runner
+failure observed in Hono's unchanged buffer and crypto tests. Any remaining
+Hono failures are scored compiler/runtime compatibility findings, not missing
+Web-global infrastructure.
+
+Implementation: [PR #4752](https://github.com/loopdive/js2/pull/4752).
+
+## 2026-08-22 Prettier utility-suite infrastructure checkpoint
+
+The Prettier adapter now selects 16 of the 20 verified `tests/unit/*.js`
+files, up from the original three-file smoke slice. The unchanged upstream
+callbacks register **151 tests**; the Node oracle reproduces **151/151** after
+the shared runner's negative `toThrow` fix. The shared runner now implements
+negative `toThrow`/`toThrowError` matching, so a negative assertion only fails
+when the thrown error also matches its requested message or constructor.
+
+The adapter supplies source-compatible, ignored checkout dependencies for the
+small pure helpers Prettier imports (`trim-newlines`, `escape-string-regexp`,
+`emoji-regex`, `get-east-asian-width`, `url-or-path`, and `n-readlines`). It
+also supports inline snapshots and the `toBeGreaterThan` matcher used by the
+selected utility tests. No upstream callback or expected input was changed.
+
+The expanded lane compiles 16/16 modules and validates 10/16. It scores
+**48/151** in Wasm; the remaining results are compiler/runtime findings,
+including the existing async-await-in-try refusal tracked in
+[3587](https://github.com/loopdive/js2wasm/blob/main/plan/issues/3587-host-declined-async-shapes-swallow-rejections.md),
+document-carrier validation failures. The four deferred files
+(`builtin-plugins.js`, `html-elements.js`, `syntax-transform.js`, and
+`visitor-keys.js`) remain explicit, with 11 direct static registration sites
+reported as unavailable infrastructure rather than silently disappearing. The
+pinned inventory counts direct `it`/`test` call sites; table-driven
+registrations are expanded separately by the runner.

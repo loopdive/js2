@@ -175,10 +175,18 @@ function sourceAtWasmOffset(sourceMapJson, wasmOffset) {
 // rewired to the in-module values rather than stubbed, so what runs is the
 // published implementation wired to the published implementation.
 function wireRequires(source) {
-  return source
-    .replace(/require\(\s*['"]react['"]\s*\)/g, "__REACT__")
-    .replace(/require\(\s*['"]react-dom['"]\s*\)/g, "__REACTDOM_SHARED__")
-    .replace(/require\(\s*['"]scheduler['"]\s*\)/g, "__SCHEDULER__");
+  return (
+    source
+      .replace(/require\(\s*['"]react['"]\s*\)/g, "__REACT__")
+      .replace(/require\(\s*['"]react-dom['"]\s*\)/g, "__REACTDOM_SHARED__")
+      .replace(/require\(\s*['"]scheduler['"]\s*\)/g, "__SCHEDULER__")
+      // These two constructors are read through Node namespace objects in the
+      // published Fizz bundle. Constructing them through a dynamic Wasm member
+      // loses the host class identity, so obtain the real per-worker instances
+      // from the explicit infrastructure capability instead.
+      .replace(/new\s+util\.TextEncoder\(\)/g, "__js2NodeTextEncoder()")
+      .replace(/new\s+async_hooks\.AsyncLocalStorage\(\)/g, "__js2NodeAsyncLocalStorage()")
+  );
 }
 
 const REACT_DOM_SCHEDULER_SHIM = `
@@ -275,8 +283,16 @@ function buildServerImplementationSource({ reactSource, sharedSource, serverSour
   ].join("\n");
 }
 
-function reactDomTestSetup(prelude, testSource = prelude, { server = false, fizz = false, nativeHost = false } = {}) {
-  const lines = [`document.body.textContent = "";`];
+export function reactDomTestSetup(
+  prelude,
+  testSource = prelude,
+  { server = false, fizz = false, nativeHost = false } = {},
+) {
+  // Some upstream server/Fizz files own a lexical `document` binding and
+  // initialize it from a fresh JSDOM instance in beforeEach. Reading that
+  // binding from the harness setup used to throw in its temporal dead-zone
+  // (or read undefined before beforeEach assigned it).
+  const lines = [`if (typeof document !== "undefined" && document && document.body) document.body.textContent = "";`];
   if (!nativeHost) lines.unshift(`${server ? "__reactDomServerEnsureInit" : "__reactDomEnsureInit"}();`);
   const binds = (name, expression) => {
     const declaration = new RegExp(`\\b(let|var|const)\\s+${name}\\b`).exec(prelude);
@@ -291,23 +307,41 @@ function reactDomTestSetup(prelude, testSource = prelude, { server = false, fizz
       lines.push(`var ${name} = ${expression};`);
     }
   };
-  binds("React", "__REACT__");
-  binds("ReactDOM", "__REACTDOM_SHARED__");
-  binds("ReactDOMClient", "__REACTDOM__");
-  binds("OuterReactDOMClient", "__REACTDOM__");
-  binds("InnerReactDOM", "{ flushSync: __REACTDOM_SHARED__.flushSync }");
-  binds("InnerReactDOMClient", "{ createRoot: __REACTDOM__.createRoot }");
-  if (server) binds("ReactDOMServer", "__REACTDOM_SERVER__");
+  const react = nativeHost ? "__js2ReactInfra().react" : "__REACT__";
+  const reactDom = nativeHost ? "__js2ReactInfra().reactDom" : "__REACTDOM_SHARED__";
+  const reactDomClient = nativeHost ? "__js2ReactInfra().reactDomClient" : "__REACTDOM__";
+  const reactDomServer = nativeHost ? "__js2ReactInfra().reactDomServer" : "__REACTDOM_SERVER__";
+  binds("React", react);
+  binds("ReactDOM", reactDom);
+  binds("ReactDOMClient", reactDomClient);
+  binds("OuterReactDOMClient", reactDomClient);
+  binds("InnerReactDOM", reactDom);
+  binds("InnerReactDOMClient", reactDomClient);
+  if (server) binds("ReactDOMServer", reactDomServer);
   if (fizz) {
-    binds("ReactDOMFizzServer", "__REACTDOM_FIZZ__");
-    binds("ReactDOMFizzStatic", "__REACTDOM_FIZZ__");
+    const fizzServer = nativeHost ? "__js2ReactInfra().reactDomServer" : "__REACTDOM_FIZZ__";
+    binds("ReactDOMFizzServer", fizzServer);
+    binds("ReactDOMFizzStatic", fizzServer);
   }
   const actDeclaration = /\b(let|var|const)\s+act\b/.exec(prelude);
+  const actFunctionDeclaration = /\b(?:async\s+)?function\s+act\s*\(/.test(prelude);
+  const actHost = nativeHost ? "__js2ReactInfra().internalTestUtils.act" : null;
   if (actDeclaration && actDeclaration[1] === "const") {
     // Preserve an upstream const binding; the extractor's import rewrite owns
     // its value and assigning to it would turn a harness setup into a failure.
-  } else if (actDeclaration || /\bact\b/.test(testSource)) {
+  } else if (actDeclaration && actHost) {
+    lines.push(`act = ${actHost};`);
+  } else if (actDeclaration) {
     lines.push(`${actDeclaration ? "act" : "var act"} = async function (callback) {
+  var result;
+  __REACTDOM_SHARED__.flushSync(function () { result = callback(); });
+  if (result !== null && result !== undefined && typeof result.then === "function") await result;
+  return result;
+};`);
+  } else if (!actFunctionDeclaration && actHost && /\bact\b/.test(testSource)) {
+    lines.push(`var act = ${actHost};`);
+  } else if (!actFunctionDeclaration && /\bact\b/.test(testSource)) {
+    lines.push(`var act = async function (callback) {
   var result;
   __REACTDOM_SHARED__.flushSync(function () { result = callback(); });
   if (result !== null && result !== undefined && typeof result.then === "function") await result;
@@ -328,6 +362,7 @@ const SETUP_BINDINGS = [
   "ReactDOMFizzServer",
   "ReactDOMFizzStatic",
   "act",
+  "document",
 ];
 
 // A React test often assigns host globals in its beforeEach before declaring
@@ -389,7 +424,42 @@ function buildProjectModuleSource({ exportName, moduleName, imports, bindings = 
   // modules made importers observe the wrong (usually empty) object.
   const carrier = `__${moduleName}Exports`;
   const wiredSource = source.replace(/\bexports\b/g, carrier);
-  return `${imports}\nconst ${carrier} = {};\n${bindings}\n${wiredSource}\nexport { ${carrier} as ${exportName} };\n`;
+  // Implementation modules are evaluated before the entry module. Their
+  // published CommonJS graphs can therefore not use the entry's Jest `require`
+  // shim: its mock table has not been initialized yet. Resolve the remaining
+  // package/Node dependencies through the worker-installed host capability
+  // surface instead. React/ReactDOM/scheduler imports are already rewired by
+  // `wireRequires`; this local resolver only handles declared host modules such
+  // as `util`, `crypto`, `async_hooks`, and `stream` in Node Fizz.
+  const moduleRequire =
+    `function __js2ModuleRequire(name) {\n` +
+    `  var infrastructure = globalThis.__js2ReactUpstreamInfrastructure;\n` +
+    `  if (infrastructure === undefined || infrastructure === null || typeof infrastructure.require !== "function")\n` +
+    `    throw new Error("React upstream implementation dependency is unavailable: " + name);\n` +
+    // Node's builtin namespace objects are host modules. Expose the members
+    // used by the published Fizz graph as plain capability records so dynamic
+    // property reads (notably new util.TextEncoder and new
+    // async_hooks.AsyncLocalStorage) retain their host constructor identity.
+    `  if (name === "util") return infrastructure.nodeUtil;\n` +
+    `  if (name === "async_hooks") return infrastructure.nodeAsyncHooks;\n` +
+    `  if (name === "crypto") return infrastructure.nodeCrypto;\n` +
+    `  if (name === "stream") return infrastructure.nodeStream;\n` +
+    `  return infrastructure.require(name);\n` +
+    `}\n` +
+    `function __js2NodeTextEncoder() { return globalThis.__js2ReactUpstreamInfrastructure.nodeTextEncoder; }\n` +
+    `function __js2NodeAsyncLocalStorage() { return globalThis.__js2ReactUpstreamInfrastructure.nodeAsyncLocalStorage; }\n` +
+    `var require = __js2ModuleRequire;\n` +
+    // Node's published Fizz graph reads these globals at module scope. The
+    // compiler otherwise treats an unqualified queueMicrotask as an unresolved
+    // identifier and emits a ReferenceError before the entry shim can run.
+    `var queueMicrotask = globalThis.queueMicrotask;\n` +
+    `var setImmediate = globalThis.setImmediate;\n` +
+    `var clearImmediate = globalThis.clearImmediate;\n` +
+    `var Buffer = globalThis.Buffer;\n` +
+    `var URL = globalThis.URL;\n` +
+    `var TextEncoder = globalThis.TextEncoder;\n` +
+    `var TextDecoder = globalThis.TextDecoder;`;
+  return `${imports}\nconst ${carrier} = {};\n${bindings}\n${moduleRequire}\n${wiredSource}\nexport { ${carrier} as ${exportName} };\n`;
 }
 
 // Keep each published CJS implementation file in its own project module.
@@ -793,7 +863,16 @@ async function runServerHarness({
       result.validationError ??
       (result.timedOut ? `compile timeout after ${compileTimeoutMs}ms` : validates ? null : "no binary emitted");
 
-    if (!validates && groupTests.length > 1 && depth < 6) {
+    // (#4604) Subdivide only on a genuine invalid result, never on a worker
+    // TIMEOUT. Each batch's compile cost is dominated by the multi-megabyte
+    // renderer graph that every sub-batch repeats, so halving a timed-out
+    // batch re-pays the full timeout per half: a 60-test Fizz file whose graph
+    // cannot compile inside the deadline would burn up to 2^7-1 attempts ×
+    // 300s ≈ 10.6h of bounded compiles — alone exceeding the refresh job's
+    // 350-min budget (run 785, job 97040048748, killed at exactly 350:00 with
+    // the graphs still compiling). One timeout is the verdict for the whole
+    // group; its tests are recorded as blocked with the timeout as reason.
+    if (!validates && !result.timedOut && groupTests.length > 1 && depth < 6) {
       const middle = Math.ceil(groupTests.length / 2);
       await compileGroup(file, groupTests.slice(0, middle), depth + 1);
       await compileGroup(file, groupTests.slice(middle), depth + 1);

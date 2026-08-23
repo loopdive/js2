@@ -60,6 +60,7 @@ import { usesNativeNumberFormat } from "../number-format-native.js";
 import { emitSymbolToString } from "../symbol-native.js";
 import { resolveGlobalParseBuiltin } from "../global-builtin-resolution.js";
 import { resolveBuiltinStaticBindingAlias } from "../builtin-static-globals.js";
+import { resolveVariadicBuiltinStaticPlainAlias } from "../builtin-static-plain-alias.js"; // (#4491 wave-5 T6)
 import { ensureStandaloneBuiltinStaticMethodClosure } from "../builtin-value-read.js";
 import { localBindingShadowsCapturingFunction } from "../function-declaration-observation.js";
 import { isUnaliasedNodeFsImportBinding } from "../node-fs-binding-identity.js";
@@ -75,7 +76,7 @@ import { compileAnnexBEscapeCall } from "../annexb-escape-call.js"; // (#3064 / 
 import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import { ensureWasiWriteFileStringsHelper } from "../wasi.js";
 import { wasiAllocStringData } from "./builtins.js";
-import { compileClosureCall } from "./calls-closures.js";
+import { compileClosureCall, runtimeSignatureParameters } from "./calls-closures.js";
 import { tryCompileStoredObjectBuiltinCall } from "./call-object-builtins.js";
 import { compileSpreadCallArgs } from "./extern.js";
 import {
@@ -89,6 +90,7 @@ import {
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
 import { buildThrowJsErrorInstrs, emitThrowReferenceError } from "../js-errors.js"; // undeclared-identifier call → ReferenceError
 import { compileInternalCallArgument } from "./internal-call-argument.js";
+import { isSloppyImplicitGlobalBinding } from "./implicit-global-binding.js"; // (#3966) callee stored on the realm global
 import { isForeignEvalNode } from "./eval-source.js";
 import { resolvesToGlobalFunctionAlias } from "./eval-inline.js";
 import { prepareStandaloneEvalAliasCall } from "./eval-alias.js";
@@ -1408,14 +1410,31 @@ export function compileIdentifierCall(
         ensureFuncValueWrappersRegistered(ctx, expr.getSourceFile());
         const sig = callSigs[0]!;
         const builtinAlias =
-          ctx.standalone || ctx.wasi ? resolveBuiltinStaticBindingAlias(ctx, expr.expression) : undefined;
+          ctx.standalone || ctx.wasi
+            ? // (#4491 wave-5 T6) The destructuring spelling (`const { max } = Math`)
+              // first — unchanged — then the plain single-name form
+              // (`var f = String.fromCharCode`), which is restricted to the
+              // variadic-convention statics whose lib rest signature actively
+              // destroys call-site argument 0.
+              (resolveBuiltinStaticBindingAlias(ctx, expr.expression) ??
+              resolveVariadicBuiltinStaticPlainAlias(ctx, expr.expression))
+            : undefined;
         const builtinAliasClosure = builtinAlias
           ? ensureStandaloneBuiltinStaticMethodClosure(ctx, builtinAlias.builtinName, builtinAlias.propName)
           : null;
         const builtinAliasInfo = builtinAliasClosure
           ? ctx.closureInfoByTypeIdx.get(builtinAliasClosure.type.typeIdx)
           : undefined;
-        const sigParamCount = builtinAliasInfo?.paramTypes.length ?? sig.parameters.length;
+        // (#4491) `runtimeSignatureParameters` drops the `(...args: any[])` the
+        // checker SYNTHESIZES for a JS function that reads `arguments`
+        // (`function __GUNC(){ return arguments[0]; }`). That symbol has no
+        // formal slot in the compiled callee — the real values travel through
+        // `__argc`/`__extras_argv` — so treating it as a formal both coerces
+        // actual argument 0 to the rest ARRAY type (a string is not a vec, so
+        // the guarded cast NULLS it) and reports `__argc = 1`. `arguments.length`
+        // stayed right while `arguments[0]` read back `null` (S13.2_A2_T1).
+        const runtimeSigParams = runtimeSignatureParameters(sig);
+        const sigParamCount = builtinAliasInfo?.paramTypes.length ?? runtimeSigParams.length;
         const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
         const sigRetWasm =
           builtinAliasInfo?.returnType ?? (isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType));
@@ -1627,6 +1646,21 @@ export function compileIdentifierCall(
           // values in order to classify that candidate's overflow arguments.
           const actualArgExternLocals: number[] = [];
           const cpParamCnt = matchedClosureInfo.paramTypes.length;
+          // (#4491 wave-5 T6) The callee is a STATICALLY KNOWN variadic builtin
+          // value (`var f = String.fromCharCode`, `var m = Math.max`, or the
+          // destructured `const { max } = Math`) whose reified closure takes ONE
+          // `(ref null $vec_externref)` args param. Its single declared slot is
+          // NOT a positional formal — filling it with call-site argument 0
+          // guard-casts a number to a vec and NULLS it (measured: `m(5)` → 0,
+          // `n(4,2,9)` → 0). Route EVERY argument through the extras path
+          // instead, where each is boxed to externref exactly as the vec fold
+          // expects; the variadic dispatch arm below then packs them in order.
+          const variadicAliasCall =
+            builtinAliasInfo !== undefined &&
+            ctx.variadicBuiltinClosure !== undefined &&
+            builtinAliasInfo.funcTypeIdx === ctx.variadicBuiltinClosure.funcTypeIdx &&
+            innerResultType?.kind === "externref";
+          const cpPositionalCnt = variadicAliasCall ? 0 : cpParamCnt;
           // (#1511) Save overflow args to externref locals so we can pack them
           // into __extras_argv right before the call (whichever dispatch arm
           // wins). The lifted callee may read `arguments` and needs the full
@@ -1634,14 +1668,14 @@ export function compileIdentifierCall(
           const cpExtrasLocals: number[] = [];
           // biome-ignore lint/complexity/noUselessLoneBlockStatements: groups arg-emit + extras-pack as one logical unit
           {
-            for (let i = 0; i < Math.min(expr.arguments.length, cpParamCnt); i++) {
+            for (let i = 0; i < Math.min(expr.arguments.length, cpPositionalCnt); i++) {
               compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, matchedClosureInfo.paramTypes[i]);
               const argLocal = allocLocal(fctx, `__carg_${fctx.locals.length}`, matchedClosureInfo.paramTypes[i]!);
               fctx.body.push({ op: "local.set", index: argLocal });
               argLocals.push(argLocal);
               saveArgumentLocalAsExtern(ctx, fctx, argLocal, matchedClosureInfo.paramTypes[i]!, actualArgExternLocals);
             }
-            for (let i = cpParamCnt; i < expr.arguments.length; i++) {
+            for (let i = cpPositionalCnt; i < expr.arguments.length; i++) {
               const extraType = compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "externref" });
               if (extraType === null) {
                 fctx.body.push({ op: "ref.null.extern" });
@@ -1677,7 +1711,14 @@ export function compileIdentifierCall(
           // pushDefaultValue emits a plain ref.null (without ref.as_non_null,
           // which would trap at runtime). The callee wrapper signature accepts
           // nullable refs, so this is assignment-compatible. (#1131)
-          for (let i = expr.arguments.length; i < matchedClosureInfo.paramTypes.length; i++) {
+          // (#4491 wave-5 T6) Pad from the number of slots actually FILLED, not
+          // from the call-site argument count. Identical for every existing
+          // shape (`argLocals.length === Math.min(expr.arguments.length,
+          // cpParamCnt)`); it differs only for the variadic-alias call above,
+          // which fills no positional slot and still needs its single declared
+          // vec slot padded so the non-variadic candidate arms stay
+          // statically valid.
+          for (let i = argLocals.length; i < matchedClosureInfo.paramTypes.length; i++) {
             const paramType = matchedClosureInfo.paramTypes[i]!;
             const padType: ValType =
               paramType.kind === "ref" ? { kind: "ref_null", typeIdx: paramType.typeIdx } : paramType;
@@ -1921,7 +1962,13 @@ export function compileIdentifierCall(
               // (argLocals beyond expr.arguments.length are synthesized padding),
               // then the overflow extras (already externref).
               let packed = 0;
-              for (let ai = 0; ai < Math.min(expr.arguments.length, argLocals.length); ai++) {
+              // (#4491 wave-5 T6) On a statically-known variadic-alias call the
+              // declared slot holds only PADDING (every real argument went down
+              // the extras path), so packing from `argLocals` would inject a
+              // null vec as argument 0 — the exact defect this arm exists to
+              // avoid.
+              const variadicPositionalCnt = variadicAliasCall ? 0 : Math.min(expr.arguments.length, argLocals.length);
+              for (let ai = 0; ai < variadicPositionalCnt; ai++) {
                 armBody.push({ op: "local.get", index: argLocals[ai]! });
                 const at = matchedClosureInfo.paramTypes[ai]!;
                 if (at.kind === "f64" || at.kind === "i32") {
@@ -1970,6 +2017,20 @@ export function compileIdentifierCall(
                   armBody.push({ op: "drop" });
                   armBody.push(...defaultValueInstrs(expectedReturn));
                 }
+              } else if (expectedReturn.kind === "ref" || expectedReturn.kind === "ref_null") {
+                // (#4491 wave-5 T6) RECOVER the ref-typed result instead of
+                // discarding it. This arm used to `drop` every non-f64/i32/
+                // externref return and push a default — invisible while only
+                // `Math.max`/`Math.min` were variadic (they return numbers), but
+                // a reified `String.fromCharCode` returns a string, which lowers
+                // to `(ref $AnyString)`: `f(97)` computed the correct `"a"` and
+                // threw it away, answering `undefined`. Both ops are pure, so
+                // the arm stays dead-arm-safe (no late import, no index shift).
+                armBody.push({ op: "any.convert_extern" });
+                armBody.push({
+                  op: expectedReturn.kind === "ref_null" ? "ref.cast_null" : "ref.cast",
+                  typeIdx: expectedReturn.typeIdx,
+                });
               } else if (expectedReturn.kind !== "externref") {
                 armBody.push({ op: "drop" });
                 armBody.push(...defaultValueInstrs(expectedReturn));
@@ -1987,6 +2048,13 @@ export function compileIdentifierCall(
             }
 
             for (const fc of [...funcCandidates].reverse()) {
+              // (#4491 wave-5 T6) On a statically-known variadic-alias call the
+              // MATCHED candidate carries the variadic func type itself — its
+              // positional arm would `call_ref` with the padded null vec and
+              // shadow the variadic arm below (measured: `m(1,2,3)` answered
+              // `-Infinity`, an empty fold). The variadic arm owns that func
+              // type here; drop the duplicate positional arm for it.
+              if (variadicAliasCall && variadic !== undefined && fc.funcTypeIdx === variadic.funcTypeIdx) continue;
               // Each candidate needs root self, args, typed funcref, call_ref.
               // Exactness belongs solely to the funcref type; wrapper subtypes
               // are module-local allocation identities.
@@ -2155,7 +2223,11 @@ export function compileIdentifierCall(
       const declaration = ctx.oracle.valueDeclarationOf(expr.expression);
       const isRuntimeEvalGlobal =
         (ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings === true && declaration === undefined;
-      const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, isKnownVariable || isRuntimeEvalGlobal);
+      // (#3966) A callee whose only binding is a realm-global property the
+      // program created (`this.beep = fn` / bare `getRight = fn`) is legitimate —
+      // see implicit-global-binding.ts for why the two arms below got it wrong.
+      const implicitCallee = isSloppyImplicitGlobalBinding(ctx, fctx, funcName);
+      const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, isKnownVariable || isRuntimeEvalGlobal || implicitCallee);
       if (dyn !== null) return dyn;
 
       // §6.2.5.5 GetValue on an unresolvable Reference: calling a TRULY
@@ -2168,7 +2240,13 @@ export function compileIdentifierCall(
       // used to swallow it. Standalone/wasi only, and NOT under
       // runtime-eval global bindings (an eval-defined global function has no
       // static symbol yet is legitimately callable there).
-      if ((ctx.standalone || ctx.wasi) && !isRuntimeEvalGlobal && declaration === undefined && noJsHost(ctx)) {
+      if (
+        (ctx.standalone || ctx.wasi) &&
+        !isRuntimeEvalGlobal &&
+        !implicitCallee &&
+        declaration === undefined &&
+        noJsHost(ctx)
+      ) {
         emitThrowReferenceError(ctx, fctx, `${funcName} is not defined`);
         fctx.body.push({ op: "unreachable" });
         return { kind: "externref" };

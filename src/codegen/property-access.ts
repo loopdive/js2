@@ -19,6 +19,7 @@ import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { emitBoundsCheckedArrayGet } from "./array-methods.js";
 import { emitHoleToUndefined } from "./array-holes.js"; // (#2001 S1)
+import { emitF64HoleToUndef } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys; (#2963) method-owner chain
@@ -3363,6 +3364,36 @@ function tryEmitRealmGlobalModuleGlobalRead(
   return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
 }
 
+/**
+ * (#4491) The BRACKET spelling of the #4500 Slice A arm above — `this["p"]` /
+ * `globalThis["p"]` where `p` is a `var`-declared script global.
+ *
+ * §13.3.3 makes the two spellings the same [[Get]], and the compiler's own
+ * global-object model makes them disagree: the dot form has read the module
+ * global since Slice A, while the bracket form kept falling to the
+ * `typeof globalThis` struct and answered `undefined`. Measured on this head:
+ *
+ *     var count = 0;   this.count      // 0          — Slice A
+ *     var count = 0;   this["count"]   // undefined  — this arm
+ *
+ * Only a key the compiler can resolve to a fixed string qualifies; a genuinely
+ * dynamic key (`this[k]`) keeps the existing dynamic read, which consults the
+ * real global object. Declining is byte-identical.
+ */
+function tryEmitRealmGlobalModuleGlobalElementRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.ElementAccessExpression,
+): ValType | undefined {
+  if (!receiverIsRealmGlobalObject(ctx, fctx, expr.expression)) return undefined;
+  const key = resolveComputedKeyExpression(ctx, expr.argumentExpression);
+  if (key === undefined) return undefined;
+  const globalIdx = ctx.moduleGlobals.get(key);
+  if (globalIdx === undefined) return undefined;
+  fctx.body.push({ op: "global.get", index: globalIdx });
+  return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
+}
+
 export function compilePropertyAccess(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3891,6 +3922,10 @@ function emitPlainArrayUndefinedOobGet(
   fctx.body.push({ op: "local.get", index: arrLocal });
   fctx.body.push({ op: "local.get", index: idxLocal });
   emitBoundsCheckedArrayGet(fctx, arrTypeIdx, elementType, ctx, false);
+  // (#4491 T11) Canonicalize the ABSENCE marker to the UNDEFINED marker before
+  // the sentinel test below, so the existing `emitIsUndefF64` observer catches
+  // both without learning a second bit pattern.
+  emitF64HoleToUndef(ctx, fctx, elementType);
   let elementIsUndefinedLocal: number | undefined;
   if (ctx.usesArrayHoles && elementType.kind === "f64") {
     const rawValueLocal = allocLocal(fctx, `__oobu_raw_${fctx.locals.length}`, { kind: "f64" });
@@ -4373,6 +4408,11 @@ export function compileElementAccess(
 
   const functionPoisonResult = tryCompileFunctionPoisonRead(ctx, fctx, expr);
   if (functionPoisonResult !== undefined) return functionPoisonResult;
+
+  // (#4491) `this["p"]` / `globalThis["p"]` on a `var`-declared script global —
+  // the bracket twin of the #4500 Slice A dot arm.
+  const realmGlobalElementRead = tryEmitRealmGlobalModuleGlobalElementRead(ctx, fctx, expr);
+  if (realmGlobalElementRead !== undefined) return realmGlobalElementRead;
 
   const jsonParseElementType = tryEmitJsonParseElementAccess(ctx, fctx, expr);
   if (jsonParseElementType !== undefined) return jsonParseElementType;
@@ -5680,6 +5720,9 @@ export function compileElementAccessBody(
       // (#2001 S1) Even bounds-eliminated externref reads must map a `$Hole`
       // slot back to `undefined` — the loop guard proves in-bounds, not present.
       if (ctx.usesArrayHoles && arrDef.element.kind === "externref") emitHoleToUndefined(ctx, fctx);
+      // (#4491 T11) f64 twin: an in-bounds slot holding the absence marker
+      // reads back as `undefined`, never as the marker itself.
+      emitF64HoleToUndef(ctx, fctx, arrDef.element);
     } else if (oobUndefined && f1BoxType !== null) {
       // (#2760 F1, #2785 type-aware box) Plain-array OOB → `undefined` for a
       // PRIMITIVE element: widen the SAFE result to externref (box the in-bounds
@@ -5801,6 +5844,7 @@ export function compileElementAccessBody(
     // (#2001 S1) Map a `$Hole` slot back to `undefined` on bounds-eliminated
     // externref reads too (in-bounds ≠ present).
     if (ctx.usesArrayHoles && typeDef.element.kind === "externref") emitHoleToUndefined(ctx, fctx);
+    emitF64HoleToUndef(ctx, fctx, typeDef.element); // (#4491 T11)
   } else if (oobUndefinedArr && f1BoxTypeArr !== null) {
     // (#2760 F1, #2785/#2792 type-aware box) Plain-array OOB → `undefined` for a
     // PRIMITIVE element: widen to a boxed-or-undefined externref, boxed by the

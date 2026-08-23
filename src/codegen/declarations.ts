@@ -35,6 +35,9 @@ import {
 } from "./module-init-collection.js";
 import { emitUndefinedExtern, ensureAnyHelpers, ensureWrapperTypes } from "./any-helpers.js";
 import { emitScriptGlobalFunctionBindings } from "./global-function-bindings.js"; // (#4394) §9.1.1.4.18
+import { emitScriptGlobalVarBindings } from "./global-var-bindings.js"; // (#4491 T4) §9.1.1.4.17
+import { isHoistedTopLevelVarName } from "./top-level-hoisted-var-names.js"; // (#4491 T3) pre-declaration writes
+import { isAssignmentOverTopLevelFunctionName } from "./top-level-assigned-function-names.js"; // (#4491 T12)
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
@@ -121,6 +124,7 @@ import {
 } from "./program-abi-source-callable-planning.js";
 import { rebindWidenedArrayVecType } from "./declarations/array-rebind-element-widening.js";
 import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneous-scalar-var-widening.js";
+import { redeclarationWidenedModuleGlobalType } from "./declarations/redeclared-var-widening.js";
 import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
 import { emitModuleVarUndefinedSeeds } from "./declarations/module-var-undefined-seed.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
@@ -1389,9 +1393,23 @@ function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, st
 
 function shouldCollectTopLevelAssignment(ctx: CodegenContext, target: ts.Expression, operator: ts.SyntaxKind): boolean {
   const targetName = getAssignmentRootIdentifier(target);
-  const namedGlobal = targetName === "globalThis" || (!!targetName && ctx.moduleGlobals.has(targetName));
+  // (#4491 T3) `ctx.moduleGlobals` is filled by the SAME single pass that asks
+  // this question, so a write that precedes its own `var` declaration
+  // (`x = 1; … var x;`) saw an empty answer and the whole statement was
+  // dropped. The pre-scan supplies the order-independent fact; `var` only —
+  // see top-level-hoisted-var-names.ts for why `let`/`const` stay out.
+  const namedGlobal =
+    targetName === "globalThis" ||
+    (!!targetName && (ctx.moduleGlobals.has(targetName) || isHoistedTopLevelVarName(target, targetName)));
   return (
     namedGlobal ||
+    // (#4491 T12) The FunctionDeclaration half of the same ordering hole: the
+    // module global that backs a reassigned function binding is minted by
+    // `registerReassignedFunctionGlobals` (#2931), which runs AFTER this pass —
+    // so `namedGlobal` is false for EVERY such name under every statement order
+    // and `function g(){}; g = 123;` was dropped outright. Bare-identifier
+    // targets only; see top-level-assigned-function-names.ts.
+    isAssignmentOverTopLevelFunctionName(target) ||
     (operator === ts.SyntaxKind.EqualsToken && isExactTopLevelClassAccessorWrite(ctx, target)) ||
     createsGlobalObjectBinding(target, ctx.sloppyImplicitGlobals)
   );
@@ -2307,6 +2325,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     return (
       rebindWidenedArrayVecType(ctx, sourceFile, decl) ??
       heterogeneousWidenedModuleGlobalType(ctx, sourceFile, decl) ??
+      // (#4491 wave-5 T4) `var x = true; … var x = function () {}` is ONE
+      // binding whose slot the checker types from the function declaration; the
+      // boolean initializer is then dropped and the slot holds null. The
+      // declaration-vs-declaration half of #4204's assignment rule.
+      redeclarationWidenedModuleGlobalType(ctx, sourceFile, decl) ??
       inferStandaloneRegExpMatchGlobalType(ctx, decl) ??
       resolveWasmType(ctx, varType)
     );
@@ -3484,6 +3507,10 @@ export function compileDeclarations(
     // properties of the global object. Seeded here, ahead of every user
     // statement, which is what declaration hoisting requires.
     emitScriptGlobalFunctionBindings(ctx, initFctx);
+    // (#4491 T4) §9.1.1.4.17 — and the `var` twin of the same instantiation
+    // step, AFTER the functions so a name declared both ways keeps the function
+    // binding GDI actually initialises. See global-var-bindings.ts.
+    emitScriptGlobalVarBindings(ctx, initFctx);
 
     if (ctx.liveFuncBindingGlobals && ctx.liveFuncBindingGlobals.size > 0) {
       const seededGlobals = new Set<number>();
