@@ -133,7 +133,12 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
      either lane could run would have compiled the combination. Cross-lane
      hazards are only visible on the combined tree — the lead's merge
      verification must include running each lane's suite there.
-   - The merge check reads the run's **counts**, never its exit status.
+   - The merge check reads the run's **counts**, never its exit status —
+     and the exit status lies in BOTH directions. Exit 0 on a run that
+     executed nothing is the familiar half; the inverse is measured too
+     (2026-08-23, dev-4653): **exit status 1 on a run where all 23 tests
+     passed**, the failure being vitest's own `onTaskUpdate` RPC timeout
+     with no test involved. `$?` is not a verdict either way.
      Five measured ways a run reports green having measured nothing (or
      less than it claims), and the check comes in **two tiers — do the free
      one first** (2026-08-23, dev-4491's calibration):
