@@ -15,8 +15,8 @@ area: codegen, runtime
 language_feature: temporal
 goal: spec-completeness
 test262_fail: 2206
-depends_on: []
-related: [661, 4627]
+depends_on: [4627]
+related: [661]
 ---
 
 # #4628 — Temporal as a real runtime object
@@ -71,12 +71,11 @@ TypeError` (59), `Cannot convert bigint to a BigInt` (45), `Expected a
 RangeError to be thrown but no exception was thrown at all` (34), `total is
 not a function` (28), `empty string is not a valid calendar ID` (25).
 
-**Depends on #4627** — the dependency is real, but it is recorded here in prose
-and in `related:` rather than in `depends_on:`, because `plan/issues/4627-…` is
-not on `main` yet (it lives on `claude/engine262-temporal-liy03i`) and the
-`quality` dangling-`depends_on` gate rejects a pointer to a file it cannot
-resolve. **Restore `depends_on: [4627]` once #4627's issue file lands on
-`main`.** Until the 1,477 compile errors clear, a third of the
+**Depends on #4627**, recorded in `depends_on:` above. (It was temporarily held
+in `related:` plus prose while #4627's issue file was still unmerged and the
+`quality` dangling-`depends_on` gate rejected a pointer it could not resolve;
+that file landed on `main` in PR #4788 on 2026-08-23 and the dependency is now
+declared properly.) Until the 1,477 compile errors clear, a third of the
 bucket never instantiates and any change here is unmeasurable in those rows.
 Expect the ~711 semantic-failure count to *grow* once tests stop failing at
 `not defined` and start failing on substance.
