@@ -16,6 +16,48 @@ language_feature: array-descriptors
 goal: standalone-gap
 related: [3251, 4479, 4622, 4620]
 origin: "2026-08-23 wave-3 residual map (196 true failures, .tmp/sweep-204-all.jsonl). Lanes B (.tmp/lane-B-descriptor.txt) + Array leftovers (.tmp/lane-leftover.txt). The single biggest coherent block left."
+loc-budget-allow:
+  # Each grant is a LOCKSTEP or GUARD site that has to live where the decision it
+  # mirrors already lives; splitting them out would separate a predicate from the
+  # consumer that must agree with it, which is the defect class this issue closes.
+  # `src/codegen/literals.ts` — `_hasRealmGlobalObjectValue`, the new arm of the
+  #   existing `objectLiteralForcesHostPath` gate. It has to sit next to that gate:
+  #   three call sites already consult the gate for lockstep, and a second
+  #   predicate module would give them two answers to keep in step instead of one.
+  - src/codegen/literals.ts
+  # `src/codegen/expressions/assignment.ts` — `emitArrayLengthSetReceiverPark`,
+  #   extracted to module scope so `compilePropertyAssignment` grows by 13 lines
+  #   rather than 51. It reads only the receiver ValType + two local indices, so it
+  #   is already the smallest unit the guard can be.
+  - src/codegen/expressions/assignment.ts
+  # `src/codegen/object-ops.ts` — the §10.4.4.2 ordering rewrite inside
+  #   `compileObjectDefineProperty`'s mapped-arguments block, plus the descriptor
+  #   record in `emitMappedArgValueDefine`. The ordering IS the fix, so it cannot
+  #   move away from the statements whose order it constrains.
+  - src/codegen/object-ops.ts
+  # `src/codegen/array-methods.ts` — `emitConcatResultBacking`, already extracted
+  #   to module scope and shared by both `compileArrayConcat` allocation sites.
+  - src/codegen/array-methods.ts
+  # `src/codegen/index.ts` + `src/codegen/declarations.ts` — the two inlined
+  #   lockstep twins of `objectLiteralForcesHostPath`. index.ts cannot import
+  #   literals.ts (index↔literals cycle, called out in the #2804 comment right
+  #   below the new arm), so the arm is inlined there exactly as the spread arm is.
+  - src/codegen/index.ts
+  - src/codegen/declarations.ts
+func-budget-allow:
+  # `compileObjectDefineProperty` +29: the mapped-arguments §10.4.4.2 block gains
+  #   the `applyAttributeState` closure and the flag-word computation. Both are
+  #   ORDER-carrying — the whole defect was that severance ran before the write —
+  #   so hoisting either out of the block would hide the constraint it encodes.
+  - src/codegen/object-ops.ts::compileObjectDefineProperty
+  # `compilePropertyAssignment` +13: the call to the extracted
+  #   `emitArrayLengthSetReceiverPark` plus the null-guarded length store. Down
+  #   from +51 before the extraction.
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  # `collectDeclarations` +12: one consult + its rationale in
+  #   `moduleInitForcesExternref`, a nested function whose entire job is to list
+  #   the reasons a module global must be externref. The list is the function.
+  - src/codegen/declarations.ts::collectDeclarations
 ---
 
 # #4638 — array element/descriptor substrate

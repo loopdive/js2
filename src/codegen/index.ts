@@ -10980,6 +10980,26 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
           }
         }
       }
+      // (#4638) A FUNCTION-SCOPED `var` whose literal has an EMPTY-STRING key
+      // (`var obj = { "": 1 }`) takes the host `$Object` route — #4616's arm of
+      // `objectLiteralForcesHostPath`, on the grounds that "" cannot be a struct
+      // field name. This inlined copy did not list that reason, so the slot kept
+      // the struct type TypeScript infers while the value was an `$Object`: the
+      // guarded store missed, wrote `ref.null`, and the first read did
+      // `struct.get` on null — an UNCATCHABLE trap, not a wrong answer. The
+      // `let`/`const` twin (statements/variables.ts) consults the predicate
+      // directly; this file cannot import literals.ts (index↔literals cycle,
+      // same reason as the spread arm below), so the arm is inlined. Keep in step.
+      if (!initForcesExternref) {
+        for (const p of decl.initializer.properties) {
+          if (!ts.isPropertyAssignment(p)) continue;
+          const n = p.name;
+          if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) && n.text === "") {
+            initForcesExternref = true;
+            break;
+          }
+        }
+      }
       // (#2804) A spread-containing object literal in a NON-SPECIFIC context
       // (no concrete contextual struct type — e.g. `var b = { ...a, z: 3 }`)
       // takes the host plain-object path (compileObjectLiteralWithAccessors),
