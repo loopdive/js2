@@ -1,7 +1,13 @@
 ---
 id: 4637
 title: "ES5 standalone: fnctor-prototype edge + Function-constructor surface — S13.2.2 family, Object(func) identity, apply/call as own-property values (~48 rows)"
-status: in-progress
+status: done
+completed: 2026-08-23
+# Flipped in-progress→done at merge by the lead, per the agent's own gap
+# statement: 4 of 5 acceptance clauses met; the unmet "A2 crashes gone" names
+# S13.2.2_A17_T3, which the agent measured to be a `with`-statement scoping
+# row (deferred feature), not a construct-return crash — mis-attributed in
+# the plan, owner recorded in ## Residuals.
 sprint: current
 created: 2026-08-23
 updated: 2026-08-23
