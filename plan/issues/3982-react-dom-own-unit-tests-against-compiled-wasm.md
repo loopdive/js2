@@ -767,3 +767,107 @@ pool, and the upstream suite harness tests remain green.
 
 Implementation: [PR #4771](https://github.com/loopdive/js2/pull/4771), stacked
 on the compiler boundary work in [PR #4769](https://github.com/loopdive/js2/pull/4769).
+
+## Where the 300s implementation-compile timeout actually goes (2026-08-23)
+
+`compileImplementationOnly` times out at 300s and the card reports
+`tests.status: "blocked"` with 0 of 1,261 admitted tests executed in Wasm. The
+obvious reading — "a 536 KB module is simply too big" — is wrong, and the
+measurement says so:
+
+| what                                                   | compile | emitted   |
+| ------------------------------------------------------ | ------- | --------- |
+| `react-dom-client.production.js`, TOP LEVEL             | 35.4 s  | 1.36 MB   |
+| the SAME bytes wrapped in `function __mod() { … }`      | 84.4 s  | 1.77 MB   |
+
+**2.4× the time and 30% more code for identical source, purely from being
+inside a function body.** That is the multiplier, not a pathological pass: the
+top-level compile of the whole published file finishes in half a minute.
+
+It matters here because `buildImplementationSource` wraps FOUR modules that way
+— `__reactModule`, `__schedulerModule`, `__reactDomSharedModule`,
+`__reactDomClientModule` — to emulate CJS scoping. The client module alone is
+84 s under that shape; with the other three plus `wireRequires` the assembly
+reaches the 300 s ceiling.
+
+Scaling for reference (top level, production build): 214 KB → 10.5 s,
+536 KB → 35.4 s. Mildly superlinear, nothing like the wrapping penalty.
+
+Two independent directions, either of which unblocks the card:
+
+1. **Harness.** Stop emulating CJS with a function wrapper for the
+   implementation-only compile. The harness ALREADY has the better shape —
+   `buildProjectFiles` emits real `react.ts` / `shared.ts` / `scheduler.ts` /
+   `client.ts` modules for the per-batch test lane. Routing
+   `compileImplementationOnly` through `compileProject` the same way should
+   drop it to roughly the top-level cost.
+2. **Compiler.** Find why a function body costs 2.4× and emits 30% more than
+   the same statements at top level. That is worth knowing regardless of
+   react-dom — every CJS package in the corpus is compiled through a wrapper.
+
+**Direction 1 is now implemented.** `compileImplementationOnly` builds the
+project files (`buildProjectFiles(…, { tests: [] })`) and goes through
+`compileProjectInWorker`, the same path the per-batch lane uses.
+
+Measured end to end on the pinned sources (react 17 KB, shared 6.6 KB, client
+536 KB):
+
+| probe shape                                    | result                                   |
+| ---------------------------------------------- | ---------------------------------------- |
+| `buildImplementationSource` (4 function wrappers) | 300 s TIMEOUT, no module, card `blocked` |
+| `buildProjectFiles` (real modules)              | **96.8 s, success, `validates: true`, 2.25 MB** |
+
+So the implementation is not "too big to compile" and never was — it compiles
+and validates in under two minutes once it is not wrapped. The card's
+`tests.status: "blocked"` / 0-of-1,261 line was an artifact of the probe's
+shape, not a statement about react-dom.
+
+Direction 2 (why a function body costs 2.4× and emits 30% more than the same
+statements at top level) is still open, and still worth doing: every CJS
+package in the corpus is compiled through a wrapper somewhere.
+
+The wrapping measurement is reproducible with `.tmp/rd-wrap.mjs` (top-level vs
+wrapped, same bytes); the probe comparison with `.tmp/rd-probe-time.mjs`.
+
+## Lever 2: the project lane recompiles the implementation once PER BATCH (2026-08-23)
+
+SPECIFIED, NOT IMPLEMENTED. Recording the measurement and the design so the
+next attempt starts from evidence rather than from the same guess.
+
+`partitionProjectTests` partitions BY UPSTREAM FILE first and only then splits
+anything oversized (`maxChars = 800_000`). There are 115 test files, so there
+are at least 115 batches, and the 800 KB cap is almost never the binding
+constraint. Every batch compiles the whole project — `react.ts`, `scheduler.ts`,
+`shared.ts` and the 525 KB `client.ts` — plus its own entry.
+
+Measured cost of a batch carrying ZERO tests: **102 s** (success, validates,
+2.25 MB). That is the floor each batch pays before a single test body is
+compiled. At 115 batches over the pinned 2-worker pool that is roughly
+**98 minutes of pure implementation recompilation**, which is most of the row's
+3-4 hour wall clock.
+
+The clean fix is separate compilation: compile the implementation once and link
+each file's test module against it. The compiler has no module-linking story
+today, so that is a large piece of work, not a harness tweak.
+
+The cheap approximation is to **pack by size instead of by file**: fill each
+batch to `maxChars` across several upstream files rather than starting a new
+batch per file. Ten files per batch turns ~115 batches into ~12 and should cut
+the row by roughly the same factor, since the per-batch cost is dominated by a
+constant.
+
+Two things that fix does NOT get for free, and which is why it is not landed
+here:
+
+1. **Lifecycle isolation.** The current partition keeps each file's Jest-style
+   `beforeEach`/`afterEach` together deliberately. Co-locating several files in
+   one module has to keep each file's lifecycle scoped to its own tests or
+   results silently change.
+2. **Blast radius.** One invalid function currently poisons one file's binary.
+   At ten files per batch it poisons ten. The halving-retry recovers, but the
+   retry is exactly the cost being optimised away, so a batch that fails
+   validation could end up slower than today.
+
+Neither can be judged from a unit test: it needs a full react-dom row (3-4 h)
+before and after, comparing wall clock AND the admitted/passed denominators.
+Do not land it on a green harness test alone.
