@@ -419,6 +419,22 @@ describe("#4654 residuals — RegExp reflection through a dynamic receiver", () 
     const re: any = opaque(new RegExp(joinParts(["a", "b"]), joinParts(["g", "i"])));
   `;
 
+  // POSITIVE CONTROL for the three `it.fails` below. The identical dynamic
+  // receiver, in the identical module shape, answers `.source` correctly — so
+  // those failures are about WHICH member is reachable, not about the receiver
+  // being dynamic. If this control ever breaks, the three residuals below stop
+  // being evidence for the root they name, and the `it.fails` would keep them
+  // green while saying nothing.
+  it("`.source` through the SAME dynamic receiver answers correctly (control)", async () => {
+    expect(
+      await runExport(
+        `${DYN_RE_PRELUDE}
+      export function probe(): number { const s: any = re.source; return s === undefined ? -1 : (s as string).length; }`,
+        "probe",
+      ),
+    ).toBe(2);
+  });
+
   // OWNER: the #2885 accessor tier (native-proto.ts — accessors are deliberately
   // NOT seeded into the proto companion; see the "ACCESSORS ARE DELIBERATELY NOT
   // SEEDED IN THIS SLICE" record). `.source` answers through a separate arm,

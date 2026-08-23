@@ -752,16 +752,49 @@ function qjsHashRehash(): void {
 // the degenerate case (N regexps sharing one source) is no worse than the
 // linear scan it replaces.
 //
+// WHAT THE KEY RESTS ON, stated because it is not obvious: it comes from a
+// COMPILED-side \`.source\` read, which \`tests/issue-4654.test.ts\` pins through a
+// dynamic receiver WITH a positive control. Note the failure MODE if that ever
+// stopped answering — every regexp would key on the empty string, the multimap
+// would collapse to one bucket, and the result would be CORRECT and quadratic
+// again rather than wrong. A silent performance cliff, not a miscompare.
+//
 // The index is AUTHORITATIVE for the RegExp partition — a miss returns "not
 // registered" without falling back to a scan. It can be, because every row that
 // enters \`qjsRowsRe\` is inserted here in the same statement. A fallback scan
 // would reintroduce the quadratic on exactly the miss-heavy shape (a compiled
 // regexp global that never crossed) that motivated the index.
 
-/** Bucket key + 1 for the entry in this slot; 0 when empty. */
-var qjsReKeys: number[] = [];
-/** Registry row + 1 for the entry in this slot; 0 when empty. */
-var qjsReVals: number[] = [];
+/**
+ * (#4654) The most recently registered RegExp row, checked BEFORE the bucket
+ * probe. This is not a micro-optimisation, it is the answer to the index's one
+ * degenerate case: a loop that evaluates the SAME pattern text every iteration
+ * puts every row in ONE bucket, and the bucket scan is then the linear scan
+ * again. Measured on \`.tmp/evalbench2.mts\` (26 distinct sources cycled, so
+ * N/26 rows per bucket): 2.91 ms/eval at N=3,200 rising to 5.40 ms/eval at
+ * N=12,800 — clearly super-linear — while the real corpus shape (a distinct
+ * source per iteration, 65,536 of them) stayed flat at 2.63 ms/eval.
+ *
+ * The MRU is a HINT, never an answer: it is confirmed with the same \`===\`
+ * comparisons as the bucket entries, and a miss falls through to the probe.
+ * Reordering is safe because at most ONE row can match a given object —
+ * \`qjsPublish\` mints a fresh reconstruction per publish, so two rows never
+ * share an exposed value.
+ */
+var qjsReLastRow: number = -1;
+
+/**
+ * CHAINED, not open-addressed, and that is forced by the same degenerate case
+ * the MRU above answers. Duplicate keys are normal here (distinct regexps may
+ * share a source), and duplicates in an open-addressed table build one long
+ * primary CLUSTER: the lookup is saved by the MRU, but every INSERT probes to
+ * the end of the run and every rehash re-inserts N rows into it. Measured with
+ * open addressing + MRU on \`.tmp/evalbench2.mts\`'s 26-source loop: still
+ * 1.48 → 2.33 ms/eval from N=3,200 to N=12,800, against a FLAT 1.41 → 1.40 for
+ * the same loop evaluating a number. Chaining makes the insert O(1) and the
+ * rehash O(N); a long bucket then costs only a lookup that misses the MRU.
+ */
+var qjsReBuckets: any[] = [];
 var qjsReMask: number = 0;
 var qjsReCount: number = 0;
 
@@ -792,12 +825,15 @@ function qjsReContentKey(re: any): number {
 
 /** Insert without a load check. Duplicates are intentional — see the note. */
 function qjsReInsertRaw(key: number, rowPlusOne: number): void {
-  let i: number = qjsHashOf(key) & qjsReMask;
-  while ((qjsReKeys[i] as number) !== 0) {
-    i = (i + 1) & qjsReMask;
+  const i: number = qjsHashOf(key) & qjsReMask;
+  const slot: any = qjsReBuckets[i];
+  if (slot === undefined) {
+    const fresh: number[] = [];
+    fresh.push(rowPlusOne);
+    qjsReBuckets[i] = fresh;
+  } else {
+    (slot as number[]).push(rowPlusOne);
   }
-  qjsReKeys[i] = key + 1;
-  qjsReVals[i] = rowPlusOne;
   qjsReCount += 1;
 }
 
@@ -805,12 +841,10 @@ function qjsReInsertRaw(key: number, rowPlusOne: number): void {
 function qjsReRehash(): void {
   let cap: number = qjsReMask + 1;
   if (cap < 16) cap = 16;
-  while (cap < (qjsRowsRe.length + 2) * 4) cap = cap * 2;
-  qjsReKeys = [];
-  qjsReVals = [];
+  while (cap < (qjsRowsRe.length + 2) * 2) cap = cap * 2;
+  qjsReBuckets = [];
   for (let i = 0; i < cap; i += 1) {
-    qjsReKeys.push(0);
-    qjsReVals.push(0);
+    qjsReBuckets.push(undefined);
   }
   qjsReMask = cap - 1;
   qjsReCount = 0;
@@ -829,7 +863,8 @@ function qjsReRehash(): void {
  * caller must push to \`qjsRowsRe\` before calling this.
  */
 function qjsReIndexRow(row: number): void {
-  if ((qjsReCount + 2) * 2 > qjsReMask + 1) {
+  qjsReLastRow = row;
+  if (qjsReCount + 2 > qjsReMask + 1) {
     qjsReRehash();
     return;
   }
@@ -841,19 +876,27 @@ function qjsReIndexRow(row: number): void {
 
 /** The registry row exposing \`value\`/\`target\` as a RegExp, or -1. */
 function qjsFindReRow(value: any, target: any): number {
+  const last: number = qjsReLastRow;
+  if (last >= 0) {
+    if (qjsBoxExposed[last] === value) return last;
+    if (qjsBoxTargets[last] === value) return last;
+    if (qjsBoxExposed[last] === target) return last;
+    if (qjsBoxTargets[last] === target) return last;
+  }
   if (qjsReMask === 0) return -1;
   const probe: any = value instanceof RegExp ? value : target;
   const key: number = qjsReContentKey(probe);
-  let i: number = qjsHashOf(key) & qjsReMask;
-  while ((qjsReKeys[i] as number) !== 0) {
-    if ((qjsReKeys[i] as number) === key + 1) {
-      const r: number = (qjsReVals[i] as number) - 1;
-      if (qjsBoxTargets[r] === target) return r;
-      if (qjsBoxExposed[r] === target) return r;
-      if (qjsBoxTargets[r] === value) return r;
-      if (qjsBoxExposed[r] === value) return r;
-    }
-    i = (i + 1) & qjsReMask;
+  const slot: any = qjsReBuckets[qjsHashOf(key) & qjsReMask];
+  if (slot === undefined) return -1;
+  const chain: number[] = slot as number[];
+  // Newest first: a chain is only long in the degenerate same-source case, and
+  // there the wanted row is the most recent one.
+  for (let k = chain.length - 1; k >= 0; k -= 1) {
+    const r: number = (chain[k] as number) - 1;
+    if (qjsBoxTargets[r] === target) return r;
+    if (qjsBoxExposed[r] === target) return r;
+    if (qjsBoxTargets[r] === value) return r;
+    if (qjsBoxExposed[r] === value) return r;
   }
   return -1;
 }
