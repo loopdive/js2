@@ -21,10 +21,14 @@ loc-budget-allow:
   - src/codegen/array-object-proto.ts
   - src/codegen/index.ts
   - src/codegen/property-access-dispatch.ts
+  - src/codegen/context/types.ts
+  - src/codegen/native-strings.ts
 func-budget-allow:
   - src/codegen/object-runtime.ts::ensureObjectRuntime
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+  # +1 line: the initializer for the new `protoNamedWrittenMembers` field.
+  - src/codegen/context/create-context.ts::createCodegenContext
 ---
 
 # #4492 — ES5 builtin-proto methods on exotic receivers
@@ -464,3 +468,133 @@ standalone` is a distinct, explicit gap (2 rows here, more elsewhere) —
 implementing it is in scope for this lane if the measurement supports it.
 `is not a constructor` rows belong to the builtin-as-value family — check
 whether a sibling lane owns them before fixing.
+
+## 2026-08-23 wave-5 results (dev-4492, branch `issue-4492-wave5`)
+
+Worktree `/home/user/js2wasm/.claude/worktrees/agent-a52996008417c674b`, based on
+campaign HEAD `c42bdbe3e`. Bundle + quickjs adapter rebuilt in-worktree before
+any measurement (the adapter cache MISSED and rebuilt, so the eval tier is this
+tree's compiler, not the shared 8-day-old artifact).
+
+### The census's named sub-root is FALSE AS STATED — measured, then narrowed
+
+The census asks to measure "an object's own `toString`/`valueOf` override is not
+consulted by the String conversion path" first. It is not true in general:
+`String({toString(){…}})`, `String({valueOf(){…}})` and the object-returning-
+`toString`→`valueOf` fall-through **all already pass** on `c42bdbe3e`
+(`.tmp/probes/t1.js`). What is true is much narrower, and the narrowing is what
+made the fix tractable. Measured in ONE module (`.tmp/probes/t6.js`), with
+`f1.toString = function(){ return "OWN_F_TS" }`:
+
+| spelling | `f1` (own toString) | `f2` (plain) |
+| --- | --- | --- |
+| `f.toString()` | `OWN_F_TS` | `function f2() {}` |
+| `"" + f` | `OWN_F_TS` | `function () { [native code] }` |
+| `` `${f}` `` | `[object Object]` | — |
+| `String(f)` | `[object Object]` | `[object Object]` |
+
+**One value, four renderings.** `+` was right because #4491's
+`emitAddOrdinaryToPrimitiveResidue` runs a REAL runtime §7.1.1.1 walk
+(`__extern_get` + `__call_accessor_get`) — and that residue is deliberately
+scoped to the `+` operator. Every other dynamic spelling lands on
+`__any_to_string`, whose object terminal is the literal `"[object Object]"`. So
+the defect is not "overrides are ignored", it is "the ONE place that resolves an
+override at runtime is reachable from ONE operator".
+
+**Method note, because it cost two probes:** every one of these differences is
+MODULE-SENSITIVE. `f2.toString()` answers the source text in a 5-line module and
+`"SHIFTED"` in a 50-line one; `String(new F())` is wrong until the module
+contains a single `"toString" in inst`. Reading any of these off a multi-case
+probe attributes the wrong cause — the isolation rule (methodology 3) is not
+about compiler state here, it is about the compiler's own arming flags.
+
+## Root cause — four, in the order they were found
+
+1. **`Function.prototype.toString` and `Object.prototype.valueOf` had no
+   reflective body.** `makeGlue` (array-object-proto.ts) wires none for those
+   families, so every route that reifies them as a VALUE minted the #2984
+   Phase-2 catchable-TypeError closure. `built-ins/String/prototype/slice/
+   S15.5.4.13_A1_T5` and `.../substring/S15.5.4.15_A1_T5` fail on exactly those
+   two messages, in that order — fixing `toString` alone moves the failure to
+   `Object.prototype.valueOf is not yet implemented`.
+2. **ToString of a CALLABLE never reached §20.2.3.5.** `__any_to_string`'s
+   terminal is `Object.prototype.toString`'s answer, which §20.2.3.5 says a
+   function must never get.
+3. **A `toString`/`valueOf` installed on a PROTOTYPE is invisible to every
+   compile-time dispatcher.** `__call_valueOf`/`__call_toString` are keyed by
+   struct TYPE; `F.prototype.toString = …` and
+   `Function.prototype.toString = …` land in the runtime prototype bag.
+   `__extern_get` walks that bag; nothing in the ToPrimitive path asked it.
+4. **A boxed wrapper's `[[PrimitiveValue]]` short-circuit ran BEFORE the
+   §7.1.1.1 walk.** §7.1.1.1 reads `Get(O, "valueOf")`, and an own slot wins
+   over `String.prototype.valueOf` — so
+   `var s = new String("ABCABC"); s.valueOf = function(){ return "ed" }; s == "ed"`
+   was false for EVERY ToPrimitive consumer at once.
+
+## Fix
+
+| commit | what |
+| --- | --- |
+| `fefaa9ab4` | §20.2.3.5 `Function.prototype.toString` + §20.1.3.7 `Object.prototype.valueOf` reflective bodies (`function-proto-to-string.ts`, `object-proto-value-of.ts`, wired in `makeGlue`); the CALLABLE arm spliced onto `__any_to_string` (`callable-any-to-string.ts`) |
+| `c4e1d7c91` | one shared runtime §7.1.1.1 walk (`ordinary-to-primitive-probe.ts`), used by the callable arm AND by a new prototype-aware TAIL on `__class_to_primitive` |
+| `6811828f5` | the wrapper `[[PrimitiveValue]]` short-circuit gated on "no own valueOf/toString" (`to-primitive-wrapper-slot.ts`), plus `.length` / `w[i]` moved off `__to_primitive` onto the bare `__wrapper_string_value` slot probe |
+
+Three deliberate design choices worth carrying forward:
+
+- **The walk is ONE builder, not a third copy.** `ordinary-to-primitive-probe.ts`
+  is what both new call sites use, so the `+` residue's answer and the ToString
+  answer cannot drift the way the four renderings above did.
+- **`null` is not an accepted primitive result.** In standalone `undefined` and
+  `null` are the same null externref, and the module already contains BOTH
+  renderings of that one value (`normaliseToString` says `"undefined"`, the
+  #4621-D raw-null arm says `"null"`). Picking either would make the walk
+  disagree with one of them for a value it cannot distinguish, so it declines.
+- **Widening ToPrimitive forced `.length` off it.** `new String("ABCABC").length`
+  became **2** the moment the override was honoured — §22.1.4.1 fixes `length`
+  at construction. `__to_primitive` had only ever been standing in for the slot
+  read ("reads the slot first", its own comment); the two stopped being the same
+  operation and had to be separated. Same for the §10.4.3.5 index read. Both are
+  pinned as regression guards.
+
+### Gate grants (frontmatter, per-file rationale)
+
+- `src/codegen/object-runtime.ts` (+7 LOC) and
+  `ensureObjectRuntime` (func budget): the `[[PrimitiveValue]]` arms were
+  extracted to `to-primitive-wrapper-slot.ts` to keep the god-file growth to the
+  call sites; +7 is the `__wrapper_string_value` identity arm plus the deps
+  literal. `ensureObjectRuntime` is a 5.5k-line function no slice of this size
+  can split further.
+- `src/codegen/array-object-proto.ts` (+10) — two `??` arms in `makeGlue`'s
+  ladder (Function/toString, Object/valueOf); the bodies live in their own files.
+- `src/codegen/index.ts` (+10, `generateModule`/`generateMultiModule`) — one
+  `fillCallableAnyToStringArm` call plus its comment on each of the two
+  finalize paths.
+- `src/codegen/property-access-dispatch.ts` — the `.length` slot-read switch is
+  net-negative code with a longer comment.
+- `src/codegen/context/types.ts` (+16) — one new field,
+  `protoNamedWrittenMembers`, and the doc explaining why `protoNamedDirty` alone
+  cannot gate a ToPrimitive consult (the harness prelude sets it in nearly every
+  test262 module). A context field has to live in the context type.
+- `src/codegen/native-strings.ts` (+16) — two exported helper-KEY constants
+  (`ANY_TO_STRING_HELPER`, `EXTERN_TO_STRING_HELPER`) plus their doc. They live
+  here because this file is the engine-owned home of that vocabulary under the
+  #2108 gate; spelling the names anywhere else is the drift that gate measures.
+
+No `coercion-sites-allow` was needed, and the reason is worth keeping: the first
+cut of `callable-any-to-string.ts` hand-rolled its own boxed-number / i31 /
+boxed-boolean → string matrix and the #2108 gate caught it
+(`number_toString 0→1, __any_to_string 0→1`). The fix was not an allowance but a
+SELF-CALL back into `__any_to_string` on a value already proven primitive — which
+removes the fourth copy of the §7.1.17 cascade, inherits the `$undefined`-
+singleton and i31 arms for free, and terminates by construction (the recursive
+argument is non-callable, so the arm's own guard fails on re-entry).
+`native-strings.ts` now exports `ANY_TO_STRING_HELPER` so the lookup key has one
+spelling in the file that owns it.
+
+## Handover — NOT this lane's row
+
+`built-ins/String/prototype/constructor/S15.5.4.1_A1_T2.js` is
+`var __constr = String.prototype.constructor; new __constr("choosing one")` — a
+builtin CONSTRUCTOR read as a value and then `new`'d ("TypeError: is not a
+constructor"). That is the builtin-as-value family, **dev-4515's lane**; nothing
+in this change-set touches constructor reification, and it did not move.

@@ -411,6 +411,11 @@ function buildClassToPrimitiveRuntimeWalk(ctx: CodegenContext, fn: WasmFunction)
       resultLocal: L_PR,
       order,
       onPrimitive: () => [{ op: "local.get", index: L_PR }, { op: "return" }],
+      // §7.1.1.1: only the STRING hint may stop on an absent first method — an
+      // absent `toString` resolves to `Object.prototype.toString`, which returns
+      // a primitive, so `valueOf` is unreachable. `built-ins/String/S9.8_A5_T1`
+      // check #13 measures exactly that.
+      stopWhenFirstAbsent: order[0] === "toString",
     });
 
   // The same object/function guard `emitAddOrdinaryToPrimitiveResidue` uses:

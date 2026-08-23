@@ -56,13 +56,15 @@ import { definedFuncAt } from "./func-space.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 
-/** The four runtime natives the walk is built from. */
+/** The runtime natives the walk is built from. */
 export interface OrdinaryToPrimitiveProbeDeps {
   readonly typeofFunctionIdx: number;
   readonly typeofObjectIdx: number;
   readonly externGetIdx: number;
   readonly callMethod0Idx: number;
   readonly nullishToNullIdx: number | undefined;
+  /** `__hasOwnProperty` — required by {@link OrdinaryToPrimitiveProbeOpts.ownOnly}. */
+  readonly hasOwnIdx: number | undefined;
 }
 
 /**
@@ -97,6 +99,7 @@ export function resolveOrdinaryToPrimitiveProbeDeps(ctx: CodegenContext): Ordina
     externGetIdx,
     callMethod0Idx,
     nullishToNullIdx: ctx.funcMap.get("__nullish_to_null"),
+    hasOwnIdx: ctx.funcMap.get("__hasOwnProperty"),
   };
 }
 
@@ -111,6 +114,48 @@ export interface OrdinaryToPrimitiveProbeOpts {
   readonly order: readonly ("toString" | "valueOf")[];
   /** Emitted with a PRIMITIVE in `resultLocal`; must not fall through. */
   readonly onPrimitive: () => Instr[];
+  /**
+   * NEST the later steps inside the first step's "present, but returned a
+   * non-primitive" branch, instead of running them when the first step is merely
+   * ABSENT.
+   *
+   * Required for the STRING hint, and not a nicety — measured as a regression:
+   *
+   * ```js
+   * var o = { valueOf: function () { return "[object MyObj]"; } };  // no toString
+   * String(o)                       // must be "[object Object]"
+   * ```
+   *
+   * `test262 built-ins/String/S9.8_A5_T1` check #13. An absent OWN `toString` is
+   * not an absent `toString`: `Get(O, "toString")` finds
+   * `Object.prototype.toString`, which returns a primitive, so `valueOf` is
+   * never reached. A flat two-step walk answered `"[object MyObj]"`.
+   *
+   * The NUMBER hint is the genuine mirror image and must NOT set this: an absent
+   * `valueOf` resolves to `Object.prototype.valueOf`, which returns the OBJECT,
+   * so the walk does continue to `toString` there.
+   */
+  readonly stopWhenFirstAbsent?: boolean;
+  /**
+   * Run a step only when the program actually INSTALLED that method on this
+   * receiver — an own slot (`__hasOwnProperty`) or a `<Ctor>.prototype.<m> = …`
+   * write recorded on the #4176 brand companion (`__protoidx_has_r`, which under
+   * `protoNamedDirty` is seeded with nothing else, so its answer IS "the user
+   * overrode this member" — see builtin-proto-member-override.ts).
+   *
+   * Measured, not defensive. On the externref path `__extern_get` resolves a
+   * CALLABLE's inherited `toString` to `Object.prototype.toString` rather than
+   * `Function.prototype.toString`, so an unrestricted chain walk answered
+   * `"[object Function]"` for a plain function —
+   * `test262 built-ins/Function/prototype/toString/Function.js`, which had been
+   * passing on the §20.2.3.5 NativeFunction constant. That mis-resolution is a
+   * defect in the receiver-aware prototype consult, upstream of this walk.
+   *
+   * A compile-time `ctx.protoNamedDirty` gate does NOT substitute: the flag is
+   * set by the test262 harness prelude in nearly every module, so it admits the
+   * ambient resolution exactly where it must not.
+   */
+  readonly userInstalledOnly?: boolean;
 }
 
 export function buildOrdinaryToPrimitiveProbe(
@@ -118,12 +163,34 @@ export function buildOrdinaryToPrimitiveProbe(
   deps: OrdinaryToPrimitiveProbeDeps,
   opts: OrdinaryToPrimitiveProbeOpts,
 ): Instr[] {
-  const { typeofFunctionIdx, typeofObjectIdx, externGetIdx, callMethod0Idx, nullishToNullIdx } = deps;
-  const { recv, methodLocal, resultLocal, order, onPrimitive } = opts;
+  const { typeofFunctionIdx, typeofObjectIdx, externGetIdx, callMethod0Idx, nullishToNullIdx, hasOwnIdx } = deps;
+  const { recv, methodLocal, resultLocal, order, onPrimitive, stopWhenFirstAbsent, userInstalledOnly } = opts;
+  const gateInstalled = userInstalledOnly === true && hasOwnIdx !== undefined;
 
-  const probe = (name: "toString" | "valueOf"): Instr[] => {
+  // When the first step is ABSENT, `stopWhenFirstAbsent` means the inherited
+  // intrinsic would have answered — so the later steps must NOT run as siblings;
+  // they move inside the "present but non-primitive" branch of step i.
+  const nested = stopWhenFirstAbsent === true;
+
+  /** Steps `[i…]` of the walk. `rest` runs when step `i` yields a non-primitive. */
+  const probe = (i: number): Instr[] => {
+    if (i >= order.length) return [];
+    const name = order[i]!;
     addStringConstantGlobal(ctx, name);
-    return [
+    const rest = probe(i + 1);
+    const afterCall: Instr[] = [
+      { op: "local.get", index: resultLocal },
+      { op: "call", funcIdx: typeofObjectIdx },
+      { op: "local.get", index: resultLocal },
+      { op: "call", funcIdx: typeofFunctionIdx },
+      { op: "i32.or" },
+      { op: "i32.eqz" },
+      { op: "if", blockType: { kind: "empty" }, then: onPrimitive() },
+      // Not a primitive → the next method (only in the nested regime; the flat
+      // regime emits `rest` as a sibling after this whole block).
+      ...(nested ? rest : []),
+    ];
+    const body: Instr[] = [
       ...recv(),
       ...stringConstantExternrefInstrs(ctx, name),
       { op: "call", funcIdx: externGetIdx },
@@ -151,25 +218,25 @@ export function buildOrdinaryToPrimitiveProbe(
               { op: "local.get", index: resultLocal },
               { op: "ref.is_null" },
               { op: "i32.eqz" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: resultLocal },
-                  { op: "call", funcIdx: typeofObjectIdx },
-                  { op: "local.get", index: resultLocal },
-                  { op: "call", funcIdx: typeofFunctionIdx },
-                  { op: "i32.or" },
-                  { op: "i32.eqz" },
-                  { op: "if", blockType: { kind: "empty" }, then: onPrimitive() },
-                ],
-              },
+              { op: "if", blockType: { kind: "empty" }, then: afterCall },
             ],
           },
         ],
       },
     ];
+    // The installed-by-the-program gate wraps STEP i only. In the flat
+    // (number-hint) regime the later steps stay siblings, so a receiver with no
+    // own `valueOf` still gets its `toString` step.
+    const step: Instr[] = gateInstalled
+      ? [
+          ...recv(),
+          ...stringConstantExternrefInstrs(ctx, name),
+          { op: "call", funcIdx: hasOwnIdx },
+          { op: "if", blockType: { kind: "empty" }, then: body },
+        ]
+      : body;
+    return nested ? step : [...step, ...rest];
   };
 
-  return order.flatMap((name) => probe(name));
+  return probe(0);
 }

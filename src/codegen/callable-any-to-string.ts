@@ -40,6 +40,13 @@
  * and invoked through the same `__call_accessor_get` arity bridge the `+`
  * residue uses.
  *
+ * The walk runs `userInstalledOnly` — see that option's doc: on a callable,
+ * `__extern_get`'s INHERITED resolution answers `Object.prototype.toString`
+ * rather than `Function.prototype.toString`, so an unrestricted walk renders a
+ * plain function `"[object Function]"`. Gating on "the program installed this
+ * member" (own slot, or a `<Ctor>.prototype.<m> = …` write on the #4176
+ * companion) admits exactly the overrides this arm exists for.
+ *
  * ## Only a PRIMITIVE result is accepted, and `null` is not one of the accepted
  * shapes
  *
@@ -64,10 +71,11 @@
  * `__call_accessor_get` missing → the fill returns having changed nothing, and
  * the module is byte-identical.
  */
-import type { Instr, ValType } from "../ir/types.js";
+import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
+import { ANY_TO_STRING_HELPER, EXTERN_TO_STRING_HELPER } from "./native-strings.js";
 import { NATIVE_FUNCTION_SOURCE } from "./callable-to-string.js";
 import { buildOrdinaryToPrimitiveProbe, resolveOrdinaryToPrimitiveProbeDeps } from "./ordinary-to-primitive-probe.js";
 
@@ -79,7 +87,7 @@ import { buildOrdinaryToPrimitiveProbe, resolveOrdinaryToPrimitiveProbeDeps } fr
 export function fillCallableAnyToStringArm(ctx: CodegenContext): void {
   if (!ctx.standalone || !ctx.nativeStrings) return;
   if (ctx.anyStrTypeIdx < 0) return;
-  const helperIdx = ctx.nativeStrHelpers.get("__any_to_string");
+  const helperIdx = ctx.nativeStrHelpers.get(ANY_TO_STRING_HELPER);
   if (helperIdx === undefined) return;
   const fn = definedFuncAt(ctx, helperIdx);
   if (!fn) return;
@@ -87,12 +95,6 @@ export function fillCallableAnyToStringArm(ctx: CodegenContext): void {
   const deps = resolveOrdinaryToPrimitiveProbeDeps(ctx);
   if (deps === undefined) return;
   const typeofFunctionIdx = deps.typeofFunctionIdx;
-
-  const anyStrTypeIdx = ctx.anyStrTypeIdx;
-  const strRef: ValType = { kind: "ref", typeIdx: anyStrTypeIdx };
-  const boxNumIdx = ctx.nativeBoxNumberTypeIdx;
-  const boxBoolIdx = ctx.nativeBoxBooleanTypeIdx;
-  const numToStrIdx = ctx.funcMap.get("number_toString");
 
   // Two fresh externref scratch locals, APPENDED so every index already baked
   // into the helper's body keeps its meaning.
@@ -107,80 +109,26 @@ export function fillCallableAnyToStringArm(ctx: CodegenContext): void {
   const recv = (): Instr[] => [{ op: "local.get", index: 0 }, { op: "extern.convert_any" }];
 
   /**
-   * `L_RESULT` holds a primitive we can render → leave a `ref $AnyString` and
-   * `return`. Anything else falls out of the `if` and the walk continues.
-   * `null` is deliberately NOT one of the accepted shapes (see the header).
+   * `L_RESULT` holds a value already PROVEN primitive (not null, not object,
+   * not function) — render it and `return`.
+   *
+   * The rendering is a SELF-CALL back into `__any_to_string`, not a local
+   * number/boolean/string matrix. Two reasons, and the second is the one that
+   * decides it:
+   *  - it terminates by construction: the recursive argument is non-callable, so
+   *    this arm's own `__typeof_function` guard fails on re-entry and the value
+   *    falls to the helper's ordinary primitive arms;
+   *  - a local matrix would be a FOURTH hand-rolled copy of the same §7.1.17
+   *    cascade, which is exactly the drift the #2108 coercion-sites gate exists
+   *    to stop — and it would have had to re-derive the boxed-number / i31 /
+   *    boxed-boolean / `$undefined`-singleton arms that this helper already owns.
    */
-  const renderPrimitiveAndReturn = (): Instr[] => {
-    const asAny: Instr[] = [{ op: "local.get", index: L_RESULT }, { op: "any.convert_extern" }];
-    const numberArm: Instr[] =
-      numToStrIdx !== undefined && boxNumIdx >= 0
-        ? [
-            ...asAny,
-            { op: "ref.test", typeIdx: boxNumIdx },
-            ...asAny,
-            { op: "ref.test", typeIdx: -20 }, // abstract i31 (small int)
-            { op: "i32.or" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                ...asAny,
-                { op: "ref.test", typeIdx: -20 },
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: { kind: "f64" } },
-                  then: [...asAny, { op: "ref.cast", typeIdx: -20 }, { op: "i31.get_s" }, { op: "f64.convert_i32_s" }],
-                  else: [
-                    ...asAny,
-                    { op: "ref.cast", typeIdx: boxNumIdx },
-                    { op: "struct.get", typeIdx: boxNumIdx, fieldIdx: 0 },
-                  ],
-                },
-                { op: "call", funcIdx: numToStrIdx },
-                { op: "any.convert_extern" },
-                { op: "ref.cast", typeIdx: anyStrTypeIdx },
-                { op: "return" },
-              ],
-            },
-          ]
-        : [];
-    const boolArm: Instr[] =
-      boxBoolIdx >= 0
-        ? [
-            ...asAny,
-            { op: "ref.test", typeIdx: boxBoolIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                ...asAny,
-                { op: "ref.cast", typeIdx: boxBoolIdx },
-                { op: "struct.get", typeIdx: boxBoolIdx, fieldIdx: 0 },
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: strRef },
-                  then: nativeStringLiteralInstrs(ctx, "true"),
-                  else: nativeStringLiteralInstrs(ctx, "false"),
-                },
-                { op: "return" },
-              ],
-            },
-          ]
-        : [];
-    return [
-      // already a native string?
-      ...asAny,
-      { op: "ref.test", typeIdx: anyStrTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [...asAny, { op: "ref.cast", typeIdx: anyStrTypeIdx }, { op: "return" }],
-      },
-      ...numberArm,
-      ...boolArm,
-    ];
-  };
+  const renderPrimitiveAndReturn = (): Instr[] => [
+    { op: "local.get", index: L_RESULT },
+    { op: "any.convert_extern" },
+    { op: "call", funcIdx: helperIdx },
+    { op: "return" },
+  ];
 
   const arm: Instr[] = [
     { op: "local.get", index: 0 },
@@ -204,6 +152,9 @@ export function fillCallableAnyToStringArm(ctx: CodegenContext): void {
               resultLocal: L_RESULT,
               order: ["toString", "valueOf"],
               onPrimitive: renderPrimitiveAndReturn,
+              stopWhenFirstAbsent: true,
+              userInstalledOnly:
+                !ctx.protoNamedWrittenMembers.has("toString") && !ctx.protoNamedWrittenMembers.has("valueOf"),
             }),
             // §20.2.3.5 step 3 — the implementation-defined NativeFunction
             // representation, the same constant `callable-to-string.ts` (#4265)
@@ -216,4 +167,96 @@ export function fillCallableAnyToStringArm(ctx: CodegenContext): void {
     },
   ];
   fn.body.splice(0, 0, ...arm);
+}
+
+/**
+ * (#4492 wave-5) The SAME consult for `__extern_toString`, which is the dispatcher
+ * a callable reaches when the receiver compiles to an `externref` rather than a
+ * concrete closure-struct ref.
+ *
+ * ## Why a second site is not a duplicate
+ *
+ * `__extern_toString`'s own body is already right — `__to_primitive(v, "string")`
+ * then `__any_to_string` — but `installCompiledClosureToStringArm` (#3540,
+ * coercion-engine.ts) PREPENDS a closure arm that answers §20.2.3.5 step 3's
+ * `"function () { [native code] }"` constant and RETURNS, before any of it runs.
+ * That short-circuit is what makes the defect receiver-representation-dependent,
+ * and it is why the same source reads differently in two module shapes:
+ *
+ * ```js
+ * function f() {} f.toString = function () { return "OWN_F_TS"; }; String(f)
+ * ```
+ *
+ * answers `"[object Object]"` at test262 top level (concrete ref →
+ * `__any_to_string`) and `"function () { [native code] }"` inside an exported
+ * function (externref → `__extern_toString`). Measured 2026-08-23: the first
+ * cut of this slice fixed only the former, and the pin suite — whose bodies are
+ * wrapped in `export function test()` — still failed 4 of 4 callable pins while
+ * every test262 row of the same family passed. Two dispatchers, one defect.
+ *
+ * ## Shape
+ *
+ * Prepended AFTER the closure arm is installed, so it runs BEFORE it, and it
+ * carries NO terminal of its own: when the walk finds no own/inherited method the
+ * arm falls straight through and the closure constant answers exactly as today.
+ * Callables only, same guard and same shared walk as
+ * {@link fillCallableAnyToStringArm}.
+ */
+export function fillCallableExternToStringArm(ctx: CodegenContext): void {
+  if (!ctx.standalone || !ctx.nativeStrings) return;
+  if (ctx.anyStrTypeIdx < 0) return;
+  const anyToStringIdx = ctx.nativeStrHelpers.get(ANY_TO_STRING_HELPER);
+  if (anyToStringIdx === undefined) return;
+  const externToStringIdx = ctx.funcMap.get(EXTERN_TO_STRING_HELPER);
+  if (externToStringIdx === undefined) return;
+  const fn = definedFuncAt(ctx, externToStringIdx);
+  if (!fn) return;
+
+  const deps = resolveOrdinaryToPrimitiveProbeDeps(ctx);
+  if (deps === undefined) return;
+
+  const L_METHOD = 1 + fn.locals.length;
+  const L_RESULT = L_METHOD + 1;
+  fn.locals.push(
+    { name: "$callable_ets_method", type: { kind: "externref" } },
+    { name: "$callable_ets_result", type: { kind: "externref" } },
+  );
+
+  const recv = (): Instr[] => [{ op: "local.get", index: 0 }];
+  const walk = buildOrdinaryToPrimitiveProbe(ctx, deps, {
+    recv,
+    methodLocal: L_METHOD,
+    resultLocal: L_RESULT,
+    order: ["toString", "valueOf"],
+    stopWhenFirstAbsent: true,
+    // Same gate, same measured reason as the `__any_to_string` twin: this is the
+    // path on which the unrestricted walk answered `"[object Function]"` for a
+    // plain function (`built-ins/Function/prototype/toString/Function.js`).
+    userInstalledOnly: !ctx.protoNamedWrittenMembers.has("toString") && !ctx.protoNamedWrittenMembers.has("valueOf"),
+    // The result is a PRIMITIVE externref; this helper owes its caller a STRING
+    // externref, so render through the ToString dispatcher (which cannot
+    // re-enter this arm — its argument is non-callable by construction).
+    onPrimitive: () => [
+      { op: "local.get", index: L_RESULT },
+      { op: "any.convert_extern" },
+      { op: "call", funcIdx: anyToStringIdx },
+      { op: "extern.convert_any" },
+      { op: "return" },
+    ],
+  });
+
+  fn.body.splice(0, 0, {
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "ref.is_null" },
+      { op: "br_if", depth: 0 },
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: deps.typeofFunctionIdx },
+      { op: "i32.eqz" },
+      { op: "br_if", depth: 0 },
+      ...walk,
+    ],
+  });
 }

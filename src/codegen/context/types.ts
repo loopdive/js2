@@ -1601,6 +1601,22 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   protoNamedDirty: boolean;
   /**
+   * (#4492 wave-5) The MEMBER NAMES behind `protoNamedDirty` — the `<m>` of every
+   * `<BrandedBuiltin>.prototype.<m> = …` the pre-scan saw.
+   *
+   * `protoNamedDirty` alone cannot gate a ToPrimitive consult: the test262
+   * harness prelude writes to some builtin prototype in nearly every module, so
+   * the flag is on almost always. The NAME is the precise question — "did this
+   * program override `Function.prototype.toString`?" — which is what decides
+   * whether a callable's inherited `toString` may be believed (see
+   * `ordinary-to-primitive-probe.ts`'s `userInstalledOnly`).
+   *
+   * Best-effort by construction: the pre-scan stops walking once every dirty
+   * flag is set, so a write after that point is not recorded. Missing a name
+   * only DECLINES the chain consult, which is the safe direction.
+   */
+  protoNamedWrittenMembers: Set<string>;
+  /**
    * (#2175 V2-S3b-1) Set by the same pre-scan when a branded builtin's
    * `.prototype` can reach the DYNAMIC reader as a runtime value — i.e. a
    * `<Builtin>.prototype` read in VALUE position (bound to a variable, passed
