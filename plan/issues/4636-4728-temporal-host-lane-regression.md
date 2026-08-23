@@ -74,6 +74,23 @@ surfaced as 367 test262 regressions concentrated in `built-ins/Temporal`
   declaration, not a compiled class/function/module global/captured global)
   — that is a host-ambient global and belongs to the legacy extern-new path.
 
+## Permanent repro references (#2093)
+
+This is a RECORD issue — the shipped code is main's #4783, so the permanent
+repros are the regressed conformance rows themselves, re-verified passing in
+the host lane on this branch:
+
+- `test262/test/built-ins/Temporal/PlainDateTime/prototype/withPlainTime/argument-string-calendar-annotation.js`
+  (the `wasm_compile` class — the composed-module CompileError repro)
+- `test262/test/built-ins/Temporal/PlainDateTime/prototype/toString/options-wrong-type.js`
+  (the `Temporal is not defined` class)
+- `test262/test/built-ins/Temporal/PlainDateTime/prototype/subtract/options-invalid.js`
+- `test262/test/built-ins/Temporal/PlainMonthDay/prototype/with/options-invalid.js`
+- `test262/test/built-ins/Temporal/ZonedDateTime/prototype/subtract/argument-singular-properties.js`
+
+The #4783-side unit guard lives upstream with that PR (`tests/issue-4618-scoped-same-name-classes.test.ts`
+covers the capture-record key mechanism on main).
+
 ## Test Results (own runs)
 
 - Composed temporalHelpers module (the real 57KB harness+test unit):

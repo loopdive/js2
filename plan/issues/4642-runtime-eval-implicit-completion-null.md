@@ -48,6 +48,13 @@ blind): the provider is itself a js2wasm-compiled module, so a JS
 crossing into its wasm — i.e. the envelope encoding of an implicit
 completion, provider-side.
 
+## Permanent repro references (#2093)
+
+Affected conformance rows (the #4637-A5 family, all requiring the eval
+tier): `test262/test/built-ins/Function/S15.3.2.1_A1_T10.js`,
+`test262/test/built-ins/Function/S15.3.2.1_A3_T15.js`. The minimal probe
+above belongs in a `tests/issue-4642.test.ts` when implemented.
+
 ## Implementation Plan
 
 1. Brief: plan/method/es5-standalone-agent-brief.md (binding). Verify the
