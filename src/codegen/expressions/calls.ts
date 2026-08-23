@@ -333,7 +333,7 @@ import {
 import { ensureAnyHelpers, undefinedExternInstrs } from "../any-helpers.js";
 import { emitSymbolToString, ensureSymbolRegistry } from "../symbol-native.js";
 import { resolveStructName } from "./misc.js";
-import { tryCompileErrorCtorCallWithoutNew } from "./new-builtin-globals.js";
+import { tryCompileDateCallWithoutNew, tryCompileErrorCtorCallWithoutNew } from "./new-builtin-globals.js";
 import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-super.js";
 import { compileIdentifierCall } from "./call-identifier.js";
 import { compileBuiltinStaticCall, tryCompileFromCharCodeFamilyReflective } from "./call-builtin-static.js";
@@ -6405,6 +6405,16 @@ function compileCallExpression(
   // `ref.null.extern`, so the following `.message` read null-trapped.
   {
     const r = tryCompileErrorCtorCallWithoutNew(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+
+  // (#4640 D7) `Date(...)` without `new` — §21.4.2.1 returns ToDateString(now),
+  // a String, ignoring every argument. Not spec-identical to the `new` form (so
+  // it cannot delegate like the Error arm above); without it the call produced a
+  // silent `ref.null.extern` under a checker type of `string`, and the next
+  // `Date.parse(...)` illegal-cast TRAPPED.
+  {
+    const r = tryCompileDateCallWithoutNew(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
 

@@ -204,9 +204,110 @@ export function isEvolvingAnyBinding(ctx: CodegenContext, callee: ts.Expression)
   if (initFact.kind === "null" || initFact.kind === "undefined") {
     const list = decl.parent;
     const isConst = ts.isVariableDeclarationList(list) && (list.flags & ts.NodeFlags.Const) !== 0;
-    if (!isConst) return true;
+    // (#4640 D1) …unless NOTHING in the module ever re-targets the binding.
+    //
+    // The #4616 carve-out is about a binding whose value MOVES: `let x = null;
+    // … x = function(){…}; x()`. Its justification is that TypeScript's
+    // closure-crossing flow analysis still reports `null` at the call site, so
+    // the initializer is not a commitment. That justification evaporates when
+    // the source contains no write to the name at all — then the initializer is
+    // the only value the binding can ever hold, and `var x = undefined; x()`
+    // (`language/expressions/call/S11.2.3_A3_T4`/`T5`,
+    // `expressions/new/S11.2.2_A3_T4`/`T5`) is a §13.3.6.1 TypeError that this
+    // guard was declining to raise.
+    //
+    // A pure RUNTIME nullish check cannot substitute for this: measured on the
+    // base branch, `var x = undefined` lowers to an **f64 NaN** local, so the
+    // externref read at the call site is a boxed NUMBER — neither `ref.is_null`
+    // nor `__extern_is_undefined` answers true for it. The undefined-ness is a
+    // static fact here or it is nowhere.
+    if (!isConst && nullishBindingIsRetargeted(callee)) return true;
   }
   return !NEVER_CALLABLE_FACT_KINDS.has(initFact.kind) && !isFreshlyConstructedNonCallable(ctx, init, initFact.kind);
+}
+
+/**
+ * (#4640 D1) True when the module contains ANY construct that could give
+ * `callee`'s binding a different value than its nullish initializer.
+ *
+ * Deliberately OVER-approximates — every "maybe" answers `true`, which keeps
+ * the #4616 carve-out in force and leaves the call alone. Counted as a
+ * re-target:
+ *
+ *  - any assignment (`=` … `??=`) whose LEFT SUBTREE mentions the name, which
+ *    covers `x = f`, `[x] = a`, `({x} = o)` and, harmlessly, `o[x] = 1`;
+ *  - `++x` / `x--`;
+ *  - a `for (x in o)` / `for (x of a)` head that assigns to the bare name;
+ *  - a second `var`/`let` declaration of the same name that HAS an initializer
+ *    (hoisted `var` redeclaration is one binding, so the later initializer is a
+ *    write to it).
+ *
+ * A whole-file scan, like `identifierIsWrittenTo`'s: a shadowing binding of the
+ * same name elsewhere can only make this answer `true` and therefore only make
+ * the guard decline.
+ */
+function nullishBindingIsRetargeted(callee: ts.Identifier): boolean {
+  const name = callee.text;
+  const file = callee.getSourceFile();
+  if (file === undefined) return true; // synthesized node — cannot scan, assume the worst
+  const mentionsName = (node: ts.Node): boolean => {
+    if (ts.isIdentifier(node) && node.text === name) return true;
+    let hit = false;
+    ts.forEachChild(node, (child) => {
+      if (!hit && mentionsName(child)) hit = true;
+    });
+    return hit;
+  };
+  let retargeted = false;
+  const visit = (node: ts.Node): void => {
+    if (retargeted) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      mentionsName(node.left)
+    ) {
+      retargeted = true;
+      return;
+    }
+    if (
+      (ts.isPostfixUnaryExpression(node) || ts.isPrefixUnaryExpression(node)) &&
+      ts.isIdentifier(node.operand) &&
+      node.operand.text === name
+    ) {
+      retargeted = true;
+      return;
+    }
+    if (
+      (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+      !ts.isVariableDeclarationList(node.initializer) &&
+      mentionsName(node.initializer)
+    ) {
+      retargeted = true;
+      return;
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === name &&
+      node.initializer !== undefined &&
+      node.name !== callee
+    ) {
+      // The declaration this call's binding came from is nullish by
+      // construction (the caller already checked its initializer fact); a
+      // SECOND initialized declaration of the same name is a re-target.
+      const initFactIsNullish =
+        node.initializer.kind === ts.SyntaxKind.NullKeyword ||
+        (ts.isIdentifier(node.initializer) && node.initializer.text === "undefined");
+      if (!initFactIsNullish) {
+        retargeted = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return retargeted;
 }
 
 /**
