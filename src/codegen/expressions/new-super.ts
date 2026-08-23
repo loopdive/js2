@@ -469,6 +469,26 @@ function resolvesToConstructableFunctionValue(ctx: CodegenContext, calleeExpr: t
  *    constructor.
  */
 function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expression): boolean {
+  // (#4616) Inline member-access ctor values: `new (Object.getPrototypeOf(arr)
+  // .constructor)(n)` (jest-util deepCyclicCopyArray's keepPrototype lane) keeps
+  // the ctor INSIDE the `new` callee, so the identifier lane below never sees
+  // it and the legacy `__new___unknown` fallthrough constructs garbage. A
+  // property/element access whose static type is `any`/`unknown` — or the bare
+  // lib `Function` interface (`.constructor` on a typed receiver, same #3435
+  // reasoning as the identifier lane) — is a genuinely-dynamic ctor value; the
+  // `__construct_closure` bridge's IsConstructor probe + `Reflect.construct` is
+  // spec-correct for whatever the member read yields at runtime. Members that
+  // resolve statically (compiled classes, extern classes, ctor-interface
+  // builtins like `Intl.NumberFormat`) have concrete types, fail the fact
+  // check, and keep their existing arms.
+  if (ts.isPropertyAccessExpression(calleeExpr) || ts.isElementAccessExpression(calleeExpr)) {
+    const declNI = ctx.oracle.valueDeclarationOf(calleeExpr);
+    if (declNI && (ts.isClassDeclaration(declNI) || ts.isClassExpression(declNI))) return false;
+    const factNI = ctx.oracle.typeFactOf(calleeExpr);
+    return (
+      factNI.kind === "any" || factNI.kind === "unknown" || (factNI.kind === "builtin" && factNI.name === "Function")
+    );
+  }
   if (!ts.isIdentifier(calleeExpr)) return false;
   if (ctx.classSet.has(calleeExpr.text) || ctx.externClasses.has(calleeExpr.text)) return false;
   if (ctx.funcConstructorMap?.has(calleeExpr.text)) return false;
@@ -2387,7 +2407,15 @@ function classExtendsReferencesOwnName(expr: ts.ClassExpression): boolean {
       let found = false;
       const visit = (node: ts.Node): void => {
         if (found) return;
-        if (ts.isIdentifier(node) && node.text === ownName) {
+        // (#4618) The NAME of a property access is not a binding reference:
+        // `class Component extends React.Component` reads `React`, never the
+        // class's own TDZ binding — counting it threw a spurious
+        // "Cannot access 'Component' before initialization".
+        if (
+          ts.isIdentifier(node) &&
+          node.text === ownName &&
+          !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node)
+        ) {
           found = true;
           return;
         }
@@ -2422,6 +2450,42 @@ function emitClassCtorValue(ctx: CodegenContext, fctx: FunctionContext, ctorName
   return { kind: "funcref" };
 }
 
+/**
+ * (#4616) §10.2.9 SetFunctionName for a NAMED class-expression VALUE (jest's
+ * convertDescriptorToString over `class Named {}` in a test table): stamp
+ * `.name` into the ctor value's sidecar once at the value-read site, so
+ * dynamic `.name` reads in other modules answer the declared name. Host lane
+ * only; a nameless class expression is a no-op.
+ */
+function stampClassExprName(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  vt: ValType | null,
+  displayName: string | undefined,
+): void {
+  if (vt === null || ctx.standalone || ctx.wasi) return;
+  if (displayName === undefined || displayName.length === 0) return;
+  if (vt.kind !== "externref" && vt.kind !== "ref" && vt.kind !== "ref_null") return;
+  const setIdx = ensureLateImport(
+    ctx,
+    "__extern_set",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (setIdx === undefined) return;
+  addStringConstantGlobal(ctx, "name");
+  addStringConstantGlobal(ctx, displayName);
+  const tmp = allocTempLocal(fctx, vt);
+  fctx.body.push({ op: "local.tee", index: tmp });
+  if (vt.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, "name"));
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, displayName));
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? setIdx });
+  fctx.body.push({ op: "local.get", index: tmp });
+  releaseTempLocal(fctx, tmp);
+}
+
 function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr: ts.ClassExpression): ValType | null {
   // §15.7.1: the class-expression name is in TDZ during its own `extends`
   // evaluation. `(class x extends x {})` must throw ReferenceError (#1594B).
@@ -2446,7 +2510,12 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
     const ctorName = `${syntheticName}_new`;
     const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)); // (#1983)
     if (funcIdx !== undefined) {
-      return emitClassCtorValue(ctx, fctx, ctorName, funcIdx);
+      const vt = emitClassCtorValue(ctx, fctx, ctorName, funcIdx);
+      // (#4616) §10.2.9 — same name stamp as the named-collection arm below;
+      // a NAMED class expression routinely lands here under its synthetic
+      // collection name, but its display name is the SOURCE name.
+      stampClassExprName(ctx, fctx, vt, expr.name?.text);
+      return vt;
     }
   }
 
@@ -2457,7 +2526,9 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
       const ctorName = `${className}_new`;
       const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)); // (#1983)
       if (funcIdx !== undefined) {
-        return emitClassCtorValue(ctx, fctx, ctorName, funcIdx);
+        const vt = emitClassCtorValue(ctx, fctx, ctorName, funcIdx);
+        stampClassExprName(ctx, fctx, vt, className);
+        return vt;
       }
     }
   }
@@ -2675,7 +2746,13 @@ function emitDynamicNewFallback(
     if (ctorResult?.kind === "externref") continue;
     candidates.push(className);
   }
-  if (candidates.length === 0) return false;
+  // (#3087 / #4616) The `__construct_closure` no-match base makes this fallback
+  // meaningful even with ZERO candidate classes: a class-free module (jest-util
+  // deepCyclicCopy) constructing a dynamic ctor value skips the tag dispatch
+  // entirely (the tag stays -1) and lands directly on the bridge. Computed
+  // up-front so the zero-candidate refusal below can consult it.
+  const useConstructClosureBase = !noJsHost(ctx) && resolvesToDynamicAnyCtorValue(ctx, calleeExpr);
+  if (candidates.length === 0 && !useConstructClosureBase) return false;
 
   const rawArgs = expr.arguments ?? [];
 
@@ -2758,7 +2835,7 @@ function emitDynamicNewFallback(
   // emission (the #608/#794 late-import index-shift hazard). Scoped to the
   // Runtime argv is supported too: its no-match arm copies the materialized
   // argv into the bridge's JS array without re-evaluating any source expression.
-  const useConstructClosureBase = !noJsHost(ctx) && resolvesToDynamicAnyCtorValue(ctx, calleeExpr);
+  // (`useConstructClosureBase` is computed above, before the candidate check.)
   let ccArrNewIdx: number | undefined = -1;
   let ccArrPushIdx: number | undefined = -1;
   let ccBridgeIdx: number | undefined = -1;
@@ -3926,7 +4003,10 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     for (const declaration of boundSymbol?.getDeclarations() ?? []) {
       const initializer = ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
       const candidate = initializer ? unwrapNewTarget(initializer) : declaration;
-      if (!ts.isClassExpression(candidate)) continue;
+      // (#4618) A nested class DECLARATION whose name collided with a class
+      // in another scope carries a per-site synthetic identity too — resolve
+      // it by declaration node exactly like an anonymous class expression.
+      if (!ts.isClassExpression(candidate) && !ts.isClassDeclaration(candidate)) continue;
       const syntheticName = ctx.anonClassExprNames.get(candidate);
       if (syntheticName && ctx.classSet.has(syntheticName)) {
         boundClassExpressionName = syntheticName;
@@ -4599,7 +4679,15 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
             ? dynCallee.expression
             : (dynCallee as ts.NonNullExpression).expression;
       }
-      if (ts.isIdentifier(dynCallee) && !ctx.classSet.has(dynCallee.text)) {
+      // (#4616) Beyond the bare-identifier form, admit an inline member-access
+      // callee (`new (Object.getPrototypeOf(arr).constructor)(n)`) when the JS
+      // host is present and the member's static type marks it a genuinely
+      // dynamic ctor value — the fallback's `__construct_closure` no-match base
+      // constructs it correctly (and its zero-candidate refusal is lifted for
+      // exactly this case). Standalone keeps the pre-existing member handling.
+      const dynMemberCallee =
+        !ts.isIdentifier(dynCallee) && !noJsHost(ctx) && resolvesToDynamicAnyCtorValue(ctx, dynCallee);
+      if ((ts.isIdentifier(dynCallee) && !ctx.classSet.has(dynCallee.text)) || dynMemberCallee) {
         // (#3054 D) Dynamic `new <ctorVal>(buffer[, off[, len]])` where `ctorVal`
         // is a first-class `$__ta_ctor` value (a TA constructor held in a var /
         // array element — test262 `CreateRabForTest`, `for (ctor of ctors) new

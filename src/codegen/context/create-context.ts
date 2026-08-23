@@ -339,6 +339,7 @@ export function createCodegenContext(
     methodClosureGlobals: new Map(),
     nullThisTypeErrorReady: false, // (#2025)
     funcClosureGlobals: new Map(),
+    funcClosureSingletonKeyByFuncIdx: new Map(),
     wasi: targetProfile.target === "wasi",
     nodeGlobals: options?.nodeGlobals ?? false,
     // #2783 — namespaces left as link-time imports (WASI-gated above).

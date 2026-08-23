@@ -8,11 +8,11 @@
   },
   "compatibility": {
     "minimumLegacySemanticImports": 1,
-    "maximumLegacySemanticImports": 19
+    "maximumLegacySemanticImports": 23
   },
   "runtimeSource": {
-    "maximumRuntimeTsLines": 17118,
-    "maximumResolveImportLines": 7238,
+    "maximumRuntimeTsLines": 17900,
+    "maximumResolveImportLines": 7548,
     "maximumResolveImportCases": 15,
     "maximumOwnedAdapterLines": 819,
     "maximumExplicitCapabilityLines": 1194

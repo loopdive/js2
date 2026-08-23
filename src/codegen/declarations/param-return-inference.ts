@@ -349,6 +349,11 @@ export function inferParamTypeFromCallSites(
   // `undefined` — e.g. `verifyEqualTo(arr, "0", getFunc())` where `getFunc`
   // returns nothing. See the withdrawal rule below.
   let sawNullishArg = false;
+  // (#4530) A call site whose argument is `any`/`unknown` AND none of the
+  // stronger sub-proofs below (numeric usage verdict, string verdict, .d.ts
+  // seed) resolved it — an OPAQUE argument that can hold any runtime value.
+  // See the ref-narrowing withdrawal rule below.
+  let sawOpaqueAnyArg = false;
 
   const isRecursiveCall = (call: ts.CallExpression | ts.NewExpression): boolean => {
     const target = ctx.oracle.valueDeclarationOf(call.expression);
@@ -464,9 +469,26 @@ export function inferParamTypeFromCallSites(
                 // also has a proven-array call; ignoring the recursive value
                 // narrows `children` to a vec and destroys element arguments.
                 conflict = true;
+              } else if (!ts.isIdentifier(arg)) {
+                // (#4616 smoke regression) Scoped to NON-identifier `any`
+                // args. A plain identifier bound to an (untyped) local or
+                // enclosing param — the native-messaging framing core's
+                // `readFillExact(read, buf, …)` where `buf` is the caller's
+                // own untyped param — routinely carries the very type the
+                // OTHER call sites agreed on; flagging it withdrew the vec
+                // narrowing module-wide and the WASI byte path silently
+                // no-opped (node_fs/deno scale variants: ZERO output at every
+                // size). The clsx poison shapes (#4530) — `arguments[i]`,
+                // call results, member reads — are all non-identifiers and
+                // stay flagged.
+                sawOpaqueAnyArg = true;
               }
             } else if (isRecursiveCall(node)) {
               conflict = true;
+            } else {
+              // (#4530) e.g. `f(arguments[i])` — an ElementAccess/other `any`
+              // expression the sub-proofs above cannot see through.
+              sawOpaqueAnyArg = true;
             }
           } else {
             // (#4491) `void` / `undefined` maps to i32 in the type mapper
@@ -476,6 +498,33 @@ export function inferParamTypeFromCallSites(
             // native scalar from being inferred out of it.
             if ((argType.flags & ~(ts.TypeFlags.Void | ts.TypeFlags.Undefined)) === 0) sawNullishArg = true;
             const wasmType = resolveWasmType(ctx, argType);
+            // (#4611) A GC-ref claim sourced from a DYNAMIC member read is only
+            // as strong as the receiver's DECLARED shape. Acorn's
+            // `pushComment(options, options.onComment)`: `options` is an open
+            // `{}` object, so the read compiles to `__extern_get` (externref,
+            // any host value), but TS's `isArray(options.onComment)` guard
+            // flow-narrows the LOCATION to `any[]` and the vec narrowing here
+            // pinned the param — a HOST array capture then guarded-cast to
+            // null and the closure's push trapped (swallowed by the method
+            // bridge; acorn's onComment family read back empty). When the
+            // declared property/element fact cannot vouch for the type, treat
+            // the site as opaque — the #4530 withdrawal below then keeps any
+            // ref agreement from other sites from surviving it.
+            if (wasmType.kind === "ref" || wasmType.kind === "ref_null") {
+              let declaredFact: { kind: string } | undefined;
+              if (ts.isPropertyAccessExpression(arg) && !ts.isPrivateIdentifier(arg.name)) {
+                declaredFact = ctx.oracle.propertyFactOf(arg.expression, arg.name.text);
+              } else if (ts.isElementAccessExpression(arg)) {
+                declaredFact = ctx.oracle.elementFactOf(arg.expression);
+              }
+              if (
+                declaredFact !== undefined &&
+                (declaredFact.kind === "any" || declaredFact.kind === "unknown" || declaredFact.kind === "unresolvable")
+              ) {
+                sawOpaqueAnyArg = true;
+                return;
+              }
+            }
             if (agreed === null) {
               agreed = wasmType;
             } else if (agreed.kind !== wasmType.kind) {
@@ -532,6 +581,52 @@ export function inferParamTypeFromCallSites(
   // whose default value IS the canonical `undefined` (`pushDefaultValue` →
   // `emitUndefinedValue` → the #2106 `$undefined` singleton in standalone).
   if (type !== null && sawNullishArg && (type.kind === "f64" || type.kind === "i32" || type.kind === "i64")) {
+    type = null;
+  }
+  // (#4530) Soundness, same shape as the #2867 S2 escape rule: a call site
+  // passing an OPAQUE `any` argument (no numeric/string/seed verdict) can
+  // deliver any runtime value, so an agreed GC-`ref` narrowing from the OTHER
+  // sites is unproven — clsx's `toVal(mix)` had one object-literal site and one
+  // `toVal(arguments[i])` site; the literal narrowed `mix` to that struct,
+  // `typeof mix` then static-folded to "object", and every string/number/array
+  // argument silently took the object branch with zero enumerable keys. Only
+  // the trapping/misfolding ref narrowing is withdrawn; scalar narrowings keep
+  // their existing coerce-don't-trap risk profile (same split as #2867 S2).
+  // (#4616 smoke regression) The opaque-any withdrawal is scoped to
+  // SPECULATIVE narrowings on UNANNOTATED params. A param with an explicit
+  // concrete type annotation (`buf: Uint8Array` in the native-messaging
+  // framing core) is vouched for by the annotation — a violating call site is
+  // a TS type error, not a runtime wildcard — and withdrawing its refined vec
+  // rep degraded the WASI byte path to a silent no-op (the node_fs/deno scale
+  // variants emitted ZERO output at every size).
+  const paramHasConcreteAnnotation = (): boolean => {
+    let found = false;
+    const scan = (node: ts.Node): void => {
+      if (found) return;
+      if (ts.isFunctionDeclaration(node) && node.name?.text === funcName) {
+        const p = node.parameters[paramIndex];
+        // Syntactic check (no checker query): any explicit annotation other
+        // than the `any`/`unknown` keywords vouches for the param.
+        if (
+          p?.type !== undefined &&
+          p.type.kind !== ts.SyntaxKind.AnyKeyword &&
+          p.type.kind !== ts.SyntaxKind.UnknownKeyword
+        ) {
+          found = true;
+        }
+        return;
+      }
+      ts.forEachChild(node, scan);
+    };
+    scan(sourceFile);
+    return found;
+  };
+  if (
+    sawOpaqueAnyArg &&
+    type !== null &&
+    (type.kind === "ref" || type.kind === "ref_null") &&
+    !paramHasConcreteAnnotation()
+  ) {
     type = null;
   }
   // (#2867 S2) Soundness, same shape as the #3548 under-application rule: if the
