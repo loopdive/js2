@@ -214,6 +214,14 @@ describe("#4515 wave-5 — measured residuals (owners named)", () => {
 
   // OWNER: #4491 T4. FIXED on `issue-4491-t4-parity` (`60f32935b`) after this
   // lane handed it back — **flip this to a passing pin when that lands here.**
+  //
+  // That is CONFIRMED, not predicted: dev-4491 copied this file into their
+  // fixed worktree as a gitignored `tests/probe-*.test.ts` and ran it, and this
+  // pin failed with exactly `Error: Expect test to fail`. Their run is also an
+  // independent check of their fix on a shape they did not write — `runModule`
+  // here uses `deferTopLevelInit: true, hostBridge: "always"` and a
+  // module-level `var __r4515 = …`, neither of which their own pins use.
+  //
   // Measured on THIS branch's tree (8794ab2c9 + this lane): `f1 + 1` is
   // "function () { [native code] }1" while `f1.toString() + 1` is
   // "function f1() { return 0; }1" (`language/expressions/addition/

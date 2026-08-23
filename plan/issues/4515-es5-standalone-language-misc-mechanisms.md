@@ -652,7 +652,7 @@ Flip: `language/expressions/in/S11.8.7_A2.4_T1.js` (both CHECK#1 and CHECK#2).
 | shape | owner |
 |---|---|
 | `(OBJECT = Object, {}) instanceof OBJECT` — and `new U() instanceof U` through a parameter | #2916 Slice B / #2660 M3 (runtime constructor→prototype edge) |
-| `f + 1 !== f.toString() + 1` | **#4491 T4 — FIXED after this lane handed it back** (`60f32935b` on `issue-4491-t4-parity`). Flip the `it.fails` pin to a passing pin when that lands here. See the correction below: the guard asymmetry this lane reported was real but NOT sufficient. |
+| `f + 1 !== f.toString() + 1` | **#4491 T4 — FIXED after this lane handed it back** (`60f32935b` on `issue-4491-t4-parity`), and **confirmed on the combined tree**: dev-4491 ran THIS lane's pin file against their fixed worktree and it failed with exactly `Expect test to fail`. Flip the `it.fails` to `it` at merge. See the correction below: the guard asymmetry this lane reported was real but NOT sufficient. |
 | `arguments.length` string write / descriptor / `callee` | **#4491** |
 | `var m = {1:"one", two:2}; m.two = "duo"` reads NaN | #4204 slot widening. This is also the root of `assignment/S8.12.5_A2`, whose reported `__str_concat` null dereference is one step DOWNSTREAM, in the assertion message. |
 | a hoisted `var x = true` read before its initializer answers `false` | #4204 slot widening (same convention as the NaN-for-undefined case this issue recorded in wave 2) |
@@ -666,35 +666,49 @@ Flip: `language/expressions/in/S11.8.7_A2.4_T1.js` (both CHECK#1 and CHECK#2).
 `ReferenceError: <name> is not defined`, which is what stopped the first cut of
 this lane's pins from running at all.
 
-**This lane's first narrowing of it was WRONG and is recorded here as a
-correction, not a finding.** From a top-level-only survey it looked like "an
-outer binding in a `while`/`for` TEST position", because every top-level case
-passes and the one failing case looked like the odd one out. **dev-4653 ran the
-discriminator on their own tree and falsified all three parts of that
-narrowing** (`for`-vs-`while` is not a factor; the loop is not a factor;
-outer-vs-local is INVERTED). Their measured rule, cited as theirs:
+**Three narrowings were proposed and two were wrong. The live one is
+dev-4653's third**, and it is theirs, measured on their tree with a 19-row
+table (`plan/issues/4653-…md` residual R, probes `.tmp/probes/ev{1..6}.js`,
+commit `82b8c2a1b`):
 
-> An update expression (`++`/`--`) on a name LOCAL to the eval'd or minted code
-> — an eval-local `var`, or a `Function` parameter — throws, and ONLY when the
-> `eval`/mint sits inside an enclosing FUNCTION. Top level is fine. Compound
-> assignment `x = x + 1` is fine. Reads are fine. `++` on an OUTER binding is
-> fine.
->
-> Measured on `c42bdbe3e` + their four commits; `new Function("p","p++; return
-> p;")(1)` throws while `new Function("p","return p;")(7)` answers 7.
+> Inside eval'd / `Function`-minted code, `++`/`--` throws `ReferenceError` for
+> any name whose binding lives in a **FUNCTION variable environment** — the
+> enclosing function's locals or parameters, a `Function` mint's parameters, or
+> an eval-local `var` when the eval runs inside a function. It works for names
+> bound in the **module/global** environment. Reads and `x = x + 1` work in
+> every case.
 
-The lesson generalises past this defect: **a survey run entirely at module top
-level cannot see a defect whose gate is "inside an enclosing function", and will
-mis-attribute the one case that does surface.**
+Superseded, both labelled as such in their file: this lane's "an outer binding
+in a `while`/`for` TEST position", and dev-4653's own "eval-local name, only
+inside an enclosing function". `new Function("p","p++; return p;")(1)` throws at
+MODULE TOP LEVEL, which kills the second one's gate.
 
-One open thread, deliberately not resolved here: this lane's own repro
-`var n = 0; eval("while(n<3){ n++; }")` — the OUTER-`++` row, which is clean on
-dev-4653's tree — does throw on this branch's tree (`8794ab2c9` + this lane's
-commit). Different trees, so neither of us can speak for the other's (the
-brief's third-arm rule); it needs isolating separately by whoever picks the
-defect up. Plausibly the same substrate as `language/expressions/assignment/
-S11.13.1_A6_T{1,2}` (an eval `var` must land in the enclosing FUNCTION's
-variable environment), which are C2 rows this lane could not reach.
+**The tree question is CLOSED — there was no tree difference.** This lane
+reported `var n = 0; eval("while(n<3){ n++; }")` throwing here while clean on
+dev-4653's tree, and filed it as an open thread. dev-4653 spotted the tell in
+the error text this lane had itself quoted: it says `n4515`, not `n`, because
+the probe wraps in `export function test(){ var n4515 = 0; … }` — making the
+name a **local of the enclosing function**, a third cell neither table varied.
+It throws on their tree too. Not a tree difference, a different cell.
+
+Two lessons, and the second is the one worth carrying:
+
+- **A survey run entirely at module top level cannot see a defect gated on
+  "inside an enclosing function"**, and mis-attributes the one case that does
+  surface (this lane's error).
+- **A table is only evidence for the axes it varies; the axis you did not vary
+  is where the wrong rule hides** (dev-4653's, after their own table's gate
+  fell). Here the axis was *where the name is bound* — not the operator, not the
+  surrounding syntax, not the nesting depth. Both of us had varied everything
+  except that.
+
+Still holds from every round: `for`-vs-`while` is irrelevant, and the loop
+itself is irrelevant. Plausibly the same substrate as
+`language/expressions/assignment/S11.13.1_A6_T{1,2}` (an eval `var` must land in
+the enclosing FUNCTION's variable environment), which are C2 rows this lane
+could not reach. Tracked as #4662 — whose body was written from the superseded
+table and, as written, **excludes the most common real shape**; dev-4653 has
+flagged that to the lead.
 
 Practical consequence for anyone writing a pin: it turns a minimal
 `export function test() { … eval(<loop>) … }` into a test of THIS defect. The
@@ -721,6 +735,14 @@ instrumenting the helper and getting zero output is what found it. Handing the
 row back rather than patching the guard in place is what kept a plausible
 non-fix from burying the real cause.
 
+**Confirmed on the combined tree, which neither lane could produce alone.**
+dev-4491 copied this lane's whole pin file into their fixed worktree as a
+gitignored `tests/probe-*.test.ts` and ran it: the `it.fails` pin failed with
+exactly `Error: Expect test to fail`. So the merge-time action is `it.fails` →
+`it`, measured rather than predicted — and it doubles as an independent check of
+their fix on a module shape they did not write (`deferTopLevelInit: true`,
+`hostBridge: "always"`, a module-level `var __r4515`).
+
 ### Method notes worth keeping
 - **`inferModuleStrictArguments: false` is required in any strictness pin.** The
   `export function test()` entry point makes TypeScript flag the source a
@@ -737,6 +759,20 @@ non-fix from burying the real cause.
   apparent flip AND every apparent regression one process at a time before
   counting it; `runTest262File`'s `timeoutMs` is post-hoc and cannot interrupt a
   slow compile.
+- **"Green because nothing ran" now has FOUR measured causes, not one.** A
+  `describe.skipIf`; a suite whose own `CompilerPool` worker cannot start; a
+  path/glob matching no file; and — found by dev-4491 while running this lane's
+  pin file — **`vitest -t` is a REGEX**, so `-t "f + 1 must agree"` requires two
+  spaces, selects zero tests, and reports `22 skipped` + exit 0 on a file with no
+  `skipIf` in it. Escape `+ ( ) [ ] . * ?` in `-t`. The defence is identical for
+  all four and is the whole rule: read the counts, require N > 0. Widened in
+  `plan/method/es5-standalone-agent-brief.md`.
+- **Contention also fakes the OPPOSITE of a failure.** A final run of this
+  lane's pin suite reported `Tests 22 passed` next to `Errors 1 error` — the
+  error being `[vitest-worker]: Timeout calling "onTaskUpdate"`, vitest's own
+  RPC giving up under load, with no test involved. Read what the error IS
+  before treating it as a result; here `22 passed` is the verdict and the
+  error is box noise.
 - **A survey run entirely at module top level is blind to any defect gated on
   "inside an enclosing function"** — and worse, it mis-attributes the one case
   that does surface, because that case looks like the odd one out. See the
