@@ -109,8 +109,76 @@ function validateCaptures(captures: readonly IrFnctorCapture[]): string | null {
   return null;
 }
 
-/** Return a diagnostic when a shape is malformed; return null when valid. */
-export function validateIrFnctorShape(shape: IrFnctorShape): string | null {
+function validateTypeGraph(type: IrType, activeTypes: Set<object>, activeShapes: Set<object>): string | null {
+  if (type.kind === "val" || type.kind === "string" || type.kind === "dynamic" || type.kind === "extern") return null;
+  if (activeTypes.has(type)) return "fnctor shape contains a recursive IR type graph";
+  activeTypes.add(type);
+  try {
+    switch (type.kind) {
+      case "fnctor":
+        return validateShapeGraph(type.shape, activeTypes, activeShapes);
+      case "vec":
+        return validateTypeGraph(type.elementType, activeTypes, activeShapes);
+      case "object":
+        for (const field of type.shape.fields) {
+          const error = validateTypeGraph(field.type, activeTypes, activeShapes);
+          if (error) return error;
+        }
+        return null;
+      case "closure":
+      case "callable":
+        for (const param of type.signature.params) {
+          const error = validateTypeGraph(param, activeTypes, activeShapes);
+          if (error) return error;
+        }
+        return type.signature.returnType === null
+          ? null
+          : validateTypeGraph(type.signature.returnType, activeTypes, activeShapes);
+      case "class":
+        for (const field of type.shape.fields) {
+          const error = validateTypeGraph(field.type, activeTypes, activeShapes);
+          if (error) return error;
+        }
+        return null;
+      case "union":
+        for (const member of type.members) {
+          const error = validateTypeGraph(member, activeTypes, activeShapes);
+          if (error) return error;
+        }
+        return null;
+      case "boxed":
+        return validateTypeGraph(type.inner, activeTypes, activeShapes);
+    }
+  } finally {
+    activeTypes.delete(type);
+  }
+}
+
+function validateShapeGraph(shape: IrFnctorShape, activeTypes: Set<object>, activeShapes: Set<object>): string | null {
+  if (activeShapes.has(shape)) return "fnctor shape contains a recursive shape graph";
+  activeShapes.add(shape);
+  try {
+    const shapeError = validateShapeScalars(shape);
+    if (shapeError) return shapeError;
+    for (const field of shape.fields) {
+      const error = validateTypeGraph(field.type, activeTypes, activeShapes);
+      if (error) return error;
+    }
+    for (const capture of shape.captures) {
+      const error = validateTypeGraph(capture.type, activeTypes, activeShapes);
+      if (error) return error;
+    }
+    for (const param of shape.userParamTypes) {
+      const error = validateTypeGraph(param, activeTypes, activeShapes);
+      if (error) return error;
+    }
+    return null;
+  } finally {
+    activeShapes.delete(shape);
+  }
+}
+
+function validateShapeScalars(shape: IrFnctorShape): string | null {
   if (shape.kind !== "fnctor-shape") return "fnctor shape has an invalid kind";
   if (!nonEmpty(shape.sourceId)) return "fnctor shape has an empty source identity";
   if (!nonEmpty(shape.constructorUnitId)) return "fnctor shape has an empty constructor identity";
@@ -136,8 +204,20 @@ export function validateIrFnctorShape(shape: IrFnctorShape): string | null {
   return null;
 }
 
+/** Return a diagnostic when a shape is malformed; return null when valid. */
+export function validateIrFnctorShape(shape: IrFnctorShape): string | null {
+  return validateShapeGraph(shape, new Set<object>(), new Set<object>());
+}
+
 function fnctorRefEquals(a: IrFuncRef | IrTypeRef, b: IrFuncRef | IrTypeRef): boolean {
-  return a.kind === b.kind && a.name === b.name && JSON.stringify(a.binding) === JSON.stringify(b.binding);
+  return a.kind === b.kind && canonicalJson(a.binding) === canonicalJson(b.binding);
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
+  return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`).join(",")}}`;
 }
 
 function fieldsEqual(a: readonly IrFnctorField[], b: readonly IrFnctorField[]): boolean {
@@ -172,7 +252,6 @@ export function irFnctorShapeEquals(a: IrFnctorShape, b: IrFnctorShape): boolean
     validateIrFnctorShape(b) === null &&
     a.sourceId === b.sourceId &&
     a.constructorUnitId === b.constructorUnitId &&
-    a.constructorName === b.constructorName &&
     fnctorRefEquals(a.constructorTarget, b.constructorTarget) &&
     fnctorRefEquals(a.reservedLayout, b.reservedLayout) &&
     fieldsEqual(a.fields, b.fields) &&

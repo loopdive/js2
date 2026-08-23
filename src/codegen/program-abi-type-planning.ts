@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { irClassTypeRef, irSupportTypeRef, irTypeBindingKey } from "../ir/abi-bindings.js";
+import { irCallableBindingKey } from "../ir/callable-bindings.js";
 import type { IrBindingId, IrClassId, IrSourceId } from "../ir/identity.js";
 import type { IrClosureSignature, IrType, IrTypeRef, IrVecLayoutRef } from "../ir/nodes.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
@@ -172,6 +173,14 @@ function canonicalClosureSupportIrType(type: IrType, active: Set<object>): unkno
         return { kind: type.kind, classId: type.shape.classId };
       case "extern":
         return { kind: type.kind, className: type.className };
+      case "fnctor":
+        return {
+          kind: type.kind,
+          sourceId: type.shape.sourceId,
+          constructorUnitId: type.shape.constructorUnitId,
+          constructorTarget: irCallableBindingKey(type.shape.constructorTarget.binding),
+          reservedLayout: irTypeBindingKey(type.shape.reservedLayout.binding),
+        };
       case "union":
         return {
           kind: type.kind,
