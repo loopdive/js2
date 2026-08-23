@@ -7620,45 +7620,45 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       const val = safeGetField(key);
       if (protoMethods === undefined && val === undefined && !hasInSidecar && !hasInFields) return undefined;
       // (#2714) Reflect the sidecar descriptor's stored enumerable flag so a
-      // `defineProperty(o, k, { enumerable: false })` own prop is reported as
-      // non-enumerable through the host proxy. Native consumers that filter by
-      // enumerability — `Object.assign` -> CopyDataProperties, object spread
-      // `{ ...o }` (both lowered via `__object_assign` over a `_wrapForHost`
-      // source) — must SKIP a non-enumerable own key. Hardcoding
-      // `enumerable: true` here leaked non-enumerable sidecar props into spread
-      // results (`spread-obj-skip-non-enumerable`, #2714). Declared struct
-      // fields carry no sidecar flags entry and stay enumerable data props,
-      // matching their spec semantics.
+      // `defineProperty(o, k, { enumerable: false })` own prop reports as
+      // non-enumerable here. Consumers that filter by enumerability —
+      // `Object.assign` → CopyDataProperties, object spread `{ ...o }` (both
+      // lowered via `__object_assign` over a `_wrapForHost` source) — must SKIP
+      // it; hardcoding `enumerable: true` leaked non-enumerable sidecar props
+      // into spread results (`spread-obj-skip-non-enumerable`). Declared struct
+      // fields carry no flags entry and stay enumerable data props.
       //
-      // (#3647) Registered class-PROTOTYPE members are the exception — the
-      // sentence above used to lump them in with declared struct fields. A
-      // MethodDefinition (§14.6 DefineMethod; likewise §14.4/§14.5 generator,
-      // async and get/set members) is created `enumerable: false`, which
+      // (#3647) Registered class-PROTOTYPE members are the exception — a
+      // MethodDefinition (§14.6; likewise §14.4/§14.5 generator, async and
+      // get/set members) is created `enumerable: false`, which
       // `_readOwnDescriptor` arm 2a (#1364a) has always reported and the
       // static-method arm above already defers to (#3479); only the prototype
-      // case fell through here and hardcoded `true`. That is observable because
-      // `Object.prototype.propertyIsEnumerable.call(C.prototype,"m")` reaches
-      // NO `__propertyIsEnumerable` import on host — `__proto_method_call` runs
-      // the ENGINE's method against this proxy, so §20.1.3.4 reads
-      // `[[GetOwnProperty]]`, i.e. this trap. Only the `enumerable` bit is
-      // corrected: `value` keeps `safeGetField` because arm 2a returns a method
-      // BRIDGE value, which would also move accessor members' `value`.
-      // `hasInFields` (not a raw `includes`) keeps `delete C.prototype.m`
-      // (#1364b) working; an explicit `defineProperty(…,{enumerable:true})`
-      // still wins via the sidecar flags entry below.
+      // case fell through. `propertyIsEnumerable.call(C.prototype,"m")` reaches NO
+      // `__propertyIsEnumerable` import on host — `__proto_method_call` runs the
+      // ENGINE's method against this proxy, so §20.1.3.4 reads this trap. Only
+      // `enumerable` is corrected: `value` keeps `safeGetField` because arm 2a
+      // returns a method BRIDGE value. `hasInFields` (not a raw `includes`)
+      // keeps `delete C.prototype.m` (#1364b) working; an explicit
+      // `defineProperty(…,{enumerable:true})` still wins via the flags entry.
       const isRegisteredProtoMember = protoMethods !== undefined && hasInFields;
       const scFlags = _wasmPropDescs.get(obj)?.get(_normalizeDescKey(key));
+      // (#4649) `writable`/`configurable` were hardcoded `true` while only
+      // `enumerable` read the flags table, so a non-writable/non-configurable
+      // define BEHAVED right but read back mutable (verifyProperty-value.js).
+      const df = scFlags !== undefined && (scFlags & _SC_ACCESSOR) === 0 ? scFlags : undefined;
       const desc: PropertyDescriptor = {
         value: val,
-        writable: true,
+        writable: df === undefined || (df & _SC_WRITABLE) !== 0,
         enumerable: scFlags === undefined ? !isRegisteredProtoMember : !!(scFlags & _SC_ENUMERABLE),
-        configurable: true,
+        configurable: df === undefined || (df & _SC_CONFIGURABLE) !== 0,
       };
-      // Mirror onto target so V8's Proxy invariant checker is happy
+      // Mirror onto target so V8's Proxy invariant checker is happy; §10.5.5
+      // forbids reporting a non-configurable descriptor the target lacks, so a
+      // REFUSED mirror serves the target's own descriptor instead (#4649).
       try {
         Object.defineProperty(target, key, desc);
       } catch {
-        /* already defined with different flags — ignore */
+        return Reflect.getOwnPropertyDescriptor(target, key) ?? desc;
       }
       return desc;
     },
