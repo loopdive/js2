@@ -187,11 +187,21 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
        skipped)`, naming the dead file without verbose. (`Test Files 1
        passed | 1 skipped (2)` is the same signal at file granularity.)
 
-       **Rung 2's limit, measured in that same run: it lists only files
-       skipped in their ENTIRETY.** The pin file in that run had 21 of its
-       22 tests skipped and got NO `↓` line at all. So rung 2 sees "a whole
-       file was lost" and is blind to "some tests within a file were lost"
-       — which is exactly the partial-`skipIf` case rung 3 exists for.
+       **Grep the `(N tests | M skipped)` SUFFIX, not the marker** — this
+       corrects an earlier reading of rung 2 (dev-4491, measured on
+       `basic`). A file skipped in its entirety gets a `↓`; a PARTIALLY
+       skipped file still has a passing test, so it lands on a `✓` line and
+       a search for `↓` will not find it:
+       ```
+       ✓ tests/issue-4491-t4-add-parity.test.ts (5 tests  | 4 skipped)
+       ✓ tests/issue-4491-wave4.test.ts        (14 tests | 13 skipped)
+       ```
+       The file WAS reported. Reading the marker instead of the suffix is
+       what makes rung 2 look blind to partial loss and sends you to
+       verbose for something already on screen. Limit stated rather than
+       generalised: the suffix is confirmed across `↓` (fully skipped) and
+       `✓` (partially skipped); a FAILING file with skips is untested —
+       one run closes it if anyone needs it.
      ```
      Tests  1 failed | 45 passed (46)   healthy
      Tests  22 skipped (22)             a `-t` regex matched nothing
