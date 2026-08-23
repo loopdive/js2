@@ -1,7 +1,10 @@
 ---
 id: 4649
 title: "js-host: property-descriptor/reflection harness self-tests — verifyProperty ×2, deepEqual-deep, isConstructor"
-status: ready
+status: in-progress
+assignee: ttraenkler/senior-dev
+loc-budget-allow:
+  - src/codegen/typeof-delete.ts
 sprint: current
 created: 2026-08-23
 updated: 2026-08-23

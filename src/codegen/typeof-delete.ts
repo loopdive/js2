@@ -1536,11 +1536,16 @@ function runtimeEvalMayRebindIdentifier(
  * Kill the fold for annotation-free parameters in JS files; the runtime
  * `__typeof_*` predicates / `$AnyValue` tag path answer correctly standalone.
  * TypeScript parameters keep the #1304 fold (an explicit annotation is a
- * compiler-enforced contract there), and the standalone/wasi gate keeps the
- * host/gc lanes byte-identical.
+ * compiler-enforced contract there).
+ *
+ * (#4649) The original `standalone || wasi` gate is GONE: the unsoundness is a
+ * property of the SOURCE (JSDoc is unenforced at runtime), not of the backend.
+ * It made the js-host lane fold `typeof desc` in `propertyHelper.js`
+ * (`@param {PropertyDescriptor|undefined} desc`) to the constant `"object"`,
+ * so verifyProperty's own primitive-descriptor rejection was unreachable and
+ * `test/harness/verifyProperty-desc-is-not-object.js` never threw.
  */
 function typeofFoldUnsoundForJsParam(ctx: CodegenContext, operand: ts.Expression): boolean {
-  if (ctx.standalone !== true && ctx.wasi !== true) return false;
   let bare: ts.Expression = operand;
   while (
     ts.isParenthesizedExpression(bare) ||
