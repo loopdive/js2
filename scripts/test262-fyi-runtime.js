@@ -40,7 +40,16 @@ var $262 = {
       Function: globalThis.Function,
       Iterator: globalThis.Iterator,
       Math: globalThis.Math,
-      Object: globalThis.Object,
+      // NO `Object: globalThis.Object` forward — measured 2026-08-23 (PR
+      // #4794 merge_group park): ANY compiled read of `globalThis.Object` /
+      // `globalThis["Object"]` in this prelude (which compiles into EVERY
+      // test) changes how js-host dynamic `import()` rejections construct
+      // their error — `error.constructor` degrades TypeError → Error,
+      // regressing test/language/expressions/dynamic-import/
+      // assignment-expression/import-meta.js from pass. Isolated by shim
+      // bisection: dropping ONLY this entry restores the pass; every other
+      // forward is inert. Re-add only together with a compiler-side fix and
+      // that test in the validation list.
       Proxy: globalThis.Proxy,
       Symbol: globalThis.Symbol,
       eval: globalThis.eval,
