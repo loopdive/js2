@@ -249,7 +249,7 @@ while holding `tests/` at the branch version:
 
 | base | count | what they are |
 | ---- | ----- | ------------- |
-| **FAIL** | 6 | Tests OF the change: the C1 pin, the three C2 pins, the C6 `Function()` pin, and the C2 cross-lane canary. Each fails on base, so none is asserting pre-existing behaviour. |
+| **FAIL** | 7 | Tests OF the change: the C1 pin, the C1 arg-only-instantiation pin, the three C2 pins, the C6 `Function()` pin, and the C2 cross-lane canary. Each fails on base, so none is asserting pre-existing behaviour. |
 | **pass** | 1 | `S15.5.4.11_A1_T1`, an explicitly-labelled control. |
 | **pass** | 6 | `pinResidualRow` entries — they assert `status !== "pass"` for residuals this change-set did NOT fix, so they are green on both arms by construction. |
 | **pass** | 1 | `carrier-hasown-prototype-guard`, labelled `REGRESSION GUARD (green on base)`. |
@@ -464,6 +464,44 @@ unchanged; they widen the C2 win rather than the row count. The mechanism is
 the one described above: no proto brand ⇒ fall through ⇒ ordinary [[Get]] ⇒
 carrier has no own `prototype` (`pushBuiltinCtorOwnPropSeed` returns early
 for a namespace, which has no arity) ⇒ `%Object.prototype%` ⇒ `undefined`.
+
+### C1 fixes a pre-existing defect on the tip that BOTH lanes mis-attributed
+
+A worked example of why partial arms produce confident wrong answers, kept
+because two lanes reached two different wrong conclusions from it before a
+third measurement settled it.
+
+Shape (dev-4637's `.tmp/p22.js` family): a constructor with a
+FUNCTION-VALUED prototype whose instance appears ONLY as a `new` argument,
+read back through a field.
+
+```js
+var P = function () {};
+function G() {}
+G.prototype = P;
+function H(x) { this.wrapped = x; }
+var h = new H(new G());
+var w = h.wrapped;
+G.prototype === P; // campaign tip: FALSE.  this branch: true.
+```
+
+| who | arms compared | conclusion | status |
+| --- | ------------- | ---------- | ------ |
+| dev-4637 | their base (= tip) vs their branch | identical ⇒ "pre-existing, unaffected" | correct about THEIR arms, incomplete |
+| me, first pass | my branch only | `true` here ⇒ "introduced by their branch" | **WRONG** — a regression claim from a one-armed measurement |
+| me, after their correction | tip vs this branch | base `false` → branch `true` | settled |
+
+Attribution narrowed by reverting ONE file: with only
+`src/codegen/fnctor-escape-gate.ts` back at `81445abf7` the answer returns to
+`false`, so **C1 is the cause**. The defect is pre-existing on the tip AND
+fixed by this change-set — a possibility neither lane's arm pair could
+represent, because neither contained the other lane's change.
+
+Pinned as `argonly-instantiation-function-valued-prototype` (fails on base).
+It is the FIRST HALF of the composition dev-4637's `CROSS-LANE PREDICTION`
+states: C1 makes this site escape-gate-approved and the prototype identity
+read correctly. It does **not** show their A1 arm links the function-valued
+prototype — that is their arm and their pin.
 
 **C1 × #4637 A1 — a PREDICTION, not a measurement.** My C1 widening makes
 MORE `new F(inst)` sites reconstruct the argument as an open `$Object`;
