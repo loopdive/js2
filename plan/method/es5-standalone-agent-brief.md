@@ -187,7 +187,8 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
        skipped)`, naming the dead file without verbose. (`Test Files 1
        passed | 1 skipped (2)` is the same signal at file granularity.)
 
-       **Grep the `(N tests | M skipped)` SUFFIX, not the marker** — this
+       **Match `skipped` on the file line — not the marker, and NOT a
+       fixed suffix shape** — this
        corrects an earlier reading of rung 2 (dev-4491, measured on
        `basic`). A file skipped in its entirety gets a `↓`; a PARTIALLY
        skipped file still has a passing test, so it lands on a `✓` line and
@@ -196,12 +197,21 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
        ✓ tests/issue-4491-t4-add-parity.test.ts (5 tests  | 4 skipped)
        ✓ tests/issue-4491-wave4.test.ts        (14 tests | 13 skipped)
        ```
-       The file WAS reported. Reading the marker instead of the suffix is
-       what makes rung 2 look blind to partial loss and sends you to
-       verbose for something already on screen. Limit stated rather than
-       generalised: the suffix is confirmed across `↓` (fully skipped) and
-       `✓` (partially skipped); a FAILING file with skips is untested —
-       one run closes it if anyone needs it.
+       The file WAS reported. Reading the marker is what makes rung 2 look
+       blind to partial loss and sends you to verbose for something already
+       on screen.
+
+       **The suffix has a VARIABLE number of segments, so do not grep the
+       pair** (dev-4515, closing dev-4491's stated limit — all three
+       markers now measured):
+       ```
+       ↓ …in-operator-edge-cases.test.ts (9 tests | 9 skipped)
+       ✓ …issue-4515-wave5.test.ts       (22 tests | 21 skipped)
+       ❯ …probe-failskip.test.ts         (3 tests | 1 failed | 2 skipped)
+       ```
+       A failing file inserts `| N failed`, so a pattern written for the
+       two-segment `(N tests | M skipped)` form misses exactly the shape
+       you most want to catch. Match the word `skipped` on the file line.
      ```
      Tests  1 failed | 45 passed (46)   healthy
      Tests  22 skipped (22)             a `-t` regex matched nothing
