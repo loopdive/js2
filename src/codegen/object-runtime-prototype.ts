@@ -20,6 +20,7 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { FUNCTION_FROM_PROTO, PROTO_FROM_FUNCTION } from "./proto-function-value.js"; // (#4637 A1)
 
 /** Everything the prototype-chain block reads from the `ensureObjectRuntime` scope. */
 export interface ObjectPrototypeHelperState {
@@ -56,6 +57,24 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
     OBJ_FLAG_NONEXTENSIBLE,
   } = s;
 
+  // (#4637 A1) The bag↔callable proto-view map, reserved just above in
+  // `ensureObjectRuntime`. `undefined` in gc/host (nothing reserved) — every
+  // consult below then emits its exact pre-#4637 instructions, so those lanes
+  // stay byte-identical by construction.
+  const protoFromFunctionIdx = ctx.funcMap.get(PROTO_FROM_FUNCTION);
+  const functionFromProtoIdx = ctx.funcMap.get(FUNCTION_FROM_PROTO);
+  /** Map a callable in a `[[Prototype]]` POSITION to the `$Object` view of it. */
+  const canonicalizeProtoArg = (paramIdx: number): Instr[] =>
+    protoFromFunctionIdx === undefined
+      ? [{ op: "local.get", index: paramIdx }]
+      : [
+          { op: "local.get", index: paramIdx },
+          { op: "call", funcIdx: protoFromFunctionIdx },
+        ];
+  /** Map a proto-view `$Object` back to the callable it stands for, on the way OUT. */
+  const devirtualizeProtoResult = (): Instr[] =>
+    functionFromProtoIdx === undefined ? [] : [{ op: "call", funcIdx: functionFromProtoIdx }];
+
   // ── Prototype-chain ops (#1472 Phase C) ──────────────────────────────────
   //
   // The $Object struct already carries the [[Prototype]] in field 0 ($proto,
@@ -80,6 +99,12 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
           { op: "ref.cast", typeIdx: objectTypeIdx },
           { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
           { op: "extern.convert_any" },
+          // (#4637 A1) `$proto` may be the `$Object` PROTO-VIEW of a function
+          // value (see `proto-function-value.ts`). Answering the view itself
+          // would publish an object the program can never name — a WRONG answer
+          // where the base has a merely missing one — so map it back to the
+          // callable. A non-registered `$Object` maps to itself.
+          ...devirtualizeProtoResult(),
         ],
         else:
           boundaryObjectGetPrototypeIdx === undefined
@@ -111,7 +136,10 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
       { op: "array.new", typeIdx: propMapTypeIdx },
       { op: "local.set", index: 2 },
       // proto = (any.convert_extern(arg) is $Object ? cast : null)
-      { op: "local.get", index: 0 },
+      // (#4637 A1) A CALLABLE argument is first mapped to its `$Object`
+      // proto-view, so `Object.create(f)` / `new F()` with `F.prototype = f`
+      // produce a walkable chain instead of storing null.
+      ...canonicalizeProtoArg(0),
       { op: "any.convert_extern" },
       { op: "local.tee", index: 1 },
       { op: "ref.test", typeIdx: objectTypeIdx },
@@ -213,7 +241,12 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         ],
       },
       // v = (proto is $Object ? cast : null) — non-$Object/null proto ⇒ null
-      { op: "local.get", index: 1 },
+      // (#4637 A1) …after mapping a CALLABLE `proto` to its `$Object` view, so
+      // `Object.setPrototypeOf(o, f)` builds the same walkable link
+      // `__object_create` does. The §10.1.2.1 checks below (SameValue, the
+      // extensibility refusal, the cycle walk) all run on the view, which is the
+      // object that will actually be in the chain.
+      ...canonicalizeProtoArg(1),
       { op: "any.convert_extern" },
       { op: "local.tee", index: 5 },
       { op: "ref.test", typeIdx: objectTypeIdx },
@@ -319,7 +352,12 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
   {
     const body: Instr[] = [
       // target = (obj is $Object ? cast : null); if null → 0
-      { op: "local.get", index: 0 },
+      // (#4637 A1) A CALLABLE receiver — `P.isPrototypeOf(m)` — is first mapped
+      // to the `$Object` proto-view that `__object_create` put in `m`'s chain,
+      // so the `ref.eq` below compares the same identity from both ends.
+      // Deliberately only the RECEIVER: `x.isPrototypeOf(f)` walks a function's
+      // OWN chain, which this issue does not model, and keeps today's `0`.
+      ...canonicalizeProtoArg(0),
       { op: "any.convert_extern" },
       { op: "local.tee", index: 4 },
       { op: "ref.test", typeIdx: objectTypeIdx },

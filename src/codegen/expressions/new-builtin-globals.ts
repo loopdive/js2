@@ -34,7 +34,7 @@ import { coerceType, compileArrowAsClosure, compileExpression } from "../shared.
 import type { InnerResult } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { coerceType as coerceTypeImpl } from "../type-coercion.js";
-import { ensureDateDaysFromCivilHelper, ensureDateStruct } from "./builtins.js";
+import { ensureDateDaysFromCivilHelper, ensureDateFormatStringHelper, ensureDateStruct } from "./builtins.js";
 import { emitStandaloneDateTimestamp } from "../standalone-clock-capability.js";
 import { emitObjectCoercion } from "./calls-guards.js";
 import {
@@ -1544,4 +1544,86 @@ export function tryCompileErrorCtorCallWithoutNew(
 
   const result = tryCompileBuiltinGlobalNew(ctx, fctx, expr as unknown as ts.NewExpression);
   return result === NEW_GLOBAL_FALLTHROUGH ? undefined : result;
+}
+
+/** `__date_format_string` mode selector for §21.4.4.41 `toString`. */
+const DATE_FORMAT_MODE_TO_STRING = 2;
+
+/**
+ * (#4640 D7) `Date()` / `Date(1970, 1)` / `Date(anything)` called WITHOUT `new`.
+ *
+ * §21.4.2.1 step 1: "If NewTarget is undefined, then let now be the time value
+ * ... return ToDateString(now)". Every argument is IGNORED — not ToNumber'd, not
+ * inspected — and the result is a **String**, never a Date object. The `new`
+ * form (handled by {@link tryCompileBuiltinGlobalNew}) is a different clause
+ * entirely, which is why this cannot delegate the way the Error-family arm does.
+ *
+ * ## Why this is a CRASH fix, not a cosmetic one
+ *
+ * Before this arm, a bare `Date(...)` matched nothing and fell through to the
+ * generic builtin-identifier terminal, which yields `ref.null.extern`. The
+ * checker types the call `string` (lib.es5's `DateConstructor` call signature),
+ * so nothing downstream re-checked it: `Date.parse(Date())` handed a NULL
+ * externref to the native `__date_parse`, whose first act is
+ * `any.convert_extern` + `ref.cast` to the string struct — an **illegal cast
+ * trap**, not a wrong answer (`built-ins/Date/S15.9.2.1_A2`). The static type
+ * being right while the runtime value is `null` is exactly what made this
+ * invisible: `typeof Date()` folds to `"string"` off the checker type, so the
+ * obvious probe agrees with the spec while the emitted value does not.
+ *
+ * ## Shape
+ *
+ * The same time value the zero-arg `new Date()` arm uses
+ * ({@link emitStandaloneDateTimestamp} standalone, `__date_now` on host), fed to
+ * the SAME `__date_format_string` formatter mode `d.toString()` compiles to, so
+ * the two spellings cannot drift — one formatter, as in `date-any-to-string.ts`.
+ *
+ * ## Declines (absent-not-wrong)
+ *
+ * - No native strings (`ctx.nativeStrings` false / no `$NativeString` type):
+ *   the formatter builds a native string and there is nothing to build it into.
+ *   Host mode keeps its prior behaviour rather than getting a half-answer.
+ * - A shadowed `Date` (a local, a `class Date {}`, an import) is not the ambient
+ *   global and is left to the ordinary call lane.
+ *
+ * Arguments are still COMPILED and dropped: ArgumentListEvaluation runs before
+ * [[Call]], so `Date(sideEffect())` must observe the side effect even though the
+ * value is discarded.
+ */
+export function tryCompileDateCallWithoutNew(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): InnerResult | undefined {
+  if (expr.questionDotToken) return undefined;
+  const callee = expr.expression;
+  if (!ts.isIdentifier(callee) || callee.text !== "Date") return undefined;
+  if (ctx.classSet.has("Date")) return undefined;
+  if (!resolvesToAmbientGlobal(ctx, callee)) return undefined;
+  if (!ctx.nativeStrings || ctx.nativeStrTypeIdx < 0) return undefined;
+
+  for (const arg of expr.arguments ?? []) {
+    const argResult = compileExpression(ctx, fctx, arg);
+    if (argResult) fctx.body.push({ op: "drop" });
+  }
+
+  const fmtIdx = ensureDateFormatStringHelper(ctx);
+  if (ctx.wasi && ctx.funcMap.has("__wasi_date_now")) {
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__wasi_date_now")! });
+    fctx.body.push({ op: "i64.trunc_sat_f64_s" });
+  } else if (ctx.standalone === true) {
+    emitStandaloneDateTimestamp(ctx, fctx);
+  } else {
+    const dateNowIdx = ensureLateImport(ctx, "__date_now", [], [{ kind: "f64" }]);
+    if (dateNowIdx === undefined) {
+      fctx.body.push({ op: "i64.const", value: 0n });
+    } else {
+      flushLateImportShifts(ctx, fctx);
+      fctx.body.push({ op: "call", funcIdx: dateNowIdx });
+      fctx.body.push({ op: "i64.trunc_sat_f64_s" });
+    }
+  }
+  fctx.body.push({ op: "i32.const", value: DATE_FORMAT_MODE_TO_STRING });
+  fctx.body.push({ op: "call", funcIdx: fmtIdx });
+  return { kind: "ref", typeIdx: ctx.nativeStrTypeIdx };
 }

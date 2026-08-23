@@ -98,6 +98,7 @@ import {
 } from "./carrier-bag-visibility.js";
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { reserveClosurePrototypeEdge } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge
+import { reserveProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
 // (#4230 L1) the #3251 overlay companion as a THIRD key source for the vec key walks
 import { buildOverlayPushKeys, buildVecOverlayHasArm, reserveVecOverlayPushKeys } from "./vec-overlay-keys.js";
 // (#4194) instance expando substrate — composes AROUND the #3537/#3468 arms and
@@ -1056,6 +1057,13 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // (#2660 M3) The function-value → prototype-object identity edge — same
     // reserve-before-arms-bake discipline; see `closure-prototype-edge.ts`.
     reserveClosurePrototypeEdge(ctx);
+    // (#4637 A1) The bag↔callable proto-view map. Must come AFTER
+    // `reserveClosurePropHelpers` (its fill bakes `__closure_bag_ensure`'s
+    // funcIdx) and BEFORE `buildObjectPrototypeHelpers` below, which bakes
+    // `call __proto_from_function` / `call __function_from_proto` into
+    // `__object_create` / `__getPrototypeOf` / `__isPrototypeOf` /
+    // `__object_setPrototypeOf`.
+    reserveProtoFunctionValue(ctx, objectTypeIdx);
     // (#3537) reserve the array-expando side table right after — same
     // reserve-before-arms-bake discipline, appended indices only.
     reserveVecPropHelpers(ctx);
@@ -2063,6 +2071,27 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 { op: "call", funcIdx: fnctorProtoStartIdx },
                 { op: "local.tee", index: 7 },
                 { op: "ref.is_null" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: buildVecOrClosurePropGetMissArm(ctx, getMiss),
+                },
+                // (#4639/#4637 cross-lane trap, 2026-08-23) TEST before the
+                // cast: `__fnctor_proto_start` answers whatever the S2 store
+                // holds, and for `G.prototype = P` where `P` is a FUNCTION the
+                // stored prototype is a raw CALLABLE, not a `$Object` — a naked
+                // `ref.cast` here was an UNCATCHABLE `illegal cast` trap on an
+                // inherited read (`w.marker`), where the sibling walk entries
+                // (`__getPrototypeOf`, `__isPrototypeOf`) ref.test first and
+                // answer gracefully. A non-`$Object` prototype takes the miss
+                // arm — the tip's silently-wrong `undefined`, restored from a
+                // module-killing trap. The CORRECT answer (walking a callable
+                // prototype's own-property bag) is the #4637 inline-arg
+                // successor's scope; pinned in tests/issue-4639.test.ts.
+                { op: "local.get", index: 7 },
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: objectTypeIdx },
+                { op: "i32.eqz" },
                 {
                   op: "if",
                   blockType: { kind: "empty" },

@@ -333,13 +333,14 @@ import {
 import { ensureAnyHelpers, undefinedExternInstrs } from "../any-helpers.js";
 import { emitSymbolToString, ensureSymbolRegistry } from "../symbol-native.js";
 import { resolveStructName } from "./misc.js";
-import { tryCompileErrorCtorCallWithoutNew } from "./new-builtin-globals.js";
+import { tryCompileDateCallWithoutNew, tryCompileErrorCtorCallWithoutNew } from "./new-builtin-globals.js";
 import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-super.js";
 import { compileIdentifierCall } from "./call-identifier.js";
 import { compileBuiltinStaticCall, tryCompileFromCharCodeFamilyReflective } from "./call-builtin-static.js";
 import { compileNamespaceStaticCall } from "./call-namespace-static.js";
 import { compileReceiverMethodCall } from "./call-receiver-method.js";
 import { compileTailDispatch } from "./call-tail-dispatch.js";
+import { tryEmitIsPrototypeOfCallArm } from "./is-prototype-of-call-arm.js";
 import { tryEmitRealmGlobalMemberCall } from "./realm-global-member-call.js"; // (#4491)
 import {
   emitNativeGeneratorToVec,
@@ -6407,6 +6408,16 @@ function compileCallExpression(
     if (r !== undefined) return r;
   }
 
+  // (#4640 D7) `Date(...)` without `new` — §21.4.2.1 returns ToDateString(now),
+  // a String, ignoring every argument. Not spec-identical to the `new` form (so
+  // it cannot delegate like the Error arm above); without it the call produced a
+  // silent `ref.null.extern` under a checker type of `string`, and the next
+  // `Date.parse(...)` illegal-cast TRAPPED.
+  {
+    const r = tryCompileDateCallWithoutNew(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+
   // (#1540) JSX runtime call intercept — `_jsx` / `_jsxs` / `_jsxDEV`. Routed to
   // the matching `__jsx_runtime_*` host import. Extracted to calls-guards.ts (#742).
   {
@@ -8311,6 +8322,19 @@ function compileCallExpression(
   {
     const __idResult = compileIdentifierCall(ctx, fctx, expr, expectedType);
     if (__idResult !== undefined) return __idResult;
+  }
+
+  // (#4623) `<ordinary receiver>.isPrototypeOf(v)` — §20.1.3.4. Every arm above
+  // has declined, so what remains is the tail dispatch, whose two possible
+  // answers for this shape were both WRONG and lane-divergent: standalone took
+  // the ref.test-guarded generic closure dispatch on a member read that
+  // resolves to nothing (→ `false`), and the JS host took the graceful
+  // `ref.null.extern` fallback (→ `undefined`). Both lanes model the
+  // `[[Prototype]]` edge the predicate asks about, so route to the chain walk.
+  // See is-prototype-of-call-arm.ts for the measurements and the guards.
+  {
+    const __ipoResult = tryEmitIsPrototypeOfCallArm(ctx, fctx, expr);
+    if (__ipoResult !== undefined) return __ipoResult;
   }
 
   // (#742 slice 5) Tail dispatch — IIFE, super, element-access, call-of-call,
