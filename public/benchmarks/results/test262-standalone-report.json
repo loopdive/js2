@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-22T20:41:53.490Z",
-  "baseline_generated_at": "2026-08-22T20:41:53.491Z",
-  "baseline_sha": "fb44458942b0f0e0eaedfe08b52460432462c66c",
+  "timestamp": "2026-08-23T01:50:56.668Z",
+  "baseline_generated_at": "2026-08-23T01:50:56.668Z",
+  "baseline_sha": "9bfe59ddf9a2a2019da1b8ba1c77fbac72ea2e86",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -1286,11 +1286,11 @@
           "Proposals": 4450
         },
         "sample_files": [
+          "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
-          "test/built-ins/Temporal/Duration/prototype/round/subclassing-ignored.js"
+          "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::CSSNumericValue_equals (##)",
@@ -1325,15 +1325,15 @@
           "ES2027": 99
         },
         "sample_files": [
-          "test/built-ins/AsyncDisposableStack/prototype/move/not-a-constructor.js",
           "test/built-ins/AsyncDisposableStack/prototype/move/sets-state-to-disposed.js",
+          "test/built-ins/AsyncDisposableStack/prototype/move/not-a-constructor.js",
           "test/built-ins/AsyncDisposableStack/instance-extensible.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.dispose-property-not-callable.js"
         ],
         "sample_signatures": [
-          "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_new (##)",
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_get_disposed, env::AsyncDisposableStack_move, env::AsyncDisposableStack_new (##)",
+          "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_new (##)",
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_new, env::AsyncDisposableStack_use (##)",
           "assertion_fail:Test262Error: [object Object] should be an own property",
           "type_error:TypeError: Cannot access property on null or undefined at #:#"
@@ -1675,14 +1675,14 @@
         "sample_files": [
           "test/built-ins/Promise/allKeyed/symbol-keys.js",
           "test/built-ins/Uint8Array/fromBase64/alphabet.js",
-          "test/built-ins/Proxy/set/call-parameters-prototype-index.js",
           "test/built-ins/Proxy/get/trap-is-undefined-receiver.js",
+          "test/built-ins/Proxy/set/call-parameters-prototype-index.js",
           "test/built-ins/Proxy/has/trap-is-not-callable.js"
         ],
         "sample_signatures": [
           "other:L#:## Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (## Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct",
-          "assertion_fail:Test262Error: handler object is the trap context Expected SameValue(«undefined», «[object Object]») to be true",
           "assertion_fail:Test262Error: Expected SameValue(«undefined», «null») to be true",
+          "assertion_fail:Test262Error: handler object is the trap context Expected SameValue(«undefined», «[object Object]») to be true",
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "null_deref:dereferencing a null pointer [in __module_init()]"
         ]
@@ -1724,7 +1724,7 @@
           "test/built-ins/DataView/byteOffset-validated-against-initial-buffer-length.js",
           "test/built-ins/Reflect/setPrototypeOf/target-is-symbol-throws.js",
           "test/built-ins/AggregateError/newtarget-proto-fallback.js",
-          "test/built-ins/Reflect/Symbol.toStringTag.js"
+          "test/built-ins/Reflect/set/return-false-if-target-is-not-writable.js"
         ],
         "sample_signatures": [
           "other:L#:## Codegen error: Reflect.set with an explicit receiver argument is not yet supported in --target standalone (##); the receiver would be silently dropped and accessor setters would write to the target instead of the receiver.",
@@ -1976,15 +1976,15 @@
         },
         "sample_files": [
           "test/built-ins/TypedArrayConstructors/internals/Set/BigInt/null-tobigint.js",
-          "test/built-ins/TypedArrayConstructors/from/invoked-as-func.js",
           "test/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/detached-buffer.js",
+          "test/built-ins/TypedArrayConstructors/from/invoked-as-func.js",
           "test/built-ins/TypedArrayConstructors/from/source-value-is-symbol-throws.js",
           "test/built-ins/TypedArrayConstructors/prototype/forEach/inherited.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with BigInt64Array and makeArray.)",
-          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)",
           "null_deref:dereferencing a null pointer [in __closure_134() ← testWithAllTypedArrayConstructors ← __fn_tramp_testWithAllTypedArrayConstructors_cached ← __call_fn_method_4]",
+          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)",
           "assertion_fail:Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)",
           "assertion_fail:Test262Error: Expected SameValue(«#», «#») to be true (Testing with Float64Array and makeArray.)"
         ]
@@ -2771,27 +2771,27 @@
           "host_free_pass": 0
         },
         "error_categories": {
-          "type_error": 4,
           "assertion_fail": 36,
+          "type_error": 4,
           "other": 9,
           "illegal_cast": 1,
           "null_deref": 1
         },
         "by_edition": {
-          "ES5": 19,
           "ES2027": 13,
+          "ES5": 19,
           "ES2015": 21
         },
         "sample_files": [
-          "test/language/statements/function/13.2-18-1.js",
           "test/language/statements/using/syntax/using-invalid-assignment-statement-body-for-of.js",
+          "test/language/statements/function/13.2-18-1.js",
           "test/language/comments/S7.4_A5.js",
           "test/language/statements/await-using/syntax/await-using-allowed-at-top-level-of-module.js",
           "test/language/statements/function/S13_A2_T2.js"
         ],
         "sample_signatures": [
-          "type_error:TypeError: Cannot destructure 'null' or 'undefined'",
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
+          "type_error:TypeError: Cannot destructure 'null' or 'undefined'",
           "compile_timeout:timeout (10s)",
           "other:L#:## 'await using' declarations are not allowed at the top level of scripts",
           "assertion_fail:Test262Error: ##: x === \"#\". Actual: x ===#"
@@ -2908,7 +2908,7 @@
           "test/built-ins/WeakRef/throws-when-target-cannot-be-held-weakly.js",
           "test/built-ins/Atomics/wait/cannot-suspend-throws.js",
           "test/built-ins/FinalizationRegistry/prototype/register/return-undefined-register-symbol.js",
-          "test/built-ins/FinalizationRegistry/prototype/unregister/custom-this.js"
+          "test/built-ins/FinalizationRegistry/target-not-callable-throws.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
