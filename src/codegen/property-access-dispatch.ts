@@ -60,6 +60,8 @@ import {
   noJsHost,
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
+import { nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
+import { receiverIsUndefinedIdentifier } from "./nullish-receiver-coercible.js"; // (#4519) the one decline that guard needs
 import { popBody, pushBody } from "./context/bodies.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
@@ -3551,6 +3553,10 @@ function emitExternGetReceiverGuard(
       syntacticNonNull: isProvablyNonNull(expr.expression, ctx.checker),
     },
     () => typeErrorThrowInstrs(ctx, expr),
+    // (#4519) §7.3.2 rejects `undefined` as well as `null`, and under the #4489
+    // S1 regime `undefined` is a NON-null singleton. `objTmp` is an externref
+    // local (allocated by the caller), which is the shape this builder wants.
+    () => (receiverIsUndefinedIdentifier(expr.expression) ? undefined : nullishExternTestInstrs(ctx, objTmp)),
   );
 }
 

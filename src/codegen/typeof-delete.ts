@@ -32,6 +32,7 @@ import { compileStandaloneRegExpLiteral } from "./regexp-standalone.js";
 import { addImport, localGlobalIdx } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import {
+  emitArgumentsOrdinaryNamedDelete, // (#4622) `delete arguments.length`
   emitArgumentsTypeofComparison,
   emitPropertyDeleteWithUnmappedArgumentsWriteback,
   prepareDynamicArgumentsDeleteIndex, // (#4491) runtime `delete arguments[i]`
@@ -501,6 +502,17 @@ export function compileDeleteExpression(
         return { kind: "i32" };
       }
     }
+  }
+
+  // (#4622) §10.4.4 — `delete arguments.length` on the compiler-materialized
+  // arguments object. Ahead of BOTH the struct-field arms and the generic
+  // `__delete_property` arm: the arguments object is an opaque `$Vec`, so the
+  // generic arm asks `__vec_gopd`, which answers with ARRAY rules
+  // (`length` non-configurable) and refuses the delete — `false` in sloppy
+  // code, a thrown TypeError in strict code. The index arms above run first and
+  // are unaffected; this arm only claims static NON-index keys.
+  if (ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner)) {
+    if (emitArgumentsOrdinaryNamedDelete(ctx, fctx, inner)) return { kind: "i32", boolean: true };
   }
 
   // Try to resolve struct type and field for property access: delete obj.prop

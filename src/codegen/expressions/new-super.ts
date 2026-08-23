@@ -22,6 +22,7 @@ import {
   resolvesToNonConstructableValue,
 } from "./non-constructable.js"; // (#4017)
 import { tryNonConstructableNewTarget } from "./new-non-constructable-value.js"; // (#4246)
+import { getOrRegisterTaCtorType } from "../registry/types.js"; // (#4626) runtime $__ta_ctor gate in the ordinary-[[Construct]] arm
 import { tryNewBuiltinStaticAlias } from "./new-builtin-static-alias.js"; // (#4491 wave-5 T6)
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
@@ -116,6 +117,7 @@ import { NEW_INDEXED_FALLTHROUGH, tryCompileIndexedBuiltinNew } from "./new-inde
 import { emitFnctorProtoGet, resolveUserFnctorName } from "./fnctor-prototype.js"; // (#2660 S3a) reconstruct `new F()` as $Object; (#3981) proto for a value-bound ctor
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js"; // (#2959 / #2903 R1) native new Promise(executor)
 import { deriveFnctorFields, resolveFnctorSymbol, resolveEnclosingFnctorOwner } from "../fnctor-escape-gate.js"; // (#2660 S3a) canonical fnctor-name key; (#2773 S1) shared field derivation; (#2681/#2686 A1) `new this()` owner
+import { newExpressionReconstructsAsObject } from "../fnctor-instance-object-slot.js"; // (#4506 S1) the site-level reconstruct predicate the slot typer shares
 import {
   appendFnctorConstructorParam,
   emitFnctorConstructorArguments,
@@ -574,6 +576,13 @@ const GLOBAL_NON_CONSTRUCTOR_FUNCTIONS = new Set([
   "isNaN",
   "isFinite",
 ]);
+
+/**
+ * (#1519 sub-issue B) The built-in non-constructor NAMESPACES. Hoisted to module
+ * scope by #4621 so the nested-`new` arm can consult the same set as the direct
+ * arm; the direct arm's behaviour is unchanged.
+ */
+const NAMESPACE_NON_CONSTRUCTORS = new Set(["Math", "JSON", "Reflect", "Atomics"]);
 
 /**
  * (#2886) Does `id` resolve to the **ambient global** binding (declared only in
@@ -1572,45 +1581,29 @@ function compileNewFunctionDeclaration(
   //
   // This is the value-rep CANARY (the low-risk first slice). It fires ONLY on a
   // proven-safe intersection and keeps the status-quo struct lowering everywhere
-  // else, so it cannot regress a typed own-field read (#1888 floor). The broad
-  // binding-retype that banks the test262 cluster is S3b — intentionally NOT
-  // here. The gate (ALL must hold; any miss → fall through to the struct):
-  //   (G0) standalone — host/WASI keep the existing lowering BYTE-IDENTICAL
-  //        (host has the #1712 instance→prototype sidecar; `__object_create` is
-  //        native only in standalone via ensureObjectRuntime — late-imports.ts).
-  //   (G1) the S1 escape-gate approved THIS exact site (node identity) — i.e.
-  //        dynamically consumed AND no typed own-field consumer (clause A∧B).
-  //   (G2) truly empty body — no `this.x=` (so no own field exists to regress)
-  //        AND no ctor-body side effects to drop (running the body is S3c).
-  //   (G3) no constructor args — nothing to evaluate/drop (arg'd sites keep
-  //        status quo, which still runs their arg side effects via the ctor).
+  // else, so it cannot regress a typed own-field read (#1888 floor). The SITE
+  // half of the gate — standalone, escape-gate-approved, empty body, no args,
+  // not an Array-carrier prototype — now lives in
+  // `newExpressionReconstructsAsObject` (fnctor-instance-object-slot.ts, #4506
+  // S1) because the module-global slot typer has to ask the identical question
+  // during `collectDeclarations`. The clause that stays here is the one that is
+  // not a property of the site:
   //   (G4) the instance's result-externref flows into an externref slot: a
   //        function-local binding whose ALLOCATED local is externref (the
-  //        `any`/`unknown` case), OR an inline `new F().x` / `new F()[i]`
-  //        receiver. Reading the REAL local type (not the TS annotation) is the
-  //        load-bearing safety check — returning externref into a struct-ref
-  //        local would `ref.cast`-trap (that retype ripple is S3b).
-  //   (G5) the one proven live `F.prototype` value is not an Array carrier
-  //        (#4387). `__object_create` can seed only its `$Object` `$proto`
-  //        slot, so reconstructing an Array-valued prototype discards the
-  //        chain. Keep that exact shape on the raw fnctor representation,
-  //        whose shared closed-method runtime recognizes the live Array.
+  //        `any`/`unknown` case), a module global that is externref, OR an
+  //        inline `new F().x` / `new F()[i]` receiver. Reading the REAL slot
+  //        type (not the TS annotation) is the load-bearing safety check —
+  //        returning externref into a struct-ref slot would `ref.cast`-trap.
   //
-  // Cache-order note: this gate sits at the cache-MISS entry. If a NON-approved
-  // sibling `new F()` of the same fnctor compiled first, it populated
-  // `funcConstructorMap[F]` and a later approved site hits that cache in
-  // `compileNewExpression` (returning the struct) WITHOUT reaching this gate — so
-  // it keeps status quo. That is a safe MISS (a 0-row outcome), never a trap: the
-  // struct ref coerces cleanly into the approved site's externref/any binding.
-  // S3b's binding-retype removes the miss; S3a deliberately does not chase it.
-  if (
-    ctx.standalone &&
-    ctx.fnctorEscapeGate?.approved.has(expr) &&
-    !ctx.fnctorEscapeGate.stableArrayPrototypeNames.has(fnctorKey) &&
-    body.statements.length === 0 &&
-    (expr.arguments?.length ?? 0) === 0 &&
-    fnctorNewResultConsumedAsExternref(ctx, fctx, expr)
-  ) {
+  // (#4506 S1) Cache-order note, UPDATED. This gate sits at the cache-MISS
+  // entry; the cache-HIT arm in `compileNewExpression` now runs the same
+  // predicate BEFORE consulting `funcConstructorMap`, so a non-approved sibling
+  // compiling first no longer strands a later approved site on the struct. That
+  // was a safe MISS while the slot stayed struct-typed; once the slot is widened
+  // to externref by the typer it would be a WRONG answer (a struct
+  // `extern.convert_any`'d into an `$Object` slot reads back as nothing), which
+  // is why closing it is part of this slice rather than an optimization.
+  if (newExpressionReconstructsAsObject(ctx, expr) && fnctorNewResultConsumedAsExternref(ctx, fctx, expr)) {
     const reconstructed = compileFnctorNewAsObject(ctx, fctx, fnctorKey);
     if (reconstructed) return reconstructed;
     // Helper declined (e.g. `__object_create` unavailable) → fall through to the
@@ -2702,10 +2695,45 @@ function tryCompileNativeConstructFromValue(
     argLocals.push(argLocal);
   }
 
-  fctx.body.push({ op: "local.get", index: calleeLocal });
-  fctx.body.push({ op: "local.get", index: protoLocal });
-  for (const argLocal of argLocals) fctx.body.push({ op: "local.get", index: argLocal });
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(`__native_construct_${args.length}`) ?? driverIdx });
+  // (#4626) A `$__ta_ctor` runtime value is NOT an ordinary function value:
+  // handing it to the native-construct driver builds a plain object with no
+  // TypedArray behavior (`function go(TA) { new TA(2) }` in the
+  // testTypedArrayConversions harness then read `length` 0 and threw "called
+  // value is not a function" on `.fill`). This arm sits BEFORE the #2872
+  // dynamic-TA construct in the dispatch order, so gate it at RUNTIME: a
+  // callee that ref.tests as `$__ta_ctor` routes through the same
+  // count/array-copy/buffer construct the #2872 arm uses; every other runtime
+  // value keeps the ordinary-[[Construct]] driver. Statically gated on the
+  // module pre-scan flag so modules without a dynamic-any `new` are
+  // byte-identical.
+  const nativeDriverCall: Instr[] = [
+    { op: "local.get", index: calleeLocal },
+    { op: "local.get", index: protoLocal },
+    ...argLocals.map((argLocal): Instr => ({ op: "local.get", index: argLocal })),
+    { op: "call", funcIdx: ctx.funcMap.get(`__native_construct_${args.length}`) ?? driverIdx },
+  ];
+  if (noJsHost(ctx) && ctx.moduleUsesDynTaView) {
+    const taCtorTypeIdx = getOrRegisterTaCtorType(ctx);
+    const descLocal = allocLocal(fctx, `__nc_tadesc_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+    fctx.body.push({ op: "local.get", index: calleeLocal });
+    fctx.body.push({ op: "any.convert_extern" });
+    fctx.body.push({ op: "local.set", index: descLocal });
+    const taArm: Instr[] = [];
+    const savedTaBody = fctx.body;
+    fctx.body = taArm;
+    emitTaDynCtorConstructFromLocals(ctx, fctx, descLocal, argLocals);
+    fctx.body = savedTaBody;
+    fctx.body.push({ op: "local.get", index: descLocal });
+    fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: taArm,
+      else: nativeDriverCall,
+    });
+  } else {
+    fctx.body.push(...nativeDriverCall);
+  }
   return { kind: "externref" };
 }
 
@@ -3927,9 +3955,58 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
             ? unwrapped.expression
             : (unwrapped as ts.TypeAssertion).expression;
     }
+    // (#4621 D) `new new Math()` — the constructor expression is itself a `new`
+    // on a namespace / non-constructor global. §13.3.5.1 step 2 evaluates that
+    // INNER construction first, and it throws TypeError, so the whole expression
+    // is a TypeError regardless of what the outer `new` would decide.
+    //
+    // The generic guard (`tryNonConstructableNewTarget`) cannot reach this: it
+    // asks the oracle for the callee's type fact, and `new Math()` has an ERROR
+    // type, so the fact is `any` — which that guard deliberately refuses to act
+    // on, because a constructor may `return function(){}` and `any` proves
+    // nothing. The inner-name test below proves something stronger and purely
+    // syntactic: this particular inner `new` never returns at all. Measured on
+    // `language/expressions/new/S11.2.2_A4_T5` CHECK#2, where `new Math` (bare),
+    // `new Math()` and `var x = new Math(); new x()` all already threw and only
+    // the nested spelling silently produced `undefined`.
+    //
+    // The shadowing proof is the same one the direct arm two blocks down uses —
+    // a user `function Math(){}` / `class isNaN{}` IS constructable and must keep
+    // the normal path.
+    if (ts.isNewExpression(unwrapped)) {
+      let innerCtor: ts.Expression = unwrapped.expression;
+      while (
+        ts.isParenthesizedExpression(innerCtor) ||
+        ts.isAsExpression(innerCtor) ||
+        ts.isNonNullExpression(innerCtor) ||
+        ts.isTypeAssertionExpression(innerCtor)
+      ) {
+        innerCtor = ts.isParenthesizedExpression(innerCtor)
+          ? innerCtor.expression
+          : ts.isAsExpression(innerCtor)
+            ? innerCtor.expression
+            : ts.isNonNullExpression(innerCtor)
+              ? innerCtor.expression
+              : (innerCtor as ts.TypeAssertion).expression;
+      }
+      if (ts.isIdentifier(innerCtor)) {
+        const innerName = innerCtor.text;
+        const innerIsNonConstructorGlobal =
+          NAMESPACE_NON_CONSTRUCTORS.has(innerName) || GLOBAL_NON_CONSTRUCTOR_FUNCTIONS.has(innerName);
+        if (
+          innerIsNonConstructorGlobal &&
+          !ctx.classSet.has(innerName) &&
+          !ctx.externClasses.has(innerName) &&
+          resolvesToAmbientGlobal(ctx, innerCtor)
+        ) {
+          emitThrowTypeError(ctx, fctx, `${innerName} is not a constructor`);
+          fctx.body.push({ op: "ref.null.extern" });
+          return { kind: "externref" };
+        }
+      }
+    }
     if (ts.isIdentifier(unwrapped)) {
       const name = unwrapped.text;
-      const NAMESPACE_NON_CONSTRUCTORS = new Set(["Math", "JSON", "Reflect", "Atomics"]);
       if (NAMESPACE_NON_CONSTRUCTORS.has(name)) {
         // Use the real-TypeError throw path so `assert.throws(TypeError, …)`
         // in test262 negative cases (S11.2.2_A4_T*) observes a TypeError
@@ -4203,6 +4280,25 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // `new (Foo as any)()` takes the same fnctor build path as `new Foo()`.
   if ((!className || !ctx.classSet.has(className)) && calleeIdent) {
     const fnName = calleeIdent.text;
+    // (#4506 S1) The reconstruct decision is per-SITE, so it has to be asked
+    // BEFORE the per-FNCTOR constructor cache. A non-approved sibling
+    // `new F()` compiling first populates `funcConstructorMap[F]`; without this
+    // check a later approved site took the cached struct ctor and never reached
+    // the gate in `compileNewFunctionDeclaration`. That was a tolerable MISS
+    // while every binding slot stayed struct-typed, but the module-global slot
+    // typer now widens such a binding to externref on the strength of this very
+    // predicate — so the miss would store a fnctor struct into an `$Object`
+    // slot, where every dynamic read fails its `ref.test $Object`. The two must
+    // agree; asking here is how.
+    if (newExpressionReconstructsAsObject(ctx, expr) && fnctorNewResultConsumedAsExternref(ctx, fctx, expr)) {
+      // The gate's own resolution, not a second symbol query: the predicate
+      // above already required it to exist.
+      const key = ctx.fnctorEscapeGate?.siteCtorName.get(expr) ?? fnName;
+      const reconstructed = compileFnctorNewAsObject(ctx, fctx, key);
+      if (reconstructed) return reconstructed;
+      // The helper declined without emitting (its contract) — fall through to
+      // the ordinary cached/struct path below, exactly as before.
+    }
     // Check cache first — if we already built a constructor for this function
     const cachedFnCtor = ctx.funcConstructorMap.get(fnName);
     if (cachedFnCtor) {

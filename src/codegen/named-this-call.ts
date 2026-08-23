@@ -227,21 +227,50 @@ function ensureNamedThisCallTrampoline(
   const installAndCall = (receiver: readonly Instr[]): Instr[] => {
     const blockType =
       resultType === undefined ? ({ kind: "empty" } as const) : ({ kind: "val", type: resultType } as const);
+    // (#4620) A CONCRETE-ref `try_table` block type is a shape no lane can use
+    // on today's engine. Isolated in a HAND-BUILT module (no compiler
+    // involved), on Node v22.22.2 / V8 12.4.254.21: a `try_table` whose block
+    // type is `(ref null <typeidx>)` traps `RuntimeError: unreachable` on
+    // ENTRY, with nothing thrown, while the same module with an `i32` or
+    // `externref` block type runs fine. Abstract single-byte ref types
+    // (`externref`, `funcref`) are unaffected; only the two-byte
+    // `0x63 <typeidx>` form is.
+    //
+    // Here that killed every `.call` on a named function that reads `this` and
+    // returns a ref — a string or an object, i.e. the whole
+    // `10.4.3-1-{1,2,4,5}-s` primitive-`this` family — before the protected
+    // call ever ran (a side-effect probe showed the callee never executed;
+    // patching the two try_tables in the emitted binary to plain `block`s made
+    // the same module return the right value).
+    //
+    // The ordinary `try`/`catch` lowering never hits it because it emits an
+    // EMPTY try_table block type and `return`s out of the protected body. This
+    // does the same thing with a local: the call's result is parked in
+    // `__result` inside the try body, so the try_table carries no value across
+    // its own boundary, and the value is read after the scaffold. Scalar
+    // results keep the pre-existing (working) value-typed shape so their bytes
+    // do not move.
+    const parkResultInLocal = standardizedEh && (resultType?.kind === "ref" || resultType?.kind === "ref_null");
+    const tryBlockType = parkResultInLocal ? ({ kind: "empty" } as const) : blockType;
     const protectedCall: Instr = standardizedEh
-      ? buildStandardTryTable(blockType, exactCall(), [
-          {
-            kind: "catch",
-            tagIdx: ensureExnTag(ctx),
-            payloadType: { kind: "externref" },
-            body: [
-              { op: "local.set", index: unwindExnLocal },
-              { op: "local.get", index: prevThisLocal },
-              { op: "global.set", index: currentThisGlobalIdx },
-              { op: "local.get", index: unwindExnLocal },
-              { op: "throw", tagIdx: ensureExnTag(ctx) },
-            ],
-          },
-        ])
+      ? buildStandardTryTable(
+          tryBlockType,
+          parkResultInLocal ? [...exactCall(), { op: "local.set", index: resultLocal }] : exactCall(),
+          [
+            {
+              kind: "catch",
+              tagIdx: ensureExnTag(ctx),
+              payloadType: { kind: "externref" },
+              body: [
+                { op: "local.set", index: unwindExnLocal },
+                { op: "local.get", index: prevThisLocal },
+                { op: "global.set", index: currentThisGlobalIdx },
+                { op: "local.get", index: unwindExnLocal },
+                { op: "throw", tagIdx: ensureExnTag(ctx) },
+              ],
+            },
+          ],
+        )
       : {
           op: "try",
           blockType,
@@ -259,7 +288,8 @@ function ensureNamedThisCallTrampoline(
       ...receiver,
       { op: "global.set", index: currentThisGlobalIdx },
       protectedCall,
-      ...(resultLocal < 0 ? [] : ([{ op: "local.set", index: resultLocal }] satisfies Instr[])),
+      // The parked-result shape already stored it inside the try body.
+      ...(resultLocal < 0 || parkResultInLocal ? [] : ([{ op: "local.set", index: resultLocal }] satisfies Instr[])),
       { op: "local.get", index: prevThisLocal },
       { op: "global.set", index: currentThisGlobalIdx },
       ...(resultLocal < 0 ? [] : ([{ op: "local.get", index: resultLocal }] satisfies Instr[])),

@@ -62,6 +62,41 @@ provider (`npx tsx scripts/build-quickjs-eval-provider.mjs`, falling back to
 `JS2WASM_EVAL_ENGINE=interpreter`), and confirm a known eval-dependent row
 runs before trusting the numbers.
 
+## Engine trap: a CONCRETE-ref `try_table` block type traps on entry (#4620)
+
+A `try_table` whose **block type is a concrete ref** (`(ref null <typeidx>)` /
+`(ref <typeidx>)` — the two-byte `0x63`/`0x64 <typeidx>` form) traps with
+`RuntimeError: unreachable` **when the instruction is entered**, before its
+protected body runs and with nothing thrown. Measured 2026-08-22 on Node
+v22.22.2 / V8 12.4.254.21 in a **hand-built module with no compiler involved**;
+the same module with an `i32` or `externref` block type runs correctly.
+Abstract single-byte ref types (`externref`, `funcref`) are fine — only the
+two-byte concrete form is affected.
+
+Why it hides: the ordinary `try`/`catch` lowering emits an **empty** try_table
+block type and `return`s out of the protected body, so it never produces this
+shape. Only hand-built scaffolds do — `named-this-call.ts`'s receiver-install
+trampoline did, which made every `foo.call(x)` on a named function that reads
+`this` and returns a **string or object** trap (`language/function-code/
+10.4.3-1-{1,2,4,5}-s`, the primitive-`this` boxing family). Scalar-returning
+targets were fine, which is why it stayed invisible.
+
+**The pattern to use instead:** give the `try_table` an EMPTY block type and
+park the value in a local INSIDE the protected body
+(`…call…; local.set $result`), then read the local after the scaffold. See
+`ensureNamedThisCallTrampoline` (#4620) for the worked example, and keep scalar
+block types as they are so their bytes do not move.
+
+**How to recognise it:** a trap whose innermost frame is the function
+CONTAINING the try_table, at an offset that decodes to the try_table's own
+bytes, with the protected callee provably never entered (set a global in the
+callee's first statement and read it after the trap). Binary-patching the
+`try_table` bytes to a plain `block` + `nop`s is a cheap confirmation.
+
+Other emitters that pass a non-empty block type to `buildStandardTryTable` /
+`buildTargetTaggedTry` are suspect; grep for them before assuming a lane is
+clean (`src/ir/backend/wasmgc-emitter.ts` passes a variable block type).
+
 ## Verification floor (every issue, before `status: done`)
 
 - Scoped standalone sweep over the issue's directory before AND after, from
