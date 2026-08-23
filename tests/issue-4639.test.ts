@@ -79,6 +79,43 @@ describe.skipIf(!TEST262)("#4639 C1 — new String(obj) runs the object's ToStri
   // `new String(o)`, in ONE module — a per-VALUE divergence, so the fix is in
   // the escape classification of the constructor argument.
   pinRow("built-ins/String/S15.5.2.1_A1_T10.js", "inherited toString on the ctor argument");
+
+  // (Cross-lane, #4637.) The SAME classification change, observed on the shape
+  // dev-4637's `CROSS-LANE PREDICTION` pin carries: a constructor with a
+  // FUNCTION-VALUED prototype whose instance appears ONLY as a `new` argument,
+  // read back through a field. `G.prototype === P` is `false` on the campaign
+  // tip and `true` here.
+  //
+  // Provenance, measured three ways rather than inferred — the sequence matters
+  // because two lanes reached two WRONG conclusions from partial arms first:
+  //   - dev-4637 measured their base vs their branch: identical, so they
+  //     concluded pre-existing and unaffected. Correct about their arms.
+  //   - I measured only my branch, saw `true`, and wrongly inferred their
+  //     branch introduced it. A regression claim from a one-armed measurement.
+  //   - Neither pair of arms contained the OTHER lane's change. Revert here:
+  //     base `false` → branch `true`, and reverting ONLY
+  //     `fnctor-escape-gate.ts` flips it back — so C1 is the cause, and the
+  //     defect is pre-existing on the tip AND fixed by this change-set.
+  //
+  // This is the first half of the composition their prediction states: C1 makes
+  // this site escape-gate-approved and the prototype identity read correctly.
+  // It does NOT show their A1 arm links the function-valued prototype — that is
+  // their arm and their pin. If their pin is still red after both land, the two
+  // halves did not compose.
+  pinSource(
+    "argonly-instantiation-function-valued-prototype",
+    "var P = function () {};\n" +
+      "function G() {}\n" +
+      "G.prototype = P;\n" +
+      "function H(x) {\n" +
+      "  this.wrapped = x;\n" +
+      "}\n" +
+      "var h = new H(new G());\n" +
+      "var w = h.wrapped;\n" +
+      'assert.sameValue(G.prototype === P, true, "G.prototype === P");\n' +
+      'assert.sameValue(w instanceof G, true, "w instanceof G");\n',
+    "arg-only instantiation keeps function-valued prototype identity",
+  );
 });
 
 describe.skipIf(!TEST262)("#4639 C2 — <Builtin>.<unknownProp> is a read, not a Codegen error", () => {
