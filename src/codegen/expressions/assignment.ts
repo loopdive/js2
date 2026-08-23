@@ -21,6 +21,7 @@ import { tryEmitLinearU8ElementCompound, tryEmitLinearU8ElementSet } from "../li
 import { emitAnyAdd, emitModulo, emitToInt32, emitToUint8Clamp } from "../binary-ops.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
+import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "../fn-global-shadow.js"; // (#4630)
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -123,6 +124,7 @@ import { tryEmitErrorInstanceFieldWrite } from "../error-instance-field-write.js
 import { ensureObjectRuntime } from "../object-runtime.js";
 import { compileCoercionRhs } from "../char-at-transfer.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { emitNativeGlobalThisObject } from "../array-object-proto.js"; // (#4630)
 import { resolveEffectiveStructName } from "../property-access.js";
 import { emitOverlayRoutedElementSet, overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4159 S5)
 import {
@@ -4041,7 +4043,35 @@ function compilePropertyAssignment(
     const propName = ts.isPrivateIdentifier(target.name) ? `__priv_${target.name.text.slice(1)}` : target.name.text;
     const wrapRuntimeEvalCallable =
       ctx.runtimeEvalCallableBoundaryEnabled === true && isStaticallyCallableExpression(ctx, value);
-    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, propName, false, wrapRuntimeEvalCallable);
+    const externSetTy = compilePropertyAssignmentExternSet(
+      ctx,
+      fctx,
+      target,
+      value,
+      propName,
+      false,
+      wrapRuntimeEvalCallable,
+    );
+    // (#4630) `globalThis.<topLevelFn> = …` also updates the override slot so
+    // bare reads/calls of the declaration resolve the reassignment (§16.1.7).
+    // The value is read BACK from the singleton (side-effect-free) rather than
+    // re-evaluated.
+    if ((ctx.standalone || ctx.wasi) && isShadowedTopLevelFn(ctx, propName)) {
+      const slot = fnShadowSlot(ctx, propName);
+      const gtTy = withShadowReadSuppressed(() => emitNativeGlobalThisObject(ctx, fctx));
+      if (gtTy) {
+        const getIdx = ctx.funcMap.get("__extern_get");
+        if (getIdx !== undefined) {
+          addStringConstantGlobal(ctx, propName);
+          for (const instr of stringConstantExternrefInstrs(ctx, propName)) fctx.body.push(instr);
+          fctx.body.push({ op: "call", funcIdx: getIdx });
+          fctx.body.push({ op: "global.set", index: slot });
+        } else {
+          fctx.body.push({ op: "drop" });
+        }
+      }
+    }
+    return externSetTy;
   }
 
   // Handle externref property set

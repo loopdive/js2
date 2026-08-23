@@ -482,6 +482,18 @@ export function inferParamTypeFromCallSites(
                 // call results, member reads — are all non-identifiers and
                 // stay flagged.
                 sawOpaqueAnyArg = true;
+              } else {
+                // (#4630) EXCEPTION to the trusted-identifier rule: a
+                // CATCH-CLAUSE binding can hold ANY thrown value, so it is
+                // never evidence that this param matches the other sites'
+                // agreement. The asyncHelpers harness's
+                // `catch (e) { sink(e) }` next to `sink("fulfilled")` agreed
+                // on native-string; the thrown TypeError then coerced to a
+                // null string ref and `err instanceof TypeError` read null.
+                const argDecl = ctx.checker.getSymbolAtLocation(arg)?.valueDeclaration;
+                if (argDecl && ts.isVariableDeclaration(argDecl) && ts.isCatchClause(argDecl.parent)) {
+                  sawOpaqueAnyArg = true;
+                }
               }
             } else if (isRecursiveCall(node)) {
               conflict = true;

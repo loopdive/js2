@@ -36,6 +36,7 @@ import {
   wasmParamIndexForSourceParam,
 } from "../linear-uint8-signatures.js";
 import { compileArrayConstructorCall, compileSymbolCall } from "../literals.js";
+import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "../fn-global-shadow.js"; // (#4630)
 import { tryCompileNodeFsCall } from "../node-fs-api.js";
 import {
   boundFunctionTargetIsDefinitelyCompiled,
@@ -297,6 +298,57 @@ export function compileIdentifierCall(
   expr: ts.CallExpression,
   expectedType?: ValType,
 ): InnerResult | undefined {
+  // (#4630) A bare call of a top-level function that the module reassigns via
+  // `globalThis.<name> = …` dispatches through the override slot (falling back
+  // to the static closure until the first reassignment) — §16.1.7 aliasing.
+  // Spread args keep the static path (their arity machinery is elsewhere).
+  if (
+    ts.isIdentifier(expr.expression) &&
+    isShadowedTopLevelFn(ctx, expr.expression.text) &&
+    fctx.localMap.get(expr.expression.text) === undefined &&
+    !(fctx.boxedCaptures?.has(expr.expression.text) ?? false) &&
+    !expr.arguments.some((a) => ts.isSpreadElement(a))
+  ) {
+    const name = expr.expression.text;
+    const slot = fnShadowSlot(ctx, name);
+    const applyIdx = reserveApplyClosure(ctx);
+    const { newIdx: vecNewIdx, pushIdx: vecPushIdx } = ensureObjVecBuilders(ctx);
+    flushLateImportShifts(ctx, fctx);
+    const staticArm: Instr[] = [];
+    const savedBody = fctx.body;
+    fctx.body = staticArm;
+    const staticTy = withShadowReadSuppressed(() =>
+      compileExpression(ctx, fctx, expr.expression, { kind: "externref" }),
+    );
+    if (staticTy && staticTy.kind !== "externref") coerceType(ctx, fctx, staticTy, { kind: "externref" });
+    else if (!staticTy) fctx.body.push({ op: "ref.null.extern" });
+    fctx.body = savedBody;
+    fctx.body.push({ op: "global.get", index: slot });
+    fctx.body.push({ op: "ref.is_null" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: staticArm,
+      else: [{ op: "global.get", index: slot }],
+    });
+    const calLocal = allocLocal(fctx, `__fnshadow_cal_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: calLocal });
+    fctx.body.push({ op: "call", funcIdx: vecNewIdx });
+    const vecLocal = allocLocal(fctx, `__fnshadow_args_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: vecLocal });
+    for (const arg of expr.arguments) {
+      fctx.body.push({ op: "local.get", index: vecLocal });
+      const at = compileExpression(ctx, fctx, arg, { kind: "externref" });
+      if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
+      else if (!at) fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push({ op: "call", funcIdx: vecPushIdx });
+    }
+    fctx.body.push({ op: "local.get", index: calLocal });
+    fctx.body.push({ op: "ref.null.extern" });
+    fctx.body.push({ op: "local.get", index: vecLocal });
+    fctx.body.push({ op: "call", funcIdx: applyIdx });
+    return { kind: "externref" };
+  }
   // #1491 — non-WASI fs.readFileSync / writeFileSync as JS-host imports.
   // Gated behind `--allow-fs` (CompileOptions.allowFs) to prevent accidental
   // capability leakage. The corresponding host imports are bound at runtime via

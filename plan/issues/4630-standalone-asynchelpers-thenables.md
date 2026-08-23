@@ -1,7 +1,7 @@
 ---
 id: 4630
 title: "Standalone: asyncHelpers harness self-tests — thenable coercion through asyncTest closures"
-status: ready
+status: in-progress
 sprint: Backlog
 created: 2026-08-23
 updated: 2026-08-23
@@ -13,8 +13,22 @@ area: codegen
 goal: test262-conformance
 lane: B
 files:
-  - src/codegen/async-frame.ts
-  - src/codegen/expressions/calls-closures.ts
+  - src/codegen/fn-global-shadow.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/declarations/param-return-inference.ts
+loc-budget-allow:
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/declarations/param-return-inference.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/declarations/param-return-inference.ts::inferParamTypeFromCallSites
 ---
 
 # #4630 — Standalone asyncHelpers self-tests (4 tests + 1 trap)
@@ -49,6 +63,35 @@ The `[object Object]` rendering in three of the failures means the
 rejection VALUE reached `$DONE`, but it stringifies as a plain object —
 the Test262Error's message is not recovered — so either the wrong value is
 propagated or `String(err)`/`err.message` on it misses.
+
+## Progress (2026-08-23)
+
+FIXED (4 of 5): return-not-thenable, returns-undefined, then-rejects,
+then-resolves. Two root causes, neither the thenable duck-typing the survey
+guessed:
+
+1. **`globalThis.$DONE = fn` never shadowed the bare `$DONE`**
+   (`fn-global-shadow.ts`): standalone, the write landed on the native
+   globalThis `$Object` singleton while bare reads kept the static compiled
+   binding (§16.1.7 requires aliasing). Fixed with per-name override slots: a
+   pre-scan collects `globalThis.<name> =` targets that are top-level
+   function declarations; the write also copies the value into a mutable
+   slot; bare reads compile to `slot ?? static closure` and bare calls to
+   `__apply_closure(slot ?? static, null, argsVec)`. Never-reassigned modules
+   are byte-identical.
+2. **A catch-clause binding poisoned cross-call-site param inference**
+   (`param-return-inference.ts`): `catch (e) { sink(e) }` next to
+   `sink("fulfilled")` agreed the param onto native-string; the thrown
+   TypeError then coerced to a null string ref and `err instanceof
+   TypeError` read null. A catch var is now an OPAQUE any-arg (withdraws
+   narrowing), joining the #4530 poison shapes.
+
+REMAINING (1 of 5): throwsAsync-same-realm — needs the dynamic-async
+substrate: an async function invoked through an `any` binding must return a
+native `$Promise` the native `.then` accepts (today the closure call runs
+the body eagerly, a sync throw leaks, and the result fails the `ref.test
+$Promise`), plus Promise-executor resolve/reject capture. Blocked on that;
+also see #4634 for the realm half (landed).
 
 ## Implementation Plan
 
