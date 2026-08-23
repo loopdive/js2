@@ -54,6 +54,7 @@ import {
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "../async-frame.js"; // (#2865) nested async-gen producer
 import { ensureExnTag, localGlobalIdx, nextModuleGlobalIdx } from "../registry/imports.js";
 import { buildTargetTaggedTry } from "../../ir/try-table.js";
+import { canonicalUndefinedExternInstrs } from "../any-helpers.js"; // (#4642) fall-off completion value
 import {
   addFuncType,
   getArrTypeIdxFromVec,
@@ -1190,7 +1191,7 @@ function compileNestedFunctionDeclarationInScope(
       for (const s of stmt.body.statements) {
         compileStatement(ctx, liftedFctx, s);
       }
-      appendDefaultReturn(liftedFctx, returnType);
+      appendDefaultReturn(ctx, liftedFctx, returnType);
     }
     if (savedFunc) ctx.funcStack.pop();
     if (savedFunc) ctx.parentBodiesStack.pop();
@@ -1664,7 +1665,7 @@ function compileNestedFunctionDeclarationInScope(
       for (const s of stmt.body.statements) {
         compileStatement(ctx, liftedFctx, s);
       }
-      appendDefaultReturn(liftedFctx, returnType);
+      appendDefaultReturn(ctx, liftedFctx, returnType);
     }
     if (savedFunc) ctx.funcStack.pop();
     if (savedFunc) ctx.parentBodiesStack.pop();
@@ -2653,14 +2654,28 @@ export function emitDefaultParamInit(
   }
 }
 
-/** Append a default return value if the function body doesn't end with a return */
-function appendDefaultReturn(fctx: FunctionContext, returnType: ValType | null): void {
+/**
+ * Append a default return value if the function body doesn't end with a return.
+ *
+ * (#4642) The `externref` arm emits the CANONICAL `undefined`: falling off the
+ * end completes with `undefined`, and a bare `ref.null.extern` IS JS `null`
+ * under the standalone value model (#2864), so every lifted function that fell
+ * off its end handed the caller `null` — measured via `Function("")()`, whose
+ * constant body #2924 synthesizes into a lifted declaration that lands here.
+ * The top-level tail in `function-body.ts` already routed through
+ * `emitUndefined`; this one was the straggler.
+ *
+ * `canonicalUndefinedExternInstrs` and NOT `emitUndefined`: it is a READ-ONLY
+ * funcMap lookup, so it cannot register a late import mid-body and shift
+ * funcidxs under the lifted body's caller.
+ */
+function appendDefaultReturn(ctx: CodegenContext, fctx: FunctionContext, returnType: ValType | null): void {
   if (!returnType) return;
   const lastInstr = fctx.body[fctx.body.length - 1];
   if (lastInstr && lastInstr.op === "return") return;
   if (returnType.kind === "f64") fctx.body.push({ op: "f64.const", value: 0 });
   else if (returnType.kind === "i32") fctx.body.push({ op: "i32.const", value: 0 });
-  else if (returnType.kind === "externref") fctx.body.push({ op: "ref.null.extern" });
+  else if (returnType.kind === "externref") fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
 }
 
 /**
