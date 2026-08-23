@@ -10,7 +10,10 @@ loc-budget-allow:
   - src/codegen/index.ts
   - src/codegen/registry/imports.ts
   - src/codegen/typeof-delete.ts
+  - src/codegen/closures.ts
 func-budget-allow:
+  - src/codegen/closures.ts::compileArrowAsCallback
+  - src/codegen/closures.ts::compileArrowAsClosure
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
   - src/codegen/expressions/assignment.ts::compilePropertyAssignment
   - src/codegen/expressions/identifiers.ts::compileIdentifierCore

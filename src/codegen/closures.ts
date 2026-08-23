@@ -124,6 +124,7 @@ import {
   reportDeclinedAsyncRejectionHazard,
 } from "./async-activation.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js"; // (#2865) async-gen fn-expr producer
+import { asyncClosurePromiseWrapEnabled, emitAsyncClosurePromiseWrapper } from "./async-closure-promise.js"; // (#4648)
 // (#3164) Native generator FUNCTION EXPRESSIONS (standalone/wasi): the lifted
 // closure body emits the state-struct factory instead of the eager-buffer host
 // path. `generators-native` does not import `closures`, so no cycle.
@@ -2902,6 +2903,12 @@ export function compileArrowAsClosure(
   // the env param is untouched — richer shapes stay on the legacy path via the
   // predicate gate.
   const asyncDecision = isAsync && !isGenerator ? planAsyncClosureActivation(ctx, arrow, /*isAsync*/ true) : null;
+  // (#4648) A DECLINED (await-free) async closure on the JS-host lane still owes
+  // its callers the async contract — a thenable result and a throw delivered as
+  // a rejection — because a dynamic callee cannot apply the static call-site
+  // repair. Bake the `externref` result into the signature exactly like the
+  // activated case; the wrapper that produces the Promise is minted below.
+  const hostAsyncPromiseWrap = isAsync && !isGenerator && asyncDecision === null && asyncClosurePromiseWrapEnabled(ctx);
   if (asyncDecision) {
     closureReturnType = { kind: "externref" };
   } else if (isAsync && !isGenerator) {
@@ -2909,6 +2916,7 @@ export function compileArrowAsClosure(
     // inside a `try`: refuse loudly instead of silently compiling the legacy
     // pass-through that cannot deliver awaited rejections.
     reportDeclinedAsyncRejectionHazard(ctx, arrow);
+    if (hostAsyncPromiseWrap) closureReturnType = { kind: "externref" };
   }
 
   // 2. Analyze captured variables (referenced/written free vars, outer-write +
@@ -2989,6 +2997,18 @@ export function compileArrowAsClosure(
   // remove from liveBodies to keep it tight (the regular walker dedupes anyway).
   ctx.liveBodies.delete(liftedFctx.body);
   ctx.funcMap.set(closureName, liftedFuncIdx);
+  // (#4648) Mint the Promise wrapper NOW, while `liftedFuncIdx` is still the
+  // body's live index, and keep `funcMap[closureName]` on the RAW body so
+  // devirtualized direct calls (whose call site already applies the static
+  // async repair) are unaffected. Only the closure STRUCT's funcref moves.
+  let closureFuncIdx = liftedFuncIdx;
+  if (hostAsyncPromiseWrap) {
+    const wrapperIdx = emitAsyncClosurePromiseWrapper(ctx, closureName, liftedParams, (n, p, r) =>
+      ensureLateImportShared(ctx, n, p, r),
+    );
+    flushLateImportShiftsShared(ctx, fctx);
+    if (wrapperIdx !== undefined) closureFuncIdx = wrapperIdx;
+  }
   let recordedTwin = false;
 
   // 6b. (#3683 S2) Typed-`this` TWIN. When this lifted closure is an admitted
@@ -3138,7 +3158,7 @@ export function compileArrowAsClosure(
     ctx,
     fctx,
     captures,
-    liftedFuncIdx,
+    closureFuncIdx, // (#4648) the Promise wrapper for a declined host-lane async closure
     structTypeIdx,
     hasRestParam ? Math.max(0, arrowParams.length - 1) : arrowParams.length,
     constructionMeta, // (#4437) plus the certified DOM callback carrier, when present
@@ -3752,23 +3772,48 @@ export function compileArrowAsCallback(
   if (savedFunc) ctx.parentBodiesStack.pop();
   ctx.currentFunc = savedFunc;
 
+  // (#4648) An AWAIT-FREE async function reaching the host-callback bridge owes
+  // its caller a thenable and a rejection (not a synchronous unwind): the host
+  // invokes the export directly, so the static call-site repair in
+  // expressions.ts never runs. Export the Promise WRAPPER under `__cb_<id>`
+  // (the name the bridge dispatches on) and keep the raw body private.
+  const cbAsyncPromiseWrap =
+    (arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false) &&
+    !(ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined) &&
+    asyncClosurePromiseWrapEnabled(ctx) &&
+    planAsyncClosureActivation(ctx, arrow, /*isAsync*/ true) === null;
+  const cbBodyName = cbAsyncPromiseWrap ? `${cbName}__async_body` : cbName;
   const cbFuncIdx = mintDefinedFunc(ctx);
   pushProgramAbiNestedCallable(ctx, arrow, cbFuncIdx, {
-    name: cbName,
+    name: cbBodyName,
     typeIdx: cbTypeIdx,
     locals: cbFctx.locals,
     body: cbFctx.body,
-    exported: true,
+    exported: !cbAsyncPromiseWrap,
   });
   // (#1384) cbFctx.body is now reachable via ctx.mod.functions[].body — the
   // regular shifter walker covers it from here on. Remove from liveBodies to
   // avoid double-traversal (the walker dedupes via its `shifted` set anyway,
   // but keeping liveBodies tight is cheaper).
   ctx.liveBodies.delete(cbFctx.body);
-  ctx.funcMap.set(cbName, cbFuncIdx);
+  ctx.funcMap.set(cbBodyName, cbFuncIdx);
+  let cbExportIdx = cbFuncIdx;
+  if (cbAsyncPromiseWrap) {
+    const wrapperIdx = emitAsyncClosurePromiseWrapper(ctx, cbBodyName, cbParams, (n, p, r) =>
+      ensureLateImportShared(ctx, n, p, r),
+    );
+    flushLateImportShiftsShared(ctx, fctx);
+    if (wrapperIdx !== undefined) {
+      cbExportIdx = wrapperIdx;
+      ctx.funcMap.set(cbName, wrapperIdx);
+    } else {
+      // No host Promise imports — keep the previous lowering exactly.
+      ctx.funcMap.set(cbName, cbFuncIdx);
+    }
+  }
   ctx.mod.exports.push({
     name: cbName,
-    desc: { kind: "func", index: cbFuncIdx },
+    desc: { kind: "func", index: cbExportIdx },
   });
 
   // 7. At creation site: push cbId + captures externref, call __make_callback / __make_getter_callback
