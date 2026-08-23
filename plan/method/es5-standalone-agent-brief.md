@@ -147,10 +147,29 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
        load (`[vitest-worker]: Timeout calling "onTaskUpdate"`). `N > 0`
        passes a run that lost half its tests; only the equality catches it.
      `21 skipped` beside `1 failed` is the tell for the first group.
-     Establish the declared count independently before trusting the
-     summary — `grep -cE '^\s+it(\.fails)?\(' <file>` is the cheap version,
-     and it is a floor, not a census (it misses `it.each`, `test(`, and
-     generated cases).
+
+     **Vitest already prints the denominator, so four of the five need no
+     external count at all (2026-08-23, dev-4491).** The parenthesised
+     total on the summary line is always present and the parts always sum
+     to it, so the primary check is **`total > 0 && (passed + failed) ==
+     total`** — that catches `skipIf`, the dead pool worker, the no-match
+     glob and the regex `-t` straight off the summary, with nothing to
+     mis-count:
+     ```
+     Tests  1 failed | 35 passed (36)     healthy
+     Tests  22 skipped (22)               a -t regex executed 0 of 22
+     Tests  36 skipped (36)               dead CompilerPool worker
+     ```
+     **Only the RPC-drop case needs a declared count**, because there
+     `passed` and `total` shrink together and the internal equality still
+     holds. That is the one place an external denominator earns its keep —
+     and the one place its accuracy must be ESTABLISHED, not grepped:
+     `grep -cE '^\s+it(\.fails)?\(' <file>` under-counts (`it.each`,
+     `test(`, generated cases) AND over-counts (any comment containing
+     `it (` — measured: 15 and 6 against a true 14 and 5, both extras
+     being prose inside comments). A wrong denominator turns
+     `N == declared` from a safety net into a false-alarm generator, which
+     is worse than `N > 0` because it burns trust in the check itself.
    - **Contention fakes the ABSENCE of failure as well as its presence.** A
      run can print `22 passed` beside `Errors 1 error` where the error is
      that RPC timeout and no test is involved. Read what the error IS. In
