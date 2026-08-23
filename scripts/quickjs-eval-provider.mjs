@@ -1519,9 +1519,17 @@ function qjsIsIntrinsicMarker(value: any): boolean {
 /** Is \`h\` one of OUR inward membrane wrappers (i.e. a compiled object wearing a
  *  QuickJS face)? \`qjs_wrapper_gc_handle\` answers 0xFFFFFFFF for anything else;
  *  the range test reads that correctly whether the i32 arrives as -1 or as the
- *  unsigned value. Used as a GUARD only: a wrapper crossing back out would today
- *  publish as an opaque box (outward identity is #4245 slice 2), so a write-back
- *  path must LEAVE the caller's own value in place instead. */
+ *  unsigned value.
+ *
+ *  Two callers, opposite intents, and the difference is worth stating because
+ *  the older one reads as a blanket "never cross a wrapper":
+ *   - the write-back guard below uses it to LEAVE the caller's own value in
+ *     place (a re-published wrapper would overwrite a live binding with a
+ *     round-tripped copy of itself);
+ *   - \`qjsMirrorRealmProperty\` (#4647) uses it to ADMIT a wrapper, because for
+ *     a name that did NOT exist at entry there is no caller value to protect,
+ *     and \`qjsPublish\` collapses the wrapper back to the caller's own object
+ *     (#4245 slice 2) rather than boxing it. */
 function qjsIsMembraneWrapperHandle(h: number): boolean {
   const id: number = qjs_wrapper_gc_handle(h);
   return id >= 0 && id < gcRegistry.length;
@@ -1662,7 +1670,24 @@ function qjsMirrorRealmProperty(c: number, globalObject: any, name: string): boo
   // functions/objects use the EDI and activation-pool paths, while publishing
   // an arbitrary new object global here would silently turn a live realm
   // property into a seam-snapshot box.
-  const crossable: boolean = qjsIsMirrorableTag(tag);
+  //
+  // (#4647 subfamily A) …with ONE exception, and it is the exception the
+  // snapshot-box argument does not cover: an INWARD MEMBRANE WRAPPER. That
+  // handle is not a QuickJS object at all, it is one of OUR OWN compiled
+  // objects wearing a QuickJS face, and \`qjsToGc\` → \`qjsPublish\` collapses it
+  // straight back to \`gcRegistry[id]\` (#4245 slice 2) — the caller's original
+  // object, same identity, no box. Refusing it made the caller's own value
+  // unreachable rather than protecting it.
+  //
+  // Measured: \`Function("a1,a2,a3", "this.shifted=a1;").call(null, [1])\` —
+  // sloppy \`this\` is the realm, so the assignment creates a FRESH realm global
+  // whose value is the wrapper for the caller's \`[1]\`. Primitive-only refused
+  // it, so \`this["shifted"]\` on the compiled side stayed \`undefined\` and the
+  // row died on \`undefined.constructor\`
+  // (built-ins/Function/prototype/call/S15.3.4.4_A6_T1, _A6_T2). The SCALAR
+  // form of the same write already worked, which is what localises the defect
+  // to this tag filter rather than to the receiver or the global mirror.
+  const crossable: boolean = qjsIsMirrorableTag(tag) || qjsIsMembraneWrapperHandle(h);
   let mirrored: boolean = false;
   if (crossable) {
     qjsPullRefusal = "";

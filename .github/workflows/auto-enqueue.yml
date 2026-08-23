@@ -38,6 +38,14 @@ name: Auto-enqueue green PRs
 # This workflow reinforces that with a LOWERED cron (~30 min; the
 # workflow_run trigger covers the responsive case) and a single-flight
 # concurrency guard so two sweeps never overlap.
+#
+# SELF-HEALING VIA NATIVE AUTO-MERGE (2026-08-23, PR #4785 incident): the
+# script additionally ARMS GitHub auto-merge on every fully-eligible PR before
+# the direct enqueue. Arming is not an enqueue mutation (it cannot poke a
+# forming head), and it makes GitHub itself retry queue entry after a
+# main-advance drop or a green transition the workflow_run allowlist missed —
+# closing the ≤30-min cron gap and mitigating the #3889 allowlist trap. See
+# armAutoMerge() in scripts/enqueue-green-prs.mjs for the safety argument.
 
 on:
   # PRIMARY (responsive): fire right after the workflows whose completion can make
