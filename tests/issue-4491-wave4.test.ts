@@ -104,9 +104,29 @@ describe("#4491 wave-4 — vec identity at a monomorphic parameter", () => {
 });
 
 describe("#4491 wave-4 — Object.freeze reaches array/arguments ELEMENTS", () => {
-  // Executes both destructive operations propertyHelper performs: the write
-  // (isWritable) and the delete (isConfigurable). Measured on the campaign
-  // base: the write LANDED and the delete SUCCEEDED, so this returned 0.
+  // Executes both destructive operations `propertyHelper.js` performs — the
+  // write (`isWritable`) and the delete (`isConfigurable`) — plus the
+  // descriptor read. Measured on the campaign base: the write LANDED, the
+  // delete SUCCEEDED, and the descriptor said `{writable: true,
+  // configurable: true}`, so this returned 0.
+  //
+  // The module is an ES module and therefore STRICT, so both refusals are
+  // `TypeError`s rather than silent no-ops — the pin asserts BOTH throws AND
+  // that the element survives unchanged, which is the stricter of the two spec
+  // outcomes and exercises the refusal channel the fix publishes into.
+  //
+  // `drop` is load-bearing beyond its own assertion: the `delete obj[name]` in
+  // it is what sets `vecIndexDeleteDirty`, and without a dirty flag the module
+  // is not `overlayRouteActive` at all — the typed lane writes straight through
+  // `array.set` and never reaches the guard. That is exactly why the real
+  // failing rows include `propertyHelper.js` (which contains that delete), and
+  // it is the honest scope of this fix: an array frozen in a module with NO
+  // descriptor/delete/proto-index trigger anywhere still accepts the write.
+  //
+  // Presence is deliberately NOT asserted here: `Object.freeze(arr)` makes
+  // `Object.prototype.hasOwnProperty.call(arr, "0")` answer FALSE, and that is
+  // PRE-EXISTING — measured on the reverted `vec-overlay.ts` as well, where the
+  // element also had no protection at all. It is pinned separately below.
   it("a frozen array element is neither writable nor deletable", async () => {
     expect(
       await runStandalone(`
@@ -117,12 +137,14 @@ describe("#4491 wave-4 — Object.freeze reaches array/arguments ELEMENTS", () =
           Object.freeze(arr);
           var k = "";
           for (var i = 0; i < 1; i++) k = String(i);
-          poke(arr, k, 42);
+          var wThrew = 0;
+          try { poke(arr, k, 42); } catch (e) { wThrew = 1; }
           var afterWrite = arr[0];
-          drop(arr, k);
-          var stillThere = Object.prototype.hasOwnProperty.call(arr, "0");
+          var dThrew = 0;
+          try { drop(arr, k); } catch (e) { dThrew = 1; }
+          var afterDelete = arr[0];
           var d = Object.getOwnPropertyDescriptor(arr, "0");
-          return (afterWrite === 7 && stillThere === true &&
+          return (wThrew === 1 && dThrew === 1 && afterWrite === 7 && afterDelete === 7 &&
                   d.writable === false && d.configurable === false &&
                   d.enumerable === true && d.value === 7) ? 1 : 0;
         }
@@ -141,9 +163,10 @@ describe("#4491 wave-4 — Object.freeze reaches array/arguments ELEMENTS", () =
           Object.freeze(argObj);
           var k = "";
           for (var i = 0; i < 1; i++) k = String(i);
-          poke(argObj, k, 99);
+          var threw = 0;
+          try { poke(argObj, k, 99); } catch (e) { threw = 1; }
           var d = Object.getOwnPropertyDescriptor(argObj, "0");
-          return (argObj[0] === 1 && d.writable === false &&
+          return (threw === 1 && argObj[0] === 1 && d.writable === false &&
                   d.configurable === false && d.value === 1) ? 1 : 0;
         }
       `),
@@ -156,21 +179,37 @@ describe("#4491 wave-4 — `var x = undefined` holds undefined, not 0", () => {
   // non-undefined value is a TypeError. The define is executed and the
   // surviving SETTER is then invoked, so the pin fails if the second define
   // either throws or discards the first one's setter.
+  //
+  // Two spellings are load-bearing, both taken from `15.2.3.6-4-21` itself:
+  //
+  //  - the bindings are MODULE-SCOPE. A FUNCTION-LOCAL `var g = undefined`
+  //    still fails — measured, and NOT fixed here: widening the local slot
+  //    alone does not close it (the enclosing literal's field type is decided
+  //    separately), so shipping that half would have been a behaviour change
+  //    on every `var x = undefined` local with no measured beneficiary. Listed
+  //    under Residuals in the issue file.
+  //  - the descriptor is passed as a VARIABLE (`desc`), not as an inline
+  //    literal. An inline `{get: getter}` argument takes the static
+  //    literal-shape define path, which still throws; the variable form is the
+  //    dynamic `__obj_define_from_desc` path the test uses and the one the
+  //    slot fix reaches. Same defect, two lowerings — worth knowing before
+  //    writing the follow-up.
   it("accepts `{get: <var holding undefined>}` and keeps the existing setter", async () => {
     expect(
       await runStandalone(`
         var wrote = 0;
+        var o = {};
+        var setter = function (x) { wrote = x; };
+        var getter = undefined;
+        var desc = { get: getter };
+        var threw = 0;
+        Object.defineProperty(o, "foo", { set: setter });
+        try {
+          Object.defineProperty(o, "foo", desc);
+        } catch (e) {
+          threw = 1;
+        }
         export function main() {
-          var o = {};
-          var setter = function (x) { wrote = x; };
-          Object.defineProperty(o, "foo", { set: setter });
-          var getter = undefined;
-          var threw = 0;
-          try {
-            Object.defineProperty(o, "foo", { get: getter });
-          } catch (e) {
-            threw = 1;
-          }
           o.foo = 5;
           var d = Object.getOwnPropertyDescriptor(o, "foo");
           return (threw === 0 && wrote === 5 && d.set === setter &&
@@ -212,14 +251,17 @@ describe("#4491 wave-4 — Date's statics are own properties", () => {
   // (`Object.prototype.hasOwnProperty.call`, the exact spelling
   // `propertyHelper.js` uses and the one that answered `false`), the own-key
   // LIST (`gOPN(Date)` reported only `length, name, prototype`), and the
-  // descriptor — and the descriptor's value is CALLED, because a seeded
-  // descriptor whose value is not a working function would be worse than no
-  // descriptor at all.
+  // descriptor — and the descriptor's value must be a callable that is
+  // IDENTITY-STABLE across two reads, because a seeded descriptor that minted
+  // a fresh closure per query would answer `true` to every shape assertion and
+  // still be wrong for any consumer that compares functions.
   //
-  // The receiver is passed as a VALUE only through `hasOwn`'s parameter and a
-  // literal-key gOPD: a syntactic `Date.now` in a value position (`d.value ===
-  // Date.now`) compiles to `__get_builtin`, which standalone rejects, and a
-  // compile error is not the failure this pin exists to catch.
+  // Two things it deliberately does NOT do. `d.value === Date.now`: a
+  // syntactic `Date.now` in a value position compiles to `__get_builtin`,
+  // which standalone rejects — a compile error is not the failure this pin
+  // exists to catch. And `d.value()`: `Date.now` needs the host clock, so
+  // CALLING it traps under this harness's `hostBridge` default and would make
+  // the pin an environment test rather than a descriptor test.
   it("Date.now is an own, writable, non-enumerable, configurable data property", async () => {
     expect(
       await runStandalone(`
@@ -230,8 +272,9 @@ describe("#4491 wave-4 — Date's statics are own properties", () => {
           var found = false;
           for (var i = 0; i < names.length; i++) { if (names[i] === "now") { found = true; } }
           var d = Object.getOwnPropertyDescriptor(Date, "now");
-          var t = d.value();
-          return (present === true && found === true && typeof t === "number" &&
+          var d2 = Object.getOwnPropertyDescriptor(Date, "now");
+          return (present === true && found === true &&
+                  typeof d.value === "function" && d.value === d2.value &&
                   d.writable === true && d.enumerable === false &&
                   d.configurable === true) ? 1 : 0;
         }
@@ -246,6 +289,32 @@ describe("#4491 wave-4 — Date's statics are own properties", () => {
  * carries the full analysis.
  */
 describe("#4491 wave-4 — measured residuals", () => {
+  // Found while writing the frozen-element pin above, and PRE-EXISTING (it
+  // reproduces with `vec-overlay.ts` reverted): `Object.freeze(arr)` flips
+  // `Object.prototype.hasOwnProperty.call(arr, "0")` from true to FALSE, while
+  // `Object.getOwnPropertyDescriptor(arr, "0")` keeps answering the full
+  // descriptor. A descriptor that exists while `hasOwnProperty` says the
+  // property does not is the #4010 overlay-vs-bag split, now reachable through
+  // the integrity path too.
+  it.fails("Object.freeze does not hide an array element from hasOwnProperty", async () => {
+    expect(
+      await runStandalone(`
+        function drop(obj, name) { return delete obj[name]; }
+        export function main() {
+          var sink = [1, 2];
+          var kk = "";
+          for (var j = 0; j < 1; j++) kk = String(j);
+          drop(sink, kk);
+          var arr = [7, 8, 9];
+          var before = Object.prototype.hasOwnProperty.call(arr, "0");
+          Object.freeze(arr);
+          var after = Object.prototype.hasOwnProperty.call(arr, "0");
+          return (before === true && after === true) ? 1 : 0;
+        }
+      `),
+    ).toBe(1);
+  });
+
   // #4497. `MAX_CANONICAL_INDEX` is 2^31-1 because `__obj_index_of_key`'s
   // result doubles as a SIGNED sort key, so an index in [2^31, 2^32-2] is
   // treated as an ordinary string key and never bumps `length`.

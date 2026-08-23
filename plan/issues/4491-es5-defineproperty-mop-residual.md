@@ -5906,7 +5906,8 @@ recorded so they are not re-derived:
 
 Every one reproduces on this branch and is pinned `it.fails` in
 `tests/issue-4491-wave4.test.ts`, so a later lane's fix flips a red test to
-green instead of landing unnoticed.
+green instead of landing unnoticed. The last two rows have no census row at
+all — they surfaced while writing the pins.
 
 | rows | root | owner / next step |
 | --- | --- | --- |
@@ -5921,12 +5922,144 @@ green instead of landing unnoticed.
 | `defineProperties/15.2.3.7-2-16` | `Object.defineProperties(obj, argumentsObject)`: the descriptor-map getter must run with `this` = the arguments object and `Object.prototype.toString.call(this)` must be `"[object Arguments]"`. | the `Properties`-map own-key source for an arguments receiver. Unowned. |
 | `defineProperty/15.2.3.6-4-589` | `teamMeeting.startTime = dateObj` through an INHERITED setter that stores into `var data1 = 1001` reads back `NaN`: the numeric-carrier binding cannot hold a Date. Same defect FAMILY as root 3, different trigger (a numeric initializer rebound to an object, not an `undefined` one). | `mixed-assignment-carrier` / `heterogeneousWidenedModuleGlobalType` (#4428). Unowned. |
 | `defineProperty/15.2.3.6-4-243-2` | the `onlyStrict` twin of a fixed row: a STRICT-mode write to an array-index accessor with no setter must throw a TypeError. The sloppy no-op is correct; the strict-throw is the documented boundary in `__extern_set`'s accessor arm. | the shared `__extern_set_decide` refusal channel already exists (root 2 uses it); wiring the accessor arm to it is a small follow-up. Unowned. |
+| (no census row — found writing the pins) | `Object.freeze(arr)` flips `Object.prototype.hasOwnProperty.call(arr,"0")` from `true` to **`false`**, while `gOPD(arr,"0")` keeps answering the full descriptor. PRE-EXISTING: reproduces with `vec-overlay.ts` reverted. A descriptor that exists while `hasOwnProperty` says the property does not is the #4010 overlay-vs-bag split, now reachable through the integrity path too. | unowned; pinned `it.fails` in `tests/issue-4491-wave4.test.ts`. |
+| (no census row — found writing the pins) | a FUNCTION-LOCAL `var g = undefined` still stores the number 0, and an INLINE `{get: getter}` descriptor argument still throws where the same descriptor in a variable does not. Root 3 fixes the module-global slot on the dynamic define path only. | unowned; see "Not done" below. |
 
 #### Cross-lane (methodology item 7)
 
 The dispatch note flagged `Array/prototype/filter/15.4.4.20-9-b-{2,14,15,16}`
 and `forEach/15.4.4.18-3-23` as possibly rooting in this lane's descriptor
-mirror. They are in the sweep set below with a before/after from this lane's
-own runs; **this lane makes no claim about dev-4641's arm** — a claim about
-another lane's effect needs an arm containing their change, which this two-arm
-A/B is structurally unable to provide.
+mirror. **They do not.** All five are `fail` on BOTH arms of this lane's A/B —
+unchanged by every fix above — so this lane hands them back to #4641 with that
+evidence. **This lane makes no claim about dev-4641's arm**: a claim about
+another lane's effect needs an arm containing their change, which a two-arm
+tip-vs-own A/B is structurally unable to provide.
+
+The four filter HARNESS rows the 2026-08-21 note names as having been
+regressed by the earlier `void 0` module-global widening —
+`filter/15.4.4.20-9-{2,3,4,6}` — are **pass on both arms**. That is the
+measurement that says the wave-4 `= undefined` arm did not repeat that
+regression, and it is why the arm is scoped to the `undefined` identifier
+rather than reusing the full local predicate.
+
+#### Test Results
+
+**Scoped standalone sweep, both arms run in this worktree** (single-test
+driver, `--target standalone`, 7 shards; base arm from file-copy reverts of
+the four touched sources, branch arm at `a41edca71`):
+
+| directory | rows |
+| --- | ---: |
+| `built-ins/Object/defineProperty` | 1131 |
+| `built-ins/Object/defineProperties` | 632 |
+| `built-ins/Object/getOwnPropertyDescriptor` | 310 |
+| `built-ins/Object/keys` | 59 |
+| `built-ins/Object/freeze` | 53 |
+| `built-ins/Object/getOwnPropertyNames` | 45 |
+| `built-ins/Object/preventExtensions` | 40 |
+| + the 9 cross-lane `Array/prototype/{filter,forEach}` rows | 9 |
+| **total** | **2279** |
+
+|  | base | branch |
+| --- | ---: | ---: |
+| pass | 2226 | **2235** |
+| fail | 51 | 42 |
+| infrastructure (compile-timeout / ENOENT) | 2 | 2 |
+
+**UP 9, DOWN 0.** Flip list:
+
+```
+defineProperty/15.2.3.6-4-195      defineProperty/15.2.3.6-4-21
+defineProperty/15.2.3.6-4-243-1    defineProperty/15.2.3.6-4-622
+defineProperties/15.2.3.7-6-a-204  defineProperties/15.2.3.7-6-a-231
+freeze/15.2.3.9-2-a-11             freeze/15.2.3.9-2-a-14
+preventExtensions/15.2.3.10-2
+```
+
+Three rows moved for INFRASTRUCTURE reasons and are excluded from both counts
+— each was re-run SERIALLY on both arms afterwards and passes on both:
+
+- `defineProperty/15.2.3.6-4-419` — base-arm `compilation timeout (123s)` under
+  7-way contention (the box was also running three sibling lanes at load 15-21).
+- `defineProperties/15.2.3.7-5-b-186` — base-arm `ENOENT`, the worktree
+  `test262/` symlink-farm race the brief documents.
+- `defineProperty/15.2.3.6-4-298-1` — the SAME ENOENT race on the branch arm.
+  Counting it as a regression would have been a false alarm; the serial re-run
+  is what settles it.
+
+The 24-row census on the branch: **9 pass, 15 fail** (`.tmp/FINAL-wave4.tsv`),
+matching the sweep exactly.
+
+**Eval tier.** The worktree's `.test262-cache` was copied from the main
+checkout at 12:57Z — i.e. the adapter the lead later found had been built from
+an 8-day-stale bundle. It was kept UNCHANGED across both arms deliberately: a
+base/branch delta is only meaningful if the tier is identical on both sides.
+Blast radius is **2 rows of 2279** (`getOwnPropertyDescriptor/15.2.3.3-4-187`,
+`-4-188` — the only rows in the set that mint from a body string); both pass on
+both arms, and both still pass on the branch after refreshing the cache from
+the rebuilt artifact. None of the 24 census rows is eval-dependent.
+
+**Pins.** `tests/issue-4491-wave4.test.ts` — **14 passed (14)** on the branch;
+on the reverted sources **7 failed / 7 passed**, i.e. every one of the 7
+positive pins fails on the arm it claims to test and every one of the 7
+`it.fails` residual pins reproduces on both arms. Prior-wave suites for this
+issue: `issue-4491-proto-index-constructor-shadow` + `issue-4491-function-
+binding-widening` → **10 passed (10)**; `issue-4506` → **22 passed**.
+
+`issue-4504-inherited-set` → **1 failed / 35 passed (36)**. The one failure
+(`reads present fnctor flow slots directly while absent slots preserve normal
+prototype lookup`, expected 7 got 6) **reproduces on the reverted sources** —
+it is pre-existing on the campaign base, not caused by this slice.
+
+Two harness notes that cost real time and will cost the next lane the same:
+
+- That suite spins its own `CompilerPool`, whose worker imports the GITIGNORED
+  `scripts/runtime-bundle.mjs` and `scripts/compiler-bundle.mjs`. A fresh
+  worktree has NEITHER, so the pool prints `[pool] worker failed before ready
+  (exit 1)` and vitest reports **`36 skipped`, exit code 0** — a suite that
+  runs nothing, green. Build both first
+  (`npx esbuild src/runtime.ts --bundle --platform=node --format=esm
+  --outfile=scripts/runtime-bundle.mjs --external:typescript
+  --external:binaryen`, plus `pnpm run build:compiler-bundle`), and read the
+  "N passed" line rather than the exit code — exactly the check the brief
+  requires.
+- Build those bundles from the arm you are measuring. They are compiled
+  snapshots of `src/`, so a bundle left over from the other arm silently
+  measures the wrong tree.
+
+Three pin-shape findings worth carrying forward, because each one is a way a
+pin can be green without testing anything:
+
+1. The vec-identity pins only reproduce when the CALL is at module scope. With
+   the same helper called from inside `main`, the checker hands the parameter
+   the externref carrier, no conversion is emitted, and the pin passes on base.
+2. The frozen-element pin only reproduces when the module contains a
+   `delete obj[k]` somewhere — that is what sets `vecIndexDeleteDirty` and
+   makes the module `overlayRouteActive`. Without it the typed lane writes
+   through `array.set` and never reaches the guard. That is the honest scope of
+   the fix, and it is why the real failing rows all include `propertyHelper.js`.
+3. The `{get: <undefined var>}` pin only reproduces when the descriptor is
+   passed as a VARIABLE. An inline literal argument takes the static
+   literal-shape define path, which still throws — the same defect has two
+   lowerings and only one of them is fixed.
+
+Gates at commit (`SKIP_SLOW_PRECOMMIT=1`): `check:loc-budget` OK,
+`check:func-budget` OK, both under the grants added to this file's
+frontmatter. `test262` gitlink verified untouched
+(`git diff 52cb0a6a6..HEAD --stat -- test262` empty).
+
+#### Not done, and why
+
+A local (function-scope) `var g = undefined` still stores the number 0. The
+one-line extension of `varBindingNeedsExternrefForUndefined` was written and
+**measured not to fix it** — the enclosing object literal's field type is
+decided separately — so it was reverted rather than shipped: a behaviour
+change on every `var x = undefined` local in every module with no measured
+beneficiary is exactly the trade this campaign's audit chain keeps flagging.
+
+Root 1's withdrawal was NOT extended to variable declarations
+(`var alias = arr` shows the same converting copy — measured: `alias[1]`
+answers the raw slot while `arr[1]` invokes the getter). No census row needed
+it, and the same "no measured beneficiary" rule applies. Worth knowing that
+the defect is not parameter-specific: a JS array is a REFERENCE, and any
+cross-carrier vec→vec conversion silently makes a copy of one.
