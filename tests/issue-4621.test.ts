@@ -100,7 +100,21 @@ describe.skipIf(!TEST262)("#4621 C — Date is a real value, not null", () => {
   pinRow("built-ins/global/S10.2.3_A1.1_T3.js", "global code — Date !== null");
   pinRow("built-ins/global/S10.2.3_A1.2_T3.js", "function code — Date !== null");
   // The sibling that already passed: a regression guard on the same walk.
-  pinRow("built-ins/global/S10.2.3_A1.3_T3.js", "control — was already passing");
+  // A1.3 is the EVAL-CODE variant, so it needs a linked runtime-eval provider —
+  // present locally (quickjs artifact) but NOT in CI's `quality` tier, where the
+  // row fails with the #2928 standalone refusal. Accept pass OR that specific
+  // refusal: the pin still trips if the Date-carrier walk regresses (a
+  // `Test262Error: Date === null` is neither), without being tier-dependent.
+  it(
+    "built-ins/global/S10.2.3_A1.3_T3.js — control (eval-code variant, tier-tolerant)",
+    { timeout: 60_000 },
+    async () => {
+      const abs = join(__dirname, "..", "test262", "test", "built-ins/global/S10.2.3_A1.3_T3.js");
+      const r = await runTest262File(abs, "issue-4621", 30_000, "standalone");
+      const ok = r.status === "pass" || /dynamic code evaluation is not supported/.test(r.error ?? "");
+      expect(ok, `${r.status}: ${r.error ?? ""}`).toBe(true);
+    },
+  );
 });
 
 describe.skipIf(!TEST262)("#4621 C — the Date carrier's own surface", () => {
