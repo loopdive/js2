@@ -127,3 +127,109 @@ verified failing on base by revert); `it.fails` pins for measured residuals with
 owners. Record `## Root cause` per cluster / `## Fix` / `## Test Results` /
 `## Residuals` here. A decline with a measured observer table is a valid
 outcome; an unmeasured fix is not.
+
+---
+
+# Result (dev-4655, 2026-08-23)
+
+Every number below comes from a run **I executed** in
+`/home/user/js2wasm/.claude/worktrees/agent-aa58d929ef0455b8c` on branch
+`issue-4655-array-element-callback`, base `3e8adf0d8` (campaign HEAD). Base arms
+are file-copy reverts from `.tmp/base-array-methods.ts` /
+`.tmp/base-array-join-element.ts` / `.tmp/base-array-join-proto-hole.ts`,
+captured at the first edit. Probes are in `.tmp/probes/`, one per claim, each
+named for the question it answers.
+
+## What this does that #4641's declined option did not
+
+#4641 declined the ELEMENT half after measuring the naive "reuse
+`UNDEF_F64_BITS` for a `null` element" fix at **+1 / −2** observers, and
+recorded the remaining work as "needs a third sNaN payload (`NULL_F64_BITS`),
+a #4491-T8-sized slice, for ONE corpus row".
+
+**I did not take that option, and the measurement says nobody should.** The
+row it was sized for (`toString/S15.4.4.2_A1_T2`) does not need a new payload
+at all:
+
+| probe                                                         | `x.toString()` | `x[2] === null` | `typeof x[2]` |
+| ------------------------------------------------------------- | -------------- | --------------- | ------------- |
+| `.tmp/probes/nullelem.js` — `var x = Array(undefined,1,null,3)` | `",1,,3"` ✓  | **true** ✓      | `"object"` ✓  |
+| `.tmp/probes/nullelem2.js` — the row's own shape: `var x = new Array(0,1,2,3); x = Array(undefined,1,null,3)` | `",1,0,3"` ✗ | false ✗ | `"number"` ✗ |
+
+The compiler **already has a correct nullish element representation** — the
+boxed/union element carrier answers all three observers. The failing row fails
+because `x` is a REUSED variable whose wasm carrier was fixed to `f64` by the
+earlier `new Array(0,1,2,3)`, so the reassignment coerces `null` into it. That
+is #3580's union-collapse **at the var slot**, not a missing element payload,
+and building `NULL_F64_BITS` would have been a #4491-T8-sized slice aimed at
+the wrong layer. Recorded as residual R3 with the discriminating control.
+
+Instead I took a root the prior measurement did not look for, because its two
+`toLocaleString` rows were filed under the element-representation heading:
+`Array.prototype.toLocaleString` asks each element for the wrong METHOD.
+
+## Root cause — cluster A(iii), `toLocaleString` (FIXED)
+
+`Array.prototype.toLocaleString` shares the `join`/`toString` lowering
+(`array-methods.ts`, the `case "toLocaleString": case "toString":` fallthrough,
+#2863 Phase 2). Sharing the separator is right; sharing the ELEMENT step is not
+— §23.1.3.32 step 6.c.i is `ToString(? Invoke(nextElement, "toLocaleString"))`,
+not `ToString(nextElement)`.
+
+Measured with a **positive control that refutes the obvious root**:
+
+```js
+var n = 0, obj = { toLocaleString: function () { n++; return "L"; } };
+[obj, obj].toLocaleString();   // base: n === 0, "[object Object],[object Object]"
+
+var m = 0, o2 = { toString: function () { m++; return "T"; } };
+[o2, o2].toString();           // base: m === 2, "T,T"   ← reflective dispatch WORKS
+```
+
+So it is not "an element's own method is never consulted" (which is the shape
+dev-4492 owns for the String conversion path, and would have been the wrong
+handover); it is the method NAME. `.tmp/probes/tls-1.js` / `tls-2.js`.
+
+A second consequence of the aliasing, same root: `toLocaleString`'s reserved
+`locales`/`options` arguments were being compiled as `join`'s **separator**.
+
+## Fix
+
+New leaf module `src/codegen/array-tolocalestring.ts` (the mechanism + its
+rationale) and dispatch plumbing in `array-methods.ts`:
+
+- `isLocalizedJoin(propAccess)` — read off the property access inside the two
+  native join lowerings rather than threaded from the dispatcher, so the
+  `compileArrayMethodCall` switch stays **byte-identical** (it is func-budgeted
+  at 603 lines).
+- `elementToLocaleStringTail` replaces the `__extern_toString` tail on the arms
+  whose element can carry a user method: the boxed-any / GC-ref element arm
+  (`buildJoinBoxedElementToString` gains an optional `tail`), the extern-receiver
+  lane, and the #4491 lane-J prototype-hole fallback
+  (`joinProtoHoleFallbackInstrs` gains the same optional `tail`). `join` /
+  `toString` pass no tail and emit unchanged bytes.
+- The separator argument is not compiled at all in localized mode.
+
+**The Invoke is `__extern_get` + `__apply_closure`, not `__extern_method_call`.**
+The first cut used the generic dispatcher and threw `TypeError: called value is
+not a function` on the issue's own shape. Its method-resolution arm is gated on
+`ref.test $Object(recv)` — the OPEN dynamic-object carrier — and an object
+LITERAL is a CLOSED `$__anon_N` struct, which falls to the
+`$Vec`/closure-own-property else arm and resolves null. Worth recording because
+a JS-level probe does NOT establish this: the same object reached through a
+computed member call `arr[0][k]()` works, because that spelling is a typed
+member dispatch and never enters `__extern_method_call`
+(`.tmp/probes/dyncall.js` answers `zzz=Z tls=L`).
+
+**Scope, deliberately: boxed elements only.** The primitive arms (numeric,
+the #2105 boolean arm) keep rendering natively. Host-free there is no `Intl`
+and `Number.prototype.toLocaleString` degrades to ToString, so the reflective
+Invoke would compute the same answer while putting a method dispatch in
+`[1,2,3].toLocaleString()`. The case it leaves wrong — an OVERRIDDEN primitive
+prototype method — is residual R1, pinned with its control.
+
+**Absent-not-wrong on the method miss.** A null resolution falls back to
+`ToString(elem)` (today's answer) rather than §23.1.3.32's TypeError: the
+reflective read does not see every builtin prototype method, so a
+`toLocaleString` this lowering cannot find is far more likely to be one it
+cannot SEE than one genuinely absent.
