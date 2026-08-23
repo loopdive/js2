@@ -582,10 +582,18 @@ unlike every other A1 case. Not diagnosed, not guessed at.)
 > arm) — the pin still passes as `it.fails`: the arg-position-only shape
 > still answers `2`, not `31`. **The two changes did NOT compose for this
 > shape.** So C1's `NewExpression`-argument classification does not, by
-> itself, make this site reconstruct — the remaining gate is elsewhere
-> (plausibly the same unexplained `G.prototype === P` anomaly recorded
-> above). Successor scope: diagnose why the arg-position-only instance
-> never reconstructs even when classified; the pin flips the day it does.
+> itself, make this site reconstruct.
+>
+> **The anomaly is ruled OUT as the gate (lead probe, combined tree):**
+> `G.prototype === P` reads **true** here and `h.wrapped instanceof G`
+> is true, while `P.isPrototypeOf(h.wrapped)` is still false — so the
+> branch-local `G.prototype === P` false reading did not survive the
+> merge (consistent with dev-4639's attribution that it was
+> 4637-branch-local), and the remaining gap is specifically the
+> reconstruction/chain-walk of the arg-position-only instance, not the
+> prototype read. Successor scope: diagnose why a classified
+> `new`-argument instance still doesn't reconstruct; the pin flips the
+> day it does.
 
 ### 3. Every pin re-verified against the base — two were mislabelled
 
