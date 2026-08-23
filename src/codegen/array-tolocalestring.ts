@@ -49,8 +49,17 @@
  * `Number.prototype.toLocaleString` degrades to `ToString`. The residual it
  * leaves is real and pinned rather than hidden: an element whose PRIMITIVE
  * prototype method is overridden (`Boolean.prototype.toString = …`, test262
- * `toLocaleString/primitive_this_value.js`) is still rendered natively. That
- * row needs per-element boxing on the primitive arms and is recorded as such.
+ * `toLocaleString/primitive_this_value.js`) is still rendered natively.
+ *
+ * **That residual is NOT this module's to fix, and boxing here would not fix
+ * it** — an earlier draft of this paragraph claimed it would, and a probe
+ * refuted that. With `Boolean.prototype.toString` overridden to return
+ * `typeof this`: `typeof true.toLocaleString` is already `"function"` (the
+ * reflective read resolves), yet `true.toLocaleString()` answers `"true"` and
+ * so does `String(true)`. The override is ignored by primitive→string
+ * conversion itself, one level below this lowering, so a boxed element routed
+ * through the Invoke above would inherit the same wrong answer while paying for
+ * a method dispatch per numeric element.
  *
  * ## Why the Invoke is `__extern_get` + `__apply_closure`, not `__extern_method_call`
  *

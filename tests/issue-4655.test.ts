@@ -204,12 +204,21 @@ describe("#4655 — the element step of Array.prototype.toLocaleString", () => {
 });
 
 describe("#4655 — measured residuals, each with the control that pins its root", () => {
-  // ── R1. PRIMITIVE element arms do not Invoke ────────────────────────────
-  // Root: the f64/i32/boolean arms render through `number_toString` / a native
-  // "true"/"false" literal, so an OVERRIDDEN primitive prototype method is
-  // invisible. Owner: #4655 follow-on (needs per-element boxing on those arms —
-  // deliberately declined here, see array-tolocalestring.ts "Deliberate scope").
-  // test262 `toLocaleString/primitive_this_value{,_getter}.js`.
+  // ── R1. an overridden PRIMITIVE prototype method is never consulted ──────
+  // The array lowering renders booleans/numbers natively, so the first guess is
+  // "box the element and Invoke like the boxed arm does". **Measured, that
+  // would not fix it** (`.tmp/probes/primitive-element-invoke-feasibility.js`,
+  // base arm, with `Boolean.prototype.toString` overridden to return
+  // `typeof this`):
+  //     typeof true.toLocaleString  →  "function"   (the read RESOLVES)
+  //     true.toLocaleString()       →  "true"       (spec: "boolean")
+  //     String(true)                →  "true"       (spec: "boolean")
+  // The reflective read already finds the method; the CALL ignores the
+  // override, and so does plain `String()`. So the root is primitive→string
+  // conversion never consulting the overridden prototype method at all — one
+  // level below the array lowering, and per-element boxing would inherit the
+  // same wrong answer. Owner: primitive wrapper-prototype dispatch, NOT this
+  // lowering. test262 `toLocaleString/primitive_this_value{,_getter}.js`.
   failSource(
     "R1-primitive-prototype-override",
     `${LOOP_CARRIED}
@@ -232,10 +241,16 @@ describe("#4655 — measured residuals, each with the control that pins its root
   );
 
   // ── R2. `Array.prototype.toLocaleString` read as a VALUE ────────────────
-  // Root: the builtin-as-value carrier family. Owner: dev-4515 cluster C1 —
-  // the SAME error text as `Array.prototype.concat` as a value, which that lane
-  // owns. test262 `toLocaleString/{resizable-buffer,
-  // user-provided-tolocalestring-grow,-shrink}.js`.
+  // Root: the builtin-as-value carrier family. Owner: #4515 cluster C1 — the
+  // SAME error text as `Array.prototype.concat` read as a value, which is that
+  // issue's, and which I re-verified STILL fails on current main.
+  //
+  // This residual rests on the pin below and NOT on a corpus row. An earlier
+  // draft cited `toLocaleString/{resizable-buffer,
+  // user-provided-tolocalestring-grow,-shrink}.js` as its evidence; on this
+  // base all three fail with `JS2WASM_EVAL_ENGINE=quickjs but the quickjs
+  // provider is not built`, which is this worktree's environment, not a root.
+  // Citing them would have been a failure text mistaken for a diagnosis.
   failSource(
     "R2-tolocalestring-as-a-value",
     `${LOOP_CARRIED}
@@ -450,34 +465,56 @@ describe("#4655 — measured residuals, each with the control that pins its root
     "CONTROL for R7 — the same borrow, with a length getter that does NOT write",
   );
 
-  // ── R8. the array element step's ToString is not `String()`'s ─────────────
+  // ── R8. `new Array(elem)` gives the element a carrier that loses the throw ─
   // `toString/S15.4.4.2_A1_T4.js` expects §7.1.1 OrdinaryToPrimitive to THROW
-  // when neither `valueOf` nor `toString` returns a primitive. It does — for
-  // `String(o)` (the control below). The ARRAY element step renders the empty
-  // string and throws nothing, so the join/toString/toLocaleString element tail
-  // (`__extern_toString`) and `String()` are two different ToString
-  // implementations that disagree on this case.
+  // when neither `valueOf` nor `toString` returns a primitive.
   //
-  // NOT fixed here on purpose: the element tail is shared with `join`, so
-  // re-pointing it moves `join`'s bytes, and this issue's fix is deliberately
-  // byte-neutral for `join`/`toString` (see `## Fix` in the issue file). The
-  // next step is to measure re-pointing the tail at whatever `String()` lowers
-  // to, on the same two-arm sweep this issue used.
+  // **THIS PIN CAUGHT MY OWN WRONG ROOT, which is why it is written this way.**
+  // The first version of it was loop-carried for unfoldability, exactly as the
+  // brief asks — and it PASSED on the fix arm (`Expect test to fail`), while
+  // the corpus row stayed red. Three cells, same element, same call, differing
+  // only in how the array is CONSTRUCTED (`.tmp/probes/r8-*.js`, fix arm):
+  //     new Array(both)          renders ''   ✗   ← the corpus row's spelling
+  //     [both]                   TypeError    ✓
+  //     x = []; x[j] = both      TypeError    ✓   ← my first pin's spelling
+  // So it is NOT "the element tail's ToString differs from `String()`'s"; the
+  // element tail is right for two of the three carriers. The defect is the
+  // carrier `new Array(elem)` hands out — the same family as R3 above and as
+  // R4's concat result slot.
+  //
+  // The pin therefore mirrors the corpus row's spelling EXACTLY and is not
+  // made "more dynamic": here the spelling IS the defect, so loop-carrying the
+  // construction would move the pin to a cell that already passes — which is
+  // precisely the mistake this comment records. Unfoldability is not at risk:
+  // answering `x.toString()` at compile time would mean running the user's
+  // `valueOf`/`toString` closures.
   failSource(
-    "R8-array-element-tostring-must-propagate-the-toprimitive-throw",
+    "R8-new-Array-element-loses-the-toprimitive-throw",
     `${LOOP_CARRIED}
      var both = { valueOf: function () { return {}; }, toString: function () { return {}; } };
-     var arr = [];
-     for (var i = 0; i < __n - 2; i++) { arr[i] = both; }
+     var x = new Array(both);
      var threw = "";
-     try { var s = arr.toString(); threw = "no throw, got '" + s + "'"; }
+     try { var s = x.toString(); threw = "no throw, got '" + s + "'"; }
      catch (e) { threw = e instanceof TypeError ? "TypeError" : "other:" + e; }
-     assert.sameValue(threw, "TypeError", "element ToPrimitive: " + threw);`,
-    "an element whose valueOf AND toString both return objects renders '' instead of throwing",
+     assert.sameValue(threw, "TypeError", "new Array(elem): " + threw);
+     assert.sameValue(__n, 3, "loop-carried");`,
+    "an element passed to new Array() renders '' where the spec throws a TypeError",
   );
-  // POSITIVE CONTROL for R8 — the SAME object through `String()`. It throws
-  // correctly, which is what makes R8 a claim about the element tail rather
-  // than about ToPrimitive.
+  // POSITIVE CONTROLS for R8 — the two cells that WORK. Without them the pin
+  // above reads as "array element ToPrimitive is broken", which is the claim
+  // the probes refuted.
+  pinSource(
+    "R8-control-array-literal-does-throw",
+    `${LOOP_CARRIED}
+     var both = { valueOf: function () { return {}; }, toString: function () { return {}; } };
+     var x = [both];
+     var threw = "";
+     try { var s = x.toString(); threw = "no throw, got '" + s + "'"; }
+     catch (e) { threw = e instanceof TypeError ? "TypeError" : "other:" + e; }
+     assert.sameValue(threw, "TypeError", "[elem]: " + threw);
+     assert.sameValue(__n, 3, "loop-carried");`,
+    "CONTROL for R8 — the SAME element in an array LITERAL does throw",
+  );
   pinSource(
     "R8-control-String-does-throw",
     `${LOOP_CARRIED}
