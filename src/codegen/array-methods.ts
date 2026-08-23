@@ -378,6 +378,21 @@ const CLOSURE_SAFE_AMBIENT_GLOBALS = new Set([
   "ReferenceError",
   "URIError",
   "AggregateError",
+  // (#4657) `Function` used as a VALUE inside a callback body — i.e. the
+  // dynamic `new Function(<computed>)` / `Function(<computed>)` constructor —
+  // has a dedicated native codegen arm on this lane exactly like the names
+  // above it: `emitDynamicNewFunctionHostEval` lowers it to the
+  // `env::__extern_new_function` shim (#2960/#4650), which resolves inside a
+  // LIFTED closure body just as it does at top level. It was absent from this
+  // set only because the #4616 audit enumerated data builtins, so it fell to
+  // the `isDeclarationFile` catch-all below and was misclassified as a
+  // host-only ambient. The consequence was NOT a safe degrade: for a
+  // ref-element receiver the gc-lane fallback is the #3126 silent no-op, so
+  // `objArray.forEach(w => { ... new Function(...) ... })` executed ZERO
+  // iterations with no diagnostic — test262
+  // `harness/wellKnownIntrinsicObjects.js` builds all ~380 intrinsics through
+  // exactly that shape and reported "could not obtain %Array%".
+  "Function",
 ]);
 
 // These names are supplied by the Test262 realm/harness rather than being

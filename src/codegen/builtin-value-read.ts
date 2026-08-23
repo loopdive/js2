@@ -73,6 +73,7 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
 import { emitMathValueReadBody } from "./math-value-read.js"; // (#4565)
+import { ensureHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649)
 import {
   emitStringFromCharCodeValueBody,
   prepareStringFromCharCodeValueRead,
@@ -458,16 +459,15 @@ export function emitArrayIsArrayExternrefPredicate(ctx: CodegenContext, fctx: Fu
   fctx.body.push({ op: "local.set", index: externTmp });
   let emittedTerm = false;
 
-  if (vecTypeIdxs.length > 0) {
-    const anyTmp = allocLocal(fctx, `__isarr_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  // (#4649) The compiled-carrier half is a CALL to the finalize-filled
+  // `__host_array_carrier`, not an inline `ref.test` ladder over
+  // `ctx.vecTypeMap` — that ladder was an emission-time snapshot, so a carrier
+  // registered LATER (a `boolean[]` first minted by a test262 body, after the
+  // harness prefix baked its ladder) answered `false`. See host-array-carrier.ts.
+  const carrierIdx = vecTypeIdxs.length > 0 ? ensureHostArrayCarrierPredicate(ctx) : undefined;
+  if (carrierIdx !== undefined) {
     fctx.body.push({ op: "local.get", index: externTmp });
-    fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "local.set", index: anyTmp });
-    for (let vi = 0; vi < vecTypeIdxs.length; vi++) {
-      fctx.body.push({ op: "local.get", index: anyTmp });
-      fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdxs[vi]! });
-      if (vi > 0) fctx.body.push({ op: "i32.or" });
-    }
+    fctx.body.push({ op: "call", funcIdx: carrierIdx });
     emittedTerm = true;
   }
 
