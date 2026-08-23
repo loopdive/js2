@@ -452,7 +452,21 @@ Nine rows remain, each with a measured root and an owner. None is a guess.
   reached the same stopping point independently, which is what makes it a
   process gap rather than a lapse: added to the brief as methodology 6 (a table
   is only evidence for the axes it varies) and a new bullet under 7 (the
-  third-arm rule governs claims, not disagreements).
+  third-arm rule governs claims, not disagreements). Both **ratified** by the
+  lead and carried in PR #4814.
+
+  **Deliberately NOT promoted to the brief — do not re-add it.** dev-4515 and I
+  converged on a synthesis of the three instances in this thread: *the check you
+  didn't run, the axis you didn't vary, the line you didn't print* — one shape,
+  where the failure is invisible because the instrument that would have shown it
+  was never pointed at it, and in all three cases pointing it cost one command.
+  The lead **declined** to add it, and the reason is budget rather than quality:
+  the brief took eleven edits in one session, and a document every lane must read
+  before its first edit stops paying for additional insight per page. It lives
+  here and in `plan/issues/4515-…md` instead, which is where a lane doing this
+  kind of work lands. **Promotion trigger: a fourth independent instance of the
+  same shape.** If you are about to add it because it seems obviously missing,
+  that judgement has already been made — supply the fourth instance instead.
 - **M `fun.prototype` own-ness** (`13.2-18-1`) — **owner #4491**, with evidence: a
   function EXPRESSION has no own `prototype` property under the live descriptor
   MOP. With an accessor installed on `Function.prototype.prototype`,
