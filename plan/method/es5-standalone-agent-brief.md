@@ -154,9 +154,23 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
      so `-t "f + 1 must agree"` requires two spaces and selects zero, on a
      file with no `skipIf` in it at all. Escape `+ ( ) [ ] . * ?`, or match
      a plain substring. Nothing here can be mis-counted, because the
-     denominator comes from the same line as the parts. (A file with
-     DELIBERATE `it.skip` is the one exception: there `executed < total` is
-     correct, and you need its expected skip count.)
+     denominator comes from the same line as the parts.
+
+     **A file with deliberate `it.skip` needs no exception and no count
+     (2026-08-23, dev-4491).** Use the FLOOR — `total > 0 && executed > 0`:
+     all four zero-selection members produce `executed == 0`, while a file
+     with real tests plus intentional skips always executes some. Keep
+     `executed == total` as the strong form, and when it does not hold,
+     **read the skipped NAMES rather than count them** — verbose mode
+     prints one `↓` line per skipped test with its full path (36 of them in
+     the run where the `CompilerPool` worker died). The argument that
+     settles it: *a count can be satisfied by the wrong set.* A partial
+     `skipIf` that skips three tests while you expected three DIFFERENT
+     ones passes any count, and that is exactly the silent hole this rule
+     exists to catch; names cannot be fooled that way, and confirming three
+     names is cheaper than maintaining a number. Caveat stated rather than
+     assumed: the `↓` lines are a `--reporter=verbose` artifact and have
+     not been checked against the default reporter.
 
      **Tier 2 — external declared count, and ONLY for the fifth member.**
      Vitest's RPC dropping task updates under load
