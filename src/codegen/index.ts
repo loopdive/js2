@@ -310,6 +310,7 @@ import {
 import { fillVecLengthDynamicArms } from "./vec-length-set.js";
 import { fillTaCtorGetMetaArm } from "./ta-ctor-meta.js"; // `$__ta_ctor` name/length meta arm
 import { fillSymbolAnyToStringArm } from "./symbol-native.js"; // (#4632) $Symbol arm in __any_to_string
+import { fillCallableAnyToStringArm } from "./callable-any-to-string.js"; // (#4492 wave-5) callable ToString arm
 import { fillMapSetDynDispatchArms } from "./map-runtime.js"; // (#4629) Map/Set any-channel dispatch arms
 import { fillBigIntDynValueOfArm } from "./wrapper-proto-value-of.js"; // (#4631) dyn wrapper valueOf arm
 import { scanGlobalThisFnShadows } from "./fn-global-shadow.js"; // (#4630) globalThis.<fn> reassignment shadowing
@@ -5660,6 +5661,13 @@ export function generateModule(
     // generic ToString terminal renders "Symbol(desc)", not "[object Object]".
     fillSymbolAnyToStringArm(ctx);
 
+    // (#4492 wave-5) …and the CALLABLE arm, on the same splice discipline:
+    // §20.2.3.5 says ToPrimitive of a function reaches
+    // `Function.prototype.toString`, never `Object.prototype.toString`. Must
+    // follow `fillAccessorDrivers` (above), which is what decides whether the
+    // `__call_accessor_get` stub is real; the arm declines if it is not.
+    fillCallableAnyToStringArm(ctx);
+
     // (#4629) Map/Set any-channel dispatch arms (size / @@iterator / IterRec
     // .next()) — before this path's typeof fill below for the same
     // classifier-roots reason as the other site.
@@ -9057,6 +9065,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // (#4632) Same `$Symbol` __any_to_string arm on this finalize path.
     fillSymbolAnyToStringArm(ctx);
+    // (#4492 wave-5) …and the same CALLABLE arm.
+    fillCallableAnyToStringArm(ctx);
 
     // Emit __call_toString/__call_valueOf exports for ToPrimitive dispatch.
     emitToPrimitiveMethodExports(ctx);
