@@ -840,7 +840,31 @@ their fix on a module shape they did not write (`deferTopLevelInit: true`,
   `2bfebb7ea`: rc=0, zero conflict markers, each of the four distinctive strings
   present exactly once, methodology numbering 1..7 intact. The lesson is not
   "simulate merges"; it is that **the lane whose commits keep invalidating a
-  peer's verification owes the re-run**.
+  peer's verification owes the re-run** — and the trigger is cheap to automate
+  (dev-4653's addition): any commit touching a file another lane has also
+  touched.
+- **…and all four of those runs answered the WRONG QUESTION.** Every one
+  simulated a single FILE. dev-4653 flagged that limit, neither lane acted on
+  it, and the whole-tree merge was one flag away the entire time:
+  `git merge-tree --write-tree --name-only issue-4653 issue-4515-wave5` → rc=0,
+  tree `1d431607a8bf…`, **empty conflict list**. Run independently by both lanes
+  against the same tips, same tree sha. Verified inside the written tree: the
+  brief carries dev-4653's methodology 6 and both their bullets AND this lane's
+  Tier 1 / Tier 2, numbering 1..7, superseded strings gone; both issue files,
+  their two new source modules and both pin files present. Nothing from either
+  lane is dropped, at any level.
+
+  The companion to *look for the cheap oracle* (dev-4653's, and it is the
+  sharper half): **check that the oracle answers the question you actually
+  have, not the narrower one you happened to set up.** Four rounds of
+  re-verifying one file while the real question — do these two branches merge —
+  sat unasked.
+- **Both lanes' brief amendments are UNREVIEWED, and neither is adding more
+  pending a ruling** (dev-4653's call, adopted here). Stacking a synthesis on an
+  unratified amendment makes the lead review a stack rather than a change, and
+  orphans the second if the first is dropped. The synthesis lives in the two
+  issue files until the first amendment lands. Escalated to the lead as one
+  accept-or-drop decision covering both lanes rather than two separate ones.
 - **A survey run entirely at module top level is blind to any defect gated on
   "inside an enclosing function"** — and worse, it mis-attributes the one case
   that does surface, because that case looks like the odd one out. See the
