@@ -1330,6 +1330,87 @@ function compileHostObjectAsStruct(
  * struct-typed, so the store null-cast and the value read back as NULL in
  * the lifted-closure lanes (jest Replaceable "Type null is not support").
  */
+/**
+ * (#4638) A DATA-ONLY object literal one of whose property values is the realm
+ * GLOBAL OBJECT — script top-level `this`, or `globalThis`.
+ *
+ * The global object has no compiled WasmGC struct representation (#4394): it is
+ * a host externref in the JS-host lane and the native `$Object` singleton under
+ * standalone. But the checker types it as the enormous structural
+ * `typeof globalThis`, so a literal that holds it gets a struct FIELD typed
+ * `(ref null $__anon_globalThis)`. Storing the value into that field emits the
+ * guarded `ref.test` / `ref.null` coercion, which can never match — so the field
+ * silently becomes NULL. Two things then go wrong, and the second is worse than
+ * the first:
+ *
+ *   1. the value is lost (`{ configurable: this }` reads back as falsy), and
+ *   2. any consumer that materializes the struct for the dynamic boundary reads
+ *      that null field and does `struct.get` on it — an UNCATCHABLE trap.
+ *      `Object.defineProperty(o, "p", attr)` with `var attr = { configurable:
+ *      this }` reifies the descriptor exactly that way (`15.2.3.6-3-123`).
+ *
+ * Routing the literal to the open `$Object` builder stores the global object as
+ * the externref it actually is, so both go away. This is the nested-property
+ * twin of the #3365 rule that already widens `var t = this` to externref.
+ *
+ * NARROWED to data-only literals (no methods/accessors/spreads, and no
+ * function/class/object-literal-valued properties) on purpose: that is the shape
+ * where the loss is provable and the `$Object` builder is a faithful
+ * replacement. The test262 harness's own `$262 = { global: globalThis, gc:
+ * function () {}, … }` is deliberately OUTSIDE the narrowing — re-representing
+ * the harness host object is a much larger blast radius than this fix needs.
+ */
+function _hasRealmGlobalObjectValue(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  const isRealmGlobal = (init: ts.Expression): boolean => {
+    let cur: ts.Expression = init;
+    while (
+      ts.isParenthesizedExpression(cur) ||
+      ts.isAsExpression(cur) ||
+      ts.isNonNullExpression(cur) ||
+      ts.isTypeAssertionExpression(cur)
+    ) {
+      cur = cur.expression;
+    }
+    if (ts.isIdentifier(cur)) return cur.text === "globalThis";
+    if (cur.kind !== ts.SyntaxKind.ThisKeyword) return false;
+    // Script top-level `this` only. An arrow does not rebind `this`, so it does
+    // not interrupt the walk; every other function-like scope (and a class body)
+    // does.
+    if (ctx.sourceIsModule) return false;
+    for (let n: ts.Node | undefined = cur.parent; n; n = n.parent) {
+      if (ts.isSourceFile(n)) return true;
+      if (
+        ts.isFunctionDeclaration(n) ||
+        ts.isFunctionExpression(n) ||
+        ts.isMethodDeclaration(n) ||
+        ts.isConstructorDeclaration(n) ||
+        ts.isGetAccessorDeclaration(n) ||
+        ts.isSetAccessorDeclaration(n) ||
+        ts.isClassDeclaration(n) ||
+        ts.isClassExpression(n)
+      ) {
+        return false;
+      }
+    }
+    return false;
+  };
+  let sawGlobal = false;
+  for (const p of expr.properties) {
+    if (!ts.isPropertyAssignment(p)) return false; // methods/accessors/spread/shorthand → outside the narrowing
+    const init = p.initializer;
+    if (
+      ts.isFunctionExpression(init) ||
+      ts.isArrowFunction(init) ||
+      ts.isClassExpression(init) ||
+      ts.isObjectLiteralExpression(init)
+    ) {
+      return false;
+    }
+    if (isRealmGlobal(init)) sawGlobal = true;
+  }
+  return sawGlobal;
+}
+
 export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
   return (
     expr.properties.length > 0 &&
@@ -1345,7 +1426,10 @@ export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.Object
       expr.properties.some(
         (p) =>
           (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) && resolvePropertyNameText(ctx, p) === "",
-      ))
+      ) ||
+      // (#4638) a data-only literal holding the realm global object — see
+      // `_hasRealmGlobalObjectValue`.
+      _hasRealmGlobalObjectValue(ctx, expr))
   );
 }
 

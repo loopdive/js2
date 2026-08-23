@@ -3645,6 +3645,60 @@ function compilePrivateSetterWithBrandCheck(
   return valResult;
 }
 
+/**
+ * (#4638) Park the `arr.length = N` receiver into `vecTmp`, guarded when the
+ * value is not statically a vec.
+ *
+ * An EXTERNREF receiver is not evidence that the value IS a vec.
+ * `resolveArrayInfo` answers from the checker's TYPE, and the checker types
+ * `Array.prototype` as `any[]` — but the runtime value is the Array prototype
+ * OBJECT, not a `$Vec`. A plain `local.set` into the `(ref null $__vec_base)`
+ * slot coerces via `any.convert_extern ; ref.cast null`, which TRAPS
+ * `illegal cast` — uncatchably, aborting the module. `Array.prototype.length =
+ * 0` is a real ES5 idiom (`15.2.3.6-4-117` and `15.2.3.7-6-a-113` both open with
+ * it) and the trap fired before the assertion those tests are about.
+ *
+ * Same invariant as #3610 / #3620 / #3621: a `ref.cast` is a claim about the
+ * RUNTIME representation, and a static type is not that evidence.
+ *
+ * Returns `true` when the receiver was statically PROVEN to be a vec, in which
+ * case the emitted bytes are identical to pre-#4638 and the caller may store the
+ * length unguarded. On `false` the parked value is `null` for a non-vec, so the
+ * caller must null-guard the store — a no-op, which is the correct observable
+ * for the prototype object (its `length` is 0 and stays 0).
+ */
+function emitArrayLengthSetReceiverPark(
+  fctx: FunctionContext,
+  receiverType: ValType,
+  vecBaseIdx: number,
+  vecTmp: number,
+): boolean {
+  if (receiverType.kind === "ref" || receiverType.kind === "ref_null") {
+    fctx.body.push({ op: "local.set", index: vecTmp });
+    return true;
+  }
+  const anyTmp = allocLocal(fctx, `__arr_len_set_any_${fctx.locals.length}`, { kind: "anyref" });
+  if (receiverType.kind === "externref") fctx.body.push({ op: "any.convert_extern" });
+  fctx.body.push({ op: "local.set", index: anyTmp });
+  fctx.body.push({ op: "local.get", index: anyTmp });
+  fctx.body.push({ op: "ref.test", typeIdx: vecBaseIdx });
+  // Empty block type + a parked local, never a concrete-ref block type (#4620).
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      { op: "local.get", index: anyTmp },
+      { op: "ref.cast_null", typeIdx: vecBaseIdx },
+      { op: "local.set", index: vecTmp },
+    ],
+    else: [
+      { op: "ref.null", typeIdx: vecBaseIdx },
+      { op: "local.set", index: vecTmp },
+    ],
+  });
+  return false;
+}
+
 function compilePropertyAssignment(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -4103,7 +4157,8 @@ function compilePropertyAssignment(
         kind: "ref_null",
         typeIdx: vecBaseIdx,
       });
-      fctx.body.push({ op: "local.set", index: vecTmp });
+      // (#4638) See `emitArrayLengthSetReceiverPark`.
+      const receiverProvenVec = emitArrayLengthSetReceiverPark(fctx, structObjResult, vecBaseIdx, vecTmp);
       // Compile value (the new length)
       const valType = compileExpression(ctx, fctx, value);
       if (!valType) return null;
@@ -4127,9 +4182,21 @@ function compilePropertyAssignment(
       }
       fctx.body.push({ op: "local.set", index: newLenTmp });
       // Set vec.length = newLen
-      fctx.body.push({ op: "local.get", index: vecTmp });
-      fctx.body.push({ op: "local.get", index: newLenTmp });
-      fctx.body.push({ op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 });
+      const lengthStore: Instr[] = [
+        { op: "local.get", index: vecTmp },
+        { op: "local.get", index: newLenTmp },
+        { op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 },
+      ];
+      if (receiverProvenVec) {
+        // Byte-identical to pre-#4638 for a statically proven vec receiver.
+        for (const instr of lengthStore) fctx.body.push(instr);
+      } else {
+        // The guarded cast above parks `null` when the receiver was not a vec;
+        // `struct.set` on null is the same uncatchable trap, so skip the store.
+        fctx.body.push({ op: "local.get", index: vecTmp });
+        fctx.body.push({ op: "ref.is_null" });
+        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: [], else: lengthStore });
+      }
       // Assignment result — UNSIGNED widening (#4491, see array-length-define.ts).
       fctx.body.push({ op: "local.get", index: newLenTmp });
       if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
