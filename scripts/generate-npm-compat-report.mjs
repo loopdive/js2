@@ -2273,7 +2273,22 @@ async function buildPackageEntry({
   };
 }
 
-const packages = [];
+// Every row records WHEN ITS OWN measurement finished, not when the run
+// ended. Packages are measured in independent CI rows now (one per package,
+// see npm-compat-refresh.yml), so a single run-level timestamp would describe
+// a moment that applies to no package in particular — and on the dashboard it
+// read as "everything here was measured at 15:27" while react-dom's numbers
+// were three days old. `measuredAt` is the per-package truth the page renders;
+// the summary's `generatedAt` stays what it always was (when this artifact was
+// assembled) and is still what the promotion freshness compare comes down to.
+class MeasuredPackageList extends Array {
+  push(...rows) {
+    const measuredAt = new Date().toISOString();
+    return super.push(...rows.map((row) => (row?.measuredAt ? row : { ...row, measuredAt })));
+  }
+}
+
+const packages = new MeasuredPackageList();
 
 if (perfOnly) {
   const name = [...selectedPackages][0];
@@ -3029,8 +3044,19 @@ packages.sort(
     (right.weeklyDownloads ?? Number.NEGATIVE_INFINITY) - (left.weeklyDownloads ?? Number.NEGATIVE_INFINITY) ||
     left.name.localeCompare(right.name),
 );
+const measuredAtStamps = packages.map((packageRow) => packageRow.measuredAt).filter(Boolean);
 const summary = {
   generatedAt: new Date().toISOString(),
+  // The spread of per-package measurement times (see MeasuredPackageList).
+  // The dashboard headline is built from this rather than `generatedAt`, so a
+  // corpus whose oldest and newest numbers are days apart says so.
+  measuredRange:
+    measuredAtStamps.length > 0
+      ? {
+          oldest: measuredAtStamps.reduce((left, right) => (left < right ? left : right)),
+          newest: measuredAtStamps.reduce((left, right) => (left > right ? left : right)),
+        }
+      : null,
   // (#4127) How much of the corpus carries correctness evidence at all. The
   // `unverified` list is named, not just counted, so the size of the blind spot
   // is legible rather than implied.
