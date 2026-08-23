@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-23T18:42:08.615Z",
-  "baseline_generated_at": "2026-08-23T18:42:08.615Z",
-  "baseline_sha": "8949b907e85b2b4fcb8cf3571e0fd9c87279469a",
+  "timestamp": "2026-08-23T19:13:42.135Z",
+  "baseline_generated_at": "2026-08-23T19:13:42.135Z",
+  "baseline_sha": "34cfb343e72eaa96fc98d44e3a9f140e66bb527d",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -10,24 +10,24 @@
   },
   "summary": {
     "total": 43621,
-    "pass": 31892,
-    "fail": 8448,
+    "pass": 31895,
+    "fail": 8444,
     "compile_error": 3256,
-    "compile_timeout": 6,
+    "compile_timeout": 7,
     "skip": 19,
-    "compilable": 40340,
-    "host_free_pass": 31892,
+    "compilable": 40339,
+    "host_free_pass": 31895,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 42535,
-        "pass": 30909,
-        "fail": 8367,
+        "pass": 30912,
+        "fail": 8363,
         "compile_error": 3234,
-        "compile_timeout": 6,
+        "compile_timeout": 7,
         "skip": 19,
-        "compilable": 39276,
-        "host_free_pass": 30909,
+        "compilable": 39275,
+        "host_free_pass": 30912,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
@@ -57,25 +57,25 @@
       },
       "official": {
         "total": 43621,
-        "pass": 31892,
-        "fail": 8448,
+        "pass": 31895,
+        "fail": 8444,
         "compile_error": 3256,
-        "compile_timeout": 6,
+        "compile_timeout": 7,
         "skip": 19,
-        "compilable": 40340,
-        "host_free_pass": 31892,
+        "compilable": 40339,
+        "host_free_pass": 31895,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48735,
-        "pass": 32280,
-        "fail": 10951,
+        "pass": 32283,
+        "fail": 10947,
         "compile_error": 5383,
-        "compile_timeout": 6,
+        "compile_timeout": 7,
         "skip": 115,
-        "compilable": 43231,
-        "host_free_pass": 32280,
+        "compilable": 43230,
+        "host_free_pass": 32283,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -83,35 +83,35 @@
   },
   "official_summary": {
     "total": 43621,
-    "pass": 31892,
-    "fail": 8448,
+    "pass": 31895,
+    "fail": 8444,
     "compile_error": 3256,
-    "compile_timeout": 6,
+    "compile_timeout": 7,
     "skip": 19,
-    "compilable": 40340,
-    "host_free_pass": 31892,
+    "compilable": 40339,
+    "host_free_pass": 31895,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
-    "pass": 32280,
-    "fail": 10951,
+    "pass": 32283,
+    "fail": 10947,
     "compile_error": 5383,
-    "compile_timeout": 6,
+    "compile_timeout": 7,
     "skip": 115,
-    "compilable": 43231,
-    "host_free_pass": 32280,
+    "compilable": 43230,
+    "host_free_pass": 32283,
     "stale": 0
   },
   "strict_summary": {
     "total": 41110,
-    "pass": 29743,
-    "fail": 8201,
+    "pass": 29746,
+    "fail": 8197,
     "compile_error": 3142,
-    "compile_timeout": 5,
+    "compile_timeout": 6,
     "skip": 19,
-    "compilable": 37944,
-    "host_free_pass": 29743,
+    "compilable": 37943,
+    "host_free_pass": 29746,
     "stale": 0
   },
   "scope_summaries": {
@@ -139,13 +139,13 @@
     },
     "standard": {
       "total": 42535,
-      "pass": 30909,
-      "fail": 8367,
+      "pass": 30912,
+      "fail": 8363,
       "compile_error": 3234,
-      "compile_timeout": 6,
+      "compile_timeout": 7,
       "skip": 19,
-      "compilable": 39276,
-      "host_free_pass": 30909,
+      "compilable": 39275,
+      "host_free_pass": 30912,
       "stale": 0
     }
   },
@@ -990,9 +990,9 @@
       "name": "language/expressions",
       "path": "language/expressions",
       "pass": 8396,
-      "fail": 1554,
+      "fail": 1553,
       "compile_error": 1133,
-      "compile_timeout": 1,
+      "compile_timeout": 2,
       "skip": 18,
       "total": 11102,
       "host_free_pass": 8396
@@ -1165,13 +1165,13 @@
     {
       "name": "language/statements",
       "path": "language/statements",
-      "pass": 7222,
-      "fail": 1451,
+      "pass": 7225,
+      "fail": 1448,
       "compile_error": 673,
       "compile_timeout": 0,
       "skip": 1,
       "total": 9347,
-      "host_free_pass": 7222
+      "host_free_pass": 7225
     },
     {
       "name": "language/types",
@@ -1197,7 +1197,7 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 6708,
+    "assertion_fail": 6705,
     "host_import_leak": 3912,
     "illegal_cast": 93,
     "negative_test_fail": 14,
@@ -1205,7 +1205,7 @@
     "oob": 17,
     "other": 3311,
     "promise_error": 42,
-    "range_error": 11,
+    "range_error": 10,
     "runtime_error": 221,
     "syntax_error": 20,
     "type_error": 1846,
@@ -1219,8 +1219,8 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 16340,
-    "classified": 16340,
+    "total_non_pass_non_skip": 16337,
+    "classified": 16337,
     "unclassified_threshold": null,
     "has_edition_breakdown": true,
     "buckets": [
@@ -1291,18 +1291,18 @@
           "Proposals": 4450
         },
         "sample_files": [
+          "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
-          "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
+          "test/built-ins/Temporal/Duration/prototype/round/subclassing-ignored.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::CSSNumericValue_equals (##)",
           "host_import_leak:standalone target emitted host imports: env::CSSNumericValue_equals, env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
           "host_import_leak:standalone target emitted host imports: env::CSSNumericValue_equals, env::__temporal_plain_date_from_string_field (##)",
-          "other:ReferenceError: Temporal is not defined",
-          "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_from_string_field (##)"
+          "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_from_string_field (##)",
+          "other:ReferenceError: Temporal is not defined"
         ]
       },
       {
@@ -2033,7 +2033,7 @@
           "test/built-ins/TypedArrayConstructors/from/invoked-as-func.js",
           "test/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/detached-buffer.js",
           "test/built-ins/TypedArrayConstructors/from/source-value-is-symbol-throws.js",
-          "test/built-ins/TypedArrayConstructors/of/invoked-as-func.js"
+          "test/built-ins/TypedArrayConstructors/prototype/forEach/inherited.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with BigInt64Array and makeArray.)",
@@ -2053,9 +2053,9 @@
         "count": 49,
         "statuses": {
           "pass": 0,
-          "fail": 40,
+          "fail": 39,
           "compile_error": 9,
-          "compile_timeout": 0,
+          "compile_timeout": 1,
           "skip": 0,
           "total": 49,
           "host_free_pass": 0
@@ -2065,7 +2065,6 @@
           "host_import_leak": 8,
           "type_error": 2,
           "other": 1,
-          "range_error": 1,
           "wasm_compile": 1
         },
         "by_edition": {
@@ -2570,18 +2569,18 @@
           "#990"
         ],
         "label": "Eval and `new Function` semantics",
-        "count": 495,
+        "count": 494,
         "statuses": {
           "pass": 0,
-          "fail": 485,
+          "fail": 484,
           "compile_error": 9,
           "compile_timeout": 1,
           "skip": 0,
-          "total": 495,
+          "total": 494,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 439,
+          "assertion_fail": 438,
           "other": 40,
           "host_import_leak": 9,
           "type_error": 2,
@@ -2598,7 +2597,7 @@
           "ES2021": 10,
           "ES2022": 10,
           "ES2023": 37,
-          "ES5": 7,
+          "ES5": 6,
           "Proposals": 7,
           "ES2017": 4,
           "ES2018": 20,
@@ -2870,18 +2869,18 @@
           "#787"
         ],
         "label": "Tail-call/control-flow loop semantics, including compile timeouts",
-        "count": 46,
+        "count": 44,
         "statuses": {
           "pass": 0,
-          "fail": 37,
+          "fail": 35,
           "compile_error": 7,
           "compile_timeout": 2,
           "skip": 0,
-          "total": 46,
+          "total": 44,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 31,
+          "assertion_fail": 29,
           "type_error": 2,
           "other": 9,
           "illegal_cast": 1,
@@ -2889,7 +2888,7 @@
         },
         "by_edition": {
           "ES2027": 12,
-          "ES5": 13,
+          "ES5": 11,
           "ES2015": 21
         },
         "sample_files": [
@@ -3024,7 +3023,7 @@
           "test/built-ins/WeakRef/throws-when-target-cannot-be-held-weakly.js",
           "test/built-ins/Atomics/wait/cannot-suspend-throws.js",
           "test/built-ins/FinalizationRegistry/prototype/register/return-undefined-register-symbol.js",
-          "test/built-ins/FinalizationRegistry/target-not-callable-throws.js"
+          "test/built-ins/FinalizationRegistry/prototype/unregister/custom-this.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",

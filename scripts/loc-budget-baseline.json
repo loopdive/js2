@@ -1,7 +1,7 @@
 {
   "generated": "2026-08-23",
   "threshold": 1500,
-  "totalCeiling": 697415,
+  "totalCeiling": 697649,
   "files": {
     "src/codegen-linear/index.ts": 5816,
     "src/codegen-linear/runtime.ts": 4444,
@@ -20,7 +20,7 @@
     "src/codegen/closures.ts": 4027,
     "src/codegen/context/types.ts": 4045,
     "src/codegen/dataview-native.ts": 6251,
-    "src/codegen/declarations.ts": 4045,
+    "src/codegen/declarations.ts": 4051,
     "src/codegen/declarations/import-collector.ts": 2205,
     "src/codegen/declarations/object-shape-widening.ts": 2278,
     "src/codegen/declarations/param-return-inference.ts": 1639,
@@ -43,7 +43,7 @@
     "src/codegen/expressions/operator-assignment.ts": 3216,
     "src/codegen/expressions/unary-updates.ts": 1893,
     "src/codegen/extern-declarations.ts": 2031,
-    "src/codegen/fnctor-escape-gate.ts": 2323,
+    "src/codegen/fnctor-escape-gate.ts": 2307,
     "src/codegen/generators-native.ts": 4304,
     "src/codegen/index.ts": 12115,
     "src/codegen/ir-prepared-free-functions.ts": 1824,
