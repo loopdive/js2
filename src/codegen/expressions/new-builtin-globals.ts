@@ -46,6 +46,7 @@ import {
 } from "./eval-inline.js";
 import { emitThrowTypeError, noJsHost } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { emitNewBooleanToBooleanArg } from "../new-boolean-tobooleanarg.js"; // (#4619)
 import {
   emitHostTaBufferConstruct,
   hostTaBufferArgSymName,
@@ -398,7 +399,9 @@ export function tryCompileBuiltinGlobalNew(
             const t = compileExpression(ctx, fctx, args[0]!);
             if (t !== null) fctx.body.push({ op: "drop" });
             fctx.body.push({ op: "f64.const", value: 1 });
-          } else {
+          } else if (!emitNewBooleanToBooleanArg(ctx, fctx, args[0]!)) {
+            // (#4619) …and an object/string argument needs §7.1.2 ToBoolean,
+            // not this f64 coercion, which INVERTS it. See the module.
             compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
           }
         } else {

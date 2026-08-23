@@ -13,6 +13,7 @@ import type { Instr } from "../ir/types.js";
 import { runtimeToPrimitiveInstrs } from "./coercion-engine.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitBrandCheckTypeError } from "./native-proto.js";
+import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import { ensureStandaloneRegExpToStringDyn, standaloneRegExpStructTypeIdx } from "./regexp-standalone.js";
 
 /**
@@ -127,8 +128,72 @@ export function emitStringProtoToStringFlat(
   const generic: Instr[] = [{ op: "local.get", index: paramIdx }];
   if (toPrimitive !== null) generic.push(...toPrimitive);
   generic.push({ op: "any.convert_extern" }, { op: "call", funcIdx: anyToStrIdx }, { op: "call", funcIdx: flattenIdx });
-  body.push(...withRegExpReceiverArm(ctx, paramIdx, flattenIdx, generic));
+  body.push(...withNullExternArm(ctx, paramIdx, withRegExpReceiverArm(ctx, paramIdx, flattenIdx, generic)));
   for (const instr of body) fctx.body.push(instr);
+}
+
+/**
+ * (#4518) Wrap a `ToString(param)` sequence with the §7.1.17 step-3 NULL arm,
+ * which renders `"null"`.
+ *
+ * The terminal it replaces is the bug: a null externref is neither a
+ * `$AnyString` nor an `$AnyValue` box, so `$__any_to_string`'s residual arm
+ * `ref.test`s the boxed-primitive structs, misses all of them, and answers the
+ * literal `"[object Object]"`. Measured standalone before this change, on the
+ * shared helper's cleanest read-outs:
+ *
+ *   String.prototype.replace.call("axb", "x", null)  → "a[object Object]b"
+ *   String.prototype.indexOf.call("anullb", null)    → -1   (needle never matched)
+ *   String.prototype.split.call("anullb", null)      → 1 part
+ *
+ * The DIRECT paths already answer correctly (`"axb".replace("x", null)` →
+ * `"anullb"`, `"anullb".split(null)` → 2 parts), so this was reflective-only:
+ * the two paths disagreed about one of §7.1.17's seven cases.
+ *
+ * **Why `"null"` and not `"undefined"`, which this issue's plan prescribed.**
+ * A null externref is ambiguous IN PRINCIPLE, because the reflective ABI also
+ * uses `ref.null.extern` as its omitted-argument pad
+ * (`closures/transferred-native-proto.ts`, the borrowed-receiver shape
+ * `obj.m = String.prototype.m; obj.m()`), and an omitted argument's spec answer
+ * is `ToString(undefined)` = `"undefined"`. Answering `"null"` for that reading
+ * would be wrong.
+ *
+ * That reading is not live here, and the check is cheap to repeat: build this
+ * arm with a distinctive sentinel literal instead of `"null"` and re-run the
+ * shapes. Measured that way, the ONLY shape that reaches this arm is an
+ * EXPLICIT `null` on the `.call` path. Every omitted-argument shape bypasses
+ * it — `replace`/`indexOf`/`split`/`anchor`/`concat` with a short argument list
+ * all still rendered `"undefined"` with the sentinel in place, because
+ * `.call` pads absent args with the #2106 `$undefined` singleton
+ * (`expressions/calls.ts`, `undefinedSingletonPad`), not with null. The
+ * borrowed path bypasses it too, for its own separate reasons (its receiver
+ * ToString and its `split` are independently broken — see this issue's
+ * residual ledger).
+ *
+ * So for every producer that can be staged today, a null externref here means
+ * the JS value `null`, and `"null"` is the answer §7.1.17 requires. The
+ * unmeasurable risk — an omitted arg reaching this splice point through some
+ * borrowed-path shape — is bounded to wrong-answer → different-wrong-answer
+ * (it renders `"[object Object]"` today), never right → wrong, and the scoped
+ * `built-ins/String/prototype` sweep is the instrument that would catch it.
+ *
+ * Emitted ONLY when the module carries the flat native-string type, so a
+ * host/gc-lowered module gets `inner` back byte for byte. Both branches leave
+ * one flat `$NativeString` on the stack, so callers are unaffected.
+ */
+function withNullExternArm(ctx: CodegenContext, paramIdx: number, inner: Instr[]): Instr[] {
+  if (ctx.nativeStrTypeIdx < 0) return inner;
+  if (ctx.mod.types[ctx.nativeStrTypeIdx] === undefined) return inner;
+  return [
+    { op: "local.get", index: paramIdx },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref", typeIdx: ctx.nativeStrTypeIdx } },
+      then: nativeStringLiteralInstrs(ctx, "null"),
+      else: inner,
+    },
+  ];
 }
 
 /**
