@@ -172,21 +172,25 @@ describe("#4637 A1 — a function value in the `.prototype` slot", () => {
     ).toBe(0);
   });
 
-  it("CANARY (dev-4639 C1 x A1): holds when the instance is a `new` ARGUMENT", async () => {
-    // Every other A1 case above builds a ZERO-ARG `new F()` at a module-scope
-    // binding, so none of them exercises the classification dev-4639's #4639 C1
-    // widens: `classifyUse` in `fnctor-escape-gate.ts` now classifies a
-    // `NewExpression` ARGUMENT as `dynamic` (standalone only), which changes
-    // WHICH fnctor instances become open `$Object`s — i.e. which sites this
-    // issue's arm fires at. Their pins cannot cover this direction either
-    // (nothing in `tests/issue-4639.test.ts` puts a callable in a
-    // `[[Prototype]]` slot), so without this case the C1 x A1 interaction is
-    // invisible to BOTH suites and a merger running either one sees green.
+  it("A1 holds at an ARG-BEARING site (NOT a C1 canary — see the case below)", async () => {
+    // Added as `CANARY (dev-4639 C1 x A1)` and RENAMED after measuring what it
+    // is actually sensitive to. It IS a real test of the A1 arm at a site that
+    // also has a `new` argument (`.tmp/p20.js`, standalone: base `33` → after
+    // `63`, the four flipping bits being `instanceof`, `isPrototypeOf`, the
+    // inherited read and `getPrototypeOf` identity).
     //
-    // Measured on this branch, `.tmp/p20.js`, standalone: base `33`, after
-    // `63` — the four flipping bits are exactly `instanceof`, `isPrototypeOf`,
-    // the inherited read and `getPrototypeOf` identity, so this shape is driven
-    // by the A1 arm and is not incidentally green.
+    // It is NOT sensitive to dev-4639's C1 lever, and that was measurable
+    // without their branch: delete the `var h = new H(g);` line and the answer
+    // is still `63` (`.tmp/p21.js`). So the NewExpression-ARGUMENT position is
+    // not what drives the reconstruction here — the other dynamic uses
+    // (`isPrototypeOf`, `getPrototypeOf`, the property read) already classify
+    // `g` as dynamic without C1's widening. A pin whose named interaction can
+    // be deleted without changing its answer is not a canary for it.
+    //
+    // This is the same blindness dev-4639 found in their own C2 canary, one
+    // round after we both articulated the rule — reverting shows a pin is
+    // sensitive to YOUR change and says nothing about whether it is sensitive
+    // to THEIRS.
     expect(
       await runModule(
         `function P(){}
@@ -201,6 +205,40 @@ describe("#4637 A1 — a function value in the `.prototype` slot", () => {
          (h.wrapped === g ? 32 : 0)`,
       ),
     ).toBe(63);
+  });
+
+  it.fails("CROSS-LANE PREDICTION (dev-4639 C1 x A1): arg-position-ONLY instance", async () => {
+    // The shape where C1's lever actually acts: `new G()` appears ONLY as a
+    // `new` ARGUMENT, and every read goes through `h.wrapped`, so no other
+    // dynamic use of the instance can classify it. Measured `.tmp/p22.js`,
+    // standalone, BOTH arms: `2` — only `instanceof` holds, the A1 arm does not
+    // fire, because the site never reconstructs. Base and branch agree, which is
+    // exactly why it belongs here as a PREDICTION rather than as a result.
+    //
+    // The prediction, stated so it is falsifiable: C1 classifies a
+    // `NewExpression` ARGUMENT as `dynamic`, which should make this site
+    // escape-gate-approved, reconstruct it as an open `$Object`, and let the A1
+    // arm link its function-valued prototype — flipping this to the spec answer
+    // `31`. **If C1 lands and this pin is still red, the two changes did not
+    // compose and that is the finding.** If it goes green, delete the
+    // `it.fails` and keep it as an ordinary pin.
+    //
+    // NOT diagnosed, and deliberately not guessed at: `G.prototype === P` also
+    // reads false in this shape on both arms, which the other A1 cases do not.
+    // It is recorded because it is measured, not explained.
+    expect(
+      await runModule(
+        `function P(){}
+         P.type = "monster";
+         function G(){}
+         G.prototype = P;
+         function H(x){ this.wrapped = x; }
+         var h = new H(new G());
+         var w = h.wrapped;`,
+        `(G.prototype === P ? 1 : 0) + (w instanceof G ? 2 : 0) + (P.isPrototypeOf(w) ? 4 : 0) +
+         (w.type === "monster" ? 8 : 0) + (Object.getPrototypeOf(w) === P ? 16 : 0)`,
+      ),
+    ).toBe(31);
   });
 });
 
