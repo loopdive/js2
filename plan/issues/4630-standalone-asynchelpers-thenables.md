@@ -39,6 +39,7 @@ files:
   - src/codegen/expressions/assignment.ts
   - src/codegen/declarations/param-return-inference.ts
   - src/codegen/async-eager-promise.ts
+  - src/codegen/closures/method-trampolines.ts
   - src/codegen/closures.ts
   - src/codegen/statements/control-flow.ts
   - src/codegen/context/types.ts
@@ -51,6 +52,7 @@ loc-budget-allow:
   - src/codegen/closures.ts
   - src/codegen/context/types.ts
   - src/codegen/statements/control-flow.ts
+  - src/codegen/closures/method-trampolines.ts
 oracle-ratchet-allow:
   # The catch-var detector needs the raw SYMBOL's valueDeclaration to see that
   # a call argument is bound by a `catch (e)` clause — a declaration-IDENTITY
