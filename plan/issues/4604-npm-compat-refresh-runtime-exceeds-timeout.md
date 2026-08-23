@@ -236,6 +236,41 @@ Implementation: [PR #4767](https://github.com/loopdive/js2wasm/pull/4767) (the
 Jest infrastructure change and npm-compat reliability follow-up share the
 same branch checkpoint).
 
+## 2026-08-22 cancellation audit after the matrix landed
+
+The remaining `cancelled` entries in the run list are not new
+`cancel-in-progress` cancellations. Runs 32564073432 and 32561947825 both
+finished their short matrix cells successfully, then their old `renderers`
+cell was killed at exactly 350 minutes (09:07:04→14:57:18 and
+08:18:47→14:09:00). Because that cell contained the serial ReactDOM, jsdom,
+and Redux group from the pre-#4767 workflow, the coordinator correctly had no
+complete artifact to publish. The SHA-keyed concurrency fix in #4755 protects
+pending push runs; it cannot revive a job that reaches its own timeout.
+
+The first post-#4770 run, 32576730177, uses the new independent
+`react-dom`/`jsdom`/`redux` cells. jsdom and Redux completed successfully while
+ReactDOM continued in its own cell, so they are no longer collateral
+cancellations. Keep this run as the acceptance probe: if ReactDOM itself
+reaches 350 minutes, the next slice must bound or subdivide the ReactDOM suite
+and publish an explicit `unavailableInfra` result rather than letting the
+workflow be killed without a partial report.
+
+## 2026-08-22 ReactDOM compile-pool follow-up
+
+The ReactDOM cell is now independently protected from the old renderer-group
+timeout, but its client project still contains 110 compile batches. They were
+being compiled one after another, so a valid but slow corpus could still reach
+the cell's 350-minute ceiling. The project lane now compiles those independent
+batches with two isolated workers and runs the shared native oracle in stable
+source order. The workflow pins the pool to two workers to keep memory bounded;
+each batch retains its own timeout and report entry. This reduces wall-clock
+time without dropping tests or converting compiler failures into
+`unavailableInfra`. Compilation is pipelined with the source-ordered native
+oracle, so the workers continue compiling later batches while the shared host
+consumes the next completed batch.
+
+Implementation: [PR #4771](https://github.com/loopdive/js2/pull/4771), stacked
+on the renderer/compiler baseline in [PR #4769](https://github.com/loopdive/js2/pull/4769).
 ## 2026-08-22 follow-up — promotion checks must never be cancelled by refresh
 
 The SHA-keyed measurement groups prevent newer main pushes from replacing an

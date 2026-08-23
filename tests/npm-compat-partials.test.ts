@@ -75,6 +75,10 @@ describe("npm-compat refresh matrix wiring", () => {
     expect(workflow).toContain("actions/download-artifact@v7");
     expect(workflow).toContain("scripts/merge-npm-compat-partials.mjs");
     expect(workflow).toContain("id: typescript");
+    expect(workflow).toContain("id: react-dom");
+    expect(workflow).toContain("packages: react-dom");
+    expect(workflow).toContain('DOGFOOD_REACT_DOM_PROJECT_CONCURRENCY: "2"');
+    expect(workflow).not.toContain("id: renderers");
   });
 
   it("keeps the renamed repository guards active for refresh promotion", () => {

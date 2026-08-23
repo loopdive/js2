@@ -40,6 +40,7 @@ loc-budget-allow:
   - src/codegen/declarations.ts
   - src/codegen/declarations/object-shape-widening.ts
   - src/codegen/extern-declarations.ts
+  - src/import-resolver.ts
 oracle-ratchet-allow:
   - src/codegen/declarations/object-shape-widening.ts
   - src/codegen/index.ts
@@ -66,6 +67,8 @@ func-budget-allow:
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
   - src/runtime.ts::_safeSet
+  - src/codegen/expressions/calls-closures.ts::tryExternClassMethodOnAny
+  - src/codegen/declarations.ts::collectDeclarations
 ---
 
 # Run react-dom's own unit tests against compiled react-dom
@@ -674,3 +677,93 @@ always; the full run is gated behind `DOGFOOD_REACT_DOM_UPSTREAM=1`.
 pnpm run dogfood:react-dom-upstream-suite
 DOGFOOD_REACT_DOM_UPSTREAM=1 pnpm exec vitest run tests/dogfood/react-dom-upstream-suite.test.ts
 ```
+
+## Narrow compiler-fix checkpoint (2026-08-22)
+
+The next bounded probe found two compiler issues in the ReactDOM path rather
+than missing jsdom infrastructure:
+
+* An `any` receiver for `createElement` was being bound to the first ambient
+  `Document.createElement` extern method. That discarded the React namespace at
+  the host boundary. Unknown receivers now stay on the generic dynamic method
+  dispatcher; typed `Document` receivers retain the exact DOM extern path.
+* A mutable parameter inferred as an anonymous WasmGC object shape could be
+  reassigned to a different object shape. The generated guarded cast then
+  produced null on the next property read. Directly reassigned anonymous
+  object/reference parameters now use the universal `externref` carrier;
+  named/native carriers remain specialized.
+
+The fixes have focused coverage in
+`tests/issue-4373-js-property-call-arguments.test.ts` and
+`tests/issue-3982-react-dom-reassigned-ref-param.test.ts`. Both legacy and IR
+compiler modes pass (8/8 tests), typecheck and formatting pass, and the exact
+one-test legacy-server worker probe now compiles and validates a 1,230,619-byte
+module and reports 1/1 compiled tests passing (12.3 seconds). This is a bounded
+smoke result, not a claim that the 1,923-test admitted corpus is green.
+
+The browser Fizz timeout and Node Fizz module-init null remain separate
+follow-up findings; the full ReactDOM corpus still needs to be rerun after the
+compiler fix. No host API was silently marked unavailable.
+
+Implementation: [PR #4769](https://github.com/loopdive/js2wasm/pull/4769).
+
+## Host-graph compiler boundary checkpoint (2026-08-22)
+
+The follow-up compiler probe found two additional generic boundary problems in
+the multi-file ReactDOM graph:
+
+* Multi-source host files now receive the callback-aware timer shim without
+  rewriting their module imports. This keeps `setTimeout` and the scheduler's
+  stored `queueMicrotask` value callable from compiled Wasm while preserving
+  the standalone/WASI no-host-import policy.
+* Ambient callable globals are collected as host function values only when they
+  are referenced and not shadowed by a user module binding. An implicit-`any`
+  parameter used as an ordinary or computed property receiver stays an
+  `externref` carrier, preventing ReactDOM's scheduler root from being
+  specialized to a boolean or nominal object shape.
+
+Regression coverage is now **30/30** across the timer-shim and mutable-parameter
+ suites (both legacy and IR modes), with typecheck, formatting, and the IR
+ fallback gate passing. The exact ReactDOM upstream corpus is still not claimed
+ green: the remaining failure is scheduler work/`act` flush synchronization in
+ the compiled project graph, not a missing host API. The next owner should
+ resume from the worker-backed scheduler queue and Promise/microtask ordering;
+ no test-harness workaround or generated diagnostic source was shipped.
+
+Implementation remains in [PR #4769](https://github.com/loopdive/js2wasm/pull/4769).
+
+## Primitive callback ABI regression checkpoint (2026-08-22)
+
+The real-wasmtime native-messaging smoke caught a regression in the generic
+property-receiver rule: the untyped `onData(chunk)` callback in the Node
+process adapter uses `chunk.length` and `chunk.charCodeAt`, and was being
+widened from the compiler's proven native-string carrier to `externref`. The
+resulting callback ABI did not match the host and produced zero output even
+for a 1 MiB frame. Ordinary property access still widens nominal/dynamic
+object receivers, but proven numeric and native-string carriers remain
+specialized. The complete real-wasmtime matrix (1/64/128/256 MiB across
+node_process, deno, wasi_p1, and node_fs) now passes. This is a compiler ABI
+fix, not a skipped or unavailable test.
+
+## Bounded project compilation checkpoint (2026-08-22)
+
+The client project lane was still compiling its 110 independent test batches
+serially. That made the worker deadline effective per batch but left the
+overall ReactDOM refresh vulnerable to the 350-minute GitHub Actions ceiling.
+The lane now uses a bounded two-worker compile pool (configurable with
+`DOGFOOD_REACT_DOM_PROJECT_CONCURRENCY`) and consumes the native oracle in the
+original source order. Compilation is pipelined with that oracle: while the
+shared host consumes one completed batch, the workers continue compiling later
+batches. Each batch still has its own isolated compiler deadline and remains
+visible in the report; only independent compilation is concurrent. The
+npm-compat workflow pins the pool to two workers to limit runner memory
+pressure. This addresses the remaining refresh-timeout path without reducing
+the upstream denominator or relabeling compiler failures as unavailable host
+infrastructure.
+
+The bounded pool and its fallback-to-two behavior have focused unit coverage;
+the 50-test probe observed both client batches dispatched to the two-worker
+pool, and the upstream suite harness tests remain green.
+
+Implementation: [PR #4771](https://github.com/loopdive/js2/pull/4771), stacked
+on the compiler boundary work in [PR #4769](https://github.com/loopdive/js2/pull/4769).

@@ -8153,7 +8153,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
           collectExternDeclarations(ctx, libSf, libRefs, libIndex);
           for (const sf of multiAst.sourceFiles) {
             if (sourceUsesLibGlobals(sf)) {
-              collectDeclaredGlobals(ctx, libSf, sf, libIndex);
+              collectDeclaredGlobals(ctx, libSf, sf, libIndex, multiAst.sourceFiles);
             }
           }
         }
