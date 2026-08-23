@@ -949,7 +949,13 @@ function hostCallableFallbackTerminal(
   thisInstrs: readonly Instr[],
   argParamStart: number,
 ): Instr[] | undefined {
-  if (ctx.standalone || ctx.wasi || arity > 4) return undefined;
+  // Native-first modules classify their host boundary explicitly
+  // (`__boundary_callback_call_N`, see planHostCallFallback); an implicit
+  // `__call_function_N` there trips the host-import-policy ratchet (#4397).
+  // Keep the legacy null terminal for that profile.
+  if (ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first" || arity > 4) {
+    return undefined;
+  }
   const importName = `__call_function_${arity}`;
   const externRef: ValType = { kind: "externref" };
   const params: ValType[] = [externRef, externRef];

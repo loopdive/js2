@@ -59,6 +59,8 @@ func-budget-allow:
   - src/codegen/literals.ts::objectLiteralSpreadTakesHostPath
   - src/codegen/expressions/calls.ts::calleeMayBeHostCallable
   - src/runtime.ts::_structFieldNamesRaw
+  - src/codegen/expressions/calls.ts::tryEmitInlineDynamicCall
+  - src/codegen/expressions/new-super.ts::emitDynamicNewFallback
 coercion-sites-allow:
   # The cookie Date-constructor bridge must unbox the host-provided numeric
   # timestamp before entering the existing date parser ABI.
@@ -514,3 +516,67 @@ rest arms or the closures.ts wrapper-sig change. Winning them back needs
 a joint look at 09d00a3c's rest lanes vs this branch's slice-17
 call-site rest expansion — flagged for the jest-arc owner; the two lanes
 are now actively colliding on the same seam (lane-partition escalation).
+
+## 2026-08-23 slice — deepCyclicCopy triple: inline member-access `new`, rest dynamic dispatch, method-local hoist
+
+Three independent defects sat under the deepCyclicCopy bucket (7 tests, all
+"dereferencing a null pointer"); each is fixed and regression-tested in
+`tests/issue-4616-rest-dispatch-inline-new.test.ts`:
+
+1. **Inline member-access ctor `new`** — `new (Object.getPrototypeOf(arr)
+   .constructor)(n)` (jest-util deepCyclicCopyArray's keepPrototype lane) kept
+   the ctor inside the callee, so the bare-identifier dynamic-new arm never
+   fired and the legacy `__new___unknown` import constructed garbage
+   (len=undefined, isArray false). `resolvesToDynamicAnyCtorValue`
+   (new-super.ts) now admits property/element-access callees whose type fact
+   is any/unknown/`Function`; the ~4656 call-site gate admits them on the JS
+   host lane, and `emitDynamicNewFallback`'s zero-candidate refusal is lifted
+   when the `__construct_closure` base applies (class-free modules land
+   directly on the bridge, tag stays -1).
+
+2. **Rest-param closures in dynamic dispatch** — `function spy(...args)` lifts
+   to the same `(self, vec) → res` funcref as a genuine one-vec-param fn, so
+   `tryEmitInlineDynamicCall`'s positional arm cast call arg 0 to the vec type
+   (`illegal cast` for every `f(1,2)` through an any binding — vi.fn's spy).
+   Rest candidates (`ClosureInfo.hasRestParam`, #4394) now keep their own
+   arms guarded by their CONCRETE struct type, emitted outermost, packing
+   `args[fixed..]` into a fresh vec (calls.ts); same-signature positional arms
+   stay in the chain. Capture-free singletons had NO rest-flagged ClosureInfo
+   at all — `ensureFuncClosureSingleton` (method-trampolines.ts) now allocates
+   a rest-marker SUBTYPE (base fields + immutable f64 — f64 so it cannot
+   canonicalize with the constructible i32-marker subtype) registered with
+   `hasRestParam`, riding the existing #4437 alloc/metaInit mechanism.
+
+3. **Object-literal method local hoist order** — literals.ts hoisted nested
+   functions BEFORE pre-allocating var/let/const method locals, so a nested
+   fn's capture of a method local (`vi.fn`'s `callList`) hit
+   `localIdx === undefined` in the capture scan and was silently dropped —
+   the compiled spy read `callList` as ref.null (`null.push`). The method
+   lane now runs `hoistVarDeclarations` + `hoistLetConstWithTdz` first,
+   mirroring function-body.ts.
+
+**Also fixed on this seam (CI red on #4728 after the earlier slice-17 push):**
+the `__call_fn_N` host-callable terminal made every host-lane module import
+`__call_function_<N>`, which (a) broke manual-instantiation equivalence tests
+(optimize-differential: "function import requires a callable") — the
+`tests/equivalence/helpers.ts` compact runtime now provides the host-call ABI
+via the production resolver, mirroring its #3529 Error-ctor overlay — and
+(b) tripped the native-first host-import-policy probe — the terminal now
+skips `semanticProviders === "native-first"` (that lane keeps the null
+terminal; its classified boundary is `__boundary_callback_call_N`). The
+compatibility-lane debt ratchet moved 19 → 23 (`__call_function_1..4`),
+recorded in `plan/audit/host-import-policy-baseline.json`.
+
+**Measured after this slice:** the deepCyclicCopy bucket still reads 7 in the
+suite: the remaining trap is INSIDE the shim's `vi.fn` (illegal cast building
+`mockClear`'s closure struct). Root cause pinned but unfixed: in untyped JS
+(`allowJs`), `const callList = []` + `callList.push(args)` infers `any[][]`,
+and the SAME binding gets a vec-of-vec type ($10) in the fn-decl capture lane
+(spy, type from the hoisted local) but a plain extern-vec type ($3) in the
+fn-expr capture lane (mockClear) — `struct.new` then casts the $10 local to
+the $3 field (wasm-dis renders it `ref.cast nullref`). One binding must get
+ONE canonical capture type; minimal repro: `.tmp/probe-spyon12.mts` with
+`.tmp/probe-spyon10-src.js` (worker-lane options: allowJs + experimentalIR +
+deferTopLevelInit + platform node). Note the cross-lane context above:
+main's 09d00a3c (codex) owns a parallel rest lane; coordinate before touching
+the capture-type seam.

@@ -61,6 +61,8 @@ import {
   extractConstantDefault,
   getOrRegisterTupleType,
   getTupleElementTypes,
+  hoistLetConstWithTdz,
+  hoistVarDeclarations,
   isTupleType,
   resolveWasmType,
 } from "./index.js";
@@ -3728,6 +3730,15 @@ export function compileObjectLiteralForStruct(
         // lowered object-literal METHOD (jest's `vi.fn`) needs the stable
         // identity binding, or each self-read materializes a fresh struct and
         // `spy.mock` reads back undefined in every spy body.
+        //
+        // (#4616) The var/let/const hoists MUST precede the function hoist —
+        // exactly as in function-body.ts. The nested fn's capture collection
+        // reads `fctx.localMap` at hoist time; without pre-allocated method
+        // locals, a captured method local (`const callList = []` in `vi.fn`)
+        // silently misses (`localIdx === undefined` → capture dropped) and the
+        // nested body reads it as null (`null.push` in every jest spy).
+        hoistVarDeclarations(ctx, methodFctx, prop.body.statements);
+        hoistLetConstWithTdz(ctx, methodFctx, prop.body.statements);
         hoistFunctionDeclarations(ctx, methodFctx, prop.body.statements);
         for (const stmt of prop.body.statements) {
           compileStatement(ctx, methodFctx, stmt);

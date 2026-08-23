@@ -469,6 +469,26 @@ function resolvesToConstructableFunctionValue(ctx: CodegenContext, calleeExpr: t
  *    constructor.
  */
 function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expression): boolean {
+  // (#4616) Inline member-access ctor values: `new (Object.getPrototypeOf(arr)
+  // .constructor)(n)` (jest-util deepCyclicCopyArray's keepPrototype lane) keeps
+  // the ctor INSIDE the `new` callee, so the identifier lane below never sees
+  // it and the legacy `__new___unknown` fallthrough constructs garbage. A
+  // property/element access whose static type is `any`/`unknown` — or the bare
+  // lib `Function` interface (`.constructor` on a typed receiver, same #3435
+  // reasoning as the identifier lane) — is a genuinely-dynamic ctor value; the
+  // `__construct_closure` bridge's IsConstructor probe + `Reflect.construct` is
+  // spec-correct for whatever the member read yields at runtime. Members that
+  // resolve statically (compiled classes, extern classes, ctor-interface
+  // builtins like `Intl.NumberFormat`) have concrete types, fail the fact
+  // check, and keep their existing arms.
+  if (ts.isPropertyAccessExpression(calleeExpr) || ts.isElementAccessExpression(calleeExpr)) {
+    const declNI = ctx.checker.getSymbolAtLocation(calleeExpr)?.valueDeclaration;
+    if (declNI && (ts.isClassDeclaration(declNI) || ts.isClassExpression(declNI))) return false;
+    const factNI = ctx.oracle.typeFactOf(calleeExpr);
+    return (
+      factNI.kind === "any" || factNI.kind === "unknown" || (factNI.kind === "builtin" && factNI.name === "Function")
+    );
+  }
   if (!ts.isIdentifier(calleeExpr)) return false;
   if (ctx.classSet.has(calleeExpr.text) || ctx.externClasses.has(calleeExpr.text)) return false;
   if (ctx.funcConstructorMap?.has(calleeExpr.text)) return false;
@@ -2726,7 +2746,13 @@ function emitDynamicNewFallback(
     if (ctorResult?.kind === "externref") continue;
     candidates.push(className);
   }
-  if (candidates.length === 0) return false;
+  // (#3087 / #4616) The `__construct_closure` no-match base makes this fallback
+  // meaningful even with ZERO candidate classes: a class-free module (jest-util
+  // deepCyclicCopy) constructing a dynamic ctor value skips the tag dispatch
+  // entirely (the tag stays -1) and lands directly on the bridge. Computed
+  // up-front so the zero-candidate refusal below can consult it.
+  const useConstructClosureBase = !noJsHost(ctx) && resolvesToDynamicAnyCtorValue(ctx, calleeExpr);
+  if (candidates.length === 0 && !useConstructClosureBase) return false;
 
   const rawArgs = expr.arguments ?? [];
 
@@ -2809,7 +2835,7 @@ function emitDynamicNewFallback(
   // emission (the #608/#794 late-import index-shift hazard). Scoped to the
   // Runtime argv is supported too: its no-match arm copies the materialized
   // argv into the bridge's JS array without re-evaluating any source expression.
-  const useConstructClosureBase = !noJsHost(ctx) && resolvesToDynamicAnyCtorValue(ctx, calleeExpr);
+  // (`useConstructClosureBase` is computed above, before the candidate check.)
   let ccArrNewIdx: number | undefined = -1;
   let ccArrPushIdx: number | undefined = -1;
   let ccBridgeIdx: number | undefined = -1;
@@ -4653,7 +4679,15 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
             ? dynCallee.expression
             : (dynCallee as ts.NonNullExpression).expression;
       }
-      if (ts.isIdentifier(dynCallee) && !ctx.classSet.has(dynCallee.text)) {
+      // (#4616) Beyond the bare-identifier form, admit an inline member-access
+      // callee (`new (Object.getPrototypeOf(arr).constructor)(n)`) when the JS
+      // host is present and the member's static type marks it a genuinely
+      // dynamic ctor value — the fallback's `__construct_closure` no-match base
+      // constructs it correctly (and its zero-candidate refusal is lifted for
+      // exactly this case). Standalone keeps the pre-existing member handling.
+      const dynMemberCallee =
+        !ts.isIdentifier(dynCallee) && !noJsHost(ctx) && resolvesToDynamicAnyCtorValue(ctx, dynCallee);
+      if ((ts.isIdentifier(dynCallee) && !ctx.classSet.has(dynCallee.text)) || dynMemberCallee) {
         // (#3054 D) Dynamic `new <ctorVal>(buffer[, off[, len]])` where `ctorVal`
         // is a first-class `$__ta_ctor` value (a TA constructor held in a var /
         // array element — test262 `CreateRabForTest`, `for (ctor of ctors) new

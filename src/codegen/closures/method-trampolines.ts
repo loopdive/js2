@@ -1074,13 +1074,67 @@ export function ensureFuncClosureSingleton(
     ctx,
     ctx.funcMapOwnerDecl.get(funcName) ?? ctx.topLevelFunctionDeclarations.get(funcName),
   );
-  const allocStructTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, structTypeIdx) : undefined;
+  // (#4616) A rest-param function's shared signature wrapper carries NO
+  // rest-ness: `function spy(...args)` and `function g(xs: any[])` lift to the
+  // same `(self, vec) → res` funcref, so the dynamic dispatchers positionally
+  // cast call arg 0 to the vec type and trap `illegal cast` (jest-util's
+  // `jest.spyOn(Array,'isArray')` spy — the whole deepCyclicCopy bucket).
+  // Allocate the singleton as a marker SUBTYPE (base fields + an f64 marker —
+  // f64 so it cannot canonicalize with the constructible i32-marker subtype)
+  // registered in `closureInfoByTypeIdx` with `hasRestParam`, which both the
+  // generic `__call_fn_N` rest arms and the inline dynamic-call rest packing
+  // key on. Reads still cast to the base wrapper (safe direction, see
+  // `allocStructTypeIdx` above).
+  const restInfo = ctx.funcRestParams.get(funcName);
+  let restAllocIdx: number | undefined;
+  if (restInfo !== undefined && userParams.length > 0) {
+    restAllocIdx = ensureRestFnWrapSubtype(ctx, structTypeIdx);
+    const existing = ctx.closureInfoByTypeIdx.get(restAllocIdx);
+    if (!existing) {
+      ctx.closureInfoByTypeIdx.set(restAllocIdx, {
+        structTypeIdx: restAllocIdx,
+        funcTypeIdx: liftedFuncTypeIdx,
+        returnType: results.length > 0 ? results[0]! : null,
+        paramTypes: userParams,
+        hasRestParam: true,
+      });
+    }
+    if (constructible) ctx.constructibleClosureTypeIdxs.add(restAllocIdx);
+  }
+  const restMarkerInit: Instr[] = restAllocIdx !== undefined ? [{ op: "f64.const", value: 0 }] : [];
+  const allocBaseIdx = restAllocIdx ?? structTypeIdx;
+  const allocStructTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, allocBaseIdx) : restAllocIdx;
+  const allocInit = metaSlot ? [...restMarkerInit, ...metaSlot.init] : restMarkerInit;
   return {
     cacheGlobalIdx,
     trampolineFuncIdx,
     closureStructTypeIdx: structTypeIdx,
-    ...(allocStructTypeIdx !== undefined && metaSlot ? { allocStructTypeIdx, metaInit: metaSlot.init } : {}),
+    ...(allocStructTypeIdx !== undefined ? { allocStructTypeIdx, metaInit: allocInit } : {}),
   };
+}
+
+/**
+ * (#4616) Get-or-create the rest-marker subtype of a funcref-wrapper struct:
+ * the base wrapper's fields plus one immutable f64 marker. The f64 (vs the
+ * constructible subtype's i32 marker) keeps the canonical shape distinct, so
+ * `ref.test` can discriminate rest-param singleton closures at dispatch time.
+ */
+function ensureRestFnWrapSubtype(ctx: CodegenContext, baseStructTypeIdx: number): number {
+  const holder = ctx as unknown as { __restFnWrapSubtypeByBase?: Map<number, number> };
+  const cache = (holder.__restFnWrapSubtypeByBase ??= new Map());
+  const hit = cache.get(baseStructTypeIdx);
+  if (hit !== undefined) return hit;
+  const baseDef = ctx.mod.types[baseStructTypeIdx];
+  const baseFields = baseDef?.kind === "struct" ? baseDef.fields : [];
+  const idx = ctx.mod.types.length;
+  ctx.mod.types.push({
+    kind: "struct",
+    name: `__rest_fn_wrap_${ctx.closureCounter++}_struct`,
+    fields: [...baseFields, { name: "__rest_marker", type: { kind: "f64" as const }, mutable: false }],
+    superTypeIdx: baseStructTypeIdx,
+  });
+  cache.set(baseStructTypeIdx, idx);
+  return idx;
 }
 
 /**
