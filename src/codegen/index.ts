@@ -315,6 +315,7 @@ import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; 
 // import { unshiftNativeProtoDeleteArm } from "./native-proto-delete.js"; // (#2875 w4-F) — DISABLED, see call sites
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
+import { unshiftExternMethodCallProtoArm } from "./native-proto-method-call.js"; // (#4619) proto-receiver method CALL
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillClosurePrototypeEdge } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
@@ -5502,6 +5503,9 @@ export function generateModule(
     // instance (or off the prototype through a binding) must yield the same
     // singleton the static `<Builtin>.prototype.<m>` read does.
     unshiftExternGetProtoMethodArm(ctx);
+    // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
+    // run after the read arm above. See native-proto-method-call.ts.
+    unshiftExternMethodCallProtoArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
 
     // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
@@ -8680,6 +8684,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // instance (or off the prototype through a binding) must yield the same
     // singleton the static `<Builtin>.prototype.<m>` read does.
     unshiftExternGetProtoMethodArm(ctx);
+    // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
+    // run after the read arm above. See native-proto-method-call.ts.
+    unshiftExternMethodCallProtoArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
 
     // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.

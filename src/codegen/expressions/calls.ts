@@ -199,6 +199,7 @@ import {
   ensureStandaloneNativeMethodClosure,
   getNativeProtoBuiltinGlue,
 } from "../native-proto.js";
+import { wrapperProtoSyntacticMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
 import { BUILTIN_STATIC_METHOD_ARITY } from "../builtin-fn-meta.js";
 import { pushReflectiveCallReceiver } from "../reflective-call-receiver.js"; // (#3638)
 import {
@@ -1071,6 +1072,14 @@ function tryEmitNativeProtoReflectiveCall(
   }
   if (!member || !ifaceName) return undefined;
 
+  // (#4619 family D) For the two wrapper members the brand genuinely owns, the
+  // SYNTACTIC spelling beats the symbol — `lib.es5.d.ts` declares no `toString`
+  // on `interface Boolean`, so the symbol says Object. See the module.
+  {
+    const syntactic = wrapperProtoSyntacticMember(ctx, unwrapTransparent(receiver), member);
+    if (syntactic !== undefined) ({ member, ifaceName } = syntactic);
+  }
+
   // (#4119) `Object.prototype.toString.call(v)` written in its DIRECT syntactic
   // form stays owned by the #2501 compile-time fold further down, NOT by the
   // reflective closure. The fold keys on the receiver ARGUMENT's static type, so
@@ -1100,8 +1109,16 @@ function tryEmitNativeProtoReflectiveCall(
   // arm both fell to the legacy `.call` tail that drops `thisArg` and returns 0:
   // `Boolean.prototype.valueOf.call(Object(true))` answered `false`, the Number
   // twin `undefined` — silent wrong values, measured on base.
-  if (brand === undefined && member === "valueOf" && ifaceName === "Number") brand = ensureNumberNativeProtoGlue(ctx);
-  else if (brand === undefined && member === "valueOf" && ifaceName === "Boolean")
+  // (#4619 family D) …and `toString`, now that it has a native body too
+  // (wrapper-proto-to-string.ts). Same measured symptom as #4582's `valueOf`:
+  // `Boolean.prototype.toString.call(true)` and the Number twin both answered
+  // `undefined` on base, because the legacy `.call` tail drops `thisArg`. Both
+  // members are still enumerated one by one rather than opening the whole
+  // family — a member whose body still refuses would turn today's (wrong but
+  // non-throwing) answer into a TypeError.
+  const wrapperWiredMember = member === "valueOf" || member === "toString";
+  if (brand === undefined && wrapperWiredMember && ifaceName === "Number") brand = ensureNumberNativeProtoGlue(ctx);
+  else if (brand === undefined && wrapperWiredMember && ifaceName === "Boolean")
     brand = ensureBooleanNativeProtoGlue(ctx);
   if (brand === undefined) return undefined;
 

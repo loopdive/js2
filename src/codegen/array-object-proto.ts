@@ -71,6 +71,7 @@ import { emitObjectProtoIsPrototypeOfBody } from "./object-proto-is-prototype-of
 // member bodies for `Object.prototype.__{define,lookup}{Getter,Setter}__`.
 import { ANNEX_B_ACCESSOR_ARITY, emitObjectProtoAnnexBAccessorBody } from "./object-proto-annex-b-accessors.js";
 import { emitWrapperProtoValueOfBody, isWrapperBrandName } from "./wrapper-proto-value-of.js";
+import { emitWrapperProtoToStringBody } from "./wrapper-proto-to-string.js"; // (#4619)
 import { emitStringConcatMemberBody } from "./string-proto-concat.js";
 import { emitStringSubstringMemberBody } from "./string-proto-substring.js";
 import { emitStringSplitMemberBody } from "./string-proto-split.js"; // (#4220) reflective String.prototype.split
@@ -1769,6 +1770,9 @@ function makeGlue(
       // nothing) for every other family/member, so the ladder below is reached
       // byte-identically.
       (member === "valueOf" && isWrapperBrandName(name) ? emitWrapperProtoValueOfBody(c, fctx, name) : null) ??
+      // (#4619 family D) The `toString` twin of the arm above, in the same
+      // position and for the same reason — routed FIRST so it serves String too.
+      (member === "toString" && isWrapperBrandName(name) ? emitWrapperProtoToStringBody(c, fctx, name) : null) ??
       (name === "Array"
         ? emitArrayProtoMemberBody(c, fctx, member)
         : name === "String"
