@@ -111,7 +111,26 @@ jobs:
             done
           fi
 
+      # A lane whose rows were ALL cancelled or failed has nothing to say. The
+      # merge script would happily publish the last snapshot with a fresh
+      # `generatedAt`, i.e. a promotion PR whose only content is a newer
+      # timestamp over unchanged numbers. Stop instead — the caller no longer
+      # gates on the matrix result (one superseded row must not discard the
+      # lane), so this is where "nothing measured" is recognised.
+      - name: Stop if this lane produced no measurements
+        id: partials
+        shell: bash
+        run: |
+          set -euo pipefail
+          COUNT=$(find "$RUNNER_TEMP/npm-compat-partials" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+          echo "lane ${{ inputs.lane }}: ${COUNT} partial report(s)"
+          echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::notice title=npm-compat-refresh::lane ${{ inputs.lane }} measured nothing this run; leaving the published artifact alone."
+          fi
+
       - name: Assemble the npm-compat artifacts
+        if: steps.partials.outputs.count != '0'
         run: node scripts/merge-npm-compat-partials.mjs "$RUNNER_TEMP/npm-compat-partials"
 
       # Refuse to publish an empty or truncated artifact. A generator that exits
@@ -122,6 +141,7 @@ jobs:
       # lint/syntax gate, and one apostrophe in a JS comment truncated it and
       # silently blocked ALL promotions for 6 hours on 2026-08-23 (#4604 S8).
       - name: Sanity-check the generated artifact
+        if: steps.partials.outputs.count != '0'
         run: node scripts/check-npm-compat-artifact.mjs
 
       # (2026-08-09, stakeholder) A DEFERRED run's measurement must never be
@@ -164,6 +184,7 @@ jobs:
       # Minted HERE, after matrix generation, because an installation
       # token expires in one hour.
       - name: Mint a GitHub App token for the promotion PR
+        if: steps.partials.outputs.count != '0'
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
@@ -182,6 +203,7 @@ jobs:
       # The current-head check gate below is deliberately fail-closed instead:
       # an unreadable check state must not knowingly cancel the CI it protects.
       - name: Check whether the promotion PR is already in the merge queue
+        if: steps.partials.outputs.count != '0'
         id: queue_state
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -273,7 +295,7 @@ jobs:
           esac
 
       - name: Publish the refreshed artifacts to the promotion branch
-        if: steps.queue_state.outputs.skip != '1'
+        if: steps.partials.outputs.count != '0' && steps.queue_state.outputs.skip != '1'
         id: promote
         env:
           MAIN_DEPLOY_KEY: ${{ secrets.MAIN_DEPLOY_KEY }}
@@ -481,4 +503,3 @@ jobs:
       # artifact. Dispatching from THIS run would in fact be wrong now: the
       # artifact is not on main yet when this job ends, so the deploy would
       # rebuild the stale page and #3958/#3977 would be back.
-
