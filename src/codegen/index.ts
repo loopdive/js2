@@ -4487,10 +4487,14 @@ export function generateModule(
   // byte-inert when the pattern is absent.
   if (ctx.standalone || ctx.wasi) {
     ctx.moduleUsesDynTaView = sourceHasDynamicTaConstruct(ast.checker, ast.sourceFile);
-    // (#4630) Collect `globalThis.<fn> =` shadow targets so bare reads/calls
-    // of a reassigned top-level function consult the override slot.
-    scanGlobalThisFnShadows(ctx, ast.sourceFile);
   }
+  // (#4630) Collect `globalThis.<fn> =` shadow targets so bare reads/calls of a
+  // reassigned top-level function consult the override slot.
+  // (#4648) Runs on every lane — the aliasing is §16.1.7, not a standalone
+  // representation detail; the JS-host write arm has its own spelling in
+  // assignment.ts. Modules with no `globalThis.<fn> =` scan to an empty set and
+  // keep byte-identical output.
+  scanGlobalThisFnShadows(ctx, ast.sourceFile);
   try {
     // (#4238 slice 1) Imported-memory topology: a PEER wasm module owns and
     // exports the linear memory and this module imports it at memory index 0,

@@ -1,7 +1,19 @@
 ---
 id: 4648
 title: "js-host: asyncHelpers harness self-tests — 6 failures (asyncTest/throwsAsync family)"
-status: ready
+status: in-progress
+assignee: ttraenkler/senior-dev
+loc-budget-allow:
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/index.ts
+  - src/codegen/registry/imports.ts
+func-budget-allow:
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  - src/codegen/index.ts::generateModule
 sprint: current
 created: 2026-08-23
 updated: 2026-08-23
