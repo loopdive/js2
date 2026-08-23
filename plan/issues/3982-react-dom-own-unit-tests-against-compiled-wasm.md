@@ -828,3 +828,46 @@ package in the corpus is compiled through a wrapper somewhere.
 
 The wrapping measurement is reproducible with `.tmp/rd-wrap.mjs` (top-level vs
 wrapped, same bytes); the probe comparison with `.tmp/rd-probe-time.mjs`.
+
+## Lever 2: the project lane recompiles the implementation once PER BATCH (2026-08-23)
+
+SPECIFIED, NOT IMPLEMENTED. Recording the measurement and the design so the
+next attempt starts from evidence rather than from the same guess.
+
+`partitionProjectTests` partitions BY UPSTREAM FILE first and only then splits
+anything oversized (`maxChars = 800_000`). There are 115 test files, so there
+are at least 115 batches, and the 800 KB cap is almost never the binding
+constraint. Every batch compiles the whole project — `react.ts`, `scheduler.ts`,
+`shared.ts` and the 525 KB `client.ts` — plus its own entry.
+
+Measured cost of a batch carrying ZERO tests: **102 s** (success, validates,
+2.25 MB). That is the floor each batch pays before a single test body is
+compiled. At 115 batches over the pinned 2-worker pool that is roughly
+**98 minutes of pure implementation recompilation**, which is most of the row's
+3-4 hour wall clock.
+
+The clean fix is separate compilation: compile the implementation once and link
+each file's test module against it. The compiler has no module-linking story
+today, so that is a large piece of work, not a harness tweak.
+
+The cheap approximation is to **pack by size instead of by file**: fill each
+batch to `maxChars` across several upstream files rather than starting a new
+batch per file. Ten files per batch turns ~115 batches into ~12 and should cut
+the row by roughly the same factor, since the per-batch cost is dominated by a
+constant.
+
+Two things that fix does NOT get for free, and which is why it is not landed
+here:
+
+1. **Lifecycle isolation.** The current partition keeps each file's Jest-style
+   `beforeEach`/`afterEach` together deliberately. Co-locating several files in
+   one module has to keep each file's lifecycle scoped to its own tests or
+   results silently change.
+2. **Blast radius.** One invalid function currently poisons one file's binary.
+   At ten files per batch it poisons ten. The halving-retry recovers, but the
+   retry is exactly the cost being optimised away, so a batch that fails
+   validation could end up slower than today.
+
+Neither can be judged from a unit test: it needs a full react-dom row (3-4 h)
+before and after, comparing wall clock AND the admitted/passed denominators.
+Do not land it on a green harness test alone.
