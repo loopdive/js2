@@ -482,6 +482,17 @@ function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expre
   // builtins like `Intl.NumberFormat`) have concrete types, fail the fact
   // check, and keep their existing arms.
   if (ts.isPropertyAccessExpression(calleeExpr) || ts.isElementAccessExpression(calleeExpr)) {
+    // (#4728 merge_group regression) `new Temporal.PlainDateTime(...)`: an
+    // UNDECLARED base identifier is a host-global read (the test262 runner
+    // provides `Temporal` as a host polyfill). The checker types the member as
+    // error-`any`, which admitted it here — and this lane then compiles the
+    // base identifier as an undeclared-identifier ReferenceError throw,
+    // breaking every Temporal file at module init (156-test "other" bucket in
+    // the #4728 merge_group). Undeclared bases keep the legacy host-new lane,
+    // which resolves them through the host global object.
+    let baseNI: ts.Expression = calleeExpr.expression;
+    while (ts.isParenthesizedExpression(baseNI)) baseNI = baseNI.expression;
+    if (ts.isIdentifier(baseNI) && ctx.oracle.valueDeclarationOf(baseNI) === undefined) return false;
     const declNI = ctx.oracle.valueDeclarationOf(calleeExpr);
     if (declNI && (ts.isClassDeclaration(declNI) || ts.isClassExpression(declNI))) return false;
     const factNI = ctx.oracle.typeFactOf(calleeExpr);

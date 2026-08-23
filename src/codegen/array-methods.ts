@@ -416,7 +416,24 @@ function hofRefElemClosureLaneSafe(ctx: CodegenContext, callExpr: ts.CallExpress
       }
       if (CLOSURE_SAFE_AMBIENT_GLOBALS.has(node.text)) return;
       const decl = ctx.oracle.valueDeclarationOf(node);
-      if (decl === undefined || decl.getSourceFile().isDeclarationFile) safe = false;
+      if (decl === undefined || decl.getSourceFile().isDeclarationFile) {
+        safe = false;
+        return;
+      }
+      // (#4728 merge_group regression) An OUTER binding whose static type is
+      // error-`any` is a host-value capture in disguise — test262's Temporal
+      // files bind `const earlier = new Temporal.PlainDateTime(...)` (an
+      // undeclared host global, so the checker types it `any`) and call
+      // `earlier.until(...)` inside `Object.entries(...).forEach(([u, i]) =>`.
+      // The native ref-elem HOF lane silently mis-threads that shape (the
+      // nested assert.throws arrow observed undefined tuple elements; the
+      // expected RangeError never fired — the "pass → fail" slice of the
+      // 03934689 widening). Bindings declared INSIDE the callback keep the
+      // native lane.
+      if (decl.pos < cbArg.pos || decl.end > cbArg.end) {
+        const fact = ctx.oracle.typeFactOf(node);
+        if (fact.kind === "any" || fact.kind === "unknown") safe = false;
+      }
       return;
     }
     ts.forEachChild(node, visit);
