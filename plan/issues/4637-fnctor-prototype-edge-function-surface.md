@@ -1,7 +1,7 @@
 ---
 id: 4637
 title: "ES5 standalone: fnctor-prototype edge + Function-constructor surface — S13.2.2 family, Object(func) identity, apply/call as own-property values (~48 rows)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-23
 updated: 2026-08-23
@@ -129,3 +129,311 @@ Object-identity leftovers:
 6. Verify: scoped sweeps of the four directories before/after (own runs,
    both arms); pins tests/issue-4637.test.ts; neighbour pins
    4506/4623/4624/4619 green; zero regressions.
+
+## Root cause
+
+### A1 — a FUNCTION VALUE cannot sit in a `[[Prototype]]` slot
+
+`$Object.$proto` is `(mut (ref null $Object))` (`object-runtime.ts`), and a
+function value is not an `$Object` — it is a closure wrapper struct. So both
+proto-position natives (`__object_create`, `__object_setPrototypeOf`) reach
+their `ref.test $Object` gate, miss, and store **null**. Measured on this
+branch's base with `.tmp/probe.mts` (`--target standalone`, `deferTopLevelInit`,
+runs executed for this issue):
+
+| shape                                                                | base |
+| -------------------------------------------------------------------- | ---- |
+| `function P(){}; P.type="m"; var o=Object.create(P); o.type`            | `undefined` |
+| `… Object.getPrototypeOf(o) === P`                                     | false |
+| `… P.isPrototypeOf(o)`                                                 | false |
+| `function P(){}; function F(){}; F.prototype=P; var m=new F()` — ditto  | all false; `getPrototypeOf(m)` is `null` |
+| `F.prototype === P` (the STATIC read)                                  | **true** |
+
+The last row is what makes this a REPAIR rather than a widening: the `.prototype`
+slot already holds the function value, and only the instance link disagreed. This
+is the residual `fnctor-instance-prototype.ts` names verbatim and the half-bar
+#4623 pinned (`it.fails`) on `S13.2.2_A1_T1` / `_T2`.
+
+### A2 — the checker's INSTANCE shape is trusted where §10.2.1.3 step 13 voids it
+
+`fnctor-foreign-return.ts` (#2071) already exists precisely to distrust the
+checker's instance type for a constructor whose body can `return` a foreign
+value, and `resolveWasmType` already degrades the SLOT to externref off that
+predicate. Two consumers were still reading the TS type:
+
+- `staticTypeofForType` folded `typeof i` to the constant `"object"`;
+- `isFreshlyConstructedNonCallable` (#4221) classified `new F(…)` as provably
+  non-callable, turning a legal call into a hard TypeError.
+
+Measured on the base (`.tmp/p6.js`, standalone):
+`function G(a){return a+1}; var F=function(a,b){this.first=a; G.prop=b; return G};
+var i=new F("one","two")` gave `i === G` ✓, `i.prop === "two"` ✓,
+`i.first === undefined` ✓ — the override LANDS — and `typeof i === "function"` ✗,
+`i(1)` ✗ (`__instance is not a function`). That is `S13.2.2_A8_T1` / `_T2`.
+
+### A3 — `Object(f)` identity was already right; the guard was not
+
+`emitObjectCoercion`'s fallback compiles the argument to externref, which
+preserves a closure. Measured on the base (`.tmp/p8.js`): `new Object(func) === func`
+✓ and `Object(func) === func` ✓. What failed was `typeof new Object(func)` (the
+checker types the expression `Object` ⇒ constant `"object"`) and `n_obj()` (the
+same #4221 guard). So the issue's framing — "`emitObjectCoercion` compiles the
+arg to plain externref and loses the carrier" — is **not** what the rows measure.
+The carrier survives; the STATIC TYPE of the expression is the lie.
+
+### A4 — the `prototype` own-property surface disagreed with the value read
+
+The #2660 M3 edge answers `f.prototype` for a function value but nothing answered
+`f.hasOwnProperty("prototype")`. Measured on the base (`.tmp/p13.js`):
+`function f(){}` gave `typeof f.prototype === "object"` ✓ and
+`f.hasOwnProperty("prototype")` **false** — one value, two surfaces, opposite
+answers. §20.2.4.2 says the property is OWN.
+
+## Fix
+
+| # | Where | What |
+| - | ----- | ---- |
+| A1 | **new** `src/codegen/proto-function-value.ts` + 4 call sites in `object-runtime-prototype.ts` | Canonicalize a callable to its #3468 own-property bag `$Object` at the proto-position choke points (`__object_create`, `__object_setPrototypeOf`, `__isPrototypeOf`'s receiver), and map the bag back to the callable on the way OUT of `__getPrototypeOf`. |
+| A2 | `typeof-delete.ts::staticTypeofForType`, `expressions/calls-guards.ts::isFreshlyConstructedNonCallable` | Both decline on `typeIsForeignReturnFnctorInstance` / `foreignReturnFunctionNames` — the predicate `resolveWasmType` already uses. |
+| A3 | `expressions/calls-guards.ts` — new `objectCoercionMayBeCallable` | `new Object(x)` is provably non-callable only when `x` is. `new Object()` and `new Object(<primitive>)` keep the throw. |
+| A4 | `closure-prototype-edge.ts` — new `closurePrototypeEdgeHasOwnArm` + `spliceClosurePrototypeEdgeHasOwn` | The SAME edge, spliced into `__hasOwnProperty` / `__object_hasOwn` for the interned key `"prototype"`. |
+
+### The A1 decision block (recorded the way #4506 records its slot decision)
+
+Two representations were on the table (plan step 2). The full argument lives in
+the `proto-function-value.ts` header; the summary:
+
+- **(a) widen `$proto` to `anyref` + teach every walk to skip non-`$Object`
+  links — REJECTED.** `$proto` is read by `struct.get $Object 0` across the
+  object runtime (`__extern_get`/`_has`/`_set`, the descriptor surface, `in`, the
+  proto-index store, the `setPrototypeOf` cycle check, `__isPrototypeOf`), and
+  every one of those reads feeds a local typed `(ref null $Object)`. Widening the
+  field forces a `ref.test`+`ref.cast` at each site and changes the type of each
+  local — a whole-runtime edit whose failure mode is a validation error at best
+  and a silently truncated chain at worst. It also buys nothing (b) does not: a
+  link to a value nothing can walk THROUGH is not a chain.
+- **(b) a proto-VIEW of the function — ADOPTED.** A property-carrying closure
+  already has an `$Object` standing in for its own-property table (the #3468
+  bag). §10.1.8.1 OrdinaryGet on an instance whose proto is `P` reads **P's own
+  properties** — exactly what the bag holds — so the chain becomes walkable with
+  no new walk. The entire cost is one bag↔callable identity map.
+
+**The reverse map is not optional.** Canonicalizing alone would make
+`Object.getPrototypeOf(o)` answer the BAG: an internal object the program can
+never name, i.e. a WRONG answer replacing a merely missing one (`null`). That is
+the one trade this campaign forbids, so `__proto_from_function` records
+`(bag → function)` in a tiny append-only registry and `__function_from_proto`
+maps it back. An `$Object` never used as a proto-view is absent from the registry
+and maps to itself, so the common path is one null check on an empty list.
+
+**Scope: CALLABLE carriers only.** The gate is a `ref.test` chain over
+`collectClosureBaseWrapperTypeIdxs` — the closure base-wrapper set
+`__is_closure`/`__typeof_function` use — deliberately NOT the wider
+`__is_closure_prop_carrier` set (which also matches `$__StandaloneRegExp` /
+`$__Date` / user instance carriers). Those reach the proto-position natives
+through paths this issue did not measure; they keep today's `null`.
+
+**What it does NOT claim.** The bag's own `$proto` stays null, so
+`%Object.prototype%` is not reachable *through* a function-valued prototype. That
+is one link short of the spec chain (`m → P → %Function.prototype% →
+%Object.prototype%`) and is a missing answer, not a wrong one — see the residuals.
+
+## Residuals (with owners)
+
+| family | row(s) | why it is still failing | owner |
+| ------ | ------ | ----------------------- | ----- |
+| A1 host lane | (no test262 row; pinned `it.fails` in `tests/issue-4623.test.ts`) | The canonicalization is gated on `ctx.standalone \|\| ctx.wasi`. In host mode `env::__extern_*` / `__boundary_object_*` own the prototype chain, so the same fact would have to be stated a second time inside the host runtime. | this issue's successor, or the host-runtime lane |
+| A1 chain depth | `S15.3.4.4_A1_T1/_T2`, `S15.3.4.3_A1_T1/_T2` | The proto-view bag's own `$proto` is null, so `%Function.prototype%`'s methods are not reachable *through* a function-valued prototype. Needs `%Function.prototype%` materialized as a real chain object with its §20.2.3 own properties — today `emitFunctionPrototypeObjectSingleton` (`array-object-proto.ts`) builds it with `__object_create(null)` and installs **nothing**. | builtin-object materialization (#4619 family) |
+| A3 static type | `S15.2.2.1_A2_T5` (`new Object(<Date>).getFullYear()`) | Identity holds; the checker types the expression `Object`, so the method does not dispatch. Needs `Object(x)`'s static type to follow the argument — a checker/type-mapper change, not a proto-representation one. | type-mapper / `Object` intrinsic signature lane |
+| A3 `.constructor` | `S15.2.1.1_A2_T11`, `S15.2.2.1_A2_T7` | `n_obj.constructor === Function` needs the same missing `%Function.prototype%` materialization as the A1-chain-depth row. | builtin-object materialization |
+| A3 slot typer | `preventExtensions/15.2.3.10-2` | **NOT a `preventExtensions` bug.** Measured (`.tmp/p11.js`): `Object.preventExtensions(o) === o` is TRUE, and `var b; b = Object.preventExtensions(o)` works. The failing fact is `var a = undefined; a = o; a === o` — the `undefined` initializer types the SLOT, so the later object write is lost. | module-global slot typer (`declarations/heterogeneous-scalar-var-widening.ts` family) |
+| A4 own-props | `built-ins/Function/prototype/S15.3.5.2_A1_T1` | The row's subject is `new Function("", null)` — a GENERIC runtime-eval marker. #4624's header already prices and declines a `prototype` for it: answering `true` with no prototype OBJECT to hand back would be two surfaces disagreeing about one value. The A4 arm shipped here covers user functions, which the row does not use. | runtime-eval (#4624 T7 successor) |
+| A4 framing | — | The issue's A4 description (`obj.apply = Function.prototype.apply; typeof obj.apply === "function"`, then `obj.apply(...)`) **already works on the base** — measured `.tmp/p13.js`, both `apply` and `call`. The rows filed under A4 are chain-depth rows (above) or eval-tier rows (below), not borrowed-intrinsic-value rows. | — (map correction) |
+| A5 | `S15.3.2.1_A1_T10/_A2_T5/_A2_T6/_A3_T3/_A3_T15`, `S15.3.4.3_A5_T8/_A7_T6/_A8_T6`, `S15.3.4.4_A5_T8/_A6_T1/_A6_T2/_A6_T6/_A7_T6`, `S13.2.2_A8_T3` | Re-measured under the QUICKJS tier (`JS2WASM_QUICKJS_ARTIFACT_DIR=…/quickjs-artifact-2e2d7736713beeda`, the verified key for this source): every one is about a `Function(src)`-minted function's `length` / `prototype` / parameter binding / `this` install. Provider-capability walled — the compiled lane owns none of it. | runtime-eval (#4624 R4) |
+| A2 `with` | `S13.2.2_A17_T3` | The `RuntimeError: dereferencing a null pointer` is a `with`-statement scoping failure (`var getRight` inside `with(__obj)` clobbers the module binding), not a §13.2.2 construct-return failure. `with` is a deferred feature in the IR budget table. | deferred (`with`) |
+| A2 misc | `S13.2.2_A2`, `_A4_T2`, `_A18_T1/_T2`, `_A19_T8`, `13.2-17-1`, `13.2-18-1` | Distinct, unrelated facts (thrown-error identity, `arguments.callee`, named-funcexpr self-reference, `fun.prototype.constructor` attributes). None is the representation question this issue owns. | successor `fix(...)` per row |
+
+## Gap statement — why this is `in-progress`, not `done`
+
+The acceptance bar had five clauses. Four are met and verified from this agent's
+own runs; **one is not**, so the issue stays `in-progress` rather than claiming a
+completion it does not have.
+
+| clause | verdict |
+| ------ | ------- |
+| A1 representation decision recorded + measured | **met** — decision block in `proto-function-value.ts` and above, 4 test262 flips, 3 probe-verified shapes, #4623's `it.fails` residual retired |
+| A3 `Object(f) === f` identity | **met** — identity already held on the base; the callable/`typeof` half now works, 2 flips, pinned with negative controls |
+| scoped sweeps before AND after, zero regressions | **met** — 1,372 rows, both arms run by this agent, +6/−0, and no still-failing row changed its error string |
+| neighbour pins 4506/4623/4624/4619 green + new `tests/issue-4637.test.ts` | **met** |
+| **A2 crashes gone** | **NOT met** |
+
+The A2 crash the plan named first — `S13.2.2_A17_T3`,
+`RuntimeError: dereferencing a null pointer in __module_init()` — was
+root-caused, not skipped: it is a **`with`-statement scoping failure**. The
+module-level `var getRight = function(){…}` binding reads null at the check on
+L38 because a `var getRight` declared *inside* `with(__obj){…}` in an IIFE
+clobbers it. `with` is a deferred feature (the IR fallback budget lists it under
+`deferred-feature`, wont-fix), and nothing about §13.2.2 construct-return is
+involved. Fixing it means implementing `with`-scope var semantics, which is not
+this issue and is not a proto-representation change.
+
+The other rows that *look* like crashes in the A2 list resolve the same way on
+inspection: `S15.3.4.3_A8_T6`, `S15.3.4.4_A6_T1`, `_A7_T6` and `15.3.4.5-2-8`
+are `Function(src)`-minted / `bind` rows, i.e. A5 and the bind lane, not
+construct-return.
+
+**Recommendation for the lead:** the branch is complete and mergeable as it
+stands — the code, pins and sweeps are self-contained and regression-free. Flip
+this issue to `done` on merge and open the successor scope named at the end of
+the Results section (**materialize `%Function.prototype%` with its §20.2.3 own
+properties**), which is what actually unlocks the remaining `built-ins/Function`
+rows now that A1 has made a function-valued prototype a walkable chain. The
+`with` row belongs to the deferred bucket, not to a successor of this issue.
+
+## Results
+
+### test262 — scoped standalone sweep, BOTH arms run by this agent
+
+Scope: 1,372 ES≤5 files — `language/statements/function/**` +
+`built-ins/Function/**` + the `built-ins/Object` subtrees a proto-representation
+change can reach (`S15.2.*` top level, `create/`, `getPrototypeOf/`,
+`preventExtensions/`, `isExtensible/`, `keys/`, `freeze/`, `seal/`, `isFrozen/`,
+`isSealed/`, `getOwnPropertyNames/`, `prototype/`). Filtered through
+`.tmp/es5-files.txt`. `--target standalone` via the real `runTest262File`,
+QUICKJS eval tier (`JS2WASM_QUICKJS_ARTIFACT_DIR=…/quickjs-artifact-2e2d7736713beeda`).
+
+| arm | pass | fail | compile_error | artifact |
+| --- | ---: | ---: | ------------: | -------- |
+| before (branch base `81445abf7`) | 1302 | 69 | 1 | `.tmp/before-final.jsonl`, run 2026-08-23 07:36–08:20 |
+| after (`f6d98fd07`)              | **1308** | **63** | 1 | `.tmp/after.jsonl`, run 2026-08-23 08:20–09:1x |
+
+**+6, zero regressions, and zero still-failing rows whose ERROR STRING changed** —
+the last is the check that catches a fix trading one failure for another inside
+the same row.
+
+The before arm is a genuine base measurement, not an inherited artifact: the
+sweep process loaded `src/` at startup, before the first source edit, and the
+three anchor rows in `.tmp/before-final.jsonl` carry the exact base errors
+(`__PROTO.isPrototypeOf(__monster) must be true`, `__instance is not a function`,
+`n_obj is not a function`).
+
+### Flip list
+
+| row | family | was |
+| --- | ------ | --- |
+| `language/statements/function/S13.2.2_A1_T1.js` | A1 | `#1: __PROTO.isPrototypeOf(__monster) must be true` |
+| `language/statements/function/S13.2.2_A1_T2.js` | A1 | same, `var`-spelled ctor |
+| `language/statements/function/S13.2.2_A8_T1.js` | A2 | `TypeError: __instance is not a function` |
+| `language/statements/function/S13.2.2_A8_T2.js` | A2 | same |
+| `built-ins/Object/S15.2.2.1_A2_T2.js` | A3 | `TypeError: n_obj is not a function` |
+| `built-ins/Object/S15.2.2.1_A2_T6.js` | A3 | same |
+
+### Probe-verified, no test262 row of its own
+
+- `Object.create(<function>)`: inherited read, `getPrototypeOf` identity and
+  `isPrototypeOf` all flip false→true (`.tmp/p2.js`).
+- `instanceof` through a function-valued prototype (`S15.3.5.3_A3_T2`'s shape)
+  flips false→true (`.tmp/p1.js`).
+- `typeof (new F())` where F returns a function: `"object"` → `"function"`
+  (`.tmp/p6.js`).
+- `f.hasOwnProperty("prototype")` for a user function: false → true
+  (`.tmp/p13.js`). The test262 row for this (`S15.3.5.2_A1_T1`) uses
+  `new Function("", null)` and stays a residual.
+
+### Pins
+
+- **New** `tests/issue-4637.test.ts` — 16 tests: 12 pinning the fixed families
+  (including four NEGATIVE controls: an ordinary-object prototype is untouched,
+  a function is not reported as the prototype of an unrelated object,
+  `new Plain()()` still throws, `new Object(42)()` / `new Object()()` still
+  throw) and 4 `it.fails` pinning the measured residuals. All 16 green. No case
+  mints from a body string, so no eval-tier arm is needed.
+- **`tests/issue-4623.test.ts`** — its standalone `it.fails` residual
+  ("standalone: P.isPrototypeOf(new F()) is true when F.prototype = P", added by
+  #4623 with the note *"pinned failing so the day the representation lands, this
+  test says so"*) now PASSES and has been flipped to an ordinary `it`. The JS-host
+  twin stays `it.fails`, with the lane-gating reason recorded inline.
+- Neighbour pins green (own runs): `tests/issue-4506.test.ts` +
+  `tests/issue-4619.test.ts` 45/45; `tests/issue-4623.test.ts` 14/14 after the
+  flip; `tests/issue-4624.test.ts` 15/15 (QUICKJS tier).
+
+### Gates (own runs)
+
+`check:loc-budget` OK (four grants above), `check:func-budget` OK (four grants),
+`check:oracle-ratchet` OK (`getTypeAtLocation +0, ctx.checker +0` across 14
+changed codegen files), `check:coercion-sites` OK, `check:stack-balance` OK (no
+fixup-bucket increases), `check:dead-exports` OK, prettier + biome lint clean.
+
+### What this issue did NOT deliver, plainly
+
+The issue's headline was "~48 rows". Six flipped. The gap is not effort
+mis-spent — it is that **the row-to-family map in the Problem section does not
+survive re-measurement**:
+
+- A4's stated surface (borrowed intrinsic values on a plain object:
+  `obj.apply = Function.prototype.apply; typeof obj.apply`) **already works on
+  the base** — measured, both `apply` and `call`. The rows filed under A4 are
+  really A1-chain-depth rows (`FACTORY.prototype = Function.prototype`) or A5
+  eval-tier rows.
+- A3's stated cause ("`emitObjectCoercion` compiles the arg to plain externref,
+  losing the carrier") is **not** what fails: the carrier survives and
+  `Object(f) === f` already held. The static TYPE of the expression was the lie.
+- A5's 14 rows are provider-capability walled, as the plan anticipated.
+- The single largest remaining blocker behind the A1-chain-depth and
+  `.constructor` rows is one concrete, nameable thing: **`%Function.prototype%`
+  is materialized as an EMPTY `$Object`** (`emitFunctionPrototypeObjectSingleton`
+  builds it with `__object_create(null)` and installs no §20.2.3 own property).
+  That is the successor scope, and it is now unblocked — with A1 landed, a
+  function-valued prototype is a walkable chain, so the moment
+  `%Function.prototype%` carries `call`/`apply`/`bind`/`toString`, the
+  `S15.3.4.3_A1_*` / `S15.3.4.4_A1_*` / `S15.2.x .constructor` rows resolve
+  through the SAME walk with no new mechanism.
+
+### Equivalence (per-file loop — a single vitest invocation OOMs in this container)
+
+23 files scoped to what this diff can reach (the `object-*`, `typeof-*`, `new-*`,
+call-dispatch and prototype-chain suites) — all green except one, which is a
+**pre-existing environment failure, A/B-confirmed**:
+
+`tests/equivalence/new-non-constructor.test.ts` fails 2/3 identically on the
+branch base and on this commit. It hard-codes
+`/workspace/test262/test/built-ins/Math/ceil/not-a-constructor.js`, and an agent
+worktree is not at `/workspace`, so the read is ENOENT and the follow-on case
+gets an empty binary. Measured both arms with a `git checkout <base> -- src/codegen`
+revert: `2 failed | 1 passed` before and after.
+
+Green: `object-create`, `object-mutability`, `object-keys`,
+`object-define-property`, `object-define-property-return`, `object-to-primitive`,
+`issue-799-prototype-chain`, `issue-4123-param-receiver-proto-method`,
+`hasownproperty-call`, `typeof-comparison`, `typeof-extended`,
+`typeof-member-expression`, `typeof-narrowing`, `symbol-typeof`,
+`new-expression-spread`, `wrapper-constructors`, `fn-variable-call`,
+`arrow-call-apply`, `iife-and-call-expressions` (70), `empty-object-widening`,
+`function-name-length`, `arguments-object`.
+
+## Handed to another lane
+
+dev-4639 (#4639) reported, and this agent reproduced under the QUICKJS tier
+(`.tmp/p15.js` / `.tmp/p16.js`): a `Function()`-minted function with an EMPTY
+body returns JS **`null`**, not `undefined`.
+
+    function h() {}
+    var g0 = Function();                    String(g0())  →  "null"      (want "undefined")
+    var g1 = Function("return undefined;");  String(g1())  →  "undefined" ✓
+    var g2 = Function("return null;");       String(g2())  →  "null"      ✓
+    var g3 = Function("var x = 1;");         String(g3())  →  "null"      (want "undefined")
+
+The discriminator matters: the **explicit** `return undefined;` decodes
+correctly, so `buildRuntimeEvalValueUnwrap`'s
+`RUNTIME_EVAL_VALUE_KIND_UNDEFINED` arm (`src/codegen/runtime-eval-boundary.ts`,
+which already prefers the `undefinedSingleton` global over `ref.null.extern`) is
+**not** the defect. The two failing shapes are exactly the ones with an IMPLICIT
+completion value, so the envelope's value slot for an implicit return is either
+not a `$RuntimeEvalValue` carrier at all — in which case
+`buildRuntimeEvalValueUnwrap`'s `ref.test`-fails else-arm passes the raw
+`ref.null.extern` straight through, and that is JS `null` — or it is a carrier
+tagged `KIND_NULL`. That is a provider-side / envelope-encoding question, in the
+runtime-eval lane, not in this issue's proto-representation scope, and changing
+the decode blind would alter every interpreted return's value model without a
+sweep to cover it. **Declined here; owner: runtime-eval (#4624 family).** It is
+the cause of `built-ins/String/prototype/replace/S15.5.4.11_A1_T5`.
