@@ -53,19 +53,15 @@ jobs:
       contents: read
 
     steps:
-      - name: Resolve immutable source revision
-        id: refs
-        shell: bash
-        # The run-wide pin from the caller's `resolve` job — NOT the trigger
-        # sha. Every measure row checked out this same revision.
-        run: echo "source_sha=${{ inputs.source_sha }}" >> "$GITHUB_OUTPUT"
-
       # This job only assembles trusted worker output and performs promotion.
       # The workers already checked out the same immutable source revision and
-      # do not receive write credentials.
+      # do not receive write credentials. `inputs.source_sha` is the caller's
+      # `github.sha` — the trusted trigger revision, used directly (routing a
+      # sha through a step output makes it tainted data to CodeQL's
+      # actions/cache-poisoning query; that pattern cost PR #4796 six alerts).
       - uses: actions/checkout@v5
         with:
-          ref: ${{ steps.refs.outputs.source_sha }}
+          ref: ${{ inputs.source_sha }}
           fetch-depth: 1
           submodules: false
           persist-credentials: false
@@ -281,7 +277,7 @@ jobs:
         id: promote
         env:
           MAIN_DEPLOY_KEY: ${{ secrets.MAIN_DEPLOY_KEY }}
-          SOURCE_SHA: ${{ steps.refs.outputs.source_sha }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -439,7 +435,7 @@ jobs:
         if: steps.promote.outputs.published == '1' && steps.queue_state.outputs.pr_number == ''
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          SOURCE_SHA: ${{ steps.refs.outputs.source_sha }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
         shell: bash
         run: |
           set -euo pipefail

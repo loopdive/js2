@@ -42,12 +42,11 @@ name: Refresh npm-compat
 # call it (see the class-coverage test in tests/issue-3915-*.test.ts).
 on:
   # Driven by merges to MAIN — no cron (stakeholder, 2026-08-23). The rule:
-  # if a refresh is already running, the push queues the next run; further
-  # merges REPLACE the queued run while it waits (the single concurrency
-  # group below keeps only the latest pending run); when the active run
-  # finishes, exactly ONE queued run starts — and the `resolve` job pins
-  # refs/heads/main at that moment, so it measures the latest main, not the
-  # sha of whichever merge happened to survive the queue.
+  # if a package's measurement is already running, the push queues the next
+  # one; further merges REPLACE the queued row while it waits (each
+  # per-package concurrency group keeps only the latest pending row); when
+  # the active row finishes, exactly ONE queued row starts — the one from
+  # the newest merge, measuring that merge's own (newest) revision.
   push:
     branches: [main]
     # DO NOT re-trigger on our OWN landing. The measurement includes perf
@@ -83,27 +82,35 @@ env:
 # package costs only its own entry (the coordinator carries it forward from
 # the last snapshot, marked stale). Promotion is split into two lanes (fast /
 # long-pole) so the dashboard updates the moment the fast rows finish. The
-# resolve-at-start pin below is what keeps per-row coalescing lossless: a
-# superseded queued row's trigger is contained in the main the surviving row
-# measures.
+# trigger-sha pin (see the `resolve` job) is what keeps per-row coalescing
+# lossless: a superseded pending row's trigger is contained in the newer main
+# whose own run's row survives the per-package queue.
 
 jobs:
-  # Pin main HEAD ONCE, at run start, for every job in this run. Runs no
-  # longer measure their trigger sha: a run that sat queued behind a 4-hour
-  # predecessor would otherwise measure a main that is hours stale on
-  # arrival, and coalescing queued runs (see `concurrency` above) would lose
-  # measurements. Resolving here makes the surviving run measure the newest
-  # main and keeps all nine matrix rows plus the coordinator on ONE immutable
-  # revision even while main advances mid-run.
+  # ONE immutable revision for every job in this run: the TRIGGER sha, via the
+  # trusted `github.sha` context — deliberately NOT an API-resolved "latest
+  # main". Two reasons:
+  #   1. It loses nothing. Runs start immediately (serialization moved to the
+  #      per-package rows), so the trigger sha IS main HEAD at run start; and
+  #      any newer content-bearing merge starts its own run whose rows
+  #      supersede this run's pending rows in their per-package groups. The
+  #      only pushes that don't spawn a superseding run are the artifact-only
+  #      ones filtered by `paths-ignore` — which change nothing measurable.
+  #   2. A sha carried through a step output is TAINTED data to CodeQL
+  #      (actions/cache-poisoning, 6 alerts on PR #4796): checking out an
+  #      expression the analysis can't prove immutable in a default-branch
+  #      workflow that then writes the shared pnpm cache reads as a
+  #      cache-poisoning vector. `github.sha` is a trusted context, and it
+  #      really is the stronger guarantee — nothing between GitHub and the
+  #      checkout can substitute a different revision.
   resolve:
-    name: Resolve latest main
+    name: Plan the measurement matrix
     if: github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
     outputs:
-      sha: ${{ steps.head.outputs.sha }}
       # Per-lane package matrices, planned from the repo's own catalog at the
       # pinned revision (scripts/list-npm-compat-packages.mjs). Adding a
       # package to the catalog — or flagging one `"longPole": true` — scales
@@ -111,21 +118,9 @@ jobs:
       fast_packages: ${{ steps.plan.outputs.fast }}
       slow_packages: ${{ steps.plan.outputs.slow }}
     steps:
-      - name: Resolve main HEAD
-        id: head
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)
-          if [ -z "$sha" ]; then echo "could not resolve refs/heads/main" >&2; exit 1; fi
-          echo "resolved main HEAD: $sha (trigger was ${GITHUB_SHA})"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-
       - uses: actions/checkout@v5
         with:
-          ref: ${{ steps.head.outputs.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
           submodules: false
           persist-credentials: false
@@ -162,9 +157,12 @@ jobs:
     permissions:
       contents: read
     steps:
+      # `github.sha`, not a job output — a step-output sha is tainted data to
+      # CodeQL and reads as cache poisoning against the default-branch pnpm
+      # cache (see the `resolve` job comment).
       - uses: actions/checkout@v5
         with:
-          ref: ${{ needs.resolve.outputs.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
           submodules: false
           persist-credentials: false
@@ -215,9 +213,10 @@ jobs:
     permissions:
       contents: read
     steps:
+      # `github.sha` for the same cache-poisoning reason as measure-fast.
       - uses: actions/checkout@v5
         with:
-          ref: ${{ needs.resolve.outputs.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
           submodules: false
           persist-credentials: false
@@ -262,7 +261,7 @@ jobs:
     if: always() && needs.resolve.result == 'success' && needs.measure-fast.result != 'cancelled' && github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
     uses: ./.github/workflows/npm-compat-promote.yml
     with:
-      source_sha: ${{ needs.resolve.outputs.sha }}
+      source_sha: ${{ github.sha }}
       partial_pattern: npm-compat-partial-fast-*
       lane: fast
     secrets: inherit
@@ -272,7 +271,7 @@ jobs:
     if: always() && needs.resolve.result == 'success' && needs.measure-slow.result != 'cancelled' && github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
     uses: ./.github/workflows/npm-compat-promote.yml
     with:
-      source_sha: ${{ needs.resolve.outputs.sha }}
+      source_sha: ${{ github.sha }}
       partial_pattern: npm-compat-partial-slow-*
       lane: slow
     secrets: inherit
