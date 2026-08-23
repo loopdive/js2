@@ -98,6 +98,7 @@ import {
 } from "./carrier-bag-visibility.js";
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { reserveClosurePrototypeEdge } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge
+import { reserveProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
 // (#4230 L1) the #3251 overlay companion as a THIRD key source for the vec key walks
 import { buildOverlayPushKeys, buildVecOverlayHasArm, reserveVecOverlayPushKeys } from "./vec-overlay-keys.js";
 // (#4194) instance expando substrate — composes AROUND the #3537/#3468 arms and
@@ -1056,6 +1057,13 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // (#2660 M3) The function-value → prototype-object identity edge — same
     // reserve-before-arms-bake discipline; see `closure-prototype-edge.ts`.
     reserveClosurePrototypeEdge(ctx);
+    // (#4637 A1) The bag↔callable proto-view map. Must come AFTER
+    // `reserveClosurePropHelpers` (its fill bakes `__closure_bag_ensure`'s
+    // funcIdx) and BEFORE `buildObjectPrototypeHelpers` below, which bakes
+    // `call __proto_from_function` / `call __function_from_proto` into
+    // `__object_create` / `__getPrototypeOf` / `__isPrototypeOf` /
+    // `__object_setPrototypeOf`.
+    reserveProtoFunctionValue(ctx, objectTypeIdx);
     // (#3537) reserve the array-expando side table right after — same
     // reserve-before-arms-bake discipline, appended indices only.
     reserveVecPropHelpers(ctx);

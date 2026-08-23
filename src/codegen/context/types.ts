@@ -1944,6 +1944,31 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   closurePropHeadGlobalIdx?: number;
   /**
+   * (#4637 A1) Set when `ensureObjectRuntime` reserved the function-value
+   * proto-view helpers (`__proto_from_function`, `__function_from_proto`) — the
+   * bag↔callable identity map that lets a FUNCTION sit in a `[[Prototype]]`
+   * position that `(ref null $Object)` cannot hold. Same reserve-then-fill
+   * discipline as `closurePropHelpersReserved`; standalone/wasi only, so the
+   * gc/host path stays byte-identical.
+   */
+  protoFunctionValueReserved?: boolean;
+  /**
+   * (#4637 A1) Type index of the `$ProtoFnEntry` linked-list node
+   * `{ next: (ref null $ProtoFnEntry); bag: (ref null $Object); fn: externref }`.
+   */
+  protoFnEntryTypeIdx?: number;
+  /**
+   * (#4637 A1) Global index of `$__proto_fn_head`
+   * (`(mut ref null $ProtoFnEntry)`, init `ref.null`).
+   */
+  protoFnHeadGlobalIdx?: number;
+  /**
+   * (#4637 A1) The `$Object` type index the proto-view helpers were reserved
+   * against, threaded from `ensureObjectRuntime` so the FINALIZE fill does not
+   * keep a second copy of that layout fact.
+   */
+  protoFnObjectTypeIdx?: number;
+  /**
    * (#3537) Set when `ensureObjectRuntime` reserved the array ($Vec) expando
    * side-table helpers (`__is_vec_prop_carrier`, `__vec_bag_lookup`,
    * `__vec_bag_ensure`, `__vec_prop_get`, `__vec_prop_set`) — the ARRAY arm of

@@ -173,6 +173,17 @@ describe("#4623 measured residual — a FUNCTION-valued .prototype has no chain 
   // lanes: `Object.getPrototypeOf(m) === P` is false, so a CORRECT chain walk
   // still answers false. Pinned failing so the day the representation lands,
   // this test says so.
+  //
+  // (#4637 A1) **It landed, on STANDALONE.** `src/codegen/proto-function-value.ts`
+  // canonicalizes a callable to its own-property bag `$Object` at the
+  // proto-position choke points, with a reverse map so `getPrototypeOf` still
+  // answers the function. The standalone pin below is now an ordinary `it`, and
+  // `S13.2.2_A1_T1` / `_T2` pass. The JS-host pin stays `it.fails`: that arm is
+  // gated on `ctx.standalone || ctx.wasi`, because in host mode the
+  // `env::__extern_*` / `__boundary_object_*` imports own the prototype chain,
+  // so the same canonicalization would have to be stated a second time inside
+  // the host runtime. Deliberately not done here — one representation, one lane,
+  // one measurement.
   const SHAPE = `
     function P() {}
     function F() {}
@@ -180,7 +191,7 @@ describe("#4623 measured residual — a FUNCTION-valued .prototype has no chain 
     var m = new F();
   `;
 
-  it.fails("standalone: P.isPrototypeOf(new F()) is true when F.prototype = P", async () => {
+  it("standalone: P.isPrototypeOf(new F()) is true when F.prototype = P", async () => {
     expect(await runStandalone(SHAPE, "P.isPrototypeOf(m) === true ? 1 : 0")).toBe(1);
   });
 
