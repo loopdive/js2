@@ -702,6 +702,18 @@ Two lessons, and the second is the one worth carrying:
   surrounding syntax, not the nesting depth. Both of us had varied everything
   except that.
 
+A third lesson came out of *how* the disagreement was handled, and it is a brief
+gap rather than either lane's carelessness — **both lanes independently stopped
+at the same wrong place, from opposite sides.** This lane wrote "different trees,
+neither of us can speak for the other's"; dev-4653 wrote "I can only say it does
+not reproduce here, whether their tip differs is theirs to measure." Both are the
+third-arm rule invoked to avoid reconciling. The rule governs **claims**, not
+**disagreements**: "it does not reproduce here" is a hypothesis about your own
+cell before it is a fact about their tree. dev-4653 has amended the brief for it
+(their `issue-4653` @ `e37bfab39`), together with the corollary that opened this
+one — read the peer's error text against the peer's quoted source, because a name
+that does not match means you are not looking at the program that ran.
+
 Still holds from every round: `for`-vs-`while` is irrelevant, and the loop
 itself is irrelevant. Plausibly the same substrate as
 `language/expressions/assignment/S11.13.1_A6_T{1,2}` (an eval `var` must land in
@@ -771,8 +783,14 @@ their fix on a module shape they did not write (`deferTopLevelInit: true`,
   lane's pin suite reported `Tests 22 passed` next to `Errors 1 error` — the
   error being `[vitest-worker]: Timeout calling "onTaskUpdate"`, vitest's own
   RPC giving up under load, with no test involved. Read what the error IS
-  before treating it as a result; here `22 passed` is the verdict and the
-  error is box noise.
+  before treating it as a result.
+- **The counts rule is `N == declared`, not `N > 0`** (dev-4491's calibration,
+  prompted by the line above). A dropped task update shows up as a total BELOW
+  the file's real count, so `N > 0` passes a run that lost half its tests.
+  Checked here: this file declares 22 `it(`, the run reported `22 passed (22)`,
+  so nothing was lost despite the `Errors` line — the equality is what
+  established that, and it is the same one comparison that catches all four
+  zero-selection cases. Adopted in `plan/method/es5-standalone-agent-brief.md`.
 - **A survey run entirely at module top level is blind to any defect gated on
   "inside an enclosing function"** — and worse, it mis-attributes the one case
   that does surface, because that case looks like the odd one out. See the

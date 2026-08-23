@@ -133,62 +133,37 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
      either lane could run would have compiled the combination. Cross-lane
      hazards are only visible on the combined tree — the lead's merge
      verification must include running each lane's suite there.
-   - The merge check confirms the run says **N passed** — never that it
-     exited 0. **Any mechanism that selects zero tests reports the same
-     green**, and there are now four measured ones: a `describe.skipIf`
-     gate; a suite that spins its own `CompilerPool` whose worker cannot
-     start (below); a `-t` filter that matches nothing — **`vitest -t` is a
-     REGEX**, so `-t "f + 1 must agree"` requires two spaces and selects
-     zero (2026-08-23, dev-4491, on a file with no `skipIf` in it at all);
-     and a path/glob that matches no file. `21 skipped` beside `1 failed`
-     is what tells you a filter has finally bitten. Escape `+ ( ) [ ] . * ?`
-     in `-t`, or match on a plain substring of the test name.
-
-     **The check is `N == the file's DECLARED test count`, not `N > 0`
-     (2026-08-23, dev-4491).** A fifth member of the family does not
-     produce zero: under load, vitest's own `Timeout calling
-     "onTaskUpdate"` RPC drops task updates, so passes print but the tally
-     comes up SHORT — `Tests 22 passed` beside an `Errors 1 error` line
-     that a results-filtering `grep` will not have matched either. One
-     comparison covers all five: `N == 0` catches the four
-     zero-selection causes; `N < declared` catches the dropped-RPC case;
-     `N > 0` alone passes a run that silently lost half its tests. Get the
-     denominator with `grep -c "^  it(" <file>`. Contention fakes the
-     ABSENCE of failure as readily as its presence.
-
-8. **A residual is a CLAIM, and `it.fails` protects it from ever being
-   tested (2026-08-23, dev-4653 self-correction).** This is the cheapest
-   place in the method for a wrong statement to survive indefinitely, and
-   it was found the only way it can be — by accident, when a sibling
-   lane's message forced a re-open of a row already written up, swept
-   green, pinned, and committed.
-
-   The failure shape: a lane attributes a residual to a root it inferred
-   rather than probed, then pins it `it.fails`. The pin **passes**,
-   because the row does fail — just not for the stated reason. The sweep
-   is green, the suite is green, and the wrong root is now documented as
-   a measurement for the next lane to build on. Nothing in the workflow
-   ever re-examines it. Measured instance: "the minted function does not
-   bind its declared parameters" survived a full lane and its pins, while
-   `new Function("p","return p;")(7)` answers `7` — one probe, never run,
-   and the attribution was backwards (the defect is `++` on a
-   mint-LOCAL name, only inside an enclosing function; see #4662).
-
-   Rules that fall out:
-   - **Probe the NEGATIVE case before attributing a residual.** State the
-     one observation that would refute your root, run it, and record the
-     result. An attribution you did not try to falsify is a hypothesis,
-     so label it one — `suspected root`, not `root`.
-   - **Every `it.fails` pin carries POSITIVE CONTROLS that must pass**,
-     chosen so the suite claims the specific root rather than the general
-     area. dev-4653's corrected pins are the worked example: two
-     `it.fails` on "`++` on a mint-local name" plus controls asserting
-     that parameter binding works and that outer-`++` works. Without the
-     controls, a future fix that widens the wrong thing repairs the pin
-     and reads as green.
-   - Residual attributions are what the NEXT lane starts from, so a wrong
-     one costs more than a missing one. "Root unknown, here is what I
-     ruled out" is a better handover than a confident wrong root.
+   - The merge check reads the run's **counts**, never its exit status —
+     and the check is **N == the number of tests the file declares**, not
+     `N > 0` (2026-08-23, dev-4491's calibration). Five measured ways a run
+     lies, all caught by that one comparison:
+     - `N == 0`, reported green: a `describe.skipIf` gate; a suite that
+       spins its own `CompilerPool` whose worker cannot start (below); a
+       path/glob matching no file; and a `-t` filter matching nothing —
+       **`vitest -t` is a REGEX**, so `-t "f + 1 must agree"` requires two
+       spaces and selects zero, on a file with no `skipIf` in it at all.
+       Escape `+ ( ) [ ] . * ?`, or match a plain substring.
+     - `0 < N < declared`: vitest's own RPC dropping task updates under
+       load (`[vitest-worker]: Timeout calling "onTaskUpdate"`). `N > 0`
+       passes a run that lost half its tests; only the equality catches it.
+     `21 skipped` beside `1 failed` is the tell for the first group.
+     Establish the declared count independently before trusting the
+     summary — `grep -cE '^\s+it(\.fails)?\(' <file>` is the cheap version,
+     and it is a floor, not a census (it misses `it.each`, `test(`, and
+     generated cases).
+   - **Contention fakes the ABSENCE of failure as well as its presence.** A
+     run can print `22 passed` beside `Errors 1 error` where the error is
+     that RPC timeout and no test is involved. Read what the error IS. In
+     the measured case the tally equalled the file's declared 22, so
+     nothing had been lost — which is exactly the comparison above doing
+     its job, and is why an `Errors` line is not by itself a verdict.
+   - **A pipe can hide the line that would have told you.** Several
+     result-bearing runs were filtered inline through
+     `grep -E "✓|×|passed|failed|skipped"`, which does not match `Errors N
+     error` — so those runs cannot retrospectively be cleared of the RPC
+     case (dev-4491, self-audit; the totals matched the declared counts, so
+     the conclusions stood). Same defect class as the `-t` regex: a filter
+     that removes the evidence of its own unreliability.
 
 ## Environment trap: fresh worktrees have NO .test262-cache (#4484 finding)
 
