@@ -98,6 +98,11 @@ import {
 import { emitMaterializedArgumentsVector, prepareCompiledApplyBridge } from "./apply-arguments-vector.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
+import { emitVirtualMethodDispatchByTag } from "./virtual-dispatch.js";
+
+// (#1299) Lives in its own subsystem module since 2026-08-23; re-exported here
+// because call sites import it from `calls.ts`.
+export { emitVirtualMethodDispatchByTag };
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import {
   addFuncType,
@@ -272,6 +277,7 @@ import {
   tryStaticEvalInline,
   tryStaticFunctionCtorCall,
 } from "./eval-inline.js";
+import { tryHostDynamicFunctionCtorValue } from "./dynamic-function-ctor-value.js"; // (#4650)
 import { dynamicEvalRefusalMessages } from "./runtime-eval-provider.js";
 import {
   ensureRuntimeEvalInterpretedCallbackType,
@@ -4325,151 +4331,6 @@ export function tryEmitInlineDynamicCall(
 }
 
 /**
- * (#1299) Emit a tag-based virtual method dispatch for a base-typed
- * receiver where multiple subclasses provide overriding implementations.
- * Mirrors the `instanceof` codegen: load the receiver's `__tag` field
- * (i32, set in each subclass's constructor) and compare against each
- * candidate's known `classTag` value, calling the matching subclass's
- * method body. Receiver and arguments are evaluated once and saved to
- * temp locals so each branch can reference them.
- *
- * Returns the call's IR result type, or undefined if dispatch could not
- * be emitted (caller falls back to the existing static path).
- */
-export function emitVirtualMethodDispatchByTag(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  expr: ts.CallExpression,
-  propAccess: ts.PropertyAccessExpression,
-  candidates: { className: string; funcIdx: number; classTag: number }[],
-  baseClassName: string,
-): InnerResult | undefined {
-  // Resolve the base struct typeIdx for `struct.get __tag` (field 0).
-  const baseStructIdx = ctx.structMap.get(baseClassName);
-  if (baseStructIdx === undefined) return undefined;
-
-  // Validate first candidate's signature (used as the schema for arg
-  // type hints and return-type lookup; all overrides share the same
-  // user-visible signature).
-  const firstCand = candidates[0]!;
-  const firstParamTypes = getFuncParamTypes(ctx, firstCand.funcIdx);
-  if (!firstParamTypes || firstParamTypes.length === 0) return undefined;
-
-  // Compile the receiver expression — produces a ref-typed value.
-  const recvType = compileExpression(ctx, fctx, propAccess.expression);
-  if (!recvType || (recvType.kind !== "ref" && recvType.kind !== "ref_null")) return undefined;
-
-  const recvLocalType: ValType = { kind: "ref_null", typeIdx: (recvType as { typeIdx: number }).typeIdx };
-  const recvLocal = allocTempLocal(fctx, recvLocalType);
-  fctx.body.push({ op: "local.set", index: recvLocal });
-
-  // Evaluate args and save each to a temp local. Pad missing args with
-  // default values so call sites can omit trailing arguments.
-  const argLocals: { idx: number; type: ValType }[] = [];
-  const userParamCount = firstParamTypes.length - 1; // exclude self
-  const argCount = Math.min(expr.arguments.length, userParamCount);
-  for (let i = 0; i < argCount; i++) {
-    const expectedArgType = firstParamTypes[i + 1];
-    const aType = compileExpression(ctx, fctx, expr.arguments[i]!, expectedArgType);
-    if (!aType) return undefined;
-    const local = allocTempLocal(fctx, aType);
-    fctx.body.push({ op: "local.set", index: local });
-    argLocals.push({ idx: local, type: aType });
-  }
-  for (let i = expr.arguments.length + 1; i < firstParamTypes.length; i++) {
-    const paramType = firstParamTypes[i]!;
-    pushDefaultValue(fctx, paramType, ctx);
-    const local = allocTempLocal(fctx, paramType);
-    fctx.body.push({ op: "local.set", index: local });
-    argLocals.push({ idx: local, type: paramType });
-  }
-
-  // Determine return type from the first candidate's signature.
-  const sig = ctx.checker.getResolvedSignature(expr);
-  let resultType: ValType | typeof VOID_RESULT = VOID_RESULT;
-  if (sig) {
-    const retType = ctx.checker.getReturnTypeOfSignature(sig);
-    const fullName0 = `${firstCand.className}_${propAccess.name.text}`;
-    if (!isEffectivelyVoidReturn(ctx, retType, fullName0)) {
-      const wasmRet = getWasmFuncReturnType(ctx, firstCand.funcIdx);
-      resultType = wasmRet ?? resolveWasmType(ctx, retType);
-    }
-  }
-  if (resultType !== VOID_RESULT && wasmFuncReturnsVoid(ctx, firstCand.funcIdx)) {
-    resultType = VOID_RESULT;
-  }
-
-  const resultIsRef = resultType !== VOID_RESULT && (resultType.kind === "ref" || resultType.kind === "ref_null");
-
-  // (#2564) Each nested `if` in the tag cascade below MUST get its own
-  // `blockType` object — never a single shared one. `dead-elimination`'s
-  // `remapTypeIdxInBody` remaps a `ref`/`ref_null` block-type via `remapVT`,
-  // and its double-remap guard (`seen` WeakSet, #1302) keys on the *instruction*
-  // object, not on the `blockType.type` sub-object. The cascade builds one
-  // distinct `if` instruction per candidate; if they all alias the SAME
-  // `blockType.type` ValType, the second nested `if`'s visit chain-remaps the
-  // already-remapped index a second time (observed: 20→16 on the first `if`,
-  // then 16→13 on the second — the compaction map shifts each survivor down, so
-  // 13 is the fn-wrapper type), while the callee func's result type — remapped
-  // exactly once in the type table — lands on 16. The mismatch surfaces as
-  // `type error in fallthru[0] (expected (ref null 13), got (ref null 16))`.
-  // A fresh `{ ...resultType }` per `if` keeps each block-type remapped once.
-  const freshBlockType = (): { kind: "val"; type: ValType } | { kind: "empty" } =>
-    resultType === VOID_RESULT
-      ? { kind: "empty" }
-      : { kind: "val", type: resultIsRef ? { ...(resultType as ValType) } : (resultType as ValType) };
-
-  // Build the call body for one candidate. We need to ref.cast the
-  // receiver to the candidate's struct type before calling, so the
-  // function-type signature matches.
-  function callBody(cand: { className: string; funcIdx: number; classTag: number }): Instr[] {
-    const candParams = getFuncParamTypes(ctx, cand.funcIdx);
-    if (!candParams || candParams.length === 0) return [];
-    const selfType = candParams[0]!;
-    if (selfType.kind !== "ref" && selfType.kind !== "ref_null") return [];
-    const selfTypeIdx = (selfType as { typeIdx: number }).typeIdx;
-    const body: Instr[] = [];
-    body.push({ op: "local.get", index: recvLocal });
-    // ref.cast_null preserves nullability if the receiver might be null;
-    // ref.cast (non-null) traps on null. Use ref.cast_null since the
-    // receiver could be null at the static type level.
-    body.push({ op: "ref.cast_null", typeIdx: selfTypeIdx });
-    for (const a of argLocals) {
-      body.push({ op: "local.get", index: a.idx });
-    }
-    const finalIdx = ctx.funcMap.get(`${cand.className}_${propAccess.name.text}`) ?? cand.funcIdx;
-    body.push({ op: "call", funcIdx: finalIdx });
-    return body;
-  }
-
-  // Build the cascade: load __tag, compare to each candidate's classTag.
-  // Outermost: candidates[0]; deepest else: unreachable.
-  let elseInstrs: Instr[] = [{ op: "unreachable" }];
-  for (let i = candidates.length - 1; i >= 0; i--) {
-    const cand = candidates[i]!;
-    const branch: Instr[] = [
-      { op: "local.get", index: recvLocal },
-      { op: "struct.get", typeIdx: baseStructIdx, fieldIdx: 0 },
-      { op: "i32.const", value: cand.classTag },
-      { op: "i32.eq" },
-      {
-        op: "if",
-        blockType: freshBlockType(),
-        then: callBody(cand),
-        else: elseInstrs,
-      },
-    ];
-    elseInstrs = branch;
-  }
-  for (const instr of elseInstrs) fctx.body.push(instr);
-
-  for (const a of argLocals) releaseTempLocal(fctx, a.idx);
-  releaseTempLocal(fctx, recvLocal);
-
-  return resultType;
-}
-
-/**
  * Statically flatten an array literal's elements into a positional argument
  * list, expanding spreads of nested array literals (`[...[a, b]]` → `a, b`).
  * Returns undefined when the literal contains an element we cannot expand at
@@ -6455,6 +6316,14 @@ function compileCallExpression(
   // a local `Function` shadow fall through to the existing paths.
   {
     const r = tryStaticFunctionCtorCall(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+
+  // (#4650) JS-host VALUE form `Function(<args>)` called as a plain function —
+  // §20.2.1.1 makes it identical to `new Function(...)`, but only the
+  // NewExpression path routed a declined compile-away to the host shim.
+  {
+    const r = tryHostDynamicFunctionCtorValue(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
 

@@ -12,6 +12,8 @@ import { forEachChild, ts } from "../../ts-api.js";
 import { numericAdmissionEnabled } from "../analysis/mixed-assignment-carrier.js";
 import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { hasAsyncModifier, resolveWasmType } from "../index.js";
+import { overlayRouteActive } from "../typed-lane-overlay-route.js";
+import { getVecInfo } from "../type-coercion.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 
@@ -491,12 +493,14 @@ export function inferParamTypeFromCallSites(
                 // `catch (e) { sink(e) }` next to `sink("fulfilled")` agreed
                 // on native-string; the thrown TypeError then coerced to a
                 // null string ref and `err instanceof TypeError` read null.
-                // Recorded SEPARATELY from sawOpaqueAnyArg: the general
-                // ref-withdrawal it triggers also killed closure/promise ref
-                // narrowings the async harness plumbing depends on (11
-                // throwsAsync-* standalone regressions) — a catch var only
-                // poisons the NATIVE-STRING agreement, where the coercion
-                // nulls silently instead of coercing.
+                // Recorded SEPARATELY from sawOpaqueAnyArg only because the
+                // withdrawal is scoped to SPECULATIVE narrowings on UNANNOTATED
+                // params in the same way (see the rule below); the once-observed
+                // "11 throwsAsync-* regressions" that scoped it to native-string
+                // ONLY were measured to be FALSE PASSES, not regressions — those
+                // tests were reporting `Test262:AsyncTestComplete` because the
+                // narrowed `$DONE` param null-coerced the error it was handed.
+                // See the second slice in plan/issues/4630.
                 const argDecl = ctx.oracle.variableDeclarationOf(arg);
                 if (argDecl && ts.isVariableDeclaration(argDecl) && ts.isCatchClause(argDecl.parent)) {
                   sawCatchVarArg = true;
@@ -648,20 +652,68 @@ export function inferParamTypeFromCallSites(
   ) {
     type = null;
   }
-  // (#4630) A catch-clause binding withdraws ONLY a native-string agreement —
-  // see the flag's comment at the recording site.
+  // (#4630) A catch-clause binding withdraws ANY GC-`ref` agreement, not just a
+  // native-string one. `catch (e)` binds whatever was thrown — a value the other
+  // call sites say nothing about — so the agreement is never proof for it, and
+  // the ABI boundary for a ref narrowing GUARD-CASTS a violating value to null
+  // rather than trapping. That silent null is what made
+  // `asyncHelpers-asyncTest-return-not-thenable` report `[false×6]`: `$DONE`'s
+  // param was agreed onto `(ref null $Test262Error)` by the
+  // `$DONE(new Test262Error(…))` site, so the TypeError handed to
+  // `catch (syncError) { $DONE(syncError) }` arrived as null and
+  // `error instanceof TypeError` read false.
+  //
+  // The narrower native-string-only rule this replaces was scoped that way to
+  // protect 12 `throwsAsync-*` tests that turned out to be passing *because* of
+  // the same nulling — they printed `Test262:AsyncTestComplete` for errors they
+  // should have reported. Widening does not regress them; it stops hiding them,
+  // and the substrate work (`async-eager-promise.ts`, both the closure and the
+  // declaration half) is what makes them pass honestly.
   if (
     sawCatchVarArg &&
     type !== null &&
     (type.kind === "ref" || type.kind === "ref_null") &&
     !paramHasConcreteAnnotation()
   ) {
-    // NATIVE-STRING agreements only: withdrawing struct-ref agreements too
-    // (the obvious general rule) regressed 11 throwsAsync-* harness tests —
-    // widening `$DONE`'s param cascades into the standalone async/.then
-    // lowering. A struct-ref agreement + catch var (the return-not-thenable
-    // shape) therefore still mis-coerces; recorded as a residual on #4630.
-    if ((type as { typeIdx?: number }).typeIdx === ctx.anyStrTypeIdx) type = null;
+    type = null;
+  }
+  // (#4491 wave-4) Soundness for the DESCRIPTOR-DIRTY module: withdraw a
+  // narrowing to a concrete `__vec_*` carrier.
+  //
+  // The checker's element type is not a proof of the runtime CARRIER once a
+  // descriptor can exist. `var arr = []; Object.defineProperty(arr, "1", {get})`
+  // is `number[]` to the checker after the first numeric element write, but
+  // codegen materialises it as `$__vec_externref` so the overlay can hold
+  // accessor entries. Narrowing the callee's parameter to `$__vec_f64` then
+  // makes the ARGUMENT boundary a carrier conversion, and `emitVecToVecBody`
+  // implements that as an element-wise COPY into a fresh `struct.new` — a
+  // brand-new vec. The #3251 overlay side table is keyed by vec IDENTITY
+  // (`ref.eq`), so the callee receives an array with NO descriptors at all:
+  // accessor get/set, `writable:false` enforcement and companion values all
+  // vanish, and the element read answers the raw backing slot.
+  //
+  // Measured (standalone, this base): `function f(o, k, v) { return o[k]; }`
+  // called once as `f(arr, "1", getFunc())` answered `0` while the identical
+  // read at module level answered `3` (the getter). Making the SAME call site
+  // polymorphic — which withdraws the narrowing through the #4530 rule —
+  // answered `3`. That is the whole `propertyHelper.js` verification family
+  // (`verifyEqualTo` / `verifyWritable` / `verifyProperty`), whose `obj`
+  // parameter is monomorphic on the array under test in every array-descriptor
+  // test262 file.
+  //
+  // Scoped to `overlayRouteActive` — the module-wide pre-scan flag that already
+  // routes typed-lane element access through the dynamic lane (#4159). In such
+  // a module the vec-typed parameter buys nothing (every access is routed
+  // anyway) and costs identity, so the withdrawal is free where it applies and
+  // byte-identical everywhere else. Withdrawing leaves the parameter on its
+  // resolved `externref`, which passes the ORIGINAL struct by reference.
+  if (
+    type !== null &&
+    (type.kind === "ref" || type.kind === "ref_null") &&
+    overlayRouteActive(ctx) &&
+    getVecInfo(ctx, (type as { typeIdx: number }).typeIdx) !== null
+  ) {
+    type = null;
   }
   // (#2867 S2) Soundness, same shape as the #3548 under-application rule: if the
   // function ALSO escapes as a value, callers exist that this scan never saw, so

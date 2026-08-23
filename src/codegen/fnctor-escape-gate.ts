@@ -53,6 +53,7 @@ import { fnctorBodyMayReturnForeignObject, foreignReturnFunctionNames } from "./
 import { applyFnctorLayoutSplit, fnctorLayoutEmitEnabled } from "./fnctor-layout-emit.js"; // (#3927) per-type layout EMISSION
 import { recordFnctorFieldProvenance } from "./fnctor-field-provenance.js";
 import { fnctorFieldNumericWriteViolation, inferFnctorFieldTypeFromCtorParam } from "./fnctor-ctor-param-types.js";
+import { fnctorDeclFromSymbol, lateAssignedFunctionExpression } from "./fnctor-ctor-decl.js"; // (#4653)
 import { resolveWasmType } from "./index.js";
 
 /** Classification of a `new F()` fnctor allocation site. */
@@ -262,25 +263,6 @@ function emptyResult(compilePath: FnctorCompilePath, sourceFileCount: number): F
   };
 }
 
-/**
- * Resolve a fnctor symbol to the function-like declaration that supplies its
- * constructor body — a top-level `function F(){…}`, a `var F = function(){…}`, or
- * a bare `FunctionExpression`. Returns `undefined` for anything else (arrow, class
- * — those never reach here via `resolveFnctorSymbol`).
- */
-function fnctorDeclFromSymbol(sym: ts.Symbol): ts.FunctionDeclaration | ts.FunctionExpression | undefined {
-  for (const decl of sym.getDeclarations() ?? []) {
-    if (ts.isFunctionDeclaration(decl) && decl.body) return decl;
-    if (ts.isFunctionExpression(decl) && decl.body) return decl;
-    if (ts.isVariableDeclaration(decl) && decl.initializer) {
-      let init: ts.Expression = decl.initializer;
-      while (ts.isParenthesizedExpression(init)) init = init.expression;
-      if (ts.isFunctionExpression(init) && init.body) return init;
-    }
-  }
-  return undefined;
-}
-
 /** Max callee-chain depth the single-return struct inference will follow. */
 const RETURN_INFER_MAX_DEPTH = 6;
 
@@ -316,7 +298,9 @@ export function resolveFnctorSymbol(checker: ts.TypeChecker, calleeExpr: ts.Expr
       if (ts.isArrowFunction(init)) return undefined; // arrows are not constructors
     }
   }
-  return undefined;
+  // (#4653) `var F; … F = function(){…};` — the SAME recogniser
+  // `fnctorDeclFromSymbol` uses, so gate and resolver keep one population.
+  return lateAssignedFunctionExpression(checker, sym) ? sym : undefined;
 }
 
 /**
@@ -1628,7 +1612,7 @@ export function analyzeFnctorEscapeGate(
   // costs only the optimization and is COUNTED, so the decline is visible.
   const declFilesByName = new Map<string, Set<ts.SourceFile>>();
   for (const { ctorSym } of newSites) {
-    const decl = fnctorDeclFromSymbol(ctorSym);
+    const decl = fnctorDeclFromSymbol(ctorSym, checker);
     if (!decl) continue;
     const seen = declFilesByName.get(ctorSym.name);
     if (seen) seen.add(decl.getSourceFile());
@@ -1640,7 +1624,7 @@ export function analyzeFnctorEscapeGate(
       refuse(ctorSym.name, "multi-module-name-collision");
       continue;
     }
-    const decl = fnctorDeclFromSymbol(ctorSym);
+    const decl = fnctorDeclFromSymbol(ctorSym, checker);
     if (decl) ctorDeclByName.set(ctorSym.name, decl);
   }
 
