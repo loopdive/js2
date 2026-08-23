@@ -497,7 +497,7 @@ export function inferParamTypeFromCallSites(
                 // throwsAsync-* standalone regressions) — a catch var only
                 // poisons the NATIVE-STRING agreement, where the coercion
                 // nulls silently instead of coercing.
-                const argDecl = ctx.checker.getSymbolAtLocation(arg)?.valueDeclaration;
+                const argDecl = ctx.oracle.variableDeclarationOf(arg);
                 if (argDecl && ts.isVariableDeclaration(argDecl) && ts.isCatchClause(argDecl.parent)) {
                   sawCatchVarArg = true;
                 }

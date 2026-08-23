@@ -97,3 +97,7 @@ member both fall through to the open-object walk and miss to null.
   (#608/#794).
 - Splice arms in FRONT of the generic `$Object` walk, after the vec fills
   (last-fill-wins ordering documented in `ta-dyn-mop.ts`).
+
+## Permanent repro
+
+`test262/test/harness/deepEqual-mapset.js` (standalone lane via `pnpm run test:262` / `runTest262File`).
