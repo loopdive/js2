@@ -2076,6 +2076,27 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                   blockType: { kind: "empty" },
                   then: buildVecOrClosurePropGetMissArm(ctx, getMiss),
                 },
+                // (#4639/#4637 cross-lane trap, 2026-08-23) TEST before the
+                // cast: `__fnctor_proto_start` answers whatever the S2 store
+                // holds, and for `G.prototype = P` where `P` is a FUNCTION the
+                // stored prototype is a raw CALLABLE, not a `$Object` — a naked
+                // `ref.cast` here was an UNCATCHABLE `illegal cast` trap on an
+                // inherited read (`w.marker`), where the sibling walk entries
+                // (`__getPrototypeOf`, `__isPrototypeOf`) ref.test first and
+                // answer gracefully. A non-`$Object` prototype takes the miss
+                // arm — the tip's silently-wrong `undefined`, restored from a
+                // module-killing trap. The CORRECT answer (walking a callable
+                // prototype's own-property bag) is the #4637 inline-arg
+                // successor's scope; pinned in tests/issue-4639.test.ts.
+                { op: "local.get", index: 7 },
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: objectTypeIdx },
+                { op: "i32.eqz" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: buildVecOrClosurePropGetMissArm(ctx, getMiss),
+                },
                 { op: "local.get", index: 7 },
                 { op: "any.convert_extern" },
                 { op: "ref.cast", typeIdx: objectTypeIdx },

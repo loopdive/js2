@@ -18,6 +18,11 @@ goal: standalone-gap
 related: [4465, 4481, 4619, 4621, 4426]
 origin: "2026-08-23 wave-3 residual map (196 true failures). Lane C (.tmp/lane-C-stringregexp.txt)."
 loc-budget-allow:
+  # (lead, trap mitigation) __extern_get's fnctor-proto-start arm gains
+  # test-before-cast — the naked ref.cast was an UNCATCHABLE illegal-cast trap
+  # when $proto holds a raw callable (the C1-reachable shape). The lines are
+  # the guard + the comment recording the trap and the #4643 successor.
+  - src/codegen/object-runtime.ts
   # (C1) `getUseClassification` gains the `NewExpression`-argument clause plus
   # the measurement that justifies it — `ts.isCallExpression` is false for a
   # `new`, so EVERY constructor argument classified `neutral` and the

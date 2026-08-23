@@ -271,3 +271,54 @@ describe.skipIf(!TEST262)("#4639 — measured residuals (see the issue's Residua
   // C5: the dynamic-pattern grammar cannot take 200 nested capture groups.
   pinResidualRow("built-ins/RegExp/S15.10.2.8_A3_T15.js", "C5 — dynamic pattern out of subset");
 });
+
+describe.skipIf(!TEST262)("#4639/#4637 — the C1-reachable function-valued-prototype TRAP (cross-lane)", () => {
+  // (2026-08-23, found by dev-4639 post-stand-down, verified by dev-4637 on the
+  // merged head.) C1 makes the arg-only-instantiation site reachable; with a
+  // FUNCTION-valued prototype (`G.prototype = P`), `$proto` holds a raw
+  // callable written by a path that bypasses #4637's `__object_create`
+  // canonicalization, and `__extern_get`'s fnctor-proto-start arm ref.cast it
+  // to `$Object` — an UNCATCHABLE `illegal cast` trap on any inherited read.
+  // Fixed by test-before-cast in `object-runtime.ts` (the miss arm = the tip's
+  // graceful `undefined`). This pin EXERCISES the read (the lesson of this
+  // thread: a pin that asserts a shape is not a pin that exercises it) and
+  // fails again if the naked cast is ever reintroduced.
+  pinSource(
+    "fn-proto-argonly-inherited-read-no-trap",
+    `var P = function () {};
+P.marker = "m";
+function G() {}
+G.prototype = P;
+function H(x) { this.wrapped = x; }
+var h = new H(new G());
+var w = h.wrapped;
+var v = w.marker;
+if (typeof v === "string" && v !== "m") throw new Test262Error("unexpected marker: " + v);`,
+    "inherited read through a function-valued prototype completes (no trap)",
+  );
+
+  // The CORRECT answers for the same shape — one cause, three wrong readings
+  // (w.marker undefined; isPrototypeOf and getPrototypeOf false): the raw
+  // callable in `$proto` at C1-reconstructed sites. Successor scope (see
+  // #4643); this pin flips the day the canonicalization covers that write.
+  it.fails("SUCCESSOR (see #4643): the same shape answers correctly", { timeout: 60_000 }, async () => {
+    const dir = join(__dirname, "..", ".tmp", "issue-4639-pins");
+    mkdirSync(dir, { recursive: true });
+    const abs = join(dir, "fn-proto-argonly-correct.js");
+    writeFileSync(
+      abs,
+      `var P = function () {};
+P.marker = "m";
+function G() {}
+G.prototype = P;
+function H(x) { this.wrapped = x; }
+var h = new H(new G());
+var w = h.wrapped;
+if (w.marker !== "m") throw new Test262Error("marker: " + w.marker);
+if (!P.isPrototypeOf(w)) throw new Test262Error("isPrototypeOf");
+if (Object.getPrototypeOf(w) !== P) throw new Test262Error("getPrototypeOf");`,
+    );
+    const r = await runTest262File(abs, "issue-4639", 30_000, "standalone");
+    expect(`${r.status}: ${r.error ?? ""}`).toBe("pass: ");
+  });
+});
