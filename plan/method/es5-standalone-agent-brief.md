@@ -95,6 +95,40 @@ provider (`npx tsx scripts/build-quickjs-eval-provider.mjs`, falling back to
 `JS2WASM_EVAL_ENGINE=interpreter`), and confirm a known eval-dependent row
 runs before trusting the numbers.
 
+## Environment trap: a suite that runs ZERO tests and exits 0 (2026-08-23, dev-4491)
+
+`tests/issue-4504-inherited-set.test.ts` spins its **own `CompilerPool`**, whose
+worker imports the GITIGNORED `scripts/runtime-bundle.mjs` and
+`scripts/compiler-bundle.mjs`. A fresh worktree has NEITHER, so the worker dies
+(`[pool] worker failed before ready (exit 1)`), vitest reports **`36 skipped`**,
+and the process **exits 0**. Every lane that ran it in a fresh worktree read a
+green that measured nothing.
+
+This is the concrete instance of the brief's "N passed, never exit 0" rule:
+`skipped` is not `passed`. Read the counts. When a suite spins its own pool,
+build BOTH bundles from **the arm you are measuring**
+(`pnpm run build:compiler-bundle`), or its verdict is about your bundle, not
+your branch. Built correctly this suite is 1 failed / 35 passed, and that one
+failure is pre-existing on the campaign base.
+
+## Environment trap: CONTENTION fakes both failures and regressions (2026-08-23, dev-4491 + lead)
+
+With several lanes sweeping at once, load on this box runs 12–16 and a compile
+that normally takes ~9 s can take **47–123 s**, so `runTest262File`'s timeout
+fires and the row reports `compile_error: compilation timeout`. Measured the
+same day in both directions: three of dev-4491's 2,279 sweep rows moved for
+infrastructure reasons alone — one of them (`15.2.3.6-4-298-1`, an ENOENT from
+the symlink-farm race) **would have read as a regression** — and two lead-run
+pins (`issue-4641`, `issue-4643`) failed on timeout under 5-lane load and passed
+**25/25** when re-run serially minutes later.
+
+**Standing practice: re-run every apparent flip AND every apparent regression
+serially before it goes in a report.** A timeout is not a verdict about your
+change. Note also that `runTest262File`'s `timeoutMs` is a POST-HOC check — it
+measures elapsed time after `await compile(...)` returns and cannot interrupt a
+slow compile, so a 600 s compile runs the full 600 s and only then reports a
+timeout; bounding it needs an OS-level `timeout` on the driver process.
+
 ## Environment trap: STALE `scripts/compiler-bundle.mjs` poisons every eval-tier A/B (2026-08-23, dev-4647)
 
 The quickjs eval ADAPTER is a js2wasm-compiled artifact, and

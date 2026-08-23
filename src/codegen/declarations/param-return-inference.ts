@@ -12,6 +12,8 @@ import { forEachChild, ts } from "../../ts-api.js";
 import { numericAdmissionEnabled } from "../analysis/mixed-assignment-carrier.js";
 import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { hasAsyncModifier, resolveWasmType } from "../index.js";
+import { overlayRouteActive } from "../typed-lane-overlay-route.js";
+import { getVecInfo } from "../type-coercion.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 
@@ -662,6 +664,44 @@ export function inferParamTypeFromCallSites(
     // lowering. A struct-ref agreement + catch var (the return-not-thenable
     // shape) therefore still mis-coerces; recorded as a residual on #4630.
     if ((type as { typeIdx?: number }).typeIdx === ctx.anyStrTypeIdx) type = null;
+  }
+  // (#4491 wave-4) Soundness for the DESCRIPTOR-DIRTY module: withdraw a
+  // narrowing to a concrete `__vec_*` carrier.
+  //
+  // The checker's element type is not a proof of the runtime CARRIER once a
+  // descriptor can exist. `var arr = []; Object.defineProperty(arr, "1", {get})`
+  // is `number[]` to the checker after the first numeric element write, but
+  // codegen materialises it as `$__vec_externref` so the overlay can hold
+  // accessor entries. Narrowing the callee's parameter to `$__vec_f64` then
+  // makes the ARGUMENT boundary a carrier conversion, and `emitVecToVecBody`
+  // implements that as an element-wise COPY into a fresh `struct.new` — a
+  // brand-new vec. The #3251 overlay side table is keyed by vec IDENTITY
+  // (`ref.eq`), so the callee receives an array with NO descriptors at all:
+  // accessor get/set, `writable:false` enforcement and companion values all
+  // vanish, and the element read answers the raw backing slot.
+  //
+  // Measured (standalone, this base): `function f(o, k, v) { return o[k]; }`
+  // called once as `f(arr, "1", getFunc())` answered `0` while the identical
+  // read at module level answered `3` (the getter). Making the SAME call site
+  // polymorphic — which withdraws the narrowing through the #4530 rule —
+  // answered `3`. That is the whole `propertyHelper.js` verification family
+  // (`verifyEqualTo` / `verifyWritable` / `verifyProperty`), whose `obj`
+  // parameter is monomorphic on the array under test in every array-descriptor
+  // test262 file.
+  //
+  // Scoped to `overlayRouteActive` — the module-wide pre-scan flag that already
+  // routes typed-lane element access through the dynamic lane (#4159). In such
+  // a module the vec-typed parameter buys nothing (every access is routed
+  // anyway) and costs identity, so the withdrawal is free where it applies and
+  // byte-identical everywhere else. Withdrawing leaves the parameter on its
+  // resolved `externref`, which passes the ORIGINAL struct by reference.
+  if (
+    type !== null &&
+    (type.kind === "ref" || type.kind === "ref_null") &&
+    overlayRouteActive(ctx) &&
+    getVecInfo(ctx, (type as { typeIdx: number }).typeIdx) !== null
+  ) {
+    type = null;
   }
   // (#2867 S2) Soundness, same shape as the #3548 under-application rule: if the
   // function ALSO escapes as a value, callers exist that this scan never saw, so
