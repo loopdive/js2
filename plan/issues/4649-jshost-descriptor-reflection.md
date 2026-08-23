@@ -90,7 +90,10 @@ property-descriptor/reflection bucket:
   sample 59/60 (`.tmp/run-host-list.mts`, `.tmp/host-sample.txt` —
   AsyncDisposableStack failure is pre-existing).
 
-## Progress (2026-08-23)
+## Progress (2026-08-23) — 3 of 4 done, `isConstructor` remains
+
+Status stays `in-progress`: `isConstructor.js` needs an IsConstructor bit the
+compiler does not have (section 4 below), which is its own piece of work.
 
 Three of the four flip. Each had a DIFFERENT root cause; none of the three was
 where the initial triage pointed, so the diagnosis notes below are the
@@ -147,6 +150,12 @@ host lane through it too is a much broader change and was NOT taken.)
 Accessor-flagged sidecar entries deliberately keep the old shape, and a refused
 target mirror now serves the target's locked descriptor so the §10.5.5 proxy
 invariant cannot be violated.
+
+Gate note: `check:host-import-policy` pins `src/runtime.ts` at **exactly** 17949
+lines — a hard no-growth ratchet, separate from and stricter than the LOC budget
+(which an issue-file `loc-budget-allow` can waive). Any host-runtime fix has to
+pay for its own lines; this one did, by compacting the trap's comment and the
+adjacent #2714/#3647 blocks. Budget the edit for that up front.
 
 ### 3. `deepEqual-deep.js` — emission-time `ctx.vecTypeMap` snapshot
 
@@ -268,7 +277,11 @@ The compile-time predicate to reuse is `callableHasConstructBehavior`
 | js-host `test/harness/` | 102 / 116 | 106 / 116 |
 | standalone `test/harness/` | 112 / 116 (with the quickjs eval provider built) | 112 / 116 |
 | js-host 60-file sample (`.tmp/host-sample.txt`) | 59 / 60 | 59 / 60 |
-| `equivalence-gate.mjs` shard 1/8 | 24 known-failures in baseline | no new regressions |
+| `equivalence-gate.mjs` (3 local runs) | 24 known-failures in baseline | no new regressions |
+
+CI on the PR (`loopdive/js2#4804`) is green on all six required checks plus all
+eight `equivalence-shard` jobs, `issue-tests`, `linear-tests` and
+`cross-backend-parity`; `mergeable_state: clean`.
 
 The js-host base of 102 is the branch base measured in this worktree before any
 edit. The standalone base of 112 was measured after building the quickjs eval
