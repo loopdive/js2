@@ -488,11 +488,31 @@ unchanged. `Array` / `String` / `Object` `.hasOwnProperty("prototype")` and
 `Object.hasOwn(<same>, "prototype")` are identical on both arms, as is the
 negative control `Array.hasOwnProperty("zzz")`.
 
-**The condition under which that stops holding, so it is not re-derived later:**
-if C2 ever asks `__object_hasOwn(recv, "prototype")` where `recv` IS an
-edge-bearing closure or class-object singleton, this arm answers `1` **first**,
-before C2's own logic. That is the spec answer (§20.2.4.2), but it is this
-issue's answer, not C2's.
+**The two arms MEET on the key — only the receiver test separates them.**
+dev-4639 measured this after the exchange above and it is stronger than either
+lane's first reading: `propName === "prototype"` really does reach the C2 arm
+(the `emitLazyNativeProtoGet` fast path above it falls through for any builtin
+with no registerable proto brand), so C2 emits
+`__object_hasOwn(carrier, "prototype")` — **the exact interned literal this arm
+keys on**. The key match is not hypothetical and is not future work; it happens
+today. What keeps the arms apart is the receiver predicate alone.
+
+dev-4639 also replaced their original (false) premise with a structural one,
+which is worth preferring over the measured negative control because it cannot
+drift: the only receiver C2 ever passes to `__object_hasOwn` is `carrierLocal`,
+set from `emitBuiltinProtoConstructorValue` — always a `__new_plain_object`
+`$Object` (`__builtin_ctor_<Name>` / `__builtin_<Name>`); the `$NativeProto` from
+`pushBuiltinIntrinsicPrototype` reaches `__extern_get` only. A carrier is neither
+a `__fn_closure_*` nor a `__class_*` singleton and cannot become one, so
+`__closure_proto_of` is null by construction. The A/B above then confirms the
+construction rather than being the only evidence for it.
+
+**The tripwire, therefore, is exact and singular:** if any C2-shaped read ever
+asks `__object_hasOwn(recv, "prototype")` where `recv` IS an edge-bearing closure
+or class-object singleton, this arm answers `1` **first**, before C2's own logic.
+That is the spec answer (§20.2.4.2), but it is this issue's answer, not C2's. It
+is written on both sides (`plan/issues/4639-string-regexp-ctor-proto-surface.md`
+carries the twin).
 
 ### 2. `classifyUse` widening (dev-4639 C1) — re-measure after both land
 
@@ -509,3 +529,18 @@ tree. Whoever merges second should run, at minimum: this issue's
 `tests/issue-4637.test.ts` + the six flipped rows in the list above, and
 dev-4639's `tests/issue-4639.test.ts` (12 pins, ~95 s) + their five flipped rows.
 Do not carry either lane's before/after numbers across the merge.
+
+**Named canaries** (dev-4639's mapping — one pin per contact point, so a
+failure identifies WHICH interaction broke rather than only that something did):
+
+| canary | watches |
+| ------ | ------- |
+| dev-4639's C2 group — `String.indicator`, `RegExp.indicator`, `Math.NaN` | this issue's spliced `__object_hasOwn` prologue |
+| `built-ins/String/S15.5.2.1_A1_T10` | the C1 escape-gate × A1 reconstruction interaction |
+| this issue's `tests/issue-4637.test.ts` A1 group | a callable in a `[[Prototype]]` slot surviving C1's widened classification |
+
+Two further flips fell out of dev-4639's key check and are recorded here only so
+they are not mistaken for this issue's: `Math.prototype` and `Proxy.prototype`
+go `compile_error → undefined` (spec: `undefined`; neither is a constructor).
+They are theirs, outside their 37-row list, and do not move either lane's
+headline.
