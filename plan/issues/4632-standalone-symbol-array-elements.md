@@ -1,7 +1,7 @@
 ---
 id: 4632
 title: "Standalone: symbol[] elements are raw i32 ids — compareArray renders the id number"
-status: ready
+status: done
 sprint: Backlog
 created: 2026-08-23
 updated: 2026-08-23
@@ -14,8 +14,16 @@ goal: test262-conformance
 lane: B
 files:
   - src/codegen/literals.ts
-  - src/codegen/array-methods.ts
   - src/codegen/symbol-native.ts
+  - src/codegen/index.ts
+loc-budget-allow:
+  - src/codegen/literals.ts
+  - src/codegen/symbol-native.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/codegen/symbol-native.ts::fillSymbolAnyToStringArm
+  - src/codegen/literals.ts::compileArrayLiteral
+status-note: implemented (compare-array-symbol passes standalone)
 ---
 
 # #4632 — Standalone symbol[] element representation

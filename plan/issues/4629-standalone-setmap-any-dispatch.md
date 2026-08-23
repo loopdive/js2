@@ -1,7 +1,7 @@
 ---
 id: 4629
 title: "Standalone: Set/Map members miss through the any channel (.size, Symbol.iterator, iterator protocol)"
-status: ready
+status: done
 sprint: Backlog
 created: 2026-08-23
 updated: 2026-08-23
@@ -15,7 +15,16 @@ lane: B
 files:
   - src/codegen/map-runtime.ts
   - src/codegen/object-runtime.ts
-  - src/codegen/property-access-dispatch.ts
+  - src/codegen/index.ts
+loc-budget-allow:
+  - src/codegen/map-runtime.ts
+  - src/codegen/object-runtime.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/codegen/map-runtime.ts::fillMapSetDynDispatchArms
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+status-note: implemented (deepEqual-mapset passes standalone)
 ---
 
 # #4629 — Standalone: Set/Map members miss through the `any` channel

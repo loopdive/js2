@@ -249,7 +249,7 @@ export const FLAG_TOMBSTONE = 0x80;
  */
 export const WRAPPER_PRIMITIVE_KEY = "[[PrimitiveValue]]";
 /** Default for a data property created by `o.x = v` — w/e/c all true. */
-const FLAG_DEFAULT = FLAG_WRITABLE | FLAG_ENUMERABLE | FLAG_CONFIGURABLE;
+export const FLAG_DEFAULT = FLAG_WRITABLE | FLAG_ENUMERABLE | FLAG_CONFIGURABLE; // (#4629) map/set dyn-dispatch fill reads it
 
 /**
  * `$Object.flags` (field 4) object-level integrity bits (#1472 Phase B Blocker

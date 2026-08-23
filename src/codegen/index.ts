@@ -309,6 +309,8 @@ import {
 } from "./object-runtime.js";
 import { fillVecLengthDynamicArms } from "./vec-length-set.js";
 import { fillTaCtorGetMetaArm } from "./ta-ctor-meta.js"; // `$__ta_ctor` name/length meta arm
+import { fillSymbolAnyToStringArm } from "./symbol-native.js"; // (#4632) $Symbol arm in __any_to_string
+import { fillMapSetDynDispatchArms } from "./map-runtime.js"; // (#4629) Map/Set any-channel dispatch arms
 import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
 import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
 import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; // (#2875 w4-F)
@@ -5636,6 +5638,15 @@ export function generateModule(
     // is immaterial; no-op unless a `$__ta_ctor` type is registered.
     fillTaCtorGetMetaArm(ctx);
 
+    // (#4632) `$Symbol` arm in `__any_to_string` — a carrier reaching the
+    // generic ToString terminal renders "Symbol(desc)", not "[object Object]".
+    fillSymbolAnyToStringArm(ctx);
+
+    // (#4629) Map/Set any-channel dispatch arms (size / @@iterator / IterRec
+    // .next()) — before this path's typeof fill below for the same
+    // classifier-roots reason as the other site.
+    fillMapSetDynDispatchArms(ctx);
+
     // (#3130) Splice the `$Error_struct` arm into `__extern_get` so dynamic
     // reads of `err.message`/`err.name`/`err.stack`/`err.constructor` resolve
     // on native Error objects instead of missing to `undefined` (see the fill's
@@ -9008,9 +9019,16 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // #2794: POSITIVE data-vs-closure discriminator (see generateModule path).
     emitIsDataStructExport(ctx);
 
+    // (#4629) Map/Set any-channel dispatch arms — BEFORE the typeof fill so
+    // the minted iterator-closure wrap type is in the classifier roots.
+    fillMapSetDynDispatchArms(ctx);
+
     // #1896: teach standalone __typeof_function/__typeof_object to recognise
     // closure wrapper structs (edits helper bodies in place — no funcIdx churn).
     fillStandaloneTypeofClosureArms(ctx);
+
+    // (#4632) Same `$Symbol` __any_to_string arm on this finalize path.
+    fillSymbolAnyToStringArm(ctx);
 
     // Emit __call_toString/__call_valueOf exports for ToPrimitive dispatch.
     emitToPrimitiveMethodExports(ctx);
