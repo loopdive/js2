@@ -16,6 +16,22 @@ language_feature: string-regexp
 goal: standalone-gap
 related: [4465, 4481, 4619, 4621, 4426]
 origin: "2026-08-23 wave-3 residual map (196 true failures). Lane C (.tmp/lane-C-stringregexp.txt)."
+loc-budget-allow:
+  # (C1) `getUseClassification` gains the `NewExpression`-argument clause plus
+  # the measurement that justifies it — `ts.isCallExpression` is false for a
+  # `new`, so EVERY constructor argument classified `neutral` and the
+  # `new String(obj)` ToPrimitive family could not work. The comment is long on
+  # purpose: it records the per-VALUE A/B (`String(o)` right vs `new String(o)`
+  # wrong, in ONE module) that took the longest to find, so the next reader does
+  # not re-derive it.
+  - src/codegen/fnctor-escape-gate.ts
+  # (C2) The ordinary-[[Get]] tail spliced ahead of the builtin-static refusal.
+  # The arm itself lives in the new `builtin-static-expando.ts`; what lands in
+  # the dispatcher is the call plus the rationale for why a CE became a read.
+  - src/codegen/property-access-dispatch.ts
+func-budget-allow:
+  # Same C2 splice — the dispatcher's builtin arm grows by the guarded call.
+  - src/codegen/property-access-dispatch.ts::tryIdentifierNamespaceAndStaticReceiverRead
 ---
 
 # #4639 — String/RegExp ctor+proto surface
