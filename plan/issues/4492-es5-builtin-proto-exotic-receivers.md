@@ -14,6 +14,17 @@ area: codegen
 es_edition: es5
 goal: standalone-mode
 related: [4444, 2175, 4161, 1461]
+# (#4492 wave-5) Per-file rationale for each grant is in "## 2026-08-23 wave-5
+# results" below, under "Gate grants".
+loc-budget-allow:
+  - src/codegen/object-runtime.ts
+  - src/codegen/array-object-proto.ts
+  - src/codegen/index.ts
+  - src/codegen/property-access-dispatch.ts
+func-budget-allow:
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # #4492 — ES5 builtin-proto methods on exotic receivers
