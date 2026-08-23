@@ -240,6 +240,47 @@ coverage rather than for size, and the uncovered remainder is
 read, which is `compile_error`-only and cannot regress a passing row) and
 `built-ins/String/prototype` methods other than the six listed.
 
+### `tests/issue-4639.test.ts` — the base/branch PARTITION
+
+14/14 on the branch is the weaker number. The useful artifact is what each
+pin does when the change is REMOVED. Measured by reverting all six changed
+`src/codegen` files to `81445abf7` (and deleting `builtin-static-expando.ts`)
+while holding `tests/` at the branch version:
+
+| base | count | what they are |
+| ---- | ----- | ------------- |
+| **FAIL** | 6 | Tests OF the change: the C1 pin, the three C2 pins, the C6 `Function()` pin, and the C2 cross-lane canary. Each fails on base, so none is asserting pre-existing behaviour. |
+| **pass** | 1 | `S15.5.4.11_A1_T1`, an explicitly-labelled control. |
+| **pass** | 6 | `pinResidualRow` entries — they assert `status !== "pass"` for residuals this change-set did NOT fix, so they are green on both arms by construction. |
+| **pass** | 1 | `carrier-hasown-prototype-guard`, labelled `REGRESSION GUARD (green on base)`. |
+
+Adopted from dev-4637 (`issue-4637`), who ran this partition on their own
+suite after I raised the "revert and confirm the pin FAILS" rule and found
+two pins in the WRONG CATEGORY — one presented as demonstrating their fix
+that was green on base, and one negative control bundled with a positive so
+that a build wrong on both would still total correctly. Mine partitions
+cleanly, but only because I ran it; I had verified the canary alone, which
+is the same half-measure.
+
+**A weakness in my own canary, found by that run and NOT fixed by it.**
+`builtin-no-brand-prototype` fails on base, so it genuinely tests the C2 arm
+— but it is INSENSITIVE to the cross-lane interaction it is named for. For a
+no-brand builtin, BOTH branches of the arm's `if` answer `undefined`, so a
+#4637 prologue that wrongly answered `1` for a carrier receiver would send
+the arm down the `then` branch and still produce `undefined`. The canary
+would stay green through exactly the regression it watches. That is why
+`carrier-hasown-prototype-guard` exists: `hasOwnProperty` has a two-valued
+answer, routes through the same spliced helper, and uses both receiver kinds
+(`Math`, a namespace with no own `prototype`; `String`, a ctor that has
+one). Measured `false|true` on both arms.
+
+**Harness gate hazard — the suite exits 0 with ZERO coverage when
+`test262/harness/assert.js` is absent.** `describe.skipIf(!TEST262)` reports
+"14 skipped", exit 0. Hit live during this work: a run right after restoring
+the `test262` gitlink skipped everything and looked green. Anyone using these
+pins as a merge check must confirm the run says **14 passed**, not merely
+that it exited 0. `tests/issue-4637.test.ts` carries the same guard.
+
 **Pin suites green (my runs):** `tests/issue-4465` 20/20,
 `tests/issue-4481` 42/42, `tests/issue-4619` 23/23, `tests/issue-4621`
 27/27, `tests/issue-4639` 12/12 (and the tier-dependent row green again
