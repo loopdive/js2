@@ -6,6 +6,8 @@ assignee: ttraenkler/senior-dev
 loc-budget-allow:
   - src/codegen/typeof-delete.ts
   - src/runtime.ts
+  - src/codegen/dyn-read.ts
+  - src/codegen/object-runtime.ts
 func-budget-allow:
   - src/runtime.ts::_wrapForHost
   - src/codegen/context/create-context.ts::createCodegenContext
@@ -182,30 +184,47 @@ array element kind the harness itself never mints (`number[]` → `f64`,
 harness-used). Proof (A/B): prepending `var __warm = [true, false];` to the
 assembled source flips `_compare` to `false` with `arrA=true`, `LEN 1/1`.
 
-Fix taken: pre-register the `i32` vec carrier in `createCodegenContext`
-alongside the existing `externref`/`f64` pre-registrations, under
-`suppressVecUsageFlag` so it does not count as array usage.
+Fix taken — **late binding, the same discipline #2047 gave standalone**, applied
+per predicate because the two ask different questions:
 
-Two alternatives were tried and REJECTED, and the reasons matter for anyone
+- **`Array.isArray` (host lane)**: the inline ladder becomes a CALL to a new
+  module-local `__host_array_carrier` (`src/codegen/host-array-carrier.ts`),
+  minted with a placeholder body on first use and filled at finalize from
+  `collectStandaloneArrayCarrierTypeIdxs` — the same list `fillExternIsArray`
+  uses, so the §7.2.2 byte-carrier exclusions come along for free. The fill is
+  invoked from `fillExternIsArray`, which already runs at both finalize sites.
+  Modules with no dynamic `Array.isArray` never mint it and are byte-identical.
+- **the dynamic `.length` vec arm**: one `ref.test $__vec_base` replaces the
+  per-type ladder. `$__vec_base` is the declared supertype of every concrete vec
+  and carries `length` as field 0 (#2186), so this is a strict SUPERSET of the
+  ladder — the byte vecs it also matches were already in `ctx.vecTypeMap` and
+  therefore already in the ladder, and `.length` is a legitimate question for a
+  byte vec anyway.
+
+Three alternatives were tried and REJECTED; the reasons matter for anyone
 extending this:
 
-- **A dedicated `i32_bool` cache key** (so the boolean brand could not be stolen
-  by a plain-`i32` pre-registration). It compiles to invalid Wasm: elem keys are
-  matched as STRINGS in several places, e.g. `vec-access-exports.ts` boxes only
-  `elemKey === "i32"` via `__box_number` and a new key fell through to
-  `extern.convert_any` on an i32 — `__vec_get` failed validation on every test.
-  A new elem key is a multi-site change, not a one-line one.
-- **`ref.test $__vec_base`** as an order-independent carrier test. Correct for
-  `.length` (strict superset of today's chain), WRONG for `Array.isArray`: every
-  byte vec, subview, TypedArray view and the regexp match-result struct also
-  subtype `$__vec_base` (#3562/#4443), so `Array.isArray(new Uint8Array(2))`
-  would answer true.
+- **Pre-registering the `i32` carrier in `createCodegenContext`** (next to the
+  existing `externref`/`f64`). It works — all three tests flipped — but it puts
+  `__vec_i32` in the WAT of modules that never build an i32 array, and #1197's
+  "promotion did NOT fire" assertions read exactly that string: **9 new
+  equivalence regressions** in shard 1. This is why the gate exists; the
+  harness numbers alone would have shipped it.
+- **A dedicated `i32_bool` cache key** (so a plain-`i32` pre-registration could
+  not steal the boolean element brand). It compiles to invalid Wasm: elem keys
+  are matched as STRINGS in several places — `vec-access-exports.ts` boxes only
+  `elemKey === "i32"` through `__box_number`, and the new key fell through to
+  `extern.convert_any` on an i32, so `__vec_get` failed validation on every
+  test. A new elem key is a multi-site change, not a one-line one.
+- **`ref.test $__vec_base` for `Array.isArray`** (what the `.length` arm does).
+  Wrong there: every byte vec, subview, TypedArray view and the regexp
+  match-result struct also subtypes `$__vec_base` (#3562/#4443), so
+  `Array.isArray(new Uint8Array(2))` would answer true.
 
-Known residual of the fix chosen: carriers keyed `ref_<typeIdx>` (nested arrays,
-`{b:[[true]]}`) are still order-dependent, and so is a plain-`i32` carrier if a
-module ever mints one before the pre-registration is consulted. The general fix
-is to give the host lane the same finalize-filled predicate #2047 gave
-standalone.
+Residual: `Array.isArray`'s host path still gates minting the predicate on
+`ctx.vecTypeMap` being non-empty. That is currently unconditional (the
+`externref`/`f64` pre-registrations), so it is inert — but it is the last
+emission-time read left on this path.
 
 ### 4. `isConstructor.js` — NOT FIXED (residual, needs its own issue)
 
@@ -252,6 +271,8 @@ The compile-time predicate to reuse is `callableHasConstructBehavior`
 | --- | --- | --- |
 | js-host `test/harness/` | 102 / 116 | 106 / 116 |
 | standalone `test/harness/` | 112 / 116 (with the quickjs eval provider built) | 112 / 116 |
+| js-host 60-file sample (`.tmp/host-sample.txt`) | 59 / 60 | 59 / 60 |
+| `equivalence-gate.mjs` shard 1/8 | 24 known-failures in baseline | no new regressions |
 
 The js-host base of 102 is the branch base measured in this worktree before any
 edit. The standalone base of 112 was measured after building the quickjs eval

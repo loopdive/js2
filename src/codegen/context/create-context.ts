@@ -460,12 +460,9 @@ export function createCodegenContext(
   // whether it uses arrays). These are NOT real array usage — suppress the
   // `usesVecValue` flag across them so arith-/string-only modules don't emit
   // the host-glue vec exports.
-  // (#4649) `i32` joins them because it backs `boolean[]` — absent from the
-  // emission-time `ctx.vecTypeMap` snapshots a test262 harness prefix bakes.
   ctx.suppressVecUsageFlag = true;
   getOrRegisterVecType(ctx, "externref", { kind: "externref" });
   getOrRegisterVecType(ctx, "f64", { kind: "f64" });
-  getOrRegisterVecType(ctx, "i32", { kind: "i32" });
   ctx.suppressVecUsageFlag = false;
 
   if (ctx.nativeStrings) registerNativeStringTypes(ctx);

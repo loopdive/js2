@@ -206,6 +206,7 @@ import {
 import { ensureWrapperConstructorCarriers, wrapperConstructorArmInstrs } from "./wrapper-constructor-carrier.js"; // (#4223) runtime `<wrapper>.constructor`
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 import { backedBoundsGuard, canonicalIndexDigitStep } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
+import { fillHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649) js-host late-bound carrier test
 export { fillProxyDispatch } from "./object-runtime-proxy.js";
 
 /** Initial `$PropMap` capacity. Must be a power of two (mask = cap - 1).
@@ -7425,7 +7426,7 @@ function isNonArrayByteVecName(name: string): boolean {
   return false;
 }
 
-function collectStandaloneArrayCarrierTypeIdxs(ctx: CodegenContext): number[] {
+export function collectStandaloneArrayCarrierTypeIdxs(ctx: CodegenContext): number[] {
   const carriers = new Set<number>();
   const objVecTypeIdx = ctx.objectRuntimeTypes?.objVecTypeIdx;
   if (objVecTypeIdx !== undefined) carriers.add(objVecTypeIdx);
@@ -7463,6 +7464,7 @@ function collectStandaloneArrayCarrierTypeIdxs(ctx: CodegenContext): number[] {
  * array carriers (`__vec_*`, template vectors, `$ObjVec`) return true.
  */
 export function fillExternIsArray(ctx: CodegenContext): void {
+  fillHostArrayCarrierPredicate(ctx); // (#4649) js-host twin, same finalize slot
   if (!ctx.externIsArrayReserved) return;
   const funcIdx = ctx.funcMap.get("__extern_is_array");
   if (funcIdx === undefined) return;
