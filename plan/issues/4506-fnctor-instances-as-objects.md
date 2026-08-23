@@ -208,9 +208,29 @@ matrix follows from that.
 
 ## S1 + S2 as implemented (2026-08-23) — +2 / −0, and the bar is NOT met
 
-Two commits on branch `issue-4506`. Both are landed and verified; the
+Branch `issue-4506`, one commit. The work is landed and verified; the
 acceptance bar (**≥10 rows**) is **not** met — **measured +2** — and the reason
 is a finding, recorded in full below rather than rounded away.
+
+### Decision needed (mirrors the #4480 precedent)
+
+The evidence says the ≥10 estimate was an over-attribution, not a shortfall in
+the work — the issue's own premise counted blocked *sites*, and a blocked site
+is not a blocked row. Left `in-progress` rather than `done`, because this agent
+will not mark an issue done against a bar it did not clear. Two options:
+
+- **(a) Accept and re-scope at +2.** The representation is now correct for the
+  population the escape gate approves, inert on a 300-file random harness
+  control, and every remaining row in the named families has a *measured* other
+  cause with an owner (Residuals R1–R7). Re-point the row target at R2 (a wrong
+  boolean, cheap, two-lane) and R1 (the non-empty ctor body).
+- **(b) Keep open and continue with R1 + R2 in this issue.** R1 is the last
+  mechanical blocker inside this issue's own framing (9 of 115 blocked sites);
+  R2 is not — it reproduces with no constructor anywhere and belongs to
+  `isPrototypeOf` dispatch.
+
+Recommendation: **(a)**, plus a new issue for R2 (which also reproduces on
+`--js-host`, so it needs a two-lane acceptance test).
 
 ### Root cause
 
