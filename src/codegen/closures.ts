@@ -2903,12 +2903,6 @@ export function compileArrowAsClosure(
   // the env param is untouched — richer shapes stay on the legacy path via the
   // predicate gate.
   const asyncDecision = isAsync && !isGenerator ? planAsyncClosureActivation(ctx, arrow, /*isAsync*/ true) : null;
-  // (#4648) A DECLINED (await-free) async closure on the JS-host lane still owes
-  // its callers the async contract — a thenable result and a throw delivered as
-  // a rejection — because a dynamic callee cannot apply the static call-site
-  // repair. Bake the `externref` result into the signature exactly like the
-  // activated case; the wrapper that produces the Promise is minted below.
-  const hostAsyncPromiseWrap = isAsync && !isGenerator && asyncDecision === null && asyncClosurePromiseWrapEnabled(ctx);
   if (asyncDecision) {
     closureReturnType = { kind: "externref" };
   } else if (isAsync && !isGenerator) {
@@ -2916,8 +2910,19 @@ export function compileArrowAsClosure(
     // inside a `try`: refuse loudly instead of silently compiling the legacy
     // pass-through that cannot deliver awaited rejections.
     reportDeclinedAsyncRejectionHazard(ctx, arrow);
-    if (hostAsyncPromiseWrap) closureReturnType = { kind: "externref" };
   }
+  // (#4648) NOTE — a DECLINED (await-free) async closure does NOT get the
+  // Promise wrapper here; only the host-callback bridge does (see
+  // `compileArrowAsCallback` below). The first cut wrapped this path too and
+  // broke three equivalence tests with an INVALID module: the wrapper's result
+  // is `externref` while the lifted body's result is whatever
+  // `compileLiftedClosureBody` settled on — a covariant/repaired typed ref for
+  // a closure stored in a `() => void` field (#3205 wrapper-root dispatch), so
+  // `call <body>` fell through as `(ref null N)` where `externref` was
+  // required. The sibling-wrapper machinery that picks those struct types is
+  // exactly what forcing an `externref` result perturbs, and this path buys
+  // nothing measurable: its call sites are the ones `isAsyncCallExpression`
+  // already repairs statically. Leaving it byte-identical to main.
 
   // 2. Analyze captured variables (referenced/written free vars, outer-write +
   //    TDZ-flag boxing) and the self-recursive binding — see planClosureCaptures.
@@ -2997,18 +3002,6 @@ export function compileArrowAsClosure(
   // remove from liveBodies to keep it tight (the regular walker dedupes anyway).
   ctx.liveBodies.delete(liftedFctx.body);
   ctx.funcMap.set(closureName, liftedFuncIdx);
-  // (#4648) Mint the Promise wrapper NOW, while `liftedFuncIdx` is still the
-  // body's live index, and keep `funcMap[closureName]` on the RAW body so
-  // devirtualized direct calls (whose call site already applies the static
-  // async repair) are unaffected. Only the closure STRUCT's funcref moves.
-  let closureFuncIdx = liftedFuncIdx;
-  if (hostAsyncPromiseWrap) {
-    const wrapperIdx = emitAsyncClosurePromiseWrapper(ctx, closureName, liftedParams, (n, p, r) =>
-      ensureLateImportShared(ctx, n, p, r),
-    );
-    flushLateImportShiftsShared(ctx, fctx);
-    if (wrapperIdx !== undefined) closureFuncIdx = wrapperIdx;
-  }
   let recordedTwin = false;
 
   // 6b. (#3683 S2) Typed-`this` TWIN. When this lifted closure is an admitted
@@ -3158,7 +3151,7 @@ export function compileArrowAsClosure(
     ctx,
     fctx,
     captures,
-    closureFuncIdx, // (#4648) the Promise wrapper for a declined host-lane async closure
+    liftedFuncIdx,
     structTypeIdx,
     hasRestParam ? Math.max(0, arrowParams.length - 1) : arrowParams.length,
     constructionMeta, // (#4437) plus the certified DOM callback carrier, when present

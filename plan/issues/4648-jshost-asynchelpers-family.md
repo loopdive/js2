@@ -188,6 +188,31 @@ repair themselves:
 Host lane only; `JS2WASM_ASYNC_CLOSURE_PROMISE=0` restores the previous
 lowering.
 
+**Correction (PR #4801 round 2): the CLOSURE path was withdrawn — only the
+host-callback bridge is wrapped.** The first cut wrapped `compileArrowAsClosure`
+too and produced an **INVALID module** on three equivalence tests
+(`issue-3205-property-call-wrapper-root` "async arrow closure stored in a
+`() => void` class field", `promise-chains` "async arrow function",
+`async-function` "#1730 module-const-arrow dispatch"):
+
+```
+WebAssembly.Module(): Compiling function #16:"__closure_4__async_promise" failed:
+type error in fallthru[0] (expected externref, got (ref null 7))
+```
+
+Forcing `closureReturnType = externref` fixes the wrapper's signature, but the
+LIFTED BODY keeps whatever result `compileLiftedClosureBody` settled on — a
+covariant / repaired typed ref for a closure stored in a `() => void` field,
+which is precisely the sibling-wrapper-struct machinery #3205 exists to pick
+between. So `call <body>` fell through as `(ref null N)` where the wrapper
+promised `externref`. Making that path correct means teaching the wrapper the
+body's real (possibly repaired) result type AND keeping the #3205 wrapper-root
+sibling selection consistent with the forced `externref` — for **zero measured
+gain**: re-measured after the withdrawal, the harness category is still 108/116,
+i.e. every flip came from the `__cb_<id>` bridge. The closure path is now
+byte-identical to main again. This was NOT a stale equivalence expectation —
+the emitted module genuinely failed `WebAssembly.validate`.
+
 ## Validation (all runs executed on this branch)
 
 | run | before | after |
@@ -196,6 +221,7 @@ lowering.
 | harness category, standalone (`.tmp/run-harness-all.mts`) | 110/116 | 110/116 |
 | 60-test js-host sample (`.tmp/run-host-list.mts`) | 59/60 | 59/60 |
 | `await` + `async-function` + `async-arrow-function`, js-host (156 files) | 131/156 | 131/156, identical failure list |
+| full unsharded `equivalence-gate` (post-merge head, round 2) | 24 known-failures | **24 failing / 1661 passing — no new regressions** |
 
 The standalone base was re-measured on this branch's base commit for the two
 non-environment failures (`asyncHelpers-asyncTest-return-not-thenable`,
