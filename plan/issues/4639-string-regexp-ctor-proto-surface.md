@@ -413,11 +413,19 @@ links). **Neither lane has compiled the combined tree.** Do NOT carry either
 lane's before/after numbers across the merge.
 
 **The merge check needs BOTH pin files, and this lane's alone is not
-sufficient.** `tests/issue-4639.test.ts` (12 pins, ~95 s) covers the
-direction where #4637 could break THIS lane: its C2 group
-(`String.indicator`, `RegExp.indicator`, `Math.NaN`) exercises the spliced
-`__object_hasOwn`, and its C1 pin `built-ins/String/S15.5.2.1_A1_T10` the
-escape-gate interaction. It CANNOT cover the opposite direction. C1's
+sufficient.** `tests/issue-4639.test.ts` (13 pins, ~50 s) covers the
+direction where #4637 could break THIS lane. Note the C2 group
+(`String.indicator`, `RegExp.indicator`, `Math.NaN`) does NOT do that on its
+own: all three use non-`prototype` keys, so none of them exercises the key on
+which the two arms actually meet. **`#4639 C2 — CANARY`
+(`builtin-no-brand-prototype`) is the pin that does** — `Math.prototype` /
+`Proxy.prototype` reach the C2 arm and emit
+`__object_hasOwn(carrier, "prototype")`, the exact interned literal
+dev-4637's prologue keys on. Verified driven and not incidentally green:
+reverting `property-access-dispatch.ts` to `81445abf7` and removing
+`builtin-static-expando.ts` makes that pin FAIL, and only it. The C1 pin
+`built-ins/String/S15.5.2.1_A1_T10` covers the escape-gate interaction. Even
+so, this file CANNOT cover the opposite direction. C1's
 widening makes more `new F(inst)` sites reconstruct, which means dev-4637's
 A1 arm fires at MORE `__object_create` sites than they measured — a
 regression there is invisible to every pin in this file, because none of

@@ -29,7 +29,7 @@
 //
 // Copied from #4485/#4621: a row costs a full compile, and batching rows into
 // few long `it`s starves vitest's worker RPC under parallel-agent load.
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { runTest262File } from "./test262-runner.js";
@@ -113,6 +113,52 @@ describe.skipIf(!TEST262)("#4639 C6 — replace with a Function replacement / nu
   // on rows that already passed and must keep passing: a string search with a
   // string-returning replacer, and the `$`-substitution engine.
   pinRow("built-ins/String/prototype/replace/S15.5.4.11_A1_T1.js", "control — plain string replace");
+});
+
+/**
+ * A pin whose SOURCE is synthetic — no test262 row covers it — but which still
+ * runs through `runTest262File` so it gets the same injected harness every other
+ * pin here does (see the file header for why a bare `compile()` disagrees with
+ * the lane in both directions). `runTest262File` takes any absolute path.
+ */
+function pinSource(name: string, source: string, note: string): void {
+  it(`${name} — ${note}`, { timeout: 60_000 }, async () => {
+    const dir = join(__dirname, "..", ".tmp", "issue-4639-pins");
+    mkdirSync(dir, { recursive: true });
+    const abs = join(dir, `${name}.js`);
+    writeFileSync(abs, source);
+    const r = await runTest262File(abs, "issue-4639", 30_000, "standalone");
+    expect(`${r.status}: ${r.error ?? ""}`).toBe("pass: ");
+  });
+}
+
+describe.skipIf(!TEST262)("#4639 C2 — CANARY: the key on which C2 and #4637's arm MEET", () => {
+  // (Cross-lane, dev-4637's `issue-4637`.) The three C2 pins above all use
+  // NON-`prototype` keys (`indicator`, `NaN`). But `propName === "prototype"`
+  // DOES reach the C2 arm — the `emitLazyNativeProtoGet` fast path above it
+  // falls through for any builtin with no registerable proto brand — so C2
+  // emits `__object_hasOwn(carrier, "prototype")`, the exact interned literal
+  // dev-4637's `spliceClosurePrototypeEdgeHasOwn` prologue keys on. Their arm
+  // declines here because `__closure_proto_of(carrier)` is null (a
+  // `__new_plain_object` carrier is not a `__fn_closure_*` / `__class_*`
+  // singleton), so the two are separated by the RECEIVER predicate ALONE.
+  //
+  // Without this pin, nothing in either lane's file exercises that key through
+  // this arm: mine used other keys, theirs used other receivers. Two files
+  // blind to the same contact point from opposite ends.
+  //
+  // Also a plain regression pin for two flips measured BOTH arms (base
+  // `81445abf7`): each was `Codegen error: <B>.prototype built-in static
+  // property value read is not supported` and is now the spec `undefined`.
+  // `Math` and `Proxy` are not constructors, so §10.3 gives them no
+  // `prototype` — the carrier has no own one and `%Object.prototype%` has none
+  // either.
+  pinSource(
+    "builtin-no-brand-prototype",
+    'assert.sameValue(Math.prototype, undefined, "Math.prototype");\n' +
+      'assert.sameValue(Proxy.prototype, undefined, "Proxy.prototype");\n',
+    "Math/Proxy .prototype reach the C2 arm with key `prototype`",
+  );
 });
 
 describe.skipIf(!TEST262)("#4639 — measured residuals (see the issue's Residuals table)", () => {
