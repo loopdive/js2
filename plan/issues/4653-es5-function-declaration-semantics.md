@@ -1,0 +1,399 @@
+---
+id: 4653
+title: "ES5 standalone: language/statements/function residual — 12 rows across arguments.callee identity, named-function-expression scope, property-vs-declaration shadowing, and a null-pointer in __module_init"
+status: done
+completed: 2026-08-23
+sprint: current
+created: 2026-08-23
+updated: 2026-08-23
+priority: high
+horizon: m
+feasibility: medium
+reasoning_effort: high
+task_type: bug
+area: codegen
+es_edition: 5
+language_feature: functions
+goal: standalone-gap
+related: [4491, 4504, 4515, 4641, 4643]
+origin: "wave-5 lead sweep (2026-08-23) on campaign HEAD c9990a7d2+, fresh compiler bundle + eval adapter. All 12 rows re-verified failing; no existing issue covers this directory."
+assignee: dev-4653
+loc-budget-allow:
+  - src/codegen/declarations.ts
+  - src/codegen/object-runtime-enumeration.ts
+func-budget-allow:
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/object-runtime-enumeration.ts::buildObjectEnumerationHelpers
+---
+
+# #4653 — `language/statements/function` residual (12 rows)
+
+> **Outcome: 3 of the 12 rows fixed, 9 documented as residuals with measured
+> roots and owners.** `status: done` records that the issue's acceptance bar —
+> triage, before/after sweep, per-file flips, zero regressions, pins, residual
+> attribution — is met; it does NOT mean all twelve rows pass. The nine open
+> rows and their roots are in `## Residuals`, and the twelve rows turned out to
+> be **eleven distinct roots**, so they do not belong under one issue. Anyone
+> picking one up should start from that section, not from the row table.
+
+## Affected rows (sweep-verified on campaign HEAD, 2026-08-23)
+
+| row | observed |
+| --- | --- |
+| `S13.2.2_A18_T1.js` | `callee === 0` → got `1` |
+| `S13.2.2_A18_T2.js` | `callee === 0` → got `1` |
+| `S13.2.2_A17_T3.js` | `RuntimeError: dereferencing a null pointer in __module_init()` at source L38 |
+| `S13.2.2_A8_T3.js` | `ReferenceError: arg is not defined` |
+| `S13.2.2_A4_T2.js` | `__device.printShape` is `undefined` |
+| `S13.2.2_A19_T8.js` | `__func()==="b"` → got `a` |
+| `S13.2.2_A2.js` | exception type should be `TypeError`, got `[object Object]` |
+| `S13_A6_T1.js` | `__1 === __A` → got `NaN` |
+| `S13_A2_T2.js` | `x === "11"` → got `2` |
+| `S13_A15_T3.js` | `typeof __func() === "undefined"` → got `object` |
+| `13.2-17-1.js` | expected `"data"`, got `"constructor"` |
+| `13.2-18-1.js` | `TypeError: Cannot destructure 'null' or 'undefined'` at `fun.prototype` |
+
+Read each test's source: they are NOT one root. At least four visible
+sub-shapes — `arguments.callee` identity across the constructed-instance
+boundary (the two `A18` rows share one wording), the `new`-instance
+property table (`13.2-17-1` / `13.2-18-1` probe `fun.prototype`'s own
+descriptors, so they may belong with #4491's MOP lane — measure before
+claiming), named-function-expression scope (`A19_T8`, `S13_A2_T2`), and one
+hard invalid-access crash (`A17_T3`).
+
+## Implementation Plan
+
+1. Brief: `plan/method/es5-standalone-agent-brief.md` — BINDING. Read it
+   fully before the first edit: methodology 1–7 (revert copies at first
+   edit, cross-lane third-arm rule, pin-exercises-the-shape, unfoldable
+   pins, "N passed" never exit 0), the stale-`compiler-bundle.mjs` trap,
+   the worktree symlink-farm + **gitlink** hazard, the concrete-ref
+   `try_table` trap, verification floor, commit rules.
+2. **Triage first, fix second.** Re-verify all 12 live, read each test's
+   source, cluster by measured ROOT (not by filename prefix). Report the
+   cluster table before implementing. Fix the largest cluster(s); a lane
+   that lands 5 of 12 with the other 7 correctly attributed is a success,
+   a lane that "fixes" 12 by guessing is not.
+3. `S13.2.2_A17_T3`'s null-pointer is an invalid-access crash — treat it
+   trap-first (absent-not-wrong: decline gracefully before answering
+   wrongly), and if the correct answer is out of scope, say so with the
+   measurement.
+4. Hand off, don't double-fix: rows whose root is the descriptor MOP
+   belong to #4491 (dev-4491 active in that territory), value-rep rows to
+   #4641, prototype-chain rows to #4643. Cross-lane claims need the third
+   arm (methodology 7).
+
+## Acceptance
+
+Scoped standalone sweep over `language/statements/function` +
+`language/statements/{return,try}` before AND after from your own runs;
+per-file flip list; **zero regressions**. `tests/issue-4653.test.ts`
+pinning every fixed shape (executing it, not asserting about it), verified
+failing on base by revert; `it.fails` pins for measured residuals with
+owners. `## Root cause` (per cluster) / `## Fix` / `## Test Results` /
+`## Residuals` in this file.
+
+---
+
+## Triage — the 12 rows are ELEVEN roots, not four
+
+Re-verified live on the branch base (campaign HEAD `c42bdbe3e`) with a freshly
+rebuilt `scripts/compiler-bundle.mjs` + quickjs adapter (the brief's stale-bundle
+trap: on the first pass, two rows reported "quickjs provider is not built" and
+one reported a compile timeout — both artifacts of the missing local adapter, not
+of the compiler). All 12 confirmed failing after the rebuild.
+
+Every root below was isolated with a reduced probe, not inferred from the row's
+error text. Three of the issue file's four premises did not survive measurement:
+`S13_A2_T2` is not a named-function-expression scope bug, `13.2-17-1`'s
+descriptors are all correct, and `S13.2.2_A19_T8`'s closure capture works in
+isolation.
+
+| cluster | rows | measured root | status |
+| --- | --- | --- | --- |
+| **E** for-in shadow set | `13.2-17-1` | `__object_keys_forin`'s private `seen` table is written with `__extern_set`, which probes the implicit `Object.prototype` companion and fires a user setter | **FIXED** |
+| **F** late-assigned fnctor | `S13.2.2_A4_T2` | `var F; F = function(){}` is invisible to both fnctor recognisers, so `F.prototype` and `new F()` disagree | **FIXED** |
+| **D** redeclared function slot | `S13_A6_T1` | the module global is typed from the FIRST `function f(){}`'s signature while the emitted body is the LAST one's | **FIXED** |
+| **W1** `with (arguments)` | `S13.2.2_A18_T1`, `_T2` | `arguments.callee` is a compile-time property-access arm, not an own property of the backing vec, so the dynamic `with` HasBinding gate misses it | residual — vec representation |
+| **W2** re-declared `with` target | `S13.2.2_A19_T8` | two `with` blocks over one re-declared `var` share a target proof keyed off the FIRST initializer's key set | residual |
+| **W3** `with` + var-hoisted fn | `S13.2.2_A17_T3` | null-pointer trap in `__module_init` | residual |
+| **V** omitted reference-typed arg | `S13_A15_T3` | an omitted argument for a `(ref null T)` parameter is `ref.null T`, i.e. JS `null`, not `undefined` | residual — value-rep |
+| **P** binary `+` | `S13_A2_T2` | `number + <dynamic>` folded to an f64 add | residual |
+| **C** non-callable call | `S13.2.2_A2` | calling a non-callable object does not throw at all | residual |
+| **R** `Function(p, body)` | `S13.2.2_A8_T3` | the minted function does not bind its declared parameters | residual — runtime-eval |
+| **M** `fun.prototype` own-ness | `13.2-18-1` | a function EXPRESSION has no own `prototype` under the live descriptor MOP | residual — **#4491** |
+
+## Root cause
+
+### E — the for-in shadow set was written through the full `[[Set]]`
+
+`__object_keys_forin` (`src/codegen/object-runtime-enumeration.ts`) walks the
+prototype chain and, at each level, marks EVERY own key — enumerable or not —
+into a private `seen` table, so a closer own property shadows an inherited
+same-named key. `seen` is `__new_plain_object()`: a `$Object` with a **null
+`$proto`**, which is exactly how an ordinary object literal is represented in
+this runtime. `__extern_set` therefore treats it as one — it exhausts the
+explicit `$proto` chain (immediately, there is none) and then probes the
+**implicit** `Object.prototype` companion via `__extern_set_decide`'s
+`protoIndexSetDecisionInstrs` tail.
+
+Once a test installs an accessor on `Object.prototype` — which the entire
+`propertyHelper.js` / `verifyProperty` family does — the mark
+`seen[key] = key` **invokes that user setter**, passing the enumerated key as
+its argument, and records nothing. Two observable defects from one write:
+
+1. a bare `for (x in o)` fires a setter it must not touch;
+2. the shadow set stays empty, so a name owned at two chain levels is yielded
+   twice.
+
+Measured on base: `13.2-17-1` fails `assert.sameValue(data, "data")` with actual
+`"constructor"`. A step-by-step replay of `verifyProperty`'s phases showed `data`
+flipping at the `for (var x in obj)` enumerability probe (`d0=data` →
+`d1=constructor`), not at any assignment the test performs.
+
+### F — `var F; … F = function(){}` was invisible to both fnctor recognisers
+
+`fnctorDeclFromSymbol` and `resolveFnctorSymbol` both keyed on a
+`VariableDeclaration`'s own initializer. The Sputnik ES5 corpus overwhelmingly
+writes the separated form (`var __CUBE, __FACTORY, __device;` then
+`__FACTORY = function(){}`), and TypeScript records no function declaration for
+that symbol: `getDeclarations()` answers `[VariableDeclaration, Identifier]`,
+the Identifier being the `F` of a later expando write, never the assignment's
+right-hand function.
+
+The result was not a missed optimisation but the **split brain**
+`resolveUserFnctorName`'s own gate comment names. The escape gate held no ctor
+declaration for the name, so `resolveUserFnctorName` reached its
+`neverConstructed` arm and minted `__fnctor_proto_F`; `F.prototype = {…}` and
+`F.prototype.p` read and wrote that global consistently; and `new F()` could not
+route to the fnctor lowering at all. Measured on base:
+
+```
+var A; A = function(){}; A.prototype = {shape:"cube", printShape:…};
+var a = new A();
+A.prototype.shape         // "cube"   <- the write landed
+Object.getPrototypeOf(a)  // null     <- the instance never saw it
+a instanceof A            // false
+```
+
+with `var A = function(){}` correct in the same program on the same run.
+
+### D — a var initialized from a REDECLARED function got a numeric slot
+
+ES §14.1.23 hoists every `function f(){…}` declaration and lets the LAST win, so
+a duplicated name is one binding holding the second body; every call, including
+one written above the second declaration, answers the second body's value.
+TypeScript resolves `f()` through the FIRST declaration's signature.
+
+The compiler already emits the last body correctly — on base the emitted
+function is `(func $__func (result (ref null 6)))` returning the `'A'` constant.
+Only the receiving slot was wrong: `moduleGlobalWasmType` typed
+`var __1 = __func()` from the checker's `number`, giving `(mut f64)`, and the
+string result coerced to `NaN` on BOTH reads.
+
+## Fix
+
+| file | change |
+| --- | --- |
+| `src/codegen/object-runtime-enumeration.ts` | the `seen` mark uses `__extern_set_own` (same data-write tail, no descriptor or prototype consult), falling back to `__extern_set` where the own-only helper is not registered — which is exactly the configuration in which `__extern_set` cannot walk a chain anyway |
+| `src/codegen/fnctor-ctor-decl.ts` (new) | `lateAssignedFunctionExpression` + the relocated `fnctorDeclFromSymbol`, so the escape gate and the resolver share ONE admission rule |
+| `src/codegen/fnctor-escape-gate.ts` | both recognisers consult it; net −16 LOC (the relocation is larger than the addition) |
+| `src/codegen/duplicate-function-declaration.ts` (new) | `callTargetIsRedeclaredFunction`, via `ctx.oracle.declarationsOf` |
+| `src/codegen/declarations.ts` | `moduleGlobalWasmType` widens a call-initialized global to `externref` when the callee has ≥2 body-bearing declarations — the sibling of the existing purely-void-call arm |
+
+**Why F's admission is narrow.** A wrong claim there is a miscompile; a decline
+only forfeits today's behaviour. Admitted: a non-exported `var` with no
+initializer, declared at the top level of its source file (a module-local `var`
+cannot be written from another file, so one file is the whole write set),
+written exactly once, by a top-level `F = <FunctionExpression>` statement. A
+second write, a compound assignment, an update expression or a for-in/of binding
+all decline. Identity is proved with `checker.getSymbolAtLocation`, never
+spelling, so an inner scope that shadows the name cannot forge a write.
+
+**Why D's admission is narrow.** Only two or more **body-bearing** declarations
+qualify, so an ordinary TS overload set — where only the implementation has a
+body — is untouched, as is every singly-declared function.
+
+## Test Results
+
+All numbers below come from runs executed on this branch, by the same driver
+(`runTest262File(…, "standalone")`), with the compiler bundle and quickjs
+adapter rebuilt locally before the first measurement.
+
+**Scoped sweep**, `language/statements/function` + `language/statements/return` +
+`language/statements/try`, 668 files, both arms, 2 shards, 20 s per-row timeout:
+
+| arm | pass | fail | compile_error |
+| --- | --- | --- | --- |
+| base (`c42bdbe3e`) | 611 | 56 | 1 |
+| this branch, as swept | 604 | 53 | 11 |
+| this branch, **corrected** | **614** | **53** | **1** |
+
+**Per-file flips (fail → pass), 3 — each re-verified SERIALLY on both arms:**
+
+| row | base | this branch |
+| --- | --- | --- |
+| `language/statements/function/13.2-17-1.js` | fail | **pass** |
+| `language/statements/function/S13.2.2_A4_T2.js` | fail | **pass** |
+| `language/statements/function/S13_A6_T1.js` | fail | **pass** |
+
+**Zero regressions.** The raw after-sweep showed ten `pass → compile_error`
+rows — `13.0-{7,8,12,13,14,15,16,17}-s`, `13.0_4-17gs`, `13.1-2-s` — every one
+of them `compilation timeout` at 24–54 s with the box at load 17–21 (five lanes
+sweeping). **A timeout is a measurement failure, not a status**, and
+`runTest262File`'s `timeoutMs` is post-hoc: it cannot interrupt a slow compile,
+only report after the fact. All ten were re-run SERIALLY at a 120 s timeout on
+BOTH arms and **pass on both**, which is what the corrected row above records.
+The three real flips were re-run in the same serial pass and hold in both
+directions. The one remaining `compile_error`
+(`param-dflt-yield-non-strict.js`) is present on base too and is unchanged.
+
+Two earlier measurements were discarded rather than reported: a first pass at
+the 12 rows where the missing local quickjs adapter made two rows read as
+"provider not built" and one as a compile timeout (the brief's stale-bundle
+trap), and a first after-sweep that I aborted because I had file-copy-reverted
+the source mid-run for a pin sensitivity check — a sweep whose base moved under
+it is not a measurement.
+
+**Pins** — `tests/issue-4653.test.ts`, 20 tests, `npm test -- tests/issue-4653.test.ts`:
+
+- on this branch: **20 passed**;
+- on base, by file-copy revert of exactly the three modified files: **3 failed,
+  14 passed** (of the 17 pins that existed at the time of that A/B — three
+  runtime-eval pins were added afterwards, see residual **R**, and they are
+  `it.fails`/positive controls that this change-set does not touch) — and the
+  three failures are precisely the three positive pins that guard E, F and D.
+  Every negative control and every `it.fails` residual pin answers identically
+  on both arms, which is what makes the three failures attributable to this
+  change-set rather than to the revert.
+
+The second E pin (a two-level own name yielded once) and the non-enumerable
+shadow pin pass on BOTH arms: they guard the half of the shadow write that the
+own-only switch must not break, not a behaviour this change flips.
+
+## Residuals
+
+Nine rows remain, each with a measured root and an owner. None is a guess.
+
+- **W1 `with (arguments)`** (`S13.2.2_A18_T1`, `_T2`) — `arguments.callee` is
+  synthesized by a compile-time property-access arm; it is not an own property of
+  the runtime vec that backs the arguments object, so the dynamic `with`
+  HasBinding gate (`__extern_has`) misses it and `callee = 1` writes the OUTER
+  binding. Measured discriminator: inside the same `with (arguments)`,
+  `return length` answers 3 for a 3-argument call (the vec DOES own `length`)
+  while `return callee` answers the outer variable. A real fix needs `callee` to
+  become a writable own property of the arguments object — the row also asserts
+  `result.callee === 1` afterwards, so a read-only special case would flip
+  CHECK#1 and still fail CHECK#3. That is vec-representation work
+  (`src/codegen/vec-overlay*.ts`), owned by another lane; **not** attempted here.
+- **W2 re-declared `with` target** (`S13.2.2_A19_T8`) — narrowed to: two `with`
+  blocks over the SAME re-declared `var obj`, where the second literal owns a key
+  the first does not. The same program with two DISTINCT target variables is
+  correct, and a single `with` block with a `var`-declared closure inside is
+  correct; only the re-declared target fails. The static target proof is keyed
+  off the first initializer's key set.
+- **W3 `with` + var-hoisted function expression** (`S13.2.2_A17_T3`) — a
+  `var f = function(){}` declared inside a `with` body whose target owns the same
+  name traps with `dereferencing a null pointer in __module_init`. Reproduced in a
+  reduced probe. Trap-first: this is an invalid access, not a wrong answer, and I
+  did not attempt a fix I could not verify end-to-end within this lane.
+- **V omitted reference-typed argument** (`S13_A15_T3`) — the row's
+  `arguments`-named parameter is INCIDENTAL. Measured: `function pass(q){return q}`
+  called with zero arguments answers `undefined` when that is the only call site,
+  and answers **`null`** (`typeof "object"`, `v === null` true) as soon as one
+  other call site passes a string, because the parameter's wasm type becomes a
+  nullable reference and the padding is `ref.null <typeidx>`. Value-representation
+  territory (#4641's lane); the fix is to widen the parameter, not to patch the
+  pad.
+- **P binary `+`** (`S13_A2_T2`) — also not what the issue file predicted. The
+  named-function-expression scope check (CHECK#2) PASSES; `arguments[1]` on its
+  own IS the string `"1"` and `typeof arguments[1]` IS `"string"`. Only
+  `arg + arguments[1]` folded to an f64 add because the left operand is provably
+  numeric and the right one is dynamic.
+- **C non-callable call** (`S13.2.2_A2`) — `rose()` does not throw at all; it
+  evaluates to `undefined`. That is why the row reports `[object Object]`: the
+  test's own `throw new Test262Error(…)` then runs inside the `try` and is caught
+  as "the exception". The spec answer is a TypeError from §7.3.14 Call step 1.
+- **R `Function(p, body)`** (`S13.2.2_A8_T3`) — **CORRECTED 2026-08-23 after
+  dev-4515 flagged an adjacent eval finding; the first write-up of this row was
+  an inference restated as a measurement and it was WRONG.** It is *not* "the
+  minted function does not bind its declared parameters" — `new Function("p",
+  "return p;")(7)` answers **7**, so the parameter is bound. The measured rule is:
+
+  > An **update expression (`++`/`--`)** applied to a name that is **LOCAL to the
+  > eval'd / `Function`-minted code** — an eval-local `var`, or a `Function`
+  > parameter — throws `ReferenceError: <name> is not defined`, but **only when
+  > the eval/mint sits inside an enclosing FUNCTION**. At module top level the
+  > same code works. Compound assignment (`x = x + 1`) works everywhere, a plain
+  > read works everywhere, and `++` on an **outer** binding works everywhere.
+
+  Discriminator table, all standalone, this branch (`.tmp/probes/ev{1,2,3,4}.js`):
+
+  | shape | inside a function | at module top level |
+  | --- | --- | --- |
+  | `eval("n + 1")`, outer read | ✓ 1 | ✓ |
+  | `eval("if (a<3) { a=7; }")`, outer in IF test | ✓ 7 | — |
+  | `eval("while (d<3) { d++; }")`, OUTER + `++` | ✓ 3 | ✓ 3 |
+  | `eval("var i=0; i++; i")`, local + `++`, no loop | **THROW** `i` | ✓ 1 |
+  | `eval("var j=0; j=j+1; j")`, local + `=` | ✓ 1 | ✓ |
+  | `eval("var k=0; while(k<1){k=k+1;} k")`, local + `=` | ✓ 1 | ✓ 1 |
+  | `eval("var m=0; while(m<1){m++;} m")`, local + `++` | **THROW** `m` | ✓ 1 |
+  | `eval("var q=0; for(q=0;q<3;q++){} q")`, local + `++` | **THROW** `q` | — |
+  | `new Function("p","return p;")(7)` | ✓ 7 | — |
+  | `new Function("p","return p+1;")(1)` | ✓ 2 | — |
+  | `new Function("p","p=p+1; return p;")(1)` | ✓ 2 | — |
+  | `new Function("p","p++; return p;")(1)` | **THROW** `p` | — |
+  | `new Function("","var z=0; z++; return z;")()` | **THROW** `z` | — |
+
+  So `for` vs `while` is irrelevant, the loop is irrelevant (the no-loop case
+  throws), and outer-vs-local is **inverted** from the first reading: OUTER
+  works, LOCAL throws. `S13.2.2_A8_T3` matches exactly — `Function.call(this,
+  "arg", "return ++arg;")` is `++` on a mint-local parameter inside the enclosing
+  `var __func = function(arg1, arg2){…}`. Owner: the runtime-eval lane.
+
+  **Not reproduced:** dev-4515 reports `var n = 0; eval("while(n<3){ n++; }")`
+  throwing on the merged campaign tip (`8794ab2c9` + their commit). On MY base
+  (`c42bdbe3e` + this branch) that exact shape **passes in both contexts** — it
+  is the OUTER-binding row above. Per the brief's third-arm rule I can only say
+  it does not reproduce here; whether their tip differs is theirs to measure.
+- **M `fun.prototype` own-ness** (`13.2-18-1`) — **owner #4491**, with evidence: a
+  function EXPRESSION has no own `prototype` property under the live descriptor
+  MOP. With an accessor installed on `Function.prototype.prototype`,
+  `fun.prototype` therefore reads as `undefined` and
+  `hasOwnProperty(fun, "prototype")` is false, so `verifyProperty`'s
+  `assert(__hasOwnProperty(obj, name))` cannot hold and `fun.prototype.toString()`
+  throws first (base error: "Cannot destructure 'null' or 'undefined'").
+  **This is DISTINCT from its sibling `13.2-17-1`**, whose
+  `fun.prototype.constructor` descriptors are already fully correct on base
+  (`writable: true, enumerable: false, configurable: true`, own, data) — that row
+  rooted in the for-in shadow write and is fixed here. The pair looked like one
+  family and is two. Routed to the issue file rather than to a live lane: the
+  dev-4491 lane completed and stood down (its slice is in PR #4808), so the next
+  lane on #4491 picks this row up from here.
+
+One residual is NOT one of the twelve, found while measuring F and worth
+recording: `a instanceof A` still answers false for a late-assigned fnctor even
+now that `Object.getPrototypeOf(a)` is right. `native-user-instanceof.ts` reaches
+the same `emitFnctorProtoGet` but a different arm decides first. Pinned
+`it.fails`.
+
+Also observed while measuring E, outside this issue's rows: an inherited
+accessor's SETTER is not invoked by an ordinary `o.zzz = 42` when `zzz` is an
+accessor on `Object.prototype` and `o` has no own `zzz` (measured: the setter
+never ran). That is #4504's territory, stated here only because the same
+`__extern_set_decide` path carries both.
+
+## Cross-lane note
+
+`language/statements/try` is in this sweep's scope and **dev-4515 has landed
+§13 completion-value changes that move three rows in it**
+(`try/cptn-finally-{wo-catch,skip-catch,from-catch}.js`) on branch
+`issue-4515-wave5`. Those are eval-only and touch no file this change-set
+touches (`statements/eval-completion-value.ts`, `statements.ts`,
+`statements/exceptions.ts`, `expressions/eval-*.ts`, `helpers/*`,
+`binary-ops-in.ts` vs this lane's `object-runtime-enumeration.ts`,
+`fnctor-escape-gate.ts`, `declarations.ts` + two new modules), so there is no
+file conflict. Per the brief's third-arm rule, the numbers above are for THIS
+branch only and say nothing about dev-4515's effect: those three rows are `fail`
+on both of my arms, exactly as they should be, because neither arm contains
+their change. The combined tree needs its own run.

@@ -32,10 +32,17 @@ import type { CodegenContext } from "./context/types.js";
 const shadowNamesByCtx = new WeakMap<CodegenContext, Set<string>>();
 const slotsByCtx = new WeakMap<CodegenContext, Map<string, number>>();
 let readSuppression = 0;
+/** Stack of names whose STATIC fallback arm is currently being compiled (#4648). */
+const staticArmNames: string[] = [];
 
 /** Collect `globalThis.<name> =` assignment targets in `sourceFile` into ctx state (additive across sources). */
 export function scanGlobalThisFnShadows(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
+  // (#4648) Lane-agnostic. The aliasing this models is a language rule
+  // (§16.1.7), not a runtime-representation detail: on the JS-host lane the
+  // write lands on the real host global via `__extern_set` while a bare
+  // `$DONE(...)` still calls the statically compiled top-level function, so
+  // the two diverge exactly as they did standalone. Only the WRITE arm needs
+  // a per-lane spelling (assignment.ts); the read/call arms are shared.
   let names = shadowNamesByCtx.get(ctx);
   const walk = (node: ts.Node): void => {
     if (
@@ -91,12 +98,54 @@ export function fnShadowSlot(ctx: CodegenContext, name: string): number {
   return idx;
 }
 
+/**
+ * (#4648) Keep the cached slot indices in step when a LATE import global is
+ * inserted below them.
+ *
+ * `fnShadowSlot` caches an ABSOLUTE global index. On the JS-host lane every
+ * string literal becomes an imported `string_constants` global, and one added
+ * after a slot was minted shifts the whole module-global range — so the cached
+ * index silently names a DIFFERENT global. Observed on
+ * `asyncHelpers-asyncTest-then-rejects`: the write arm's `global.set` landed on
+ * the `var realDone = $DONE` module global instead of the slot, and the later
+ * `realDone()` trapped on a null closure struct. Standalone never saw it
+ * (native strings are not import globals), which is why #4630 shipped without
+ * this. Same discipline as `newTargetGlobalIdx` / `holeGlobalIdx` /
+ * `sharedEmptyVecGlobals` in registry/imports.ts.
+ */
+export function shiftFnShadowSlots(ctx: CodegenContext, threshold: number, delta: number): void {
+  const slots = slotsByCtx.get(ctx);
+  if (!slots) return;
+  for (const [name, idx] of slots) {
+    if (idx >= threshold) slots.set(name, idx + delta);
+  }
+}
+
+/**
+ * (#4648) True while the STATIC fallback arm for `name` is being compiled.
+ *
+ * The static arm models the binding's value before any `globalThis.<name> =`
+ * write — which, for a top-level function declaration, is the compiled function
+ * itself. On the JS-host lane the presence of the `globalThis.<name> =` write
+ * also puts `name` in `ctx.sloppyImplicitGlobals`, so an unguarded static arm
+ * re-reads the value back OFF the host global object; that read returns a
+ * host-wrapped callable, and storing it in a variable (`var realDone = $DONE`)
+ * makes the later `realDone()` miss the closure-struct `ref.test` and trap on a
+ * null dereference. Consulting this predicate lets the static arm fall through
+ * to the funcref-as-value lowering and keep the WasmGC closure.
+ */
+export function isShadowStaticArmFor(name: string): boolean {
+  return staticArmNames.length > 0 && staticArmNames[staticArmNames.length - 1] === name;
+}
+
 /** Run `emit` with the shadow READ arm suppressed (for compiling the static fallback). */
-export function withShadowReadSuppressed<T>(emit: () => T): T {
+export function withShadowReadSuppressed<T>(emit: () => T, name?: string): T {
   readSuppression++;
+  if (name !== undefined) staticArmNames.push(name);
   try {
     return emit();
   } finally {
+    if (name !== undefined) staticArmNames.pop();
     readSuppression--;
   }
 }

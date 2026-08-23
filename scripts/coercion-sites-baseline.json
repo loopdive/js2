@@ -86,6 +86,7 @@
   "codegen/string-raw.ts": 2,
   "codegen/struct-field-exports.ts": 1,
   "codegen/symbol-field-carrier.ts": 1,
+  "codegen/symbol-native.ts": 1,
   "codegen/ta-dyn-mop.ts": 4,
   "codegen/ta-hof-map-filter.ts": 3,
   "codegen/tonumber-fast-paths.ts": 7,

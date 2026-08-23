@@ -84,6 +84,40 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
    - The merge check confirms the run says **N passed** — never that it
      exited 0 (`describe.skipIf` gates can skip an entire suite green).
 
+8. **A residual is a CLAIM, and `it.fails` protects it from ever being
+   tested (2026-08-23, dev-4653 self-correction).** This is the cheapest
+   place in the method for a wrong statement to survive indefinitely, and
+   it was found the only way it can be — by accident, when a sibling
+   lane's message forced a re-open of a row already written up, swept
+   green, pinned, and committed.
+
+   The failure shape: a lane attributes a residual to a root it inferred
+   rather than probed, then pins it `it.fails`. The pin **passes**,
+   because the row does fail — just not for the stated reason. The sweep
+   is green, the suite is green, and the wrong root is now documented as
+   a measurement for the next lane to build on. Nothing in the workflow
+   ever re-examines it. Measured instance: "the minted function does not
+   bind its declared parameters" survived a full lane and its pins, while
+   `new Function("p","return p;")(7)` answers `7` — one probe, never run,
+   and the attribution was backwards (the defect is `++` on a
+   mint-LOCAL name, only inside an enclosing function; see #4662).
+
+   Rules that fall out:
+   - **Probe the NEGATIVE case before attributing a residual.** State the
+     one observation that would refute your root, run it, and record the
+     result. An attribution you did not try to falsify is a hypothesis,
+     so label it one — `suspected root`, not `root`.
+   - **Every `it.fails` pin carries POSITIVE CONTROLS that must pass**,
+     chosen so the suite claims the specific root rather than the general
+     area. dev-4653's corrected pins are the worked example: two
+     `it.fails` on "`++` on a mint-local name" plus controls asserting
+     that parameter binding works and that outer-`++` works. Without the
+     controls, a future fix that widens the wrong thing repairs the pin
+     and reads as green.
+   - Residual attributions are what the NEXT lane starts from, so a wrong
+     one costs more than a missing one. "Root unknown, here is what I
+     ruled out" is a better handover than a confident wrong root.
+
 ## Environment trap: fresh worktrees have NO .test262-cache (#4484 finding)
 
 A fresh agent worktree lacks `.test262-cache/`, so eval-dependent rows fail
@@ -94,6 +128,62 @@ provider (`npx tsx scripts/build-quickjs-eval-provider.mjs`, falling back to
 `node scripts/build-runtime-eval-provider.mjs --refusal-only` +
 `JS2WASM_EVAL_ENGINE=interpreter`), and confirm a known eval-dependent row
 runs before trusting the numbers.
+
+## Environment trap: a suite that runs ZERO tests and exits 0 (2026-08-23, dev-4491)
+
+`tests/issue-4504-inherited-set.test.ts` spins its **own `CompilerPool`**, whose
+worker imports the GITIGNORED `scripts/runtime-bundle.mjs` and
+`scripts/compiler-bundle.mjs`. A fresh worktree has NEITHER, so the worker dies
+(`[pool] worker failed before ready (exit 1)`), vitest reports **`36 skipped`**,
+and the process **exits 0**. Every lane that ran it in a fresh worktree read a
+green that measured nothing.
+
+This is the concrete instance of the brief's "N passed, never exit 0" rule:
+`skipped` is not `passed`. Read the counts. When a suite spins its own pool,
+build BOTH bundles from **the arm you are measuring**
+(`pnpm run build:compiler-bundle`), or its verdict is about your bundle, not
+your branch. Built correctly this suite is 1 failed / 35 passed, and that one
+failure is pre-existing on the campaign base.
+
+## Environment trap: CONTENTION fakes both failures and regressions (2026-08-23, dev-4491 + lead)
+
+With several lanes sweeping at once, load on this box runs 12–16 and a compile
+that normally takes ~9 s can take **47–123 s**, so `runTest262File`'s timeout
+fires and the row reports `compile_error: compilation timeout`. Measured the
+same day in both directions: three of dev-4491's 2,279 sweep rows moved for
+infrastructure reasons alone — one of them (`15.2.3.6-4-298-1`, an ENOENT from
+the symlink-farm race) **would have read as a regression** — and two lead-run
+pins (`issue-4641`, `issue-4643`) failed on timeout under 5-lane load and passed
+**25/25** when re-run serially minutes later.
+
+**Standing practice: re-run every apparent flip AND every apparent regression
+serially before it goes in a report.** A timeout is not a verdict about your
+change. Note also that `runTest262File`'s `timeoutMs` is a POST-HOC check — it
+measures elapsed time after `await compile(...)` returns and cannot interrupt a
+slow compile, so a 600 s compile runs the full 600 s and only then reports a
+timeout; bounding it needs an OS-level `timeout` on the driver process.
+
+## Environment trap: STALE `scripts/compiler-bundle.mjs` poisons every eval-tier A/B (2026-08-23, dev-4647)
+
+The quickjs eval ADAPTER is a js2wasm-compiled artifact, and
+`loadProviderCompiler` prefers the prebuilt, GITIGNORED
+`scripts/compiler-bundle.mjs` over live `src/`. The adapter cache key is
+sha256(adapter source ∥ bundle hash) — it hashes the BUNDLE, so a stale
+bundle produces a **self-consistent cache HIT**: the build script reports
+"adapter cache HIT + linked-pair verification" while handing you an
+adapter compiled by a compiler that may be WEEKS behind your tree.
+Measured 2026-08-23: the shared cache's adapter was 8 days / 3 waves
+stale; rebuilding the bundle + adapter with ZERO source change flipped 12
+`built-ins/Function` SyntaxError-family rows green. Both directions are
+live: a stale-adapter base OVERSTATES your flips (rows your change never
+touched read as yours) and can HIDE a real regression (a truly-passing
+row reads "already failing on base").
+
+Before ANY eval-dependent A/B or sweep:
+`pnpm run build:compiler-bundle && npx tsx scripts/build-quickjs-eval-provider.mjs`
+— on BOTH arms if the arms differ in compiler source. A cache HIT is not
+freshness; check the bundle's mtime against your base commit date. CI is
+unaffected (it rebuilds per run).
 
 ## Environment trap: the worktree `test262/` symlink farm + the GITLINK hazard
 
