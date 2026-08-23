@@ -1199,10 +1199,26 @@ function compileIdentifierCore(
           ts.isFunctionDeclaration(decl) ||
           ts.isFunctionExpression(decl) ||
           ts.isArrowFunction(decl) ||
-          ts.isParameter(decl) ||
-          ts.isVariableDeclaration(decl)
+          ts.isParameter(decl)
         ) {
           resolvedClassName = undefined;
+        } else if (ts.isVariableDeclaration(decl)) {
+          // A var/let/const binding opts out ONLY when it provably holds a
+          // NON-class function value (react's `const Foo = () => …` twin of
+          // the function-declaration case). `var C = class { … }` — the
+          // dominant test262 class-elements shape — IS the class this arm
+          // serves; the blanket var opt-out sent every read of `C` to the
+          // normal identifier lanes (undefined), which surfaced as 205
+          // merge_group regressions in language/expressions/class/elements
+          // ("Cannot convert undefined or null to object" in verifyProperty).
+          let init = decl.initializer;
+          while (init !== undefined && ts.isParenthesizedExpression(init)) init = init.expression;
+          if (init !== undefined && ts.isClassExpression(init)) {
+            const scoped = ctx.anonClassExprNames.get(init);
+            if (scoped !== undefined && ctx.classObjectGlobals.has(scoped)) resolvedClassName = scoped;
+          } else if (init !== undefined && (ts.isFunctionExpression(init) || ts.isArrowFunction(init))) {
+            resolvedClassName = undefined;
+          }
         }
       }
     }

@@ -836,3 +836,26 @@ in-module reads (host-side detection is what react-dom needs).
 - react upstream suite: the "is not defined" bucket (7) and the act()-shape
   failures move; target ≥ 100/146 scored.
 - jest 319/331, acorn 3518/3518, cookie 63740/63740, clsx 32/32 hold.
+
+## 2026-08-23 park root cause FIXED — fix-49's var opt-out broke `var C = class` (205 class/elements regressions)
+
+The PR #4728 merge_group auto-park (205 regressions in
+`test/language/expressions/class/elements`, net −255, all "TypeError: Cannot
+convert undefined or null to object" in verifyProperty/module-init) bisected
+to **aa6ae8af (fix 49)**: its checker-identity guard opted every
+VariableDeclaration binding out of the classObjectGlobals arm — but
+`var C = class { … }` is the DOMINANT test262 class-elements shape, and the
+var-bound class expression IS that arm's class. Every read of `C` fell to
+the normal identifier lanes (undefined). The guard is narrowed: a var/let/
+const binding opts out only when its initializer is provably a function
+value (function-expr / arrow — the react StrictMode cross-kind case fix-49
+exists for); a class-expression initializer keeps the class arm (per-site
+synthetic honored via anonClassExprNames keyed on the initializer node).
+
+Validated: 4 sampled park regressions flip back to pass via the real
+test262 runner; the full 1004-baseline-pass class/elements sweep re-running;
+react holds 109 (incl. the cross-kind grab test), acorn 3518/3518, jest
+328/358, scoped-same-name-classes 7/7. Regression test:
+`tests/issue-4618-var-bound-class-expression-identity.test.ts` (both
+directions: var-bound class expression stays a class; function-valued const
+still opts out).
