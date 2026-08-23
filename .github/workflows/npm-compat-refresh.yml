@@ -275,7 +275,7 @@ jobs:
               const entry = byName.get(pin.name);
               // A failed worker is carried forward from the last committed
               // snapshot. Its old test numbers are useful context, but they
-              // must not block publication or masquerade as this run's data.
+              // must not block publication or masquerade as data from this run.
               if (entry?.refresh?.status === "stale") continue;
               const tests = entry?.tests;
               if (!tests || typeof tests.passed !== "number" || typeof tests.total !== "number") {
