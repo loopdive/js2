@@ -379,3 +379,12 @@ instruction ("merge-driven, no cron", 2026-08-23). Options, cheapest first:
    the option that most contradicts the stated instruction.
 
 (1) or (2) look right; both keep the trigger merge-driven.
+
+**Decision (stakeholder, 2026-08-23): option 2.** The coordinator never pushes
+while a promotion PR is open. The check-runs probe and the merge-queue GraphQL
+probe are gone — there is no longer a "looks idle right now" path to race. An
+unreadable PR listing now fails CLOSED (skip the cycle) rather than pushing.
+
+Consequence accepted: a genuinely wedged PR freezes promotion rather than
+trampling it, and `npm-compat-staleness.yml` is the alarm. A frozen artifact
+that shouts beats the silent six-hour freeze this replaces.

@@ -110,6 +110,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      pull-requests: read
     outputs:
       # Per-lane package matrices, planned from the repo's own catalog at the
       # pinned revision (scripts/list-npm-compat-packages.mjs). Adding a
@@ -117,7 +118,47 @@ jobs:
       # the matrix automatically; this workflow never hardcodes package names.
       fast_packages: ${{ steps.plan.outputs.fast }}
       slow_packages: ${{ steps.plan.outputs.slow }}
+      promotion_pr: ${{ steps.pending.outputs.pr_number }}
     steps:
+      # DON'T MEASURE WHAT CANNOT BE PUBLISHED (stakeholder, 2026-08-23).
+      #
+      # The coordinator already refuses to push while a promotion PR is open,
+      # so a run started in that window spends ~24 runners for ~15 minutes
+      # producing an artifact that is thrown away at the last step. Merges land
+      # every ~20 minutes and the PR can be open for hours, so that is most
+      # runs. Deciding here instead costs one 30-second job.
+      #
+      # The measurement is not lost, only deferred: the run after the PR merges
+      # measures whatever main is by then, which is fresher than what this run
+      # would have produced anyway.
+      - name: Is a promotion PR already open?
+        id: pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROMOTION_BRANCH: ${{ env.PROMOTION_BRANCH }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          PR_NUMBER="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$PROMOTION_BRANCH" \
+            --state open --json number --jq '.[0].number // empty' 2>/dev/null || echo "unreadable")"
+          case "$PR_NUMBER" in
+            "")
+              echo "No open promotion PR; measuring."
+              ;;
+            unreadable)
+              # Fail OPEN here, unlike the coordinator's push gate. The cost of
+              # a wrong measurement is wasted compute; the cost of a wrong skip
+              # is a stale dashboard, which is the failure this workflow exists
+              # to prevent (#3988).
+              echo "::warning title=npm-compat-refresh::could not list promotion PRs; measuring anyway."
+              PR_NUMBER=""
+              ;;
+            *)
+              echo "::notice title=npm-compat-refresh::promotion PR #${PR_NUMBER} is still open; skipping this measurement entirely. The run after it merges will measure a fresher main."
+              ;;
+          esac
+          echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
@@ -144,7 +185,7 @@ jobs:
   measure-fast:
     name: Measure npm-compat (${{ matrix.package }})
     needs: resolve
-    if: github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+    if: needs.resolve.outputs.promotion_pr == '' && github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
     concurrency:
       group: npm-compat-pkg-${{ matrix.package }}
       cancel-in-progress: false
@@ -200,7 +241,7 @@ jobs:
   measure-slow:
     name: Measure npm-compat (${{ matrix.package }})
     needs: resolve
-    if: github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+    if: needs.resolve.outputs.promotion_pr == '' && github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
     concurrency:
       group: npm-compat-pkg-${{ matrix.package }}
       cancel-in-progress: false
@@ -267,7 +308,7 @@ jobs:
   # cleanly when its lane produced no partials at all.
   refresh-fast:
     needs: [resolve, measure-fast]
-    if: always() && needs.resolve.result == 'success' && github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+    if: always() && needs.resolve.result == 'success' && needs.resolve.outputs.promotion_pr == '' && github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
     uses: ./.github/workflows/npm-compat-promote.yml
     with:
       source_sha: ${{ github.sha }}
@@ -277,7 +318,7 @@ jobs:
 
   refresh-slow:
     needs: [resolve, measure-slow]
-    if: always() && needs.resolve.result == 'success' && github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+    if: always() && needs.resolve.result == 'success' && needs.resolve.outputs.promotion_pr == '' && github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
     uses: ./.github/workflows/npm-compat-promote.yml
     with:
       source_sha: ${{ github.sha }}

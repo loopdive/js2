@@ -151,22 +151,31 @@ describe("the refresh cannot retrigger itself", () => {
     }
   });
 
-  it("does not force-update the branch while its PR is in the merge queue", () => {
-    // Force-pushing the head of the in-flight merge group rebuilds it and
-    // cancels its run — the exact harm this change removes, relocated.
-    const gate = workflow.slice(
-      at("- name: Check whether the promotion PR"),
-      at("- name: Publish the refreshed artifacts"),
-    );
-    expect(gate).toContain("mergeQueue");
-    // ...but an unreadable queue must PROCEED, never freeze the artifact.
-    // That is #4130's lesson and it survives the redesign.
-    expect(gate).toMatch(/skip=0[^\n]*GITHUB_OUTPUT[\s\S]*?;;\s*$/m);
-    expect(gate).toContain("must never freeze the artifact");
-  });
-});
+  it("never force-updates the branch while a promotion PR is open", () => {
+    // Force-updating ejects the PR from the merge queue and restarts it. The
+    // guard this replaces tried to allow a push whenever the PR looked neither
+    // queued nor check-busy — a point-in-time read of a state that changes
+    // constantly. Run 827 (2026-08-23): guard passed 20:02:34, forced update
+    // landed 20:03:20, auto-enqueue still reported the PR queued at 20:40. The
+    // fast lane promotes on every merge since the per-package split, so that
+    // window was hit repeatedly and the dashboard froze at 15:27Z for six
+    // hours with every job green. An open PR now means hands off, full stop
+    // (stakeholder choice, 2026-08-23).
+    const guard = workflow.slice(at("- name: Skip the push while a promotion PR is open"));
+    expect(guard).toContain('echo "skip=1" >> "$GITHUB_OUTPUT"');
 
-describe("the pre-promote sanity check is unrelated to the PR switch and stays", () => {
+    // The racy probes must stay gone: nothing may re-introduce a "push if it
+    // looks idle right now" path.
+    expect(code).not.toContain("mergeQueue(branch:");
+    expect(code).not.toContain("check-runs?per_page=100");
+    expect(code).not.toContain("PR_HEAD_SHA");
+
+    // Unreadable state now fails CLOSED. Pushing on an unreadable read is what
+    // the race exploited; skipping costs one cycle, and the staleness workflow
+    // is the alarm if it persists.
+    expect(guard).toContain("could not list promotion PRs; skipping the push this cycle");
+  });
+
   it("still refuses to publish fewer than 20 packages or entries missing name/compile", () => {
     // The check moved OUT of an inline `node -e` into scripts/ (#4792) after an
     // apostrophe in a JS comment terminated the bash string, truncating the

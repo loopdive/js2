@@ -253,6 +253,13 @@ describe("npm-compat refresh matrix wiring", () => {
     expect(refresh).toContain("if-no-files-found: warn");
     expect(refresh).toContain("DOGFOOD_REACT_DOM_PROJECT_CONCURRENCY: 2");
 
+    // Do not MEASURE what cannot be published: a run started while a promotion
+    // PR is open would spend ~24 runners for ~15 minutes on an artifact the
+    // coordinator then refuses to push. The gate lives in `resolve` so it costs
+    // one 30-second job instead.
+    expect(refresh).toContain("Is a promotion PR already open?");
+    expect(refresh).toContain("needs.resolve.outputs.promotion_pr == ''");
+
     expect(promote).toContain("actions/download-artifact@v7");
     expect(promote).toContain("continue-on-error: true");
     expect(promote).toContain("scripts/merge-npm-compat-partials.mjs");
@@ -268,18 +275,16 @@ describe("npm-compat refresh matrix wiring", () => {
     }
   });
 
-  it("does not force-update a promotion PR while its checks are in flight", () => {
-    // Lives in the reusable coordinator since the per-package split.
+  it("never force-updates the promotion branch while its PR is open", () => {
+    // See issue-4130-npm-compat-refresh-staleness-gate.test.ts for the full
+    // history. Short version: the old "push if it looks idle" guard lost a
+    // race it now ran several times an hour, and froze the dashboard for six
+    // hours behind green CI.
     const workflow = readFileSync(new URL("../.github/workflows/npm-compat-promote.yml", import.meta.url), "utf8");
 
-    expect(workflow).toContain("headRefOid");
-    expect(workflow).toContain("--paginate");
-    expect(workflow).toContain("awk '{ total += $1 } END { print total + 0 }'");
-    expect(workflow).not.toContain("--slurp");
-    expect(workflow).toContain("/commits/${PR_HEAD_SHA}/check-runs?per_page=100");
-    expect(workflow).toContain("leaving its branch untouched to avoid cancelling CI");
-    expect(workflow).toContain("Do not age this guard out");
-    expect(workflow).not.toContain("CHECK_CUTOFF");
+    expect(workflow).toContain("Skip the push while a promotion PR is open");
+    expect(workflow).not.toContain("mergeQueue(branch:");
+    expect(workflow).not.toContain("check-runs?per_page=100");
     expect(workflow).toContain('echo "skip=1" >> "$GITHUB_OUTPUT"');
   });
 
