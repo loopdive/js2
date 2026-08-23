@@ -606,6 +606,36 @@ function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Id
   return compileIdentifierCore(ctx, fctx, id);
 }
 
+/**
+ * (#4660) Does `id` resolve to a USER function declaration that shadows an
+ * ambient `ctx.declaredGlobals` entry of the same name?
+ *
+ * The ambient arm is name-keyed, so it answers `env.global_<name>` for every
+ * read of that name anywhere in the module. That is correct only for reads that
+ * actually denote the global. The checker knows which declaration a given
+ * identifier denotes, so ask it rather than the name.
+ *
+ * Deliberately narrow — all three conditions are load-bearing:
+ *  - a **function declaration** in a non-declaration source file (a lib.d.ts
+ *    declaration IS the ambient global; a `var`/`let` shadow is already served
+ *    by the local/module arms and has no in-module carrier here);
+ *  - the declaration's own name matches, so a renamed/aliased binding never
+ *    diverts the read;
+ *  - `ctx.funcMap` holds a **defined** (non-import) function for that name, so
+ *    the funcref-as-value arm downstream is guaranteed to serve the read. An
+ *    import-backed entry is skipped by that arm (#1809) and skipping the
+ *    ambient one too would degrade the read to `ref.null.extern`.
+ */
+function ambientGlobalReadIsUserFunctionShadowed(ctx: CodegenContext, id: ts.Identifier, name: string): boolean {
+  if (!ctx.declaredGlobals.has(name)) return false;
+  const funcIdx = ctx.funcMap.get(name);
+  if (funcIdx === undefined || definedFuncAt(ctx, funcIdx) === undefined) return false;
+  const decl = ctx.oracle.valueDeclarationOf(id);
+  if (decl === undefined) return false;
+  if (decl.getSourceFile().isDeclarationFile) return false;
+  return ts.isFunctionDeclaration(decl) && decl.name?.text === name;
+}
+
 /** The non-`with` identifier lowering (locals, globals, funcs, builders,
  *  ReferenceError). Split out so the Tier-2 dynamic `with` path can invoke it as
  *  the HasBinding-miss fallback (#2663 Slice 1). */
@@ -1167,7 +1197,31 @@ function compileIdentifierCore(
   }
 
   // Check declared globals (e.g. document, window)
-  const globalInfo = ctx.declaredGlobals.get(name);
+  //
+  // (#4660) …but ONLY when this identifier really denotes the ambient global.
+  // `ctx.declaredGlobals` is name-keyed and module-wide, and the arms above that
+  // model shadowing (`localMap`, `capturedGlobals`, `moduleGlobals`) are ALSO
+  // name-keyed per-FunctionContext — so a user function declaration that lives
+  // in a body the driven/frame-based async lowering re-hosts (`__async_resume_*`)
+  // is invisible to all of them and the read fell through to the host global.
+  // That silently returned the INTRINSIC for a shadowing declaration:
+  //
+  //   asyncTest(async function () {
+  //     function TypeError() {}          // shadows the intrinsic
+  //     await (async function () { throw new TypeError(); })();
+  //     // `TypeError === intrinsicTypeError` was TRUE — both read
+  //     // `call env.global_TypeError`
+  //   });
+  //
+  // Ask the checker who this identifier resolves to instead of trusting the
+  // name. A declaration in a real source file is a user binding, not the
+  // ambient one. Gated on there being a DEFINED in-module function to serve the
+  // read (the funcref-as-value arm below), so the read can never degrade from
+  // "wrong object" to the `ref.null.extern` graceful default.
+  // `unresolvedInModuleGoal` disables the funcref arm too (#3505), so the
+  // ambient read must stay in that case or nothing serves it.
+  const shadowedAmbient = !unresolvedInModuleGoal && ambientGlobalReadIsUserFunctionShadowed(ctx, id, name);
+  const globalInfo = shadowedAmbient ? undefined : ctx.declaredGlobals.get(name);
   if (globalInfo) {
     fctx.body.push({ op: "call", funcIdx: globalInfo.funcIdx });
     // (#4616-adjacent) A node-builtin NAMED binding is a MEMBER of the module
