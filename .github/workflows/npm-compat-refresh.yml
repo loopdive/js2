@@ -256,9 +256,18 @@ jobs:
   # coordinator's branch-overlay + freshness stamps. A lane whose rows were
   # ALL superseded in their per-package queues reports `cancelled` and its
   # promotion is skipped — a newer run owns those measurements.
+  # Gate on `resolve` ONLY. Do NOT gate on the measure job's aggregate result:
+  # a matrix job reports `cancelled` when ANY row cancels, so one superseded
+  # package discarded every other package's completed measurement — the exact
+  # coupling this per-package split exists to remove. Observed 2026-08-23 in
+  # run 822: lit measured successfully in 29 minutes, react-dom's row was
+  # cancelled 17 minutes in, and `refresh-slow` skipped, throwing lit's result
+  # away. The coordinator already handles a partial lane (it carries unmeasured
+  # packages forward from the last snapshot, marked stale) and now stops
+  # cleanly when its lane produced no partials at all.
   refresh-fast:
     needs: [resolve, measure-fast]
-    if: always() && needs.resolve.result == 'success' && needs.measure-fast.result != 'cancelled' && github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+    if: always() && needs.resolve.result == 'success' && github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
     uses: ./.github/workflows/npm-compat-promote.yml
     with:
       source_sha: ${{ github.sha }}
@@ -268,7 +277,7 @@ jobs:
 
   refresh-slow:
     needs: [resolve, measure-slow]
-    if: always() && needs.resolve.result == 'success' && needs.measure-slow.result != 'cancelled' && github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+    if: always() && needs.resolve.result == 'success' && github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
     uses: ./.github/workflows/npm-compat-promote.yml
     with:
       source_sha: ${{ github.sha }}
