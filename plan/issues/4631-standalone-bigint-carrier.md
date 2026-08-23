@@ -1,10 +1,11 @@
 ---
 id: 4631
 title: "Standalone: BigInt literal/value support (env::__new_BigInt host-import refusal)"
-status: ready
+status: done
 sprint: Backlog
 created: 2026-08-23
 updated: 2026-08-23
+completed: 2026-08-23
 priority: low
 horizon: xl
 feasibility: hard
