@@ -168,12 +168,20 @@ jobs:
             --only "${{ matrix.packages }}" \
             --partial-output "$RUNNER_TEMP/npm-compat-${{ matrix.id }}.json"
 
+      - name: Discard incomplete package-group report
+        if: failure()
+        run: rm -f "$RUNNER_TEMP/npm-compat-${{ matrix.id }}.json"
+
       - name: Upload package-group report
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: npm-compat-partial-${{ matrix.id }}
           path: ${{ runner.temp }}/npm-compat-${{ matrix.id }}.json
-          if-no-files-found: error
+          # A failed worker has no fresh report. The coordinator fills that
+          # package group from the last committed snapshot and marks it stale,
+          # so one flaky upstream suite cannot freeze every other package.
+          if-no-files-found: warn
           retention-days: 14
 
   refresh:
@@ -181,7 +189,11 @@ jobs:
     # The `paths-ignore` filter above is what actually breaks the trigger loop
     # now (this job's own landing changes only artifact paths). The actor guard
     # is kept as a second, cheaper line against any OTHER bot push to main.
-    if: github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+    # Matrix failures are data-quality signals, not a reason to discard the
+    # successful groups. The merge step carries missing groups forward from
+    # the committed snapshot and marks them stale. A cancelled matrix cannot
+    # be trusted because it may have no artifacts at all.
+    if: always() && needs.measure.result != 'cancelled' && github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     # The coordinator only assembles reports and promotes them. The expensive
     # package work runs in the matrix above, so this retains the 350-minute
@@ -219,6 +231,10 @@ jobs:
 
       - name: Download package-group reports
         uses: actions/download-artifact@v7
+        # If every worker failed, there are no partial artifacts. The merge
+        # script can still publish the last complete snapshot, so do not make
+        # an empty download abort the coordinator.
+        continue-on-error: true
         with:
           pattern: npm-compat-partial-*
           path: ${{ runner.temp }}/npm-compat-partials
@@ -247,7 +263,12 @@ jobs:
             const byName = new Map(packages.map(entry => [entry.name, entry]));
             const suitePins = JSON.parse(fs.readFileSync("tests/dogfood/npm-compat-upstream-sources.json", "utf8"));
             for (const pin of suitePins.filter(entry => entry.suiteScript)) {
-              const tests = byName.get(pin.name)?.tests;
+              const entry = byName.get(pin.name);
+              // A failed worker is carried forward from the last committed
+              // snapshot. Its old test numbers are useful context, but they
+              // must not block publication or masquerade as this run's data.
+              if (entry?.refresh?.status === "stale") continue;
+              const tests = entry?.tests;
               if (!tests || typeof tests.passed !== "number" || typeof tests.total !== "number") {
                 throw new Error(`${pin.name} has ${pin.suiteScript} but its unit-test result is absent from ${path}`);
               }
