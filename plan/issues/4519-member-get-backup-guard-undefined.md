@@ -139,17 +139,40 @@ checkout (`readlink -f` on a leaf test file).
 
 ### Shape A/B — paired, one process, `JS2WASM_4519_AB=base` reverting the fix
 
+**Flips (all five spec-correct):**
+
 | shape | base | fix |
 | --- | --- | --- |
-| ABSENT argument receiver `a.foo` | no throw | **TypeError** |
-| EXPLICIT `undefined` argument receiver `a.foo` | no throw | **TypeError** |
-| `undefined`-typed `any` param, TS lane | no throw | **TypeError** |
-| `null` argument receiver (control) | TypeError | TypeError |
-| syntactic `undefined.foo` / `undefined.toString()` (#4484's arm) | TypeError | TypeError |
-| live object `a.foo` reads 5 | 5 | 5 |
-| ABSENT property on a live object | undefined | undefined |
-| string `.length`, number/boolean `.toString()` | correct | correct |
-| shadowed-`undefined` parameter holding `{foo:7}` | no throw | no throw (after the decline; **threw** without it) |
+| ABSENT argument receiver `a.foo` | no throw | **catchable TypeError** |
+| EXPLICIT `undefined` argument receiver `a.foo` | no throw | **catchable TypeError** |
+| an ABSENT property as the next receiver, `o.missing.foo` | no throw | **catchable TypeError** |
+| an OUT-OF-RANGE element as a receiver, `arr[3].foo` | no throw | **catchable TypeError** |
+| STRICT-mode detached `this.foo` (§10.2.1.2) | no throw | **catchable TypeError** |
+
+**Unmoved — the half that decides whether a guard on every member access is
+shippable at all.** Each of these routes a NON-nullish receiver through the
+widened guard:
+
+| shape | both arms |
+| --- | --- |
+| live object `a.foo` | reads 5 |
+| ABSENT property read `a.nope` (result, not receiver) | `undefined`, no throw |
+| string `.length`, number/boolean `.toString()` | correct |
+| 3-deep live chain, `for-in` count, `arguments.length`, string method chain, `Error.message` | correct |
+| `null` argument receiver (control — already threw) | TypeError |
+| syntactic `undefined.foo` / `undefined.toString()` (#4484's arm) | TypeError |
+| `for-in` over `undefined`, `delete undefined.foo`, `typeof`, `x && x.foo`, `undefined.foo()` | unchanged |
+| `JSON.stringify`, `Object.keys`, array index loop, prototype method through an instance | correct |
+| shadowed-`undefined` parameter holding `{foo:7}` | no throw — **threw without the decline** |
+
+**Per-lane byte identity** (same source, sha256 of the emitted binary, absent-arg
+shape which is measured to REACH the guard):
+
+| lane | base | fix | |
+| --- | --- | --- | --- |
+| host/gc | `26b7803db56e48a2` | `26b7803db56e48a2` | **identical** |
+| standalone | `bcaa0c26bd2add72` | `357642971e0e7e7b` | differs, valid |
+| wasi | `9e03c06f04c40a21` | `7681b6458dea5a8a` | differs, valid |
 
 ### Corpus sweep
 
@@ -161,25 +184,103 @@ the same machine, load and provider cache. File order is a fixed-seed (4519)
 (the member-access surface, must complete), stratum 2 = the other 6,885 ES≤5
 files shuffled. Two interleaved slices run in parallel.
 
-<!-- RESULTS-PLACEHOLDER -->
+**Coverage and result — RESULTS-PENDING (updated at hand-off).**
+
+Two flips, both re-confirmed in a FRESH process:
+
+```
++ built-ins/Function/15.3.5.4_2-10gs.js            fail -> pass
+- built-ins/Function/prototype/S15.3.3.1_A3.js     pass -> fail
+```
+
+**The fix row is exactly this issue's semantics.** `15.3.5.4_2-10gs` ends with
+`return gNonStrict.caller || gNonStrict.caller.throwTypeError;` — `.caller` of a
+strict-called function is `undefined`, and reading `.throwTypeError` off it must
+throw TypeError. It now does.
+
+**The regressed row was a VACUOUS pass, and the vacuity is a pre-existing
+capability gap, not something this change introduces.** Bisected to a single
+harness call (`.tmp/p1.js`: `verifyNotConfigurable(Function, "prototype")`
+alone reproduces it; the test's own `delete` half passes on both arms). The
+runner inlines the REAL upstream `propertyHelper.js`, whose line 457 is
+
+```js
+assert(!__getOwnPropertyDescriptor(obj, name).configurable, …)
+```
+
+and `Object.getOwnPropertyDescriptor(obj, name)` through a **dynamic receiver
+parameter** answers `undefined` for a builtin constructor on this compiler.
+Measured directly, and identical on BOTH arms (`.tmp/p4.js`):
+
+| shape | result |
+| --- | --- |
+| `Object.getOwnPropertyDescriptor(Function, "prototype")`, LITERAL receiver | object ✓ |
+| `Object.getOwnPropertyDescriptor(o, "a")` via a dynamic parameter | object ✓ |
+| `Object.getOwnPropertyDescriptor(obj, name)` via a dynamic parameter, `obj = Function` | **`undefined`** |
+
+So before this change the harness read `.configurable` off `undefined`, got
+`undefined`, and `!undefined` satisfied the assert — the row passed **because**
+the descriptor was missing. §7.3.2 requires that read to throw; it now does, and
+the harness surfaces the throw as a failure. The row is a true statement about a
+gap that was previously invisible.
+
+**The class is bounded and measured, not assumed.** Every ES≤5 test that calls
+`verifyConfigurable`/`verifyNotConfigurable` — **10 files**, the complete set —
+was A/B'd: exactly this one flips, the other nine are unmoved.
+
+Two further complete A/B runs, both **0 flips**:
+
+- the acceptance directory `language/expressions/property-accessors` (21/21) —
+  which is also the direct evidence that the issue's stated acceptance rows
+  (`S11.2.1_A3_T4`/`_T5`) were already flipped by #4484 and cannot flip again;
+- `language/function-code` + `language/statements/function` (425/425), targeted
+  at the strict-`this` family the probe A/B showed flipping — so that
+  improvement is real per-shape but does not move rows there.
 
 ### Pins
 
-- `tests/issue-4519.test.ts` — 11 tests (8 behavioural + 3 `it.fails`
-  residuals). The behavioural half is deliberately half over-throw pins: a
-  guard on every member access is only shippable if it stays ABSENT for every
-  non-nullish receiver, including a site where a live and a nullish receiver
-  flow through the SAME emitted guard.
+- `tests/issue-4519.test.ts` — **15 tests** (12 behavioural + 3 `it.fails`
+  residuals), green in three configurations: plain, `--sequence.shuffle`
+  (order-dependence / #3673 pollution check), and
+  `JS2WASM_EVAL_ENGINE=interpreter` (the CI `quality` tier). Half the
+  behavioural pins are over-throw controls, including one where a live and a
+  nullish receiver flow through the SAME emitted guard.
 - `tests/issue-4484.test.ts` — 27 green. One stale `it.fails` flipped to `it`
   (`'valueOf' in {}`): healed by #4506 on this branch's base, verified failing
   identically under `JS2WASM_4519_AB=base`, i.e. not caused here.
-- `tests/issue-4489.test.ts`, `tests/issue-789.test.ts` — green.
+- `tests/issue-4489.test.ts` (15), `tests/issue-789.test.ts`,
+  `tests/issue-4465.test.ts` (20), `tests/issue-737.test.ts` (13),
+  `tests/issue-2931.test.ts` (4), `tests/issue-4506.test.ts` (22),
+  `tests/issue-4479.test.ts` (16) — green.
+  `tests/issue-4157.test.ts` does not exist on this base (skipped, said so).
+- Standalone suites, per-file: `es5-standalone-this-and-construct` (22),
+  `-function-semantics` (14), `-descriptors` (2), `-instanceof` (20), `-with`
+  (24), `-with-carrier` (8), `-replace-fn` (23) — green.
+- Scoped `tests/equivalence/`, per-file (the suite OOMs in one invocation):
+  `binding-null-guard` (9), `null-narrowing` (5), `null-destructuring` (6),
+  `struct-null-comparison` (7), `optional-element-access` (4),
+  `optional-chaining-call` (5), `hasownproperty-call` (5),
+  `element-access-externref` (4), `element-access-class` (5),
+  `super-property-access` (7), `issue-4123-param-receiver-proto-method` (10),
+  `issue-799-prototype-chain` (5), `issue-3205-property-call-wrapper-root` (5),
+  `compound-assignment-property` (5), `prefix-postfix-increment-property` (8) —
+  all green.
+
+**Two pre-existing failures, each verified on BOTH arms by my own runs** (not
+inherited from another issue's record):
+
+- `tests/equivalence/null-dereference-guards.test.ts` — the same 5 tests fail
+  with `JS2WASM_4519_AB=base`. Their receivers are null-typed STRUCTS, a path
+  this guard does not sit on.
+- `tests/es5-standalone-array-semantics.test.ts` — 1 test ("array HOFs skip a
+  deleted index … through an `any`-typed alias") fails identically on base.
 
 ### Gates
 
-`typecheck` clean · `check:oracle-ratchet` OK (+0 raw checker usage) ·
-`check:coercion-sites` OK · `check:func-budget` OK · `prettier` clean ·
-`check:loc-budget` requires the frontmatter allowance granted above.
+`typecheck` clean · `lint` clean · `prettier` clean ·
+`check:oracle-ratchet` OK (+0 raw checker usage) · `check:coercion-sites` OK ·
+`check:func-budget` OK · `check:stack-balance` OK (no fixup-bucket increases) ·
+`check:loc-budget` OK with the frontmatter allowance granted above.
 
 ## Residuals
 
@@ -205,3 +306,43 @@ files shuffled. Two interleaved slices run in parallel.
 3. **`typeof (42).toString === "function"` answers falsy** — a method-value read
    off a boxed primitive. Measured identical on both arms; not this guard's
    surface. Deliberately not pinned here.
+4. **The WRITE side does not throw either.** `x.foo = 1` on an `undefined` `x`
+   silently succeeds, measured identical on both arms. This issue is read-side
+   only (`emitReceiverNullGuard` has no write-side counterpart); §7.3.2 applies
+   to the assignment target's base the same way, so this is a real follow-up.
+   `delete x.foo` on an `undefined` `x` already throws, on both arms.
+5. **A sloppy-mode detached call leaves `this === undefined`** rather than the
+   global object (§10.2.1.2's non-strict branch). Unchanged by this issue and
+   visible in its probe table because the strict twin is what flipped.
+6. **`Object.getOwnPropertyDescriptor(obj, name)` answers `undefined` for a
+   builtin constructor when `obj` arrives through a DYNAMIC parameter** — the
+   literal-receiver form and a plain own property both work. This is what makes
+   `built-ins/Function/prototype/S15.3.3.1_A3.js` a vacuous pass, and it is the
+   one row this change costs. Descriptor-attribute surface (#4479-adjacent), not
+   this guard's. **Needs a lead routing decision**: the honest repair is to give
+   the dynamic-receiver descriptor lookup the builtin's own property, after which
+   the row passes for a real reason.
+
+## Decision log — two things a reviewer will ask about
+
+- **`nullishExternTestInstrs` calls `ensureAnyValueType(ctx)`**, which can mint
+  the `$AnyValue` type and the `__undefined` global at GUARD-emission time rather
+  than at first-use-of-`any`. Kept deliberately, for consistency with
+  `emitIsNullishAnyAt`, which #4489 shipped doing exactly this from the same
+  emission phase. Both additions are appends (no index shifts), and the corpus
+  A/B shows no `pass → compile_error` transition. The considered alternative —
+  gating on `ctx.undefinedGlobalIdx !== undefined` so nothing is minted — was
+  rejected because it makes the widening depend on whether the module's first
+  `undefined` producer has run yet, i.e. order-dependent and unreproducible.
+- **Why the guard, not the read paths.** The two populations in residual 1 are
+  fixed by giving a lowering path a receiver check it never had; this issue is
+  about a guard that HAS the check and spells it wrong. Mixing them would make
+  the A/B unable to attribute a regression to either.
+- **`git diff` reports `src/codegen/nonnull-proof.ts` as `Bin 11219 → 12794
+  bytes`, and that is NOT a corruption.** The file has contained a literal NUL
+  byte at offset 7,861 since before this change — `` `${q.fnKey}\0${simple}` ``
+  in `priceDominance`, a census map key using NUL as a separator that cannot
+  occur in an identifier. Git's binary heuristic scans the first 8,000 bytes, so
+  it classifies the file as binary and prints a byte-size line instead of a
+  textual diff. Verified present at the identical offset in the pre-change blob.
+  Read the file to review the change; `git diff` will not show it.
