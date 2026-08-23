@@ -114,6 +114,97 @@ constructor runs. Only the `.constructor` READ resolves the wrong carrier.
 - Full standalone harness category unchanged.
 - js-host 60-sample and the equivalence gate clean.
 
+## Diagnosis (measured 2026-08-23, main `d821d9618`)
+
+**The `.constructor` read was never the defect, and neither was the frame
+spill.** Both were downstream of a wrong *identifier* read: inside the driven
+body, the plain identifier `TypeError` — the shadowing `function TypeError() {}`
+read as a VALUE — evaluated to the **intrinsic host constructor**. Everything
+else follows: `new TypeError()` registers the fnctor instance against that wrong
+carrier, and `.constructor` faithfully hands it back.
+
+### How it was pinned
+
+The `#4648` discriminator does not reproduce in isolation — a bare
+`await Promise.resolve(1)` in the async body is NOT sufficient. Measured
+js-host, all four in one file (`.tmp/probe/k.js`, `local === intrinsic`
+should always be `false`):
+
+| probe | shape | result |
+| --- | --- | --- |
+| k1 | shadow captured by an **async IIFE that is invoked** | `true` ← BUG |
+| k2 | shadow captured by an async fn expr, **invoked** via a var | `true` ← BUG |
+| k3 | shadow captured by a **sync** nested fn, invoked | `false` ok |
+| k4 | shadow captured by an async fn expr, **never invoked** | `false` ok |
+
+So the discriminator is: *a nested **async** function that captures the shadow
+and is actually reached*. That is what forces the enclosing body through the
+frame-driven lowering (`$__async_resume_<fn>`) — which is where the #4648 agent's
+"frame-driven" intuition was right, but the mechanism is not spilling.
+
+`.tmp/w.mts` dumping the two WATs makes it exact. In the working case (k4) the
+read resolves to the cached fn-closure singleton:
+
+```wat
+(global.get $global$3)   ;; lazily = (struct.new $0 (ref.func $__fn_tramp_TypeError_cached) …)
+```
+
+In the broken case (k1), inside `$__async_resume_fk1`, the SAME source read
+becomes:
+
+```wat
+(call $global_TypeError)   ;; the ambient host intrinsic, via __declared_global_TypeError
+```
+
+### Root cause
+
+`compileIdentifierCore` (`src/codegen/expressions/identifiers.ts`) consults
+`ctx.declaredGlobals` — the ambient host-global registry populated by
+`collectDeclaredGlobals` (`extern-declarations.ts` ~L1582, `AMBIENT_BUILTIN_CTORS`
+gated on a bare value use, which `var intrinsicTypeError = TypeError` supplies).
+That map is **name-keyed and module-wide, with no shadow check at all**.
+
+Every arm placed ABOVE it that models shadowing — `fctx.localMap`,
+`ctx.capturedGlobals`, `ctx.moduleGlobals` — is *also* name-keyed, and the first
+is per-`FunctionContext`. The funcref-as-value arm that owns user function
+declarations sits ~300 lines BELOW the ambient arm. So the ambient arm is the
+de-facto shadow adjudicator, and it only ever adjudicated correctly by accident:
+in ordinary bodies the read is served earlier (as a local, or reused from the
+value materialised into a closure struct). A body re-hosted into
+`$__async_resume_*` has neither, the read reaches the ambient arm, and the
+intrinsic wins.
+
+`ctx.standalone` is excluded from that registration (extern-declarations.ts
+L1606, `#2907`) — **that, and nothing about the standalone async lowering, is
+why the standalone lane already passed this test.** Verified before changing
+shared code.
+
+### Fix
+
+One guard at the ambient arm: ask the checker who the identifier denotes
+(`ctx.oracle.valueDeclarationOf`) instead of trusting the name. Skip the ambient
+global when the identifier resolves to a **function declaration in a real source
+file** whose own name matches, and `ctx.funcMap` holds a **defined** (non-import)
+function for it — the last clause guarantees the funcref arm downstream will
+serve the read, so it can never degrade from "wrong object" to the
+`ref.null.extern` graceful default. Not special-cased to `TypeError` or to the
+error family; the whole `AMBIENT_BUILTIN_CTORS` list is covered.
+
+### Deliberately not done
+
+The deeper defect — a driven body losing the binding for a hoisted nested
+function declaration, so `localMap`/`capturedGlobals` cannot see it — is
+untouched. It is invisible for any name that is not also an ambient global
+(nothing else claims it, so the funcref arm serves), which is why this narrow
+guard is sufficient. If a shadow of a non-function kind (`var TypeError = …`)
+in a driven body ever shows the same symptom, that is the issue to open.
+
+## Progress
+
+- Root cause pinned and fixed in `src/codegen/expressions/identifiers.ts`
+  (`ambientGlobalReadIsUserFunctionShadowed`). `status: done`.
+- Validation numbers are in the PR description.
+
 ## Permanent repro
 
 `test262/test/harness/asyncHelpers-throwsAsync-custom-typeerror.js` (js-host
