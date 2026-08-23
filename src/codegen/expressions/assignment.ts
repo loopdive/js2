@@ -4110,19 +4110,31 @@ function compilePropertyAssignment(
     // bare reads/calls of the declaration resolve the reassignment (§16.1.7).
     // The value is read BACK from the singleton (side-effect-free) rather than
     // re-evaluated.
-    if ((ctx.standalone || ctx.wasi) && isShadowedTopLevelFn(ctx, propName)) {
+    if (isShadowedTopLevelFn(ctx, propName)) {
       const slot = fnShadowSlot(ctx, propName);
-      const gtTy = withShadowReadSuppressed(() => emitNativeGlobalThisObject(ctx, fctx));
-      if (gtTy) {
-        const getIdx = ctx.funcMap.get("__extern_get");
-        if (getIdx !== undefined) {
-          addStringConstantGlobal(ctx, propName);
-          for (const instr of stringConstantExternrefInstrs(ctx, propName)) fctx.body.push(instr);
-          fctx.body.push({ op: "call", funcIdx: getIdx });
-          fctx.body.push({ op: "global.set", index: slot });
-        } else {
-          fctx.body.push({ op: "drop" });
+      if (ctx.standalone || ctx.wasi) {
+        const gtTy = withShadowReadSuppressed(() => emitNativeGlobalThisObject(ctx, fctx));
+        if (gtTy) {
+          const getIdx = ctx.funcMap.get("__extern_get");
+          if (getIdx !== undefined) {
+            addStringConstantGlobal(ctx, propName);
+            for (const instr of stringConstantExternrefInstrs(ctx, propName)) fctx.body.push(instr);
+            fctx.body.push({ op: "call", funcIdx: getIdx });
+            fctx.body.push({ op: "global.set", index: slot });
+          } else {
+            fctx.body.push({ op: "drop" });
+          }
         }
+      } else if (externSetTy !== null && externSetTy !== VOID_RESULT && externSetTy.kind === "externref") {
+        // (#4648) JS-host lane: `globalThis` is the host global object, so the
+        // read-back hop the standalone arm uses (native singleton +
+        // `__extern_get`) has no counterpart here. The assignment expression's
+        // own result is already the stored value on top of the stack, so tee
+        // it into the slot — same observable aliasing, no extra host call.
+        const tmp = allocLocal(fctx, `__fnshadow_set_${fctx.locals.length}`, { kind: "externref" });
+        fctx.body.push({ op: "local.tee", index: tmp });
+        fctx.body.push({ op: "global.set", index: slot });
+        fctx.body.push({ op: "local.get", index: tmp });
       }
     }
     return externSetTy;
