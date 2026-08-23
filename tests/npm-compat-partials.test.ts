@@ -253,6 +253,13 @@ describe("npm-compat refresh matrix wiring", () => {
     expect(refresh).toContain("if-no-files-found: warn");
     expect(refresh).toContain("DOGFOOD_REACT_DOM_PROJECT_CONCURRENCY: 2");
 
+    // Do not MEASURE what cannot be published: a run started while a promotion
+    // PR is open would spend ~24 runners for ~15 minutes on an artifact the
+    // coordinator then refuses to push. The gate lives in `resolve` so it costs
+    // one 30-second job instead.
+    expect(refresh).toContain("Is a promotion PR already open?");
+    expect(refresh).toContain("needs.resolve.outputs.promotion_pr == ''");
+
     expect(promote).toContain("actions/download-artifact@v7");
     expect(promote).toContain("continue-on-error: true");
     expect(promote).toContain("scripts/merge-npm-compat-partials.mjs");
