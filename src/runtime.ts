@@ -10651,7 +10651,8 @@ assert._isSameValue = isSameValue;
         return createDynamicFunctionImport({
           policy: dynamicCode,
           createFunction: dynamicCodeEvaluator ? (p, b) => dynamicCodeEvaluator.createFunction(p, b) : undefined,
-          createWasmNewFunctionShim: () => createNewFunctionShim({}) as (params: unknown, body: string) => unknown,
+          createWasmNewFunctionShim: () =>
+            createNewFunctionShim({ globalSandbox }) as (params: unknown, body: string) => unknown,
           moduleGlobal: globalSandbox ?? (globalThis as any),
           makeEvalError: (message) => new EvalError(message),
         });
