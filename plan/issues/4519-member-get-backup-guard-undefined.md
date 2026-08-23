@@ -1,7 +1,8 @@
 ---
 id: 4519
 title: "standalone: the member-access RECEIVER guard answers a fallback instead of TypeError for an `undefined` receiver — nullness-means-unset consumer #2 from #4489"
-status: in-progress
+status: done
+completed: 2026-08-23
 sprint: current
 created: 2026-08-16
 updated: 2026-08-23
@@ -184,35 +185,42 @@ the same machine, load and provider cache. File order is a fixed-seed (4519)
 (the member-access surface, must complete), stratum 2 = the other 6,885 ES≤5
 files shuffled. Two interleaved slices run in parallel.
 
-**Coverage: 4,440 paired rows = 53.8 % of the 8,260-file ES≤5 corpus — stratum 1
-COMPLETE (1,375/1,375) and stratum 2 at 3,065/6,885 (44.5 %), i.e. the agreed
-≥3,000 floor met.**
+**Coverage: 5,242 paired rows = 63.5 % of the 8,260-file ES≤5 corpus — stratum 1
+COMPLETE (1,375/1,375) and stratum 2 at 3,867/6,885 (56.2 %), i.e. 1.3x the
+agreed ≥3,000 floor.**
 
 | transition | rows |
 | --- | --- |
-| pass → pass | 4,248 |
-| fail → fail | 183 |
+| pass → pass | 5,010 |
+| fail → fail | 222 |
 | compile_error → compile_error | 4 |
-| **fail → pass (fixes)** | **3** |
+| **fail → pass (fixes)** | **4** |
 | **pass → fail (regressions)** | **2** |
 | any other transition | **0** |
 
-**Net +1.** Five flips, each re-confirmed in a FRESH process:
+**Net +2.** Six flips, each re-confirmed in a FRESH process:
 
 ```
 + built-ins/Function/15.3.5.4_2-10gs.js            fail -> pass
 + built-ins/Function/15.3.5.4_2-96gs.js            fail -> pass
 + built-ins/Function/15.3.5.4_2-97gs.js            fail -> pass
++ language/statements/with/S12.10_A5_T4.js         fail -> pass
 - built-ins/Function/prototype/S15.3.3.1_A3.js     pass -> fail
 - built-ins/Function/prototype/S15.3.3.1_A1.js     pass -> fail
 ```
 
-**All three fix rows are exactly this issue's semantics** — the §15.3.5.4
+**Three of the four fixes are exactly this issue's semantics** — the §15.3.5.4
 strict-`.caller` family. Each ends with
 `return g.caller || g.caller.throwTypeError;`: `.caller` of a strict-called
 function is `undefined`, and reading `.throwTypeError` off that `undefined` must
 throw a TypeError, which is what `assert.throws(TypeError, …)` is waiting for.
-Before this change the read answered a fallback and nothing threw.
+Before this change the read answered a fallback and nothing threw. The fourth,
+`with/S12.10_A5_T4`, is a `with`-scope member read on a deleted binding.
+
+**There is no zero-flip run to fall back on: the same instrument shows a flip in
+BOTH directions**, which is the check that the A/B is sensitive rather than
+inert. Zero transitions of any other kind (no `pass → compile_error`, no
+timeout-class churn) across 5,242 pairs.
 
 **The two regressed rows were VACUOUS passes, and the vacuity is a pre-existing
 capability gap, not something this change introduces.** Bisected to a single
@@ -298,6 +306,9 @@ Two further complete A/B runs, both **0 flips**:
   `issue-799-prototype-chain` (5), `issue-3205-property-call-wrapper-root` (5),
   `compound-assignment-property` (5), `prefix-postfix-increment-property` (8) —
   all green.
+
+All of the above were re-run a second time after the final commit; the results
+are identical.
 
 **Two pre-existing failures, each verified on BOTH arms by my own runs** (not
 inherited from another issue's record):
