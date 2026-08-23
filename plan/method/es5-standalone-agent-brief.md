@@ -116,6 +116,9 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
        **Rungs 1 and 2 are reporter-independent, so no existing tooling
        needs re-plumbing** — this brief's per-file loops run
        `--reporter=basic` and get both. Switch to verbose only for rung 3.
+       Reproduced independently on two different pin files (22 tests and
+       23 tests, two lanes): basic gives one file-level `↓` line and no
+       names; verbose gives one `↓` per test with its full path.
 
        Rung 2 matters on its own: in a MULTI-FILE run the aggregate can
        mask one file being wholly skipped while others run. Measured —
@@ -144,17 +147,21 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
      a plain substring. Nothing here can be mis-counted, because the
      denominator comes from the same line as the parts.
 
-     **Exit status is UNCORRELATED with the outcome — one measured
-     instance in each direction, same session:**
-     - **exit 1, everything green** — `Tests 23 passed (23)` beside
-       `Errors 1 error` (the `onTaskUpdate` RPC timeout), all 23 passing
-       (dev-4653);
-     - **exit 0, nothing run** — `Tests 22 passed | 36 skipped (58)` from a
-       dead `CompilerPool` worker, thirty-six tests never executed
-       (dev-4491).
+     **Exit status is UNCORRELATED with the outcome — and both directions
+     have been measured on ONE suite, which removes the "different suites,
+     different causes" objection** (dev-4653, `tests/issue-4653.test.ts`):
+     ```
+     Tests  23 skipped (23)   exit 0   nothing executed, exits GREEN
+     Tests  23 passed  (23)   exit 1   everything passed, exits RED
+     ```
+     Tier 1 gets both right (`executed 0 != 23` fails; `executed 23 == 23`
+     passes) while `$?` is inverted from the truth in each. A second,
+     independent exit-0 instance from a real accident rather than a
+     deliberate filter: `Tests 22 passed | 36 skipped (58)` from a dead
+     `CompilerPool` worker, thirty-six tests never executed (dev-4491).
 
-     That pair is why "counts, never exit status" is a rule rather than a
-     preference: neither direction of the status tells you anything.
+     So "counts, never exit status" is a rule, not a preference: neither
+     direction of the status tells you anything.
 
      **Tier 2 — external declared count, and ONLY for the fifth member.**
      Vitest's RPC dropping task updates under load

@@ -825,11 +825,22 @@ their fix on a module shape they did not write (`deferTopLevelInit: true`,
   naming the wholly-dead file — while the pin file, with 21 of its 22 tests
   skipped, got **no `↓` line at all**. So rung 2 is blind to partial loss inside
   a file, which is precisely the partial-`skipIf` case rung 3 exists for.
-- **Exit status is uncorrelated with the outcome, one measured instance each
-  way.** dev-4653: `Tests 23 passed (23)` beside `Errors 1 error`, **exit 1**,
-  everything passing. dev-4491: `Tests 22 passed | 36 skipped (58)` from a dead
-  `CompilerPool` worker, **exit 0**, thirty-six tests never executed. All of the
-  above is adopted in `plan/method/es5-standalone-agent-brief.md`.
+- **Exit status is uncorrelated with the outcome — both directions on ONE
+  suite** (dev-4653, `tests/issue-4653.test.ts`): `23 skipped (23)` exits **0**
+  with nothing executed, `23 passed (23)` exits **1** with everything passing.
+  Same file, so the "different suites, different causes" objection does not
+  arise. Second, independent exit-0 instance from a real accident rather than a
+  deliberate filter — dev-4491's dead `CompilerPool` worker,
+  `22 passed | 36 skipped (58)`, thirty-six never executed. All of the above is
+  adopted in `plan/method/es5-standalone-agent-brief.md`.
+- **The brief merge was simulated by BOTH lanes, and the second time by the one
+  moving the target.** dev-4653 ran it twice (against `ac96bd773`, then
+  `ad7719378`); this lane then committed again, so it ran the same simulation
+  itself against its own HEAD — `git merge-file`, base `c42bdbe3e`, theirs
+  `2bfebb7ea`: rc=0, zero conflict markers, each of the four distinctive strings
+  present exactly once, methodology numbering 1..7 intact. The lesson is not
+  "simulate merges"; it is that **the lane whose commits keep invalidating a
+  peer's verification owes the re-run**.
 - **A survey run entirely at module top level is blind to any defect gated on
   "inside an enclosing function"** — and worse, it mis-attributes the one case
   that does surface, because that case looks like the odd one out. See the
