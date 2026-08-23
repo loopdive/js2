@@ -1,10 +1,11 @@
 ---
 id: 4630
 title: "Standalone: asyncHelpers harness self-tests — thenable coercion through asyncTest closures"
-status: in-progress
+status: done
 sprint: Backlog
 created: 2026-08-23
 updated: 2026-08-23
+completed: 2026-08-23
 priority: medium
 horizon: l
 feasibility: hard
@@ -226,6 +227,95 @@ Prerequisites before the withdrawal can land conformance-neutral:
 2. `Array.fromAsync` standalone (4 tests), `#3494` dynamic import (1),
    for-await iteration-limit (1), `await-using` (1), for-await-of iterator
    close (1) — or an accepted, deliberate net-negative decision from the lead.
+
+## Progress — third slice (2026-08-23): item A LANDED, standalone harness 116/116
+
+Both remaining pieces landed together, because neither works alone.
+
+### What shipped
+
+1. **`param-return-inference.ts` — the widening.** A `catch (e)` binding now
+   withdraws **any** agreed GC-`ref` narrowing, not only a native-string one.
+   The justification is the one the second slice already established and this
+   slice confirmed by measurement: a catch var holds whatever was thrown, so the
+   other call sites' agreement is never evidence for it, and the ABI boundary
+   for a ref narrowing **guard-casts** a violating value to null instead of
+   trapping. `$DONE`'s param was agreed onto `(ref null $Test262Error)`, so the
+   TypeError from `catch (syncError) { $DONE(syncError) }` arrived as null and
+   `error instanceof TypeError` read false — the `[false×6]`.
+
+2. **`async-eager-promise.ts` + `closures/method-trampolines.ts` — the
+   DECLARATION half of the substrate** (prerequisite 1 from the second slice).
+   `asyncTest(foo)` with an async function *declaration* has the closure half's
+   void-result defect one indirection further out: the cached func-closure
+   singleton's trampoline (`ensureFuncClosureSingleton`) forwards verbatim into
+   a void wasm function, so the dynamic dispatch substitutes `undefined` and
+   `testFunc().then(…)` throws the §27.2.5.4 non-Promise-receiver TypeError.
+
+### How the ordering hazard was avoided (the design decision)
+
+The hazard this issue recorded — `wrapAsyncReturn` reads
+`wasmFuncReturnsVoid(funcIdx)` **at each call site**, so promoting a
+declaration's result after some sites have compiled desyncs the stack — is
+avoided by **not promoting the declaration at all**. The promotion is on the
+**trampoline** (the value view): the wrapper type and its forwarding body get an
+`externref` `$Promise` result, while the function's own signature, and therefore
+every direct call site's `wasmFuncReturnsVoid` answer, stay bit-identical. The
+two views are already permitted to differ — reconciling them is exactly what
+`finalizeMethodTrampolines`' wrapper-vs-method logic exists for.
+
+The gate is order-independent by construction: it pairs the (possibly
+provisional) `results.length === 0` with a **purely syntactic** void-body check,
+so a callee that turns out drive-lowered — and therefore already returns a real
+`$Promise` — is settled by the §27.2.4.7-idempotent
+`emitStandalonePromiseResolve`, which passes it through unchanged. A
+value-returning async declaration is excluded up front, so the #1727 raw-`T`
+consumers are never reached.
+
+One incidental fix: `targetOfTrampoline` scanned **backward** for the last
+`call` to identify a trampoline's target. The appended `Promise.resolve`
+sequence contains a `call`, so the scan now goes forward — the forwarding call
+is always the first.
+
+### Measured (this branch, own before AND after, provider built)
+
+| run | before | after |
+| --- | --- | --- |
+| standalone `test/harness/` (116 files) | **115 / 1** | **116 / 0** |
+| js-host `test/harness/` (116 files) | **105 / 11** | **105 / 11** (identical failure list) |
+| standalone `asyncTest(`-using population (391 files) | **114** | **105** |
+| standalone 60-sample (`sa-sample.txt`) | — | **60 / 60** |
+| standalone 90-file regression list (`regr-list.txt`) | — | **90 / 90** |
+| js-host 60-sample (`host-sample.txt`) | — | **59 / 60** |
+
+(The two standalone samples are 100 % after, which cannot hide a regression
+against any base ≤ 100 %. The js-host sample's one failure is the pre-existing
+`AsyncDisposableStack/prototype/adopt/not-a-constructor.js` the second slice
+already recorded.)
+
+### The 10 newly-VISIBLE failures — documented as #4659
+
+The population goes 114 → 105: `asyncTest-return-not-thenable` gains, ten lose.
+The second slice predicted twelve; **four of those twelve were the declaration
+analogues and are now fixed**, and two files outside that slice's 72-file sample
+joined (`Promise.allKeyed` / `allSettledKeyed`).
+
+**None of the ten is caused by this change.** Measured directly: with the
+declaration substrate applied but the widening reverted, all ten pass; with the
+widening, all ten fail. They were false passes through the `$DONE` nulling.
+
+**They are also invisible to CI's regression gate.** Re-run in the runner's
+DEFAULT (js-host) mode — the mode `test262-current.jsonl` records — **nine of the
+ten already fail there**, and the one that does not
+(`Array/fromAsync/this-non-constructor.js`, baseline `pass`) **still passes**.
+Every one keeps its baseline status; the change is confined to the standalone
+lane. Root causes, grouped, are in
+[#4659](plan/issues/4659-standalone-asynctest-unhidden-failures.md): 4 ×
+`Array.fromAsync` standalone-unimplemented, 2 × `Promise.{all,allSettled}Keyed`
+absent, 1 × standalone dynamic import (#3494), and 3 × async-carrier substrate
+gaps (`for await` settlement observation, `await using`, async iterator close).
+
+`throwsAsync-same-realm` (item B) landed in the second slice and stays green.
 
 ## Implementation Plan (updated 2026-08-23, post-slice)
 
