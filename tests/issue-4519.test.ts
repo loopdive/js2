@@ -138,6 +138,26 @@ describe("#4519 member read on an undefined VALUE throws a catchable TypeError",
     ).toBe(1);
   });
 
+  it("the §15.3.5.4 strict-`.caller` shape throws — the three corpus rows this flipped", async () => {
+    // `built-ins/Function/15.3.5.4_2-{10,96,97}gs.js` all end with
+    //     return g.caller || g.caller.throwTypeError;
+    // `.caller` of a strict-called function is `undefined`, so the second read
+    // must throw the TypeError the tests' `assert.throws` is waiting for.
+    // Pinned in the corpus' own shape (`fn.caller` on a function value) rather
+    // than by re-deriving it from a parameter.
+    expect(
+      await runStandalone(`
+        var out = 0;
+        function g() { }
+        function probeCaller(fn) {
+          try { var v = fn.caller.throwTypeError; return 0; } catch (e) { return (e instanceof TypeError) ? 1 : 2; }
+        }
+        out = probeCaller(g);
+        export function test() { return out; }
+      `),
+    ).toBe(1);
+  });
+
   it("a syntactic `undefined.foo` still throws (#4484's arm, unchanged)", async () => {
     expect(
       await runStandalone(`

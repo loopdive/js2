@@ -184,24 +184,41 @@ the same machine, load and provider cache. File order is a fixed-seed (4519)
 (the member-access surface, must complete), stratum 2 = the other 6,885 ES≤5
 files shuffled. Two interleaved slices run in parallel.
 
-**Coverage and result — RESULTS-PENDING (updated at hand-off).**
+**Coverage: 4,440 paired rows = 53.8 % of the 8,260-file ES≤5 corpus — stratum 1
+COMPLETE (1,375/1,375) and stratum 2 at 3,065/6,885 (44.5 %), i.e. the agreed
+≥3,000 floor met.**
 
-Two flips, both re-confirmed in a FRESH process:
+| transition | rows |
+| --- | --- |
+| pass → pass | 4,248 |
+| fail → fail | 183 |
+| compile_error → compile_error | 4 |
+| **fail → pass (fixes)** | **3** |
+| **pass → fail (regressions)** | **2** |
+| any other transition | **0** |
+
+**Net +1.** Five flips, each re-confirmed in a FRESH process:
 
 ```
 + built-ins/Function/15.3.5.4_2-10gs.js            fail -> pass
++ built-ins/Function/15.3.5.4_2-96gs.js            fail -> pass
++ built-ins/Function/15.3.5.4_2-97gs.js            fail -> pass
 - built-ins/Function/prototype/S15.3.3.1_A3.js     pass -> fail
+- built-ins/Function/prototype/S15.3.3.1_A1.js     pass -> fail
 ```
 
-**The fix row is exactly this issue's semantics.** `15.3.5.4_2-10gs` ends with
-`return gNonStrict.caller || gNonStrict.caller.throwTypeError;` — `.caller` of a
-strict-called function is `undefined`, and reading `.throwTypeError` off it must
-throw TypeError. It now does.
+**All three fix rows are exactly this issue's semantics** — the §15.3.5.4
+strict-`.caller` family. Each ends with
+`return g.caller || g.caller.throwTypeError;`: `.caller` of a strict-called
+function is `undefined`, and reading `.throwTypeError` off that `undefined` must
+throw a TypeError, which is what `assert.throws(TypeError, …)` is waiting for.
+Before this change the read answered a fallback and nothing threw.
 
-**The regressed row was a VACUOUS pass, and the vacuity is a pre-existing
+**The two regressed rows were VACUOUS passes, and the vacuity is a pre-existing
 capability gap, not something this change introduces.** Bisected to a single
 harness call (`.tmp/p1.js`: `verifyNotConfigurable(Function, "prototype")`
-alone reproduces it; the test's own `delete` half passes on both arms). The
+alone reproduces `_A3`; `_A1` is the `verifyNotWritable` twin; the `_A3` test's
+own `delete` half passes on both arms). The
 runner inlines the REAL upstream `propertyHelper.js`, whose line 457 is
 
 ```js
@@ -218,15 +235,29 @@ Measured directly, and identical on BOTH arms (`.tmp/p4.js`):
 | `Object.getOwnPropertyDescriptor(o, "a")` via a dynamic parameter | object ✓ |
 | `Object.getOwnPropertyDescriptor(obj, name)` via a dynamic parameter, `obj = Function` | **`undefined`** |
 
-So before this change the harness read `.configurable` off `undefined`, got
-`undefined`, and `!undefined` satisfied the assert — the row passed **because**
-the descriptor was missing. §7.3.2 requires that read to throw; it now does, and
-the harness surfaces the throw as a failure. The row is a true statement about a
-gap that was previously invisible.
+So before this change the harness read `.configurable` (resp. `.writable`) off
+`undefined`, got `undefined`, and `!undefined` satisfied the assert — the rows
+passed **because** the descriptor was missing. §7.3.2 requires that read to
+throw; it now does, and the harness surfaces the throw as a failure. Both rows
+are true statements about a gap that was previously invisible.
 
 **The class is bounded and measured, not assumed.** Every ES≤5 test that calls
-`verifyConfigurable`/`verifyNotConfigurable` — **10 files**, the complete set —
-was A/B'd: exactly this one flips, the other nine are unmoved.
+ANY of the six deprecated descriptor verifiers — `verify{Not,}Configurable`,
+`verify{Not,}Writable`, `verify{Not,}Enumerable`, **248 files, the complete
+set** — was A/B'd to completion. **Exactly two flip**, both in the same
+directory and both the same vacuity:
+
+```
+- built-ins/Function/prototype/S15.3.3.1_A1.js   pass -> fail   verifyNotWritable(Function, "prototype", …)
+- built-ins/Function/prototype/S15.3.3.1_A3.js   pass -> fail   verifyNotConfigurable(Function, "prototype")
+```
+
+The other 246 are unmoved. `verifyProperty` — the non-deprecated helper the rest
+of the suite uses — is rewritten to `assert_sameValue` at source level by the
+runner and never executes the descriptor read, which is why the exposure stops
+here. (The scoring path is `assembleOriginalHarness`, i.e. the REAL upstream
+`sta.js`/`assert.js`/`propertyHelper.js`, not the runner's stub preamble — so
+these are genuine conformance rows, not a harness artifact.)
 
 Two further complete A/B runs, both **0 flips**:
 
@@ -239,12 +270,14 @@ Two further complete A/B runs, both **0 flips**:
 
 ### Pins
 
-- `tests/issue-4519.test.ts` — **15 tests** (12 behavioural + 3 `it.fails`
+- `tests/issue-4519.test.ts` — **16 tests** (13 behavioural + 3 `it.fails`
   residuals), green in three configurations: plain, `--sequence.shuffle`
   (order-dependence / #3673 pollution check), and
-  `JS2WASM_EVAL_ENGINE=interpreter` (the CI `quality` tier). Half the
-  behavioural pins are over-throw controls, including one where a live and a
-  nullish receiver flow through the SAME emitted guard.
+  `JS2WASM_EVAL_ENGINE=interpreter` (the CI `quality` tier).
+  **The pins are shown to bite, not assumed to:** re-run under
+  `JS2WASM_4519_AB=base` (every widening reverted) **7 of the 16 FAIL** — the
+  six flip pins plus the mixed live/nullish-through-one-guard pin — and the
+  other 9 pass on both arms, which is exactly the job of an over-throw control.
 - `tests/issue-4484.test.ts` — 27 green. One stale `it.fails` flipped to `it`
   (`'valueOf' in {}`): healed by #4506 on this branch's base, verified failing
   identically under `JS2WASM_4519_AB=base`, i.e. not caused here.
@@ -316,12 +349,16 @@ inherited from another issue's record):
    visible in its probe table because the strict twin is what flipped.
 6. **`Object.getOwnPropertyDescriptor(obj, name)` answers `undefined` for a
    builtin constructor when `obj` arrives through a DYNAMIC parameter** — the
-   literal-receiver form and a plain own property both work. This is what makes
-   `built-ins/Function/prototype/S15.3.3.1_A3.js` a vacuous pass, and it is the
-   one row this change costs. Descriptor-attribute surface (#4479-adjacent), not
-   this guard's. **Needs a lead routing decision**: the honest repair is to give
-   the dynamic-receiver descriptor lookup the builtin's own property, after which
-   the row passes for a real reason.
+   literal-receiver form and a plain own property both work. `object-runtime.ts`
+   states the rule at `__getOwnPropertyDescriptor`'s registration: "missing own
+   prop / **non-`$Object` receiver → undefined", and a builtin carrier is not a
+   `$Object`. This is what makes `S15.3.3.1_A1`/`_A3` vacuous passes, and it is
+   the two rows this change costs. Descriptor-attribute / `$Object`-substrate
+   surface (#4479 / #4506-adjacent), not this guard's. **Needs a lead routing
+   decision**: the honest repair is to give the dynamic-receiver descriptor
+   lookup the builtin's own property, after which both rows pass for a real
+   reason. Deliberately NOT attempted here — it is another lane's file set and
+   would make the A/B unable to attribute either result.
 
 ## Decision log — two things a reviewer will ask about
 
