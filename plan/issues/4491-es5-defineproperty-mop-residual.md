@@ -5925,6 +5925,41 @@ all — they surfaced while writing the pins.
 | (no census row — found writing the pins) | `Object.freeze(arr)` flips `Object.prototype.hasOwnProperty.call(arr,"0")` from `true` to **`false`**, while `gOPD(arr,"0")` keeps answering the full descriptor. PRE-EXISTING: reproduces with `vec-overlay.ts` reverted. A descriptor that exists while `hasOwnProperty` says the property does not is the #4010 overlay-vs-bag split, now reachable through the integrity path too. | unowned; pinned `it.fails` in `tests/issue-4491-wave4.test.ts`. |
 | (no census row — found writing the pins) | a FUNCTION-LOCAL `var g = undefined` still stores the number 0, and an INLINE `{get: getter}` descriptor argument still throws where the same descriptor in a variable does not. Root 3 fixes the module-global slot on the dynamic define path only. | unowned; see "Not done" below. |
 
+#### Routed IN from #4654 (2026-08-23) — accessor-tier twin of the T9 fix
+
+dev-4654 handed over three rows whose root is in this issue's files, with the
+analysis already done and the wrong fix already ruled out. Recorded here so it
+is not lost; **not taken in this slice** — it is a different member KIND with
+its own risk record, and folding an unmeasured accessor-tier change into a
+branch whose zero-regression claim is already established would put that claim
+at risk. It should be dispatched as its own wave-5 slice.
+
+- Rows: `RegExp/prototype/{global,multiline,ignoreCase}/S15.10.7.{2,4,3}_A9.js`.
+  The receiver is `RegExp.prototype` ITSELF, not an instance. `hasOwnProperty`
+  and the `delete` both pass; the SECOND `hasOwnProperty` (must be `false`)
+  fails.
+- Root: `__nproto_hasown` (`native-proto-own-props.ts`). Those three names are
+  in the brand's `$memberCsv`, and the CSV token scan answers `1`
+  unconditionally. The seeded-member ladder that consults the mutable
+  companion — the one #4491 T9 added `constructor` to — is restricted to
+  `kind === "method"`, because `ensureNativeProtoCompanionSeeder` deliberately
+  does not seed accessors. So a deleted accessor member is resurrected by the
+  CSV. Structurally the SAME defect T9 closed for `constructor`, one member
+  kind over.
+- Ruled out, with a record: seeding the getters via
+  `__defineProperty_accessor` flips `tests/issue-2885.test.ts` ("plain read
+  `RegExp.prototype.global` is undefined") to FAIL, and that mechanism is not
+  established (see the "ACCESSORS ARE DELIBERATELY NOT SEEDED IN THIS SLICE"
+  note in `native-proto.ts`).
+- The direction that is still open: these rows do not need accessors SEEDED —
+  they need a DELETION to be OBSERVABLE. A tombstone consulted by the CSV
+  shortcut answers all three assertions without installing an accessor entry,
+  and therefore without touching the #2885 read path. Merely routing accessor
+  keys through the companion does NOT work: the companion has no entry for
+  them, so the FIRST `hasOwnProperty` would start failing.
+- Control set for whoever takes it:
+  `%TypedArray%.prototype.{buffer,byteLength,byteOffset,length}/prop-desc.js`.
+
 #### Cross-lane (methodology item 7)
 
 The dispatch note flagged `Array/prototype/filter/15.4.4.20-9-b-{2,14,15,16}`
