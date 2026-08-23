@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 7735,
-    "fail": 1286,
+    "pass": 7742,
+    "fail": 1279,
     "ce": 8,
     "skip": 0,
     "total": 9029,
@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9155,
-    "fail": 2445,
+    "pass": 9168,
+    "fail": 2432,
     "ce": 103,
     "skip": 1,
     "total": 11704,
@@ -57,8 +57,8 @@
     "features": [
       {
         "name": "destructuring-binding",
-        "pass": 3602,
-        "fail": 510,
+        "pass": 3613,
+        "fail": 499,
         "ce": 41,
         "skip": 0,
         "total": 4153,
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 1954,
-        "fail": 502,
+        "pass": 1966,
+        "fail": 490,
         "ce": 30,
         "skip": 0,
         "total": 2486,
@@ -93,12 +93,12 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 464,
-        "fail": 287,
+        "pass": 475,
+        "fail": 276,
         "ce": 43,
         "skip": 1,
         "total": 795,
-        "pct": 58
+        "pct": 60
       },
       {
         "name": "Symbol",
@@ -120,8 +120,8 @@
       },
       {
         "name": "Proxy",
-        "pass": 201,
-        "fail": 230,
+        "pass": 202,
+        "fail": 229,
         "ce": 0,
         "skip": 0,
         "total": 431,
@@ -147,8 +147,8 @@
       },
       {
         "name": "Reflect",
-        "pass": 192,
-        "fail": 137,
+        "pass": 193,
+        "fail": 136,
         "ce": 1,
         "skip": 0,
         "total": 330,
@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3510,
-    "fail": 1275,
+    "pass": 3514,
+    "fail": 1271,
     "ce": 38,
     "skip": 0,
     "total": 4823,
@@ -1071,8 +1071,8 @@
     "features": [
       {
         "name": "async-iteration",
-        "pass": 2586,
-        "fail": 1191,
+        "pass": 2590,
+        "fail": 1187,
         "ce": 33,
         "skip": 0,
         "total": 3810,
@@ -1089,12 +1089,12 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 144,
-        "fail": 491,
+        "pass": 148,
+        "fail": 487,
         "ce": 17,
         "skip": 0,
         "total": 652,
-        "pct": 22
+        "pct": 23
       },
       {
         "name": "regexp-unicode-property-escapes",
@@ -1107,12 +1107,12 @@
       },
       {
         "name": "generators",
-        "pass": 323,
-        "fail": 142,
+        "pass": 327,
+        "fail": 138,
         "ce": 4,
         "skip": 0,
         "total": 469,
-        "pct": 69
+        "pct": 70
       },
       {
         "name": "Symbol.asyncIterator",
@@ -3264,8 +3264,8 @@
   {
     "edition": "ES2025",
     "pass": 701,
-    "fail": 276,
-    "ce": 24,
+    "fail": 279,
+    "ce": 21,
     "skip": 0,
     "total": 1001,
     "pct": 70,
@@ -3273,8 +3273,8 @@
       {
         "name": "iterator-helpers",
         "pass": 168,
-        "fail": 217,
-        "ce": 8,
+        "fail": 220,
+        "ce": 5,
         "skip": 0,
         "total": 393,
         "pct": 43
@@ -3571,21 +3571,21 @@
   },
   {
     "edition": "ES2026",
-    "pass": 156,
-    "fail": 145,
-    "ce": 9,
+    "pass": 157,
+    "fail": 153,
+    "ce": 0,
     "skip": 0,
     "total": 310,
-    "pct": 50,
+    "pct": 51,
     "features": [
       {
         "name": "Array.fromAsync",
-        "pass": 34,
-        "fail": 52,
-        "ce": 9,
+        "pass": 35,
+        "fail": 60,
+        "ce": 0,
         "skip": 0,
         "total": 95,
-        "pct": 36
+        "pct": 37
       },
       {
         "name": "upsert",
@@ -4250,12 +4250,12 @@
   },
   {
     "edition": "Proposals",
-    "pass": 443,
-    "fail": 2933,
-    "ce": 1642,
+    "pass": 817,
+    "fail": 4046,
+    "ce": 155,
     "skip": 96,
     "total": 5114,
-    "pct": 9
+    "pct": 16
   },
   {
     "edition": "Unclassified (legacy)",
@@ -4268,8 +4268,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4243,
-    "fail": 1120,
+    "pass": 4246,
+    "fail": 1117,
     "ce": 82,
     "skip": 0,
     "total": 5445,
