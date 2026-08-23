@@ -335,6 +335,16 @@ export function buildQuickjsAdapterSource(abi) {
   if (absent.length > 0) {
     throw new Error(`qjs-abi.json is missing tags.{${absent.join(",")}} — the artifact ABI dump is unusable`);
   }
+  // (#4654) The handle registry's O(1) lookup reads the JSValue payload word
+  // directly, which ABI note 3 sanctions ("codegen may open-code the hot
+  // predicates without a call: … the payload is `i32.load offset=
+  // qjs_abi_payload_offset`"). Refuse rather than guess an offset: a wrong one
+  // would silently key the registry on garbage and collapse distinct objects
+  // onto one row.
+  const payloadOffset = abi?.value?.payloadOffset;
+  if (typeof payloadOffset !== "number") {
+    throw new Error("qjs-abi.json is missing value.payloadOffset — the artifact ABI dump is unusable");
+  }
   const j = JSON.stringify;
   return `
 import { load8, load32, store8, store32 } from "wasm:memory";
@@ -378,6 +388,8 @@ const QJS_TAG_STRING: number = ${tags.STRING};
 const QJS_TAG_STRING_ROPE: number = ${tags.STRING_ROPE};
 const QJS_TAG_OBJECT: number = ${tags.OBJECT};
 const QJS_TAG_SHORT_BIG_INT: number = ${tags.SHORT_BIG_INT};
+/** Byte offset of the JSValue payload word inside a handle cell (ABI note 3). */
+const QJS_PAYLOAD_OFFSET: number = ${payloadOffset};
 
 /**
  * One mutable boxed binding shared by AOT code and this provider — the exact
@@ -585,6 +597,128 @@ var qjsBoxMirror: number[] = [];
 var qjsBoxKeyList: any[] = [];
 var qjsBoxLast: any[] = [];
 
+/** (#4654) The row indices whose \`qjsBoxMirror\` is 1, so the per-crossing sync
+ *  walks only them. Append-only, exactly like the columns above. */
+var qjsMirroredRows: number[] = [];
+
+/** (#4654) The reverse scan's two partitions — rows whose exposed value is a
+ *  RegExp, and every other row. See \`qjsHandleOf\` for why the split is by that
+ *  predicate specifically. Classification is by construction and never changes:
+ *  a row's exposed value is fixed at push time. */
+var qjsRowsRe: number[] = [];
+var qjsRowsOther: number[] = [];
+
+// ------------------------------------ registry index, O(1) (#4654) ---------
+//
+// WHY THIS EXISTS. \`qjsFindBoxIndex\` used to be a linear scan with ONE
+// \`qjs_is_equal\` FFI CALL PER ROW, and it runs on every value published out of
+// an evaluation. The module note above justified that with "the population is
+// the handful of realm bindings and seam arguments that actually cross" — true
+// for the corpus it was written against, and false for a loop that evaluates
+// once per iteration. Measured (this box, same load window, N evals each
+// returning a fresh object):
+//
+//     N =   800 →  8.9 s          N = 3200 → 52.0 s
+//
+// which fits t = C + a·N + b·N²/2 with b ≈ 6.7 µs PER ROW PER EVAL — i.e. the
+// scan, not the evaluation. The same shape with a NUMBER result (no row is ever
+// pushed) is flat: 4.0 s → 6.7 s, a marginal 1.1 ms/eval and b ≈ 0. Extrapolated
+// to the 65,536-iteration \`language/literals/regexp/S7.8.5_*_T2\` loops the
+// quadratic term alone was ~4 HOURS, against a 40-minute CI shard budget that
+// nothing can interrupt (a test executes as one synchronous call into Wasm).
+//
+// THE KEY. A handle is a \`JSValue*\` cell in the shared linear memory
+// (qjs_shim.c), so two handles to the SAME object differ — which is why the
+// scan needed \`qjs_is_equal\` at all. But the PAYLOAD WORD inside the cell is
+// the \`JSObject*\`, and that IS the object's identity: equal payloads ⟺ same
+// object, for OBJECT-tagged values that are simultaneously alive. Every
+// registry row RETAINS its handle for the instance lifetime (the slice-3
+// note), so a registered row's object cannot be freed and its pointer cannot be
+// recycled under us. That retention is what makes the payload safe as a key
+// rather than merely likely-unique.
+//
+// Open addressing with linear probing over two plain \`number[]\`s, rather than a
+// \`Map\`: this module is compiled by js2wasm in standalone mode and the arrays
+// are the shape every other column here already uses.
+//
+// Rows whose payload cannot be read (a non-OBJECT tag — none exist today, but
+// the seeds are pushed by name and a future one might not be an object) are
+// recorded in \`qjsBoxUnhashed\` and still found, by the original scan, over that
+// short list only. Correctness does not depend on the fast path being taken.
+
+/** Slot key: payload word + 1, so 0 can mean "empty". */
+var qjsHashKeys: number[] = [];
+/** Registry index + 1 for the row in this slot; 0 when empty. */
+var qjsHashVals: number[] = [];
+var qjsHashMask: number = 0;
+var qjsHashCount: number = 0;
+/** Row indices whose handle has no usable payload key. */
+var qjsBoxUnhashed: number[] = [];
+
+/** The JSObject pointer behind an OBJECT-tagged handle, or 0. */
+function qjsPayloadKey(handle: number): number {
+  if (handle === 0) return 0;
+  if (qjs_tag(handle) !== QJS_TAG_OBJECT) return 0;
+  return load32(handle + QJS_PAYLOAD_OFFSET);
+}
+
+/**
+ * Bucket for a pointer key. Shifts and xors only — no \`Math.imul\`, and no plain
+ * \`*\`: this module compiles to Wasm where \`*\` on a \`number\` is an f64 multiply,
+ * which would round a 32-bit product. Pointers are at least 4-byte aligned, so
+ * the low bits are constant and must not be used as the bucket directly.
+ */
+function qjsHashOf(key: number): number {
+  let x: number = (key >>> 3) | 0;
+  x = (x ^ (x >>> 11)) | 0;
+  x = (x + ((x << 5) | 0)) | 0;
+  x = (x ^ (x >>> 7)) | 0;
+  x = (x + ((x << 3) | 0)) | 0;
+  return x & 0x7fffffff;
+}
+
+/**
+ * FIRST row for a key wins, deliberately: the old linear scan returned the
+ * first match from the front, and \`qjsSeedIntrinsicErrorIdentities\` can push a
+ * SECOND row for an object that was already published as a box (it seeds on the
+ * first globals push, not at context creation). Overwriting would silently
+ * change which stand-in an already-crossed intrinsic resolves to.
+ */
+function qjsHashInsert(key: number, rowPlusOne: number): void {
+  let i: number = qjsHashOf(key) & qjsHashMask;
+  while ((qjsHashKeys[i] as number) !== 0) {
+    if ((qjsHashKeys[i] as number) === key + 1) return;
+    i = (i + 1) & qjsHashMask;
+  }
+  qjsHashKeys[i] = key + 1;
+  qjsHashVals[i] = rowPlusOne;
+  qjsHashCount += 1;
+}
+
+/** Grow (or build) the table and re-insert every hashable row. */
+function qjsHashRehash(): void {
+  let cap: number = qjsHashMask + 1;
+  if (cap < 16) cap = 16;
+  while (cap < (qjsBoxHandles.length + 1) * 2) cap = cap * 2;
+  qjsHashKeys = [];
+  qjsHashVals = [];
+  for (let i = 0; i < cap; i += 1) {
+    qjsHashKeys.push(0);
+    qjsHashVals.push(0);
+  }
+  qjsHashMask = cap - 1;
+  qjsHashCount = 0;
+  qjsBoxUnhashed = [];
+  for (let r = 0; r < qjsBoxHandles.length; r += 1) {
+    const key: number = qjsPayloadKey(qjsBoxHandles[r] as number);
+    if (key === 0) {
+      qjsBoxUnhashed.push(r);
+      continue;
+    }
+    qjsHashInsert(key, r + 1);
+  }
+}
+
 /** Append one non-mirrored registry row (identity seeds, callable boxes). */
 function qjsPushBoxRow(handle: number, target: any, exposed: any, mirror: number): void {
   qjsBoxHandles.push(handle);
@@ -593,11 +727,41 @@ function qjsPushBoxRow(handle: number, target: any, exposed: any, mirror: number
   qjsBoxMirror.push(mirror);
   qjsBoxKeyList.push(undefined);
   qjsBoxLast.push(undefined);
+  const row: number = qjsBoxHandles.length - 1;
+  if (mirror === 1) qjsMirroredRows.push(row);
+  // A row is in the RegExp partition when EITHER column is one — \`target\` and
+  // \`exposed\` differ only for the callable carrier, which is never a RegExp, so
+  // in practice this is the reconstruction arm and nothing else.
+  if (exposed instanceof RegExp || target instanceof RegExp) {
+    qjsRowsRe.push(row);
+  } else {
+    qjsRowsOther.push(row);
+  }
+  const key: number = qjsPayloadKey(handle);
+  if (key === 0) {
+    qjsBoxUnhashed.push(row);
+    return;
+  }
+  if ((qjsHashCount + 1) * 2 > qjsHashMask + 1) {
+    qjsHashRehash();
+    return;
+  }
+  qjsHashInsert(key, row + 1);
 }
 
 function qjsFindBoxIndex(c: number, h: number): number {
-  for (let i = 0; i < qjsBoxHandles.length; i += 1) {
-    if (qjs_is_equal(c, qjsBoxHandles[i] as number, h, 1) !== 0) return i;
+  const key: number = qjsPayloadKey(h);
+  if (key !== 0 && qjsHashMask !== 0) {
+    let i: number = qjsHashOf(key) & qjsHashMask;
+    while ((qjsHashKeys[i] as number) !== 0) {
+      if ((qjsHashKeys[i] as number) === key + 1) return (qjsHashVals[i] as number) - 1;
+      i = (i + 1) & qjsHashMask;
+    }
+  }
+  // The short unhashable tail keeps the original semantics verbatim.
+  for (let k = 0; k < qjsBoxUnhashed.length; k += 1) {
+    const r: number = qjsBoxUnhashed[k] as number;
+    if (qjs_is_equal(c, qjsBoxHandles[r] as number, h, 1) !== 0) return r;
   }
   return -1;
 }
@@ -612,7 +776,25 @@ function qjsFindBoxIndex(c: number, h: number): number {
  */
 function qjsHandleOf(value: any): number {
   const target: any = __runtime_eval_unwrap_interpreted_callback(value);
-  for (let i = 0; i < qjsBoxTargets.length; i += 1) {
+  // (#4654) PARTITIONED, not shortened. Identity is object reference identity,
+  // which the compiled subset gives no hash for — \`Map\` is not a way out, it is
+  // measured LINEAR here (6.8 µs/lookup at 500 entries, 480 µs at 32,000). So
+  // the scan stays, and what changes is WHAT it has to walk.
+  //
+  // The population that explodes in an eval LOOP is the reconstructed RegExps:
+  // one row per iteration, 65,536 of them in
+  // \`language/literals/regexp/S7.8.5_*_T2\`. The values that actually reach this
+  // function on the hot path are the caller's GLOBALS, pushed once per global
+  // per eval — and none of them is a RegExp. Splitting the row list by that one
+  // predicate lets the globals push skip the whole exploding population without
+  // giving up a single answer: a RegExp still finds its row, in the RegExp list.
+  // Measured contribution before the split (bench module, N evals, 16 extra
+  // object globals): 11.2 s → 68.2 s at N=3200, while the same loop whose eval
+  // returns a NUMBER — which pushes no row at all — moved 4.70 s → 5.43 s. The
+  // cost was globals × rows, i.e. exactly this scan.
+  const list: number[] = value instanceof RegExp ? qjsRowsRe : qjsRowsOther;
+  for (let k = 0; k < list.length; k += 1) {
+    const i: number = list[k] as number;
     if (qjsBoxTargets[i] === target) return qjsBoxHandles[i] as number;
     if (qjsBoxExposed[i] === target) return qjsBoxHandles[i] as number;
     if (qjsBoxTargets[i] === value) return qjsBoxHandles[i] as number;
@@ -1311,14 +1493,23 @@ function qjsSyncBoxes(c: number, push: boolean): void {
   if (qjsBoxSyncing) return;
   if (c === 0) return;
   qjsBoxSyncing = true;
+  // (#4654) Iterate the MIRRORED rows, not every row. The predicate is
+  // unchanged — \`qjsMirroredRows\` holds exactly the indices whose
+  // \`qjsBoxMirror\` is 1 — but the walk no longer costs one array read per
+  // NON-mirrored row per seam crossing, and there are two crossings per eval.
+  // With a registry the size the module note assumed ("a handful") that was
+  // free; in an eval LOOP the registry is one row per iteration and this was a
+  // second O(N²) alongside the handle scan. The loop still re-reads
+  // \`.length\` each turn on purpose: pulling one box publishes its
+  // object-valued properties, which appends NEW mirrored rows that have to be
+  // covered in the same pass (the original reason, unchanged).
   let i: number = 0;
-  while (i < qjsBoxMirror.length) {
-    if ((qjsBoxMirror[i] as number) === 1) {
-      if (push) {
-        qjsPushBox(c, i);
-      } else {
-        qjsPullBox(c, i);
-      }
+  while (i < qjsMirroredRows.length) {
+    const row: number = qjsMirroredRows[i] as number;
+    if (push) {
+      qjsPushBox(c, row);
+    } else {
+      qjsPullBox(c, row);
     }
     i += 1;
   }
