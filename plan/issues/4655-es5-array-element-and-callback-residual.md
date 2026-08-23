@@ -132,13 +132,27 @@ outcome; an unmeasured fix is not.
 
 # Result (dev-4655, 2026-08-23)
 
-Every number below comes from a run **I executed** in
-`/home/user/js2wasm/.claude/worktrees/agent-aa58d929ef0455b8c` on branch
-`issue-4655-array-element-callback`, base `3e8adf0d8` (campaign HEAD). Base arms
-are file-copy reverts from `.tmp/base-array-methods.ts` /
-`.tmp/base-array-join-element.ts` / `.tmp/base-array-join-proto-hole.ts`,
-captured at the first edit. Probes are in `.tmp/probes/`, one per claim, each
-named for the question it answers.
+Every number below comes from a run **I executed**. Two worktrees are involved
+because a container restart killed the first session mid-sweep:
+
+| | |
+| --- | --- |
+| first session | `/workspace/.claude/worktrees/agent-aa58d929ef0455b8c`, branch `issue-4655-array-element-callback`, base `3e8adf0d8` |
+| this session | `/workspace/.claude/worktrees/agent-a44258edd957935c5`, branch `issue-4655-array-element-callback-r2`, base `origin/main` @ `f6e094cdb` |
+
+The work survived (the commit plus two uncommitted files were recovered and
+committed first thing); the **branch name changed** only because the original
+branch is still checked out in the dead worktree and the isolation layer refuses
+both `git worktree remove` and `checkout --ignore-other-worktrees`.
+
+**Every measurement in `## Test Results` was RE-RUN on the post-merge base**, so
+nothing here is inherited from the pre-restart artifacts. Base arms are file-copy
+reverts (`.tmp/base-array-methods.ts` / `-join-element` / `-join-proto-hole`,
+captured from `origin/main`), swapped by `.tmp/to-base.sh` / `.tmp/to-fix.sh`,
+with `git diff --stat -- src` read before each arm — it must name the same four
+files the change touches, which is the brief's partial-restore detector. Probes
+are in `.tmp/probes/`, one module per claim, each named for the question it
+answers.
 
 ## What this does that #4641's declined option did not
 
@@ -233,3 +247,68 @@ prototype method — is residual R1, pinned with its control.
 reflective read does not see every builtin prototype method, so a
 `toLocaleString` this lowering cannot find is far more likely to be one it
 cannot SEE than one genuinely absent.
+
+## Root cause — the other 18 rows, and why none of them is fixed here
+
+Every one was probed, not assumed. **Four of the six roots I would have written
+down from the failure text are refuted by a probe below** — that is the whole
+value of this section, and it is why the issue's own row groupings (A/B/C) do
+not survive contact: the 20 rows carry **eight** distinct roots, and the
+grouping that predicts them is not "which method failed" but "which conversion
+or carrier decision was made before the method ran".
+
+| # | rows | root — as MEASURED | the attribution it REFUTES |
+| --- | --- | --- | --- |
+| **FIXED** | `toLocaleString/S15.4.4.3_A{1,3}_T1` | the element step asked for `toString` | — |
+| R3 | `toString/S15.4.4.2_A1_T2` | a `null` element assigned into a var whose wasm carrier was already fixed to `f64` (#3580 union-collapse at the var slot) | #4641 R4's "needs a third sNaN payload `NULL_F64_BITS`" — the SAME expression in a fresh var is fully correct |
+| R4 | `concat/S15.4.4.4_A1_T{2,4}`, `A3_T{1,2,3}` | the `concat` RESULT slot is still statically `number[]`, so a hole / an inherited index / an object element comes out `NaN` | "nullish elements have no representation" — read directly they are all correct |
+| R5 | `forEach/15.4.4.18-3-23` | an array-like whose `length` object inherits `valueOf` from a constructor prototype visits no index | #4641 R7's "`length` is an OBJECT needing ToPrimitive" — an OWN `valueOf` works end to end |
+| R6 | `filter/15.4.4.20-9-b-{14,15,16}` | the #1888 / #2141-S4 heterogeneous-element tag lie | the #4491 descriptor MOP — reproduces with NO `defineProperty` anywhere |
+| R7 | `filter/15.4.4.20-9-b-2` | a `{}` that is both given a self-writing `length` accessor AND borrowed as an array-like is materialised carrying **Array's own** `length` (`value=0,w=true,e=false,c=false`) | the #4491 descriptor MOP again — §10.1.6.3 step 4.a is behaving CORRECTLY; seven single-axis probes all pass and only the combination fails |
+| R8 | `toString/S15.4.4.2_A1_T4` | the element tail's `__extern_toString` and `String()` are different ToString implementations; only the latter throws when neither `valueOf` nor `toString` returns a primitive | "ToPrimitive is wrong" — `String(o)` on the same object throws correctly |
+| R9 | `Array/S15.4_A1.1_T9` | ToPropertyKey does not use ToPrimitive's `valueOf` fallback | same — `String(o)` on the same object answers `"1"` |
+| — | `concat/S15.4.4.4_A2_T{1,2}` | `Array.prototype.concat` read as a VALUE (#4515 cluster C1) | — but see the re-verification below |
+| — | `Array/S15.4_A1.1_T10` | sparse array indexed up to 2³²−2 → `array element access out of bounds`; the dense backing store | — |
+| — | `isArray/15.4.3.2-1-13` | `arguments` is materialised as a real Array, so `Array.isArray` says `true` | — |
+| — | `filter/15.4.4.20-5-7` | `eval` used as a `thisArg` VALUE. **NOT MEASURED HERE** — see `## Test Results` | — |
+
+### The cluster-C re-verification the task asked for
+
+**#4515 has landed and the two `concat`-as-a-value rows still fail, unchanged.**
+Measured on `origin/main` @ `f6e094cdb` (this session's base), both rows report
+verbatim `TypeError: Array.prototype.concat is not yet callable as a value in
+--target standalone`. Do not close them as covered by #4515. The same error
+text, on the same base, also covers `Array.prototype.toLocaleString` read as a
+value (residual R2), so the family is one root and it is still open.
+
+## Residuals
+
+Nine, every one pinned in `tests/issue-4655.test.ts` as an `it.fails` **plus a
+positive control that passes**. The control is not decoration: an `it.fails`
+alone protects whatever root you attributed from ever being tested, and in this
+issue four attributions were wrong. The control is the cell that discriminates,
+so if a future change repairs the residual for the WRONG reason — or breaks the
+surrounding area so thoroughly that the residual "passes" — the control goes red.
+
+| id | shape | owner | the control that pins it |
+| --- | --- | --- | --- |
+| R1 | an element whose PRIMITIVE prototype method is overridden (`Boolean.prototype.toString = …`) is still rendered natively | #4655 follow-on — needs per-element boxing on the f64/i32/boolean arms; declined here on purpose (see "Deliberate scope") | an UN-overridden boolean still renders `true`/`false` |
+| R2 | `Array.prototype.toLocaleString` read as a VALUE | #4515 cluster C1 (builtin-as-value) — **still open, re-verified above** | the same method CALLED works |
+| R3 | a `null` element assigned into a var already typed `number[]` | #3580 union-collapse at the var slot | the same expression in a FRESH var is fully correct, including `x[2] === null` and `typeof x[2] === "object"` |
+| R4 | a hole / inherited index / object element crossing `concat` becomes `NaN` | value-rep — the concat result-carrier slice | the same hole read WITHOUT `concat` is already correct |
+| R5 | an array-like whose `length` object has an INHERITED `valueOf` visits no index | unclaimed | the OWN-`valueOf` twin works end to end |
+| R6 | a heterogeneous element reads back as `[object Object]` after `filter` | #1888 / #2141-S4 | the HOMOGENEOUS twin — including the mid-iteration `length` shrink a prior lane suspected — passes |
+| R7 | self-writing `length` accessor + array-like borrow ⇒ the object carries Array's own non-configurable `length` | array-like borrow carrier selection (value-rep). **NOT #4491** | both single-axis halves pass; only the combination fails |
+| R8 | an element whose `valueOf` AND `toString` both return objects renders `""` instead of throwing | this lowering's neighbourhood — see the note below | `String()` on the same object DOES throw a TypeError |
+| R9 | an object property KEY whose `toString` returns an object ignores `valueOf` | computed-member key coercion (core-semantics) | `String()` on the same object DOES use the fallback |
+
+**R8 is the one I could have taken and deliberately did not.** It is one row
+(`toString/S15.4.4.2_A1_T4`), it sits in the tail I was already editing, and the
+fix is plausibly small — re-point the element tail at whatever `String()`
+lowers to. It is declined because that tail is **shared with `join`**, and this
+change's whole safety argument is that `join`/`toString` bytes do not move
+(verified by `wasm_sha`, `## Test Results`). Re-pointing it forfeits that
+argument and needs its own two-arm sweep, which is a slice, not a rider. Whoever
+takes it: the discriminating probe pair is
+`.tmp/probes/toprimitive-no-primitive-must-throw.js` (passes) and
+`.tmp/probes/array-tostring-propagates-toprimitive-throw.js` (fails).

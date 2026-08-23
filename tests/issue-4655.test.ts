@@ -385,4 +385,132 @@ describe("#4655 — measured residuals, each with the control that pins its root
      assert.sameValue(out[2], 2, "element: " + String(out[2]));`,
     "CONTROL for R6 — a HOMOGENEOUS filter whose getter shrinks length is already correct",
   );
+
+  // ── R7. a `length` accessor on an object that is BORROWED as an array-like ─
+  // `filter/15.4.4.20-9-b-2.js`. The throw is
+  // `TypeError: Cannot redefine property: configurable attribute of a
+  // non-configurable property`, which reads like the #4491 descriptor MOP —
+  // and is NOT. §10.1.6.3 step 4.a is behaving correctly; the object simply
+  // already HAS a non-configurable `length` before user code runs. Caught the
+  // throw and read the descriptor back:
+  //   value=0, get=undefined, writable=true, enumerable=false, configurable=false
+  // — that is §10.4.2's ARRAY-exotic length, on a `{}`.
+  //
+  // Seven probes, varying one axis at a time (`.tmp/probes/dp-length-*.js`).
+  // Only the LAST combination fails, which is why no single-axis attribution
+  // survives:
+  //   accessor named "length" on a plain {}                        pass
+  //   the same accessor named "len"                                pass
+  //   after a top-level numeric-index write obj[2]="x"             pass
+  //   after a top-level NAMED write obj.foo="x"                    pass
+  //   getter body itself writes obj[2] (no borrow in the module)   pass
+  //   plain getter + a later Array.prototype.filter.call(obj)      pass
+  //   getter writes obj[2]  AND  a later filter borrow             FAIL
+  // Owner: array-like borrow carrier selection (value-rep), NOT #4491.
+  failSource(
+    "R7-length-accessor-on-a-borrowed-array-like",
+    `${LOOP_CARRIED}
+     var obj = {};
+     var threw = "";
+     try {
+       Object.defineProperty(obj, "length", {
+         get: function () { obj[2] = "length"; return __n; },
+         configurable: true
+       });
+     } catch (e) { threw = String(e); }
+     var out = Array.prototype.filter.call(obj, function () { return true; });
+     assert.sameValue(threw, "", "defineProperty(length) threw: " + threw);`,
+    "a self-writing length accessor + an array-like borrow pre-seeds Array's own non-configurable length",
+  );
+  // POSITIVE CONTROLS for R7 — the two single-axis halves. Both pass, which is
+  // what makes R7 a claim about the COMBINATION rather than about accessors on
+  // `length`, or about borrowing, either of which would have been the easy
+  // (wrong) attribution.
+  pinSource(
+    "R7-control-self-writing-getter-without-a-borrow",
+    `${LOOP_CARRIED}
+     var obj = {};
+     Object.defineProperty(obj, "length", {
+       get: function () { obj[2] = "length"; return __n; },
+       configurable: true
+     });
+     assert.sameValue(obj.length, 3, "length: " + obj.length);`,
+    "CONTROL for R7 — the same self-writing length accessor, with NO array-like borrow",
+  );
+  pinSource(
+    "R7-control-borrow-without-a-self-writing-getter",
+    `${LOOP_CARRIED}
+     var obj = {};
+     Object.defineProperty(obj, "length", {
+       get: function () { return __n; },
+       configurable: true
+     });
+     var out = Array.prototype.filter.call(obj, function () { return true; });
+     assert.sameValue(obj.length, 3, "length: " + obj.length);`,
+    "CONTROL for R7 — the same borrow, with a length getter that does NOT write",
+  );
+
+  // ── R8. the array element step's ToString is not `String()`'s ─────────────
+  // `toString/S15.4.4.2_A1_T4.js` expects §7.1.1 OrdinaryToPrimitive to THROW
+  // when neither `valueOf` nor `toString` returns a primitive. It does — for
+  // `String(o)` (the control below). The ARRAY element step renders the empty
+  // string and throws nothing, so the join/toString/toLocaleString element tail
+  // (`__extern_toString`) and `String()` are two different ToString
+  // implementations that disagree on this case.
+  //
+  // NOT fixed here on purpose: the element tail is shared with `join`, so
+  // re-pointing it moves `join`'s bytes, and this issue's fix is deliberately
+  // byte-neutral for `join`/`toString` (see `## Fix` in the issue file). The
+  // next step is to measure re-pointing the tail at whatever `String()` lowers
+  // to, on the same two-arm sweep this issue used.
+  failSource(
+    "R8-array-element-tostring-must-propagate-the-toprimitive-throw",
+    `${LOOP_CARRIED}
+     var both = { valueOf: function () { return {}; }, toString: function () { return {}; } };
+     var arr = [];
+     for (var i = 0; i < __n - 2; i++) { arr[i] = both; }
+     var threw = "";
+     try { var s = arr.toString(); threw = "no throw, got '" + s + "'"; }
+     catch (e) { threw = e instanceof TypeError ? "TypeError" : "other:" + e; }
+     assert.sameValue(threw, "TypeError", "element ToPrimitive: " + threw);`,
+    "an element whose valueOf AND toString both return objects renders '' instead of throwing",
+  );
+  // POSITIVE CONTROL for R8 — the SAME object through `String()`. It throws
+  // correctly, which is what makes R8 a claim about the element tail rather
+  // than about ToPrimitive.
+  pinSource(
+    "R8-control-String-does-throw",
+    `${LOOP_CARRIED}
+     var both = { valueOf: function () { return {}; }, toString: function () { return {}; } };
+     var threw = "";
+     try { var s = String(both); threw = "no throw, got '" + s + "'"; }
+     catch (e) { threw = e instanceof TypeError ? "TypeError" : "other:" + e; }
+     assert.sameValue(threw, "TypeError", "String(): " + threw);
+     assert.sameValue(__n, 3, "loop-carried");`,
+    "CONTROL for R8 — String() on the same object DOES throw a TypeError",
+  );
+
+  // ── R9. ToPropertyKey does not use ToPrimitive's valueOf fallback ─────────
+  // `Array/S15.4_A1.1_T9.js`. An object key whose `toString` returns an OBJECT
+  // must fall back to `valueOf` (§7.1.19 → §7.1.1.1 step 3). Through `String()`
+  // it does (the control); in KEY position the write lands nowhere.
+  // Owner: computed-member key coercion (core-semantics), not this issue.
+  failSource(
+    "R9-property-key-toprimitive-fallback",
+    `${LOOP_CARRIED}
+     var o = { valueOf: function () { return __n - 2; }, toString: function () { return {}; } };
+     var x = [];
+     x[o] = 0;
+     assert.sameValue(x[1], 0, "key must be '1': x[1] is " + String(x[1]));`,
+    "an object property key whose toString returns an object ignores valueOf",
+  );
+  // POSITIVE CONTROL for R9 — the same object through `String()`, which is what
+  // isolates R9 to the KEY position.
+  pinSource(
+    "R9-control-String-uses-the-fallback",
+    `${LOOP_CARRIED}
+     var o = { valueOf: function () { return __n - 2; }, toString: function () { return {}; } };
+     assert.sameValue(String(o), "1", "String(o): " + String(o));`,
+    "CONTROL for R9 — String() on the same object DOES fall back to valueOf",
+  );
 });
