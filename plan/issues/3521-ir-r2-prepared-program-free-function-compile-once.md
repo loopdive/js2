@@ -1914,3 +1914,35 @@ selector-only admission is invalid. Unsupported captures, `arguments`, foreign
 returns, aliases, rebinding, cross-source collisions, and parser escape remain
 fail-closed. The focused test collection is still deferred; no source edit or
 runtime result is claimed by this checkpoint.
+
+### 2026-08-23 Luna max ABI design checkpoint
+
+The second Luna-max pass confirmed that the current IR has no fnctor type,
+`fnctor.new`/`fnctor.get` instructions, builder methods, lowering resolver, or
+selector propagation kind. Existing `class.*` machinery is not a safe
+substitute: fnctor construction is an ABI-specific call whose operand order
+includes captures/TDZ values, user parameters, and the trailing constructor
+identity parameter.
+
+The implementation delta is therefore explicitly staged as:
+
+1. Add a nominal `IrFnctorShape` and `IrType.kind === "fnctor"` carrying exact
+   source/unit identity, constructor target, capture layout, hidden-identity
+   requirement, user parameter types, and a symbolic reserved-layout reference.
+2. Add builder/verifier `fnctorNew` and `fnctorGet` operations. Enforce hidden
+   argument ordering and reject missing/extra capture or identity operands.
+3. Extend `IrLowerResolver.resolveFnctor(shape)` to cross-check declaration
+   identity, source/unit, `fnctorReservedTypeIdx`, `structFields`,
+   `funcConstructorMap`, capture layout, constructor params, and the defined
+   function. No name fallback is permitted.
+4. Add selector admissions for the exact direct same-source unaliased
+   constructor, fixed string field, proven constructor identity, and no
+   reassignment/escape; aliases, computed keys, foreign/cross-source joins,
+   unsupported captures/returns, and ambiguous propagation demote to dynamic.
+5. Add one positive linked-parser test plus negative alias, foreign,
+   reassignment, cross-source collision, computed/non-string field, and missing
+   reservation mutations.
+
+This is a design checkpoint only: no source edit, commit, runtime, or collector
+result is claimed until the staged ABI seam is implemented and independently
+reviewed.
