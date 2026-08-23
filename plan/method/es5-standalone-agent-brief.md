@@ -51,6 +51,39 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
    `node scripts/build-runtime-eval-provider.mjs --refusal-only` and run the
    pin under `JS2WASM_EVAL_ENGINE=interpreter` before calling it done.
 
+7. **Cross-lane claims need a third arm (2026-08-23, #4637/#4639).** With
+   sibling lanes branching from one tip, your two-arm A/B (tip vs your
+   branch) answers "did I change this" and is STRUCTURALLY SILENT on "did
+   the other lane fix or break it". One measured case: a defect was
+   pre-existing on the tip AND fixed by the sibling's change — one lane's
+   tip-vs-own A/B read "unaffected", the other's branch-only read
+   "introduced by them"; both were measured correctly and both concluded
+   wrongly. Rules that fall out:
+   - A claim about ANOTHER lane's effect requires an arm containing their
+     change — measured by whoever owns it and cited as theirs, or measured
+     by the lead on the combined tree. Never infer it from your own pair.
+   - **Verify every pin fails on the arm it claims to test** (revert for
+     your own change; DELETE the named interaction for a cross-lane pin —
+     a revert proves sensitivity to *your* change only). A canary nobody
+     has seen fail is an assertion about the code, not a test of it.
+   - Write pins UNFOLDABLE where a compile-time fold could bypass the
+     path under test (loop-carried index beats a syntactic literal).
+   - **A pin that asserts a shape is not a pin that exercises the shape.**
+     Both wave-3 lanes wrote one while actively hunting this class: one
+     asserted identity relations and sat one property READ away from an
+     uncatchable trap, reporting green; the other read the property and
+     was `it.fails`-green *because* the read trapped. Neither assertion
+     was wrong; neither pin could fail for the reason it existed. Every
+     pin must execute the operation whose behavior it guards.
+   - A sibling's change alters not only what is CORRECT but what is
+     REACHABLE: the wave-3 trap needed one lane's classification widening
+     plus a shape only the other lane's domain produced, and no sweep
+     either lane could run would have compiled the combination. Cross-lane
+     hazards are only visible on the combined tree — the lead's merge
+     verification must include running each lane's suite there.
+   - The merge check confirms the run says **N passed** — never that it
+     exited 0 (`describe.skipIf` gates can skip an entire suite green).
+
 ## Environment trap: fresh worktrees have NO .test262-cache (#4484 finding)
 
 A fresh agent worktree lacks `.test262-cache/`, so eval-dependent rows fail
@@ -61,6 +94,29 @@ provider (`npx tsx scripts/build-quickjs-eval-provider.mjs`, falling back to
 `node scripts/build-runtime-eval-provider.mjs --refusal-only` +
 `JS2WASM_EVAL_ENGINE=interpreter`), and confirm a known eval-dependent row
 runs before trusting the numbers.
+
+## Environment trap: the worktree `test262/` symlink farm + the GITLINK hazard
+
+The isolation layer rebuilds a fresh worktree's `test262/` as a symlink farm
+pointing at SIBLING worktrees (whose chains can dead-end in an empty dir),
+and it does so repeatedly — measured ~every 2s / at the start of every Bash
+call. `ls` works intermittently while `node` gets ENOENT, so sweeps fail
+silently. Fixes, in order of robustness: re-point the link to
+`/home/user/js2wasm/test262` **in-process immediately before each read** and
+retry on ENOENT (fighting it from the shell is futile); at minimum verify a
+LEAF test file resolves (`readlink -f`) before trusting any sweep. Also:
+`test262/test/test` is a self-referential symlink — use lstat, skip symlinks
+in every recursive walk.
+
+**The gitlink hazard that rides along (2026-08-23, hit independently by two
+lanes):** `test262` is a git SUBMODULE gitlink. Replacing the directory with
+a symlink flips the gitlink to a symlink in the index — it shows as `T` in
+`git status` and silently rides into any `git commit -a`, breaking every
+other checkout. If you repoint `test262`, (1) never use `commit -a` (the
+brief already requires staging specific files), (2) check `git status --
+test262` before every commit, and (3) before finishing, verify with
+`git diff <base>..HEAD --stat -- test262` that NO commit touched it, and
+restore the plain directory/gitlink state.
 
 ## Engine trap: a CONCRETE-ref `try_table` block type traps on entry (#4620)
 

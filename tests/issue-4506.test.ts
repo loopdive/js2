@@ -290,14 +290,13 @@ describe("#4506 — measured residuals", () => {
     ).toBe(1);
   });
 
-  it.fails("answers `<plain object>.isPrototypeOf(v)` for a named receiver", async () => {
-    // NOT a fnctor problem — it reproduces with no constructor anywhere, so it
-    // is not this issue's representation scope. The chain is provably live in
-    // the SAME module (`"q" in o` is true), yet the call answers false, i.e.
-    // the defect is on the RECEIVER spelling. This is the general form of the
-    // wrong-boolean #4480 recorded on 2026-08-20 for `<UserFn>.prototype`, and
-    // it is what still blocks `S13.2.2_A1_T1`/`_T2`
-    // (`__PROTO.isPrototypeOf(__monster)`).
+  // (2026-08-23) HEALED by #4623 — the residual pin TRIPPED, its designed
+  // mechanism. The routed defect was neither a fnctor problem nor the receiver
+  // compiling wrong: NO dispatcher claimed `recv.isPrototypeOf(v)` for a closed
+  // receiver, and #4623's call arm now routes it to `__isPrototypeOf` in both
+  // lanes. (S13.2.2_A1_T1/_T2 still need the fnctor-prototype edge — pinned in
+  // #4623's own residuals.) Flipped to a positive pin.
+  it("answers `<plain object>.isPrototypeOf(v)` for a named receiver", async () => {
     expect(
       await runModule(
         `var P = {q: 1};
