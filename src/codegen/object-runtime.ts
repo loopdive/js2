@@ -73,6 +73,7 @@ import {
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#4221) absent-callee TypeError
+import { buildResolvedCalleeGuard } from "./resolved-callee-guard.js"; // (#4656) §7.3.14 callability
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import {
@@ -5923,50 +5924,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           ]
         : [{ name: "any", type: { kind: "anyref" } }];
 
-    // (#4221) §13.3.6.2 EvaluateCall step 5 — a method call whose resolved
-    // callee is ABSENT must throw TypeError, not silently answer `undefined`.
-    // `fillApplyClosure` documents this throw as its deferred "S2", carved out
-    // because pulling the error machinery in at FINALIZE shifts func indices.
-    // Emitting it HERE sidesteps that: `ensureObjectRuntime` runs during
-    // codegen, where minting the in-module `__new_TypeError` only APPENDS a
-    // defined func — the same discipline the `__to_primitive` TypeError
-    // already uses in this file.
-    //
-    // Scope is deliberately the resolved-method-is-null case only. A non-null
-    // but non-callable value keeps the legacy `__apply_closure` answer: the
-    // callable-brand classifier does not recognise every callable shape, and a
-    // false positive here turns a working call into a hard throw.
-    //
-    // Standalone/WASI only — with a JS host this call is a host import where
-    // the engine already throws, so the gc lane stays byte-identical.
-    const throwNotAFunctionInstrs: Instr[] = noJsHost(ctx)
-      ? (() => {
-          emitWasiErrorConstructor(ctx, "TypeError", 1);
-          return buildThrowJsErrorInstrs(ctx, "TypeError", "called value is not a function", {
-            forceInModuleCtor: true,
-          });
-        })()
-      : [];
-    // (#4221) A FACTORY, not a shared array: the guard is spliced into more than
-    // one arm now, and finalize's DCE/remap walks double-remap a shared `Instr`
-    // object (`reference_shared_instr_object_dce_double_remap`).
-    let resolvedMethodGuard: () => Instr[] = () => [];
-    if (throwNotAFunctionInstrs.length > 0) {
-      const methodLocalIdx = 3 + methodCallLocals.length;
-      methodCallLocals.push({ name: "resolvedMethod", type: { kind: "externref" } });
-      resolvedMethodGuard = () => [
-        { op: "local.tee", index: methodLocalIdx },
-        { op: "ref.is_null" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: buildThrowJsErrorInstrs(ctx, "TypeError", "called value is not a function", {
-            forceInModuleCtor: true,
-          }),
-        },
-        { op: "local.get", index: methodLocalIdx },
-      ];
-    }
+    // (#4221/#4656) The resolved-callee TypeError guard — see
+    // `resolved-callee-guard.ts` for the ABSENT and provably-PRIMITIVE arms and
+    // why the primitive test is sound where a negative callable test is not.
+    const resolvedMethodGuard = buildResolvedCalleeGuard(ctx, methodCallLocals);
     const boundaryCallResultLocal = boundaryObjectCallIdx === undefined ? undefined : 3 + methodCallLocals.length;
     if (boundaryCallResultLocal !== undefined) {
       methodCallLocals.push({ name: "boundaryCallResult", type: { kind: "externref" } });
