@@ -9154,9 +9154,9 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
  *   - `__vec_*` structs that are not externref-backed (`number[]` — the Gap-4
  *     output-representation escalation documented in promise-combinators.ts);
  *     externref-backed vecs were already committed by arm 1.
- *   - strings (checker-typed OR lowering to a native string struct): strings
- *     ARE iterable per spec (§22.1.5) — the drain has no string arm yet, so
- *     routing them would produce a WRONG observable reject. Follow-up.
+ *   - strings when native strings are OFF (#2867 string-combinator slice:
+ *     with them ON the drain has a code-point string arm, so strings take
+ *     the dynamic path; with the arm absent they'd WRONGLY reject).
  *   - native-generator subjects: they iterate via the dedicated compile-time
  *     resume path (`emitNativeGeneratorToVec`), not the runtime dispatchers —
  *     the drain would wrongly reject them. Follow-up.
@@ -9168,7 +9168,7 @@ export function isDynamicCombinatorArgEligible(
   arg0: ts.Expression,
 ): boolean {
   if (argType === null) return false;
-  if (isStringType(ctx.checker.getTypeAtLocation(arg0))) return false;
+  if (ctx.nativeStrings !== true && isStringType(ctx.checker.getTypeAtLocation(arg0))) return false;
   switch (argType.kind) {
     case "f64":
     case "i32":
@@ -9183,7 +9183,7 @@ export function isDynamicCombinatorArgEligible(
       const structName = ctx.typeIdxToStructName.get(typeIdx);
       if (structName !== undefined && structName.startsWith("__vec_")) return false;
       if (typeIdx === ctx.anyStrTypeIdx || typeIdx === ctx.nativeStrTypeIdx || typeIdx === ctx.consStrTypeIdx) {
-        return false;
+        return ctx.nativeStrings === true;
       }
       if (nativeGeneratorInfoForForOfSubject(ctx, argType) !== undefined) return false;
       return true;
