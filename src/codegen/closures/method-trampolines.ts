@@ -34,6 +34,12 @@ import {
 import { emitFuncRefAsClosure } from "./funcref-as-closure.js";
 import { normalizeOrdinaryFunctionConstructibility } from "./ordinary-fn-constructibility.js";
 import { observeProgramAbiFunctionValue } from "../program-abi-source-callable-planning.js";
+// (#4630) the DECLARATION half of the parked-async `$Promise` value substrate
+import {
+  emitEagerAsyncPromiseWrap,
+  emitEagerAsyncUndefinedPromise,
+  parkedAsyncDeclarationWrapsPromise,
+} from "../async-eager-promise.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
 import { ensureFnMetaSubtype, fnMetaSlot } from "../function-instance-meta.js";
 // (#4440) the METHOD half of the same carrier — class/object-literal members
@@ -435,6 +441,40 @@ export function emitObjectMethodAsClosure(
  * indices stay valid; only the per-arg coercion is what could drift, and any
  * coercion the call needs is applied by mirroring the method's param types.
  */
+/**
+ * A `FunctionContext` shaped exactly like a func-decl trampoline's WRAPPER
+ * signature (`__self` at slot 0, the wrapper's user params at 1..N), so helpers
+ * that allocate scratch locals compute indices past the real params and the
+ * allocated `localDefs` can be attached to the registered function.
+ *
+ * `finalizeMethodTrampolines` builds this inline for its coercion temps; the
+ * (#4630) async-promise wrap needs the identical thing at REGISTRATION time,
+ * where no `FunctionContext` exists yet. Callers assign `body` themselves.
+ */
+function miniTrampolineFctx(
+  name: string,
+  wrapperUserParams: readonly ValType[],
+  wrapperResult: ValType | undefined,
+  localDefs: LocalDef[],
+): FunctionContext {
+  return {
+    name,
+    params: [
+      { name: "__self", type: { kind: "anyref" } },
+      ...wrapperUserParams.map((p, i) => ({ name: `__p${i}`, type: p })),
+    ],
+    locals: localDefs,
+    localMap: new Map(),
+    returnType: wrapperResult ?? null,
+    body: [],
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+  };
+}
+
 export function finalizeMethodTrampolines(ctx: CodegenContext): void {
   for (const t of ctx.pendingMethodTrampolines) {
     // (#1525b / #1809) If the captured methodFuncIdx resolves to an IMPORT at
@@ -511,22 +551,12 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
     // past the real params; the allocated `localDefs` are attached to the
     // registered trampoline function below.
     const localDefs: LocalDef[] = [];
-    const tFctx: FunctionContext = {
-      name: `__obj_meth_tramp_finalize_${t.trampolineFuncIdx}`,
-      params: [
-        { name: "__self", type: { kind: "anyref" } },
-        ...wrapperUserParams.map((p, i) => ({ name: `__p${i}`, type: p })),
-      ],
-      locals: localDefs,
-      localMap: new Map(),
-      returnType: wrapperResult ?? null,
-      body: [],
-      blockDepth: 0,
-      breakStack: [],
-      continueStack: [],
-      labelMap: new Map(),
-      savedBodies: [],
-    };
+    const tFctx: FunctionContext = miniTrampolineFctx(
+      `__obj_meth_tramp_finalize_${t.trampolineFuncIdx}`,
+      wrapperUserParams,
+      wrapperResult,
+      localDefs,
+    );
 
     // (#1340) Function-decl trampolines have no `this` prologue; method
     // trampolines resolve the receiver from `__current_this` (#2015, falling
@@ -578,8 +608,24 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
       }
     }
     newBody.push({ op: "call", funcIdx: t.methodFuncIdx });
-    // Reconcile the result arity/type with the wrapper's declared result.
-    if (methodResult && !wrapperResult) {
+    // (#4630) Promoted async-declaration wrapper: settle the callee's completion
+    // into the `externref` `$Promise` the wrapper type declares. Both arms are
+    // §27.2.4.7-idempotent, which is what makes the promotion safe against the
+    // callee's signature having been re-resolved since registration — a callee
+    // that turned out drive-lowered already returns a real `$Promise` and passes
+    // through unchanged.
+    // Any other shape (which the registration gate's syntactic void check
+    // excludes) falls through to the generic reconciliation below rather than
+    // mis-settling a raw value as a completion.
+    if (
+      t.eagerAsyncPromiseWrap === true &&
+      wrapperResult?.kind === "externref" &&
+      (methodResult === undefined || methodResult.kind === "externref")
+    ) {
+      tFctx.body = newBody;
+      if (methodResult === undefined) emitEagerAsyncUndefinedPromise(ctx, tFctx);
+      else emitEagerAsyncPromiseWrap(ctx, tFctx);
+    } else if (methodResult && !wrapperResult) {
       // Method now returns a value the void wrapper must discard.
       newBody.push({ op: "drop" });
     } else if (wrapperResult && methodResult && wrapperResult.kind !== methodResult.kind) {
@@ -939,7 +985,17 @@ export function ensureFuncClosureSingleton(
   if (!sig) return null;
 
   const userParams = sig.params;
-  const results = sig.results;
+  // (#4630) A parked async function DECLARATION used as a VALUE must hand the
+  // dynamic dispatcher a `$Promise`, not the `undefined` a void wasm result
+  // substitutes. Promote the WRAPPER's result only — the declaration's own
+  // signature (and therefore every direct call site's `wasmFuncReturnsVoid`
+  // answer) is left untouched. See `parkedAsyncDeclarationWrapsPromise`.
+  const eagerAsyncPromiseWrap = parkedAsyncDeclarationWrapsPromise(
+    ctx,
+    ctx.funcMapOwnerDecl.get(funcName) ?? ctx.topLevelFunctionDeclarations.get(funcName),
+    sig.results,
+  );
+  const results: ValType[] = eagerAsyncPromiseWrap ? [{ kind: "externref" }] : sig.results;
   const wrapperTypes = constructible
     ? getOrCreateConstructibleFuncRefWrapperTypes(ctx, userParams, results)
     : getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
@@ -961,11 +1017,14 @@ export function ensureFuncClosureSingleton(
   // suffix. Assignment order is compile order, which is deterministic and
   // identical across passes — so unlike embedding a raw function handle, this
   // cannot drift when late imports shift indices (#2043).
+  // (#4630) Scan FORWARD for the first top-level `call`: the forwarding call to
+  // the target is always the first instruction after the parameter `local.get`s,
+  // whereas the promoted-async arm appends a `Promise.resolve` sequence whose own
+  // `call` would win a backward scan and name the wrong target.
   const targetOfTrampoline = (handle: number): number | undefined => {
     const body = definedFuncAt(ctx, handle)?.body;
     if (!body) return undefined;
-    for (let i = body.length - 1; i >= 0; i--) {
-      const instr = body[i]!;
+    for (const instr of body) {
       if (instr.op === "call") return instr.funcIdx;
     }
     return undefined;
@@ -1027,11 +1086,21 @@ export function ensureFuncClosureSingleton(
       trampolineBody.push({ op: "local.get", index: i + 1 });
     }
     trampolineBody.push({ op: "call", funcIdx });
+    // (#4630) Settle the void async completion into the promoted `externref`
+    // result. `finalizeMethodTrampolines` rebuilds this body from the (possibly
+    // re-resolved) callee signature, but it can also decline to rebuild, so the
+    // registration-time body must already validate on its own.
+    const trampolineLocals: LocalDef[] = [];
+    if (eagerAsyncPromiseWrap) {
+      const wrapFctx = miniTrampolineFctx(trampolineName, userParams, results[0], trampolineLocals);
+      wrapFctx.body = trampolineBody;
+      emitEagerAsyncUndefinedPromise(ctx, wrapFctx);
+    }
     trampolineFuncIdx = mintDefinedFunc(ctx);
     pushDefinedFunc(ctx, trampolineFuncIdx, {
       name: trampolineName,
       typeIdx: liftedFuncTypeIdx,
-      locals: [],
+      locals: trampolineLocals,
       body: trampolineBody,
       exported: false,
     });
@@ -1048,6 +1117,7 @@ export function ensureFuncClosureSingleton(
       wrapperResult: results[0],
       noThisParam: true,
       methodTargetsImport: funcIdx < ctx.numImportFuncs,
+      ...(eagerAsyncPromiseWrap ? { eagerAsyncPromiseWrap: true } : {}),
     });
 
     cacheGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;

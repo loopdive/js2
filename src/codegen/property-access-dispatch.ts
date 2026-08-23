@@ -2758,17 +2758,17 @@ export function tryLengthAndNameReads(
           }
         }
       }
-      if (hasFuncSig && (noJsHost(ctx) ? !objType.isUnion() : true)) {
+      if (hasFuncSig && !objType.isUnion()) {
         // Resolve the function name from the type symbol or the expression.
         //
-        // UNION-typed receivers are excluded on the host-free lanes: a union
-        // (e.g. `typedArrayConstructors[i]` — element type is the union of the
-        // TA ctor interfaces) has no single static name, and the old fold
-        // answered the covered-form `""` for every element — the literal
-        // testTypedArray.js harness then keyed `callCounts[""]` and its
-        // per-ctor call-count self-check failed. Falling through lets the
-        // dynamic read (now backed by the `$__ta_ctor` meta arm) answer the
-        // real per-value name. Host lane keeps the fold (byte-identical).
+        // UNION-typed receivers are excluded in BOTH lanes: a union (e.g.
+        // `typedArrayConstructors[i]`, the union of the TA ctor interfaces) has
+        // no single static name, so the fold answered `""` — testTypedArray.js keyed
+        // `callCounts[""]` and its per-ctor call-count self-check failed
+        // (undefined, want 8). Falling through lets the dynamic read answer the
+        // real per-value name: the `$__ta_ctor` meta arm host-free, and
+        // `__extern_get(v, "name")` in the JS-host lane. (#4433 excluded the
+        // host-free lanes; #4650 measured the same `""` in the host lane.)
         let funcName = objType.getSymbol()?.name ?? "";
         // __type, __function, __class, __object are anonymous type names from TS checker
         if (funcName === "__type" || funcName === "__function" || funcName === "__class" || funcName === "__object")

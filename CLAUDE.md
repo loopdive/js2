@@ -701,7 +701,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 33,005 / 43,621 (75.7 %)
+**test262 conformance**: 33,138 / 43,621 (76.0 %)
 
 <!-- AUTO:conformance-end -->
 

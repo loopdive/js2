@@ -1,0 +1,111 @@
+---
+id: 4655
+title: "ES5 standalone: Array residual — 20 rows: undefined/null elements degrade to NaN/0 through concat/toString/toLocaleString, filter/forEach callback+hole semantics, Array.prototype.concat unreachable as a value"
+status: ready
+sprint: current
+created: 2026-08-23
+updated: 2026-08-23
+priority: high
+horizon: m
+feasibility: hard
+reasoning_effort: max
+task_type: bug
+area: codegen
+es_edition: 5
+language_feature: arrays
+goal: standalone-gap
+related: [4641, 4491, 1888, 2141]
+origin: "wave-6 lead sweep (2026-08-23) on the merged wave-4 tree (7,959/8,115). These 20 rows are owned by NO active lane: #4641 measured them and DECLINED the element half with a recorded +1/-2 observer trade-off; dev-4491 owns only the Object/* MOP directories."
+---
+
+# #4655 — Array element representation + callback/hole residual (20 rows)
+
+## Read the prior measurement FIRST — this is not a fresh problem
+
+#4641's decision matrix (in `plan/issues/4641-bare-return-mixed-return-f64-zero.md`)
+already measured this territory and **declined it deliberately**:
+
+- Of 1,031 array-construction sites in the ES5 corpus, exactly **one** mixes
+  numeric literals with `null`/`undefined` — so the element half is not the
+  17-row family the original issue claimed.
+- The naive fix (reuse the existing `UNDEF_F64_BITS` sentinel for elements) was
+  measured at **+1 / −2 observers** — it makes `typeof` right and `String()`
+  and the `any`-box wrong. Do not re-derive this; read the table.
+- `#4641` also isolated two of the `filter` rows away from the descriptor MOP:
+  `[0,1,2,"last"].filter(...)` fails with **no `defineProperty` anywhere**, so
+  those sit behind the heterogeneous-element tag lie (#1888/#2141-S4), not
+  behind #4491.
+
+Your job is the honest version of the fix, or a documented decline with a
+better measurement than the one above. A third "+1/−2" is not progress.
+
+## Affected rows (sweep-verified on the merged wave-4 tree, 2026-08-23)
+
+**A. element representation through Array methods (9)**
+```
+built-ins/Array/prototype/concat/S15.4.4.4_A1_T2.js   arr[1] === y      got NaN
+built-ins/Array/prototype/concat/S15.4.4.4_A1_T4.js   arr[0] undefined  got NaN
+built-ins/Array/prototype/concat/S15.4.4.4_A3_T1.js   arr[1] === 1      got NaN
+built-ins/Array/prototype/concat/S15.4.4.4_A3_T2.js   b[1] undefined    got NaN
+built-ins/Array/prototype/concat/S15.4.4.4_A3_T3.js   b[1] undefined    got NaN
+built-ins/Array/prototype/toString/S15.4.4.2_A1_T2.js Array(undefined,1,null,3).toString() → ",1,0,3" want ",1,,3"
+built-ins/Array/prototype/toString/S15.4.4.2_A1_T4.js expected a throw, none
+built-ins/Array/prototype/toLocaleString/S15.4.4.3_A1_T1.js  toLocaleString not consulted
+built-ins/Array/prototype/toLocaleString/S15.4.4.3_A3_T1.js  same
+```
+Note the two `toLocaleString` rows may be a DIFFERENT root (an object element's
+own `toLocaleString` override not consulted) — that is the same shape dev-4492
+is chasing for `toString`/`valueOf` in the String conversion path. Measure
+before grouping; hand over if it is theirs.
+
+**B. callback / hole semantics (6)**
+```
+built-ins/Array/prototype/filter/15.4.4.20-5-7.js      RuntimeError: null pointer in __module_init
+built-ins/Array/prototype/filter/15.4.4.20-9-b-14.js   newArr.length 4 vs 3
+built-ins/Array/prototype/filter/15.4.4.20-9-b-15.js   newArr[2] NaN vs "prototype"
+built-ins/Array/prototype/filter/15.4.4.20-9-b-16.js   newArr.length 2 vs 3
+built-ins/Array/prototype/filter/15.4.4.20-9-b-2.js    Cannot redefine property
+built-ins/Array/prototype/forEach/15.4.4.18-3-23.js    testResult !== true
+```
+
+**C. reflective / misc (5)**
+```
+built-ins/Array/prototype/concat/S15.4.4.4_A2_T1.js  concat not callable as a VALUE
+built-ins/Array/prototype/concat/S15.4.4.4_A2_T2.js  same
+built-ins/Array/S15.4_A1.1_T9.js                     x[1] === 0
+built-ins/Array/S15.4_A1.1_T10.js                    RuntimeError: array element access out of bounds
+built-ins/Array/isArray/15.4.3.2-1-13.js             isArray(arguments) must be false
+```
+The two `A2` rows are the builtin-as-value family — dev-4515 owns that root
+(#4515 cluster C1). Verify and hand over rather than fixing here.
+
+## Implementation Plan
+
+1. Brief: `plan/method/es5-standalone-agent-brief.md` — BINDING, read fully
+   before the first edit. Load-bearing here: methodology 1–7 (re-verify live;
+   `.tmp/base-<file>.ts` revert copies at first edit; one probe per compiled
+   module; **absent-not-wrong**; cross-lane third-arm rule;
+   pin-exercises-the-shape; unfoldable pins; "N passed" never exit 0), the
+   stale `compiler-bundle.mjs` trap, the `test262/` symlink-farm + **GITLINK
+   hazard** (never `commit -a`; `git status -- test262` before every commit;
+   `git diff <base>..HEAD --stat -- test262` EMPTY before finishing), the
+   concrete-ref `try_table` trap, the verification floor, commit rules.
+2. Read #4641's decision matrix and state, in your report, what your approach
+   does that its declined option did not. If after measuring you also decline,
+   that is an acceptable outcome — record the observer table.
+3. B before A if the measurement supports it: a null-pointer crash and a
+   `length` disagreement are usually cheaper and less ABI-invasive than an
+   element-representation change.
+4. Anything whose measured root is the heterogeneous-element tag lie belongs to
+   #1888/#2141-S4 — attribute it there with evidence rather than patching
+   around it.
+
+## Acceptance
+
+Scoped standalone sweep over `built-ins/Array` before AND after from your own
+runs; per-file flip list; **zero regressions**. `tests/issue-4655.test.ts`
+pinning each fixed family (executing the operation, loop-carried/unfoldable,
+verified failing on base by revert); `it.fails` pins for measured residuals with
+owners. Record `## Root cause` per cluster / `## Fix` / `## Test Results` /
+`## Residuals` here. A decline with a measured observer table is a valid
+outcome; an unmeasured fix is not.

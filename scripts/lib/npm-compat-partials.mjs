@@ -70,13 +70,32 @@ export function mergeNpmCompatPartials(
   const stalePackages = [];
   for (const name of allowStaleFallback ? [...expected].filter((candidate) => !seen.has(candidate)) : []) {
     const previous = existingByName.get(name);
+    // A carried-forward row keeps ITS OWN measurement time. Deriving it from
+    // the previous SNAPSHOT's `generatedAt` (what this did until 2026-08-23)
+    // makes the reported date creep forward one refresh at a time: a package
+    // stale across five promotions would claim it was measured at the fifth,
+    // having actually run before the first. With the fast lane promoting every
+    // ~12 minutes and react-dom's row taking 3-4 hours, that drift is the
+    // normal case, not an edge one.
+    //
+    // For rows written before `measuredAt` existed, migrate from the truth the
+    // old shape DID carry: a row already marked stale records its real date in
+    // `refresh.lastMeasuredAt`. Reaching past that to `existingGeneratedAt`
+    // would commit the creep once, permanently — against the live 2026-08-23
+    // artifact it restamped react-dom from its true 08-20 18:44 to the 15:27
+    // snapshot, and no later run could recover the real date. The snapshot
+    // time is right only for a row that has never been stale, which is exactly
+    // the case where neither of the first two is present.
+    const previouslyMeasuredAt =
+      previous?.measuredAt ?? previous?.refresh?.lastMeasuredAt ?? existingGeneratedAt ?? null;
     const packageRow = previous
       ? {
           ...previous,
+          ...(previouslyMeasuredAt ? { measuredAt: previouslyMeasuredAt } : {}),
           refresh: {
             status: "stale",
             reason: staleReason,
-            ...(existingGeneratedAt ? { lastMeasuredAt: existingGeneratedAt } : {}),
+            ...(previouslyMeasuredAt ? { lastMeasuredAt: previouslyMeasuredAt } : {}),
           },
         }
       : {
@@ -114,10 +133,26 @@ export function mergeNpmCompatPartials(
   }
 
   const firstMeta = partials.find((partial) => partial.summaryMeta)?.summaryMeta ?? existingSummaryMeta ?? {};
-  const sortedPackages = sortPackages(packages);
+  // A fresh row written by a generator that predates per-package stamping gets
+  // this assembly's time: it really was measured in this run.
+  const sortedPackages = sortPackages(packages).map((packageRow) =>
+    packageRow.measuredAt ? packageRow : { ...packageRow, measuredAt: generatedAt },
+  );
   const freshPackages = sortedPackages.filter((packageRow) => packageRow.refresh?.status !== "stale");
+  const measuredAtStamps = sortedPackages.map((packageRow) => packageRow.measuredAt).filter(Boolean);
   const summary = {
     generatedAt,
+    // The SPREAD of measurement times across the corpus. The page headline is
+    // built from this, not from `generatedAt`: with per-package rows the two
+    // ends can be days apart, and one timestamp over a mixed-age corpus
+    // presents the oldest numbers as if they were current.
+    measuredRange:
+      measuredAtStamps.length > 0
+        ? {
+            oldest: measuredAtStamps.reduce((left, right) => (left < right ? left : right)),
+            newest: measuredAtStamps.reduce((left, right) => (left > right ? left : right)),
+          }
+        : null,
     correctness: correctnessRollup(sortedPackages),
     note: firstMeta.note ?? "Only packages with a committed, reproducible tests/dogfood harness are listed.",
     popularity: firstMeta.popularity ?? null,
@@ -125,6 +160,8 @@ export function mergeNpmCompatPartials(
     refresh: {
       status: stalePackages.length > 0 ? "partial" : "complete",
       stalePackages: [...stalePackages].sort(),
+      freshCount: freshPackages.length,
+      totalCount: sortedPackages.length,
     },
     packages: sortedPackages,
   };
