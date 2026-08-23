@@ -132,6 +132,37 @@ describe("#4637 A1 — a function value in the `.prototype` slot", () => {
       ),
     ).toBe(2);
   });
+
+  it("CANARY (dev-4639 C1 x A1): holds when the instance is a `new` ARGUMENT", async () => {
+    // Every other A1 case above builds a ZERO-ARG `new F()` at a module-scope
+    // binding, so none of them exercises the classification dev-4639's #4639 C1
+    // widens: `classifyUse` in `fnctor-escape-gate.ts` now classifies a
+    // `NewExpression` ARGUMENT as `dynamic` (standalone only), which changes
+    // WHICH fnctor instances become open `$Object`s — i.e. which sites this
+    // issue's arm fires at. Their pins cannot cover this direction either
+    // (nothing in `tests/issue-4639.test.ts` puts a callable in a
+    // `[[Prototype]]` slot), so without this case the C1 x A1 interaction is
+    // invisible to BOTH suites and a merger running either one sees green.
+    //
+    // Measured on this branch, `.tmp/p20.js`, standalone: base `33`, after
+    // `63` — the four flipping bits are exactly `instanceof`, `isPrototypeOf`,
+    // the inherited read and `getPrototypeOf` identity, so this shape is driven
+    // by the A1 arm and is not incidentally green.
+    expect(
+      await runModule(
+        `function P(){}
+         P.type = "monster";
+         function G(){}
+         G.prototype = P;
+         function H(x){ this.wrapped = x; }
+         var g = new G();
+         var h = new H(g);`,
+        `(G.prototype === P ? 1 : 0) + (g instanceof G ? 2 : 0) + (P.isPrototypeOf(g) ? 4 : 0) +
+         (g.type === "monster" ? 8 : 0) + (Object.getPrototypeOf(g) === P ? 16 : 0) +
+         (h.wrapped === g ? 32 : 0)`,
+      ),
+    ).toBe(63);
+  });
 });
 
 describe("#4637 A2 — §10.2.1.3 step 13, a constructor that returns a function", () => {

@@ -497,9 +497,13 @@ with no registerable proto brand), so C2 emits
 keys on**. The key match is not hypothetical and is not future work; it happens
 today. What keeps the arms apart is the receiver predicate alone.
 
-dev-4639 also replaced their original (false) premise with a structural one,
-which is worth preferring over the measured negative control because it cannot
-drift: the only receiver C2 ever passes to `__object_hasOwn` is `carrierLocal`,
+dev-4639 also replaced their original (false) premise with a structural one.
+**Keep BOTH, and their reason is the right one: the two fail differently.** The
+A/B catches a wrong READING of the code; the construction argument catches a
+DRIFTING carrier set. Neither alone would have caught both — and the construction
+argument is only as good as the reading behind it, which is exactly the failure
+mode that produced the false premise it replaced. The structural argument: the
+only receiver C2 ever passes to `__object_hasOwn` is `carrierLocal`,
 set from `emitBuiltinProtoConstructorValue` — always a `__new_plain_object`
 `$Object` (`__builtin_ctor_<Name>` / `__builtin_<Name>`); the `$NativeProto` from
 `pushBuiltinIntrinsicPrototype` reaches `__extern_get` only. A carrier is neither
@@ -529,6 +533,22 @@ tree. Whoever merges second should run, at minimum: this issue's
 `tests/issue-4637.test.ts` + the six flipped rows in the list above, and
 dev-4639's `tests/issue-4639.test.ts` (12 pins, ~95 s) + their five flipped rows.
 Do not carry either lane's before/after numbers across the merge.
+
+**Both pin files had the SAME structural gap, in mirror image — fixed on both
+sides.** dev-4639 found theirs first: `tests/issue-4639.test.ts` covers the
+direction where this issue's work can break theirs, and structurally cannot cover
+the reverse, because nothing in it constructs a callable in a `[[Prototype]]`
+slot. Checking for the mirror found the same hole here: **every A1 pin in
+`tests/issue-4637.test.ts` built a ZERO-ARG `new F()`**, so none of them
+exercised the classification C1 widens (a `NewExpression` ARGUMENT). A merger
+running either suite alone would have seen green on a two-directional
+interaction.
+
+Closed by `#4637 A1 … CANARY (dev-4639 C1 x A1)`, which puts the instance in
+`new H(g)` argument position with a function-valued prototype on its
+constructor. Verified it is not incidentally green: `.tmp/p20.js`, standalone,
+base `33` → after `63`, the four flipping bits being `instanceof`,
+`isPrototypeOf`, the inherited read and `getPrototypeOf` identity.
 
 **Named canaries** (dev-4639's mapping — one pin per contact point, so a
 failure identifies WHICH interaction broke rather than only that something did):
