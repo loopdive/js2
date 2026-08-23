@@ -135,6 +135,10 @@ class NpmCompatChart extends HTMLElement {
   }
 
   _currentSpeedSnapshot(pkg) {
+    // A failed matrix worker carries the last committed package row forward
+    // so other packages can still publish. Do not append that old measurement
+    // as if it were a point from the current refresh.
+    if (pkg?.refresh?.status === "stale") return null;
     const perf = pkg.perf;
     if (!perf) return null;
     const lanes = perf.lanes ?? { jsHost: perf };
@@ -391,6 +395,18 @@ class NpmCompatChart extends HTMLElement {
         )
       : "";
 
+    const refreshNotice =
+      pkg.refresh?.status === "stale"
+        ? this._row(
+            "refresh",
+            `<span class="muted">not measured in this run${
+              pkg.refresh.lastMeasuredAt
+                ? `; last measured ${this._esc(this._fmtDate(pkg.refresh.lastMeasuredAt))}`
+                : ""
+            }</span>`,
+          )
+        : "";
+
     // Tests — the "own test suite" vs "differential ops" distinction is
     // load-bearing, so it is the row's own label, never blurred into one number.
     let tests;
@@ -576,7 +592,7 @@ class NpmCompatChart extends HTMLElement {
             ? `<span class="badge" title="The published entry module only re-exports other packages, so these badges describe the barrel — see the tests row for the real implementation.">entry is a barrel</span>`
             : ""
         }</div>
-        <div class="rows">${correctness}${tests}${serverTests}${fizzTests}${nodeFizzTests}${edgeFizzTests}${perf}${bugs}</div>
+        <div class="rows">${refreshNotice}${correctness}${tests}${serverTests}${fizzTests}${nodeFizzTests}${edgeFizzTests}${perf}${bugs}</div>
         <div class="card-links">
           <a class="playground-link" href="${playgroundUrl}"
             title="Open ${this._esc(pkg.name)} test files in the playground">Open tests in playground&nbsp;↗</a>

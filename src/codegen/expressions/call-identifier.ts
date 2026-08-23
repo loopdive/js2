@@ -1300,8 +1300,29 @@ export function compileIdentifierCall(
       if (uncurriedCall !== undefined) return uncurriedCall;
     }
 
+    // (#4616) A callee bound as a PARAMETER never registers in `closureMap`
+    // (only variable/assignment bindings do), so a by-name hit here is
+    // cross-scope leakage: jest's diff-sequences declares the param
+    // `foundSubsequence: FoundSubsequence` (3-arity) while an unrelated test
+    // file's local `const foundSubsequence = () => {}` registered a 0-arity
+    // info under the same bare name. The call then dispatched as a
+    // single-candidate 0-arg call_ref whose guarded funcref cast nulls for
+    // every real callback → un-catchable "dereferencing a null pointer"
+    // (32 diff-sequences tests). The param must use the typed callable-param
+    // dispatch below, which builds arity/return candidates from the DECLARED
+    // signature.
+    // Destructured bindings (`const {foundSubsequence} = callbacks[0]`) leak
+    // the same way: `registerClosureBindingInfo` only keys VariableDeclaration
+    // identifiers and assignment targets, so a BindingElement's by-name hit is
+    // always some OTHER binding's info.
+    const calleeBindingDecl = ctx.oracle.valueDeclarationOf(expr.expression);
+    const calleeIsParameterBinding =
+      calleeBindingDecl !== undefined && (ts.isParameter(calleeBindingDecl) || ts.isBindingElement(calleeBindingDecl));
     let closureInfo =
-      isLocallyShadowed || nestedBindingVisible || (!hasVisibleClosureStorage && ctx.funcMap.has(funcName))
+      isLocallyShadowed ||
+      nestedBindingVisible ||
+      calleeIsParameterBinding ||
+      (!hasVisibleClosureStorage && ctx.funcMap.has(funcName))
         ? undefined
         : ctx.closureMap.get(funcName);
 
@@ -1435,6 +1456,7 @@ export function compileIdentifierCall(
         // stayed right while `arguments[0]` read back `null` (S13.2_A2_T1).
         const runtimeSigParams = runtimeSignatureParameters(sig);
         const sigParamCount = builtinAliasInfo?.paramTypes.length ?? runtimeSigParams.length;
+        const lastSigParam = sig.parameters[sig.parameters.length - 1];
         const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
         const sigRetWasm =
           builtinAliasInfo?.returnType ?? (isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType));
@@ -1475,6 +1497,34 @@ export function compileIdentifierCall(
           }
           const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
           sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+        }
+
+        // (#4616) A REAL declared rest param (`body: (...args: unknown[]) =>
+        // void` — jest's `test.each` callback) resolved to one positional VEC
+        // slot here, so `body(row)` coerced its single argument INTO a vec and
+        // matched only a `(vec) -> void` wrapper that no fixed-arity arrow can
+        // satisfy — the actual 1-param arrow's funcref failed every candidate.
+        // JS rest semantics at the CALL SITE are positional: expand the rest
+        // slot to one externref per remaining call-site argument so the
+        // candidates (declared shape + the shorter-arity prefixes below) match
+        // fixed-arity callbacks. A true rest-compiled closure still receives
+        // surplus args via the `__argc`/`__extras_argv` protocol.
+        const lastSigParamDecl = lastSigParam?.valueDeclaration;
+        const sigHasDeclaredRest =
+          !builtinAliasInfo &&
+          lastSigParamDecl !== undefined &&
+          ts.isParameter(lastSigParamDecl) &&
+          lastSigParamDecl.dotDotDotToken !== undefined;
+        if (sigHasDeclaredRest && sigParamWasmTypes.length > 0) {
+          sigParamWasmTypes.pop();
+          // Two slots beyond the call-site count: a callback may declare MORE
+          // formals than this site passes (`body(row)` driving a `(x, y) =>`
+          // table callback — the extra formals read `undefined`), and the
+          // matched/prefix candidates plus the arg-padding below only cover
+          // arities up to this list's length.
+          while (sigParamWasmTypes.length < Math.max(expr.arguments.length, 1) + 2) {
+            sigParamWasmTypes.push({ kind: "externref" });
+          }
         }
 
         // Eagerly create the closure wrapper types for this signature so the
@@ -1584,6 +1634,33 @@ export function compileIdentifierCall(
                 paramTypes: info.paramTypes,
                 hasRestParam,
               });
+            }
+          }
+
+          // (#4616) JS ignores surplus call-site arguments, but a shorter-arity
+          // callback compiled in a LATER module is not yet in
+          // closureInfoByTypeIdx when this call site compiles, so the retention
+          // scan above cannot see it and the dispatch terminal threw TypeError
+          // — jest's diff-sequences declares `foundSubsequence(nCommon,
+          // aCommon, bCommon)` while every test passes a 1-param arrow (32
+          // tests trapped). Eagerly create the shorter-arity PREFIX wrapper
+          // types (same get-or-create family, so the later-compiled closure
+          // reuses the identical funcref type) — the per-candidate arm already
+          // marshals only the candidate's formal prefix and packs the surplus
+          // into `__extras_argv`.
+          for (let prefixArity = 0; prefixArity < sigParamWasmTypes.length; prefixArity++) {
+            const prefixParams = sigParamWasmTypes.slice(0, prefixArity);
+            for (const retVariant of [resultTypes, [{ kind: "externref" } as ValType], [] as ValType[]]) {
+              const alt = getOrCreateFuncRefWrapperTypes(ctx, prefixParams, retVariant);
+              if (alt && !seenFuncTypeIdx.has(alt.closureInfo.funcTypeIdx)) {
+                seenFuncTypeIdx.add(alt.closureInfo.funcTypeIdx);
+                funcCandidates.push({
+                  funcTypeIdx: alt.closureInfo.funcTypeIdx,
+                  structTypeIdx: alt.closureInfo.structTypeIdx,
+                  returnType: alt.closureInfo.returnType,
+                  paramTypes: alt.closureInfo.paramTypes,
+                });
+              }
             }
           }
 
@@ -2229,6 +2306,89 @@ export function compileIdentifierCall(
       const implicitCallee = isSloppyImplicitGlobalBinding(ctx, fctx, funcName);
       const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, isKnownVariable || isRuntimeEvalGlobal || implicitCallee);
       if (dyn !== null) return dyn;
+
+      // (#4527) Reference-preserving dynamic-call bridge. A call on a KNOWN
+      // variable of `any` type (a JS callback parameter) whose closure wrapper
+      // candidates were not registered when THIS body compiled — the
+      // cross-module case: `cb.mjs`'s `callIt(cb) { return cb(2, 3); }`
+      // compiles before `main.ts`'s arrow argument exists — used to fall to
+      // the graceful `ref.null.extern` below and the callee was silently
+      // never invoked (diff-sequences' isCommon/foundSubsequence, jest-util's
+      // each-callbacks). Route it through the host `__call_dyn_<n>` bridge:
+      // the callee and every argument cross as externref (numbers boxed,
+      // refs converted), the host wraps the closure exactly like the numeric
+      // `__call_N_f64` bridges, and reference arguments stay LIVE. Host lane
+      // only — standalone keeps its existing lowering (the ReferenceError /
+      // graceful arms below).
+      if (
+        !noJsHost(ctx) &&
+        !ctx.standalone &&
+        !ctx.wasi &&
+        isKnownVariable &&
+        expr.arguments.length <= 10 &&
+        !expr.arguments.some((a) => ts.isSpreadElement(a))
+      ) {
+        addUnionImports(ctx);
+        const calleeType = compileExpression(ctx, fctx, expr.expression);
+        if (calleeType !== null) {
+          const toExtern = (t: ValType | null): void => {
+            if (t === null) {
+              fctx.body.push({ op: "ref.null.extern" });
+            } else if (t.kind === "f64") {
+              const boxIdx = ctx.funcMap.get("__box_number");
+              if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
+              else {
+                fctx.body.push({ op: "drop" });
+                fctx.body.push({ op: "ref.null.extern" });
+              }
+            } else if (t.kind === "i32") {
+              // Same convention as the sig-dispatch extras loop: a plain i32 is
+              // a NUMBER (loop counters, int literals) — only a symbol-tagged
+              // i32 boxes as a symbol. Boxing untagged i32 as boolean turned
+              // diff-sequences' index arguments into `false`/`true`.
+              if (t.symbol === true) {
+                const boxIdx = ctx.funcMap.get("__box_symbol");
+                if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
+                else {
+                  fctx.body.push({ op: "drop" });
+                  fctx.body.push({ op: "ref.null.extern" });
+                }
+              } else {
+                fctx.body.push({ op: "f64.convert_i32_s" });
+                const boxIdx = ctx.funcMap.get("__box_number");
+                if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
+                else {
+                  fctx.body.push({ op: "drop" });
+                  fctx.body.push({ op: "ref.null.extern" });
+                }
+              }
+            } else if (t.kind === "ref" || t.kind === "ref_null") {
+              fctx.body.push({ op: "extern.convert_any" });
+            }
+          };
+          toExtern(calleeType);
+          for (const arg of expr.arguments) {
+            toExtern(compileExpression(ctx, fctx, arg));
+          }
+          const bridgeName = `__call_dyn_${expr.arguments.length}`;
+          const params: ValType[] = Array.from({ length: expr.arguments.length + 1 }, () => ({
+            kind: "externref",
+          }));
+          const bridgeIdx = ensureLateImport(ctx, bridgeName, params, [{ kind: "externref" }]);
+          flushLateImportShifts(ctx, fctx);
+          const resolvedBridgeIdx = ctx.funcMap.get(bridgeName) ?? bridgeIdx;
+          if (resolvedBridgeIdx === undefined) {
+            // Import registration refused (strict no-host mode) — drop the
+            // already-pushed callee+args and degrade like the graceful
+            // null-callee fallback instead of calling an unresolved index.
+            for (let di = 0; di < expr.arguments.length + 1; di++) fctx.body.push({ op: "drop" });
+            fctx.body.push({ op: "ref.null.extern" });
+            return { kind: "externref" };
+          }
+          fctx.body.push({ op: "call", funcIdx: resolvedBridgeIdx });
+          return { kind: "externref" };
+        }
+      }
 
       // §6.2.5.5 GetValue on an unresolvable Reference: calling a TRULY
       // undeclared identifier (`$DETACHBUFFER(ab)` with no `includes:` that

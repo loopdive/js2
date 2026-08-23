@@ -66,6 +66,16 @@ export function emitVecDefineWritebackExports(
       );
       // value unboxing per element kind (value param is local 2)
       const strElemIdx = nativeStrVecElemTypeIdx(ctx, vecTypeIdx);
+      // (#4531) Struct-ref element: mirror the __vec_push arm — recover the
+      // typed element from the externref value; the guard in `thenBranch`
+      // proves the ref.test first, so the cast cannot trap.
+      const setArrDef = ctx.mod.types[arrTypeIdx];
+      const structElemTypeIdx =
+        elemKey === "structref" &&
+        setArrDef?.kind === "array" &&
+        (setArrDef.element.kind === "ref" || setArrDef.element.kind === "ref_null")
+          ? setArrDef.element.typeIdx
+          : -1;
       const valueInstrs: Instr[] =
         elemKey === "externref"
           ? [{ op: "local.get", index: 2 }]
@@ -76,9 +86,35 @@ export function emitVecDefineWritebackExports(
               ]
             : elemKey === "i32"
               ? [{ op: "local.get", index: 2 }, { op: "call", funcIdx: unboxNumIdx! }, { op: "i32.trunc_sat_f64_s" }]
-              : // (#3311) native-string carrier: recover the `$AnyString` ref element.
-                [{ op: "local.get", index: 2 }, { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: strElemIdx }];
+              : elemKey === "structref"
+                ? [
+                    { op: "local.get", index: 2 },
+                    { op: "any.convert_extern" },
+                    { op: "ref.cast", typeIdx: structElemTypeIdx },
+                  ]
+                : // (#3311) native-string carrier: recover the `$AnyString` ref element.
+                  [
+                    { op: "local.get", index: 2 },
+                    { op: "any.convert_extern" },
+                    { op: "ref.cast", typeIdx: strElemIdx },
+                  ];
       const thenBranch: Instr[] = [
+        // (#4531) An incompatible value must NOT trap the cast in `valueInstrs`
+        // — answer the -1 unsupported sentinel so the runtime keeps its legacy
+        // sidecar fallback for that define.
+        ...(elemKey === "structref"
+          ? ([
+              { op: "local.get", index: 2 },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: structElemTypeIdx },
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [{ op: "i32.const", value: -1 }, { op: "return" }],
+              },
+            ] satisfies Instr[])
+          : []),
         { op: "local.get", index: 3 },
         { op: "ref.cast", typeIdx: vecTypeIdx },
         { op: "local.set", index: vecL },

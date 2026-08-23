@@ -194,6 +194,17 @@ export function isEvolvingAnyBinding(ctx: CodegenContext, callee: ts.Expression)
   // An initializer commits the widened declared type only when the initializer
   // itself is non-callable; anything else (including `any`) stays untouched.
   const initFact = ctx.oracle.typeFactOf(init);
+  // (#4616) `let x = null; … x = function(){…}; x()` — the deferred-init
+  // idiom (cookie's `__upstreamSnapshotMatcher`). A NULLISH initializer on a
+  // MUTABLE unannotated binding commits nothing: TS infers the literal
+  // `null`/`undefined` type and closure-crossing flow analysis reports it at
+  // the call site even after a function was assigned. Only `const` makes a
+  // nullish initializer a real commitment.
+  if (initFact.kind === "null" || initFact.kind === "undefined") {
+    const list = decl.parent;
+    const isConst = ts.isVariableDeclarationList(list) && (list.flags & ts.NodeFlags.Const) !== 0;
+    if (!isConst) return true;
+  }
   return !NEVER_CALLABLE_FACT_KINDS.has(initFact.kind) && !isFreshlyConstructedNonCallable(ctx, init, initFact.kind);
 }
 
@@ -536,11 +547,20 @@ export function emitObjectCoercion(
       return { kind: "externref" };
     }
   }
-  // Unknown / object / externref / union — per spec, `Object(o)` returns `o`
-  // unchanged for objects. We can't distinguish primitive-boxed-as-externref
-  // from real objects statically, so the best static behavior is identity.
-  // (A future revision could call a `__to_object` host helper for runtime
-  // ToObject of any-typed values; out of scope for this issue.)
+  // Unknown / object / externref / union. (#4530) In host mode, route through
+  // the `__to_object` host helper: it performs the real §7.1.18 ToObject at
+  // runtime (primitive → wrapper object, object → identity), so
+  // `Object(value) !== value` distinguishes primitives even when the static
+  // type is `any` (jest-get-type's isPrimitive). Standalone / no-JS-host keeps
+  // the historical identity fallback — a native ToObject is separate work.
   compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
+  if (!noJsHost(ctx)) {
+    const toObjIdx = ensureLateImport(ctx, "__to_object", [{ kind: "externref" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    const finalToObjIdx = ctx.funcMap.get("__to_object") ?? toObjIdx;
+    if (finalToObjIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: finalToObjIdx });
+    }
+  }
   return { kind: "externref" };
 }

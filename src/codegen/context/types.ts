@@ -1469,7 +1469,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  the extern class of the global's declared type ("Document") — recorded
    *  at registration for the IR host-extern path (#2856), which types the
    *  `call global_<name>` handle as `IrType.extern { className }`. */
-  declaredGlobals: Map<string, { type: ValType; funcIdx: number; className?: string }>;
+  declaredGlobals: Map<string, { type: ValType; funcIdx: number; className?: string; member?: string }>;
   /** Counter for generated callback functions (__cb_0, __cb_1, ...) */
   callbackCounter: number;
   /** Map from captured variable name → global index in mod.globals */
@@ -2729,10 +2729,29 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   classTagCounter: number;
   /** Map from class name → unique tag value (for instanceof support) */
   classTagMap: Map<string, number>;
+  /**
+   * (#4618) Per-class record of the capture globals its member bodies were
+   * compiled against. Module-init compiles twice (discovery + final emission)
+   * and `capturedGlobals` is CLEARED between passes, but class member bodies
+   * compile only ONCE — permanently bound to pass-1 globals. The re-compile's
+   * early-return re-binds these exact globals into `capturedGlobals` (and
+   * syncs the frame's fresh local into them) so frame reads and method writes
+   * share one store. Keyed by resolved class name → captured name →
+   * the pass-1 global index (+ widened flag).
+   */
+  classMemberCaptureGlobals?: Map<string, Map<string, { globalIdx: number; widened: boolean }>>;
+  /**
+   * (#4618) Which FunctionContext value-promoted each `capturedGlobals` name.
+   * `capturedGlobals` is name-keyed and not cleared between sibling callback
+   * bodies of one pass, so a same-named binding in a DIFFERENT function must
+   * mint a fresh global instead of silently reusing the sibling's. Entries
+   * are advisory (owners may be dead fctxs); compared by identity only.
+   */
+  capturedGlobalsOwner?: Map<string, FunctionContext>;
   /** Map from TS symbol name → synthetic class name for class expressions */
   classExprNameMap: Map<string, string>;
-  /** Map from ClassExpression AST node → synthetic class name */
-  anonClassExprNames: Map<ts.ClassExpression, string>;
+  /** Map from class AST node → synthetic class name (expressions and nested declarations). */
+  anonClassExprNames: Map<ts.ClassExpression | ts.ClassDeclaration, string>;
   /** Map from function/class identifier → its ES-spec .name string value */
   functionNameMap: Map<string, string>;
   /** Whether to attach source positions for source map generation */
@@ -3397,6 +3416,14 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  later reads. Mirrors `methodClosureGlobals` (#1394) for the function-decl
    *  case where the same JS identifier is read as a value at multiple sites. */
   funcClosureGlobals: Map<string, number>;
+  /** (#4530) Canonical singleton KEY per target function index. An import
+   *  alias (`import cx from 'clsx'` → funcMap "cx" → clsx's funcIdx) reads the
+   *  same function value under a different name; keying the singleton pair by
+   *  name alone minted a SECOND trampoline/cache for the alias, breaking
+   *  `default === named` identity and giving the alias a wrapper the call-site
+   *  dispatch candidates never match. First name to materialize a funcIdx
+   *  claims the key; later aliases reuse it. */
+  funcClosureSingletonKeyByFuncIdx: Map<number, string>;
   /** Whether targeting WASI */
   wasi: boolean;
   /** Whether Node-compatible ambient globals such as `global` are enabled. */

@@ -1188,7 +1188,35 @@ export function compileInstanceOf(
  * Determine the typeof result string for a TS type at compile time.
  * Returns null if the type cannot be statically resolved (e.g., any/unknown).
  */
+/**
+ * (#4529) True for the empty anonymous object type `{}` — no properties, no
+ * call/construct signatures, no index signatures. TS uses it as the narrowing
+ * of `unknown` behind a nullish guard, where it means "any non-nullish value",
+ * so a typeof fold on it is unsound.
+ */
+function isEmptyAnonymousObjectType(tsType: ts.Type): boolean {
+  if (!(tsType.flags & ts.TypeFlags.Object)) return false;
+  const objectFlags = (tsType as ts.ObjectType).objectFlags;
+  if (!(objectFlags & ts.ObjectFlags.Anonymous)) return false;
+  if (tsType.getProperties().length > 0) return false;
+  if ((tsType.getCallSignatures?.()?.length ?? 0) > 0) return false;
+  if ((tsType.getConstructSignatures?.()?.length ?? 0) > 0) return false;
+  const withIndex = tsType as ts.Type & {
+    getStringIndexType?: () => ts.Type | undefined;
+    getNumberIndexType?: () => ts.Type | undefined;
+  };
+  return withIndex.getStringIndexType?.() === undefined && withIndex.getNumberIndexType?.() === undefined;
+}
+
 function staticTypeofForType(ctx: CodegenContext, tsType: ts.Type): string | null {
+  // (#4529) The empty anonymous object type `{}` admits EVERY non-nullish
+  // value — number, string, function, symbol — not just objects. It is what
+  // TS narrows `unknown` to after a `!= null` / `!== undefined` guard, so
+  // jest-get-type's `typeof value === 'number'` chain (an `unknown` param
+  // behind null/undefined early-returns) folded every compare against the
+  // constant "object" and classified every primitive as an object. `{}` is
+  // dynamic; never fold it.
+  if (isEmptyAnonymousObjectType(tsType)) return null;
   if (tsType.flags & ts.TypeFlags.Null) return "object";
   if (tsType.flags & ts.TypeFlags.Undefined || tsType.flags & ts.TypeFlags.Void) return "undefined";
   if (tsType.flags & ts.TypeFlags.BigInt || tsType.flags & ts.TypeFlags.BigIntLiteral) return "bigint";

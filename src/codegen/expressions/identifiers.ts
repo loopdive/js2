@@ -1084,7 +1084,18 @@ function compileIdentifierCore(
   if (
     !ctx.standalone &&
     !ctx.wasi &&
-    (taCtorKindOf(name) >= 0 || name === "BigInt64Array" || name === "BigUint64Array") &&
+    // (#4616-adjacent) `Buffer` rides the same host-global materialization:
+    // jest-util's deepCyclicCopy suite reads the bare Node global (`new
+    // Buffer/Buffer.from`), which otherwise fell to the null-extern default
+    // ("Buffer is not defined").
+    // (#4616) `process` too: jest-core's globals suite reads the bare Node
+    // global (`Object.prototype.toString.call(process)`), which otherwise fell
+    // to the graceful-null default and stringified as "[object Null]".
+    (taCtorKindOf(name) >= 0 ||
+      name === "BigInt64Array" ||
+      name === "BigUint64Array" ||
+      name === "Buffer" ||
+      name === "process") &&
     fctx.localMap.get(name) === undefined &&
     !(fctx.boxedCaptures?.has(name) ?? false) &&
     !ctx.classSet.has(name)
@@ -1115,6 +1126,28 @@ function compileIdentifierCore(
   const globalInfo = ctx.declaredGlobals.get(name);
   if (globalInfo) {
     fctx.body.push({ op: "call", funcIdx: globalInfo.funcIdx });
+    // (#4616-adjacent) A node-builtin NAMED binding is a MEMBER of the module
+    // object the thunk returns (`import { EOL } from 'os'` reads `os.EOL`),
+    // not the module itself.
+    if (globalInfo.member !== undefined) {
+      const getIdx = ensureLateImport(
+        ctx,
+        "__extern_get",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (getIdx !== undefined) {
+        addStringConstantGlobal(ctx, globalInfo.member);
+        const strGlobalIdx = ctx.stringGlobalMap.get(globalInfo.member);
+        if (strGlobalIdx !== undefined) {
+          fctx.body.push({ op: "global.get", index: strGlobalIdx });
+        } else {
+          fctx.body.push({ op: "ref.null.extern" });
+        }
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+      }
+    }
     return globalInfo.type;
   }
 
@@ -1147,7 +1180,48 @@ function compileIdentifierCore(
   {
     // (#3505) A foreign module's class must not resolve by bare name — see
     // `unresolvedInModuleGoal`.
-    const resolvedClassName = unresolvedInModuleGoal ? undefined : (ctx.classExprNameMap.get(name) ?? name);
+    let resolvedClassName = unresolvedInModuleGoal ? undefined : (ctx.classExprNameMap.get(name) ?? name);
+    // (#4618) Checker-verified identity: a bare name is not a binding. A
+    // nested FUNCTION named like a class elsewhere (react's StrictMode batch
+    // declares `class Foo` in one test and `function Foo()` in the next) was
+    // hijacked into the class singleton here — createElement received the
+    // CLASS object and the function component never ran. When the checker
+    // resolves this identifier to a declaration, take the class arm only if
+    // that declaration IS a class; a per-site synthetic (scoped duplicate
+    // declaration) resolves through its own node.
+    if (resolvedClassName !== undefined && ctx.classObjectGlobals?.has(resolvedClassName)) {
+      const decl = ctx.oracle.valueDeclarationOf(id);
+      if (decl !== undefined) {
+        if (ts.isClassDeclaration(decl) || ts.isClassExpression(decl)) {
+          const scoped = ctx.anonClassExprNames.get(decl);
+          if (scoped !== undefined && ctx.classObjectGlobals.has(scoped)) resolvedClassName = scoped;
+        } else if (
+          ts.isFunctionDeclaration(decl) ||
+          ts.isFunctionExpression(decl) ||
+          ts.isArrowFunction(decl) ||
+          ts.isParameter(decl)
+        ) {
+          resolvedClassName = undefined;
+        } else if (ts.isVariableDeclaration(decl)) {
+          // A var/let/const binding opts out ONLY when it provably holds a
+          // NON-class function value (react's `const Foo = () => …` twin of
+          // the function-declaration case). `var C = class { … }` — the
+          // dominant test262 class-elements shape — IS the class this arm
+          // serves; the blanket var opt-out sent every read of `C` to the
+          // normal identifier lanes (undefined), which surfaced as 205
+          // merge_group regressions in language/expressions/class/elements
+          // ("Cannot convert undefined or null to object" in verifyProperty).
+          let init = decl.initializer;
+          while (init !== undefined && ts.isParenthesizedExpression(init)) init = init.expression;
+          if (init !== undefined && ts.isClassExpression(init)) {
+            const scoped = ctx.anonClassExprNames.get(init);
+            if (scoped !== undefined && ctx.classObjectGlobals.has(scoped)) resolvedClassName = scoped;
+          } else if (init !== undefined && (ts.isFunctionExpression(init) || ts.isArrowFunction(init))) {
+            resolvedClassName = undefined;
+          }
+        }
+      }
+    }
     if (resolvedClassName !== undefined && ctx.classObjectGlobals?.has(resolvedClassName)) {
       if (emitLazyClassObjectGet(ctx, fctx, resolvedClassName)) {
         return { kind: "externref" };
@@ -1295,7 +1369,15 @@ function compileIdentifierCore(
   if (
     !ctx.standalone &&
     !ctx.wasi &&
-    (name === "DisposableStack" || name === "AsyncDisposableStack" || name === "SuppressedError") &&
+    // (#4618) `console` referenced as a VALUE (not `console.m(...)` call
+    // position, which has its own intrinsic path): react's upstream tests do
+    // `spyOnDevAndProd(console, 'log')` — the null-externref fallback made
+    // `target[key]` throw inside the spy helper for all 7 StrictMode
+    // console-logs-logging tests. Same host-only resolution as the ERM ctors.
+    (name === "DisposableStack" ||
+      name === "AsyncDisposableStack" ||
+      name === "SuppressedError" ||
+      name === "console") &&
     !fctx.localMap.has(name) &&
     !(fctx.boxedCaptures?.has(name) ?? false) &&
     !ctx.classSet.has(name)
@@ -1387,11 +1469,40 @@ function compileIdentifierCore(
     const valDecl = valSym?.valueDeclaration;
     return !(valDecl !== undefined && ts.isFunctionDeclaration(valDecl));
   };
+  // (#4618) `classSet` is name-keyed, so a class named `Foo` ANYWHERE in the
+  // module used to veto the funcref-as-value arm for a sibling scope's
+  // `function Foo()` too — the read fell through to the graceful default and
+  // the function crossed as a bare value with its capture writes lost. When
+  // the funcMap entry is OWNED by the exact FunctionDeclaration this
+  // reference resolves to (funcMapOwnerDecl), the collision is spurious.
+  const collisionValueDecl = ctx.classSet.has(name) ? identifierValueSymbol(ctx, id)?.valueDeclaration : undefined;
+  const classNameCollision =
+    ctx.classSet.has(name) &&
+    !(
+      funcRefIdx !== undefined &&
+      ctx.funcMapOwnerDecl.get(name) !== undefined &&
+      collisionValueDecl === ctx.funcMapOwnerDecl.get(name)
+    ) &&
+    // (#4618) A TOP-LEVEL `function Component` read as a value was ALSO
+    // vetoed by a sibling `class Component` anywhere in the module (react's
+    // own `exports.Component = Component` under per-test class declarations
+    // stored null, so `React.Component` and every class-component detection
+    // read back null). With no nested owner declaration the funcMap entry
+    // belongs to the top-level function; when the checker resolves this
+    // reference to exactly a top-level FunctionDeclaration, the collision
+    // is spurious.
+    !(
+      funcRefIdx !== undefined &&
+      ctx.funcMapOwnerDecl.get(name) === undefined &&
+      collisionValueDecl !== undefined &&
+      ts.isFunctionDeclaration(collisionValueDecl) &&
+      ts.isSourceFile(collisionValueDecl.parent)
+    );
   if (
     funcRefIdx !== undefined &&
     definedFuncAt(ctx, funcRefIdx) !== undefined &&
     !isInternalHelperName() &&
-    !ctx.classSet.has(name)
+    !classNameCollision
   ) {
     const valueDecl = identifierValueSymbol(ctx, id)?.valueDeclaration;
     const isOrdinaryFunctionDecl =

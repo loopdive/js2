@@ -31,6 +31,11 @@ export const NODE_BUILTIN_MODULES = new Set([
   "buffer",
   "zlib",
   "util",
+  // (#4616) `import {isNativeError} from 'node:util/types'` — jest-util's
+  // isError delegates to it (Error.isError is absent on Node 22). Same
+  // subpath-module pattern as stream/web and fs/promises; the runtime adapter
+  // require()s the specifier verbatim.
+  "util/types",
   "path",
   "process",
   "net",

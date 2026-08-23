@@ -392,6 +392,17 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
       }
     }
   }
+  // (#4618) Per-class member-capture records carry the pass-1 global index
+  // across module-init passes — same shift discipline as capturedBoxGlobals.
+  if (ctx.classMemberCaptureGlobals) {
+    for (const record of ctx.classMemberCaptureGlobals.values()) {
+      for (const entry of record.values()) {
+        if (entry.globalIdx >= threshold) {
+          entry.globalIdx += delta;
+        }
+      }
+    }
+  }
   shiftMap(ctx.staticProps);
   shiftMap(ctx.protoGlobals);
   shiftMap(ctx.classObjectGlobals); // (#1395) — same shift discipline as protoGlobals
@@ -715,60 +726,75 @@ export function addUnionImports(ctx: CodegenContext): void {
   // indices if imports are added after collectDeclarations has run.
   const importsBefore = ctx.numImportFuncs;
 
+  // (#4616) A helper of this family may ALREADY be imported individually by
+  // `ensureLateImport` before the union pass runs (e.g. `__box_number` from an
+  // extras-packing/HOF site, then a vec→vec coercion calls addUnionImports).
+  // Blindly re-adding produced a SECOND `env` import entry for the same name —
+  // the binary still linked (old call sites keep the pre-existing index), but
+  // the adapter-manifest validator rejects the module outright ("duplicate
+  // adapter import 'env::__box_number' appears 2 times"). Skip any name that
+  // already resolves to an import; its existing (pre-`importsBefore`) index is
+  // below the shift range, so the delta bookkeeping stays correct.
+  const addUnionImport = (name: string, desc: Import["desc"]): void => {
+    const existing = ctx.funcMap.get(name);
+    if (existing !== undefined && existing < ctx.numImportFuncs) return;
+    addImport(ctx, "env", name, desc);
+  };
+
   // __typeof_number: (externref) → i32
   const typeofType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }]);
-  addImport(ctx, "env", "__typeof_number", {
+  addUnionImport("__typeof_number", {
     kind: "func",
     typeIdx: typeofType,
   });
-  addImport(ctx, "env", "__typeof_string", {
+  addUnionImport("__typeof_string", {
     kind: "func",
     typeIdx: typeofType,
   });
-  addImport(ctx, "env", "__typeof_boolean", {
+  addUnionImport("__typeof_boolean", {
     kind: "func",
     typeIdx: typeofType,
   });
-  addImport(ctx, "env", "__typeof_bigint", {
+  addUnionImport("__typeof_bigint", {
     kind: "func",
     typeIdx: typeofType,
   });
-  addImport(ctx, "env", "__typeof_undefined", {
+  addUnionImport("__typeof_undefined", {
     kind: "func",
     typeIdx: typeofType,
   });
-  addImport(ctx, "env", "__typeof_object", {
+  addUnionImport("__typeof_object", {
     kind: "func",
     typeIdx: typeofType,
   });
-  addImport(ctx, "env", "__typeof_function", {
+  addUnionImport("__typeof_function", {
     kind: "func",
     typeIdx: typeofType,
   });
 
   // __is_truthy: (externref) → i32
-  addImport(ctx, "env", "__is_truthy", { kind: "func", typeIdx: typeofType });
+  addUnionImport("__is_truthy", { kind: "func", typeIdx: typeofType });
 
   // __unbox_number: (externref) → f64
   const unboxNumType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "f64" }]);
-  addImport(ctx, "env", "__unbox_number", {
+  addUnionImport("__unbox_number", {
     kind: "func",
     typeIdx: unboxNumType,
   });
 
   // __unbox_boolean: (externref) → i32
-  addImport(ctx, "env", "__unbox_boolean", {
+  addUnionImport("__unbox_boolean", {
     kind: "func",
     typeIdx: typeofType,
   });
 
   // __box_number: (f64) → externref
   const boxNumType = addFuncType(ctx, [{ kind: "f64" }], [{ kind: "externref" }]);
-  addImport(ctx, "env", "__box_number", { kind: "func", typeIdx: boxNumType });
+  addUnionImport("__box_number", { kind: "func", typeIdx: boxNumType });
 
   // __box_boolean: (i32) → externref
   const boxBoolType = addFuncType(ctx, [{ kind: "i32" }], [{ kind: "externref" }]);
-  addImport(ctx, "env", "__box_boolean", {
+  addUnionImport("__box_boolean", {
     kind: "func",
     typeIdx: boxBoolType,
   });
@@ -779,7 +805,7 @@ export function addUnionImports(ctx: CodegenContext): void {
   // `f1ElementBoxType`). Same (i32)→externref signature as __box_boolean. Only
   // reached on the compatibility-provider path; with native providers
   // `addUnionImports` returns before this block.)
-  addImport(ctx, "env", "__box_symbol", {
+  addUnionImport("__box_symbol", {
     kind: "func",
     typeIdx: boxBoolType,
   });
@@ -787,29 +813,29 @@ export function addUnionImports(ctx: CodegenContext): void {
   // __box_bigint: (i64) → externref  (#1644 — boxes a branded-bigint i64 as a
   // JS bigint; JS-BigInt-integration makes the host body identity)
   const boxBigType = addFuncType(ctx, [{ kind: "i64" }], [{ kind: "externref" }]);
-  addImport(ctx, "env", "__box_bigint", { kind: "func", typeIdx: boxBigType });
+  addUnionImport("__box_bigint", { kind: "func", typeIdx: boxBigType });
 
   // __to_bigint: (externref) → i64  (#1644 — §7.1.13 ToBigInt)
   const toBigType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i64" }]);
-  addImport(ctx, "env", "__to_bigint", { kind: "func", typeIdx: toBigType });
+  addUnionImport("__to_bigint", { kind: "func", typeIdx: toBigType });
 
   // __bigint_ctor: (externref) → i64  (#1644 Slice B — §21.2.1.1 BigInt(value):
   // ToPrimitive(number) then NumberToBigInt (RangeError) for Number, else
   // ToBigInt (SyntaxError on bad string syntax). Distinct from __to_bigint,
   // which throws TypeError on a Number per §7.1.13.)
   const ctorBigType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i64" }]);
-  addImport(ctx, "env", "__bigint_ctor", { kind: "func", typeIdx: ctorBigType });
+  addUnionImport("__bigint_ctor", { kind: "func", typeIdx: ctorBigType });
 
   // __bigint_ctor_ref: (externref) → externref (#2846 follow-up). The ordinary
   // i64 constructor above remains the arithmetic carrier; this variant keeps
   // arbitrary-width host BigInts exact when the surrounding value is already
   // nullable/dynamic externref (Acorn's `bigint | null` stringToBigInt result).
   const ctorBigRefType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
-  addImport(ctx, "env", "__bigint_ctor_ref", { kind: "func", typeIdx: ctorBigRefType });
+  addUnionImport("__bigint_ctor_ref", { kind: "func", typeIdx: ctorBigRefType });
 
   // __typeof: (externref) → externref (returns type string)
   const typeofStrType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
-  addImport(ctx, "env", "__typeof", {
+  addUnionImport("__typeof", {
     kind: "func",
     typeIdx: typeofStrType,
   });

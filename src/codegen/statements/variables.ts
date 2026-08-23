@@ -16,7 +16,9 @@ import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
 import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import { emitShapeInferredVecInit } from "../shape-vec-literal-seed.js"; // (#4491) module-global array-carrier seed
 import {
+  arrayLiteralEscapeWidensToExternref,
   objectLiteralIsStandaloneAnyObjectCarrier,
+  objectLiteralForcesHostPath,
   objectLiteralSpreadTakesHostPath,
   resolveComputedKeyExpression,
 } from "../literals.js";
@@ -761,6 +763,10 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
           (ts.isPropertyAssignment(p) && p.name !== undefined && ts.isComputedPropertyName(p.name)),
       );
       if (forcesHostObject) return { kind: "externref" };
+      // (#4616) Same lockstep as the main local-typing path: runtime computed
+      // keys (incl. symbols), disposal methods, and empty-string keys route the
+      // VALUE to the host plain-object path.
+      if (objectLiteralForcesHostPath(ctx, init)) return { kind: "externref" };
       if (objectLiteralSpreadTakesHostPath(ctx, init)) return { kind: "externref" };
     }
     if (isProxyConstruction(init)) return { kind: "externref" };
@@ -1708,24 +1714,18 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // (#1433) Same routing for `[Symbol.dispose]` / `[Symbol.asyncDispose]`
     // computed methods — they reach the JS-host plain-object path so the
     // native runtime can find the disposer under the real Symbol property.
+    // (#4616) Routes through the SAME predicate compileObjectLiteral's host
+    // gate uses (objectLiteralForcesHostPath — accessors, disposal methods,
+    // RUNTIME computed keys incl. symbols, empty-string keys) so the local's
+    // representation and the literal's value representation stay in lockstep.
+    // The previous inline check missed computed-key PropertyAssignments
+    // (`{ a: 1, [symbolKey]: 3 }`): the value built as a host object while an
+    // un-annotated local stayed struct-typed — the store null-cast and reads
+    // answered NULL (jest Replaceable "Type null is not support").
     const initIsAccessorLiteral =
       decl.initializer !== undefined &&
       ts.isObjectLiteralExpression(decl.initializer) &&
-      decl.initializer.properties.some((p) => {
-        if (ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) return true;
-        if (ts.isMethodDeclaration(p) && ts.isComputedPropertyName(p.name)) {
-          const inner = p.name.expression;
-          if (
-            ts.isPropertyAccessExpression(inner) &&
-            ts.isIdentifier(inner.expression) &&
-            inner.expression.text === "Symbol" &&
-            (inner.name.text === "dispose" || inner.name.text === "asyncDispose")
-          ) {
-            return true;
-          }
-        }
-        return false;
-      });
+      objectLiteralForcesHostPath(ctx, decl.initializer);
     // (#2804) A spread-containing object literal initializer that takes the host
     // plain-object path (no concrete contextual struct type — e.g.
     // `const b = { ...a, z: 3 }`) builds a host `$Object` (externref), NOT the
@@ -1837,6 +1837,17 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     const mixedCarrierProvenF64 = mixedAssignmentCarrier
       ? numericProofOverridesMixedCarrier(usageInferredLocalType(ctx, decl))
       : null;
+    // (#4531) The initializer array literal widens its element carrier to
+    // externref because its value escapes into an opaque call argument (see
+    // arrayLiteralEscapeWidensToExternref). The SLOT must widen with it — a
+    // checker-derived closed-struct vec slot would force a vec→vec converting
+    // copy whose per-element ref.test nulls every open-representation element.
+    const escapeWidenedVecType: ValType | undefined =
+      decl.initializer !== undefined &&
+      ts.isArrayLiteralExpression(decl.initializer) &&
+      arrayLiteralEscapeWidensToExternref(ctx, decl.initializer)
+        ? { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, "externref", { kind: "externref" }) }
+        : undefined;
     const wasmTypeBase: ValType =
       // (#3123) A widened fnctor-subclass binding (pre-hoist recorded it in
       // `fnctorWidenedLocals` — reassigned with a foreign/host value) must
@@ -1868,7 +1879,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
                           ? { kind: "ref_null" as const, typeIdx: getOrRegisterVecType(ctx, "i32", { kind: "i32" }) }
                           : widenedTypeIdx !== undefined
                             ? { kind: "ref_null" as const, typeIdx: widenedTypeIdx }
-                            : (taViewType ??
+                            : (escapeWidenedVecType ??
+                              taViewType ??
                               subarraySubviewType ??
                               inferredVecType ??
                               standaloneRegExpMatchArrayType ??

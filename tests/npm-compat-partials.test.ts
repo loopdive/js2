@@ -58,10 +58,69 @@ describe("npm-compat partial aggregation", () => {
       }),
     ).toThrow(/source revision mismatch/);
   });
+
+  it("carries a failed worker forward without recording stale perf as a new run", () => {
+    const previous = {
+      ...partial(["react"], "old"),
+      packages: [
+        {
+          ...partial(["react"], "old").packages[0],
+          perf: {
+            lanes: {
+              jsHost: { status: "measured", ratio: 0.5 },
+            },
+          },
+        },
+      ],
+    };
+    const fresh = partial(["acorn"]);
+    (fresh.packages[0] as any).perf = {
+      lanes: {
+        jsHost: { status: "measured", ratio: 2 },
+      },
+    };
+    const result = mergeNpmCompatPartials([fresh], {
+      expectedNames: ["acorn", "react"],
+      sourceRevision: "source",
+      existingPackages: previous.packages,
+      existingSummaryMeta: previous.summaryMeta,
+      existingGeneratedAt: "2026-08-21T00:00:00.000Z",
+      allowStaleFallback: true,
+      generatedAt: "2026-08-22T00:00:00.000Z",
+    });
+
+    expect(result.summary.refresh).toEqual({ status: "partial", stalePackages: ["react"] });
+    expect(result.summary.packages.find((entry) => entry.name === "react")?.refresh).toEqual({
+      status: "stale",
+      reason: "measurement worker did not produce a partial report",
+      lastMeasuredAt: "2026-08-21T00:00:00.000Z",
+    });
+    expect(result.perfRows.map((entry) => entry.name)).toEqual(["acorn · JS host · runtime dynamic"]);
+    expect(result.perfHistory.runs.at(-1)?.packages).toEqual({
+      acorn: { jsHost: { dynamic: 2 }, standalone: {} },
+    });
+  });
+
+  it("can publish the prior complete snapshot when every worker fails", () => {
+    const previous = partial(["acorn", "react"], "old");
+    const result = mergeNpmCompatPartials([], {
+      expectedNames: ["acorn", "react"],
+      sourceRevision: "source",
+      existingPackages: previous.packages,
+      existingSummaryMeta: previous.summaryMeta,
+      existingGeneratedAt: "2026-08-21T00:00:00.000Z",
+      allowStaleFallback: true,
+      generatedAt: "2026-08-22T00:00:00.000Z",
+    });
+
+    expect(result.summary.packages).toHaveLength(2);
+    expect(result.summary.refresh.stalePackages).toEqual(["acorn", "react"]);
+    expect(result.perfHistory.runs).toHaveLength(0);
+  });
 });
 
 describe("npm-compat refresh matrix wiring", () => {
-  it("measures independent groups and assembles only after every group succeeds", () => {
+  it("measures independent groups and publishes successful groups after a worker failure", () => {
     const workflow = readFileSync(new URL("../.github/workflows/npm-compat-refresh.yml", import.meta.url), "utf8");
 
     expect(workflow).toContain("github.repository == 'loopdive/js2'");
@@ -71,8 +130,11 @@ describe("npm-compat refresh matrix wiring", () => {
     );
     expect(workflow).toMatch(/concurrency:[\s\S]*?cancel-in-progress: false/);
     expect(workflow).toContain("needs: measure");
+    expect(workflow).toContain("always() && needs.measure.result != 'cancelled'");
     expect(workflow).toContain("--partial-output");
     expect(workflow).toContain("actions/download-artifact@v7");
+    expect(workflow).toContain("continue-on-error: true");
+    expect(workflow).toContain("if-no-files-found: warn");
     expect(workflow).toContain("scripts/merge-npm-compat-partials.mjs");
     expect(workflow).toContain("id: typescript");
     expect(workflow).toContain("id: react-dom");

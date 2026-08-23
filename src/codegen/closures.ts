@@ -468,6 +468,10 @@ export function promoteAccessorCapturesToGlobals(
   fctx: FunctionContext,
   accessorBody: ts.Block | undefined,
   extraNodes?: readonly ts.Node[],
+  /** (#4618) When provided, records the names this call value-promoted from
+   *  THIS fctx's locals (name → pass-local global index + widened flag) so
+   *  the caller can re-bind the same globals on a later re-compile pass. */
+  promotedRecord?: Map<string, { globalIdx: number; widened: boolean }>,
 ): void {
   if (!accessorBody && (!extraNodes || extraNodes.length === 0)) return;
 
@@ -578,8 +582,21 @@ export function promoteAccessorCapturesToGlobals(
   }
 
   for (const name of referencedNames) {
-    // Skip if already a captured global or module global
-    if (ctx.capturedGlobals.has(name)) continue;
+    // Skip if already a captured global or module global.
+    // (#4618) `capturedGlobals` is name-keyed and NOT cleared between the
+    // sibling callback bodies of one module-init pass, so an entry here can
+    // belong to a DIFFERENT function's same-named binding (test files where
+    // every `it` body declares `let instance`). Reusing it would route this
+    // frame's methods to the sibling's global; skipping outright would leave
+    // this frame's methods with no promotion at all. When THIS fctx still
+    // holds the name as a live local and the entry's owner is not this fctx,
+    // fall through and mint a fresh global for this frame (the per-class
+    // record in compileNestedClassDeclaration keeps re-compiles coherent).
+    if (ctx.capturedGlobals.has(name)) {
+      const owner = ctx.capturedGlobalsOwner?.get(name);
+      const foreignOwnerWithLiveLocal = owner !== undefined && owner !== fctx && fctx.localMap.has(name);
+      if (!foreignOwnerWithLiveLocal) continue;
+    }
     if (ctx.moduleGlobals.has(name)) continue;
     // (#2029 family A) Skip names box-promoted above — their localMap entry
     // now points at the shared ref-cell box; value-promoting that box would
@@ -599,7 +616,20 @@ export function promoteAccessorCapturesToGlobals(
     // (concat/length/equals/substring/charCodeAt), which lives in funcMap yet
     // must not block capture of a same-named outer local (e.g. the test262
     // `let length = "outer"` dstr template). Discriminate by index.
-    if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) continue;
+    // (#4618) The skip is name-keyed, so a MODULE-level `function test`
+    // used to block promotion of an enclosing frame's `let test` local that
+    // a class method writes (`componentDidMount() { test = this; }` with the
+    // react shim's module-level `function test` in funcMap) — the method
+    // wrote a phantom cell and the frame read stayed null. Reaching this
+    // point means the frame HAS a local of this name; when the funcMap entry
+    // has no nested owner declaration (it is a module-level function) and
+    // the local is not that function's own hoisted value binding, the local
+    // provably SHADOWS the function — promote it.
+    if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) {
+      const shadowsModuleFn =
+        !ctx.funcMapOwnerDecl.has(name) && !(fctx.hoistedFunctionValueBindings?.has(name) ?? false);
+      if (!shadowsModuleFn) continue;
+    }
 
     // Get the local's type
     const localType =
@@ -639,7 +669,11 @@ export function promoteAccessorCapturesToGlobals(
     ctx.capturedGlobals.set(name, globalIdx);
     if (localType.kind === "ref") {
       ctx.capturedGlobalsWidened.add(name);
+    } else {
+      ctx.capturedGlobalsWidened.delete(name);
     }
+    (ctx.capturedGlobalsOwner ??= new Map()).set(name, fctx);
+    promotedRecord?.set(name, { globalIdx, widened: localType.kind === "ref" });
 
     // (#3039) When the promoted local is a BOXED mutable capture (a ref cell:
     // a sibling closure mutates it, so `fctx.boxedCaptures.has(name)`), the
@@ -2638,6 +2672,13 @@ export function compileLiftedClosureBody(
     // the body, so the default-return tail below is a no-op.
     emitAsyncClosureBody(ctx, liftedFctx, arrow, asyncDecision);
   } else if (ts.isBlock(body)) {
+    // (#4616) Mirror the function-body lane: without the hoist pre-pass a
+    // nested `function spy() { spy.mock... }` inside a METHOD/closure body
+    // (jest's `vi.fn`) gets no stable value binding, so every self-read
+    // re-materialized a fresh struct and the spy's own `mock` property read
+    // answered undefined. hoistFunctionDeclarations reserves forward slots
+    // AND prepares identity-observed value bindings.
+    hoistFunctionDeclarations(ctx, liftedFctx, body.statements);
     for (const stmt of body.statements) {
       compileStatement(ctx, liftedFctx, stmt);
     }
@@ -3112,6 +3153,40 @@ export function compileArrowAsClosure(
       { op: "global.get", index: directGenericGlobalIdx },
       { op: "ref.as_non_null" },
     );
+  }
+
+  // (#4616) §10.2.9 SetFunctionName for a NAMED function expression built as a
+  // closure value: stamp `.name` into the sidecar once at materialization, so
+  // dynamic `.name` reads (jest's convertDescriptorToString on table-driven
+  // function values) and the host bridge's Function.name both answer the
+  // declared name instead of undefined / the bridge's own name. Host lane
+  // only (the sidecar + __extern_set live in the JS runtime); anonymous
+  // arrows/function expressions are untouched — zero cost for the common case.
+  if (
+    !ctx.standalone &&
+    !ctx.wasi &&
+    ts.isFunctionExpression(arrow) &&
+    arrow.name !== undefined &&
+    arrow.name.text.length > 0
+  ) {
+    const setIdx = ensureLateImportShared(
+      ctx,
+      "__extern_set",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [],
+    );
+    flushLateImportShiftsShared(ctx, fctx);
+    if (setIdx !== undefined) {
+      addStringConstantGlobal(ctx, "name");
+      addStringConstantGlobal(ctx, arrow.name.text);
+      const selfLocal = allocLocal(fctx, `__clname_${fctx.locals.length}`, { kind: "ref", typeIdx: structTypeIdx });
+      fctx.body.push({ op: "local.tee", index: selfLocal });
+      fctx.body.push({ op: "extern.convert_any" });
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, "name"));
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, arrow.name.text));
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? setIdx });
+      fctx.body.push({ op: "local.get", index: selfLocal });
+    }
   }
 
   return { kind: "ref", typeIdx: structTypeIdx };
@@ -3646,6 +3721,11 @@ export function compileArrowAsCallback(
 
   let exprBodyHasReturnValue = false;
   if (ts.isBlock(body)) {
+    // (#4616) Same hoist pre-pass as the lifted-closure/function-body lanes:
+    // an object-literal METHOD body (jest's `vi.fn`) declaring a nested
+    // `function spy()` that self-references as a value needs the stable
+    // identity binding, or each self-read re-materializes a fresh struct.
+    hoistFunctionDeclarations(ctx, cbFctx, body.statements);
     for (const stmt of body.statements) {
       compileStatement(ctx, cbFctx, stmt);
     }

@@ -152,6 +152,27 @@ same stale artifact.
   timeout names the lane and batch it went to. All other groups were green
   in run 785 (jsdom 4 min, redux 2 min, tools 46 min), so react-dom is the
   sole remaining publisher-blocker.
+- **S7: the bounds worked — react-dom now fails at 2h42m instead of timing
+  out at 350min, and the new failure is a crash, not a hang or a budget
+  blow-up.** Run 796 (id 32597629293, job 97090976800, S6 merge commit)
+  measured all 9 groups; react-dom's per-batch `[dogfood]` log (now visible
+  via `NPM_COMPAT_SUITE_LOGS=1`, S6) shows dozens of client-project batches
+  completing or bounded-timing-out cleanly for ~2h40m, then the whole job
+  dying: `Error: expected Hello toBe Goodbye` thrown from
+  `testUserInteractionBeforeClientRender` (`ReactDOMFizzForm-test.js`),
+  uncaught, killing node with exit 1 — no partial report for the entire
+  react-dom group despite the dozens of completed batches before it.
+  Root cause: `installNativeHostErrorBoundary`'s `uncaughtException` handler
+  re-threw anything that wasn't the one known late-jsdom-removal error. The
+  per-test watchdog (S5) makes an abandoned test body with a still-pending
+  scheduler/timer callback routine — that callback can fire its own
+  `expect(...).toBe` assertion after the watchdog has already moved on,
+  landing as an uncaughtException with no test context to attribute it to,
+  and the re-throw crashed the whole process. Fixed by making the boundary
+  record every late host error (file/test/name/message +
+  `expectedLateJsdomHostError` flag) into the report's `nativeHostErrors`
+  instead of re-throwing — one stray callback now costs one report entry,
+  never the whole measurement.
 
 ## Fix directions (pick during implementation)
 
