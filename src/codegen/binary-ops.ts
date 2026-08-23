@@ -1289,11 +1289,34 @@ export function compileBinaryExpression(
   // well-tested lowering for no measured gain.
   const leftIsWidenedPrimitiveGlobal =
     isEqualityOp && ts.isIdentifier(expr.left) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, expr.left);
-  const rightIsAbstractNonString =
+  // (#4621 D) …and the same exclusion for a right operand the checker types as a
+  // structural OBJECT. The #2503 comment above already named this case — "or an
+  // object (must ToPrimitive then recurse, so `"x" == {valueOf:()=>"x"}` is
+  // `true`)" — but the flag it wrote only tested `any`/`unknown`, so an operand
+  // with a REAL object type (an object literal, the common spelling in the
+  // suite) still took the pure content-compare route and answered `false`
+  // WITHOUT calling `valueOf` or `toString` at all. Measured on
+  // `language/expressions/{equals/S11.9.1_A7.9, does-not-equals/S11.9.2_A7.8}`:
+  // `"+1" == {valueOf(){return 1}, toString(){return {}}}` answered false with an empty
+  // call log, where §7.2.15 step 9 requires `"+1" == ToPrimitive(y)` → `"+1" ==
+  // 1` → true.
+  //
+  // Deliberately the `object` fact ONLY. `class` / `builtin` / `function`
+  // receivers are left on their existing route: their §7.2.15 answer is also
+  // reached through ToPrimitive, but re-routing them would change hot, long-
+  // tested lowerings (wrapper equality, Date, RegExp) for rows this slice did
+  // not measure. Absent-not-wrong — a declined arm keeps today's behaviour.
+  const rightIsObjectOperand =
     !rightIsStrLike &&
-    (rightTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 &&
     ctx.nativeStrings &&
-    ctx.anyStrTypeIdx >= 0;
+    ctx.anyStrTypeIdx >= 0 &&
+    ctx.oracle.typeFactOf(expr.right).kind === "object";
+  const rightIsAbstractNonString =
+    (!rightIsStrLike &&
+      (rightTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 &&
+      ctx.nativeStrings &&
+      ctx.anyStrTypeIdx >= 0) ||
+    rightIsObjectOperand;
   // (#4564) §13.15.3 step 5 reduces BOTH operands BEFORE step 7 asks whether
   // either is a string: `o + ""` must take `valueOf`, but the string routes just
   // below call ToString on the object, which takes `toString`. Standalone only —

@@ -16,6 +16,64 @@ language_feature: misc
 goal: standalone-gap
 related: [4426, 4484, 4485]
 origin: "2026-08-16 residual map at 97.26%. Long-tail buckets grouped into bounded slices."
+loc-budget-allow:
+  # Six families, six arms, each of which must sit inside an existing ORDERED
+  # dispatch. Arm ORDER is the load-bearing property in every one of these
+  # files, so an arm cannot be lifted into a subsystem module without lifting
+  # the ordering decision with it — which is the bug class this campaign keeps
+  # re-fixing, not a refactor it wants. Each entry is majority COMMENT: the
+  # measured reason is longer than the emitted code.
+  #
+  #  - early-errors/node-checks.ts +37: two `on([...])` registrations plus the
+  #    `nodeIsParserSynthesizedMissing` predicate. This file IS the early-error
+  #    registry — a check that lives anywhere else is a check `runNodeChecks`
+  #    never runs. Real code is ~12 lines; the rest explains why TS code 1109 is
+  #    tolerated in compiler.ts and why re-raising exactly two parser-recovered
+  #    zero-width shapes is sound.
+  #  - statements/control-flow.ts +33: the NULL arm of `emitSwitchStrictEq`. It
+  #    wraps the existing tag cascade (now a named `taggedCascade` array) in one
+  #    `if`, ~11 instructions. It cannot move: the cascade closes over `lTmp`/
+  #    `rTmp` and over the `refArm`/`identityArm` locals allocated in this
+  #    function, and the arm must precede the tag dispatch.
+  #  - native-strings.ts +31: the `ref.is_null → "null"` arm at the top of
+  #    `__any_to_string`'s body. Five instructions. The helper is built here and
+  #    cached under `nativeStrHelpers`; the arm has to be the FIRST test, ahead
+  #    of the `$AnyString` / `$AnyValue` shape tests, so it is structurally part
+  #    of this builder.
+  #  - expressions/assignment.ts +30: the §19.1.1-19.1.3 bare-identifier arm.
+  #    The predicate and the name table live in the subsystem module
+  #    (`builtin-nonwritable-write.ts`, where #4484 C already put its twin);
+  #    what stays here is the ~8-line call site plus the note on why it must sit
+  #    above the `localMap` lookup and why the shadowing proof is load-bearing.
+  #  - binary-ops.ts +23: one extra disjunct on `rightIsAbstractNonString`
+  #    (three lines) plus the note recording that this file's own #2503 comment
+  #    already described the object case the flag did not test.
+  #  - expressions/new-super.ts +56: the nested-`new` arm, which must sit inside
+  #    `compileNewExpression`'s unwrap block next to the direct
+  #    NAMESPACE_NON_CONSTRUCTORS arm it shares a set with (that set is hoisted
+  #    to module scope by this change so the two arms cannot drift). Already
+  #    carried by #4506's grant for the same path; listed here for attribution.
+  - src/compiler/early-errors/node-checks.ts
+  - src/codegen/statements/control-flow.ts
+  - src/codegen/native-strings.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/binary-ops.ts
+  - src/codegen/expressions/new-super.ts
+func-budget-allow:
+  # The same three edits seen per-function; the fourth (`compileNewExpression`)
+  # is already granted by #4506 for this path.
+  #  - ensureAnyToStringHelper 606 -> 637: this function IS `__any_to_string`'s
+  #    body builder. The new arm is the body's outermost `if`.
+  #  - compileAssignment 531 -> 557: this function is the ORDERED chain of
+  #    identifier/target assignment arms; a new arm is one more link and its
+  #    position is the fix.
+  #  - compileBinaryExpression 1647 -> 1670: the route-selection preamble that
+  #    decides between the string fast path and the runtime-tag cascade. The
+  #    change is to that decision, so it cannot live outside it.
+  - src/codegen/native-strings.ts::ensureAnyToStringHelper
+  - src/codegen/expressions/assignment.ts::compileAssignment
+  - src/codegen/binary-ops.ts::compileBinaryExpression
+  - src/codegen/expressions/new-super.ts::compileNewExpression
 ---
 
 # #4621 — ES5 smalls sweep

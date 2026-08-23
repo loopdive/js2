@@ -546,6 +546,13 @@ const GLOBAL_NON_CONSTRUCTOR_FUNCTIONS = new Set([
 ]);
 
 /**
+ * (#1519 sub-issue B) The built-in non-constructor NAMESPACES. Hoisted to module
+ * scope by #4621 so the nested-`new` arm can consult the same set as the direct
+ * arm; the direct arm's behaviour is unchanged.
+ */
+const NAMESPACE_NON_CONSTRUCTORS = new Set(["Math", "JSON", "Reflect", "Atomics"]);
+
+/**
  * (#2886) Does `id` resolve to the **ambient global** binding (declared only in
  * the TypeScript lib `.d.ts` files), rather than a user-defined shadow? A user
  * who writes `function parseInt() {}` (or `class isNaN {}`) has a declaration in
@@ -3824,9 +3831,58 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
             ? unwrapped.expression
             : (unwrapped as ts.TypeAssertion).expression;
     }
+    // (#4621 D) `new new Math()` — the constructor expression is itself a `new`
+    // on a namespace / non-constructor global. §13.3.5.1 step 2 evaluates that
+    // INNER construction first, and it throws TypeError, so the whole expression
+    // is a TypeError regardless of what the outer `new` would decide.
+    //
+    // The generic guard (`tryNonConstructableNewTarget`) cannot reach this: it
+    // asks the oracle for the callee's type fact, and `new Math()` has an ERROR
+    // type, so the fact is `any` — which that guard deliberately refuses to act
+    // on, because a constructor may `return function(){}` and `any` proves
+    // nothing. The inner-name test below proves something stronger and purely
+    // syntactic: this particular inner `new` never returns at all. Measured on
+    // `language/expressions/new/S11.2.2_A4_T5` CHECK#2, where `new Math` (bare),
+    // `new Math()` and `var x = new Math(); new x()` all already threw and only
+    // the nested spelling silently produced `undefined`.
+    //
+    // The shadowing proof is the same one the direct arm two blocks down uses —
+    // a user `function Math(){}` / `class isNaN{}` IS constructable and must keep
+    // the normal path.
+    if (ts.isNewExpression(unwrapped)) {
+      let innerCtor: ts.Expression = unwrapped.expression;
+      while (
+        ts.isParenthesizedExpression(innerCtor) ||
+        ts.isAsExpression(innerCtor) ||
+        ts.isNonNullExpression(innerCtor) ||
+        ts.isTypeAssertionExpression(innerCtor)
+      ) {
+        innerCtor = ts.isParenthesizedExpression(innerCtor)
+          ? innerCtor.expression
+          : ts.isAsExpression(innerCtor)
+            ? innerCtor.expression
+            : ts.isNonNullExpression(innerCtor)
+              ? innerCtor.expression
+              : (innerCtor as ts.TypeAssertion).expression;
+      }
+      if (ts.isIdentifier(innerCtor)) {
+        const innerName = innerCtor.text;
+        const innerIsNonConstructorGlobal =
+          NAMESPACE_NON_CONSTRUCTORS.has(innerName) || GLOBAL_NON_CONSTRUCTOR_FUNCTIONS.has(innerName);
+        if (
+          innerIsNonConstructorGlobal &&
+          !ctx.classSet.has(innerName) &&
+          !ctx.externClasses.has(innerName) &&
+          resolvesToAmbientGlobal(ctx, innerCtor)
+        ) {
+          emitThrowTypeError(ctx, fctx, `${innerName} is not a constructor`);
+          fctx.body.push({ op: "ref.null.extern" });
+          return { kind: "externref" };
+        }
+      }
+    }
     if (ts.isIdentifier(unwrapped)) {
       const name = unwrapped.text;
-      const NAMESPACE_NON_CONSTRUCTORS = new Set(["Math", "JSON", "Reflect", "Atomics"]);
       if (NAMESPACE_NON_CONSTRUCTORS.has(name)) {
         // Use the real-TypeError throw path so `assert.throws(TypeError, …)`
         // in test262 negative cases (S11.2.2_A4_T*) observes a TypeError
