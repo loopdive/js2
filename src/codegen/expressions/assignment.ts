@@ -2783,7 +2783,23 @@ export function emitAssignToTarget(
       compileExpression(ctx, fctx, target.expression);
       fctx.body.push({ op: "local.get", index: valueLocal });
       if (!valTypesMatch(valueType, fieldType)) {
-        coerceType(ctx, fctx, valueType, fieldType);
+        // (#4531, twin of the #4611 member-set arm) A wasm-vec value stored
+        // into an externref FIELD keeps its raw identity: the generic
+        // vec→externref coercion appends `__make_iterable`, which materializes
+        // a JS MIRROR — the field then holds the mirror while every native
+        // method/read path `ref.cast`s to the vec (prettier AstPath's
+        // `this.stack = [value]`: every stack op trapped `illegal cast`).
+        // Host-boundary reads of the raw boxed vec still materialize on
+        // demand in the runtime bridges.
+        if (
+          fieldType.kind === "externref" &&
+          (valueType.kind === "ref" || valueType.kind === "ref_null") &&
+          getArrTypeIdxFromVec(ctx, (valueType as { typeIdx: number }).typeIdx) >= 0
+        ) {
+          fctx.body.push({ op: "extern.convert_any" });
+        } else {
+          coerceType(ctx, fctx, valueType, fieldType);
+        }
       }
       fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
       return;

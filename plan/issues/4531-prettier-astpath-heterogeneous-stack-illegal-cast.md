@@ -157,3 +157,46 @@ DIFFERENT mechanism (guarded casts inside the module-const-arrow
 `diffSequence` closure, type-57 cascade), still open here. Prettier AstPath
 (the issue headline, class-FIELD variant) also still open — the widening
 covers literals, not class-field arrays mutated across types.
+
+## 2026-08-23 checkpoint — AstPath class-FIELD headline FIXED (prettier 48 → 49/151; call() green, traps cleared)
+
+Three coordinated fixes close the class-field variant (the issue headline):
+
+1. **Raw vec box on externref FIELD stores** — `compileCoercionRhs`
+   (char-at-transfer.ts), the ctor-store twin of the #4611 member-set arm: an
+   array-literal RHS assigned to an externref struct field compiles UNHINTED
+   and boxes with a bare `extern.convert_any`. Before, the externref hint
+   routed the vec through the generic coercion, which appends
+   `__make_iterable`; the field then held the JS MIRROR while every native
+   lane `ref.cast`ed to the vec — the `illegal cast` under all four AstPath
+   methods.
+2. **Guarded dual-lane push/pop for externref receivers** —
+   `compileExternReceiverPushPop` (array-methods.ts), mirroring the #2784 S3
+   arm: `ref.test` the registered vec carriers → native
+   `__vec_push`/`__vec_pop`, else the host `__extern_method_call` bridge.
+   `case "push"/"pop"` route there when `receiverIsExternref` (host/gc lane
+   only). The old native inline push cast the receiver unguarded.
+3. **Mirror→vec mutation routing** — `_tryWasmVecMutation` (runtime.ts)
+   resolves a registered mirror via `vecForMirror` and mutates BOTH the vec
+   (authoritative) and the mirror (immediate host-side visibility). A host
+   push on a mirror was a silent no-op wiped by the next crossing's refresh.
+
+Regression test: `tests/issue-4531-class-field-array-native-identity.test.ts`
+(2 tests incl. the verbatim AstPath call/getValue shape, `true|1`). Full
+pinned-source probe (`.tmp/probe-astpath.mts`, real ast-path.js): call,
+nested call, callParent basics all correct.
+
+**Measured**: prettier 48 → 49/151; AstPath#call PASSES; callParent/each/map
+converted from `illegal cast` traps to assertion-level residuals
+(`callParent` assert 3 `1 != 5` — `stack.splice(stackIndex + 1)` +
+`stack.push(...parentValues)` spread-push on the field are the next lanes;
+each/map toEqual mismatches). Guards: acorn 3518/3518, jest 328/358,
+react 109 pass zero-flips (fail 35→37 is the main-merge denominator change:
+the 2 former `skipped` now count as fail), cookie 63740, clsx 32/32,
+issue-3244/4204/4289/4428/4531/4611 unit guards 46/46, equivalence
+push-pop/prototype-methods/optimize-differential 29/29, func/LOC/oracle
+gates OK.
+
+**Still open here**: the ~95 prettier no-error-text failures (doc-utils
+validation / isEmptyDoc / parser-selection families — likely one shared root,
+un-diagnosed) and the AstPath splice/spread-push lanes above.

@@ -28,6 +28,7 @@ import {
 } from "./index.js";
 import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
 import { addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
+import { reserveVecMethodHelper } from "./vec-access-exports.js"; // (#4531) extern-receiver push/pop dual-lane
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
 import { emitTypedArraySetBoundsCheck } from "./typed-array-set-bounds.js";
 import { emitToBoolean } from "./coercion-engine.js";
@@ -1781,9 +1782,39 @@ export function compileArrayMethodCall(
         : compileArrayReverse(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "push":
+      // (#4531) An externref-shaped receiver (a class FIELD holding what may
+      // be a `__make_iterable` host mirror — prettier's `this.stack`) must not
+      // take the native inline push, whose receiver coercion `ref.cast`s to
+      // the statically inferred vec and traps `illegal cast` on the mirror.
+      // Emit the #2784-style guarded dual-lane instead: `ref.test` the vec
+      // carriers → native `__vec_push`, else the host `__extern_method_call`
+      // bridge (whose `_tryWasmVecMutation` routes a registered mirror back to
+      // its source vec). Host/gc lane only — standalone and native-first keep
+      // the native path (no host mirrors exist there).
+      if (
+        receiverIsExternref &&
+        !ctx.standalone &&
+        !ctx.wasi &&
+        ctx.targetProfile.semanticProviders !== "native-first" &&
+        callExpr.arguments.length === 1
+      ) {
+        result = compileExternReceiverPushPop(ctx, fctx, methodAccess, callExpr, "push");
+        if (result !== undefined) break;
+      }
       result = compileArrayPush(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "pop":
+      // (#4531) Same dual-lane as `push` — see above.
+      if (
+        receiverIsExternref &&
+        !ctx.standalone &&
+        !ctx.wasi &&
+        ctx.targetProfile.semanticProviders !== "native-first" &&
+        callExpr.arguments.length === 0
+      ) {
+        result = compileExternReceiverPushPop(ctx, fctx, methodAccess, callExpr, "pop");
+        if (result !== undefined) break;
+      }
       result = compileArrayPop(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, expectedType);
       break;
     case "shift":
@@ -3337,6 +3368,121 @@ function compileArrayReverse(
  * arr.push(val, ...) -> capacity-based amortized push supporting multiple arguments.
  * Mutates vec struct in-place: grows backing array if needed, sets elements, increments length.
  */
+/**
+ * (#4531) Guarded dual-lane `push`/`pop` for an EXTERNREF-shaped receiver —
+ * the class-field case where the slot may hold either the native vec (boxed
+ * through externref) or its `__make_iterable` host MIRROR (prettier's
+ * `this.stack`). `ref.test` the registered vec carriers: on hit call the
+ * unconditionally-exported native `__vec_push`/`__vec_pop` helper; else route
+ * through the host `__extern_method_call` bridge, whose `_tryWasmVecMutation`
+ * resolves a registered mirror back to its source vec (runtime.ts). Mirrors
+ * the #2784 S3 arm in call-receiver-method.ts. Returns undefined when a
+ * required import could not be ensured (caller falls back to the native path).
+ */
+function compileExternReceiverPushPop(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  callExpr: ts.CallExpression,
+  methodName: "push" | "pop",
+): ValType | undefined {
+  if (!ts.isPropertyAccessExpression(propAccess)) return undefined;
+  const mcIdx = ensureLateImport(
+    ctx,
+    "__extern_method_call",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
+  const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
+  const boxNumIdx =
+    methodName === "push"
+      ? ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }])
+      : undefined;
+  addStringConstantGlobal(ctx, methodName);
+  flushLateImportShifts(ctx, fctx);
+  const vecOpIdx = reserveVecMethodHelper(ctx, methodName);
+  if (
+    vecOpIdx === undefined ||
+    mcIdx === undefined ||
+    arrNewIdx === undefined ||
+    arrPushIdx === undefined ||
+    (methodName === "push" && boxNumIdx === undefined)
+  ) {
+    return undefined;
+  }
+  // Receiver -> externref local.
+  const recvT = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
+  if (recvT && recvT.kind !== "externref") coerceType(ctx, fctx, recvT, { kind: "externref" });
+  else if (!recvT) fctx.body.push({ op: "ref.null.extern" });
+  const recvLocal = allocLocal(fctx, `__xr_pp_recv_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: recvLocal });
+  // push's element -> argLocal (side effects evaluated once, up front).
+  let argLocal: number | undefined;
+  if (methodName === "push") {
+    const a = callExpr.arguments[0];
+    if (a) {
+      const at = compileExpression(ctx, fctx, a, { kind: "externref" });
+      if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
+      else if (!at) fctx.body.push({ op: "ref.null.extern" });
+    } else {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    argLocal = allocLocal(fctx, `__xr_pp_arg_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: argLocal });
+  }
+  // isVec = OR of ref.test over every registered vec carrier.
+  const anyTmp = allocLocal(fctx, `__xr_pp_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  fctx.body.push({ op: "local.get", index: recvLocal });
+  fctx.body.push({ op: "any.convert_extern" });
+  fctx.body.push({ op: "local.set", index: anyTmp });
+  let emitted = false;
+  for (const vi of new Set(ctx.vecTypeMap.values())) {
+    fctx.body.push({ op: "local.get", index: anyTmp });
+    fctx.body.push({ op: "ref.test", typeIdx: vi });
+    if (emitted) fctx.body.push({ op: "i32.or" });
+    emitted = true;
+  }
+  if (!emitted) {
+    fctx.body.push({ op: "i32.const", value: 0 });
+  }
+  // THEN arm: native vec op through the exported helper.
+  const thenStart = fctx.body.length;
+  if (methodName === "push") {
+    fctx.body.push({ op: "local.get", index: recvLocal });
+    fctx.body.push({ op: "local.get", index: argLocal! });
+    fctx.body.push({ op: "call", funcIdx: vecOpIdx }); // -> i32 new length
+    fctx.body.push({ op: "f64.convert_i32_s" });
+    fctx.body.push({ op: "call", funcIdx: boxNumIdx! }); // -> externref
+  } else {
+    fctx.body.push({ op: "local.get", index: recvLocal });
+    fctx.body.push({ op: "call", funcIdx: vecOpIdx }); // -> externref
+  }
+  const thenInstrs = fctx.body.splice(thenStart);
+  // ELSE arm: host bridge.
+  const elseStart = fctx.body.length;
+  fctx.body.push({ op: "call", funcIdx: arrNewIdx });
+  const argsLocal = allocLocal(fctx, `__xr_pp_args_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: argsLocal });
+  if (methodName === "push") {
+    fctx.body.push({ op: "local.get", index: argsLocal });
+    fctx.body.push({ op: "local.get", index: argLocal! });
+    fctx.body.push({ op: "call", funcIdx: arrPushIdx });
+  }
+  fctx.body.push({ op: "local.get", index: recvLocal });
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
+  fctx.body.push({ op: "local.get", index: argsLocal });
+  fctx.body.push({ op: "call", funcIdx: mcIdx });
+  const elseInstrs = fctx.body.splice(elseStart);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: thenInstrs,
+    else: elseInstrs,
+  });
+  return { kind: "externref" };
+}
+
 function compileArrayPush(
   ctx: CodegenContext,
   fctx: FunctionContext,

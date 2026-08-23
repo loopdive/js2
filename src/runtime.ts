@@ -61,7 +61,12 @@ import {
 import * as test262Host from "./runtime/test262-harness-host.js"; // (#4394)
 import { ASYNC_CALLBACK_EXCEPTION_POLICY } from "./ir/async-runtime-providers.js";
 import { _arrayProtoSparseFastPaths } from "./runtime/array-proto-sparse.js"; // (#3103, #1234) sparse-aware Array.prototype fast paths
-import { registerVecMirror, snapshotVecMirrors, reconcileVecMirrors } from "./runtime/vec-mirror-writeback.js"; // (#3603 S1) vec-mirror write-back
+import {
+  registerVecMirror,
+  snapshotVecMirrors,
+  reconcileVecMirrors,
+  vecForMirror,
+} from "./runtime/vec-mirror-writeback.js"; // (#3603 S1) vec-mirror write-back; (#4531) mirror→vec mutation routing
 import { createHostCallImport, isHostCallImportName } from "./runtime/host-call-abi.js";
 import { createBoundaryObjectAdapter } from "./runtime/boundary-object-adapter.js";
 import { createBoundaryCallbackAdapter } from "./runtime/boundary-callback-adapter.js";
@@ -2631,7 +2636,25 @@ function _tryWasmVecMutation(
     const wrapperTarget = _wasmClosureWrapperTargets.get(rawVec);
     if (wrapperTarget) rawVec = wrapperTarget;
   }
-  if (!_isWasmStruct(rawVec)) return { handled: false };
+  // (#4531) The receiver may be a `__make_iterable` MIRROR (a real JS array) —
+  // prettier's `this.stack` field stores the mirror externref, so a compiled
+  // `stack.push(x)` reaches this bridge with the mirror, not the vec. Mutating
+  // only the mirror is a silent no-op (the next crossing refreshes it FROM the
+  // unchanged vec, #3368/#3603). Resolve the source vec and mutate BOTH: the
+  // vec (authoritative) and the mirror (so host-side reads that hold the
+  // mirror reference observe the mutation immediately).
+  let mirrorArr: unknown[] | undefined;
+  if (!_isWasmStruct(rawVec)) {
+    const source = vecForMirror(rawVec);
+    if (process.env.JS2WASM_DEBUG_MIRROR) {
+      process.stderr.write(
+        `[mirror-mut] method=${method} isArr=${Array.isArray(rawVec)} source=${source === undefined ? "none" : "found"}\n`,
+      );
+    }
+    if (source === undefined || !_isWasmStruct(source)) return { handled: false };
+    mirrorArr = rawVec as unknown[];
+    rawVec = source;
+  }
 
   const mutSupFn = exports.__vec_mut_supported as ((value: any) => number) | undefined;
   let supported = false;
@@ -2650,12 +2673,17 @@ function _tryWasmVecMutation(
     for (const arg of args ?? []) {
       newLen = pushFn(rawVec, _unwrapForHost(arg));
       if (newLen < 0) return { handled: false };
+      // Keep the mirror in lockstep (index assignment — `Array.prototype.push`
+      // may have been deleted by a test262 file, see vec-mirror-writeback.ts).
+      if (mirrorArr) mirrorArr[mirrorArr.length] = arg;
     }
     return { handled: true, value: newLen };
   }
 
   if (method === "pop" && typeof exports.__vec_pop === "function") {
-    return { handled: true, value: exports.__vec_pop(rawVec) };
+    const popped = exports.__vec_pop(rawVec);
+    if (mirrorArr && mirrorArr.length > 0) mirrorArr.length = mirrorArr.length - 1;
+    return { handled: true, value: popped };
   }
   return { handled: false };
 }
