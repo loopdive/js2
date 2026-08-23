@@ -119,6 +119,8 @@ import { tryCompileTemporalMethodCall } from "../temporal-native.js";
 import { ensureTextEncodingHelpers } from "../text-encoding-native.js";
 import { defaultValueInstrs, emitGuardedRefCast, pushDefaultValue } from "../type-coercion.js";
 import { compileDateMethodCall } from "./builtins.js";
+// (#4479 slice 2) Annex B §B.2.2 legacy accessor methods on an ordinary receiver.
+import { tryCompileAnnexBAccessorCall } from "../object-proto-annex-b-accessors.js";
 import {
   compileCallablePropertyCall,
   compileGetterCallable,
@@ -700,6 +702,12 @@ export function compileReceiverMethodCall(
   if (propAccess.name.text === "hasOwnProperty" || propAccess.name.text === "propertyIsEnumerable") {
     return compilePropertyIntrospection(ctx, fctx, propAccess, expr);
   }
+
+  // (#4479 slice 2) Annex B §B.2.2 `o.__defineGetter__(k, f)` & friends — here
+  // for the introspection arm's reason: the receiver may be ANY object, so the
+  // extern-class dispatch below would hunt a member no builtin declares.
+  const annexBAccessor = tryCompileAnnexBAccessorCall(ctx, fctx, propAccess, expr);
+  if (annexBAccessor !== undefined) return annexBAccessor;
 
   // #1654/#4397 — the native DataView provider is independent of the embedder.
   // It must run before extern-class dispatch so native-first JS builds do not
