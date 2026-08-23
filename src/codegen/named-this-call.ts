@@ -117,7 +117,14 @@ function receiverIsAdmitted(
   // dispatch. The trampoline still runtime-splits a null value to the legacy
   // unbound call, so a detached/nullish reach does not enter the fast arm.
   if (inner.kind === ts.SyntaxKind.ThisKeyword) {
-    return fctx.readsCurrentThis === true || thisReceiverIsGlobalObject(ctx, fctx, inner);
+    // (#4536/#3729) A CLASS METHOD's own `this` is its receiver param
+    // (`localMap` carries "this"), not `__current_this` — acorn's
+    // `finishNode(node, type) { return finishNodeAt.call(this, …) }` is
+    // exactly this shape. The compiled receiver value is param 0 either way,
+    // so the trampoline install is as sound as for the readsCurrentThis rung;
+    // refusing it dropped the receiver and silently skipped every
+    // `this.options.ranges`-guarded write in the callee.
+    return fctx.readsCurrentThis === true || fctx.localMap.has("this") || thisReceiverIsGlobalObject(ctx, fctx, inner);
   }
   const fact = ctx.oracle.typeFactOf(inner);
   if (!factIsStaticallyNullish(fact)) return true;

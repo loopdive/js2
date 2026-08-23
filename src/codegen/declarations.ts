@@ -343,12 +343,161 @@ function restBindingOverridesToExternref(p: ts.ParameterDeclaration): boolean {
 
 const dynamicObjectParamsByFunction = new WeakMap<ts.FunctionDeclaration, ReadonlySet<string>>();
 
+// A call-site-inferred JavaScript parameter starts life as one nominal WasmGC
+// object shape. If the function assigns a different object-producing value to
+// that parameter, keeping the narrowed slot emits a guarded ref.cast and turns
+// a valid value into null when the shapes differ. ReactDOM's createRequest is
+// the large real-world instance: its render-state parameter is replaced by a
+// pending-segment object before the value is used. Keep this rule deliberately
+// narrow: only direct assignments to a parameter in this function body whose
+// RHS is proven to produce a reference. Named/native reference carriers retain
+// their ABI; scalar carriers widen only for this mixed-representation case.
+const reassignedReferenceParamsByFunction = new WeakMap<ts.FunctionDeclaration, ReadonlySet<string>>();
+
+const functionReturnsReferenceByDeclaration = new WeakMap<ts.FunctionDeclaration, boolean>();
+
+function expressionProducesReference(
+  ctx: CodegenContext,
+  expression: ts.Expression,
+  visiting: Set<ts.FunctionDeclaration>,
+): boolean {
+  while (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isNonNullExpression(expression)
+  ) {
+    expression = expression.expression;
+  }
+  if (
+    ts.isObjectLiteralExpression(expression) ||
+    ts.isArrayLiteralExpression(expression) ||
+    ts.isFunctionExpression(expression) ||
+    ts.isArrowFunction(expression) ||
+    ts.isClassExpression(expression) ||
+    ts.isNewExpression(expression)
+  ) {
+    return true;
+  }
+  if (ts.isConditionalExpression(expression)) {
+    return (
+      expressionProducesReference(ctx, expression.whenTrue, visiting) ||
+      expressionProducesReference(ctx, expression.whenFalse, visiting)
+    );
+  }
+  if (ts.isBinaryExpression(expression)) {
+    if (expression.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+      return expressionProducesReference(ctx, expression.right, visiting);
+    }
+    if (
+      expression.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+      expression.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+      expression.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken
+    ) {
+      return (
+        expressionProducesReference(ctx, expression.left, visiting) ||
+        expressionProducesReference(ctx, expression.right, visiting)
+      );
+    }
+    return false;
+  }
+  if (ts.isCallExpression(expression)) {
+    // Function.prototype.bind always returns a callable reference, even when
+    // the receiver is an untyped local function value. ReactDOM's event
+    // bridge reuses its numeric `eventSystemFlags` parameter for precisely
+    // this bound listener.
+    if (ts.isPropertyAccessExpression(expression.expression) && expression.expression.name.text === "bind") {
+      return true;
+    }
+    const declaration = ctx.oracle.valueDeclarationOf(expression.expression);
+    if (declaration && ts.isFunctionDeclaration(declaration) && !visiting.has(declaration)) {
+      const cached = functionReturnsReferenceByDeclaration.get(declaration);
+      if (cached !== undefined) return cached;
+      visiting.add(declaration);
+      let result = false;
+      const visit = (node: ts.Node): void => {
+        if (result) return;
+        if (
+          node !== declaration &&
+          (ts.isFunctionDeclaration(node) ||
+            ts.isFunctionExpression(node) ||
+            ts.isArrowFunction(node) ||
+            ts.isMethodDeclaration(node) ||
+            ts.isAccessor(node) ||
+            ts.isConstructorDeclaration(node))
+        ) {
+          return;
+        }
+        if (ts.isReturnStatement(node) && node.expression) {
+          result = expressionProducesReference(ctx, node.expression, visiting);
+          if (result) return;
+        }
+        forEachChild(node, visit);
+      };
+      if (declaration.body) forEachChild(declaration.body, visit);
+      visiting.delete(declaration);
+      functionReturnsReferenceByDeclaration.set(declaration, result);
+      return result;
+    }
+  }
+  return false;
+}
+
+function reassignedReferenceParams(ctx: CodegenContext, stmt: ts.FunctionDeclaration): ReadonlySet<string> {
+  const cached = reassignedReferenceParamsByFunction.get(stmt);
+  if (cached) return cached;
+  const parametersByName = new Map<string, ts.ParameterDeclaration>();
+  for (const parameter of stmt.parameters) {
+    if (ts.isIdentifier(parameter.name)) parametersByName.set(parameter.name.text, parameter);
+  }
+  const names = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (
+      node !== stmt &&
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node) ||
+        ts.isAccessor(node) ||
+        ts.isConstructorDeclaration(node))
+    ) {
+      return;
+    }
+    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
+      let target: ts.Expression = node.left;
+      while (
+        ts.isParenthesizedExpression(target) ||
+        ts.isAsExpression(target) ||
+        ts.isTypeAssertionExpression(target) ||
+        ts.isNonNullExpression(target)
+      ) {
+        target = target.expression;
+      }
+      if (ts.isIdentifier(target)) {
+        const parameter = parametersByName.get(target.text);
+        if (
+          parameter &&
+          ctx.oracle.valueDeclarationOf(target) === parameter &&
+          expressionProducesReference(ctx, node.right, new Set())
+        ) {
+          names.add(target.text);
+        }
+      }
+    }
+    forEachChild(node, visit);
+  };
+  if (stmt.body) forEachChild(stmt.body, visit);
+  reassignedReferenceParamsByFunction.set(stmt, names);
+  return names;
+}
+
 /**
- * An implicit-any parameter used as the receiver of a computed property access
- * may be intentionally polymorphic. Specialising it from one call-site object
- * shape would insert a nominal struct cast at the function boundary, while the
- * body uses a runtime key and must accept every object carrier. Acorn's
- * `getOptions(opts)` is the canonical case (`opts[opt]`).
+ * An implicit-any parameter used as the receiver of a property access may be
+ * intentionally polymorphic. Specialising it from one call-site object shape
+ * would insert a nominal struct cast at the function boundary, while the body
+ * uses runtime fields and must accept every object carrier. This covers both
+ * computed (`opts[opt]`) and ordinary (`root.cancelPendingCommit`) accesses;
+ * ReactDOM's scheduler root is the latter real-world case.
  *
  * Call-site inference may still prove an indexed vec/array carrier. Those
  * carriers must stay concrete: Native Messaging's untyped `buf[start + i]`
@@ -384,6 +533,21 @@ function implicitAnyParamNeedsDynamicObjectCarrier(
       ts.isElementAccessExpression(node) &&
       ts.isIdentifier(node.expression) &&
       parameterNames.has(node.expression.text)
+    ) {
+      dynamicParams.add(node.expression.text);
+    }
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      parameterNames.has(node.expression.text) &&
+      // Read-only property probes can be callback/error carriers whose
+      // concrete ABI is part of the host contract (for example Test262's
+      // `$DONE(error)` path).  Only widen a parameter when the property
+      // itself is mutated; this retains the dynamic carrier needed by
+      // ReactDOM's reassigned root while preserving those callback ABIs.
+      ts.isBinaryExpression(node.parent) &&
+      node.parent.left === node &&
+      isAssignmentOperator(node.parent.operatorToken.kind)
     ) {
       dynamicParams.add(node.expression.text);
     }
@@ -653,6 +817,20 @@ function lowerParamType(
         inferredTypeIdx === undefined ? undefined : ctx.typeIdxToStructName.get(inferredTypeIdx);
       const inferredIndexedCarrier =
         inferredStructName?.startsWith("__vec_") || inferredStructName?.startsWith("__arr_");
+      // An ordinary property access is also how an untyped string/number
+      // parameter is observed (`chunk.length`, `chunk.charCodeAt(i)`).  The
+      // dynamic-object guard must not erase that primitive inference: doing so
+      // changes the callback ABI to externref and breaks the standalone WASI
+      // stdin reactor, whose `onData(chunk)` callback receives a native string.
+      // Computed/nominal object accesses still remain on the universal carrier;
+      // only primitive scalars and the compiler's native-string carrier are
+      // safe to keep specialized here.
+      const inferredPrimitiveCarrier =
+        inferred.kind === "f64" ||
+        inferred.kind === "f32" ||
+        inferred.kind === "i32" ||
+        inferred.kind === "i64" ||
+        ((inferred.kind === "ref" || inferred.kind === "ref_null") && inferred.typeIdx === ctx.anyStrTypeIdx);
       const inferredEscapingAnonymousObject =
         inferredStructName?.startsWith("__anon_") === true && functionDeclarationEscapesAsValue(ctx, stmt, sourceFile);
       // A call-site object literal is only one observed shape of an untyped JS
@@ -664,13 +842,31 @@ function lowerParamType(
       // A computed-access parameter likewise stays dynamic unless inference
       // proved the indexed vec/array family rather than one incidental object.
       if (
-        !(needsDynamicObjectCarrier && !inferredIndexedCarrier) &&
+        !(needsDynamicObjectCarrier && !inferredIndexedCarrier && !inferredPrimitiveCarrier) &&
         !(ctx.standalone && inferredStructName?.startsWith("__anon_")) &&
         !inferredEscapingAnonymousObject
       ) {
         wasmType = inferred;
       }
     }
+  }
+  // (#3982) A reference narrowed to an anonymous object shape cannot safely
+  // remain in that nominal slot after a mutable parameter assignment. The
+  // body compiler would otherwise emit a guarded cast from the new shape back
+  // to the old one; a mismatch produces null and the next property read traps.
+  // Preserve JavaScript's dynamic reassignment semantics by using the universal
+  // externref carrier. Named/native carriers (strings, vectors, and class
+  // instances) keep their existing specialized ABI until a dedicated slice
+  // proves the corresponding mutation family safe.
+  const paramStructName =
+    wasmType.kind === "ref" || wasmType.kind === "ref_null" ? ctx.typeIdxToStructName.get(wasmType.typeIdx) : undefined;
+  const hasReferenceReassignment = reassignedReferenceParams(ctx, stmt).has(param.name.getText(sourceFile));
+  const isAnonymousReference =
+    (wasmType.kind === "ref" || wasmType.kind === "ref_null") && paramStructName?.startsWith("__anon_");
+  const isScalar =
+    wasmType.kind === "i32" || wasmType.kind === "i64" || wasmType.kind === "f32" || wasmType.kind === "f64";
+  if (hasReferenceReassignment && (isAnonymousReference || isScalar)) {
+    wasmType = { kind: "externref" };
   }
   // Runtime eval publishes top-level script functions through an externref
   // AOT-callable adapter. Structurally typed object parameters need the same
@@ -1350,9 +1546,43 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       // registration for these shapes. (#1287)
       const isAmbient = hasDeclareModifier(stmt) || stmt.getSourceFile().isDeclarationFile;
       if (ts.isClassDeclaration(stmt) && stmt.name && !isAmbient) {
-        collectClassDeclaration(ctx, stmt);
-        // Register class declaration .name
-        ctx.functionNameMap.set(stmt.name.text, stmt.name.text);
+        // (#4618) A NESTED class declaration whose name is already taken by a
+        // class in ANOTHER scope must get its own identity — collection is
+        // name-keyed and collectClassDeclaration's structMap guard silently
+        // no-ops the duplicate, so react's per-test `class Foo extends
+        // React.Component { … }` re-declarations all bound to the FIRST
+        // test's compiled class (probe: two fns each declaring `class Foo`,
+        // the second's methods answered the first's bodies). Mint the same
+        // per-site synthetic identity class EXPRESSIONS already use; the
+        // statement-position compile binds the scoped VALUE to a local.
+        let nestedDuplicate = false;
+        if (ctx.classSet.has(stmt.name.text) || ctx.structMap.has(stmt.name.text)) {
+          let owner: ts.Node | undefined = stmt.parent;
+          while (owner && !ts.isFunctionLike(owner) && !ts.isSourceFile(owner)) owner = owner.parent;
+          nestedDuplicate = !!owner && !ts.isSourceFile(owner);
+        }
+        if (nestedDuplicate && !ctx.anonClassExprNames.has(stmt)) {
+          const syntheticName = `__anonClass_${stmt.name.text}_${ctx.anonTypeCounter++}`;
+          ctx.anonClassExprNames.set(stmt, syntheticName);
+          collectClassDeclaration(ctx, stmt, syntheticName);
+          // Bodies are compiled at the statement position — without the
+          // deferred flag its structMap-membership early-return would leave
+          // every method a stub returning null.
+          ctx.deferredClassBodies.add(syntheticName);
+          // collectClassDeclaration maps the TS symbol name to the synthetic
+          // GLOBALLY (classExprNameMap) — correct for the one-per-name
+          // `const C = class {}` shape, but for a same-named class in another
+          // scope it would hijack every OTHER scope's reads of that name.
+          // Scoping is provided by the statement-position LOCAL binding.
+          if (ctx.classExprNameMap.get(stmt.name.text) === syntheticName) {
+            ctx.classExprNameMap.delete(stmt.name.text);
+          }
+          ctx.functionNameMap.set(syntheticName, stmt.name.text);
+        } else if (!nestedDuplicate) {
+          collectClassDeclaration(ctx, stmt);
+          // Register class declaration .name
+          ctx.functionNameMap.set(stmt.name.text, stmt.name.text);
+        }
       } else if (ts.isVariableStatement(stmt) && !isAmbient) {
         for (const decl of stmt.declarationList.declarations) {
           if (ts.isIdentifier(decl.name) && decl.initializer && ts.isClassExpression(decl.initializer)) {
@@ -2452,14 +2682,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           ctx.moduleInitStatements.push(stmt);
           continue;
         }
-        // (#2660 S2) `F.prototype = …` / `F.prototype.p = …` for a user fnctor `F`
-        // (standalone): the root identifier `F` is a function, NOT a module
-        // global, so the generic check below drops the statement and the
-        // prototype write never reaches compilePropertyAssignment (the S2
-        // interception). Keep it in __module_init so the per-fnctor prototype
-        // `$Object` is populated. Host/GC mode is byte-identical (gated, dropped
-        // as before). Mirrors the Array.prototype CPR keep-in-init above.
-        if (ctx.standalone && isFnctorPrototypeAssignTarget(ctx, expr.left)) {
+        // (#2660 S2 / #3982) `F.prototype = …` / `F.prototype.p = …` for a user
+        // fnctor `F`: the root identifier `F` is a function, NOT a module
+        // global, so the generic check below drops the statement. Keep it in
+        // __module_init so the runtime's fnctor sidecar can receive the write
+        // in both standalone and JS-host lanes. Standalone's dedicated `$Object`
+        // interception and the host lane's `_getOrVivifyFnPrototype` path use
+        // the same source-level assignment; dropping it only in the host lane
+        // leaves `new F().method()` with an empty prototype.
+        if (isFnctorPrototypeAssignTarget(ctx, expr.left)) {
           ctx.moduleInitStatements.push(stmt);
           continue;
         }
@@ -2566,6 +2797,34 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           if (ts.isIdentifier(receiver) && ctx.topLevelFunctionNames.has(receiver.text)) {
             ctx.moduleInitStatements.push(stmt);
             continue;
+          }
+          // (#4618) `F.prototype.m = …` — the react shape (the compiled react
+          // source's `Component.prototype.setState = …` /
+          // `Component.prototype.isReactComponent = {}` are top-level
+          // statements). The bare-identifier gate above deliberately excluded
+          // prototype chains, but that exclusion predates the #1712 vivified
+          // fnctor prototype: in host mode the write-arm inside a function
+          // body lands on the identity-stable vivified `F.prototype` object
+          // (measured: probe passes), so keeping the statement is the whole
+          // fix — the same collection-gap family as #2992/#3592/#3615/#3049.
+          if (
+            ts.isPropertyAccessExpression(receiver) &&
+            !ts.isPrivateIdentifier(receiver.name) &&
+            receiver.name.text === "prototype"
+          ) {
+            let protoRecv: ts.Expression = receiver.expression;
+            while (
+              ts.isParenthesizedExpression(protoRecv) ||
+              ts.isAsExpression(protoRecv) ||
+              ts.isNonNullExpression(protoRecv) ||
+              ts.isTypeAssertionExpression(protoRecv)
+            ) {
+              protoRecv = protoRecv.expression;
+            }
+            if (ts.isIdentifier(protoRecv) && ctx.topLevelFunctionNames.has(protoRecv.text)) {
+              ctx.moduleInitStatements.push(stmt);
+              continue;
+            }
           }
           // (#4394) Host/GC counterpart of the standalone #3666 keep above:
           // the receiver is itself a function-valued own property of a
@@ -2912,7 +3171,17 @@ export function compileDeclarations(
       // A name bound to a *user* function is a function reference, not a
       // captured variable (but a same-named wasm:js-string builtin import must
       // not block capture — discriminate by index, as promotion does).
-      if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) return false;
+      // (#4618) The check is name-keyed, so a MODULE-level `function test`
+      // used to veto deferral of a try-nested class whose method captures the
+      // enclosing scope's `let test` (react's `componentDidMount(){test=this}`
+      // under the shim's module `function test`) — the class compiled eagerly,
+      // promotion never fired, and the write was a silent no-op. Only a
+      // funcMap entry owned by a nested FunctionDeclaration is a true
+      // function reference here; a module-level function shadowed by the
+      // scope-local declaration (names.has(name) held above) is a capture.
+      if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) {
+        if (ctx.funcMapOwnerDecl.has(name)) return false;
+      }
       return true;
     };
     for (const member of decl.members) {
@@ -3302,6 +3571,7 @@ export function compileDeclarations(
     ctx.capturedGlobals.clear();
     ctx.capturedGlobalsWidened.clear();
     ctx.capturedBoxGlobals?.clear();
+    ctx.capturedGlobalsOwner?.clear();
     const initFctx: FunctionContext = {
       name: "__module_init",
       params: [],

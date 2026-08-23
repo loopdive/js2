@@ -2349,6 +2349,16 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
   if (!ts.isIdentifier(expr)) return false;
   const sym = ctx.checker.getSymbolAtLocation(expr);
   const decl = sym?.valueDeclaration;
+  // (#4616) A callable PARAM of a CLASS METHOD routinely receives a host
+  // function at runtime: an any-receiver dynamic method call marshals its
+  // arrow argument through the host bridge, and test harnesses hand methods
+  // host spies (jest.fn()). Replaceable.forEach's `cb(...)` nulled the
+  // wrapper cast and trapped call_ref un-catchably. Method params get the
+  // #1712 host arm; plain function params keep the #1941 gate so pure
+  // local-closure programs stay host-import-free.
+  if (decl && ts.isParameter(decl) && decl.parent !== undefined && ts.isMethodDeclaration(decl.parent)) {
+    return !ctx.standalone && !ctx.wasi;
+  }
   if (!decl || !ts.isVariableDeclaration(decl) || !decl.initializer) return false;
 
   // (#3432 follow-up) A declaration that SKIPPED the closure match-and-recast
@@ -2374,6 +2384,16 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
     return false;
   };
 
+  // Ambient callable globals (`queueMicrotask`, `requestAnimationFrame`, and
+  // the standard global parsing/URI helpers) arrive as host externrefs when a
+  // function value is copied into a local.  That local must retain the
+  // host-call fallback; otherwise the closure-shaped dispatch path casts the
+  // externref to a null Wasm closure and traps on an indirect call.
+  const isDeclaredHostGlobal = (node: ts.Expression): boolean => {
+    const inner = unparen(node);
+    return ts.isIdentifier(inner) && ctx.declaredGlobals.has(inner.text);
+  };
+
   // (#3488) `Object.getOwnPropertyDescriptor(o, k).get`/`.set` extracts a HOST
   // accessor function (not a wasm closure), e.g. a builtin-proto getter like
   // `%TypedArray%.prototype.length`. Invoked as a bare `getter()` it must reach
@@ -2396,7 +2416,7 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
   // chains), checking whether any reachable left operand is a host builtin.
   const initMayBeHost = (node: ts.Expression): boolean => {
     const inner = ts.isParenthesizedExpression(node) ? node.expression : node;
-    if (isHostBuiltinMember(inner)) return true;
+    if (isHostBuiltinMember(inner) || isDeclaredHostGlobal(inner)) return true;
     if (isReflectiveAccessorExtraction(inner)) return true;
     if (ts.isConditionalExpression(inner)) {
       return initMayBeHost(inner.whenTrue) || initMayBeHost(inner.whenFalse);
@@ -2997,6 +3017,47 @@ export function functionExprBodyReferencesOwnName(fn: ts.FunctionExpression): bo
   };
   if (fn.body) visit(fn.body);
   return found;
+}
+
+/**
+ * (#4614) Statically resolve `ns.member(...)` through a NamespaceImport of a
+ * compiled sibling module to the equivalent named call. Returns undefined to
+ * decline (not a namespace-import receiver, external/ambient module, or a
+ * non-function export) — the caller falls through to the legacy lanes.
+ */
+function tryNamespaceImportMemberCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): InnerResult | undefined {
+  if (!ts.isPropertyAccessExpression(expr.expression)) return undefined;
+  const access = expr.expression;
+  if (!ts.isIdentifier(access.expression) || ts.isPrivateIdentifier(access.name)) return undefined;
+  const nsDecl = ctx.oracle.valueDeclarationOf(access.expression);
+  if (nsDecl === undefined || !ts.isNamespaceImport(nsDecl)) return undefined;
+  // The export symbol of `export function f` carries the FunctionDeclaration
+  // directly; deeper re-export chains resolve to the intermediate specifier
+  // and decline here (fail-closed to the legacy lane).
+  const memberDecl = ctx.oracle.valueDeclarationOf(access.name);
+  if (
+    memberDecl === undefined ||
+    !ts.isFunctionDeclaration(memberDecl) ||
+    memberDecl.name === undefined ||
+    memberDecl.body === undefined
+  ) {
+    return undefined;
+  }
+  const targetName = memberDecl.name;
+  // The target must be a function this program actually compiled — an
+  // unmapped name means the module was consumed externally (host require,
+  // deferred entry) and the legacy lane's answer stands.
+  if (!ctx.funcMap.has(targetName.text)) return undefined;
+  const synthetic = ts.factory.createCallExpression(targetName, expr.typeArguments, expr.arguments);
+  ts.setTextRange(synthetic, expr);
+  // A factory node has no parent chain, so `getSourceFile()` on it (position
+  // maps, diagnostics) crashes — anchor it where the original call sits.
+  (synthetic as { parent?: ts.Node }).parent = expr.parent;
+  return compileCallExpression(ctx, fctx, synthetic as ts.CallExpression);
 }
 
 function compileOptionalDirectCall(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression): InnerResult {
@@ -3614,7 +3675,15 @@ export function tryEmitInlineDynamicCall(
     // silent no-op, so the promise never settled (resolve-settled-*-self).
     // Void candidates needing a non-externref pad stay excluded
     // (conservative: their pad values are NaN/0/typed-null guesses).
-    if (info.paramTypes.length > arity && info.returnType === null) {
+    // (#4616) A rest-param closure's trailing formal is the packed rest VEC,
+    // not a positional param: its effective fixed-formal count excludes it.
+    // Mirror the generic `__call_fn_N` dispatcher (closure-exports.ts): only
+    // admit a rest candidate when the call supplies at least every fixed
+    // formal (fewer → conservative skip, same as `hostArity > arity` there).
+    const infoIsRest = info.hasRestParam === true && info.paramTypes.length > 0;
+    const infoFixedCount = infoIsRest ? info.paramTypes.length - 1 : info.paramTypes.length;
+    if (infoIsRest && arity < infoFixedCount) continue;
+    if (!infoIsRest && info.paramTypes.length > arity && info.returnType === null) {
       let padsAllExternref = true;
       for (let i = arity; i < info.paramTypes.length; i++) {
         if (info.paramTypes[i]!.kind !== "externref") {
@@ -3666,9 +3735,23 @@ export function tryEmitInlineDynamicCall(
 
   // Dedupe by funcTypeIdx — concrete subtypes share funcTypeIdx with their
   // base wrapper; one dispatch arm per unique funcref type is enough.
+  // (#4616) EXCEPT rest-param candidates: a rest closure's funcref signature
+  // is identical to a genuine one-vec-param closure's (`function spy(...args)`
+  // vs `function g(xs: any[])`), so rest candidates keep their own arms —
+  // guarded by their CONCRETE struct type, not just the funcref signature —
+  // and are emitted after the positional arms below so they are tested FIRST
+  // (each later arm wraps the previous dispatch chain).
   const seenFuncType = new Set<number>();
+  const seenRestStruct = new Set<number>();
   const candidates: Cand[] = [];
+  const restCandidates: Cand[] = [];
   for (const c of allCandidates) {
+    if (c.info.hasRestParam === true && c.info.paramTypes.length > 0) {
+      if (seenRestStruct.has(c.structTypeIdx)) continue;
+      seenRestStruct.add(c.structTypeIdx);
+      restCandidates.push(c);
+      continue;
+    }
     if (seenFuncType.has(c.info.funcTypeIdx)) continue;
     seenFuncType.add(c.info.funcTypeIdx);
     candidates.push(c);
@@ -3677,6 +3760,10 @@ export function tryEmitInlineDynamicCall(
   // so a value that satisfies an exact wrapper takes that arm before a
   // wider, undefined-padded one.
   candidates.sort((a, b) => a.info.paramTypes.length - arity - (b.info.paramTypes.length - arity));
+  // (#4616) Rest arms last in emission order = OUTERMOST at runtime, so a
+  // rest-struct value takes the rest arm before the same-signature positional
+  // arm can mis-cast its first arg to the vec type.
+  candidates.push(...restCandidates);
 
   // Ensure box/unbox helpers exist (standalone: registered as native defined
   // functions, no import; host: late imports). Their indices are captured AFTER
@@ -3982,9 +4069,34 @@ export function tryEmitInlineDynamicCall(
         ? (selfParam as { typeIdx: number }).typeIdx
         : cand.structTypeIdx;
 
+    // (#4616) Rest-param candidate: the trailing formal is the packed rest
+    // vec. Marshal only the fixed formals positionally, then pack every
+    // remaining call arg into a fresh vec — mirroring the generic
+    // `__call_fn_N` rest arm (closure-exports.ts). Falls back to positional
+    // marshalling when the vec/array shape can't be resolved or an element
+    // kind isn't marshalable here.
+    let restVec: { vecTypeIdx: number; arrTypeIdx: number; elemType: ValType } | undefined;
+    let fixedCount = cand.info.paramTypes.length;
+    if (cand.info.hasRestParam === true && cand.info.paramTypes.length > 0) {
+      const restFixed = cand.info.paramTypes.length - 1;
+      const restParam = funcTypeDef?.kind === "func" ? funcTypeDef.params[restFixed + 1] : undefined;
+      if (restParam && (restParam.kind === "ref" || restParam.kind === "ref_null")) {
+        const vecTypeIdx = (restParam as { typeIdx: number }).typeIdx;
+        const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+        const arrDef = ctx.mod.types[arrTypeIdx];
+        if (
+          arrDef?.kind === "array" &&
+          (arrDef.element.kind === "externref" || arrDef.element.kind === "f64" || arrDef.element.kind === "i32")
+        ) {
+          restVec = { vecTypeIdx, arrTypeIdx, elemType: arrDef.element };
+          fixedCount = restFixed;
+        }
+      }
+    }
+
     const callBody: Instr[] = [];
 
-    appendDynamicCandidateArgcSetup(ctx, fctx, callBody, cand.info.paramTypes.length, argLocals, arity);
+    appendDynamicCandidateArgcSetup(ctx, fctx, callBody, fixedCount, argLocals, arity);
     // Self arg: anyref → the concrete struct type this funcref expects.
     callBody.push({ op: "local.get", index: anyLocal });
     callBody.push({ op: "ref.cast", typeIdx: selfTypeIdx });
@@ -3994,7 +4106,7 @@ export function tryEmitInlineDynamicCall(
     // missing trailing formals (i >= arity) are padded with `undefined`
     // (#820/#1543) so the lifted method applies its default / runs the
     // spec-mandated destructure of the default value.
-    for (let i = 0; i < cand.info.paramTypes.length; i++) {
+    for (let i = 0; i < fixedCount; i++) {
       const pType = cand.info.paramTypes[i]!;
       if (i >= arity) {
         // Missing arg → `undefined`. For ref/ref_null formals there is no
@@ -4038,6 +4150,25 @@ export function tryEmitInlineDynamicCall(
       }
     }
 
+    // (#4616) Rest formal: pack every remaining call arg into a fresh vec
+    // (length first, then the fixed-size array — the vec struct field order).
+    if (restVec !== undefined) {
+      const restCount = Math.max(0, arity - fixedCount);
+      callBody.push({ op: "i32.const", value: restCount });
+      for (let i = fixedCount; i < arity; i++) {
+        callBody.push({ op: "local.get", index: argLocals[i]! });
+        if (restVec.elemType.kind === "f64") {
+          callBody.push({ op: "call", funcIdx: unboxNumberIdx });
+        } else if (restVec.elemType.kind === "i32") {
+          callBody.push({ op: "call", funcIdx: unboxNumberIdx });
+          callBody.push({ op: "i32.trunc_sat_f64_s" });
+        }
+        // externref element: raw saved arg local.
+      }
+      callBody.push({ op: "array.new_fixed", typeIdx: restVec.arrTypeIdx, length: restCount });
+      callBody.push({ op: "struct.new", typeIdx: restVec.vecTypeIdx });
+    }
+
     // Extract funcref from field 0 and call_ref.
     callBody.push({ op: "local.get", index: anyLocal });
     callBody.push({ op: "ref.cast", typeIdx: selfTypeIdx });
@@ -4067,9 +4198,14 @@ export function tryEmitInlineDynamicCall(
     // wrapper struct is a safe supertype to cast any wrapper to for that read.
     const rootStructIdx =
       (ctx as unknown as { __funcRefWrapperRootTypeIdx?: number }).__funcRefWrapperRootTypeIdx ?? selfTypeIdx;
+    // (#4616) A rest arm additionally guards on the candidate's CONCRETE
+    // struct type — its funcref signature alone is indistinguishable from a
+    // genuine vec-param closure's, and the positional arm for that signature
+    // stays in the chain below for those.
+    const structGuardIdx = restVec !== undefined ? cand.structTypeIdx : rootStructIdx;
     const testCond: Instr[] = [
       { op: "local.get", index: anyLocal },
-      { op: "ref.test", typeIdx: rootStructIdx },
+      { op: "ref.test", typeIdx: structGuardIdx },
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "i32" } },
@@ -6275,6 +6411,21 @@ function compileCallExpression(
   // the matching `__jsx_runtime_*` host import. Extracted to calls-guards.ts (#742).
   {
     const r = tryJsxRuntimeCall(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+
+  // (#4614) `ns.f(args)` where `ns` is a NamespaceImport of a COMPILED sibling
+  // module. The namespace binding has no runtime value (it compiled to
+  // `ref.null extern`), so the generic method lane became
+  // `__extern_method_call(null, "f", …)` — every call through `import * as`
+  // threw (cookie's vitest harness: 65/63740). Namespace member access is
+  // statically resolvable per ESM semantics: resolve the alias to the target
+  // FunctionDeclaration and re-enter as the equivalent named call, which
+  // carries the full identifier-call lowering (arguments protocol, rest,
+  // dispatch). Ambient/external declarations (no body) and non-function
+  // exports decline to the legacy lane.
+  {
+    const r = tryNamespaceImportMemberCall(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
 

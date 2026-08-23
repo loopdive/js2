@@ -443,8 +443,23 @@ function boundByInterveningScope(id: ts.Identifier, name: string, scopeStart: nu
   let node: ts.Node | undefined = id.parent;
   let child: ts.Node = id;
   while (node && node.getStart(sf) > scopeStart) {
-    if (ts.isBlock(node) && listBindsLexically(node.statements, name)) return true;
-    if ((ts.isCaseClause(node) || ts.isDefaultClause(node)) && listBindsLexically(node.statements, name)) return true;
+    // (#4618) A block-level FUNCTION DECLARATION is a lexical binding of its
+    // block (§14.2.3 sloppy-web-compat included) — without counting it here, a
+    // read inside `try { function ParentComponent(){…} … PC … }` was condemned
+    // by a SAME-NAMED Annex B site in a DIFFERENT sibling function (react's
+    // repeated ParentComponent/ComponentRendering* test components), throwing
+    // "X is not defined" for a perfectly bound read.
+    const blockStatements = ts.isBlock(node)
+      ? node.statements
+      : ts.isCaseClause(node) || ts.isDefaultClause(node)
+        ? node.statements
+        : undefined;
+    if (blockStatements !== undefined) {
+      if (listBindsLexically(blockStatements, name)) return true;
+      for (const stmt of blockStatements) {
+        if (ts.isFunctionDeclaration(stmt) && stmt.name?.text === name) return true;
+      }
+    }
     if (ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node)) {
       if (loopHeadBindsLexically(node, name)) return true;
     }

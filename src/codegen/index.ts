@@ -4720,6 +4720,29 @@ export function generateModule(
         kind: "func",
         typeIdx: regStaticMethodTypeIdx,
       });
+      // (#4618) Pair the class object with its compiled constructor closure,
+      // prototype singleton, and fnctor parent so the host proxy can present
+      // the class as a constructible function (react-dom's `new type(props)`).
+      // Pre-registered here (not a late import) so the initBody instructions
+      // emitLazyClassObjectGet builds are never invalidated by an import shift.
+      const regClassCtorTypeIdx = addFuncType(
+        ctx,
+        [
+          { kind: "externref" },
+          { kind: "externref" },
+          { kind: "externref" },
+          { kind: "externref" },
+          { kind: "externref" },
+        ],
+        [],
+      );
+      addImport(ctx, "env", "__register_class_ctor", { kind: "func", typeIdx: regClassCtorTypeIdx });
+      // (#4618) Dynamic `extends <value>` parent registration — pre-registered
+      // for the same reason as __register_class_ctor: its late add at a class
+      // DECLARATION statement shifts func indices after an earlier class's
+      // initBody baked its ctor-closure ref.func.
+      const regClassParentTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], []);
+      addImport(ctx, "env", "__register_class_parent", { kind: "func", typeIdx: regClassParentTypeIdx });
     }
 
     // #1677 — reconcile native-string helper func indices before emitting more
@@ -6302,6 +6325,58 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
   const dispatchTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], "$call_method_type");
 
   // Helper to emit a method dispatch export
+  // (#4618) Same-shaped same-named sibling classes canonicalize to ONE WasmGC
+  // struct type, so a bare `ref.test` dispatch arm matches BOTH classes'
+  // instances and the first arm wins — the canonical class's instance ran the
+  // SIBLING's method body (react's per-test `class Foo` re-declarations).
+  // When an entry's layout collides with another entry's, guard its arm with
+  // the `__tag` field: own tag plus every DESCENDANT's tag (a parent's arm
+  // must keep matching subclass instances for inherited-method dispatch).
+  // Returns undefined — zero byte change — when no collision exists.
+  const classDispatchTagCondition = (
+    entriesAll: readonly { structName: string }[],
+    structName: string,
+    typeIdx: number,
+    receiverLocal: number,
+  ): Instr[] | undefined => {
+    const fields = ctx.structFields.get(structName);
+    if (!fields || fields.length === 0 || fields[0]!.name !== "__tag") return undefined;
+    const layoutSig = (n: string): string | undefined => {
+      const fs = ctx.structFields.get(n);
+      return fs?.map((f) => `${f.type.kind}:${(f.type as { typeIdx?: number }).typeIdx ?? ""}`).join(",");
+    };
+    const own = layoutSig(structName);
+    if (own === undefined) return undefined;
+    const conflict = entriesAll.some((e) => e.structName !== structName && layoutSig(e.structName) === own);
+    if (!conflict) return undefined;
+    const ownTag = ctx.classTagMap.get(structName);
+    if (ownTag === undefined) return undefined;
+    const tags = [ownTag];
+    const isDescendantOf = (n: string): boolean => {
+      let cur: string | undefined = ctx.classParentMap.get(n);
+      const seen = new Set<string>();
+      while (cur !== undefined && !seen.has(cur)) {
+        if (cur === structName) return true;
+        seen.add(cur);
+        cur = ctx.classParentMap.get(cur);
+      }
+      return false;
+    };
+    for (const [childName, tag] of ctx.classTagMap) {
+      if (childName !== structName && isDescendantOf(childName) && !tags.includes(tag)) tags.push(tag);
+    }
+    const readTag: Instr[] = [
+      { op: "local.get", index: receiverLocal },
+      { op: "ref.cast", typeIdx },
+      { op: "struct.get", typeIdx, fieldIdx: 0 },
+    ];
+    const cond: Instr[] = [...readTag, { op: "i32.const", value: tags[0]! }, { op: "i32.eq" }];
+    for (const t of tags.slice(1)) {
+      cond.push(...readTag, { op: "i32.const", value: t }, { op: "i32.eq" }, { op: "i32.or" });
+    }
+    return cond;
+  };
+
   const emitMethodDispatch = (
     methodSuffix: string,
     exportName: string,
@@ -6633,9 +6708,22 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
       }
       // externref: no conversion needed
 
+      const tagCond = classMember
+        ? classDispatchTagCondition(entries, entry.structName, entry.typeIdx, receiverAnyLocal)
+        : undefined;
       current = [
         { op: "local.get", index: receiverAnyLocal },
         { op: "ref.test", typeIdx: entry.typeIdx },
+        ...(tagCond
+          ? ([
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "i32" } },
+                then: tagCond,
+                else: [{ op: "i32.const", value: 0 }],
+              },
+            ] satisfies Instr[])
+          : []),
         {
           op: "if",
           blockType: { kind: "val", type: { kind: "externref" } },
@@ -6843,11 +6931,62 @@ function emitExternrefClassMethodDispatch(ctx: CodegenContext, className: string
  * ref.test cascade. Getters remain self-only; methods additionally publish
  * their declared arity so the host can select an arity-specific bridge.
  */
+// (#4618) Shared tag-guard condition for class member dispatch arms — see the
+// classDispatchTagCondition closure in generateModule for the rationale
+// (same-layout sibling classes canonicalize to ONE WasmGC type; `ref.test`
+// alone matches both). Guards only when the entry's field layout collides
+// with another entry's; own tag plus descendant tags keep inherited-method
+// dispatch working.
+function classArmTagCondition(
+  ctx: CodegenContext,
+  entriesAll: readonly { structName: string }[],
+  structName: string,
+  typeIdx: number,
+  receiverLocal: number,
+): Instr[] | undefined {
+  const fields = ctx.structFields.get(structName);
+  if (!fields || fields.length === 0 || fields[0]!.name !== "__tag") return undefined;
+  const layoutSig = (n: string): string | undefined => {
+    const fs = ctx.structFields.get(n);
+    return fs?.map((f) => `${f.type.kind}:${(f.type as { typeIdx?: number }).typeIdx ?? ""}`).join(",");
+  };
+  const own = layoutSig(structName);
+  if (own === undefined) return undefined;
+  if (!entriesAll.some((e) => e.structName !== structName && layoutSig(e.structName) === own)) return undefined;
+  const ownTag = ctx.classTagMap.get(structName);
+  if (ownTag === undefined) return undefined;
+  const tags = [ownTag];
+  const isDescendantOf = (n: string): boolean => {
+    let cur: string | undefined = ctx.classParentMap.get(n);
+    const seen = new Set<string>();
+    while (cur !== undefined && !seen.has(cur)) {
+      if (cur === structName) return true;
+      seen.add(cur);
+      cur = ctx.classParentMap.get(cur);
+    }
+    return false;
+  };
+  for (const [childName, tag] of ctx.classTagMap) {
+    if (childName !== structName && isDescendantOf(childName) && !tags.includes(tag)) tags.push(tag);
+  }
+  const readTag: Instr[] = [
+    { op: "local.get", index: receiverLocal },
+    { op: "ref.cast", typeIdx },
+    { op: "struct.get", typeIdx, fieldIdx: 0 },
+  ];
+  const cond: Instr[] = [...readTag, { op: "i32.const", value: tags[0]! }, { op: "i32.eq" }];
+  for (const t of tags.slice(1)) {
+    cond.push(...readTag, { op: "i32.const", value: t }, { op: "i32.eq" }, { op: "i32.or" });
+  }
+  return cond;
+}
+
 function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number, keys: string[]): void {
   const mod = ctx.mod;
   const skipStruct = isSyntheticStructName;
 
   type KindEntry = {
+    structName: string;
     typeIdx: number;
     funcIdx: number;
     resultType: ValType | undefined;
@@ -6882,14 +7021,14 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
       if (!isGetter && restInfo) {
         if (!ctx.hostDynamicClassMethodNames.has(memberKey)) continue;
         const resultType: ValType | undefined = funcType.results.length > 0 ? funcType.results[0]! : undefined;
-        entries.push({ typeIdx, funcIdx, resultType, paramTypes: funcType.params, isRest: true });
+        entries.push({ structName, typeIdx, funcIdx, resultType, paramTypes: funcType.params, isRest: true });
         continue;
       }
       if ((isGetter || !ctx.hostDynamicClassMethodNames.has(memberKey)) && funcType.params.length !== 1) continue;
       if (funcType.params.length < 1) continue;
       if (funcType.params.slice(1).some((param) => !supportsHostClassBridgeParam(param))) continue;
       const resultType: ValType | undefined = funcType.results.length > 0 ? funcType.results[0]! : undefined;
-      entries.push({ typeIdx, funcIdx, resultType, paramTypes: funcType.params });
+      entries.push({ structName, typeIdx, funcIdx, resultType, paramTypes: funcType.params });
     }
     return entries;
   };
@@ -6907,18 +7046,32 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
     {
       const funcIdx = ctx.numImportFuncs + mod.functions.length;
       let current: Instr[] = [{ op: "i32.const", value: 0 }];
-      const arm = (typeIdx: number, kind: number, tail: Instr[]): Instr[] => [
-        { op: "local.get", index: 1 },
-        { op: "ref.test", typeIdx },
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "i32" } },
-          then: [{ op: "i32.const", value: kind }],
-          else: tail,
-        },
-      ];
-      for (const e of methodEntries) current = arm(e.typeIdx, 1, current);
-      for (const e of getterEntries) current = arm(e.typeIdx, 2, current);
+      const allEntries = [...methodEntries, ...getterEntries];
+      const arm = (entry: KindEntry, kind: number, tail: Instr[]): Instr[] => {
+        const tagCond = classArmTagCondition(ctx, allEntries, entry.structName, entry.typeIdx, 1);
+        return [
+          { op: "local.get", index: 1 },
+          { op: "ref.test", typeIdx: entry.typeIdx },
+          ...(tagCond
+            ? ([
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "i32" } },
+                  then: tagCond,
+                  else: [{ op: "i32.const", value: 0 }],
+                },
+              ] satisfies Instr[])
+            : []),
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [{ op: "i32.const", value: kind }],
+            else: tail,
+          },
+        ];
+      };
+      for (const e of methodEntries) current = arm(e, 1, current);
+      for (const e of getterEntries) current = arm(e, 2, current);
       const exportName = `__member_kind_${key}`;
       mod.functions.push({
         name: exportName,
@@ -6938,9 +7091,20 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
       const funcIdx = ctx.numImportFuncs + mod.functions.length;
       let current: Instr[] = [{ op: "i32.const", value: -1 }];
       for (const e of methodEntries) {
+        const tagCond = classArmTagCondition(ctx, methodEntries, e.structName, e.typeIdx, 1);
         current = [
           { op: "local.get", index: 1 },
           { op: "ref.test", typeIdx: e.typeIdx },
+          ...(tagCond
+            ? ([
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "i32" } },
+                  then: tagCond,
+                  else: [{ op: "i32.const", value: 0 }],
+                },
+              ] satisfies Instr[])
+            : []),
           {
             op: "if",
             blockType: { kind: "val", type: { kind: "i32" } },
@@ -7922,6 +8086,18 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
     }
     const nested = ctx.nestedFuncCaptures.get(targetName);
     if (nested !== undefined && !ctx.nestedFuncCaptures.has(localName)) ctx.nestedFuncCaptures.set(localName, nested);
+    // (#4530) The call path keys the `arguments`-extras protocol and rest-param
+    // packing by the CALLEE NAME (`ctx.funcUsesArguments.has(funcName)` /
+    // `ctx.funcRestParams.get(funcName)` in call-identifier.ts). Without these
+    // two copies, a call through an import alias of an `arguments`-reading
+    // zero-param function (clsx's exact shape: `import cx from 'clsx'`) found
+    // the funcIdx via the alias above but skipped `__argc`/`__extras_argv` —
+    // every argument was silently dropped and `arguments.length` read 0.
+    if (ctx.funcUsesArguments.has(targetName) && !ctx.funcUsesArguments.has(localName)) {
+      ctx.funcUsesArguments.add(localName);
+    }
+    const restInfo = ctx.funcRestParams.get(targetName);
+    if (restInfo !== undefined && !ctx.funcRestParams.has(localName)) ctx.funcRestParams.set(localName, restInfo);
     // (#2931) If the target is a reassigned function backed by a live-binding
     // global, propagate membership so the aliased local name reads through the
     // (copied) module global too.
@@ -8124,6 +8300,25 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
         kind: "func",
         typeIdx: regStaticMethodTypeIdx,
       });
+      // (#4618) Same class-ctor bridge registration as the single-source site.
+      const regClassCtorTypeIdx = addFuncType(
+        ctx,
+        [
+          { kind: "externref" },
+          { kind: "externref" },
+          { kind: "externref" },
+          { kind: "externref" },
+          { kind: "externref" },
+        ],
+        [],
+      );
+      addImport(ctx, "env", "__register_class_ctor", { kind: "func", typeIdx: regClassCtorTypeIdx });
+      // (#4618) Dynamic `extends <value>` parent registration — pre-registered
+      // for the same reason as __register_class_ctor: its late add at a class
+      // DECLARATION statement shifts func indices after an earlier class's
+      // initBody baked its ctor-closure ref.func.
+      const regClassParentTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], []);
+      addImport(ctx, "env", "__register_class_parent", { kind: "func", typeIdx: regClassParentTypeIdx });
     }
 
     // WASI target: check for DOM-only globals and emit compile errors
@@ -8157,7 +8352,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
           collectExternDeclarations(ctx, libSf, libRefs, libIndex);
           for (const sf of multiAst.sourceFiles) {
             if (sourceUsesLibGlobals(sf)) {
-              collectDeclaredGlobals(ctx, libSf, sf, libIndex);
+              collectDeclaredGlobals(ctx, libSf, sf, libIndex, multiAst.sourceFiles);
             }
           }
         }
@@ -11514,6 +11709,32 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           : null;
         const carrierForcesExternref =
           initForcesExternref || realmStructuralCarrier || (mixedAssignmentCarrier && !mixedCarrierProvenF64);
+        // (#4616) Empty-array (or Array<any>) initializer: use the SAME
+        // usage-based vec inference `compileVariableStatement` applies
+        // (`inferArrayVecType`, mirroring the var hoister above). Without it
+        // the hoist resolved the checker's EVOLVED evolving-array type (e.g.
+        // `const callList = []; callList.push(args)` in untyped JS evolves to
+        // `any[][]` → a vec-of-vec slot), while the statement later retyped
+        // the slot to the usage-inferred vec — but a nested FunctionDeclaration
+        // hoisted in between had already baked the stale slot type into its
+        // lifted signature/closure struct, so materializing it cast the
+        // retyped slot to the old field type (impossible cast → trap in every
+        // jest `vi.fn` spy).
+        // (Gated to the empty-initializer shape only — the statement lane's
+        // additional Array<any> arm needs a raw `getTypeArguments` query the
+        // oracle ratchet (#1930/#3273) forbids adding here, and the evolving
+        // divergence this fixes only arises from the `[]` initializer.)
+        let hoistInferredArrayVecType: ValType | null = null;
+        if (varType.flags & ts.TypeFlags.Object) {
+          const arrSym = (varType as ts.TypeReference).symbol ?? varType.symbol;
+          const isInitiallyEmptyArray =
+            decl.initializer !== undefined &&
+            ts.isArrayLiteralExpression(decl.initializer) &&
+            decl.initializer.elements.length === 0;
+          if (arrSym?.name === "Array" && isInitiallyEmptyArray) {
+            hoistInferredArrayVecType = inferArrayVecType(ctx, decl);
+          }
+        }
         let wasmType: ValType = carrierForcesExternref
           ? { kind: "externref" }
           : mixedCarrierProvenF64
@@ -11522,7 +11743,8 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
               ? { kind: "i32" }
               : isNullablePrimitiveType(varType)
                 ? { kind: "externref" }
-                : (inferLetConstInitializerWasmType(ctx, fctx, decl.initializer) ??
+                : (hoistInferredArrayVecType ??
+                  inferLetConstInitializerWasmType(ctx, fctx, decl.initializer) ??
                   usageInferredLocalType(ctx, decl) ??
                   resolveWasmType(ctx, varType));
         // (#3123) A let-binding declared as a FNCTOR-SUBCLASS class instance

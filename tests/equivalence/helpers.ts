@@ -242,6 +242,20 @@ export function buildImports(result: CompileResult): WebAssembly.Imports {
     Object.assign(env, buildRuntimeImports(errorConstructorImports, undefined, result.stringPool).env);
   }
 
+  // (#4616) The `__call_fn_N` dispatchers' unmatched-callee terminal now calls
+  // the fixed-arity `__call_function_<N>` host bridge instead of yielding a
+  // silent null, so any host-lane module that exports closure dispatchers
+  // imports that ABI. Provide it here the same way #3529 P5 provides the
+  // Error-family constructors — via the production resolver — so
+  // manual-instantiation equivalence tests keep instantiating.
+  const hostCallImports = result.imports.filter(
+    (descriptor) =>
+      descriptor.module === "env" && descriptor.kind === "func" && /^__call_function(_[0-4])?$/.test(descriptor.name),
+  );
+  if (hostCallImports.length > 0) {
+    Object.assign(env, buildRuntimeImports(hostCallImports, undefined, result.stringPool).env);
+  }
+
   return {
     env,
     "wasm:js-string": jsStringPolyfill,

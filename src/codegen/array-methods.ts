@@ -28,6 +28,7 @@ import {
 } from "./index.js";
 import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
 import { addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
+import { reserveVecMethodHelper } from "./vec-access-exports.js"; // (#4531) extern-receiver push/pop dual-lane
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
 import { emitTypedArraySetBoundsCheck } from "./typed-array-set-bounds.js";
 import { emitToBoolean } from "./coercion-engine.js";
@@ -335,6 +336,93 @@ function refElemHofCallbackIsClosure(ctx: CodegenContext, fctx: FunctionContext,
     (probed.kind === "ref" || probed.kind === "ref_null") &&
     ctx.closureInfoByTypeIdx.has((probed as { typeIdx: number }).typeIdx)
   );
+}
+
+/**
+ * (#4616) Globals with dedicated native codegen arms — safe inside a lifted
+ * closure body. Anything else that resolves to NO user-source declaration is
+ * assumed to be a host-provided ambient (TemporalHelpers, harness globals, …)
+ * that only the __make_callback host lane can see; see the #2838 note on
+ * hofElemKindOk for the 212-test regression that taught us this.
+ */
+const CLOSURE_SAFE_AMBIENT_GLOBALS = new Set([
+  "Math",
+  "JSON",
+  "Object",
+  "Array",
+  "String",
+  "Number",
+  "Boolean",
+  "Date",
+  "RegExp",
+  "Symbol",
+  "Promise",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "console",
+  "NaN",
+  "Infinity",
+  "undefined",
+  "parseInt",
+  "parseFloat",
+  "isNaN",
+  "isFinite",
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "EvalError",
+  "ReferenceError",
+  "URIError",
+  "AggregateError",
+]);
+
+// These names are supplied by the Test262 realm/harness rather than being
+// ordinary compiler intrinsics.  A callback that captures one must remain on
+// the host callback path: inlining it into the ref-element lane would carry
+// compiler-owned Temporal values into the harness (or vice versa), making
+// methods such as `Duration.prototype.round` disappear.  The explicit deny
+// list is deliberately small; it keeps the generic host fallback for realm
+// objects while retaining the host-free fast path for callbacks that only use
+// normal JS builtins.
+const CLOSURE_UNSAFE_HOST_AMBIENTS = new Set(["Temporal", "TemporalHelpers", "Intl", "$262"]);
+
+/**
+ * (#4616) May this ref-element HOF call take the closure lane in the gc HOST
+ * profile? Only when the inline callback's body resolves every identifier to a
+ * user-source declaration or a native-codegen builtin — a body needing a
+ * host-only ambient global must stay on the host-callback fallback (which is a
+ * silent no-op for ref-element receivers, the pre-existing #3126 residual, but
+ * never *wrong* for the widened set). Identifier callbacks are safe: the probe
+ * in refElemHofCallbackIsClosure already proved they are compiled closures.
+ */
+function hofRefElemClosureLaneSafe(ctx: CodegenContext, callExpr: ts.CallExpression): boolean {
+  const cbArg = callExpr.arguments[0];
+  if (cbArg === undefined) return true;
+  if (!ts.isArrowFunction(cbArg) && !ts.isFunctionExpression(cbArg)) return true;
+  let safe = true;
+  const visit = (node: ts.Node): void => {
+    if (!safe) return;
+    if (ts.isIdentifier(node)) {
+      // Skip non-value positions: property names, declaration names.
+      const parent = node.parent;
+      if (ts.isPropertyAccessExpression(parent) && parent.name === node) return;
+      if ((ts.isPropertyAssignment(parent) || ts.isMethodDeclaration(parent)) && parent.name === node) return;
+      if (CLOSURE_UNSAFE_HOST_AMBIENTS.has(node.text)) {
+        safe = false;
+        return;
+      }
+      if (CLOSURE_SAFE_AMBIENT_GLOBALS.has(node.text)) return;
+      const decl = ctx.oracle.valueDeclarationOf(node);
+      if (decl === undefined || decl.getSourceFile().isDeclarationFile) safe = false;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(cbArg.body);
+  return safe;
 }
 
 // ── Guarded funcref cast (ref.test before ref.cast to avoid illegal cast traps) ──
@@ -1643,8 +1731,11 @@ export function compileArrayMethodCall(
     et.kind === "i32" ||
     et.kind === "externref" ||
     ((et.kind === "ref" || et.kind === "ref_null") &&
-      (ctx.standalone || ctx.wasi) &&
-      refElemHofCallbackIsClosure(ctx, fctx, callExpr));
+      refElemHofCallbackIsClosure(ctx, fctx, callExpr) &&
+      // (#4616) gc HOST lane: widen only for callbacks whose body is free of
+      // host-only ambient globals — the #2838 Temporal hazard. The standalone/
+      // wasi lanes keep their unconditional widening (no host globals exist).
+      (ctx.standalone || ctx.wasi || hofRefElemClosureLaneSafe(ctx, callExpr)));
 
   let result: ValType | null | undefined;
   switch (methodName) {
@@ -1691,9 +1782,39 @@ export function compileArrayMethodCall(
         : compileArrayReverse(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "push":
+      // (#4531) An externref-shaped receiver (a class FIELD holding what may
+      // be a `__make_iterable` host mirror — prettier's `this.stack`) must not
+      // take the native inline push, whose receiver coercion `ref.cast`s to
+      // the statically inferred vec and traps `illegal cast` on the mirror.
+      // Emit the #2784-style guarded dual-lane instead: `ref.test` the vec
+      // carriers → native `__vec_push`, else the host `__extern_method_call`
+      // bridge (whose `_tryWasmVecMutation` routes a registered mirror back to
+      // its source vec). Host/gc lane only — standalone and native-first keep
+      // the native path (no host mirrors exist there).
+      if (
+        receiverIsExternref &&
+        !ctx.standalone &&
+        !ctx.wasi &&
+        ctx.targetProfile.semanticProviders !== "native-first" &&
+        callExpr.arguments.length === 1
+      ) {
+        result = compileExternReceiverPushPop(ctx, fctx, methodAccess, callExpr, "push");
+        if (result !== undefined) break;
+      }
       result = compileArrayPush(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "pop":
+      // (#4531) Same dual-lane as `push` — see above.
+      if (
+        receiverIsExternref &&
+        !ctx.standalone &&
+        !ctx.wasi &&
+        ctx.targetProfile.semanticProviders !== "native-first" &&
+        callExpr.arguments.length === 0
+      ) {
+        result = compileExternReceiverPushPop(ctx, fctx, methodAccess, callExpr, "pop");
+        if (result !== undefined) break;
+      }
       result = compileArrayPop(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, expectedType);
       break;
     case "shift":
@@ -1794,12 +1915,21 @@ export function compileArrayMethodCall(
       break;
     case "reduce":
       result = hofElemKindOk(elemType)
-        ? compileArrayReduce(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        ? compileArrayReduce(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, receiverIsExternref)
         : undefined;
       break;
     case "reduceRight":
       result = hofElemKindOk(elemType)
-        ? compileArrayReduceRight(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        ? compileArrayReduceRight(
+            ctx,
+            fctx,
+            methodAccess,
+            callExpr,
+            vecTypeIdx,
+            arrTypeIdx,
+            elemType,
+            receiverIsExternref,
+          )
         : undefined;
       break;
     case "forEach": {
@@ -1819,34 +1949,52 @@ export function compileArrayMethodCall(
         result = elemType;
       } else {
         result = hofElemKindOk(elemType)
-          ? compileArrayFind(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+          ? compileArrayFind(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, receiverIsExternref)
           : undefined;
       }
       break;
     }
     case "findIndex":
       result = hofElemKindOk(elemType)
-        ? compileArrayFindIndex(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        ? compileArrayFindIndex(
+            ctx,
+            fctx,
+            methodAccess,
+            callExpr,
+            vecTypeIdx,
+            arrTypeIdx,
+            elemType,
+            receiverIsExternref,
+          )
         : undefined;
       break;
     case "findLast":
       result = hofElemKindOk(elemType)
-        ? compileArrayFindLast(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        ? compileArrayFindLast(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, receiverIsExternref)
         : undefined;
       break;
     case "findLastIndex":
       result = hofElemKindOk(elemType)
-        ? compileArrayFindLastIndex(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        ? compileArrayFindLastIndex(
+            ctx,
+            fctx,
+            methodAccess,
+            callExpr,
+            vecTypeIdx,
+            arrTypeIdx,
+            elemType,
+            receiverIsExternref,
+          )
         : undefined;
       break;
     case "some":
       result = hofElemKindOk(elemType)
-        ? compileArraySome(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        ? compileArraySome(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, receiverIsExternref)
         : undefined;
       break;
     case "every":
       result = hofElemKindOk(elemType)
-        ? compileArrayEvery(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+        ? compileArrayEvery(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, receiverIsExternref)
         : undefined;
       break;
     case "toReversed":
@@ -3247,6 +3395,121 @@ function compileArrayReverse(
  * arr.push(val, ...) -> capacity-based amortized push supporting multiple arguments.
  * Mutates vec struct in-place: grows backing array if needed, sets elements, increments length.
  */
+/**
+ * (#4531) Guarded dual-lane `push`/`pop` for an EXTERNREF-shaped receiver —
+ * the class-field case where the slot may hold either the native vec (boxed
+ * through externref) or its `__make_iterable` host MIRROR (prettier's
+ * `this.stack`). `ref.test` the registered vec carriers: on hit call the
+ * unconditionally-exported native `__vec_push`/`__vec_pop` helper; else route
+ * through the host `__extern_method_call` bridge, whose `_tryWasmVecMutation`
+ * resolves a registered mirror back to its source vec (runtime.ts). Mirrors
+ * the #2784 S3 arm in call-receiver-method.ts. Returns undefined when a
+ * required import could not be ensured (caller falls back to the native path).
+ */
+function compileExternReceiverPushPop(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  callExpr: ts.CallExpression,
+  methodName: "push" | "pop",
+): ValType | undefined {
+  if (!ts.isPropertyAccessExpression(propAccess)) return undefined;
+  const mcIdx = ensureLateImport(
+    ctx,
+    "__extern_method_call",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
+  const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
+  const boxNumIdx =
+    methodName === "push"
+      ? ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }])
+      : undefined;
+  addStringConstantGlobal(ctx, methodName);
+  flushLateImportShifts(ctx, fctx);
+  const vecOpIdx = reserveVecMethodHelper(ctx, methodName);
+  if (
+    vecOpIdx === undefined ||
+    mcIdx === undefined ||
+    arrNewIdx === undefined ||
+    arrPushIdx === undefined ||
+    (methodName === "push" && boxNumIdx === undefined)
+  ) {
+    return undefined;
+  }
+  // Receiver -> externref local.
+  const recvT = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
+  if (recvT && recvT.kind !== "externref") coerceType(ctx, fctx, recvT, { kind: "externref" });
+  else if (!recvT) fctx.body.push({ op: "ref.null.extern" });
+  const recvLocal = allocLocal(fctx, `__xr_pp_recv_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: recvLocal });
+  // push's element -> argLocal (side effects evaluated once, up front).
+  let argLocal: number | undefined;
+  if (methodName === "push") {
+    const a = callExpr.arguments[0];
+    if (a) {
+      const at = compileExpression(ctx, fctx, a, { kind: "externref" });
+      if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
+      else if (!at) fctx.body.push({ op: "ref.null.extern" });
+    } else {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    argLocal = allocLocal(fctx, `__xr_pp_arg_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: argLocal });
+  }
+  // isVec = OR of ref.test over every registered vec carrier.
+  const anyTmp = allocLocal(fctx, `__xr_pp_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  fctx.body.push({ op: "local.get", index: recvLocal });
+  fctx.body.push({ op: "any.convert_extern" });
+  fctx.body.push({ op: "local.set", index: anyTmp });
+  let emitted = false;
+  for (const vi of new Set(ctx.vecTypeMap.values())) {
+    fctx.body.push({ op: "local.get", index: anyTmp });
+    fctx.body.push({ op: "ref.test", typeIdx: vi });
+    if (emitted) fctx.body.push({ op: "i32.or" });
+    emitted = true;
+  }
+  if (!emitted) {
+    fctx.body.push({ op: "i32.const", value: 0 });
+  }
+  // THEN arm: native vec op through the exported helper.
+  const thenStart = fctx.body.length;
+  if (methodName === "push") {
+    fctx.body.push({ op: "local.get", index: recvLocal });
+    fctx.body.push({ op: "local.get", index: argLocal! });
+    fctx.body.push({ op: "call", funcIdx: vecOpIdx }); // -> i32 new length
+    fctx.body.push({ op: "f64.convert_i32_s" });
+    fctx.body.push({ op: "call", funcIdx: boxNumIdx! }); // -> externref
+  } else {
+    fctx.body.push({ op: "local.get", index: recvLocal });
+    fctx.body.push({ op: "call", funcIdx: vecOpIdx }); // -> externref
+  }
+  const thenInstrs = fctx.body.splice(thenStart);
+  // ELSE arm: host bridge.
+  const elseStart = fctx.body.length;
+  fctx.body.push({ op: "call", funcIdx: arrNewIdx });
+  const argsLocal = allocLocal(fctx, `__xr_pp_args_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: argsLocal });
+  if (methodName === "push") {
+    fctx.body.push({ op: "local.get", index: argsLocal });
+    fctx.body.push({ op: "local.get", index: argLocal! });
+    fctx.body.push({ op: "call", funcIdx: arrPushIdx });
+  }
+  fctx.body.push({ op: "local.get", index: recvLocal });
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
+  fctx.body.push({ op: "local.get", index: argsLocal });
+  fctx.body.push({ op: "call", funcIdx: mcIdx });
+  const elseInstrs = fctx.body.splice(elseStart);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: thenInstrs,
+    else: elseInstrs,
+  });
+  return { kind: "externref" };
+}
+
 function compileArrayPush(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -6202,6 +6465,7 @@ function compileArrayReduce(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.reduce")) {
@@ -6221,7 +6485,7 @@ function compileArrayReduce(
   const redInitIsRef = callExpr.arguments.length >= 2 && initArgIsReference(ctx, callExpr.arguments[1]!);
   const accType = resolveReduceAccType(setup, numKind, redInitIsRef);
 
-  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "red");
+  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "red", receiverIsExternref);
   const accTmp = allocLocal(fctx, `__arr_red_acc_${fctx.locals.length}`, accType);
 
   // Compile initial value or use arr[0] as default
@@ -6370,6 +6634,7 @@ function compileArrayReduceRight(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.reduceRight")) {
@@ -6414,7 +6679,21 @@ function compileArrayReduceRight(
   const logicalLenTmp = allocLocal(fctx, `__arr_rr_loglen_${fctx.locals.length}`, { kind: "i32" });
   const iTmp = allocLocal(fctx, `__arr_rr_i_${fctx.locals.length}`, { kind: "i32" });
 
-  compileExpression(ctx, fctx, propAccess.expression);
+  const rrReceiverType = compileExpression(
+    ctx,
+    fctx,
+    propAccess.expression,
+    receiverIsExternref ? { kind: "externref" } : undefined,
+  );
+  // (#4536) Externref-carried receiver (e.g. a default-parameter `arr = []`
+  // whose argument crossed the closure ABI as a `__make_iterable` mirror):
+  // materialize back into the native vec instead of ref.cast-trapping. Same
+  // arm as setupArrayLoop's #3996 handling.
+  if (receiverIsExternref && rrReceiverType?.kind === "externref") {
+    const externTmp = allocLocal(fctx, `__arr_rr_extern_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: externTmp });
+    fctx.body.push(...buildVecFromExternref(ctx, fctx, externTmp, vecTypeIdx, { arrTypeIdx, elemType }));
+  }
   fctx.body.push({ op: "local.tee", index: vecTmp });
   emitReceiverNullGuard(ctx, fctx, vecTmp);
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -6663,6 +6942,7 @@ function compileArrayFind(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.find")) {
@@ -6675,7 +6955,7 @@ function compileArrayFind(
 
   const elemTmpLocal = allocLocal(fctx, `__arr_find_el_${fctx.locals.length}`, elemType);
 
-  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "find");
+  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "find", receiverIsExternref);
 
   const callAndCheck = buildCallAndCheck(
     ctx,
@@ -6772,6 +7052,7 @@ function compileArrayFindIndex(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.findIndex")) {
@@ -6782,7 +7063,7 @@ function compileArrayFindIndex(
   const setup = setupArrayCallback(ctx, fctx, callExpr, "findIndex", "fi", undefined, 1);
   if (!setup) return null;
 
-  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "fi");
+  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "fi", receiverIsExternref);
 
   const callAndCheck = buildCallAndCheck(
     ctx,
@@ -6842,8 +7123,9 @@ function setupArrayLoopReverse(
   arrTypeIdx: number,
   elemType: ValType,
   tag: string,
+  receiverIsExternref = false,
 ): ArrayLoopLocals {
-  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, tag);
+  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, tag, receiverIsExternref);
   // i = len - 1 (setupArrayLoop left it at 0).
   fctx.body.push({ op: "local.get", index: loop.lenTmp });
   fctx.body.push({ op: "i32.const", value: 1 });
@@ -6886,6 +7168,7 @@ function compileArrayFindLast(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.findLast")) {
     fctx.body.push({ op: "unreachable" });
@@ -6897,7 +7180,16 @@ function compileArrayFindLast(
 
   const elemTmpLocal = allocLocal(fctx, `__arr_findLast_el_${fctx.locals.length}`, elemType);
 
-  const loop = setupArrayLoopReverse(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "findLast");
+  const loop = setupArrayLoopReverse(
+    ctx,
+    fctx,
+    propAccess,
+    vecTypeIdx,
+    arrTypeIdx,
+    elemType,
+    "findLast",
+    receiverIsExternref,
+  );
 
   const callAndCheck = buildCallAndCheck(
     ctx,
@@ -6986,6 +7278,7 @@ function compileArrayFindLastIndex(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.findLastIndex")) {
     fctx.body.push({ op: "unreachable" });
@@ -6995,7 +7288,16 @@ function compileArrayFindLastIndex(
   const setup = setupArrayCallback(ctx, fctx, callExpr, "findLastIndex", "fli", undefined, 1);
   if (!setup) return null;
 
-  const loop = setupArrayLoopReverse(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "fli");
+  const loop = setupArrayLoopReverse(
+    ctx,
+    fctx,
+    propAccess,
+    vecTypeIdx,
+    arrTypeIdx,
+    elemType,
+    "fli",
+    receiverIsExternref,
+  );
 
   const callAndCheck = buildCallAndCheck(
     ctx,
@@ -7053,6 +7355,7 @@ function compileArraySome(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.some")) {
@@ -7063,7 +7366,7 @@ function compileArraySome(
   const setup = setupArrayCallback(ctx, fctx, callExpr, "some", "some", undefined, 1);
   if (!setup) return null;
 
-  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "some");
+  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "some", receiverIsExternref);
 
   const callAndCheck = buildCallAndCheck(
     ctx,
@@ -7118,6 +7421,7 @@ function compileArrayEvery(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.every")) {
@@ -7128,7 +7432,7 @@ function compileArrayEvery(
   const setup = setupArrayCallback(ctx, fctx, callExpr, "every", "evr", undefined, 1);
   if (!setup) return null;
 
-  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "evr");
+  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "evr", receiverIsExternref);
 
   const callAndCheck = buildCallAndCheck(
     ctx,

@@ -5372,6 +5372,48 @@ export function compileElementAccessBody(
       if (isTuple) {
         // Tuple element access requires a literal numeric index
         if (!ts.isNumericLiteral(expr.argumentExpression)) {
+          // (#4536) Dynamic index into a HOMOGENEOUS tuple — webpack's groupBy
+          // accumulator (`@returns {[T[], T[]]}`) does `groups[fn(v) ? 0 : 1]`.
+          // All fields share one ValType, so `t[i]` lowers to an i32 ladder of
+          // `struct.get` arms (an out-of-range index reads the last field —
+          // acceptable for the checker-typed tuple shapes that reach here).
+          // Mixed-type tuples keep the literal-index requirement.
+          const firstFieldType = typeDef.fields[0]?.type;
+          const tupleHomogeneous =
+            firstFieldType !== undefined && typeDef.fields.every((f) => valTypesMatch(f.type, firstFieldType));
+          if (tupleHomogeneous) {
+            const recvLocal = allocLocal(fctx, `__tup_recv_${fctx.locals.length}`, { kind: "ref_null", typeIdx });
+            fctx.body.push({ op: "local.set", index: recvLocal });
+            const idxType = compileExpression(ctx, fctx, expr.argumentExpression, { kind: "i32" });
+            if (idxType && typeof idxType === "object" && (idxType as ValType).kind === "f64") {
+              fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+            }
+            const idxLocal = allocLocal(fctx, `__tup_idx_${fctx.locals.length}`, { kind: "i32" });
+            fctx.body.push({ op: "local.set", index: idxLocal });
+            const lastIdx = typeDef.fields.length - 1;
+            const armFor = (i: number): Instr[] =>
+              i >= lastIdx
+                ? [
+                    { op: "local.get", index: recvLocal },
+                    { op: "struct.get", typeIdx, fieldIdx: lastIdx },
+                  ]
+                : [
+                    { op: "local.get", index: idxLocal },
+                    { op: "i32.const", value: i },
+                    { op: "i32.eq" },
+                    {
+                      op: "if",
+                      blockType: { kind: "val", type: firstFieldType },
+                      then: [
+                        { op: "local.get", index: recvLocal },
+                        { op: "struct.get", typeIdx, fieldIdx: i },
+                      ],
+                      else: armFor(i + 1),
+                    },
+                  ];
+            fctx.body.push(...armFor(0));
+            return firstFieldType;
+          }
           reportError(ctx, expr, "Tuple element access requires a numeric literal index");
           return null;
         }

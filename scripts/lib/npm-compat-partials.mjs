@@ -27,11 +27,22 @@ export function mergeNpmCompatPartials(
     generatedAt = new Date().toISOString(),
     sourceRevision = null,
     existingHistory = { schemaVersion: 1, runs: [] },
+    existingPackages = [],
+    existingSummaryMeta = null,
+    existingGeneratedAt = null,
+    staleReason = "measurement worker did not produce a partial report",
+    allowStaleFallback = false,
     expectedNames = NPM_COMPAT_EXPECTED_PACKAGE_NAMES,
   } = {},
 ) {
-  if (!Array.isArray(partials) || partials.length === 0) {
-    throw new Error("npm-compat aggregation requires at least one partial report");
+  if (!Array.isArray(partials)) {
+    throw new Error("npm-compat aggregation requires an array of partial reports");
+  }
+  if (
+    partials.length === 0 &&
+    (!allowStaleFallback || !Array.isArray(existingPackages) || existingPackages.length === 0)
+  ) {
+    throw new Error("npm-compat aggregation requires at least one partial report or an existing snapshot");
   }
 
   const packages = [];
@@ -51,6 +62,41 @@ export function mergeNpmCompatPartials(
   }
 
   const expected = new Set(expectedNames);
+  const existingByName = new Map(
+    (Array.isArray(existingPackages) ? existingPackages : [])
+      .filter((packageRow) => packageRow?.name)
+      .map((packageRow) => [packageRow.name, packageRow]),
+  );
+  const stalePackages = [];
+  for (const name of allowStaleFallback ? [...expected].filter((candidate) => !seen.has(candidate)) : []) {
+    const previous = existingByName.get(name);
+    const packageRow = previous
+      ? {
+          ...previous,
+          refresh: {
+            status: "stale",
+            reason: staleReason,
+            ...(existingGeneratedAt ? { lastMeasuredAt: existingGeneratedAt } : {}),
+          },
+        }
+      : {
+          name,
+          version: null,
+          issue: null,
+          entryFile: null,
+          shape: null,
+          compile: { success: false, error: staleReason },
+          validation: { validates: false, firstError: staleReason },
+          tests: { kind: "upstream-suite", status: "refresh-failed", reason: staleReason },
+          correctness: { status: "unverified", reason: staleReason },
+          perf: null,
+          knownBugs: [],
+          refresh: { status: "stale", reason: staleReason },
+        };
+    packages.push(packageRow);
+    seen.add(name);
+    stalePackages.push(name);
+  }
   const missing = [...expected].filter((name) => !seen.has(name));
   const unexpected = [...seen].filter((name) => !expected.has(name));
   if (missing.length > 0 || unexpected.length > 0) {
@@ -67,25 +113,35 @@ export function mergeNpmCompatPartials(
     );
   }
 
-  const firstMeta = partials.find((partial) => partial.summaryMeta)?.summaryMeta ?? {};
+  const firstMeta = partials.find((partial) => partial.summaryMeta)?.summaryMeta ?? existingSummaryMeta ?? {};
   const sortedPackages = sortPackages(packages);
+  const freshPackages = sortedPackages.filter((packageRow) => packageRow.refresh?.status !== "stale");
   const summary = {
     generatedAt,
     correctness: correctnessRollup(sortedPackages),
     note: firstMeta.note ?? "Only packages with a committed, reproducible tests/dogfood harness are listed.",
     popularity: firstMeta.popularity ?? null,
     performanceMethodology: firstMeta.performanceMethodology ?? null,
+    refresh: {
+      status: stalePackages.length > 0 ? "partial" : "complete",
+      stalePackages: [...stalePackages].sort(),
+    },
     packages: sortedPackages,
   };
-  const perfRows = npmPerfRows(sortedPackages);
-  const perfHistory = mergeNpmPerfHistory(existingHistory, [
-    npmPerfHistoryPoint(
-      sortedPackages,
-      generatedAt,
-      sourceRevision,
-      firstMeta.performanceMethodology?.optimizationLevels,
-    ),
-  ]);
+  const perfRows = npmPerfRows(freshPackages);
+  const perfHistory = mergeNpmPerfHistory(
+    existingHistory,
+    freshPackages.length > 0
+      ? [
+          npmPerfHistoryPoint(
+            freshPackages,
+            generatedAt,
+            sourceRevision,
+            firstMeta.performanceMethodology?.optimizationLevels,
+          ),
+        ]
+      : [],
+  );
 
   return { summary, perfRows, perfHistory };
 }

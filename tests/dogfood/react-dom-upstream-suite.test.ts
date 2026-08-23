@@ -13,9 +13,11 @@ import { loadReactUpstreamSuitePin } from "./setup-react-upstream-suite.mjs";
 import {
   createNativeRequire,
   buildServerProjectFiles,
+  installNativeHostErrorBoundary,
   isExpectedLateJsdomHostError,
   partitionProjectTests,
   partitionReactDomTestsForBuild,
+  projectCompileConcurrency,
   reactDomTestSetup,
 } from "./react-dom-upstream-suite.mjs";
 // @ts-expect-error — .mjs dogfood extractor has no declaration file
@@ -37,6 +39,37 @@ describe("react-dom upstream suite", () => {
     expect(isExpectedLateJsdomHostError(expected)).toBe(true);
     expect(isExpectedLateJsdomHostError({ ...expected, message: "different DOM failure" })).toBe(false);
     expect(isExpectedLateJsdomHostError({ name: "TypeError", message: expected.message })).toBe(false);
+  });
+
+  // (#4604 S7) A watchdog-abandoned test body can assert inside a late
+  // scheduler/timer callback, which surfaces as an uncaughtException. The
+  // boundary must RECORD it — crashing lost run 796's entire react-dom
+  // measurement to one stray `toBe`. The listener is invoked directly (not via
+  // process.emit) so the test never trips vitest's own uncaught handler.
+  it("records unexpected late host errors instead of crashing the run", () => {
+    const before = process.listeners("uncaughtException").length;
+    const captured: Array<Record<string, unknown>> = [];
+    const dispose = installNativeHostErrorBoundary(captured);
+    const listeners = process.listeners("uncaughtException");
+    expect(listeners.length).toBe(before + 1);
+    const boundary = listeners[listeners.length - 1] as (error: unknown) => void;
+
+    boundary(new Error("expected Hello toBe Goodbye"));
+    const lateJsdom = new Error("The node to be removed is not a child of this node.");
+    lateJsdom.name = "NotFoundError";
+    boundary(lateJsdom);
+
+    dispose();
+    expect(process.listeners("uncaughtException").length).toBe(before);
+    expect(captured).toHaveLength(2);
+    expect(captured[0]).toMatchObject({
+      message: "expected Hello toBe Goodbye",
+      expectedLateJsdomHostError: false,
+    });
+    expect(captured[1]).toMatchObject({
+      name: "NotFoundError",
+      expectedLateJsdomHostError: true,
+    });
   });
 
   it("rejects exact development-only React API calls before a production run", () => {
@@ -147,6 +180,13 @@ describe("react-dom upstream suite", () => {
       ["b.js", ["b.js-0"]],
     ]);
     expect(batches.flatMap(({ tests }) => tests).map(({ id }) => id)).toEqual(input.map(({ id }) => id));
+  });
+
+  it("keeps the project compile pool bounded and deterministic", () => {
+    expect(projectCompileConcurrency(0, "4")).toBe(0);
+    expect(projectCompileConcurrency(3, "1")).toBe(1);
+    expect(projectCompileConcurrency(3, "4")).toBe(3);
+    expect(projectCompileConcurrency(3, "not-a-number")).toBe(2);
   });
 
   it("does not shadow upstream act functions or read a test-owned document early", () => {

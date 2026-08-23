@@ -58,6 +58,19 @@ import {
 export const NEW_GLOBAL_FALLTHROUGH = Symbol("new-builtin-global-fallthrough");
 
 /**
+ * (#4616) Is the single `new Date(arg)` argument DYNAMIC — statically able to
+ * hold a String at runtime without being string-typed (any/unknown/
+ * unresolvable, or a union with a string part)? Such an arg needs the runtime
+ * string-vs-ToNumber dispatch below; statically-typed number/Date args keep
+ * the plain ToNumber(ms) path.
+ */
+function isDynamicMaybeStringArg(ctx: CodegenContext, arg: ts.Expression): boolean {
+  const fact = ctx.oracle.typeFactOf(arg);
+  if (fact.kind === "any" || fact.kind === "unknown" || fact.kind === "unresolvable") return true;
+  return fact.kind === "union" && fact.parts.some((p) => p.kind === "string");
+}
+
+/**
  * (#4100) "Is the Error message null-or-undefined?" — leaves an i32 on the stack.
  *
  * `ref.is_null` alone misses a RUNTIME-undefined message: under the #2106
@@ -907,6 +920,47 @@ export function tryCompileBuiltinGlobalNew(
         const argType = compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
         if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
         fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__date_parse_host")! });
+      } else if (
+        !ctx.standalone &&
+        !ctx.wasi &&
+        isDynamicMaybeStringArg(ctx, args[0]!) &&
+        ctx.funcMap.has("__date_parse_host")
+      ) {
+        // (#4616) §21.4.2.1 for a DYNAMIC single arg (any/unknown/union-with-
+        // string): ToPrimitive yields a String → parse as if by Date.parse;
+        // anything else → ToNumber(ms). The static-type arms above can't see
+        // this (an `any` holding "Wed, 21 Oct 2015 …" ToNumbered to NaN, which
+        // silently dropped cookie's `expires` on every parsed Set-Cookie).
+        // Branch at runtime on `__typeof_string`; both callees are registered
+        // up-front (collector / addUnionImports), so no late-import shift can
+        // strand the arm indices.
+        const argType = compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
+        if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+        addUnionImports(ctx);
+        flushLateImportShifts(ctx, fctx);
+        const typeofStringIdx = ctx.funcMap.get("__typeof_string");
+        const unboxNumberIdx = ctx.funcMap.get("__unbox_number");
+        const parseHostIdx = ctx.funcMap.get("__date_parse_host")!;
+        if (typeofStringIdx === undefined || unboxNumberIdx === undefined) {
+          coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
+        } else {
+          const extLocal = allocTempLocal(fctx, { kind: "externref" });
+          fctx.body.push({ op: "local.tee", index: extLocal });
+          fctx.body.push({ op: "call", funcIdx: typeofStringIdx });
+          fctx.body.push({
+            op: "if",
+            blockType: { kind: "val", type: { kind: "f64" } },
+            then: [
+              { op: "local.get", index: extLocal },
+              { op: "call", funcIdx: parseHostIdx },
+            ],
+            else: [
+              { op: "local.get", index: extLocal },
+              { op: "call", funcIdx: unboxNumberIdx },
+            ],
+          });
+          releaseTempLocal(fctx, extLocal);
+        }
       } else {
         compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
       }

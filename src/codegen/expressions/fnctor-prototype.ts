@@ -99,6 +99,15 @@ export function resolveUserFnctorName(ctx: CodegenContext, expr: ts.Expression):
   // `(Con as any).prototype` must still resolve to `Con`.
   const sym = resolveFnctorSymbol(ctx.checker, expr);
   if (!sym) return undefined;
+  // The JS-host lane already has a live fnctor sidecar (`_getOrVivifyFnPrototype`)
+  // that represents every ordinary function's `.prototype`. Its module-init
+  // assignments must therefore be retained even when the standalone escape
+  // gate classified the constructor as `keep-typed`/`keep-static`; otherwise a
+  // chained write such as `HydrationRoot.prototype.render = Root.prototype.render
+  // = fn` is dropped before the sidecar can observe it. Standalone/WASI keep the
+  // stricter gate below because their native prototype representation is only
+  // sound for the approved population.
+  if (!ctx.standalone && !ctx.wasi) return sym.name;
   // RECONSTRUCT-GATE (#2660 S2): only materialize the per-fnctor prototype
   // `$Object` for a constructor S3 will reconstruct (≥1 `reconstruct`-classified
   // `new F()` site). A `keep-typed` / `keep-static` / never-`new`'d function keeps

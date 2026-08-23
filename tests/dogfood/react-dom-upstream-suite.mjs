@@ -106,20 +106,27 @@ export function partitionReactDomTestsForBuild(tests, build) {
   return { tests: runnable, rejected };
 }
 
-function installNativeHostErrorBoundary(nativeHostErrors) {
+// (#4604 S7) Record EVERY late host error; never crash the run. This boundary
+// used to re-throw anything that wasn't the one known late-jsdom error, which
+// killed the whole generator: an upstream test body can schedule scheduler or
+// host-timer work that asserts AFTER its own try/catch has returned — and the
+// per-test watchdog makes abandoned bodies with pending callbacks routine.
+// Refresh run 796 (job 97090976800) died exactly this way at 2h42m: one
+// `expect(...).toBe` firing in a late callback of `ReactDOMFizzForm-test.js`'s
+// testUserInteractionBeforeClientRender became an uncaughtException, the
+// re-throw crashed node, and the entire react-dom measurement — dozens of
+// completed batches — produced no partial. One upstream test's stray callback
+// must cost one report entry, not the package's whole measurement. Every
+// capture is attributed (file/test) and kept in the report's
+// `nativeHostErrors`, with the previously-special jsdom case now a flag.
+export function installNativeHostErrorBoundary(nativeHostErrors) {
   const onUncaught = (error) => {
-    if (!isExpectedLateJsdomHostError(error)) {
-      process.off("uncaughtException", onUncaught);
-      process.nextTick(() => {
-        throw error;
-      });
-      return;
-    }
     nativeHostErrors.push({
       file: nativeContextFile,
       test: nativeContextTest,
-      name: error.name,
-      message: error.message,
+      name: error?.name ?? "Error",
+      message: error?.message ?? String(error),
+      expectedLateJsdomHostError: isExpectedLateJsdomHostError(error),
     });
   };
   process.on("uncaughtException", onUncaught);
@@ -632,6 +639,19 @@ export function partitionProjectTests(tests, maxChars = 800_000) {
   return batches;
 }
 
+// Project batches are independent compile jobs, but the native oracle must
+// remain serial: it shares the installed React/jsdom globals and the host
+// error boundary. Keep the compile pool deliberately small because each
+// worker loads the published ReactDOM graph and TypeScript compiler. Two
+// workers cut the long pole without turning a runner's memory pressure into a
+// second source of cancelled refreshes; CI can raise this for a larger host.
+export function projectCompileConcurrency(batchCount, configured = process.env.DOGFOOD_REACT_DOM_PROJECT_CONCURRENCY) {
+  if (batchCount <= 0) return 0;
+  const requested = Number(configured ?? 2);
+  if (!Number.isFinite(requested) || requested < 1) return Math.min(2, batchCount);
+  return Math.max(1, Math.min(Math.floor(requested), batchCount));
+}
+
 function buildNativeRunners(implementation, tests, options = {}) {
   const { server = false } = options;
   const init = server ? "__reactDomServerEnsureInit()" : "__reactDomEnsureInit()";
@@ -1090,82 +1110,112 @@ async function runProjectHarness({
   let totalBytes = 0;
 
   try {
-    for (let batchIndex = 0; batchIndex < projectBatches.length; batchIndex++) {
-      const { file, tests: batchTests } = projectBatches[batchIndex];
-      const files = buildProjectFiles({ reactSource, sharedSource, clientSource, tests: batchTests });
-      const generatedRoot = join(PROJECT_ROOT, `batch-${batchIndex}`);
-      const started = performance.now();
-      let isolated;
-      try {
-        isolated = await compileProjectInWorker({
-          generatedRoot,
-          entryFile: "entry.ts",
-          files,
-          timeoutMs,
-          workerEnv: {
-            DOGFOOD_INSTALL_JSDOM: "1",
-            DOGFOOD_NAMED_TEST_EXPORTS: "1",
-            DOGFOOD_REACT_DOM_ACT: "1",
-          },
-        });
-      } catch (error) {
-        isolated = {
-          compile: {
-            success: false,
-            validates: false,
-            durationMs: Math.round(performance.now() - started),
-            binaryBytes: 0,
-            errors: [{ message: error instanceof Error ? error.message : String(error) }],
-          },
-          wasm: null,
-        };
-      }
-      const compile = isolated?.compile ?? {
-        success: false,
-        validates: false,
-        durationMs: Math.round(performance.now() - started),
-        binaryBytes: 0,
-        errors: [{ message: "compile worker returned no result" }],
-      };
-      const wasm = isolated?.wasm ?? null;
-      const compileError =
-        compile.errors?.[0]?.message ??
-        compile.validationError ??
-        (compile.timedOut ? `compile timeout after ${timeoutMs}ms` : compile.success ? null : "no binary emitted");
-      const validates = compile.validates === true;
-      totalCompileMs += compile.durationMs ?? 0;
-      totalBytes += compile.binaryBytes ?? 0;
-
-      nativeContextFile = file;
-      const nativeResults = new Map((await runNative(implementation, batchTests)).map((entry) => [entry.id, entry]));
-      const statuses = wasm?.statuses ?? [];
-      const wasmErrors = wasm?.errors ?? [];
-      for (let index = 0; index < batchTests.length; index++) {
-        const test = batchTests[index];
-        const native = nativeResults.get(test.id) ?? {};
-        runResults.set(test.id, {
-          native,
-          validates,
-          compileError,
-          wasmFatal: wasm?.fatal ?? null,
-          wasmStatus: statuses[index] === true,
-          wasmError: wasmErrors[index] ?? "",
-        });
-      }
-      batchReports.push({
-        file,
-        tests: batchTests.length,
-        compileMs: compile.durationMs ?? 0,
-        binaryBytes: compile.binaryBytes ?? 0,
-        imports: compile.imports ?? [],
-        compileSuccess: compile.success === true,
-        validates,
-        firstError: compileError,
+    const batchReady = Array.from({ length: projectBatches.length }, () => {
+      let resolve;
+      const promise = new Promise((done) => {
+        resolve = done;
       });
-      log(
-        `[dogfood]   client project ${file.replace(/^.*\//, "")}: ${batchTests.length} tests, ` +
-          `${validates ? "valid" : `INVALID — ${String(compileError).slice(0, 70)}`}`,
-      );
+      return { promise, resolve };
+    });
+    const workerCount = projectCompileConcurrency(projectBatches.length);
+    log(`[dogfood]   client project: ${projectBatches.length} batches, ${workerCount} compile workers`);
+    let nextBatchIndex = 0;
+    const compileBatch = async () => {
+      while (true) {
+        const batchIndex = nextBatchIndex++;
+        if (batchIndex >= projectBatches.length) return;
+        const { file, tests: batchTests } = projectBatches[batchIndex];
+        const generatedRoot = join(PROJECT_ROOT, `batch-${batchIndex}`);
+        const started = performance.now();
+        let isolated;
+        try {
+          const files = buildProjectFiles({ reactSource, sharedSource, clientSource, tests: batchTests });
+          isolated = await compileProjectInWorker({
+            generatedRoot,
+            entryFile: "entry.ts",
+            files,
+            timeoutMs,
+            workerEnv: {
+              DOGFOOD_INSTALL_JSDOM: "1",
+              DOGFOOD_NAMED_TEST_EXPORTS: "1",
+              DOGFOOD_REACT_DOM_ACT: "1",
+            },
+          });
+        } catch (error) {
+          isolated = {
+            compile: {
+              success: false,
+              validates: false,
+              durationMs: Math.round(performance.now() - started),
+              binaryBytes: 0,
+              errors: [{ message: error instanceof Error ? error.message : String(error) }],
+            },
+            wasm: null,
+          };
+        }
+        const compile = isolated?.compile ?? {
+          success: false,
+          validates: false,
+          durationMs: Math.round(performance.now() - started),
+          binaryBytes: 0,
+          errors: [{ message: "compile worker returned no result" }],
+        };
+        const wasm = isolated?.wasm ?? null;
+        const compileError =
+          compile.errors?.[0]?.message ??
+          compile.validationError ??
+          (compile.timedOut ? `compile timeout after ${timeoutMs}ms` : compile.success ? null : "no binary emitted");
+        const batch = { file, batchTests, compile, wasm, compileError };
+        batchReady[batchIndex].resolve(batch);
+        log(
+          `[dogfood]   client project ${file.replace(/^.*\//, "")}: ${batchTests.length} tests, ` +
+            `${compile.validates === true ? "valid" : `INVALID — ${String(compileError).slice(0, 70)}`}`,
+        );
+      }
+    };
+    const compileWorkers = Promise.all(Array.from({ length: workerCount }, () => compileBatch()));
+
+    // Compilation and the native oracle are pipelined: later independent
+    // batches keep compiling while the shared host consumes the next batch.
+    // The oracle itself remains strictly source-ordered, so scheduler
+    // callbacks and late host errors stay deterministic.
+    try {
+      for (const { promise } of batchReady) {
+        const { file, batchTests, compile, wasm, compileError } = await promise;
+        const validates = compile.validates === true;
+        totalCompileMs += compile.durationMs ?? 0;
+        totalBytes += compile.binaryBytes ?? 0;
+
+        nativeContextFile = file;
+        const nativeResults = new Map((await runNative(implementation, batchTests)).map((entry) => [entry.id, entry]));
+        const statuses = wasm?.statuses ?? [];
+        const wasmErrors = wasm?.errors ?? [];
+        for (let index = 0; index < batchTests.length; index++) {
+          const test = batchTests[index];
+          const native = nativeResults.get(test.id) ?? {};
+          runResults.set(test.id, {
+            native,
+            validates,
+            compileError,
+            wasmFatal: wasm?.fatal ?? null,
+            wasmStatus: statuses[index] === true,
+            wasmError: wasmErrors[index] ?? "",
+          });
+        }
+        batchReports.push({
+          file,
+          tests: batchTests.length,
+          compileMs: compile.durationMs ?? 0,
+          binaryBytes: compile.binaryBytes ?? 0,
+          imports: compile.imports ?? [],
+          compileSuccess: compile.success === true,
+          validates,
+          firstError: compileError,
+        });
+      }
+    } finally {
+      // Do not leave compiler workers behind if the shared native oracle throws.
+      await compileWorkers;
     }
   } finally {
     // A scheduler callback can outlive the final test body. Keep the host error

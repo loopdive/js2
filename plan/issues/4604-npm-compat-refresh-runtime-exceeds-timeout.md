@@ -152,6 +152,27 @@ same stale artifact.
   timeout names the lane and batch it went to. All other groups were green
   in run 785 (jsdom 4 min, redux 2 min, tools 46 min), so react-dom is the
   sole remaining publisher-blocker.
+- **S7: the bounds worked — react-dom now fails at 2h42m instead of timing
+  out at 350min, and the new failure is a crash, not a hang or a budget
+  blow-up.** Run 796 (id 32597629293, job 97090976800, S6 merge commit)
+  measured all 9 groups; react-dom's per-batch `[dogfood]` log (now visible
+  via `NPM_COMPAT_SUITE_LOGS=1`, S6) shows dozens of client-project batches
+  completing or bounded-timing-out cleanly for ~2h40m, then the whole job
+  dying: `Error: expected Hello toBe Goodbye` thrown from
+  `testUserInteractionBeforeClientRender` (`ReactDOMFizzForm-test.js`),
+  uncaught, killing node with exit 1 — no partial report for the entire
+  react-dom group despite the dozens of completed batches before it.
+  Root cause: `installNativeHostErrorBoundary`'s `uncaughtException` handler
+  re-threw anything that wasn't the one known late-jsdom-removal error. The
+  per-test watchdog (S5) makes an abandoned test body with a still-pending
+  scheduler/timer callback routine — that callback can fire its own
+  `expect(...).toBe` assertion after the watchdog has already moved on,
+  landing as an uncaughtException with no test context to attribute it to,
+  and the re-throw crashed the whole process. Fixed by making the boundary
+  record every late host error (file/test/name/message +
+  `expectedLateJsdomHostError` flag) into the report's `nativeHostErrors`
+  instead of re-throwing — one stray callback now costs one report entry,
+  never the whole measurement.
 
 ## Fix directions (pick during implementation)
 
@@ -215,6 +236,41 @@ Implementation: [PR #4767](https://github.com/loopdive/js2wasm/pull/4767) (the
 Jest infrastructure change and npm-compat reliability follow-up share the
 same branch checkpoint).
 
+## 2026-08-22 cancellation audit after the matrix landed
+
+The remaining `cancelled` entries in the run list are not new
+`cancel-in-progress` cancellations. Runs 32564073432 and 32561947825 both
+finished their short matrix cells successfully, then their old `renderers`
+cell was killed at exactly 350 minutes (09:07:04→14:57:18 and
+08:18:47→14:09:00). Because that cell contained the serial ReactDOM, jsdom,
+and Redux group from the pre-#4767 workflow, the coordinator correctly had no
+complete artifact to publish. The SHA-keyed concurrency fix in #4755 protects
+pending push runs; it cannot revive a job that reaches its own timeout.
+
+The first post-#4770 run, 32576730177, uses the new independent
+`react-dom`/`jsdom`/`redux` cells. jsdom and Redux completed successfully while
+ReactDOM continued in its own cell, so they are no longer collateral
+cancellations. Keep this run as the acceptance probe: if ReactDOM itself
+reaches 350 minutes, the next slice must bound or subdivide the ReactDOM suite
+and publish an explicit `unavailableInfra` result rather than letting the
+workflow be killed without a partial report.
+
+## 2026-08-22 ReactDOM compile-pool follow-up
+
+The ReactDOM cell is now independently protected from the old renderer-group
+timeout, but its client project still contains 110 compile batches. They were
+being compiled one after another, so a valid but slow corpus could still reach
+the cell's 350-minute ceiling. The project lane now compiles those independent
+batches with two isolated workers and runs the shared native oracle in stable
+source order. The workflow pins the pool to two workers to keep memory bounded;
+each batch retains its own timeout and report entry. This reduces wall-clock
+time without dropping tests or converting compiler failures into
+`unavailableInfra`. Compilation is pipelined with the source-ordered native
+oracle, so the workers continue compiling later batches while the shared host
+consumes the next completed batch.
+
+Implementation: [PR #4771](https://github.com/loopdive/js2/pull/4771), stacked
+on the renderer/compiler baseline in [PR #4769](https://github.com/loopdive/js2/pull/4769).
 ## 2026-08-22 follow-up — promotion checks must never be cancelled by refresh
 
 The SHA-keyed measurement groups prevent newer main pushes from replacing an

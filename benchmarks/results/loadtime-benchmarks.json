@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-08-22T21:43:18.603Z",
+  "timestamp": "2026-08-23T05:07:39.969Z",
   "benchmarks": [
     {
       "name": "fib",
@@ -270,6 +270,56 @@
             "name": "__concat_4"
           },
           "paramCount": 4
+        },
+        {
+          "module": "env",
+          "name": "__call_function_0",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_0"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__call_function_1",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_1"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__call_function_2",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_2"
+          },
+          "paramCount": 4
+        },
+        {
+          "module": "env",
+          "name": "__call_function_3",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_3"
+          },
+          "paramCount": 5
+        },
+        {
+          "module": "env",
+          "name": "__call_function_4",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_4"
+          },
+          "paramCount": 6
         }
       ],
       "stringPool": [
@@ -573,6 +623,56 @@
             "name": "__concat_4"
           },
           "paramCount": 4
+        },
+        {
+          "module": "env",
+          "name": "__call_function_0",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_0"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__call_function_1",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_1"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__call_function_2",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_2"
+          },
+          "paramCount": 4
+        },
+        {
+          "module": "env",
+          "name": "__call_function_3",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_3"
+          },
+          "paramCount": 5
+        },
+        {
+          "module": "env",
+          "name": "__call_function_4",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_4"
+          },
+          "paramCount": 6
         }
       ],
       "stringPool": [
@@ -885,6 +985,56 @@
             "name": "__extern_method_call_1"
           },
           "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__call_function_0",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_0"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__call_function_1",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_1"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__call_function_2",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_2"
+          },
+          "paramCount": 4
+        },
+        {
+          "module": "env",
+          "name": "__call_function_3",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_3"
+          },
+          "paramCount": 5
+        },
+        {
+          "module": "env",
+          "name": "__call_function_4",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_4"
+          },
+          "paramCount": 6
         }
       ],
       "stringPool": [
@@ -1189,6 +1339,56 @@
             "name": "__concat_4"
           },
           "paramCount": 4
+        },
+        {
+          "module": "env",
+          "name": "__call_function_0",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_0"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__call_function_1",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_1"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__call_function_2",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_2"
+          },
+          "paramCount": 4
+        },
+        {
+          "module": "env",
+          "name": "__call_function_3",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_3"
+          },
+          "paramCount": 5
+        },
+        {
+          "module": "env",
+          "name": "__call_function_4",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_4"
+          },
+          "paramCount": 6
         }
       ],
       "stringPool": [
@@ -1503,6 +1703,56 @@
             "name": "__concat_4"
           },
           "paramCount": 4
+        },
+        {
+          "module": "env",
+          "name": "__call_function_0",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_0"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__call_function_1",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_1"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__call_function_2",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_2"
+          },
+          "paramCount": 4
+        },
+        {
+          "module": "env",
+          "name": "__call_function_3",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_3"
+          },
+          "paramCount": 5
+        },
+        {
+          "module": "env",
+          "name": "__call_function_4",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_4"
+          },
+          "paramCount": 6
         }
       ],
       "stringPool": [
@@ -1841,6 +2091,56 @@
             "name": "__concat_5"
           },
           "paramCount": 5
+        },
+        {
+          "module": "env",
+          "name": "__call_function_0",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_0"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__call_function_1",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_1"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__call_function_2",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_2"
+          },
+          "paramCount": 4
+        },
+        {
+          "module": "env",
+          "name": "__call_function_3",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_3"
+          },
+          "paramCount": 5
+        },
+        {
+          "module": "env",
+          "name": "__call_function_4",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_4"
+          },
+          "paramCount": 6
         }
       ],
       "stringPool": [
@@ -2188,6 +2488,56 @@
             "name": "__concat_7"
           },
           "paramCount": 7
+        },
+        {
+          "module": "env",
+          "name": "__call_function_0",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_0"
+          },
+          "paramCount": 2
+        },
+        {
+          "module": "env",
+          "name": "__call_function_1",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_1"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__call_function_2",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_2"
+          },
+          "paramCount": 4
+        },
+        {
+          "module": "env",
+          "name": "__call_function_3",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_3"
+          },
+          "paramCount": 5
+        },
+        {
+          "module": "env",
+          "name": "__call_function_4",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_4"
+          },
+          "paramCount": 6
         }
       ],
       "stringPool": [
