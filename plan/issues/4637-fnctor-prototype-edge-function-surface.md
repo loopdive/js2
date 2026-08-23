@@ -548,11 +548,34 @@ exercised the classification C1 widens (a `NewExpression` ARGUMENT). A merger
 running either suite alone would have seen green on a two-directional
 interaction.
 
-Closed by `#4637 A1 … CANARY (dev-4639 C1 x A1)`, which puts the instance in
-`new H(g)` argument position with a function-valued prototype on its
-constructor. Verified it is not incidentally green: `.tmp/p20.js`, standalone,
-base `33` → after `63`, the four flipping bits being `instanceof`,
-`isPrototypeOf`, the inherited read and `getPrototypeOf` identity.
+First attempt: a case putting the instance in `new H(g)` argument position with
+a function-valued prototype, verified not incidentally green (`.tmp/p20.js`,
+base `33` → after `63`). **That case was mislabelled and has been renamed.** It
+is a real test of the A1 arm; it is NOT a C1 canary, and that was measurable
+without dev-4639's branch: delete the `var h = new H(g);` line and the answer is
+still `63` (`.tmp/p21.js`). The NewExpression-ARGUMENT position is not what
+drives the reconstruction there — the other dynamic uses (`isPrototypeOf`,
+`getPrototypeOf`, the property read) already classify the instance as dynamic
+without C1's widening. **A pin whose named interaction can be deleted without
+changing its answer is not a canary for it.**
+
+This is the same blindness dev-4639 found in their own C2 canary, one round
+after both lanes articulated the rule — which sharpens the rule itself:
+**reverting shows a pin is sensitive to YOUR change and says nothing about
+whether it is sensitive to THEIRS.** A cross-lane canary needs its own
+sensitivity check, and the cheap form is: delete the interaction the pin is
+named for and see whether the answer moves.
+
+The shape where C1's lever actually acts is the ARGUMENT-ONLY one — `new G()`
+appears solely as a `new` argument, every read goes through `h.wrapped`, so no
+other dynamic use can classify the instance. Measured `.tmp/p22.js`, **both arms
+`2`**: only `instanceof` holds, the A1 arm does not fire, because the site never
+reconstructs. Pinned as `CROSS-LANE PREDICTION (dev-4639 C1 x A1)`, `it.fails`,
+with a falsifiable statement: C1 should make this site reconstruct and flip it to
+the spec answer `31`. **If C1 lands and it is still red, the two changes did not
+compose, and that is the finding.** (One measured anomaly recorded without
+explanation: `G.prototype === P` also reads false in this shape on both arms,
+unlike every other A1 case. Not diagnosed, not guessed at.)
 
 ### 3. Every pin re-verified against the base — two were mislabelled
 
@@ -582,9 +605,27 @@ pins were the wrong thing:
   positive half is already covered by the `Object.create(<function>)` case.
 
 **Resulting partition, measured (base `81445abf7`, tests at branch version):
-8 fail / 10 pass.** Every one of the 8 failures is a test OF the change; every
-one of the 10 passes is either an explicitly-labelled regression guard (1), a
-pure negative control (5), or an `it.fails` residual (4). On the branch: 18/18.
+8 fail / 11 pass.** Every one of the 8 failures is a test OF the change; every
+one of the 11 passes is an explicitly-labelled regression guard (1), a pure
+negative control (5), an `it.fails` residual (4), or the `it.fails` cross-lane
+prediction above (1, red on both arms by design). On the branch: 19/19.
+
+### 4. A green exit code is not a green run (dev-4639's live hazard)
+
+dev-4639 hit this and it is worth a line here even though it does not bite this
+file: their suite uses `describe.skipIf(!TEST262)` keyed on
+`test262/harness/assert.js` existing, and after restoring the `test262` gitlink
+the directory is empty until the symlink-farm rebuilder repopulates it — so the
+run reported **`14 skipped`, exit 0**. A merge check that shells out and trusts
+the exit code sees green with ZERO coverage, and it composes badly with the
+gitlink flip both lanes hit.
+
+**Checked here rather than assumed: `tests/issue-4637.test.ts` and
+`tests/issue-4623.test.ts` carry no such gate.** Neither calls
+`runTest262File`; both compile in-process (`compile()` + `WebAssembly.instantiate`
+/ `instantiateWasm`), so there is no test262 path to be absent and nothing that
+can skip silently. The general rule still applies to whoever runs the merge
+check: **confirm the run says N passed — never that it exited 0.**
 
 **Named canaries** (dev-4639's mapping — one pin per contact point, so a
 failure identifies WHICH interaction broke rather than only that something did):
