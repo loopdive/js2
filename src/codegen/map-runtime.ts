@@ -2502,7 +2502,11 @@ function rehashIfNeededInstrs(ctx: CodegenContext, M_BUCKETS: number, M_LIVECOUN
  * module built the native map runtime; js-host lanes never register
  * `__map_*`, so they stay byte-identical.
  */
-export const ITER_KIND_MAPSET = 7;
+// 9: kinds 1-7 are taken by iterator-native.ts (VEC=3, USER=1, OBJ=4,
+// HOSTGEN=5, ASYNCGEN=6, GENSTATE=7 — colliding with 7 sent sync-generator
+// recs into the $MapIter cast, the exact set-like regression this constant's
+// first value caused); 8 is left spare for iterator-native's next arm.
+export const ITER_KIND_MAPSET = 9;
 
 export function fillMapSetDynDispatchArms(ctx: CodegenContext): void {
   if (ctx.mapTypeIdx < 0) return;
