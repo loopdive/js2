@@ -159,6 +159,36 @@ describe.skipIf(!TEST262)("#4639 C2 — CANARY: the key on which C2 and #4637's 
       'assert.sameValue(Proxy.prototype, undefined, "Proxy.prototype");\n',
     "Math/Proxy .prototype reach the C2 arm with key `prototype`",
   );
+
+  // REGRESSION GUARD (green on base) — and it exists because the pin ABOVE,
+  // which fails on base and so is a real test of the C2 arm, is NEVERTHELESS
+  // INSENSITIVE to the cross-lane interaction it is named for.
+  //
+  // Why: for a no-brand builtin BOTH branches of the arm's `if` answer
+  // `undefined` — the carrier has no own `prototype`, and `%Object.prototype%`
+  // has none either. So if dev-4637's prologue ever wrongly answered `1` for a
+  // carrier receiver, the arm would take the `then` branch, read
+  // `__extern_get(carrier, "prototype")`, and still produce `undefined`. The
+  // canary would stay green through exactly the regression it watches for.
+  //
+  // This pin is the discriminating one: `hasOwnProperty` has a two-valued
+  // answer, it routes through the SAME `__object_hasOwn` / `__hasOwnProperty`
+  // their prologue splices, and it uses both receiver kinds — a NAMESPACE
+  // carrier with no own `prototype` (§10.3: `Math` is not a constructor) and a
+  // CONSTRUCTOR carrier that has one (seeded by `pushBuiltinCtorOwnPropSeed`).
+  // A splice that stopped declining on carriers flips the `Math` half
+  // false → true and trips this.
+  //
+  // Measured BOTH arms, `false|true` on each, so it is labelled a guard rather
+  // than presented as a demonstration of this change-set — the distinction
+  // dev-4637 had to introduce on `issue-4637` after two of their pins turned
+  // out to be the wrong category.
+  pinSource(
+    "carrier-hasown-prototype-guard",
+    'assert.sameValue(Math.hasOwnProperty("prototype"), false, "Math has no own prototype");\n' +
+      'assert.sameValue(String.hasOwnProperty("prototype"), true, "String has an own prototype");\n',
+    "REGRESSION GUARD (green on base) — discriminating answer on the spliced helper",
+  );
 });
 
 describe.skipIf(!TEST262)("#4639 — measured residuals (see the issue's Residuals table)", () => {
