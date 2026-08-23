@@ -71,18 +71,18 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
-import { WRAPPER_PRIMITIVE_KEY } from "./object-runtime.js";
+import { FLAG_INTERNAL, WRAPPER_PRIMITIVE_KEY } from "./object-runtime.js";
 import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitThrowTypeError } from "./expressions/helpers.js";
-import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#4631) dyn valueOf arm fill
-import { nativeStringLiteralInstrs } from "./native-string-literals.js"; // (#4631)
-import { getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js"; // (#4631)
+import { definedFuncAt } from "./func-space.js"; // (#4631) dyn valueOf arm fill
 import { registerNativeProtoType } from "./native-proto.js"; // (#4619) arm 3's type, eagerly
 
 /** `$PropEntry.$value` field index (object-runtime.ts layout). */
 const ENTRY_VALUE = 1;
+/** `$PropEntry.$flags` field index (object-runtime.ts layout). */
+const ENTRY_FLAGS = 2;
 /** `$NativeProto` field indices (native-proto.ts layout). */
 const NP_BRAND = 0;
 const NP_IS_CLASS = 1;
@@ -331,142 +331,83 @@ export function emitWrapperThisValueBody(
 }
 
 /**
- * (#4631) Finalize fill: `wrapper.valueOf()` through the DYNAMIC method-call
- * native. The static/typed receiver path already answers the
- * `[[PrimitiveValue]]` slot; the any-channel call resolved through the proto
- * walk and, for brands with no minted valueOf closure (BigInt, Symbol), hit
- * the `Object.prototype.valueOf is not yet implemented` refusal — the
- * deepEqual harness's `isBoxed(a) → a.valueOf()` leg. The arm answers the
- * slot VALUE for any wrapper `$Object` whose own props do NOT shadow
- * `valueOf` — the §21.1.3.7-family answer for every primitive wrapper brand.
- * Prepended at finalize; reads funcMap only.
+ * (#4631) Finalize fill: the BIGINT wrapper arm of `__dyn_valueOf`
+ * (wrapper-valueof.ts) — the dispatcher that actually lowers a zero-arg
+ * `<any>.valueOf()` call.
+ *
+ * ## Which dispatcher, and how that was established
+ *
+ * `a.valueOf()` on an `any` receiver does NOT go through
+ * `__extern_method_call`, nor through an `__extern_get` + apply pair at the
+ * call site. `tryEmitValueOfFallback` (expressions/valueof-fallback.ts)
+ * intercepts the shape `<expr>.valueOf()` with zero arguments BEFORE the
+ * generic dynamic method-call lowering and routes it to the single-argument
+ * native `__dyn_valueOf`. Confirmed empirically for
+ * `function anyv(v){return v} anyv(Object(1n)).valueOf()` by returning a
+ * distinct native-string sentinel from each of that helper's four exits: the
+ * program observed `A4631_APPLY`, i.e. the helper's arm 1.
+ *
+ * ## Why arm 1 answered wrongly for a bigint wrapper
+ *
+ * Arm 1 is `m = __extern_get(recv, "valueOf")` → `__apply_closure(m, recv,
+ * [])`. For a Number/String/Boolean wrapper `m` is the brand's minted
+ * `__proto_method_<brand>_valueOf` closure, which returns the
+ * `[[PrimitiveValue]]` slot — right answer. A BigInt wrapper has no minted
+ * brand closure, so `m` resolved to the Object-brand `valueOf` (return
+ * `this`), and arm 2 — the slot read that WOULD have been right — is only
+ * reached when `m` is null. The receiver came back instead of `1n`, which
+ * renders in a test262 diff as an object-vs-bigint mismatch
+ * (`harness/deepEqual-primitives-bigint.js`, leg `deepEqual(Object(1n), 1n)`).
+ *
+ * ## The arm
+ *
+ * Prepended to the helper body, so it runs BEFORE the property probe:
+ *
+ *     recv is $Object
+ *       ∧ no OWN "valueOf" (an own property still shadows — §21.1.3.7 is only
+ *         the INHERITED intrinsic)
+ *       ∧ the reserved FLAG_INTERNAL `[[PrimitiveValue]]` slot is present
+ *       ∧ that slot's VALUE is the native bigint carrier
+ *     ⇒ return the slot value.
+ *
+ * The last conjunct is what keeps this from re-ordering anything that works
+ * today: a Number/String/Boolean slot fails the `ref.test`, falls through, and
+ * keeps resolving through the proto walk exactly as before — so a program that
+ * REPLACES `Number.prototype.valueOf` still wins over the slot. Only the brand
+ * with no proto closure to walk to changes behaviour. A module with no bigint
+ * carrier type (`nativeBigIntTypeIdx < 0`) or no `__dyn_valueOf` emits nothing.
  */
-export function fillWrapperValueOfDynCallArm(ctx: CodegenContext): void {
-  fillBigIntWrapperValueOfResolutionArm(ctx);
+export function fillBigIntDynValueOfArm(ctx: CodegenContext): void {
   const objTypes = ctx.objectRuntimeTypes;
-  const methodCallIdx = ctx.funcMap.get("__extern_method_call");
+  const dynValueOfIdx = ctx.funcMap.get("__dyn_valueOf");
   const objFindIdx = ctx.funcMap.get("__obj_find");
-  const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
-  const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals");
-  if (!objTypes || methodCallIdx === undefined || objFindIdx === undefined) return;
-  if (strFlattenIdx === undefined || strEqualsIdx === undefined || ctx.anyStrTypeIdx < 0) return;
-  const fn = definedFuncAt(ctx, methodCallIdx);
-  if (!fn) return;
-  if ((ctx as unknown as { __wrapperValueOfArmFilled?: boolean }).__wrapperValueOfArmFilled) return;
-  (ctx as unknown as { __wrapperValueOfArmFilled?: boolean }).__wrapperValueOfArmFilled = true;
-  const { objectTypeIdx, propEntryTypeIdx } = objTypes;
-  addStringConstantGlobal(ctx, WRAPPER_PRIMITIVE_KEY);
-  const castObj = (): Instr[] => [
-    { op: "local.get", index: 0 },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: objectTypeIdx },
-  ];
-  const slotLocal = 3 + fn.locals.length;
-  fn.locals.push({ name: "__wvo_slot", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } });
-  fn.body.splice(
-    0,
-    0,
-    { op: "local.get", index: 0 },
-    { op: "any.convert_extern" },
-    { op: "ref.test", typeIdx: objectTypeIdx },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        // name == "valueOf"?
-        { op: "local.get", index: 1 },
-        { op: "any.convert_extern" },
-        { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: 1 },
-            { op: "any.convert_extern" },
-            { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-            { op: "call", funcIdx: strFlattenIdx },
-            { op: "ref.as_non_null" },
-            ...nativeStringLiteralInstrs(ctx, "valueOf"),
-            { op: "call", funcIdx: strEqualsIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                // an OWN `valueOf` shadows — fall through to ordinary dispatch.
-                ...castObj(),
-                { op: "local.get", index: 1 },
-                { op: "call", funcIdx: objFindIdx },
-                { op: "ref.is_null" },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [
-                    ...castObj(),
-                    ...stringConstantExternrefInstrs(ctx, WRAPPER_PRIMITIVE_KEY),
-                    { op: "call", funcIdx: objFindIdx },
-                    { op: "local.set", index: slotLocal },
-                    { op: "local.get", index: slotLocal },
-                    { op: "ref.is_null" },
-                    { op: "i32.eqz" },
-                    {
-                      op: "if",
-                      blockType: { kind: "empty" },
-                      then: [
-                        { op: "local.get", index: slotLocal },
-                        { op: "ref.as_non_null" },
-                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 }, // value anyref
-                        { op: "extern.convert_any" },
-                        { op: "return" },
-                      ],
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    },
-  );
-}
-
-/**
- * (#4631) `__extern_get(wrapper, "valueOf")` for a BIGINT wrapper resolves to
- * a minted `(self, this) -> this[[PrimitiveValue]]` closure instead of the
- * proto walk's Object-brand refusal. The Number/String/Boolean brands already
- * resolve through the #4223 classify ladder; BigInt has no minted proto
- * closure, so its wrapper read fell to `Object.prototype.valueOf is not yet
- * implemented`. Gated on the slot VALUE testing as the native bigint carrier,
- * so every other receiver keeps its exact resolution.
- */
-function fillBigIntWrapperValueOfResolutionArm(ctx: CodegenContext): void {
-  const objTypes = ctx.objectRuntimeTypes;
-  const externGetIdx = ctx.funcMap.get("__extern_get");
-  const objFindIdx = ctx.funcMap.get("__obj_find");
-  const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
-  const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals");
-  if (!objTypes || externGetIdx === undefined || objFindIdx === undefined) return;
-  if (strFlattenIdx === undefined || strEqualsIdx === undefined || ctx.anyStrTypeIdx < 0) return;
+  if (!objTypes || dynValueOfIdx === undefined || objFindIdx === undefined) return;
   if (ctx.nativeBigIntTypeIdx < 0) return;
-  const fn = definedFuncAt(ctx, externGetIdx);
+  const fn = definedFuncAt(ctx, dynValueOfIdx);
   if (!fn) return;
-  const marker = ctx as unknown as { __bigintWrapperValueOfArmFilled?: boolean };
-  if (marker.__bigintWrapperValueOfArmFilled) return;
-  marker.__bigintWrapperValueOfArmFilled = true;
-  const closure = ensureBigIntWrapperValueOfClosure(ctx, objTypes, objFindIdx);
-  if (closure === undefined) return;
+  const marker = ctx as unknown as { __bigintDynValueOfArmFilled?: boolean };
+  if (marker.__bigintDynValueOfArmFilled) return;
+  marker.__bigintDynValueOfArmFilled = true;
+
   const { objectTypeIdx, propEntryTypeIdx } = objTypes;
   addStringConstantGlobal(ctx, WRAPPER_PRIMITIVE_KEY);
+  addStringConstantGlobal(ctx, "valueOf");
+  // The helper declares param 0 + locals 1..3; append our own entry local
+  // rather than reusing `e`, which arm 2 also writes.
+  const entryLocal = 1 + fn.locals.length;
+  fn.locals.push({ name: "__bdvo_e", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } });
+
   const castObj = (): Instr[] => [
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
     { op: "ref.cast", typeIdx: objectTypeIdx },
   ];
   const slotValue = (): Instr[] => [
-    ...castObj(),
-    ...stringConstantExternrefInstrs(ctx, WRAPPER_PRIMITIVE_KEY),
-    { op: "call", funcIdx: objFindIdx },
+    { op: "local.get", index: entryLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: ENTRY_VALUE },
   ];
+
   fn.body.splice(
     0,
     0,
@@ -477,58 +418,40 @@ function fillBigIntWrapperValueOfResolutionArm(ctx: CodegenContext): void {
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        { op: "local.get", index: 1 },
-        { op: "any.convert_extern" },
-        { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+        // An OWN `valueOf` shadows the intrinsic — leave the call alone.
+        ...castObj(),
+        ...stringConstantExternrefInstrs(ctx, "valueOf"),
+        { op: "call", funcIdx: objFindIdx },
+        { op: "ref.is_null" },
         {
           op: "if",
           blockType: { kind: "empty" },
           then: [
-            { op: "local.get", index: 1 },
-            { op: "any.convert_extern" },
-            { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-            { op: "call", funcIdx: strFlattenIdx },
-            { op: "ref.as_non_null" },
-            ...nativeStringLiteralInstrs(ctx, "valueOf"),
-            { op: "call", funcIdx: strEqualsIdx },
+            ...castObj(),
+            ...stringConstantExternrefInstrs(ctx, WRAPPER_PRIMITIVE_KEY),
+            { op: "call", funcIdx: objFindIdx },
+            { op: "local.tee", index: entryLocal },
+            { op: "ref.is_null" },
+            { op: "i32.eqz" },
             {
               op: "if",
               blockType: { kind: "empty" },
               then: [
-                // own `valueOf` shadows — ordinary resolution.
-                ...castObj(),
-                { op: "local.get", index: 1 },
-                { op: "call", funcIdx: objFindIdx },
-                { op: "ref.is_null" },
+                { op: "local.get", index: entryLocal },
+                { op: "ref.as_non_null" },
+                { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: ENTRY_FLAGS },
+                { op: "i32.const", value: FLAG_INTERNAL },
+                { op: "i32.and" },
                 {
                   op: "if",
                   blockType: { kind: "empty" },
                   then: [
                     ...slotValue(),
-                    { op: "ref.is_null" },
-                    { op: "i32.eqz" },
+                    { op: "ref.test", typeIdx: ctx.nativeBigIntTypeIdx },
                     {
                       op: "if",
                       blockType: { kind: "empty" },
-                      then: [
-                        ...slotValue(),
-                        { op: "ref.as_non_null" },
-                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: ENTRY_VALUE },
-                        { op: "ref.test", typeIdx: ctx.nativeBigIntTypeIdx },
-                        {
-                          op: "if",
-                          blockType: { kind: "empty" },
-                          then: [
-                            { op: "ref.func", funcIdx: closure.funcIdx },
-                            { op: "i32.const", value: 0 },
-                            { op: "ref.null.extern" },
-                            { op: "local.get", index: 0 }, // recv capture
-                            { op: "struct.new", typeIdx: closure.subTypeIdx },
-                            { op: "extern.convert_any" },
-                            { op: "return" },
-                          ],
-                        },
-                      ],
+                      then: [...slotValue(), { op: "extern.convert_any" }, { op: "return" }],
                     },
                   ],
                 },
@@ -539,81 +462,4 @@ function fillBigIntWrapperValueOfResolutionArm(ctx: CodegenContext): void {
       ],
     },
   );
-}
-
-/** Mint (once) the bigint-wrapper valueOf lifted func + env subtype. */
-function ensureBigIntWrapperValueOfClosure(
-  ctx: CodegenContext,
-  objTypes: NonNullable<CodegenContext["objectRuntimeTypes"]>,
-  objFindIdx: number,
-): { funcIdx: number; subTypeIdx: number } | undefined {
-  const marker = ctx as unknown as { __bigintWrapperValueOfClosure?: { funcIdx: number; subTypeIdx: number } };
-  if (marker.__bigintWrapperValueOfClosure !== undefined) return marker.__bigintWrapperValueOfClosure;
-  const wrap = getOrCreateFuncRefWrapperTypes(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
-  if (!wrap) return undefined;
-  const { objectTypeIdx, propEntryTypeIdx } = objTypes;
-  addStringConstantGlobal(ctx, WRAPPER_PRIMITIVE_KEY);
-  // The receiver travels CAPTURED on the closure struct (a subtype of the
-  // wrap root carrying one extra externref field) — the resolution arm
-  // allocates a fresh closure binding the wrapper it resolved on. Neither
-  // param 1 (first user ARGUMENT) nor `__current_this` (not set on every
-  // apply path) is reliable here.
-  const subTypeIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: "__bigint_wrapper_valueof_env",
-    fields: [
-      { name: "func", type: { kind: "funcref" }, mutable: false },
-      { name: "$arity", type: { kind: "i32" }, mutable: false },
-      { name: "$bag", type: { kind: "externref" }, mutable: true },
-      { name: "recv", type: { kind: "externref" }, mutable: false },
-    ],
-    superTypeIdx: wrap.structTypeIdx,
-  } as never);
-  const recvInstrs: Instr[] = [
-    { op: "local.get", index: 0 },
-    { op: "ref.cast", typeIdx: subTypeIdx },
-    { op: "struct.get", typeIdx: subTypeIdx, fieldIdx: 3 },
-  ];
-  const funcIdx = mintDefinedFunc(ctx);
-  pushDefinedFunc(ctx, funcIdx, {
-    name: "__bigint_wrapper_valueof",
-    typeIdx: wrap.liftedFuncTypeIdx,
-    locals: [{ name: "slot", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } }],
-    body: [
-      ...recvInstrs,
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: objectTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          ...recvInstrs.map((i) => ({ ...i })),
-          { op: "any.convert_extern" },
-          { op: "ref.cast", typeIdx: objectTypeIdx },
-          ...stringConstantExternrefInstrs(ctx, WRAPPER_PRIMITIVE_KEY),
-          { op: "call", funcIdx: objFindIdx },
-          { op: "local.set", index: 2 },
-          { op: "local.get", index: 2 },
-          { op: "ref.is_null" },
-          { op: "i32.eqz" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 2 },
-              { op: "ref.as_non_null" },
-              { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: ENTRY_VALUE },
-              { op: "extern.convert_any" },
-              { op: "return" },
-            ],
-          },
-        ],
-      },
-      { op: "ref.null.extern" },
-    ],
-    exported: false,
-  });
-  marker.__bigintWrapperValueOfClosure = { funcIdx, subTypeIdx };
-  return marker.__bigintWrapperValueOfClosure;
 }
