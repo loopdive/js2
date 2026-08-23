@@ -1,7 +1,8 @@
 ---
 id: 4647
 title: "runtime-eval: provider-minted Function(...).call/.apply lose this-binding writes and argument marshalling; Function.prototype.bind unimplemented in standalone — 16-row built-ins/Function/prototype block"
-status: ready
+status: in-progress
+assignee: dev-4647
 sprint: current
 created: 2026-08-23
 updated: 2026-08-23
@@ -125,3 +126,220 @@ built-ins/Function/prototype/bind/15.3.4.5-2-8.js      (subfamily C)
    regressions; eval-dependent rows need the quickjs artifact
    (`JS2WASM_QUICKJS_ARTIFACT_DIR=/home/user/js2wasm/.test262-cache/quickjs-artifact-2e2d7736713beeda`
    or copy `.test262-cache/` in — fresh-worktree trap in the brief).
+
+## Root cause
+
+All 16 rows re-verified failing on this branch's base (campaign HEAD
+`52cb0a6a6`), quickjs tier, this lane's own runs. Three distinct causes, not
+one:
+
+### A. The split is by RUNTIME REPRESENTATION, not by `call`/`apply`
+
+"The this-binding write lands elsewhere" is not uniform. Measured with one
+compiled module per probe (identity-isolation, methodology 3):
+
+| value / receiver crossing the provider seam | base | this branch |
+| --- | --- | --- |
+| new realm global assigned a PRIMITIVE | ok | ok |
+| new realm global assigned a compiled ARRAY | LOST | **ok** |
+| new realm global assigned a compiled OBJECT | LOST | **ok** |
+| receiver = demoted/dynamic object (get + set) | ok | ok |
+| receiver = compiled ARRAY, GET (`this[1]`, `this.length`) | ok | ok |
+| receiver = compiled ARRAY, SET (write-back) | LOST | LOST |
+| receiver = SHAPE-TYPED object literal `{pre:44}` | LOST | LOST |
+| receiver = compiled FUNCTION (closure struct) | LOST | LOST |
+
+Two independent defects live under that table.
+
+**A1 — the one this lane fixed.** `qjsMirrorRealmProperty`
+(`scripts/quickjs-eval-provider.mjs`) mirrors a realm global that did NOT exist
+at entry back to the caller, and did so for PRIMITIVE tags only. The comment
+justified that as "publishing an arbitrary new object global here would
+silently turn a live realm property into a seam-snapshot box" — true for a real
+QuickJS object, and **false for an inward membrane wrapper**, which is not a
+QuickJS object at all but one of our own compiled objects wearing a QuickJS
+face. `qjsToGc` → `qjsPublish` collapses such a handle straight back to
+`gcRegistry[id]` (#4245 slice 2), i.e. the caller's ORIGINAL object, same
+identity, no box. Refusing it did not protect the caller's value; it made the
+caller's value unreachable.
+
+`Function("a1,a2,a3","this.shifted=a1;").call(null,[1])` is exactly that: sloppy
+`this` is the realm, so the assignment creates a fresh realm global whose value
+is the wrapper for the caller's `[1]`. The **scalar** form of the identical
+write already worked on base, which is what localises the defect to the tag
+filter rather than to the receiver plumbing or the global mirror.
+
+**A2 — NOT fixed here, precisely characterized instead.** A compiled object
+whose runtime representation is a **module-private nominal struct** is opaque
+to the provider's dynamic property runtime. Two producers of such structs:
+a shape-inferred object literal (`{pre:44}` lowers to `(struct (field f64))`,
+`local $o (ref null 45)` in the WAT — a type index unique to that module's
+shape table) and a closure struct (`var obj = Function()` is AOT-synthesized by
+#2924, so it is an ordinary compiled closure). The provider has no matching
+type declaration and cannot `ref.cast` to it, so its `target[key]` answers
+`undefined` and its `target[key] = v` is a silent no-op — the write does not
+even stick inside the provider (`Function("this.z=9; return this.z;").call(g)`
+returns `undefined`). The canonical `$Object` dictionary round-trips fully and
+the vec/array carrier round-trips for reads.
+
+This is an architectural gap, not a patch: making it work needs either a
+REVERSE membrane (the caller hands the provider get/set callbacks bound to the
+object — the provider can already call compiled closures via `__apply_closure`)
+or an escape rule that keeps any object reaching a runtime-eval boundary in the
+canonical representation from ALLOCATION time (identity-preserving; converting
+at the crossing is not, because the caller keeps the original). Deliberately
+declined rather than patched blind (methodology 4).
+
+### B. inherited `.apply`/`.call` through a function-valued prototype
+
+Verified on THIS branch's base only: `apply/S15.3.4.3_A1_T{1,2}` and
+`call/S15.3.4.4_A1_T{1,2}` all fail with `typeof obj.{apply,call}` ===
+`"undefined"`. Untouched by this lane. Per methodology item 7, this lane
+CANNOT claim anything about #4643's effect on them — a tree containing #4643's
+change is required, measured by that lane or by the session lead on the
+combined tree. Recorded here as "still failing on 52cb0a6a6 + this branch's
+diff", nothing more.
+
+### C. `bind`
+
+`bind` is NOT unimplemented in standalone — probed on base, user-function
+`bind` already works for this-binding, partial application, `.length` and
+`.name` (`b.name === "bound f"`). What the three rows need is the part that
+does not:
+
+| probe (base) | result |
+| --- | --- |
+| `f.bind(o)()` this-binding | ok |
+| `f.bind(null,10)(5)` partial args | ok |
+| `b.length` / `b.name` | ok |
+| `new (f.bind(null))(7)` | throws |
+| `Object.bind(null)(42)` | wrong value |
+| `Array.bind(null)(3)` | `RuntimeError: dereferencing a null pointer` |
+| `Function.prototype.bind.apply(f,[…])` | throws the §"not yet implemented" refusal |
+
+The refusal message the issue quotes comes from the generic
+`genericThrowBody` arm in `src/codegen/builtin-value-read.ts` — it is the
+`Function.prototype.bind` **value read**, not `bind` itself. All three rows
+bind a BUILTIN constructor (`Date`, `Object`, `Array`) and two of them then
+[[Construct]] through it, so closing them means `%Function.prototype.bind%` as
+a first-class value + bound-of-builtin + curried `[[Construct]]` on builtin
+carriers. `src/codegen/construct-bound.ts` (#4196) already implements
+§10.4.1.2 for user targets; the missing pieces are the builtin-carrier arms.
+Left for a dedicated slice — see Residuals.
+
+## Fix
+
+`scripts/quickjs-eval-provider.mjs`, `qjsMirrorRealmProperty`: admit an inward
+membrane-wrapper handle alongside the mirrorable primitive tags —
+
+```ts
+const crossable: boolean = qjsIsMirrorableTag(tag) || qjsIsMembraneWrapperHandle(h);
+```
+
+`qjsIsMembraneWrapperHandle` already existed as a write-back GUARD; its
+doc-comment (which read as a blanket "never cross a wrapper") is updated to
+name both callers and why their intents are opposite. Adapter rebuilt with
+`npx tsx scripts/build-quickjs-eval-provider.mjs` → key `fb007972febf3c42`
+(canary-verified by the build script); CI rebuilds it from source
+automatically, since the adapter cache key is `sha256(adapter source ∥ compiler
+bundle hash)`.
+
+Nothing in `src/codegen/object-runtime.ts` (dev-4643) or the descriptor MOP
+(dev-4491) was touched.
+
+## Test Results (runs executed by this lane)
+
+Scoped standalone sweep, `built-ins/Function/prototype` (309 files), both arms
+run by this lane's own driver. **The base arm was re-run against a
+freshly-built base-source adapter** after the artifact-staleness finding
+recorded in #4642 — a stale base can HIDE a regression, so the floor claim
+rests on the true base, not the first one:
+
+| arm | pass | fail | compile_error |
+| --- | --- | --- | --- |
+| base (52cb0a6a6, rebuilt base adapter) | 228 | 76 | 5 |
+| this branch | 231 | 74 | 4 |
+
+**+2 real flips, zero regressions.** The diff shows 3 flips; the third,
+`built-ins/Function/prototype/S15.3.3.1_A1.js`, is a **flake, not a flip** —
+its base entry is `compile_error: compilation timeout (20342.58ms)` under a
+loaded box, and it passes on both arms otherwise. Named rather than counted.
+
+Adapter provenance for both arms: this worktree has **no
+`scripts/compiler-bundle.mjs`**, so `loadProviderCompiler` took the
+`src/index.ts (tsx)` path and each adapter was compiled by the LIVE source of
+its own arm (`bundle no-bundle` in both build logs) — base adapter
+`1429ec7ecf2163fd` built with base sources checked out, branch adapter
+`fb007972febf3c42` with branch sources. No stale-bundle exposure.
+
+`tests/issue-4647.test.ts` — 8 tests: 5 positive pins + 3 `it.fails` residual
+pins, each of which performs the this-bound WRITE and reads it back.
+**8 passed** on the quickjs tier; **5 passed / 3 skipped** under
+`JS2WASM_EVAL_ENGINE=interpreter` (the residual pins are skipped there because
+the refusal provider's throw would make an `it.fails` pin pass for the wrong
+reason). Both positive realm-global pins verified to FAIL on base by file-copy
+revert of `scripts/quickjs-eval-provider.mjs`; the primitive/demoted-object/
+array-read pins pass on BOTH arms by design — they are the localisation
+controls.
+
+Named sibling suites, this branch: `tests/issue-4639.test.ts` +
+`tests/issue-4442.test.ts` → **30 passed**; `tests/issue-4464.test.ts` →
+**20 passed**; `tests/issue-4642.test.ts` → **6 passed** on each tier.
+
+Row-level, `runTest262File(..., "standalone")`, base vs this branch:
+
+| row | base | branch |
+| --- | --- | --- |
+| `call/S15.3.4.4_A6_T1.js` | fail | **pass** |
+| `call/S15.3.4.4_A6_T2.js` | fail | **pass** |
+| `call/S15.3.4.4_A1_T1.js` | fail | fail (subfamily B) |
+| `call/S15.3.4.4_A1_T2.js` | fail | fail (subfamily B) |
+| `call/S15.3.4.4_A5_T8.js` | fail | fail (A2) |
+| `call/S15.3.4.4_A6_T6.js` | fail | fail (A2) |
+| `call/S15.3.4.4_A7_T6.js` | fail | fail (construct-through-provider, #4438) |
+| `apply/S15.3.4.3_A1_T1.js` | fail | fail (subfamily B) |
+| `apply/S15.3.4.3_A1_T2.js` | fail | fail (subfamily B) |
+| `apply/S15.3.4.3_A5_T8.js` | fail | fail (A2) |
+| `apply/S15.3.4.3_A7_T6.js` | fail | fail (A2) |
+| `apply/S15.3.4.3_A8_T6.js` | fail | fail (construct-through-provider, #4438) |
+| `S15.3.5.2_A1_T1.js` | fail | fail (function own `prototype`) |
+| `bind/S15.3.4.5_A5.js` | fail | fail (C) |
+| `bind/15.3.4.5-2-6.js` | fail | fail (C) |
+| `bind/15.3.4.5-2-8.js` | fail | fail (C) |
+
+## Status — PARTIAL, deliberately
+
+2 of the 16 rows closed. `status` stays `in-progress`, not `done`: the
+remaining 14 are not "not yet attempted", they are four **named** causes with
+owners (below), three of which belong to other lanes and one of which (A2) is
+an architectural change this lane declined to make blind. The lead should
+decide whether to split A2 and C into their own issues and close this one.
+
+The lead re-verified all 16 rows still failing on the rebuilt shared adapter
+(2026-08-23), so the scope above is measured against a fresh provider on both
+sides, not a stale cache.
+
+## Residuals (with owners)
+
+- **A2 — module-private struct receivers are opaque at the provider seam.**
+  Blocks `call/apply S15.3.4.3_A5_T8`, `call/S15.3.4.4_A6_T6`,
+  `apply/S15.3.4.3_A7_T6`, and the array write-back. Needs a reverse membrane
+  or an allocation-time escape rule (see A2 above). Owner: runtime-eval +
+  value-rep (#2660) jointly — this is the same "canonical vs bespoke struct"
+  axis #2660 already owns.
+- **`new` on a provider-minted callable** (`call/S15.3.4.4_A7_T6`,
+  `apply/S15.3.4.3_A8_T6`; the crash is the harness's own
+  `undefined.p1` read after `new` produced nothing). Owner: #4438
+  (runtime-eval construct), already an open lane.
+- **Subfamily B** — untouched here on purpose; see B above. Owner: #4643.
+- **Subfamily C — bind of a BUILTIN constructor + curried `[[Construct]]`,
+  and `%Function.prototype.bind%` as a first-class value.** Three rows.
+  Owner: unassigned; `src/codegen/construct-bound.ts` + the
+  `genericThrowBody` arm in `src/codegen/builtin-value-read.ts` are the two
+  edit points.
+- **`f.hasOwnProperty('prototype')` is FALSE for every compiled function**
+  (declared, expression and `Function(...)`-synthesized alike), and a
+  `Function(...)`-synthesized function has no `prototype` object at all while
+  a declared one does. Blocks `S15.3.5.2_A1_T1`, which additionally needs
+  `prototype` non-configurable and `delete f.prototype === false`. Owner:
+  function-instance own properties (#4436/#4437).
