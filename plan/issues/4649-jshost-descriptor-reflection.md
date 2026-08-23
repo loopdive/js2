@@ -5,6 +5,9 @@ status: in-progress
 assignee: ttraenkler/senior-dev
 loc-budget-allow:
   - src/codegen/typeof-delete.ts
+  - src/runtime.ts
+func-budget-allow:
+  - src/runtime.ts::_wrapForHost
 sprint: current
 created: 2026-08-23
 updated: 2026-08-23

@@ -7647,17 +7647,33 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       // still wins via the sidecar flags entry below.
       const isRegisteredProtoMember = protoMethods !== undefined && hasInFields;
       const scFlags = _wasmPropDescs.get(obj)?.get(_normalizeDescKey(key));
+      // (#4649) `writable`/`configurable` were hardcoded `true` here while only
+      // `enumerable` learned to read the flags table (#2714/#3647). Any
+      // `Object.defineProperty(o, k, {writable:false, configurable:false})` on a
+      // compiled struct therefore READ BACK as a fully-mutable descriptor
+      // through the host proxy — the behaviour was right (the write threw, the
+      // delete was refused) but `[[GetOwnProperty]]` lied, which is exactly the
+      // round-trip `test/harness/verifyProperty-value.js` checks. A stored
+      // ACCESSOR entry is handled by the sidecar branch in `_readOwnDescriptor`;
+      // it must not be re-flagged as a non-writable DATA property here.
+      const scIsAccessor = scFlags !== undefined && (scFlags & _SC_ACCESSOR) !== 0;
+      const scDataFlags = scFlags !== undefined && !scIsAccessor ? scFlags : undefined;
       const desc: PropertyDescriptor = {
         value: val,
-        writable: true,
+        writable: scDataFlags === undefined ? true : (scDataFlags & _SC_WRITABLE) !== 0,
         enumerable: scFlags === undefined ? !isRegisteredProtoMember : !!(scFlags & _SC_ENUMERABLE),
-        configurable: true,
+        configurable: scDataFlags === undefined ? true : (scDataFlags & _SC_CONFIGURABLE) !== 0,
       };
-      // Mirror onto target so V8's Proxy invariant checker is happy
+      // Mirror onto target so V8's Proxy invariant checker is happy. §10.5.5
+      // forbids reporting a non-configurable descriptor the target does not
+      // carry, so when the mirror is refused (the key is already locked with
+      // different attributes) serve the target's own descriptor instead of a
+      // report V8 would reject.
       try {
         Object.defineProperty(target, key, desc);
       } catch {
-        /* already defined with different flags — ignore */
+        const locked = Reflect.getOwnPropertyDescriptor(target, key);
+        if (locked !== undefined) return locked;
       }
       return desc;
     },
