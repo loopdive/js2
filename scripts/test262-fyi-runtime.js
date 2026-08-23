@@ -13,7 +13,55 @@ var $262 = {
   // [[IsHTMLDDA]] semantics remains a separate language-feature concern.
   IsHTMLDDA: function () {},
   createRealm: function () {
-    return $262;
+    // (#4634) A realm must expose error constructors with DISTINCT function
+    // identity so the same-realm harness tests (assert-throws-same-realm,
+    // asyncHelpers-throwsAsync-same-realm) can observe that a foreign
+    // instance does not satisfy `assert.throws(TypeError, ...)`. The ctors
+    // are minted via an anonymous factory ON PURPOSE: a function expression
+    // literally named `TypeError` in this prelude shadows the builtin in the
+    // compiler's name-keyed fnctor machinery for EVERY test module (the
+    // 2026-08-23 merge_group park, 367 js-host regressions) — never name
+    // these after builtins.
+    var mkerr = function () {
+      return function (msg) {
+        this.message = msg;
+      };
+    };
+    // The realm's global forwards the builtins the cross-realm corpus reads
+    // (`.global.Array` / `.global.Proxy` / `.global.eval`) from the real
+    // global, and overrides ONLY the error constructors with distinct
+    // identities. Copied via `globalThis.<name>` member reads — the same
+    // read path `global: globalThis` used to serve — never bare-identifier
+    // value reads, whose standalone lowering differs per builtin.
+    var realmGlobal = {
+      Array: globalThis.Array,
+      ArrayBuffer: globalThis.ArrayBuffer,
+      Date: globalThis.Date,
+      Function: globalThis.Function,
+      Iterator: globalThis.Iterator,
+      Math: globalThis.Math,
+      Object: globalThis.Object,
+      Proxy: globalThis.Proxy,
+      Symbol: globalThis.Symbol,
+      eval: globalThis.eval,
+      parseInt: globalThis.parseInt,
+      Error: mkerr(),
+      TypeError: mkerr(),
+      RangeError: mkerr(),
+      SyntaxError: mkerr(),
+      ReferenceError: mkerr(),
+      EvalError: mkerr(),
+      URIError: mkerr(),
+    };
+    var realm = {
+      global: realmGlobal,
+      IsHTMLDDA: $262.IsHTMLDDA,
+      createRealm: $262.createRealm,
+      evalScript: $262.evalScript,
+      gc: $262.gc,
+      detachArrayBuffer: $262.detachArrayBuffer,
+    };
+    return realm;
   },
   evalScript: function (sourceText) {
     return eval(sourceText);
