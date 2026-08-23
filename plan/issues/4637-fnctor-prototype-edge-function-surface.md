@@ -333,7 +333,11 @@ three anchor rows in `.tmp/before-final.jsonl` carry the exact base errors
 - `Object.create(<function>)`: inherited read, `getPrototypeOf` identity and
   `isPrototypeOf` all flip false→true (`.tmp/p2.js`).
 - `instanceof` through a function-valued prototype (`S15.3.5.3_A3_T2`'s shape)
-  flips false→true (`.tmp/p1.js`).
+  flips false→true (`.tmp/p1.js`, base `8` → after `31`). **Shape-dependent, and
+  the scope matters:** the bare `F.prototype = P; new F() instanceof F` spelling
+  already answers `true` on the base — `instanceof` here goes through the escape
+  gate's classification, so the flip is a property of `.tmp/p1.js`'s shape, not
+  of the construct in general. See cross-lane note 3.
 - `typeof (new F())` where F returns a function: `"object"` → `"function"`
   (`.tmp/p6.js`).
 - `f.hasOwnProperty("prototype")` **and** `Object.hasOwn(f, "prototype")` for a
@@ -543,6 +547,38 @@ Closed by `#4637 A1 … CANARY (dev-4639 C1 x A1)`, which puts the instance in
 constructor. Verified it is not incidentally green: `.tmp/p20.js`, standalone,
 base `33` → after `63`, the four flipping bits being `instanceof`,
 `isPrototypeOf`, the inherited read and `getPrototypeOf` identity.
+
+### 3. Every pin re-verified against the base — two were mislabelled
+
+dev-4639's operational rule, adopted: **a canary nobody has seen fail is an
+assertion about the code, not a test of it.** The `.tmp/p20.js` A/B above proved
+the SHAPE was affected; it did not prove the PIN AS WRITTEN fails. So the whole
+suite was run against `81445abf7` with `tests/` held at the branch version. Two
+pins were the wrong thing:
+
+- **`carries instanceof through a function-valued prototype` PASSED on base.**
+  It used the bare `function P(){} function F(){} F.prototype = P;
+  new F() instanceof F` spelling, which already answered `true` before this
+  change — so a case presented as demonstrating the fix asserted only
+  pre-existing behaviour. `instanceof` here is escape-gate-SHAPE-dependent
+  (`.tmp/p1.js`'s fuller shape measures base `8` → after `31`, with `instanceof`
+  among the flipping bits, while the bare shape is green both ways). The pin now
+  uses the measured-flipping shape, and the bare one is kept beside it,
+  explicitly labelled `REGRESSION GUARD (green on base)` — it still earns its
+  place, because an arm that changes what sits in the `$proto` slot could
+  quietly break an `instanceof` that already worked.
+- **`does not report a function as the prototype of an unrelated object` FAILED
+  on base** — because it bundled the negative assertion with a positive one
+  (`P.isPrototypeOf(o)`). A build answering `true` for BOTH receivers would have
+  produced the wrong total for the right-looking reason, so the
+  no-false-positive property was never independently exercised. Split: it now
+  asserts only the false-positive direction and is green on both arms; the
+  positive half is already covered by the `Object.create(<function>)` case.
+
+**Resulting partition, measured (base `81445abf7`, tests at branch version):
+8 fail / 10 pass.** Every one of the 8 failures is a test OF the change; every
+one of the 10 passes is either an explicitly-labelled regression guard (1), a
+pure negative control (5), or an `it.fails` residual (4). On the branch: 18/18.
 
 **Named canaries** (dev-4639's mapping — one pin per contact point, so a
 failure identifies WHICH interaction broke rather than only that something did):

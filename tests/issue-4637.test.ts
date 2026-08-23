@@ -84,6 +84,38 @@ describe("#4637 A1 — a function value in the `.prototype` slot", () => {
   });
 
   it("carries instanceof through a function-valued prototype", async () => {
+    // The MEASURED-flipping shape (`.tmp/p1.js`): base `8` — only
+    // `__FACTORY.prototype === __PROTO` — after `31`, so `instanceof` is one of
+    // the four bits this arm turns on. `S15.3.5.3_A3_T2`'s shape.
+    //
+    // The bare `function __PROTO(){} function __FACTORY(){}
+    // __FACTORY.prototype = __PROTO; new __FACTORY() instanceof __FACTORY`
+    // spelling is deliberately NOT used here: it already answers `true` on the
+    // base (verified by running this suite against `81445abf7`), so pinning it
+    // would have looked like a test of this change while asserting only
+    // pre-existing behaviour. `instanceof` is escape-gate-shape-dependent, and
+    // that is precisely why the pin has to use a shape whose flip was measured.
+    expect(
+      await runModule(
+        `function __PROTO(){}
+         __PROTO.type = "monster";
+         function __FACTORY(){}
+         __FACTORY.prototype = __PROTO;
+         var __monster = new __FACTORY();`,
+        `(__PROTO.isPrototypeOf(__monster) ? 1 : 0) + (__monster.type === "monster" ? 2 : 0) +
+         (Object.getPrototypeOf(__monster) === __PROTO ? 4 : 0) +
+         (__FACTORY.prototype === __PROTO ? 8 : 0) +
+         (__monster instanceof __FACTORY ? 16 : 0)`,
+      ),
+    ).toBe(31);
+  });
+
+  it("REGRESSION GUARD (green on base): plain instanceof on a fnctor instance", async () => {
+    // Companion to the case above and labelled for what it is. This shape
+    // answers `true` on the base too, so it proves nothing about the fix — it
+    // exists so the A1 arm cannot QUIETLY BREAK an `instanceof` that already
+    // worked, which is a distinct and real risk given the arm changes what sits
+    // in the `$proto` slot.
     expect(
       await runModule(
         `function __PROTO(){}
@@ -123,14 +155,21 @@ describe("#4637 A1 — a function value in the `.prototype` slot", () => {
   });
 
   it("does not report a function as the prototype of an unrelated object", async () => {
+    // PURE negative control — asserts ONLY the false-positive direction, so it
+    // is green on the base as well as after. It was previously bundled with the
+    // positive half (`P.isPrototypeOf(o)`), which made the whole case fail on
+    // the base and meant the no-false-positive property was never independently
+    // exercised: a build that answered `true` for BOTH would have failed the
+    // bundled assertion for the right total and the wrong reason. The positive
+    // half is covered by the `Object.create(<function>)` case above.
     expect(
       await runModule(
         `function P(){}
          var o = Object.create(P);
          var other = {};`,
-        `(P.isPrototypeOf(other) ? 1 : 0) + (P.isPrototypeOf(o) ? 2 : 0)`,
+        `P.isPrototypeOf(other) ? 1 : 0`,
       ),
-    ).toBe(2);
+    ).toBe(0);
   });
 
   it("CANARY (dev-4639 C1 x A1): holds when the instance is a `new` ARGUMENT", async () => {
