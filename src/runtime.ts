@@ -68,6 +68,7 @@ import {
   vecForMirror,
 } from "./runtime/vec-mirror-writeback.js"; // (#3603 S1) vec-mirror write-back; (#4531) mirror→vec mutation routing
 import { createHostCallImport, isHostCallImportName } from "./runtime/host-call-abi.js";
+import { createDynamicFunctionImport } from "./runtime/dynamic-function-import.js"; // (#2960/#4650)
 import { createBoundaryObjectAdapter } from "./runtime/boundary-object-adapter.js";
 import { createBoundaryCallbackAdapter } from "./runtime/boundary-callback-adapter.js";
 import { createBoundaryPromiseAdapter } from "./runtime/boundary-promise-adapter.js";
@@ -10645,50 +10646,15 @@ assert._isSameValue = isSameValue;
         }
       }
       if (name === "__extern_new_function") {
-        if (dynamicCode === "deny") {
-          return () => {
-            throw new EvalError("dynamic code generation is disabled by the host");
-          };
-        }
-        if (dynamicCode === "native") {
-          // biome-ignore lint/security/noGlobalEval: explicit opt-in host-eval engine
-          return (params: any, body: any) => new Function(String(params ?? ""), String(body ?? ""));
-        }
-        if (dynamicCode === "evaluator") {
-          return (params: any, body: any) => {
-            if (!dynamicCodeEvaluator) throw new EvalError("no dynamic-code evaluator was supplied by the host");
-            return dynamicCodeEvaluator.createFunction(String(params ?? ""), String(body ?? ""));
-          };
-        }
-        // (#2960) Dynamic `new Function(params, body)` — meta-circular
-        // construction via js2wasm's own compiler (see createNewFunctionShim).
-        // Returns a real JS-callable function the parent module can invoke.
-        // Falls back to native `Function(params, body)` when the js2wasm
-        // pipeline can't compile the body (mirrors __extern_eval's host
-        // fallback — keeps harness-shaped dynamic functions working).
-        const wasmNewFnShim = createNewFunctionShim({});
-        return (params: any, body: any) => {
-          // (#3058) A body carrying a `class` expression/declaration can never
-          // round-trip through the meta-circular Wasm path usefully: the child
-          // module's compiled class value is an opaque struct the PARENT module
-          // cannot construct (its dyn-new tag dispatch only knows its own class
-          // tags), and a class extending a host builtin (the test262
-          // resizableArrayBufferUtils `subClass` shape — `return class MyUint8Array
-          // extends Uint8Array {}`) additionally loses the builtin's statics and
-          // [[Construct]] semantics. The host `Function` fallback below produces a
-          // genuine host class that interops through the extern paths, so route
-          // class-carrying bodies there directly.
-          const bodyStr = String(body ?? "");
-          if (!/\bclass\b/.test(bodyStr)) {
-            try {
-              return wasmNewFnShim(params, bodyStr);
-            } catch {
-              /* fall through to the host constructor */
-            }
-          }
-          // biome-ignore lint/security/noGlobalEval: intentional test262 runtime new Function
-          return new Function(String(params ?? ""), bodyStr);
-        };
+        // (#2960/#4650) Dynamic `new Function(params, body)`. Policy arms +
+        // meta-circular/host split live in runtime/dynamic-function-import.ts.
+        return createDynamicFunctionImport({
+          policy: dynamicCode,
+          createFunction: dynamicCodeEvaluator ? (p, b) => dynamicCodeEvaluator.createFunction(p, b) : undefined,
+          createWasmNewFunctionShim: () => createNewFunctionShim({}) as (params: unknown, body: string) => unknown,
+          moduleGlobal: globalSandbox ?? (globalThis as any),
+          makeEvalError: (message) => new EvalError(message),
+        });
       }
       if (name === "__extern_get")
         return (obj: any, key: any) => {

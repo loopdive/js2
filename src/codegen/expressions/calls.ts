@@ -272,6 +272,7 @@ import {
   tryStaticEvalInline,
   tryStaticFunctionCtorCall,
 } from "./eval-inline.js";
+import { tryHostDynamicFunctionCtorValue } from "./dynamic-function-ctor-value.js"; // (#4650)
 import { dynamicEvalRefusalMessages } from "./runtime-eval-provider.js";
 import {
   ensureRuntimeEvalInterpretedCallbackType,
@@ -6455,6 +6456,14 @@ function compileCallExpression(
   // a local `Function` shadow fall through to the existing paths.
   {
     const r = tryStaticFunctionCtorCall(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+
+  // (#4650) JS-host VALUE form `Function(<args>)` called as a plain function —
+  // §20.2.1.1 makes it identical to `new Function(...)`, but only the
+  // NewExpression path routed a declined compile-away to the host shim.
+  {
+    const r = tryHostDynamicFunctionCtorValue(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
 

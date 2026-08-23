@@ -9,6 +9,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { allocLocal, allocTempLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion } from "../context/types.js";
+import { emitEagerAsyncPromiseWrap } from "../async-eager-promise.js"; // (#4630)
 import { emitToNumber } from "../coercion-engine.js";
 import { emitThrowTypeError } from "../expressions/helpers.js";
 import {
@@ -396,6 +397,13 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
     else if (fctx.returnType.kind === "externref") emitUndefined(ctx, fctx);
     else if (fctx.returnType.kind === "ref_null") fctx.body.push({ op: "ref.null", typeIdx: fctx.returnType.typeIdx });
     else if (fctx.returnType.kind === "ref") fctx.body.push({ op: "ref.null", typeIdx: fctx.returnType.typeIdx });
+  }
+
+  // (#4630) A parked async closure whose result was promoted to a `$Promise`
+  // settles its completion value here — `Promise.resolve(v)`, idempotent for a
+  // value that already IS a native `$Promise` (§27.2.4.7 step 2).
+  if (fctx.eagerAsyncPromiseReturn === true) {
+    emitEagerAsyncPromiseWrap(ctx, fctx);
   }
 
   emitReturnTail(ctx, fctx, hasPendingFinally);
