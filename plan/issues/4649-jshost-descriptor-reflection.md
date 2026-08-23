@@ -5,12 +5,8 @@ status: in-progress
 assignee: ttraenkler/senior-dev
 loc-budget-allow:
   - src/codegen/typeof-delete.ts
-  - src/runtime.ts
   - src/codegen/dyn-read.ts
   - src/codegen/object-runtime.ts
-func-budget-allow:
-  - src/runtime.ts::_wrapForHost
-  - src/codegen/context/create-context.ts::createCodegenContext
 sprint: current
 created: 2026-08-23
 updated: 2026-08-23
