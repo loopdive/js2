@@ -132,6 +132,7 @@ import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { prepareModuleTdzGlobals, registerModuleGlobal } from "./module-global-registration.js";
 import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
 import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-object-slot.js";
+import { callTargetIsRedeclaredFunction } from "./duplicate-function-declaration.js"; // (#4653)
 import { emitRuntimeEvalAotCallableAdapter } from "./runtime-eval-callable.js";
 import { numericReturnsFlagEnabled } from "../derivation-flags.js";
 
@@ -2390,6 +2391,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         if ((callType.flags & ~(ts.TypeFlags.Undefined | ts.TypeFlags.Void)) === 0) {
           return { kind: "externref" };
         }
+        // (#4653) …and the DUPLICATE-DECLARATION twin of the same defect: the
+        // checker answers the FIRST `function f(){…}`'s signature while the
+        // emitted body is the LAST one's, so no query on this call site reports
+        // what the slot will actually receive. See duplicate-function-declaration.ts.
+        if (callTargetIsRedeclaredFunction(ctx, init)) return { kind: "externref" };
       }
     }
     // #1914 — `var m = re.exec(s)` under standalone gets the precise
