@@ -29,7 +29,7 @@ import { attachSourcePos, getSourcePos } from "./context/source-pos.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { compileExpression, registerCompileStatement } from "./shared.js";
 import { restoreBlockScopedShadows, saveBlockScopedShadows } from "./statements/shared.js";
-import { sinkExpressionStatementValue } from "./statements/eval-completion-value.js";
+import { resetCompletionValueForStatement, sinkExpressionStatementValue } from "./statements/eval-completion-value.js";
 import { compileWithStatement } from "./with-scope.js";
 import { expressionRunsUserCode } from "./module-init-collection.js"; // (#4433) bare `typeof f();`
 
@@ -320,6 +320,10 @@ export function compileStatement(ctx: CodegenContext, fctx: FunctionContext, stm
 
   try {
     ctx.irBodyRouteAuditSession?.recordFrame("compileStatement", fctx, stmt);
+    // (#4515) §13 `UpdateEmpty(…, undefined)`: `if` / `try` / `switch` / `with`
+    // and every loop start their completion value at `undefined` rather than
+    // inheriting the previous statement's. No-op outside an inline eval.
+    resetCompletionValueForStatement(ctx, fctx, stmt);
     compileStatementInner(ctx, fctx, stmt);
   } catch (e) {
     // Defensive: catch any unhandled crash in statement compilation

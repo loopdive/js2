@@ -47,10 +47,12 @@
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { addOperandCallableSourceText } from "./add-to-primitive.js";
 import { isStaticallyCallableType } from "./callable-to-string.js";
 import { runtimeToPrimitiveInstrs } from "./coercion-engine.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
-import { ensureAnyToStringHelper, ensureNativeStringHelpers } from "./native-strings.js";
+import { ensureAnyToStringHelper, ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
+import { addStringConstantGlobal } from "./registry/imports.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { compileExpression } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
@@ -313,12 +315,55 @@ export function emitObjectAdd(ctx: CodegenContext, fctx: FunctionContext, expr: 
   ensureNativeStringHelpers(ctx);
 
   const externref: ValType = { kind: "externref" };
-  const lType = compileExpression(ctx, fctx, expr.left, externref);
+  /**
+   * (#4491 T4 parity, 2026-08-23) §20.2.3.5 step 1 for an operand that is a
+   * top-level function: its ToPrimitive answer is its SOURCE TEXT, which is the
+   * same string `f.toString()` already returns from `ctx.funcSourceText`
+   * (#1463). The runtime cascade below cannot produce it — `__extern_toString`'s
+   * callable terminal is step 3's `"function () { [native code] }"` placeholder
+   * — so `f1 + 1 !== f1.toString() + 1` (`S11.6.1_A2.2_T3` CHECK#1).
+   *
+   * The fold and its guards already existed in `add-to-primitive.ts`, but on a
+   * path this shape never takes: `admitsObjectAddition` above ADMITS a
+   * known-compiled-closure operand, so `emitObjectAdd` claims `f1 + 1` and
+   * `binary-ops.ts`'s later `admitsObjectAdd` arm — the only caller of that
+   * helper — is unreachable for it. Measured: repairing the helper's own guard
+   * alone moved 0 of 128 rows, because the helper was never called. Reusing it
+   * HERE is what makes the spellings agree, and reuse (rather than a second
+   * copy of the guards) is what stops them drifting apart again.
+   *
+   * A substituted operand is not evaluated, which is safe for exactly the shape
+   * the helper admits: a plain identifier resolving to a function declaration
+   * has no side effects, so §13.15.3's left-then-right evaluation order is
+   * unobservable here. The `f.valueOf = …` / `f.toString = …` override guard
+   * inside the helper is what keeps CHECKS #2-#4 of that same test on the
+   * runtime cascade, where they belong.
+   */
+  const emitOperand = (operand: ts.Expression): ValType | null => {
+    let inner = operand;
+    while (
+      ts.isParenthesizedExpression(inner) ||
+      ts.isAsExpression(inner) ||
+      ts.isNonNullExpression(inner) ||
+      ts.isSatisfiesExpression(inner) ||
+      ts.isTypeAssertionExpression(inner)
+    ) {
+      inner = inner.expression;
+    }
+    const source = addOperandCallableSourceText(ctx, fctx, inner);
+    if (source !== undefined) {
+      addStringConstantGlobal(ctx, source);
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, source));
+      return externref;
+    }
+    return compileExpression(ctx, fctx, operand, externref);
+  };
+  const lType = emitOperand(expr.left);
   if (!lType) return { kind: "f64" };
   if (lType.kind !== "externref") coerceType(ctx, fctx, lType, externref);
   const lTmp = allocTempLocal(fctx, externref);
   fctx.body.push({ op: "local.set", index: lTmp });
-  const rType = compileExpression(ctx, fctx, expr.right, externref);
+  const rType = emitOperand(expr.right);
   if (!rType) {
     releaseTempLocal(fctx, lTmp);
     return { kind: "f64" };

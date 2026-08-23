@@ -6,6 +6,7 @@
  * the responsibility of eval-inline's conservative dynamic-eval fallback.
  */
 import { ts } from "../../ts-api.js";
+import { isUseStrictDirectiveExpression } from "../helpers/use-strict-directive.js";
 
 const STRICT_RESERVED_WORDS = new Set([
   "implements",
@@ -112,7 +113,8 @@ function evalNodeHasStrictScope(node: ts.Node): boolean {
 function hasUseStrictDirective(statements: readonly ts.Statement[]): boolean {
   for (const statement of statements) {
     if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression)) return false;
-    if (statement.expression.text === "use strict") return true;
+    // §11.2.2 matches the RAW token — see helpers/use-strict-directive.ts.
+    if (isUseStrictDirectiveExpression(statement.expression)) return true;
   }
   return false;
 }
