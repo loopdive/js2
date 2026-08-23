@@ -99,7 +99,51 @@ the body eagerly, a sync throw leaks, and the result fails the `ref.test
 $Promise`), plus Promise-executor resolve/reject capture. Blocked on that;
 also see #4634 for the realm half (landed).
 
-## Implementation Plan
+## Implementation Plan (updated 2026-08-23, post-slice)
+
+Two remaining tests, two independent work items:
+
+### A. asyncTest-return-not-thenable — the \$DONE widening cascade
+
+Known facts (measured):
+- `$DONE`'s param agreement in this module is the Test262Error struct
+  (`ref_null` 17/19); the catch-var arg (a thrown TypeError) guard-casts to
+  null, so `error instanceof TypeError` reads null → `[false×6]`.
+- Withdrawing the struct-ref agreement (JS2_CV_FULL experiment, see the
+  scoping comment in param-return-inference.ts) FIXES this test but breaks
+  11 throwsAsync-* tests with `Promise.prototype.then called on a
+  non-Promise receiver` — i.e. widening `$DONE(param)` to externref makes
+  `testFunc().then(...)` inside asyncTest receive something that fails the
+  native then's `ref.test $Promise`.
+1. Diagnose the cascade FIRST: re-apply the full withdrawal locally, take
+   asyncHelpers-throwsAsync-no-arg.js, and trace WHY the async testFunc's
+   result stops being a `$Promise` (suspects: the standalone async-producer
+   gate consults inferred callback/param types and demotes the producer;
+   or the .then receiver arm's carrier acceptance). Use the mark-trace
+   method (prepend env-gated console.error probes, or return-instrument
+   compileNewExpression-style) — do not guess.
+2. Fix the cascade at its site (the producer gate or the then-receiver
+   acceptance), THEN widen the catch-var withdrawal from anyStr-only to all
+   ref/ref_null agreements.
+3. Acceptance: FULL standalone harness category run (.tmp/run-harness-all
+   equivalent) — return-not-thenable passes AND all 13 throwsAsync-* stay
+   green; the 60/60 standalone + 60/60-1 js-host samples stay clean.
+
+### B. throwsAsync-same-realm — dynamic-async substrate
+
+Repro (from the survey): `driver(async function () { throw new
+Test262Error("boom"); })` with driver calling `testFunc().then(f, r)` —
+today the async body runs eagerly, the sync throw leaks, and the returned
+value fails `ref.test $Promise`.
+1. Make a dynamically-invoked async FUNCTION EXPRESSION return the native
+   `$Promise` carrier (body throw → rejected promise, return → resolved),
+   at least for the await-carrying shapes asyncTest exercises.
+2. `new Promise(function (onF, onR) { outer1 = onF; outer2 = onR; })` —
+   executor capture into outer vars must hand out working resolve/reject.
+3. Acceptance: asyncHelpers-throwsAsync-same-realm.js passes (its realm
+   half already landed in #4634); full category + samples clean.
+
+## Original Implementation Plan
 
 1. **Reproduce small**: reduce each failure in `.tmp/` probes:
    (a) `typeof x.then === "function"` for x = compiled async fn result,

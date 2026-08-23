@@ -62,9 +62,17 @@ REMAINING HOLE for `harness/deepEqual-primitives-bigint.js`: the 0-arg
 `a.valueOf()` call on an ANY receiver routes through a dispatcher that is
 neither `__extern_method_call` nor the `__extern_get`+apply pair (markers in
 both never fire) — locate the actual 0-arg valueOf any-receiver dispatch
-(suspects: the `__call_valueOf` per-struct ToPrimitive dispatcher family or
-a call-receiver-method special case) and teach it the wrapper slot. Legs
-a/c/d of the test already pass; only `deepEqual(Object(1n), 1n)` fails.
+(suspects: the `__call_valueOf` per-struct ToPrimitive dispatcher family,
+`declinesToOwnOrInheritedSlot`'s valueOf carve-out in
+call-receiver-method.ts, or a compile-time valueOf special case) and teach
+it the wrapper slot. Method: env-gated mark-trace on the CALL lowering
+(mirror the compileNewExpression return-instrumentation used for #4626's
+second slice) with the exact repro
+`function anyv(v){return v} anyv(Object(1n)).valueOf()` — identify the
+winning arm empirically before editing. Legs a/c/d of the test already
+pass; only `deepEqual(Object(1n), 1n)` fails. Acceptance: the harness test
+passes standalone; full category run + the 90-test Map/Set/Symbol sample
+stay clean; js-host untouched.
 
 ## Implementation Plan (phased)
 
