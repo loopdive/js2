@@ -1078,6 +1078,7 @@ const _CLOSURE_HOST_BRIDGE_EXPORTS = [
   ["__closure_arity", "$ce"],
   ["__is_closure", "$cf"],
   ["__closure_has_rest", "$cg"],
+  ["__is_ctor_closure", "$ch"],
 ] as const;
 
 const _DATA_STRUCT_HOST_BRIDGE_EXPORTS = [
@@ -1090,8 +1091,8 @@ const _CLOSURE_HOST_BRIDGE_MARKER = ["__\0js2_closure_host_bridge_marker", "$ct"
 const _CLOSURE_HOST_BRIDGE_BINDINGS = ["__\0js2_closure_host_bridge_bindings", "$cu"] as const;
 const _CLOSURE_HOST_BRIDGE_MANIFEST_MAGIC = 0x5a200000;
 const _CLOSURE_HOST_BRIDGE_MANIFEST_MAGIC_MASK = 0xfff00000;
-const _CLOSURE_HOST_BRIDGE_MANIFEST_BITS_MASK = 0x0001ffff;
-const _CLOSURE_HOST_BRIDGE_MANIFEST_RESERVED_MASK = 0x000e0000;
+const _CLOSURE_HOST_BRIDGE_MANIFEST_BITS_MASK = 0x0003ffff; // (#4661) bit 17 = __is_ctor_closure
+const _CLOSURE_HOST_BRIDGE_MANIFEST_RESERVED_MASK = 0x000c0000;
 const _DATA_STRUCT_HOST_BRIDGE_MANIFEST = ["__\0js2_data_struct_host_bridge", "$dm"] as const;
 const _DATA_STRUCT_HOST_BRIDGE_MARKER = ["__\0js2_data_struct_host_bridge_marker", "$dt"] as const;
 const _DATA_STRUCT_HOST_BRIDGE_BINDINGS = ["__\0js2_data_struct_host_bridge_bindings", "$du"] as const;
@@ -1168,7 +1169,7 @@ function _isImmutableI32Global(value: unknown): value is WebAssembly.Global {
 }
 
 /** Prove a Table's exact funcref limits through Wasm import validation. */
-function _isExactFuncrefTable(value: unknown, size: 0 | 2 | 17): value is WebAssembly.Table {
+function _isExactFuncrefTable(value: unknown, size: 0 | 2 | 18): value is WebAssembly.Table {
   try {
     if (!(value instanceof WebAssembly.Table) || value.length !== size) return false;
     const verdict =
@@ -1183,7 +1184,7 @@ function _isExactFuncrefTable(value: unknown, size: 0 | 2 | 17): value is WebAss
         ? [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 0, 0]
         : size === 2
           ? [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 2, 2]
-          : [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 17, 17];
+          : [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 18, 18];
     let probe =
       size === 0
         ? _emptyFuncrefTableProbeModule
@@ -1242,7 +1243,7 @@ function _closureHostBridgeMetadata(exports: Record<string, any>): ClosureHostBr
   const [bindingsLogicalName, bindingsPhysicalBase] = _CLOSURE_HOST_BRIDGE_BINDINGS;
   if (!_hasOwn(exports, bindingsLogicalName)) return undefined;
   const bindings = _terminalHostBridgeAlias(exports, bindingsPhysicalBase);
-  if (!_isExactFuncrefTable(bindings, 17)) return undefined;
+  if (!_isExactFuncrefTable(bindings, 18)) return undefined;
   try {
     for (let bit = 0; bit < _CLOSURE_HOST_BRIDGE_EXPORTS.length; bit++) {
       const binding = bindings.get(bit);
@@ -7947,6 +7948,28 @@ function _unwrapForHost(v: any): any {
 // constructor case (a dedicated `__construct_closure` export) is the separate
 // codegen follow-up #1632b-2 and is intentionally NOT handled here; A.i's
 // `NotPromise` is always an ordinary function, so this fallback closes it.
+// (#4661) Cross a value to the host in the representation its IsConstructor
+// answer requires: the CONSTRUCTIBLE callable proxy when the compiler
+// classified this closure allocation as having [[Construct]], the plain
+// (non-callable) `_wrapForHost` mirror otherwise. `__is_ctor_closure` ref.tests
+// the nominal `__constructible_fn_wrap_*` subtypes — the same registry the
+// standalone `__reflect_is_constructor` reads, so both lanes give one answer.
+// Non-structs pass through; an absent export degrades to today's mirror.
+function _wrapForHostByConstructibility(
+  value: any,
+  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
+): any {
+  const exports = callbackState?.getExports();
+  if (!_isWasmStruct(value)) return value;
+  const isCtor = exports?.__is_ctor_closure as ((v: any) => number) | undefined;
+  try {
+    if (typeof isCtor === "function" && isCtor(value) === 1) return _wrapCallableForHost(value, callbackState);
+  } catch {
+    /* classifier declined this value — fall through to the mirror */
+  }
+  return _wrapForHost(value, exports);
+}
+
 function _wrapCallableForHost(
   closure: any,
   callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
@@ -13891,7 +13914,11 @@ assert._isSameValue = isSameValue;
           if (!newTargetIsPresent && (newTarget === undefined || newTarget === null)) {
             return Reflect.construct(wrappedCtor, wrappedArgs ?? []);
           }
-          const wrappedNew = _isWasmStruct(newTarget) ? _wrapForHost(newTarget, exports) : newTarget;
+          // (#4661) §26.1.2 step 3 IsConstructor(newTarget). The non-callable
+          // mirror fails that check for EVERY compiled function, so a
+          // constructible closure must cross as the callable proxy. newTarget is
+          // never invoked here — it is only classified and read for `.prototype`.
+          const wrappedNew = _wrapForHostByConstructibility(newTarget, callbackState);
           return Reflect.construct(wrappedCtor, wrappedArgs ?? [], wrappedNew);
         };
       }

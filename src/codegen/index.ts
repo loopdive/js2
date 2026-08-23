@@ -514,6 +514,7 @@ import {
   emitClosureCallExport4,
   emitClosureMethodCallExportN,
   emitIsClosureExport,
+  emitIsCtorClosureExport,
   emitClosureArityExport,
   emitClosureHasRestExport,
   emitIsDataStructExport,
@@ -5746,6 +5747,12 @@ export function generateModule(
     // non-vec structs — JS cannot tell them apart without this probe).
     emitIsClosureExport(ctx);
 
+    // (#4661) IsConstructor bridge for the js-host `Reflect.construct` newTarget
+    // path — a ref.test chain over the same `constructibleClosureTypeIdxs`
+    // registry the standalone `__reflect_is_constructor` reads. BEFORE
+    // `emitClosureHasRestExport`, which seals the availability manifest.
+    emitIsCtorClosureExport(ctx);
+
     // #2742: classify accessor-returned rest closures before the JS runtime
     // exposes them through a dispatcher that cannot materialize their rest vec.
     emitClosureHasRestExport(ctx);
@@ -9052,6 +9059,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // #1504: emit __is_closure for wrapExports discrimination.
     emitIsClosureExport(ctx);
+
+    // (#4661) IsConstructor bridge (see generateModule path).
+    emitIsCtorClosureExport(ctx);
 
     // #2742: accessor-returned rest-closure discriminator (see primary path).
     emitClosureHasRestExport(ctx);
