@@ -32,6 +32,7 @@ import {
 } from "../index.js";
 import { emitCapturedBoxGlobalRead, emitNullGuardedStructGet, getCapturedBoxGlobal } from "../property-access.js";
 import { coerceType, compileExpression, isAnyValue } from "../shared.js";
+import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "../fn-global-shadow.js"; // (#4630)
 import { emitTdzCheck } from "../statements.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import { emitStringBuilderRead, getBuilderInfo } from "../string-builder.js";
@@ -610,6 +611,34 @@ function compileIdentifierCore(
   skipRuntimeEvalState = false,
 ): ValType | null {
   const name = id.text;
+
+  // (#4630) A top-level function reassigned via `globalThis.<name> = …` must
+  // resolve bare reads through the override slot (§16.1.7 — the declaration
+  // IS a global-object property, so the write rebinds it). Locals/captures
+  // still win; the static closure serves until the first reassignment.
+  if (
+    isShadowedTopLevelFn(ctx, name) &&
+    fctx.localMap.get(name) === undefined &&
+    !(fctx.boxedCaptures?.has(name) ?? false)
+  ) {
+    const slot = fnShadowSlot(ctx, name);
+    const staticArm: Instr[] = [];
+    const savedBody = fctx.body;
+    fctx.body = staticArm;
+    const staticTy = withShadowReadSuppressed(() => compileIdentifierCore(ctx, fctx, id, skipRuntimeEvalState));
+    if (staticTy && staticTy.kind !== "externref") coerceType(ctx, fctx, staticTy, { kind: "externref" });
+    else if (!staticTy) fctx.body.push({ op: "ref.null.extern" });
+    fctx.body = savedBody;
+    fctx.body.push({ op: "global.get", index: slot });
+    fctx.body.push({ op: "ref.is_null" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: staticArm,
+      else: [{ op: "global.get", index: slot }],
+    });
+    return { kind: "externref" };
+  }
 
   // #1210: string-builder bindings are stored as a (buf, len, cap, mat)
   // tuple of synthetic locals. The binding name is intentionally NOT in
@@ -2109,7 +2138,7 @@ function nativeBuiltinInstanceOfTypeIdxs(ctx: CodegenContext, ctorName: string):
 }
 
 function isStandaloneWrapperConstructorName(ctorName: string): ctorName is StandaloneWrapperConstructorName {
-  return ctorName === "Number" || ctorName === "String" || ctorName === "Boolean";
+  return ctorName === "Number" || ctorName === "String" || ctorName === "Boolean" || ctorName === "BigInt";
 }
 
 /** Emit the real standalone wrapper-brand predicate over the LHS carrier. */

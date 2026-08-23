@@ -37,6 +37,10 @@ reference, so `Object.is` answers false.
 1. **Measure first**: instrument what `new Function("return Array")()`
    returns standalone (carrier kind, null?) and what the bare `Array`
    value read returns in the same module. Record both here before design.
+   Probe files go in your worktree's `.tmp/`; run via
+   `npx tsx` + `runTest262File(path, "harness", 30000, "standalone")`
+   (see tests/test262-runner.ts). The quickjs runtime-eval tier is the
+   default engine (#4242).
 2. **Design decision** (pick after step 1):
    - (a) **Boundary canonicalization**: when the runtime-eval boundary
      hands back a value that names a global builtin (the eval engine can

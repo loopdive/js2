@@ -13,8 +13,21 @@ area: codegen
 goal: test262-conformance
 lane: B
 files:
-  - src/codegen/literals.ts
-  - src/codegen/type-coercion.ts
+  - src/codegen/object-runtime.ts
+  - src/codegen/standalone-wrapper-instanceof.ts
+  - src/codegen/wrapper-proto-value-of.ts
+loc-budget-allow:
+  - src/codegen/object-runtime.ts
+  - src/codegen/wrapper-proto-value-of.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/index.ts
+  - src/codegen/declarations/param-return-inference.ts
+func-budget-allow:
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/wrapper-proto-value-of.ts::fillWrapperValueOfDynCallArm
+  - src/codegen/wrapper-proto-value-of.ts::fillBigIntWrapperValueOfResolutionArm
+  - src/codegen/wrapper-proto-value-of.ts::ensureBigIntWrapperValueOfClosure
+  - src/codegen/declarations/param-return-inference.ts::inferParamTypeFromCallSites
 ---
 
 # #4631 — Standalone BigInt carrier
@@ -35,6 +48,32 @@ the host import can remain as a fast path. i64-branded values exist for
 `__box_bigint`), but arbitrary-precision semantics, mixed comparisons and
 `typeof x === "bigint"` are unimplemented standalone.
 
+## Progress (2026-08-23)
+
+Landed: native `__new_BigInt(i64)` wrapper (object-runtime, [[PrimitiveValue]]
+slot — `Object(1n)` is a real `$Object`, was null), `instanceof BigInt`
+wrapper brand arm (standalone-wrapper-instanceof), a `$Symbol`-style
+`__any_to_string` render is NOT yet done for bigint (String(1n) through any
+still "[object Object]"), plus two valueOf arms (an `__extern_method_call`
+arm and an `__extern_get` resolution closure). The typed probes all answer
+correctly (typeof/===/instanceof/valueOf on typed receivers).
+
+REMAINING HOLE for `harness/deepEqual-primitives-bigint.js`: the 0-arg
+`a.valueOf()` call on an ANY receiver routes through a dispatcher that is
+neither `__extern_method_call` nor the `__extern_get`+apply pair (markers in
+both never fire) — locate the actual 0-arg valueOf any-receiver dispatch
+(suspects: the `__call_valueOf` per-struct ToPrimitive dispatcher family,
+`declinesToOwnOrInheritedSlot`'s valueOf carve-out in
+call-receiver-method.ts, or a compile-time valueOf special case) and teach
+it the wrapper slot. Method: env-gated mark-trace on the CALL lowering
+(mirror the compileNewExpression return-instrumentation used for #4626's
+second slice) with the exact repro
+`function anyv(v){return v} anyv(Object(1n)).valueOf()` — identify the
+winning arm empirically before editing. Legs a/c/d of the test already
+pass; only `deepEqual(Object(1n), 1n)` fails. Acceptance: the harness test
+passes standalone; full category run + the 90-test Map/Set/Symbol sample
+stay clean; js-host untouched.
+
 ## Implementation Plan (phased)
 
 1. **Phase 0 — inventory**: count standalone test262 failures whose error
@@ -53,3 +92,7 @@ the host import can remain as a fast path. i64-branded values exist for
    element type, `BigInt(string)`.
 5. **Acceptance for phase 1-2**: `harness/deepEqual-primitives-bigint.js`
    passes standalone; no js-host byte change; standalone floor unaffected.
+
+## Permanent repro
+
+`test262/test/harness/deepEqual-primitives-bigint.js` (standalone lane via `pnpm run test:262` / `runTest262File`).
