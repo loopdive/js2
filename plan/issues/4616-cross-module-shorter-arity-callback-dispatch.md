@@ -609,3 +609,20 @@ spy-count reads through the vec-copy-at-boundary shim caveat). Guards: react
 109 zero-flips, acorn 3518/3518, cookie 63740, clsx 32/32,
 optimize-differential + all #4616/#4618 regression tests green, equivalence
 sample (array/closure/let-const) green.
+
+## 2026-08-23 residual notes (post slice 2, jest 328/358)
+
+- **expectationResultFactory 6** — all trap null-deref inside the per-test
+  closures; a hand-rolled expectationResultFactory (destructured options,
+  messageFormatter/stackFormatter, `new Error().stack`) PASSES standalone
+  (`.tmp/probe-erf.mts`), so the trap lives in the compiled
+  `pretty-format` import (the suite injects `__upstreamPrettyFormat` for
+  exactly this file) or the snapshot matcher lane. Needs a batch-module probe.
+- **queueRunner 6** — async test bodies awaiting `queueRunner(options)`
+  (PCancelable + promise queue); failures carry NO error text (assertion
+  with empty message or silent timeout). Needs an in-situ probe.
+- **pTimeout 3 / Replaceable 4 / deepCyclicCopy 5 / errorWithStack 1 /
+  diff-sequences 3** — traps are gone after slice 2; residuals are
+  assertion-level (prototype identity `toBe`, spy-count reads through the
+  vec-copy-at-boundary caveat, `Error.captureStackTrace` args,
+  diff-sequences numeric mismatches).
