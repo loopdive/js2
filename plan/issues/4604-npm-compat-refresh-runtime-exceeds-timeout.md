@@ -333,3 +333,49 @@ branch and emit the same cancelling `synchronize` event outside the npm
 coordinator.
 
 Implementation: [PR #4776](https://github.com/loopdive/js2/pull/4776).
+
+## The promotion PR never lands: the queue guard loses a race it now runs constantly (2026-08-23)
+
+**Symptom.** `benchmarks/results/npm-compat.json` on main sat at
+`generatedAt 2026-08-23T15:27:53Z` for 6+ hours while the fast lane promoted
+successfully over and over. The dashboard was frozen with green CI everywhere.
+
+**Not the enqueuer.** `auto-enqueue` is healthy and explicitly reports
+`#4807 skip (already-queued)`; the queue held 5 entries with another PR
+`AWAITING_CHECKS` at the head. The promotion PR reaches the queue fine.
+
+**What actually happens.** Every fast-lane promotion force-updates the reused
+`ci/npm-compat-refresh` branch, which ejects the PR from the merge queue and
+restarts it. The coordinator has a guard against exactly this — it skips the
+push when the PR has checks in flight or appears in the queue — but the guard
+is a POINT-IN-TIME read, and there is a window between "ejected" and
+"re-enqueued" in which the PR is neither queued nor check-busy. Measured on
+run 827:
+
+```
+20:02:34  refresh-fast starts; queue guard passes (the publish step ran, so skip != 1)
+20:03:20  + b87c9042...a1793bff HEAD -> ci/npm-compat-refresh (forced update)
+20:40:39  auto-enqueue: "#4807 skip (already-queued)"
+```
+
+**Why it started now.** Before the per-package split (#4796) the whole fleet
+promoted roughly once per ~25 minutes, and only after every package finished.
+The fast lane now promotes on EVERY merge — ~12 minutes after each one — so
+the race window is entered several times an hour instead of occasionally, and
+the PR never survives long enough to reach the front of a 5-deep queue. This is
+a consequence of the split, not a pre-existing bug.
+
+**Not fixed here — it needs a call on cadence**, and cadence is a stakeholder
+instruction ("merge-driven, no cron", 2026-08-23). Options, cheapest first:
+
+1. **Only push when the numbers actually changed.** Perf timings differ every
+   run, so every run currently publishes something. Comparing the artifact
+   modulo perf noise would collapse most promotions to no-ops, and the PR would
+   sit still long enough to merge. Does not touch the trigger.
+2. **Do not re-push while an open promotion PR exists.** Let the current one
+   land; the next run's measurement is picked up by the run after it. The
+   artifact is then never more than one cycle behind.
+3. **Rate-limit promotions** (at most one push per hour). Closest to a cron and
+   the option that most contradicts the stated instruction.
+
+(1) or (2) look right; both keep the trigger merge-driven.
