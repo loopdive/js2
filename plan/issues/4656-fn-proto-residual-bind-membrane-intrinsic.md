@@ -1,8 +1,24 @@
 ---
 id: 4656
 title: "ES5 standalone: Function.prototype residual — 23 rows: this-binding writes to opaque compiled receivers (reverse membrane), bind-of-builtin + curried [[Construct]], %Function.prototype% unreachable through a function-valued prototype, primitive-this in function-code"
-status: ready
+status: in-progress
+assignee: dev-4656
 sprint: current
+loc-budget-allow:
+  # +4 lines at the `!leftType || !rightType` bail-out of
+  # `compileBinaryExpression`. That fork is the DEFECT SITE — the bail-out is
+  # what rolled back the operands and substituted a constant — and it cannot be
+  # moved: the continuation needs the two operand ValTypes in scope. All of the
+  # new logic (≈95 lines) lives in the subsystem module
+  # `src/codegen/equality-void-operand.ts`; what remains here is the 4-line call
+  # + destructure that hands the materialised operand types back to the existing
+  # `foldTypeDisjointThenPromote` → `compileTypedBinaryDispatch` chain.
+  - src/codegen/binary-ops.ts
+func-budget-allow:
+  # Same +4 lines, same rationale — the bail-out fork lives inside
+  # `compileBinaryExpression` and the continuation needs its two operand
+  # ValTypes in scope, so the growth cannot be moved out of the function.
+  - src/codegen/binary-ops.ts::compileBinaryExpression
 created: 2026-08-23
 updated: 2026-08-23
 priority: high
