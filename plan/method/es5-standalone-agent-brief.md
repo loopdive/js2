@@ -68,6 +68,19 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
      has seen fail is an assertion about the code, not a test of it.
    - Write pins UNFOLDABLE where a compile-time fold could bypass the
      path under test (loop-carried index beats a syntactic literal).
+   - **A pin that asserts a shape is not a pin that exercises the shape.**
+     Both wave-3 lanes wrote one while actively hunting this class: one
+     asserted identity relations and sat one property READ away from an
+     uncatchable trap, reporting green; the other read the property and
+     was `it.fails`-green *because* the read trapped. Neither assertion
+     was wrong; neither pin could fail for the reason it existed. Every
+     pin must execute the operation whose behavior it guards.
+   - A sibling's change alters not only what is CORRECT but what is
+     REACHABLE: the wave-3 trap needed one lane's classification widening
+     plus a shape only the other lane's domain produced, and no sweep
+     either lane could run would have compiled the combination. Cross-lane
+     hazards are only visible on the combined tree — the lead's merge
+     verification must include running each lane's suite there.
    - The merge check confirms the run says **N passed** — never that it
      exited 0 (`describe.skipIf` gates can skip an entire suite green).
 
