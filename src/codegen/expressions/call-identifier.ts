@@ -45,6 +45,7 @@ import {
   resolveUncurryThisAlias,
 } from "../object-builtin-effects.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
+import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } from "../host-fnctor-method-driver.js"; // (#4648)
 import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
 import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
 import { emitStandaloneRegExpToStringFromExpr } from "../regexp-standalone.js";
@@ -294,6 +295,33 @@ function normalizeWasiWriteFileStringRef(
  * dispatch chain (IIFE, super, element-access, conditional, …). The block was
  * moved unchanged so the emitted Wasm is byte-identical.
  */
+/**
+ * (#4630 / #4648) Push the callee for a shadowed top-level function: the
+ * override slot when a `globalThis.<name> = …` write has landed, else the
+ * statically compiled closure. Emitted identically on every lane; only the
+ * INVOCATION that consumes it differs (host driver vs `__apply_closure`).
+ */
+function emitShadowCalleeSelect(ctx: CodegenContext, fctx: FunctionContext, callee: ts.Identifier, slot: number): void {
+  const staticArm: Instr[] = [];
+  const savedBody = fctx.body;
+  fctx.body = staticArm;
+  const staticTy = withShadowReadSuppressed(
+    () => compileExpression(ctx, fctx, callee, { kind: "externref" }),
+    callee.text, // (#4648) static fallback arm for this name
+  );
+  if (staticTy && staticTy.kind !== "externref") coerceType(ctx, fctx, staticTy, { kind: "externref" });
+  else if (!staticTy) fctx.body.push({ op: "ref.null.extern" });
+  fctx.body = savedBody;
+  fctx.body.push({ op: "global.get", index: slot });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: staticArm,
+    else: [{ op: "global.get", index: slot }],
+  });
+}
+
 export function compileIdentifierCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -309,30 +337,50 @@ export function compileIdentifierCall(
     isShadowedTopLevelFn(ctx, expr.expression.text) &&
     fctx.localMap.get(expr.expression.text) === undefined &&
     !(fctx.boxedCaptures?.has(expr.expression.text) ?? false) &&
-    !expr.arguments.some((a) => ts.isSpreadElement(a))
+    !expr.arguments.some((a) => ts.isSpreadElement(a)) &&
+    // (#4648) JS-host lane: the private fnctor driver below is only reserved
+    // for arities the canonical closure-method surface covers. Above the cap
+    // the static lowering stays (a reassignment there is not observed — the
+    // same limit the host `this.m(...)` fast path carries).
+    (ctx.standalone || ctx.wasi || expr.arguments.length <= 8)
   ) {
     const name = expr.expression.text;
     const slot = fnShadowSlot(ctx, name);
+    if (!ctx.standalone && !ctx.wasi) {
+      // (#4648) JS-host lane. The standalone arm below packs the arguments into
+      // an `$ObjVec` for `__apply_closure`, and `ensureObjVecBuilders` pulls in
+      // the whole native object runtime — which, in host mode (wasm:js-string,
+      // not native strings), aborts as soon as a string-family selfhost builtin
+      // is emitted. Use the fixed-arity host driver instead: it dispatches a
+      // WasmGC closure through `__call_fn_method_N` and falls back to the
+      // `__extern_call_raw_callable_N` import when the slot holds a genuine JS
+      // callable, so a host function assigned to `globalThis.<name>` also works.
+      const argc = expr.arguments.length;
+      const driverIdx = reserveHostFnctorMethodDriver(ctx, argc);
+      const undefIdx = ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+      ensureLateImport(
+        ctx,
+        hostFnctorCallableFallbackImportName(argc),
+        Array.from({ length: argc + 2 }, () => ({ kind: "externref" }) as ValType),
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      // `this` for a bare call is undefined (§13.3.6.1 — no reference base).
+      if (undefIdx !== undefined) fctx.body.push({ op: "call", funcIdx: undefIdx });
+      else fctx.body.push({ op: "ref.null.extern" });
+      emitShadowCalleeSelect(ctx, fctx, expr.expression, slot);
+      for (const arg of expr.arguments) {
+        const at = compileExpression(ctx, fctx, arg, { kind: "externref" });
+        if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
+        else if (!at) fctx.body.push({ op: "ref.null.extern" });
+      }
+      fctx.body.push({ op: "call", funcIdx: driverIdx });
+      return { kind: "externref" };
+    }
     const applyIdx = reserveApplyClosure(ctx);
     const { newIdx: vecNewIdx, pushIdx: vecPushIdx } = ensureObjVecBuilders(ctx);
     flushLateImportShifts(ctx, fctx);
-    const staticArm: Instr[] = [];
-    const savedBody = fctx.body;
-    fctx.body = staticArm;
-    const staticTy = withShadowReadSuppressed(() =>
-      compileExpression(ctx, fctx, expr.expression, { kind: "externref" }),
-    );
-    if (staticTy && staticTy.kind !== "externref") coerceType(ctx, fctx, staticTy, { kind: "externref" });
-    else if (!staticTy) fctx.body.push({ op: "ref.null.extern" });
-    fctx.body = savedBody;
-    fctx.body.push({ op: "global.get", index: slot });
-    fctx.body.push({ op: "ref.is_null" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "val", type: { kind: "externref" } },
-      then: staticArm,
-      else: [{ op: "global.get", index: slot }],
-    });
+    emitShadowCalleeSelect(ctx, fctx, expr.expression, slot);
     const calLocal = allocLocal(fctx, `__fnshadow_cal_${fctx.locals.length}`, { kind: "externref" });
     fctx.body.push({ op: "local.set", index: calLocal });
     fctx.body.push({ op: "call", funcIdx: vecNewIdx });

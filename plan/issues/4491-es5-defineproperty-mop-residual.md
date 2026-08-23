@@ -132,6 +132,25 @@ loc-budget-allow:
   # entry above). Surfaced only after #4723's post-merge baseline refresh
   # reset the ceiling.
   - src/codegen/object-runtime.ts
+  # 2026-08-23 wave-4 census slice. Four narrow arms, each in the ONE module
+  # that owns the decision it corrects — none of them has a body that can be
+  # moved out, because each is a guard/withdrawal inside an existing ordered
+  # chain:
+  #  - declarations/param-return-inference.ts (+~35): a fifth WITHDRAWAL rule
+  #    alongside #3548/#4555/#4530/#2867-S2, in the same `if (type !== null …)`
+  #    ladder at the end of `inferParamTypeFromCallSites`. The rule IS the
+  #    dispatch; there is no body.
+  #  - builtin-ctor-own-props.ts (+~12): one entry (plus its cost rationale) in
+  #    the existing `CTOR_STATIC_METHODS` table.
+  #  - vec-overlay.ts (+~110): the integrity-bag consult for a vec's IMPLICIT
+  #    element descriptor and the frozen-own-index write guard. Both splice
+  #    into `__vec_gopd` / `__extern_set`'s prologue and reference those
+  #    functions' own local vectors, so they cannot live anywhere else (the
+  #    same constraint as the #4491 lane B entry above).
+  #  - declarations.ts: extends the existing 2026-08-21 void-undefined grant
+  #    with the `= undefined` IDENTIFIER arm next to the void-call arm.
+  - src/codegen/declarations/param-return-inference.ts
+  - src/codegen/builtin-ctor-own-props.ts
 oracle-ratchet-allow:
   # 2026-08-21: one getTypeAtLocation in varBindingNeedsExternrefForUndefined's
   # new call arm — the same raw-checker idiom as the surrounding predicate;
@@ -200,6 +219,17 @@ coercion-sites-allow:
   # hand-rolled.
   - src/codegen/string-fromcharcode-value-read.ts
 func-budget-allow:
+  # 2026-08-23 wave-4 census: +38 in `inferParamTypeFromCallSites`, which is a
+  # TERMINAL LADDER of soundness withdrawals — #3548 (under-application), #4555
+  # (native scalars), #4491 (nullish arg), #4530 (opaque `any`), #2867 S2
+  # (escapes-as-value) — each a `if (type !== null && …) type = null;` guard on
+  # the SAME local. The wave-4 vec-carrier rule is the sixth. It cannot be
+  # hoisted into a helper without passing `type` in and out by reference (the
+  # ladder is order-dependent: a later rule must see the earlier ones' result),
+  # and splitting the ladder in half would put the withdrawal decisions in two
+  # files with no single place to read the rule set. Most of the +38 is the
+  # rationale comment the surrounding rules all carry.
+  - src/codegen/declarations/param-return-inference.ts::inferParamTypeFromCallSites
   # 2026-08-22 PR #4768: +4 dispatch in the T12 redeclared-binding arm.
   - src/codegen/statements/variables.ts::compileVariableStatement
   # 2026-08-22 gate-visibility re-grant for PR #4768, same stranded-grant
@@ -5698,3 +5728,373 @@ module-size/sha A/B, `wat-ab.sh` diffs the WAT when sizes move.
 tree, so ANY uncommitted edit is lost when you flip sides. It cost this lane
 three fixes and one full control run. Re-run `ab-setup.sh` immediately after
 every edit, and prefer committing before flipping.
+
+## 2026-08-23 wave-4 census (lead sweep on campaign HEAD, post-#4785)
+
+24 MOP rows remain in the ES≤5 standalone failing set (162 total), all
+re-verified failing by the lead's fresh sweep (`.tmp/sweep-wave4.jsonl`):
+
+```
+Object/defineProperty/15.2.3.6-3-138.js      Object/defineProperty/15.2.3.6-4-183.js
+Object/defineProperty/15.2.3.6-4-195.js      Object/defineProperty/15.2.3.6-4-21.js
+Object/defineProperty/15.2.3.6-4-243-1.js    Object/defineProperty/15.2.3.6-4-243-2.js
+Object/defineProperty/15.2.3.6-4-589.js      Object/defineProperty/15.2.3.6-4-622.js
+Object/defineProperty/S15.2.3.6_A1.js
+Object/defineProperties/15.2.3.7-2-16.js     Object/defineProperties/15.2.3.7-6-a-179.js
+Object/defineProperties/15.2.3.7-6-a-183.js  Object/defineProperties/15.2.3.7-6-a-204.js
+Object/defineProperties/15.2.3.7-6-a-231.js
+Object/freeze/15.2.3.9-2-a-11.js             Object/freeze/15.2.3.9-2-a-12.js
+Object/freeze/15.2.3.9-2-a-14.js
+Object/preventExtensions/15.2.3.10-2.js      Object/preventExtensions/15.2.3.10-3-5.js
+Object/getOwnPropertyDescriptor/15.2.3.3-4-4.js
+Object/getOwnPropertyDescriptor/15.2.3.3-4-34.js
+Object/keys/15.2.3.14-5-13.js                Object/keys/15.2.3.14-5-a-4.js
+Object/getOwnPropertyNames/15.2.3.4-4-1.js
+```
+
+Wave-4 dispatch note: sample errors include arguments-object descriptor
+visibility (`freeze/15.2.3.9-2-a-1x` — frozen ARGUMENTS index
+descriptors still writable/configurable), `arrObj.length` descriptor
+(`SameValue(«0», «4294967295»)`, length-descriptor configurable),
+`getOwnPropertyNames` on built-ins, and defineProperty on array index
+past length. Triage-first per this file's standing plan; re-verify each
+row live before edits (methodology item 1). Possible cross-lane overlap:
+`Array/prototype/filter/15.4.4.20-9-b-*` rows are in #4641's extended
+family but may root here (descriptor mirror on callback iteration) —
+whichever lane measures the root first takes them, hand over with
+evidence.
+
+### Wave-4 census RESULT (dev-4491, branch `issue-4491-wave4`, base `52cb0a6a6`)
+
+All 24 rows re-verified failing on the campaign base before any edit
+(`.tmp/base-wave4.tsv`, standalone lane, single-test driver). **8 of the 24
+flip to pass**, from four independent roots. Every number below is from a run
+executed in this worktree; the base side was re-measured from file-copy
+reverts (`.tmp/base/*.ts`), not inherited.
+
+#### Root 1 — a monomorphic vec PARAMETER destroys array identity (5 rows)
+
+`Object.defineProperty(arr, "1", {get, set})` records the accessor in the
+#3251 overlay companion, which is a module-global side table **keyed by vec
+IDENTITY** (`ref.eq`). `inferParamTypeFromCallSites` narrows a callee's
+implicit-any parameter to the argument's `resolveWasmType`, and in a
+descriptor-dirty module the checker's element type is **not** a proof of the
+runtime carrier: `var arr = []; Object.defineProperty(arr, …)` is `number[]`
+to the checker after the first numeric element write, but codegen materialises
+it as `$__vec_externref` so the overlay can hold accessor entries. The
+parameter is therefore narrowed to `$__vec_f64`, and the ARGUMENT boundary
+becomes a carrier conversion — `emitSafeStructConversion` →
+`emitVecToVecBody`, an element-wise copy into a **fresh `struct.new`**. The
+callee receives an array the overlay has never heard of.
+
+Measured, standalone, on the base (`.tmp/pA*.js` probes):
+
+| read of `arr[1]` where index 1 is an accessor returning 3 | answer |
+| --- | --- |
+| module level, literal key | `3` (getter invoked) |
+| `function f(o,k,v){return o[k];}` called once with `arr` | **`0`** (raw backing slot, getter never invoked) |
+| the SAME call site made polymorphic (a second, non-array call) | `3` |
+
+The emitted signature is the proof: with the module-level call the callee is
+`(func $readThrough (param (ref null 4) …))` where `arr`'s global is
+`(mut (ref null 2))` — `$__vec_f64` vs `$__vec_externref`.
+
+That is exactly `propertyHelper.js`: `verifyEqualTo` / `verifyWritable` /
+`verifyProperty` all take the array under test as their only `obj` argument,
+so the whole verification family ran on a COPY. It is also why the defect
+resisted isolation — a two-parameter clone of `verifyEqualTo` in the test body
+answered correctly whenever the same helper was ALSO called before the
+element write, because the narrowing depends on the call sites, not the call.
+
+**Fix** (`src/codegen/declarations/param-return-inference.ts`, +~35): a fifth
+withdrawal rule in the existing ladder — when `overlayRouteActive(ctx)` (the
+module-wide #4159/#4222/#4160 pre-scan flag), withdraw a narrowing to any
+`__vec_*` carrier. Free where it applies: that flag already routes typed-lane
+element access through the dynamic lane, so a vec-typed parameter buys nothing
+there and costs identity. Byte-identical in every module where the flag is
+clear.
+
+Flips: `defineProperty/15.2.3.6-4-195`, `-4-243-1`,
+`defineProperties/15.2.3.7-6-a-204`, `-6-a-231`.
+(`-4-243-2`, the `onlyStrict` twin of `-4-243-1`, still fails — see Residuals.)
+
+#### Root 2 — `Object.freeze` was invisible to an array/arguments ELEMENT (2 rows)
+
+`__object_freeze` records the level on the carrier's #4032 integrity bag and
+clears W/C on the **bag's** entries. A vec's elements have no bag entry, so
+the implicit element descriptor `__vec_gopd` synthesises kept answering
+`{writable: true, configurable: true}` — and, worse, nothing refused the
+operations: measured on base, `Object.freeze([0,1,2])` then propertyHelper's
+`isWritable(arr,"0")` answered **true** (the store landed and was reverted)
+and `isConfigurable(arr,"0")` answered **true** (the delete succeeded, which
+then made `isEnumerable` answer false as a knock-on).
+
+**Fix** (`src/codegen/vec-overlay.ts`, +~110), two halves that compose:
+
+1. `__vec_gopd`'s implicit element descriptor reads the integrity bag
+   (`__vec_bag_lookup` — LOOKUP, never `ensure`: a gOPD is a pure query and
+   must not allocate a bag for every array merely inspected) and answers
+   `writable: !FROZEN`, `configurable: !SEALED`. `enumerable` is untouched by
+   either operation.
+2. `__extern_set`'s vec arm refuses a write to an own, BACKED index of a
+   frozen vec, publishing the shared refusal result so a strict-mode
+   assignment throws. Deliberately scoped to an index inside the backed
+   length: a key the frozen array does NOT own must still walk the prototype
+   chain, so this is not a blanket refusal.
+
+The DELETE half needed no new code — `buildVecDeletePrologue` already consults
+`__vec_gopd(obj,key).configurable` and refuses on false, so half (1) closes it
+by construction.
+
+Flips: `freeze/15.2.3.9-2-a-11` (arguments), `-2-a-14` (array).
+
+#### Root 3 — `var x = undefined` was the NUMBER 0 (2 rows)
+
+`resolveWasmType(undefined)` is `i32` ("void → no result"), a lowering
+convention for a RESULT. Applied to a module-global BINDING it stored
+`i32.const 0` and boxed to `ref.i31 0`. Measured on base:
+
+```
+var g  = undefined; ({get: g }).get === undefined   // false   ← i31 0
+var g2;             ({get: g2}).get === undefined   // true
+```
+
+Two census rows are this one defect: `{get: getter}` with
+`var getter = undefined` threw `TypeError: Getter/setter must be a function`
+(§6.2.5.6 accepts an undefined half; the ambiguous raw value took the
+non-callable arm), and `var o2 = undefined; o2 = Object.preventExtensions(o)`
+read back `0` instead of the object.
+
+**Fix** (`src/codegen/declarations.ts`): one arm next to the existing
+2026-08-21 void-CALL arm in `moduleGlobalWasmType` — an initializer that is
+the `undefined` IDENTIFIER resolving to the global binding gets an `externref`
+slot. Deliberately NOT the general "declared type is purely undefined/void"
+rule (an optional read or a delete-sentinel keeps its numeric slot) and NOT
+the `void 0` arm, which is the one the 2026-08-21 note records as having
+regressed the filter harness family.
+
+Flips: `defineProperty/15.2.3.6-4-21`, `preventExtensions/15.2.3.10-2`.
+
+#### Root 4 — `Date`'s statics were not own properties (1 row)
+
+The ctor carrier seeded only `length`/`name`/`prototype`, so
+`Object.prototype.hasOwnProperty.call(Date,"now")` answered false and
+`gOPN(Date)` reported three names. **Fix**
+(`src/codegen/builtin-ctor-own-props.ts`): `Date: ["now","parse","UTC"]` in
+`CTOR_STATIC_METHODS`. This joins that table on the SAME cost argument its
+String-only note makes, not against it — `BUILTIN_STATIC_METHOD_ARITY.Date`
+has exactly three entries, the same order of magnitude as String's three, not
+`Math`'s ~30.
+
+Flip: `defineProperty/15.2.3.6-4-622`.
+
+#### What the roots were NOT
+
+Two hypotheses were measured and falsified before the ones above, and are
+recorded so they are not re-derived:
+
+- *"the dynamic-key element read ignores the overlay"* — it does not:
+  `__extern_get_idx` and `__extern_get` both carry the overlay read prologue
+  and both answer the getter correctly. The receiver they were handed was a
+  different object.
+- *"the `{get: undefined}` TypeError is a ToPropertyDescriptor bug"* — the
+  literal spelling `{get: undefined}` and `{get: void 0}` both already worked;
+  only a value routed through an `undefined`-typed binding failed, which put
+  the defect in the binding's slot, not in the descriptor reader.
+
+#### Residuals — 16 of 24, each with a measured root and an owner
+
+Every one reproduces on this branch and is pinned `it.fails` in
+`tests/issue-4491-wave4.test.ts`, so a later lane's fix flips a red test to
+green instead of landing unnoticed. The last two rows have no census row at
+all — they surfaced while writing the pins.
+
+| rows | root | owner / next step |
+| --- | --- | --- |
+| `defineProperty/15.2.3.6-4-183`, `defineProperties/15.2.3.7-6-a-179` | array INDEX at 2^32-2 must bump `length` to 2^32-1. `MAX_CANONICAL_INDEX` is `2^31-1` because `__obj_index_of_key`'s result doubles as a SIGNED sort key for OrdinaryOwnPropertyKeys, so keys in `[2^31, 2^32-2]` are ordinary string keys and never touch `length`. | **#4497** — already filed by the 2026-08-21 bucket-D triage as exactly this (`part D-I`). Not re-derived here. |
+| `defineProperties/15.2.3.7-6-a-183` | a data-only descriptor whose VALUE is kind-incompatible with the array's carrier (a string into `$__vec_f64`) cannot be written back into the element, so it lands in the companion with `FLAG_COMPANION_VALUE` — but `isNonDataDescriptorDefine` calls `{value: "abc"}` data-only, the module is not descriptor-dirty, and the typed read never consults the companion. Measured: `gOPD(arr,"1").value === "abc"` while `arr[1] === 2`. | NOT a pre-scan fix: flagging every `{value: <non-numeric>}` define would route element access in any module containing `Object.defineProperty(x,k,{value:true})` through the dynamic lane. The narrow fix is to widen that BINDING's carrier (`heterogeneousWidenedModuleGlobalType`, #4428). Unowned. |
+| `keys/15.2.3.14-5-13` | defining a far index (10000) grows the backing with a NON-hole default, so `Object.keys` enumerates the whole filled range: measured 9999 keys where the spec wants 4. | growth must fill with the `$Hole` sentinel (externref carriers) or skip the write-back. Unowned. |
+| `keys/15.2.3.14-5-a-4` | `delete array[0]` on an `Object.keys` RESULT records the tombstone (`hasOwnProperty("0")` → false) but the element read still answers `"prop1"`. The keys result is an `$ObjVec`, not a `__vec_*` carrier, so the #4222 delete/presence prologues do not cover it. | unowned; the `$ObjVec`-vs-vec split is the same seam as #4010. |
+| `freeze/15.2.3.9-2-a-12`, `preventExtensions/15.2.3.10-3-5` | a String object's INDEX read misses through a dynamic receiver: measured `readThrough(new String("abc"), "0")` → `undefined`, while the module-level literal-key read answers `"a"`. `preventExtensions` additionally does not stop `new String()` from answering a character for an out-of-range index. | `string-exotic-own-props.ts` (the #4232 §10.4.3 lane). Unowned. |
+| `getOwnPropertyDescriptor/15.2.3.3-4-4`, `-4-34`, `getOwnPropertyNames/15.2.3.4-4-1` | the GLOBAL object and `Function.prototype` expose no own function properties: `gOPD(this,"eval")` and `gOPD(Function.prototype,"constructor")` are `undefined`, and `gOPN(this)` reports a name set missing every global function. The comparable tables DO work — `Math.abs` and `Array.prototype.push` both answer the full `{w:true,e:false,c:true}` triple — so this is a carrier-coverage gap, not a MOP gap. | needs a global-object own-property carrier + `constructor` on the `Function.prototype` proto (which has no identity-stable carrier, per the T9/T10 note above). Unowned. **Distinct from #4651**: `gOPN(this)` also TRAPS with `illegal cast` in some module shapes (surfaced by this lane's probe, filed by the lead as #4651). `15.2.3.4-4-1` itself does NOT trap — it fails its own `assert` on a short name list — so the row belongs here, not to #4651. |
+| `defineProperty/S15.2.3.6_A1` | §13.5.3 says `typeof` of an unresolvable Reference is `"undefined"`, but a name the TS DOM lib declares gets an ambient `valueDeclaration`, so `typeof-delete.ts`'s undeclared-fold does not fire and the static type fold answers `"object"` — then `document.createElement` null-derefs and the test never reaches its own guard. | closing it needs the standalone PROVIDED-globals set; today `structuredClone` has a hand-written arm for exactly this shape. Unowned. Worth more than one row: `typeof document !== "undefined"` is a very common npm guard. |
+| `defineProperty/15.2.3.6-3-138` | a descriptor object whose `value` field is INHERITED and is an accessor with no getter must make the property `undefined`. `__desc_has_own` does walk the chain (`"value" in child` → true, `child.value` → undefined), yet the define leaves the old value in place. | root not isolated — the presence and read halves both answer correctly, so the loss is inside `__obj_define_from_desc`'s field ACCUMULATION for this receiver shape (a fnctor instance). Unowned. |
+| `defineProperties/15.2.3.7-2-16` | `Object.defineProperties(obj, argumentsObject)`: the descriptor-map getter must run with `this` = the arguments object and `Object.prototype.toString.call(this)` must be `"[object Arguments]"`. | the `Properties`-map own-key source for an arguments receiver. Unowned. |
+| `defineProperty/15.2.3.6-4-589` | `teamMeeting.startTime = dateObj` through an INHERITED setter that stores into `var data1 = 1001` reads back `NaN`: the numeric-carrier binding cannot hold a Date. Same defect FAMILY as root 3, different trigger (a numeric initializer rebound to an object, not an `undefined` one). | `mixed-assignment-carrier` / `heterogeneousWidenedModuleGlobalType` (#4428). Unowned. |
+| `defineProperty/15.2.3.6-4-243-2` | the `onlyStrict` twin of a fixed row: a STRICT-mode write to an array-index accessor with no setter must throw a TypeError. The sloppy no-op is correct; the strict-throw is the documented boundary in `__extern_set`'s accessor arm. | the shared `__extern_set_decide` refusal channel already exists (root 2 uses it); wiring the accessor arm to it is a small follow-up. Unowned. |
+| (no census row — found writing the pins) | `Object.freeze(arr)` flips `Object.prototype.hasOwnProperty.call(arr,"0")` from `true` to **`false`**, while `gOPD(arr,"0")` keeps answering the full descriptor. PRE-EXISTING: reproduces with `vec-overlay.ts` reverted. A descriptor that exists while `hasOwnProperty` says the property does not is the #4010 overlay-vs-bag split, now reachable through the integrity path too. | unowned; pinned `it.fails` in `tests/issue-4491-wave4.test.ts`. |
+| (no census row — found writing the pins) | a FUNCTION-LOCAL `var g = undefined` still stores the number 0, and an INLINE `{get: getter}` descriptor argument still throws where the same descriptor in a variable does not. Root 3 fixes the module-global slot on the dynamic define path only. | unowned; see "Not done" below. |
+
+#### Routed IN from #4654 (2026-08-23) — accessor-tier twin of the T9 fix
+
+dev-4654 handed over three rows whose root is in this issue's files, with the
+analysis already done and the wrong fix already ruled out. Recorded here so it
+is not lost; **not taken in this slice** — it is a different member KIND with
+its own risk record, and folding an unmeasured accessor-tier change into a
+branch whose zero-regression claim is already established would put that claim
+at risk. It should be dispatched as its own wave-5 slice.
+
+- Rows: `RegExp/prototype/{global,multiline,ignoreCase}/S15.10.7.{2,4,3}_A9.js`.
+  The receiver is `RegExp.prototype` ITSELF, not an instance. `hasOwnProperty`
+  and the `delete` both pass; the SECOND `hasOwnProperty` (must be `false`)
+  fails.
+- Root: `__nproto_hasown` (`native-proto-own-props.ts`). Those three names are
+  in the brand's `$memberCsv`, and the CSV token scan answers `1`
+  unconditionally. The seeded-member ladder that consults the mutable
+  companion — the one #4491 T9 added `constructor` to — is restricted to
+  `kind === "method"`, because `ensureNativeProtoCompanionSeeder` deliberately
+  does not seed accessors. So a deleted accessor member is resurrected by the
+  CSV. Structurally the SAME defect T9 closed for `constructor`, one member
+  kind over.
+- Ruled out, with a record: seeding the getters via
+  `__defineProperty_accessor` flips `tests/issue-2885.test.ts` ("plain read
+  `RegExp.prototype.global` is undefined") to FAIL, and that mechanism is not
+  established (see the "ACCESSORS ARE DELIBERATELY NOT SEEDED IN THIS SLICE"
+  note in `native-proto.ts`).
+- The direction that is still open: these rows do not need accessors SEEDED —
+  they need a DELETION to be OBSERVABLE. A tombstone consulted by the CSV
+  shortcut answers all three assertions without installing an accessor entry,
+  and therefore without touching the #2885 read path. Merely routing accessor
+  keys through the companion does NOT work: the companion has no entry for
+  them, so the FIRST `hasOwnProperty` would start failing.
+- Control set for whoever takes it:
+  `%TypedArray%.prototype.{buffer,byteLength,byteOffset,length}/prop-desc.js`.
+
+#### Cross-lane (methodology item 7)
+
+The dispatch note flagged `Array/prototype/filter/15.4.4.20-9-b-{2,14,15,16}`
+and `forEach/15.4.4.18-3-23` as possibly rooting in this lane's descriptor
+mirror. **They do not.** All five are `fail` on BOTH arms of this lane's A/B —
+unchanged by every fix above — so this lane hands them back to #4641 with that
+evidence. **This lane makes no claim about dev-4641's arm**: a claim about
+another lane's effect needs an arm containing their change, which a two-arm
+tip-vs-own A/B is structurally unable to provide.
+
+The four filter HARNESS rows the 2026-08-21 note names as having been
+regressed by the earlier `void 0` module-global widening —
+`filter/15.4.4.20-9-{2,3,4,6}` — are **pass on both arms**. That is the
+measurement that says the wave-4 `= undefined` arm did not repeat that
+regression, and it is why the arm is scoped to the `undefined` identifier
+rather than reusing the full local predicate.
+
+#### Test Results
+
+**Scoped standalone sweep, both arms run in this worktree** (single-test
+driver, `--target standalone`, 7 shards; base arm from file-copy reverts of
+the four touched sources, branch arm at `a41edca71`):
+
+| directory | rows |
+| --- | ---: |
+| `built-ins/Object/defineProperty` | 1131 |
+| `built-ins/Object/defineProperties` | 632 |
+| `built-ins/Object/getOwnPropertyDescriptor` | 310 |
+| `built-ins/Object/keys` | 59 |
+| `built-ins/Object/freeze` | 53 |
+| `built-ins/Object/getOwnPropertyNames` | 45 |
+| `built-ins/Object/preventExtensions` | 40 |
+| + the 9 cross-lane `Array/prototype/{filter,forEach}` rows | 9 |
+| **total** | **2279** |
+
+|  | base | branch |
+| --- | ---: | ---: |
+| pass | 2226 | **2235** |
+| fail | 51 | 42 |
+| infrastructure (compile-timeout / ENOENT) | 2 | 2 |
+
+**UP 9, DOWN 0.** Flip list:
+
+```
+defineProperty/15.2.3.6-4-195      defineProperty/15.2.3.6-4-21
+defineProperty/15.2.3.6-4-243-1    defineProperty/15.2.3.6-4-622
+defineProperties/15.2.3.7-6-a-204  defineProperties/15.2.3.7-6-a-231
+freeze/15.2.3.9-2-a-11             freeze/15.2.3.9-2-a-14
+preventExtensions/15.2.3.10-2
+```
+
+Three rows moved for INFRASTRUCTURE reasons and are excluded from both counts
+— each was re-run SERIALLY on both arms afterwards and passes on both:
+
+- `defineProperty/15.2.3.6-4-419` — base-arm `compilation timeout (123s)` under
+  7-way contention (the box was also running three sibling lanes at load 15-21).
+- `defineProperties/15.2.3.7-5-b-186` — base-arm `ENOENT`, the worktree
+  `test262/` symlink-farm race the brief documents.
+- `defineProperty/15.2.3.6-4-298-1` — the SAME ENOENT race on the branch arm.
+  Counting it as a regression would have been a false alarm; the serial re-run
+  is what settles it.
+
+The 24-row census on the branch: **9 pass, 15 fail** (`.tmp/FINAL-wave4.tsv`),
+matching the sweep exactly.
+
+**Eval tier.** The worktree's `.test262-cache` was copied from the main
+checkout at 12:57Z — i.e. the adapter the lead later found had been built from
+an 8-day-stale bundle. It was kept UNCHANGED across both arms deliberately: a
+base/branch delta is only meaningful if the tier is identical on both sides.
+Blast radius is **2 rows of 2279** (`getOwnPropertyDescriptor/15.2.3.3-4-187`,
+`-4-188` — the only rows in the set that mint from a body string); both pass on
+both arms, and both still pass on the branch after refreshing the cache from
+the rebuilt artifact. None of the 24 census rows is eval-dependent.
+
+**Pins.** `tests/issue-4491-wave4.test.ts` — **14 passed (14)** on the branch;
+on the reverted sources **7 failed / 7 passed**, i.e. every one of the 7
+positive pins fails on the arm it claims to test and every one of the 7
+`it.fails` residual pins reproduces on both arms. Prior-wave suites for this
+issue: `issue-4491-proto-index-constructor-shadow` + `issue-4491-function-
+binding-widening` → **10 passed (10)**; `issue-4506` → **22 passed**.
+
+`issue-4504-inherited-set` → **1 failed / 35 passed (36)**. The one failure
+(`reads present fnctor flow slots directly while absent slots preserve normal
+prototype lookup`, expected 7 got 6) **reproduces on the reverted sources** —
+it is pre-existing on the campaign base, not caused by this slice.
+
+Two harness notes that cost real time and will cost the next lane the same:
+
+- That suite spins its own `CompilerPool`, whose worker imports the GITIGNORED
+  `scripts/runtime-bundle.mjs` and `scripts/compiler-bundle.mjs`. A fresh
+  worktree has NEITHER, so the pool prints `[pool] worker failed before ready
+  (exit 1)` and vitest reports **`36 skipped`, exit code 0** — a suite that
+  runs nothing, green. Build both first
+  (`npx esbuild src/runtime.ts --bundle --platform=node --format=esm
+  --outfile=scripts/runtime-bundle.mjs --external:typescript
+  --external:binaryen`, plus `pnpm run build:compiler-bundle`), and read the
+  "N passed" line rather than the exit code — exactly the check the brief
+  requires.
+- Build those bundles from the arm you are measuring. They are compiled
+  snapshots of `src/`, so a bundle left over from the other arm silently
+  measures the wrong tree.
+
+Three pin-shape findings worth carrying forward, because each one is a way a
+pin can be green without testing anything:
+
+1. The vec-identity pins only reproduce when the CALL is at module scope. With
+   the same helper called from inside `main`, the checker hands the parameter
+   the externref carrier, no conversion is emitted, and the pin passes on base.
+2. The frozen-element pin only reproduces when the module contains a
+   `delete obj[k]` somewhere — that is what sets `vecIndexDeleteDirty` and
+   makes the module `overlayRouteActive`. Without it the typed lane writes
+   through `array.set` and never reaches the guard. That is the honest scope of
+   the fix, and it is why the real failing rows all include `propertyHelper.js`.
+3. The `{get: <undefined var>}` pin only reproduces when the descriptor is
+   passed as a VARIABLE. An inline literal argument takes the static
+   literal-shape define path, which still throws — the same defect has two
+   lowerings and only one of them is fixed.
+
+Gates at commit (`SKIP_SLOW_PRECOMMIT=1`): `check:loc-budget` OK,
+`check:func-budget` OK, both under the grants added to this file's
+frontmatter. `test262` gitlink verified untouched
+(`git diff 52cb0a6a6..HEAD --stat -- test262` empty).
+
+#### Not done, and why
+
+A local (function-scope) `var g = undefined` still stores the number 0. The
+one-line extension of `varBindingNeedsExternrefForUndefined` was written and
+**measured not to fix it** — the enclosing object literal's field type is
+decided separately — so it was reverted rather than shipped: a behaviour
+change on every `var x = undefined` local in every module with no measured
+beneficiary is exactly the trade this campaign's audit chain keeps flagging.
+
+Root 1's withdrawal was NOT extended to variable declarations
+(`var alias = arr` shows the same converting copy — measured: `alias[1]`
+answers the raw slot while `arr[1]` invokes the getter). No census row needed
+it, and the same "no measured beneficiary" rule applies. Worth knowing that
+the defect is not parameter-specific: a JS array is a REFERENCE, and any
+cross-carrier vec→vec conversion silently makes a copy of one.

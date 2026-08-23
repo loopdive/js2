@@ -405,3 +405,51 @@ The remaining Array rows split three ways, none a small slice:
 
 The consult-order asymmetry (Finding: `__extern_method_call` honours an
 override for `join` but not `toString`) was NOT touched by any wave-2 change.
+
+## 2026-08-23 wave-5 census (lead sweep on campaign HEAD, fresh bundle+adapter)
+
+Live failing rows in this issue's territory, all re-verified failing by the
+lead's own sweep (`.tmp/sweep-wave4b.jsonl`). Two halves:
+
+**String receivers / ToPrimitive on objects (16):**
+
+```
+built-ins/String/S15.5.1.1_A1_T9.js        Cannot convert object to primitive value
+built-ins/String/S15.5.1.1_A1_T8.js        Array.prototype.toString override ignored
+built-ins/String/S15.5.2.1_A1_T8.js        Function.prototype.toString override ignored
+built-ins/String/S15.5.2.1_A1_T11.js       new String(__obj) == "true..."
+built-ins/String/S15.5.5.1_A5.js           new String("ABCABC")
+built-ins/String/prototype/constructor/S15.5.4.1_A1_T2.js   is not a constructor
+built-ins/String/prototype/replace/S15.5.4.11_A1_T9.js      {valueOf, toString:void 0}
+built-ins/String/prototype/replace/S15.5.4.11_A1_T5.js      replace(null, Function())
+built-ins/String/prototype/slice/S15.5.4.13_A1_T5.js        Function.prototype.toString unimplemented
+built-ins/String/prototype/slice/S15.5.4.13_A3_T4.js        instance.slice(0,100)
+built-ins/String/prototype/substring/S15.5.4.15_A1_T5.js    Function.prototype.toString unimplemented
+built-ins/String/prototype/split/instance-is-math.js        "[object Math]"
+built-ins/String/prototype/split/argument-is-regexp-and-instance-is-number.js
+built-ins/String/prototype/split/separator-regexp-limit-string-via-eval.js
+built-ins/String/prototype/trim/15.5.4.20-2-51.js           trim.call(argObj)
+built-ins/String/prototype/concat/S15.5.4.6_A2.js           concat with 128 arguments
+```
+
+**Boxed-primitive receivers (7):**
+
+```
+built-ins/Number/15.7.4-1.js                     "[object Object]" vs "[object Number]"
+built-ins/Object/S15.2.1.1_A2_T11.js             n_obj.constructor
+built-ins/Object/S15.2.2.1_A2_T7.js              n_obj.constructor
+built-ins/Object/S15.2.2.1_A2_T5.js              n_obj.getFullYear() (boxed Date)
+language/expressions/object/S11.1.5_A2.js        {prop: new Boolean(true)}
+language/function-code/10.4.3-1-103.js           (5).x == 5
+language/function-code/10.4.3-1-104.js           (5).x === 5
+language/function-code/10.4.3-1-106.js           typeof (5).x
+```
+
+Note the recurring sub-root worth measuring first: **an object's own
+`toString`/`valueOf` override is not consulted by the String conversion
+path**, which would explain the `_A1_T8`/`_A1_T11`/`S11.1.5_A2` group in
+one fix. `Function.prototype.toString is not yet implemented in --target
+standalone` is a distinct, explicit gap (2 rows here, more elsewhere) —
+implementing it is in scope for this lane if the measurement supports it.
+`is not a constructor` rows belong to the builtin-as-value family — check
+whether a sibling lane owns them before fixing.

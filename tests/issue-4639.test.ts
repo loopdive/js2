@@ -297,11 +297,15 @@ if (typeof v === "string" && v !== "m") throw new Test262Error("unexpected marke
     "inherited read through a function-valued prototype completes (no trap)",
   );
 
-  // The CORRECT answers for the same shape — one cause, three wrong readings
-  // (w.marker undefined; isPrototypeOf and getPrototypeOf false): the raw
-  // callable in `$proto` at C1-reconstructed sites. Successor scope (see
-  // #4643); this pin flips the day the canonicalization covers that write.
-  it.fails("SUCCESSOR (see #4643): the same shape answers correctly", { timeout: 60_000 }, async () => {
+  // The CORRECT answers for the same shape. Filed as a successor `it.fails`
+  // here; FLIPPED POSITIVE by #4643, which is also where the "one cause, three
+  // wrong readings" reading of it is corrected — measured there, the three rows
+  // had TWO causes: the raw callable stored into the per-fnctor prototype global
+  // (the read), and `__getPrototypeOf`/`__isPrototypeOf` having no chain start
+  // for a `__fnctor_<F>` instance struct at all (the other two, which were
+  // equally wrong for an OBJECT-valued prototype and so could not have shared
+  // the callable's cause).
+  it("SUCCESSOR (fixed by #4643): the same shape answers correctly", { timeout: 60_000 }, async () => {
     const dir = join(__dirname, "..", ".tmp", "issue-4639-pins");
     mkdirSync(dir, { recursive: true });
     const abs = join(dir, "fn-proto-argonly-correct.js");

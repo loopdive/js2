@@ -32,7 +32,12 @@ import {
 } from "../index.js";
 import { emitCapturedBoxGlobalRead, emitNullGuardedStructGet, getCapturedBoxGlobal } from "../property-access.js";
 import { coerceType, compileExpression, isAnyValue } from "../shared.js";
-import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "../fn-global-shadow.js"; // (#4630)
+import {
+  fnShadowSlot,
+  isShadowedTopLevelFn,
+  isShadowStaticArmFor,
+  withShadowReadSuppressed,
+} from "../fn-global-shadow.js"; // (#4630 / #4648)
 import { emitTdzCheck } from "../statements.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import { emitStringBuilderRead, getBuilderInfo } from "../string-builder.js";
@@ -625,7 +630,10 @@ function compileIdentifierCore(
     const staticArm: Instr[] = [];
     const savedBody = fctx.body;
     fctx.body = staticArm;
-    const staticTy = withShadowReadSuppressed(() => compileIdentifierCore(ctx, fctx, id, skipRuntimeEvalState));
+    const staticTy = withShadowReadSuppressed(
+      () => compileIdentifierCore(ctx, fctx, id, skipRuntimeEvalState),
+      name, // (#4648) marks this as the static fallback arm FOR `name`
+    );
     if (staticTy && staticTy.kind !== "externref") coerceType(ctx, fctx, staticTy, { kind: "externref" });
     else if (!staticTy) fctx.body.push({ op: "ref.null.extern" });
     fctx.body = savedBody;
@@ -1049,7 +1057,14 @@ function compileIdentifierCore(
   }
   const globalFunction = tryEmitStandaloneGlobalFunctionIdentifier(ctx, fctx, name, id);
   if (globalFunction) return globalFunction;
-  if (ctx.sloppyImplicitGlobals?.has(name)) return emitImplicitGlobalRead(ctx, fctx, name);
+  // (#4648) …except inside the shadow-slot STATIC arm on the JS-host lane: the
+  // pre-override value of a top-level function declaration is the compiled
+  // function, and round-tripping it through the host global object loses the
+  // WasmGC closure representation the call path needs. Host lane only, so the
+  // standalone lowering stays byte-identical.
+  if (ctx.sloppyImplicitGlobals?.has(name) && !(!ctx.standalone && !ctx.wasi && isShadowStaticArmFor(name))) {
+    return emitImplicitGlobalRead(ctx, fctx, name);
+  }
   // Standalone built-in namespace values (Array/Object) materialize as lazy
   // open-object singletons before ambient lib declarations can route them to
   // host globals.

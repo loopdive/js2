@@ -207,7 +207,21 @@ describe("#4637 A1 — a function value in the `.prototype` slot", () => {
     ).toBe(63);
   });
 
-  it.fails("CROSS-LANE PREDICTION (dev-4639 C1 x A1): arg-position-ONLY instance", async () => {
+  // (#4643, 2026-08-23) THE PREDICTION RESOLVED — and its own instruction was
+  // "if it reaches 31, delete the `it.fails` and keep it as an ordinary pin".
+  // Measured 31 on `issue-4643`, so the `it.fails` is gone.
+  //
+  // It resolved at 31 only after a SECOND defect was fixed, which is the part
+  // worth carrying forward: C1 + A1 composed give bits 1|2|8 (classification,
+  // instanceof, and — once the callable store is canonicalized — the inherited
+  // read). Bits 4|16 (`isPrototypeOf`, `getPrototypeOf`) were NOT an A1 question
+  // at all: `__isPrototypeOf`/`__getPrototypeOf` had no chain start for a
+  // `__fnctor_<F>` INSTANCE STRUCT, so they answered false/null for every such
+  // instance regardless of what its prototype was — measured on an
+  // object-valued prototype too (see `tests/issue-4643.test.ts`'s `OBJ` pins).
+  // The composition question and the chain-start question looked like one row
+  // because both surfaced on the same shape.
+  it("CROSS-LANE PREDICTION RESOLVED (dev-4639 C1 x A1 x #4643): arg-position-ONLY instance", async () => {
     // The shape where C1's lever actually acts: `new G()` appears ONLY as a
     // `new` ARGUMENT, and every read goes through `h.wrapped`, so no other
     // dynamic use of the instance can classify it. Measured `.tmp/p22.js`,
