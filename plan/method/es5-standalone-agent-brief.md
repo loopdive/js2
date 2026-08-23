@@ -62,6 +62,29 @@ provider (`npx tsx scripts/build-quickjs-eval-provider.mjs`, falling back to
 `JS2WASM_EVAL_ENGINE=interpreter`), and confirm a known eval-dependent row
 runs before trusting the numbers.
 
+## Environment trap: the worktree `test262/` symlink farm + the GITLINK hazard
+
+The isolation layer rebuilds a fresh worktree's `test262/` as a symlink farm
+pointing at SIBLING worktrees (whose chains can dead-end in an empty dir),
+and it does so repeatedly — measured ~every 2s / at the start of every Bash
+call. `ls` works intermittently while `node` gets ENOENT, so sweeps fail
+silently. Fixes, in order of robustness: re-point the link to
+`/home/user/js2wasm/test262` **in-process immediately before each read** and
+retry on ENOENT (fighting it from the shell is futile); at minimum verify a
+LEAF test file resolves (`readlink -f`) before trusting any sweep. Also:
+`test262/test/test` is a self-referential symlink — use lstat, skip symlinks
+in every recursive walk.
+
+**The gitlink hazard that rides along (2026-08-23, hit independently by two
+lanes):** `test262` is a git SUBMODULE gitlink. Replacing the directory with
+a symlink flips the gitlink to a symlink in the index — it shows as `T` in
+`git status` and silently rides into any `git commit -a`, breaking every
+other checkout. If you repoint `test262`, (1) never use `commit -a` (the
+brief already requires staging specific files), (2) check `git status --
+test262` before every commit, and (3) before finishing, verify with
+`git diff <base>..HEAD --stat -- test262` that NO commit touched it, and
+restore the plain directory/gitlink state.
+
 ## Engine trap: a CONCRETE-ref `try_table` block type traps on entry (#4620)
 
 A `try_table` whose **block type is a concrete ref** (`(ref null <typeidx>)` /
