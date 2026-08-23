@@ -38,11 +38,10 @@ import { extractReactUpstreamTests } from "./react-upstream-extract.mjs";
 import { installReactTestEnvironment } from "./react-test-environment.mjs";
 import { installReactUpstreamInfrastructure } from "./react-upstream-infrastructure.mjs";
 import { REACT_EXPECT_SHIM, LAST_ERROR_EXPORT, buildTestFunction, withTimeout } from "./react-upstream-shim.mjs";
-import { compileProjectInWorker, compileSourceInWorker } from "./upstream-suite-runner.mjs";
+import { compileProjectInWorker } from "./upstream-suite-runner.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = join(HERE, "report", "react-dom-upstream-suite.json");
-const GENERATED_ROOT = join(HERE, ".react-dom-upstream-suite-impl");
 const PROJECT_ROOT = join(HERE, ".react-dom-upstream-suite-project");
 let nativeContextFile = "<setup>";
 let nativeContextTest = "<setup>";
@@ -473,7 +472,10 @@ function buildProjectModuleSource({ exportName, moduleName, imports, bindings = 
 // Concatenating the 560 KB client graph into every test batch both repeats
 // compilation work and makes a single compiler watchdog unable to distinguish
 // a slow implementation from a pathological test body.
-function buildProjectFiles({ reactSource, sharedSource, clientSource, tests }) {
+// Exported like its sibling `buildServerProjectFiles`: the implementation
+// probe's cost is a property of this shape, so it has to be measurable
+// without running the 3-4 hour suite.
+export function buildProjectFiles({ reactSource, sharedSource, clientSource, tests }) {
   const entry = [
     'import { __reactExports } from "./react.ts";',
     'import { __sharedExports } from "./shared.ts";',
@@ -1064,13 +1066,27 @@ async function runServerHarness({
 // Compiles the implementation ALONE — no test code. If this cannot produce a
 // valid module then every batch containing it is invalid too, and subdividing
 // per test only burns wall clock while hiding the actual finding.
-async function compileImplementationOnly(implementation) {
-  const source = `${implementation}\nexport function __probe() {\n  return 1;\n}`;
+//
+// Uses the PROJECT shape (real `react.ts` / `scheduler.ts` / `shared.ts` /
+// `client.ts` modules), not `buildImplementationSource`'s CJS-emulating
+// `function __reactDomClientModule() { … }` wrapper. Measured 2026-08-23 on the
+// 536 KB published client source: 35.4 s compiling at top level versus 84.4 s
+// wrapped in a function body, emitting 1.36 MB versus 1.77 MB — 2.4× the time
+// and 30% more code for identical source. `buildImplementationSource` wraps
+// four modules that way, which is what drove this probe into its 300 s ceiling
+// and left the card reporting `blocked` with 0 of 1,261 admitted tests run.
+//
+// The per-batch lane already knew: `buildProjectModuleSource` keeps each export
+// carrier top-level with the comment "so the large React production bodies do
+// not become nested function expressions". This probe is now the same shape,
+// with an empty test list, so it measures what the batches actually compile.
+async function compileImplementationOnly({ reactSource, sharedSource, clientSource }) {
   const configuredTimeout = Number(process.env.DOGFOOD_REACT_DOM_COMPILE_TIMEOUT_MS ?? 300_000);
   const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 300_000;
-  const result = await compileSourceInWorker({
-    generatedPath: join(GENERATED_ROOT, "generated-implementation.ts"),
-    source,
+  const result = await compileProjectInWorker({
+    generatedRoot: join(PROJECT_ROOT, "implementation-probe"),
+    entryFile: "entry.ts",
+    files: buildProjectFiles({ reactSource, sharedSource, clientSource, tests: [] }),
     timeoutMs,
     workerEnv: { DOGFOOD_INSTALL_JSDOM: "1" },
   });
@@ -1629,7 +1645,7 @@ export async function runHarness({ quiet = false } = {}) {
   }
 
   // --- 3. DOES THE IMPLEMENTATION COMPILE AT ALL? --------------------------
-  const baseline = await compileImplementationOnly(implementation);
+  const baseline = await compileImplementationOnly({ reactSource, sharedSource, clientSource });
   log(
     `[dogfood] react-dom implementation alone (${Math.round(implementation.length / 1024)} KB): ` +
       (baseline.validates ? `valid in ${baseline.compileMs}ms` : `INVALID — ${String(baseline.error).slice(0, 100)}`),

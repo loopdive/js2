@@ -805,5 +805,26 @@ Two independent directions, either of which unblocks the card:
    the same statements at top level. That is worth knowing regardless of
    react-dom — every CJS package in the corpus is compiled through a wrapper.
 
-Not yet attempted: neither of these is implemented. The measurement is
-reproducible with `.tmp/rd-wrap.mjs` (top-level vs wrapped, same bytes).
+**Direction 1 is now implemented.** `compileImplementationOnly` builds the
+project files (`buildProjectFiles(…, { tests: [] })`) and goes through
+`compileProjectInWorker`, the same path the per-batch lane uses.
+
+Measured end to end on the pinned sources (react 17 KB, shared 6.6 KB, client
+536 KB):
+
+| probe shape                                    | result                                   |
+| ---------------------------------------------- | ---------------------------------------- |
+| `buildImplementationSource` (4 function wrappers) | 300 s TIMEOUT, no module, card `blocked` |
+| `buildProjectFiles` (real modules)              | **96.8 s, success, `validates: true`, 2.25 MB** |
+
+So the implementation is not "too big to compile" and never was — it compiles
+and validates in under two minutes once it is not wrapped. The card's
+`tests.status: "blocked"` / 0-of-1,261 line was an artifact of the probe's
+shape, not a statement about react-dom.
+
+Direction 2 (why a function body costs 2.4× and emits 30% more than the same
+statements at top level) is still open, and still worth doing: every CJS
+package in the corpus is compiled through a wrapper somewhere.
+
+The wrapping measurement is reproducible with `.tmp/rd-wrap.mjs` (top-level vs
+wrapped, same bytes); the probe comparison with `.tmp/rd-probe-time.mjs`.
