@@ -927,6 +927,50 @@ function qjsPublish(c: number, h: number): any {
     qjsPushBoxRow(retained, carrierTarget, exposed, 0);
     return exposed;
   }
+  // (#4654) A REGEXP crossing out is RECONSTRUCTED, not mirrored.
+  //
+  // The mirrored box below copies only the QuickJS object's OWN STRING KEYS,
+  // and a RegExp instance has exactly one — \`lastIndex\`. Everything the
+  // language reads off a regexp (\`source\`, \`flags\`, \`global\`, \`ignoreCase\`,
+  // \`multiline\`, \`sticky\`, \`exec\`, \`test\`) lives on %RegExp.prototype% as an
+  // accessor or a method, so the box arrived with NO regexp-ness whatever:
+  // measured on campaign HEAD c42bdbe3e, \`eval("/" + xx + "/").source\` answered
+  // \`undefined\` for EVERY code unit, \`instanceof RegExp\` was false and
+  // \`.test\` was "called value is not a function". (The issue's NUL-truncation
+  // reading was an artifact of the test loops starting at \`cu = 0\`; the NUL is
+  // simply the first iteration to report, not the cause.)
+  //
+  // Reconstructing gives the caller a REAL compiled RegExp, so all of the
+  // above answer natively. Two properties of the compiled lane make this safe
+  // rather than a trade:
+  //  - \`new RegExp(<dynamic>)\` does NOT refuse an unsupported pattern at
+  //    CONSTRUCTION. The standalone dynamic-pattern grammar
+  //    (regexp-dynamic-pattern.ts) refuses at MATCH time, so \`source\`/\`flags\`
+  //    are right for every pattern and only \`test\`/\`exec\` on a pattern
+  //    outside that grammar throws — which is exactly what the same pattern
+  //    does through \`new RegExp(s)\` in ordinary user code today. Nothing that
+  //    worked before regresses: the box could not run \`test\` at all.
+  //  - a construction that DOES throw (an invalid pattern, or a flags string
+  //    the compiled constructor rejects) falls through to the mirrored box.
+  //    Absent-not-wrong: the box is what shipped before this arm.
+  //
+  // Residual, stated plainly: the reconstruction is a SNAPSHOT, so it is not
+  // the live view the mirrored box gives. \`lastIndex\` is carried across once
+  // here; a later realm-side mutation of it is not observed, and a compiled
+  // write is not pushed back. A regexp's other state is immutable, so
+  // \`lastIndex\` is the whole of the divergence.
+  const reInfo: string = qjsRegExpInfo(c, h);
+  if (reInfo.length > 0) {
+    const sep: number = qjsUnitIndex(reInfo, 1);
+    if (sep >= 0) {
+      const rebuilt: any = qjsRebuildRegExp(reInfo.substring(sep + 1), reInfo.substring(0, sep));
+      if (rebuilt !== undefined) {
+        qjsCarryLastIndex(c, h, rebuilt);
+        qjsPushBoxRow(retained, rebuilt, rebuilt, 0);
+        return rebuilt;
+      }
+    }
+  }
   // Register BEFORE mirroring: a self-referential object (\`o.self = o\`) walks
   // straight back into qjsPublish for the same handle, and without the row in
   // place that recursion never terminates.
@@ -934,6 +978,63 @@ function qjsPublish(c: number, h: number): any {
   qjsPushBoxRow(retained, box, box, 1);
   qjsPullBox(c, qjsBoxHandles.length - 1);
   return box;
+}
+
+/**
+ * (#4654) Index of the first code unit \`unit\` in \`text\`, or -1.
+ *
+ * Hand-rolled rather than \`indexOf\` for the same reason \`qjsSplitJoined\` is:
+ * the separator is U+0001, which a regexp SOURCE may legitimately contain, so
+ * only the FIRST occurrence separates the flags from the source and the rest
+ * must survive verbatim.
+ */
+function qjsUnitIndex(text: string, unit: number): number {
+  for (let i = 0; i < text.length; i += 1) {
+    if ((text.charCodeAt(i) as number) === unit) return i;
+  }
+  return -1;
+}
+
+/**
+ * (#4654) \`flags ∥ U+0001 ∥ source\` when \`h\` is a realm RegExp, "" otherwise.
+ *
+ * "" is unambiguous as the negative answer: a positive one always carries the
+ * separator, even for \`new RegExp("")\` (whose \`source\` is the spec's
+ * \`"(?:)"\`) and for the empty flags string.
+ */
+function qjsRegExpInfo(c: number, h: number): string {
+  if (!qjsEnsureBoxHelpers(c)) return "";
+  const ret: number = qjsCallGlobalHelper(c, "__js2wasm_eval_reinfo__", 1, h);
+  if (ret === 0) return "";
+  const info: string = qjsReadString(c, ret);
+  qjs_free_value(c, ret);
+  return info;
+}
+
+/**
+ * (#4654) \`new RegExp(source, flags)\` on the COMPILED side, or \`undefined\`
+ * when the compiled constructor refuses. The refusal path is the whole reason
+ * this is a function: the caller must be able to fall through to the mirrored
+ * box rather than propagate a throw out of \`qjsPublish\`, which runs while a
+ * result is being handed back and has no way to signal failure.
+ */
+function qjsRebuildRegExp(source: string, flags: string): any {
+  try {
+    return new RegExp(source, flags);
+  } catch (e) {
+    return undefined;
+  }
+}
+
+/**
+ * (#4654) Carry the realm regexp's \`lastIndex\` onto the reconstruction. Only
+ * a \`g\`/\`y\` regexp that already matched has a non-zero one, so the guard
+ * keeps the common case free of a dynamic property write.
+ */
+function qjsCarryLastIndex(c: number, h: number, re: any): void {
+  const last: number = qjsPropNumber(c, h, "lastIndex");
+  if (last === 0) return;
+  re.lastIndex = last;
 }
 
 // ---------------------------------------------- outward live view (#4245 S2) --
@@ -989,6 +1090,15 @@ function qjsEnsureBoxHelpers(c: number): boolean {
       " }" +
       " return out.join('\\\\u0001'); };" +
       "globalThis.__js2wasm_eval_boxdel__ = function (o, k) { try { delete o[k]; } catch (e) {} };" +
+      // (#4654) RegExp identification + state, in ONE realm call: '' for
+      // anything that is not a realm RegExp, else flags ∥ U+0001 ∥ source.
+      // \`Object.prototype.toString\` is the brand check rather than
+      // \`instanceof\`, so a cross-realm or prototype-swapped regexp still
+      // answers by its [[RegExpMatcher]] slot rather than by its proto chain.
+      "globalThis.__js2wasm_eval_reinfo__ = function (o) {" +
+      " if (o === null || typeof o !== 'object') return '';" +
+      " if (Object.prototype.toString.call(o) !== '[object RegExp]') return '';" +
+      " try { return o.flags + '\\\\u0001' + o.source; } catch (e) { return ''; } };" +
       "0"
   );
   if (installed === 0) return false;
