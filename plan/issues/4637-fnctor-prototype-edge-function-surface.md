@@ -599,21 +599,25 @@ two-arm measurement rather than by either lane's inference.
 
 > **PREDICTION ANSWERED (lead, 2026-08-23, at merge):** on the combined
 > campaign tree — BOTH lanes merged (#4639's C1 widening + this branch's A1
-> arm) — the pin still passes as `it.fails`: the arg-position-only shape
-> still answers `2`, not `31`. **The two changes did NOT compose for this
-> shape.** So C1's `NewExpression`-argument classification does not, by
-> itself, make this site reconstruct.
+> arm) — the answer is PER-SPELLING, measured by lead probe on the
+> combined tree (`.tmp/probe-anomaly2.mts`):
 >
-> **The anomaly is ruled OUT as the gate (lead probe, combined tree):**
-> `G.prototype === P` reads **true** here and `h.wrapped instanceof G`
-> is true, while `P.isPrototypeOf(h.wrapped)` is still false — so the
-> branch-local `G.prototype === P` false reading did not survive the
-> merge (consistent with dev-4639's attribution that it was
-> 4637-branch-local), and the remaining gap is specifically the
-> reconstruction/chain-walk of the arg-position-only instance, not the
-> prototype read. Successor scope: diagnose why a classified
-> `new`-argument instance still doesn't reconstruct; the pin flips the
-> day it does.
+> | spelling | `G.prototype===P` | `P.isPrototypeOf(h.wrapped)` |
+> | --- | --- | --- |
+> | `var g = new G(); var h = new H(g);` | true | **true — COMPOSED** |
+> | `var h = new H(new G());` (the pin's shape) | true | **false — did not compose** |
+>
+> So C1×A1 **did** compose for the variable-then-argument spelling (on
+> dev-4637's branch alone that shape answered only `instanceof`), and the
+> residual gap is precisely the INLINE `new G()` argument — plausibly
+> because an inline argument has no binding slot for #4506's G4
+> externref-slot half of the gate to widen. The `it.fails` prediction pin
+> (inline shape) correctly stays red. The `G.prototype === P` false
+> anomaly did not reproduce in either spelling of the lead's probe
+> module; dev-4637's p23 measured it false in its fuller module (with
+> `P.type` seeding) on both arms — shape-sensitive, provenance settled
+> as pre-existing, mechanism still open. Successor scope: the inline-arg
+> reconstruction gap; the pin flips the day it lands.
 
 ### 3. Every pin re-verified against the base — two were mislabelled
 
