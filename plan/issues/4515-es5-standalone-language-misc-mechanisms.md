@@ -364,3 +364,65 @@ The wave-2 plan's step-2/3/4 hypotheses did not survive measurement:
 Converging theme across (a), the instanceof arm, and the protos rows: **the
 un-materialized builtin prototype substrate (#4480 family)** is now the single
 largest identified blocker class in the language-core residue.
+
+## 2026-08-23 wave-5 census (lead sweep on campaign HEAD, fresh bundle+adapter)
+
+Live failing rows in this issue's territory, re-verified failing by the lead's
+own sweep (`.tmp/sweep-wave4b.jsonl`). Clustered by apparent root — VERIFY each
+cluster live before trusting the grouping (methodology 1):
+
+**C1 — builtin/ctor reflected as a VALUE (7).** The recurring errors are
+`is not a constructor`, `not yet callable as a value`, and
+`Function.prototype.toString is not yet implemented`:
+```
+built-ins/Error/prototype/constructor/S15.11.4.1_A1_T2.js
+built-ins/Object/prototype/constructor/S15.2.4.1_A1_T2.js
+built-ins/Array/prototype/concat/S15.4.4.4_A2_T1.js     concat as a value
+built-ins/Array/prototype/concat/S15.4.4.4_A2_T2.js
+built-ins/Array/S15.4.3_A1.1_T2.js                      Array.toString()
+built-ins/Error/length.js                               err1.constructor.length
+language/expressions/addition/S11.6.1_A2.2_T3.js        f1 + 1 === f1.toString() + 1
+```
+
+**C2 — assignment/reference layer + scope chain (8):**
+```
+language/expressions/assignment/S11.13.1_A6_T1.js   innerX === undefined, got 1
+language/expressions/assignment/S11.13.1_A6_T2.js   innerX === 2, got 1
+language/expressions/assignment/8.12.5-3-b_1.js
+language/expressions/assignment/S8.12.5_A2.js       null-pointer in __str_concat()
+language/identifier-resolution/S10.2.2_A1_T3.js     scope chain disturbed
+language/statements/with/S12.10_A5_T5.js            x === 1, got undefined
+language/types/reference/8.7.2-1-s.js               expected ReferenceError
+language/statements/try/12.14-7.js                  e instanceof ReferenceError
+```
+
+**C3 — `in` / `instanceof` with a comma-expression LHS (4):**
+```
+language/expressions/in/S11.8.7_A2.4_T1.js          (NUMBER = Number, "MAX_VALUE") in NUMBER
+language/expressions/instanceof/S11.8.6_A2.4_T1.js  (OBJECT = Object, {}) instanceof OBJECT
+language/expressions/instanceof/S11.8.6_A6_T4.js    [[HasInstance]] on a non-Function
+language/expressions/instanceof/S15.3.5.3_A3_T2.js
+```
+The first two share one wording: the assignment-inside-comma is evaluated but
+its RESULT is not what the operator receives. Likely one root.
+
+**C4 — accessors in an object literal (2):** `language/expressions/object/11.1.5-0-1.js`,
+`11.1.5-0-2.js` — `o.foo` answers `null` instead of running the getter.
+
+**C5 — arguments object descriptors (4):** `language/arguments-object/10.6-13-a-1.js`,
+`10.6-6-2.js`, `10.6-7-1.js`, `S10.6_A5_T4.js` — `length` descriptor
+configurability. **Overlaps #4491** (dev-4491 landed a `freeze`-on-arguments
+fix in wave 4); check its wave-4 results before touching these.
+
+**C6 — singles, verify individually (6):** `built-ins/JSON/parse/S15.12.2_A1.js`,
+`built-ins/Object/create/15.2.3.5-4-15.js`,
+`built-ins/Object/prototype/S15.2.4_A1_T2.js`,
+`built-ins/Object/prototype/valueOf/S15.2.4.4_A14.js`,
+`language/types/object/S8.6.2_A8.js` (prototype of non-extensible object
+mutated), `language/types/boolean/S8.3_A1_T1.js`,
+`language/statements/for/head-init-expr-check-empty-inc-empty-completion.js`,
+`language/statements/try/S12.14_A18_T6.js`,
+`annexB/language/statements/try/catch-redeclared-var-statement.js`,
+`language/directive-prologue/14.1-4-s.js` + `14.1-5-s.js`.
+
+Triage-first: measure the cluster roots, fix the largest, attribute the rest.

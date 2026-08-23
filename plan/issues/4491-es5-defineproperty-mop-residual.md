@@ -5698,3 +5698,38 @@ module-size/sha A/B, `wat-ab.sh` diffs the WAT when sizes move.
 tree, so ANY uncommitted edit is lost when you flip sides. It cost this lane
 three fixes and one full control run. Re-run `ab-setup.sh` immediately after
 every edit, and prefer committing before flipping.
+
+## 2026-08-23 wave-4 census (lead sweep on campaign HEAD, post-#4785)
+
+24 MOP rows remain in the ES≤5 standalone failing set (162 total), all
+re-verified failing by the lead's fresh sweep (`.tmp/sweep-wave4.jsonl`):
+
+```
+Object/defineProperty/15.2.3.6-3-138.js      Object/defineProperty/15.2.3.6-4-183.js
+Object/defineProperty/15.2.3.6-4-195.js      Object/defineProperty/15.2.3.6-4-21.js
+Object/defineProperty/15.2.3.6-4-243-1.js    Object/defineProperty/15.2.3.6-4-243-2.js
+Object/defineProperty/15.2.3.6-4-589.js      Object/defineProperty/15.2.3.6-4-622.js
+Object/defineProperty/S15.2.3.6_A1.js
+Object/defineProperties/15.2.3.7-2-16.js     Object/defineProperties/15.2.3.7-6-a-179.js
+Object/defineProperties/15.2.3.7-6-a-183.js  Object/defineProperties/15.2.3.7-6-a-204.js
+Object/defineProperties/15.2.3.7-6-a-231.js
+Object/freeze/15.2.3.9-2-a-11.js             Object/freeze/15.2.3.9-2-a-12.js
+Object/freeze/15.2.3.9-2-a-14.js
+Object/preventExtensions/15.2.3.10-2.js      Object/preventExtensions/15.2.3.10-3-5.js
+Object/getOwnPropertyDescriptor/15.2.3.3-4-4.js
+Object/getOwnPropertyDescriptor/15.2.3.3-4-34.js
+Object/keys/15.2.3.14-5-13.js                Object/keys/15.2.3.14-5-a-4.js
+Object/getOwnPropertyNames/15.2.3.4-4-1.js
+```
+
+Wave-4 dispatch note: sample errors include arguments-object descriptor
+visibility (`freeze/15.2.3.9-2-a-1x` — frozen ARGUMENTS index
+descriptors still writable/configurable), `arrObj.length` descriptor
+(`SameValue(«0», «4294967295»)`, length-descriptor configurable),
+`getOwnPropertyNames` on built-ins, and defineProperty on array index
+past length. Triage-first per this file's standing plan; re-verify each
+row live before edits (methodology item 1). Possible cross-lane overlap:
+`Array/prototype/filter/15.4.4.20-9-b-*` rows are in #4641's extended
+family but may root here (descriptor mirror on callback iteration) —
+whichever lane measures the root first takes them, hand over with
+evidence.

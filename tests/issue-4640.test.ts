@@ -96,6 +96,13 @@ describe.skipIf(!TEST262)("#4640 statements/expressions smalls round 3 (standalo
     pinRow("language/statements/for/S12.6.3_A10.1_T1.js", "seven nested var-loops");
   });
 
+  describe("escalated to #4641 and landed there — mixed-return `T | undefined`", () => {
+    // Was `it.fails` here: `myfunc3(){ x3++; return; return x3; }` answered `0`
+    // because the wasm result was `f64` and a bare `return;` pushed that type's
+    // zero. #4641 widens a mixed-return DECLARATION's result to externref.
+    pinRow("language/statements/return/S12.9_A5.js", "bare `return;` answers undefined, not 0 (#4641)");
+  });
+
   describe("residuals measured on this branch (each with an owner)", () => {
     // ── D1 remainder: a MEMBER callee, which needs a runtime IsCallable test.
     // Deliberately not attempted here: the member-read lane answers `null` for
@@ -106,14 +113,19 @@ describe.skipIf(!TEST262)("#4640 statements/expressions smalls round 3 (standalo
     pinResidual("language/expressions/call/11.2.3-3_4.js", "runtime IsCallable on a member callee (#4519 line)");
     pinResidual("language/expressions/call/11.2.3-3_8.js", "runtime IsCallable on `this.bar` (#4519 line)");
 
-    // ── Mixed-return functions. MEASURED on this branch, and much wider than
-    // this one row: `function f(c){ if (c) return; return 5; }` answers **0**,
-    // not `undefined`, for `f(true)`. The wasm return type is f64 and a bare
-    // `return;` emits `f64.const 0`. Fixing it means widening such functions to
-    // an externref return — a value-representation change with real perf and
-    // call-site blast radius. Owner: value-rep lane.
-    pinResidual("language/statements/return/S12.9_A5.js", "bare `return;` answers 0, not undefined (value-rep)");
-    pinResidual("language/types/undefined/S8.1_A2_T2.js", "void-call result !== `void 0` (value-rep)");
+    // ── Mixed-return functions. This escalation was filed as #4641 and the
+    // RETURN-slot half has since LANDED there: a declaration whose checker
+    // return type is a union containing `undefined` now widens its wasm result
+    // to externref, so a bare `return;` carries the canonical `undefined`
+    // instead of `f64.const 0`. `S12.9_A5` therefore moved OUT of this residual
+    // list and into a passing pin above (see `tests/issue-4641.test.ts` for the
+    // full family + the measured residuals that did NOT land: the local slot,
+    // concrete-ref carriers, function expressions).
+    //
+    // `S8.1_A2_T2` stays a residual: it is the same family read through a
+    // DIFFERENT slot (`var x = f(); x === void 0`), i.e. the `number|undefined`
+    // LOCAL collapse, which is #3580 S3/S4 and not part of #4641's landing.
+    pinResidual("language/types/undefined/S8.1_A2_T2.js", "void-call result !== `void 0` (#3580 local-slot collapse)");
 
     // ── D4. `11.1.5-0-1/2` mint the accessors with `eval("o = {get foo(){…}}")`
     // — the object literal is never seen by this compiler at all, so the family

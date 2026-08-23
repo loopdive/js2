@@ -12,6 +12,7 @@ import { ts, forEachChild } from "../../ts-api.js";
 import { ensureLateImport, flushLateImportShifts } from "../shared.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { shiftAsyncSideChannelFuncIdxs } from "../async-scheduler.js";
+import { shiftFnShadowSlots } from "../fn-global-shadow.js"; // (#4648)
 import { buildIsUndefinedExternBody, undefinedSingletonActive, ensureAnyValueType } from "../any-helpers.js";
 import { createUnifiedCollectorState, unifiedVisitNode, finalizeUnifiedCollector } from "../declarations.js";
 import { mapTsTypeToWasm } from "../../checker/type-mapper.js";
@@ -268,6 +269,9 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
       if (globalIdx >= threshold) ctx.sharedEmptyVecGlobals.set(typeIdx, globalIdx + delta);
     }
   }
+  // (#4648) And for the `globalThis.<fn> =` override slots (#4630). Fifth
+  // instance of the same cache-staleness bug; see `shiftFnShadowSlots`.
+  shiftFnShadowSlots(ctx, threshold, delta);
 
   const visitedInstrs = new WeakSet<object>();
   const visitedArrays = new WeakSet<Instr[]>();
