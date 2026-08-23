@@ -18,6 +18,7 @@ import { ts, forEachChild } from "../ts-api.js";
 import { isVoidType, unwrapPromiseType, isPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/types.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2867 Gap 1) native-$Promise carrier gate
+import { emitEagerAsyncPromiseWrap, parkedAsyncClosureWrapsPromise } from "./async-eager-promise.js"; // (#4630)
 import { definedFuncAt, funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedCallable, pushProgramAbiTypedThisTwin } from "./program-abi-source-callable-planning.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3b) manual import-shift must skip stable handles
@@ -171,6 +172,9 @@ function emitClosureDefaultReturnValue(
   const lastInstr = fctx.body[fctx.body.length - 1];
   if (returnType?.kind === "externref" && !alreadyHasValue && (!lastInstr || lastInstr.op !== "return")) {
     emitUndefined(ctx, fctx);
+    // (#4630) The parked-async `$Promise` promotion settles the implicit
+    // `undefined` completion the same way an explicit `return` does.
+    if (fctx.eagerAsyncPromiseReturn === true) emitEagerAsyncPromiseWrap(ctx, fctx);
     return;
   }
   emitDefaultReturnValue(fctx, returnType, alreadyHasValue);
@@ -1995,6 +1999,12 @@ export interface LiftedClosureBodyOptions {
    * `__get_member_*` / `__set_member_*` dispatcher calls.
    */
   typedThis?: { fnctorStructTypeIdx: number; structName: string };
+  /**
+   * (#4630) The parked-async `$Promise` result promotion — every `return` and
+   * the default tail settle through `Promise.resolve(v)`. See
+   * `async-eager-promise.ts`.
+   */
+  eagerAsyncPromiseWrap?: boolean;
 }
 
 /** (#3683 S2) What {@link compileLiftedClosureBody} produces / may have repaired. */
@@ -2069,6 +2079,8 @@ export function compileLiftedClosureBody(
     locals: [],
     localMap: new Map(),
     returnType: closureReturnType,
+    // (#4630) parked-async `$Promise` result promotion (async-eager-promise.ts)
+    eagerAsyncPromiseReturn: opts.eagerAsyncPromiseWrap === true,
     body: [],
     blockDepth: 0,
     breakStack: [],
@@ -2706,6 +2718,11 @@ export function compileLiftedClosureBody(
           closureInfoForSelf.funcTypeIdx = liftedFuncTypeIdx;
         }
       }
+      // (#4630) Concise parked-async body (`async () => expr`) — settle the
+      // completion value into the promoted `$Promise` result.
+      if (liftedFctx.eagerAsyncPromiseReturn === true && closureReturnType?.kind === "externref") {
+        emitEagerAsyncPromiseWrap(ctx, liftedFctx);
+      }
     } else if (exprType !== null) {
       liftedFctx.body.push({ op: "drop" });
     }
@@ -2903,12 +2920,23 @@ export function compileArrowAsClosure(
   // the env param is untouched — richer shapes stay on the legacy path via the
   // predicate gate.
   const asyncDecision = isAsync && !isGenerator ? planAsyncClosureActivation(ctx, arrow, /*isAsync*/ true) : null;
+  // (#4630) A PARKED async closure with a void unwrapped result gets an
+  // `externref` `$Promise` result instead — see async-eager-promise.ts. Without
+  // it a dynamically-dispatched `testFunc()` yields `undefined` and every
+  // `.then` on it throws the §27.2.5.4 non-Promise-receiver TypeError.
+  let eagerAsyncPromiseWrap = false;
   if (asyncDecision) {
     closureReturnType = { kind: "externref" };
   } else if (isAsync && !isGenerator) {
+    if (parkedAsyncClosureWrapsPromise(ctx, closureReturnType)) {
+      closureReturnType = { kind: "externref" };
+      eagerAsyncPromiseWrap = true;
+    }
     // (#3587) Declined async arrow/fn-expr with a genuinely-suspending await
     // inside a `try`: refuse loudly instead of silently compiling the legacy
-    // pass-through that cannot deliver awaited rejections.
+    // pass-through that cannot deliver awaited rejections. Still reported for
+    // the #4630 wrap — the wrap settles the COMPLETION value, it does not make
+    // the parked pass-through deliver awaited rejections.
     reportDeclinedAsyncRejectionHazard(ctx, arrow);
   }
   // (#4648) NOTE — a DECLINED (await-free) async closure does NOT get the
@@ -2977,6 +3005,7 @@ export function compileArrowAsClosure(
     isAsync,
     asyncDecision,
     isNamedFuncExpr: !!isNamedFuncExpr,
+    eagerAsyncPromiseWrap,
   });
   const liftedFctx = generic.liftedFctx;
   closureReturnType = generic.closureReturnType;

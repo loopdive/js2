@@ -90,7 +90,8 @@ import {
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
-import { buildThrowJsErrorInstrs, emitThrowReferenceError } from "../js-errors.js"; // undeclared-identifier call → ReferenceError
+import { buildThrowJsErrorInstrs } from "../js-errors.js";
+import { tryEmitUndeclaredCalleeReferenceError } from "./undeclared-callee.js"; // undeclared-identifier call → ReferenceError
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { isSloppyImplicitGlobalBinding } from "./implicit-global-binding.js"; // (#3966) callee stored on the realm global
 import { tryEmitNullishIdentifierCalleeTypeError } from "./stored-member-closure-call.js"; // (#4640 D1)
@@ -2491,26 +2492,16 @@ export function compileIdentifierCall(
         }
       }
 
-      // §6.2.5.5 GetValue on an unresolvable Reference: calling a TRULY
-      // undeclared identifier (`$DETACHBUFFER(ab)` with no `includes:` that
-      // would define it — test262 harness/detachArrayBuffer.js) must throw
-      // ReferenceError, and the arguments must NOT be evaluated (the callee
-      // reference is resolved first, §13.3.6.1 step 1). The identifier READ
-      // path already throws for symbol-less names (#1380); this is the same
-      // rule at the call site, where the graceful undefined fallback below
-      // used to swallow it. Standalone/wasi only, and NOT under
-      // runtime-eval global bindings (an eval-defined global function has no
-      // static symbol yet is legitimately callable there).
-      if (
-        (ctx.standalone || ctx.wasi) &&
-        !isRuntimeEvalGlobal &&
-        !implicitCallee &&
-        declaration === undefined &&
-        noJsHost(ctx)
-      ) {
-        emitThrowReferenceError(ctx, fctx, `${funcName} is not defined`);
-        fctx.body.push({ op: "unreachable" });
-        return { kind: "externref" };
+      // §6.2.5.5 GetValue on an unresolvable Reference — both lanes. See
+      // undeclared-callee.ts for the rule and for why the two lanes prove
+      // "undeclared" differently (#4650).
+      {
+        const undeclared = tryEmitUndeclaredCalleeReferenceError(ctx, fctx, expr, funcName, {
+          declarationIsUndefined: declaration === undefined,
+          isRuntimeEvalGlobal,
+          implicitCallee,
+        });
+        if (undeclared !== undefined) return undeclared;
       }
 
       // (#4640 D1) §13.3.6.1 step 4 — the binding EXISTS (so the ReferenceError
