@@ -24,9 +24,7 @@ loc-budget-allow:
   - src/codegen/declarations/param-return-inference.ts
 func-budget-allow:
   - src/codegen/object-runtime.ts::ensureObjectRuntime
-  - src/codegen/wrapper-proto-value-of.ts::fillWrapperValueOfDynCallArm
-  - src/codegen/wrapper-proto-value-of.ts::fillBigIntWrapperValueOfResolutionArm
-  - src/codegen/wrapper-proto-value-of.ts::ensureBigIntWrapperValueOfClosure
+  - src/codegen/wrapper-proto-value-of.ts::fillBigIntDynValueOfArm
   - src/codegen/declarations/param-return-inference.ts::inferParamTypeFromCallSites
 ---
 
@@ -58,7 +56,53 @@ still "[object Object]"), plus two valueOf arms (an `__extern_method_call`
 arm and an `__extern_get` resolution closure). The typed probes all answer
 correctly (typeof/===/instanceof/valueOf on typed receivers).
 
-REMAINING HOLE for `harness/deepEqual-primitives-bigint.js`: the 0-arg
+RESOLVED (2026-08-23, second slice): the harness test PASSES standalone.
+
+**The dispatcher was `__dyn_valueOf`** (`src/codegen/wrapper-valueof.ts`), not
+`__extern_method_call` and not an `__extern_get`+apply pair at the call site.
+`tryEmitValueOfFallback` (`src/codegen/expressions/valueof-fallback.ts`)
+intercepts every zero-arg `<expr>.valueOf()` property-access call under
+standalone — before the generic dynamic method-call lowering — and routes it to
+that one-argument native. Evidence: each of the helper's four exits was made to
+return a distinct native-string sentinel under an env gate; the repro
+`function anyv(v){return v} anyv(Object(1n)).valueOf()` observed `A4631_APPLY`,
+i.e. arm 1 (`m = __extern_get(recv,"valueOf")` → `__apply_closure(m, recv, [])`).
+
+Why arm 1 answered wrongly: for a Number/String/Boolean wrapper `m` is the
+brand's minted `__proto_method_<brand>_valueOf` closure, which returns the
+`[[PrimitiveValue]]` slot. BigInt has no minted brand closure, so `m` resolved
+to the Object-brand `valueOf` (return `this`) and arm 2 — the slot read that
+would have been right — is only reached when `m` is null.
+
+Fix: `fillBigIntDynValueOfArm` (wrapper-proto-value-of.ts) prepends one arm to
+`__dyn_valueOf` at finalize — `$Object` receiver ∧ no OWN `valueOf` ∧ reserved
+FLAG_INTERNAL `[[PrimitiveValue]]` slot ∧ that slot's value `ref.test`s as the
+native bigint carrier ⇒ return the slot value. The last conjunct is what keeps
+the change inert for the other brands: a Number/String/Boolean slot fails the
+test and keeps resolving through the proto walk, so a program that REPLACES
+`Number.prototype.valueOf` still beats the slot.
+
+Both earlier arms proved dead and were REMOVED: the `__extern_get` resolution
+closure was actively broken (`__apply_closure` cannot invoke a finalize-minted
+closure struct that is not in `closureInfoByTypeIdx`, so `w.valueOf()` came back
+null — the "r:null" symptom), and disabling the `__extern_method_call` arm left
+the harness category at exactly 113 pass / 3 not-pass, i.e. it fixed nothing
+while out-ranking proto-resolved overrides for all brands.
+
+Measured: harness category 112/4 → **113 pass / 3 not-pass** (the three
+remaining — return-not-thenable, throwsAsync-same-realm,
+wellKnownIntrinsicObjects — unchanged, they belong to #4630/#4633);
+`sa-sample` 60/60 and `regr-list` 90/90 standalone; js-host sample 59/60 (the
+AsyncDisposableStack failure is pre-existing).
+
+RESIDUAL, not fixed here: strict equality on a slot-recovered bigint through the
+any channel is still wrong — `anyv(Object(1n)).valueOf() === 1n` answers
+`false`, and a probe that also compares `anyv(1n) === 1n` throws
+`TypeError: Cannot convert value to a BigInt`. `deepEqual` does not depend on it,
+so the harness leg passes regardless. Same family as the missing `String(1n)`
+render below.
+
+ORIGINAL HOLE (kept for the record) for `harness/deepEqual-primitives-bigint.js`: the 0-arg
 `a.valueOf()` call on an ANY receiver routes through a dispatcher that is
 neither `__extern_method_call` nor the `__extern_get`+apply pair (markers in
 both never fire) — locate the actual 0-arg valueOf any-receiver dispatch
