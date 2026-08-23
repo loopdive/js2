@@ -230,13 +230,18 @@ describe("#4619 controls — the neighbours this must not move", () => {
 });
 
 describe("#4619 residuals (measured base==after, pinned so a later change cannot move them silently)", () => {
-  it.fails('R1 — the element-access spelling `x["toString"]()`', async () => {
+  it('R1 (CLOSED by #4625) — the element-access spelling `x["toString"]()`', async () => {
     // `language/expressions/property-accessors/S11.2.1_A3_T1` CHECK#2/#4 and
-    // `_T2` CHECK#3/#4. Base and after both throw the same 43-char
-    // "Cannot access property on null or undefined": the static-key
+    // `_T2` CHECK#3/#4. On this issue's base and after, both threw the same
+    // 43-char "Cannot access property on null or undefined": the static-key
     // ElementAccess callee has its own dispatch (call-tail-dispatch.ts) and
-    // never reaches the property-access route this issue fixed.
-    // Owner: standalone-gap, unclaimed.
+    // never reached the property-access route this issue fixed.
+    //
+    // #4625 found WHY it never reached it — `compileCallableElementAccessCall`
+    // (#1306) claims the call because `interface Boolean` declares a callable
+    // `toString`, then reads a value the compiler never materialises — and
+    // normalised the ambient-member bracket spelling onto the property-access
+    // route. Flipped positive there, in the same change, per this pin's design.
     const r = await bothLanes(`var b = new Boolean(false);\nreturn b["toString"]() === "false" ? 1 : 0;`);
     expect(r).toEqual({ plain: 1, sta: 1 });
   });
