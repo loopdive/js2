@@ -240,22 +240,69 @@ describe("#4492 wave-5 — an OWN valueOf/toString shadows a wrapper's [[Primiti
 // `plan/issues/4492-es5-builtin-proto-exotic-receivers.md` (wave-5 results).
 //
 // Every POSITIVE pin above (except the three marked GUARD / REGRESSION GUARD)
-// was verified failing on the branch point `c42bdbe3e` by checking out this
-// change-set's six touched source files at that commit in the same worktree and
-// re-running this file: 10 of them failed, log kept at `.tmp/pins-base-KEEP.log`.
-// A pin nobody has seen fail is an assertion about the code, not a test of it.
-describe("#4492 wave-5 — measured residuals", () => {
-  it.fails("`String(new Array)` ignores an `Array.prototype.toString` override (test262 S15.5.1.1_A1_T8)", async () => {
-    // Owner: #4556 bucket A / the `builtin-proto-member-override.ts` two-arm,
-    // which today is wired only for Array METHOD CALLS, not for the ToString
-    // coercion site. `String(<array>)` folds to the native join before any
-    // consult of the #4176 companion the override was written to.
-    //
-    // The receiver spelling is load-bearing and was corrected after the base
-    // run: with `var a = [1, 2]` this same assertion PASSES on both arms (the
-    // literal's own dynamic index reads arm the module differently), so it would
-    // have been a residual pin that is not a residual. `new Array` is the
-    // census row's own spelling.
+// was verified failing on the base arm by checking this change-set's touched
+// source files out at the merge-base and re-running this file in the same
+// worktree. A pin nobody has seen fail is an assertion about the code, not a
+// test of it.
+// Every `it.fails` below is paired with POSITIVE CONTROLS that must pass, chosen
+// so this suite claims the SPECIFIC root rather than the general area (brief
+// methodology 8). Each control was measured in its OWN single-purpose module —
+// every one of these behaviours is module-sensitive, so a control read off a
+// multi-case probe attributes the wrong cause.
+describe("#4492 wave-5 — residual R1: an Array.prototype.toString override and the INLINE receiver", () => {
+  // MEASURED RULE (this is a correction — see below): the deciding axis is the
+  // RECEIVER SPELLING at the `String(...)` call, not the array's contents and
+  // not "the ToString site never consults the override".
+  //
+  //   | receiver            | `String(x)` | `x.toString()` | `"" + x` |
+  //   | `new Array` inline  | ✗           | —              | —        |
+  //   | `[]` inline         | ✗           | —              | —        |
+  //   | `[1, 2]` inline     | ✗           | —              | —        |
+  //   | `var a = new Array` | ✓           | ✓              | ✗        |
+  //   | `var a = [1, 2]`    | ✓           | —              | —        |
+  //
+  // Axes VARIED: receiver spelling (inline `new Array` / inline literal /
+  // named var), array emptiness, operation (`String`, method call, `+`).
+  // Axes held FIXED: `--target standalone`, the override installed at the top
+  // of the same exported function, one exported function per module.
+  //
+  // CORRECTION to this file's first cut: it attributed the var form's success
+  // to "the literal's own dynamic index reads arm the module differently".
+  // Refuted — `var a = [1, 2]; String(a)` has no index read at all and still
+  // passes, and `var a = new Array; String(a)` passes with no literal. Naming
+  // the receiver is what changes the answer.
+  //
+  // SUSPECTED mechanism (NOT established): an inline array-typed receiver keeps
+  // a concrete vec struct that the compile-time array→string lowering claims
+  // before `__any_to_string`'s runtime consult is reachable; a named binding
+  // widens it to externref. A WAT read did not settle this (the emitted names
+  // are numeric), so it is recorded as a hypothesis.
+  //
+  // Owner: #4556 bucket A / `builtin-proto-member-override.ts` — the override
+  // two-arm is wired for Array METHOD CALLS, and the coercion sites are the gap.
+  // Census row: `built-ins/String/S15.5.1.1_A1_T8` (uses the inline spelling).
+
+  it("CONTROL — a NAMED array receiver DOES honour the override", async () => {
+    expect(
+      await runStandalone(
+        `${loopBuilt("want", "__ARRAY__")}` +
+          ` Array.prototype.toString = function () { return "__ARRAY__"; };` +
+          ` var a = new Array; return String(a) === want ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+
+  it("CONTROL — a direct `a.toString()` on a named array honours it too", async () => {
+    expect(
+      await runStandalone(
+        `${loopBuilt("want", "__ARRAY__")}` +
+          ` Array.prototype.toString = function () { return "__ARRAY__"; };` +
+          ` var a = new Array; return a.toString() === want ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+
+  it.fails("`String(new Array)` — INLINE receiver ignores it (test262 S15.5.1.1_A1_T8)", async () => {
     expect(
       await runStandalone(
         `${loopBuilt("want", "__ARRAY__")}` +
@@ -265,51 +312,131 @@ describe("#4492 wave-5 — measured residuals", () => {
     ).toBe(1);
   });
 
-  it.fails(
-    "`String(new F())` misses `F.prototype.toString` when the whole program is inside one function",
-    async () => {
-      // The `__class_to_primitive` runtime tail DOES fix this family — measured by
-      // reverting `class-to-primitive.ts` alone, which flips `.tmp/probes/t3.js`
-      // A-String and A-slice back to "[object Object]" — but only in a module
-      // where the fnctor instance actually acquired a `$proto` link. Inside a
-      // single exported function it stays a closed nominal struct with no chain
-      // for `__extern_get` to walk, and adding a `"toString" in inst` (which flips
-      // the whole module at test262 top level) does NOT help here.
-      //
-      // Owner: #2660 S3 / #2175 — the fnctor escape gate decides the receiver's
-      // representation, and that decision is upstream of everything this
-      // change-set touches. Same root as the unflipped census row
-      // `built-ins/String/prototype/slice/S15.5.4.13_A3_T4`.
-      expect(
-        await runStandalone(
-          `${loopBuilt("want", "v7")}` +
-            ` function F(v) { this.value = v; } F.prototype.toString = function () { return "v" + this.value; };` +
-            ` var inst = new F(7); var seen = "toString" in inst;` +
-            ` return (seen && String(inst) === want) ? 1 : 0;`,
-        ),
-      ).toBe(1);
-    },
-  );
+  it.fails("`String([1, 2])` — an inline LITERAL receiver ignores it as well", async () => {
+    // Pins the emptiness axis: the inline miss is not about `new Array` being
+    // empty, so a fix that special-cases the empty vec does not close this.
+    expect(
+      await runStandalone(
+        `${loopBuilt("want", "__ARRAY__")}` +
+          ` Array.prototype.toString = function () { return "__ARRAY__"; };` +
+          ` return String([1, 2]) === want ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
 
-  it.fails("the DYNAMIC ToString of `Math` is not the §20.1.3.6 `[object Math]` tag", async () => {
-    // `Object.prototype.toString.call(Math)` is already right (#4491 wave-5 T1,
-    // a compile-time tag); the runtime `__any_to_string` terminal has no brand
-    // classifier, so `String(Math)` answers "[object Object]". Owner: #4492
-    // residual — needs the §20.1.3.6 classifier reachable from the terminal.
+  it.fails('`"" + a` ignores the override even with a NAMED receiver', async () => {
+    // A SECOND residual, separable from the inline one and previously unrecorded:
+    // the `+` path reaches `__to_primitive`'s vec arm (`array-to-primitive.ts`),
+    // whose whole body is a hard-coded `join(",")` with no prototype consult.
+    expect(
+      await runStandalone(
+        `${loopBuilt("want", "__ARRAY__")}` +
+          ` Array.prototype.toString = function () { return "__ARRAY__"; };` +
+          ` var a = new Array; return ("" + a) === want ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+});
+
+describe("#4492 wave-5 — residual R2: `F.prototype.toString` is unreachable FROM the instance", () => {
+  // CORRECTION of this file's first cut, which said the fnctor instance "stays a
+  // closed nominal struct with no chain for `__extern_get` to walk". Refuted by
+  // the controls below: the prototype object carries the override, it is
+  // callable, and `Object.getPrototypeOf(inst)` returns it. What is missing is
+  // the instance→prototype edge that the RUNTIME property walk uses — which is
+  // exactly the edge `__class_to_primitive`'s new tail asks `__extern_get` for.
+  //
+  // Measured, one module each: `"toString" in F.prototype` ✓, `typeof
+  // F.prototype[k] === "function"` ✓, `F.prototype[k].call({value: 7}) === "v7"`
+  // ✓, `hasOwnProperty` ✓, `Object.getPrototypeOf(inst) === F.prototype` ✓ —
+  // but `"toString" in inst` ✗ and `inst[k]()` answers neither "v7" nor the
+  // `[object Object]` tag. `inst.toString()` ✓ only because that spelling is a
+  // COMPILE-TIME member dispatch that never consults the runtime chain.
+  //
+  // Owner: #2660 S3 / #2175 (fnctor instance representation). Same root as the
+  // unflipped census row `built-ins/String/prototype/slice/S15.5.4.13_A3_T4`.
+  const F_SETUP = ` function F(v) { this.value = v; } F.prototype.toString = function () { return "v" + this.value; };`;
+  const KEY = `var k = ""; var kc = ["t","o","S","t","r","i","n","g"]; for (var ki = 0; ki < kc.length; ki++) { k = k + kc[ki]; }`;
+
+  it("CONTROL — the PROTOTYPE object carries the override and it is callable", async () => {
+    expect(
+      await runStandalone(
+        `${loopBuilt("want", "v7")} ${KEY}${F_SETUP}` +
+          ` var p = F.prototype;` +
+          ` return ((k in p) && typeof p[k] === "function" && p[k].call({ value: 7 }) === want) ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+
+  it("CONTROL — the instance's prototype LINK is the right object", async () => {
+    expect(
+      await runStandalone(
+        `${F_SETUP} var inst = new F(7); return Object.getPrototypeOf(inst) === F.prototype ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+
+  it("CONTROL — the compile-time member dispatch `inst.toString()` is correct", async () => {
+    expect(
+      await runStandalone(
+        `${loopBuilt("want", "v7")}${F_SETUP} var inst = new F(7); return inst.toString() === want ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+
+  it.fails('a RUNTIME lookup from the instance misses it — `"toString" in inst`', async () => {
+    expect(await runStandalone(`${KEY}${F_SETUP} var inst = new F(7); return (k in inst) ? 1 : 0;`)).toBe(1);
+  });
+
+  it.fails("…so `String(new F())` cannot see it either", async () => {
+    expect(
+      await runStandalone(
+        `${loopBuilt("want", "v7")}${F_SETUP} var inst = new F(7); return String(inst) === want ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+});
+
+describe("#4492 wave-5 — residual R3: no §20.1.3.6 brand classifier on the RUNTIME ToString terminal", () => {
+  // The compile-time tag is right and every runtime coercion spelling is wrong,
+  // which is what makes "the terminal has no brand classifier" the root rather
+  // than "`Math` is untagged".
+  it("CONTROL — `Object.prototype.toString.call(Math)` IS `[object Math]`", async () => {
+    expect(
+      await runStandalone(
+        `${loopBuilt("want", "[object Math]")} return Object.prototype.toString.call(Math) === want ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+
+  it.fails("`String(Math)` is not", async () => {
     expect(await runStandalone(`${loopBuilt("want", "[object Math]")} return String(Math) === want ? 1 : 0;`)).toBe(1);
   });
 
-  it.fails("`String(new String(x))` ignores an own toString on the wrapper", async () => {
-    // `String(<String wrapper>)` is lowered as the [[StringData]] coercion
-    // (`__wrapper_string_value`), not as §7.1.17 → ToPrimitive, so the own
-    // method is bypassed at that ONE spelling while `==` and `+` now honour it.
-    // Owner: #4492 residual.
+  it.fails('`"" + Math` is not either — the miss is the terminal, not one call site', async () => {
     expect(
-      await runStandalone(
-        `${loopBuilt("want", "ed")}` +
-          ` var s = new String("ABCABC"); s.toString = function () { return "ed"; };` +
-          ` return String(s) === want ? 1 : 0;`,
-      ),
+      await runStandalone(`${loopBuilt("want", "[object Math]")} var m = Math; return ("" + m) === want ? 1 : 0;`),
     ).toBe(1);
+  });
+});
+
+describe("#4492 wave-5 — residual R4: the ONE `String(<wrapper>)` spelling bypasses ToPrimitive", () => {
+  // Negative case probed first: the own method IS reachable — `s.toString()`,
+  // `==`, `"" + s` and a template substitution all answer "ed" after this
+  // change-set. Only `String(s)` does not, because that spelling is lowered as
+  // the [[StringData]] coercion (`__wrapper_string_value`) rather than §7.1.17 →
+  // ToPrimitive. Owner: #4492 residual.
+  const SETUP = ` var s = new String("ABCABC"); s.valueOf = function () { return "ed"; }; s.toString = function () { return "ed"; };`;
+
+  it("CONTROL — `s.toString()` answers the own method", async () => {
+    expect(await runStandalone(`${loopBuilt("want", "ed")}${SETUP} return s.toString() === want ? 1 : 0;`)).toBe(1);
+  });
+
+  it("CONTROL — a template substitution answers it", async () => {
+    expect(await runStandalone(`${loopBuilt("want", "ed")}${SETUP} return \`\${s}\` === want ? 1 : 0;`)).toBe(1);
+  });
+
+  it.fails("`String(new String(x))` does not", async () => {
+    expect(await runStandalone(`${loopBuilt("want", "ed")}${SETUP} return String(s) === want ? 1 : 0;`)).toBe(1);
   });
 });
