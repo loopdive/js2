@@ -538,7 +538,15 @@ function implicitAnyParamNeedsDynamicObjectCarrier(
     if (
       ts.isPropertyAccessExpression(node) &&
       ts.isIdentifier(node.expression) &&
-      parameterNames.has(node.expression.text)
+      parameterNames.has(node.expression.text) &&
+      // Read-only property probes can be callback/error carriers whose
+      // concrete ABI is part of the host contract (for example Test262's
+      // `$DONE(error)` path).  Only widen a parameter when the property
+      // itself is mutated; this retains the dynamic carrier needed by
+      // ReactDOM's reassigned root while preserving those callback ABIs.
+      ts.isBinaryExpression(node.parent) &&
+      node.parent.left === node &&
+      isAssignmentOperator(node.parent.operatorToken.kind)
     ) {
       dynamicParams.add(node.expression.text);
     }
