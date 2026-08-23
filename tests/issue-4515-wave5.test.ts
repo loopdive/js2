@@ -64,17 +64,48 @@ async function runModule(topLevel: string): Promise<number> {
 }
 
 /**
- * A direct `eval` with a constant body is SPLICED by the inline path
- * (`eval-inline.ts`), so these never reach the runtime-eval provider and need
- * no `JS2WASM_EVAL_ENGINE=interpreter` tier arm. That is not assumed: the
- * modules instantiate through the test262 seam, which surfaces a provider
- * refusal as a throw out of `test()`.
+ * A direct `eval` with a constant body is USUALLY spliced by the inline path
+ * (`eval-inline.ts`) and never reaches the runtime-eval provider — but that is
+ * NOT universal, and the original blanket claim here ("these need no tier arm")
+ * was wrong. It cost two CI failures on PR #4814.
+ *
+ * MEASURED AXIS (2026-08-23, varying one dimension at a time — the earlier
+ * reading blamed loops, which is refuted by row B):
+ *
+ *   A  `1; 2;`                            no var, no loop   -> spliced, passes
+ *   B  `1; do { 2; break; } while(true)`  no var, WITH loop -> spliced, passes
+ *   C  `var q=0; 3;`                      VAR, no loop      -> PROVIDER
+ *   D  `var q=0; do { q++; } while(q<2)`  VAR, with loop    -> PROVIDER
+ *
+ * A `var` in the body must hoist into the ENCLOSING variable environment, which
+ * the inline splice cannot do, so it declines and the call reaches the provider.
+ * Under CI's changed-root `quality` lane (`JS2WASM_EVAL_ENGINE=interpreter`,
+ * REFUSAL provider) that throws a raw WebAssembly.Exception out of the module.
+ * So: a `var`-declaring eval body needs a tier arm; the others genuinely do not.
+ * `const`/`let` are block-scoped and stay splicable (see the `const t4515` pin).
  *
  * `expected` is the REFERENCE-ENGINE answer, recorded per case with the `node`
  * expression that produced it — never a guess from the grammar.
  */
 const evalIs = (body: string, expected: string) =>
   `var v4515 = eval(${JSON.stringify(body)});\nvar __r4515 = (v4515 === ${expected}) ? 1 : 0;`;
+
+/**
+ * Tier arm for the `var`-declaring eval bodies above. Same seam as
+ * `tests/issue-4464.test.ts`: under the refusal provider the observable that
+ * survives is that the eval REACHES the provider and its refusal escapes the
+ * module, so the pin still fails if the call is silently folded away instead.
+ */
+const REFUSAL_TIER = process.env.JS2WASM_EVAL_ENGINE === "interpreter";
+async function expectRefusalEscape(p: Promise<number>): Promise<void> {
+  let threw = false;
+  try {
+    await p;
+  } catch {
+    threw = true;
+  }
+  expect(threw, "refusal-tier eval should throw out of the module").toBe(true);
+}
 
 describe("#4515 wave-5 — a Use Strict Directive is matched on the RAW token (§11.2.2)", () => {
   // A directive containing a LineContinuation or an EscapeSequence is NOT a Use
@@ -120,9 +151,9 @@ describe("#4515 wave-5 — §13 completion value: the forms that RESET V", () =>
     // the `break` sits inside an `if`, so the iteration's completion is
     // (break, undefined) and the loop's UpdateEmpty has nothing to fill.
     // Base arm: 0 — we answered `4`, the last `c4515++` to run.
-    expect(
-      await runModule(evalIs("var c4515=0; for(c4515=0;;) {if (c4515===5)break;else c4515++; }", "undefined")),
-    ).toBe(1);
+    const run = runModule(evalIs("var c4515=0; for(c4515=0;;) {if (c4515===5)break;else c4515++; }", "undefined"));
+    if (REFUSAL_TIER) return expectRefusalEscape(run);
+    expect(await run).toBe(1);
   });
 
   it("an if whose branch produces a value still yields it", async () => {
@@ -143,7 +174,9 @@ describe("#4515 wave-5 — §13 completion value: the forms that RESET V", () =>
     // The row the register was originally built for (`do-while/S12.6.1_A8`).
     // The `continue` inside an `if` now carries `undefined`, and the answer is
     // still the last `o++` to execute. node: 4.
-    expect(await runModule(evalIs("var c=0,o=0; do { c++; if (c%2) continue; o++; } while (c<10)", "4"))).toBe(1);
+    const run = runModule(evalIs("var c=0,o=0; do { c++; if (c%2) continue; o++; } while (c<10)", "4"));
+    if (REFUSAL_TIER) return expectRefusalEscape(run);
+    expect(await run).toBe(1);
   });
 });
 
