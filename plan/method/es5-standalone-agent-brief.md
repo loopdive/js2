@@ -145,8 +145,29 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
 
      **Tier 1 — internal, needs nothing but the summary line, catches four
      of the five.** Vitest prints its own denominator and the parts sum to
-     it. Let `executed = passed + failed`; require
-     **`total > 0 && executed == total`**:
+     it. Let `executed = passed + failed`.
+     - **Floor, always safe: `total > 0 && executed > 0`.** All four
+       zero-selection members produce `executed == 0`, and a file with real
+       tests plus a few deliberate `it.skip` always executes some — so this
+       never false-alarms and needs no count anywhere.
+     - **Strong form: `executed == total`.** When it holds you are done.
+     - **When it does not hold, read the skipped NAMES — do not reach for a
+       number.** A count of expected skips is grepped from `it.skip(` and
+       carries the identical hazards as the tier-2 denominator below (a
+       commented-out `// it.skip(`, one inside a template string, a
+       `describe.skip` wrapping four tests). Names also catch what a count
+       structurally cannot: **the right number of skips from the wrong
+       set** — a partial `skipIf` skipping three tests when you expected
+       three *different* ones satisfies any count, and is exactly the
+       silent hole the rule exists for.
+       **The per-test names are `--reporter=verbose` ONLY** (measured
+       2026-08-23 on `tests/issue-4515-wave5.test.ts`, 22 tests skipped via
+       a no-match `-t`): verbose prints 22 `↓` lines with full paths, while
+       `--reporter=basic` and the DEFAULT reporter print a single
+       file-level `↓ tests/… (22 tests | 22 skipped)` and no names at all.
+       This brief's own per-file loops use `--reporter=basic`, i.e. the one
+       that hides them — switch to verbose for the run where you need to
+       look.
      ```
      Tests  1 failed | 45 passed (46)   healthy
      Tests  22 skipped (22)             a `-t` regex matched nothing
@@ -183,17 +204,22 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
      and `total` TOGETHER, so tier 1 still holds and only a count from
      outside the runner catches it. This is the one place an external
      denominator earns its keep — and the one place its accuracy has to be
-     established rather than grepped, because **a loose pattern is wrong in
-     BOTH directions, sometimes on the same file**. Measured on
-     `tests/issue-4515-wave5.test.ts`, which really declares 22:
-     `grep -c "it("` → **16** (misses every `it.fails(`), while
-     `grep -cE "it\(|test\("` → **21** (picks up `export function test()`
-     in a doc comment, in a template string, and `exports.test()`). Neither
-     is 22. `grep -cE '^\s+it(\.fails)?\('` gets it right *for this file*
-     because it was calibrated to it; it still misses `it.each`, `test(`
-     and generated cases, and a comment containing `it (` still over-counts.
-     If you cannot establish the number, say so rather than quoting an
-     equality you did not verify.
+     established rather than grepped, because **the same pattern is wrong
+     in BOTH directions — measured on two files, one each**:
+     - `tests/issue-4515-wave5.test.ts` declares **22**. `grep -c "it("` →
+       **16** (misses every `it.fails(`); `grep -cE "it\(|test\("` → **21**
+       (picks up `export function test()` in a doc comment, the same text
+       in a template string, and `exports.test()`). Neither is 22, and the
+       two errors partially cancel.
+     - dev-4653's pin file declares **23**; the naive `it\(` answers
+       **13** — under by ten, again because `it.fails(` is invisible to it.
+
+     `grep -cE '^\s+it(\.fails)?\('` gets the first file right *because it
+     was calibrated to it*, not because it is correct — the same defect as
+     a stale baseline restated as a measurement. It still misses `it.each`,
+     `test(` and generated cases, and a comment containing `it (`
+     over-counts. If you cannot establish the number, say so rather than
+     quoting an equality you did not verify.
    - **Contention fakes the ABSENCE of failure as well as its presence.** A
      run can print `22 passed` beside `Errors 1 error` where the error is
      that RPC timeout and no test is involved. Read what the error IS. In

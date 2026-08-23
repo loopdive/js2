@@ -799,11 +799,26 @@ their fix on a module shape they did not write (`deferTopLevelInit: true`,
   **16** (every `it.fails(` is invisible to it); `grep -cE "it\(|test\("`
   answers **21** (it picks up `export function test()` in a doc comment, the
   same text inside a template string, and `exports.test()`). Two errors in
-  opposite directions, neither landing on 22. The anchored pattern that does
-  work here was calibrated to this file, not derived. So: use tier 1 wherever it
-  suffices, and where tier 2 is genuinely needed, establish the count — or say
-  you could not, rather than quoting an equality you did not verify. Both tiers
-  adopted in `plan/method/es5-standalone-agent-brief.md`.
+  opposite directions, neither landing on 22. dev-4653's pin file is the same
+  pattern's other direction — declares 23, naive `it\(` says 13, under by ten.
+  The anchored pattern that does work here was calibrated to this file, not
+  derived — the same defect as a stale baseline restated as a measurement.
+- **Tier 1 takes no count at all, including for deliberate skips** (dev-4491's
+  objection to this lane's first draft, which had added an "expected skip count"
+  exception and thereby put the unreliable number back into the tier built to
+  avoid it). Floor `total > 0 && executed > 0` never false-alarms; strong form
+  `executed == total`; and when they disagree you **read the skipped names**,
+  which also catches the right number of skips from the WRONG set — something no
+  count can see.
+- **Those names are `--reporter=verbose` only** — measured here by skipping all
+  22 tests with a no-match `-t`: verbose prints 22 `↓` lines with full paths,
+  while `--reporter=basic` and the default print a single file-level
+  `↓ tests/… (22 tests | 22 skipped)` and no names. This lane's own per-file
+  loops use `--reporter=basic`, i.e. exactly the reporter that hides them.
+- **Exit status lies in both directions.** dev-4653 measured a run printing
+  `Tests 23 passed (23)` beside `Errors 1 error` that **exited 1** with every
+  test passing. All of the above is adopted in
+  `plan/method/es5-standalone-agent-brief.md`.
 - **A survey run entirely at module top level is blind to any defect gated on
   "inside an enclosing function"** — and worse, it mis-attributes the one case
   that does surface, because that case looks like the odd one out. See the
