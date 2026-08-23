@@ -84,6 +84,40 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
    - The merge check confirms the run says **N passed** — never that it
      exited 0 (`describe.skipIf` gates can skip an entire suite green).
 
+8. **A residual is a CLAIM, and `it.fails` protects it from ever being
+   tested (2026-08-23, dev-4653 self-correction).** This is the cheapest
+   place in the method for a wrong statement to survive indefinitely, and
+   it was found the only way it can be — by accident, when a sibling
+   lane's message forced a re-open of a row already written up, swept
+   green, pinned, and committed.
+
+   The failure shape: a lane attributes a residual to a root it inferred
+   rather than probed, then pins it `it.fails`. The pin **passes**,
+   because the row does fail — just not for the stated reason. The sweep
+   is green, the suite is green, and the wrong root is now documented as
+   a measurement for the next lane to build on. Nothing in the workflow
+   ever re-examines it. Measured instance: "the minted function does not
+   bind its declared parameters" survived a full lane and its pins, while
+   `new Function("p","return p;")(7)` answers `7` — one probe, never run,
+   and the attribution was backwards (the defect is `++` on a
+   mint-LOCAL name, only inside an enclosing function; see #4662).
+
+   Rules that fall out:
+   - **Probe the NEGATIVE case before attributing a residual.** State the
+     one observation that would refute your root, run it, and record the
+     result. An attribution you did not try to falsify is a hypothesis,
+     so label it one — `suspected root`, not `root`.
+   - **Every `it.fails` pin carries POSITIVE CONTROLS that must pass**,
+     chosen so the suite claims the specific root rather than the general
+     area. dev-4653's corrected pins are the worked example: two
+     `it.fails` on "`++` on a mint-local name" plus controls asserting
+     that parameter binding works and that outer-`++` works. Without the
+     controls, a future fix that widens the wrong thing repairs the pin
+     and reads as green.
+   - Residual attributions are what the NEXT lane starts from, so a wrong
+     one costs more than a missing one. "Root unknown, here is what I
+     ruled out" is a better handover than a confident wrong root.
+
 ## Environment trap: fresh worktrees have NO .test262-cache (#4484 finding)
 
 A fresh agent worktree lacks `.test262-cache/`, so eval-dependent rows fail
