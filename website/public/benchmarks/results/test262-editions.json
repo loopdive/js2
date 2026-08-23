@@ -1063,8 +1063,8 @@
   {
     "edition": "ES2018",
     "pass": 3512,
-    "fail": 1273,
-    "ce": 38,
+    "fail": 1274,
+    "ce": 37,
     "skip": 0,
     "total": 4823,
     "pct": 73,
@@ -1072,8 +1072,8 @@
       {
         "name": "async-iteration",
         "pass": 2586,
-        "fail": 1191,
-        "ce": 33,
+        "fail": 1192,
+        "ce": 32,
         "skip": 0,
         "total": 3810,
         "pct": 68
