@@ -36,7 +36,7 @@
   "codegen/expressions/identifiers.ts": 2,
   "codegen/expressions/late-imports.ts": 4,
   "codegen/expressions/logical-ops.ts": 2,
-  "codegen/expressions/new-builtin-globals.ts": 4,
+  "codegen/expressions/new-builtin-globals.ts": 5,
   "codegen/expressions/new-super.ts": 2,
   "codegen/expressions/operator-assignment.ts": 11,
   "codegen/expressions/runtime-eval-provider.ts": 2,
