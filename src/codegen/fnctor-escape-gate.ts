@@ -571,8 +571,39 @@ function classifyUse(
   // any/unknown parameter counts as dynamic; a typed parameter is neutral here
   // (the callee's own uses would be classified at that param's site in a fuller
   // interprocedural pass — out of scope for S1's conservative single-level view).
-  if (ts.isCallExpression(parent)) {
-    const argIdx = parent.arguments.indexOf(useNode);
+  //
+  // (#4639 C1) A `new F(inst)` argument counts too. `ts.isCallExpression` is
+  // FALSE for a `NewExpression`, so before this the CONSTRUCT spelling never
+  // reached this clause at all and every constructor argument classified
+  // `neutral` — the instance kept its bespoke struct. That is the whole of the
+  // `new String(obj)` ToPrimitive family: measured on this branch's base, in one
+  // module and on the SAME instance,
+  //
+  //     String(o)      // "tostr"   — `(value?: any)` ⇒ dynamic ⇒ `$Object`
+  //     new String(o)  // "[object Object]" — never classified ⇒ closed struct
+  //
+  // and the divergence is per-VALUE, not per-module: adding `String(other)` for
+  // a DIFFERENT instance leaves `new String(o)` wrong. Downstream,
+  // `__extern_toString` → `__to_primitive` reduces a `$Object` through
+  // OrdinaryToPrimitive (so an INHERITED `F.prototype.toString` runs) but hands
+  // a nominal struct to `__class_to_primitive`, whose per-struct
+  // `__call_toString` has no entry for a PROTOTYPE-assigned method and answers
+  // null — the canonical "[object Object]".
+  //
+  // Same conservatism as the call clause: only an explicitly `any`/`unknown`
+  // parameter (which is what `new String(value?: any)`, `new Number`,
+  // `new Boolean` and `new Error(message?: any)` all declare) classifies
+  // dynamic; a TYPED constructor parameter stays neutral, so a typed user class
+  // cannot be moved off its struct by this.
+  //
+  // STANDALONE-ONLY, the same narrowest-site wiring the #4394 `throw` clause
+  // above uses. The gc/host lane reduces a nominal struct through the host
+  // `_hostToPrimitive`, so it does not have this defect, and widening the
+  // classification there would move representation choices in a lane this
+  // change-set did not measure. Keeping it host-free means the host emit is
+  // byte-identical.
+  if (ts.isCallExpression(parent) || (ts.isNewExpression(parent) && standalone === true)) {
+    const argIdx = (parent.arguments ?? ([] as readonly ts.Expression[])).indexOf(useNode);
     if (argIdx >= 0) {
       // (#4163) ANY argument of a builtin `Object.*` / `Reflect.*` namespace
       // call is a DYNAMIC consumer: the standalone lowering of every such

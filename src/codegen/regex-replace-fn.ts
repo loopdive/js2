@@ -37,7 +37,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
-import { undefinedExternInstrs } from "./any-helpers.js";
+import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js";
 import { guardedFuncRefCastInstrs } from "./array-methods.js";
 import { allocLocal } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
@@ -287,8 +287,17 @@ function buildReplacerCallInstrs(
 
   // Normalize the return value to externref, then ToString it. A void replacer
   // leaves nothing on the stack, which is `undefined` → `"undefined"`.
+  //
+  // (#4639 C6) …and `undefined` here must be the CANONICAL undefined, not
+  // `ref.null.extern`. Standalone distinguishes the two regardless of the
+  // #2106 flag (see `canonicalUndefinedExternInstrs`), so the null form is JS
+  // **null**, and the ToString tail below then answered for a value the
+  // replacer never returned. Measured on this branch's base, host-free:
+  // `"gnulluna".replace("null", function(){})` came back UNCHANGED, where a
+  // conforming engine answers "gundefineduna"
+  // (`built-ins/String/prototype/replace/S15.5.4.11_A1_T{5,9}`).
   if (info.returnType === null) {
-    out.push({ op: "ref.null.extern" });
+    out.push(...canonicalUndefinedExternInstrs(ctx));
   } else {
     out.push(...coercionInstrs(ctx, info.returnType, { kind: "externref" }, fctx));
   }
