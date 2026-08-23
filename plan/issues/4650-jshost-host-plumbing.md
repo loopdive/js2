@@ -201,6 +201,15 @@ a NON-union builtin-ctor receiver still folds to the TypeScript INTERFACE name.
 fires only when `expr.expression` is the identifier `Float64Array` itself.
 Worth its own issue.
 
+### Pre-existing red unit tests at the branch point (NOT caused by this work)
+
+Measured A/B in this worktree (branch src vs the four files reverted to the
+branch point): `tests/issue-1450.test.ts` (2 tests — try/catch array and object
+destructuring NamedEvaluation) and `tests/issue-2924.test.ts` (1 —
+standalone no-arg `new Function()`) fail **identically on both sides**. No
+required check runs them, which is exactly the "born red / silently reddened"
+gap `ci.yml` warns about. Not touched here.
+
 ### Out of scope, as instructed
 
 `wellKnownIntrinsicObjects.js` (js-host) is untouched — owned by #4633. For the
