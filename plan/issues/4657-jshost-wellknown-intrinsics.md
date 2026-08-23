@@ -1,10 +1,11 @@
 ---
 id: 4657
 title: "js-host: wellKnownIntrinsicObjects harness self-test — new Function(dynamic source) cannot obtain %Array%"
-status: ready
+status: done
 sprint: current
 created: 2026-08-23
 updated: 2026-08-23
+completed: 2026-08-23
 priority: high
 horizon: m
 feasibility: medium
@@ -124,6 +125,106 @@ Two facts that shape the work:
 - Full standalone harness category stays 115/116 — in particular the standalone
   twin of this test, fixed by #4633, must not flip back.
 - js-host 60-sample and the equivalence gate clean.
+
+## Diagnosis (what it actually was)
+
+The plan's step-2 branch question — "did the call throw, or return undefined?"
+— had a **third** answer: the call was never reached. Two independent defects
+stacked, and both had to fall. Neither is in the two files the plan listed.
+
+### Defect 1 — the callback never ran (this is the "could not obtain")
+
+Narrowing probe (runtime-built source, exception NOT swallowed) over six
+callable shapes, all with `new Function("return " + w.source)` in the body:
+
+| shape | before |
+| --- | --- |
+| `arr.forEach(arrow)` | **body produced nothing, `ran=0`** |
+| `arr.map(arrow)` | works |
+| user-defined HOF | works |
+| function expression in a var | works |
+| IIFE | works |
+| declared function | works |
+
+Only `forEach`, and only when the `new Function` is **inside the callback**
+(the same module with `new Function` elsewhere is fine). The receiver matters
+too: `WellKnownIntrinsicObjects` is an array of object literals, so its element
+type is a **`ref` (object struct)**, not `f64`/`externref`.
+
+That combination lands on `hofElemKindOk` in `src/codegen/array-methods.ts`.
+A ref-element receiver is admitted to the native HOF lane only if
+`hofRefElemClosureLaneSafe` says the callback body is closure-safe, and that
+predicate treats **any identifier resolving to a declaration file** as a
+host-only ambient (the #4616 Temporal guard). `Function` is declared in
+`lib.d.ts` and was not in `CLOSURE_SAFE_AMBIENT_GLOBALS`, so it was
+misclassified.
+
+The misclassification was not a safe degrade. The gc-lane fallback for a
+ref-element receiver is the **#3126 silent no-op** — already documented in the
+`hofElemKindOk` comment as a known residual. The emitted module fetched
+`arr.forEach`, **dropped** it, built a callback, **dropped** it, and never
+called anything. Zero iterations, zero diagnostics, `wkio.value` never
+assigned. `Function` genuinely has a dedicated native arm on this lane
+(`emitDynamicNewFunctionHostEval` → `env::__extern_new_function`, #2960/#4650)
+and resolves inside a lifted closure exactly as at top level, so it belongs in
+the safe set alongside `Math`/`JSON`/`Object`/….
+
+### Defect 2 — the value was obtained but was the wrong realm's object
+
+With defect 1 fixed the error changed to
+`Expected true but got false` at the same line: the intrinsic came back, but
+`Object.is(Array, intrinsicArray)` was false. Measured, this was **specific to
+`Array`** — `Object.is(Object, …)` and `Object.is(Math, …)` were already true,
+and the mismatched `Array` had the same `.name`, the same `.prototype` and the
+same statics as the module's. Only an identity test could see it.
+
+Cause: the default `compat` policy builds the function meta-circularly —
+`createNewFunctionShim` compiles the body into a **child Wasm module**. That
+child was constructed with `createNewFunctionShim({})`, i.e. **no realm**, so
+`buildImports(..., undefined, ...)` resolved the child's `global_Array`
+declared-global import against the host `globalThis`, while the parent module
+resolved its own `Array` against `globalSandbox` (the test262 per-test realm —
+see the `_sandboxConstructorValue` note at `src/runtime.ts` ~L16703).
+Two realms, one name.
+
+`new Function` is realm-transparent per §20.2.1.1, so the fix is to thread the
+parent's realm into the child: a new `EvalShimOptions.globalSandbox`, forwarded
+to `buildImports`, supplied at the `__extern_new_function` construction site.
+This repairs **all ~380 intrinsics at once** — no name table, which the brief
+explicitly ruled out.
+
+### Why the #4633 standalone fix did not transfer
+
+Confirmed rather than assumed: #4633 published the compiled `__builtin_Array`
+singleton on the runtime-eval realm carrier and seeded the QuickJS provider's
+identity registry. js-host has no such provider — it has a *sandbox object* and
+a *meta-circular child module*, and the gap was between those two. Standalone
+stayed at 115/116 across this change, so the twin did not flip back.
+
+## Measurements (this branch, provider built)
+
+| run | before | after |
+| --- | --- | --- |
+| js-host full `test/harness/` | 105 / 116 | **106 / 116** |
+| standalone full `test/harness/` | 115 / 116 | 115 / 116 |
+| js-host 60-sample | — | 59 / 60 |
+
+Failure-set diffs, not just totals: js-host flipped exactly
+`wellKnownIntrinsicObjects.js` and gained nothing; standalone's failure set is
+byte-identical. The 60-sample residual is the pre-existing
+`AsyncDisposableStack/prototype/adopt/not-a-constructor.js`.
+
+Base numbers were measured on this branch, not inherited: the brief's
+102/116 predates PR #4803 landing on main.
+
+## Residual (deliberately out of scope)
+
+`[] instanceof v1` for a dynamically-obtained `v1 === Array` reads `false`
+while `[] instanceof Array` reads `true`. That is the dynamic-RHS `instanceof`
+path disagreeing with the specially-lowered builtin-identifier path; it is
+independent of realm threading (the same disagreement exists for the
+already-identical `Object`) and is not what this issue asserts. Worth its own
+issue if it bites.
 
 ## Permanent repro
 
