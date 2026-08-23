@@ -28,8 +28,15 @@ top-level `this` (the global-this stand-in) reaches a
 `getOwnPropertyNames` arm that `ref.cast`s it to a shape it does not
 have.
 
-Sweep row in the census: `built-ins/Object/getOwnPropertyNames/15.2.3.4-4-1.js`
-(and any ES≤5 row enumerating globals).
+**Scope correction (dev-4491, same day):** the census row
+`built-ins/Object/getOwnPropertyNames/15.2.3.4-4-1.js` does NOT root
+here — it runs to completion and fails its assert because the global
+object exposes no own function properties (`gOPD(this,"eval")` →
+undefined while `Math.abs`/`Array.prototype.push` answer correctly);
+that is a #4491 carrier-coverage residual. The trap reproduces in a
+module that ALSO reads global members through a helper (dev-4491's
+probe shape). This issue owns only the trap; no conformance row is
+currently attributed to it.
 
 ## Implementation Plan
 
