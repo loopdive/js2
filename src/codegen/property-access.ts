@@ -56,11 +56,14 @@ import {
 // (#4157) provably-dead null guards
 import { type ReceiverProofHint, emitReceiverNullGuard, receiverProofHolds } from "./nonnull-proof.js";
 import {
+  ab4519RevertsToBase,
   emitIsNullishAnyAt,
   ensureAnyFromExternHelper,
+  nullishExternTestInstrs,
   undefinedExternInstrs,
   undefinedSingletonActive,
 } from "./any-helpers.js";
+import { receiverIsUndefinedIdentifier } from "./nullish-receiver-coercible.js"; // (#4519) the one decline that guard needs
 import {
   emitUndefined,
   ensureExternIsUndefinedImport,
@@ -1541,7 +1544,27 @@ export function emitNullGuardedStructGet(
     // the receiver is proven non-null it contributes nothing and is skipped
     // wholesale. `provenNonNull` already excludes the guarded-cast case, which
     // is the one where this null does NOT mean "null receiver".
+    // (#4519) The BACKUP arm below is `emitNullCheckThrow`'s twin: it reads
+    // nullness of the pre-cast value as "unset", which the tag-1 `$undefined`
+    // singleton (#4489) is not. Widened to NULLISH for the same reason and with
+    // the same helper. Measured caveat, recorded so the next reader does not
+    // re-derive it: across 120 standalone test262 modules this guard was emitted
+    // **0 times** (the live member-read receiver check is
+    // `emitReceiverNullGuard`'s `dispatch:extern-get-recv`, 2,598 emissions over
+    // the same 120). It is widened because the arm is WRONG as written, not
+    // because the corpus exercises it.
+    //
+    // Built INSIDE the `!provenNonNull` arm on purpose: `emitIsNullishAnyAt`
+    // reserves `$AnyValue` (and, first time, the `__undefined` global), and an
+    // elided guard must not mint module state the base emission never had.
+    let backupNullishTest: Instr[] | undefined;
     if (!provenNonNull) {
+      if (backupLocal !== undefined && !ab4519RevertsToBase()) {
+        const savedForNullish = pushBody(fctx);
+        const widened = emitIsNullishAnyAt(ctx, fctx, backupLocal);
+        if (widened) backupNullishTest = fctx.body;
+        popBody(fctx, savedForNullish);
+      }
       fctx.body.push({ op: "local.get", index: tmpAny });
       fctx.body.push({ op: "ref.is_null" });
       fctx.body.push({
@@ -1550,10 +1573,9 @@ export function emitNullGuardedStructGet(
         then:
           backupLocal !== undefined
             ? ([
-                // Value is null — could be wrong struct type or genuinely null.
+                // Value is null — could be wrong struct type or genuinely NULLISH.
                 // Check the backup anyref to distinguish.
-                { op: "local.get", index: backupLocal },
-                { op: "ref.is_null" },
+                ...(backupNullishTest ?? [{ op: "local.get", index: backupLocal }, { op: "ref.is_null" }]),
                 {
                   op: "if",
                   blockType: { kind: "empty" },
@@ -3324,6 +3346,10 @@ function emitExternRecvNullGuard(
     recvTmp,
     { site, compiled: recvType, expr: recvExpr, syntacticNonNull: isProvablyNonNull(recvExpr, ctx.checker) },
     () => typeErrorThrowInstrs(ctx, throwNode),
+    // (#4519) The same §7.3.2 widening as the `dispatch:extern-get-recv` guard —
+    // both callers of `emitReceiverNullGuard` are member-access receiver checks,
+    // and both hold the receiver in an externref local.
+    () => (receiverIsUndefinedIdentifier(recvExpr) ? undefined : nullishExternTestInstrs(ctx, recvTmp)),
   );
 }
 

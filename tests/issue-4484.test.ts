@@ -283,7 +283,14 @@ describe("#4484 — measured residuals (routed, not fixed)", () => {
   });
 
   // ROUTED TO #4480 as well — same missing edge, reached through `in`.
-  it.fails("`'valueOf' in {}` finds the inherited Object.prototype method", async () => {
+  //
+  // (#4519) RESIDUAL RETIRED — flipped from `it.fails` to `it`. #4506 (fnctor
+  // instances reach the `$Object` conversion, on this branch's base) supplied
+  // the missing `{}` → `Object.prototype` edge for the `in` path, so the pin
+  // started PASSING and the `it.fails` wrapper turned that improvement into a
+  // suite failure. Verified NOT caused by #4519: it fails identically under
+  // `JS2WASM_4519_AB=base`, i.e. with every #4519 widening reverted.
+  it("`'valueOf' in {}` finds the inherited Object.prototype method", async () => {
     expect(await runStandalone(`const o: any = {}; return ("valueOf" in o) ? 1 : 2;`)).toBe(1);
   });
 
