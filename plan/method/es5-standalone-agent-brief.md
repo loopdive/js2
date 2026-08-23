@@ -179,6 +179,14 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
        23 tests, two lanes): basic gives one file-level `↓` line and no
        names; verbose gives one `↓` per test with its full path.
 
+       **"Names are verbose-only" is too strong, though** (dev-4491,
+       correcting its own earlier caveat): basic DOES print per-test `↓`
+       names with full paths for a file that **failed** — vitest expands a
+       failed file's per-test detail on basic and does not expand a passing
+       one. Rung 3's "needs verbose" still holds for the case that matters,
+       a partial `skipIf` in a file whose surviving tests all pass, which
+       is the silent one. The blanket claim does not.
+
        Rung 2 matters on its own: in a MULTI-FILE run the aggregate can
        mask one file being wholly skipped while others run. Measured —
        `vitest run <pin> <equivalence> -t "labelled block"
@@ -211,7 +219,17 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
        ```
        A failing file inserts `| N failed`, so a pattern written for the
        two-segment `(N tests | M skipped)` form misses exactly the shape
-       you most want to catch. Match the word `skipped` on the file line.
+       you most want to catch. A fully-passing file prints `(2 tests)` with
+       no pipe and no `skipped` at all — which is what makes matching the
+       WORD complete across all four shapes: absent when nothing was lost,
+       present for fully-skipped, partial-skip and fail+skip. It is the
+       only candidate that cannot false-negative.
+
+       **Anchor it to the file line — a bare `grep skipped` false-positives
+       three ways** in that same output (a test NAME containing "skipped",
+       a source excerpt in the failure dump, and the summary line). Use
+       `\.test\.ts \(.*skipped`, or a file whose tests are named after
+       skipping reports itself as broken.
      ```
      Tests  1 failed | 45 passed (46)   healthy
      Tests  22 skipped (22)             a `-t` regex matched nothing
