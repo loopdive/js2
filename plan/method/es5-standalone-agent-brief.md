@@ -153,29 +153,45 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
        tests plus a few deliberate `it.skip` always executes some — so this
        never false-alarms and needs no count anywhere.
      - **Strong form: `executed == total`.** When it holds you are done.
-     - **When it does not hold, read the skipped NAMES — do not reach for a
-       number.** A count of expected skips is grepped from `it.skip(` and
-       carries the identical hazards as the tier-2 denominator below (a
-       commented-out `// it.skip(`, one inside a template string, a
-       `describe.skip` wrapping four tests). Names also catch what a count
-       structurally cannot: **the right number of skips from the wrong
-       set** — a partial `skipIf` skipping three tests when you expected
-       three *different* ones satisfies any count, and is exactly the
-       silent hole the rule exists for.
-       **Only the per-test NAMES need verbose; the COUNTS are
-       reporter-independent** (measured 2026-08-23 by two lanes on their
-       own pin files, 22 and 5 tests skipped via a no-match `-t`). It is a
-       three-rung ladder — climb only as far as the question needs, and do
-       NOT re-plumb existing per-file loops:
-       1. `Tests N passed (M)` — **every** reporter — *something* was lost.
-          Tier 1's floor and strong form work unchanged on `basic` and on
-          the default.
-       2. `↓ <file> (N tests | N skipped)` — default and `basic` — **which
-          file**. This catches one file being wholly skipped inside a
-          multi-file run, where the aggregate line would mask it.
-       3. `↓ <full test path>` — **verbose only** — **which tests**, which
-          is what the "read the names" step above needs. Switch reporters
-          for that one run.
+     - **When it does not hold, do NOT reach for a number — climb.** A
+       count of expected skips is grepped from `it.skip(` and carries the
+       identical hazards as the tier-2 denominator below (a commented-out
+       `// it.skip(`, one inside a template string, a `describe.skip`
+       wrapping four tests). Reading what was skipped also catches what a
+       count structurally cannot: **the right number of skips from the
+       wrong set** — a partial `skipIf` skipping three tests when you
+       expected three *different* ones satisfies any count.
+
+       It is a **three-rung ladder, and you climb only as far as the
+       question needs** (measured 2026-08-23 across both lanes' pin files,
+       skipping via a no-match `-t`):
+
+       | rung | line | reporters | answers |
+       | --- | --- | --- | --- |
+       | 1 | `Tests 1 passed \| 30 skipped (31)` | all | something was lost |
+       | 2 | `↓ tests/… (9 tests \| 9 skipped)` | default + basic | **which FILE** lost it |
+       | 3 | `↓ tests/… > suite > test name` | **verbose only** | **which TESTS** |
+
+       **Rungs 1 and 2 are reporter-independent, so no existing tooling
+       needs re-plumbing** — this brief's per-file loops run
+       `--reporter=basic` and get both. Switch to verbose only for rung 3.
+       Reproduced independently on two different pin files (22 tests and
+       23 tests, two lanes): basic gives one file-level `↓` line and no
+       names; verbose gives one `↓` per test with its full path.
+
+       Rung 2 matters on its own: in a MULTI-FILE run the aggregate can
+       mask one file being wholly skipped while others run. Measured —
+       `vitest run <pin> <equivalence> -t "labelled block"
+       --reporter=basic` printed `Tests 1 passed | 30 skipped (31)` and
+       `↓ tests/equivalence/in-operator-edge-cases.test.ts (9 tests | 9
+       skipped)`, naming the dead file without verbose. (`Test Files 1
+       passed | 1 skipped (2)` is the same signal at file granularity.)
+
+       **Rung 2's limit, measured in that same run: it lists only files
+       skipped in their ENTIRETY.** The pin file in that run had 21 of its
+       22 tests skipped and got NO `↓` line at all. So rung 2 sees "a whole
+       file was lost" and is blind to "some tests within a file were lost"
+       — which is exactly the partial-`skipIf` case rung 3 exists for.
      ```
      Tests  1 failed | 45 passed (46)   healthy
      Tests  22 skipped (22)             a `-t` regex matched nothing
@@ -190,21 +206,21 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
      a plain substring. Nothing here can be mis-counted, because the
      denominator comes from the same line as the parts.
 
-     **A file with deliberate `it.skip` needs no exception and no count
-     (2026-08-23, dev-4491).** Use the FLOOR — `total > 0 && executed > 0`:
-     all four zero-selection members produce `executed == 0`, while a file
-     with real tests plus intentional skips always executes some. Keep
-     `executed == total` as the strong form, and when it does not hold,
-     **read the skipped NAMES rather than count them** — verbose mode
-     prints one `↓` line per skipped test with its full path (36 of them in
-     the run where the `CompilerPool` worker died). The argument that
-     settles it: *a count can be satisfied by the wrong set.* A partial
-     `skipIf` that skips three tests while you expected three DIFFERENT
-     ones passes any count, and that is exactly the silent hole this rule
-     exists to catch; names cannot be fooled that way, and confirming three
-     names is cheaper than maintaining a number. Caveat stated rather than
-     assumed: the `↓` lines are a `--reporter=verbose` artifact and have
-     not been checked against the default reporter.
+     **Exit status is UNCORRELATED with the outcome — and both directions
+     have been measured on ONE suite, which removes the "different suites,
+     different causes" objection** (dev-4653, `tests/issue-4653.test.ts`):
+     ```
+     Tests  23 skipped (23)   exit 0   nothing executed, exits GREEN
+     Tests  23 passed  (23)   exit 1   everything passed, exits RED
+     ```
+     Tier 1 gets both right (`executed 0 != 23` fails; `executed 23 == 23`
+     passes) while `$?` is inverted from the truth in each. A second,
+     independent exit-0 instance from a real accident rather than a
+     deliberate filter: `Tests 22 passed | 36 skipped (58)` from a dead
+     `CompilerPool` worker, thirty-six tests never executed (dev-4491).
+
+     So "counts, never exit status" is a rule, not a preference: neither
+     direction of the status tells you anything.
 
      **Tier 2 — external declared count, and ONLY for the fifth member.**
      Vitest's RPC dropping task updates under load

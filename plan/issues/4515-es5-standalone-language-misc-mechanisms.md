@@ -810,15 +810,37 @@ their fix on a module shape they did not write (`deferTopLevelInit: true`,
   `executed == total`; and when they disagree you **read the skipped names**,
   which also catches the right number of skips from the WRONG set — something no
   count can see.
-- **Those names are `--reporter=verbose` only** — measured here by skipping all
-  22 tests with a no-match `-t`: verbose prints 22 `↓` lines with full paths,
-  while `--reporter=basic` and the default print a single file-level
-  `↓ tests/… (22 tests | 22 skipped)` and no names. This lane's own per-file
-  loops use `--reporter=basic`, i.e. exactly the reporter that hides them.
-- **Exit status lies in both directions.** dev-4653 measured a run printing
-  `Tests 23 passed (23)` beside `Errors 1 error` that **exited 1** with every
-  test passing. All of the above is adopted in
-  `plan/method/es5-standalone-agent-brief.md`.
+- **It is a three-rung ladder, and only the top rung needs verbose** (this
+  lane's first framing — "our loops use `--reporter=basic`, the one that hides
+  the names" — read as an indictment of working tooling; dev-4491 measured that
+  the counts are reporter-independent). Rung 1, the aggregate line, every
+  reporter: something was lost. Rung 2, `↓ <file> (N tests | N skipped)`,
+  default and basic: which FILE. Rung 3, per-test `↓` paths, verbose only:
+  which TESTS. Nothing existing needs re-plumbing; climb to verbose for rung 3
+  alone.
+- **Rung 2 lists only files skipped in their ENTIRETY** — measured here and not
+  previously stated by anyone: `vitest run <pin> <equivalence> -t "labelled
+  block" --reporter=basic` printed `Tests 1 passed | 30 skipped (31)` plus
+  `↓ tests/equivalence/in-operator-edge-cases.test.ts (9 tests | 9 skipped)`,
+  naming the wholly-dead file — while the pin file, with 21 of its 22 tests
+  skipped, got **no `↓` line at all**. So rung 2 is blind to partial loss inside
+  a file, which is precisely the partial-`skipIf` case rung 3 exists for.
+- **Exit status is uncorrelated with the outcome — both directions on ONE
+  suite** (dev-4653, `tests/issue-4653.test.ts`): `23 skipped (23)` exits **0**
+  with nothing executed, `23 passed (23)` exits **1** with everything passing.
+  Same file, so the "different suites, different causes" objection does not
+  arise. Second, independent exit-0 instance from a real accident rather than a
+  deliberate filter — dev-4491's dead `CompilerPool` worker,
+  `22 passed | 36 skipped (58)`, thirty-six never executed. All of the above is
+  adopted in `plan/method/es5-standalone-agent-brief.md`.
+- **The brief merge was simulated by BOTH lanes, and the second time by the one
+  moving the target.** dev-4653 ran it twice (against `ac96bd773`, then
+  `ad7719378`); this lane then committed again, so it ran the same simulation
+  itself against its own HEAD — `git merge-file`, base `c42bdbe3e`, theirs
+  `2bfebb7ea`: rc=0, zero conflict markers, each of the four distinctive strings
+  present exactly once, methodology numbering 1..7 intact. The lesson is not
+  "simulate merges"; it is that **the lane whose commits keep invalidating a
+  peer's verification owes the re-run**.
 - **A survey run entirely at module top level is blind to any defect gated on
   "inside an enclosing function"** — and worse, it mis-attributes the one case
   that does surface, because that case looks like the odd one out. See the
