@@ -34,6 +34,7 @@ async function loadNodeHostDependencies() {
   const { createRequire } = await import("node:module");
   const require = createRequire(import.meta.url);
   const dependencies = Object.create(null);
+  const { DOM_GLOBALS } = await import("./react-test-environment.mjs");
   // Resolve both the namespace-qualified import and the exported class/function
   // names. This keeps the worker generic for upstream suites that use a small
   // Node builtin surface without replacing any package implementation.
@@ -83,6 +84,26 @@ async function loadNodeHostDependencies() {
   // map. Forward the same host constructors so upstream Node tests can use
   // TextEncoder/TextDecoder and related Web APIs without a package shim.
   Object.assign(dependencies, getWebHostConstructors());
+  for (const name of DOM_GLOBALS) {
+    const value = globalThis[name];
+    if (value !== undefined) dependencies[name] = value;
+  }
+  return dependencies;
+}
+
+// The compiler's default web import object is intentionally hermetic and
+// therefore cannot see the JSDOM globals installed by this worker. Upstream
+// ReactDOM tests need the actual document/window objects and their constructors
+// at the Wasm boundary, so bind exactly the explicit environment surface rather
+// than relying on an ambient empty-object provider.
+async function loadWebHostDependencies() {
+  const { DOM_GLOBALS } = await import("./react-test-environment.mjs");
+  const dependencies = Object.create(null);
+  Object.assign(dependencies, getWebHostConstructors());
+  for (const name of DOM_GLOBALS) {
+    const value = globalThis[name];
+    if (value !== undefined) dependencies[name] = value;
+  }
   return dependencies;
 }
 
@@ -191,10 +212,12 @@ async function main() {
   }
 
   try {
-    const imports =
+    const imports = buildCompiledImports(
+      result,
       platform === "node" || process.env.DOGFOOD_NODE_HOST_DEPS === "1"
-        ? buildCompiledImports(result, await loadNodeHostDependencies())
-        : (result.importObject ?? {});
+        ? await loadNodeHostDependencies()
+        : await loadWebHostDependencies(),
+    );
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
     imports.setInstance?.(instance);
     imports.__setInstance?.(instance);

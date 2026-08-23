@@ -131,6 +131,27 @@ same stale artifact.
   chains (`setTimeout(run, 0)` reschedules while render work remains) that
   would otherwise keep a FINISHED run's process — and its CI step — alive
   indefinitely.
+- **S6: the remaining budget-eater is subdivision-on-timeout, not a hang.**
+  Run 785 (id 32576730177) measured the S5 watchdog merge itself and its
+  react-dom group STILL died at exactly 350:00 (job 97040048748,
+  13:46:49 → 19:36:27Z) with the same single-line log. Two facts resolve the
+  contradiction: (a) the log is single-line **by design** — the generator ran
+  the suite with `quiet: true`, so batch progress was invisible and a bounded
+  slow run is indistinguishable from a hang; (b) a local smoke showed a
+  1-test browser-Fizz batch consuming the full 300s compile-worker timeout,
+  and `runServerHarness`'s `compileGroup` subdivided on ANY invalid result —
+  timeouts included — up to depth 6. Since every sub-batch repeats the same
+  multi-megabyte renderer graph, halving a timed-out batch re-pays the full
+  timeout per half: the ~60-test browser-Fizz file alone can burn up to
+  2^7−1 ≈ 127 attempts × 300s ≈ 10.6h of perfectly bounded compiles — more
+  than the entire 350-min job. Fix in this slice: (1) `compileGroup` no
+  longer subdivides when the worker timed out — one timeout is the verdict
+  for the whole group, its tests recorded as blocked with the timeout as
+  reason; (2) the refresh workflow sets `NPM_COMPAT_SUITE_LOGS=1` and the
+  generator honors it by running react-dom's suite non-quiet, so the next
+  timeout names the lane and batch it went to. All other groups were green
+  in run 785 (jsdom 4 min, redux 2 min, tools 46 min), so react-dom is the
+  sole remaining publisher-blocker.
 
 ## Fix directions (pick during implementation)
 
@@ -194,24 +215,58 @@ Implementation: [PR #4767](https://github.com/loopdive/js2wasm/pull/4767) (the
 Jest infrastructure change and npm-compat reliability follow-up share the
 same branch checkpoint).
 
-## 2026-08-22 follow-up — promotion checks were being cancelled by refreshes
+## 2026-08-22 cancellation audit after the matrix landed
 
-The SHA-keyed measurement groups stopped newer pushes from cancelling pending
-refresh runs, but a second race remained at promotion. When the reusable
-`ci/npm-compat-refresh` branch already had an open PR, the coordinator checked
-only whether that PR was in the merge queue. If its current `CI` checks were
-still queued or running, the coordinator force-updated the branch anyway. The
-resulting `pull_request:synchronize` event cancelled the checks for the old
-head and started a new set, so frequent refreshes could keep the promotion PR
-permanently pending.
+The remaining `cancelled` entries in the run list are not new
+`cancel-in-progress` cancellations. Runs 32564073432 and 32561947825 both
+finished their short matrix cells successfully, then their old `renderers`
+cell was killed at exactly 350 minutes (09:07:04→14:57:18 and
+08:18:47→14:09:00). Because that cell contained the serial ReactDOM, jsdom,
+and Redux group from the pre-#4767 workflow, the coordinator correctly had no
+complete artifact to publish. The SHA-keyed concurrency fix in #4755 protects
+pending push runs; it cannot revive a job that reaches its own timeout.
 
-The workflow now reads check-runs for the promotion PR's current head and
-leaves the branch untouched while any recent check is queued or in progress.
-The guard has a two-hour bound so a wedged check cannot suppress publication
-forever; the staleness workflow remains the product-level alert. If the check
-API is unreadable, the safe action is also to leave the branch untouched rather
-than knowingly cancel CI; the generated measurement is retained as an
-artifact and the next scheduled/push run retries.
+The first post-#4770 run, 32576730177, uses the new independent
+`react-dom`/`jsdom`/`redux` cells. jsdom and Redux completed successfully while
+ReactDOM continued in its own cell, so they are no longer collateral
+cancellations. Keep this run as the acceptance probe: if ReactDOM itself
+reaches 350 minutes, the next slice must bound or subdivide the ReactDOM suite
+and publish an explicit `unavailableInfra` result rather than letting the
+workflow be killed without a partial report.
+
+## 2026-08-22 ReactDOM compile-pool follow-up
+
+The ReactDOM cell is now independently protected from the old renderer-group
+timeout, but its client project still contains 110 compile batches. They were
+being compiled one after another, so a valid but slow corpus could still reach
+the cell's 350-minute ceiling. The project lane now compiles those independent
+batches with two isolated workers and runs the shared native oracle in stable
+source order. The workflow pins the pool to two workers to keep memory bounded;
+each batch retains its own timeout and report entry. This reduces wall-clock
+time without dropping tests or converting compiler failures into
+`unavailableInfra`. Compilation is pipelined with the source-ordered native
+oracle, so the workers continue compiling later batches while the shared host
+consumes the next completed batch.
+
+Implementation: [PR #4771](https://github.com/loopdive/js2/pull/4771), stacked
+on the renderer/compiler baseline in [PR #4769](https://github.com/loopdive/js2/pull/4769).
+## 2026-08-22 follow-up — promotion checks must never be cancelled by refresh
+
+The SHA-keyed measurement groups prevent newer main pushes from replacing an
+older pending refresh, but a second cancellation race remained at promotion.
+When the reusable `ci/npm-compat-refresh` branch already had an open pull
+request, the coordinator checked only whether it was in the merge queue. It
+could then force-update that branch while the pull request's current checks
+were queued or running. GitHub emits `pull_request:synchronize` for that push
+and cancels the checks for the old head before starting a new set; frequent
+refreshes could therefore keep the artifact pull request permanently pending.
+
+The workflow now reads all check-run pages for the promotion pull request's
+current head and leaves the branch untouched while any check is active. The
+guard is intentionally not aged out: the refresh matrix has a 350-minute
+timeout, so a two-hour cutoff would still cancel a legitimate long run. A
+wedged pull request is retained for diagnosis and surfaced by the staleness
+workflow instead of being repeatedly reset.
 
 Implementation: [PR #4774](https://github.com/loopdive/js2wasm/pull/4774).
 
@@ -230,5 +285,11 @@ guard out, and fails closed when the check API is unreadable. The generic
 behind-PR sweep excludes `ci/npm-compat-refresh` entirely. This makes the npm
 coordinator the only updater of its promotion branch and prevents both direct
 and indirect `pull_request:synchronize` cancellation churn.
+
+The generic `auto-refresh-prs` cron also excludes the exact
+`ci/npm-compat-refresh` head. Its two-hour stale-check heuristic is appropriate
+for ordinary behind pull requests, but it could otherwise rebase this bot-owned
+branch and emit the same cancelling `synchronize` event outside the npm
+coordinator.
 
 Implementation: [PR #4776](https://github.com/loopdive/js2/pull/4776).

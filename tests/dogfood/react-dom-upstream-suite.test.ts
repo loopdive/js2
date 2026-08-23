@@ -16,6 +16,8 @@ import {
   isExpectedLateJsdomHostError,
   partitionProjectTests,
   partitionReactDomTestsForBuild,
+  projectCompileConcurrency,
+  reactDomTestSetup,
 } from "./react-dom-upstream-suite.mjs";
 // @ts-expect-error — .mjs dogfood extractor has no declaration file
 import { extractReactUpstreamTests } from "./react-upstream-extract.mjs";
@@ -146,6 +148,39 @@ describe("react-dom upstream suite", () => {
       ["b.js", ["b.js-0"]],
     ]);
     expect(batches.flatMap(({ tests }) => tests).map(({ id }) => id)).toEqual(input.map(({ id }) => id));
+  });
+
+  it("keeps the project compile pool bounded and deterministic", () => {
+    expect(projectCompileConcurrency(0, "4")).toBe(0);
+    expect(projectCompileConcurrency(3, "1")).toBe(1);
+    expect(projectCompileConcurrency(3, "4")).toBe(3);
+    expect(projectCompileConcurrency(3, "not-a-number")).toBe(2);
+  });
+
+  it("does not shadow upstream act functions or read a test-owned document early", () => {
+    const setup = reactDomTestSetup(
+      ["let React;", "let document;", "async function act(callback) { return callback(); }"].join("\n"),
+      "act(() => document.body);",
+      { server: true, fizz: true },
+    );
+    expect(setup).toContain("document.body.textContent");
+    expect(setup).not.toContain("var act = async function");
+    expect(setup).not.toContain("act = async function");
+    expect(setup).toContain('typeof document !== "undefined"');
+  });
+
+  it("binds the native oracle to host React singletons instead of uninitialized carriers", () => {
+    const setup = reactDomTestSetup(
+      "let React; let ReactDOM; let ReactDOMClient; let InnerReactDOM; let act;",
+      "ReactDOM.flushSync(() => {}); InnerReactDOM.flushSync(() => {}); act(() => {});",
+      { nativeHost: true },
+    );
+    expect(setup).toContain("React = __js2ReactInfra().react;");
+    expect(setup).toContain("ReactDOM = __js2ReactInfra().reactDom;");
+    expect(setup).toContain("ReactDOMClient = __js2ReactInfra().reactDomClient;");
+    expect(setup).toContain("InnerReactDOM = __js2ReactInfra().reactDom;");
+    expect(setup).toContain("act = __js2ReactInfra().internalTestUtils.act;");
+    expect(setup).not.toContain("__REACTDOM_SHARED__.flushSync");
   });
 
   it("keeps server and Fizz batches in isolated project modules", () => {

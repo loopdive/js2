@@ -34,6 +34,7 @@ loc-budget-allow:
   - src/codegen/declarations.ts
   - src/codegen/statements/control-flow.ts
   - src/compiler.ts
+  - src/codegen/extern-declarations.ts
 func-budget-allow:
   - src/codegen/expressions/calls.ts::compileCallExpression
   - src/codegen/expressions/calls.ts::tryEmitInlineDynamicCall
@@ -55,6 +56,7 @@ func-budget-allow:
   - src/codegen/class-bodies.ts::compileClassBodiesInner
   - src/codegen/index.ts::emitIteratorMethodExport
   - src/runtime.ts::<anonymous>#89
+  - src/codegen/extern-declarations.ts::registerBuiltinExternClasses
 ---
 # npm-compat: pin and adapt original upstream test suites for catalog packages
 
@@ -1151,3 +1153,49 @@ failures remain), all 34 modules compile and 33 validate, and Wasm scores
 remainder is **2,930 registrations** from 207 deferred files.
 
 Implementation: [PR #4773 — provide CommonJS path globals](https://github.com/loopdive/js2wasm/pull/4773).
+
+## 2026-08-22 Web-host TextEncoder/TextDecoder binding checkpoint
+
+The generic host compiler now registers `TextEncoder` and `TextDecoder` as
+synthetic extern classes when a JavaScript package uses the bare Web/Node
+globals without a DOM or Node declaration file. Their constructors, UTF-8
+methods, and standard read-only properties bind through the existing
+`extern_class` host boundary and the runtime's real Web constructors. Host-free
+WASI/standalone targets keep the native UTF-8 lowering and acquire no
+`TextEncoder_*`/`TextDecoder_*` imports.
+
+The regression covers both compilation and execution: a compiled
+`new TextEncoder().encode()` / `new TextDecoder().decode()` round trip returns
+the Node result and requests the expected host imports. This closes the
+concrete `TextEncoder is not defined` / `TextDecoder is not defined` runner
+failure observed in Hono's unchanged buffer and crypto tests. Any remaining
+Hono failures are scored compiler/runtime compatibility findings, not missing
+Web-global infrastructure.
+
+Implementation: [PR #4752](https://github.com/loopdive/js2/pull/4752).
+
+## 2026-08-22 Prettier utility-suite infrastructure checkpoint
+
+The Prettier adapter now selects 16 of the 20 verified `tests/unit/*.js`
+files, up from the original three-file smoke slice. The unchanged upstream
+callbacks register **151 tests**; the Node oracle reproduces **151/151** after
+the shared runner's negative `toThrow` fix. The shared runner now implements
+negative `toThrow`/`toThrowError` matching, so a negative assertion only fails
+when the thrown error also matches its requested message or constructor.
+
+The adapter supplies source-compatible, ignored checkout dependencies for the
+small pure helpers Prettier imports (`trim-newlines`, `escape-string-regexp`,
+`emoji-regex`, `get-east-asian-width`, `url-or-path`, and `n-readlines`). It
+also supports inline snapshots and the `toBeGreaterThan` matcher used by the
+selected utility tests. No upstream callback or expected input was changed.
+
+The expanded lane compiles 16/16 modules and validates 10/16. It scores
+**48/151** in Wasm; the remaining results are compiler/runtime findings,
+including the existing async-await-in-try refusal tracked in
+[3587](https://github.com/loopdive/js2wasm/blob/main/plan/issues/3587-host-declined-async-shapes-swallow-rejections.md),
+document-carrier validation failures. The four deferred files
+(`builtin-plugins.js`, `html-elements.js`, `syntax-transform.js`, and
+`visitor-keys.js`) remain explicit, with 11 direct static registration sites
+reported as unavailable infrastructure rather than silently disappearing. The
+pinned inventory counts direct `it`/`test` call sites; table-driven
+registrations are expanded separately by the runner.

@@ -43,6 +43,24 @@ describe("real-world: Web APIs", () => {
     `);
   });
 
+  it("binds bare TextEncoder/TextDecoder globals to the host constructors", async () => {
+    const source = `
+      export function byteLength(s: string): number {
+        return new TextEncoder().encode(s).length;
+      }
+      export function roundTrip(): string {
+        return new TextDecoder().decode(new TextEncoder().encode("Aé"));
+      }
+    `;
+    const result = await compileValid(source);
+    expect(hostImportNames(result)).toEqual(
+      expect.arrayContaining(["TextEncoder_new", "TextEncoder_encode", "TextDecoder_new", "TextDecoder_decode"]),
+    );
+    const exports = await instantiate(source);
+    expect(exports.byteLength("Aé")).toBe(3);
+    expect(exports.roundTrip()).toBe("Aé");
+  });
+
   it("compiles URL parsing", async () => {
     await compileValid(`
       export function hostname(u: string): string {

@@ -40,6 +40,7 @@ loc-budget-allow:
   - src/codegen/declarations.ts
   - src/codegen/declarations/object-shape-widening.ts
   - src/codegen/extern-declarations.ts
+  - src/import-resolver.ts
 oracle-ratchet-allow:
   - src/codegen/declarations/object-shape-widening.ts
   - src/codegen/index.ts
@@ -66,6 +67,8 @@ func-budget-allow:
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
   - src/runtime.ts::_safeSet
+  - src/codegen/expressions/calls-closures.ts::tryExternClassMethodOnAny
+  - src/codegen/declarations.ts::collectDeclarations
 ---
 
 # Run react-dom's own unit tests against compiled react-dom
@@ -585,6 +588,86 @@ reported as one implementation-invalid/skipped test rather than wedging the
 parent process. These are compiler/runtime findings, not missing host setup;
 the probe is deliberately too small to be a corpus pass-rate claim.
 
+## Harness-seam checkpoint (2026-08-22)
+
+The next infrastructure slice is prepared in [PR #4775](https://github.com/loopdive/js2wasm/pull/4775). The generated ReactDOM
+setup now recognizes upstream `async function act(...)` declarations before
+injecting its fallback, so the native oracle no longer fails with duplicate
+`act` declarations. It also places setup after test-owned `document` bindings
+and guards the initial body cleanup, which lets Fizz/JSDOM tests initialize
+their own document instead of failing in the temporal dead-zone.
+
+The shared Jest shim now supplies `unmock`, `setTimeout`, `spyOnDev`, and the
+`expect.objectContaining`/`expect.arrayContaining` asymmetric matchers. These
+are test-runner capabilities, not production React behavior; both the native
+oracle and compiled lane use the same shim. Focused ReactDOM and React
+infrastructure tests, typecheck, issue-ID validation, formatting, and diff
+checks pass. The full upstream corpus has not been rerun, so no new pass-rate
+claim is made here; rerun it after the PR lands and keep renderer/compiler
+failures separate from unavailable-infrastructure counts.
+
+The native setup is also now explicit about its package carriers: when the
+oracle skips compiled initialization, `React`, `ReactDOM`, the client/server
+entries, and `act` bind to the installed pinned host singletons. The compiled
+lane continues to bind those names to its Wasm carriers. This closes the
+previous `flushSync`/undefined native-oracle failure mode without changing the
+implementation under test.
+
+The private upstream `./utils/ReactDOMServerIntegrationTestUtils` dependency is
+now available through the same explicit shim. Its rendering helpers receive
+the test's `initModules()` result, so server/client calls stay on the selected
+Wasm module set; only the JSDOM document and PassThrough stream sink are host
+capabilities. A focused regression renders through the selected helper module.
+This removes a module-lookup failure without claiming that the nested helper
+registration cases are a separate denominator; the extractor still reports
+the original direct upstream test records.
+
+The facade also has a compiled-Wasm smoke test: the generated module imports
+the helper factory, instantiates successfully, and exposes its server-render
+method. The full ReactDOM corpus remains unrerun because the pinned upstream
+checkout is unavailable offline in this worktree.
+
+The upstream test-side `scheduler` import now resolves to the installed
+`scheduler/unstable_mock` capability, matching React's Jest preset and
+providing `log`/flush methods without changing the renderer's internal
+scheduler. The infrastructure test verifies both exports.
+
+The matcher shim also now covers the upstream `resolves.not.toThrow()` and
+`resolves.not.toThrowError()` forms. These are promise assertions over the
+test callback result, not a blanket exception suppressor; the focused test
+exercises both a fulfilled non-function and a fulfilled non-throwing function.
+
+The compile worker now builds the web-lane import object from the same explicit
+JSDOM globals used by the parent harness instead of falling back to the
+compiler's hermetic empty import object. This makes the worker's `document`,
+`window`, and DOM constructor receivers observable and keeps the node and web
+lanes on an explicit host boundary. Simple document receiver controls pass
+through the worker. The remaining upstream CSS/edge failures still receive an
+empty object at the compiled renderer boundary, so they remain compiler/runtime
+findings rather than being hidden by a fake document; no renderer pass-rate
+claim is made.
+
+## Node Fizz module-initialization checkpoint (2026-08-22)
+
+The Node Fizz graph exposed one more genuine host seam. Its published CommonJS
+module is evaluated before the lifted test entry, so top-level
+`require("util")`, `require("async_hooks")`, `require("crypto")`, and
+`require("stream")` could reach the entry's not-yet-initialized Jest resolver.
+The project-module resolver now uses the worker's explicit infrastructure
+capability, and the worker exposes the real host records plus a per-worker
+`TextEncoder` and `AsyncLocalStorage`. `queueMicrotask`, `setImmediate`,
+`Buffer`, `URL`, and the encoder globals are declared in the implementation
+module scope as well. This is host setup only; React and the Fizz renderer
+remain the compiled package graph.
+
+The controls are measurable: an implementation-only Node Fizz project now
+validates and instantiates, a no-op test and a type/export probe each pass, and
+the real upstream `ReactDOMFizzServer › should call renderToPipeableStream`
+test now reaches the renderer. It then fails with a compiled renderer null
+pointer in `createRequest`, rather than a module-init or unavailable-infra
+error. The bounded one-test-per-lane smoke therefore still has zero native-host
+errors; this slice does not claim a renderer pass or a full-corpus pass rate.
+
 ## Permanent test reference
 
 `tests/dogfood/react-dom-upstream-suite.test.ts` — pin/commit assertions run
@@ -594,3 +677,93 @@ always; the full run is gated behind `DOGFOOD_REACT_DOM_UPSTREAM=1`.
 pnpm run dogfood:react-dom-upstream-suite
 DOGFOOD_REACT_DOM_UPSTREAM=1 pnpm exec vitest run tests/dogfood/react-dom-upstream-suite.test.ts
 ```
+
+## Narrow compiler-fix checkpoint (2026-08-22)
+
+The next bounded probe found two compiler issues in the ReactDOM path rather
+than missing jsdom infrastructure:
+
+* An `any` receiver for `createElement` was being bound to the first ambient
+  `Document.createElement` extern method. That discarded the React namespace at
+  the host boundary. Unknown receivers now stay on the generic dynamic method
+  dispatcher; typed `Document` receivers retain the exact DOM extern path.
+* A mutable parameter inferred as an anonymous WasmGC object shape could be
+  reassigned to a different object shape. The generated guarded cast then
+  produced null on the next property read. Directly reassigned anonymous
+  object/reference parameters now use the universal `externref` carrier;
+  named/native carriers remain specialized.
+
+The fixes have focused coverage in
+`tests/issue-4373-js-property-call-arguments.test.ts` and
+`tests/issue-3982-react-dom-reassigned-ref-param.test.ts`. Both legacy and IR
+compiler modes pass (8/8 tests), typecheck and formatting pass, and the exact
+one-test legacy-server worker probe now compiles and validates a 1,230,619-byte
+module and reports 1/1 compiled tests passing (12.3 seconds). This is a bounded
+smoke result, not a claim that the 1,923-test admitted corpus is green.
+
+The browser Fizz timeout and Node Fizz module-init null remain separate
+follow-up findings; the full ReactDOM corpus still needs to be rerun after the
+compiler fix. No host API was silently marked unavailable.
+
+Implementation: [PR #4769](https://github.com/loopdive/js2wasm/pull/4769).
+
+## Host-graph compiler boundary checkpoint (2026-08-22)
+
+The follow-up compiler probe found two additional generic boundary problems in
+the multi-file ReactDOM graph:
+
+* Multi-source host files now receive the callback-aware timer shim without
+  rewriting their module imports. This keeps `setTimeout` and the scheduler's
+  stored `queueMicrotask` value callable from compiled Wasm while preserving
+  the standalone/WASI no-host-import policy.
+* Ambient callable globals are collected as host function values only when they
+  are referenced and not shadowed by a user module binding. An implicit-`any`
+  parameter used as an ordinary or computed property receiver stays an
+  `externref` carrier, preventing ReactDOM's scheduler root from being
+  specialized to a boolean or nominal object shape.
+
+Regression coverage is now **30/30** across the timer-shim and mutable-parameter
+ suites (both legacy and IR modes), with typecheck, formatting, and the IR
+ fallback gate passing. The exact ReactDOM upstream corpus is still not claimed
+ green: the remaining failure is scheduler work/`act` flush synchronization in
+ the compiled project graph, not a missing host API. The next owner should
+ resume from the worker-backed scheduler queue and Promise/microtask ordering;
+ no test-harness workaround or generated diagnostic source was shipped.
+
+Implementation remains in [PR #4769](https://github.com/loopdive/js2wasm/pull/4769).
+
+## Primitive callback ABI regression checkpoint (2026-08-22)
+
+The real-wasmtime native-messaging smoke caught a regression in the generic
+property-receiver rule: the untyped `onData(chunk)` callback in the Node
+process adapter uses `chunk.length` and `chunk.charCodeAt`, and was being
+widened from the compiler's proven native-string carrier to `externref`. The
+resulting callback ABI did not match the host and produced zero output even
+for a 1 MiB frame. Ordinary property access still widens nominal/dynamic
+object receivers, but proven numeric and native-string carriers remain
+specialized. The complete real-wasmtime matrix (1/64/128/256 MiB across
+node_process, deno, wasi_p1, and node_fs) now passes. This is a compiler ABI
+fix, not a skipped or unavailable test.
+
+## Bounded project compilation checkpoint (2026-08-22)
+
+The client project lane was still compiling its 110 independent test batches
+serially. That made the worker deadline effective per batch but left the
+overall ReactDOM refresh vulnerable to the 350-minute GitHub Actions ceiling.
+The lane now uses a bounded two-worker compile pool (configurable with
+`DOGFOOD_REACT_DOM_PROJECT_CONCURRENCY`) and consumes the native oracle in the
+original source order. Compilation is pipelined with that oracle: while the
+shared host consumes one completed batch, the workers continue compiling later
+batches. Each batch still has its own isolated compiler deadline and remains
+visible in the report; only independent compilation is concurrent. The
+npm-compat workflow pins the pool to two workers to limit runner memory
+pressure. This addresses the remaining refresh-timeout path without reducing
+the upstream denominator or relabeling compiler failures as unavailable host
+infrastructure.
+
+The bounded pool and its fallback-to-two behavior have focused unit coverage;
+the 50-test probe observed both client batches dispatched to the two-worker
+pool, and the upstream suite harness tests remain green.
+
+Implementation: [PR #4771](https://github.com/loopdive/js2/pull/4771), stacked
+on the compiler boundary work in [PR #4769](https://github.com/loopdive/js2/pull/4769).

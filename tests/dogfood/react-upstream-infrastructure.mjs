@@ -522,6 +522,12 @@ export function installReactUpstreamInfrastructure({ react, build = "production"
   });
   const propTypes = readModule("prop-types");
   const webStreams = readModule("web-streams-polyfill/ponyfill") ?? readModule("web-streams-polyfill");
+  const shouldIgnoreConsoleError = readModule("internal-test-utils/shouldIgnoreConsoleError") ?? (() => false);
+  // React's Jest preset aliases `scheduler` to the mock scheduler for
+  // upstream tests. The published renderer keeps its own scheduler wiring;
+  // this value is only the test-side dependency that provides log/flush
+  // assertions.
+  const schedulerMock = readModule("scheduler/unstable_mock") ?? readModule("scheduler");
   // React's create-react-class integration tests import both the already
   // configured public creator and the original three-argument factory. Keep
   // both host capabilities distinct: returning the configured creator from
@@ -550,6 +556,13 @@ export function installReactUpstreamInfrastructure({ react, build = "production"
   const reactJsxRuntime = readModule("react/jsx-runtime");
   const reactJsxDevRuntime = readModule("react/jsx-dev-runtime");
   const reactNativeRenderer = readModule("react-native-renderer") ?? { version: nativeReact?.version };
+  const nodeUtilModule = readModule("util") ?? {};
+  const nodeAsyncHooksModule = readModule("async_hooks") ?? {};
+  const nodeCryptoModule = readModule("crypto") ?? {};
+  const nodeStreamModule = readModule("stream") ?? {};
+  const nodeTextEncoder = typeof nodeUtilModule.TextEncoder === "function" ? new nodeUtilModule.TextEncoder() : null;
+  const nodeAsyncLocalStorage =
+    typeof nodeAsyncHooksModule.AsyncLocalStorage === "function" ? new nodeAsyncHooksModule.AsyncLocalStorage() : null;
 
   // React's internal assertion helpers consume console output after a render.
   // Capture it without printing hundreds of expected development warnings.
@@ -581,7 +594,23 @@ export function installReactUpstreamInfrastructure({ react, build = "production"
     createReactClass,
     createReactClassFactory: createReactClassFactoryModule,
     internalTestUtils: createInternalTestUtils({ reactTestRenderer, reactDom, consumeConsole, preferReactDomAct }),
+    shouldIgnoreConsoleError,
+    schedulerMock,
     webStreams,
+    // Node Fizz reads these namespaces during module initialization, before
+    // the lifted entry's Jest shim exists. Keep the small host records explicit
+    // so the compiled graph can construct the real host classes without a
+    // dynamic namespace-property lookup.
+    nodeUtil: { TextEncoder: nodeUtilModule.TextEncoder, TextDecoder: nodeUtilModule.TextDecoder },
+    nodeAsyncHooks: { AsyncLocalStorage: nodeAsyncHooksModule.AsyncLocalStorage },
+    nodeCrypto: { createHash: nodeCryptoModule.createHash },
+    nodeStream: {
+      Readable: nodeStreamModule.Readable,
+      Writable: nodeStreamModule.Writable,
+      PassThrough: nodeStreamModule.PassThrough,
+    },
+    nodeTextEncoder,
+    nodeAsyncLocalStorage,
     patchMessageChannel() {},
     // Node Fizz's upstream tests construct `stream.PassThrough` through a
     // dynamic namespace member. Expose the host construction as a named

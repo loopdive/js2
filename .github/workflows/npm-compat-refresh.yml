@@ -88,7 +88,7 @@ env:
 
 concurrency:
   # GitHub keeps only one pending run per concurrency group. A ref-only key
-  # therefore cancelled older pending push runs even with `cancel-in-progress: false`
+  # therefore cancelled older pending runs even with `cancel-in-progress: false`
   # (the active run survived, but its predecessor never got a runner). Pushes
   # are keyed by their immutable SHA; scheduled and manual runs also get a
   # unique run-id suffix so a delayed measurement is never discarded while it
@@ -153,6 +153,15 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Measure package group
+        env:
+          # ReactDOM's project lane has many independent compile batches. Keep
+          # two compiler workers active so the long pole finishes before the
+          # job ceiling without exhausting the runner's memory.
+          DOGFOOD_REACT_DOM_PROJECT_CONCURRENCY: "2"
+          # (#4604) Keep react-dom's per-batch [dogfood] progress lines in the
+          # job log. Two full runs were lost to a silent single-line log where
+          # a 350-min timeout and a hang were indistinguishable.
+          NPM_COMPAT_SUITE_LOGS: "1"
         run: |
           set -euo pipefail
           pnpm run generate:npm-compat -- \
@@ -333,21 +342,23 @@ jobs:
 
           # Do not replace the promotion branch while its current PR checks are
           # running. A force-update fires `pull_request:synchronize`; GitHub
-          # cancels the checks for the old head before starting checks for the
-          # new one. On a long npm-compat refresh cadence that turns every PR
-          # run into a moving target and can keep the artifact PR permanently
-          # pending. Let the current head finish; a later refresh will publish
-          # the newer measurement. Do not age this guard out: the refresh
-          # matrix itself has a 350-minute timeout, so a two-hour cutoff would
-          # knowingly cancel a valid long-running check. A genuinely wedged PR
-          # is surfaced by the staleness workflow and needs human intervention.
+          # cancels the checks for the old head before starting a new one. On a
+          # long npm-compat refresh cadence that turns every PR run into a
+          # moving target and can keep the artifact PR permanently pending.
+          # Let the current head finish; a later refresh will publish the newer
+          # measurement. Do not age this guard out: the refresh matrix itself
+          # has a 350-minute timeout, so a two-hour cutoff would knowingly
+          # cancel a valid long-running check. A genuinely wedged PR is
+          # surfaced by the staleness workflow and needs human intervention.
           ACTIVE_CHECKS="unreadable"
           if [ -n "$PR_HEAD_SHA" ]; then
-            ACTIVE_CHECKS="$(gh api \
-              --paginate --slurp \
+            if ! ACTIVE_CHECKS="$(gh api \
+              --paginate \
               "/repos/${GITHUB_REPOSITORY}/commits/${PR_HEAD_SHA}/check-runs?per_page=100" \
-              --jq '[.[].check_runs[] | select(.status == "queued" or .status == "in_progress")] | length' \
-              2>/dev/null || echo "unreadable")"
+              --jq '[.check_runs[] | select(.status == "queued" or .status == "in_progress")] | length' \
+              2>/dev/null | awk '{ total += $1 } END { print total + 0 }')"; then
+              ACTIVE_CHECKS="unreadable"
+            fi
           fi
           case "$ACTIVE_CHECKS" in
             unreadable)
