@@ -75,24 +75,17 @@ env:
   # than the problem being fixed. Nobody else ever touches this ref.
   PROMOTION_BRANCH: ci/npm-compat-refresh
 
-concurrency:
-  # ONE measurement at a time, coalesced to the freshest main (stakeholder,
-  # 2026-08-23). Per-SHA groups made every push its own group, so a busy main
-  # ran FOUR ~4-hour, 9-runner measurements in parallel (runs 807-810), each
-  # of an intermediate sha whose artifact was superseded before it finished.
-  #
-  # A single group serializes: one run active, and GitHub keeps only the
-  # LATEST pending run — older pending runs are superseded (shown as
-  # "cancelled" without ever starting). That used to be treated as a lost
-  # measurement, which is why the per-SHA keys existed; it no longer is,
-  # because the `resolve` job below pins the checkout to main HEAD **at run
-  # start** rather than the trigger sha. Whatever run survives the queue
-  # measures a main that CONTAINS every superseded trigger, so discarding
-  # queued predecessors is lossless by construction. Promotion stays
-  # freshness-checked with a lease-protected force push.
-  group: npm-compat-refresh
-  # Never kill an ACTIVE measurement — only queued ones coalesce.
-  cancel-in-progress: false
+# NO workflow-level concurrency group: serialization and coalescing moved to
+# the JOBS (stakeholder, 2026-08-23 — "run this for each npm package
+# independently"). Each measure row carries a PER-PACKAGE concurrency group,
+# so every package serializes and coalesces on its own: a fast package's next
+# measurement is never queued behind react-dom's ~3-4h row, and a failing
+# package costs only its own entry (the coordinator carries it forward from
+# the last snapshot, marked stale). Promotion is split into two lanes (fast /
+# long-pole) so the dashboard updates the moment the fast rows finish. The
+# resolve-at-start pin below is what keeps per-row coalescing lossless: a
+# superseded queued row's trigger is contained in the main the surviving row
+# measures.
 
 jobs:
   # Pin main HEAD ONCE, at run start, for every job in this run. Runs no
@@ -115,63 +108,57 @@ jobs:
       - name: Resolve main HEAD
         id: head
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          sha=$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | cut -f1)
+          sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)
           if [ -z "$sha" ]; then echo "could not resolve refs/heads/main" >&2; exit 1; fi
           echo "resolved main HEAD: $sha (trigger was ${GITHUB_SHA})"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
-  # The package runners are independent. Running them as a matrix changes the
-  # wall clock from the sum of every upstream suite to the slowest group, so a
-  # busy main can finish a refresh without a newer push cancelling its lane.
-  # `fail-fast: false` is intentional: one flaky package must not cancel the
-  # other measurements or leave the coordinator without their artifacts.
-  measure:
-    name: Measure npm-compat (${{ matrix.id }})
+  # One row PER PACKAGE, each with its own concurrency group: every package
+  # serializes and coalesces independently, so a slow or failing package
+  # never delays another package's measurement. `fail-fast: false` keeps one
+  # failing package from cancelling the rest; a row that fails simply leaves
+  # its package to be carried forward from the last snapshot (marked stale).
+  measure-fast:
+    name: Measure npm-compat (${{ matrix.package }})
     needs: resolve
     if: github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+    concurrency:
+      group: npm-compat-pkg-${{ matrix.package }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - id: core
-            packages: acorn,marked,clsx,cookie
-          - id: frontend
-            packages: eslint,prettier,react
-          # Keep the renderer suites in separate jobs. ReactDOM is the long
-          # pole; when it shared one 350-minute job with jsdom and Redux, the
-          # whole row was cancelled at the job timeout and the smaller suites
-          # never produced partial reports. Isolating the rows lets each
-          # package finish (or report its own timeout) independently.
-          - id: react-dom
-            packages: react-dom
-          # lit is the OTHER long pole (~40 min — it runs lit's own upstream
-          # unit suite). Sharing a row with webpack/jest/stylelint/three made
-          # that row ~55 min, one flake away from gating the whole refresh;
-          # isolated, the ex-`tools` row drops to ~15 min and a lit timeout
-          # can't take the other measurements down with it (measured
-          # 2026-08-23, run 32618985600: lit 40m; webpack 2.3m, jest 3.4m,
-          # styled-components 0.9m, stylelint 4.9m, three 3.3m).
-          - id: lit
-            packages: lit
-          # redux (1.5m), jsdom (3.3m) and tailwindcss (2.4m) each idled a
-          # runner after ~3 minutes of work; one ~7-minute row covers all
-          # three. (Their earlier isolation was about not sharing a row with
-          # the 350-minute ReactDOM job, not about being alone forever.)
-          - id: small
-            packages: redux,jsdom,tailwindcss
-          - id: libraries
-            packages: hono,lodash,lodash-es,axios,uuid,moment
-          - id: tools
-            packages: webpack,jest,styled-components,stylelint,three
-          - id: typescript
-            packages: typescript
+        package:
+          - acorn
+          - marked
+          - clsx
+          - cookie
+          - eslint
+          - prettier
+          - react
+          - redux
+          - jsdom
+          - tailwindcss
+          - hono
+          - lodash
+          - lodash-es
+          - axios
+          - uuid
+          - moment
+          - webpack
+          - jest
+          - styled-components
+          - stylelint
+          - three
+          - typescript
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     permissions:
       contents: read
-
     steps:
       - uses: actions/checkout@v5
         with:
@@ -185,76 +172,52 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Measure package group
+      - name: Measure package
         env:
-          # ReactDOM's project lane has many independent compile batches. Keep
-          # two compiler workers active so the long pole finishes before the
-          # job ceiling without exhausting the runner's memory.
-          DOGFOOD_REACT_DOM_PROJECT_CONCURRENCY: "2"
-          # (#4604) Keep react-dom's per-batch [dogfood] progress lines in the
-          # job log. Two full runs were lost to a silent single-line log where
-          # a 350-min timeout and a hang were indistinguishable.
-          NPM_COMPAT_SUITE_LOGS: "1"
+          NPM_COMPAT_SUITE_LOGS: 1
         run: |
           set -euo pipefail
           pnpm run generate:npm-compat -- \
-            --only "${{ matrix.packages }}" \
-            --partial-output "$RUNNER_TEMP/npm-compat-${{ matrix.id }}.json"
+            --only "${{ matrix.package }}" \
+            --partial-output "$RUNNER_TEMP/npm-compat-${{ matrix.package }}.json"
 
-      - name: Discard incomplete package-group report
+      - name: Discard incomplete package report
         if: failure()
-        run: rm -f "$RUNNER_TEMP/npm-compat-${{ matrix.id }}.json"
+        run: rm -f "$RUNNER_TEMP/npm-compat-${{ matrix.package }}.json"
 
-      - name: Upload package-group report
+      - name: Upload package report
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: npm-compat-partial-${{ matrix.id }}
-          path: ${{ runner.temp }}/npm-compat-${{ matrix.id }}.json
-          # A failed worker has no fresh report. The coordinator fills that
-          # package group from the last committed snapshot and marks it stale,
-          # so one flaky upstream suite cannot freeze every other package.
+          name: npm-compat-partial-fast-${{ matrix.package }}
+          path: ${{ runner.temp }}/npm-compat-${{ matrix.package }}.json
           if-no-files-found: warn
           retention-days: 14
 
-  refresh:
-    needs: [resolve, measure]
-    # The `paths-ignore` filter on the push trigger breaks the promotion loop
-    # (our own landing changes only artifact paths). The actor guard is kept
-    # as a second, cheaper line against any OTHER bot push to main.
-    # Matrix failures are data-quality signals, not a reason to discard the
-    # successful groups. The merge step carries missing groups forward from
-    # the committed snapshot and marks them stale. A cancelled matrix cannot
-    # be trusted because it may have no artifacts at all.
-    if: always() && needs.resolve.result == 'success' && needs.measure.result != 'cancelled' && github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+  # The two LONG-POLE packages (react-dom ~3-4h; lit ~40m — each runs its
+  # package's own upstream suite) get their own lane so their duration and
+  # their failures never gate the fast lane's promotion.
+  measure-slow:
+    name: Measure npm-compat (${{ matrix.package }})
+    needs: resolve
+    if: github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+    concurrency:
+      group: npm-compat-pkg-${{ matrix.package }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - react-dom
+          - lit
     runs-on: ubuntu-24.04
-    # The coordinator only assembles reports and promotes them. The expensive
-    # package work runs in the matrix above, so this retains the 350-minute
-    # ceiling as a final safety bound without making one serial job the
-    # availability bottleneck (#4604).
     timeout-minutes: 350
-    environment: baseline-promote
     permissions:
-      # The branch push uses MAIN_DEPLOY_KEY (SSH) and the PR is opened with a
-      # GitHub App token, so GITHUB_TOKEN needs no write scope here. `actions:
-      # write` is gone with the deploy-pages dispatch it existed for (#4217 —
-      # see the note at the end of this job).
       contents: read
-
     steps:
-      - name: Resolve immutable source revision
-        id: refs
-        shell: bash
-        # The run-wide pin from the `resolve` job — NOT the trigger sha. All
-        # nine measure rows checked out this same revision.
-        run: echo "source_sha=${{ needs.resolve.outputs.sha }}" >> "$GITHUB_OUTPUT"
-
-      # This job only assembles trusted worker output and performs promotion.
-      # The workers already checked out the same immutable source revision and
-      # do not receive write credentials.
       - uses: actions/checkout@v5
         with:
-          ref: ${{ steps.refs.outputs.source_sha }}
+          ref: ${{ needs.resolve.outputs.sha }}
           fetch-depth: 1
           submodules: false
           persist-credentials: false
@@ -264,384 +227,52 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Download package-group reports
-        uses: actions/download-artifact@v7
-        # If every worker failed, there are no partial artifacts. The merge
-        # script can still publish the last complete snapshot, so do not make
-        # an empty download abort the coordinator.
-        continue-on-error: true
-        with:
-          pattern: npm-compat-partial-*
-          path: ${{ runner.temp }}/npm-compat-partials
-          merge-multiple: true
+      - name: Measure package
+        env:
+          DOGFOOD_REACT_DOM_PROJECT_CONCURRENCY: 2
+          NPM_COMPAT_SUITE_LOGS: 1
+        run: |
+          set -euo pipefail
+          pnpm run generate:npm-compat -- \
+            --only "${{ matrix.package }}" \
+            --partial-output "$RUNNER_TEMP/npm-compat-${{ matrix.package }}.json"
 
-      - name: Assemble the npm-compat artifacts
-        run: node scripts/merge-npm-compat-partials.mjs "$RUNNER_TEMP/npm-compat-partials"
+      - name: Discard incomplete package report
+        if: failure()
+        run: rm -f "$RUNNER_TEMP/npm-compat-${{ matrix.package }}.json"
 
-      # Refuse to publish an empty or truncated artifact. A generator that exits
-      # 0 having written nothing useful would otherwise blank the dashboard, and
-      # the page has no other source of truth to fall back on.
-      # The check itself lives in scripts/check-npm-compat-artifact.mjs, NOT
-      # inline: an inline single-quoted `node -e` script is invisible to every
-      # lint/syntax gate, and one apostrophe in a JS comment truncated it and
-      # silently blocked ALL promotions for 6 hours on 2026-08-23 (#4604 S8).
-      - name: Sanity-check the generated artifact
-        run: node scripts/check-npm-compat-artifact.mjs
-
-      # (2026-08-09, stakeholder) A DEFERRED run's measurement must never be
-      # LOST. On 2026-08-09 two successful runs — including the one measuring
-      # the #4252 bag-slot merge — deferred their promote behind a busy queue,
-      # and their numbers were unrecoverable: no commit, no artifact, logs
-      # don't carry the JSON. Upload the generated artifacts unconditionally
-      # so every measurement is inspectable the moment the run ends, published
-      # or not. Still worth keeping now that promotion goes through a PR: a run
-      # that skips its push (queued PR, or a fresher artifact already pending)
-      # still has a measurement worth reading.
-      - name: Upload generated artifacts (always — unpublished measurements must survive)
+      - name: Upload package report
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: npm-compat-generated
-          path: |
-            benchmarks/results/npm-compat.json
-            benchmarks/results/npm-compat-perf.json
-            benchmarks/results/npm-compat-history.json
+          name: npm-compat-partial-slow-${{ matrix.package }}
+          path: ${{ runner.temp }}/npm-compat-${{ matrix.package }}.json
           if-no-files-found: warn
           retention-days: 14
 
-      # THE PR MUST BE OPENED BY AN ACTOR THAT IS NOT `GITHUB_TOKEN`. A pull
-      # request created with `GITHUB_TOKEN` fires NO `pull_request` and no
-      # `pull_request_target` events — GitHub's "a workflow run cannot trigger
-      # another workflow run" rule — so it gets neither `CI` nor `cla-check`,
-      # never reaches `mergeStateStatus == CLEAN`, and `auto-enqueue.yml` (which
-      # takes only CLEAN/HAS_HOOKS) never touches it. The result would be a
-      # green-looking PR that strands forever and an artifact that silently
-      # stops moving: the exact failure shape this workflow exists to prevent.
-      # Same rule that wedged the merge queue for a full night in #2523.
-      #
-      # A GitHub App installation token is a distinct actor, which is why
-      # `auto-enqueue.yml` already mints one. Reuse those secrets rather than a
-      # PAT: `AUTO_ENQUEUE_TOKEN` is NOT set on this repo (#2523 resolved by
-      # adopting the app instead), so a `secrets.AUTO_ENQUEUE_TOKEN || ...`
-      # fallback would silently select the broken path.
-      #
-      # Minted HERE, after matrix generation, because an installation
-      # token expires in one hour.
-      - name: Mint a GitHub App token for the promotion PR
-        id: app-token
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ secrets.ENQUEUE_APP_ID }}
-          private-key: ${{ secrets.ENQUEUE_APP_PRIVATE_KEY }}
+  # Each lane promotes the moment ITS rows finish — the fast lane's dashboard
+  # update is never delayed or blocked by react-dom/lit or by any failing
+  # package (row failures are carried forward from the last snapshot, marked
+  # stale, inside the coordinator). Cross-lane consistency lives in the
+  # coordinator's branch-overlay + freshness stamps. A lane whose rows were
+  # ALL superseded in their per-package queues reports `cancelled` and its
+  # promotion is skipped — a newer run owns those measurements.
+  refresh-fast:
+    needs: [resolve, measure-fast]
+    if: always() && needs.resolve.result == 'success' && needs.measure-fast.result != 'cancelled' && github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+    uses: ./.github/workflows/npm-compat-promote.yml
+    with:
+      source_sha: ${{ needs.resolve.outputs.sha }}
+      partial_pattern: npm-compat-partial-fast-*
+      lane: fast
+    secrets: inherit
 
-      # Force-updating the promotion branch WHILE its PR is the in-flight merge
-      # group rebuilds that group and cancels its run — the same harm this whole
-      # change removes, just relocated. So look before pushing.
-      #
-      # The merge-queue gate remains fail-open: if the queue cannot be read we
-      # proceed, because the harm of a wrong push is bounded (with
-      # `max_entries_to_build=1` the cancelled group contains only this PR), and
-      # the harm of a wrong skip is the artifact freezing behind an unreadable
-      # gate — which is #4130, the failure this repo has already paid for once.
-      # The current-head check gate below is deliberately fail-closed instead:
-      # an unreadable check state must not knowingly cancel the CI it protects.
-      - name: Check whether the promotion PR is already in the merge queue
-        id: queue_state
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        shell: bash
-        run: |
-          set -uo pipefail
-          PR_INFO="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$PROMOTION_BRANCH" \
-            --state open --json number,headRefOid \
-            --jq '.[0] | if . == null then empty else "\(.number) \(.headRefOid)" end' \
-            2>/dev/null || true)"
-          PR_NUMBER="${PR_INFO%% *}"
-          PR_HEAD_SHA="${PR_INFO#* }"
-          if [ "$PR_INFO" = "$PR_NUMBER" ]; then
-            PR_HEAD_SHA=""
-          fi
-          echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
-
-          if [ -z "$PR_NUMBER" ]; then
-            echo "No open promotion PR on ${PROMOTION_BRANCH}; nothing can be queued."
-            echo "skip=0" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "Open promotion PR: #${PR_NUMBER}"
-
-          # Do not replace the promotion branch while its current PR checks are
-          # running. A force-update fires `pull_request:synchronize`; GitHub
-          # cancels the checks for the old head before starting a new one. On a
-          # long npm-compat refresh cadence that turns every PR run into a
-          # moving target and can keep the artifact PR permanently pending.
-          # Let the current head finish; a later refresh will publish the newer
-          # measurement. Do not age this guard out: the refresh matrix itself
-          # has a 350-minute timeout, so a two-hour cutoff would knowingly
-          # cancel a valid long-running check. A genuinely wedged PR is
-          # surfaced by the staleness workflow and needs human intervention.
-          ACTIVE_CHECKS="unreadable"
-          if [ -n "$PR_HEAD_SHA" ]; then
-            if ! ACTIVE_CHECKS="$(gh api \
-              --paginate \
-              "/repos/${GITHUB_REPOSITORY}/commits/${PR_HEAD_SHA}/check-runs?per_page=100" \
-              --jq '[.check_runs[] | select(.status == "queued" or .status == "in_progress")] | length' \
-              2>/dev/null | awk '{ total += $1 } END { print total + 0 }')"; then
-              ACTIVE_CHECKS="unreadable"
-            fi
-          fi
-          case "$ACTIVE_CHECKS" in
-            unreadable)
-              echo "::warning title=npm-compat-refresh::could not read checks for promotion PR #${PR_NUMBER}; leaving its branch untouched to avoid cancelling CI."
-              echo "skip=1" >> "$GITHUB_OUTPUT"
-              exit 0
-              ;;
-            ''|*[!0-9]*)
-              echo "::warning title=npm-compat-refresh::invalid active-check count (${ACTIVE_CHECKS}); leaving promotion PR #${PR_NUMBER} untouched."
-              echo "skip=1" >> "$GITHUB_OUTPUT"
-              exit 0
-              ;;
-            0)
-              echo "No checks are running on promotion PR #${PR_NUMBER}; continuing."
-              ;;
-            *)
-              echo "Promotion PR #${PR_NUMBER} has ${ACTIVE_CHECKS} check(s) in flight; leaving its branch untouched."
-              echo "skip=1" >> "$GITHUB_OUTPUT"
-              exit 0
-              ;;
-          esac
-
-          QUEUED="$(gh api graphql -f query="
-            query(\$owner: String!, \$name: String!) {
-              repository(owner: \$owner, name: \$name) {
-                mergeQueue(branch: \"main\") {
-                  entries(first: 100) { nodes { pullRequest { number } } }
-                }
-              }
-            }" -f owner="${GITHUB_REPOSITORY%%/*}" -f name="${GITHUB_REPOSITORY##*/}" \
-            --jq "[.data.repository.mergeQueue.entries.nodes[].pullRequest.number] | index(${PR_NUMBER}) != null" 2>/dev/null || echo "unreadable")"
-
-          case "$QUEUED" in
-            true)
-              echo "::notice title=npm-compat-refresh::PR #${PR_NUMBER} is in the merge queue; leaving it alone. This measurement is uploaded as an artifact and the next run publishes a fresher one."
-              echo "skip=1" >> "$GITHUB_OUTPUT"
-              ;;
-            false)
-              echo "PR #${PR_NUMBER} is not queued; safe to force-update its branch."
-              echo "skip=0" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "::warning title=npm-compat-refresh::could not read the merge queue; proceeding (an unreadable gate must never freeze the artifact — #4130)."
-              echo "skip=0" >> "$GITHUB_OUTPUT"
-              ;;
-          esac
-
-      - name: Publish the refreshed artifacts to the promotion branch
-        if: steps.queue_state.outputs.skip != '1'
-        id: promote
-        env:
-          MAIN_DEPLOY_KEY: ${{ secrets.MAIN_DEPLOY_KEY }}
-          SOURCE_SHA: ${{ steps.refs.outputs.source_sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -z "${MAIN_DEPLOY_KEY:-}" ]; then
-            echo "::error::MAIN_DEPLOY_KEY is empty in the baseline-promote environment."
-            exit 1
-          fi
-
-          # The branch push MUST NOT use GITHUB_TOKEN either, for the same
-          # reason as the PR: a `synchronize` from GITHUB_TOKEN would not
-          # re-run the PR's checks. A deploy key is a distinct credential and
-          # its pushes do trigger workflows.
-          eval "$(ssh-agent -s)"
-          echo "$MAIN_DEPLOY_KEY" | ssh-add -
-          mkdir -p ~/.ssh
-          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote add deploykey "git@github.com:${GITHUB_REPOSITORY}.git"
-          git fetch deploykey main
-          git fetch deploykey "$PROMOTION_BRANCH" || true
-
-          # Do NOT gate on "did main advance". It always advances — the job runs
-          # matrix generation and main merges faster than that — so the sha-equality guard
-          # this replaces deferred EVERY completed run to "a newer run", while
-          # `cancel-in-progress` was killing those newer runs. The two composed
-          # into a livelock: the artifact sat on its first snapshot for 9 hours
-          # while both mechanisms each pointed at the other.
-          #
-          # The invariant that actually matters is FRESHNESS: never overwrite a
-          # newer artifact with an older measurement. Compare `generatedAt`, not
-          # commit shas. Both landed (main) and PENDING (the promotion branch)
-          # copies count — a measurement already waiting in the open PR is just
-          # as real as one on main, and clobbering it with an older one would
-          # move the dashboard backwards.
-          # Read remote copies via `git show`, NOT `git checkout -- <path>`: the
-          # work tree currently holds the freshly generated artifact and a
-          # checkout would overwrite the very thing we are about to publish.
-          stamp_of() {
-            git show "$1:benchmarks/results/npm-compat.json" 2>/dev/null > /tmp/other-npm-compat.json || : > /tmp/other-npm-compat.json
-            node -e 'try{const r=JSON.parse(require("fs").readFileSync("/tmp/other-npm-compat.json","utf8"));process.stdout.write(String(r.generatedAt??""))}catch{process.stdout.write("")}'
-          }
-          MAIN_STAMP="$(stamp_of deploykey/main)"
-          BRANCH_STAMP="$(stamp_of "deploykey/${PROMOTION_BRANCH}")"
-          OURS_STAMP="$(node -e 'try{const r=JSON.parse(require("fs").readFileSync("benchmarks/results/npm-compat.json","utf8"));process.stdout.write(String(r.generatedAt??""))}catch{process.stdout.write("")}')"
-          echo "generatedAt — main: ${MAIN_STAMP:-<none>} | ${PROMOTION_BRANCH}: ${BRANCH_STAMP:-<none>} | ours: ${OURS_STAMP:-<none>}"
-          for OTHER in "$MAIN_STAMP" "$BRANCH_STAMP"; do
-            if [ -n "$OTHER" ] && [ -n "$OURS_STAMP" ] && [[ "$OTHER" > "$OURS_STAMP" ]]; then
-              echo "A fresher artifact already exists (${OTHER} > ${OURS_STAMP}); nothing to publish."
-              exit 0
-            fi
-          done
-
-          ARTIFACTS=(
-            benchmarks/results/npm-compat.json
-            benchmarks/results/npm-compat-perf.json
-            benchmarks/results/npm-compat-history.json
-            website/public/benchmarks/results/npm-compat.json
-            website/public/benchmarks/results/npm-compat-perf.json
-            website/public/benchmarks/results/npm-compat-history.json
-          )
-
-          # Stash the generated artifacts OUTSIDE the work tree, then replay them
-          # onto whatever main is now. The commit cannot be built on SOURCE_SHA:
-          # main has advanced during matrix measurement, so the PR would
-          # open behind main and immediately need a refresh. This is the step
-          # that actually makes a long-running measurement publishable.
-          STAGE="$(mktemp -d)"
-          for f in "${ARTIFACTS[@]}"; do
-            mkdir -p "${STAGE}/$(dirname "$f")"
-            cp "$f" "${STAGE}/$f"
-          done
-
-          # `-f`: the work tree still holds the regenerated artifacts, which
-          # differ from main's committed copies, so a plain checkout would
-          # refuse with "local changes would be overwritten". Discarding them
-          # is safe — STAGE holds the only copy that matters.
-          git checkout -q -f -B "$PROMOTION_BRANCH" deploykey/main
-          for f in "${ARTIFACTS[@]}"; do
-            mkdir -p "$(dirname "$f")"
-            cp "${STAGE}/$f" "$f"
-          done
-
-          # The perf-history artifact ACCUMULATES; the other two are snapshots.
-          # Ours was derived from main as of SOURCE_SHA, so a run published
-          # during matrix measurement — still pending in the open
-          # promotion PR, or already landed on main — is missing from it, and a
-          # force-push of the branch would delete it. Union before committing so
-          # this branch is only ever additive. Idempotent by measurement
-          # identity, and a missing copy is skipped rather than fatal.
-          for REF in deploykey/main "deploykey/${PROMOTION_BRANCH}"; do
-            OTHER="$(mktemp)"
-            if git show "${REF}:benchmarks/results/npm-compat-history.json" > "$OTHER" 2>/dev/null; then
-              node scripts/merge-npm-compat-history.mjs "$OTHER"
-            else
-              echo "No npm-compat history on ${REF}; nothing to union."
-            fi
-          done
-
-          git add -f -- "${ARTIFACTS[@]}"
-
-          if git diff --cached --quiet; then
-            echo "npm-compat artifacts are already current on main; nothing to promote."
-            exit 0
-          fi
-
-          # (#4132/#4140) --no-verify on BOTH the commit and the push. This job
-          # installs dependencies, so husky's hooks are live:
-          #   pre-commit runs `test:changed-root`, which needs a merge base with
-          #     `origin/main`;
-          #   pre-push  runs the oracle ratchet, which fails here too.
-          # The checkout is `fetch-depth: 1` with `persist-credentials: false`
-          # and the push remote is `deploykey`, so `origin/main` does not exist
-          # and neither hook can do its job. The sibling `benchmark-refresh` is
-          # immune only structurally — its promote job is separate and never
-          # runs `pnpm install`, so no hook is installed. This workflow is
-          # deliberately a single coordinator job and has to opt out explicitly. Running
-          # either check over generated JSON artifacts would be meaningless.
-          #
-          # NO `[skip ci]`. The PR now NEEDS its checks to run to become CLEAN;
-          # a `[skip ci]` commit would leave it permanently unmergeable. Landing
-          # via the queue also means the merge to main is an ordinary,
-          # CI-visible push — which is what restores the Pages redeploy (#4217,
-          # see the note at the end of this job).
-          git commit -q --no-verify -m "chore(ci): refresh npm-compat artifacts"
-
-          # Pushes for different main SHAs now run in independent workflow
-          # groups, so two coordinators can reach this point together. Keep
-          # the bot-owned branch race-safe: a lease failure means another run
-          # won the update between our fetch and push. Its freshness check will
-          # publish the newer measurement, so this older run can finish cleanly
-          # without overwriting it.
-          LEASE_SHA="$(git rev-parse "refs/remotes/deploykey/${PROMOTION_BRANCH}" 2>/dev/null || printf '%040d' 0)"
-          if ! git push --no-verify --force-with-lease="refs/heads/${PROMOTION_BRANCH}:${LEASE_SHA}" \
-            deploykey "HEAD:refs/heads/${PROMOTION_BRANCH}"; then
-            echo "A concurrent refresh already updated ${PROMOTION_BRANCH}; leaving its newer artifact in place."
-            exit 0
-          fi
-          echo "Pushed npm-compat artifacts measured at ${SOURCE_SHA} to ${PROMOTION_BRANCH}."
-          echo "published=1" >> "$GITHUB_OUTPUT"
-
-      # Coalesce: open a PR only when none is open. An existing PR was just
-      # force-updated above, which fires `synchronize` and re-runs its checks —
-      # nothing more to do for it here.
-      #
-      # This workflow does NOT enqueue, by policy (#2786): `auto-enqueue.yml` is
-      # the single enqueuer and picks the PR up when its required checks go
-      # green. An artifact-only diff touches nothing on the `&test262-paths`
-      # anchor in test262-sharded.yml, so the ~19-minute shard matrix is skipped
-      # in the merge group (the `detect` job emits run_shards=false) — keep it
-      # that way: never let this PR touch `package.json`, `pnpm-lock.yaml`, or
-      # anything else on that list.
-      - name: Open the promotion PR if none is open
-        if: steps.promote.outputs.published == '1' && steps.queue_state.outputs.pr_number == ''
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          SOURCE_SHA: ${{ steps.refs.outputs.source_sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Re-check right before creating. `queue_state` ran before a ~1-minute
-          # push; a PR opened in that window would make `gh pr create` fail the
-          # job over a condition that is actually the desired end state.
-          EXISTING="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$PROMOTION_BRANCH" \
-            --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
-          if [ -n "$EXISTING" ]; then
-            echo "PR #${EXISTING} already open on ${PROMOTION_BRANCH}; the force-update above is all it needed."
-            exit 0
-          fi
-
-          # printf, not a heredoc: heredoc body lines would have to be indented
-          # to stay inside this YAML block scalar, and those leading spaces
-          # would land in the PR body as markdown code blocks.
-          BODY="$(printf '%s\n' \
-            'Automated by `.github/workflows/npm-compat-refresh.yml`.' \
-            '' \
-            "Regenerated \`benchmarks/results/npm-compat*.json\` and their \`website/public/\` twins from main at \`${SOURCE_SHA}\`." \
-            "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            '' \
-            'This branch is reused and force-updated on every refresh, so this PR always carries the newest measurement — there is never a backlog of stale artifact PRs. Merging it through the queue is deliberate: a direct push to main rebuilds every in-flight merge group and discards its validation.' \
-            '' \
-            'Data only. Do not add source, `package.json` or lockfile changes here — they would pull the full test262 matrix into this PR'"'"'s merge group.')"
-          gh pr create -R "$GITHUB_REPOSITORY" \
-            --base main \
-            --head "$PROMOTION_BRANCH" \
-            --title "chore(ci): refresh npm-compat artifacts" \
-            --body "$BODY"
-
-      # (#4217) The explicit `deploy-pages.yml` dispatch that used to live here
-      # is GONE, and its root cause with it. That dispatch existed because the
-      # artifact commit carried `[skip ci]`, which suppresses EVERY workflow for
-      # that push — including `deploy-pages`, whose only relevant trigger is
-      # `push: branches: [main]` with no path filter. The site therefore kept
-      # serving the previous JSON until some later unrelated merge redeployed it
-      # (observed 2026-08-08: artifact published 05:56, last deploy 05:34).
-      #
-      # The artifact now lands as an ordinary merge-queue merge with no
-      # `[skip ci]`, so that same `push: main` trigger fires on the landing
-      # commit and Pages rebuilds from a tree that already contains the fresh
-      # artifact. Dispatching from THIS run would in fact be wrong now: the
-      # artifact is not on main yet when this job ends, so the deploy would
-      # rebuild the stale page and #3958/#3977 would be back.
+  refresh-slow:
+    needs: [resolve, measure-slow]
+    if: always() && needs.resolve.result == 'success' && needs.measure-slow.result != 'cancelled' && github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+    uses: ./.github/workflows/npm-compat-promote.yml
+    with:
+      source_sha: ${{ needs.resolve.outputs.sha }}
+      partial_pattern: npm-compat-partial-slow-*
+      lane: slow
+    secrets: inherit
