@@ -236,6 +236,53 @@ Stated residual: the reconstruction is a SNAPSHOT, not the box's live view.
 of it is not observed, and a compiled write is not pushed back. Every other
 piece of regexp state is immutable, so `lastIndex` is the whole divergence.
 
+### …and the part that was NOT optional: the membrane registry was quadratic
+
+The six eval rows are `for (cu = 0; cu <= 0xffff; ++cu)` loops. On base they
+abort on iteration 0, so nothing ever ran them; the moment `.source` answers,
+they run **65,536 evals**. That turned out to be the real work of this issue.
+
+Three registry costs scaled with the number of PUBLISHED OBJECTS, each paid
+once per eval, i.e. O(N²) over a loop:
+
+| site                        | what it did per eval                                            | fix                                                                                |
+| --------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `qjsFindBoxIndex` (forward) | one `qjs_is_equal` **FFI call per registry row**                | O(1) open-addressing hash keyed by the JSValue PAYLOAD word (`qjs_abi_payload_offset`) |
+| `qjsSyncBoxes`              | one array read per row, twice per crossing, to test `mirror==1` | walk a maintained `qjsMirroredRows` index list instead                              |
+| `qjsHandleOf` (reverse)     | four `===` per row, **once per global pushed** — globals × rows | partition the rows by `value instanceof RegExp`; the globals push skips the exploding partition |
+
+The payload key is safe rather than merely likely-unique **because every row
+retains its handle for the instance lifetime** (the slice-3 note), so a
+registered object cannot be freed and its `JSObject*` cannot be recycled.
+
+`Map` is not an alternative and that is measured, not assumed: js2wasm's
+standalone `Map` is LINEAR — 6.8 µs/lookup at 500 entries, 45 µs at 4,000,
+480 µs at 32,000.
+
+Measured on the same build, an N-eval loop with 16 object-valued globals
+(`.tmp/evalbench.mts`, no test262 harness):
+
+| what the eval RETURNS                     | N=3,200         | N=12,800       |
+| ----------------------------------------- | --------------- | -------------- |
+| a number (publishes nothing)              | 2.28 ms/eval    | 2.73 ms/eval   |
+| a RegExp (this fix)                       | 1.71 ms/eval    | 4.03 ms/eval   |
+| a plain object (the **pre-existing** box) | **116 ms/eval** | (did not finish) |
+
+Two things follow, and the second is the one that matters for merge:
+
+1. The reconstruction's marginal cost over publishing nothing is ~1–1.3 ms/eval
+   and roughly flat, not quadratic.
+2. **The mirrored box — what base publishes for these very files — is ~68×
+   more expensive per eval than the reconstruction, and still super-linear.**
+   So this fix does not make these loops slower than base would have been; it
+   makes them dramatically cheaper. The box path's own quadratic
+   (`qjsPullBox` re-reads every mirrored box's keys from the realm on every
+   crossing) is untouched here and is a separate, pre-existing problem.
+
+Before the three fixes the same regexp loop measured 8.9 s at N=800 and 52.0 s
+at N=3,200 — a fit of b ≈ 6.7 µs per row per eval, extrapolating to ~4 HOURS at
+N=65,536. That is what would have burned the 40-minute CI shard.
+
 ## Test Results
 
 (placeholder — filled in below once the after-arm sweep lands)
