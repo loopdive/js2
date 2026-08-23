@@ -1540,7 +1540,13 @@ function runtimeEvalMayRebindIdentifier(
  * host/gc lanes byte-identical.
  */
 function typeofFoldUnsoundForJsParam(ctx: CodegenContext, operand: ts.Expression): boolean {
-  if (ctx.standalone !== true && ctx.wasi !== true) return false;
+  // (#4648) Lane-agnostic since 2026-08-23. #4394 gated this standalone/wasi to
+  // keep the host/gc lanes byte-identical, but the unsoundness is a property of
+  // the SOURCE (a JSDoc `@param {Function}` is not enforced at runtime), not of
+  // the backend: on the JS-host lane `asyncTest(null)` folded
+  // `typeof testFunc !== "function"` to false just the same, skipped the
+  // harness's own guard, and reported a TypeError where the test expects a
+  // Test262Error (`asyncHelpers-asyncTest-rejects-non-callable`).
   let bare: ts.Expression = operand;
   while (
     ts.isParenthesizedExpression(bare) ||

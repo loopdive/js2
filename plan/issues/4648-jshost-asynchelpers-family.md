@@ -9,6 +9,7 @@ loc-budget-allow:
   - src/codegen/expressions/assignment.ts
   - src/codegen/index.ts
   - src/codegen/registry/imports.ts
+  - src/codegen/typeof-delete.ts
 func-budget-allow:
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
   - src/codegen/expressions/assignment.ts::compilePropertyAssignment
