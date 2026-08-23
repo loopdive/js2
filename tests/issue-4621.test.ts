@@ -202,12 +202,12 @@ describe.skipIf(!TEST262)("#4621 — measured residuals (must still fail)", () =
   // value-representation / to-primitive-carrier lane.
   pinResidualRow("language/statements/try/S12.14_A18_T6.js", "valueOf-object loses identity across throw");
 
-  // Family E, and its root cause is NOT eval: `delete <name>` inside a `with`
-  // whose target is a proven closed object literal answers `true` and deletes
-  // NOTHING. The plain `with (o) { del = delete q1 }` control reproduces it
-  // without any eval, and the qualified `delete o.q1` works. Owner: the
-  // with-scope / closed-struct presence lane.
-  pinResidualRow("language/statements/with/S12.10_A5_T4.js", "static with-scope delete is a no-op");
+  // Family E — was pinned residual ("static with-scope delete is a no-op"),
+  // HEALED by #4519 in the same merge cycle (its member-get guard corpus sweep
+  // lists this exact row fail→pass). The pin tripped at merge time — the
+  // designed mechanism — and is flipped positive. The _T5 twin below is still
+  // failing (array-valued property, different shape).
+  pinRow("language/statements/with/S12.10_A5_T4.js", "healed by #4519 member-get guard");
   pinResidualRow("language/statements/with/S12.10_A5_T5.js", "same, array-valued property");
 
   // `in` does not walk a REASSIGNED prototype (`Robin.prototype = __proto`),
