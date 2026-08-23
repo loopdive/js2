@@ -580,3 +580,32 @@ ONE canonical capture type; minimal repro: `.tmp/probe-spyon12.mts` with
 deferTopLevelInit + platform node). Note the cross-lane context above:
 main's 09d00a3c (codex) owns a parallel rest lane; coordinate before touching
 the capture-type seam.
+
+## 2026-08-23 slice 2 — evolving empty-array hoist/statement slot-type split (jest 322 → 328/358)
+
+The "pinned but unfixed" residual from the previous slice is FIXED, and it was
+simpler than the two-lane framing suggested: not two capture lanes
+disagreeing, but the let/const HOIST and the STATEMENT disagreeing about one
+slot. For untyped `const callList = []` + `callList.push(args)` the checker
+EVOLVES the binding to `any[][]`; `walkStmtForLetConst` resolved that evolved
+type (vec-of-vec slot), while `compileVariableStatement` computed the
+usage-inferred vec (`inferArrayVecType`) and RETYPED the reused slot in place
+(the #962-guarded fallback arm). A nested FunctionDeclaration hoisted between
+the two (jest's `spy`) had already baked the stale slot type into its lifted
+signature + closure struct, so materializing it emitted an impossible cast
+(wasm-dis: `ref.cast nullref`) — the `illegal cast` inside `__anon_N_fn` that
+every jest.fn/spyOn test tripped.
+
+Fix: `walkStmtForLetConst` now applies the SAME `inferArrayVecType` inference
+under the same gate (empty-array initializer or `Array<any>`) as
+`compileVariableStatement` and the `var` hoister — one authoritative slot
+type, retype becomes a no-op. Regression test (fails on base):
+`tests/issue-4616-evolving-array-hoist-type.test.ts`.
+
+Measured: jest 322 → **328/358** (prompt bucket 4→0 — its illegal casts were
+all this; deepCyclicCopy 7→5, pTimeout 3 remain but the traps are gone —
+residuals are now assertion-level: prototype-identity `toBe` comparisons and
+spy-count reads through the vec-copy-at-boundary shim caveat). Guards: react
+109 zero-flips, acorn 3518/3518, cookie 63740, clsx 32/32,
+optimize-differential + all #4616/#4618 regression tests green, equivalence
+sample (array/closure/let-const) green.

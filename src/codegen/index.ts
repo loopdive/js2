@@ -11702,6 +11702,31 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           : null;
         const carrierForcesExternref =
           initForcesExternref || realmStructuralCarrier || (mixedAssignmentCarrier && !mixedCarrierProvenF64);
+        // (#4616) Empty-array (or Array<any>) initializer: use the SAME
+        // usage-based vec inference `compileVariableStatement` applies
+        // (`inferArrayVecType`, mirroring the var hoister above). Without it
+        // the hoist resolved the checker's EVOLVED evolving-array type (e.g.
+        // `const callList = []; callList.push(args)` in untyped JS evolves to
+        // `any[][]` → a vec-of-vec slot), while the statement later retyped
+        // the slot to the usage-inferred vec — but a nested FunctionDeclaration
+        // hoisted in between had already baked the stale slot type into its
+        // lifted signature/closure struct, so materializing it cast the
+        // retyped slot to the old field type (impossible cast → trap in every
+        // jest `vi.fn` spy).
+        let hoistInferredArrayVecType: ValType | null = null;
+        if (varType.flags & ts.TypeFlags.Object) {
+          const arrSym = (varType as ts.TypeReference).symbol ?? varType.symbol;
+          if (arrSym?.name === "Array") {
+            const typeArgs = ctx.checker.getTypeArguments(varType as ts.TypeReference);
+            const isInitiallyEmptyArray =
+              decl.initializer !== undefined &&
+              ts.isArrayLiteralExpression(decl.initializer) &&
+              decl.initializer.elements.length === 0;
+            if (isInitiallyEmptyArray || (typeArgs?.[0] && typeArgs[0].flags & ts.TypeFlags.Any)) {
+              hoistInferredArrayVecType = inferArrayVecType(ctx, decl);
+            }
+          }
+        }
         let wasmType: ValType = carrierForcesExternref
           ? { kind: "externref" }
           : mixedCarrierProvenF64
@@ -11710,7 +11735,8 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
               ? { kind: "i32" }
               : isNullablePrimitiveType(varType)
                 ? { kind: "externref" }
-                : (inferLetConstInitializerWasmType(ctx, fctx, decl.initializer) ??
+                : (hoistInferredArrayVecType ??
+                  inferLetConstInitializerWasmType(ctx, fctx, decl.initializer) ??
                   usageInferredLocalType(ctx, decl) ??
                   resolveWasmType(ctx, varType));
         // (#3123) A let-binding declared as a FNCTOR-SUBCLASS class instance
