@@ -35,8 +35,16 @@ var $262 = {
     // value reads, whose standalone lowering differs per builtin.
     var realmGlobal = {
       Array: globalThis.Array,
+      ArrayBuffer: globalThis.ArrayBuffer,
+      Date: globalThis.Date,
+      Function: globalThis.Function,
+      Iterator: globalThis.Iterator,
+      Math: globalThis.Math,
+      Object: globalThis.Object,
       Proxy: globalThis.Proxy,
+      Symbol: globalThis.Symbol,
       eval: globalThis.eval,
+      parseInt: globalThis.parseInt,
       Error: mkerr(),
       TypeError: mkerr(),
       RangeError: mkerr(),
