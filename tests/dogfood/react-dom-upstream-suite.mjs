@@ -106,20 +106,27 @@ export function partitionReactDomTestsForBuild(tests, build) {
   return { tests: runnable, rejected };
 }
 
-function installNativeHostErrorBoundary(nativeHostErrors) {
+// (#4604 S7) Record EVERY late host error; never crash the run. This boundary
+// used to re-throw anything that wasn't the one known late-jsdom error, which
+// killed the whole generator: an upstream test body can schedule scheduler or
+// host-timer work that asserts AFTER its own try/catch has returned — and the
+// per-test watchdog makes abandoned bodies with pending callbacks routine.
+// Refresh run 796 (job 97090976800) died exactly this way at 2h42m: one
+// `expect(...).toBe` firing in a late callback of `ReactDOMFizzForm-test.js`'s
+// testUserInteractionBeforeClientRender became an uncaughtException, the
+// re-throw crashed node, and the entire react-dom measurement — dozens of
+// completed batches — produced no partial. One upstream test's stray callback
+// must cost one report entry, not the package's whole measurement. Every
+// capture is attributed (file/test) and kept in the report's
+// `nativeHostErrors`, with the previously-special jsdom case now a flag.
+export function installNativeHostErrorBoundary(nativeHostErrors) {
   const onUncaught = (error) => {
-    if (!isExpectedLateJsdomHostError(error)) {
-      process.off("uncaughtException", onUncaught);
-      process.nextTick(() => {
-        throw error;
-      });
-      return;
-    }
     nativeHostErrors.push({
       file: nativeContextFile,
       test: nativeContextTest,
-      name: error.name,
-      message: error.message,
+      name: error?.name ?? "Error",
+      message: error?.message ?? String(error),
+      expectedLateJsdomHostError: isExpectedLateJsdomHostError(error),
     });
   };
   process.on("uncaughtException", onUncaught);
