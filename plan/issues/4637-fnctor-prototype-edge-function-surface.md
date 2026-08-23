@@ -577,6 +577,16 @@ compose, and that is the finding.** (One measured anomaly recorded without
 explanation: `G.prototype === P` also reads false in this shape on both arms,
 unlike every other A1 case. Not diagnosed, not guessed at.)
 
+> **PREDICTION ANSWERED (lead, 2026-08-23, at merge):** on the combined
+> campaign tree — BOTH lanes merged (#4639's C1 widening + this branch's A1
+> arm) — the pin still passes as `it.fails`: the arg-position-only shape
+> still answers `2`, not `31`. **The two changes did NOT compose for this
+> shape.** So C1's `NewExpression`-argument classification does not, by
+> itself, make this site reconstruct — the remaining gate is elsewhere
+> (plausibly the same unexplained `G.prototype === P` anomaly recorded
+> above). Successor scope: diagnose why the arg-position-only instance
+> never reconstructs even when classified; the pin flips the day it does.
+
 ### 3. Every pin re-verified against the base — two were mislabelled
 
 dev-4639's operational rule, adopted: **a canary nobody has seen fail is an
