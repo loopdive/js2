@@ -452,6 +452,19 @@ skipped. The 6 base failures are exactly the fixed family (the two corpus rows,
 and all 9 residuals with their 11 controls pass on BOTH arms, which is what
 makes the controls controls.
 
+### Post-merge re-run
+
+`origin/main` advanced 88 commits while the two arms were running, so after the
+measurements I merged it in (plain `git merge origin/main`, tip `58fc17eae`,
+clean) and **re-ran the pins on the combined tree: 29 passed (29), exit 0.**
+Main's only touch to a file this change edits is `array-methods.ts`'s
+`CLOSURE_SAFE_AMBIENT_GLOBALS` gaining `"Function"` (#4657) — no interaction —
+but a sibling's change alters what is REACHABLE, not just what is correct, so
+the re-run is the check rather than the reasoning.
+
+The sweep numbers above are NOT re-run on that tree; they are stated against
+`f6e094cdb`, which is the base both arms shared.
+
 ### What I could NOT measure
 
 - `filter/15.4.4.20-5-7.js` — uses `eval` as a `thisArg` VALUE, and this
