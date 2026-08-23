@@ -767,3 +767,43 @@ pool, and the upstream suite harness tests remain green.
 
 Implementation: [PR #4771](https://github.com/loopdive/js2/pull/4771), stacked
 on the compiler boundary work in [PR #4769](https://github.com/loopdive/js2/pull/4769).
+
+## Where the 300s implementation-compile timeout actually goes (2026-08-23)
+
+`compileImplementationOnly` times out at 300s and the card reports
+`tests.status: "blocked"` with 0 of 1,261 admitted tests executed in Wasm. The
+obvious reading — "a 536 KB module is simply too big" — is wrong, and the
+measurement says so:
+
+| what                                                   | compile | emitted   |
+| ------------------------------------------------------ | ------- | --------- |
+| `react-dom-client.production.js`, TOP LEVEL             | 35.4 s  | 1.36 MB   |
+| the SAME bytes wrapped in `function __mod() { … }`      | 84.4 s  | 1.77 MB   |
+
+**2.4× the time and 30% more code for identical source, purely from being
+inside a function body.** That is the multiplier, not a pathological pass: the
+top-level compile of the whole published file finishes in half a minute.
+
+It matters here because `buildImplementationSource` wraps FOUR modules that way
+— `__reactModule`, `__schedulerModule`, `__reactDomSharedModule`,
+`__reactDomClientModule` — to emulate CJS scoping. The client module alone is
+84 s under that shape; with the other three plus `wireRequires` the assembly
+reaches the 300 s ceiling.
+
+Scaling for reference (top level, production build): 214 KB → 10.5 s,
+536 KB → 35.4 s. Mildly superlinear, nothing like the wrapping penalty.
+
+Two independent directions, either of which unblocks the card:
+
+1. **Harness.** Stop emulating CJS with a function wrapper for the
+   implementation-only compile. The harness ALREADY has the better shape —
+   `buildProjectFiles` emits real `react.ts` / `shared.ts` / `scheduler.ts` /
+   `client.ts` modules for the per-batch test lane. Routing
+   `compileImplementationOnly` through `compileProject` the same way should
+   drop it to roughly the top-level cost.
+2. **Compiler.** Find why a function body costs 2.4× and emits 30% more than
+   the same statements at top level. That is worth knowing regardless of
+   react-dom — every CJS package in the corpus is compiled through a wrapper.
+
+Not yet attempted: neither of these is implemented. The measurement is
+reproducible with `.tmp/rd-wrap.mjs` (top-level vs wrapped, same bytes).
