@@ -134,11 +134,12 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
      hazards are only visible on the combined tree — the lead's merge
      verification must include running each lane's suite there.
    - The merge check reads the run's **counts**, never its exit status —
-     and the exit status lies in BOTH directions. Exit 0 on a run that
-     executed nothing is the familiar half; the inverse is measured too
-     (2026-08-23, dev-4653): **exit status 1 on a run where all 23 tests
-     passed**, the failure being vitest's own `onTaskUpdate` RPC timeout
-     with no test involved. `$?` is not a verdict either way.
+     and the exit status is UNCORRELATED with the outcome in both
+     directions — one measured instance of each, same session:
+     **exit 1 with `23 passed (23)`, everything green** (the failure being
+     vitest's own `onTaskUpdate` RPC timeout, no test involved), and
+     **exit 0 with `22 passed | 36 skipped (58)`**, thirty-six tests never
+     executed. `$?` is not a verdict in either direction.
      Five measured ways a run reports green having measured nothing (or
      less than it claims), and the check comes in **two tiers — do the free
      one first** (2026-08-23, dev-4491's calibration):
@@ -160,14 +161,20 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
        set** — a partial `skipIf` skipping three tests when you expected
        three *different* ones satisfies any count, and is exactly the
        silent hole the rule exists for.
-       **The per-test names are `--reporter=verbose` ONLY** (measured
-       2026-08-23 on `tests/issue-4515-wave5.test.ts`, 22 tests skipped via
-       a no-match `-t`): verbose prints 22 `↓` lines with full paths, while
-       `--reporter=basic` and the DEFAULT reporter print a single
-       file-level `↓ tests/… (22 tests | 22 skipped)` and no names at all.
-       This brief's own per-file loops use `--reporter=basic`, i.e. the one
-       that hides them — switch to verbose for the run where you need to
-       look.
+       **Only the per-test NAMES need verbose; the COUNTS are
+       reporter-independent** (measured 2026-08-23 by two lanes on their
+       own pin files, 22 and 5 tests skipped via a no-match `-t`). It is a
+       three-rung ladder — climb only as far as the question needs, and do
+       NOT re-plumb existing per-file loops:
+       1. `Tests N passed (M)` — **every** reporter — *something* was lost.
+          Tier 1's floor and strong form work unchanged on `basic` and on
+          the default.
+       2. `↓ <file> (N tests | N skipped)` — default and `basic` — **which
+          file**. This catches one file being wholly skipped inside a
+          multi-file run, where the aggregate line would mask it.
+       3. `↓ <full test path>` — **verbose only** — **which tests**, which
+          is what the "read the names" step above needs. Switch reporters
+          for that one run.
      ```
      Tests  1 failed | 45 passed (46)   healthy
      Tests  22 skipped (22)             a `-t` regex matched nothing
