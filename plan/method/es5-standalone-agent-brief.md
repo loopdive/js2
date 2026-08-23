@@ -50,6 +50,27 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
    Build the provider locally with
    `node scripts/build-runtime-eval-provider.mjs --refusal-only` and run the
    pin under `JS2WASM_EVAL_ENGINE=interpreter` before calling it done.
+6. **A table is only evidence for the axes it VARIES — the axis you did not
+   vary is where the wrong rule hides (2026-08-23, #4653/#4662).** A rule
+   generalised from a discriminator table is exactly as strong as the table's
+   dimensions, and a probe harness silently fixes the dimensions you did not
+   think to name. Measured: one lane published THREE successive rules for the
+   same defect. v1 varied only the operator. v2 varied operator ×
+   surrounding-syntax × top-level-vs-inside-a-function — three axes, none of
+   them the one that decided the answer — because every probe wrapped its
+   subject in the same helper, so every "outer" variable happened to be
+   module-level. The real axis was **where the name is bound**; the first probe
+   that varied it (a function-LOCAL, neither eval-local nor module-level)
+   refuted v2 in two lines, and a second two-line probe refuted its remaining
+   half. v2 had already been filed as an issue by then.
+   - Before publishing a rule, name the axes your probes varied and the ones
+     they held FIXED. The held-fixed list is the honest confidence interval —
+     and it is usually short enough to close by hand.
+   - Suspect any axis your harness supplies rather than your test data: the
+     wrapper, the scope you happened to declare things in, the lane, the
+     tier. Those are fixed by convenience, not by design.
+   - A rule that survives only the cells you found convenient is a
+     description of your harness, not of the compiler.
 
 7. **Cross-lane claims need a third arm (2026-08-23, #4637/#4639).** With
    sibling lanes branching from one tip, your two-arm A/B (tip vs your
@@ -62,6 +83,21 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
    - A claim about ANOTHER lane's effect requires an arm containing their
      change — measured by whoever owns it and cited as theirs, or measured
      by the lead on the combined tree. Never infer it from your own pair.
+   - **This rule governs CLAIMS, not DISAGREEMENTS (2026-08-23, #4653/#4515).**
+     When two lanes' results on the "same" shape conflict, the first move is to
+     reconcile — did we measure the same CELL? — NOT to stop at "different
+     trees, I can't speak for yours". Both lanes did the latter here and it kept
+     a wrong rule alive for three rounds and one filed issue. The repro turned
+     out not to be the snippet that had been pasted (its error text named a
+     variable the quoted source never declared), so one lane was measuring a
+     module-level binding and the other a function-local one — same words,
+     different cell, no tree difference at all. "It does not reproduce here" is
+     a hypothesis about YOUR cell before it is a fact about their tree. Invoke
+     the third arm for what survives reconciliation; a third-arm caveat is not a
+     substitute for reconciling two results.
+   - Corollary, cheap and repeatedly decisive: **read the peer's error text
+     against the peer's quoted source.** A name, line, or type that does not
+     match the snippet means you are not looking at the program that ran.
    - **Verify every pin fails on the arm it claims to test** (revert for
      your own change; DELETE the named interaction for a cross-lane pin —
      a revert proves sensitivity to *your* change only). A canary nobody

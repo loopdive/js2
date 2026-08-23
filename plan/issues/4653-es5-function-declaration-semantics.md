@@ -385,6 +385,18 @@ Nine rows remain, each with a measured root and an owner. None is a guess.
   "does not reproduce on my base" was measuring row 3 (a module-level `var`), a
   different cell. There is no tree difference between `c42bdbe3e` + mine and
   `8794ab2c9` + theirs on this shape.
+
+  **The reflex that kept this alive for three rounds was mine first.** When our
+  results disagreed I wrote, in this file, "per the brief's third-arm rule I can
+  only say it does not reproduce here; whether their tip differs is theirs to
+  measure" — invoking a rule about *claims* to justify not *reconciling*. The
+  third-arm rule is right that I cannot assert anything about their tree; it
+  says nothing about whether we measured the same cell, which is the question a
+  disagreement actually poses and which costs one probe to answer. dev-4515
+  reached the same stopping point independently, which is what makes it a
+  process gap rather than a lapse: added to the brief as methodology 6 (a table
+  is only evidence for the axes it varies) and a new bullet under 7 (the
+  third-arm rule governs claims, not disagreements).
 - **M `fun.prototype` own-ness** (`13.2-18-1`) — **owner #4491**, with evidence: a
   function EXPRESSION has no own `prototype` property under the live descriptor
   MOP. With an accessor installed on `Function.prototype.prototype`,
