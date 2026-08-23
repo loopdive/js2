@@ -2442,7 +2442,33 @@ function emitStandaloneDefinePropertyKeyToString(ctx: CodegenContext, fctx: Func
   const toStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   const finalIdx = ctx.funcMap.get("__extern_toString") ?? toStrIdx;
-  if (finalIdx !== undefined) fctx.body.push({ op: "call", funcIdx: finalIdx });
+  if (finalIdx === undefined) return;
+  // (#3505 harness) ToPropertyKey stringifies everything EXCEPT a Symbol. The
+  // $Object runtime keys symbols by their $Symbol carrier (id-compare in
+  // __obj_find / __key_equals), so ToString-ing one here aliased
+  // `Symbol("x")` to the STRING "Symbol(x)" — `Object.defineProperty(o, sym,
+  // …)` stored under a string key that `o[sym]` reads (correctly id-keyed)
+  // could never find, and getOwnPropertyDescriptor(o, sym) answered
+  // undefined. When the module has minted the $Symbol carrier type, test for
+  // it and pass a symbol key through unchanged; a module with no symbols
+  // cannot receive one here and keeps the plain call.
+  if (ctx.symbolTypeIdx >= 0) {
+    const keyLocal = allocLocal(fctx, `__defprop_tokey_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.tee", index: keyLocal });
+    fctx.body.push({ op: "any.convert_extern" });
+    fctx.body.push({ op: "ref.test", typeIdx: ctx.symbolTypeIdx });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [{ op: "local.get", index: keyLocal }],
+      else: [
+        { op: "local.get", index: keyLocal },
+        { op: "call", funcIdx: finalIdx },
+      ],
+    });
+    return;
+  }
+  fctx.body.push({ op: "call", funcIdx: finalIdx });
 }
 
 /**

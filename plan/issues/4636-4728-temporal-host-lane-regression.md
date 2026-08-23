@@ -32,6 +32,14 @@ origin: "2026-08-23 merge_group run 32621994030 on PR #4781: 367 host-lane regre
 
 # #4636 — #4728 Temporal host-lane regression forward-fix
 
+> **Superseded on merge (2026-08-23, same day):** main's PR #4783 — from the
+> #4728 authors — landed the SAME two fixes independently while this branch's
+> version was in flight (their record key is the declaration NODE, with a
+> type-match guard on the sync; their ctor-arm guard checks the immediate
+> base). At the origin/main merge this branch adopted main's versions and
+> dropped its own (the stacked duplicate guard was removed). This file stays
+> as the record of the independent bisect/diagnosis and its verification.
+
 ## Root cause (bisected, both defects verified by single-file repro)
 
 PR #4728 (curated npm-package fixes) landed two host-lane defects that

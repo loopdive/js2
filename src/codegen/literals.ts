@@ -2252,6 +2252,17 @@ export function compileSymbolCall(ctx: CodegenContext, fctx: FunctionContext, ar
   }
   // Push the symbol id (the counter) as the result.
   fctx.body.push({ op: "global.get", index: counterIdx });
+  // (#4626) Carry the symbol BRAND on the i32 id ONLY in the native-symbol
+  // lanes (standalone/wasi), so any-channel coercions box via __box_symbol
+  // (interned $Symbol carrier), not __box_number — unbranded, `typeof
+  // t(Symbol())` through an any param answered "number" and defineProperty/
+  // sameValue treated symbols as numbers whenever the checker type was not
+  // consulted. The js-host lane MUST stay unbranded: branding it routed
+  // mid-emission coercions through the `ensureLateImport(__box_symbol)` arm,
+  // whose late host-import insertion shifted baked function indices (#608/
+  // #794) — 216 "invalid Wasm binary" regressions in the 2026-08-23
+  // merge_group (Temporal/JSON/Array buckets).
+  if (nativeSymbolProvider) return { kind: "i32", symbol: true };
   return { kind: "i32" };
 }
 

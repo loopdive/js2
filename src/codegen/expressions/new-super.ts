@@ -22,6 +22,7 @@ import {
   resolvesToNonConstructableValue,
 } from "./non-constructable.js"; // (#4017)
 import { tryNonConstructableNewTarget } from "./new-non-constructable-value.js"; // (#4246)
+import { getOrRegisterTaCtorType } from "../registry/types.js"; // (#4626) runtime $__ta_ctor gate in the ordinary-[[Construct]] arm
 import { tryNewBuiltinStaticAlias } from "./new-builtin-static-alias.js"; // (#4491 wave-5 T6)
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
@@ -483,30 +484,19 @@ function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expre
   // builtins like `Intl.NumberFormat`) have concrete types, fail the fact
   // check, and keep their existing arms.
   if (ts.isPropertyAccessExpression(calleeExpr) || ts.isElementAccessExpression(calleeExpr)) {
+    // (#4728 merge_group regression) `new Temporal.PlainDateTime(...)`: an
+    // UNDECLARED base identifier is a host-global read (the test262 runner
+    // provides `Temporal` as a host polyfill). The checker types the member as
+    // error-`any`, which admitted it here — and this lane then compiles the
+    // base identifier as an undeclared-identifier ReferenceError throw,
+    // breaking every Temporal file at module init (156-test "other" bucket in
+    // the #4728 merge_group). Undeclared bases keep the legacy host-new lane,
+    // which resolves them through the host global object.
+    let baseNI: ts.Expression = calleeExpr.expression;
+    while (ts.isParenthesizedExpression(baseNI)) baseNI = baseNI.expression;
+    if (ts.isIdentifier(baseNI) && ctx.oracle.valueDeclarationOf(baseNI) === undefined) return false;
     const declNI = ctx.oracle.valueDeclarationOf(calleeExpr);
     if (declNI && (ts.isClassDeclaration(declNI) || ts.isClassExpression(declNI))) return false;
-    // (#4728 regression fix) When the member chain bottoms out at a BARE
-    // identifier with no static binding anywhere — no declaration the checker
-    // can see, no compiled class/function, no module global — the base is a
-    // HOST-AMBIENT global (`new Temporal.PlainDateTime(...)`,
-    // `new Intl.DurationFormat(...)` on a lib target without it). Claiming the
-    // site routes the callee through the identifier VALUE lane, which compiles
-    // the unresolved base as a ReferenceError throw — that flipped ~200
-    // passing Temporal host-lane rows to "Temporal is not defined" in the
-    // merge_group (the #4616 arm's one over-claim). The legacy extern-new
-    // path resolves such bases from globalThis; leave the shape to it.
-    let base: ts.Expression = calleeExpr;
-    while (ts.isPropertyAccessExpression(base) || ts.isElementAccessExpression(base)) base = base.expression;
-    if (
-      ts.isIdentifier(base) &&
-      ctx.oracle.valueDeclarationOf(base) === undefined &&
-      !ctx.classSet.has(base.text) &&
-      !ctx.funcMap.has(base.text) &&
-      !ctx.moduleGlobals.has(base.text) &&
-      !ctx.capturedGlobals.has(base.text)
-    ) {
-      return false;
-    }
     const factNI = ctx.oracle.typeFactOf(calleeExpr);
     return (
       factNI.kind === "any" || factNI.kind === "unknown" || (factNI.kind === "builtin" && factNI.name === "Function")
@@ -2705,10 +2695,45 @@ function tryCompileNativeConstructFromValue(
     argLocals.push(argLocal);
   }
 
-  fctx.body.push({ op: "local.get", index: calleeLocal });
-  fctx.body.push({ op: "local.get", index: protoLocal });
-  for (const argLocal of argLocals) fctx.body.push({ op: "local.get", index: argLocal });
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(`__native_construct_${args.length}`) ?? driverIdx });
+  // (#4626) A `$__ta_ctor` runtime value is NOT an ordinary function value:
+  // handing it to the native-construct driver builds a plain object with no
+  // TypedArray behavior (`function go(TA) { new TA(2) }` in the
+  // testTypedArrayConversions harness then read `length` 0 and threw "called
+  // value is not a function" on `.fill`). This arm sits BEFORE the #2872
+  // dynamic-TA construct in the dispatch order, so gate it at RUNTIME: a
+  // callee that ref.tests as `$__ta_ctor` routes through the same
+  // count/array-copy/buffer construct the #2872 arm uses; every other runtime
+  // value keeps the ordinary-[[Construct]] driver. Statically gated on the
+  // module pre-scan flag so modules without a dynamic-any `new` are
+  // byte-identical.
+  const nativeDriverCall: Instr[] = [
+    { op: "local.get", index: calleeLocal },
+    { op: "local.get", index: protoLocal },
+    ...argLocals.map((argLocal): Instr => ({ op: "local.get", index: argLocal })),
+    { op: "call", funcIdx: ctx.funcMap.get(`__native_construct_${args.length}`) ?? driverIdx },
+  ];
+  if (noJsHost(ctx) && ctx.moduleUsesDynTaView) {
+    const taCtorTypeIdx = getOrRegisterTaCtorType(ctx);
+    const descLocal = allocLocal(fctx, `__nc_tadesc_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+    fctx.body.push({ op: "local.get", index: calleeLocal });
+    fctx.body.push({ op: "any.convert_extern" });
+    fctx.body.push({ op: "local.set", index: descLocal });
+    const taArm: Instr[] = [];
+    const savedTaBody = fctx.body;
+    fctx.body = taArm;
+    emitTaDynCtorConstructFromLocals(ctx, fctx, descLocal, argLocals);
+    fctx.body = savedTaBody;
+    fctx.body.push({ op: "local.get", index: descLocal });
+    fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: taArm,
+      else: nativeDriverCall,
+    });
+  } else {
+    fctx.body.push(...nativeDriverCall);
+  }
   return { kind: "externref" };
 }
 
