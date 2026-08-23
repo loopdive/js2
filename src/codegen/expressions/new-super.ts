@@ -485,6 +485,28 @@ function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expre
   if (ts.isPropertyAccessExpression(calleeExpr) || ts.isElementAccessExpression(calleeExpr)) {
     const declNI = ctx.oracle.valueDeclarationOf(calleeExpr);
     if (declNI && (ts.isClassDeclaration(declNI) || ts.isClassExpression(declNI))) return false;
+    // (#4728 regression fix) When the member chain bottoms out at a BARE
+    // identifier with no static binding anywhere — no declaration the checker
+    // can see, no compiled class/function, no module global — the base is a
+    // HOST-AMBIENT global (`new Temporal.PlainDateTime(...)`,
+    // `new Intl.DurationFormat(...)` on a lib target without it). Claiming the
+    // site routes the callee through the identifier VALUE lane, which compiles
+    // the unresolved base as a ReferenceError throw — that flipped ~200
+    // passing Temporal host-lane rows to "Temporal is not defined" in the
+    // merge_group (the #4616 arm's one over-claim). The legacy extern-new
+    // path resolves such bases from globalThis; leave the shape to it.
+    let base: ts.Expression = calleeExpr;
+    while (ts.isPropertyAccessExpression(base) || ts.isElementAccessExpression(base)) base = base.expression;
+    if (
+      ts.isIdentifier(base) &&
+      ctx.oracle.valueDeclarationOf(base) === undefined &&
+      !ctx.classSet.has(base.text) &&
+      !ctx.funcMap.has(base.text) &&
+      !ctx.moduleGlobals.has(base.text) &&
+      !ctx.capturedGlobals.has(base.text)
+    ) {
+      return false;
+    }
     const factNI = ctx.oracle.typeFactOf(calleeExpr);
     return (
       factNI.kind === "any" || factNI.kind === "unknown" || (factNI.kind === "builtin" && factNI.name === "Function")

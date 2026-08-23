@@ -177,6 +177,17 @@ export function emitPreparedAccessorComputedNameEffects(
   }
 }
 
+/**
+ * Key for `ctx.classMemberCaptureGlobals`: per class DECLARATION, not per bare
+ * name. `decl.pos` disambiguates same-named sibling classes declared in
+ * different enclosing frames (temporalHelpers declares `class MySubclass
+ * extends construct` in five separate methods) and is stable across the two
+ * module-init compile passes, which is all the re-bind needs.
+ */
+function classCaptureRecordKey(className: string, decl: ts.ClassLikeDeclaration, syntheticName?: string): string {
+  return `${syntheticName ?? className}@${decl.pos}`;
+}
+
 export function compileNestedClassDeclaration(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -224,7 +235,17 @@ export function compileNestedClassDeclaration(
     // react's `componentDidMount(){ test = this }` stayed null). Re-bind the
     // recorded pass-1 globals instead, sync each from this frame's fresh
     // local, and route the frame through them.
-    const recorded = ctx.classMemberCaptureGlobals?.get(className);
+    //
+    // The record key is per-DECLARATION, not the bare class name: five
+    // different harness methods each declaring `class MySubclass extends
+    // construct` (test262 temporalHelpers) must not share one record — a
+    // name-keyed re-bind synced a later frame's i32 `called` local into an
+    // earlier frame's f64 global, an invalid `global.set` (the #4728-era
+    // Temporal host-lane CompileError wave). With the positional key, a
+    // same-named SIBLING class finds no record here (matching the pre-#4618
+    // behavior for that aliased case), while a genuine pass-2 re-compile of
+    // the SAME declaration still re-binds its own globals.
+    const recorded = ctx.classMemberCaptureGlobals?.get(classCaptureRecordKey(className, decl, syntheticName));
     if (recorded !== undefined) {
       for (const [name, entry] of recorded) {
         ctx.capturedGlobals.set(name, entry.globalIdx);
@@ -283,7 +304,10 @@ export function compileNestedClassDeclaration(
     // record them so a later re-compile pass (module-init pass 2 clears
     // capturedGlobals) re-binds the SAME globals the compiled methods use.
     if (promotedRecord.size > 0) {
-      (ctx.classMemberCaptureGlobals ??= new Map()).set(className, promotedRecord);
+      (ctx.classMemberCaptureGlobals ??= new Map()).set(
+        classCaptureRecordKey(className, decl, syntheticName),
+        promotedRecord,
+      );
     }
 
     // Build funcByName map for compileClassBodies

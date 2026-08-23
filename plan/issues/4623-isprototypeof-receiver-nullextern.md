@@ -17,6 +17,11 @@ language_feature: prototype-chain
 goal: standalone-gap
 related: [4506, 4480, 4556]
 origin: "dev-4506 residual (2026-08-23): WAT-decoded — the highest-value single defect left in the fnctor/prototype families. Reproduces on --js-host too (two-lane), per #4480's 2026-08-20 record."
+loc-budget-allow:
+  # +14 in the driver: the arm invocation + the placement comment (see
+  # func-budget rationale below); the arm's body lives in the new
+  # is-prototype-of-call-arm.ts module.
+  - src/codegen/expressions/calls.ts
 func-budget-allow:
   # The fix is ONE arm invocation placed at the last decision point of
   # `compileCallExpression`, immediately before `compileTailDispatch` — the only
