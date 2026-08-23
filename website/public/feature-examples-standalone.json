@@ -111,7 +111,7 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 1019,
+      "passCount": 1018,
       "totalCount": 1177
     },
     {
@@ -144,7 +144,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4079,
+      "passCount": 4080,
       "totalCount": 4581
     },
     {
@@ -414,7 +414,7 @@
     {
       "name": "Top-level await",
       "testCategories": ["language/module-code/top-level-await"],
-      "passCount": 176,
+      "passCount": 177,
       "totalCount": 257
     },
     {
