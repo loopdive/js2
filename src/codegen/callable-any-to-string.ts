@@ -68,9 +68,8 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
-import { addStringConstantGlobal } from "./registry/imports.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { NATIVE_FUNCTION_SOURCE } from "./callable-to-string.js";
+import { buildOrdinaryToPrimitiveProbe, resolveOrdinaryToPrimitiveProbeDeps } from "./ordinary-to-primitive-probe.js";
 
 /**
  * Prepend the §7.1.17-for-callables arm to the built `__any_to_string`.
@@ -85,23 +84,9 @@ export function fillCallableAnyToStringArm(ctx: CodegenContext): void {
   const fn = definedFuncAt(ctx, helperIdx);
   if (!fn) return;
 
-  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
-  const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
-  const externGetIdx = ctx.funcMap.get("__extern_get");
-  const callMethod0Idx = ctx.funcMap.get("__call_accessor_get");
-  if (
-    typeofFunctionIdx === undefined ||
-    typeofObjectIdx === undefined ||
-    externGetIdx === undefined ||
-    callMethod0Idx === undefined
-  ) {
-    return;
-  }
-  // The driver is reserved with an `unreachable` stub and only filled when the
-  // module has a real arity-0 closure (accessor-driver.ts). Calling an unfilled
-  // stub would TRAP — strictly worse than the `[object Object]` this replaces.
-  const driver = definedFuncAt(ctx, callMethod0Idx);
-  if (!driver || (driver.body.length === 1 && driver.body[0]?.op === "unreachable")) return;
+  const deps = resolveOrdinaryToPrimitiveProbeDeps(ctx);
+  if (deps === undefined) return;
+  const typeofFunctionIdx = deps.typeofFunctionIdx;
 
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
   const strRef: ValType = { kind: "ref", typeIdx: anyStrTypeIdx };
@@ -197,55 +182,6 @@ export function fillCallableAnyToStringArm(ctx: CodegenContext): void {
     ];
   };
 
-  /** §7.1.1.1 steps 2-5 for ONE method name on the callable receiver. */
-  const probe = (name: "toString" | "valueOf"): Instr[] => {
-    addStringConstantGlobal(ctx, name);
-    return [
-      ...recv(),
-      ...stringConstantExternrefInstrs(ctx, name),
-      { op: "call", funcIdx: externGetIdx },
-      { op: "local.tee", index: L_METHOD },
-      { op: "ref.is_null" },
-      { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          // IsCallable(method)? — an `undefined`/data-valued slot is skipped.
-          { op: "local.get", index: L_METHOD },
-          { op: "call", funcIdx: typeofFunctionIdx },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              ...recv(),
-              { op: "local.get", index: L_METHOD },
-              { op: "call", funcIdx: callMethod0Idx },
-              { op: "local.set", index: L_RESULT },
-              // A non-null, non-object, non-function result is a primitive.
-              { op: "local.get", index: L_RESULT },
-              { op: "ref.is_null" },
-              { op: "i32.eqz" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: L_RESULT },
-                  { op: "call", funcIdx: typeofObjectIdx },
-                  { op: "local.get", index: L_RESULT },
-                  { op: "call", funcIdx: typeofFunctionIdx },
-                  { op: "i32.or" },
-                  { op: "i32.eqz" },
-                  { op: "if", blockType: { kind: "empty" }, then: renderPrimitiveAndReturn() },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-    ];
-  };
-
   const arm: Instr[] = [
     { op: "local.get", index: 0 },
     { op: "ref.is_null" },
@@ -260,8 +196,15 @@ export function fillCallableAnyToStringArm(ctx: CodegenContext): void {
           op: "if",
           blockType: { kind: "empty" },
           then: [
-            ...probe("toString"),
-            ...probe("valueOf"),
+            // §7.1.1.1 with hint "string": toString → valueOf, over the shared
+            // runtime walk (ordinary-to-primitive-probe.ts).
+            ...buildOrdinaryToPrimitiveProbe(ctx, deps, {
+              recv,
+              methodLocal: L_METHOD,
+              resultLocal: L_RESULT,
+              order: ["toString", "valueOf"],
+              onPrimitive: renderPrimitiveAndReturn,
+            }),
             // §20.2.3.5 step 3 — the implementation-defined NativeFunction
             // representation, the same constant `callable-to-string.ts` (#4265)
             // and `installCompiledClosureToStringArm` already answer.
