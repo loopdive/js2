@@ -12,6 +12,10 @@ task_type: bug
 area: codegen, runtime
 es_edition: 5
 goal: es5
+related: [2668, 1888, 3626, 2666, 4504]
+# NOTE (2026-08-23 wave-5): this key was DUPLICATED in the frontmatter — two
+# separate `loc-budget-allow:` blocks — so a YAML parser kept only the second
+# and the `src/codegen/closures.ts` grant was silently dead. Merged into one.
 loc-budget-allow:
   # 2026-08-19 accessor-pair fix: for an accessor PAIR, TypeScript takes the
   # property type from the GETTER's return and requires the setter's parameter
@@ -21,16 +25,20 @@ loc-budget-allow:
   # module src/codegen/closures/set-accessor-param.ts; the god-file grows by the
   # IMPORT LINE ONLY (+1).
   - src/codegen/closures.ts
-related: [2668, 1888, 3626, 2666, 4504]
-loc-budget-allow:
-  # One import line. The set-accessor parameter predicate + its rationale live
-  # in the new leaf module src/codegen/closures/set-accessor-param.ts; the
-  # widening itself replaces an existing line in computeClosureWrapperSig, so
-  # this is the import and nothing else.
   # One field. The §13 eval completion register is a FunctionContext slot; the
   # register's whole lifecycle and rationale live in the new leaf module
   # src/codegen/statements/eval-completion-value.ts, and eval-inline.ts SHRANK.
   - src/codegen/context/types.ts
+func-budget-allow:
+  # 2026-08-23 wave-5, §14.15.3 step 5 (a NORMALLY-completing `finally`
+  # contributes no completion value). +2 LINES, both calls: the snapshot local's
+  # lifecycle, the abrupt-exit argument and the clone-safety argument all live in
+  # the leaf src/codegen/statements/eval-completion-value.ts. They cannot move
+  # out of this function: the save/restore must be emitted INTO the pre-compiled
+  # `finallyInstrs` scratch body that compileTryStatement clones into each
+  # control-flow path, between its own `pushBody`/`popBody` pair, so any split
+  # would have to carry that body-swap protocol with it.
+  - src/codegen/statements/exceptions.ts::compileTryStatement
 ---
 
 # ES5 standalone `language/` misc — 110 rows, ~7 mechanisms

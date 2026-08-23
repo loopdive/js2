@@ -36,6 +36,7 @@ import { compileStringLiteral } from "../string-ops.js";
 import { emitThrowJsError, noJsHost } from "./helpers.js";
 import { reportError } from "../context/errors.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
+import { isUseStrictDirectiveExpression } from "../helpers/use-strict-directive.js";
 import { foldedEvalEarlyError } from "./eval-early-errors.js";
 import { evalAnnexBDeclarationsInlineSupported, hasScriptScopeAnnexBFunction } from "./eval-annexb.js";
 import { EVAL_SOURCE_FILENAME } from "./eval-source.js";
@@ -1338,16 +1339,12 @@ function compileInlinedEvalStatements(
       return undefined;
     }
 
-    // Compile all but the last statement for side effects.
     const lastIdx = stmts.length - 1;
-    for (let i = 0; i < lastIdx; i++) {
-      compileStatement(ctx, fctx, stmts[i]!);
-    }
-
     const last = stmts[lastIdx]!;
 
     // ExpressionStatement — the expression's value is the eval result.
     if (ts.isExpressionStatement(last)) {
+      for (let i = 0; i < lastIdx; i++) compileStatement(ctx, fctx, stmts[i]!);
       const t = compileExpression(ctx, fctx, last.expression);
       if (t === null) {
         // Unreachable (e.g. the expression compiled to a throw).
@@ -1359,9 +1356,11 @@ function compileInlinedEvalStatements(
       return { kind: "externref" };
     }
 
-    // A non-expression tail carries the §13 completion value OUT of whatever it
-    // nests — see statements/eval-completion-value.ts for the register and why.
-    return emitEvalCompletionTail(ctx, fctx, () => compileStatement(ctx, fctx, last));
+    // (#4515) The §13 completion register spans the WHOLE StatementList, not
+    // just the tail — see statements/eval-completion-value.ts.
+    return emitEvalCompletionTail(ctx, fctx, () => {
+      for (const s of stmts) compileStatement(ctx, fctx, s);
+    });
   } finally {
     if (savedBindingState) {
       fctx.localMap = savedBindingState.localMap;
@@ -1525,7 +1524,8 @@ function evalBodyHasUseStrictDirective(stmts: ts.NodeArray<ts.Statement>): boole
     if (!ts.isExpressionStatement(s)) break;
     // Only a plain StringLiteral counts as a directive (a template does not).
     if (!ts.isStringLiteral(s.expression)) break;
-    if (s.expression.text === "use strict") return true;
+    // §11.2.2 matches the RAW token — see helpers/use-strict-directive.ts.
+    if (isUseStrictDirectiveExpression(s.expression)) return true;
     // Some other directive (e.g. "use asm") → keep scanning the prologue.
   }
   return false;
