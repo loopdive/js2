@@ -372,10 +372,27 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
   //   2. ALL own keys (`__obj_ordered_all`, incl. non-enumerable): add each to
   //      `seen` so it shadows the same name at lower (proto) levels.
   // The `seen` set is a fresh empty `$Object` (null $proto) used purely as a
-  // membership table via `__object_hasOwn`/`__extern_set` — this reuses the exact
-  // key hashing + equality the property map uses, so there is no native-string
-  // representation mismatch. The own-only test remains correct even after the
-  // Object.prototype companion has gained properties of its own.
+  // membership table via `__object_hasOwn`/`__extern_set_own` — this reuses the
+  // exact key hashing + equality the property map uses, so there is no
+  // native-string representation mismatch. The own-only test remains correct
+  // even after the Object.prototype companion has gained properties of its own.
+  //
+  // (#4653) The membership WRITE must be own-only. A null-`$proto` `$Object` is
+  // exactly how an ordinary object literal is represented in this runtime, so
+  // `__extern_set` treats `seen` as one and — after the explicit chain runs out
+  // — probes the IMPLICIT `Object.prototype` companion (`__extern_set_decide`'s
+  // `protoIndexSetDecisionInstrs` tail). Once a test installs an accessor on
+  // `Object.prototype` (the `propertyHelper.js` / `verifyProperty` family does
+  // this constantly), `seen[key] = key` INVOKES that user setter with the
+  // enumerated key as its argument and the shadow entry is never recorded. Two
+  // observable defects fall out: the setter fires from a bare `for (x in o)`
+  // (`language/statements/function/13.2-17-1` fails on `data === "data"` — the
+  // setter received the string `"constructor"`), and the shadow set stays empty
+  // so a name owned at two chain levels is yielded twice. `__extern_set_own` is
+  // the same data-write tail without any descriptor/proto consult; it exists
+  // only when the #4504 inherited-set runtime is active, which is also the only
+  // configuration in which `__extern_set` can walk a chain at all, so the
+  // fallback below is exact.
   //
   // params: 0=obj(externref)
   // locals: 1=any(anyref) 2=cur(ref null $Object) 3=arr(ref null $PropMap)
@@ -384,7 +401,11 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
   {
     const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object")!;
     const objectHasOwnIdx = ctx.funcMap.get("__object_hasOwn")!;
-    const externSetIdx = ctx.funcMap.get("__extern_set")!;
+    // (#4653) Prefer the own-only data write; see the note above.
+    const externSetOwnIdx = ctx.funcMap.get("__extern_set_own");
+    const seenSetIdx = externSetOwnIdx ?? ctx.funcMap.get("__extern_set")!;
+    /** `__extern_set_own` answers an i32 result code the shadow set ignores. */
+    const seenSetTail: Instr[] = externSetOwnIdx === undefined ? [] : [{ op: "drop" }];
     const body: Instr[] = [
       // vec = __objvec_new() ; seen = __new_plain_object()
       { op: "call", funcIdx: objVecNewIdx },
@@ -514,7 +535,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
                       { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
                       { op: "extern.convert_any" },
                       { op: "local.set", index: 9 },
-                      // if !__object_hasOwn(seen, keyExt) → __extern_set(seen, keyExt, keyExt)
+                      // if !__object_hasOwn(seen, keyExt) → set_own(seen, keyExt, keyExt)
                       { op: "local.get", index: 8 },
                       { op: "local.get", index: 9 },
                       { op: "call", funcIdx: objectHasOwnIdx },
@@ -526,7 +547,8 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
                           { op: "local.get", index: 8 },
                           { op: "local.get", index: 9 },
                           { op: "local.get", index: 9 },
-                          { op: "call", funcIdx: externSetIdx },
+                          { op: "call", funcIdx: seenSetIdx },
+                          ...seenSetTail,
                         ],
                       },
                       { op: "local.get", index: 5 },
