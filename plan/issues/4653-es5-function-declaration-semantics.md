@@ -301,6 +301,32 @@ the weakest link: in dev-4515's file the naive `it\(|test\(` pattern INFLATES
 pattern, opposite errors, two files — which is why the denominator belongs on
 vitest's own summary line wherever tier 1 can answer.
 
+**Exit status carries no verdict in EITHER direction — both measured on this one
+suite.** Forcing an all-skipped run of the same file (`-t` matching nothing, the
+brief's regex case):
+
+```
+npx vitest run tests/issue-4653.test.ts -t "zzz-no-such-test-name-zzz"
+  Tests  23 skipped (23)      exit status: 0     <- nothing executed, exits GREEN
+npx vitest run tests/issue-4653.test.ts
+  Tests  23 passed (23)       exit status: 1     <- everything passed, exits RED
+```
+
+Tier 1 classifies both correctly (`executed = 0 != 23` fails; `executed = 23 ==
+23` passes) while `$?` is exactly inverted from the truth in both. One file, both
+directions, so this needs no cross-file argument.
+
+**Confirmed on this suite: skipped NAMES are `--reporter=verbose` only**
+(dev-4515's measurement, independently reproduced here). Same all-skipped run:
+`--reporter=basic` prints one file-level line,
+`↓ tests/issue-4653.test.ts (23 tests | 23 skipped)`, with **no test names**;
+`--reporter=verbose` prints 23 `↓` lines with the full names. So a lane that
+skips by accident cannot see WHICH tests vanished under the default or basic
+reporter. This suite is unaffected in practice — it declares zero `.skip` /
+`.only` / `skipIf`, so `executed != total` can only arise from a filter or an
+infrastructure failure, not from an intended skip — but the reporter choice is a
+precondition for the tier-1 rule's diagnostic half, not just for its verdict.
+
 ## Residuals
 
 Nine rows remain, each with a measured root and an owner. None is a guess.
