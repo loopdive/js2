@@ -33,6 +33,13 @@ loc-budget-allow:
   # `undefined` fallback this narrows); the +13 here is the call plus the
   # pointer to why the STATIC guard cannot answer it.
   - src/codegen/expressions/call-identifier.ts
+  # The sloppy-implicit-global `typeof` arm, which has to be repeated in BOTH
+  # of this module's typeof ladders — the general one and the
+  # `typeof x <op> "literal"` comparison fast path, which never calls the
+  # general one and is the spelling test262 uses. Splitting them out would put
+  # one arm of a pair in another file, which is how the two ladders got out of
+  # step in the first place.
+  - src/codegen/typeof-delete.ts
 func-budget-allow:
   # Both are ONE dispatch arm plus its rationale comment, placed at the exact
   # point in an existing ladder where the decision has to be made — the
@@ -40,6 +47,11 @@ func-budget-allow:
   # (`implicit-global-binding.ts`, `stored-member-closure-call.ts`).
   - src/codegen/expressions/operator-assignment.ts::compileCompoundAssignment
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  # The same sloppy-implicit-global `typeof` arm, once per ladder. Both are a
+  # guard + a four-instruction emit + the comment saying why the OTHER ladder
+  # needs its twin.
+  - src/codegen/typeof-delete.ts::compileTypeofComparison
+  - src/codegen/typeof-delete.ts::compileTypeofExpression
 origin: "2026-08-23 wave-3 residual map (196 true failures). Lane D (.tmp/lane-D-smalls.txt) + try/return/Date leftovers."
 ---
 
