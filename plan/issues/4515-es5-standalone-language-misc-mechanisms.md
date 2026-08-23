@@ -784,13 +784,26 @@ their fix on a module shape they did not write (`deferTopLevelInit: true`,
   error being `[vitest-worker]: Timeout calling "onTaskUpdate"`, vitest's own
   RPC giving up under load, with no test involved. Read what the error IS
   before treating it as a result.
-- **The counts rule is `N == declared`, not `N > 0`** (dev-4491's calibration,
-  prompted by the line above). A dropped task update shows up as a total BELOW
-  the file's real count, so `N > 0` passes a run that lost half its tests.
-  Checked here: this file declares 22 `it(`, the run reported `22 passed (22)`,
-  so nothing was lost despite the `Errors` line — the equality is what
-  established that, and it is the same one comparison that catches all four
-  zero-selection cases. Adopted in `plan/method/es5-standalone-agent-brief.md`.
+- **The counts rule has TWO tiers, and the free one comes first** (dev-4491's
+  calibration, prompted by the line above; final form after they re-censused
+  their own denominator and found it over-counting). Tier 1 needs nothing but
+  vitest's summary line — `executed = passed + failed`, require
+  `total > 0 && executed == total` — and catches four of the five failure modes
+  with a denominator that cannot be mis-counted, because it is printed on the
+  same line as the parts. Verified against all 22 summary lines this lane
+  recorded: every one sums (`1 failed | 45 passed (46)`, and so on). Tier 2 —
+  an external declared count — is needed ONLY for the RPC-drop case, where
+  `passed` and `total` shrink together and tier 1 cannot see it.
+- **An external denominator is wrong in both directions, and this lane's own pin
+  file shows both at once.** It really declares 22. `grep -c "it("` answers
+  **16** (every `it.fails(` is invisible to it); `grep -cE "it\(|test\("`
+  answers **21** (it picks up `export function test()` in a doc comment, the
+  same text inside a template string, and `exports.test()`). Two errors in
+  opposite directions, neither landing on 22. The anchored pattern that does
+  work here was calibrated to this file, not derived. So: use tier 1 wherever it
+  suffices, and where tier 2 is genuinely needed, establish the count — or say
+  you could not, rather than quoting an equality you did not verify. Both tiers
+  adopted in `plan/method/es5-standalone-agent-brief.md`.
 - **A survey run entirely at module top level is blind to any defect gated on
   "inside an enclosing function"** — and worse, it mis-attributes the one case
   that does surface, because that case looks like the odd one out. See the

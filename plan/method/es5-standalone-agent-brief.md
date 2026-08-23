@@ -133,43 +133,48 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
      either lane could run would have compiled the combination. Cross-lane
      hazards are only visible on the combined tree — the lead's merge
      verification must include running each lane's suite there.
-   - The merge check reads the run's **counts**, never its exit status —
-     and the check is **N == the number of tests the file declares**, not
-     `N > 0` (2026-08-23, dev-4491's calibration). Five measured ways a run
-     lies, all caught by that one comparison:
-     - `N == 0`, reported green: a `describe.skipIf` gate; a suite that
-       spins its own `CompilerPool` whose worker cannot start (below); a
-       path/glob matching no file; and a `-t` filter matching nothing —
-       **`vitest -t` is a REGEX**, so `-t "f + 1 must agree"` requires two
-       spaces and selects zero, on a file with no `skipIf` in it at all.
-       Escape `+ ( ) [ ] . * ?`, or match a plain substring.
-     - `0 < N < declared`: vitest's own RPC dropping task updates under
-       load (`[vitest-worker]: Timeout calling "onTaskUpdate"`). `N > 0`
-       passes a run that lost half its tests; only the equality catches it.
-     `21 skipped` beside `1 failed` is the tell for the first group.
+   - The merge check reads the run's **counts**, never its exit status.
+     Five measured ways a run reports green having measured nothing (or
+     less than it claims), and the check comes in **two tiers — do the free
+     one first** (2026-08-23, dev-4491's calibration):
 
-     **Vitest already prints the denominator, so four of the five need no
-     external count at all (2026-08-23, dev-4491).** The parenthesised
-     total on the summary line is always present and the parts always sum
-     to it, so the primary check is **`total > 0 && (passed + failed) ==
-     total`** — that catches `skipIf`, the dead pool worker, the no-match
-     glob and the regex `-t` straight off the summary, with nothing to
-     mis-count:
+     **Tier 1 — internal, needs nothing but the summary line, catches four
+     of the five.** Vitest prints its own denominator and the parts sum to
+     it. Let `executed = passed + failed`; require
+     **`total > 0 && executed == total`**:
      ```
-     Tests  1 failed | 35 passed (36)     healthy
-     Tests  22 skipped (22)               a -t regex executed 0 of 22
-     Tests  36 skipped (36)               dead CompilerPool worker
+     Tests  1 failed | 45 passed (46)   healthy
+     Tests  22 skipped (22)             a `-t` regex matched nothing
+     Tests  1 failed | 21 skipped (22)  same file, filter finally biting
+     Tests  36 skipped (36)             dead CompilerPool worker
      ```
-     **Only the RPC-drop case needs a declared count**, because there
-     `passed` and `total` shrink together and the internal equality still
-     holds. That is the one place an external denominator earns its keep —
-     and the one place its accuracy must be ESTABLISHED, not grepped:
-     `grep -cE '^\s+it(\.fails)?\(' <file>` under-counts (`it.each`,
-     `test(`, generated cases) AND over-counts (any comment containing
-     `it (` — measured: 15 and 6 against a true 14 and 5, both extras
-     being prose inside comments). A wrong denominator turns
-     `N == declared` from a safety net into a false-alarm generator, which
-     is worse than `N > 0` because it burns trust in the check itself.
+     That covers a `describe.skipIf` gate, a suite whose own
+     `CompilerPool` worker cannot start (below), a path/glob matching no
+     file, and a `-t` filter matching nothing — **`vitest -t` is a REGEX**,
+     so `-t "f + 1 must agree"` requires two spaces and selects zero, on a
+     file with no `skipIf` in it at all. Escape `+ ( ) [ ] . * ?`, or match
+     a plain substring. Nothing here can be mis-counted, because the
+     denominator comes from the same line as the parts. (A file with
+     DELIBERATE `it.skip` is the one exception: there `executed < total` is
+     correct, and you need its expected skip count.)
+
+     **Tier 2 — external declared count, and ONLY for the fifth member.**
+     Vitest's RPC dropping task updates under load
+     (`[vitest-worker]: Timeout calling "onTaskUpdate"`) shrinks `passed`
+     and `total` TOGETHER, so tier 1 still holds and only a count from
+     outside the runner catches it. This is the one place an external
+     denominator earns its keep — and the one place its accuracy has to be
+     established rather than grepped, because **a loose pattern is wrong in
+     BOTH directions, sometimes on the same file**. Measured on
+     `tests/issue-4515-wave5.test.ts`, which really declares 22:
+     `grep -c "it("` → **16** (misses every `it.fails(`), while
+     `grep -cE "it\(|test\("` → **21** (picks up `export function test()`
+     in a doc comment, in a template string, and `exports.test()`). Neither
+     is 22. `grep -cE '^\s+it(\.fails)?\('` gets it right *for this file*
+     because it was calibrated to it; it still misses `it.each`, `test(`
+     and generated cases, and a comment containing `it (` still over-counts.
+     If you cannot establish the number, say so rather than quoting an
+     equality you did not verify.
    - **Contention fakes the ABSENCE of failure as well as its presence.** A
      run can print `22 passed` beside `Errors 1 error` where the error is
      that RPC timeout and no test is involved. Read what the error IS. In
