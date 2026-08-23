@@ -226,7 +226,13 @@ describe("#4515 wave-5 — measured residuals (owners named)", () => {
   // all: `binary-ops.ts` has two `+` object dispatches and `emitObjectAdd`
   // (`addition-to-primitive.ts`, #4564) wins, not `emitAnyAdd`
   // (`add-to-primitive.ts`). Fixing only the guard moved 0 of 128 rows.
-  it.fails("f + 1 must agree with f.toString() + 1 (#4491 T4)", async () => {
+  // CLOSED by #4491 T4 (`60f32935b`): `emitObjectAdd` now consults the shared
+  // source-text helper per operand, and the guard became an oracle resolution
+  // question. Flipped from `it.fails` to `it` at merge, as this pin's author
+  // instructed — the cross-lane arm is that this suite's shape
+  // (`deferTopLevelInit: true`, `hostBridge: "always"`, a module-level `var`)
+  // is one the fixing lane's own pins never used.
+  it("f + 1 must agree with f.toString() + 1 (#4491 T4)", async () => {
     expect(
       await runModule(`function f1x4515() { return 0; }
        var __r4515 = (f1x4515 + 1 === f1x4515.toString() + 1) ? 1 : 0;`),

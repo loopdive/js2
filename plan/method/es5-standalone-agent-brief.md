@@ -145,6 +145,24 @@ provider (`npx tsx scripts/build-quickjs-eval-provider.mjs`, falling back to
 `JS2WASM_EVAL_ENGINE=interpreter`), and confirm a known eval-dependent row
 runs before trusting the numbers.
 
+## The rule that covers all of them: ANY mechanism selecting zero tests reports GREEN
+
+Require **N > 0 in the "N passed" line.** Never read exit 0, and never read
+"no failures", as evidence a suite ran. Three distinct causes were hit in a
+single day, all producing an indistinguishable green:
+
+1. **`describe.skipIf` gates** — an entire suite skipped, exit 0.
+2. **An absent gitignored bundle** — a suite spinning its own `CompilerPool`
+   dies at worker startup and reports `36 skipped`, exit 0 (below).
+3. **A regex-metacharacter `-t` filter** — `vitest -t` is a REGEX, so
+   `-t "f + 1 must agree"` makes `+` a quantifier, requires two spaces,
+   matches nothing, and skips everything. Measured 2026-08-23: reported
+   `Test Files 1 skipped (1) · Tests 22 skipped (22)`, exit 0, with no
+   `skipIf` anywhere in the file.
+
+The tell in every case is a **`skipped` count sitting where a `passed` count
+should be**. Read the counts, not the colour.
+
 ## Environment trap: a suite that runs ZERO tests and exits 0 (2026-08-23, dev-4491)
 
 `tests/issue-4504-inherited-set.test.ts` spins its **own `CompilerPool`**, whose
