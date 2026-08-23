@@ -272,6 +272,78 @@ lane does not re-derive it.
 | **C3 — `<B>.prototype.constructor` as a CONSTRUCTOR** | `String/prototype/constructor/S15.5.4.1_A1_T2`, `RegExp/prototype/S15.10.6.1_A1_T2` (2) | The `.constructor` VALUE read is right (it is the identity-stable carrier); the carrier has no [[Construct]] arm. Routing `new <alias>(…)` back to `new <Builtin>(…)` needs either a `ctorNameOverride` threaded through `tryCompileBuiltinGlobalNew` (which keys on `expr.expression.text` in ~20 places) or a per-builtin arm; `new RegExp` additionally lives in `regexp-standalone.ts`, a separate subsystem keyed on the syntactic shape. Not started. |
 | **C4 — RegExp flags as proto accessors** | `global/S15.10.7.2_A9`, `ignoreCase/S15.10.7.3_A9`, `multiline/S15.10.7.4_A9` (3) | **PRIOR FAILED ATTEMPT — do not repeat the obvious fix.** The rows need `delete RegExp.prototype.global` to be OBSERVABLE, which requires the flag ACCESSORS to be authoritative in the brand companion. `ensureNativeProtoCompanionSeeder` (native-proto.ts) records that seeding getters flips `tests/issue-2885.test.ts` "plain read `RegExp.prototype.global` is undefined" from pass to FAIL, by a mechanism its own note calls unidentified — the divergence is between the INLINE and MATERIALIZED read paths, not receiver binding. Start there, not from a receiver theory. |
 | **C5 — dynamic-pattern refusals** | `S15.10.2.8_A3_T15/T16`, `annexB/RegExp-control-escape-russian-letter` (3) | The runtime pattern compiler's grammar cannot take the input (T15/T16 build a 200-deep nested-capture pattern). Raising the limit is work inside the emitted regex compiler in `regexp-standalone.ts`; the refusal is already deferred to first USE (#4439), so `.source`/`.flags` reads are unaffected. Not started. |
-| **C6 rest** | `replace/S15.5.4.11_A1_T5`, `A1_T9`, `split/argument-is-regexp-and-instance-is-number`, `split/instance-is-math`, `split/separator-regexp-limit-string-via-eval`, `concat/S15.5.4.6_A2` (6) | T5 is now `fail`, not `compile_error`, and **its remaining cause is NOT in `replace` at all** — the "unchanged" output is a coincidence, not a missed match. Root-caused here: a `Function()`-minted function with an EMPTY body returns JS **`null`**, not `undefined`. Measured directly, host-free: `function h(){}; var g = Function(); String(h()) + "|" + String(g())` answers **`"undefined|null"`**. In T5 the replacer therefore contributes the TEXT `"null"`, which for the subject `"gnulluna"` is exactly the needle, so the result is indistinguishable from no replacement. Every other shape on this path is already correct after C6b: `"gnulluna".replace(null, function(){})` → `"gundefineduna"`, `"gnulluna".replace(null, Function("return 'Z';"))` → `"gZuna"`, and an IIFE receiver is fine. **Owner: dev-4637** (Function surface / #4442 family) — this is the runtime-eval-minted function's RETURN conversion, the same `ref.null.extern`-is-not-`undefined` class C6b fixed one level out, and it is that lane's file to edit, not this one's. T9 needs the §22.1.3.19 replacer ARG types (it renders `NaN` — the position argument reaches `a1+a2+a3` as a number, so the args are not the spec's `« matched, position, string »` strings). `split/instance-is-math` is narrower than it looks and I measured where the seam is: `Object.prototype.toString.call(Math)` ALREADY answers `"[object Math]"`, but `String(Math)` answers `"[object Object]"`. The tag is a COMPILE-TIME fold (`resolveObjectToStringTag` / `emitObjectProtoToStringClassifier`, which is emitted into a closure body, not minted as a shared native), while `__to_primitive`'s `tryOrdinaryMethod("toString", /*defaultObjectToStringOnMissing*/ true)` arm hardcodes the literal `"[object Object]"`. Fixing it means minting the classifier as a callable native and calling it from that arm — ordering-sensitive against `ensureObjectRuntime`, so not a one-liner; `trim/15.5.4.20-2-51`, listed below, is the same class one level out (an ARGUMENTS object stringifying as an array). |
+| **C6 rest** | `replace/S15.5.4.11_A1_T5`, `A1_T9`, `split/argument-is-regexp-and-instance-is-number`, `split/instance-is-math`, `split/separator-regexp-limit-string-via-eval`, `concat/S15.5.4.6_A2` (6) | T5 is now `fail`, not `compile_error`, and **its remaining cause is NOT in `replace` at all** — the "unchanged" output is a coincidence, not a missed match. Root-caused here: a `Function()`-minted function with an EMPTY body returns JS **`null`**, not `undefined`. Measured directly, host-free: `function h(){}; var g = Function(); String(h()) + "|" + String(g())` answers **`"undefined|null"`**. In T5 the replacer therefore contributes the TEXT `"null"`, which for the subject `"gnulluna"` is exactly the needle, so the result is indistinguishable from no replacement. Every other shape on this path is already correct after C6b: `"gnulluna".replace(null, function(){})` → `"gundefineduna"`, `"gnulluna".replace(null, Function("return 'Z';"))` → `"gZuna"`, and an IIFE receiver is fine. **Owner: runtime-eval (#4624 family).** Handed to dev-4637 first as a Function-surface defect; they reproduced it, declined (correctly — it is not proto-representation scope), and returned a discriminator that **refutes my first hypothesis and mine in turn narrows theirs**. See "## Handed to another lane — `Function()` implicit completion" below for the whole chain; it is NOT the return conversion, NOT engine-specific, and NOT in `src/`. T9 needs the §22.1.3.19 replacer ARG types (it renders `NaN` — the position argument reaches `a1+a2+a3` as a number, so the args are not the spec's `« matched, position, string »` strings). `split/instance-is-math` is narrower than it looks and I measured where the seam is: `Object.prototype.toString.call(Math)` ALREADY answers `"[object Math]"`, but `String(Math)` answers `"[object Object]"`. The tag is a COMPILE-TIME fold (`resolveObjectToStringTag` / `emitObjectProtoToStringClassifier`, which is emitted into a closure body, not minted as a shared native), while `__to_primitive`'s `tryOrdinaryMethod("toString", /*defaultObjectToStringOnMissing*/ true)` arm hardcodes the literal `"[object Object]"`. Fixing it means minting the classifier as a callable native and calling it from that arm — ordering-sensitive against `ensureObjectRuntime`, so not a one-liner; `trim/15.5.4.20-2-51`, listed below, is the same class one level out (an ARGUMENTS object stringifying as an array). |
 | **C7 — regexp-literal 65k-eval** | `S7.8.5_A{1.1,1.4,2.1,2.4}_T2`, `annexB` leading/trailing escape (6 in my row list; the issue's header says 7 — I did not reconcile which row it counted seventh) | **Re-verified, wall holds.** `annexB/RegExp-leading-escape-BMP` still fails on `Code unit: 0` single-threaded, i.e. runtime-eval throughput, exactly as #4621 measured. Owner: runtime-eval-throughput. One caution for the next measurer: under 3-worker parallel load the same row reports `compilation timeout (19489.6ms)` instead — that is LOAD NOISE, not a second defect; re-run single-threaded before believing a status change on this family. |
 | **not in any family** | `RegExp/S15.10.4.1_A6_T1`, `RegExp/prototype/exec/S15.10.6.2_A4_T11`, `RegExp/S15.10.2_A1_T1`, `String/S15.5.1.1_A1_T9`, `slice/S15.5.4.13_A1_T5`, `substring/S15.5.4.15_A1_T5`, `trim/15.5.4.20-2-51` (7) | The last two are `Function.prototype.toString is not yet implemented in --target standalone` — **dev-4637's lane** (#4442 Function-surface), declined here by the coordination rule. `S15.5.1.1_A1_T9` is `String(this)` at global scope with a global `toString`, i.e. a global-object receiver. `A6_T1`/`A4_T11` were not triaged. |
+
+## Handed to another lane — `Function()` implicit completion
+
+**Owner: runtime-eval (#4624 family).** Also recorded by dev-4637 in
+`plan/issues/4637-fnctor-prototype-edge-function-surface.md` under
+"## Handed to another lane". Visible symptom:
+`built-ins/String/prototype/replace/S15.5.4.11_A1_T5`.
+
+**The defect.** A `Function`-minted function whose completion value is
+IMPLICIT returns JS `null`, not `undefined`. Reproduced by me, `--target
+standalone`, `deferTopLevelInit`, through `runTest262File`:
+
+```js
+function h() {}                          String(h())  -> "undefined"  correct
+var g0 = Function();                     String(g0()) -> "null"       want "undefined"
+var g1 = Function("return undefined;");   String(g1()) -> "undefined"  correct
+var g2 = Function("return null;");        String(g2()) -> "null"       correct
+var g3 = Function("var x = 1;");          String(g3()) -> "null"       want "undefined"
+```
+
+Three lanes have now narrowed this, each one refuting the previous
+hypothesis. Recording the whole chain, because two of the three dead ends
+look plausible enough to be re-entered:
+
+1. **My first hypothesis — the minted function's RETURN conversion — is
+   wrong.** dev-4637's discriminator: `g1`'s EXPLICIT `return undefined;`
+   decodes correctly through the same conversion. The broken shapes are
+   exactly the two with an IMPLICIT completion (empty body; body whose last
+   statement is not a `return`).
+2. **dev-4637's fork (a) "the value slot is not a `$RuntimeEvalValue`
+   carrier, so `ref.test` fails and a raw externref passes through" vs (b)
+   "it is a carrier tagged `_NULL`" is answerable without a WAT dump, and
+   the answer is (b) — but with the cause one step FURTHER upstream than
+   either branch assumes.** The classifier in
+   `src/codegen/runtime-eval-boundary.ts` (`classifiedValue`) tries
+   `__typeof_undefined` FIRST and only then falls to `ref.is_null` →
+   `_NULL`. So a value arriving as the canonical undefined singleton is
+   tagged `_UNDEFINED`, and one arriving as a bare `ref.null.extern` is
+   tagged `_NULL` — **correctly**. The carrier and the tag are both doing
+   their job for a value that was already wrong when it reached them.
+   Do not edit the decode or the classifier.
+3. **It is TIER-INDEPENDENT, which rules out both engines.** Identical
+   `"null|undefined|null|null"` under the QUICKJS provider AND under
+   `JS2WASM_EVAL_ENGINE=interpreter`. Two independent engines do not
+   coincide on a wrong value by accident, so the wrong value is produced by
+   something they SHARE.
+4. **What they share is not in `src/`.**
+   `__runtime_apply_interpreted` is a HOST IMPORT
+   (`RUNTIME_EVAL_IMPORT_MODULE`, registered in
+   `src/codegen/expressions/eval-inline.ts` ~L2151) whose body lives in the
+   PROVIDER artifact built by `scripts/build-runtime-eval-provider.mjs` /
+   `scripts/build-quickjs-eval-provider.mjs`. It returns
+   `runtimeEvalResult(true, value)` →
+   `[ok, __runtime_eval_wrap_result(exposeRuntimeEvalValue(value))]`
+   (`scripts/runtime-eval-provider.mjs`, `PROVIDER_EXPORT_WRAPPER` ~L233).
+
+**Leading hypothesis, explicitly NOT yet measured** — stated so the next
+lane tests it rather than inherits it: the provider is ITSELF a
+js2wasm-compiled module, so its `__runtime_eval_wrap_result(undefined)` goes
+through the same classifier as (2). If a JS `undefined` crossing into the
+provider's wasm materializes as `ref.null.extern` rather than the canonical
+undefined singleton, the envelope is tagged `_NULL` and every step
+downstream is faithful. That would explain (3) exactly. Confirming it needs
+one probe INSIDE the provider build, not another probe of a compiled module.
+
+**Why neither dev-4637 nor I fixed it.** The change moves the value model
+for EVERY interpreted call's return, and the fix site is a prebuilt provider
+artifact — so the verification surface is an artifact rebuild plus an
+eval-dependent corpus sweep, which is the runtime-eval owner's lane and
+budget, not a String/RegExp or a proto-representation lane's. Landing an
+unmeasured value-model change underneath a verified result is the trade the
+campaign brief forbids.
