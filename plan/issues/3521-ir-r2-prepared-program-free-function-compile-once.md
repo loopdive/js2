@@ -21,6 +21,9 @@ parent: 3518
 depends_on: [3520]
 required_by: [3522, 3523, 3525, 3526]
 related: [2138, 2855, 3143, 3203, 3518, 3519, 3678, 4260, 4382]
+loc-budget-allow:
+  - src/ir/propagate.ts
+  - src/ir/select.ts
 origin: "#3518 R2 — invert single-source free functions from compile/patch to prepare/emit"
 files:
   - src/ir/program.ts
@@ -1130,3 +1133,18 @@ is in final-context preparation (`reconcileIrOverlayOutcomes` bookkeeping),
 i.e. this issue's territory jointly with #3520's identity records, and
 fixing it makes every claim #2949 has banked visible on the linked lane.
 Session-wide context: `plan/agent-context/fable-lead.md`.
+
+## 2026-08-24 source-qualified fnctor admission checkpoint
+
+The first implementation checkpoint is deliberately limited to admission
+evidence. `buildIrUnitTypeMap`, identity selection, and the selector accept an
+opt-in `IrFnctorAdmission` only when a source-qualified constructor proof
+establishes the reserved `Parser { input: string }` shape, direct construction,
+fixed unconditional field, and no alias/reassignment/escape/cross-source
+collision. Without a resolver, all existing propagation and selector behavior
+is unchanged and the site remains dynamic/Unsupported. This checkpoint does
+not add an IR fnctor node, constructor lowering, or ABI emission; those must be
+landed as the next signed slice with exact reserved-layout and hidden-identity
+checks from the architecture section above. The bounded source changes are
+covered by `loc-budget-allow` for the two existing god-files and are intended
+to be reviewed independently before any R2 replay.
