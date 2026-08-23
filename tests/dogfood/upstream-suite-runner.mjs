@@ -915,7 +915,41 @@ function nativePathFor(generatedPath) {
   return `${generatedPath.slice(0, -extension.length)}.native.mjs`;
 }
 
+// (#4604 S7, generalized) Late host errors from NATIVE upstream test runs must
+// cost a report entry, never the process. `runNative` imports the generated
+// module IN-PROCESS and try/catches only the awaited test body — but upstream
+// code schedules host-timer work that can throw AFTER its test resolved.
+// npm-compat refresh run 32623956233 died exactly this way: hono's
+// `concurrent.js` threw "interval violated" from a `setTimeout` callback ~2
+// minutes into the measurement, the uncaughtException killed node, and ALL SIX
+// packages of the `libraries` matrix row lost their measurement (the partial
+// report is deliberately discarded on non-zero exit). Same policy as
+// react-dom's `installNativeHostErrorBoundary`: record and keep going. Every
+// capture is echoed to stderr so genuine harness bugs stay visible in CI logs,
+// and drained into the next run's `native.lateHostErrors`.
+const nativeLateHostErrors = [];
+let nativeLateBoundaryInstalled = false;
+let nativeLateCurrentFile = null;
+function installNativeLateErrorBoundary() {
+  if (nativeLateBoundaryInstalled) return;
+  nativeLateBoundaryInstalled = true;
+  const record = (kind) => (error) => {
+    const entry = {
+      kind,
+      file: nativeLateCurrentFile,
+      name: error?.name ?? "Error",
+      message: error?.message ?? String(error),
+    };
+    nativeLateHostErrors.push(entry);
+    process.stderr.write(`[dogfood] late native host error (${kind}) in ${entry.file ?? "?"}: ${entry.message}\n`);
+  };
+  process.on("uncaughtException", record("uncaughtException"));
+  process.on("unhandledRejection", record("unhandledRejection"));
+}
+
 async function runNative(generatedPath, source) {
+  installNativeLateErrorBoundary();
+  nativeLateCurrentFile = generatedPath;
   const transpiled = ts.transpileModule(source, {
     compilerOptions: {
       target: ts.ScriptTarget.ES2022,
@@ -953,6 +987,10 @@ async function runNative(generatedPath, source) {
     names: Array.from(module.upstreamTestNames(), String),
     statuses,
     errors,
+    // Late async throws recorded (not fatal) since this file's native run
+    // started — see installNativeLateErrorBoundary above. Drained per run so
+    // one file's stray timers are not attributed to the next.
+    lateHostErrors: nativeLateHostErrors.splice(0, nativeLateHostErrors.length),
   };
 }
 
