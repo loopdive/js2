@@ -37,6 +37,22 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
    delta you report must come from runs YOU executed. A figure inherited from
    an artifact and restated as a measurement is the campaign's most-repeated
    documented defect.
+
+   **One snapshot per touched file, and check `git diff --stat` before each
+   arm (2026-08-23, dev-4491).** Restoring only ONE snapshot when your change
+   spans two files silently measures a HYBRID tree — half your change, half
+   the base — and nothing in the run announces it. The cheap detector is
+   `git diff --stat` immediately before each arm: if it names a different
+   number of files than your change touches, you have a partial restore. That
+   count mismatch is the only reason the one measured instance was caught.
+
+   **Branch-update merges use a PLAIN `git merge <ref>` — never `--ff-only`.**
+   `pre-merge.sh` treats `--ff-only` as the legacy merge-TO-main path and
+   refuses it without a fresh test-proof artifact, so a lane pulling the
+   campaign tip into its own feature branch gets blocked and may be tempted to
+   `--no-verify` past a gate doing its job. The documented protocol is a plain
+   merge anyway (CLAUDE.md: "Dev merges `origin/main` INTO their branch —
+   `git merge origin/main` (not rebase)"). Use the right form; do not bypass.
 3. **One probe per compiled module where identity matters** (in-process
    pollution confound, #3673). Isolate and re-run anomalous batch results.
 4. **Absent-not-wrong.** A new arm that cannot be certain about a dynamic
@@ -50,6 +66,27 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
    Build the provider locally with
    `node scripts/build-runtime-eval-provider.mjs --refusal-only` and run the
    pin under `JS2WASM_EVAL_ENGINE=interpreter` before calling it done.
+6. **A table is only evidence for the axes it VARIES — the axis you did not
+   vary is where the wrong rule hides (2026-08-23, #4653/#4662).** A rule
+   generalised from a discriminator table is exactly as strong as the table's
+   dimensions, and a probe harness silently fixes the dimensions you did not
+   think to name. Measured: one lane published THREE successive rules for the
+   same defect. v1 varied only the operator. v2 varied operator ×
+   surrounding-syntax × top-level-vs-inside-a-function — three axes, none of
+   them the one that decided the answer — because every probe wrapped its
+   subject in the same helper, so every "outer" variable happened to be
+   module-level. The real axis was **where the name is bound**; the first probe
+   that varied it (a function-LOCAL, neither eval-local nor module-level)
+   refuted v2 in two lines, and a second two-line probe refuted its remaining
+   half. v2 had already been filed as an issue by then.
+   - Before publishing a rule, name the axes your probes varied and the ones
+     they held FIXED. The held-fixed list is the honest confidence interval —
+     and it is usually short enough to close by hand.
+   - Suspect any axis your harness supplies rather than your test data: the
+     wrapper, the scope you happened to declare things in, the lane, the
+     tier. Those are fixed by convenience, not by design.
+   - A rule that survives only the cells you found convenient is a
+     description of your harness, not of the compiler.
 
 7. **Cross-lane claims need a third arm (2026-08-23, #4637/#4639).** With
    sibling lanes branching from one tip, your two-arm A/B (tip vs your
@@ -62,6 +99,21 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
    - A claim about ANOTHER lane's effect requires an arm containing their
      change — measured by whoever owns it and cited as theirs, or measured
      by the lead on the combined tree. Never infer it from your own pair.
+   - **This rule governs CLAIMS, not DISAGREEMENTS (2026-08-23, #4653/#4515).**
+     When two lanes' results on the "same" shape conflict, the first move is to
+     reconcile — did we measure the same CELL? — NOT to stop at "different
+     trees, I can't speak for yours". Both lanes did the latter here and it kept
+     a wrong rule alive for three rounds and one filed issue. The repro turned
+     out not to be the snippet that had been pasted (its error text named a
+     variable the quoted source never declared), so one lane was measuring a
+     module-level binding and the other a function-local one — same words,
+     different cell, no tree difference at all. "It does not reproduce here" is
+     a hypothesis about YOUR cell before it is a fact about their tree. Invoke
+     the third arm for what survives reconciliation; a third-arm caveat is not a
+     substitute for reconciling two results.
+   - Corollary, cheap and repeatedly decisive: **read the peer's error text
+     against the peer's quoted source.** A name, line, or type that does not
+     match the snippet means you are not looking at the program that ran.
    - **Verify every pin fails on the arm it claims to test** (revert for
      your own change; DELETE the named interaction for a cross-lane pin —
      a revert proves sensitivity to *your* change only). A canary nobody
@@ -81,42 +133,168 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
      either lane could run would have compiled the combination. Cross-lane
      hazards are only visible on the combined tree — the lead's merge
      verification must include running each lane's suite there.
-   - The merge check confirms the run says **N passed** — never that it
-     exited 0 (`describe.skipIf` gates can skip an entire suite green).
+   - The merge check reads the run's **counts**, never its exit status —
+     and the exit status is UNCORRELATED with the outcome in both
+     directions — and both inversions were measured on the SAME suite, so
+     "different suites, different causes" does not explain it away:
+     **exit 1 with `23 passed (23)`, everything green** (the failure being
+     vitest's own `onTaskUpdate` RPC timeout, no test involved), and
+     **exit 0 with `22 passed | 36 skipped (58)`**, thirty-six tests never
+     executed. `$?` is not a verdict in either direction.
+     Five measured ways a run reports green having measured nothing (or
+     less than it claims), and the check comes in **two tiers — do the free
+     one first** (2026-08-23, dev-4491's calibration):
 
-8. **A residual is a CLAIM, and `it.fails` protects it from ever being
-   tested (2026-08-23, dev-4653 self-correction).** This is the cheapest
-   place in the method for a wrong statement to survive indefinitely, and
-   it was found the only way it can be — by accident, when a sibling
-   lane's message forced a re-open of a row already written up, swept
-   green, pinned, and committed.
+     **Tier 1 — internal, needs nothing but the summary line, catches four
+     of the five.** Vitest prints its own denominator and the parts sum to
+     it. Let `executed = passed + failed`.
+     - **Floor, always safe: `total > 0 && executed > 0`.** All four
+       zero-selection members produce `executed == 0`, and a file with real
+       tests plus a few deliberate `it.skip` always executes some — so this
+       never false-alarms and needs no count anywhere.
+     - **Strong form: `executed == total`.** When it holds you are done.
+     - **When it does not hold, do NOT reach for a number — climb.** A
+       count of expected skips is grepped from `it.skip(` and carries the
+       identical hazards as the tier-2 denominator below (a commented-out
+       `// it.skip(`, one inside a template string, a `describe.skip`
+       wrapping four tests). Reading what was skipped also catches what a
+       count structurally cannot: **the right number of skips from the
+       wrong set** — a partial `skipIf` skipping three tests when you
+       expected three *different* ones satisfies any count.
 
-   The failure shape: a lane attributes a residual to a root it inferred
-   rather than probed, then pins it `it.fails`. The pin **passes**,
-   because the row does fail — just not for the stated reason. The sweep
-   is green, the suite is green, and the wrong root is now documented as
-   a measurement for the next lane to build on. Nothing in the workflow
-   ever re-examines it. Measured instance: "the minted function does not
-   bind its declared parameters" survived a full lane and its pins, while
-   `new Function("p","return p;")(7)` answers `7` — one probe, never run,
-   and the attribution was backwards (the defect is `++` on a
-   mint-LOCAL name, only inside an enclosing function; see #4662).
+       It is a **three-rung ladder, and you climb only as far as the
+       question needs** (measured 2026-08-23 across both lanes' pin files,
+       skipping via a no-match `-t`):
 
-   Rules that fall out:
-   - **Probe the NEGATIVE case before attributing a residual.** State the
-     one observation that would refute your root, run it, and record the
-     result. An attribution you did not try to falsify is a hypothesis,
-     so label it one — `suspected root`, not `root`.
-   - **Every `it.fails` pin carries POSITIVE CONTROLS that must pass**,
-     chosen so the suite claims the specific root rather than the general
-     area. dev-4653's corrected pins are the worked example: two
-     `it.fails` on "`++` on a mint-local name" plus controls asserting
-     that parameter binding works and that outer-`++` works. Without the
-     controls, a future fix that widens the wrong thing repairs the pin
-     and reads as green.
-   - Residual attributions are what the NEXT lane starts from, so a wrong
-     one costs more than a missing one. "Root unknown, here is what I
-     ruled out" is a better handover than a confident wrong root.
+       | rung | line | reporters | answers |
+       | --- | --- | --- | --- |
+       | 1 | `Tests 1 passed \| 30 skipped (31)` | all | something was lost |
+       | 2 | `↓ tests/… (9 tests \| 9 skipped)` | default + basic | **which FILE** lost it |
+       | 3 | `↓ tests/… > suite > test name` | **verbose only** | **which TESTS** |
+
+       **Rungs 1 and 2 are reporter-independent, so no existing tooling
+       needs re-plumbing** — this brief's per-file loops run
+       `--reporter=basic` and get both. Switch to verbose only for rung 3.
+       Reproduced independently on two different pin files (22 tests and
+       23 tests, two lanes): basic gives one file-level `↓` line and no
+       names; verbose gives one `↓` per test with its full path.
+
+       **"Names are verbose-only" is too strong, though** (dev-4491,
+       correcting its own earlier caveat): basic DOES print per-test `↓`
+       names with full paths for a file that **failed** — vitest expands a
+       failed file's per-test detail on basic and does not expand a passing
+       one. Rung 3's "needs verbose" still holds for the case that matters,
+       a partial `skipIf` in a file whose surviving tests all pass, which
+       is the silent one. The blanket claim does not.
+
+       Rung 2 matters on its own: in a MULTI-FILE run the aggregate can
+       mask one file being wholly skipped while others run. Measured —
+       `vitest run <pin> <equivalence> -t "labelled block"
+       --reporter=basic` printed `Tests 1 passed | 30 skipped (31)` and
+       `↓ tests/equivalence/in-operator-edge-cases.test.ts (9 tests | 9
+       skipped)`, naming the dead file without verbose. (`Test Files 1
+       passed | 1 skipped (2)` is the same signal at file granularity.)
+
+       **Match `skipped` on the file line — not the marker, and NOT a
+       fixed suffix shape** — this
+       corrects an earlier reading of rung 2 (dev-4491, measured on
+       `basic`). A file skipped in its entirety gets a `↓`; a PARTIALLY
+       skipped file still has a passing test, so it lands on a `✓` line and
+       a search for `↓` will not find it:
+       ```
+       ✓ tests/issue-4491-t4-add-parity.test.ts (5 tests  | 4 skipped)
+       ✓ tests/issue-4491-wave4.test.ts        (14 tests | 13 skipped)
+       ```
+       The file WAS reported. Reading the marker is what makes rung 2 look
+       blind to partial loss and sends you to verbose for something already
+       on screen.
+
+       **The suffix has a VARIABLE number of segments, so do not grep the
+       pair** (dev-4515, closing dev-4491's stated limit — all three
+       markers now measured):
+       ```
+       ↓ …in-operator-edge-cases.test.ts (9 tests | 9 skipped)
+       ✓ …issue-4515-wave5.test.ts       (22 tests | 21 skipped)
+       ❯ …probe-failskip.test.ts         (3 tests | 1 failed | 2 skipped)
+       ```
+       A failing file inserts `| N failed`, so a pattern written for the
+       two-segment `(N tests | M skipped)` form misses exactly the shape
+       you most want to catch. A fully-passing file prints `(2 tests)` with
+       no pipe and no `skipped` at all — which is what makes matching the
+       WORD complete across all four shapes: absent when nothing was lost,
+       present for fully-skipped, partial-skip and fail+skip. It is the
+       only candidate that cannot false-negative.
+
+       **Anchor it to the file line — a bare `grep skipped` false-positives
+       three ways** in that same output (a test NAME containing "skipped",
+       a source excerpt in the failure dump, and the summary line). Use
+       `\.test\.ts \(.*skipped`, or a file whose tests are named after
+       skipping reports itself as broken.
+     ```
+     Tests  1 failed | 45 passed (46)   healthy
+     Tests  22 skipped (22)             a `-t` regex matched nothing
+     Tests  1 failed | 21 skipped (22)  same file, filter finally biting
+     Tests  36 skipped (36)             dead CompilerPool worker
+     ```
+     That covers a `describe.skipIf` gate, a suite whose own
+     `CompilerPool` worker cannot start (below), a path/glob matching no
+     file, and a `-t` filter matching nothing — **`vitest -t` is a REGEX**,
+     so `-t "f + 1 must agree"` requires two spaces and selects zero, on a
+     file with no `skipIf` in it at all. Escape `+ ( ) [ ] . * ?`, or match
+     a plain substring. Nothing here can be mis-counted, because the
+     denominator comes from the same line as the parts.
+
+     **Exit status is UNCORRELATED with the outcome — and both directions
+     have been measured on ONE suite, which removes the "different suites,
+     different causes" objection** (dev-4653, `tests/issue-4653.test.ts`):
+     ```
+     Tests  23 skipped (23)   exit 0   nothing executed, exits GREEN
+     Tests  23 passed  (23)   exit 1   everything passed, exits RED
+     ```
+     Tier 1 gets both right (`executed 0 != 23` fails; `executed 23 == 23`
+     passes) while `$?` is inverted from the truth in each. A second,
+     independent exit-0 instance from a real accident rather than a
+     deliberate filter: `Tests 22 passed | 36 skipped (58)` from a dead
+     `CompilerPool` worker, thirty-six tests never executed (dev-4491).
+
+     So "counts, never exit status" is a rule, not a preference: neither
+     direction of the status tells you anything.
+
+     **Tier 2 — external declared count, and ONLY for the fifth member.**
+     Vitest's RPC dropping task updates under load
+     (`[vitest-worker]: Timeout calling "onTaskUpdate"`) shrinks `passed`
+     and `total` TOGETHER, so tier 1 still holds and only a count from
+     outside the runner catches it. This is the one place an external
+     denominator earns its keep — and the one place its accuracy has to be
+     established rather than grepped, because **the same pattern is wrong
+     in BOTH directions — measured on two files, one each**:
+     - `tests/issue-4515-wave5.test.ts` declares **22**. `grep -c "it("` →
+       **16** (misses every `it.fails(`); `grep -cE "it\(|test\("` → **21**
+       (picks up `export function test()` in a doc comment, the same text
+       in a template string, and `exports.test()`). Neither is 22, and the
+       two errors partially cancel.
+     - dev-4653's pin file declares **23**; the naive `it\(` answers
+       **13** — under by ten, again because `it.fails(` is invisible to it.
+
+     `grep -cE '^\s+it(\.fails)?\('` gets the first file right *because it
+     was calibrated to it*, not because it is correct — the same defect as
+     a stale baseline restated as a measurement. It still misses `it.each`,
+     `test(` and generated cases, and a comment containing `it (`
+     over-counts. If you cannot establish the number, say so rather than
+     quoting an equality you did not verify.
+   - **Contention fakes the ABSENCE of failure as well as its presence.** A
+     run can print `22 passed` beside `Errors 1 error` where the error is
+     that RPC timeout and no test is involved. Read what the error IS. In
+     the measured case the tally equalled the file's declared 22, so
+     nothing had been lost — which is exactly the comparison above doing
+     its job, and is why an `Errors` line is not by itself a verdict.
+   - **A pipe can hide the line that would have told you.** Several
+     result-bearing runs were filtered inline through
+     `grep -E "✓|×|passed|failed|skipped"`, which does not match `Errors N
+     error` — so those runs cannot retrospectively be cleared of the RPC
+     case (dev-4491, self-audit; the totals matched the declared counts, so
+     the conclusions stood). Same defect class as the `-t` regex: a filter
+     that removes the evidence of its own unreliability.
 
 ## Environment trap: fresh worktrees have NO .test262-cache (#4484 finding)
 

@@ -75,6 +75,7 @@ const CLOSURE_HOST_BRIDGE_ORDINAL = Object.freeze({
   closureArity: 11,
   isClosure: 12,
   closureHasRest: 13,
+  isCtorClosure: 14,
 } as const);
 
 /**
@@ -98,6 +99,7 @@ function closureHostBridgeDefinition(logicalName: string): { physicalBase: strin
   if (logicalName === "__closure_arity") return { physicalBase: "$ce", bit: 14 };
   if (logicalName === "__is_closure") return { physicalBase: "$cf", bit: 15 };
   if (logicalName === "__closure_has_rest") return { physicalBase: "$cg", bit: 16 };
+  if (logicalName === "__is_ctor_closure") return { physicalBase: "$ch", bit: 17 };
   throw new Error(`unknown closure host bridge ${logicalName}`);
 }
 
@@ -184,7 +186,7 @@ function emitClosureHostBridgeManifest(ctx: CodegenContext): void {
 
   const bindingsTableIdx =
     ctx.mod.imports.filter((entry) => entry.desc.kind === "table").length + ctx.mod.tables.length;
-  ctx.mod.tables.push({ elementType: "funcref", min: 17, max: 17 });
+  ctx.mod.tables.push({ elementType: "funcref", min: 18, max: 18 });
   const markerTableIdx = bindingsTableIdx + 1;
   ctx.mod.tables.push({ elementType: "funcref", min: 0, max: 0 });
   for (const [bit, func] of publishedClosureHostBridgeFuncs.get(ctx) ?? []) {
@@ -1543,6 +1545,70 @@ export function emitIsClosureExport(ctx: CodegenContext): void {
       exported: true,
     } as WasmFunction,
     CLOSURE_HOST_BRIDGE_ORDINAL.isClosure,
+  );
+}
+
+/**
+ * Emit `__is_ctor_closure(externref) -> i32` (#4661) — the js-host lane's bridge
+ * to the IsConstructor answer the STANDALONE lane already computes natively.
+ *
+ * ## Why this export exists
+ * `__reflect_construct_newtarget` wraps a wasm-struct `newTarget` with
+ * `_wrapForHost`, which is not callable, so V8's §26.1.2 step-3
+ * IsConstructor(newTarget) check rejected EVERY compiled function — test262's
+ * `isConstructor(function(){})` answered `false`. The naive repair (route every
+ * closure through the constructible `_wrapCallableForHost`, as
+ * `__construct_closure` does) inverts the error: arrows and generators would
+ * then report `true`. The runtime needs the BIT, not a blanket policy.
+ *
+ * ## Why no new field, and no second predicate
+ * The bit already exists in the type system. `#3371`'s
+ * `getOrCreateConstructibleFuncRefWrapperTypes` mints a nominally distinct
+ * struct SUBTYPE (`__constructible_fn_wrap_N_struct`, one extra
+ * `$__constructible i32`) for ordinary function declarations/expressions, and
+ * every such type is registered in {@link CodegenContext.constructibleClosureTypeIdxs}.
+ * The standalone `__reflect_is_constructor` (`reflect-construct-native.ts`)
+ * answers IsConstructor from exactly that set — which is why standalone passes
+ * `test/harness/isConstructor.js` today and js-host does not. So this is a
+ * `ref.test` chain over the SAME registry, not a new source of truth: the two
+ * lanes cannot drift apart, and no allocation site changes.
+ *
+ * A distinct ROOT wrapper type for non-constructible callables was rejected
+ * (#3205): two closures of one signature would stop being assignable to one
+ * slot. The registry is over SUBTYPES, which keeps root assignability intact.
+ *
+ * No-op when the module registered no constructible closure, exactly like
+ * `__is_closure` — so a module without ordinary function values is byte-identical.
+ */
+export function emitIsCtorClosureExport(ctx: CodegenContext): void {
+  const ctorTypeIdxs = [...ctx.constructibleClosureTypeIdxs].sort((a, b) => a - b);
+  if (ctorTypeIdxs.length === 0) return;
+
+  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$is_ctor_closure_type");
+  const body: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }];
+  for (const ctorType of ctorTypeIdxs) {
+    body.push(
+      { op: "local.get", index: 1 },
+      { op: "ref.test", typeIdx: ctorType },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+      },
+    );
+  }
+  body.push({ op: "i32.const", value: 0 });
+
+  publishClosureHostBridge(
+    ctx,
+    {
+      name: "__is_ctor_closure",
+      typeIdx,
+      locals: [{ name: "__any", type: { kind: "anyref" } }],
+      body,
+      exported: true,
+    } as WasmFunction,
+    CLOSURE_HOST_BRIDGE_ORDINAL.isCtorClosure,
   );
 }
 

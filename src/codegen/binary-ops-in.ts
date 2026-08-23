@@ -422,7 +422,31 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // overlay and the #3537 bag, so routing makes `in` agree with the read — and
     // only a folded `false` is routed, so no affirmative answer moves.
     const vecNamedKeyRoute = !has && carrierBagKeyNeedsRuntime(ctx, rightWasm, staticKey, 0);
-    if (!has && (rightWasm.kind === "externref" || rightWasm.kind === "anyref" || vecNamedKeyRoute)) {
+    // (#4515 wave-5) The SECOND half of the #4484 D guard above. That one
+    // stopped a reassigned binding's stale static type from producing a wrong
+    // THROW; the same staleness also produces a wrong ANSWER here, because
+    // `tsTypeHasProperty` is read off that same type:
+    //
+    //   var NUMBER = 0;
+    //   (NUMBER = Number, "MAX_VALUE") in NUMBER   // folded false, spec true
+    //
+    // TS widens `NUMBER` to `number | NumberConstructor` and a union property
+    // must exist on EVERY constituent, so `MAX_VALUE` is invisible and the fold
+    // answers `false` for an RHS that holds the real `Number` constructor.
+    // `__extern_has` decides from the VALUE and already answers this correctly
+    // — measured on this branch, `(function (x, k) { return k in x; })(Number,
+    // "MAX_VALUE")` is `true` and `…"nope"` is `false`, both through this same
+    // helper. Routing the site there replaces evidence that is stale by
+    // construction with evidence that is not (`S11.8.7_A2.4_T1`).
+    //
+    // Deliberately narrow: ONLY a bare-identifier RHS the file writes to
+    // somewhere, which is exactly the population whose declared type is not a
+    // fact about this site. Every other receiver keeps its fold byte-for-byte.
+    const reassignedReceiverRoute = rhsIsReassignedBinding && rightWasm.kind !== "ref" && rightWasm.kind !== "ref_null";
+    if (
+      !has &&
+      (rightWasm.kind === "externref" || rightWasm.kind === "anyref" || vecNamedKeyRoute || reassignedReceiverRoute)
+    ) {
       const hasIdx = ensureLateImport(
         ctx,
         "__extern_has",

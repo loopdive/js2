@@ -151,6 +151,18 @@ loc-budget-allow:
   #    with the `= undefined` IDENTIFIER arm next to the void-call arm.
   - src/codegen/declarations/param-return-inference.ts
   - src/codegen/builtin-ctor-own-props.ts
+  # 2026-08-23 T4 parity slice (S11.6.1_A2.2_T3): +63 in add-to-primitive.ts
+  # (the replacement guard `identifierIsTheCapturedFunction` plus the record of
+  # why the old one always fired) and +50 in addition-to-primitive.ts (the
+  # `emitOperand` closure inside `emitObjectAdd` that consults the shared
+  # helper). Neither body can move: the guard IS the predicate the exported
+  # helper applies, and `emitOperand` must sit between the two operand
+  # compilations it replaces, because §13.15.3's left-then-right evaluation
+  # order is what it preserves. Most of both diffs is the rationale comment —
+  # in particular the measured record that repairing the guard ALONE moved 0
+  # of 128 rows, which is the trap the next lane would otherwise re-derive.
+  - src/codegen/add-to-primitive.ts
+  - src/codegen/addition-to-primitive.ts
 oracle-ratchet-allow:
   # 2026-08-21: one getTypeAtLocation in varBindingNeedsExternrefForUndefined's
   # new call arm — the same raw-checker idiom as the surrounding predicate;
@@ -219,6 +231,9 @@ coercion-sites-allow:
   # hand-rolled.
   - src/codegen/string-fromcharcode-value-read.ts
 func-budget-allow:
+  # 2026-08-23 T4 parity slice — `emitObjectAdd` gains the `emitOperand`
+  # closure (see the loc entry above for why it cannot be hoisted).
+  - src/codegen/addition-to-primitive.ts::emitObjectAdd
   # 2026-08-23 wave-4 census: +38 in `inferParamTypeFromCallSites`, which is a
   # TERMINAL LADDER of soundness withdrawals — #3548 (under-application), #4555
   # (native scalars), #4491 (nullish arg), #4530 (opaque `any`), #2867 S2
@@ -5924,6 +5939,61 @@ all — they surfaced while writing the pins.
 | `defineProperty/15.2.3.6-4-243-2` | the `onlyStrict` twin of a fixed row: a STRICT-mode write to an array-index accessor with no setter must throw a TypeError. The sloppy no-op is correct; the strict-throw is the documented boundary in `__extern_set`'s accessor arm. | the shared `__extern_set_decide` refusal channel already exists (root 2 uses it); wiring the accessor arm to it is a small follow-up. Unowned. |
 | (no census row — found writing the pins) | `Object.freeze(arr)` flips `Object.prototype.hasOwnProperty.call(arr,"0")` from `true` to **`false`**, while `gOPD(arr,"0")` keeps answering the full descriptor. PRE-EXISTING: reproduces with `vec-overlay.ts` reverted. A descriptor that exists while `hasOwnProperty` says the property does not is the #4010 overlay-vs-bag split, now reachable through the integrity path too. | unowned; pinned `it.fails` in `tests/issue-4491-wave4.test.ts`. |
 | (no census row — found writing the pins) | a FUNCTION-LOCAL `var g = undefined` still stores the number 0, and an INLINE `{get: getter}` descriptor argument still throws where the same descriptor in a variable does not. Root 3 fixes the module-global slot on the dynamic define path only. | unowned; see "Not done" below. |
+
+#### T4 parity slice (2026-08-23, branch `issue-4491-t4-parity`, base `340f7c49d`)
+
+Routed in from dev-4515: `language/expressions/addition/S11.6.1_A2.2_T3`
+CHECK#1 — `f1 + 1 !== f1.toString() + 1`. Measured standalone on the base:
+
+```
+f1 + 1            -> "function () { [native code] }1"   (§20.2.3.5 step 3)
+f1.toString() + 1 -> "function f1() { return 0; }1"     (#1463's funcSourceText)
+```
+
+The row is the invariant `add-to-primitive.ts`'s own header names, so the module
+that exists to hold it was not holding it.
+
+**The reported root was real but NOT sufficient, and the measurement is the only
+reason that is known.** dev-4515 identified `add-to-primitive.ts`'s
+`fctx.localMap.has(expr.text)` guard: the test262 harness wraps every script in a
+synthetic `export function test()`, so every top-level function is a local and
+the guard always fires. That is true. Repairing it moved **0 of 128 rows** —
+because for this operand shape `addOperandCallableSourceText` is **never
+called**. An earlier dispatch in `binary-ops.ts` (line ~1325) hands `f1 + 1` to
+`emitObjectAdd` (`addition-to-primitive.ts`, #4564): `admitsObjectAddition`
+admits a known-compiled-closure operand, so the later `admitsObjectAdd` arm —
+the helper's only caller — is unreachable for it. Two modules with near-identical
+names own the same operator, and the live one had no source-text arm.
+
+**Fix, both halves (neither works alone):**
+
+1. `addition-to-primitive.ts` — `emitObjectAdd` consults the shared helper for
+   each operand before compiling it, materialising the captured source text.
+   Reuse, not a second copy of the guards, so the spellings cannot drift apart
+   again.
+2. `add-to-primitive.ts` — the guard becomes a resolution question instead of a
+   name-in-a-map question (`ctx.oracle.valueDeclarationOf` → is it that
+   `FunctionDeclaration`?), plus a `getText()` equality so the map's BARE-NAME
+   keying cannot fold a same-named function's source. Without this the helper
+   refuses under the harness and half 1 is inert. The replacement is both
+   narrower (a local that IS the function now folds) and WIDER (a module-scope
+   shadow, which `localMap` never saw, is now refused) than what it replaced.
+   The same `valueDeclarationOf` → `isFunctionDeclaration` idiom is what
+   `isKnownCompiledClosure` in the sibling module already uses.
+
+**Measured, both arms run in this worktree** (`language/expressions/addition` 48
+rows + `built-ins/Function/prototype/toString` 80 rows as the `funcSourceText`
+control set, 128 total): base 78 pass, branch 78 pass, **UP 1** (the target row),
+**DOWN 0**. One row (`S11.6.1_A2.4_T3`) reported DOWN in the parallel sweep and
+passes on BOTH arms when re-run serially — the worktree symlink-farm ENOENT race
+again, the same false-regression class recorded in the wave-4 section. Serial
+re-verification of every apparent flip is now standing practice for this harness.
+
+Pins: `tests/issue-4491-t4-add-parity.test.ts` — 5 passed on the branch; on the
+reverted sources the parity pin FAILS and the four "must not fold" controls
+(CHECKS #2-#4's `valueOf`/`toString` overrides, plus a local shadowing a
+top-level function) pass on both arms, which is what shows the guards were made
+precise rather than removed.
 
 #### Routed IN from #4654 (2026-08-23) — accessor-tier twin of the T9 fix
 

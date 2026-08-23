@@ -1078,6 +1078,7 @@ const _CLOSURE_HOST_BRIDGE_EXPORTS = [
   ["__closure_arity", "$ce"],
   ["__is_closure", "$cf"],
   ["__closure_has_rest", "$cg"],
+  ["__is_ctor_closure", "$ch"],
 ] as const;
 
 const _DATA_STRUCT_HOST_BRIDGE_EXPORTS = [
@@ -1090,8 +1091,8 @@ const _CLOSURE_HOST_BRIDGE_MARKER = ["__\0js2_closure_host_bridge_marker", "$ct"
 const _CLOSURE_HOST_BRIDGE_BINDINGS = ["__\0js2_closure_host_bridge_bindings", "$cu"] as const;
 const _CLOSURE_HOST_BRIDGE_MANIFEST_MAGIC = 0x5a200000;
 const _CLOSURE_HOST_BRIDGE_MANIFEST_MAGIC_MASK = 0xfff00000;
-const _CLOSURE_HOST_BRIDGE_MANIFEST_BITS_MASK = 0x0001ffff;
-const _CLOSURE_HOST_BRIDGE_MANIFEST_RESERVED_MASK = 0x000e0000;
+const _CLOSURE_HOST_BRIDGE_MANIFEST_BITS_MASK = 0x0003ffff; // (#4661) bit 17 = __is_ctor_closure
+const _CLOSURE_HOST_BRIDGE_MANIFEST_RESERVED_MASK = 0x000c0000;
 const _DATA_STRUCT_HOST_BRIDGE_MANIFEST = ["__\0js2_data_struct_host_bridge", "$dm"] as const;
 const _DATA_STRUCT_HOST_BRIDGE_MARKER = ["__\0js2_data_struct_host_bridge_marker", "$dt"] as const;
 const _DATA_STRUCT_HOST_BRIDGE_BINDINGS = ["__\0js2_data_struct_host_bridge_bindings", "$du"] as const;
@@ -1168,7 +1169,7 @@ function _isImmutableI32Global(value: unknown): value is WebAssembly.Global {
 }
 
 /** Prove a Table's exact funcref limits through Wasm import validation. */
-function _isExactFuncrefTable(value: unknown, size: 0 | 2 | 17): value is WebAssembly.Table {
+function _isExactFuncrefTable(value: unknown, size: 0 | 2 | 18): value is WebAssembly.Table {
   try {
     if (!(value instanceof WebAssembly.Table) || value.length !== size) return false;
     const verdict =
@@ -1183,7 +1184,7 @@ function _isExactFuncrefTable(value: unknown, size: 0 | 2 | 17): value is WebAss
         ? [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 0, 0]
         : size === 2
           ? [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 2, 2]
-          : [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 17, 17];
+          : [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 18, 18];
     let probe =
       size === 0
         ? _emptyFuncrefTableProbeModule
@@ -1242,7 +1243,7 @@ function _closureHostBridgeMetadata(exports: Record<string, any>): ClosureHostBr
   const [bindingsLogicalName, bindingsPhysicalBase] = _CLOSURE_HOST_BRIDGE_BINDINGS;
   if (!_hasOwn(exports, bindingsLogicalName)) return undefined;
   const bindings = _terminalHostBridgeAlias(exports, bindingsPhysicalBase);
-  if (!_isExactFuncrefTable(bindings, 17)) return undefined;
+  if (!_isExactFuncrefTable(bindings, 18)) return undefined;
   try {
     for (let bit = 0; bit < _CLOSURE_HOST_BRIDGE_EXPORTS.length; bit++) {
       const binding = bindings.get(bit);
@@ -7620,45 +7621,45 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       const val = safeGetField(key);
       if (protoMethods === undefined && val === undefined && !hasInSidecar && !hasInFields) return undefined;
       // (#2714) Reflect the sidecar descriptor's stored enumerable flag so a
-      // `defineProperty(o, k, { enumerable: false })` own prop is reported as
-      // non-enumerable through the host proxy. Native consumers that filter by
-      // enumerability — `Object.assign` -> CopyDataProperties, object spread
-      // `{ ...o }` (both lowered via `__object_assign` over a `_wrapForHost`
-      // source) — must SKIP a non-enumerable own key. Hardcoding
-      // `enumerable: true` here leaked non-enumerable sidecar props into spread
-      // results (`spread-obj-skip-non-enumerable`, #2714). Declared struct
-      // fields carry no sidecar flags entry and stay enumerable data props,
-      // matching their spec semantics.
+      // `defineProperty(o, k, { enumerable: false })` own prop reports as
+      // non-enumerable here. Consumers that filter by enumerability —
+      // `Object.assign` → CopyDataProperties, object spread `{ ...o }` (both
+      // lowered via `__object_assign` over a `_wrapForHost` source) — must SKIP
+      // it; hardcoding `enumerable: true` leaked non-enumerable sidecar props
+      // into spread results (`spread-obj-skip-non-enumerable`). Declared struct
+      // fields carry no flags entry and stay enumerable data props.
       //
-      // (#3647) Registered class-PROTOTYPE members are the exception — the
-      // sentence above used to lump them in with declared struct fields. A
-      // MethodDefinition (§14.6 DefineMethod; likewise §14.4/§14.5 generator,
-      // async and get/set members) is created `enumerable: false`, which
+      // (#3647) Registered class-PROTOTYPE members are the exception — a
+      // MethodDefinition (§14.6; likewise §14.4/§14.5 generator, async and
+      // get/set members) is created `enumerable: false`, which
       // `_readOwnDescriptor` arm 2a (#1364a) has always reported and the
       // static-method arm above already defers to (#3479); only the prototype
-      // case fell through here and hardcoded `true`. That is observable because
-      // `Object.prototype.propertyIsEnumerable.call(C.prototype,"m")` reaches
-      // NO `__propertyIsEnumerable` import on host — `__proto_method_call` runs
-      // the ENGINE's method against this proxy, so §20.1.3.4 reads
-      // `[[GetOwnProperty]]`, i.e. this trap. Only the `enumerable` bit is
-      // corrected: `value` keeps `safeGetField` because arm 2a returns a method
-      // BRIDGE value, which would also move accessor members' `value`.
-      // `hasInFields` (not a raw `includes`) keeps `delete C.prototype.m`
-      // (#1364b) working; an explicit `defineProperty(…,{enumerable:true})`
-      // still wins via the sidecar flags entry below.
+      // case fell through. `propertyIsEnumerable.call(C.prototype,"m")` reaches NO
+      // `__propertyIsEnumerable` import on host — `__proto_method_call` runs the
+      // ENGINE's method against this proxy, so §20.1.3.4 reads this trap. Only
+      // `enumerable` is corrected: `value` keeps `safeGetField` because arm 2a
+      // returns a method BRIDGE value. `hasInFields` (not a raw `includes`)
+      // keeps `delete C.prototype.m` (#1364b) working; an explicit
+      // `defineProperty(…,{enumerable:true})` still wins via the flags entry.
       const isRegisteredProtoMember = protoMethods !== undefined && hasInFields;
       const scFlags = _wasmPropDescs.get(obj)?.get(_normalizeDescKey(key));
+      // (#4649) `writable`/`configurable` were hardcoded `true` while only
+      // `enumerable` read the flags table, so a non-writable/non-configurable
+      // define BEHAVED right but read back mutable (verifyProperty-value.js).
+      const df = scFlags !== undefined && (scFlags & _SC_ACCESSOR) === 0 ? scFlags : undefined;
       const desc: PropertyDescriptor = {
         value: val,
-        writable: true,
+        writable: df === undefined || (df & _SC_WRITABLE) !== 0,
         enumerable: scFlags === undefined ? !isRegisteredProtoMember : !!(scFlags & _SC_ENUMERABLE),
-        configurable: true,
+        configurable: df === undefined || (df & _SC_CONFIGURABLE) !== 0,
       };
-      // Mirror onto target so V8's Proxy invariant checker is happy
+      // Mirror onto target so V8's Proxy invariant checker is happy; §10.5.5
+      // forbids reporting a non-configurable descriptor the target lacks, so a
+      // REFUSED mirror serves the target's own descriptor instead (#4649).
       try {
         Object.defineProperty(target, key, desc);
       } catch {
-        /* already defined with different flags — ignore */
+        return Reflect.getOwnPropertyDescriptor(target, key) ?? desc;
       }
       return desc;
     },
@@ -7947,6 +7948,28 @@ function _unwrapForHost(v: any): any {
 // constructor case (a dedicated `__construct_closure` export) is the separate
 // codegen follow-up #1632b-2 and is intentionally NOT handled here; A.i's
 // `NotPromise` is always an ordinary function, so this fallback closes it.
+// (#4661) Cross a value to the host in the representation its IsConstructor
+// answer requires: the CONSTRUCTIBLE callable proxy when the compiler
+// classified this closure allocation as having [[Construct]], the plain
+// (non-callable) `_wrapForHost` mirror otherwise. `__is_ctor_closure` ref.tests
+// the nominal `__constructible_fn_wrap_*` subtypes — the same registry the
+// standalone `__reflect_is_constructor` reads, so both lanes give one answer.
+// Non-structs pass through; an absent export degrades to today's mirror.
+function _wrapForHostByConstructibility(
+  value: any,
+  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
+): any {
+  const exports = callbackState?.getExports();
+  if (!_isWasmStruct(value)) return value;
+  const isCtor = exports?.__is_ctor_closure as ((v: any) => number) | undefined;
+  try {
+    if (typeof isCtor === "function" && isCtor(value) === 1) return _wrapCallableForHost(value, callbackState);
+  } catch {
+    /* classifier declined this value — fall through to the mirror */
+  }
+  return _wrapForHost(value, exports);
+}
+
 function _wrapCallableForHost(
   closure: any,
   callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
@@ -10651,7 +10674,8 @@ assert._isSameValue = isSameValue;
         return createDynamicFunctionImport({
           policy: dynamicCode,
           createFunction: dynamicCodeEvaluator ? (p, b) => dynamicCodeEvaluator.createFunction(p, b) : undefined,
-          createWasmNewFunctionShim: () => createNewFunctionShim({}) as (params: unknown, body: string) => unknown,
+          createWasmNewFunctionShim: () =>
+            createNewFunctionShim({ globalSandbox }) as (params: unknown, body: string) => unknown,
           moduleGlobal: globalSandbox ?? (globalThis as any),
           makeEvalError: (message) => new EvalError(message),
         });
@@ -13891,7 +13915,11 @@ assert._isSameValue = isSameValue;
           if (!newTargetIsPresent && (newTarget === undefined || newTarget === null)) {
             return Reflect.construct(wrappedCtor, wrappedArgs ?? []);
           }
-          const wrappedNew = _isWasmStruct(newTarget) ? _wrapForHost(newTarget, exports) : newTarget;
+          // (#4661) §26.1.2 step 3 IsConstructor(newTarget). The non-callable
+          // mirror fails that check for EVERY compiled function, so a
+          // constructible closure must cross as the callable proxy. newTarget is
+          // never invoked here — it is only classified and read for `.prototype`.
+          const wrappedNew = _wrapForHostByConstructibility(newTarget, callbackState);
           return Reflect.construct(wrappedCtor, wrappedArgs ?? [], wrappedNew);
         };
       }

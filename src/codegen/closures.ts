@@ -24,7 +24,6 @@ import { pushProgramAbiNestedCallable, pushProgramAbiTypedThisTwin } from "./pro
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3b) manual import-shift must skip stable handles
 import { addStringConstantGlobal } from "./registry/imports.js"; // (#2025)
 import { stringConstantExternrefInstrs } from "./native-strings.js"; // (#2025)
-import { noJsHost } from "./expressions/helpers.js"; // (#2025)
 import { emitWasiErrorConstructor } from "./registry/error-types.js"; // (#2025)
 import { widenClosureReturnForPreInitVar } from "./declarations/hoisted-var-preinit-read.js"; // (#4206)
 import { popBody, pushBody } from "./context/bodies.js";
@@ -34,7 +33,7 @@ import { reportSilentFallback } from "./fallback-telemetry.js";
 import { resolveLiftedMethodThisStruct } from "./fnctor-escape-gate.js"; // (#2681/#2686 A3) lifted-method `this`→struct
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
 import { seedLiftedClosureArgumentsCallee } from "./arguments-callee.js"; // (#4243) §10.6 step 13.a
-import { resolveCallbackMakerName } from "./callback-ctor-bridge.js"; // (#4394) bridge [[Construct]] parity
+import { callableHasConstructBehavior, resolveCallbackMakerName } from "./callback-ctor-bridge.js"; // (#4394) bridge [[Construct]] parity
 import { registerStandaloneDomCallbackDirectClosure } from "./standalone-dom-callback-authority.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
@@ -2976,11 +2975,13 @@ export function compileArrowAsClosure(
     closureName,
     isNamedFuncExpr: !!isNamedFuncExpr,
     decl: arrow, // (#4437) the `$fnmeta` slot's source of `name` + §15.1.5 `length`
-    constructible:
-      (noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first") &&
-      ts.isFunctionExpression(arrow) &&
-      arrow.asteriskToken === undefined &&
-      !(arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false),
+    // (#4661) Lane-INDEPENDENT. This used to be `noJsHost || native-first`, so
+    // the nominal constructible subtype existed only for standalone — which is
+    // exactly why standalone passed `test/harness/isConstructor.js` and js-host
+    // did not: the js-host runtime had no bit to read. §15.2.4 constructibility
+    // is a property of the source function, not of the target profile.
+    // The open-coded copy of the predicate is gone too (#4394 owns it).
+    constructible: callableHasConstructBehavior(arrow),
   });
   let { structTypeIdx, liftedFuncTypeIdx, liftedParams } = mintedTypes;
   const { liftedSelfTypeIdx } = mintedTypes;
