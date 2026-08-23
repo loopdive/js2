@@ -124,7 +124,7 @@ import {
   reportDeclinedAsyncRejectionHazard,
 } from "./async-activation.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js"; // (#2865) async-gen fn-expr producer
-import { asyncClosurePromiseWrapEnabled, emitAsyncClosurePromiseWrapper } from "./async-closure-promise.js"; // (#4648)
+import { asyncClosurePromiseWrapEnabled, reserveAsyncClosurePromiseWrapper } from "./async-closure-promise.js"; // (#4648)
 // (#3164) Native generator FUNCTION EXPRESSIONS (standalone/wasi): the lifted
 // closure body emits the state-struct factory instead of the eager-buffer host
 // path. `generators-native` does not import `closures`, so no cycle.
@@ -3770,9 +3770,27 @@ export function compileArrowAsCallback(
   // invokes the export directly, so the static call-site repair in
   // expressions.ts never runs. Export the Promise WRAPPER under `__cb_<id>`
   // (the name the bridge dispatches on) and keep the raw body private.
+  //
+  // Gated on the BODY'S SETTLED RESULT REPRESENTATION, not just on `async`:
+  // `cbResults` is whatever `resolveWasmTypeForClosureReturn` made of the
+  // declared `Promise<T>`, and for `Promise<boolean>`-ish callbacks that is a
+  // raw `i32`. The wrapper must hand `Promise_resolve` an `externref`, so an
+  // unguarded wrap emitted `call <body>` → i32 where externref was required and
+  // the MODULE FAILED TO VALIDATE ("type error in fallthru[0] (expected
+  // externref, got i32)" — six pass→compile_error regressions in the
+  // merge_group: AsyncDisposableStack adopt/use, Function.prototype.toString
+  // proxy-async-function, Object.prototype.toString symbol-tag-non-str-proxy,
+  // __proto__-permitted-dup). Boxing an i32 here would have to guess boolean vs
+  // number, and guessing wrong is a silent value corruption (`true` → `1`), so
+  // any result that is not already `externref` DECLINES the wrapper and keeps
+  // main's lowering. Known gap, stated in the issue: an await-free async
+  // callback whose result lowers to a scalar still reaches the host unwrapped.
+  const cbResultIsPromiseWrappable =
+    cbResults.length === 0 || (cbResults.length === 1 && cbResults[0]!.kind === "externref");
   const cbAsyncPromiseWrap =
     (arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false) &&
     !(ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined) &&
+    cbResultIsPromiseWrappable &&
     asyncClosurePromiseWrapEnabled(ctx) &&
     planAsyncClosureActivation(ctx, arrow, /*isAsync*/ true) === null;
   const cbBodyName = cbAsyncPromiseWrap ? `${cbName}__async_body` : cbName;
@@ -3792,7 +3810,7 @@ export function compileArrowAsCallback(
   ctx.funcMap.set(cbBodyName, cbFuncIdx);
   let cbExportIdx = cbFuncIdx;
   if (cbAsyncPromiseWrap) {
-    const wrapperIdx = emitAsyncClosurePromiseWrapper(ctx, cbBodyName, cbParams, (n, p, r) =>
+    const wrapperIdx = reserveAsyncClosurePromiseWrapper(ctx, cbBodyName, cbParams, (n, p, r) =>
       ensureLateImportShared(ctx, n, p, r),
     );
     flushLateImportShiftsShared(ctx, fctx);
@@ -3800,7 +3818,15 @@ export function compileArrowAsCallback(
       cbExportIdx = wrapperIdx;
       ctx.funcMap.set(cbName, wrapperIdx);
     } else {
-      // No host Promise imports — keep the previous lowering exactly.
+      // The helper refused (missing host Promise import, or a body result it
+      // will not wrap). Restore the un-wrapped shape completely: the raw body
+      // goes back to being `__cb_<id>` itself, exported under that name.
+      const bodyFunc = definedFuncAt(ctx, cbFuncIdx);
+      if (bodyFunc) {
+        bodyFunc.name = cbName;
+        bodyFunc.exported = true;
+      }
+      ctx.funcMap.delete(cbBodyName);
       ctx.funcMap.set(cbName, cbFuncIdx);
     }
   }

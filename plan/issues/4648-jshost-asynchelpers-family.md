@@ -18,6 +18,7 @@ func-budget-allow:
   - src/codegen/expressions/assignment.ts::compilePropertyAssignment
   - src/codegen/expressions/identifiers.ts::compileIdentifierCore
   - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 sprint: current
 created: 2026-08-23
 updated: 2026-08-23
@@ -28,6 +29,26 @@ task_type: bug
 area: codegen
 goal: test262-conformance
 lane: B
+trap-growth-allow:
+  count: 16
+  reason: "Stale-baseline reclassification carried from merged PR #4794 (realm shim #4634): createRealm().global became a narrowed forwarding object, so 16 cross-realm tests that were ALREADY failing (all baseline fail) null-deref instead of failing an assertion. The js2wasm-baselines JSONL has not re-promoted since, so every queued PR sees the same +15/16 null_deref growth it did not cause. Named per #3596; failure-flavour reclassification only — no baseline-pass test traps."
+  tests:
+    - test/built-ins/AsyncFunction/proto-from-ctor-realm.js
+    - test/built-ins/AsyncGeneratorFunction/proto-from-ctor-realm-prototype.js
+    - test/built-ins/AsyncGeneratorFunction/proto-from-ctor-realm.js
+    - test/built-ins/Function/internals/Call/class-ctor-realm.js
+    - test/built-ins/Function/internals/Construct/derived-return-val-realm.js
+    - test/built-ins/Function/internals/Construct/derived-this-uninitialized-realm.js
+    - test/built-ins/GeneratorFunction/proto-from-ctor-realm-prototype.js
+    - test/built-ins/GeneratorFunction/proto-from-ctor-realm.js
+    - test/built-ins/Proxy/apply/arguments-realm.js
+    - test/built-ins/Proxy/construct/arguments-realm.js
+    - test/language/eval-code/indirect/realm.js
+    - test/language/expressions/async-generator/eval-body-proto-realm.js
+    - test/language/expressions/generators/eval-body-proto-realm.js
+    - test/language/expressions/tagged-template/cache-realm.js
+    - test/language/types/reference/get-value-prop-base-primitive-realm.js
+    - test/language/types/reference/put-value-prop-base-primitive-realm.js
 files:
   - src/codegen/fn-global-shadow.ts
   - src/codegen/async-closure-promise.ts
@@ -188,8 +209,46 @@ repair themselves:
 Host lane only; `JS2WASM_ASYNC_CLOSURE_PROMISE=0` restores the previous
 lowering.
 
-**Correction (PR #4801 round 2): the CLOSURE path was withdrawn — only the
-host-callback bridge is wrapped.** The first cut wrapped `compileArrowAsClosure`
+**Correction (PR #4801 round 3): the wrapper is RESERVED during compilation and
+FILLED AT FINALIZE.** The merge_group caught six pass→compile_error regressions
+on the `__cb` path — AsyncDisposableStack `adopt`/`use`, `Function.prototype.
+toString/proxy-async-function`, `Object.prototype.toString/symbol-tag-non-str-
+proxy-function`, `__proto__-permitted-dup` — all reading
+
+```
+Compiling function #N:"__cb_0__async_body__async_promise" failed:
+type error in fallthru[0] (expected externref, got i32)
+```
+
+The shape was right; the **indices were stale**. The wrapper body bakes three
+callees (the raw body, `Promise_resolve`, `Promise_reject`), and every one of
+those indices moves when a later late import is inserted. Dumping the emitted
+WAT showed the wrapper calling `isNegativeZero` / `__box_number` /
+`isPrimitive` — three unrelated functions — which is why the fallthru type was
+`i32`. Small modules (the harness category) never shifted after the wrapper was
+emitted, so the bug was invisible there.
+
+The fix is the discipline the codebase already uses for exactly this hazard
+(`accessor-driver.ts`, `host-fnctor-method-driver.ts`): `reserveAsyncClosure
+PromiseWrapper` mints a stable handle with an `unreachable` placeholder while
+compiling, and `fillAsyncClosurePromiseWrappers` — called at finalize next to
+`fillHostFnctorMethodDrivers`, on BOTH the single- and multi-source paths —
+writes the body, resolving every callee **by name** from `funcMap` (which the
+import-shift fixup keeps in step, unlike a baked index).
+
+Two guards came out of the same investigation and are kept:
+
+- the wrapper is only reserved when the body's settled result is `externref` or
+  void. `resolveWasmTypeForClosureReturn` lowers a `Promise<boolean>`-ish
+  signature to a raw `i32`, and boxing that would have to guess boolean vs
+  number — a wrong guess is a silent `true` → `1`. Declining keeps main's
+  lowering. **Known gap:** an await-free async callback whose result lowers to a
+  scalar still reaches the host unwrapped.
+- if the reserve refuses, the raw body is renamed back to `__cb_<id>` and
+  re-exported, so the decline path is exactly the pre-#4648 module.
+
+**Round 2 (kept): the CLOSURE path was withdrawn — only the host-callback
+bridge is wrapped.** The first cut wrapped `compileArrowAsClosure`
 too and produced an **INVALID module** on three equivalence tests
 (`issue-3205-property-call-wrapper-root` "async arrow closure stored in a
 `() => void` class field", `promise-chains` "async arrow function",
@@ -222,6 +281,8 @@ the emitted module genuinely failed `WebAssembly.validate`.
 | 60-test js-host sample (`.tmp/run-host-list.mts`) | 59/60 | 59/60 |
 | `await` + `async-function` + `async-arrow-function`, js-host (156 files) | 131/156 | 131/156, identical failure list |
 | full unsharded `equivalence-gate` (post-merge head, round 2) | 24 known-failures | **24 failing / 1661 passing — no new regressions** |
+| the 6 merge_group compile_error files, `WebAssembly.validate` (round 3) | 6 INVALID | **6 valid** |
+| 300 async-USING js-host compilations, `WebAssembly.validate` (round 3) | — | **valid 261 / INVALID 0** / 39 pre-existing compile-error — byte-for-byte identical with `JS2WASM_ASYNC_CLOSURE_PROMISE=0`, so the wrapper adds no invalid module |
 
 The standalone base was re-measured on this branch's base commit for the two
 non-environment failures (`asyncHelpers-asyncTest-return-not-thenable`,

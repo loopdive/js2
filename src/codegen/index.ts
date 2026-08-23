@@ -313,6 +313,7 @@ import { fillSymbolAnyToStringArm } from "./symbol-native.js"; // (#4632) $Symbo
 import { fillMapSetDynDispatchArms } from "./map-runtime.js"; // (#4629) Map/Set any-channel dispatch arms
 import { fillBigIntDynValueOfArm } from "./wrapper-proto-value-of.js"; // (#4631) dyn wrapper valueOf arm
 import { scanGlobalThisFnShadows } from "./fn-global-shadow.js"; // (#4630) globalThis.<fn> reassignment shadowing
+import { fillAsyncClosurePromiseWrappers } from "./async-closure-promise.js"; // (#4648)
 import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
 import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
 import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; // (#2875 w4-F)
@@ -5376,6 +5377,12 @@ export function generateModule(
     // parser descent in Wasm after the live host method lookup returns.
     fillHostFnctorMethodDrivers(ctx);
 
+    // (#4648) Fill the reserved `__cb_<id>__async_body__async_promise` wrappers
+    // here, where the import section has settled: their callees (the raw body,
+    // `Promise_resolve`/`Promise_reject`) are resolved BY NAME, because a baked
+    // index moves under every late import. No-op when nothing reserved one.
+    fillAsyncClosurePromiseWrappers(ctx);
+
     // (#3981) Fill the reserved standalone `__native_construct_<N>` drivers now
     // that `__call_fn_method_<N>` is registered. No-op when no site reserved
     // one (every JS-host module, and any standalone module with no
@@ -9036,6 +9043,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // Fill multi-source constructor method drivers after all closure tables.
     fillHostFnctorMethodDrivers(ctx);
+
+    // (#4648) Same fill on the multi-source path — see the primary path note.
+    fillAsyncClosurePromiseWrappers(ctx);
 
     // Fill apply only after every multi-source arity dispatcher exists.
     fillApplyClosure(ctx);
