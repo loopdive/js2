@@ -249,7 +249,7 @@ once per eval, i.e. O(N²) over a loop:
 | --------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | `qjsFindBoxIndex` (forward) | one `qjs_is_equal` **FFI call per registry row**                | O(1) open-addressing hash keyed by the JSValue PAYLOAD word (`qjs_abi_payload_offset`) |
 | `qjsSyncBoxes`              | one array read per row, twice per crossing, to test `mirror==1` | walk a maintained `qjsMirroredRows` index list instead                              |
-| `qjsHandleOf` (reverse)     | four `===` per row, **once per global pushed** — globals × rows | partition the rows by `value instanceof RegExp`; the globals push skips the exploding partition |
+| `qjsHandleOf` (reverse)     | four `===` per row, **once per global pushed** — globals × rows | partition by `value instanceof RegExp`, **then index the RegExp partition by content** — see the correction below, the partition alone was not enough |
 
 The payload key is safe rather than merely likely-unique **because every row
 retains its handle for the instance lifetime** (the slice-3 note), so a
@@ -283,10 +283,106 @@ Before the three fixes the same regexp loop measured 8.9 s at N=800 and 52.0 s
 at N=3,200 — a fit of b ≈ 6.7 µs per row per eval, extrapolating to ~4 HOURS at
 N=65,536. That is what would have burned the 40-minute CI shard.
 
+### Correction: the partition was necessary and NOT sufficient (the axis the bench held fixed)
+
+The table above shipped a claim that did not survive the first end-to-end run,
+and it is worth recording how it failed rather than quietly replacing it.
+
+`qjsHandleOf`'s first fix PARTITIONED the row list by `value instanceof RegExp`,
+justified in a code comment by: *"the values that actually reach this function on
+the hot path are the caller's GLOBALS … and none of them is a RegExp."* That
+sentence generalised from `.tmp/evalbench.mts`, whose eval result was a
+**function-local**. The six files this issue exists for write
+
+```js
+for (var cu = 0; cu <= 0xffff; ++cu) { … var pattern = eval("/" + xx + "/"); … }
+```
+
+and `pattern` is **module-level**, so every reconstructed RegExp is pushed back
+INTO the realm as a global on each later iteration — probing precisely the
+partition that grows by one row per iteration. The bench varied the eval's
+RETURN KIND and the number of extra globals; it never varied **where the result
+is bound**, and that was the axis that decided the answer. (Brief methodology 6.)
+
+Measured, end to end, `language/literals/regexp/S7.8.5_A1.1_T2.js` on the
+partition-only build: **still running at 16 minutes** (box load 13–17), killed.
+
+The sufficient fix is a second index: an open-addressed **multimap keyed by a
+bounded hash of the regexp's `source`**, authoritative for the RegExp partition
+(a miss is an answer, never a fallback scan — a fallback would restore the
+quadratic on the miss-heavy shape). `source` is immutable for the object's life,
+so the key is stable; distinct regexps may share a source, so buckets are
+confirmed with the same `===` comparisons the scan used, and the degenerate
+all-same-source case is no worse than the scan it replaces.
+
+With it, the same file **passes in 194.6 s** (22.1 s compile + 172.1 s execute),
+box load ~12 on 4 cores — 2.63 ms per eval over ~65,500 evals, flat against the
+2.53 ms/eval measured at N=12,800. Flat marginal cost is the point: the curve is
+linear, not quadratic. The residual 2.6 ms/eval is the membrane's **pre-existing
+per-eval cost** — an eval returning a NUMBER, which publishes nothing at all,
+measured 2.28–2.73 ms/eval on the same build — so the reconstruction's own
+marginal cost is now indistinguishable from zero.
+
+**What this costs CI, stated plainly:** on base these six files abort on
+iteration 0 and cost nothing. Passing them means actually running 65,536 evals
+each, ~3 min per file on this box. That is inherent to the tests, not to the
+fix; but it is new wall-clock in the test262 shards and the lead should know the
+shape of it before this lands.
+
 ## Test Results
 
 (placeholder — filled in below once the after-arm sweep lands)
 
 ## Residuals
 
-(placeholder)
+Pinned as `it.fails` in `tests/issue-4654.test.ts` unless noted.
+
+1. **`lastIndex` is a SNAPSHOT, not a live view.** The reconstruction carries
+   `lastIndex` across once at publish time. A later realm-side mutation is not
+   observed and a compiled-side write is not pushed back. Every other piece of
+   regexp state is immutable, so this is the whole of the divergence from the
+   mirrored box's live semantics. No test262 row in the three swept directories
+   depends on it. Owner: this issue's arm; revisit only if a row appears.
+
+2. **RegExp reflection through a DYNAMIC receiver answers wrongly** —
+   `.flags`, `.global`, `.exec` on a value the compiler types `any` do not
+   reach the regexp's own accessors. This is NOT a membrane defect: it
+   reproduces on a compiled `new RegExp(...)` that never crosses eval. Two
+   further shapes measured while benching this issue:
+   - `(x.flags as string).length` on a statically-known regexp typed `any`
+     makes the compiler emit an INVALID module (`struct.get[0] expected
+     (ref null 6), found local.tee of type i32`) — on this branch AND on base.
+   - a `.source` read whose receiver the checker has narrowed to `undefined`
+     (`var r: any = undefined; … r = eval(…); r.source`) answers `undefined`,
+     while the identical read with an `instanceof RegExp` guard in front of it
+     answers correctly. This is what made `.tmp/evalbench2.mts` report
+     `out: 0`; the real test262 shape (`var pattern = eval(…)`, no initialiser)
+     is unaffected and passes.
+
+   Owner: the standalone RegExp value-representation lane, not the membrane.
+
+3. **Part B — RegExp.prototype accessor own-ness (3 rows) — NOT TAKEN here.**
+   Root cause is established (`__nproto_hasown` answers `1` for any key in the
+   brand's `$memberCsv`; the seeded-member ladder that consults the MUTABLE
+   companion is restricted to `kind === "method"`, so a deleted ACCESSOR can
+   never be observed). It is structurally the same defect #4491 T9 closed for
+   `constructor`, one member-kind over. It is deliberately left to #4491's lane
+   because widening the ladder to accessors touches
+   `ensureNativeProtoCompanionSeeder`, whose prior attempt flipped **#2885**,
+   and clearing it needs a #2885 canary run on BOTH arms — a measurement this
+   lane has not made and must not assert.
+
+4. **Part C — "Unsupported dynamic regular expression pattern" is the GENERAL
+   runtime-grammar gap**, not a narrow one. `regexp-dynamic-pattern.ts`
+   recognises literals, `.`, `|` and `CharacterEscape`s and refuses everything
+   else; the rows need character classes + `+` (`[^<]+`), capture groups (200
+   nested parens) and quantifiers (`\c*`, `\c+`, `\c?`). Unchanged before and
+   after this issue's fix, by identical error text. Needs its own issue sized
+   as a grammar build-out.
+
+5. Three part-C rows belong to other families and are handed over as such:
+   `S15.10.6.1_A1_T2.js` (builtin-as-value, #4492 lane),
+   `S15.10.4.1_A6_T1.js` (`Object.prototype.toString` in standalone),
+   `prototype/exec/S15.10.6.2_A4_T11.js` (`lastIndex` typed as an `f64` FIELD
+   on `$StandaloneRegExp`, so §22.2.7.1's "store the object, coerce inside
+   `exec`" cannot be expressed — a value-representation change).
