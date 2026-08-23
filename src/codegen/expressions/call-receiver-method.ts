@@ -25,6 +25,7 @@ import {
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, resolveArrayInfo } from "../array-methods.js";
 import { isWiredTypedArrayViewName } from "../array-object-proto.js";
+import { ensureWrapperProtoDynamicMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
 import {
   emitStandalonePromiseFinally,
   emitStandalonePromiseThen,
@@ -1149,12 +1150,32 @@ export function compileReceiverMethodCall(
     const wrapperMethodName = propAccess.name.text;
     const isWrapperReceiver =
       isStringWrapperType(receiverType) || isNumberWrapperType(receiverType) || isBooleanWrapperType(receiverType);
-    if (
+    const wrapperDynamicCandidate =
       isWrapperReceiver &&
       (wrapperMethodName === "valueOf" || wrapperMethodName === "toString") &&
-      expr.arguments.length === 0 &&
-      sourceHasMethodReassignment(ctx, propAccess.expression, wrapperMethodName)
-    ) {
+      sourceHasMethodReassignment(ctx, propAccess.expression, wrapperMethodName);
+    if (wrapperDynamicCandidate) {
+      // (#4619 family D) Make the destination of this hand-off EXIST — and do
+      // it regardless of the argument count that gates the dispatch below, for
+      // the reason recorded in wrapper-proto-dynamic-demand.ts.
+      ensureWrapperProtoDynamicMember(
+        ctx,
+        isStringWrapperType(receiverType) ? "String" : isNumberWrapperType(receiverType) ? "Number" : "Boolean",
+        wrapperMethodName,
+      );
+    }
+    // (#4619) …and dispatch dynamically for an ARGUMENT-CARRYING call too, but
+    // only for the members the spec gives no parameters — §20.3.3.3 / §22.1.3.28
+    // `valueOf` and §20.3.3.2 / §22.1.3.27 `toString`, which ignore anything
+    // passed. `Number.prototype.toString` is excluded because its argument is
+    // the §21.1.3.6 RADIX and the standalone `__extern_method_call` path
+    // deliberately carries no args (`emitWrapperDynamicMethodCall`), so routing
+    // it here would silently drop the radix. Measured on base:
+    // `(new Boolean(-1)).valueOf(false)` (test262 `S15.6.4.3_A1_T2`) fell to the
+    // legacy arm that recompiles the WRAPPER as `i32` and answered `false`.
+    const memberIgnoresArguments =
+      wrapperMethodName === "valueOf" || (wrapperMethodName === "toString" && !isNumberWrapperType(receiverType));
+    if (wrapperDynamicCandidate && (expr.arguments.length === 0 || memberIgnoresArguments)) {
       const dynResult = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, wrapperMethodName);
       if (dynResult) return dynResult;
     }
@@ -1174,15 +1195,25 @@ export function compileReceiverMethodCall(
     //     it needs the radix-aware numeric ToString lowering, so it falls through.
     //   - Boolean wrappers — the internal slot is a `$__box_boolean_struct`, whose
     //     extraction differs from the boxed-number unbox used here.
+    // (#4619) The arg count no longer gates this arm. EVERY member it covers is
+    // spec-parameterless — §22.1.3.28/§22.1.3.27 `String.prototype.{valueOf,
+    // toString}`, §21.1.3.7 `Number.prototype.valueOf`, §20.3.3.3
+    // `Boolean.prototype.valueOf` — so an argument is ignored, and the ONLY
+    // arg-bearing wrapper member that matters (`Number.prototype.toString`'s
+    // radix) is already excluded by name. Requiring 0 args sent the arg-bearing
+    // spellings to the legacy tail, which recompiles the WRAPPER as a primitive
+    // ValType: measured on base, `(new Boolean(-1)).valueOf(false)` answered
+    // `false` (test262 `S15.6.4.3_A1_T2`) and `(new String("ab")).valueOf(1)`
+    // answered `"[object Object]"`. The arguments are still EVALUATED below, in
+    // source order, so a side-effecting one is not skipped.
     const isWrapperValueAccessor =
-      expr.arguments.length === 0 &&
-      ((recvSymName === "String" && (wrapperMethodName === "valueOf" || wrapperMethodName === "toString")) ||
-        (recvSymName === "Number" && wrapperMethodName === "valueOf") ||
-        // #1910 R3 — Boolean wrapper .valueOf() in standalone: the internal
-        // slot holds a boxed boolean (`__box_boolean_struct`), recovered by
-        // `__to_primitive`; unbox it to the i32 primitive below (§20.3.3.3
-        // Boolean.prototype.valueOf returns the [[BooleanData]] slot).
-        (recvSymName === "Boolean" && wrapperMethodName === "valueOf"));
+      (recvSymName === "String" && (wrapperMethodName === "valueOf" || wrapperMethodName === "toString")) ||
+      (recvSymName === "Number" && wrapperMethodName === "valueOf") ||
+      // #1910 R3 — Boolean wrapper .valueOf() in standalone: the internal
+      // slot holds a boxed boolean (`__box_boolean_struct`), recovered by
+      // `__to_primitive`; unbox it to the i32 primitive below (§20.3.3.3
+      // Boolean.prototype.valueOf returns the [[BooleanData]] slot).
+      (recvSymName === "Boolean" && wrapperMethodName === "valueOf");
 
     // #2160 — standalone recovery of the wrapper's internal [[PrimitiveValue]]
     // slot. In --target standalone there is no JS host, so `new String(x)` /
@@ -1192,8 +1223,8 @@ export function compileReceiverMethodCall(
     // ValType (which traps / yields the wrong value for a `$Object` receiver).
     // Route through the native `__to_primitive` helper, which reads that slot
     // first (§7.1.1.1), then apply the method's result type. `Number.prototype.
-    // toString` with a radix is NOT this path (arguments.length === 0 above), so
-    // it falls through to the radix-aware toString lowering. Gated on
+    // toString` with a radix is NOT this path (excluded by member name above),
+    // so it falls through to the radix-aware toString lowering. Gated on
     // `ctx.standalone` specifically — WASI keeps the host-import object
     // machinery (the native object-runtime is standalone-only), so it stays on
     // the legacy paths below.
@@ -1218,6 +1249,13 @@ export function compileReceiverMethodCall(
         // valueOf — matches OrdinaryToPrimitive's hint ordering.
         const hint = wrapperMethodName === "toString" || recvSymName === "String" ? "string" : "number";
         compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
+        // (#4619) §13.3.6.2: the arguments are evaluated even though these
+        // members take none. Compile-and-drop, after the receiver, in source
+        // order — the arm is stack-neutral so the receiver stays on top.
+        for (const argExpr of expr.arguments) {
+          const argResult = compileExpression(ctx, fctx, argExpr);
+          if (argResult !== null) fctx.body.push({ op: "drop" });
+        }
         addStringConstantGlobal(ctx, hint);
         fctx.body.push(...stringConstantExternrefInstrs(ctx, hint));
         fctx.body.push({ op: "call", funcIdx: toPrimIdx });
