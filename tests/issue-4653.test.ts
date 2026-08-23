@@ -354,14 +354,19 @@ describe("#4653 residuals — measured, not fixed here", () => {
     ).toBe(null);
   });
 
-  // ROW S13.2.2_A8_T3. CORRECTED: the parameter IS bound —
-  // `new Function("p","return p;")(7)` answers 7, and `p = p + 1` works. What
-  // throws is an UPDATE expression (`++`/`--`) on a name LOCAL to the eval'd /
-  // minted code (an eval-local `var`, or a Function parameter), and only when
-  // the mint sits inside an enclosing FUNCTION; at module top level the same
-  // code works, and `++` on an OUTER binding works everywhere. Full
-  // discriminator table in the issue file. Owner: the runtime-eval lane.
-  it.fails("(#4653 residual, runtime-eval) `++` on a mint-LOCAL name resolves", async () => {
+  // ROW S13.2.2_A8_T3 — root corrected TWICE; see the issue file for both
+  // superseded versions and why each was wrong. Final measured rule: inside
+  // eval'd / minted code, an UPDATE expression (`++`/`--`) throws
+  // ReferenceError for any name whose binding lives in a FUNCTION variable
+  // environment (the enclosing function's locals or parameters, a Function
+  // mint's own parameters, or an eval-local `var` when the eval runs inside a
+  // function); it works for names bound in the MODULE/global environment.
+  // Reads and compound assignment work in every case. The axis is WHERE THE
+  // NAME IS BOUND — not the surrounding syntax, and not whether an enclosing
+  // function exists. Filed as #4662; owner is the runtime-eval lane.
+  //
+  // This is the row's own shape: `++` on a Function-mint parameter.
+  it.fails("(#4662) `++` on a Function-mint PARAMETER resolves", async () => {
     expect(
       await runScript(`
         function host() { return new Function("p", "p++; return p;")(1); }
@@ -370,10 +375,34 @@ describe("#4653 residuals — measured, not fixed here", () => {
     ).toBe(null);
   });
 
-  // Same root, eval spelling — an eval-LOCAL `var` incremented inside an
-  // enclosing function. No loop is involved, which is what rules out the
-  // "loop-test position" reading.
-  it.fails("(#4653 residual, runtime-eval) `++` on an eval-LOCAL var resolves", async () => {
+  // The gate is NOT "there is an enclosing function": the same mint at module
+  // top level throws too, because a Function parameter is always bound in a
+  // function environment. This pin is what falsifies the enclosing-function
+  // reading, so it must stay separate from the one above.
+  it.fails("(#4662) `++` on a mint parameter resolves at MODULE TOP LEVEL too", async () => {
+    expect(
+      await runScript(`
+        var mint = new Function("p", "p++; return p;");
+        if (mint(1) !== 2) throw new Error("mint(1) === " + String(mint(1)));
+      `),
+    ).toBe(null);
+  });
+
+  // The most common real-world shape, and the one both earlier readings of this
+  // root missed: the name is a local of the ENCLOSING function — neither
+  // eval-local nor module-level. No loop, so this also rules out the
+  // "loop-test position" reading on its own.
+  it.fails("(#4662) `++` on an ENCLOSING-FUNCTION local resolves inside eval", async () => {
+    expect(
+      await runScript(`
+        function host() { var d = 0; eval("d++;"); return d; }
+        if (host() !== 1) throw new Error("host() === " + String(host()));
+      `),
+    ).toBe(null);
+  });
+
+  // Same environment, eval-local spelling.
+  it.fails("(#4662) `++` on an eval-LOCAL var resolves inside a function", async () => {
     expect(
       await runScript(`
         function host() { return eval("var i = 0; i++; i"); }
@@ -382,10 +411,11 @@ describe("#4653 residuals — measured, not fixed here", () => {
     ).toBe(null);
   });
 
-  // POSITIVE CONTROLS for the corrected root — these must PASS, and they are
-  // what makes the two `it.fails` above a claim about `++`-on-a-local rather
-  // than about eval scope in general. If a future fix "repairs" these by
-  // widening something, the pair above should flip, not these.
+  // POSITIVE CONTROLS. These must PASS, and they are what make the four
+  // `it.fails` above a claim about `++`-on-a-function-env-binding rather than
+  // about eval scope in general. A fix that widens the wrong thing would repair
+  // these — which they already do — while leaving the four above failing; a fix
+  // that flips these instead of those is fixing the wrong thing.
   it("binds a Function parameter for a plain read and for `p = p + 1`", async () => {
     expect(
       await runScript(`
@@ -401,12 +431,34 @@ describe("#4653 residuals — measured, not fixed here", () => {
     ).toBe(null);
   });
 
-  it("increments an OUTER binding from inside an eval, in a loop test", async () => {
+  // A MODULE-environment binding — this is the cell that passes, and mislabelling
+  // it "outer binding" is what produced the second wrong rule. It is not "outer",
+  // it is "bound in the module environment"; an enclosing function's own local is
+  // equally "outer" relative to the eval and it throws (pin above).
+  it("increments a MODULE-environment binding from inside an eval in a function", async () => {
     expect(
       await runScript(`
         var d = 0;
         function host() { eval("while (d < 3) { d++; }"); return d; }
         if (host() !== 3) throw new Error("d === " + String(host()));
+      `),
+    ).toBe(null);
+  });
+
+  // Reads and compound assignment on a function-env binding work — the operator
+  // half of the rule, pinned separately from the environment half.
+  it("reads and compound-assigns a function-env binding from inside an eval", async () => {
+    expect(
+      await runScript(`
+        function host() {
+          var d = 41;
+          if (eval("d + 1") !== 42) throw new Error("read");
+          var e = 0;
+          eval("e = e + 1;");
+          if (e !== 1) throw new Error("compound assign, e === " + String(e));
+          return 1;
+        }
+        if (host() !== 1) throw new Error("host() === " + String(host()));
       `),
     ).toBe(null);
   });
