@@ -52,6 +52,7 @@ import type { IntrinsicId, IntrinsicSignatureVersion } from "./intrinsics.js";
 // neutral `TagId` below, so the IR's core node module names no ECMAScript
 // partition, in a type position or otherwise.
 import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
+import type { IrFnctorShape } from "./fnctor-abi.js";
 // #3954 phase 1 — the tag-domain seam. `IrType`'s dynamic leaf carries an
 // OPAQUE `TagId` resolved against a `TagDomain` (`producer.ts` picks the
 // producer's domain), not a bare ECMAScript `JsTag`. `tag-domain.ts` is itself
@@ -402,6 +403,11 @@ export type IrType =
   // without a TS-checker round trip. See `src/ir/from-ast.ts`'s
   // `lowerExternMethodCall` and the `extern.*` IR instr kinds.
   | { readonly kind: "extern"; readonly className: string }
+  // #3521 — nominal function-style constructor instance. The shape is
+  // source/unit/layout-qualified and remains opaque until the fnctor lowering
+  // resolver proves the reserved ABI. It is deliberately not an object/class
+  // alias: unsupported backends must decline it rather than guess a carrier.
+  | { readonly kind: "fnctor"; readonly shape: IrFnctorShape }
   // #1926 — union members are IrTypes, not raw ValTypes. V1 still only
   // admits scalar (`f64`/`i32`) members upstream (see
   // `passes/tagged-unions.ts`), but typing them as IrType keeps the IR
@@ -463,6 +469,11 @@ export function irVal(v: ValType): IrType {
 /** Construct a backend-neutral dense-vector type. */
 export function irVec(elementType: IrType, nullable = true): IrType {
   return { kind: "vec", elementType, nullable };
+}
+
+/** Construct a nominal, backend-neutral fnctor instance type. */
+export function irFnctor(shape: IrFnctorShape): IrType {
+  return { kind: "fnctor", shape };
 }
 
 /**
@@ -560,6 +571,48 @@ export function irTypeEquals(a: IrType, b: IrType): boolean {
   // match.
   if (a.kind === "extern" && b.kind === "extern") {
     return a.className === b.className;
+  }
+  if (a.kind === "fnctor" && b.kind === "fnctor") {
+    const refEquals = (
+      left: { readonly kind: string; readonly name: string; readonly binding: unknown },
+      right: { readonly kind: string; readonly name: string; readonly binding: unknown },
+    ) =>
+      left.kind === right.kind &&
+      left.name === right.name &&
+      JSON.stringify(left.binding) === JSON.stringify(right.binding);
+    if (
+      a.shape.sourceId !== b.shape.sourceId ||
+      a.shape.constructorUnitId !== b.shape.constructorUnitId ||
+      a.shape.constructorName !== b.shape.constructorName ||
+      a.shape.constructorIdentity.unitId !== b.shape.constructorIdentity.unitId ||
+      a.shape.constructorIdentity.paramIndex !== b.shape.constructorIdentity.paramIndex ||
+      !refEquals(a.shape.reservedLayout, b.shape.reservedLayout) ||
+      !refEquals(a.shape.constructorTarget, b.shape.constructorTarget) ||
+      a.shape.fields.length !== b.shape.fields.length ||
+      a.shape.captures.length !== b.shape.captures.length ||
+      a.shape.userParamTypes.length !== b.shape.userParamTypes.length
+    ) {
+      return false;
+    }
+    for (let i = 0; i < a.shape.fields.length; i++) {
+      const left = a.shape.fields[i]!;
+      const right = b.shape.fields[i]!;
+      if (left.name !== right.name || left.ordinal !== right.ordinal || !irTypeEquals(left.type, right.type))
+        return false;
+    }
+    for (let i = 0; i < a.shape.captures.length; i++) {
+      const left = a.shape.captures[i]!;
+      const right = b.shape.captures[i]!;
+      if (
+        left.name !== right.name ||
+        left.ordinal !== right.ordinal ||
+        left.hasTdzFlag !== right.hasTdzFlag ||
+        !irTypeEquals(left.type, right.type)
+      ) {
+        return false;
+      }
+    }
+    return a.shape.userParamTypes.every((type, index) => irTypeEquals(type, b.shape.userParamTypes[index]!));
   }
   // #2949 slice 1 — dynamic equality is EXACT on the `tag` refinement (both
   // absent, or both present and equal). Deliberately strict: silently

@@ -1159,3 +1159,17 @@ constructor rejection. This checkpoint deliberately does not widen `IrType`,
 add instructions, or emit Wasm; the next slice must consume this contract from
 the IR builder/verifier and standalone resolver rather than duplicating the
 legacy `CodegenContext` lookup.
+
+## 2026-08-24 nominal IrType utility checkpoint
+
+The next static slice widens the backend-neutral `IrType` union with a nominal
+`fnctor` arm carrying the validated source/unit/layout-qualified
+`IrFnctorShape`. Type equality, canonical keys, debug descriptions, context
+index scans, and preparation walks now recurse through fields, captures, and
+user parameters without assigning a physical carrier. Linear-memory, string,
+vector, and physical-reference preparation preserve the opaque arm unchanged;
+lowering fails closed with an explicit missing-resolver diagnostic. No
+`fnctor.new`/`fnctor.get` instruction, ABI emission, or runtime behavior is
+claimed by this checkpoint. The next signed slice must add those instructions,
+builder/verifier effects, and an exact standalone resolver before this arm can
+reach lowering.
