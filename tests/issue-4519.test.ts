@@ -94,6 +94,50 @@ describe("#4519 member read on an undefined VALUE throws a catchable TypeError",
     ).toBe(1);
   });
 
+  it("an ABSENT property used as the next receiver throws (`o.missing.foo`)", async () => {
+    // The most common real-world shape of this defect, and the one that makes
+    // the change worth its blast radius: the intermediate read answers
+    // `undefined` and the NEXT read must reject it.
+    expect(
+      await runStandalone(`
+        var out = 0;
+        var o = { a: 1 };
+        ${READ_IN_TRY}
+        out = probe(o.missing);
+        export function test() { return out; }
+      `),
+    ).toBe(1);
+  });
+
+  it("an OUT-OF-RANGE array element used as a receiver throws (`arr[3].foo`)", async () => {
+    expect(
+      await runStandalone(`
+        var out = 0;
+        var arr = [];
+        ${READ_IN_TRY}
+        out = probe(arr[3]);
+        export function test() { return out; }
+      `),
+    ).toBe(1);
+  });
+
+  it("a STRICT-mode detached `this.foo` throws", async () => {
+    // §10.2.1.2: a strict function called with no receiver gets `this ===
+    // undefined`, and §7.3.2 then rejects `this.foo`. Measured flipping here.
+    expect(
+      await runStandalone(`
+        var out = 0;
+        function m() {
+          "use strict";
+          try { var v = this.foo; return 0; } catch (e) { return (e instanceof TypeError) ? 1 : 2; }
+        }
+        var detached = m;
+        out = detached();
+        export function test() { return out; }
+      `),
+    ).toBe(1);
+  });
+
   it("a syntactic `undefined.foo` still throws (#4484's arm, unchanged)", async () => {
     expect(
       await runStandalone(`
@@ -156,6 +200,28 @@ describe("#4519 member read on an undefined VALUE throws a catchable TypeError",
         export function test() { return viaString + 2 * viaNumber + 4 * viaBool; }
       `),
     ).toBe(1 + 2 + 4);
+  });
+
+  it("chained reads, for-in, `arguments`, string chains and Error.message are unmoved", async () => {
+    // Five whole-shape controls in one module: each one routes through the same
+    // widened guard on a NON-nullish receiver, and each was measured identical
+    // on both arms.
+    expect(
+      await runStandalone(`
+        var a = 0, b = 0, c = 0, d = 0, e2 = 0;
+        function chain(x) { return x.a.b.c; }
+        function count(x) { var k, n = 0; for (k in x) { n = n + 1; } return n; }
+        function argc() { return arguments.length; }
+        function upper(s) { return s.toUpperCase().charAt(0); }
+        function msg() { try { throw new TypeError("boom"); } catch (err) { return err.message; } }
+        a = (chain({ a: { b: { c: 7 } } }) === 7) ? 1 : 0;
+        b = (count({ a: 1, b: 2, c: 3 }) === 3) ? 1 : 0;
+        c = (argc(1, 2) === 2) ? 1 : 0;
+        d = (upper("abc") === "A") ? 1 : 0;
+        e2 = (msg() === "boom") ? 1 : 0;
+        export function test() { return a + 2 * b + 4 * c + 8 * d + 16 * e2; }
+      `),
+    ).toBe(1 + 2 + 4 + 8 + 16);
   });
 
   it("an object flowing through the same parameter as an undefined one still reads", async () => {
