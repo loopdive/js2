@@ -173,6 +173,25 @@ same stale artifact.
   `expectedLateJsdomHostError` flag) into the report's `nativeHostErrors`
   instead of re-throwing — one stray callback now costs one report entry,
   never the whole measurement.
+- **S8: after S5–S7, every measure group succeeds — the coordinator itself
+  was broken.** Run 801 (id 32619275535, S7 merge commit) and run 805 (id
+  32624575420, a later commit) both show all 9 matrix groups green
+  (react-dom completing in 3h48m and 3h10m respectively, no timeout, no
+  crash), but the `refresh` coordinator job's "Sanity-check the generated
+  artifact" step fails on both: `[eval]:18 ... Expected '}', got '<eof>'`
+  from `node -e`. Root cause: `#4779` ("keep npm-compat refresh publishing
+  partial results") added a comment inside that step's inline
+  `node -e '...'` script — `// must not block publication or masquerade as
+  this run's data.` — whose apostrophe terminates the bash single-quoted
+  string wrapping the whole script. Everything after it, including the
+  rest of the validation logic and the closing quote, falls outside the
+  quoted argument node receives, so `node -e` gets a truncated script and
+  throws a `SyntaxError` before ever reading the artifact. Unrelated to
+  react-dom or timing — a plain bash-quoting bug that blocked every run
+  from publishing regardless of how clean the measurements were. Fixed by
+  rewording the comment to avoid the apostrophe; verified by extracting the
+  exact script bash constructs (`bash -n`) and running it against synthetic
+  data.
 
 ## Fix directions (pick during implementation)
 
