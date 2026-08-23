@@ -260,20 +260,31 @@ is handed over there rather than patched here.
 design, so the chain never reaches `%Function.prototype%`". **Measured with an
 OPAQUE key, that attribution is wrong in a way that changes who owns it.**
 
-| probe (standalone, one module each) | base |
+| probe (standalone, one module each) | base and branch |
 | --- | --- |
 | `typeof target.apply` — LITERAL key, plain function receiver | `"function"` |
 | `typeof target[k]` where `k` is a loop-carried `"apply"` — same receiver | **`undefined`** |
 | `target.own = 5; target[k]` where `k` is a loop-carried `"own"` | `5` |
+| `box[i].call(null,1,2)` — LITERAL key, OPAQUE receiver, `box[i]` is a function | **misses** |
+| `typeof inst.apply` where `inst = new FACTORY()`, `FACTORY.prototype = Function()` | **`undefined`** |
+| `typeof inst.toString` — same `inst`, i.e. `%Object.prototype%` | **`undefined`** |
+| `P.own = 5; inst.own` — same link, an OWN property of the prototype object | `5` |
 
-The third row is the control that makes this claim specific: the opaque-key READ
-PATH works on that very receiver, so the miss is about `%Function.prototype%`
-membership and **not** about key opacity — and there is no prototype chain
-involved in any of the three, the receiver is a plain function. `f.apply`
-answers `"function"` only as a compile-time fold on a literal key
-(`tryPrototypeMethodAndArityReads`, the #4481 arm). There is no runtime table in
-which `%Function.prototype%.apply` is a value, so no prototype link, however
-correct, can find one.
+Row 3 is the control that makes the claim specific: the opaque-key READ PATH
+works on that very receiver, so the miss is not about key opacity — and no
+prototype chain is involved in the first three at all, the receiver is a plain
+function. Row 7 is the same control one link out: the prototype LINK carries
+values fine.
+
+**Rows 4 and 6 are corrections this lane owes its own first draft.** Both were
+written as CONTROLS — "these pass on both arms" — and both FAIL on both arms.
+Fixing the label changes the conclusion twice over, in the useful direction:
+the miss is reachable from an opaque RECEIVER as well as an opaque KEY, and it
+is **not specific to `%Function.prototype%`** — `%Object.prototype%.toString` is
+equally unreachable through the identical link. A builtin prototype's members
+are reachable only through the #4481 compile-time fold, which needs a
+statically-branded receiver AND a literal key. There is no runtime table in
+which they are values, so no prototype link, however correct, can find one.
 
 **The substrate for the value already exists, and this is the actionable part
 of the correction.** #2175 V2-S2's `pushBuiltinFnSingletonValueInstrs` already
@@ -287,12 +298,13 @@ user-written prototype property one step earlier in the same tail; and (ii) the
 `IsCallable(this)` check inside those members' `[[Call]]`, since the rows go on
 to require `obj.apply()` to throw TypeError when `obj` is not callable.
 
-Both halves are real work in `%Function.prototype%`'s own surface, not in the
-prototype LINK — and the link demonstrably already carries values (this lane's
-R2 controls: an own property of a function-valued prototype reads through it,
-and `%Object.prototype%.toString` is reachable through the same link). Handed to
-the builtin-prototype-surface family (#4480/#4481/#4483, dev-4515's C1) with
-that narrowing, rather than re-attributed to #4637's bag.
+Both halves are real work in the builtin-prototype SURFACE, not in the prototype
+LINK — the link demonstrably carries values (row 7: an own property of a
+function-valued prototype reads through it). And per the correction above, the
+work is not `%Function.prototype%`-shaped: whatever serves `apply`/`call` at
+runtime has to serve `%Object.prototype%.toString` too. Handed to the
+builtin-prototype-surface family (#4480/#4481/#4483, dev-4515's C1) with that
+narrowing, rather than re-attributed to #4637's bag.
 
 ### B — `bind` (unchanged from #4647's correction; re-verified, not re-derived)
 
@@ -333,3 +345,174 @@ the two that preserves identity by construction rather than by agreement between
 two emitters — the property #4442 made a rule of after `%Function%` was built
 twice and shipped neither. It is a whole-issue slice and is **not** started
 here.
+
+## Fix
+
+Three changes, each standalone/WASI-gated so the JS-host lane is byte-identical
+(with a host the engine throws on its own, and the host bridge owns the
+ordering).
+
+**D1 — `src/codegen/equality-void-operand.ts` (+ 4 lines in
+`binary-ops.ts`).** The module gains `provablyNonNullish`, which looks THROUGH a
+union's constituents so any nullish member refuses the fold, and a third
+outcome: instead of only "constant" or "not handled", it can now materialise the
+canonical `undefined` for the void side and hand the two operand `ValType`s back
+to the caller, which CONTINUES into the ordinary typed dispatch
+(`foldTypeDisjointThenPromote` → `compileTypedBinaryDispatch`). That is what
+keeps the already-emitted operand code alive: there is no rollback, because
+there is no substitution. The 4 lines in `compileBinaryExpression` are the call
+plus the destructure — the fork is the defect site and the continuation needs
+both `ValType`s in scope.
+
+**D2 — new `src/codegen/resolved-callee-guard.ts`, spliced into three arms of
+`__extern_method_call`.** The guard tees the resolved callee, throws on
+`ref.is_null` (the #4221 arm, moved), then throws on each POSITIVE primitive
+brand (`__typeof_number` / `__typeof_string` / `__typeof_boolean`), then leaves
+the callee back on the stack. It is a FACTORY, not a shared `Instr[]` — finalize's
+DCE/remap walks double-remap a shared instruction object
+(`reference_shared_instr_object_dce_double_remap`) and this guard is spliced
+more than once. Each brand predicate is looked up, never required, so a module
+that registered none of them emits the pre-#4656 bytes exactly.
+
+**D3 — `src/codegen/closed-method-dispatch.ts` +
+`expressions/call-receiver-method.ts`.** `buildCallSiteNullishReceiverGuard` is
+the existing `nullishReceiverGuardInstrs` with its leading `local.get 0`
+re-pointed at an arbitrary local, so it fires on exactly the same predicate as
+the in-callee guard and can never throw where that one would not. Two call sites
+take it: the fixed-arity `__call_m_<name>_<arity>` arm (the one
+`11.2.3-3_3` takes — confirmed by reading the WAT, where the inlined
+dispatcher's `__inl9___argvec` locals name it) and the generic
+`__extern_method_call` arm. The receiver is already on the stack at both points,
+so `local.tee` into a POOLED temp (`allocTempLocal`) keeps it there: no
+per-call-site local, and `callSiteNullishReceiverGuardApplies` skips the spill
+entirely on any lane where the guard would be empty. The `then` exemption
+(#4394) is preserved unchanged.
+
+A note on why D3's blast radius is smaller than it looks: for the dispatcher arm
+the dispatcher ALREADY threw this exact TypeError for a nullish receiver, so the
+only observable delta is that the arguments are no longer evaluated first. The
+generic-arm splice is the one that can throw where nothing threw before; it is
+kept because §7.3.14 requires it and it is covered by the sweep below.
+
+Finding the right arm was itself the work. The obvious call site — the generic
+`__extern_method_call` arm — is **not** the one `11.2.3-3_3` takes, and wiring
+only that arm produced a byte-identical module (same `wasm_sha`, `a0e061db4c24`
+before and after). Reading the WAT settled it: the emitted body carried
+`__inl9___argvec`, a local name that belongs to `closed-method-dispatch.ts`, so
+the call was an INLINED `__call_m_gar_1`. That is the fixed-arity arm, ~700
+lines further down the same dispatcher.
+
+## Test Results
+
+Every number below is from a run this lane executed, on its own tree, with the
+compiler bundle AND quickjs adapter rebuilt on each arm — the base arm's adapter
+key was `70afda182fdbfd59`, the branch arm's `bacfe64cd8008662`, both reported
+`cache MISS — compiling`, so the stale-`compiler-bundle.mjs` trap is excluded by
+construction.
+
+**Scoped standalone sweep** — the issue's three directories, 818 files, both
+arms complete:
+
+| arm | pass | fail | compile_error |
+| --- | --- | --- | --- |
+| base (`origin/main` @ `f6e094cdb`, merged in) | 668 | 146 | 4 |
+| branch | **670** | 144 | 4 |
+
+Plus `language/types/undefined` (8 files — D1's row lives outside the issue's
+three directories, so it is measured separately, both arms): base **7/8**,
+branch **8/8**.
+
+**Flip list — 3 gains, 0 regressions, 0 other status changes across 826 files:**
+
+```
++ language/expressions/call/11.2.3-3_3.js        (D3)
++ language/expressions/call/11.2.3-3_4.js        (D2)
++ language/types/undefined/S8.1_A2_T2.js         (D1)
+```
+
+Two things worth stating rather than assuming:
+
+- **Neither arm produced a single `compilation timeout` row.** The box ran at
+  load 9–17 for the whole measurement (three other lanes sweeping), which is
+  exactly the condition the brief warns fakes flips and regressions in both
+  directions. It did not here, and that is checked, not hoped.
+- **The 4 `compile_error` rows are identical on both arms** — all in
+  `built-ins/Function/prototype/bind/`, all the same genuine decline
+  (`standalone Reflect.construct cannot preserve an arbitrary distinct
+  NewTarget…`, #3371), not infrastructure.
+
+**Pins — `tests/issue-4656.test.ts`, 27 tests, BOTH eval tiers:**
+
+| run | result |
+| --- | --- |
+| quickjs (default) | `27 passed (27)` |
+| `JS2WASM_EVAL_ENGINE=interpreter` (refusal provider) | `27 passed (27)` |
+| **base arm, by file-copy revert of all six files** | `9 failed \| 17 passed \| 1 skipped (27)` |
+
+`passed + failed == total` on all three, so nothing was silently deselected; the
+declared 27 was established by enumerating the `it(`/`it.fails(` lines, not by a
+grep count (the brief's tier-2 caveat — the naive patterns are wrong in both
+directions on real files). The 9 base failures are the three F1 pins, the three
+F2 pins, the F3 pin and the two rows demoted below. The fourth F1 pin
+(`v0() !== void 0` is false) passes on base **for the wrong reason** and is
+pinned separately for exactly that: on base `===` and `!==` both answered
+`false`, and a fix that repaired one and broke the other would otherwise read
+as green.
+
+### Three corrections this lane owes its own first draft
+
+1. **Two pins labelled `CONTROL` fail on BOTH arms** — `%Function.prototype%
+   .call/.apply` through an opaque receiver, and `%Object.prototype%.toString`
+   through a function-valued prototype. They are residuals, not controls, and
+   demoting them is what produced the sharper C root cause above (the miss is
+   not `%Function.prototype%`-specific, and it is reachable from an opaque
+   RECEIVER as well as an opaque KEY). A control that has never been run on the
+   base arm is a label, not evidence.
+2. **R2's eval-tier gate was unnecessary and was removed.** It was
+   `skipIf(REFUSAL_TIER)` on the assumption that `Function()` mints from a body
+   string. Measured: an **argument-less** `Function()` is AOT-synthesized by
+   #2924 and never reaches the provider — the block answers `0` identically on
+   both tiers. A pin now asserts that identity, so the gate comes back
+   automatically if that ever changes. Whether a snippet mints is not
+   answerable by reading it; the compiler decides.
+3. **The first D3 wiring changed nothing at all** (identical `wasm_sha`) — see
+   the arm-identification note under Fix.
+
+## Residuals, with owners
+
+20 of the issue's 23 rows remain. All are pinned `it.fails` in
+`tests/issue-4656.test.ts` where a pin is meaningful, and each is routed to the
+family that owns the substrate — not left unassigned.
+
+| shape | rows | owner |
+| --- | --- | --- |
+| a builtin prototype's MEMBER as a value, reached by an opaque KEY, an opaque RECEIVER, or a dynamically-typed receiver — `%Function.prototype%.{apply,call}` and `%Object.prototype%.toString` alike | C's 5, plus 2 demoted controls | **#4480/#4481/#4483 — the builtin-prototype surface** (dev-4515's C1). Narrowed above: the prototype LINK works; the members are not values. |
+| `bind` of a builtin constructor · curried `[[Construct]]` · `%Function.prototype.bind%` as a value | B's 3 | **dependent on the row above.** `construct-bound.ts` (#4196) already does §10.4.1.2 for user targets; only the builtin-carrier arms are missing. Sequencing B first would build the carrier twice. |
+| this-binding writes to a receiver whose runtime representation is a module-private nominal struct | A's 6 | **#4647's recorded decline**, unchanged. Needs a reverse membrane or an allocation-time escape rule; this lane's recommendation (allocation-time) and its reasoning are under *Root cause → A*. |
+| the `this` value of a plain function call — global object in sloppy mode, `undefined` in strict | D4's 5 | **#4480** (a real global object). `11.2.3-3_8` needs it *plus* D3, which is now landed. |
+| a function DECLARATION must override a same-named PARAMETER (§10.2.11 order) | 1, inside `S10.2.1_A4_T1` | **unowned — file it.** Isolated here with two controls that pass: the same collision against a `var` DOES override, and a non-colliding inner declaration hoists, so the hoist itself is sound; only the parameter case loses. |
+
+Not attempted, and worth saying plainly: **C was in the plan for this lane and
+is not done.** What is delivered instead is a corrected root cause with an owner
+and a measured design (the runtime arm at `__extern_get`'s proto-walk terminus
+serving `pushBuiltinFnSingletonValueInstrs`, plus `IsCallable(this)` in the
+members' `[[Call]]`), which is the part that was wrong in the record and would
+have been re-derived wrongly by the next lane.
+
+## Status — PARTIAL, deliberately
+
+**3 of 23 rows land here; the other 20 are routed above, none dropped.** The
+issue stays `in-progress` rather than `done` so the remainder does not become
+invisible — but note that every remaining row's substrate belongs to a
+DIFFERENT issue (#4480/#4481/#4483, #4647, #4196) except the one §10.2.11
+parameter-vs-declaration row, which needs filing. If the lead prefers, closing
+this issue and filing that single row is a defensible alternative; what must not
+happen is the 20 rows being read as still owned here.
+
+The plan's order was D → C → B → A on the ground that "landing D+C with A and B
+correctly designed-and-declined is a good outcome; a rushed reverse membrane is
+not". D landed as far as it goes without a global object. C did not, and the
+reason is recorded rather than glossed: its substrate turned out to be wider
+than the issue described (`%Object.prototype%` too, not just
+`%Function.prototype%`), which makes it another issue's whole slice rather than
+this one's next step.
