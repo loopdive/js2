@@ -98,7 +98,17 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
      hazards are only visible on the combined tree — the lead's merge
      verification must include running each lane's suite there.
    - The merge check confirms the run says **N passed** — never that it
-     exited 0 (`describe.skipIf` gates can skip an entire suite green).
+     exited 0. **Any mechanism that selects zero tests reports the same
+     green**, and there are now four measured ones: a `describe.skipIf`
+     gate; a suite that spins its own `CompilerPool` whose worker cannot
+     start (below); a `-t` filter that matches nothing — **`vitest -t` is a
+     REGEX**, so `-t "f + 1 must agree"` requires two spaces and selects
+     zero (2026-08-23, dev-4491, on a file with no `skipIf` in it at all);
+     and a path/glob that matches no file. The reader's defence is the
+     same for all four, which is why they are one rule: read the counts and
+     require N > 0. `21 skipped` beside `1 failed` is what tells you a
+     filter has finally bitten. Escape `+ ( ) [ ] . * ?` in `-t`, or match
+     on a plain substring of the test name.
 
 8. **A residual is a CLAIM, and `it.fails` protects it from ever being
    tested (2026-08-23, dev-4653 self-correction).** This is the cheapest
