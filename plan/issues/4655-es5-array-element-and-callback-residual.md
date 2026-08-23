@@ -15,6 +15,24 @@ es_edition: 5
 language_feature: arrays
 goal: standalone-gap
 related: [4641, 4491, 1888, 2141]
+assignee: dev-4655
+# (#4655) The mechanism lives in the new leaf module `array-tolocalestring.ts`.
+# What lands in the god-file is DISPATCH PLUMBING only: one import, one
+# `isLocalizedJoin` call in each of the two native join lowerings, the
+# separator-argument condition, and the three tail hook-ups. The dispatch
+# `switch` itself is byte-identical — `localized` is derived from the property
+# access inside the lowering rather than threaded through it, precisely to keep
+# `compileArrayMethodCall` from growing (it is 603 lines and func-budgeted).
+loc-budget-allow:
+  - src/codegen/array-methods.ts
+# (#4655) ONE new `__extern_toString` reference, in the new module. §23.1.3.32
+# step 6.c.i is literally `ToString(Invoke(elem, "toLocaleString"))`, so the
+# ToString is the spec step, not a hand-rolled coercion matrix — and it is the
+# SAME `__extern_toString` the join lane it sits next to already calls, so the
+# two cannot disagree about how a value stringifies. Named once as `TO_STRING`
+# and used from the three sites that need it.
+coercion-sites-allow:
+  - src/codegen/array-tolocalestring.ts
 origin: "wave-6 lead sweep (2026-08-23) on the merged wave-4 tree (7,959/8,115). These 20 rows are owned by NO active lane: #4641 measured them and DECLINED the element half with a recorded +1/-2 observer trade-off; dev-4491 owns only the Object/* MOP directories."
 ---
 

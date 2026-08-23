@@ -63,6 +63,12 @@ export function isAnyStringSubtype(ctx: CodegenContext, typeIdx: number): boolea
  * `joinEmptyElementTest` (array-holes.ts) — §23.1.3.18 step 4.b renders all
  * three as the empty string. `convertFromGcRef` prepends the
  * `extern.convert_any` a GC-ref element needs to reach the externref local.
+ *
+ * (#4655) `tail` overrides the element→string step for
+ * `Array.prototype.toLocaleString`, whose §23.1.3.32 step 6.c.i is
+ * `ToString(Invoke(elem, "toLocaleString"))` rather than `ToString(elem)`. The
+ * nullish guard is shared verbatim: step 6.c and step 4.b agree that
+ * `undefined`/`null` render as the empty string.
  */
 export function buildJoinBoxedElementToString(
   ctx: CodegenContext,
@@ -70,9 +76,10 @@ export function buildJoinBoxedElementToString(
   emptyElem: { elemLocal: number; test: Instr[] },
   externToStrIdx: number,
   convertFromGcRef: boolean,
+  tail?: Instr[],
 ): Instr[] {
   const anyStrRef: ValType = { kind: "ref", typeIdx: anyStrTypeIdx };
-  const toStrPath: Instr[] = [
+  const toStrPath: Instr[] = tail ?? [
     { op: "call", funcIdx: externToStrIdx },
     { op: "any.convert_extern" },
     { op: "ref.cast", typeIdx: anyStrTypeIdx },
