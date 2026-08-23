@@ -224,8 +224,19 @@ describe("#4637 A1 — a function value in the `.prototype` slot", () => {
     // `it.fails` and keep it as an ordinary pin.
     //
     // NOT diagnosed, and deliberately not guessed at: `G.prototype === P` also
-    // reads false in this shape on both arms, which the other A1 cases do not.
-    // It is recorded because it is measured, not explained.
+    // reads false in this shape, which the other A1 cases do not. It is
+    // recorded because it is measured, not explained.
+    //
+    // It is however PRE-EXISTING, not introduced here — `.tmp/p23.js` isolates
+    // it against two controls and measures base `11` = after `11`:
+    //   bare, `function P(){}`        → `G.prototype === P` true  (both arms)
+    //   bare, `var P = function(){}`  → true  (both arms)
+    //   this arg-only shape           → FALSE (both arms)
+    // So it is a property of the arg-only instantiation shape, not of
+    // function-valued prototypes and not of declaration-vs-expression.
+    // dev-4639 read it as "introduced by your branch" from a RECONSTRUCTED
+    // version of this shape; the A/B above is the direct measurement and
+    // supersedes that inference.
     expect(
       await runModule(
         `function P(){}

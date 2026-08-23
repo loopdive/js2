@@ -567,9 +567,29 @@ other dynamic use can classify the instance. Measured `.tmp/p22.js`, **both arms
 reconstructs. Pinned as `CROSS-LANE PREDICTION (dev-4639 C1 x A1)`, `it.fails`,
 with a falsifiable statement: C1 should make this site reconstruct and flip it to
 the spec answer `31`. **If C1 lands and it is still red, the two changes did not
-compose, and that is the finding.** (One measured anomaly recorded without
-explanation: `G.prototype === P` also reads false in this shape on both arms,
-unlike every other A1 case. Not diagnosed, not guessed at.)
+compose, and that is the finding.**
+
+**The anomaly in that shape, isolated — and it is PRE-EXISTING.**
+`G.prototype === P` reads false there, unlike every other A1 case. dev-4639 ran
+a RECONSTRUCTED version of the shape on `issue-4639`, saw it read `true`, and
+inferred it was *introduced by this branch* — a regression claim, and the wrong
+conclusion for a merger to inherit. Their own caveat is what made it resolvable:
+the reconstruction was written from a prose description, not from `.tmp/p22.js`.
+
+Measured directly instead (`.tmp/p23.js`, three shapes in one module, both arms):
+**base `11` = after `11`.**
+
+| shape | `G.prototype === P` | both arms |
+| ----- | ------------------- | --------- |
+| bare, `function P(){}` | true | identical |
+| bare, `var P = function(){}` | true | identical |
+| arg-only instantiation (the p22 shape) | **false** | identical |
+
+So it is a property of the ARG-ONLY instantiation shape — not of function-valued
+prototypes, not of declaration-vs-expression, and **not introduced by this
+branch**. Still not diagnosed; the point of the isolation was to establish
+provenance, which is what a regression claim needs, and it is now settled by a
+two-arm measurement rather than by either lane's inference.
 
 ### 3. Every pin re-verified against the base — two were mislabelled
 
