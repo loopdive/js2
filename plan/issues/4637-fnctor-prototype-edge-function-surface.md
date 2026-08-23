@@ -16,6 +16,44 @@ language_feature: function-objects
 goal: standalone-gap
 related: [4506, 4623, 4624, 4619]
 origin: "2026-08-23 wave-3 residual map at 97.5% (196 true failures re-measured on branch tree, .tmp/sweep-204-all.jsonl). Lane A."
+# (#3102) Intentional god-file growth for this change-set. Every entry is a
+# WIRING line or a context-field declaration; the substance lives in the new
+# `src/codegen/proto-function-value.ts` and in `closure-prototype-edge.ts`.
+loc-budget-allow:
+  # +25: the four `protoFunctionValue*` context fields + their doc comments.
+  # `CodegenContext` is where the reserve-then-fill handshake state has to live —
+  # `closurePropHelpersReserved` and its type/global indices are declared three
+  # lines above, and splitting the twin across a second interface is what the
+  # #4241 header calls "a private second copy of a layout fact".
+  - src/codegen/context/types.ts
+  # +19: two `fillProtoFunctionValue(ctx)` calls and two
+  # `spliceClosurePrototypeEdgeHasOwn(ctx)` calls (single- and multi-source
+  # FINALIZE), plus their ordering comments and one import. The FINALIZE
+  # sequence is a single ordered list in this file by construction.
+  - src/codegen/index.ts
+  # +11: one decline clause in `staticTypeofForType` (the fold must not trust a
+  # foreign-return fnctor INSTANCE shape) plus its measured rationale.
+  - src/codegen/typeof-delete.ts
+  # +8: one `reserveProtoFunctionValue(ctx, objectTypeIdx)` call inside the
+  # existing standalone reserve block, plus the ordering comment that states why
+  # it must sit between `reserveClosurePropHelpers` and
+  # `buildObjectPrototypeHelpers`, plus one import.
+  - src/codegen/object-runtime.ts
+# (#3400) Intentional function growth for this change-set.
+func-budget-allow:
+  # +37: the four proto-position choke points (`__object_create`,
+  # `__getPrototypeOf`, `__isPrototypeOf`, `__object_setPrototypeOf`) are all
+  # registered inside this ONE function, and the whole point of the A1 fix is
+  # that they agree. The added lines are two 6-line helper closures plus four
+  # 1-line call sites and their comments; extracting them would put the
+  # canonicalize/devirtualize pair in a third file away from the four bodies
+  # that must stay consistent with it.
+  - src/codegen/object-runtime-prototype.ts::buildObjectPrototypeHelpers
+  # +12 / +6: the FINALIZE call sequences (see the index.ts note above).
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  # +7: the reserve call + ordering comment (see the object-runtime.ts note).
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
 ---
 
 # #4637 — fnctor-prototype edge + Function surface

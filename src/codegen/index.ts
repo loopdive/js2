@@ -317,7 +317,8 @@ import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primiti
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { unshiftExternMethodCallProtoArm } from "./native-proto-method-call.js"; // (#4619) proto-receiver method CALL
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
-import { fillClosurePrototypeEdge } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge
+import { fillProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
+import { fillClosurePrototypeEdge, spliceClosurePrototypeEdgeHasOwn } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge; (#4637 A4) its own-property visibility twin
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
 import { fillFunctionInstanceProps } from "./function-instance-props.js"; // (#4436) user-closure `length` own property
 import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando bag substrate
@@ -5402,8 +5403,20 @@ export function generateModule(
     // (#2660 M3) FIRST — `fillClosurePropHelpers` reads the same edge table.
     fillClosurePrototypeEdge(ctx);
 
+    // (#4637 A4) …then publish the SAME edge on the own-property visibility
+    // surface, so `f.hasOwnProperty("prototype")` agrees with `f.prototype`.
+    // After the fill (it needs `__closure_proto_of`'s real body) and before the
+    // closed-struct prologue pass, which unshifts later and therefore keeps its
+    // existing precedence.
+    spliceClosurePrototypeEdgeHasOwn(ctx);
+
     // (#3468) Fill after all closure types and object-runtime deps are known.
     fillClosurePropHelpers(ctx);
+
+    // (#4637 A1) Fill the function-value proto-view helpers — needs the COMPLETE
+    // closure base-wrapper set (the callable gate) and `__closure_bag_ensure`,
+    // both settled by here. No-op when never reserved (gc/host).
+    fillProtoFunctionValue(ctx);
 
     // (#3537) Fill the array-expando side-table helpers (same deps: the
     // object-runtime funcIdxs are all in funcMap by finalize).
@@ -8794,10 +8807,16 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#2660 M3) Same ordering as the single-source pipeline.
     fillClosurePrototypeEdge(ctx);
 
+    // (#4637 A4) Same ordering as the single-source pipeline.
+    spliceClosurePrototypeEdgeHasOwn(ctx);
+
     // (#3468) Multi-source compilation can reserve the closure own-property
     // side-table helpers too. Fill their placeholders only after every source
     // has registered its closure types, matching the single-source pipeline.
     fillClosurePropHelpers(ctx);
+
+    // (#4637 A1) Same for the function-value proto-view map.
+    fillProtoFunctionValue(ctx);
 
     // (#3537) Same for the array-expando side table.
     fillVecPropHelpers(ctx);

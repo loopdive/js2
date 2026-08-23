@@ -17,6 +17,7 @@ import { isBigIntType, isBooleanType, isNumberType, isStringType, isSymbolType }
 import { noJsHost } from "../js-errors.js";
 import { pushDefaultValue } from "../type-coercion.js";
 import { compileStandaloneRegExpConstructor, isGlobalRegExpIdentifier } from "../regexp-standalone.js";
+import { foreignReturnFunctionNames } from "../fnctor-foreign-return.js"; // (#4637 A2) §10.2.1.3 step 13
 
 /**
  * (#4221) Unwrap the transparent wrappers that sit between a call expression
@@ -219,6 +220,24 @@ export function isEvolvingAnyBinding(ctx: CodegenContext, callee: ts.Expression)
  *
  * `Function` and `Proxy` are excluded — `new Function(...)` IS callable, and a
  * proxy's [[Call]] comes from its target.
+ *
+ * (#4637 A2) A user constructor whose body can `return` a FOREIGN value is
+ * excluded for the SAME reason, and it is not a corner case: §10.2.1.3 step 13
+ * makes that returned value the construction result, so
+ *
+ *     var __func = function(a,b){ this.first=a; __gunc.prop=b; return __gunc;
+ *                                 function __gunc(arg){return ++arg} };
+ *     var __instance = new __func("one","two");
+ *     __instance(1)                       // spec: 2
+ *
+ * is a call on a FUNCTION. Measured on this branch's base (`.tmp/p6.js`,
+ * `--target standalone`): `__instance === __gunc` and `__instance.prop` are
+ * already right — the override lands — and only `typeof` and the call
+ * disagreed, because both read the checker's INSTANCE shape. That is exactly
+ * the inference `fnctor-foreign-return.ts` exists to distrust (`resolveWasmType`
+ * already degrades the SLOT to externref off the same predicate); this guard was
+ * the one consumer still trusting it, and it turned a working call into a hard
+ * `__instance is not a function` throw — `S13.2.2_A8_T1`/`_T2`.
  */
 export function isFreshlyConstructedNonCallable(ctx: CodegenContext, callee: ts.Expression, factKind: string): boolean {
   const brand = ctx.oracle.builtinReceiverOf(callee);
@@ -228,6 +247,8 @@ export function isFreshlyConstructedNonCallable(ctx: CodegenContext, callee: ts.
   if (ts.isNewExpression(callee)) {
     const ctorName = ts.isIdentifier(callee.expression) ? callee.expression.text : undefined;
     if (ctorName === "Function" || ctorName === "Proxy") return false;
+    if (ctorName !== undefined && foreignReturnFunctionNames(callee.getSourceFile()).has(ctorName)) return false;
+    if (ctorName === "Object" && objectCoercionMayBeCallable(ctx, callee.arguments)) return false;
     // The result of `new` is an ordinary object — `object` is safe HERE (and
     // only here), unlike a checker-typed `{}` binding.
     return factKind === "builtin" || factKind === "class" || factKind === "object";
@@ -238,6 +259,37 @@ export function isFreshlyConstructedNonCallable(ctx: CodegenContext, callee: ts.
   // it can reach `builtin`/`class`. `object` (the structural `{}` fact) is
   // deliberately NOT accepted off the `new` path.
   return factKind === "builtin" || factKind === "class";
+}
+
+/**
+ * (#4637 A3) `Object(x)` / `new Object(x)` is §7.1.18 ToObject, and ToObject on
+ * an object is the IDENTITY — so `new Object(f)` where `f` is a function IS that
+ * function, callable, `=== f`. Measured on this branch's base (`.tmp/p8.js`,
+ * `--target standalone`): the identity already holds — `emitObjectCoercion`'s
+ * fallback compiles the argument to externref, which preserves the closure — and
+ * the only thing that disagreed was the checker's `Object` type for the
+ * expression, which drove `typeof` to the constant `"object"` and this guard to
+ * a hard `n_obj is not a function` throw (`built-ins/Object/S15.2.2.1_A2_T2`,
+ * `_A2_T6`).
+ *
+ * Answers "the result of this ToObject may be callable". It is a decline
+ * predicate, so it must err toward `true`: `new Object()` (no argument) and
+ * `new Object(<provably-primitive>)` answer `false` and keep the guard, which is
+ * what `language/expressions/call/S11.2.3_A4_*` needs; anything the oracle
+ * cannot classify as a primitive answers `true` and the call is left to the
+ * runtime dispatcher.
+ */
+export function objectCoercionMayBeCallable(
+  ctx: CodegenContext,
+  args: ts.NodeArray<ts.Expression> | undefined,
+): boolean {
+  const arg = args?.[0];
+  if (arg === undefined) return false; // `new Object()` — a fresh plain object
+  const argFact = ctx.oracle.typeFactOf(arg);
+  if (NEVER_CALLABLE_FACT_KINDS.has(argFact.kind)) return false;
+  // A nested `new` whose own result is provably non-callable stays so through
+  // ToObject (`new Object(new Number(1))()` must still throw).
+  return !isFreshlyConstructedNonCallable(ctx, arg, argFact.kind);
 }
 
 /**
