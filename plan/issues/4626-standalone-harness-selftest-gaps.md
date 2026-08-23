@@ -96,7 +96,7 @@ alias form `var TA = Int8Array; new TA([5])` misreads the array argument as a
 length (`.length` 5) — a different (builtin-alias) arm; the harness shape is
 the param form, which is fixed.
 
-## Remaining standalone failures (11) — root causes surveyed
+## Remaining standalone failures (10) — root causes surveyed
 
 | Test(s) | Gap |
 | --- | --- |
@@ -106,5 +106,5 @@ the param form, which is fixed.
 | deepEqual-primitives-bigint | BigInt standalone (`env::__new_BigInt` host-import refusal) |
 | assert-throws-same-realm, (throwsAsync-same-realm) | needs a realm shim with distinct error-ctor identities (see revert note above — must not shadow builtin names) plus `.constructor` identity |
 | wellKnownIntrinsicObjects | `%Array%` intrinsic identity (`Object.is(Array, intrinsic)`) |
-| detachArrayBuffer-host | `err.constructor` on a Test262Error thrown by a BARE `throw new Test262Error(...)` inside an object-literal method loses fnctor identity (resolves to a generic closure; `throw (new …)` and `throw <var>` both work — the escape-gate/lowering divergence is syntactic) |
+| detachArrayBuffer-host | FIXED (third slice): the runtime shim's `var $262` collided with the test's own `var $262` override (no last-assignment-wins for duplicate top-level vars); `assembleVariant` now renames the shim part's `$262` occurrences when the body declares one. Fixes BOTH lanes. |
 | testTypedArray-conversions | FIXED (second slice, above) |
