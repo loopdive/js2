@@ -212,14 +212,20 @@ describe("#4515 wave-5 — measured residuals (owners named)", () => {
     ).toBe(1);
   });
 
-  // OWNER: #4491 T4 (`src/codegen/add-to-primitive.ts`).
-  // `addOperandCallableSourceText` refuses when `fctx.localMap` has the name,
-  // while `f.toString()` (`call-receiver-method.ts`) reads the SAME
-  // `ctx.funcSourceText` map with NO such guard — so the two spellings disagree
-  // by construction wherever the guard fires. Measured on this branch's base:
-  // `f1 + 1` is "function () { [native code] }1" and `f1.toString() + 1` is
+  // OWNER: #4491 T4. FIXED on `issue-4491-t4-parity` (`60f32935b`) after this
+  // lane handed it back — **flip this to a passing pin when that lands here.**
+  // Measured on THIS branch's tree (8794ab2c9 + this lane): `f1 + 1` is
+  // "function () { [native code] }1" while `f1.toString() + 1` is
   // "function f1() { return 0; }1" (`language/expressions/addition/
   // S11.6.1_A2.2_T3`).
+  //
+  // Worth keeping when the pin flips: the asymmetry this lane reported —
+  // `addOperandCallableSourceText` refuses on `fctx.localMap` while
+  // `call-receiver-method.ts` reads the same `ctx.funcSourceText` unguarded —
+  // was real but NOT sufficient. For this shape the helper is never called at
+  // all: `binary-ops.ts` has two `+` object dispatches and `emitObjectAdd`
+  // (`addition-to-primitive.ts`, #4564) wins, not `emitAnyAdd`
+  // (`add-to-primitive.ts`). Fixing only the guard moved 0 of 128 rows.
   it.fails("f + 1 must agree with f.toString() + 1 (#4491 T4)", async () => {
     expect(
       await runModule(`function f1x4515() { return 0; }

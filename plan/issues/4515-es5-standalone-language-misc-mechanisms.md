@@ -39,6 +39,15 @@ func-budget-allow:
   # control-flow path, between its own `pushBody`/`popBody` pair, so any split
   # would have to carry that body-swap protocol with it.
   - src/codegen/statements/exceptions.ts::compileTryStatement
+  # 2026-08-23 wave-5, the ANSWER half of the #4484 D guard: a reassigned
+  # binding's stale static type must not decide `in` either. The predicate is
+  # ONE line plus one extra term in an existing condition; the +24 is the
+  # rationale comment, and it belongs here rather than in a leaf module —
+  # splitting a one-line predicate out would not shrink this function below its
+  # baseline anyway (the gate is a no-growth ratchet), so it would buy nothing
+  # and move the reasoning away from the four other route conditions it has to
+  # be read against.
+  - src/codegen/binary-ops-in.ts::compileInOperator
 ---
 
 # ES5 standalone `language/` misc — 110 rows, ~7 mechanisms
@@ -434,3 +443,301 @@ mutated), `language/types/boolean/S8.3_A1_T1.js`,
 `language/directive-prologue/14.1-4-s.js` + `14.1-5-s.js`.
 
 Triage-first: measure the cluster roots, fix the largest, attribute the rest.
+
+## 2026-08-23 wave-5 results (dev-4515, branch `issue-4515-wave5`)
+
+Base for every number below: the campaign tip **`8794ab2c9`**, which INCLUDES
+dev-4491's wave-4 merge `fbfe60815` — the lane started on `c42bdbe3e`, merged
+the tip mid-flight when the lead flagged it, and **re-measured everything on the
+merged tree**. The base arm is that tree with only this lane's seven source
+files reverted, in the same worktree (`.tmp/base/`, `.tmp/arm.sh`), and the
+compiler bundle + quickjs eval adapter are REBUILT on each arm.
+
+**All 36 census rows re-verified failing on the base arm before any edit**
+(methodology 1). The clustering held for C3/C5 and did NOT for C1/C4/C6 — see
+below.
+
+### Test Results
+
+| run | files | base pass | branch pass |
+|---|---|---|---|
+| scoped standalone sweep, both arms, this lane's own runs | **291** | 222 | 237 |
+
+**Serially re-confirmed: 14 flips, 0 regressions.** The parallel sweep reported
+15; `built-ins/eval/length-non-writable.js` PASSES ON BOTH ARMS when re-run
+serially and was a contention artifact (the box sat at load 20–30 for the whole
+session; two sibling lanes reported the same class of fake independently). Every
+apparent flip was re-run one-process-at-a-time on both arms before being counted.
+
+The 14, all confirmed serially:
+
+```
+language/directive-prologue/14.1-4-s.js                     root 1  (census C6)
+language/directive-prologue/14.1-5-s.js                     root 1  (census C6)
+language/expressions/in/S11.8.7_A2.4_T1.js                  root 3  (census C3)
+language/statements/for/head-init-expr-check-empty-inc-empty-completion.js
+                                                            root 2a (census C6)
+language/statements/if/cptn-else-false-abrupt-empty.js      root 2a
+language/statements/if/cptn-else-true-abrupt-empty.js       root 2a
+language/statements/if/cptn-no-else-true-abrupt-empty.js    root 2a
+language/statements/with/cptn-abrupt-empty.js               root 2a
+language/statements/empty/cptn-value.js                     root 2b
+language/statements/const/cptn-value.js                     root 2b
+language/statements/let/cptn-value.js                       root 2b
+language/statements/try/cptn-finally-wo-catch.js            root 2c
+language/statements/try/cptn-finally-skip-catch.js          root 2c
+language/statements/try/cptn-finally-from-catch.js          root 2c
+```
+
+Controls that must NOT move, verified `pass` on both arms serially:
+`do-while/S12.6.1_A8.js` (the row the wave-3 register was built for),
+`do-while/cptn-{abrupt-empty,normal}.js`, `labeled/cptn-{break,nrml}.js`,
+`switch/cptn-abrupt-empty.js`.
+
+**Scope of the sweep, stated so it is not read as more than it is.** 291 files,
+not the full census directories — the box was saturated and a 2,740-file two-arm
+run was not completable. The set is the *directly-affected population* plus the
+census, not a sample: every `cptn*` file in the corpus (97), `directive-prologue`
+and `expressions/in` in full, `built-ins/eval`, every eval-CALLING file in the
+completion-value statement directories, this issue's 36 census rows, and — the
+part that makes root 1's coverage complete rather than sampled — **all 16 files
+in the entire corpus whose source contains a string literal starting `use` with
+a backslash in it**. No other file can reach the strictness change.
+
+Other suites, both arms, this lane's runs:
+- `tests/issue-4515-wave5.test.ts` — **22 passed** (a count, not an exit code).
+- `tests/issue-4491-wave4.test.ts` on the combined tree — **14 passed**, so this
+  change does not disturb the sibling lane it merged.
+- 11 scoped `tests/equivalence/` files, per-file loop (they OOM in one vitest
+  invocation): 116 tests, **1 failed on BOTH arms** (`arguments-nested-and-loops`),
+  byte-identical summaries — 0 regressions.
+
+### Landed — three roots, 14 rows
+
+#### 1. A Use Strict Directive is matched on the RAW token (§11.2.2) — +2
+
+Every call site compared `stringLiteral.text`, the COOKED value. §11.2.2 says a
+Use Strict Directive *"may not contain an EscapeSequence or LineContinuation"*,
+so both of these are ordinary (non-directive) ExpressionStatements and their
+functions stay SLOPPY:
+
+```js
+function foo() { 'use str\
+ict'; return this !== undefined; }   // answered false, spec true
+function bar() { 'use strict'; return this !== undefined; }  // same
+```
+
+`foo.call(undefined)` substitutes the global object in a sloppy function, so the
+answer is `true`; treating the directive as real leaves `this` genuinely
+`undefined`. **This is not a conformance nicety** — strictness drives `this`
+substitution, the mapped-vs-unmapped `arguments` split, assignment-to-
+unresolvable-reference and the eval early-error set, so a mis-read directive
+silently over-restricts an ordinary program.
+
+One predicate now, `src/codegen/helpers/use-strict-directive.ts`, used by
+`is-strict-function.ts`, `eval-inline.ts` and `eval-early-errors.ts`. A
+synthesized node with no readable source token keeps the cooked comparison
+(absent-not-wrong: a synthesized `"use strict"` is one this compiler emitted).
+
+Flips: `language/directive-prologue/14.1-4-s.js`, `14.1-5-s.js` (both C6).
+
+**The affected population is enumerable and was enumerated**, which is stronger
+than a sweep: only a string literal that cooks to `use strict` with a backslash
+in its raw token can change, and a corpus-wide grep finds **16 files** in all of
+test262.
+
+#### 2. §13 completion value — three missing halves of the wave-3 `V` register — +9
+
+The register (`2f4ad77`, earlier in this issue) modelled "an ExpressionStatement
+that runs updates `V`". That is one third of §13.
+
+(a) **`if` / `try` / `switch` / `with` and every loop RESET `V`** —
+`UpdateEmpty(stmtCompletion, undefined)` (§14.6.2 / §14.15.3 / §14.12.4 /
+§14.11.2) and `Let V be undefined` at loop entry (§14.7.x). `Block` and
+`LabelledStatement` deliberately do NOT: they thread the inherited value
+(`UpdateEmpty(s, sl)`). **That list was reference-checked, not read off the
+grammar** — `eval("1; lbl: {}")` is `1` while `eval("1; if(false);")` is
+`undefined`, and a grammar-only reading gets Labelled wrong.
+
+The census row that exposed it:
+
+```js
+eval("for(count=0;;) {if (count===supreme)break;else count++; }")   // undefined
+```
+
+The `break` sits inside an `if`, so the iteration's completion is
+(break, **undefined**), not (break, empty), and the loop's `UpdateEmpty` has
+nothing to fill. We answered `4`, the last `count++` to run.
+
+Emitting the reset at STATEMENT ENTRY *is* `UpdateEmpty(…, undefined)`: a branch
+that produces a value overwrites it; a branch that produces nothing (`break`,
+`continue`, an empty block, a declaration) leaves the `undefined`.
+
+(b) **The register spans the whole StatementList**, not just the tail. §16.1.7
+threads `V` across the list, so a value-less tail answers with the last
+statement that DID produce one — `eval("2;;")` is `2`, `eval("4; const t = 5;")`
+is `4`. Both answered `undefined`. The ExpressionStatement-tail fast path is
+deliberately left in place (such a tail always overwrites `V` last, and keeping
+it preserves the abrupt `eval("throw 1")` result).
+
+(c) **A normally-completing `finally` contributes nothing** — §14.15.3 step 5,
+*"If F.[[type]] is normal, let F be C"*. Snapshot `V` before the block, restore
+after. Putting the restore at the END of the protected sequence makes the ABRUPT
+arm right for free: a `break`/`continue`/`return` out of the finally branches
+PAST the restore, which is step 7 (`eval("1; do { try { 2; } finally { 3; break;
+} } while(true)")` is `3`).
+
+Flips: `language/statements/if/cptn-{else-false,else-true,no-else-true}-abrupt-empty.js`,
+`with/cptn-abrupt-empty.js`, `try/cptn-finally-{wo-catch,skip-catch,from-catch}.js`,
+`{empty,const,let}/cptn-value.js`, `for/head-init-expr-check-empty-inc-empty-completion.js`.
+
+Controls unchanged: `do-while/S12.6.1_A8.js` (the row the register was built
+for — the `continue` inside an `if` now carries `undefined` and the answer is
+still `4`), `do-while/cptn-{abrupt-empty,normal}.js`, `labeled/cptn-{break,nrml}.js`,
+`switch/cptn-*`.
+
+#### 3. `in` on a REASSIGNED binding asks the VALUE — +1 (C3, half)
+
+The #4484 D guard already stopped a reassigned binding's stale static type from
+producing a wrong THROW. The same staleness also produces a wrong ANSWER, from
+the same type, four lines further down: `tsTypeHasProperty` reads
+`rightType.getProperty(key)`, and TS widens `var NUMBER = 0; NUMBER = Number` to
+the UNION `number | NumberConstructor`, where a property must exist on every
+constituent — so `MAX_VALUE` is invisible and the fold answers `false`.
+
+`__extern_has` decides from the value and already answers this correctly:
+measured on this branch, `(function (x, k) { return k in x; })(Number,
+"MAX_VALUE")` is `true` and the same with a bogus key is `false`. The site now
+routes there when the receiver is a bare identifier the file writes to. Narrow
+by construction — that population is exactly the one whose declared type is not
+a fact about the site; every other receiver keeps its fold.
+
+Flip: `language/expressions/in/S11.8.7_A2.4_T1.js` (both CHECK#1 and CHECK#2).
+
+### Census re-clustering — what the wave-5 grouping got wrong
+
+- **C1 (7) is one substrate, not seven bugs, and it is NOT reachable from this
+  lane.** `Error.prototype.constructor`, `Object.prototype.constructor`,
+  `Array.prototype.concat` as a value, `Array.toString()`,
+  `err1.constructor.length` all need builtin prototypes materialised as real
+  objects carrying `constructor`/`length` — the #4480 family. The one exception
+  is `addition/S11.6.1_A2.2_T3`, which is **#4491 T4's** and is handed back with
+  a precise root (below).
+- **C3's two halves have DIFFERENT roots.** The `in` half is a stale-static-type
+  fold (fixed). The `instanceof` half is the #2916 Slice B / #2660 M3 dynamic
+  substrate, and it is *not* an identifier-resolution gap: measured on both arms,
+  `(function (v, C) { return v instanceof C; })(new U(), U)` is **`false` for a
+  plain user constructor** too, as is `({}, Object)`, `([], Array)` and
+  `(new Error(), Error)`. `__instanceof_dynamic` answers its documented
+  conservative `false` because no runtime constructor→prototype edge resolves.
+  Fixing the RHS name resolution would have changed nothing.
+- **C4 is not a getter bug.** Confirms this issue's own 2026-08-19 routing
+  correction: `11.1.5-0-{1,2}` build the accessor object INSIDE `eval()`, and a
+  direct `var o = { get foo(){…} }; o.foo` is correct. The accessor-PAIR trap
+  recorded earlier in this file was fixed in wave 3 and is not what these rows
+  hit.
+- **C5 STILL FAILS after dev-4491's wave-4 merge** — re-verified on the merged
+  tip at the lead's request. Narrowed: a NUMBER write to `arguments.length`
+  sticks; a STRING write does not, the `length` descriptor reports
+  `configurable/writable !== true`, and `typeof argObj.callee` answers
+  `"number"`. So the residue is the arguments `length`/`callee` own-property
+  descriptors, not element freeze. Left entirely to #4491.
+- **C6 is genuinely diffuse and two of its members were the cheapest wins in the
+  whole census** (the two directive-prologue rows). `language/statements/if/
+  S12.5_A8.js` is a PARSE-phase SyntaxError row (`if()` with an empty
+  expression), not a completion-value row.
+
+### Residuals, with owners (all pinned `it.fails` in `tests/issue-4515-wave5.test.ts`)
+
+| shape | owner |
+|---|---|
+| `(OBJECT = Object, {}) instanceof OBJECT` — and `new U() instanceof U` through a parameter | #2916 Slice B / #2660 M3 (runtime constructor→prototype edge) |
+| `f + 1 !== f.toString() + 1` | **#4491 T4 — FIXED after this lane handed it back** (`60f32935b` on `issue-4491-t4-parity`). Flip the `it.fails` pin to a passing pin when that lands here. See the correction below: the guard asymmetry this lane reported was real but NOT sufficient. |
+| `arguments.length` string write / descriptor / `callee` | **#4491** |
+| `var m = {1:"one", two:2}; m.two = "duo"` reads NaN | #4204 slot widening. This is also the root of `assignment/S8.12.5_A2`, whose reported `__str_concat` null dereference is one step DOWNSTREAM, in the assertion message. |
+| a hoisted `var x = true` read before its initializer answers `false` | #4204 slot widening (same convention as the NaN-for-undefined case this issue recorded in wave 2) |
+| the catch binding resolves after its block instead of throwing ReferenceError (`try/12.14-7`) | catch-clause scoping — unowned; the parameter is lowered to a plain function local |
+| `eval("var x;")` inside a function must create the binding in the FUNCTION's variable environment (`assignment/S11.13.1_A6_T{1,2}`) | eval var-environment — unowned |
+| `built-ins/Object/{prototype/S15.2.4_A1_T2, prototype/valueOf/S15.2.4.4_A14, create/15.2.3.5-4-15}`, `JSON/parse/S15.12.2_A1`, `types/object/S8.6.2_A8` | #4480 materialised builtin prototypes |
+
+### An eval-scoping defect found while building the pins (unowned, NOT fixed here)
+
+`eval("<loop>")` inside a minimal `export function test()` throws
+`ReferenceError: <name> is not defined`, which is what stopped the first cut of
+this lane's pins from running at all.
+
+**This lane's first narrowing of it was WRONG and is recorded here as a
+correction, not a finding.** From a top-level-only survey it looked like "an
+outer binding in a `while`/`for` TEST position", because every top-level case
+passes and the one failing case looked like the odd one out. **dev-4653 ran the
+discriminator on their own tree and falsified all three parts of that
+narrowing** (`for`-vs-`while` is not a factor; the loop is not a factor;
+outer-vs-local is INVERTED). Their measured rule, cited as theirs:
+
+> An update expression (`++`/`--`) on a name LOCAL to the eval'd or minted code
+> — an eval-local `var`, or a `Function` parameter — throws, and ONLY when the
+> `eval`/mint sits inside an enclosing FUNCTION. Top level is fine. Compound
+> assignment `x = x + 1` is fine. Reads are fine. `++` on an OUTER binding is
+> fine.
+>
+> Measured on `c42bdbe3e` + their four commits; `new Function("p","p++; return
+> p;")(1)` throws while `new Function("p","return p;")(7)` answers 7.
+
+The lesson generalises past this defect: **a survey run entirely at module top
+level cannot see a defect whose gate is "inside an enclosing function", and will
+mis-attribute the one case that does surface.**
+
+One open thread, deliberately not resolved here: this lane's own repro
+`var n = 0; eval("while(n<3){ n++; }")` — the OUTER-`++` row, which is clean on
+dev-4653's tree — does throw on this branch's tree (`8794ab2c9` + this lane's
+commit). Different trees, so neither of us can speak for the other's (the
+brief's third-arm rule); it needs isolating separately by whoever picks the
+defect up. Plausibly the same substrate as `language/expressions/assignment/
+S11.13.1_A6_T{1,2}` (an eval `var` must land in the enclosing FUNCTION's
+variable environment), which are C2 rows this lane could not reach.
+
+Practical consequence for anyone writing a pin: it turns a minimal
+`export function test() { … eval(<loop>) … }` into a test of THIS defect. The
+test262 original-harness lane puts its bindings at TOP LEVEL, which is why the
+conformance rows pass while the minimal module throws.
+
+### Correction to this lane's own hand-back (dev-4491, cited as theirs)
+
+This lane handed `S11.6.1_A2.2_T3` to #4491 with a root: the `fctx.localMap`
+guard in `addOperandCallableSourceText` always fires under the harness wrapper,
+while the `.toString()` spelling reads the same map with no guard. **That was
+true and NOT sufficient — repairing it alone moved 0 of 128 rows**, because for
+this operand shape the helper *is never called*. `binary-ops.ts` has TWO `+`
+object dispatches and the one that wins for a top-level function declaration is
+`admitsObjectAddition` → `emitObjectAdd` (`addition-to-primitive.ts`, #4564),
+not `admitsObjectAdd` → `emitAnyAdd` (`add-to-primitive.ts`, the helper's only
+caller). Two modules whose names differ by three letters own the same operator,
+and the live one had no source-text arm at all. dev-4491's fix needed both
+halves.
+
+The transferable part: **a root that explains the symptom is not yet a root that
+reaches it.** The dispatch that actually claims the shape has to be identified —
+instrumenting the helper and getting zero output is what found it. Handing the
+row back rather than patching the guard in place is what kept a plausible
+non-fix from burying the real cause.
+
+### Method notes worth keeping
+- **`inferModuleStrictArguments: false` is required in any strictness pin.** The
+  `export function test()` entry point makes TypeScript flag the source a
+  MODULE, and module code is always strict — so without it every function in the
+  pin is strict for a reason unrelated to its directive prologue. Measured: both
+  arms answered the same value, i.e. the pin could not fail for the reason it
+  existed.
+- The issue frontmatter carried **two `loc-budget-allow:` keys**, so a YAML
+  parser kept only the second and the `src/codegen/closures.ts` grant was dead.
+  Merged into one.
+- **A parallel sweep will hand you a fake eventually.** One of 15 apparent flips
+  here was a contention artifact, and two sibling lanes hit the same class in the
+  same session (one fake regression, two fake flips between them). Re-run every
+  apparent flip AND every apparent regression one process at a time before
+  counting it; `runTest262File`'s `timeoutMs` is post-hoc and cannot interrupt a
+  slow compile.
+- **A survey run entirely at module top level is blind to any defect gated on
+  "inside an enclosing function"** — and worse, it mis-attributes the one case
+  that does surface, because that case looks like the odd one out. See the
+  eval-scoping correction above.
