@@ -104,6 +104,12 @@ jobs:
       contents: read
     outputs:
       sha: ${{ steps.head.outputs.sha }}
+      # Per-lane package matrices, planned from the repo's own catalog at the
+      # pinned revision (scripts/list-npm-compat-packages.mjs). Adding a
+      # package to the catalog — or flagging one `"longPole": true` — scales
+      # the matrix automatically; this workflow never hardcodes package names.
+      fast_packages: ${{ steps.plan.outputs.fast }}
+      slow_packages: ${{ steps.plan.outputs.slow }}
     steps:
       - name: Resolve main HEAD
         id: head
@@ -116,6 +122,24 @@ jobs:
           if [ -z "$sha" ]; then echo "could not resolve refs/heads/main" >&2; exit 1; fi
           echo "resolved main HEAD: $sha (trigger was ${GITHUB_SHA})"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.head.outputs.sha }}
+          fetch-depth: 1
+          submodules: false
+          persist-credentials: false
+
+      - name: Plan the per-package matrices from the catalog
+        id: plan
+        shell: bash
+        # Node-builtins-only script — no pnpm install needed here.
+        run: |
+          set -euo pipefail
+          PLAN="$(node scripts/list-npm-compat-packages.mjs)"
+          echo "matrix plan: $PLAN"
+          echo "fast=$(node -e 'process.stdout.write(JSON.stringify(JSON.parse(process.argv[1]).fast))' "$PLAN")" >> "$GITHUB_OUTPUT"
+          echo "slow=$(node -e 'process.stdout.write(JSON.stringify(JSON.parse(process.argv[1]).slow))' "$PLAN")" >> "$GITHUB_OUTPUT"
 
   # One row PER PACKAGE, each with its own concurrency group: every package
   # serializes and coalesces independently, so a slow or failing package
@@ -132,29 +156,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package:
-          - acorn
-          - marked
-          - clsx
-          - cookie
-          - eslint
-          - prettier
-          - react
-          - redux
-          - jsdom
-          - tailwindcss
-          - hono
-          - lodash
-          - lodash-es
-          - axios
-          - uuid
-          - moment
-          - webpack
-          - jest
-          - styled-components
-          - stylelint
-          - three
-          - typescript
+        package: ${{ fromJSON(needs.resolve.outputs.fast_packages) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     permissions:
@@ -207,9 +209,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package:
-          - react-dom
-          - lit
+        package: ${{ fromJSON(needs.resolve.outputs.slow_packages) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     permissions:
