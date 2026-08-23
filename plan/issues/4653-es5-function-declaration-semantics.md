@@ -271,6 +271,36 @@ The second E pin (a two-level own name yielded once) and the non-enumerable
 shadow pin pass on BOTH arms: they guard the half of the shadow write that the
 own-only switch must not break, not a behaviour this change flips.
 
+**Counts audit (2026-08-23, prompted by dev-4515's `N == declared` calibration,
+since superseded by their two-tier version).** Every pin run I reported above was
+filtered inline through `grep -E "Tests |Test Files|✓ tests|×"`, which does NOT
+match `Errors N error` — the exact "a pipe can hide the line that would have told
+you" defect, committed repeatedly in this lane. Re-run unfiltered:
+
+```
+Tests  23 passed (23)
+Errors  1 error        <- [vitest-worker]: Timeout calling "onTaskUpdate"
+vitest exit status: 1
+```
+
+- **Tier 1** (vitest's own summary): `executed = 23 + 0 = 23`, `total = 23`,
+  `total > 0 && executed == total` → PASS.
+- **Tier 2** (external count, required here because the RPC error IS present and
+  it shrinks `passed` and `total` together): `grep -cE '^\s+it(\.fails)?\('` = 23,
+  with zero `it.each` / `test(` / `.skip` / `.only` forms → 23 == 23. **Nothing
+  was lost.** The error is the RPC drop with no test involved.
+- Retrospectively for the base arm: `3 failed | 14 passed` ⇒ executed 17 = the
+  17 declared at that time, so tier 1 clears that run from the numbers already
+  recorded.
+
+Two things worth carrying out of this. **The exit status was `1` on a run where
+all 23 tests passed** — the inverse of the usual trap, and a second reason the
+verdict must come from counts rather than `$?`. And the tier-2 grep is genuinely
+the weakest link: in dev-4515's file the naive `it\(|test\(` pattern INFLATES
+(comments), while in mine it UNDER-counts by 10 (it misses `it.fails(`). Same
+pattern, opposite errors, two files — which is why the denominator belongs on
+vitest's own summary line wherever tier 1 can answer.
+
 ## Residuals
 
 Nine rows remain, each with a measured root and an owner. None is a guess.
