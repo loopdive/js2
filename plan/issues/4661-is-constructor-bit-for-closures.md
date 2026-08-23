@@ -228,6 +228,21 @@ not built", which is a local artifact, not a lane result.
 | `equivalence-gate.mjs`, all 8 shards (`SHARD=n/8`) | 24 known-failures | **8/8 "No new equivalence regressions"** |
 | construct-semantics sweep, 1437 files (`.tmp/construct-sweep.txt`) | **862 / 1437** | **881 / 1437** (+19, **0 lost**) |
 
+### Re-measured after the catch-up merge of `origin/main` @ `f6e094cdb`
+
+`#4812` landed while this branch was in validation, so the branch was re-merged
+and both categories re-run on the merged tree (quickjs provider rebuilt first):
+
+| lane | merged tree |
+| --- | --- |
+| standalone `test/harness/` | **116 / 116 — the goal, met** |
+| js-host `test/harness/` | **112 / 116** |
+
+The four js-host residuals are `deepEqual-deep`, `verifyProperty-value`,
+`asyncHelpers-throwsAsync-custom-typeerror` and `wellKnownIntrinsicObjects` —
+all owned by #4804 / #4811 / #4810, none of which had landed. `isConstructor.js`
+is no longer among them, so js-host reaches 116/116 when those merge.
+
 ### The construct-semantics sweep (+19 / −0)
 
 The sweep is every one of the 849 `Reflect.construct`-using test262 files plus a
