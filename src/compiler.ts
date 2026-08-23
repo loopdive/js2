@@ -63,7 +63,7 @@ import { emitWat } from "./emit/wat.js";
 import { applyDefineSubstitutions, applyDefineSubstitutionsWithMap } from "./compiler/define-substitution.js";
 import { collectGraphNodeBuiltinImports } from "./compiler/node-builtin-import-collector.js";
 import { rewriteCjsRequire, rewriteCjsRequireWithMap } from "./cjs-rewrite.js";
-import { preprocessImports } from "./import-resolver.js";
+import { injectTimerShimOnly, preprocessImports } from "./import-resolver.js";
 import { PositionMap } from "./position-map.js";
 import { profileCount, profilePhase } from "./compile-profile.js";
 import { resolveCompileTargetProfile } from "./target-profile.js";
@@ -1661,8 +1661,21 @@ export async function compileMultiSource(
   const rewrittenFiles = profilePhase("cjs-rewrite", () =>
     Object.fromEntries(Object.entries(definedFiles).map(([k, v]) => [k, rewriteCjsRequire(v)])),
   );
+  const multiTargetProfile = resolveCompileTargetProfile(options);
+  // Keep the graph's import declarations intact, but give each source the
+  // same callback-aware timer ABI as single-source compilation. Without this
+  // narrow prelude, multi-file `setTimeout` calls resolve to the raw ambient
+  // host function and pass an unwrapped Wasm closure across the boundary.
+  const timerShimmedFiles = profilePhase("timer-shim", () =>
+    Object.fromEntries(
+      Object.entries(rewrittenFiles).map(([k, v]) => [
+        k,
+        injectTimerShimOnly(v, { host: multiTargetProfile.target === "gc" }),
+      ]),
+    ),
+  );
   const processedFiles = profilePhase("ground-call-fold", () =>
-    foldGroundCallsInMulti(rewrittenFiles, entryFile, options.optimize),
+    foldGroundCallsInMulti(timerShimmedFiles, entryFile, options.optimize),
   );
   profileCount("input-files", Object.keys(processedFiles).length);
 

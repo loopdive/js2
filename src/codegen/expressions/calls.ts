@@ -2357,6 +2357,16 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
     return false;
   };
 
+  // Ambient callable globals (`queueMicrotask`, `requestAnimationFrame`, and
+  // the standard global parsing/URI helpers) arrive as host externrefs when a
+  // function value is copied into a local.  That local must retain the
+  // host-call fallback; otherwise the closure-shaped dispatch path casts the
+  // externref to a null Wasm closure and traps on an indirect call.
+  const isDeclaredHostGlobal = (node: ts.Expression): boolean => {
+    const inner = unparen(node);
+    return ts.isIdentifier(inner) && ctx.declaredGlobals.has(inner.text);
+  };
+
   // (#3488) `Object.getOwnPropertyDescriptor(o, k).get`/`.set` extracts a HOST
   // accessor function (not a wasm closure), e.g. a builtin-proto getter like
   // `%TypedArray%.prototype.length`. Invoked as a bare `getter()` it must reach
@@ -2379,7 +2389,7 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
   // chains), checking whether any reachable left operand is a host builtin.
   const initMayBeHost = (node: ts.Expression): boolean => {
     const inner = ts.isParenthesizedExpression(node) ? node.expression : node;
-    if (isHostBuiltinMember(inner)) return true;
+    if (isHostBuiltinMember(inner) || isDeclaredHostGlobal(inner)) return true;
     if (isReflectiveAccessorExtraction(inner)) return true;
     if (ts.isConditionalExpression(inner)) {
       return initMayBeHost(inner.whenTrue) || initMayBeHost(inner.whenFalse);

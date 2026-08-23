@@ -154,6 +154,10 @@ jobs:
 
       - name: Measure package group
         env:
+          # ReactDOM's project lane has many independent compile batches. Keep
+          # two compiler workers active so the long pole finishes before the
+          # job ceiling without exhausting the runner's memory.
+          DOGFOOD_REACT_DOM_PROJECT_CONCURRENCY: "2"
           # (#4604) Keep react-dom's per-batch [dogfood] progress lines in the
           # job log. Two full runs were lost to a silent single-line log where
           # a 350-min timeout and a hang were indistinguishable.
