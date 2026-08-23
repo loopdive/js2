@@ -300,6 +300,17 @@ Re-run after the change in two halves, both sharded exactly like the baseline:
 > disproving it cost a full sweep cycle: **a sharded sweep is not a valid
 > instrument for a timeout-adjacent row.**
 
+### Against the acceptance bar ("≥18 of ~35 flip")
+
+Stated plainly, because the two numbers differ: **27 rows flip in total, but only
+14 of them are inside this issue's own named families.** The bar was written
+against the 2026-08-16 map, and 10 of the ~35 rows it counted are not winnable
+here — F (2) and G (1) already pass, and A (~8) is walled behind a >30x
+eval-throughput gap, all three measured above. Of the ~27 rows that were really
+failing in the seven families, 14 flipped and 13 are declined with a named owner
+in the residual table below. The other 13 flips are `built-ins/Date` rows that
+fall out of family C's carrier.
+
 **Total: 27 rows flip** — 14 in the issue's own scope plus 13 more in
 `built-ins/Date` that fall out of family C (exactly the rows #4485's residual
 table predicted: `built-ins/Date/{is-a-constructor, name, length, S15.9.4_A1,
