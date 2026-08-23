@@ -818,13 +818,36 @@ their fix on a module shape they did not write (`deferTopLevelInit: true`,
   default and basic: which FILE. Rung 3, per-test `↓` paths, verbose only:
   which TESTS. Nothing existing needs re-plumbing; climb to verbose for rung 3
   alone.
-- **Rung 2 lists only files skipped in their ENTIRETY** — measured here and not
-  previously stated by anyone: `vitest run <pin> <equivalence> -t "labelled
-  block" --reporter=basic` printed `Tests 1 passed | 30 skipped (31)` plus
-  `↓ tests/equivalence/in-operator-edge-cases.test.ts (9 tests | 9 skipped)`,
-  naming the wholly-dead file — while the pin file, with 21 of its 22 tests
-  skipped, got **no `↓` line at all**. So rung 2 is blind to partial loss inside
-  a file, which is precisely the partial-`skipIf` case rung 3 exists for.
+- **CORRECTION — this lane's "rung 2 is blind to partial loss" was WRONG, and
+  wrong in the artifact documenting the hazard.** dev-4491 measured it and the
+  lead has already fixed the brief. The claim came from grepping for the `↓`
+  MARKER: a partially-skipped file is still reported, it just lands on a
+  different marker because it has a passing test. The line was in this lane's
+  OWN run all along —
+  `✓ tests/issue-4515-wave5.test.ts (22 tests | 21 skipped)` — and a search for
+  `↓` did not find it. Re-run and confirmed here.
+
+  **So the rung-2 rule is: match `skipped` on the FILE line, never the marker.**
+  Three markers now measured, all carrying the count:
+  ```
+  ↓ tests/…in-operator-edge-cases.test.ts (9 tests | 9 skipped)          wholly skipped
+  ✓ tests/issue-4515-wave5.test.ts        (22 tests | 21 skipped)        partial, pass+skip
+  ❯ tests/probe-…-failskip.test.ts        (3 tests | 1 failed | 2 skipped)  partial, fail+skip
+  ```
+  The third shape was untested by anyone and is measured here (throwaway
+  gitignored probe, no compiler, 34 ms), closing dev-4491's stated limit. It
+  also refines their rule: **the suffix has a VARIABLE number of segments** — a
+  failing file inserts `| N failed` — so a grep for the two-segment form
+  `(N tests | M skipped)` misses exactly the shape you most want to catch.
+
+  Rung 2 therefore localizes partial loss on `basic` after all; rung 3 is needed
+  only for WHICH tests, not whether.
+
+  This is the third time in one session a filter hid the evidence of its own
+  unreliability — dev-4491's `grep -E "Tests |✓|×"` dropping `Errors`, this
+  lane's `--reporter=basic` habit, and now this lane's `grep ↓`. The first two
+  were caught by peers; the third was too. Worth stating plainly: the pattern
+  survived being written down by the people writing it down.
 - **Exit status is uncorrelated with the outcome — both directions on ONE
   suite** (dev-4653, `tests/issue-4653.test.ts`): `23 skipped (23)` exits **0**
   with nothing executed, `23 passed (23)` exits **1** with everything passing.
@@ -859,12 +882,18 @@ their fix on a module shape they did not write (`deferTopLevelInit: true`,
   have, not the narrower one you happened to set up.** Four rounds of
   re-verifying one file while the real question — do these two branches merge —
   sat unasked.
-- **Both lanes' brief amendments are UNREVIEWED, and neither is adding more
-  pending a ruling** (dev-4653's call, adopted here). Stacking a synthesis on an
-  unratified amendment makes the lead review a stack rather than a change, and
-  orphans the second if the first is dropped. The synthesis lives in the two
-  issue files until the first amendment lands. Escalated to the lead as one
-  accept-or-drop decision covering both lanes rather than two separate ones.
+- **Both lanes' brief amendments: ACCEPTED, merged, and in PR #4814** (lead
+  ruling). Nothing trimmed — the offer to compress the worked examples was
+  declined on the grounds that the examples are what make the rules act on a
+  reader. The `f + 1` pin was flipped `it.fails` → `it` at merge, as this lane
+  and dev-4491 specified. The lead also corrected this lane's rung-2 error in
+  the PR directly (see the correction above).
+  **The brief is now CLOSED to further amendment for this session** — eleven
+  edits in one day to a document every lane must read before its first edit; the
+  budget is not insight per page. The remaining synthesis (*the check you didn't
+  run / the axis you didn't vary / the line you didn't print*) stays in this file
+  and dev-4653's, which is where a lane doing that work lands. A fourth wave
+  hitting the same shape is the promotion trigger.
 - **A survey run entirely at module top level is blind to any defect gated on
   "inside an enclosing function"** — and worse, it mis-attributes the one case
   that does surface, because that case looks like the odd one out. See the
