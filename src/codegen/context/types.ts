@@ -3299,6 +3299,14 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
      * the trampoline's null-`this` arm throws a catchable TypeError.
      */
     methodUsesThis?: boolean;
+    /**
+     * (#4630) The wrapper's declared result was PROMOTED to `externref` for a
+     * parked async function DECLARATION whose own wasm result is void — see
+     * `parkedAsyncDeclarationWrapsPromise`. The finalize rebuild must settle the
+     * completion value through `Promise.resolve` instead of falling through with
+     * an empty stack (which would not validate against the promoted result).
+     */
+    eagerAsyncPromiseWrap?: boolean;
   }[];
   /** True if Math.clz32 or Math.imul is used — requires ToUint32 Wasm helper */
   needsToUint32: boolean;
