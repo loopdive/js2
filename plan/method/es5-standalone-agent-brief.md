@@ -51,6 +51,26 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
    `node scripts/build-runtime-eval-provider.mjs --refusal-only` and run the
    pin under `JS2WASM_EVAL_ENGINE=interpreter` before calling it done.
 
+7. **Cross-lane claims need a third arm (2026-08-23, #4637/#4639).** With
+   sibling lanes branching from one tip, your two-arm A/B (tip vs your
+   branch) answers "did I change this" and is STRUCTURALLY SILENT on "did
+   the other lane fix or break it". One measured case: a defect was
+   pre-existing on the tip AND fixed by the sibling's change — one lane's
+   tip-vs-own A/B read "unaffected", the other's branch-only read
+   "introduced by them"; both were measured correctly and both concluded
+   wrongly. Rules that fall out:
+   - A claim about ANOTHER lane's effect requires an arm containing their
+     change — measured by whoever owns it and cited as theirs, or measured
+     by the lead on the combined tree. Never infer it from your own pair.
+   - **Verify every pin fails on the arm it claims to test** (revert for
+     your own change; DELETE the named interaction for a cross-lane pin —
+     a revert proves sensitivity to *your* change only). A canary nobody
+     has seen fail is an assertion about the code, not a test of it.
+   - Write pins UNFOLDABLE where a compile-time fold could bypass the
+     path under test (loop-carried index beats a syntactic literal).
+   - The merge check confirms the run says **N passed** — never that it
+     exited 0 (`describe.skipIf` gates can skip an entire suite green).
+
 ## Environment trap: fresh worktrees have NO .test262-cache (#4484 finding)
 
 A fresh agent worktree lacks `.test262-cache/`, so eval-dependent rows fail
