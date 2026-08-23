@@ -29,7 +29,7 @@ import { collectOwnerBindingsWrittenAfterDeclaration } from "../closures/declara
 import { popBody, pushBody } from "../context/bodies.js";
 import { recordNestedFunctionBody } from "../context/body-route-audit.js";
 import { reportError } from "../context/errors.js";
-import { allocLocal } from "../context/locals.js";
+import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "../context/types.js";
 import { installFrameTrap } from "../frame-trap.js";
 import {
@@ -52,7 +52,7 @@ import {
   resolveWasmType,
 } from "../index.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "../async-frame.js"; // (#2865) nested async-gen producer
-import { ensureExnTag, nextModuleGlobalIdx } from "../registry/imports.js";
+import { ensureExnTag, localGlobalIdx, nextModuleGlobalIdx } from "../registry/imports.js";
 import { buildTargetTaggedTry } from "../../ir/try-table.js";
 import {
   addFuncType,
@@ -68,6 +68,7 @@ import {
   flushLateImportShifts,
   registerEmitArgumentsObject,
   registerHoistFunctionDeclarations,
+  valTypesMatch,
   VOID_RESULT,
 } from "../shared.js";
 import { definedFuncAt, mintDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
@@ -224,7 +225,16 @@ export function compileNestedClassDeclaration(
     // react's `componentDidMount(){ test = this }` stayed null). Re-bind the
     // recorded pass-1 globals instead, sync each from this frame's fresh
     // local, and route the frame through them.
-    const recorded = ctx.classMemberCaptureGlobals?.get(className);
+    // Keyed by the class DECLARATION NODE, not className: `structMap` is
+    // name-keyed, so a SECOND same-named class in a different function (the
+    // test262 TemporalHelpers `class MySubclass extends construct` in a dozen
+    // helper methods) also lands on this early return — and a name-keyed
+    // record then re-bound ANOTHER frame's globals and synced this frame's
+    // local into them, mismatching types (`global.set expected f64` wasm
+    // validation failures across 216 Temporal files, PR #4728 merge_group).
+    // The node key makes the rebind fire only for the true pass-2 re-compile
+    // of the SAME declaration.
+    const recorded = ctx.classMemberCaptureGlobals?.get(decl);
     if (recorded !== undefined) {
       for (const [name, entry] of recorded) {
         ctx.capturedGlobals.set(name, entry.globalIdx);
@@ -233,10 +243,18 @@ export function compileNestedClassDeclaration(
         (ctx.capturedGlobalsOwner ??= new Map()).set(name, fctx);
         const localIdx = fctx.localMap.get(name);
         if (localIdx !== undefined) {
-          fctx.body.push({ op: "local.get", index: localIdx });
-          fctx.body.push({ op: "global.set", index: entry.globalIdx });
-          fctx.localMap.delete(name);
-          (fctx.promotedCaptureNames ??= new Set()).add(name);
+          // Sync only when the fresh local's type matches the recorded
+          // global's — a mismatch means this frame's binding is not the one
+          // the record promoted, and an unchecked global.set fails wasm
+          // validation for the WHOLE module.
+          const globalDef = ctx.mod.globals[localGlobalIdx(ctx, entry.globalIdx)];
+          const localType = getLocalType(fctx, localIdx);
+          if (globalDef !== undefined && localType !== undefined && valTypesMatch(globalDef.type, localType)) {
+            fctx.body.push({ op: "local.get", index: localIdx });
+            fctx.body.push({ op: "global.set", index: entry.globalIdx });
+            fctx.localMap.delete(name);
+            (fctx.promotedCaptureNames ??= new Set()).add(name);
+          }
         }
       }
     }
@@ -283,7 +301,7 @@ export function compileNestedClassDeclaration(
     // record them so a later re-compile pass (module-init pass 2 clears
     // capturedGlobals) re-binds the SAME globals the compiled methods use.
     if (promotedRecord.size > 0) {
-      (ctx.classMemberCaptureGlobals ??= new Map()).set(className, promotedRecord);
+      (ctx.classMemberCaptureGlobals ??= new Map()).set(decl, promotedRecord);
     }
 
     // Build funcByName map for compileClassBodies

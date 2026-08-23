@@ -2739,7 +2739,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * share one store. Keyed by resolved class name → captured name →
    * the pass-1 global index (+ widened flag).
    */
-  classMemberCaptureGlobals?: Map<string, Map<string, { globalIdx: number; widened: boolean }>>;
+  classMemberCaptureGlobals?: Map<ts.Node, Map<string, { globalIdx: number; widened: boolean }>>;
   /**
    * (#4618) Which FunctionContext value-promoted each `capturedGlobals` name.
    * `capturedGlobals` is name-keyed and not cleared between sibling callback

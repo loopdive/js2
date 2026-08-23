@@ -859,3 +859,21 @@ react holds 109 (incl. the cross-kind grab test), acorn 3518/3518, jest
 `tests/issue-4618-var-bound-class-expression-identity.test.ts` (both
 directions: var-bound class expression stays a class; function-valued const
 still opts out).
+
+## 2026-08-23 merge_group regression triage (post-#4728 merge) — capture-record keying
+
+PR #4728's merge_group run 32618016516 failed (net −168; 216 wasm_compile) but
+the queue landed the chain anyway; main carried the regression. Bisected with
+the single-file src-checkout script to **9565dea9** (fixes 51–52):
+`ctx.classMemberCaptureGlobals` was keyed by CLASS NAME, and `structMap` is
+name-keyed too — so test262 TemporalHelpers' dozen `class MySubclass extends
+construct` helper methods sent the SECOND same-named class into the
+early-return rebind arm with the FIRST one's record. The sync then emitted
+`global.set <other frame's global>` from a differently-typed local —
+`global.set expected f64` module-wide wasm validation failure across ~216
+Temporal files. Fixed on the follow-up branch: the record map is keyed by the
+class DECLARATION NODE (stable across module-init's two passes, distinct for
+same-named siblings), and the sync only fires when the fresh local's ValType
+matches the recorded global's. Regression test:
+`tests/issue-4787-temporal-merge-group-regressions.test.ts` (same-named
+sibling classes case, fails on the merged base).

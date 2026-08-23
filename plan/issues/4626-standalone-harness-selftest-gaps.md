@@ -91,20 +91,19 @@ untouched (its own 17 failures unchanged, none new).
   callee routes through `emitTaDynCtorConstructFromLocals`; every other value
   keeps the ordinary-construct driver byte-for-byte.
 
-Residual found while reducing (NOT one of the 16, deferred): the DECLARED
-alias form `var TA = Int8Array; new TA([5])` misreads the array argument as a
-length (`.length` 5) — a different (builtin-alias) arm; the harness shape is
-the param form, which is fixed.
+Residual found while reducing (NOT one of the 16): the DECLARED alias form
+`var TA = Int8Array; new TA([5])` misreads the array argument as a length
+(`.length` 5) — filed as **#4635**.
 
-## Remaining standalone failures (11) — root causes surveyed
+## Remaining standalone failures (10) — root causes surveyed
 
 | Test(s) | Gap |
 | --- | --- |
-| asyncHelpers-* (5) | asyncTest/thenable semantics through harness closures (one null-deref trap in an async resume) |
-| deepEqual-mapset | Set/Map member dispatch through `any` (`.size`, `Symbol.iterator`, `.next()` all missing → trap/false) |
-| compare-array-symbol | symbol[] elements are raw i32 ids in `$__arr_i32`; `map.call(arr, String)` renders the id number |
-| deepEqual-primitives-bigint | BigInt standalone (`env::__new_BigInt` host-import refusal) |
-| assert-throws-same-realm, (throwsAsync-same-realm) | needs a realm shim with distinct error-ctor identities (see revert note above — must not shadow builtin names) plus `.constructor` identity |
-| wellKnownIntrinsicObjects | `%Array%` intrinsic identity (`Object.is(Array, intrinsic)`) |
-| detachArrayBuffer-host | `err.constructor` on a Test262Error thrown by a BARE `throw new Test262Error(...)` inside an object-literal method loses fnctor identity (resolves to a generic closure; `throw (new …)` and `throw <var>` both work — the escape-gate/lowering divergence is syntactic) |
+| asyncHelpers-* (5) | → **#4630** (asyncTest/thenable semantics; one null-deref trap) |
+| deepEqual-mapset | → **#4629** (Set/Map member dispatch through `any`: `.size`, `Symbol.iterator`, `.next()` all missing) |
+| compare-array-symbol | → **#4632** (symbol[] elements are raw i32 ids; `String` renders the id number) |
+| deepEqual-primitives-bigint | → **#4631** (standalone BigInt carrier) |
+| assert-throws-same-realm, (throwsAsync-same-realm) | → **#4634** (non-shadowing realm-shim error ctors) + #4630 for the async trap |
+| wellKnownIntrinsicObjects | → **#4633** (intrinsic identity across the runtime-eval boundary) |
+| detachArrayBuffer-host | FIXED (third slice): the runtime shim's `var $262` collided with the test's own `var $262` override (no last-assignment-wins for duplicate top-level vars); `assembleVariant` now renames the shim part's `$262` occurrences when the body declares one. Fixes BOTH lanes. |
 | testTypedArray-conversions | FIXED (second slice, above) |
