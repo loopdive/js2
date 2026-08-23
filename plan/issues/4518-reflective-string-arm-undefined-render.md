@@ -1,7 +1,8 @@
 ---
 id: 4518
 title: "standalone: reflective String-method arm renders the undefined singleton as '[object Object]' — blocks 3 of #4489's R1 rows"
-status: in-progress
+status: done
+completed: 2026-08-23
 sprint: current
 created: 2026-08-16
 updated: 2026-08-23
@@ -161,7 +162,92 @@ coordination note rather than chasing it.
 
 ## Test Results
 
-_(filled in below once the scoped sweep completes — every figure is a run I executed.)_
+Every figure is a run I executed on this box, on branch `issue-4518`
+(parent `04c0d5d42`). The A/B instrument throughout is the base-copy pattern:
+`git show HEAD:src/codegen/string-proto-tostring.ts > .tmp/base-…`, captured at
+the first edit, so each "before" is a run rather than an inherited number.
+
+### Scoped standalone sweep — `built-ins/String/prototype`, 1073 files
+
+Full directory, both sides, `lstat`-based walk (the self-referential
+`test262/test/test` symlink is skipped rather than followed):
+
+| transition | rows |
+| --- | --- |
+| pass → pass | 919 |
+| fail → fail | 136 |
+| compile_error → compile_error | 18 |
+| **any flip** | **0** |
+
+Rows floored 1073/1073 on both sides, no timeouts, no `THREW`.
+
+**Zero regressions — and zero fixes. State that plainly rather than dressing
+it up:** this change flips no test262 row in the directory it targets. The
+reason is visible in the corpus and was predicted before the sweep ran: all 15
+`String.prototype.<m>.call(…null…)` occurrences under `built-ins/String/prototype`
+pass `null` as the **receiver**, where `RequireObjectCoercible` throws before
+ToString runs. No row passes an explicit `null` ARGUMENT through a reflective
+shape. What the change buys is the removal of a measured §7.1.17 violation on
+which the reflective and direct lowerings disagreed, at zero corpus cost, now
+pinned — not a pass-rate movement.
+
+It also means the sweep did **not** discriminate between the `"null"` and
+`"undefined"` readings of the forced choice above; the §7.1.17 argument is
+carrying that decision on its own.
+
+### Environment note (this cost real time — worth recording)
+
+The fresh worktree's `test262/` was the documented symlink-farm trap: a
+directory of symlinks pointing into `agent-a7e3cb3fae8a40155`'s worktree, whose
+own `test262/` is EMPTY. It resolves and lists, so it fails silently — relinked
+to `/home/user/js2wasm/test262` (1073 files) before any sweep. `.test262-cache`
+was absent and was linked to the main checkout's.
+
+### Behavioural A/B (standalone, opaque dispatch)
+
+Method passed through a function parameter so nothing resolves statically to
+the direct path:
+
+| shape | base | after | spec |
+| --- | --- | --- | --- |
+| `replace.call("axb","x",null)` | `"a[object Object]b"` | `"anullb"` | `"anullb"` |
+| `replace.call("anullb",null,"Z")` | `"anullb"` | `"aZb"` | `"aZb"` |
+| `indexOf.call("anullb",null)` | `-1` | `1` | `1` |
+| `lastIndexOf.call("anullnullb",null)` | `-1` | `5` | `5` |
+| `replace.call("axb","x",undefined)` | `"aundefinedb"` | `"aundefinedb"` | `"aundefinedb"` |
+| `anchor.call("R", 42/true/{toString}/[]/regexp/error)` | unchanged | unchanged | — |
+| `slice.call(new String/Number/Boolean/…, 0)` | unchanged | unchanged | — |
+
+### Lane byte-identity — verified, not asserted
+
+sha256 of the emitted binary for four reflective-String modules
+(`replace`, `indexOf`, borrowed `toUpperCase`, `anchor`), base copy vs fix:
+
+| lane | result |
+| --- | --- |
+| host/gc (default) | **identical, all four** |
+| `nativeStrings` | **identical, all four** |
+| `standalone` | all four differ (the intended change) |
+
+### Pin suites
+
+| suite | result |
+| --- | --- |
+| `tests/issue-4518.test.ts` (new) | **21/21** — 5 null-arm, 4 undefined-regression, 8 unmoved-carrier, 4 `it.fails` residuals |
+| `tests/issue-4465.test.ts` + `tests/issue-4489.test.ts` | **35/35** |
+| `es5-standalone-replace-fn` + `-wrapper-exotics-replace` + `-callable-tostring` | **34/34** |
+| `es5-standalone-with` + `-with-carrier` + `-this-and-construct` + `-wrapper-prototype` | 59 pass, **1 pre-existing fail** |
+| `issue-2742` + `issue-2875` + `issue-4439` + `issue-1470` + `es5-standalone-split` | 56 pass, **3 pre-existing fails** |
+
+The four failures are NOT regressions — each was re-run with the base copy in
+place and fails identically there: `#2742` group (c) and (d), `#2875` slice 1
+`at.call('abc', 9)`, and `#4248` wrapper-prototype `[[PrimitiveValue]]`.
+
+### Gates
+
+`npm run typecheck`, `biome lint`, `prettier --check`, `check:loc-budget`,
+`check:func-budget`, `check:stack-balance` — all clean. **No budget grant
+needed**: +66 LOC in one file, under the gate, and no fixup-bucket increases.
 
 ## Residuals
 
