@@ -52,7 +52,6 @@
  * however the name resolved there.
  */
 import { ts } from "../../ts-api.js";
-import { noJsHost } from "../expressions/helpers.js";
 import type { CodegenContext } from "../context/types.js";
 
 /**
@@ -76,7 +75,9 @@ export function normalizeOrdinaryFunctionConstructibility(
   constructible: boolean,
 ): boolean {
   if (constructible) return true;
-  if (!noJsHost(ctx) && ctx.targetProfile.semanticProviders !== "native-first") return false;
+  // (#4661) Lane-INDEPENDENT (was gated to `noJsHost || native-first`). The
+  // js-host lane needs the same nominal constructible subtype so
+  // `__is_ctor_closure` can answer §26.1.2's IsConstructor(newTarget).
   const owner = compiledFunctionOwnerDeclaration(ctx, funcName);
   return (
     owner !== undefined &&
