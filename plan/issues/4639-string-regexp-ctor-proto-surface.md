@@ -347,3 +347,71 @@ eval-dependent corpus sweep, which is the runtime-eval owner's lane and
 budget, not a String/RegExp or a proto-representation lane's. Landing an
 unmeasured value-model change underneath a verified result is the trade the
 campaign brief forbids.
+
+## Cross-lane contact points (#4637, dev-4637's `issue-4637`)
+
+Mirror of the section in
+`plan/issues/4637-fnctor-prototype-edge-function-surface.md`. Written after
+dev-4637 corrected a FALSE PREMISE in my first collision note; the
+conclusion survived, the reason did not.
+
+**What I got wrong.** I claimed C2 cannot intersect #4637 "because it calls
+`__object_hasOwn`/`__extern_get`, not the four proto-position natives".
+dev-4637 **does** splice a prologue into `__object_hasOwn` (and
+`__hasOwnProperty`) — `spliceClosurePrototypeEdgeHasOwn`,
+`src/codegen/closure-prototype-edge.ts`. That is the helper C2 calls. I
+asserted a negative about another lane's diff without reading it.
+
+**Why the conclusion still holds, structurally rather than by measurement.**
+Read on this branch: the ONLY receiver C2 ever passes to `__object_hasOwn`
+is `carrierLocal`, set from `emitBuiltinProtoConstructorValue` — i.e. either
+`emitBuiltinConstructorIdentity` (`__builtin_ctor_<Name>`) or
+`emitBuiltinNamespaceObject` (`__builtin_<Name>`), both `__new_plain_object`
+`$Object` singletons. The `$NativeProto` from
+`pushBuiltinIntrinsicPrototype` reaches `__extern_get` ONLY, never
+`__object_hasOwn`. dev-4637's prologue fires only when
+`__closure_proto_of(recv)` is non-null — a `ref.eq` identity match against
+`__fn_closure_<name>` / `__class_<Name>` singletons. A `__new_plain_object`
+carrier is neither, and cannot become one, so the precondition is
+unreachable by construction. That is stronger than their (correct) measured
+negative control on builtin ctor carriers, because it cannot drift with a
+later change to which carriers exist.
+
+**The tighter statement neither of us had — the two arms DO meet on the
+key.** I measured that `propName === "prototype"` reaches the C2 arm: the
+`prototype` fast path above it (`emitLazyNativeProtoGet`) falls through for
+any builtin with no registerable proto brand, so C2 emits
+`__object_hasOwn(carrier, "prototype")` — the exact interned literal
+dev-4637's arm keys on. The two arms are therefore separated by the RECEIVER
+test alone, not by the key. **That is the thing to watch**, and it is the
+same condition dev-4637 named from their side: if a C2-shaped read ever asks
+`__object_hasOwn(recv, "prototype")` where `recv` IS an edge-bearing closure
+or class-object singleton, their arm answers `1` first — the §20.2.4.2
+answer, but theirs, not this lane's.
+
+**Two flips this check turned up, measured both arms just now** (base
+`81445abf7` via `git checkout <base> -- src/codegen/property-access-dispatch.ts`
+plus removing `builtin-static-expando.ts`; restored after):
+
+| expression | base | after | spec |
+| ---------- | ---- | ----- | ---- |
+| `Math.prototype` | `compile_error` (#1907 builtin static value read) | `undefined` | `undefined` — `Math` is not a constructor |
+| `Proxy.prototype` | `compile_error` (same) | `undefined` | `undefined` |
+
+Both are OUTSIDE the issue's 37-row list, so the `0/37 → 5/37` headline is
+unchanged; they widen the C2 win rather than the row count. The mechanism is
+the one described above: no proto brand ⇒ fall through ⇒ ordinary [[Get]] ⇒
+carrier has no own `prototype` (`pushBuiltinCtorOwnPropSeed` returns early
+for a namespace, which has no arity) ⇒ `%Object.prototype%` ⇒ `undefined`.
+
+**C1 × #4637 A1 — a PREDICTION, not a measurement.** My C1 widening makes
+MORE `new F(inst)` sites reconstruct the argument as an open `$Object`;
+dev-4637's A1 arm fires at `__object_create`, i.e. only at sites that
+already reconstruct. Expected direction is therefore additive (more
+reconstructing sites ⇒ more instances whose function-valued prototype
+links). **Neither lane has compiled the combined tree.** Do NOT carry either
+lane's before/after numbers across the merge. Whoever merges second should
+re-run, at minimum, `tests/issue-4639.test.ts` (12 pins, ~95 s) — its C2
+group (`String.indicator`, `RegExp.indicator`, `Math.NaN`) is the direct
+canary for the spliced `__object_hasOwn`, and its C1 pin
+(`built-ins/String/S15.5.2.1_A1_T10`) for the escape-gate interaction.
