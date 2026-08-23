@@ -15,6 +15,25 @@ lane: B
 files:
   - scripts/test262-fyi-runtime.js
   - tests/test262-runner.ts
+# (#4650) Gate allowances. The implementation bodies were extracted into three
+# NEW modules (undeclared-callee.ts, dynamic-function-ctor-value.ts,
+# runtime/dynamic-function-import.ts), so call-identifier.ts and runtime.ts
+# SHRANK. What remains is irreducible:
+#  - calls.ts / compileCallExpression: a new arm in an ordered dispatch chain,
+#    where the arm's POSITION is the semantics (after the constant
+#    compile-away, before the generic any-callee dispatch). +9 LOC, all of it
+#    the guarded delegation + its ordering note.
+#  - src/runtime.ts::<anonymous>#89: a pure RENUMBERING artifact, not growth.
+#    Extracting the __extern_new_function arm removed three block-bodied arrows
+#    ahead of it, so a pre-existing 390-line anonymous function moved from
+#    ordinal #92 to #89. Verified by A/B: `collectFunctionSizes` reports exactly
+#    one >300-LOC anonymous unit in runtime.ts on both the base and the branch,
+#    both 390 lines.
+loc-budget-allow:
+  - src/codegen/expressions/calls.ts
+func-budget-allow:
+  - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/runtime.ts::<anonymous>#89
 ---
 
 # js-host: host-plumbing harness self-tests — 3 failures
