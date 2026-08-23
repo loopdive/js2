@@ -49,6 +49,7 @@ import {
   functionBodyReferencesThis,
 } from "./closures.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
+import { widenMixedUndefinedReturn } from "./mixed-return-widening.js"; // (#4641) `T | undefined` return slots
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
@@ -1846,7 +1847,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
                 nativeTypeFromTypeNode(ctx.checker, stmt.type) ??
                   (functionReturnsDynamicObjectCarrier(stmt)
                     ? { kind: "externref" }
-                    : resolveWasmType(ctx, rUnwrapped)),
+                    : // (#4641) `function f(c) { if (c) return; return 5; }` — a
+                      // MIXED-return declaration. `resolveWasmType`'s union arm
+                      // strips the `undefined` member, so the result is `f64` and
+                      // both "no value" emit sites push that type's ZERO — a legal
+                      // JS value, indistinguishable from a returned `0`. Widen the
+                      // RESULT so `emitUndefined` can carry the absent value (the
+                      // externref arm of both sites already does). Deliberately NOT
+                      // the general union-collapse reversal — that is #3580 S3.
+                      widenMixedUndefinedReturn(rUnwrapped, resolveWasmType(ctx, rUnwrapped))),
               ];
         }
       }
