@@ -53,7 +53,7 @@ import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
-import { _hasRuntimeComputedKey } from "./literals.js"; // (#3024) module-global externref routing for runtime-computed-key literals
+import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import {
   addArrayIteratorImports,
@@ -130,6 +130,7 @@ import { emitModuleVarUndefinedSeeds } from "./declarations/module-var-undefined
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { prepareModuleTdzGlobals, registerModuleGlobal } from "./module-global-registration.js";
 import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
+import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-object-slot.js";
 import { emitRuntimeEvalAotCallableAdapter } from "./runtime-eval-callable.js";
 import { numericReturnsFlagEnabled } from "../derivation-flags.js";
 
@@ -2256,6 +2257,18 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // (statements/variables.ts `resolveSpillLocalValType`), keeping the module
     // global in lockstep with the same routing predicate.
     if (_hasRuntimeComputedKey(ctx, decl.initializer)) return true;
+    // (#4638) A data-only literal holding the realm GLOBAL OBJECT takes the same
+    // host `$Object` route (`objectLiteralForcesHostPath`); the module global
+    // must match. Nested twin of the #3365 `var t = this` rule just above.
+    if (objectLiteralForcesHostPath(ctx, decl.initializer)) return true;
+    // The consult above ALSO covers #4616's EMPTY-STRING-key arm (`var obj = {
+    // "": 1 }`) — "" cannot be a struct field name, so the value is built as an
+    // `$Object`. #4616 added the value routing and the `let`/`const` local twin
+    // but not this module-global twin, so a top-level `var` kept the struct type
+    // the checker infers: the guarded store missed, wrote `ref.null`, and the
+    // first read (`obj[""]`) did `struct.get` on null — an UNCATCHABLE trap, not
+    // a wrong answer. Sloppy test262 scripts declare with `var`, which is why
+    // `15.2.3.3-2-32` crashed the module.
     for (const p of decl.initializer.properties) {
       if (ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) return true;
       if (ts.isMethodDeclaration(p) && ts.isComputedPropertyName(p.name)) {
@@ -2310,6 +2323,20 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // erased `$__vec_externref` supertype and loses the HasProperty route.
     if (ctx.holeyArrayDeclarations.has(decl)) {
       return { kind: "ref_null", typeIdx: getOrRegisterHoleyArrayType(ctx) };
+    }
+    // (#4506 S1) `var x = new F()` at module scope, where the #2660 escape gate
+    // approved the site and the S3a lowering will emit a native `$Object`. The
+    // lowering refuses to return externref into a non-externref slot (its
+    // load-bearing safety check), so a slot derived from the checker's nominal
+    // `(ref null $__fnctor_F)` instance type is what made the reconstruction
+    // decline on 91 of 178 approved sites in the measured ES≤5 corpus — the
+    // single largest blocker, and the dominant test262 shape (a top-level
+    // `var child = new F()` in a script). Both this typer and the lowering ask
+    // ONE site-level predicate so they cannot disagree; see
+    // fnctor-instance-object-slot.ts for why agreement is a correctness
+    // requirement rather than an optimization.
+    if (variableSlotHoldsReconstructedFnctorInstance(ctx, decl)) {
+      return { kind: "externref" };
     }
     if (moduleInitForcesExternref(decl) && ts.isIdentifier(decl.name)) {
       ctx.externrefAccessorVars.add(decl.name.text);

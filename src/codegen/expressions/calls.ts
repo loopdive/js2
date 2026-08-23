@@ -199,6 +199,7 @@ import {
   ensureStandaloneNativeMethodClosure,
   getNativeProtoBuiltinGlue,
 } from "../native-proto.js";
+import { wrapperProtoSyntacticMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
 import { BUILTIN_STATIC_METHOD_ARITY } from "../builtin-fn-meta.js";
 import { pushReflectiveCallReceiver } from "../reflective-call-receiver.js"; // (#3638)
 import {
@@ -332,13 +333,14 @@ import {
 import { ensureAnyHelpers, undefinedExternInstrs } from "../any-helpers.js";
 import { emitSymbolToString, ensureSymbolRegistry } from "../symbol-native.js";
 import { resolveStructName } from "./misc.js";
-import { tryCompileErrorCtorCallWithoutNew } from "./new-builtin-globals.js";
+import { tryCompileDateCallWithoutNew, tryCompileErrorCtorCallWithoutNew } from "./new-builtin-globals.js";
 import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-super.js";
 import { compileIdentifierCall } from "./call-identifier.js";
 import { compileBuiltinStaticCall, tryCompileFromCharCodeFamilyReflective } from "./call-builtin-static.js";
 import { compileNamespaceStaticCall } from "./call-namespace-static.js";
 import { compileReceiverMethodCall } from "./call-receiver-method.js";
 import { compileTailDispatch } from "./call-tail-dispatch.js";
+import { tryEmitIsPrototypeOfCallArm } from "./is-prototype-of-call-arm.js";
 import { tryEmitRealmGlobalMemberCall } from "./realm-global-member-call.js"; // (#4491)
 import {
   emitNativeGeneratorToVec,
@@ -1071,6 +1073,14 @@ function tryEmitNativeProtoReflectiveCall(
   }
   if (!member || !ifaceName) return undefined;
 
+  // (#4619 family D) For the two wrapper members the brand genuinely owns, the
+  // SYNTACTIC spelling beats the symbol — `lib.es5.d.ts` declares no `toString`
+  // on `interface Boolean`, so the symbol says Object. See the module.
+  {
+    const syntactic = wrapperProtoSyntacticMember(ctx, unwrapTransparent(receiver), member);
+    if (syntactic !== undefined) ({ member, ifaceName } = syntactic);
+  }
+
   // (#4119) `Object.prototype.toString.call(v)` written in its DIRECT syntactic
   // form stays owned by the #2501 compile-time fold further down, NOT by the
   // reflective closure. The fold keys on the receiver ARGUMENT's static type, so
@@ -1100,8 +1110,16 @@ function tryEmitNativeProtoReflectiveCall(
   // arm both fell to the legacy `.call` tail that drops `thisArg` and returns 0:
   // `Boolean.prototype.valueOf.call(Object(true))` answered `false`, the Number
   // twin `undefined` — silent wrong values, measured on base.
-  if (brand === undefined && member === "valueOf" && ifaceName === "Number") brand = ensureNumberNativeProtoGlue(ctx);
-  else if (brand === undefined && member === "valueOf" && ifaceName === "Boolean")
+  // (#4619 family D) …and `toString`, now that it has a native body too
+  // (wrapper-proto-to-string.ts). Same measured symptom as #4582's `valueOf`:
+  // `Boolean.prototype.toString.call(true)` and the Number twin both answered
+  // `undefined` on base, because the legacy `.call` tail drops `thisArg`. Both
+  // members are still enumerated one by one rather than opening the whole
+  // family — a member whose body still refuses would turn today's (wrong but
+  // non-throwing) answer into a TypeError.
+  const wrapperWiredMember = member === "valueOf" || member === "toString";
+  if (brand === undefined && wrapperWiredMember && ifaceName === "Number") brand = ensureNumberNativeProtoGlue(ctx);
+  else if (brand === undefined && wrapperWiredMember && ifaceName === "Boolean")
     brand = ensureBooleanNativeProtoGlue(ctx);
   if (brand === undefined) return undefined;
 
@@ -6390,6 +6408,16 @@ function compileCallExpression(
     if (r !== undefined) return r;
   }
 
+  // (#4640 D7) `Date(...)` without `new` — §21.4.2.1 returns ToDateString(now),
+  // a String, ignoring every argument. Not spec-identical to the `new` form (so
+  // it cannot delegate like the Error arm above); without it the call produced a
+  // silent `ref.null.extern` under a checker type of `string`, and the next
+  // `Date.parse(...)` illegal-cast TRAPPED.
+  {
+    const r = tryCompileDateCallWithoutNew(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+
   // (#1540) JSX runtime call intercept — `_jsx` / `_jsxs` / `_jsxDEV`. Routed to
   // the matching `__jsx_runtime_*` host import. Extracted to calls-guards.ts (#742).
   {
@@ -8294,6 +8322,19 @@ function compileCallExpression(
   {
     const __idResult = compileIdentifierCall(ctx, fctx, expr, expectedType);
     if (__idResult !== undefined) return __idResult;
+  }
+
+  // (#4623) `<ordinary receiver>.isPrototypeOf(v)` — §20.1.3.4. Every arm above
+  // has declined, so what remains is the tail dispatch, whose two possible
+  // answers for this shape were both WRONG and lane-divergent: standalone took
+  // the ref.test-guarded generic closure dispatch on a member read that
+  // resolves to nothing (→ `false`), and the JS host took the graceful
+  // `ref.null.extern` fallback (→ `undefined`). Both lanes model the
+  // `[[Prototype]]` edge the predicate asks about, so route to the chain walk.
+  // See is-prototype-of-call-arm.ts for the measurements and the guards.
+  {
+    const __ipoResult = tryEmitIsPrototypeOfCallArm(ctx, fctx, expr);
+    if (__ipoResult !== undefined) return __ipoResult;
   }
 
   // (#742 slice 5) Tail dispatch — IIFE, super, element-access, call-of-call,

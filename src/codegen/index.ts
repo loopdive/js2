@@ -315,8 +315,10 @@ import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; 
 // import { unshiftNativeProtoDeleteArm } from "./native-proto-delete.js"; // (#2875 w4-F) — DISABLED, see call sites
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
+import { unshiftExternMethodCallProtoArm } from "./native-proto-method-call.js"; // (#4619) proto-receiver method CALL
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
-import { fillClosurePrototypeEdge } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge
+import { fillProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
+import { fillClosurePrototypeEdge, spliceClosurePrototypeEdgeHasOwn } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge; (#4637 A4) its own-property visibility twin
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
 import { fillFunctionInstanceProps } from "./function-instance-props.js"; // (#4436) user-closure `length` own property
 import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando bag substrate
@@ -5401,8 +5403,20 @@ export function generateModule(
     // (#2660 M3) FIRST — `fillClosurePropHelpers` reads the same edge table.
     fillClosurePrototypeEdge(ctx);
 
+    // (#4637 A4) …then publish the SAME edge on the own-property visibility
+    // surface, so `f.hasOwnProperty("prototype")` agrees with `f.prototype`.
+    // After the fill (it needs `__closure_proto_of`'s real body) and before the
+    // closed-struct prologue pass, which unshifts later and therefore keeps its
+    // existing precedence.
+    spliceClosurePrototypeEdgeHasOwn(ctx);
+
     // (#3468) Fill after all closure types and object-runtime deps are known.
     fillClosurePropHelpers(ctx);
+
+    // (#4637 A1) Fill the function-value proto-view helpers — needs the COMPLETE
+    // closure base-wrapper set (the callable gate) and `__closure_bag_ensure`,
+    // both settled by here. No-op when never reserved (gc/host).
+    fillProtoFunctionValue(ctx);
 
     // (#3537) Fill the array-expando side-table helpers (same deps: the
     // object-runtime funcIdxs are all in funcMap by finalize).
@@ -5525,6 +5539,9 @@ export function generateModule(
     // instance (or off the prototype through a binding) must yield the same
     // singleton the static `<Builtin>.prototype.<m>` read does.
     unshiftExternGetProtoMethodArm(ctx);
+    // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
+    // run after the read arm above. See native-proto-method-call.ts.
+    unshiftExternMethodCallProtoArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
 
     // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
@@ -8790,10 +8807,16 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#2660 M3) Same ordering as the single-source pipeline.
     fillClosurePrototypeEdge(ctx);
 
+    // (#4637 A4) Same ordering as the single-source pipeline.
+    spliceClosurePrototypeEdgeHasOwn(ctx);
+
     // (#3468) Multi-source compilation can reserve the closure own-property
     // side-table helpers too. Fill their placeholders only after every source
     // has registered its closure types, matching the single-source pipeline.
     fillClosurePropHelpers(ctx);
+
+    // (#4637 A1) Same for the function-value proto-view map.
+    fillProtoFunctionValue(ctx);
 
     // (#3537) Same for the array-expando side table.
     fillVecPropHelpers(ctx);
@@ -8875,6 +8898,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // instance (or off the prototype through a binding) must yield the same
     // singleton the static `<Builtin>.prototype.<m>` read does.
     unshiftExternGetProtoMethodArm(ctx);
+    // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
+    // run after the read arm above. See native-proto-method-call.ts.
+    unshiftExternMethodCallProtoArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
 
     // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
@@ -10968,6 +10994,26 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
             inner.expression.text === "Symbol" &&
             (inner.name.text === "dispose" || inner.name.text === "asyncDispose")
           ) {
+            initForcesExternref = true;
+            break;
+          }
+        }
+      }
+      // (#4638) A FUNCTION-SCOPED `var` whose literal has an EMPTY-STRING key
+      // (`var obj = { "": 1 }`) takes the host `$Object` route — #4616's arm of
+      // `objectLiteralForcesHostPath`, on the grounds that "" cannot be a struct
+      // field name. This inlined copy did not list that reason, so the slot kept
+      // the struct type TypeScript infers while the value was an `$Object`: the
+      // guarded store missed, wrote `ref.null`, and the first read did
+      // `struct.get` on null — an UNCATCHABLE trap, not a wrong answer. The
+      // `let`/`const` twin (statements/variables.ts) consults the predicate
+      // directly; this file cannot import literals.ts (index↔literals cycle,
+      // same reason as the spread arm below), so the arm is inlined. Keep in step.
+      if (!initForcesExternref) {
+        for (const p of decl.initializer.properties) {
+          if (!ts.isPropertyAssignment(p)) continue;
+          const n = p.name;
+          if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) && n.text === "") {
             initForcesExternref = true;
             break;
           }

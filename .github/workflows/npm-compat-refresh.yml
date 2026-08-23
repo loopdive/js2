@@ -122,16 +122,25 @@ jobs:
           # package finish (or report its own timeout) independently.
           - id: react-dom
             packages: react-dom
-          - id: jsdom
-            packages: jsdom
-          - id: redux
-            packages: redux
+          # lit is the OTHER long pole (~40 min — it runs lit's own upstream
+          # unit suite). Sharing a row with webpack/jest/stylelint/three made
+          # that row ~55 min, one flake away from gating the whole refresh;
+          # isolated, the ex-`tools` row drops to ~15 min and a lit timeout
+          # can't take the other measurements down with it (measured
+          # 2026-08-23, run 32618985600: lit 40m; webpack 2.3m, jest 3.4m,
+          # styled-components 0.9m, stylelint 4.9m, three 3.3m).
+          - id: lit
+            packages: lit
+          # redux (1.5m), jsdom (3.3m) and tailwindcss (2.4m) each idled a
+          # runner after ~3 minutes of work; one ~7-minute row covers all
+          # three. (Their earlier isolation was about not sharing a row with
+          # the 350-minute ReactDOM job, not about being alone forever.)
+          - id: small
+            packages: redux,jsdom,tailwindcss
           - id: libraries
             packages: hono,lodash,lodash-es,axios,uuid,moment
           - id: tools
-            packages: webpack,jest,styled-components,stylelint,three,lit
-          - id: tailwind
-            packages: tailwindcss
+            packages: webpack,jest,styled-components,stylelint,three
           - id: typescript
             packages: typescript
     runs-on: ubuntu-24.04
@@ -246,38 +255,12 @@ jobs:
       # Refuse to publish an empty or truncated artifact. A generator that exits
       # 0 having written nothing useful would otherwise blank the dashboard, and
       # the page has no other source of truth to fall back on.
+      # The check itself lives in scripts/check-npm-compat-artifact.mjs, NOT
+      # inline: an inline single-quoted `node -e` script is invisible to every
+      # lint/syntax gate, and one apostrophe in a JS comment truncated it and
+      # silently blocked ALL promotions for 6 hours on 2026-08-23 (#4604 S8).
       - name: Sanity-check the generated artifact
-        run: |
-          set -euo pipefail
-          node -e '
-            const fs = require("fs");
-            const path = "benchmarks/results/npm-compat.json";
-            const report = JSON.parse(fs.readFileSync(path, "utf8"));
-            const packages = report.packages ?? report;
-            if (!Array.isArray(packages) || packages.length < 20) {
-              throw new Error(`${path} has ${packages?.length ?? "no"} packages; refusing to publish`);
-            }
-            if (!packages.every((entry) => entry.name && entry.compile)) {
-              throw new Error(`${path} has entries missing name/compile; refusing to publish`);
-            }
-            const byName = new Map(packages.map(entry => [entry.name, entry]));
-            const suitePins = JSON.parse(fs.readFileSync("tests/dogfood/npm-compat-upstream-sources.json", "utf8"));
-            for (const pin of suitePins.filter(entry => entry.suiteScript)) {
-              const entry = byName.get(pin.name);
-              // A failed worker is carried forward from the last committed
-              // snapshot. Its old test numbers are useful context, but they
-              // must not block publication or masquerade as this run's data.
-              if (entry?.refresh?.status === "stale") continue;
-              const tests = entry?.tests;
-              if (!tests || typeof tests.passed !== "number" || typeof tests.total !== "number") {
-                throw new Error(`${pin.name} has ${pin.suiteScript} but its unit-test result is absent from ${path}`);
-              }
-              if (tests.status === "not-integrated") {
-                throw new Error(`${pin.name} still reports adapter pending despite ${pin.suiteScript}`);
-              }
-            }
-            console.log(`ok: ${packages.length} packages`);
-          '
+        run: node scripts/check-npm-compat-artifact.mjs
 
       # (2026-08-09, stakeholder) A DEFERRED run's measurement must never be
       # LOST. On 2026-08-09 two successful runs — including the one measuring

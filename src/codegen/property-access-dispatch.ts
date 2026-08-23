@@ -60,6 +60,8 @@ import {
   noJsHost,
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
+import { nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
+import { receiverIsUndefinedIdentifier } from "./nullish-receiver-coercible.js"; // (#4519) the one decline that guard needs
 import { popBody, pushBody } from "./context/bodies.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
@@ -189,6 +191,7 @@ import {
   emitStandaloneFunctionIntrinsicValue,
   tryEmitFunctionValueConstructorRead,
 } from "./function-intrinsic-carrier.js"; // (#4442) `<fn>.constructor`; (#4484) `<Builtin>.constructor`
+import { tryEmitBuiltinStaticExpandoRead } from "./builtin-static-expando.js"; // (#4639 C2) ordinary [[Get]] tail
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 
 /**
@@ -1834,6 +1837,17 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       if (propName === "constructor") {
         const fnIntrinsic = emitStandaloneFunctionIntrinsicValue(ctx, fctx);
         if (fnIntrinsic !== undefined) return fnIntrinsic;
+      }
+      // (#4639 C2) Everything the ladder above did not recognise is an ORDINARY
+      // [[Get]] — the builtin's carrier, then its [[Prototype]]
+      // (%Function.prototype% for a ctor, %Object.prototype% for a namespace).
+      // `Function.prototype.indicator = 1; String.indicator` is `1`, and
+      // `Math.NaN` is `undefined`; both were compile errors. Declines (keeping
+      // the refusal below) for a read that names a real builtin static METHOD —
+      // see builtin-static-expando.ts.
+      {
+        const expando = tryEmitBuiltinStaticExpandoRead(ctx, fctx, builtinName, propName);
+        if (expando !== undefined) return expando;
       }
       reportUnsupportedStandaloneBuiltinValueRead(ctx, builtinName, propName);
       fctx.body.push({ op: "ref.null.extern" });
@@ -3551,6 +3565,10 @@ function emitExternGetReceiverGuard(
       syntacticNonNull: isProvablyNonNull(expr.expression, ctx.checker),
     },
     () => typeErrorThrowInstrs(ctx, expr),
+    // (#4519) §7.3.2 rejects `undefined` as well as `null`, and under the #4489
+    // S1 regime `undefined` is a NON-null singleton. `objTmp` is an externref
+    // local (allocated by the caller), which is the shape this builder wants.
+    () => (receiverIsUndefinedIdentifier(expr.expression) ? undefined : nullishExternTestInstrs(ctx, objTmp)),
   );
 }
 

@@ -76,10 +76,25 @@
  * `Object.getOwnPropertyDescriptor(Function, "length")` — which already answers
  * correctly on base (`built-ins/Function/length/15.3.3.2-1.js` passes) — is
  * untouched either way.
+ *
+ * ## (#4624) The DESCRIPTOR surface, added after the fact
+ *
+ * The sentence above is true only of the **literal-receiver** fold
+ * (`builtin-static-gopd.ts`). Through a dynamic receiver — which is the ONLY
+ * kind `propertyHelper.js` has — `gOPD(Function, key)` answered `undefined` for
+ * all three keys, because `__getOwnPropertyDescriptor` walks `$Object` and the
+ * marker is a nominal struct. So presence said "own" while the descriptor said
+ * "absent", and the deprecated verifiers read the descriptor DIRECTLY
+ * (`.writable` / `.configurable`), which is what made
+ * `built-ins/Function/prototype/S15.3.3.1_A1.js` and `_A3.js` vacuous passes
+ * before #4519 and honest failures after it. `spliceIntrinsicFunctionGopd`
+ * below closes that; see its doc for the measured table and the value sources.
  */
-import type { Instr } from "../ir/types.js";
+import type { Instr, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { ensureNativeStringHelpers, nativeStringLiteralInstrs } from "./native-strings.js";
+import { BUILTIN_CTOR_ARITY } from "./builtin-value-read.js";
+import { buildLazyNativeProtoGetInstrs, getBuiltinBrand } from "./native-proto.js";
 import {
   RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A,
   RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B,
@@ -88,6 +103,14 @@ import {
 
 /** §20.2.2 — the own properties of the `%Function%` constructor object. */
 const FUNCTION_INTRINSIC_OWN_KEYS = ["prototype", "length", "name"] as const;
+
+/**
+ * `__create_descriptor`'s flag word: bit 0 writable, bit 1 enumerable, bit 2
+ * configurable. The same encoding `builtin-static-gopd.ts` passes for the
+ * SYNTACTIC `gOPD(Function, …)` answer — shared so the two spellings of one
+ * property's attributes cannot drift.
+ */
+const FLAG_CONFIGURABLE = 0x04;
 
 /**
  * The keys whose §20.2.2 attributes make `delete` FAIL, paired with the answer
@@ -133,71 +156,221 @@ export function fillRuntimeEvalIntrinsicFunctionOwnProps(ctx: CodegenContext): v
   for (const [name, keys, answer] of WIDENED_NATIVES) {
     const fn = ctx.mod.functions.find((candidate) => candidate.name === name);
     if (!fn) continue;
+    unshiftIntrinsicFunctionArm(ctx, fn, markerTypeIdx, flattenIdx, equalsIdx, (keyEquals) => {
+      const keyArms: Instr[] = [];
+      for (const key of keys) {
+        keyArms.push(...keyEquals(key), {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "i32.const", value: answer }, { op: "return" }],
+        });
+      }
+      return keyArms;
+    });
+  }
 
-    // Two params on all three, so appended locals start at 2 + locals.length —
-    // the same index discipline the AOT-carrier front-guard one file away uses.
-    const markerLocal = 2 + fn.locals.length;
-    fn.locals.push({ name: "__fnintrinsic_marker", type: { kind: "ref_null", typeIdx: markerTypeIdx } });
-    const keyAnyLocal = 2 + fn.locals.length;
-    fn.locals.push({ name: "__fnintrinsic_key_any", type: { kind: "anyref" } });
+  // (#4624) …and the descriptor surface for the same three keys.
+  spliceIntrinsicFunctionGopd(ctx, markerTypeIdx, flattenIdx, equalsIdx);
+}
 
-    const keyEquals = (key: string): Instr[] => [
-      { op: "local.get", index: keyAnyLocal },
-      { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-      { op: "call", funcIdx: flattenIdx },
-      ...nativeStringLiteralInstrs(ctx, key),
-      { op: "call", funcIdx: equalsIdx },
-    ];
+/**
+ * (#4624) `__getOwnPropertyDescriptor(%Function%, key)` — the §20.2.2 data
+ * descriptor for `prototype` / `length` / `name` on the intrinsic marker.
+ *
+ * ## Why the trio above was not enough
+ *
+ * #4491 T7-B widened presence (`__hasOwnProperty` / `__object_hasOwn`) and
+ * `delete`, which is what `propertyHelper.js`'s `isConfigurable` /
+ * `isWritable` probes exercise — but the deprecated verifiers ALSO read the
+ * descriptor directly (`__getOwnPropertyDescriptor(obj, name).writable`,
+ * line 411; `.configurable`, line 457). That native only walks `$Object`, and
+ * the marker is a nominal struct, so it answered `undefined`. Measured on this
+ * branch's base, `--target standalone`, real `runTest262File`:
+ *
+ * | shape                                                | base        | spec     |
+ * | ---------------------------------------------------- | ----------- | -------- |
+ * | `gOPD(Function, "prototype")`, LITERAL receiver       | descriptor  | descriptor |
+ * | `gOPD(o, "a")` through a parameter, plain object      | descriptor  | descriptor |
+ * | `gOPD(obj, name)` through a parameter, `obj = Function`| **undefined** | descriptor |
+ * | `Function.hasOwnProperty("prototype")`                | true        | true     |
+ *
+ * The third row is the defect: presence said the property exists while the
+ * descriptor said it does not. Until #4519 that read `!undefined` as
+ * `writable: false` and both `built-ins/Function/prototype/S15.3.3.1_A1.js`
+ * and `_A3.js` passed VACUOUSLY; with #4519's member-get guard merged the same
+ * read throws and both rows fail honestly. This arm makes them pass for a real
+ * reason.
+ *
+ * ## The values are the SAME ones the syntactic fold answers
+ *
+ * `prototype`'s value is `buildLazyNativeProtoGetInstrs(Function)` — the
+ * identity-stable `$NativeProto` singleton that `builtin-static-gopd.ts` hands
+ * the LITERAL-receiver fold, so `gOPD(Function,"prototype").value ===
+ * Function.prototype` holds through either path (verified on base for the
+ * literal arm before this change). `length` comes from the shared
+ * `BUILTIN_CTOR_ARITY` table and `name` is the literal `"Function"` — again the
+ * static arm's own sources. A descriptor whose `value` disagreed with the
+ * direct read would be worse than no descriptor at all, which is exactly what
+ * `verifyNotWritable` cross-checks.
+ *
+ * ## Attributes (ECMA-262 §20.2.2)
+ *
+ * - `prototype` — `{w:false, e:false, c:false}` (flag word `0`).
+ * - `length` / `name` — `{w:false, e:false, c:true}` (§17).
+ *
+ * ## Absent-not-wrong, and the exact decline condition
+ *
+ * Each key is emitted ONLY when its value can be produced honestly, and the
+ * `prototype` one genuinely cannot always be. `buildLazyNativeProtoGetInstrs`
+ * answers `null` unless the `Function` proto GLUE is registered — which happens
+ * when the module mentions `Function.prototype` (or a `Function.prototype.<m>`)
+ * SYNTACTICALLY. Registering that glue from here would mean minting glue and a
+ * struct type at FINALIZE, out of regime, so the arm DECLINES instead: the
+ * `prototype` key keeps the base `undefined` while `length`/`name` still
+ * answer. Measured, and pinned as an `it.fails` residual.
+ *
+ * In practice every `propertyHelper.js`-using row has
+ * `Function.prototype.call.bind(...)` in the harness, so the acceptance rows
+ * are unaffected. Same discipline for `length`: no `__box_number` in `funcMap`
+ * ⇒ no `length` arm. With no arm left the splice writes nothing at all, so the
+ * module stays byte-identical.
+ *
+ * ## Known residual, deliberately not papered over
+ *
+ * `delete Function.length` still does not remove the key (#4491's stated
+ * residual: the marker has no store to tombstone in), so `length`/`name` now
+ * report `configurable: true` through a surface whose `delete` refuses. That
+ * asymmetry already existed on the LITERAL-receiver fold — this arm makes the
+ * two receivers agree with each other, and the `delete` half needs the
+ * cross-module marker-slot ABI change #4491 priced and declined. Pinned as
+ * `it.fails` in `tests/issue-4624.test.ts`.
+ */
+function spliceIntrinsicFunctionGopd(
+  ctx: CodegenContext,
+  markerTypeIdx: number,
+  flattenIdx: number,
+  equalsIdx: number,
+): void {
+  const fn = ctx.mod.functions.find((candidate) => candidate.name === "__getOwnPropertyDescriptor");
+  if (!fn) return;
+  // Resolved by NAME from `funcMap` at fill time — never a fresh
+  // `ensureLateImport`, which at finalize would shift every baked funcIdx.
+  const createDescIdx = ctx.funcMap.get("__create_descriptor");
+  if (createDescIdx === undefined) return;
+  const boxNumberIdx = ctx.funcMap.get("__box_number");
 
+  // `getBuiltinBrand`, NOT `tryEnsureNativeProtoBrand`: the brand id is a table
+  // lookup and always resolves, but REGISTERING the proto glue is what
+  // `tryEnsure…` does, and doing that at finalize is out of regime. So the
+  // builder answers `null` for a module whose glue nobody registered, and the
+  // `prototype` key declines. `prependBuiltinFnObjectSemantics` (object-runtime,
+  // same finalize phase) reaches the identical singleton exactly this way.
+  const functionBrand = getBuiltinBrand(ctx, "Function");
+  const protoValue = functionBrand === undefined ? null : buildLazyNativeProtoGetInstrs(ctx, functionBrand);
+
+  const arity = BUILTIN_CTOR_ARITY["Function"];
+  const descriptors: Array<{ key: string; value: Instr[]; flags: number }> = [];
+  if (protoValue) descriptors.push({ key: "prototype", value: protoValue, flags: 0 });
+  if (boxNumberIdx !== undefined && arity !== undefined) {
+    descriptors.push({
+      key: "length",
+      value: [
+        { op: "f64.const", value: arity },
+        { op: "call", funcIdx: boxNumberIdx },
+      ],
+      flags: FLAG_CONFIGURABLE,
+    });
+  }
+  descriptors.push({
+    key: "name",
+    value: [...nativeStringLiteralInstrs(ctx, "Function"), { op: "extern.convert_any" }],
+    flags: FLAG_CONFIGURABLE,
+  });
+  if (descriptors.length === 0) return;
+
+  unshiftIntrinsicFunctionArm(ctx, fn, markerTypeIdx, flattenIdx, equalsIdx, (keyEquals) => {
     const keyArms: Instr[] = [];
-    for (const key of keys) {
+    for (const { key, value, flags } of descriptors) {
       keyArms.push(...keyEquals(key), {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: answer }, { op: "return" }],
+        then: [...value, { op: "i32.const", value: flags }, { op: "call", funcIdx: createDescIdx }, { op: "return" }],
       });
     }
+    return keyArms;
+  });
+}
 
-    // Falling out of the arm without returning leaves the pre-existing body to
-    // answer, so a marker key this slice does not own (`call`, an expando)
-    // keeps exactly today's answer rather than a fabricated `false`.
-    fn.body.unshift(
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: markerTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 0 },
-          { op: "any.convert_extern" },
-          { op: "ref.cast", typeIdx: markerTypeIdx },
-          { op: "local.set", index: markerLocal },
-          { op: "local.get", index: markerLocal },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: markerTypeIdx, fieldIdx: 1 },
-          { op: "i32.const", value: RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A },
-          { op: "i32.eq" },
-          { op: "local.get", index: markerLocal },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: markerTypeIdx, fieldIdx: 2 },
-          { op: "i32.const", value: RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B },
-          { op: "i32.eq" },
-          { op: "i32.and" },
-          { op: "local.get", index: markerLocal },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: markerTypeIdx, fieldIdx: 3 },
-          { op: "i32.const", value: RUNTIME_EVAL_INTERP_CALLBACK_KIND_INTRINSIC_FUNCTION },
-          { op: "i32.eq" },
-          { op: "i32.and" },
-          { op: "local.get", index: 1 },
-          { op: "any.convert_extern" },
-          { op: "local.tee", index: keyAnyLocal },
-          { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
-          { op: "i32.and" },
-          { op: "if", blockType: { kind: "empty" }, then: keyArms },
-        ],
-      },
-    );
-  }
+/**
+ * Unshift the shared `receiver is the %Function% intrinsic marker AND the key
+ * is a string` guard onto `fn`, wrapping the key arms `buildKeyArms` produces.
+ *
+ * Extracted so the presence/delete trio and the descriptor arm ask the SAME
+ * question about the SAME struct fields — two spellings of one brand check is
+ * how the surfaces drift apart. Every caller's function has two params, so
+ * appended locals start at `2 + locals.length`.
+ *
+ * Falling out of the arm without returning leaves the pre-existing body to
+ * answer, so a marker key this slice does not own (`call`, an expando) keeps
+ * exactly today's answer rather than a fabricated one.
+ */
+function unshiftIntrinsicFunctionArm(
+  ctx: CodegenContext,
+  fn: WasmFunction,
+  markerTypeIdx: number,
+  flattenIdx: number,
+  equalsIdx: number,
+  buildKeyArms: (keyEquals: (key: string) => Instr[]) => Instr[],
+): void {
+  const markerLocal = 2 + fn.locals.length;
+  fn.locals.push({ name: "__fnintrinsic_marker", type: { kind: "ref_null", typeIdx: markerTypeIdx } });
+  const keyAnyLocal = 2 + fn.locals.length;
+  fn.locals.push({ name: "__fnintrinsic_key_any", type: { kind: "anyref" } });
+
+  const keyEquals = (key: string): Instr[] => [
+    { op: "local.get", index: keyAnyLocal },
+    { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+    { op: "call", funcIdx: flattenIdx },
+    ...nativeStringLiteralInstrs(ctx, key),
+    { op: "call", funcIdx: equalsIdx },
+  ];
+
+  fn.body.unshift(
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: markerTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: markerTypeIdx },
+        { op: "local.set", index: markerLocal },
+        { op: "local.get", index: markerLocal },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: markerTypeIdx, fieldIdx: 1 },
+        { op: "i32.const", value: RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A },
+        { op: "i32.eq" },
+        { op: "local.get", index: markerLocal },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: markerTypeIdx, fieldIdx: 2 },
+        { op: "i32.const", value: RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B },
+        { op: "i32.eq" },
+        { op: "i32.and" },
+        { op: "local.get", index: markerLocal },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: markerTypeIdx, fieldIdx: 3 },
+        { op: "i32.const", value: RUNTIME_EVAL_INTERP_CALLBACK_KIND_INTRINSIC_FUNCTION },
+        { op: "i32.eq" },
+        { op: "i32.and" },
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "local.tee", index: keyAnyLocal },
+        { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+        { op: "i32.and" },
+        { op: "if", blockType: { kind: "empty" }, then: buildKeyArms(keyEquals) },
+      ],
+    },
+  );
 }

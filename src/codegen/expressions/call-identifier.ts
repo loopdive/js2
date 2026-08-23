@@ -91,6 +91,7 @@ import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./
 import { buildThrowJsErrorInstrs, emitThrowReferenceError } from "../js-errors.js"; // undeclared-identifier call → ReferenceError
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { isSloppyImplicitGlobalBinding } from "./implicit-global-binding.js"; // (#3966) callee stored on the realm global
+import { tryEmitNullishIdentifierCalleeTypeError } from "./stored-member-closure-call.js"; // (#4640 D1)
 import { isForeignEvalNode } from "./eval-source.js";
 import { resolvesToGlobalFunctionAlias } from "./eval-inline.js";
 import { prepareStandaloneEvalAliasCall } from "./eval-alias.js";
@@ -2410,6 +2411,18 @@ export function compileIdentifierCall(
         emitThrowReferenceError(ctx, fctx, `${funcName} is not defined`);
         fctx.body.push({ op: "unreachable" });
         return { kind: "externref" };
+      }
+
+      // (#4640 D1) §13.3.6.1 step 4 — the binding EXISTS (so the ReferenceError
+      // arm above declined) but its runtime value is nullish, which can never be
+      // callable. Throws a real TypeError instance after the arguments are
+      // evaluated. Declines for every non-nullish value, so the graceful
+      // fallback below keeps its behaviour for shapes we merely failed to
+      // dispatch. See the helper's header for why the STATIC guard (#4221)
+      // cannot answer this and must not be relaxed to try.
+      {
+        const nullishCallee = tryEmitNullishIdentifierCalleeTypeError(ctx, fctx, expr);
+        if (nullishCallee !== undefined) return nullishCallee;
       }
 
       // Graceful fallback for unknown functions — compile arguments (for side effects)

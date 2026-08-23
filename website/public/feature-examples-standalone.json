@@ -4,7 +4,7 @@
     {
       "name": "Primitive types (string, number, boolean, null, undefined)",
       "testCategories": ["language/types", "language/literals"],
-      "passCount": 629,
+      "passCount": 631,
       "totalCount": 647
     },
     {
@@ -46,13 +46,13 @@
         "language/expressions/concatenation",
         "language/expressions/relational"
       ],
-      "passCount": 958,
+      "passCount": 961,
       "totalCount": 1083
     },
     {
       "name": "typeof / instanceof",
       "testCategories": ["language/expressions/typeof", "language/expressions/instanceof"],
-      "passCount": 48,
+      "passCount": 47,
       "totalCount": 59
     },
     {
@@ -82,7 +82,7 @@
     {
       "name": "arguments object (full)",
       "testCategories": ["language/arguments-object"],
-      "passCount": 126,
+      "passCount": 127,
       "totalCount": 263
     },
     {
@@ -94,7 +94,7 @@
     {
       "name": "with statement",
       "testCategories": ["language/statements/with", "annexB/language/statements/with"],
-      "passCount": 163,
+      "passCount": 164,
       "totalCount": 181
     },
     {
@@ -111,7 +111,7 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 1019,
+      "passCount": 1022,
       "totalCount": 1177
     },
     {
@@ -126,7 +126,7 @@
         "language/statements/continue",
         "language/statements/return"
       ],
-      "passCount": 642,
+      "passCount": 645,
       "totalCount": 699
     },
     {
@@ -138,25 +138,25 @@
     {
       "name": "throw",
       "testCategories": ["language/statements/throw"],
-      "passCount": 13,
+      "passCount": 14,
       "totalCount": 14
     },
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4079,
+      "passCount": 4134,
       "totalCount": 4581
     },
     {
       "name": "Strings",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 1051,
+      "passCount": 1057,
       "totalCount": 1230
     },
     {
       "name": "Numbers",
       "testCategories": ["built-ins/Number", "built-ins/Math"],
-      "passCount": 623,
+      "passCount": 624,
       "totalCount": 667
     },
     {
@@ -173,13 +173,13 @@
         "built-ins/AggregateError",
         "built-ins/SuppressedError"
       ],
-      "passCount": 91,
+      "passCount": 90,
       "totalCount": 234
     },
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2007,
+      "passCount": 2012,
       "totalCount": 3161
     },
     {
@@ -197,7 +197,7 @@
     {
       "name": "Object.defineProperty (full)",
       "testCategories": ["built-ins/Object/defineProperty"],
-      "passCount": 1107,
+      "passCount": 1111,
       "totalCount": 1131
     },
     {
@@ -282,7 +282,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 811,
+      "passCount": 829,
       "totalCount": 1955
     },
     {
@@ -294,7 +294,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 501,
+      "passCount": 510,
       "totalCount": 1106
     },
     {
@@ -306,7 +306,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 577,
+      "passCount": 579,
       "totalCount": 1072
     },
     {
@@ -378,7 +378,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 285,
+      "passCount": 293,
       "totalCount": 1048
     },
     {
@@ -396,7 +396,7 @@
     {
       "name": "Class fields (public, private, static)",
       "testCategories": ["language/statements/class/fields"],
-      "passCount": 3583,
+      "passCount": 3587,
       "totalCount": 4979
     },
     {
@@ -414,7 +414,7 @@
     {
       "name": "Top-level await",
       "testCategories": ["language/module-code/top-level-await"],
-      "passCount": 176,
+      "passCount": 177,
       "totalCount": 257
     },
     {
@@ -540,7 +540,7 @@
     {
       "name": "Iterator sequencing (Iterator.concat)",
       "testCategories": [],
-      "passCount": 12,
+      "passCount": 13,
       "totalCount": 32
     },
     {

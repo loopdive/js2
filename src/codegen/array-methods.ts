@@ -16,6 +16,7 @@ import { emitHoleToUndefined, holeTestInstrs, holeToUndefinedInstrs, joinEmptyEl
 import { emitF64HoleToUndef, f64HolesActive, f64HoleTestInstrs, f64HoleToUndefFor } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4491 T11)
 import { f64JoinSentinelArm } from "./vec-f64-hole-gap.js"; // (#4491 T8)
+import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4638) concat absent-tail marker
 import { buildJoinBoxedElementToString, isAnyStringSubtype } from "./array-join-element.js"; // (#4560)
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
@@ -416,7 +417,24 @@ function hofRefElemClosureLaneSafe(ctx: CodegenContext, callExpr: ts.CallExpress
       }
       if (CLOSURE_SAFE_AMBIENT_GLOBALS.has(node.text)) return;
       const decl = ctx.oracle.valueDeclarationOf(node);
-      if (decl === undefined || decl.getSourceFile().isDeclarationFile) safe = false;
+      if (decl === undefined || decl.getSourceFile().isDeclarationFile) {
+        safe = false;
+        return;
+      }
+      // (#4728 merge_group regression) An OUTER binding whose static type is
+      // error-`any` is a host-value capture in disguise — test262's Temporal
+      // files bind `const earlier = new Temporal.PlainDateTime(...)` (an
+      // undeclared host global, so the checker types it `any`) and call
+      // `earlier.until(...)` inside `Object.entries(...).forEach(([u, i]) =>`.
+      // The native ref-elem HOF lane silently mis-threads that shape (the
+      // nested assert.throws arrow observed undefined tuple elements; the
+      // expected RangeError never fired — the "pass → fail" slice of the
+      // 03934689 widening). Bindings declared INSIDE the callback keep the
+      // native lane.
+      if (decl.pos < cbArg.pos || decl.end > cbArg.end) {
+        const fact = ctx.oracle.typeFactOf(node);
+        if (fact.kind === "any" || fact.kind === "unknown") safe = false;
+      }
       return;
     }
     ts.forEachChild(node, visit);
@@ -4203,6 +4221,46 @@ function emitBackingClampedArrayCopy(
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: copyInstrs });
 }
 
+/**
+ * (#4638) Allocate concat's result backing so its BEYOND-BACKING tail reads as
+ * absent, not as `0`.
+ *
+ * `array.new_default` zero-fills an f64 backing, and the two copies that follow
+ * are BACKING-clamped (#3201) — a sparse operand (`a = [0]; a.length = 3`) has
+ * fewer backing slots than its logical length, so the untouched destination
+ * slots kept the default `0`. `a.concat()` then answered `b[1] === 0` where the
+ * spec answers `undefined` (`S15.4.4.4_A3_T2`/`_T3`): a REAL element `0` was
+ * invented where the source had none.
+ *
+ * `array.new` with the marker costs exactly what `array.new_default` costs (one
+ * fill pass either way), and every slot the copies do reach is overwritten — so
+ * a DENSE concat is unchanged in behaviour and in cost. Only the f64 carrier
+ * needs it: `array.new_default` already yields `null` for an externref backing,
+ * which the read boundary reports as absent.
+ *
+ * Marker choice follows the #4491 T8/T11 split: `HOLE_F64_BITS` when the
+ * module's hole machinery is demand-gated ON (presence answers `absent` too),
+ * `UNDEF_F64_BITS` otherwise — because with the gate OFF nothing canonicalises
+ * `HOLE → UNDEF` at the read boundary and the marker would surface as a raw NaN.
+ */
+function emitConcatResultBacking(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arrTypeIdx: number,
+  elemType: ValType,
+  lenLocal: number,
+): void {
+  if (elemType.kind !== "f64") {
+    fctx.body.push({ op: "local.get", index: lenLocal });
+    fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
+    return;
+  }
+  fctx.body.push({ op: "i64.const", value: f64HolesActive(ctx) ? HOLE_F64_BITS : UNDEF_F64_BITS });
+  fctx.body.push({ op: "f64.reinterpret_i64" });
+  fctx.body.push({ op: "local.get", index: lenLocal });
+  fctx.body.push({ op: "array.new", typeIdx: arrTypeIdx });
+}
+
 /** Native-first concat for array operands whose physical vec kinds differ. */
 function compileArrayConcatNativeDynamic(
   ctx: CodegenContext,
@@ -4289,7 +4347,7 @@ function compileArrayConcat(
   callExpr: ts.CallExpression,
   vecTypeIdx: number,
   arrTypeIdx: number,
-  _elemType: ValType,
+  elemType: ValType,
 ): ValType | null {
   // 0-arg concat: shallow copy of the receiver array
   if (callExpr.arguments.length === 0) {
@@ -4308,9 +4366,8 @@ function compileArrayConcat(
     fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
     fctx.body.push({ op: "local.set", index: dataA });
 
-    // newData = array.new_default(lenA)
-    fctx.body.push({ op: "local.get", index: lenA });
-    fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
+    // newData = backing of lenA slots, absent-marked (#4638 — see helper).
+    emitConcatResultBacking(ctx, fctx, arrTypeIdx, elemType, lenA);
     fctx.body.push({ op: "local.set", index: newData });
 
     // array.copy newData[0..lenA] = dataA[0..lenA] — (#3201) backing-clamped +
@@ -4397,9 +4454,8 @@ function compileArrayConcat(
   fctx.body.push({ op: "i32.add" });
   fctx.body.push({ op: "local.set", index: totalLen });
 
-  // newData = array.new_default(totalLen)
-  fctx.body.push({ op: "local.get", index: totalLen });
-  fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
+  // newData = backing of totalLen slots, absent-marked (#4638 — see helper).
+  emitConcatResultBacking(ctx, fctx, arrTypeIdx, elemType, totalLen);
   fctx.body.push({ op: "local.set", index: newData });
 
   // array.copy newData[0..lenA] = dataA[0..lenA] — (#3201) clamp both copy

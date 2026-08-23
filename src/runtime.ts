@@ -3791,6 +3791,21 @@ function _structFieldNamesRaw(obj: any, exports: Record<string, Function> | unde
   return names;
 }
 
+/**
+ * (#4536) Tuple-struct probe: a compiler-minted tuple lowers to a struct whose
+ * fields are all `_0`,`_1`,… . In JS semantics that value IS an array
+ * (`Array.isArray([a, b])` is true), so the boundary lanes (isArray, length,
+ * host wrap) present it as one. Returns the element count, or undefined when
+ * `obj` is not a tuple-shaped struct.
+ */
+function _tupleFieldCount(obj: any, exports: Record<string, Function> | undefined): number | undefined {
+  if (!exports) return undefined;
+  const names = _getStructFieldNames(obj, exports);
+  if (!names || names.length === 0) return undefined;
+  for (const n of names) if (!/^_\d+$/.test(n)) return undefined;
+  return names.length;
+}
+
 function _getStructFieldNames(obj: any, exports: Record<string, Function> | undefined): string[] | null {
   const names = _structFieldNamesRaw(obj, exports);
   if (!names) return null;
@@ -7184,6 +7199,27 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       }
     } catch {
       // discriminator unavailable — fall through to the generic object proxy
+    }
+  }
+
+  // (#4536) A TUPLE struct (compiler-owned `_0`,`_1`,… fields — e.g. the JSDoc
+  // `[T[], T[]]` groupBy accumulator in webpack's ArrayHelpers) must present to
+  // the host as a real JS array as well: Array.isArray / deep-equality walks
+  // (upstream toStrictEqual shims) otherwise see `{_0:…,_1:…}` and fail.
+  // Elements are wrapped like any other boundary value. Slot writes through
+  // this array are NOT written back (same snapshot semantics as
+  // _convertIterableForHost's #1438 tuple arm); nested mutations of the
+  // wrapped elements still land on the underlying values.
+  if (exports) {
+    const tupleNames = _getStructFieldNames(obj, exports);
+    if (tupleNames && tupleNames.length > 0 && tupleNames.every((n) => /^_\d+$/.test(n))) {
+      const tupleArr: any[] = new Array(tupleNames.length);
+      _hostProxyCache.set(obj, tupleArr);
+      for (let i = 0; i < tupleNames.length; i++) {
+        const getter = exports[`__sget_${tupleNames[i]}`] as Function | undefined;
+        tupleArr[i] = getter ? _wrapForHost(getter(obj), exports) : undefined;
+      }
+      return tupleArr;
     }
   }
 
@@ -11025,6 +11061,9 @@ assert._isSameValue = isSameValue;
             // call-site instance→ctor registration to have linked the instance.
             const pd = _fnctorProtoLookup(obj, "length", exports);
             if (pd) return toLength(coerceLen(pd.get ? pd.get.call(obj) : pd.value));
+            // (#4536) A tuple struct's length is its field count.
+            const tupleLen = _tupleFieldCount(obj, exports);
+            if (tupleLen !== undefined) return tupleLen;
             return 0;
           }
           const len = obj.length;
@@ -11490,7 +11529,17 @@ assert._isSameValue = isSameValue;
       // (#1328) Array.isArray on an externref value (e.g. a RegExp match
       // result returned from the host). The compile-time type can't decide
       // this for `externref`, so defer to the real spec predicate.
-      if (name === "__extern_is_array") return (v: any) => (Array.isArray(v) ? 1 : 0);
+      if (name === "__extern_is_array")
+        return (v: any) => {
+          if (Array.isArray(v)) return 1;
+          // (#4536) A compiler-minted TUPLE struct is an array in JS semantics
+          // (webpack groupBy's JSDoc `[T[], T[]]` accumulator reaching the
+          // upstream shim's Array.isArray check).
+          if (v != null && typeof v === "object" && _isWasmStruct(v)) {
+            if (_tupleFieldCount(v, callbackState?.getExports()) !== undefined) return 1;
+          }
+          return 0;
+        };
       if (name === "__get_undefined") return () => undefined;
       // (#1343) ToBoolean for externref values per ECMA-262 §7.1.2.
       // The pre-existing externref path for `Boolean(x)` only checked

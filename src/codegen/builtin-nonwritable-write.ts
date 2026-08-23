@@ -74,6 +74,32 @@ const NUMBER_CONSTANTS: ReadonlySet<string> = new Set([
 const CTOR_NON_WRITABLE_PROPS: ReadonlySet<string> = new Set(["length", "name", "prototype"]);
 
 /**
+ * (#4621 family B) §19.1.1–19.1.3 — the three VALUE properties of the global
+ * object, all `{ [[Writable]]: false, [[Enumerable]]: false,
+ * [[Configurable]]: false }`. A strict-mode assignment to the BARE identifier
+ * (`NaN = 12`) is a PutValue on a GlobalEnvironmentRecord reference whose
+ * [[Set]] fails, so §6.2.5.6 step 6.a throws TypeError.
+ *
+ * This is the bare-identifier twin of the property-write table above: the same
+ * spec fact, reached through a different reference form. The property spelling
+ * `globalThis.NaN = 12` already throws through `tryEmitSpecNonWritableBuiltinWrite`
+ * where the receiver resolves; the identifier spelling had no arm at all and
+ * silently did nothing (measured: `built-ins/global/10.2.1.1.3-4-{16,18}-s.js`,
+ * "Expected a TypeError to be thrown but no exception was thrown at all").
+ *
+ * Deliberately NOT here: `globalThis` itself (§19.1.4 is
+ * `{ w:true, e:false, c:true }` — writable, so an assignment to it must
+ * succeed), and every function-valued global (`parseInt`, `isNaN`, …), which are
+ * writable too.
+ */
+const GLOBAL_NON_WRITABLE_VALUE_NAMES: ReadonlySet<string> = new Set(["NaN", "Infinity", "undefined"]);
+
+/** See `GLOBAL_NON_WRITABLE_VALUE_NAMES`. */
+export function isSpecNonWritableGlobalValueName(name: string): boolean {
+  return GLOBAL_NON_WRITABLE_VALUE_NAMES.has(name);
+}
+
+/**
  * True when `<builtinName>.<propName>` is an own data property the spec fixes as
  * non-writable. `isConstructorName` is the caller's answer to "does this name
  * denote a builtin constructor" (`BUILTIN_CTOR_ARITY` membership), kept as a

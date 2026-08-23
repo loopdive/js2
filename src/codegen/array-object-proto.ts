@@ -67,7 +67,11 @@ import { emitObjectProtoOrRefusal as emitProtoMemberBodyRefusal } from "./object
 // (#4491) `Object.prototype.isPrototypeOf` — the §20.1.3.3 chain walk, routed
 // to the same `__isPrototypeOf` native the typed call path uses.
 import { emitObjectProtoIsPrototypeOfBody } from "./object-proto-is-prototype-of.js";
+// (#4479 slice 2) Annex B §B.2.2's four legacy accessor methods — the reflective
+// member bodies for `Object.prototype.__{define,lookup}{Getter,Setter}__`.
+import { ANNEX_B_ACCESSOR_ARITY, emitObjectProtoAnnexBAccessorBody } from "./object-proto-annex-b-accessors.js";
 import { emitWrapperProtoValueOfBody, isWrapperBrandName } from "./wrapper-proto-value-of.js";
+import { emitWrapperProtoToStringBody } from "./wrapper-proto-to-string.js"; // (#4619)
 import { emitStringConcatMemberBody } from "./string-proto-concat.js";
 import { emitStringSubstringMemberBody } from "./string-proto-substring.js";
 import { emitStringSplitMemberBody } from "./string-proto-split.js"; // (#4220) reflective String.prototype.split
@@ -131,8 +135,19 @@ const ARRAY_PROTO_METHODS = [
   "with",
 ] as const;
 
-/** `Object.prototype`'s own method names (ES2024 §20.1.3). */
+/**
+ * `Object.prototype`'s own method names (ES2024 §20.1.3), plus Annex B §B.2.2's
+ * four legacy accessor methods (#4479 slice 2), which are own properties of
+ * `Object.prototype` in every web-reality engine and are asserted as such by
+ * `built-ins/Object/prototype/__{define,lookup}{Getter,Setter}__/prop-desc.js`.
+ * Their bodies live in `object-proto-annex-b-accessors.ts`; listing them here is
+ * what makes `Object.prototype.__defineGetter__` resolve as a value at all.
+ */
 const OBJECT_PROTO_METHODS = [
+  "__defineGetter__",
+  "__defineSetter__",
+  "__lookupGetter__",
+  "__lookupSetter__",
   "hasOwnProperty",
   "isPrototypeOf",
   "propertyIsEnumerable",
@@ -482,6 +497,9 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
     hasOwnProperty: 1,
     isPrototypeOf: 1,
     propertyIsEnumerable: 1,
+    // (#4479 slice 2) Annex B §B.2.2, declared beside the bodies that read the
+    // arg slots this arity sizes.
+    ...ANNEX_B_ACCESSOR_ARITY,
     // Map.prototype.set(key, value) is arity 2 (ES2024 §24.1.3); add/get/has/delete
     // default to 1.
     set: 2,
@@ -1752,6 +1770,9 @@ function makeGlue(
       // nothing) for every other family/member, so the ladder below is reached
       // byte-identically.
       (member === "valueOf" && isWrapperBrandName(name) ? emitWrapperProtoValueOfBody(c, fctx, name) : null) ??
+      // (#4619 family D) The `toString` twin of the arm above, in the same
+      // position and for the same reason — routed FIRST so it serves String too.
+      (member === "toString" && isWrapperBrandName(name) ? emitWrapperProtoToStringBody(c, fctx, name) : null) ??
       (name === "Array"
         ? emitArrayProtoMemberBody(c, fctx, member)
         : name === "String"
@@ -1766,10 +1787,12 @@ function makeGlue(
               ? (emitBoxedProtoValueOfBody(c, fctx, name === "Number" ? "Number" : "Boolean") ??
                 emitProtoMemberBodyRefusal(c, fctx, name, member))
               : // (#4491) `Object.prototype.isPrototypeOf` has a real answer — the
-                // §20.1.3.3 chain walk. Every other Object member still degrades
-                // to the catchable refusal (`toString`'s classifier lives inside
-                // it).
+                // §20.1.3.3 chain walk. (#4479 slice 2) So do Annex B §B.2.2's
+                // four legacy accessor methods. Every other Object member still
+                // degrades to the catchable refusal (`toString`'s classifier
+                // lives inside it).
                 ((name === "Object" ? emitObjectProtoIsPrototypeOfBody(c, fctx, member) : null) ??
+                (name === "Object" ? emitObjectProtoAnnexBAccessorBody(c, fctx, member) : null) ??
                 emitProtoMemberBodyRefusal(c, fctx, name, member))),
   };
 }

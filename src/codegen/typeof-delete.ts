@@ -13,6 +13,7 @@ import { reportError } from "./context/errors.js";
 import { elementReadOfRebindWidenedArray } from "./declarations/array-rebind-element-widening.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { typeofFoldContradictedByFieldVerdict } from "./fnctor-ctor-param-types.js";
+import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#4637 A2) §10.2.1.3 step 13
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -32,6 +33,7 @@ import { compileStandaloneRegExpLiteral } from "./regexp-standalone.js";
 import { addImport, localGlobalIdx } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import {
+  emitArgumentsOrdinaryNamedDelete, // (#4622) `delete arguments.length`
   emitArgumentsTypeofComparison,
   emitPropertyDeleteWithUnmappedArgumentsWriteback,
   prepareDynamicArgumentsDeleteIndex, // (#4491) runtime `delete arguments[i]`
@@ -45,8 +47,10 @@ import {
   emitGlobalEnvironmentDelete,
   emitRuntimeEvalBindingDelete,
   emitRuntimeEvalBindingRead,
+  emitRuntimeEvalGlobalRead,
   tryEmitNonConfigurableGlobalObjectDelete,
 } from "./global-environment.js";
+import { isSloppyImplicitGlobalBinding } from "./expressions/implicit-global-binding.js"; // (#4640)
 import { runtimeEvalStateMayShadowBinding } from "./direct-eval-environment.js";
 
 // (#2726 group (b), partial) The only value properties of the global object with
@@ -501,6 +505,17 @@ export function compileDeleteExpression(
         return { kind: "i32" };
       }
     }
+  }
+
+  // (#4622) §10.4.4 — `delete arguments.length` on the compiler-materialized
+  // arguments object. Ahead of BOTH the struct-field arms and the generic
+  // `__delete_property` arm: the arguments object is an opaque `$Vec`, so the
+  // generic arm asks `__vec_gopd`, which answers with ARRAY rules
+  // (`length` non-configurable) and refuses the delete — `false` in sloppy
+  // code, a thrown TypeError in strict code. The index arms above run first and
+  // are unaffected; this arm only claims static NON-index keys.
+  if (ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner)) {
+    if (emitArgumentsOrdinaryNamedDelete(ctx, fctx, inner)) return { kind: "i32", boolean: true };
   }
 
   // Try to resolve struct type and field for property access: delete obj.prop
@@ -1217,6 +1232,16 @@ function staticTypeofForType(ctx: CodegenContext, tsType: ts.Type): string | nul
   // constant "object" and classified every primitive as an object. `{}` is
   // dynamic; never fold it.
   if (isEmptyAnonymousObjectType(tsType)) return null;
+  // (#4637 A2) The INSTANCE shape of a function-style constructor whose body can
+  // `return` a foreign value is not a commitment about the runtime value:
+  // §10.2.1.3 step 13 substitutes the returned object, which may be a FUNCTION.
+  // `resolveWasmType` already degrades the slot to externref off the same
+  // predicate (`fnctor-foreign-return.ts`), but the fold below reads the TS type
+  // and answered the constant "object" — measured on this branch's base
+  // (`.tmp/p6.js`, standalone): `i === G` and `i.prop` are right while
+  // `typeof i` said "object" for a value that IS `G`. Never fold it; the runtime
+  // `__typeof` reads the value.
+  if (typeIsForeignReturnFnctorInstance(tsType)) return null;
   if (tsType.flags & ts.TypeFlags.Null) return "object";
   if (tsType.flags & ts.TypeFlags.Undefined || tsType.flags & ts.TypeFlags.Void) return "undefined";
   if (tsType.flags & ts.TypeFlags.BigInt || tsType.flags & ts.TypeFlags.BigIntLiteral) return "bigint";
@@ -1618,6 +1643,31 @@ export function compileTypeofExpression(
       if (withBinding) {
         return compileStringLiteral(ctx, fctx, staticTypeofForWasmType(ctx, withBinding.field.type));
       }
+      // (#4640) A SLOPPY IMPLICIT GLOBAL — a name some `<name> = v` (or
+      // `this.<name> = v`) in this module creates on the realm global object.
+      // §13.5.3 says `typeof` of an unresolvable Reference is `"undefined"`, and
+      // that is exactly what every fold below answers — but this name is NOT
+      // unresolvable once the assignment has run, so the fold is a static lie:
+      //
+      //     var obj = new Object(); __ref = obj;
+      //     typeof __ref            // folded "undefined", spec "object"
+      //
+      // (`language/types/reference/S8.7_A5_T2` CHECK#2.) The bare READ of the
+      // same name already resolves it from the global object; this makes
+      // `typeof` agree, with the §13.5.3 non-throwing lookup
+      // (`missingAsUndefined`) so a read BEFORE the assignment still answers
+      // `"undefined"` instead of throwing.
+      if (isSloppyImplicitGlobalBinding(ctx, fctx, ident.text)) {
+        addUnionImports(ctx);
+        const typeofIdx = ctx.funcMap.get("__typeof");
+        if (typeofIdx !== undefined) {
+          const valueType = emitRuntimeEvalGlobalRead(ctx, fctx, ident.text, true);
+          if (valueType !== null) {
+            fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__typeof") ?? typeofIdx });
+            return { kind: "externref" };
+          }
+        }
+      }
       const sym = ctx.checker.getSymbolAtLocation(ident);
       const hasValueDecl = !!sym?.valueDeclaration;
       // (#3436) In standalone / WASI mode `structuredClone` is deliberately NOT
@@ -1904,6 +1954,29 @@ export function compileTypeofComparison(
         const result = isEq ? (matches ? 1 : 0) : matches ? 0 : 1;
         fctx.body.push({ op: "i32.const", value: result });
         return { kind: "i32" };
+      }
+      // (#4640) The `typeof x <op> "<literal>"` twin of the sloppy-implicit-
+      // global arm in `compileTypeofExpression`. It has to be repeated here
+      // because this comparison fast path is a SEPARATE ladder that never calls
+      // that function — and it is the spelling test262 actually uses
+      // (`typeof(__ref) !== "undefined"`, `language/types/reference/S8.7_A5_T2`),
+      // so fixing only the general form fixes nothing measurable.
+      if (isSloppyImplicitGlobalBinding(ctx, fctx, ident.text)) {
+        addUnionImports(ctx);
+        const typeofIdx = ctx.funcMap.get("__typeof");
+        if (typeofIdx !== undefined) {
+          const valueType = emitRuntimeEvalGlobalRead(ctx, fctx, ident.text, true);
+          if (valueType !== null) {
+            fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__typeof") ?? typeofIdx });
+            const literalType = compileStringLiteral(ctx, fctx, stringLiteral);
+            if (literalType) {
+              return emitHostEqualityFromStack(ctx, fctx, { kind: "externref" }, literalType, true, isNeq);
+            }
+            fctx.body.push({ op: "drop" });
+            fctx.body.push({ op: "i32.const", value: isEq ? 0 : 1 });
+            return { kind: "i32" };
+          }
+        }
       }
       const sym = ctx.checker.getSymbolAtLocation(ident);
       if (!sym?.valueDeclaration) {
