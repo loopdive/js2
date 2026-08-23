@@ -122,16 +122,25 @@ jobs:
           # package finish (or report its own timeout) independently.
           - id: react-dom
             packages: react-dom
-          - id: jsdom
-            packages: jsdom
-          - id: redux
-            packages: redux
+          # lit is the OTHER long pole (~40 min — it runs lit's own upstream
+          # unit suite). Sharing a row with webpack/jest/stylelint/three made
+          # that row ~55 min, one flake away from gating the whole refresh;
+          # isolated, the ex-`tools` row drops to ~15 min and a lit timeout
+          # can't take the other measurements down with it (measured
+          # 2026-08-23, run 32618985600: lit 40m; webpack 2.3m, jest 3.4m,
+          # styled-components 0.9m, stylelint 4.9m, three 3.3m).
+          - id: lit
+            packages: lit
+          # redux (1.5m), jsdom (3.3m) and tailwindcss (2.4m) each idled a
+          # runner after ~3 minutes of work; one ~7-minute row covers all
+          # three. (Their earlier isolation was about not sharing a row with
+          # the 350-minute ReactDOM job, not about being alone forever.)
+          - id: small
+            packages: redux,jsdom,tailwindcss
           - id: libraries
             packages: hono,lodash,lodash-es,axios,uuid,moment
           - id: tools
-            packages: webpack,jest,styled-components,stylelint,three,lit
-          - id: tailwind
-            packages: tailwindcss
+            packages: webpack,jest,styled-components,stylelint,three
           - id: typescript
             packages: typescript
     runs-on: ubuntu-24.04
