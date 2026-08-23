@@ -66,8 +66,14 @@ propagated or `String(err)`/`err.message` on it misses.
 
 ## Progress (2026-08-23)
 
-FIXED (4 of 5): return-not-thenable, returns-undefined, then-rejects,
-then-resolves. Two root causes, neither the thenable duck-typing the survey
+FIXED (3 of 5 net): returns-undefined, then-rejects, then-resolves.
+return-not-thenable briefly flipped with a FULL catch-var ref-withdrawal,
+but that rule regressed 11 baseline-passing throwsAsync-* tests (widening
+`$DONE`'s inferred param cascades into the standalone async/.then lowering
+— the async producer demotes and its result stops ref-testing as $Promise).
+The withdrawal is scoped to NATIVE-STRING agreements; the struct-ref
+agreement + catch-var mis-coercion (return-not-thenable's exact shape)
+remains and needs the cascade understood first. Two root causes, neither the thenable duck-typing the survey
 guessed:
 
 1. **`globalThis.$DONE = fn` never shadowed the bare `$DONE`**
@@ -86,7 +92,7 @@ guessed:
    TypeError` read null. A catch var is now an OPAQUE any-arg (withdraws
    narrowing), joining the #4530 poison shapes.
 
-REMAINING (1 of 5): throwsAsync-same-realm — needs the dynamic-async
+REMAINING: return-not-thenable (above) and throwsAsync-same-realm — needs the dynamic-async
 substrate: an async function invoked through an `any` binding must return a
 native `$Promise` the native `.then` accepts (today the closure call runs
 the body eagerly, a sync throw leaks, and the result fails the `ref.test

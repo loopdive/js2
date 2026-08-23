@@ -2138,7 +2138,7 @@ function nativeBuiltinInstanceOfTypeIdxs(ctx: CodegenContext, ctorName: string):
 }
 
 function isStandaloneWrapperConstructorName(ctorName: string): ctorName is StandaloneWrapperConstructorName {
-  return ctorName === "Number" || ctorName === "String" || ctorName === "Boolean";
+  return ctorName === "Number" || ctorName === "String" || ctorName === "Boolean" || ctorName === "BigInt";
 }
 
 /** Emit the real standalone wrapper-brand predicate over the LHS carrier. */

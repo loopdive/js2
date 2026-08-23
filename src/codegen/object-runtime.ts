@@ -2625,6 +2625,35 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     );
   }
 
+  // (#4631) __new_BigInt(i64) -> externref : Object(bigint) — box via
+  // __box_bigint (the native bigint carrier), then wrap with the same
+  // [[PrimitiveValue]] internal slot as the other primitive wrappers. This is
+  // the §7.1.18 Table-13 BigInt row host-free; without it the coercion site's
+  // `env::__new_BigInt` late import resolved to nothing and `Object(1n)`
+  // evaluated to null (harness deepEqual-primitives-bigint).
+  {
+    addUnionImportsViaRegistry(ctx);
+    const boxBigIdx = ctx.funcMap.get("__box_bigint");
+    if (boxBigIdx !== undefined) {
+      const body: Instr[] = [
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: boxBigIdx }, // boxed bigint externref
+        { op: "local.set", index: 1 },
+        ...emitWrapperBuildTail(1, 2),
+      ];
+      registerNative(
+        "__new_BigInt",
+        [{ kind: "i64" }],
+        [{ kind: "externref" }],
+        [
+          { name: "boxed", type: { kind: "externref" } },
+          { name: "o", type: objRef },
+        ],
+        body,
+      );
+    }
+  }
+
   // ── $__obj_grow(ref $Object) -> void ─────────────────────────────────────
   //
   // Double the capacity and rehash live (non-tombstone) entries into a fresh
@@ -10831,4 +10860,6 @@ export const OBJECT_RUNTIME_HELPER_NAMES: ReadonlySet<string> = new Set([
   "__new_Number",
   "__new_String",
   "__new_Boolean",
+  // (#4631) BigInt wrapper — same [[PrimitiveValue]] slot pattern.
+  "__new_BigInt",
 ]);

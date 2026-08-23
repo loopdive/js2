@@ -311,6 +311,7 @@ import { fillVecLengthDynamicArms } from "./vec-length-set.js";
 import { fillTaCtorGetMetaArm } from "./ta-ctor-meta.js"; // `$__ta_ctor` name/length meta arm
 import { fillSymbolAnyToStringArm } from "./symbol-native.js"; // (#4632) $Symbol arm in __any_to_string
 import { fillMapSetDynDispatchArms } from "./map-runtime.js"; // (#4629) Map/Set any-channel dispatch arms
+import { fillWrapperValueOfDynCallArm } from "./wrapper-proto-value-of.js"; // (#4631) dyn wrapper valueOf arm
 import { scanGlobalThisFnShadows } from "./fn-global-shadow.js"; // (#4630) globalThis.<fn> reassignment shadowing
 import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
 import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
@@ -5650,6 +5651,8 @@ export function generateModule(
     // .next()) — before this path's typeof fill below for the same
     // classifier-roots reason as the other site.
     fillMapSetDynDispatchArms(ctx);
+    // (#4631) wrapper.valueOf() through the dynamic method-call native.
+    fillWrapperValueOfDynCallArm(ctx);
 
     // (#3130) Splice the `$Error_struct` arm into `__extern_get` so dynamic
     // reads of `err.message`/`err.name`/`err.stack`/`err.constructor` resolve
@@ -9026,6 +9029,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#4629) Map/Set any-channel dispatch arms — BEFORE the typeof fill so
     // the minted iterator-closure wrap type is in the classifier roots.
     fillMapSetDynDispatchArms(ctx);
+    // (#4631) wrapper.valueOf() through the dynamic method-call native.
+    fillWrapperValueOfDynCallArm(ctx);
 
     // #1896: teach standalone __typeof_function/__typeof_object to recognise
     // closure wrapper structs (edits helper bodies in place — no funcIdx churn).

@@ -13,8 +13,21 @@ area: codegen
 goal: test262-conformance
 lane: B
 files:
-  - src/codegen/literals.ts
-  - src/codegen/type-coercion.ts
+  - src/codegen/object-runtime.ts
+  - src/codegen/standalone-wrapper-instanceof.ts
+  - src/codegen/wrapper-proto-value-of.ts
+loc-budget-allow:
+  - src/codegen/object-runtime.ts
+  - src/codegen/wrapper-proto-value-of.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/index.ts
+  - src/codegen/declarations/param-return-inference.ts
+func-budget-allow:
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/wrapper-proto-value-of.ts::fillWrapperValueOfDynCallArm
+  - src/codegen/wrapper-proto-value-of.ts::fillBigIntWrapperValueOfResolutionArm
+  - src/codegen/wrapper-proto-value-of.ts::ensureBigIntWrapperValueOfClosure
+  - src/codegen/declarations/param-return-inference.ts::inferParamTypeFromCallSites
 ---
 
 # #4631 — Standalone BigInt carrier
@@ -34,6 +47,24 @@ the host import can remain as a fast path. i64-branded values exist for
 `type i64` annotations (`from.bigint` arm in type-coercion.ts boxes via
 `__box_bigint`), but arbitrary-precision semantics, mixed comparisons and
 `typeof x === "bigint"` are unimplemented standalone.
+
+## Progress (2026-08-23)
+
+Landed: native `__new_BigInt(i64)` wrapper (object-runtime, [[PrimitiveValue]]
+slot — `Object(1n)` is a real `$Object`, was null), `instanceof BigInt`
+wrapper brand arm (standalone-wrapper-instanceof), a `$Symbol`-style
+`__any_to_string` render is NOT yet done for bigint (String(1n) through any
+still "[object Object]"), plus two valueOf arms (an `__extern_method_call`
+arm and an `__extern_get` resolution closure). The typed probes all answer
+correctly (typeof/===/instanceof/valueOf on typed receivers).
+
+REMAINING HOLE for `harness/deepEqual-primitives-bigint.js`: the 0-arg
+`a.valueOf()` call on an ANY receiver routes through a dispatcher that is
+neither `__extern_method_call` nor the `__extern_get`+apply pair (markers in
+both never fire) — locate the actual 0-arg valueOf any-receiver dispatch
+(suspects: the `__call_valueOf` per-struct ToPrimitive dispatcher family or
+a call-receiver-method special case) and teach it the wrapper slot. Legs
+a/c/d of the test already pass; only `deepEqual(Object(1n), 1n)` fails.
 
 ## Implementation Plan (phased)
 
