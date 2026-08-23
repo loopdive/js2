@@ -72,3 +72,7 @@ brand when choosing the element vec type.
    `usesNativeSymbolProvider`, mirroring the #4626 brand gate — the
    js-host brand leak was exactly the 2026-08-23 merge_group park, do not
    repeat it).
+
+## Permanent repro
+
+`test262/test/harness/compare-array-symbol.js` (standalone lane via `pnpm run test:262` / `runTest262File`).
