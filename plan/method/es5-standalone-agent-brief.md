@@ -190,33 +190,6 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
      one costs more than a missing one. "Root unknown, here is what I
      ruled out" is a better handover than a confident wrong root.
 
-9. **A table is only evidence for the axes it VARIES; the axis you did not
-   vary is where the wrong rule hides (2026-08-23, dev-4653, after being
-   wrong twice about one row).** A discriminator table feels like proof
-   because it is systematic — but it only constrains the dimensions it
-   crosses, and the dimension you never thought to cross is exactly where
-   a plausible-and-wrong rule survives.
-
-   The measured case: v1 varied only the operator and concluded "the mint
-   does not bind its parameters" (false — the read answers `7`). v2 then
-   varied operator × surrounding-syntax × top-level-vs-inside-a-function,
-   three axes, and concluded the defect needed an enclosing function
-   (false). Neither version varied **where the name is BOUND**, because
-   every probe wrapped its subject in the same helper and every "outer"
-   variable chosen happened to be module-level. The real rule is a
-   function-variable-environment binding vs a module/global one (#4662).
-   Both refuting probes were two lines.
-
-   - Before trusting your table, list the axes it holds CONSTANT and ask
-     which of them your rule silently assumes. Vary the most load-bearing
-     one.
-   - **Name every control by the axis it actually holds.** v2's control
-     was labelled "outer binding" when it was really "module-environment
-     binding"; that mislabel is what produced the wrong rule. A control
-     whose name misdescribes it is worse than no control.
-   - A helper that wraps every probe is a constant, not a neutral
-     harness — the wrapper's own scope is an axis.
-
 ## Environment trap: fresh worktrees have NO .test262-cache (#4484 finding)
 
 A fresh agent worktree lacks `.test262-cache/`, so eval-dependent rows fail
