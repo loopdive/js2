@@ -104,11 +104,21 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
      start (below); a `-t` filter that matches nothing — **`vitest -t` is a
      REGEX**, so `-t "f + 1 must agree"` requires two spaces and selects
      zero (2026-08-23, dev-4491, on a file with no `skipIf` in it at all);
-     and a path/glob that matches no file. The reader's defence is the
-     same for all four, which is why they are one rule: read the counts and
-     require N > 0. `21 skipped` beside `1 failed` is what tells you a
-     filter has finally bitten. Escape `+ ( ) [ ] . * ?` in `-t`, or match
-     on a plain substring of the test name.
+     and a path/glob that matches no file. `21 skipped` beside `1 failed`
+     is what tells you a filter has finally bitten. Escape `+ ( ) [ ] . * ?`
+     in `-t`, or match on a plain substring of the test name.
+
+     **The check is `N == the file's DECLARED test count`, not `N > 0`
+     (2026-08-23, dev-4491).** A fifth member of the family does not
+     produce zero: under load, vitest's own `Timeout calling
+     "onTaskUpdate"` RPC drops task updates, so passes print but the tally
+     comes up SHORT — `Tests 22 passed` beside an `Errors 1 error` line
+     that a results-filtering `grep` will not have matched either. One
+     comparison covers all five: `N == 0` catches the four
+     zero-selection causes; `N < declared` catches the dropped-RPC case;
+     `N > 0` alone passes a run that silently lost half its tests. Get the
+     denominator with `grep -c "^  it(" <file>`. Contention fakes the
+     ABSENCE of failure as readily as its presence.
 
 8. **A residual is a CLAIM, and `it.fails` protects it from ever being
    tested (2026-08-23, dev-4653 self-correction).** This is the cheapest
