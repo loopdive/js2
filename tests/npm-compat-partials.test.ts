@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
 
 import { mergeNpmCompatPartials } from "../scripts/lib/npm-compat-partials.mjs";
 
@@ -9,7 +9,9 @@ function partial(names: string[], sourceRevision = "source", downloadBase = 0) {
     summaryMeta: {
       note: "test",
       popularity: { metric: "weekly npm downloads" },
-      performanceMethodology: { optimizationLevels: { "js-host": 4, standalone: 4 } },
+      performanceMethodology: {
+        optimizationLevels: { "js-host": 4, standalone: 4 },
+      },
     },
     packages: names.map((name, index) => ({
       name,
@@ -89,7 +91,12 @@ describe("npm-compat partial aggregation", () => {
       generatedAt: "2026-08-22T00:00:00.000Z",
     });
 
-    expect(result.summary.refresh).toEqual({ status: "partial", stalePackages: ["react"] });
+    expect(result.summary.refresh).toEqual({
+      status: "partial",
+      stalePackages: ["react"],
+      freshCount: 1,
+      totalCount: 2,
+    });
     expect(result.summary.packages.find((entry) => entry.name === "react")?.refresh).toEqual({
       status: "stale",
       reason: "measurement worker did not produce a partial report",
@@ -99,6 +106,90 @@ describe("npm-compat partial aggregation", () => {
     expect(result.perfHistory.runs.at(-1)?.packages).toEqual({
       acorn: { jsHost: { dynamic: 2 }, standalone: {} },
     });
+  });
+
+  it("keeps a stale row's OWN measurement time instead of creeping it forward each refresh", () => {
+    // The regression this pins: `lastMeasuredAt` used to be taken from the
+    // previous SNAPSHOT's generatedAt, so a package that stayed stale across
+    // several promotions reported the most recent one as its measurement date.
+    // With the fast lane promoting every ~12 min and react-dom's row running
+    // 3-4 h, that is the ordinary case.
+    const measuredLongAgo = {
+      ...partial(["react"], "old").packages[0],
+      measuredAt: "2026-08-20T18:44:00.000Z",
+    };
+    let existingPackages: any[] = [measuredLongAgo];
+    let existingGeneratedAt = "2026-08-21T00:00:00.000Z";
+
+    // Three consecutive fast-lane promotions, react-dom stale through all.
+    for (const generatedAt of ["2026-08-22T00:00:00.000Z", "2026-08-22T12:00:00.000Z", "2026-08-23T00:00:00.000Z"]) {
+      const result: any = mergeNpmCompatPartials([partial(["acorn"])], {
+        expectedNames: ["acorn", "react"],
+        sourceRevision: "source",
+        existingPackages,
+        existingGeneratedAt,
+        allowStaleFallback: true,
+        generatedAt,
+      });
+      existingPackages = result.summary.packages;
+      existingGeneratedAt = result.summary.generatedAt;
+    }
+
+    const react = existingPackages.find((entry) => entry.name === "react");
+    expect(react.measuredAt).toBe("2026-08-20T18:44:00.000Z");
+    expect(react.refresh.lastMeasuredAt).toBe("2026-08-20T18:44:00.000Z");
+  });
+
+  it("migrates a pre-measuredAt stale row from refresh.lastMeasuredAt, not the snapshot time", () => {
+    // The live 2026-08-23 artifact: react-dom already stale, its real date only
+    // in refresh.lastMeasuredAt because per-package stamping did not exist yet.
+    // Falling back to existingGeneratedAt here commits the creep ONCE and
+    // permanently — the real date is then unrecoverable by any later run.
+    const legacyStale = {
+      ...partial(["react"], "old").packages[0],
+      refresh: {
+        status: "stale",
+        reason: "worker failed",
+        lastMeasuredAt: "2026-08-20T18:44:18.260Z",
+      },
+    };
+    const result: any = mergeNpmCompatPartials([partial(["acorn"])], {
+      expectedNames: ["acorn", "react"],
+      sourceRevision: "source",
+      existingPackages: [legacyStale],
+      existingGeneratedAt: "2026-08-23T15:27:53.137Z",
+      allowStaleFallback: true,
+      generatedAt: "2026-08-23T17:00:00.000Z",
+    });
+
+    const react = result.summary.packages.find((entry: any) => entry.name === "react");
+    expect(react.measuredAt).toBe("2026-08-20T18:44:18.260Z");
+    expect(react.refresh.lastMeasuredAt).toBe("2026-08-20T18:44:18.260Z");
+  });
+
+  it("stamps fresh rows and reports the measured range across a mixed-age corpus", () => {
+    const stale = {
+      ...partial(["react"], "old").packages[0],
+      measuredAt: "2026-08-20T18:44:00.000Z",
+    };
+    const result: any = mergeNpmCompatPartials([partial(["acorn"])], {
+      expectedNames: ["acorn", "react"],
+      sourceRevision: "source",
+      existingPackages: [stale],
+      allowStaleFallback: true,
+      generatedAt: "2026-08-23T15:27:00.000Z",
+    });
+
+    // A fresh row with no stamp of its own was measured in this run.
+    expect(result.summary.packages.find((entry: any) => entry.name === "acorn").measuredAt).toBe(
+      "2026-08-23T15:27:00.000Z",
+    );
+    expect(result.summary.measuredRange).toEqual({
+      oldest: "2026-08-20T18:44:00.000Z",
+      newest: "2026-08-23T15:27:00.000Z",
+    });
+    expect(result.summary.refresh.freshCount).toBe(1);
+    expect(result.summary.refresh.totalCount).toBe(2);
   });
 
   it("can publish the prior complete snapshot when every worker fails", () => {
@@ -120,27 +211,43 @@ describe("npm-compat partial aggregation", () => {
 });
 
 describe("npm-compat refresh matrix wiring", () => {
-  it("measures independent groups and publishes successful groups after a worker failure", () => {
-    const workflow = readFileSync(new URL("../.github/workflows/npm-compat-refresh.yml", import.meta.url), "utf8");
+  it("measures every package independently and publishes a lane after a worker failure", () => {
+    // The per-package split (2026-08-23) moved the coordinator into its own
+    // reusable workflow and replaced the hardcoded package GROUPS with
+    // catalog-planned matrices, so these guards read both files. The
+    // group-era assertions this replaces (`id: typescript`, `packages:
+    // react-dom`, one `needs: measure`) described a shape that no longer
+    // exists — they broke the moment the split landed.
+    const refresh = readFileSync(new URL("../.github/workflows/npm-compat-refresh.yml", import.meta.url), "utf8");
+    const promote = readFileSync(new URL("../.github/workflows/npm-compat-promote.yml", import.meta.url), "utf8");
 
-    expect(workflow).toContain("github.repository == 'loopdive/js2'");
-    expect(workflow).toContain("fail-fast: false");
-    expect(workflow).toContain(
-      "group: npm-compat-refresh-${{ github.event_name == 'push' && github.sha || format('{0}-{1}', github.ref, github.run_id) }}",
-    );
-    expect(workflow).toMatch(/concurrency:[\s\S]*?cancel-in-progress: false/);
-    expect(workflow).toContain("needs: measure");
-    expect(workflow).toContain("always() && needs.measure.result != 'cancelled'");
-    expect(workflow).toContain("--partial-output");
-    expect(workflow).toContain("actions/download-artifact@v7");
-    expect(workflow).toContain("continue-on-error: true");
-    expect(workflow).toContain("if-no-files-found: warn");
-    expect(workflow).toContain("scripts/merge-npm-compat-partials.mjs");
-    expect(workflow).toContain("id: typescript");
-    expect(workflow).toContain("id: react-dom");
-    expect(workflow).toContain("packages: react-dom");
-    expect(workflow).toContain('DOGFOOD_REACT_DOM_PROJECT_CONCURRENCY: "2"');
-    expect(workflow).not.toContain("id: renderers");
+    expect(refresh).toContain("github.repository == 'loopdive/js2'");
+    expect(refresh).toContain("fail-fast: false");
+
+    // Per-PACKAGE serialization: each row coalesces on its own queue, so a
+    // slow or failing package never delays another package's measurement.
+    expect(refresh).toContain("group: npm-compat-pkg-${{ matrix.package }}");
+    expect(refresh).toMatch(/concurrency:[\s\S]*?cancel-in-progress: false/);
+
+    // Matrices are planned from the catalog at run time — adding a package
+    // must never require a YAML edit.
+    expect(refresh).toContain("scripts/list-npm-compat-packages.mjs");
+    expect(refresh).toContain("fromJSON(needs.resolve.outputs.fast_packages)");
+    expect(refresh).toContain("fromJSON(needs.resolve.outputs.slow_packages)");
+    expect(refresh).not.toContain("id: typescript");
+    expect(refresh).not.toContain("id: renderers");
+
+    // Two lanes, each promoting on its own cadence.
+    expect(refresh).toContain("needs.measure-fast.result != 'cancelled'");
+    expect(refresh).toContain("needs.measure-slow.result != 'cancelled'");
+    expect(refresh).toContain("uses: ./.github/workflows/npm-compat-promote.yml");
+    expect(refresh).toContain("--partial-output");
+    expect(refresh).toContain("if-no-files-found: warn");
+    expect(refresh).toContain("DOGFOOD_REACT_DOM_PROJECT_CONCURRENCY: 2");
+
+    expect(promote).toContain("actions/download-artifact@v7");
+    expect(promote).toContain("continue-on-error: true");
+    expect(promote).toContain("scripts/merge-npm-compat-partials.mjs");
   });
 
   it("keeps the renamed repository guards active for refresh promotion", () => {
@@ -154,7 +261,8 @@ describe("npm-compat refresh matrix wiring", () => {
   });
 
   it("does not force-update a promotion PR while its checks are in flight", () => {
-    const workflow = readFileSync(new URL("../.github/workflows/npm-compat-refresh.yml", import.meta.url), "utf8");
+    // Lives in the reusable coordinator since the per-package split.
+    const workflow = readFileSync(new URL("../.github/workflows/npm-compat-promote.yml", import.meta.url), "utf8");
 
     expect(workflow).toContain("headRefOid");
     expect(workflow).toContain("--paginate");
