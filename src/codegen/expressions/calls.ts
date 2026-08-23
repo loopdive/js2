@@ -340,6 +340,7 @@ import { compileBuiltinStaticCall, tryCompileFromCharCodeFamilyReflective } from
 import { compileNamespaceStaticCall } from "./call-namespace-static.js";
 import { compileReceiverMethodCall } from "./call-receiver-method.js";
 import { compileTailDispatch } from "./call-tail-dispatch.js";
+import { tryEmitIsPrototypeOfCallArm } from "./is-prototype-of-call-arm.js";
 import { tryEmitRealmGlobalMemberCall } from "./realm-global-member-call.js"; // (#4491)
 import {
   emitNativeGeneratorToVec,
@@ -8160,6 +8161,19 @@ function compileCallExpression(
   {
     const __idResult = compileIdentifierCall(ctx, fctx, expr, expectedType);
     if (__idResult !== undefined) return __idResult;
+  }
+
+  // (#4623) `<ordinary receiver>.isPrototypeOf(v)` — §20.1.3.4. Every arm above
+  // has declined, so what remains is the tail dispatch, whose two possible
+  // answers for this shape were both WRONG and lane-divergent: standalone took
+  // the ref.test-guarded generic closure dispatch on a member read that
+  // resolves to nothing (→ `false`), and the JS host took the graceful
+  // `ref.null.extern` fallback (→ `undefined`). Both lanes model the
+  // `[[Prototype]]` edge the predicate asks about, so route to the chain walk.
+  // See is-prototype-of-call-arm.ts for the measurements and the guards.
+  {
+    const __ipoResult = tryEmitIsPrototypeOfCallArm(ctx, fctx, expr);
+    if (__ipoResult !== undefined) return __ipoResult;
   }
 
   // (#742 slice 5) Tail dispatch — IIFE, super, element-access, call-of-call,
