@@ -1334,6 +1334,10 @@ function qjsInstallEngineIdentity(c: number): void {
  *
  * One realm per provider instance is assumed, exactly as \`qjsIntrinsicRealm\`
  * already assumes; the seed therefore runs once.
+ *
+ * (#4633) The seeded set is no longer only the error constructors — see the
+ * \`Array\` entry in the list below. The mechanism is unchanged; only the name
+ * list widened.
  */
 var qjsIntrinsicErrorsSeeded: boolean = false;
 
@@ -1384,6 +1388,15 @@ function qjsSeedIntrinsicErrorIdentities(c: number, realm: any): void {
     "SyntaxError",
     "TypeError",
     "URIError",
+    // (#4633) \`%Array%\`. Not an error constructor, but the identity problem and
+    // its fix are the same one: unseeded, \`new Function("return " + src)()\`
+    // published QuickJS's \`Array\` as an opaque callable box, so
+    // \`Object.is(Array, intrinsicArray)\` was false AND the box had no
+    // \`prototype\`/\`isArray\`. The caller publishes its own \`Array\` singleton on
+    // the realm carrier (RUNTIME_EVAL_INTRINSIC_VALUE_GLOBALS,
+    // runtime-eval-provider.ts); a caller that does not is left unmapped by the
+    // \`qjsIsMembraneWrappable\` guard below, exactly as an absent name is.
+    "Array",
   ];
   const g: number = qjs_global_object(c);
   for (let i = 0; i < names.length; i += 1) {
