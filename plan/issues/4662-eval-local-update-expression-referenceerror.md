@@ -20,52 +20,68 @@ origin: "dev-4515 flagged an eval-scope symptom; dev-4653 ran the discriminator 
 
 # #4662 — update expression on an eval-local name throws ReferenceError
 
-## Measured rule (dev-4653, standalone lane, reduced probes)
+## Measured rule (dev-4653, v3 — TWO earlier versions of this rule were wrong)
 
-An update expression (`++` / `--`) on a name **local to the eval'd or minted
-code** — an eval-local `var`, or a `Function` parameter — throws
-`ReferenceError: <name> is not defined`, **and only when the eval/mint sits
-inside an enclosing function.** Module top level is fine.
+> Inside eval'd / `Function`-minted code, an **update expression (`++`/`--`)**
+> throws `ReferenceError: <name> is not defined` for any name whose binding
+> lives in a **FUNCTION variable environment** — the enclosing function's
+> locals **or parameters**, a `Function` mint's own parameters, or an
+> eval-local `var` when the eval runs inside a function. It works for names
+> bound in the **module/global** environment. Plain reads and compound
+> assignment (`x = x + 1`) work in every case.
+
+**The axis is where the name is BOUND** — not the surrounding syntax, not the
+nesting depth, not local-vs-outer as a lexical notion.
 
 ```js
-new Function("p", "return p;")(7)             // -> 7   the parameter IS bound
-new Function("p", "p = p + 1; return p;")(1)  // -> 2   compound assignment fine
-new Function("p", "p++; return p;")(1)        // -> THROW `p is not defined`
-eval("var i = 0; i++; i")   inside a function // -> THROW `i`  (no loop involved)
-eval("var i = 0; i++; i")   at top level      // -> 1
+function h(){ var d = 0; eval("d++;"); return d; }      // THROW `d`  enclosing-fn local
+var mint = new Function("p","p++; return p;"); mint(1)  // THROW `p`  AT MODULE TOP LEVEL
+new Function("p", "return p;")(7)                       // 7   the parameter IS bound
+new Function("p", "p = p + 1; return p;")(1)            // 2   compound assignment fine
 ```
 
-## Three intuitions this kills — read before hypothesising
+The second line is the decisive one: **no enclosing function exists there and
+it still throws**, because a `Function` parameter is always bound in a function
+environment. Full 19-row environment × operator table in
+`plan/issues/4653-es5-function-declaration-semantics.md` residual **R**, with
+both superseded versions kept and labelled. Probes `.tmp/probes/ev{1..6}.js`.
 
-1. **`for` vs `while` is irrelevant.** `for (q = 0; q < 3; q++)` throws too.
-2. **The loop is irrelevant.** The bare `eval("var i = 0; i++; i")` throws with
-   no loop anywhere.
-3. **Outer-vs-local is INVERTED from the first reading.** `++` on an **outer**
-   binding works; `++` on a **local** one throws. The originally-reported repro
-   (`var n = 0; eval("while (n<3) { n++; }")`) is the *outer* case and does
-   **not** reproduce on dev-4653's base.
-4. **The enclosing-function context is the confound.** A top-level survey cannot
-   see this defect at all, which is why it first looked like a loop-test rule.
+## Readings this kills — check yours against them before hypothesising
 
-## Provenance and its limits (third-arm rule)
+1. **`for` vs `while` is irrelevant**, and so is the loop: bare
+   `eval("var i = 0; i++; i")` throws with no loop anywhere.
+2. **"Local vs outer" is the wrong frame** (v2's error). It happens to describe
+   some rows because the "outer" variables probed were all module-level. An
+   enclosing function's own local is *outer* to the eval and still throws.
+3. **The enclosing-function gate is FALSE** (v2's error). A top-level
+   `Function` mint with a parameter throws with no enclosing function at all.
+4. **The mint DOES bind its parameters** (v1's error) — the read-only case
+   answers `7`.
+5. Consequence for a fixer: the superseded wording **excluded the most common
+   real shape** — a plain local of the function containing the eval — and
+   pointed at the wrong seam.
 
-- The rule above is dev-4653's measurement on base `c42bdbe3e` + its own commits,
-  **standalone lane only**.
-- dev-4515 was on `8794ab2c9` + its own commit. Neither lane can speak for the
-  other's tree, so "does not reproduce" is recorded as *does not reproduce
-  here*, not as a claim about the other arm. Re-establish the rule on current
-  campaign HEAD before building on it.
-- Probes: `.tmp/probes/ev{1,2,3,4}.js` in dev-4653's worktree; the full
-  discriminator table is in `plan/issues/4653-es5-function-declaration-semantics.md`
-  under residual **R**.
+## Provenance
 
-## A correction this issue exists because of
+Standalone lane, dev-4653's probes. The earlier cross-tree thread is **closed**:
+dev-4515's repro is vindicated. Its error text named `n4515` while its quoted
+source said `n`, and that mismatch revealed the probe wraps in
+`export function test(){ var n4515 = 0; … }` — the enclosing-function-local
+cell. It throws on both lanes' trees. The earlier "does not reproduce here" was
+measuring a module-level `var`, a different cell entirely.
 
-dev-4653's first write-up recorded residual R as *"the minted function does not
-bind its declared parameters"* — an inference restated as a measurement, and
-**false**: the read-only case answers `7`. The refuting probe cost one run. The
-brief names this as the campaign's most-repeated documented defect; it is worth
-re-reading before the first hypothesis here hardens into a claim.
+## The lesson from how BOTH earlier rules failed
+
+> **A table is only evidence for the axes it varies; the axis you did not vary
+> is where the wrong rule hides.**
+
+v1 varied only the operator. v2 varied operator × surrounding-syntax ×
+top-level-vs-in-a-function — a three-axis table that never varied **where the
+name is bound**, because every probe wrapped its subject in the same helper and
+every "outer" variable chosen was module-level. Both refuting probes were two
+lines. Note also that v2's control was *labelled* "outer binding" when it was
+really "module-environment binding"; the mislabel is precisely what produced the
+wrong rule, so name controls by the axis they actually hold.
 
 ## Known conformance rows
 
