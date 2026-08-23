@@ -19,6 +19,7 @@ import {
 import { emitExternrefDestructureGuard } from "../destructuring-params.js";
 import { collectBindingNames } from "../../ir/analysis/loop-shape.js";
 import { adjustRethrowDepth, restoreBlockScopedShadows, saveBlockScopedShadows } from "./shared.js";
+import { beginFinallyCompletionSnapshot, endFinallyCompletionSnapshot } from "./eval-completion-value.js";
 import { buildStandardTryTable } from "../../ir/try-table.js";
 
 type BoxedCapture = { refCellTypeIdx: number; valType: ValType };
@@ -368,12 +369,15 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
     adjustRethrowDepth(fctx, 1);
 
     const savedForFinally = pushBody(fctx);
+    // (#4515) §14.15.3 step 5 — see eval-completion-value.ts.
+    const completionSnapshot = beginFinallyCompletionSnapshot(fctx);
     // Save/restore block-scoped shadows for let/const in the finally block (#817).
     const savedFinallyScope = saveBlockScopedShadows(fctx, stmt.finallyBlock);
     for (const s of stmt.finallyBlock.statements) {
       compileStatement(ctx, fctx, s);
     }
     restoreBlockScopedShadows(fctx, savedFinallyScope);
+    endFinallyCompletionSnapshot(fctx, completionSnapshot);
     finallyInstrs = fctx.body;
     popBody(fctx, savedForFinally);
 
