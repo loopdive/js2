@@ -8,12 +8,19 @@
 // `language/statements/{return,try}` (668 files), run by the same driver on
 // both arms (`runTest262File(…, "standalone")`):
 //
-//   | state                | pass | fail | compile_error |
-//   | -------------------- | ---- | ---- | ------------- |
-//   | base (c42bdbe3e)     | 611  |  56  |       1       |
-//   | this branch          | 614  |  53  |       1       |
+//   | state                    | pass | fail | compile_error |
+//   | ------------------------ | ---- | ---- | ------------- |
+//   | base (c42bdbe3e)         | 611  |  56  |       1       |
+//   | this branch, as swept    | 604  |  53  |      11       |
+//   | this branch, CORRECTED   | 614  |  53  |       1       |
 //
-// +3 flips, zero regressions (per-file diff, see the issue file).
+// +3 flips, zero regressions. The correction is not a rounding: the raw
+// after-sweep reported ten `pass -> compile_error` rows, every one of them a
+// `compilation timeout` at 24-54 s with the box at load 17-21 (five lanes
+// sweeping). A timeout is a measurement failure, not a status, and
+// `runTest262File`'s timeout is post-hoc — it cannot interrupt a slow compile.
+// All ten were re-run SERIALLY at 120 s on BOTH arms and pass on both; the
+// three flips were re-run in the same pass and hold in both directions.
 //
 // Every pin here compiles a SCRIPT and runs its `__module_init`, not a wrapped
 // `export function test()`. That is load-bearing for two of the three families:

@@ -1,7 +1,8 @@
 ---
 id: 4653
 title: "ES5 standalone: language/statements/function residual — 12 rows across arguments.callee identity, named-function-expression scope, property-vs-declaration shadowing, and a null-pointer in __module_init"
-status: in-progress
+status: done
+completed: 2026-08-23
 sprint: current
 created: 2026-08-23
 updated: 2026-08-23
@@ -26,6 +27,14 @@ func-budget-allow:
 ---
 
 # #4653 — `language/statements/function` residual (12 rows)
+
+> **Outcome: 3 of the 12 rows fixed, 9 documented as residuals with measured
+> roots and owners.** `status: done` records that the issue's acceptance bar —
+> triage, before/after sweep, per-file flips, zero regressions, pins, residual
+> attribution — is met; it does NOT mean all twelve rows pass. The nine open
+> rows and their roots are in `## Residuals`, and the twelve rows turned out to
+> be **eleven distinct roots**, so they do not belong under one issue. Anyone
+> picking one up should start from that section, not from the row table.
 
 ## Affected rows (sweep-verified on campaign HEAD, 2026-08-23)
 
@@ -212,20 +221,39 @@ All numbers below come from runs executed on this branch, by the same driver
 adapter rebuilt locally before the first measurement.
 
 **Scoped sweep**, `language/statements/function` + `language/statements/return` +
-`language/statements/try`, 668 files, both arms:
+`language/statements/try`, 668 files, both arms, 2 shards, 20 s per-row timeout:
 
 | arm | pass | fail | compile_error |
 | --- | --- | --- | --- |
 | base (`c42bdbe3e`) | 611 | 56 | 1 |
-| this branch | (see `## Sweep result` below) | | |
+| this branch, as swept | 604 | 53 | 11 |
+| this branch, **corrected** | **614** | **53** | **1** |
 
-**Per-file flips (fail → pass), 3:**
+**Per-file flips (fail → pass), 3 — each re-verified SERIALLY on both arms:**
 
-- `language/statements/function/13.2-17-1.js`
-- `language/statements/function/S13.2.2_A4_T2.js`
-- `language/statements/function/S13_A6_T1.js`
+| row | base | this branch |
+| --- | --- | --- |
+| `language/statements/function/13.2-17-1.js` | fail | **pass** |
+| `language/statements/function/S13.2.2_A4_T2.js` | fail | **pass** |
+| `language/statements/function/S13_A6_T1.js` | fail | **pass** |
 
-**Zero regressions** (per-file diff of the two sweeps).
+**Zero regressions.** The raw after-sweep showed ten `pass → compile_error`
+rows — `13.0-{7,8,12,13,14,15,16,17}-s`, `13.0_4-17gs`, `13.1-2-s` — every one
+of them `compilation timeout` at 24–54 s with the box at load 17–21 (five lanes
+sweeping). **A timeout is a measurement failure, not a status**, and
+`runTest262File`'s `timeoutMs` is post-hoc: it cannot interrupt a slow compile,
+only report after the fact. All ten were re-run SERIALLY at a 120 s timeout on
+BOTH arms and **pass on both**, which is what the corrected row above records.
+The three real flips were re-run in the same serial pass and hold in both
+directions. The one remaining `compile_error`
+(`param-dflt-yield-non-strict.js`) is present on base too and is unchanged.
+
+Two earlier measurements were discarded rather than reported: a first pass at
+the 12 rows where the missing local quickjs adapter made two rows read as
+"provider not built" and one as a compile timeout (the brief's stale-bundle
+trap), and a first after-sweep that I aborted because I had file-copy-reverted
+the source mid-run for a pin sensitivity check — a sweep whose base moved under
+it is not a measurement.
 
 **Pins** — `tests/issue-4653.test.ts`, 17 tests, `npm test -- tests/issue-4653.test.ts`:
 
@@ -288,14 +316,20 @@ Nine rows remain, each with a measured root and an owner. None is a guess.
   Measured identically for `new Function("arg","return ++arg;")`,
   `Function("arg", …)` and `Function.call(null, "arg", …)`, so the root is the
   MINT, not the receiver or the `.call` transfer. Runtime-eval lane.
-- **M `fun.prototype` own-ness** (`13.2-18-1`) — **#4491's**, with evidence: with
-  an accessor installed on `Function.prototype.prototype`, `fun.prototype` reads
-  as `undefined` and `hasOwnProperty(fun, "prototype")` is false for a function
-  EXPRESSION, so `verifyProperty`'s `assert(__hasOwnProperty(obj, name))` cannot
-  hold and `fun.prototype.toString()` throws first. Its sibling `13.2-17-1` did
-  NOT root in the MOP — every descriptor on `fun.prototype.constructor` is
-  already correct (`writable: true, enumerable: false, configurable: true`, own,
-  data) — which is why only one of the pair moved here.
+- **M `fun.prototype` own-ness** (`13.2-18-1`) — **owner #4491**, with evidence: a
+  function EXPRESSION has no own `prototype` property under the live descriptor
+  MOP. With an accessor installed on `Function.prototype.prototype`,
+  `fun.prototype` therefore reads as `undefined` and
+  `hasOwnProperty(fun, "prototype")` is false, so `verifyProperty`'s
+  `assert(__hasOwnProperty(obj, name))` cannot hold and `fun.prototype.toString()`
+  throws first (base error: "Cannot destructure 'null' or 'undefined'").
+  **This is DISTINCT from its sibling `13.2-17-1`**, whose
+  `fun.prototype.constructor` descriptors are already fully correct on base
+  (`writable: true, enumerable: false, configurable: true`, own, data) — that row
+  rooted in the for-in shadow write and is fixed here. The pair looked like one
+  family and is two. Routed to the issue file rather than to a live lane: the
+  dev-4491 lane completed and stood down (its slice is in PR #4808), so the next
+  lane on #4491 picks this row up from here.
 
 One residual is NOT one of the twelve, found while measuring F and worth
 recording: `a instanceof A` still answers false for a late-assigned fnctor even
@@ -309,6 +343,17 @@ accessor on `Object.prototype` and `o` has no own `zzz` (measured: the setter
 never ran). That is #4504's territory, stated here only because the same
 `__extern_set_decide` path carries both.
 
-## Sweep result
+## Cross-lane note
 
-_(filled in below once the after-sweep completes — see `## Test Results`)_
+`language/statements/try` is in this sweep's scope and **dev-4515 has landed
+§13 completion-value changes that move three rows in it**
+(`try/cptn-finally-{wo-catch,skip-catch,from-catch}.js`) on branch
+`issue-4515-wave5`. Those are eval-only and touch no file this change-set
+touches (`statements/eval-completion-value.ts`, `statements.ts`,
+`statements/exceptions.ts`, `expressions/eval-*.ts`, `helpers/*`,
+`binary-ops-in.ts` vs this lane's `object-runtime-enumeration.ts`,
+`fnctor-escape-gate.ts`, `declarations.ts` + two new modules), so there is no
+file conflict. Per the brief's third-arm rule, the numbers above are for THIS
+branch only and say nothing about dev-4515's effect: those three rows are `fail`
+on both of my arms, exactly as they should be, because neither arm contains
+their change. The combined tree needs its own run.
