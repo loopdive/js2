@@ -15,6 +15,31 @@ es_edition: 5
 language_feature: misc
 goal: standalone-gap
 related: [4621, 4620, 4519, 4484]
+loc-budget-allow:
+  # D7 — `Date(...)` without `new` (§21.4.2.1). The `new`-form arms for every
+  # builtin global live in this module and the without-`new` arm has to sit
+  # beside `tryCompileErrorCtorCallWithoutNew`, which is the only other
+  # called-as-a-function ctor arm; splitting one of a pair into a new leaf is
+  # how the two drift. Most of the +82 is the header explaining why this is a
+  # CRASH fix (illegal cast in `__date_parse`) rather than a cosmetic one.
+  - src/codegen/expressions/new-builtin-globals.ts
+  # D3 — the sloppy-implicit-global compound-assignment arm. The lowering lives
+  # in the leaf `implicit-global-binding.ts`; what lands here is the dispatch
+  # arm plus the comment recording WHY it must precede the string-concat lane
+  # (that lane's local carrier is exactly what swallowed the appends).
+  - src/codegen/expressions/operator-assignment.ts
+  # D1 — the nullish-callee dispatch arm. The helper lives in
+  # `stored-member-closure-call.ts` (the documented home of the graceful
+  # `undefined` fallback this narrows); the +13 here is the call plus the
+  # pointer to why the STATIC guard cannot answer it.
+  - src/codegen/expressions/call-identifier.ts
+func-budget-allow:
+  # Both are ONE dispatch arm plus its rationale comment, placed at the exact
+  # point in an existing ladder where the decision has to be made — the
+  # lowerings themselves live in leaf modules
+  # (`implicit-global-binding.ts`, `stored-member-closure-call.ts`).
+  - src/codegen/expressions/operator-assignment.ts::compileCompoundAssignment
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
 origin: "2026-08-23 wave-3 residual map (196 true failures). Lane D (.tmp/lane-D-smalls.txt) + try/return/Date leftovers."
 ---
 
