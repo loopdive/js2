@@ -183,11 +183,36 @@ describe.skipIf(!TEST262)("#4639 C2 — CANARY: the key on which C2 and #4637's 
   // than presented as a demonstration of this change-set — the distinction
   // dev-4637 had to introduce on `issue-4637` after two of their pins turned
   // out to be the wrong category.
+  //
+  // RECEIVER IS RUNTIME-SELECTED ON PURPOSE. The first cut of this guard used
+  // the syntactic `Math.hasOwnProperty("prototype")`, and its whole value rests
+  // on the claim "this routes through the `__object_hasOwn`/`__hasOwnProperty`
+  // dev-4637 splices". A syntactic receiver + literal key is exactly the shape a
+  // compile-time fold would claim, and if it folds, the guard never reaches the
+  // helper and guards NOTHING — green whatever their arm does. Rather than prove
+  // the fold does not happen, the pin is written so it cannot matter: the
+  // receiver comes out of an array indexed by a loop-carried counter, which no
+  // call-site specialisation can constant-fold. (Applying dev-4637's
+  // delete-the-interaction test to my own pin — see the issue file.)
+  //
+  // THE THREE ASSERTIONS POINT IN DIFFERENT DIRECTIONS, which is what makes
+  // bundling them safe here — the hazard dev-4637 hit was a negative control
+  // bundled with a positive, where a build wrong on BOTH still totals correctly.
+  // Expected `false|true|false` is position-sensitive with unequal values, so
+  // neither a blanket-`true` nor a blanket-`false` build can satisfy it.
   pinSource(
     "carrier-hasown-prototype-guard",
-    'assert.sameValue(Math.hasOwnProperty("prototype"), false, "Math has no own prototype");\n' +
-      'assert.sameValue(String.hasOwnProperty("prototype"), true, "String has an own prototype");\n',
-    "REGRESSION GUARD (green on base) — discriminating answer on the spliced helper",
+    "var recvs = [Math, String];\n" +
+      'var out = "";\n' +
+      "var i = 0;\n" +
+      "while (i < 2) {\n" +
+      '  out += recvs[i].hasOwnProperty("prototype");\n' +
+      '  out += "|";\n' +
+      "  i = i + 1;\n" +
+      "}\n" +
+      'out += Math.hasOwnProperty("zzz");\n' +
+      'assert.sameValue(out, "false|true|false", "carrier hasOwn(prototype) + negative control");\n',
+    "REGRESSION GUARD (green on base) — unfoldable receiver, discriminating answer",
   );
 });
 
