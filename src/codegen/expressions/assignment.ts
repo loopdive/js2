@@ -153,7 +153,11 @@ import {
 } from "../global-environment.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
 import { BUILTIN_CTOR_ARITY } from "../builtin-value-read.js"; // (#4484 C) which names are builtin constructors
-import { isSpecNonWritableBuiltinProp, resolveUnshadowedGlobalIdentifier } from "../builtin-nonwritable-write.js"; // (#4484 C)
+import {
+  isSpecNonWritableBuiltinProp,
+  isSpecNonWritableGlobalValueName, // (#4621 B)
+  resolveUnshadowedGlobalIdentifier,
+} from "../builtin-nonwritable-write.js"; // (#4484 C)
 import { tryCompileStrictFunctionPoisonAssignment } from "../function-poison-pill-access.js";
 import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
@@ -362,6 +366,32 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
       emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
       fctx.body.push({ op: "unreachable" });
       return { kind: "f64" }; // unreachable, but satisfy type
+    }
+    // (#4621 B) §19.1.1-19.1.3 — `NaN = 12` / `Infinity = 12` / `undefined = 12`
+    // in STRICT code. These are non-writable value properties of the global
+    // object, so PutValue's [[Set]] fails and §6.2.5.6 step 6.a throws
+    // TypeError. Sloppy code declines here and keeps the existing silent-no-op
+    // lowering, which is what the same step prescribes for non-strict code.
+    //
+    // Order: BEFORE the `localMap` lookup and every ordinary write arm, but the
+    // arm is itself gated on `resolveUnshadowedGlobalIdentifier`, which declines
+    // for any local / captured / module-level binding of the name. So
+    // `function f(NaN) { "use strict"; NaN = 1; }` — a legal write to a
+    // parameter — still falls through untouched. A wrong throw here would be
+    // catchable and therefore observable, which is why the shadowing proof is
+    // load-bearing rather than defensive.
+    if (
+      isSpecNonWritableGlobalValueName(name) &&
+      isStrictContext(expr.left, ctx.inferModuleStrictArguments) &&
+      resolveUnshadowedGlobalIdentifier(ctx, fctx, expr.left) !== undefined
+    ) {
+      // §13.15.2: the RHS is evaluated before PutValue is attempted, so its side
+      // effects must still happen even though the store never lands.
+      const rhsType = compileExpression(ctx, fctx, expr.right);
+      if (rhsType) fctx.body.push({ op: "drop" });
+      emitThrowTypeError(ctx, fctx, `Cannot assign to read only property '${name}' of object '#<Object>'`);
+      fctx.body.push({ op: "unreachable" });
+      return { kind: "f64" }; // unreachable, but the expression stack needs a type
     }
     // Named function expression name binding is read-only — assignments are
     // silently ignored in sloppy mode (the RHS is still evaluated for side effects)

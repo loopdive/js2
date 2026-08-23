@@ -529,6 +529,43 @@ on([ts.SyntaxKind.SourceFile, ts.SyntaxKind.Block], (ctx, node) => {
   }
 });
 
+/**
+ * (#4621 D) A node the parser INVENTED to recover from missing source. TypeScript
+ * marks these with a zero-width extent (`pos === end`); they carry no text and no
+ * symbol. `EndOfFileToken` is the one legitimate zero-width node.
+ */
+function nodeIsParserSynthesizedMissing(node: ts.Node): boolean {
+  return node.pos === node.end && node.kind !== ts.SyntaxKind.EndOfFileToken;
+}
+
+// (#4621 D) §14.12.1 — `switch ( Expression ) CaseBlock` and
+// `CaseClause : case Expression : StatementList`. Neither expression is
+// optional, so `switch () {}` and `case :` are SyntaxErrors.
+//
+// TypeScript DOES report both ("Expression expected.", code 1109) but that code
+// sits in `TOLERATED_SYNTAX_CODES` (compiler.ts) — #537 downgraded it to a
+// warning because the TS-mode parser raises it for several patterns that are
+// valid JavaScript. The blanket tolerance also swallowed these two genuine
+// grammar violations, so `language/statements/switch/S12.11_A3_T{1,4}` compiled,
+// RAN, and tripped their own `$DONOTEVALUATE()` sentinel instead of failing to
+// parse. Re-raise exactly the two recovered shapes here, on the same discipline
+// the 1121/1489/1487/1488 octal checks use for their own tolerated codes.
+//
+// This is a syntactic test on the RECOVERED AST, not a re-parse: the parser
+// leaves a zero-width invented Identifier in the missing expression's place, a
+// shape no well-formed source can produce.
+on([ts.SyntaxKind.SwitchStatement], (ctx, node) => {
+  if (ts.isSwitchStatement(node) && nodeIsParserSynthesizedMissing(node.expression)) {
+    ctx.addError(node, "Expression expected: a switch statement requires a discriminant");
+  }
+});
+
+on([ts.SyntaxKind.CaseClause], (ctx, node) => {
+  if (ts.isCaseClause(node) && nodeIsParserSynthesizedMissing(node.expression)) {
+    ctx.addError(node, "Expression expected: a case clause requires a test expression");
+  }
+});
+
 // Check 'with' statement — SyntaxError in strict mode (all modules are strict)
 on([ts.SyntaxKind.WithStatement], (ctx, node) => {
   if (ts.isWithStatement(node) && isStrictMode(node)) {
