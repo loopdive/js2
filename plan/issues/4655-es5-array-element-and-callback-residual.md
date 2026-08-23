@@ -1,7 +1,7 @@
 ---
 id: 4655
 title: "ES5 standalone: Array residual — 20 rows: undefined/null elements degrade to NaN/0 through concat/toString/toLocaleString, filter/forEach callback+hole semantics, Array.prototype.concat unreachable as a value"
-status: ready
+status: in-review
 sprint: current
 created: 2026-08-23
 updated: 2026-08-23
@@ -359,6 +359,23 @@ Check that a residual pin still fails on the arm it claims to test, exactly as
 you would for a fix pin — an `it.fails` that has stopped failing looks green
 from every angle except the one that matters.
 (`.tmp/probes/r8-newarray-literal.js`, `r8-array-literal.js`, `r8-loop-built.js`.)
+
+## Recommendation on this issue's own status
+
+Left at **`in-review`, not `done`** — deliberately, and the lead should decide
+rather than inherit my judgement. The brief's acceptance bar IS met (two-arm
+sweep from my own runs, per-file flip list, zero regressions with every apparent
+flip and regression re-verified serially, pins that fail on the arm they claim,
+`it.fails` residuals with positive controls and owners, all four required
+sections). But **2 of the 20 rows flip**; the other 18 are rooted, pinned and
+attributed rather than fixed. Closing this issue `done` would retire the only
+place those 18 rows are written down together with the probes that root them.
+
+Two clean options: close it `done` and spin the residual table into issues
+(R3/R4/R8 into one value-rep carrier issue — they are the same defect seen from
+three directions; R5, R7, R9 separately; R1 into wrapper-prototype dispatch;
+R2 onto #4515), or keep it open as the tracking issue for the remaining 18. The
+work is the same either way; what must not happen is `done` with no successor.
 
 ## Test Results
 
