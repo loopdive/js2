@@ -83,8 +83,42 @@ working.
    the wrong constructor, so tests depending on them may flip in either
    direction. Investigate any flip rather than assuming it is noise.
 
+## Measured test262 impact — 45 files, all currently dead
+
+Measured 2026-08-23 against a `tc39/test262` sparse checkout at tip-of-main
+(53,872 test files) joined to `test262-current.jsonl`.
+
+**No test calls any of the five helpers directly.** They are reached only
+through two public entry points:
+
+| Entry point | Fans out to | Test files |
+| --- | --- | --- |
+| `TemporalHelpers.checkSubclassingIgnored` | `checkSubclassConstructorUndefined`, `checkSubclassConstructorNotCalled`, `checkSubclassSpeciesNull`, `checkSubclassSpeciesUndefined` | 35 |
+| `TemporalHelpers.checkSubclassingIgnoredStatic` | `checkThisValueNotCalled` | 10 |
+| **union** | | **45** |
+
+All 45 are `*/subclassing-ignored.js` under `test/built-ins/Temporal/**`. All 45
+are present in the baseline, and **all 45 currently report `compile_error`**
+with the invalid-Wasm signature from #4627 — none of them reaches its test body
+today.
+
+So the blast radius is bounded at 45 tests, and **the flip risk is one-way**:
+nothing here can regress from `pass`, because nothing here passes. Once #4627's
+fix (`569d78f7`) propagates into the baseline these 45 become the population
+where this defect is first observable — five helpers sharing one compiled class
+body is exactly what `subclassing-ignored.js` tests are written to detect, so
+expect some of them to fail on substance rather than pass outright.
+
+Two caveats on the measurement:
+
+- Taken against **tip-of-main** test262 while the project pins a revision. The
+  helper call graph is stable, but re-confirm the file count against the pinned
+  submodule before quoting 45 as a target.
+- Taken against a **pre-#4627** baseline, which is why all 45 read as
+  `compile_error`. Re-measure after that fix lands to get the real starting
+  point.
+
 ## Notes
 
-The test262 impact is not estimated. Five harness helpers are affected and they
-are used across the Temporal suite, but how many tests observe the difference
-is unmeasured — do not quote a number that has not been measured.
+Do not quote a pass-count target for this issue. 45 is the number of tests that
+can *observe* the defect, not the number that will pass once it is fixed.
