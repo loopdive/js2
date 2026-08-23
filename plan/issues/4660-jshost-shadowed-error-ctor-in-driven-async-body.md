@@ -1,10 +1,11 @@
 ---
 id: 4660
 title: "js-host: .constructor on a user-shadowed intrinsic error resolves the intrinsic carrier inside a frame-driven async body"
-status: ready
+status: done
 sprint: current
 created: 2026-08-23
 updated: 2026-08-23
+completed: 2026-08-23
 priority: high
 horizon: m
 feasibility: medium
