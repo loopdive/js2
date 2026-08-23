@@ -359,6 +359,27 @@ const HANGING_TESTS = new Set([
   "test/language/statements/for-of/body-put-error.js",
 ]);
 
+// Tests whose failure mode is an UNHANDLED PROMISE REJECTION that terminates
+// the host process, rather than a scored failure. In the CompilerPool that
+// kills a worker; in an in-process run it aborts the run outright. Same
+// justification as HANGING_TESTS — a skip is earned only by a crash or a hang,
+// never by a test that merely fails.
+//
+// Verified 2026-08-23 by running each with the skip disabled: the process dies
+// with `ERR_MODULE_NOT_FOUND` escaping an async generator / top-level-await
+// cycle, after ~2-8s. Every OTHER file in both families runs and is counted.
+const PROCESS_KILLING_TESTS = new Set([
+  // #1696 family — `__dynamic_import` cannot resolve a test262 fixture path
+  // relative to the test file; in these two async-generator variants the
+  // rejection escapes instead of being scored.
+  "test/language/expressions/dynamic-import/usage/nested-async-gen-await-eval-script-code-host-resolves-module-code.js",
+  "test/language/expressions/dynamic-import/usage/nested-async-gen-return-await-eval-script-code-host-resolves-module-code.js",
+  // import-defer proposal subtree — the remaining 101 files run and are
+  // counted (28 of them PASS); only these two kill the process.
+  "test/language/import/import-defer/errors/module-throws/third-party-evaluation-after-defer-import.js",
+  "test/language/import/import-defer/evaluation-top-level-await/async-cycle-dependency-of-deferred-module/main.js",
+]);
+
 export function shouldSkip(source: string, meta: Test262Meta, filePath?: string): FilterResult {
   const scope = classifyTestScope(source, meta, filePath);
 
@@ -380,41 +401,30 @@ export function shouldSkip(source: string, meta: Test262Meta, filePath?: string)
     }
   }
 
-  // #1390: import-defer proposal tests are syntax-only — they have no
-  // `export function test()` and rely on either a parse-phase negative check
-  // or a `import defer` namespace runtime that we don't implement. With
-  // TEST262_INCLUDE_PROPOSALS=1 they show as ~31 false `compile_error: no test
-  // export` entries. Skip the whole subtree unconditionally so the conformance
-  // report stays clean regardless of the proposals flag.
+  // #1390 / re-measured 2026-08-23: the `language/import/import-defer/`
+  // subtree used to be skipped WHOLESALE. Measured with the skip disabled and
+  // TEST262_INCLUDE_PROPOSALS=1 (the value CI always uses), all 103 files run:
+  // 28 PASS, 71 fail, 2 compile_error — and exactly 2 kill the host process
+  // with an unhandled rejection. Only crashes and hangs earn a skip, so the
+  // subtree runs and the two process-killers are named individually below.
+  //
+  // The same rule applied to #1696's 18-file
+  // `eval-script-code-host-resolves-module-code` family: 16 of them compile
+  // and fail in ~1.7s on fixture-path resolution (`__dynamic_import` resolves
+  // the fixture relative to the runtime module, not the test file) — those now
+  // run and count; the 2 async-generator variants crash the host and are
+  // listed here.
+  //
+  // A crash is not merely expensive: in the CompilerPool it kills a worker,
+  // and in an in-process run it aborts the whole run.
   if (filePath) {
-    const relPath = filePath.replace(/.*test262\//, "");
-    if (relPath.includes("language/import/import-defer/")) {
+    const relPath = getTest262RelativePath(filePath) ?? "";
+    if (PROCESS_KILLING_TESTS.has(relPath)) {
       return {
         skip: true,
-        reason: "proposal feature: import defer (no test harness)",
+        reason: "unhandled rejection kills the host process (see PROCESS_KILLING_TESTS)",
       };
     }
-  }
-
-  // #1696: the 18-test `eval-script-code-host-resolves-module-code` family.
-  //
-  // Re-measured 2026-08-23 with the skip disabled — the ORIGINAL rationale is
-  // stale (they are no longer compile errors: the TypeScript var/function
-  // redeclaration rejection is gone and all 18 compile), but the family still
-  // cannot pass and skipping it still pays for itself:
-  //   - 16/18 fail in ~1.7s with `Cannot find module
-  //     '<repo>/src/runtime/module-code_FIXTURE.js'` — `__dynamic_import`
-  //     resolves the fixture relative to the runtime module, not to the test
-  //     file, so the fixture can never be found.
-  //   - 2/18 (nested-async-gen-{await,return-await}) escape as an UNHANDLED
-  //     rejection that kills the host process outright. In CI that costs a
-  //     CompilerPool worker; in-process it aborts the run.
-  // No pass is lost by skipping. Remove once fixture-relative resolution lands.
-  if (filePath && /eval-script-code-host-resolves-module-code/.test(filePath)) {
-    return {
-      skip: true,
-      reason: "dynamic-import fixture path unresolvable from runtime module (#1696)",
-    };
   }
 
   // #1073: annexB/language/eval-code blanket skip removed. The __extern_eval
