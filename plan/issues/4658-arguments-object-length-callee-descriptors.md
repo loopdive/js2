@@ -1,5 +1,23 @@
 ---
 id: 4658
+loc-budget-allow:
+  # `__vec_gopd`'s `length` descriptor synthesis lives here; the §10.4.4 answer
+  # has to be decided at that exact site. +19 lines = the brand/tombstone
+  # consults plus their rationale; the mechanism itself is a new leaf module
+  # (`src/codegen/arguments-length-brand.ts`), 0 lines of it in any god-file.
+  - src/codegen/vec-overlay.ts
+  # `emitArgumentsVecBody` is the single construction site every arguments
+  # object passes through — the brand cannot be minted anywhere else. +11 lines
+  # = one gated call plus why the gate is `registerWithHost`.
+  - src/codegen/statements/nested-declarations.ts
+  # +2 lines: the `$Object.flags` bit table comment, recording 0x40 as taken.
+  - src/codegen/object-runtime.ts
+func-budget-allow:
+  # Same +18 lines as the `vec-overlay.ts` allowance above, seen at function
+  # granularity: `__vec_gopd`'s bodies are built inside this one closure (it
+  # owns `missExtern`/`integrityBit`/`setKey`), so a consult that has to sit in
+  # the `length` arm cannot be hoisted out without duplicating that scope.
+  - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
 title: "ES5 standalone: arguments-object `length`/`callee` own-property descriptors — a NUMBER write to arguments.length sticks but a STRING write does not; gOPD reports wrong writable/configurable; typeof argObj.callee answers \"number\""
 status: ready
 sprint: current

@@ -81,6 +81,7 @@
 import type { Instr, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { CARRIER_BAG_DELETE } from "./carrier-bag-delete.js";
+import { buildArgumentsLengthDeleteArm } from "./arguments-length-brand.js"; // (#4658) §10.4.4 `length`
 import { CARRIER_BAG_HAS, buildBagGopdFallback, buildBagHasFallback } from "./carrier-bag-visibility.js"; // (#4010 S3)
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 
@@ -523,6 +524,14 @@ export function buildVecDeletePrologue(ctx: CodegenContext, fn: WasmFunction, d:
         { op: "local.get", index: anyLocal },
         { op: "call", funcIdx: d.ensureIdx },
         { op: "local.set", index: compLocal },
+        // (#4658) §10.4.4 `delete <argumentsObject>.length`. The vec has no
+        // per-key storage for `length` (`__vec_prop_set` refuses the key so the
+        // real vec length can never be shadowed), so the deletion is recorded
+        // as a tombstone bit on the companion and read back by the
+        // `__hasOwnProperty` / `__vec_gopd` length arms. Reached only after the
+        // `configurable` gate above, so a sealed/frozen arguments object still
+        // refuses. `[]` for any module with no branded arguments object.
+        ...buildArgumentsLengthDeleteArm(ctx, 0, keyLocal),
         ...d.parseIndex(keyLocal, indexLocal),
         { op: "local.get", index: indexLocal },
         { op: "i32.const", value: 0 },

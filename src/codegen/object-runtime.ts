@@ -267,8 +267,10 @@ const OBJ_FLAG_FROZEN = 0x04;
 // carrier. Set on the `$Object.flags` field (a genuine internal slot, NOT an
 // own property — so a plain `{ rawJSON: '…' }` is distinguishable from a real
 // raw-JSON object). `JSON.isRawJSON` reads this bit. 0x10/0x20 are #4120's
-// callable/ctor brand (builtin-callable-brand.ts), 0x40+ free; the isFrozen/
-// isSealed/isExtensible helpers mask only their own bits, so all stay inert.
+// callable/ctor brand (builtin-callable-brand.ts), 0x40 is #4658's `arguments`
+// brand on the #3251 vec-overlay COMPANION (arguments-length-brand.ts), 0x80+
+// free; the isFrozen/isSealed/isExtensible helpers mask only their own bits, so
+// all stay inert.
 export const OBJ_FLAG_RAWJSON = 0x08;
 
 /**
