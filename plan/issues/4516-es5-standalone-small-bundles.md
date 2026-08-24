@@ -16,6 +16,9 @@ related: [2200, 2552, 3626]
 loc-budget-allow:
   - src/codegen/regexp-standalone.ts
   - src/codegen/expressions/calls.ts
+func-budget-allow:
+  - src/codegen/regexp-standalone.ts::ensureDynamicStandaloneRegExpCompiler
+  - src/codegen/regexp-dynamic-pattern.ts::ensureDynamicPatternTokenDecoder
 ---
 
 # ES5 standalone small bundles — ~39 rows across 6 mechanical buckets
