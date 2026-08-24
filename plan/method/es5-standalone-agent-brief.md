@@ -679,3 +679,40 @@ Provenance: #4655 wave-1 fell back on this when its 3,082-file sweep was OOM-kil
 got a better answer from a smaller set (adjacent tier 0 differ, 200-file sample 0 differ,
 own tier 21 differ and every one a `toLocaleString` caller). lane-4655b reused it for a
 125-file sample. It is now the preferred zero-regression argument, not the fallback.
+
+## `includes:` splices harness code into YOUR compilation unit
+
+Building a scoped file list by grepping the test *sources* for the API you touched will
+miss files that reach it through their metadata. A test262 file's
+`includes: [someHarness.js]` is compiled into the **same unit**, so a file whose own body
+never mentions `concat` still changes bytes when `resizableArrayBufferUtils.js` calls
+`builtinCtors.concat(...)`.
+
+Measured 2026-08-24 (#4655 concat lane): a byte-identity sample of 125 files had exactly
+one unexplained difference, and it was exactly the one file in the sample whose `includes:`
+pulled in a concat-calling harness. The anomaly closed completely — which is the point.
+
+Two consequences:
+
+- When you grep for callers, grep the `harness/` directory too, and expand `includes:`.
+- **An unexplained byte difference in an identity sample is a lead, not noise.** Chase it
+  to a named cause. If it will not close, your reachable set is wrong and every "cannot
+  move" claim resting on it is unsupported.
+
+## A pin made "unfoldable" can land on a DIFFERENT carrier
+
+The brief's unfoldability rule (write the pin loop-carried so the compiler cannot constant-fold
+the case away) has a failure mode that has now bitten twice.
+
+#4655 R8: an `it.fails` pin written loop-carried **passed** on the fix arm while the corpus
+row stayed red — when the defect *is* the spelling, unfoldability rewriting moves the pin to
+a cell that already worked.
+
+The concat lane hit the inverse. Rewriting the receiver as `var a = []; a[0] = 0; a.length = 3`
+instead of the corpus's `var a = [0]; a.length = 3` broke even the **direct** read — five pins
+moved onto a different carrier, exposing a separate live defect in the grow-gap marker rather
+than the one under test.
+
+So: after making a pin unfoldable, **re-derive that it still exercises the same carrier as the
+corpus row**. A pin that is unfoldable but lands elsewhere tests something real and answers the
+wrong question.
