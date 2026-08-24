@@ -33,9 +33,10 @@ both arms**, so pre-existing, not introduced by the concat fix.
 
 Declined by the concat lane on blast radius, and that judgement stands: `hasOwnProperty`
 is what test262's `propertyHelper.js` is built on, so changing it moves the harness under
-a large fraction of the corpus at once. Read `plan/issues/4667-*.md` before starting —
-it documents the adjacent case where narrowing an Array-identity predicate silently
-trades `10.6-6-2` away, and the same class of coupling applies here.
+a large fraction of the corpus at once. Read
+`plan/issues/4667-arguments-array-identity-vec-shared-rep.md` before starting — it
+documents the adjacent case where narrowing an Array-identity predicate silently trades
+`10.6-6-2` away, and the same class of coupling applies here.
 
 **This is the row-bearing half.** It is what `A3_T{1,2,3}` now fail on.
 
