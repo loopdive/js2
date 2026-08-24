@@ -76,9 +76,6 @@ export function tryEmitUnresolvableUpdateThrow(
 ): ValType | undefined {
   if (!ts.isIdentifier(operand)) return undefined;
   if (resolveWithBinding(fctx, operand.text) !== null) return undefined;
-  // (#4662) See `codegenHasBindingFor` — the checker cannot see a spliced eval
-  // body's own parameters/locals, so its silence must not become a throw.
-  if (codegenHasBindingFor(ctx, fctx, operand.text)) return undefined;
   // (#4640 D3) A SLOPPY IMPLICIT GLOBAL is unresolvable to the checker and
   // perfectly resolvable at run time: some `<name> = v` in this module creates
   // the property on the realm global object, and every other spelling of the
@@ -95,6 +92,13 @@ export function tryEmitUnresolvableUpdateThrow(
   // directly above: the environment record decides, not the checker.
   if (isSloppyImplicitGlobalBinding(ctx, fctx, operand.text)) return undefined;
   if (!ctx.oracle.isUnresolvableIdentifier(operand)) return undefined;
+  // (#4662) LAST, deliberately: the checker has just said "no symbol", and this
+  // asks whether that is knowledge or absence of it. See `codegenHasBindingFor`.
+  // Ordering it here (rather than earlier, where the map lookups would also be
+  // cheaper) keeps the predicate's meaning exact — it fires only on operands the
+  // helper was about to throw for — which is what makes its blast radius
+  // measurable rather than argued.
+  if (codegenHasBindingFor(ctx, fctx, operand.text)) return undefined;
   emitStaticTdzThrow(ctx, fctx, operand.text);
   return { kind: "f64" };
 }
