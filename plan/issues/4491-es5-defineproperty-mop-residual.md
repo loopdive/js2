@@ -1,7 +1,7 @@
 ---
 id: 4491
 title: "ES5 standalone: Object.defineProperty/defineProperties/create residual (90 tests) — descriptor MOP semantics on the dynamic object runtime"
-status: suspended
+status: ready
 sprint: current
 created: 2026-08-15
 updated: 2026-08-22
@@ -6618,3 +6618,46 @@ by one guarded block at the single fold site.
 
 `test262` gitlink verified untouched: `git status --short -- test262` empty
 throughout, and no commit on this branch touches the submodule.
+
+## Wave-7 landed (2026-08-24) — and re-bucketed what is left
+
+**Status stays `ready`, not `done`:** wave-7 took one root of several. It was found at
+`suspended`, which was stale.
+
+**Landed:** `Object.prototype.toString` had two lowerings and only one could see a value.
+The syntactic `.call(v)` form is owned by the #2501 compile-time fold, whose standalone
+ladder ended in a `[object Object]` that is a **fallback, not a classification** — under
+`allowJs` every `any` lands there. Measured: **11 of 16 receivers** answered wrongly by a
+baked constant, while the same question with a visible operand answered correctly. The
+#4119 runtime classifier could already prove most of them; it was unreachable from that
+spelling. Composed **runtime-answer-first, fold-constant-as-fallback** — never the reverse,
+because #4119's own record shows the reverse cost 27 passing rows.
+
+4 flips (`Object/create/15.2.3.5-4-15`, `Object/defineProperties/15.2.3.7-2-16`, plus
+out-of-census `Number/15.7.4-1` and `Error/prototype/S15.11.4_A2`), 0 regressions.
+`Object/prototype/S15.2.4_A1_T2` **moved, did not flip** — assertion 1 now passes, it fails
+at the `delete Object.prototype.toString` half, and is handed to **#4664** as the same
+deleted-member-observability root.
+
+### Three corrections to the earlier bucketing — do not re-derive these
+
+1. **The "Array-length descriptor cluster" is THREE roots, not one.** Only
+   `defineProperty/15.2.3.6-4-183` and `defineProperties/15.2.3.7-6-a-179` share one
+   (#4497). `defineProperties/15.2.3.7-6-a-183` and `keys/15.2.3.14-5-13` are separate.
+2. **The "propertyHelper-site cluster" is not a cluster at all.** The `315:18` / `316:18` /
+   `320:18` offsets are each test's **own failing line**, and the deltas are 302, 302 and
+   **305** — different harness prefixes. There is no shared root to hand back, and the
+   `Function/prototype` rows that share the message are not siblings of these.
+3. **`Object(v)` does not lose identity.** `Object(x) === x` holds on base for Date, array,
+   object, function and RegExp. That bucket is **dynamic-receiver member lookup**, not
+   ToObject — start there.
+
+### Still open here
+
+String-exotic index reads (`keys/15.2.3.14-5-a-4`, `preventExtensions/15.2.3.10-3-5`), the
+three Array-length roots above, and the singles (`create/15.2.3.5-4-15`'s neighbours,
+`defineProperty/15.2.3.6-3-138`, `-4-243-2`, `-4-589`, `freeze/15.2.3.9-2-a-12`,
+`getOwnPropertyNames/15.2.3.4-4-1`, `prototype/valueOf/S15.2.4.4_A14`, the `n_obj.constructor`
+pair). Explicitly **out of scope**: `defineProperty/S15.2.3.6_A1.js`, which fails on
+`standalone target emitted host imports: env::Document_createElement (#2961)` — a DOM-import
+issue, not descriptor MOP.
