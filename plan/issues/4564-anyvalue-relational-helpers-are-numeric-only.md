@@ -1,10 +1,10 @@
 ---
 id: 4564
-title: "STANDALONE relational/`+` coercion: the inline numeric cascade skips ToPrimitive — PARTIALLY FIXED (64 -> 48 wrong truth-table cells); the rest needs __to_primitive to reduce closure and Date carriers"
+title: "STANDALONE relational/`+` ToPrimitive: closure/Date/RegExp carriers and addition prototype close the 180-cell matrix; shared host `+` remains"
 status: in-progress
 sprint: current
 created: 2026-08-19
-updated: 2026-08-19
+updated: 2026-08-22
 priority: high
 horizon: m
 feasibility: medium
@@ -15,6 +15,8 @@ es_edition: 5
 language_feature: relational-operators
 goal: es5
 related: [4515, 2059, 1374, 4163]
+coercion-sites-allow:
+  - src/codegen/carrier-to-primitive.ts
 origin: "2026-08-19 ES5 standalone push, language/expressions lane. Root-caused to the bottom and deliberately NOT landed at the end of a long session; this file is the implementable spec."
 ---
 
@@ -217,3 +219,132 @@ The conclusion held, but the figures were noise and were retracted rather than
 left quotable. With two independent halves needing to move, a contaminated
 baseline is exactly how a partial fix reads as complete.
 
+
+## 2026-08-21 wave-2 census + Implementation Plan (coercion lane)
+
+The partial fix (`fcc0c206`) landed; the **coercion/language-core lane is 74
+rows** — `language/types/object` 12, `instanceof` 6, `assignment` 5,
+`types/string` 4, `types/reference` 4, `Scope chain disturbed` 6, long tail.
+Lane list: `.claude/worktrees/es5w2-coercion/.tmp/lane-tests.txt`.
+
+### Plan (ordered)
+
+1. Re-baseline lane + guard.
+2. **`__to_primitive` carrier coverage for closures and Dates** — the remaining
+   48 truth-table cells (24 relational function/Date, 24 `+`). This is the
+   shared object runtime, not `binary-ops.ts`. The explicitly rejected shortcut
+   stands: do NOT special-case the cascade to `__extern_toString` — it is
+   ToString, not ToPrimitive; it skips `valueOf` and converts a loud wrong
+   answer into a quiet one. Re-measure the 180-cell truth table before/after;
+   js-host must stay 180/180.
+3. **`language/types/object` rows**: mostly ToPrimitive-adjacent (constructor
+   identity, valueOf ordering) — expect step 2 to move several; re-measure
+   before touching anything else.
+4. **`instanceof` residue** (6): check against #4480 R3 (closure-proto
+   representation) before attempting; skip R3 shapes.
+5. **`Scope chain disturbed` (6)**: 5 of 6 need `with` (#4206) — verify the
+   count on this tree, fix the one reachable row, record the rest as blocked.
+
+### CORRECTION (2026-08-21, wave-2 baseline): js-host is NOT a valid guard for the `+` half
+
+The wave-1 "js-host 180/180" reading was made against **node-literal
+expectations** on that harness's matrix. The wave-2 lane rebuilt the table with
+**spec-identity expectations** (what the test262 rows actually assert), because
+two carrier texts are implementation-defined and node literals mis-measure them
+on this tree: our `fn.toString()` is `function () { [native code] }` (node
+prints the source text) and our `dt.toString()` is UTC (node prints local TZ).
+
+Under that corrected oracle, at the wave-2 branch point (`5176abc1`):
+
+| | wrong cells |
+| --- | ---: |
+| standalone | 50 |
+| **js-host** | **66** |
+
+**All 26 `+` cells are wrong in BOTH lanes, identically** — so `+`-ToPrimitive
+is a *shared* defect, not standalone-only, and **the js-host lane cannot serve
+as the guard for the `+` work** (it can still guard the relational half).
+
+Hand-verified single expressions, not just table cells:
+
+- `fn + fn` → NaN and `ob + ob` → NaN — plain **object** `+` is broken too,
+  not only closures.
+- `"1" + dt` → `"1[object Object]"` — a `Date` reduces via the generic default;
+  its own `toString` never runs.
+- `fn >= fn` → false, `dt >= dt` → false (the known relational half).
+
+## 2026-08-22 implementation handover — standalone matrix closed
+
+The wave-2 standalone prototype is implemented. It does not use the rejected
+ToString shortcut.
+
+### What changed
+
+- `__to_primitive` gets finalized carrier arms for compiled closures and
+  `__Date`/`__StandaloneRegExp` values. Each `valueOf`/`toString` step uses full HasProperty lookup
+  (carrier bag plus inherited builtin-prototype companions); only a true miss
+  runs that method's intrinsic at that exact position. Present non-callables and
+  object-returning methods shadow the same-name intrinsic and advance to the
+  next method. Exhausting both steps throws the canonical TypeError.
+- Closure default/number ordering is valueOf then
+  Function.prototype.toString. Date number ordering is valueOf then toString;
+  Date default/string ordering is toString then valueOf. Null, undefined,
+  number, boolean, string and bigint method results are accepted as primitives.
+- `String(Date)` delegates to the same string-hint carrier reduction and then
+  resumes the native primitive stringifier; raw null is completed as `"null"`
+  at that bridge.
+- Standalone object `+` now evaluates both operands, applies
+  ToPrimitive(default) left-to-right, and only then selects string concatenation
+  versus numeric addition. Object-containing primitive unions (for example
+  `{} | number`) take the runtime cascade. Known source closures can take it
+  next to a static string, so a custom `f.valueOf` is observable.
+- Class objects, callable Proxies and reified builtin callables are deliberately
+  not admitted as closure carriers. Their runtime identity needs separate
+  coverage; the existing static NativeFunction string path is preserved for the
+  working #4265 cases instead of misclassifying class instances by struct type.
+- Closure admission is provenance-checked. Direct/compound/destructuring
+  assignment, updates, later `var` initializers, for-in/of writes, direct eval,
+  and `with` all withdraw a mutable binding; property writes such as
+  `f.valueOf = ...` remain observable by the runtime cascade.
+- The RegExp arm uses ordinary default/number ordering (`valueOf`, then
+  `toString`) and the existing native `/source/flags` renderer; the string hint
+  reverses that order. This closes the ES5 exotic carrier that the broader
+  object-add gate would otherwise leave unreduced.
+- The base ordinary-object ToPrimitive helper now recognizes singleton
+  `undefined` (and bigint) results too; otherwise the new object-add path would
+  incorrectly continue from `valueOf() { return undefined; }` to `toString`.
+
+### Measured result
+
+- Standalone carrier/operator truth table: **180/180 correct** (previous wave-2
+  branch point: 130/180).
+- Focused regression: **35/35**, including own and inherited overrides,
+  non-callable shadowing, object-result fallback, null/undefined results,
+  terminal TypeError, Date/RegExp hint ordering, callable/static-string,
+  stable-binding provenance, builtin/Proxy preservation, and both arms of
+  `{} | number`.
+- Existing ToPrimitive/callable suites: **19/19**.
+- Frozen-candidate standalone guard: **551/551**, with an identical scoped
+  source/test fingerprint before and after the 8-shard run.
+- Prototype-write corpus, one fresh process per row: **120/121**, exactly the
+  documented `main` baseline. The sole not-pass is
+  `primitive-prototype-with-primitive.js`, whose cached QuickJS adapter is
+  unavailable; no branch-only regression.
+- Invariant guard: **176 pass / 17 fail / 4 skip**. An exact `origin/main` A/B
+  over the four failing files (`#2906`, `#2980`, `#3164`, `#3386`) produces the
+  same 17 failures, so the branch adds zero failures; several require Node's
+  `--experimental-wasm-exnref`, while the remaining invalid-module failures are
+  already present on `main`.
+- TypeScript 7 typecheck, scoped Biome/Prettier, LOC/function budgets and the
+  type-oracle ratchet: clean.
+
+### Still open before this issue can be called globally complete
+
+1. The new addition admission is native-first/standalone only. The corrected
+   wave-2 measurement showed a shared js-host `+` defect; this patch does not
+   change or re-measure that lane.
+2. Dynamic conversion overrides on non-closure callable identities (class
+   objects, reified builtin constructors, callable Proxies) need identity-aware
+   carrier coverage. The working static NativeFunction fallback is retained.
+3. Symbol/`@@toPrimitive` support remains the #1900 follow-up. ES2015+ carrier
+   families such as Map/Set are outside this bounded ES5 slice.

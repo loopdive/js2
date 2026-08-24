@@ -63,6 +63,7 @@ import { FLAG_INTERNAL, WRAPPER_PRIMITIVE_KEY, ensureObjectRuntime } from "./obj
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { compileExpression } from "./shared.js";
+import { receiverIsPrimitiveWrapper } from "./object-ctor-primitive-receiver.js";
 
 const HELPER = "__dyn_valueOf";
 
@@ -90,7 +91,17 @@ export function tryEmitDynamicValueOfCall(
 ): ValType | undefined {
   if (!ctx.standalone) return undefined;
   const fact = ctx.oracle.typeFactOf(propAccess.expression).kind;
-  if (fact !== "any" && fact !== "unknown") return undefined;
+  // (#4491 wave-5 T2) …plus the one receiver whose static type is a LIE about
+  // its shape: `new Object(<primitive>)` types as `Object`, but §20.1.1.1 makes
+  // it a String/Number/Boolean wrapper. `Object(1.1)` types as `any` and has
+  // always come here; `new Object(1.1)` did not, and fell to the caller's
+  // blanket `Object.prototype.valueOf` identity — returning the WRAPPER where
+  // §21.1.3.7 requires its [[NumberData]]. The two spellings are spec-identical,
+  // so this makes the lowering agree with itself. Same predicate #4232 uses to
+  // stand the `.constructor` fold down for these receivers.
+  if (fact !== "any" && fact !== "unknown" && !receiverIsPrimitiveWrapper(ctx, propAccess.expression)) {
+    return undefined;
+  }
   const helperIdx = ensureDynamicValueOfHelper(ctx);
   if (helperIdx < 0) return undefined;
   flushLateImportShifts(ctx, fctx);

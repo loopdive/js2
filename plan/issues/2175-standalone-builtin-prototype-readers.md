@@ -1,12 +1,12 @@
 ---
 id: 2175
 title: "architect spec: standalone builtin-prototype object representation + native-method-closure dispatch"
-status: ready
+status: suspended
 model: fable
 fable_role: spec
 sprint: current
 created: 2026-06-16
-updated: 2026-07-17
+updated: 2026-08-22
 priority: high
 feasibility: hard
 model: fable
@@ -38,6 +38,14 @@ func-budget-allow:
   # module (src/codegen/function-prototype-callable.ts); only the ordered
   # dispatch arm is here, and it must precede the generic signature count.
   - src/codegen/property-access-dispatch.ts::tryLengthAndNameReads
+coercion-sites-allow:
+  # 2026-08-21 lane D (arguments inside `new F(…)`): __box_number/__unbox_number
+  # here are a REPRESENTATION transfer, not a hand-rolled ToNumber — numeric
+  # ctor params ride the externref arguments vector and the mapped-arguments
+  # writeback restores the declared param slot type. Same class as the
+  # bound-fn-meta declaration (#4562): routing through the coercion engine
+  # would coerce values §10.4.4 says must pass through unchanged.
+  - src/codegen/fnctor-ctor-arguments.ts
 depends_on: [2101]
 origin: "2026-06-16 — sdev5 #2161a refinement: RegExp.prototype-as-object refusal is the convergent gate across RegExp/class/TypedArray standalone reflection"
 ---
@@ -2296,3 +2304,21 @@ biome clean; `tsc --noEmit` clean on all three touched files.
 spec-correct for user TypeScript that declares an explicit `this` parameter,
 but that surface was reasoned about (no top-level `this:` in any other bundled
 `lib.*.d.ts` method signature) rather than measured.
+
+## Suspended Work — builtin-prototype readers (2026-08-22)
+
+Merged via #4723: `arguments` inside `new F(…)` (the __extras_argv/__argc
+protocol at the ctor call site, `fnctor-ctor-arguments.ts`) and instanceof
+boolean branding. Wave-5 T9 later seeded `constructor` into the builtin-proto
+companion — which turned out to also break the QuickJS provider canary until
+#4491's T10 stopped `constructor` taking the `Object.prototype` fallthrough in
+the proto-index walk.
+
+Open, with prices attached in #4491: the `memberCsv` exclusion is load-bearing
+(a CSV entry would mint a brand-keyed closure, making `Error.prototype.
+constructor` a callable refusal stub); `Date`/`Function` decline the seed for
+want of an identity-stable carrier (#4200 follow-ups); `Iterator` needs an
+accessor pair. Four `tests/issue-4200.test.ts` guards are now stale against the
+seed and need #4200's owner to adjudicate.
+
+Resume from #4491's "Suspended Work" section.

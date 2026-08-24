@@ -25,6 +25,7 @@ import {
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, resolveArrayInfo } from "../array-methods.js";
 import { isWiredTypedArrayViewName } from "../array-object-proto.js";
+import { ensureWrapperProtoDynamicMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
 import {
   emitStandalonePromiseFinally,
   emitStandalonePromiseThen,
@@ -32,12 +33,17 @@ import {
 } from "../async-scheduler.js";
 import { isSupportedBuiltinStaticProperty, resolveBuiltinNamespaceValueName } from "../builtin-static-globals.js";
 import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.js";
-import { reserveClosedMethodDispatch, reserveClosedMethodDispatchVararg } from "../closed-method-dispatch.js";
+import {
+  buildCallSiteNullishReceiverGuard, // (#4656) callee-reference-before-arguments
+  callSiteNullishReceiverGuardApplies,
+  reserveClosedMethodDispatch,
+  reserveClosedMethodDispatchVararg,
+} from "../closed-method-dispatch.js";
 import { compileArrowAsClosure, computeClosureWrapperSig } from "../closures.js";
 import { tryEmitDirectTwinCall } from "../typed-this.js"; // (#3683 S3) direct-call devirtualization
 import { undefinedExternInstrs } from "../any-helpers.js"; // (#3683 S3b) arity-padding sentinel
 import { pushBody } from "../context/bodies.js";
-import { allocLocal } from "../context/locals.js";
+import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
 import { tryEmitFixedHostMethodCall } from "../fixed-host-method-call.js";
@@ -119,6 +125,8 @@ import { tryCompileTemporalMethodCall } from "../temporal-native.js";
 import { ensureTextEncodingHelpers } from "../text-encoding-native.js";
 import { defaultValueInstrs, emitGuardedRefCast, pushDefaultValue } from "../type-coercion.js";
 import { compileDateMethodCall } from "./builtins.js";
+// (#4479 slice 2) Annex B §B.2.2 legacy accessor methods on an ordinary receiver.
+import { tryCompileAnnexBAccessorCall } from "../object-proto-annex-b-accessors.js";
 import {
   compileCallablePropertyCall,
   compileGetterCallable,
@@ -404,6 +412,16 @@ function tryCompileLateFnctorPrototypeMethodCall(
     coerceType(ctx, fctx, recvType, { kind: "externref" });
   } else if (recvType === null) {
     fctx.body.push({ op: "ref.null.extern" });
+  }
+  // (#4656) §13.3.6.1 callee-reference-before-arguments — see
+  // `buildCallSiteNullishReceiverGuard` for why a callee-side guard cannot get
+  // this order right. The receiver is on the stack here, so `local.tee` into a
+  // POOLED temp keeps it there and costs no per-site local.
+  if (callSiteNullishReceiverGuardApplies(ctx, methodName)) {
+    const guardTmp = allocTempLocal(fctx, { kind: "externref" });
+    fctx.body.push({ op: "local.tee", index: guardTmp });
+    fctx.body.push(...buildCallSiteNullishReceiverGuard(ctx, guardTmp, methodName));
+    releaseTempLocal(fctx, guardTmp);
   }
   if (!ctx.standalone && !ctx.wasi) {
     // Keep one receiver copy for `this`, then resolve the current method value
@@ -700,6 +718,12 @@ export function compileReceiverMethodCall(
   if (propAccess.name.text === "hasOwnProperty" || propAccess.name.text === "propertyIsEnumerable") {
     return compilePropertyIntrospection(ctx, fctx, propAccess, expr);
   }
+
+  // (#4479 slice 2) Annex B §B.2.2 `o.__defineGetter__(k, f)` & friends — here
+  // for the introspection arm's reason: the receiver may be ANY object, so the
+  // extern-class dispatch below would hunt a member no builtin declares.
+  const annexBAccessor = tryCompileAnnexBAccessorCall(ctx, fctx, propAccess, expr);
+  if (annexBAccessor !== undefined) return annexBAccessor;
 
   // #1654/#4397 — the native DataView provider is independent of the embedder.
   // It must run before extern-class dispatch so native-first JS builds do not
@@ -1149,12 +1173,32 @@ export function compileReceiverMethodCall(
     const wrapperMethodName = propAccess.name.text;
     const isWrapperReceiver =
       isStringWrapperType(receiverType) || isNumberWrapperType(receiverType) || isBooleanWrapperType(receiverType);
-    if (
+    const wrapperDynamicCandidate =
       isWrapperReceiver &&
       (wrapperMethodName === "valueOf" || wrapperMethodName === "toString") &&
-      expr.arguments.length === 0 &&
-      sourceHasMethodReassignment(ctx, propAccess.expression, wrapperMethodName)
-    ) {
+      sourceHasMethodReassignment(ctx, propAccess.expression, wrapperMethodName);
+    if (wrapperDynamicCandidate) {
+      // (#4619 family D) Make the destination of this hand-off EXIST — and do
+      // it regardless of the argument count that gates the dispatch below, for
+      // the reason recorded in wrapper-proto-dynamic-demand.ts.
+      ensureWrapperProtoDynamicMember(
+        ctx,
+        isStringWrapperType(receiverType) ? "String" : isNumberWrapperType(receiverType) ? "Number" : "Boolean",
+        wrapperMethodName,
+      );
+    }
+    // (#4619) …and dispatch dynamically for an ARGUMENT-CARRYING call too, but
+    // only for the members the spec gives no parameters — §20.3.3.3 / §22.1.3.28
+    // `valueOf` and §20.3.3.2 / §22.1.3.27 `toString`, which ignore anything
+    // passed. `Number.prototype.toString` is excluded because its argument is
+    // the §21.1.3.6 RADIX and the standalone `__extern_method_call` path
+    // deliberately carries no args (`emitWrapperDynamicMethodCall`), so routing
+    // it here would silently drop the radix. Measured on base:
+    // `(new Boolean(-1)).valueOf(false)` (test262 `S15.6.4.3_A1_T2`) fell to the
+    // legacy arm that recompiles the WRAPPER as `i32` and answered `false`.
+    const memberIgnoresArguments =
+      wrapperMethodName === "valueOf" || (wrapperMethodName === "toString" && !isNumberWrapperType(receiverType));
+    if (wrapperDynamicCandidate && (expr.arguments.length === 0 || memberIgnoresArguments)) {
       const dynResult = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, wrapperMethodName);
       if (dynResult) return dynResult;
     }
@@ -1174,15 +1218,25 @@ export function compileReceiverMethodCall(
     //     it needs the radix-aware numeric ToString lowering, so it falls through.
     //   - Boolean wrappers — the internal slot is a `$__box_boolean_struct`, whose
     //     extraction differs from the boxed-number unbox used here.
+    // (#4619) The arg count no longer gates this arm. EVERY member it covers is
+    // spec-parameterless — §22.1.3.28/§22.1.3.27 `String.prototype.{valueOf,
+    // toString}`, §21.1.3.7 `Number.prototype.valueOf`, §20.3.3.3
+    // `Boolean.prototype.valueOf` — so an argument is ignored, and the ONLY
+    // arg-bearing wrapper member that matters (`Number.prototype.toString`'s
+    // radix) is already excluded by name. Requiring 0 args sent the arg-bearing
+    // spellings to the legacy tail, which recompiles the WRAPPER as a primitive
+    // ValType: measured on base, `(new Boolean(-1)).valueOf(false)` answered
+    // `false` (test262 `S15.6.4.3_A1_T2`) and `(new String("ab")).valueOf(1)`
+    // answered `"[object Object]"`. The arguments are still EVALUATED below, in
+    // source order, so a side-effecting one is not skipped.
     const isWrapperValueAccessor =
-      expr.arguments.length === 0 &&
-      ((recvSymName === "String" && (wrapperMethodName === "valueOf" || wrapperMethodName === "toString")) ||
-        (recvSymName === "Number" && wrapperMethodName === "valueOf") ||
-        // #1910 R3 — Boolean wrapper .valueOf() in standalone: the internal
-        // slot holds a boxed boolean (`__box_boolean_struct`), recovered by
-        // `__to_primitive`; unbox it to the i32 primitive below (§20.3.3.3
-        // Boolean.prototype.valueOf returns the [[BooleanData]] slot).
-        (recvSymName === "Boolean" && wrapperMethodName === "valueOf"));
+      (recvSymName === "String" && (wrapperMethodName === "valueOf" || wrapperMethodName === "toString")) ||
+      (recvSymName === "Number" && wrapperMethodName === "valueOf") ||
+      // #1910 R3 — Boolean wrapper .valueOf() in standalone: the internal
+      // slot holds a boxed boolean (`__box_boolean_struct`), recovered by
+      // `__to_primitive`; unbox it to the i32 primitive below (§20.3.3.3
+      // Boolean.prototype.valueOf returns the [[BooleanData]] slot).
+      (recvSymName === "Boolean" && wrapperMethodName === "valueOf");
 
     // #2160 — standalone recovery of the wrapper's internal [[PrimitiveValue]]
     // slot. In --target standalone there is no JS host, so `new String(x)` /
@@ -1192,8 +1246,8 @@ export function compileReceiverMethodCall(
     // ValType (which traps / yields the wrong value for a `$Object` receiver).
     // Route through the native `__to_primitive` helper, which reads that slot
     // first (§7.1.1.1), then apply the method's result type. `Number.prototype.
-    // toString` with a radix is NOT this path (arguments.length === 0 above), so
-    // it falls through to the radix-aware toString lowering. Gated on
+    // toString` with a radix is NOT this path (excluded by member name above),
+    // so it falls through to the radix-aware toString lowering. Gated on
     // `ctx.standalone` specifically — WASI keeps the host-import object
     // machinery (the native object-runtime is standalone-only), so it stays on
     // the legacy paths below.
@@ -1218,6 +1272,13 @@ export function compileReceiverMethodCall(
         // valueOf — matches OrdinaryToPrimitive's hint ordering.
         const hint = wrapperMethodName === "toString" || recvSymName === "String" ? "string" : "number";
         compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
+        // (#4619) §13.3.6.2: the arguments are evaluated even though these
+        // members take none. Compile-and-drop, after the receiver, in source
+        // order — the arm is stack-neutral so the receiver stays on top.
+        for (const argExpr of expr.arguments) {
+          const argResult = compileExpression(ctx, fctx, argExpr);
+          if (argResult !== null) fctx.body.push({ op: "drop" });
+        }
         addStringConstantGlobal(ctx, hint);
         fctx.body.push(...stringConstantExternrefInstrs(ctx, hint));
         fctx.body.push({ op: "call", funcIdx: toPrimIdx });
@@ -3699,6 +3760,14 @@ export function compileReceiverMethodCall(
         } else if (recvType === null) {
           fctx.body.push({ op: "ref.null.extern" });
         }
+        // (#4656) §13.3.6.1 callee-reference-before-arguments — this is the arm
+        // `11.2.3-3_3` takes. See `buildCallSiteNullishReceiverGuard`.
+        if (callSiteNullishReceiverGuardApplies(ctx, methodName)) {
+          const guardTmp = allocTempLocal(fctx, { kind: "externref" });
+          fctx.body.push({ op: "local.tee", index: guardTmp });
+          fctx.body.push(...buildCallSiteNullishReceiverGuard(ctx, guardTmp, methodName));
+          releaseTempLocal(fctx, guardTmp);
+        }
         // Each argument compiled and boxed to externref (the dispatcher unboxes
         // to the method's declared param type per candidate struct).
         for (const arg of dispatchArgs) {
@@ -4068,6 +4137,10 @@ export function compileReceiverMethodCall(
           }
           const recvLocal = allocLocal(fctx, `__emc_recv_${fctx.locals.length}`, { kind: "externref" });
           fctx.body.push({ op: "local.set", index: recvLocal });
+
+          // (#4656) Same §13.3.6.1 ordering fix for the generic
+          // `__extern_method_call` arm; the receiver already has a local here.
+          fctx.body.push(...buildCallSiteNullishReceiverGuard(ctx, recvLocal, methodName));
 
           // Build args array
           fctx.body.push({ op: "call", funcIdx: arrNewIdx });

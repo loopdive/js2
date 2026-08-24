@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import { elementAccessAssignedMemberName } from "./element-access-member-names.js";
 
 const functionMemberNames = new WeakMap<ts.SourceFile, Set<string>>();
 const aliasedFunctionMembers = new WeakMap<ts.SourceFile, Map<string, Set<string>>>();
@@ -17,6 +18,11 @@ export function sourceDefinesFunctionMember(sourceFile: ts.SourceFile, name: str
       (ts.isFunctionExpression(node.right) || ts.isArrowFunction(node.right) || ts.isIdentifier(node.right))
     ) {
       names!.add(node.left.name.text);
+    } else if (elementAccessAssignedMemberName(node) !== undefined) {
+      // (#4491) `o['dispose'] = function () {}` — the bracket spelling of the
+      // same write. See element-access-member-names.ts for why the miss was a
+      // live miscompile, not a cosmetic gap.
+      names!.add(elementAccessAssignedMemberName(node)!);
     } else if (ts.isObjectLiteralExpression(node)) {
       for (const property of node.properties) {
         if (ts.isMethodDeclaration(property) && ts.isIdentifier(property.name)) names!.add(property.name.text);

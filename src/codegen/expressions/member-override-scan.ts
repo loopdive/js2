@@ -233,5 +233,51 @@ function constructedInstanceInstallsMethod(
     forEachChild(node, visit);
   }
   visit(body);
+  if (installs) return true;
+  return ctorPrototypeInstallsMethod(init.expression, methodName);
+}
+
+/**
+ * (#2875 b2) The PROTOTYPE-INSTALLED half of {@link constructedInstanceInstallsMethod}.
+ *
+ * `constructedInstanceInstallsMethod` only sees slots the constructor writes on
+ * `this`. The other ES5 way to give an instance a `toString` is the prototype:
+ *
+ *     function F(v){ this.value = v; }
+ *     F.prototype.toString = function(){ return this.value + ""; };
+ *     new F(7).toString();          // must be "7"
+ *
+ * — and that write's receiver is `F.prototype`, which neither the binding scan
+ * nor the `this` scan matches. So the caller kept the static
+ * `Object.prototype.toString` arm and answered "[object Object]".
+ *
+ * Matches a WHOLE-property write `<Ctor>.prototype.<methodName> = …` anywhere
+ * in the constructor's file. Deliberately not receiver-precise beyond the
+ * constructor identity: the prototype object is shared by every instance of
+ * `F`, so one such write shadows the inherited member for all of them.
+ */
+function ctorPrototypeInstallsMethod(ctorId: ts.Identifier, methodName: string): boolean {
+  const sf = ctorId.getSourceFile();
+  if (!sf) return false;
+  let installs = false;
+  function visit(node: ts.Node): void {
+    if (installs) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      !ts.isPrivateIdentifier(node.left.name) &&
+      node.left.name.text === methodName &&
+      ts.isPropertyAccessExpression(node.left.expression) &&
+      node.left.expression.name.text === "prototype" &&
+      ts.isIdentifier(node.left.expression.expression) &&
+      node.left.expression.expression.text === ctorId.text
+    ) {
+      installs = true;
+      return;
+    }
+    forEachChild(node, visit);
+  }
+  visit(sf);
   return installs;
 }

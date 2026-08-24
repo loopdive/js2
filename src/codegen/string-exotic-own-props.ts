@@ -323,6 +323,196 @@ export function registerStringExoticHasOwn(
   return funcIdx;
 }
 
+export const STRING_EXOTIC_PUSH_KEYS_FN = "__strexo_push_keys";
+
+/**
+ * (#4491) Register `__strexo_push_keys(obj externref, vec externref) -> i32` —
+ * the ENUMERATION half of §10.4.3, the counterpart to
+ * {@link registerStringExoticHasOwn}'s presence half.
+ *
+ * `hasOwnProperty` has answered String-exotic own properties correctly since
+ * #4232, but `Object.keys` / `getOwnPropertyNames` never did: their key list is
+ * built by walking the `$Object` own-props TABLE, and a String exotic's indices
+ * are DERIVED from the `[[PrimitiveValue]]` [[StringData]], not table entries.
+ * Measured on this branch, `--target standalone`, before this native existed:
+ *
+ * ```js
+ * Object.keys("abc");                          // []                    ← ["0","1","2"]
+ * Object.keys(new String("abc"));              // []                    ← ["0","1","2"]
+ * Object.getOwnPropertyNames(new String("abc"));// ["[[PrimitiveValue]]"] ← ["0","1","2","length"]
+ * ```
+ *
+ * Pushes `"0" … "len-1"` into `vec` and answers 1 when `obj` is a String
+ * exotic, else pushes nothing and answers 0 — so a non-String receiver is
+ * byte-identical to the pre-existing walk.
+ *
+ * **Order.** §10.4.3.6 OrdinaryOwnPropertyKeys puts the integer indices first,
+ * ascending, then the other string keys in creation order. The string's own
+ * indices are always the LOWEST — an index below `[[StringData]].length` is
+ * non-configurable (§10.4.3.5), so a `defineProperty` there can never create a
+ * competing table entry — which is why pushing them all up front, before the
+ * table walk, is the spec order rather than an approximation of it.
+ *
+ * `length` is NOT pushed here: it is a non-index string key, so it belongs
+ * AFTER the table's index entries (`Object.getOwnPropertyNames(str)` with
+ * `str[5] = "de"` is `["0","1","2","5","length"]`), and it is non-enumerable so
+ * `Object.keys` must not have it at all. The gOPN caller appends it once the
+ * table walk is done, keyed on this native's return value.
+ *
+ * **Two receiver shapes.** A `new String(…)` wrapper is a `$Object` carrying
+ * the reserved slot; a PRIMITIVE string reaching `Object.keys("abc")` is the
+ * `$AnyString` itself (the ToObject at the call site is not materialized in the
+ * standalone lane). Both resolve to the same [[StringData]] here.
+ */
+export function registerStringExoticPushKeys(
+  ctx: CodegenContext,
+  deps: {
+    objectTypeIdx: number;
+    propEntryTypeIdx: number;
+    objFindIdx: number;
+    objVecPushIdx: number;
+  },
+): number | undefined {
+  if (!ctx.standalone) return undefined;
+  const already = ctx.funcMap.get(STRING_EXOTIC_PUSH_KEYS_FN);
+  if (already !== undefined) return already;
+  const anyStr = ctx.anyStrTypeIdx;
+  if (anyStr < 0) return undefined;
+  // The canonical index key is ToString(i) — the sealed `number_toString`, the
+  // same formatter every other index-key producer uses (`__extern_get_idx`'s
+  // `$Object` arm, the overlay's companion lookup, `emitArrayForIn`). Resolved
+  // here rather than threaded in from `ensureObjectRuntime` so the
+  // coercion-sites grant names THIS module, not the shared god-file.
+  const numToStringIdx = ctx.funcMap.get("number_toString");
+  if (numToStringIdx === undefined) return undefined;
+  const { objectTypeIdx, propEntryTypeIdx, objFindIdx, objVecPushIdx } = deps;
+
+  // params: 0 obj, 1 vec. locals below start at 2.
+  const L_ANY = 2;
+  const L_SLOT = 3;
+  const L_STR = 4;
+  const L_N = 5;
+  const L_I = 6;
+
+  const returnZero: Instr[] = [{ op: "i32.const", value: 0 }, { op: "return" }];
+
+  const body: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: L_ANY },
+    { op: "ref.test", typeIdx: objectTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      // Wrapper: [[StringData]] lives in the reserved [[PrimitiveValue]] slot.
+      then: [
+        { op: "local.get", index: L_ANY },
+        { op: "ref.cast", typeIdx: objectTypeIdx },
+        ...nativeStringLiteralInstrs(ctx, WRAPPER_PRIMITIVE_KEY),
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: objFindIdx },
+        { op: "local.tee", index: L_SLOT },
+        { op: "ref.is_null" },
+        { op: "if", blockType: { kind: "empty" }, then: returnZero },
+        { op: "local.get", index: L_SLOT },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: ENTRY_VALUE },
+        { op: "ref.test", typeIdx: anyStr },
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: returnZero },
+        { op: "local.get", index: L_SLOT },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: ENTRY_VALUE },
+        { op: "ref.cast", typeIdx: anyStr },
+        { op: "local.set", index: L_STR },
+      ],
+      // Primitive string receiver — it IS the [[StringData]].
+      else: [
+        { op: "local.get", index: L_ANY },
+        { op: "ref.test", typeIdx: anyStr },
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: returnZero },
+        { op: "local.get", index: L_ANY },
+        { op: "ref.cast", typeIdx: anyStr },
+        { op: "local.set", index: L_STR },
+      ],
+    },
+    // n = [[StringData]].length (field 0 of `$AnyString`, valid for the flat
+    // and the cons shape alike); i = 0.
+    { op: "local.get", index: L_STR },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: anyStr, fieldIdx: STR_LEN },
+    { op: "local.set", index: L_N },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: L_I },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: L_I },
+            { op: "local.get", index: L_N },
+            { op: "i32.ge_s" },
+            { op: "br_if", depth: 1 },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: L_I },
+            { op: "f64.convert_i32_s" },
+            { op: "call", funcIdx: numToStringIdx },
+            { op: "call", funcIdx: objVecPushIdx },
+            { op: "local.get", index: L_I },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "local.set", index: L_I },
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    },
+    { op: "i32.const", value: 1 },
+  ];
+
+  const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(STRING_EXOTIC_PUSH_KEYS_FN, funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: STRING_EXOTIC_PUSH_KEYS_FN,
+    typeIdx,
+    locals: [
+      { name: "any", type: { kind: "anyref" } },
+      { name: "slot", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
+      { name: "sdata", type: { kind: "ref_null", typeIdx: anyStr } },
+      { name: "n", type: { kind: "i32" } },
+      { name: "i", type: { kind: "i32" } },
+    ],
+    body,
+    exported: false,
+  });
+  return funcIdx;
+}
+
+/**
+ * The prologue spliced into `__object_keys` / `__getOwnPropertyNames` right
+ * after they mint their result vector: push the String-exotic index keys and
+ * park the "was a String exotic" answer in `flagLocal` (pass `undefined` to
+ * discard it — `Object.keys` has no `length` tail to gate).
+ *
+ * Empty when the native was never registered, so a non-standalone or
+ * native-string-less build is byte-identical.
+ */
+export function stringExoticPushKeysPrologue(ctx: CodegenContext, vecLocal: number, flagLocal?: number): Instr[] {
+  const funcIdx = ctx.funcMap.get(STRING_EXOTIC_PUSH_KEYS_FN);
+  if (funcIdx === undefined) return [];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: vecLocal },
+    { op: "call", funcIdx },
+    flagLocal === undefined ? { op: "drop" } : { op: "local.set", index: flagLocal },
+  ];
+}
+
 /**
  * The prologue spliced at the FRONT of `__hasOwnProperty` / `__object_hasOwn`:
  * consult the native, return 1 on a hit, otherwise fall through untouched.

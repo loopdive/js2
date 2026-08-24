@@ -296,7 +296,7 @@ import {
   type IrSelection,
 } from "./select.js";
 import { verifyIrFunction } from "./verify.js";
-import { irModuleDeclarations } from "./declared-types.js";
+import { programAbiModuleDeclarations } from "../codegen/program-abi-declared-globals.js";
 import { prepareIrRuntimeManifest, type PreparedIrRuntimeManifest } from "./intrinsic-support.js";
 import { attachIrExternSupport } from "./extern-support.js";
 import { attachIrGeneratorSupport, collectAttachedGeneratorProviders } from "./generator-support.js";
@@ -2187,11 +2187,9 @@ export function compileIrPathFunctions(
   }
 
   // 2c. Re-run hygiene on functions the inline pass actually rewrote; verify.
-  // (#4605) The module IS in scope here, so the verifier gets its declared
-  // signatures — a call site whose arity or result carrier contradicts the
-  // callee's own declaration is caught even when it is the only reference to
-  // that callee in its function.
-  const declsAfterInline = irModuleDeclarations(modOut);
+  // (#4605/#4608) Module declarations catch lone contradictory sibling calls
+  // and global references against exact Program ABI allocator carriers.
+  const declsAfterInline = programAbiModuleDeclarations(ctx, modOut);
   const afterInline: BuiltFn[] = [];
   for (let i = 0; i < afterHygiene.length; i++) {
     const before = afterHygiene[i]!;
@@ -2473,9 +2471,8 @@ export function compileIrPathFunctions(
   // (usually a no-op but cheap).
   // -------------------------------------------------------------------------
   const readyForLower: BuiltFn[] = [];
-  // (#4605) Same declared-signature check as after inlining, re-derived after
-  // monomorphization: clones are new units with their own declarations.
-  const declsAfterTU = irModuleDeclarations(modAfterTU);
+  // (#4605/#4608) Re-derive function/global declarations after monomorphization.
+  const declsAfterTU = programAbiModuleDeclarations(ctx, modAfterTU);
 
   for (const fn of modAfterTU.functions) {
     const before = afterInlineByUnitId.get(fn.unitId);

@@ -336,9 +336,26 @@ export function emitImplicitGlobalRead(ctx: CodegenContext, fctx: FunctionContex
   if (!emitGlobalEnvironmentObject(ctx, fctx)) return null;
   const objectLocal = allocLocal(fctx, `__implicit_global_obj_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: objectLocal });
-  const hasOwnIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__hasOwnProperty");
+  const hasOwnIdx0 = ensureGlobalEnvironmentOperation(ctx, fctx, "__hasOwnProperty");
   const getIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_get");
-  if (hasOwnIdx === undefined || getIdx === undefined) return null;
+  if (hasOwnIdx0 === undefined || getIdx === undefined) return null;
+  // (#4640) HARDENING, not a measured fix — say so plainly. Registering
+  // `__extern_get` on the line above can add a late import, and a late import
+  // SHIFTS every function index at or above its insertion point
+  // (#1839/#117/#1886). `flushLateImportShifts` repairs indices already EMITTED
+  // into a body; it cannot repair one still sitting in a local variable, and
+  // `hasOwnIdx0` is captured before the shift and pushed after it. Same for
+  // `getIdx`, which is pushed after `emitThrowReferenceError` may have
+  // registered `__new_ReferenceError`.
+  //
+  // `emitRuntimeEvalGlobalRead` immediately below already re-reads both of its
+  // own indices for exactly this reason; this arm was the one that did not, and
+  // the asymmetry is the kind that gets discovered by a miscompile. It was
+  // investigated as a candidate cause of the #4640 D3 failure and RULED OUT
+  // (the real cause was `tryEmitUnresolvableUpdateThrow` / the missing compound
+  // arm); no shift was observed here. The re-read is a no-op when nothing
+  // shifted, so it costs nothing to keep the two readers symmetric.
+  const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty") ?? hasOwnIdx0;
 
   fctx.body.push({ op: "local.get", index: objectLocal });
   emitGlobalEnvironmentKey(ctx, fctx, name);
@@ -351,7 +368,7 @@ export function emitImplicitGlobalRead(ctx: CodegenContext, fctx: FunctionContex
 
   fctx.body.push({ op: "local.get", index: objectLocal });
   emitGlobalEnvironmentKey(ctx, fctx, name);
-  fctx.body.push({ op: "call", funcIdx: getIdx });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
   return { kind: "externref" };
 }
 
@@ -624,29 +641,64 @@ export function isGlobalObjectExpr(ctx: CodegenContext, fctx: FunctionContext, e
   return ts.isIdentifier(cur) && cur.text === "globalThis" && !ctx.moduleGlobals.has("globalThis");
 }
 
+/**
+ * The deleted member's NAME, for either spelling of a global-object member
+ * access — `this.x` and `this["x"]` name the same property (§13.5.1.2 runs
+ * ToPropertyKey on the computed form), so the `{ DontDelete }` answer must not
+ * depend on which one the source used.
+ *
+ * (#4491 T4) The element-access arm is the gap: `S12.2_A2` spells its checks
+ * `delete this["__variable"]`, which fell past a property-access-only guard to
+ * the generic member delete and answered `true` for a declared `var`. The
+ * identifier form of the same check (`delete __variable`) already answered
+ * `false` in the same file — one binding, two answers, decided by spelling.
+ * Only a STRING/no-substitution-template literal key qualifies; a computed key
+ * is not knowable here and keeps the runtime path.
+ */
+function unwrapTypeOnly(expr: ts.Expression): ts.Expression {
+  let cur = expr;
+  while (
+    ts.isParenthesizedExpression(cur) ||
+    ts.isAsExpression(cur) ||
+    ts.isNonNullExpression(cur) ||
+    ts.isTypeAssertionExpression(cur)
+  ) {
+    cur = cur.expression;
+  }
+  return cur;
+}
+
+function globalObjectDeletedMember(operand: ts.Expression): { name: string; receiver: ts.Expression } | undefined {
+  // `delete(this["k"])` — the Sputnik spelling — parses the operand as a
+  // ParenthesizedExpression, so an unwrapped test misses the very files this
+  // guard exists for.
+  const target = unwrapTypeOnly(operand);
+  if (ts.isPropertyAccessExpression(target)) {
+    if (ts.isPrivateIdentifier(target.name)) return undefined;
+    return { name: target.name.text, receiver: unwrapTypeOnly(target.expression) };
+  }
+  if (ts.isElementAccessExpression(target)) {
+    const key = unwrapTypeOnly(target.argumentExpression);
+    if (!ts.isStringLiteral(key) && !ts.isNoSubstitutionTemplateLiteral(key)) return undefined;
+    return { name: key.text, receiver: unwrapTypeOnly(target.expression) };
+  }
+  return undefined;
+}
+
 /** Whether a direct module-init member delete targets a script var/function. */
 export function isNonConfigurableGlobalObjectDelete(
   ctx: CodegenContext,
   fctx: FunctionContext,
   operand: ts.Expression,
 ): boolean {
-  if (!ts.isPropertyAccessExpression(operand) || fctx.name !== "__module_init" || ctx.sourceIsModule) return false;
-  let receiver: ts.Expression = operand.expression;
-  while (
-    ts.isParenthesizedExpression(receiver) ||
-    ts.isAsExpression(receiver) ||
-    ts.isNonNullExpression(receiver) ||
-    ts.isTypeAssertionExpression(receiver)
-  ) {
-    receiver = receiver.expression;
-  }
+  if (fctx.name !== "__module_init" || ctx.sourceIsModule) return false;
+  const member = globalObjectDeletedMember(operand);
+  if (member === undefined) return false;
+  const { name, receiver } = member;
   const isGlobalObject =
     receiver.kind === ts.SyntaxKind.ThisKeyword ||
     (ts.isIdentifier(receiver) && receiver.text === "globalThis" && !ctx.moduleGlobals.has("globalThis"));
-  return (
-    isGlobalObject &&
-    (ctx.globalObjectVarBindings?.has(operand.name.text) || ctx.topLevelFunctionNames.has(operand.name.text))
-  );
+  return isGlobalObject && (ctx.globalObjectVarBindings?.has(name) || ctx.topLevelFunctionNames.has(name));
 }
 
 /** Emit the known outcome for a direct delete of a script var/function property. */

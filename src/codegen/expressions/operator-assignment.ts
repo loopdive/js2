@@ -57,6 +57,7 @@ import {
 import { compileComputedMemberKeyAfterBaseGuard, emitToPropertyKeyOnce } from "./computed-member-reference.js";
 import { ensureLateImport, flushLateImportShifts, patchStructNewForAddedField } from "./late-imports.js";
 import { emitMappedArgParamSync } from "./logical-ops.js";
+import { isSloppyImplicitGlobalBinding, tryEmitImplicitGlobalCompoundAssign } from "./implicit-global-binding.js"; // (#4640 D3)
 import { resolveStructNameForExpr } from "./misc.js";
 import {
   compileStringBuilderAppend,
@@ -1710,6 +1711,36 @@ export function compileCompoundAssignment(
     emitCapturedBoxGlobalWrite(fctx, capturedBoxCompound, tmpRes);
     fctx.body.push({ op: "local.get", index: tmpRes });
     return valType;
+  }
+
+  // (#4640 D3) A SLOPPY IMPLICIT GLOBAL — a name some `<name> = v` in this
+  // module created as a property of the realm global object. Its storage IS the
+  // global object, so it must be read and written there; every lane below this
+  // point assumes a LOCAL (or a module global) carrier.
+  //
+  // Two separate defects, one arm:
+  //   • `__str += "x"` took the string-concat lane, which read and wrote a
+  //     `local.get`/`local.tee` slot the global-object read never consults — the
+  //     appends vanished silently and `__str` stayed `""`.
+  //   • `n += 1` reached the genuinely-undeclared branch far below and threw
+  //     `ReferenceError: n is not defined` for a name whose plain read in the
+  //     next statement answered correctly.
+  //
+  // Placed HERE, above the concat lane, because the arm's own predicate already
+  // excludes every declarative carrier (local / boxed capture / module global /
+  // captured global) — so it can only claim calls the lanes below would get
+  // wrong. `++`/`--` got the equivalent arm in #3966; this is its compound twin.
+  if (isSloppyImplicitGlobalBinding(ctx, fctx, name)) {
+    const implicitCompound = tryEmitImplicitGlobalCompoundAssign(
+      ctx,
+      fctx,
+      name,
+      op,
+      expr.right,
+      (e, hint) => compileExpression(ctx, fctx, e, hint),
+      emitCompoundOp,
+    );
+    if (implicitCompound !== undefined) return implicitCompound;
   }
 
   // String += : concat instead of numeric add.

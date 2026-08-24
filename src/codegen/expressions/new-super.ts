@@ -15,12 +15,15 @@ import {
 import { installFrameTrap } from "../frame-trap.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
 import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
+import { emitFnctorCtorArgumentsObject, fnctorCtorNeedsArguments } from "../fnctor-ctor-arguments.js";
 import {
   provablyNonConstructableStatically,
   resolvesToAmbientGlobal,
   resolvesToNonConstructableValue,
 } from "./non-constructable.js"; // (#4017)
 import { tryNonConstructableNewTarget } from "./new-non-constructable-value.js"; // (#4246)
+import { getOrRegisterTaCtorType } from "../registry/types.js"; // (#4626) runtime $__ta_ctor gate in the ordinary-[[Construct]] arm
+import { tryNewBuiltinStaticAlias } from "./new-builtin-static-alias.js"; // (#4491 wave-5 T6)
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import { fnctorBodyMayReturnForeignObject } from "../fnctor-foreign-return.js"; // (#2071)
@@ -114,6 +117,7 @@ import { NEW_INDEXED_FALLTHROUGH, tryCompileIndexedBuiltinNew } from "./new-inde
 import { emitFnctorProtoGet, resolveUserFnctorName } from "./fnctor-prototype.js"; // (#2660 S3a) reconstruct `new F()` as $Object; (#3981) proto for a value-bound ctor
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js"; // (#2959 / #2903 R1) native new Promise(executor)
 import { deriveFnctorFields, resolveFnctorSymbol, resolveEnclosingFnctorOwner } from "../fnctor-escape-gate.js"; // (#2660 S3a) canonical fnctor-name key; (#2773 S1) shared field derivation; (#2681/#2686 A1) `new this()` owner
+import { newExpressionReconstructsAsObject } from "../fnctor-instance-object-slot.js"; // (#4506 S1) the site-level reconstruct predicate the slot typer shares
 import {
   appendFnctorConstructorParam,
   emitFnctorConstructorArguments,
@@ -467,6 +471,37 @@ function resolvesToConstructableFunctionValue(ctx: CodegenContext, calleeExpr: t
  *    constructor.
  */
 function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expression): boolean {
+  // (#4616) Inline member-access ctor values: `new (Object.getPrototypeOf(arr)
+  // .constructor)(n)` (jest-util deepCyclicCopyArray's keepPrototype lane) keeps
+  // the ctor INSIDE the `new` callee, so the identifier lane below never sees
+  // it and the legacy `__new___unknown` fallthrough constructs garbage. A
+  // property/element access whose static type is `any`/`unknown` — or the bare
+  // lib `Function` interface (`.constructor` on a typed receiver, same #3435
+  // reasoning as the identifier lane) — is a genuinely-dynamic ctor value; the
+  // `__construct_closure` bridge's IsConstructor probe + `Reflect.construct` is
+  // spec-correct for whatever the member read yields at runtime. Members that
+  // resolve statically (compiled classes, extern classes, ctor-interface
+  // builtins like `Intl.NumberFormat`) have concrete types, fail the fact
+  // check, and keep their existing arms.
+  if (ts.isPropertyAccessExpression(calleeExpr) || ts.isElementAccessExpression(calleeExpr)) {
+    // (#4728 merge_group regression) `new Temporal.PlainDateTime(...)`: an
+    // UNDECLARED base identifier is a host-global read (the test262 runner
+    // provides `Temporal` as a host polyfill). The checker types the member as
+    // error-`any`, which admitted it here — and this lane then compiles the
+    // base identifier as an undeclared-identifier ReferenceError throw,
+    // breaking every Temporal file at module init (156-test "other" bucket in
+    // the #4728 merge_group). Undeclared bases keep the legacy host-new lane,
+    // which resolves them through the host global object.
+    let baseNI: ts.Expression = calleeExpr.expression;
+    while (ts.isParenthesizedExpression(baseNI)) baseNI = baseNI.expression;
+    if (ts.isIdentifier(baseNI) && ctx.oracle.valueDeclarationOf(baseNI) === undefined) return false;
+    const declNI = ctx.oracle.valueDeclarationOf(calleeExpr);
+    if (declNI && (ts.isClassDeclaration(declNI) || ts.isClassExpression(declNI))) return false;
+    const factNI = ctx.oracle.typeFactOf(calleeExpr);
+    return (
+      factNI.kind === "any" || factNI.kind === "unknown" || (factNI.kind === "builtin" && factNI.name === "Function")
+    );
+  }
   if (!ts.isIdentifier(calleeExpr)) return false;
   if (ctx.classSet.has(calleeExpr.text) || ctx.externClasses.has(calleeExpr.text)) return false;
   if (ctx.funcConstructorMap?.has(calleeExpr.text)) return false;
@@ -541,6 +576,13 @@ const GLOBAL_NON_CONSTRUCTOR_FUNCTIONS = new Set([
   "isNaN",
   "isFinite",
 ]);
+
+/**
+ * (#1519 sub-issue B) The built-in non-constructor NAMESPACES. Hoisted to module
+ * scope by #4621 so the nested-`new` arm can consult the same set as the direct
+ * arm; the direct arm's behaviour is unchanged.
+ */
+const NAMESPACE_NON_CONSTRUCTORS = new Set(["Math", "JSON", "Reflect", "Atomics"]);
 
 /**
  * (#2886) Does `id` resolve to the **ambient global** binding (declared only in
@@ -1539,45 +1581,29 @@ function compileNewFunctionDeclaration(
   //
   // This is the value-rep CANARY (the low-risk first slice). It fires ONLY on a
   // proven-safe intersection and keeps the status-quo struct lowering everywhere
-  // else, so it cannot regress a typed own-field read (#1888 floor). The broad
-  // binding-retype that banks the test262 cluster is S3b — intentionally NOT
-  // here. The gate (ALL must hold; any miss → fall through to the struct):
-  //   (G0) standalone — host/WASI keep the existing lowering BYTE-IDENTICAL
-  //        (host has the #1712 instance→prototype sidecar; `__object_create` is
-  //        native only in standalone via ensureObjectRuntime — late-imports.ts).
-  //   (G1) the S1 escape-gate approved THIS exact site (node identity) — i.e.
-  //        dynamically consumed AND no typed own-field consumer (clause A∧B).
-  //   (G2) truly empty body — no `this.x=` (so no own field exists to regress)
-  //        AND no ctor-body side effects to drop (running the body is S3c).
-  //   (G3) no constructor args — nothing to evaluate/drop (arg'd sites keep
-  //        status quo, which still runs their arg side effects via the ctor).
+  // else, so it cannot regress a typed own-field read (#1888 floor). The SITE
+  // half of the gate — standalone, escape-gate-approved, empty body, no args,
+  // not an Array-carrier prototype — now lives in
+  // `newExpressionReconstructsAsObject` (fnctor-instance-object-slot.ts, #4506
+  // S1) because the module-global slot typer has to ask the identical question
+  // during `collectDeclarations`. The clause that stays here is the one that is
+  // not a property of the site:
   //   (G4) the instance's result-externref flows into an externref slot: a
   //        function-local binding whose ALLOCATED local is externref (the
-  //        `any`/`unknown` case), OR an inline `new F().x` / `new F()[i]`
-  //        receiver. Reading the REAL local type (not the TS annotation) is the
-  //        load-bearing safety check — returning externref into a struct-ref
-  //        local would `ref.cast`-trap (that retype ripple is S3b).
-  //   (G5) the one proven live `F.prototype` value is not an Array carrier
-  //        (#4387). `__object_create` can seed only its `$Object` `$proto`
-  //        slot, so reconstructing an Array-valued prototype discards the
-  //        chain. Keep that exact shape on the raw fnctor representation,
-  //        whose shared closed-method runtime recognizes the live Array.
+  //        `any`/`unknown` case), a module global that is externref, OR an
+  //        inline `new F().x` / `new F()[i]` receiver. Reading the REAL slot
+  //        type (not the TS annotation) is the load-bearing safety check —
+  //        returning externref into a struct-ref slot would `ref.cast`-trap.
   //
-  // Cache-order note: this gate sits at the cache-MISS entry. If a NON-approved
-  // sibling `new F()` of the same fnctor compiled first, it populated
-  // `funcConstructorMap[F]` and a later approved site hits that cache in
-  // `compileNewExpression` (returning the struct) WITHOUT reaching this gate — so
-  // it keeps status quo. That is a safe MISS (a 0-row outcome), never a trap: the
-  // struct ref coerces cleanly into the approved site's externref/any binding.
-  // S3b's binding-retype removes the miss; S3a deliberately does not chase it.
-  if (
-    ctx.standalone &&
-    ctx.fnctorEscapeGate?.approved.has(expr) &&
-    !ctx.fnctorEscapeGate.stableArrayPrototypeNames.has(fnctorKey) &&
-    body.statements.length === 0 &&
-    (expr.arguments?.length ?? 0) === 0 &&
-    fnctorNewResultConsumedAsExternref(ctx, fctx, expr)
-  ) {
+  // (#4506 S1) Cache-order note, UPDATED. This gate sits at the cache-MISS
+  // entry; the cache-HIT arm in `compileNewExpression` now runs the same
+  // predicate BEFORE consulting `funcConstructorMap`, so a non-approved sibling
+  // compiling first no longer strands a later approved site on the struct. That
+  // was a safe MISS while the slot stayed struct-typed; once the slot is widened
+  // to externref by the typer it would be a WRONG answer (a struct
+  // `extern.convert_any`'d into an `$Object` slot reads back as nothing), which
+  // is why closing it is part of this slice rather than an optimization.
+  if (newExpressionReconstructsAsObject(ctx, expr) && fnctorNewResultConsumedAsExternref(ctx, fctx, expr)) {
     const reconstructed = compileFnctorNewAsObject(ctx, fctx, fnctorKey);
     if (reconstructed) return reconstructed;
     // Helper declined (e.g. `__object_create` unavailable) → fall through to the
@@ -1631,6 +1657,11 @@ function compileNewFunctionDeclaration(
     const paramType = ctx.checker.getTypeAtLocation(param);
     userCtorParams.push(resolveWasmType(ctx, paramType));
   }
+  // (fnctor-ctor-arguments.ts) Asked ONCE and shared by both halves of the
+  // `arguments` protocol — the ctor-body materialization below and the call
+  // site's `__extras_argv` publication — so they cannot disagree about whether
+  // the protocol is live for this constructor.
+  const ctorReadsArguments = fnctorCtorNeedsArguments(funcDecl);
   const captureLayout = fnctorCaptureLayout(ctx, funcName);
   const ctorIdentityParamIdx = captureLayout.allParamTypes.length + userCtorParams.length;
   const ctorParams = fnctorConstructorParams(ctx, userCtorParams, captureLayout.allParamTypes);
@@ -1677,6 +1708,7 @@ function compileNewFunctionDeclaration(
     ctorFuncName: ctorName,
     captureLayout,
     resultIsExtern,
+    readsArguments: ctorReadsArguments,
   });
 
   // 4. Compile the constructor body
@@ -1693,6 +1725,10 @@ function compileNewFunctionDeclaration(
       paramDefs.push({ name: `__tdz_box_${capture.name}`, type: captureLayout.tdzFlagParamTypes[flagIndex]! });
     }
   }
+  // (fnctor-ctor-arguments.ts) Where this ctor's FIRST user-declared parameter
+  // sits, past the capture / TDZ-flag parameters — the `paramOffset` the
+  // `arguments` vec indexes from.
+  const userParamOffset = paramDefs.length;
   for (let i = 0; i < funcDecl.parameters.length; i++) {
     const p = funcDecl.parameters[i]!;
     paramDefs.push({
@@ -1813,6 +1849,14 @@ function compileNewFunctionDeclaration(
       materializeFnctorTwinCaptures(ctx, ctorFctx, closureRecord.structTypeIdx, ctorIdentityParamIdx);
     }
   }
+  // (fnctor-ctor-arguments.ts) Materialize `arguments` — the one prologue step
+  // this synthesized body was missing relative to `function-body.ts`, which is
+  // why `arguments` read back as `null` inside every `new F(…)`. Emitted here,
+  // with `ctx.currentFunc === ctorFctx`, so a late-import shift reaches these
+  // instructions through `currentFunc.body` like any other body instruction.
+  if (ctorReadsArguments) {
+    emitFnctorCtorArgumentsObject(ctx, ctorFctx, funcDecl, userParamOffset, userCtorParams);
+  }
   // (#2071) Hoist the constructor body's own function declarations BEFORE its
   // statements compile — the same prologue every other function body gets
   // (`function-body.ts`). Without it a ctor that calls a function declared
@@ -1870,10 +1914,17 @@ function compileNewFunctionDeclaration(
   // would read the PREVIOUS function's params and coerce arguments against the
   // wrong types (observed: `call[0] expected externref, found (ref null $N)`).
   const paramTypes: ValType[] | undefined = userCtorParams;
-  emitFnctorConstructorArguments(ctx, fctx, captureLayout, expr.expression, args, paramTypes);
+  emitFnctorConstructorArguments(ctx, fctx, captureLayout, expr.expression, args, paramTypes, ctorReadsArguments);
   // Re-lookup funcIdx in case addUnionImports shifted indices
   const finalCtorIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)) ?? ctorFuncIdx; // (#1983)
-  maybeSetArgcForKnownCall(ctx, fctx, ctorName, args.length, paramTypes?.length ?? args.length);
+  // (fnctor-ctor-arguments.ts) `maybeSetArgcForKnownCall` keys on
+  // `ctx.funcUsesArguments`, which holds the SOURCE name — never the synthesized
+  // `__fnctor_<F>_new` passed here — so it returns early for every constructor.
+  // When the ctor reads `arguments`, `emitFnctorConstructorArguments` has
+  // already set `__argc` alongside `__extras_argv`; leave it alone.
+  if (!ctorReadsArguments) {
+    maybeSetArgcForKnownCall(ctx, fctx, ctorName, args.length, paramTypes?.length ?? args.length);
+  }
   fctx.body.push({ op: "call", funcIdx: finalCtorIdx });
   // (#3138) Function-scope fnctor: link instance → ctor closure at the call
   // site (the ctor prologue can't — no module global to read). No-op for
@@ -2360,7 +2411,15 @@ function classExtendsReferencesOwnName(expr: ts.ClassExpression): boolean {
       let found = false;
       const visit = (node: ts.Node): void => {
         if (found) return;
-        if (ts.isIdentifier(node) && node.text === ownName) {
+        // (#4618) The NAME of a property access is not a binding reference:
+        // `class Component extends React.Component` reads `React`, never the
+        // class's own TDZ binding — counting it threw a spurious
+        // "Cannot access 'Component' before initialization".
+        if (
+          ts.isIdentifier(node) &&
+          node.text === ownName &&
+          !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node)
+        ) {
           found = true;
           return;
         }
@@ -2395,6 +2454,42 @@ function emitClassCtorValue(ctx: CodegenContext, fctx: FunctionContext, ctorName
   return { kind: "funcref" };
 }
 
+/**
+ * (#4616) §10.2.9 SetFunctionName for a NAMED class-expression VALUE (jest's
+ * convertDescriptorToString over `class Named {}` in a test table): stamp
+ * `.name` into the ctor value's sidecar once at the value-read site, so
+ * dynamic `.name` reads in other modules answer the declared name. Host lane
+ * only; a nameless class expression is a no-op.
+ */
+function stampClassExprName(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  vt: ValType | null,
+  displayName: string | undefined,
+): void {
+  if (vt === null || ctx.standalone || ctx.wasi) return;
+  if (displayName === undefined || displayName.length === 0) return;
+  if (vt.kind !== "externref" && vt.kind !== "ref" && vt.kind !== "ref_null") return;
+  const setIdx = ensureLateImport(
+    ctx,
+    "__extern_set",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (setIdx === undefined) return;
+  addStringConstantGlobal(ctx, "name");
+  addStringConstantGlobal(ctx, displayName);
+  const tmp = allocTempLocal(fctx, vt);
+  fctx.body.push({ op: "local.tee", index: tmp });
+  if (vt.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, "name"));
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, displayName));
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? setIdx });
+  fctx.body.push({ op: "local.get", index: tmp });
+  releaseTempLocal(fctx, tmp);
+}
+
 function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr: ts.ClassExpression): ValType | null {
   // §15.7.1: the class-expression name is in TDZ during its own `extends`
   // evaluation. `(class x extends x {})` must throw ReferenceError (#1594B).
@@ -2419,7 +2514,12 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
     const ctorName = `${syntheticName}_new`;
     const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)); // (#1983)
     if (funcIdx !== undefined) {
-      return emitClassCtorValue(ctx, fctx, ctorName, funcIdx);
+      const vt = emitClassCtorValue(ctx, fctx, ctorName, funcIdx);
+      // (#4616) §10.2.9 — same name stamp as the named-collection arm below;
+      // a NAMED class expression routinely lands here under its synthetic
+      // collection name, but its display name is the SOURCE name.
+      stampClassExprName(ctx, fctx, vt, expr.name?.text);
+      return vt;
     }
   }
 
@@ -2430,7 +2530,9 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
       const ctorName = `${className}_new`;
       const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)); // (#1983)
       if (funcIdx !== undefined) {
-        return emitClassCtorValue(ctx, fctx, ctorName, funcIdx);
+        const vt = emitClassCtorValue(ctx, fctx, ctorName, funcIdx);
+        stampClassExprName(ctx, fctx, vt, className);
+        return vt;
       }
     }
   }
@@ -2593,10 +2695,45 @@ function tryCompileNativeConstructFromValue(
     argLocals.push(argLocal);
   }
 
-  fctx.body.push({ op: "local.get", index: calleeLocal });
-  fctx.body.push({ op: "local.get", index: protoLocal });
-  for (const argLocal of argLocals) fctx.body.push({ op: "local.get", index: argLocal });
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(`__native_construct_${args.length}`) ?? driverIdx });
+  // (#4626) A `$__ta_ctor` runtime value is NOT an ordinary function value:
+  // handing it to the native-construct driver builds a plain object with no
+  // TypedArray behavior (`function go(TA) { new TA(2) }` in the
+  // testTypedArrayConversions harness then read `length` 0 and threw "called
+  // value is not a function" on `.fill`). This arm sits BEFORE the #2872
+  // dynamic-TA construct in the dispatch order, so gate it at RUNTIME: a
+  // callee that ref.tests as `$__ta_ctor` routes through the same
+  // count/array-copy/buffer construct the #2872 arm uses; every other runtime
+  // value keeps the ordinary-[[Construct]] driver. Statically gated on the
+  // module pre-scan flag so modules without a dynamic-any `new` are
+  // byte-identical.
+  const nativeDriverCall: Instr[] = [
+    { op: "local.get", index: calleeLocal },
+    { op: "local.get", index: protoLocal },
+    ...argLocals.map((argLocal): Instr => ({ op: "local.get", index: argLocal })),
+    { op: "call", funcIdx: ctx.funcMap.get(`__native_construct_${args.length}`) ?? driverIdx },
+  ];
+  if (noJsHost(ctx) && ctx.moduleUsesDynTaView) {
+    const taCtorTypeIdx = getOrRegisterTaCtorType(ctx);
+    const descLocal = allocLocal(fctx, `__nc_tadesc_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+    fctx.body.push({ op: "local.get", index: calleeLocal });
+    fctx.body.push({ op: "any.convert_extern" });
+    fctx.body.push({ op: "local.set", index: descLocal });
+    const taArm: Instr[] = [];
+    const savedTaBody = fctx.body;
+    fctx.body = taArm;
+    emitTaDynCtorConstructFromLocals(ctx, fctx, descLocal, argLocals);
+    fctx.body = savedTaBody;
+    fctx.body.push({ op: "local.get", index: descLocal });
+    fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: taArm,
+      else: nativeDriverCall,
+    });
+  } else {
+    fctx.body.push(...nativeDriverCall);
+  }
   return { kind: "externref" };
 }
 
@@ -2648,7 +2785,13 @@ function emitDynamicNewFallback(
     if (ctorResult?.kind === "externref") continue;
     candidates.push(className);
   }
-  if (candidates.length === 0) return false;
+  // (#3087 / #4616) The `__construct_closure` no-match base makes this fallback
+  // meaningful even with ZERO candidate classes: a class-free module (jest-util
+  // deepCyclicCopy) constructing a dynamic ctor value skips the tag dispatch
+  // entirely (the tag stays -1) and lands directly on the bridge. Computed
+  // up-front so the zero-candidate refusal below can consult it.
+  const useConstructClosureBase = !noJsHost(ctx) && resolvesToDynamicAnyCtorValue(ctx, calleeExpr);
+  if (candidates.length === 0 && !useConstructClosureBase) return false;
 
   const rawArgs = expr.arguments ?? [];
 
@@ -2731,7 +2874,7 @@ function emitDynamicNewFallback(
   // emission (the #608/#794 late-import index-shift hazard). Scoped to the
   // Runtime argv is supported too: its no-match arm copies the materialized
   // argv into the bridge's JS array without re-evaluating any source expression.
-  const useConstructClosureBase = !noJsHost(ctx) && resolvesToDynamicAnyCtorValue(ctx, calleeExpr);
+  // (`useConstructClosureBase` is computed above, before the candidate check.)
   let ccArrNewIdx: number | undefined = -1;
   let ccArrPushIdx: number | undefined = -1;
   let ccBridgeIdx: number | undefined = -1;
@@ -3684,6 +3827,15 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     if (nonCtorValue !== undefined) return nonCtorValue;
   }
 
+  // (#4491 wave-5 T6) `new <alias-of-a-builtin-static>(…)` — a §10.3 built-in
+  // function object with no `[[Construct]]`. Placed after the #4246 arm (whose
+  // primitive/fresh-`new` facts can never describe a reified builtin closure)
+  // and before the unknown-constructor path that answered a null externref.
+  {
+    const builtinAliasNew = tryNewBuiltinStaticAlias(ctx, fctx, expr);
+    if (builtinAliasNew !== undefined) return builtinAliasNew;
+  }
+
   // Handle `new (class { ... })()` — anonymous class expression in new
   // Unwrap parenthesized expressions to find the class expression
   {
@@ -3803,9 +3955,58 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
             ? unwrapped.expression
             : (unwrapped as ts.TypeAssertion).expression;
     }
+    // (#4621 D) `new new Math()` — the constructor expression is itself a `new`
+    // on a namespace / non-constructor global. §13.3.5.1 step 2 evaluates that
+    // INNER construction first, and it throws TypeError, so the whole expression
+    // is a TypeError regardless of what the outer `new` would decide.
+    //
+    // The generic guard (`tryNonConstructableNewTarget`) cannot reach this: it
+    // asks the oracle for the callee's type fact, and `new Math()` has an ERROR
+    // type, so the fact is `any` — which that guard deliberately refuses to act
+    // on, because a constructor may `return function(){}` and `any` proves
+    // nothing. The inner-name test below proves something stronger and purely
+    // syntactic: this particular inner `new` never returns at all. Measured on
+    // `language/expressions/new/S11.2.2_A4_T5` CHECK#2, where `new Math` (bare),
+    // `new Math()` and `var x = new Math(); new x()` all already threw and only
+    // the nested spelling silently produced `undefined`.
+    //
+    // The shadowing proof is the same one the direct arm two blocks down uses —
+    // a user `function Math(){}` / `class isNaN{}` IS constructable and must keep
+    // the normal path.
+    if (ts.isNewExpression(unwrapped)) {
+      let innerCtor: ts.Expression = unwrapped.expression;
+      while (
+        ts.isParenthesizedExpression(innerCtor) ||
+        ts.isAsExpression(innerCtor) ||
+        ts.isNonNullExpression(innerCtor) ||
+        ts.isTypeAssertionExpression(innerCtor)
+      ) {
+        innerCtor = ts.isParenthesizedExpression(innerCtor)
+          ? innerCtor.expression
+          : ts.isAsExpression(innerCtor)
+            ? innerCtor.expression
+            : ts.isNonNullExpression(innerCtor)
+              ? innerCtor.expression
+              : (innerCtor as ts.TypeAssertion).expression;
+      }
+      if (ts.isIdentifier(innerCtor)) {
+        const innerName = innerCtor.text;
+        const innerIsNonConstructorGlobal =
+          NAMESPACE_NON_CONSTRUCTORS.has(innerName) || GLOBAL_NON_CONSTRUCTOR_FUNCTIONS.has(innerName);
+        if (
+          innerIsNonConstructorGlobal &&
+          !ctx.classSet.has(innerName) &&
+          !ctx.externClasses.has(innerName) &&
+          resolvesToAmbientGlobal(ctx, innerCtor)
+        ) {
+          emitThrowTypeError(ctx, fctx, `${innerName} is not a constructor`);
+          fctx.body.push({ op: "ref.null.extern" });
+          return { kind: "externref" };
+        }
+      }
+    }
     if (ts.isIdentifier(unwrapped)) {
       const name = unwrapped.text;
-      const NAMESPACE_NON_CONSTRUCTORS = new Set(["Math", "JSON", "Reflect", "Atomics"]);
       if (NAMESPACE_NON_CONSTRUCTORS.has(name)) {
         // Use the real-TypeError throw path so `assert.throws(TypeError, …)`
         // in test262 negative cases (S11.2.2_A4_T*) observes a TypeError
@@ -3890,7 +4091,10 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     for (const declaration of boundSymbol?.getDeclarations() ?? []) {
       const initializer = ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
       const candidate = initializer ? unwrapNewTarget(initializer) : declaration;
-      if (!ts.isClassExpression(candidate)) continue;
+      // (#4618) A nested class DECLARATION whose name collided with a class
+      // in another scope carries a per-site synthetic identity too — resolve
+      // it by declaration node exactly like an anonymous class expression.
+      if (!ts.isClassExpression(candidate) && !ts.isClassDeclaration(candidate)) continue;
       const syntheticName = ctx.anonClassExprNames.get(candidate);
       if (syntheticName && ctx.classSet.has(syntheticName)) {
         boundClassExpressionName = syntheticName;
@@ -3998,8 +4202,26 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         const allParamTypes = getFuncParamTypes(ctx, ctorFuncIdx);
         const paramTypes = fnctorUserParamTypes(ctx, cachedFnCtor.captureLayout, allParamTypes);
         const args = expr.arguments ?? [];
-        emitFnctorConstructorArguments(ctx, fctx, cachedFnCtor.captureLayout, expr.expression, args, paramTypes);
-        maybeSetArgcForKnownCall(ctx, fctx, cachedFnCtor.ctorFuncName, args.length, paramTypes?.length ?? args.length);
+        // (fnctor-ctor-arguments.ts) Same cached-protocol reason as the
+        // identifier cache-hit arm below.
+        const thisReadsArguments = cachedFnCtor.readsArguments === true;
+        emitFnctorConstructorArguments(
+          ctx,
+          fctx,
+          cachedFnCtor.captureLayout,
+          expr.expression,
+          args,
+          paramTypes,
+          thisReadsArguments,
+        );
+        if (!thisReadsArguments)
+          maybeSetArgcForKnownCall(
+            ctx,
+            fctx,
+            cachedFnCtor.ctorFuncName,
+            args.length,
+            paramTypes?.length ?? args.length,
+          );
         fctx.body.push({ op: "call", funcIdx: ctorFuncIdx });
         // (#2071) A widened ctor returns externref — report it, never the struct.
         return cachedFnCtor.resultIsExtern
@@ -4058,6 +4280,25 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // `new (Foo as any)()` takes the same fnctor build path as `new Foo()`.
   if ((!className || !ctx.classSet.has(className)) && calleeIdent) {
     const fnName = calleeIdent.text;
+    // (#4506 S1) The reconstruct decision is per-SITE, so it has to be asked
+    // BEFORE the per-FNCTOR constructor cache. A non-approved sibling
+    // `new F()` compiling first populates `funcConstructorMap[F]`; without this
+    // check a later approved site took the cached struct ctor and never reached
+    // the gate in `compileNewFunctionDeclaration`. That was a tolerable MISS
+    // while every binding slot stayed struct-typed, but the module-global slot
+    // typer now widens such a binding to externref on the strength of this very
+    // predicate — so the miss would store a fnctor struct into an `$Object`
+    // slot, where every dynamic read fails its `ref.test $Object`. The two must
+    // agree; asking here is how.
+    if (newExpressionReconstructsAsObject(ctx, expr) && fnctorNewResultConsumedAsExternref(ctx, fctx, expr)) {
+      // The gate's own resolution, not a second symbol query: the predicate
+      // above already required it to exist.
+      const key = ctx.fnctorEscapeGate?.siteCtorName.get(expr) ?? fnName;
+      const reconstructed = compileFnctorNewAsObject(ctx, fctx, key);
+      if (reconstructed) return reconstructed;
+      // The helper declined without emitting (its contract) — fall through to
+      // the ordinary cached/struct path below, exactly as before.
+    }
     // Check cache first — if we already built a constructor for this function
     const cachedFnCtor = ctx.funcConstructorMap.get(fnName);
     if (cachedFnCtor) {
@@ -4066,9 +4307,29 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         const allParamTypes = getFuncParamTypes(ctx, ctorFuncIdx);
         const paramTypes = fnctorUserParamTypes(ctx, cachedFnCtor.captureLayout, allParamTypes);
         const args = expr.arguments ?? [];
-        emitFnctorConstructorArguments(ctx, fctx, cachedFnCtor.captureLayout, expr.expression, args, paramTypes);
+        // (fnctor-ctor-arguments.ts) The cache-hit arm never sees the
+        // declaration, so the `arguments` protocol travels WITH the cached ctor.
+        // Without it a second `new F(…)` dropped its over-supplied arguments
+        // while the callee still expected them on `__extras_argv`.
+        const cachedReadsArguments = cachedFnCtor.readsArguments === true;
+        emitFnctorConstructorArguments(
+          ctx,
+          fctx,
+          cachedFnCtor.captureLayout,
+          expr.expression,
+          args,
+          paramTypes,
+          cachedReadsArguments,
+        );
         const finalIdx = ctx.funcMap.get(cachedFnCtor.ctorFuncName) ?? ctorFuncIdx;
-        maybeSetArgcForKnownCall(ctx, fctx, cachedFnCtor.ctorFuncName, args.length, paramTypes?.length ?? args.length);
+        if (!cachedReadsArguments)
+          maybeSetArgcForKnownCall(
+            ctx,
+            fctx,
+            cachedFnCtor.ctorFuncName,
+            args.length,
+            paramTypes?.length ?? args.length,
+          );
         fctx.body.push({ op: "call", funcIdx: finalIdx });
         // (#3138) Function-scope fnctor: call-site instance→ctor link (the
         // cached arm bypasses compileNewFunctionDeclaration's emission).
@@ -4525,7 +4786,15 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
             ? dynCallee.expression
             : (dynCallee as ts.NonNullExpression).expression;
       }
-      if (ts.isIdentifier(dynCallee) && !ctx.classSet.has(dynCallee.text)) {
+      // (#4616) Beyond the bare-identifier form, admit an inline member-access
+      // callee (`new (Object.getPrototypeOf(arr).constructor)(n)`) when the JS
+      // host is present and the member's static type marks it a genuinely
+      // dynamic ctor value — the fallback's `__construct_closure` no-match base
+      // constructs it correctly (and its zero-candidate refusal is lifted for
+      // exactly this case). Standalone keeps the pre-existing member handling.
+      const dynMemberCallee =
+        !ts.isIdentifier(dynCallee) && !noJsHost(ctx) && resolvesToDynamicAnyCtorValue(ctx, dynCallee);
+      if ((ts.isIdentifier(dynCallee) && !ctx.classSet.has(dynCallee.text)) || dynMemberCallee) {
         // (#3054 D) Dynamic `new <ctorVal>(buffer[, off[, len]])` where `ctorVal`
         // is a first-class `$__ta_ctor` value (a TA constructor held in a var /
         // array element — test262 `CreateRabForTest`, `for (ctor of ctors) new
