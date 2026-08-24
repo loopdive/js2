@@ -26,7 +26,11 @@ loc-budget-allow:
 func-budget-allow:
   - src/codegen/property-access.ts::compileElementAccessBody
   - src/codegen/declarations.ts::lowerParamType
+  - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/closures.ts::computeClosureWrapperSig
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 files:
   - tests/dogfood/stylelint-upstream-suite.mjs
   - tests/dogfood/webpack-upstream-suite.mjs
