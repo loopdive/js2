@@ -103,7 +103,7 @@ import type {
   IrPrimitiveExpressionFamily,
   IrStableFunctionCallPlan,
 } from "./module-bindings.js";
-import type { LatticeType, TypeMap } from "./propagate.js";
+import type { IrFnctorAdmission, IrFnctorSelectionAdmissionResolver, LatticeType, TypeMap } from "./propagate.js";
 import type { RecursiveTypeEvidence } from "./type-evidence.js";
 import type { IntrinsicId } from "./intrinsics.js";
 
@@ -344,6 +344,12 @@ export interface IrSelection {
    *  individually claimed); callers must treat a missing map as "no edge
    *  information" and behave conservatively. */
   readonly localCallees?: ReadonlyMap<string, ReadonlySet<string>>;
+  /**
+   * Exact allocation-site evidence retained for a future fnctor lowering
+   * pass.  This is deliberately absent from the legacy projection: a
+   * NewExpression node cannot be made source-safe by a display-name map.
+   */
+  readonly fnctorAdmissions?: ReadonlyMap<string, ReadonlyArray<IrFnctorAdmission>>;
   /** (#3142) Module-level (top-level statement) claim assessment — gate G3
    *  of the legacy-frontend retirement. Slice 1 added the assessment
    *  (telemetry: the `check:ir-fallbacks` gate ratchets a `module-level`
@@ -500,6 +506,15 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   readonly isArrayExpression?: (expr: ts.Expression) => boolean;
   /** Exact pre-scanned sized-Array constructor sites for the sparse carrier. */
   readonly isHoleyArrayConstructor?: (expr: ts.NewExpression) => boolean;
+  /**
+   * Exact, source-qualified admission for the one future fnctor shape whose
+   * constructor stores an unconditional `this.input: string`.  The resolver
+   * owns declaration identity, approved/reserved gate evidence, direct-site
+   * validation, and alias/reassignment/escape/collision checks.  Returning
+   * `undefined` keeps this constructor on the existing Unsupported path.
+   * This hook is planning-only; it does not authorize lowering by itself.
+   */
+  readonly resolveFnctorAdmission?: IrFnctorSelectionAdmissionResolver;
   /** Exact direct filter consumers of that sparse carrier. */
   readonly isHoleyArrayFilterCall?: (expr: ts.CallExpression) => boolean;
   /** True only when this backend owns the dedicated sparse filter provider. */
@@ -8122,6 +8137,120 @@ function isAffineThreeDeepElementAccess(expr: ts.ElementAccessExpression): boole
   return indexHasMultiply;
 }
 
+function phase1FnctorNewExpression(
+  expr: ts.NewExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean | undefined {
+  const fnctorAdmission = currentSelectionOptions?.resolveFnctorAdmission?.(expr);
+  if (fnctorAdmission === undefined) return undefined;
+  for (const arg of expr.arguments ?? []) {
+    if (ts.isSpreadElement(arg) || !isPhase1Expr(arg, scope, localClasses)) {
+      return shapeNo("expr-new-fnctor-arg", arg);
+    }
+  }
+  return true;
+}
+
+function phase1NewExpression(
+  expr: ts.NewExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (!ts.isIdentifier(expr.expression)) return shapeNo("expr-new-callee-nonident", expr.expression);
+  const fnctorAdmission = phase1FnctorNewExpression(expr, scope, localClasses);
+  if (fnctorAdmission !== undefined) return fnctorAdmission;
+  const promiseDelay = currentSelectionOptions?.promiseDelays?.resolve(expr);
+  if (promiseDelay) {
+    for (const capture of promiseDelay.executorCaptureNames) {
+      if (!scope.has(capture)) return shapeNo("expr-promise-delay-capture-scope", expr);
+    }
+    return true;
+  }
+  const ctorName = expr.expression.text;
+  const isLocalClass = localClassValueIsUnshadowed(ctorName, scope) && localClasses.has(ctorName);
+  const isAmbientConstructor = !isLocalClass && selectorSeesAmbientBinding(expr.expression);
+  if (currentSelectionOptions?.isHoleyArrayConstructor?.(expr) === true) {
+    if (ctorName !== "Array" || isLocalClass || scope.has("Array")) {
+      return capabilityNo("constructor-resolution-unsupported", "expr-new-holey-array-identity", expr);
+    }
+    if ((expr.typeArguments?.length ?? 0) !== 0 || expr.arguments?.length !== 1) {
+      return capabilityNo("constructor-arity-unsupported", "expr-new-holey-array-shape", expr);
+    }
+    const length = expr.arguments[0]!;
+    if (ts.isSpreadElement(length) || !ts.isNumericLiteral(length)) {
+      return capabilityNo("constructor-arity-unsupported", "expr-new-holey-array-length", length);
+    }
+    const numericLength = Number(length.text.replace(/_/g, ""));
+    if (!Number.isInteger(numericLength) || numericLength < 0 || numericLength > 0x7fff_ffff) {
+      return capabilityNo("constructor-arity-unsupported", "expr-new-holey-array-length", length);
+    }
+    return true;
+  }
+  if (
+    ctorName === "RegExp" &&
+    isAmbientConstructor &&
+    currentSelectionOptions?.supportsBackendCapability?.("host-regexp-constructor") === false
+  ) {
+    return capabilityNo("regexp-constructor-unsupported", "expr-new-regexp-target", expr);
+  }
+  if (!isLocalClass && isKnownExternClass(ctorName) && !isAmbientConstructor) {
+    return capabilityNo("constructor-resolution-unsupported", "expr-new-extern-identity", expr.expression);
+  }
+  if (NATIVE_TYPED_ARRAY_CLASSES.has(ctorName) && isAmbientConstructor) {
+    return capabilityNo("typed-array-constructor-unsupported", "expr-new-native-typed-array", expr);
+  }
+  if (LEGACY_ERROR_CONSTRUCTOR_CLASSES.has(ctorName) && isAmbientConstructor) {
+    return capabilityNo("error-constructor-unsupported", "expr-new-error-constructor", expr);
+  }
+  if (isLocalClass) {
+    if (localClassHasKnownProjectionGap(ctorName)) {
+      return capabilityNo("class-projection-unsupported", "expr-new-local-class-shape", expr);
+    }
+    const expectedArity = projectedConstructorArity(ctorName);
+    const actualArity = expr.arguments ? staticCallArgumentCount(expr.arguments) : 0;
+    if (expectedArity === undefined) {
+      return capabilityNo("class-projection-unsupported", "expr-new-local-class-constructor", expr);
+    }
+    if (actualArity !== null && actualArity !== expectedArity) {
+      return capabilityNo("constructor-arity-unsupported", "expr-new-local-class-arity", expr);
+    }
+  }
+  if (currentModuleBindingResolver?.isDirectModuleBinding(expr.expression)) {
+    return shapeNo("expr-new-module-binding-callee", expr.expression);
+  }
+  const hostDateSnapshot =
+    ctorName === "Date" && isAmbientConstructor ? currentSelectionOptions?.hostDateSnapshots?.(expr) : undefined;
+  if (ctorName === "Date" && !isLocalClass) {
+    if (!isAmbientConstructor) {
+      return capabilityNo("constructor-resolution-unsupported", "expr-new-date-identity", expr.expression);
+    }
+    if (currentSelectionOptions?.supportsBackendCapability?.("host-date-snapshot") === false) {
+      return capabilityNo("date-constructor-unsupported", "expr-new-date-target", expr);
+    }
+    if (currentSubjectIsModuleInit && !hostDateSnapshot) {
+      return capabilityNo("date-constructor-unsupported", "expr-new-module-native-date", expr);
+    }
+    if (!hostDateSnapshot) {
+      return capabilityNo("date-constructor-unsupported", "expr-new-date-snapshot-shape", expr);
+    }
+  }
+  if (!isLocalClass && !isKnownExternClass(ctorName)) {
+    return capabilityNo("constructor-resolution-unsupported", "expr-new-ctor-unknown", expr.expression);
+  }
+  if (expr.typeArguments && expr.typeArguments.length > 0 && !isExactModuleMapGenericInitializer(expr)) {
+    return shapeNo("expr-new-type-args", expr);
+  }
+  if (currentModuleBindingResolver && !currentModuleBindingResolver.externCallArgumentsMatch(expr)) {
+    return shapeNo("expr-new-module-extern-call-brand", expr);
+  }
+  if (!expr.arguments) return true;
+  for (const arg of expr.arguments) {
+    if (!isPhase1Expr(arg, scope, localClasses)) return shapeNo("expr-new-arg", arg);
+  }
+  return true;
+}
+
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
   if (
     (expressionTouchesModuleExtern(expr) || expressionTouchesModuleMapGetAlias(expr)) &&
@@ -8903,126 +9032,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     }
     return true;
   }
-  // Slice 4 (#1169d) + Slice 10 (#1169i): NewExpression. Callee must be
-  // an Identifier naming either:
-  //   - a class declared in the same compilation unit (slice 4), or
-  //   - a host extern class known to the IR (slice 10 — RegExp,
-  //     Uint8Array, DataView, Map, …).
-  // Args are Phase-1 expressions. The lowerer validates the
-  // constructor's signature against the args (slice 4 against the
-  // class shape; slice 10 against `getExternClassInfo`'s
-  // constructorParams).
-  if (ts.isNewExpression(expr)) {
-    if (!ts.isIdentifier(expr.expression)) return shapeNo("expr-new-callee-nonident", expr.expression);
-    // (#2856 async-delay slice) Intercept the exact checker-certified
-    // Promise<number> timer construction before the generic constructor arm
-    // rejects its type argument and arrow.  The resolver has already proven
-    // the whole nested relationship; selection only rechecks that its two
-    // transitive executor captures are live in this function scope.
-    const promiseDelay = currentSelectionOptions?.promiseDelays?.resolve(expr);
-    if (promiseDelay) {
-      for (const capture of promiseDelay.executorCaptureNames) {
-        if (!scope.has(capture)) return shapeNo("expr-promise-delay-capture-scope", expr);
-      }
-      return true;
-    }
-    const ctorName = expr.expression.text;
-    const isLocalClass = localClassValueIsUnshadowed(ctorName, scope) && localClasses.has(ctorName);
-    const isAmbientConstructor = !isLocalClass && selectorSeesAmbientBinding(expr.expression);
-    if (currentSelectionOptions?.isHoleyArrayConstructor?.(expr) === true) {
-      if (ctorName !== "Array" || isLocalClass || scope.has("Array")) {
-        return capabilityNo("constructor-resolution-unsupported", "expr-new-holey-array-identity", expr);
-      }
-      if ((expr.typeArguments?.length ?? 0) !== 0 || expr.arguments?.length !== 1) {
-        return capabilityNo("constructor-arity-unsupported", "expr-new-holey-array-shape", expr);
-      }
-      const length = expr.arguments[0]!;
-      if (ts.isSpreadElement(length) || !ts.isNumericLiteral(length)) {
-        return capabilityNo("constructor-arity-unsupported", "expr-new-holey-array-length", length);
-      }
-      const numericLength = Number(length.text.replace(/_/g, ""));
-      if (!Number.isInteger(numericLength) || numericLength < 0 || numericLength > 0x7fff_ffff) {
-        return capabilityNo("constructor-arity-unsupported", "expr-new-holey-array-length", length);
-      }
-      return true;
-    }
-    // The IR slice lowers RegExp construction through the host `RegExp_new`
-    // extern-class ABI. Host-free targets own RegExp in legacy native codegen,
-    // including its runtime pattern compiler, so defer the whole function
-    // before from-ast can type-check native strings against externref params.
-    if (
-      ctorName === "RegExp" &&
-      isAmbientConstructor &&
-      currentSelectionOptions?.supportsBackendCapability?.("host-regexp-constructor") === false
-    ) {
-      return capabilityNo("regexp-constructor-unsupported", "expr-new-regexp-target", expr);
-    }
-    if (!isLocalClass && isKnownExternClass(ctorName) && !isAmbientConstructor) {
-      return capabilityNo("constructor-resolution-unsupported", "expr-new-extern-identity", expr.expression);
-    }
-    if (NATIVE_TYPED_ARRAY_CLASSES.has(ctorName) && isAmbientConstructor) {
-      return capabilityNo("typed-array-constructor-unsupported", "expr-new-native-typed-array", expr);
-    }
-    if (LEGACY_ERROR_CONSTRUCTOR_CLASSES.has(ctorName) && isAmbientConstructor) {
-      return capabilityNo("error-constructor-unsupported", "expr-new-error-constructor", expr);
-    }
-    if (isLocalClass) {
-      if (localClassHasKnownProjectionGap(ctorName)) {
-        return capabilityNo("class-projection-unsupported", "expr-new-local-class-shape", expr);
-      }
-      const expectedArity = projectedConstructorArity(ctorName);
-      const actualArity = expr.arguments ? staticCallArgumentCount(expr.arguments) : 0;
-      if (expectedArity === undefined) {
-        return capabilityNo("class-projection-unsupported", "expr-new-local-class-constructor", expr);
-      }
-      if (actualArity !== null && actualArity !== expectedArity) {
-        return capabilityNo("constructor-arity-unsupported", "expr-new-local-class-arity", expr);
-      }
-    }
-    if (currentModuleBindingResolver?.isDirectModuleBinding(expr.expression)) {
-      return shapeNo("expr-new-module-binding-callee", expr.expression);
-    }
-    // Date is native-struct-owned in legacy, while this slice deliberately
-    // lowers only checker-certified host snapshots through synthetic extern
-    // imports. Exact immediate module-init snapshots share that same host ABI
-    // so a Calendar cannot mix UTC-native module state with local host getters.
-    const hostDateSnapshot =
-      ctorName === "Date" && isAmbientConstructor ? currentSelectionOptions?.hostDateSnapshots?.(expr) : undefined;
-    if (ctorName === "Date" && !isLocalClass) {
-      if (!isAmbientConstructor) {
-        return capabilityNo("constructor-resolution-unsupported", "expr-new-date-identity", expr.expression);
-      }
-      if (currentSelectionOptions?.supportsBackendCapability?.("host-date-snapshot") === false) {
-        return capabilityNo("date-constructor-unsupported", "expr-new-date-target", expr);
-      }
-      if (currentSubjectIsModuleInit && !hostDateSnapshot) {
-        return capabilityNo("date-constructor-unsupported", "expr-new-module-native-date", expr);
-      }
-      if (!hostDateSnapshot) {
-        return capabilityNo("date-constructor-unsupported", "expr-new-date-snapshot-shape", expr);
-      }
-    }
-    if (!isLocalClass && !isKnownExternClass(ctorName)) {
-      return capabilityNo("constructor-resolution-unsupported", "expr-new-ctor-unknown", expr.expression);
-    }
-    // Type arguments are erased before lowering, but accepting them in the
-    // general constructor surface would silently widen generic local classes
-    // and shadowable builtin names. The one certified exception is the direct
-    // module initializer `const cache = new Map<K, V>()`: its ambient
-    // constructor identity, extern Map storage, arity, and host ABI are all
-    // checker-proven by the shared module-binding resolver.
-    if (expr.typeArguments && expr.typeArguments.length > 0 && !isExactModuleMapGenericInitializer(expr)) {
-      return shapeNo("expr-new-type-args", expr);
-    }
-    if (currentModuleBindingResolver && !currentModuleBindingResolver.externCallArgumentsMatch(expr)) {
-      return shapeNo("expr-new-module-extern-call-brand", expr);
-    }
-    if (!expr.arguments) return true;
-    for (const arg of expr.arguments) {
-      if (!isPhase1Expr(arg, scope, localClasses)) return shapeNo("expr-new-arg", arg);
-    }
-    return true;
-  }
+  if (ts.isNewExpression(expr)) return phase1NewExpression(expr, scope, localClasses);
   // Slice 1: `typeof <expr>` is claimable when its operand is a Phase-1
   // expression. The resulting value is a string tag ("number" / "boolean" /
   // "string" / …); downstream it only composes with `isPhase1BinaryOp`'s
@@ -9701,6 +9711,16 @@ export function buildLocalCallGraph(
         // resolve as external identifier calls.  Uncertified `new Promise`
         // shapes retain the ordinary graph behavior below.
         if (currentSelectionOptions?.promiseDelays?.resolve(node)) return;
+        // #3521 — an admitted function-style constructor is also a certified
+        // leaf for the local call graph.  Only the exact resolver may suppress
+        // the ordinary unknown-constructor rejection; its arguments still
+        // need the normal nested-call walk.
+        if (currentSelectionOptions?.resolveFnctorAdmission?.(node) !== undefined) {
+          if (node.arguments) {
+            for (const argument of node.arguments) visit(argument);
+          }
+          return;
+        }
         if (currentSelectionOptions?.isHoleyArrayConstructor?.(node) === true) {
           if (node.arguments) {
             for (const argument of node.arguments) visit(argument);
