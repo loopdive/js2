@@ -500,7 +500,13 @@ function tryBuiltinPrototypeIsPrototypeOf(
  *   - `Object.prototype.isPrototypeOf` — §20.1.3.3 step 1 is
  *     "If V is not an Object, return false", which runs BEFORE ToObject(this).
  *     Whether it throws depends on the ARGUMENT, not the receiver, so a
- *     receiver-only gate cannot decide it.
+ *     receiver-only gate cannot decide it. (#4623) It is now IN the table, with
+ *     the missing half supplied: {@link tryBorrowedPrototypeNullishThisThrow}
+ *     additionally requires the argument to be PROVABLY an object
+ *     ({@link provablyObjectValuedArgument}), so step 1 cannot have returned
+ *     first. A non-object (or unprovable) argument still declines, which is
+ *     what keeps `{null,undefined}-this-and-primitive-arg-returns-false.js`
+ *     answering `false` rather than throwing.
  *   - `String.prototype.*` — already routed through
  *     `emitBorrowedStringReceiverToString` (#3254), which performs
  *     RequireObjectCoercible + ToString on the borrowed receiver. Duplicating it
@@ -522,6 +528,8 @@ const NULLISH_THIS_THROWS: ReadonlyMap<string, ReadonlyMap<string, ValType>> = n
       ["toLocaleString", { kind: "externref" }],
       ["hasOwnProperty", { kind: "i32", boolean: true }],
       ["propertyIsEnumerable", { kind: "i32", boolean: true }],
+      // (#4623) Conditional on the argument — see ARGUMENT_MUST_BE_OBJECT.
+      ["isPrototypeOf", { kind: "i32", boolean: true }],
     ]),
   ],
   [
@@ -574,6 +582,40 @@ function skipParens(expr: ts.Expression): ts.Expression {
  * here. Used only for the `Function.prototype` family, whose step 2 is
  * "If IsCallable(func) is false, throw a TypeError exception" (§20.2.3).
  */
+/**
+ * (#4623) Methods whose nullish-`this` throw is reached ONLY when their first
+ * VALUE argument is an object, because an earlier step answers for a
+ * non-object one. `Object.prototype.isPrototypeOf` (§20.1.3.3) is the whole
+ * population: step 1 "If V is not an Object, return false" precedes step 2's
+ * `ToObject(this value)`.
+ */
+const ARGUMENT_MUST_BE_OBJECT: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["Object", new Set(["isPrototypeOf"])],
+]);
+
+/**
+ * (#4623) Is `expr` **provably** an object value, whatever the checker infers?
+ *
+ * Syntax proof only, in the same spirit as {@link syntacticallyNotCallable}: a
+ * function/class/object/array literal and a `new` expression each evaluate to
+ * an object in every program (§13.3.5 EvaluateNew yields the freshly created
+ * instance even for a constructor that returns a primitive). An identifier is
+ * deliberately NOT accepted — under `allowJs` its type is routinely `any`, and
+ * a wrong throw here is catchable and therefore observable.
+ */
+function provablyObjectValuedArgument(expr: ts.Expression | undefined): boolean {
+  if (expr === undefined) return false;
+  const e = skipParens(expr);
+  return (
+    ts.isFunctionExpression(e) ||
+    ts.isArrowFunction(e) ||
+    ts.isClassExpression(e) ||
+    ts.isObjectLiteralExpression(e) ||
+    ts.isArrayLiteralExpression(e) ||
+    ts.isNewExpression(e)
+  );
+}
+
 function syntacticallyNotCallable(expr: ts.Expression): boolean {
   const e = skipParens(expr);
   return (
@@ -645,6 +687,12 @@ export function tryBorrowedPrototypeNullishThisThrow(
   const invalidThis =
     provablyNullishReceiver(ctx, receiver) || (ctor === "Function" && syntacticallyNotCallable(receiver));
   if (!invalidThis) return undefined;
+  // (#4623) …and, for the methods whose earlier step answers for a non-object
+  // argument, the argument must be provably an object or the throw is not the
+  // spec's answer. `.call(recv, V)` puts `V` in argument slot 1.
+  if (ARGUMENT_MUST_BE_OBJECT.get(ctor)?.has(method) === true && !provablyObjectValuedArgument(expr.arguments[1])) {
+    return undefined;
+  }
 
   for (const arg of expr.arguments) {
     const t = compileArg(arg);

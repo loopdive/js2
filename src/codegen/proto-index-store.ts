@@ -942,6 +942,63 @@ function fillHasKBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
   ];
 }
 
+/**
+ * (#4491 T10) `key !== "constructor"` as an i32, built at FILL time.
+ *
+ * Guards the Object.prototype FALLTHROUGH in {@link fillGetKBody}. `constructor`
+ * is an own data property of EVERY builtin prototype (§19.2.3.1, §20.2.3.1,
+ * §22.1.3.1, …), so for a receiver whose implicit prototype is any brand other
+ * than `Object` the correct answer never comes from `Object.prototype` — the
+ * nearer level always shadows it. The two-level walk this store models
+ * (brand companion, then Object's) has no way to express "the nearer level owns
+ * this key but has no companion", so it has to be said for the one key where a
+ * missing companion is common: `Function` and `Date` decline a `constructor`
+ * seed (no identity-stable carrier — see builtin-proto-constructor-seed.ts), and
+ * without this guard a closure's `f.constructor` walks past the absent
+ * `Function.prototype` companion straight into `Object.prototype.constructor`
+ * and answers `Object`.
+ *
+ * That is exactly what regressed the QuickJS provider's function-parity canary:
+ * `new Function(…).constructor === Function` reads through
+ * `__closure_prop_get`'s #4176 miss consult, and once the T9 seed put
+ * `constructor` on `Object.prototype`'s companion the consult started answering
+ * `Object` — which then shadowed the runtime-eval carrier's own marker
+ * `constructor` field (the provider-realm `%Function%`), because a non-undefined
+ * consult result is taken as final by the carrier's property-get trampoline.
+ *
+ * A MISS here is the pre-T9 answer and lets each caller's own fallback run (the
+ * carrier's marker metadata, #4442's `%Function%` arm for a statically
+ * function-typed receiver). Returns `undefined` when the native-string helpers
+ * are unavailable, in which case the caller keeps its body byte-identical.
+ */
+function keyIsNotConstructorInstrs(ctx: CodegenContext, keyParam: number): Instr[] | undefined {
+  const anyStr = ctx.anyStrTypeIdx;
+  const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
+  if (anyStr < 0 || flattenIdx === undefined || equalsIdx === undefined) return undefined;
+  return [
+    { op: "local.get", index: keyParam },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: anyStr },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        { op: "local.get", index: keyParam },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: anyStr },
+        { op: "call", funcIdx: flattenIdx },
+        ...nativeStringLiteralInstrs(ctx, "constructor"),
+        { op: "call", funcIdx: equalsIdx },
+        { op: "i32.eqz" },
+      ],
+      // A non-string key (symbol / already-normalised index) can never be
+      // `constructor`, so the fallthrough stays available.
+      else: [{ op: "i32.const", value: 1 }],
+    },
+  ];
+}
+
 /** `__protoidx_get_k(origRecv, key, firstOff) -> externref` — §6.2.5.5 Get. */
 function fillGetKBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
   const fn = findFn(ctx, PROTOIDX_GET_K);
@@ -976,6 +1033,8 @@ function fillGetKBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
       ],
     },
   ];
+  // (#4491 T10) …and never for `constructor`, which every builtin prototype owns.
+  const notConstructor = keyIsNotConstructorInstrs(ctx, 1);
   fn.body = [
     // firstOff companion first (the receiver's own proto brand)…
     ...probeInto([{ op: "local.get", index: 2 }]),
@@ -986,6 +1045,7 @@ function fillGetKBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
     { op: "i32.const", value: OBJ_OFF },
     { op: "i32.ne" },
     { op: "i32.and" },
+    ...(notConstructor === undefined ? [] : [...notConstructor, { op: "i32.and" } satisfies Instr]),
     { op: "if", blockType: { kind: "empty" }, then: probeInto([{ op: "i32.const", value: OBJ_OFF }]) },
     // No entry anywhere → undefined miss.
     { op: "local.get", index: 4 },

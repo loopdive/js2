@@ -62,6 +62,7 @@ import {
 } from "./async-cps.js";
 import { ensureNativeGeneratorResultType } from "./generators-native.js";
 import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js"; // (#3178) canonical undefined for the done-result value
+import { recordAsyncFrameMachinery } from "./compiler-support-abi.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3 / #2710) stable-regime minting
 import { buildNativeAwaitClassification, buildNativeAwaitSuspendArm } from "./prepared-native-async-await.js";
 import {
@@ -320,6 +321,17 @@ export interface AsyncFrameInfo {
    * closures.ts capture aliasing flow through the cell.
    */
   spillCellInfo?: Map<number, { refCellTypeIdx: number; valType: ValType }>;
+  /**
+   * (#4618) Spilled let/const bindings whose TDZ FLAG must survive suspends.
+   * Each gets an i32 ref-cell frame field (`tdzcell_<name>`, starting at
+   * `tdzCellFieldStart`); the entry creates the cell at struct.new (0 =
+   * uninitialized) and the resume prologue re-binds it into
+   * `boxedTdzFlags`/`tdzFlagLocals` so inits/checks/capture-prepends all
+   * flow through one suspend-surviving cell.
+   */
+  tdzCellNames?: string[];
+  tdzCellFieldStart?: number;
+  tdzCellTypeIdx?: number;
   /** Field index of the result `$Promise` the async fn returns / settles. */
   resultPromiseFieldIdx: number;
   /**
@@ -604,10 +616,38 @@ export function buildAsyncFrameInfo(
     });
   }
 
+  // (#4618) TDZ flag CELLS for spilled let/const bindings. The resume fn's
+  // locals reset on every re-entry, so a raw i32 TDZ flag flipped in state k
+  // is LOST by state k+1 — a hoisted fn-decl capturing the binding then
+  // throws "X is not defined" from its boxed flag param even though the
+  // declaration ran. Persist each flagged spill's TDZ state in an i32 ref
+  // cell frame field: the entry creates the cell (0 = uninitialized), the
+  // resume prologue re-binds it into `boxedTdzFlags`/`tdzFlagLocals` (both
+  // emitLocalTdzInit and the call-site flag prepend are already cell-aware),
+  // and cell identity survives every suspend.
+  const tdzCellNames: string[] = [];
+  let tdzCellTypeIdx: number | undefined;
+  if (decl.asteriskToken === undefined && activatingFctx?.tdzFlagLocals !== undefined) {
+    for (const name of spillNames) {
+      if (activatingFctx.tdzFlagLocals.has(name)) tdzCellNames.push(name);
+    }
+    if (tdzCellNames.length > 0) {
+      tdzCellTypeIdx = getOrRegisterRefCellType(ctx, { kind: "i32" });
+      for (const name of tdzCellNames) {
+        stateFields.push({
+          name: `tdzcell_${name}`,
+          type: { kind: "ref_null", typeIdx: tdzCellTypeIdx },
+          mutable: true,
+        });
+      }
+    }
+  }
+  const tdzCellFieldStart = spillFieldOffset + spillNames.length;
+
   // Trailing result-promise field — after spills so `spillFieldOffset` is stable.
   // Host backend: the result promise is a host Promise object (externref); there
   // is no native `$Promise` struct in the module at all.
-  const resultPromiseFieldIdx = spillFieldOffset + spillNames.length;
+  const resultPromiseFieldIdx = spillFieldOffset + spillNames.length + tdzCellNames.length;
   const resultPromiseFieldType: ValType = hostImports
     ? { kind: "externref" }
     : { kind: "ref", typeIdx: promiseTypeIdx };
@@ -639,6 +679,9 @@ export function buildAsyncFrameInfo(
     spillFieldOffset,
     derivedSpillInit: derivedSpillInit.size > 0 ? derivedSpillInit : undefined,
     spillCellInfo: spillCellInfo.size > 0 ? spillCellInfo : undefined,
+    tdzCellNames: tdzCellNames.length > 0 ? tdzCellNames : undefined,
+    tdzCellFieldStart: tdzCellNames.length > 0 ? tdzCellFieldStart : undefined,
+    tdzCellTypeIdx,
     resultPromiseFieldIdx,
     promiseTypeIdx,
     host: hostImports !== undefined,
@@ -1584,17 +1627,23 @@ export function ensureAsyncResumeFunction(
     exported: false,
   };
   pushDefinedFunc(ctx, resumeFuncIdx, resumePlaceholder);
+  // (#3520 C35) Owned by the async function's OWN unit, not the entry source:
+  // a second async function cannot renumber this one. `resumePlaceholder` is
+  // filled in place below, so the recorded object is the one the module keeps.
+  recordAsyncFrameMachinery(ctx, info.decl, "resume", resumePlaceholder);
 
   const stepFulfillFuncIdx = mintDefinedFunc(ctx);
   info.stepFulfillFuncIdx = stepFulfillFuncIdx;
   ctx.funcMap.set(stepFulfillName, stepFulfillFuncIdx);
-  pushDefinedFunc(ctx, stepFulfillFuncIdx, {
+  const stepFulfillFunc: WasmFunction = {
     name: stepFulfillName,
     typeIdx: stepTypeIdx,
     locals: buildStepAdapterLocals(info),
     body: buildStepAdapterBody(info, resumeFuncIdx, /*reject*/ false),
     exported: info.host,
-  });
+  };
+  pushDefinedFunc(ctx, stepFulfillFuncIdx, stepFulfillFunc);
+  recordAsyncFrameMachinery(ctx, info.decl, "stepFulfill", stepFulfillFunc);
   // Host backend: the `__make_callback` host bridge dispatches by the exported
   // `__cb_<id>` NAME, so the adapters need real export entries (the `exported`
   // flag alone only opts into the module-init guard). The late-import shift
@@ -1610,13 +1659,15 @@ export function ensureAsyncResumeFunction(
   const stepRejectFuncIdx = mintDefinedFunc(ctx);
   info.stepRejectFuncIdx = stepRejectFuncIdx;
   ctx.funcMap.set(stepRejectName, stepRejectFuncIdx);
-  pushDefinedFunc(ctx, stepRejectFuncIdx, {
+  const stepRejectFunc: WasmFunction = {
     name: stepRejectName,
     typeIdx: stepTypeIdx,
     locals: buildStepAdapterLocals(info),
     body: buildStepAdapterBody(info, resumeFuncIdx, /*reject*/ true),
     exported: info.host,
-  });
+  };
+  pushDefinedFunc(ctx, stepRejectFuncIdx, stepRejectFunc);
+  recordAsyncFrameMachinery(ctx, info.decl, "stepReject", stepRejectFunc);
   if (info.host) {
     ctx.mod.exports.push({
       name: stepRejectName,
@@ -1661,6 +1712,31 @@ export function ensureAsyncResumeFunction(
   // eager hydration; frame-core also preserves force-boxed capture aliases.
   const selectiveSpillRestores = cfg.states.some((state) => state.restoreSpillNames !== undefined);
   initializeSpillLocals(info, resumeFctx, frameLocal, !selectiveSpillRestores, info.spillCellInfo);
+  // (#4618) Re-bind the suspend-surviving TDZ flag cells: load each cell from
+  // its frame field and register it in boxedTdzFlags + tdzFlagLocals so
+  // emitLocalTdzInit / emitLocalTdzCheck / the call-site flag prepend all
+  // flow through the ONE cell whose state persists across re-entries.
+  if (info.tdzCellNames !== undefined && info.tdzCellTypeIdx !== undefined && info.tdzCellFieldStart !== undefined) {
+    for (let i = 0; i < info.tdzCellNames.length; i++) {
+      const tdzName = info.tdzCellNames[i]!;
+      const cellLocal = allocLocal(resumeFctx, `__tdz_box_${tdzName}`, {
+        kind: "ref_null",
+        typeIdx: info.tdzCellTypeIdx,
+      });
+      resumeFctx.body.push({ op: "local.get", index: frameLocal });
+      resumeFctx.body.push({
+        op: "struct.get",
+        typeIdx: info.stateTypeIdx,
+        fieldIdx: info.tdzCellFieldStart + i,
+      });
+      resumeFctx.body.push({ op: "local.set", index: cellLocal });
+      (resumeFctx.boxedTdzFlags ??= new Map()).set(tdzName, {
+        refCellTypeIdx: info.tdzCellTypeIdx,
+        localIdx: cellLocal,
+      });
+      (resumeFctx.tdzFlagLocals ??= new Map()).set(tdzName, cellLocal);
+    }
+  }
   // (#2865) A lifted-CLOSURE body (arrow / fn-expr) keeps its captures in the
   // `__self` struct — closures.ts materializes each into a NAMED local in the
   // lifted body's prologue, and every identifier/call site in the body resolves
@@ -2678,6 +2754,11 @@ function emitAsyncFrameEntry(
       fctx.body.push(defaultSpillInstr(info.spillTypes[i]!));
     }
   }
+  // (#4618) TDZ flag cells — one fresh 0-initialized i32 cell per flagged spill.
+  for (let i = 0; i < (info.tdzCellNames?.length ?? 0); i++) {
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "struct.new", typeIdx: info.tdzCellTypeIdx! });
+  }
   fctx.body.push({ op: "local.get", index: resultPromiseLocal });
   fctx.body.push({ op: "struct.new", typeIdx: info.stateTypeIdx });
   const frameLocal = allocLocal(fctx, "__async_frame", {
@@ -3123,6 +3204,11 @@ export function emitAsyncGenerator(ctx: CodegenContext, fctx: FunctionContext, d
     } else {
       fctx.body.push(defaultSpillInstr(info.spillTypes[i]!));
     }
+  }
+  // (#4618) TDZ flag cells — one fresh 0-initialized i32 cell per flagged spill.
+  for (let i = 0; i < (info.tdzCellNames?.length ?? 0); i++) {
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "struct.new", typeIdx: info.tdzCellTypeIdx! });
   }
   // result_promise: fresh pending $Promise (overwritten by the first next()).
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });

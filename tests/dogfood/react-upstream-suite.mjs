@@ -42,7 +42,7 @@ import { setupReactUpstreamSuite } from "./setup-react-upstream-suite.mjs";
 import { extractReactUpstreamTests } from "./react-upstream-extract.mjs";
 import { installReactTestEnvironment } from "./react-test-environment.mjs";
 import { installReactUpstreamInfrastructure } from "./react-upstream-infrastructure.mjs";
-import { REACT_EXPECT_SHIM, LAST_ERROR_EXPORT, buildTestFunction } from "./react-upstream-shim.mjs";
+import { REACT_EXPECT_SHIM, LAST_ERROR_EXPORT, buildTestFunction, withTimeout } from "./react-upstream-shim.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = join(HERE, "report", "react-upstream-suite.json");
@@ -80,14 +80,6 @@ function buildNativeRunners(tests) {
   ].join("\n");
   // eslint-disable-next-line no-new-func
   return new Function("__REACT__", "require", source);
-}
-
-function withTimeout(value, timeoutMs, label) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs} ms`)), timeoutMs);
-  });
-  return Promise.race([Promise.resolve(value), timeout]).finally(() => clearTimeout(timer));
 }
 
 async function runNative(tests, nativeReact, timeoutMs, infrastructure) {

@@ -433,6 +433,61 @@ function graphql(query, vars = {}) {
 }
 
 /**
+ * (2026-08-23, PR #4785 incident) ARM native auto-merge on a fully-eligible PR,
+ * best-effort, so GitHub itself retries queue entry on its own events. Two gaps
+ * this closes, both measured that day:
+ *
+ *   1. QUEUE DROPS: the serial queue drops a PR when main advances under it,
+ *      and the only re-add was this sweep's ≤30-min cron (the workflow_run
+ *      trigger fires on CI completion, not on queue membership changes). With
+ *      auto-merge armed, GitHub re-queues the dropped PR the moment it is
+ *      eligible again — no cron wait.
+ *   2. THE workflow_run ALLOWLIST (#3889): a green transition produced by a
+ *      workflow outside ["Test262 Sharded", "CI"] never fires the responsive
+ *      trigger. GitHub's native arming keys on check state directly and does
+ *      not depend on that allowlist.
+ *
+ * WHY THIS IS SAFE against the #1758 serial-queue hazards: arming auto-merge is
+ * NOT an enqueue mutation — it never adds, removes, or re-adds a queue entry
+ * itself, so it cannot poke a forming head or cancel an in-flight group. GitHub
+ * performs the eventual entry as a normal trailing add.
+ *
+ * WHY THIS DOES NOT re-open #3878 (red non-required checks reaching the queue):
+ * this is called ONLY after the caller's FULL eligibility gate has passed —
+ * author trust, zero FAILURE-conclusion checks of ANY kind, required checks
+ * green by ruleset name, not draft, no hold label. GitHub's own auto-merge
+ * would key on required checks alone, which is why this helper must never be
+ * hoisted above those gates.
+ *
+ * Idempotent: "already enabled" (and its clean-status refusal twin) count as
+ * ok. All failures are telemetry, never a skip — the direct enqueue that
+ * follows is still the primary mechanism.
+ */
+function armAutoMerge(pullRequestId) {
+  try {
+    graphql(
+      `
+        mutation ($id: ID!) {
+          enablePullRequestAutoMerge(input: { pullRequestId: $id }) {
+            clientMutationId
+          }
+        }
+      `,
+      { id: pullRequestId },
+    );
+    return { ok: true, why: "auto-merge armed" };
+  } catch (e) {
+    const msg = String(e.stderr || e.message || e)
+      .split("\n")[0]
+      .slice(0, 120);
+    // Benign shapes: already armed, or GitHub refuses because the PR is in a
+    // state where arming is unnecessary (already queued / already mergeable).
+    if (/already.*(enabled|auto.?merge)|clean status/i.test(msg)) return { ok: true, why: "auto-merge already armed" };
+    return { ok: false, why: `auto-merge arm failed: ${msg}` };
+  }
+}
+
+/**
  * #4094 — the full commit messages of every commit `main` is ahead of `headOid` by,
  * read from the SERVER-SIDE compare API (never local refs: this checkout's remote
  * tracking refs are unreliable, and CI has no local main to compare against).
@@ -1373,6 +1428,12 @@ function runSweep() {
       enqueued.push([pr.number, `would-enqueue (green ${ageMin}m >= ${GRACE_MINUTES}m grace)`]);
       continue;
     }
+    // Arm native auto-merge FIRST (see armAutoMerge's header): if the direct
+    // enqueue below races a head move or a queue drop, GitHub's own retry is
+    // already in place. Placed after every eligibility gate on purpose — the
+    // arming must never widen what can reach the queue (#3878 note in the
+    // helper). Best-effort: an arm failure never blocks the direct enqueue.
+    const arm = armAutoMerge(pr.id);
     try {
       graphql(
         `
@@ -1400,7 +1461,7 @@ function runSweep() {
       } catch {
         /* telemetry only */
       }
-      enqueued.push([pr.number, `enqueued (green ${ageMin}m${behindNote})`]);
+      enqueued.push([pr.number, `enqueued (green ${ageMin}m${behindNote}; ${arm.why})`]);
       // #3584: a PR flagged on an earlier sweep and enqueued now was a false
       // positive (or was rescued); drop the label so it cannot rot and dilute
       // the signal. No-op when the label is absent.
@@ -1440,7 +1501,10 @@ function runSweep() {
           continue;
         }
         refusals.push([pr.number, msg]);
-        skipped.push([pr.number, `enqueue-failed: ${msg}`]);
+        // The arm status matters most on THIS path: a failed direct enqueue
+        // with auto-merge armed is self-healing (GitHub retries entry), while
+        // one without it strands until the next sweep.
+        skipped.push([pr.number, `enqueue-failed: ${msg} (${arm.why})`]);
       }
     }
   }
