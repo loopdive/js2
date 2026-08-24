@@ -969,7 +969,7 @@ const DATE_MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug",
  * not reachable: civil years are calendar years). Returns
  * `$NativeString(len, off=0, data)`; the buffer is sized for the longest format.
  */
-function ensureDateFormatStringHelper(ctx: CodegenContext): number {
+export function ensureDateFormatStringHelper(ctx: CodegenContext): number {
   const existing = ctx.funcMap.get("__date_format_string");
   if (existing !== undefined) return existing;
 

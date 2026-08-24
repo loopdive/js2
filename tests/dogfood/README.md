@@ -772,3 +772,48 @@ regression floor (`equal >= 18` at `total === 21`).
 
 This harness does **not** fix any compiler bug — pure tooling, same as the
 other harnesses' scope notes above.
+
+## @js-temporal/polyfill — spike harness (#4628)
+
+Unlike every other harness here, this one is a **spike instrument, not a
+regression gate**. It exists to answer one question for
+[#4628](https://js2wasm.loopdive.com/dashboard/issue.html?slug=4628-temporal-runtime-object-spike):
+can js2wasm compile `@js-temporal/polyfill` well enough to install a real
+`Temporal` global? So it runs the **compile + validate** lane only — the cheap
+half — with no differential-execution lane and, deliberately, **no pass/fail
+floor** in the vitest wrapper.
+
+Two pins, not one: the polyfill's published ESM bundle is **not**
+self-contained. `dist/index.esm.js` carries exactly one import against
+`jsbi@^4.3.0`, so `jsbi-4.3.0.tgz` is pinned alongside it and the harness links
+them into a single module (jsbi's `export default JSBI;` dropped, the import
+rewritten to `const e=JSBI;`). Both edits are asserted, so an upstream bump that
+changes the bundle shape fails loudly instead of quietly measuring something
+else.
+
+```bash
+# slice lane — split at top-level statement boundaries, compile chunk by chunk
+node tests/dogfood/temporal-polyfill-harness.mjs --no-umd --no-whole --slices=25
+# whole-bundle lane (see the caveat below)
+JS2WASM_COMPILE_PROFILE=stream node tests/dogfood/temporal-polyfill-harness.mjs --no-umd
+# vitest contract wrapper (cheap acquisition/link lane always runs)
+DOGFOOD_TEMPORAL_POLYFILL=1 pnpm test -- tests/dogfood/temporal-polyfill.test.ts
+```
+
+Report: `tests/dogfood/report/temporal-polyfill-surface.json` (gitignored). Pin:
+`temporal-polyfill-pin.json`.
+
+**Current state (2026-08-23):** the slice lane compiles **342 / 342 top-level
+statements with zero compile errors**, but 5 of 14 slices emit a binary that
+fails `WebAssembly.compile()` (all one family: a call thunk pushing one operand
+fewer than the callee's declared arity). The **whole-bundle lane does not
+terminate** — 157 KB in one module ran 45 minutes without finishing, while the
+same statements sliced up sum to ~24 seconds. Per the rule at the top of this
+file, a compile timeout is an unverified workload, never a pass. Full
+measurements, the scaling curve and the Option A / Option B decision are in the
+issue.
+
+The `--slices=N` mode is the reusable part: when a whole-module compile will not
+terminate, it still yields a bucketed cause list, and it **reports coverage**
+(slices run / skipped, statements covered / total) so partial results can never
+be mistaken for a whole-bundle number.

@@ -54,6 +54,7 @@ import {
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
 import { localGlobalIdx } from "../registry/imports.js";
+import { reassignedFunctionBindingIsDynamic } from "./reassigned-function-binding-widening.js";
 
 /**
  * The widened slot type for `decl`, or `undefined` to leave the type picker's
@@ -107,6 +108,10 @@ export function moduleGlobalIsDynamicButStaticallyPrimitive(ctx: CodegenContext,
   const globalIdx = ctx.moduleGlobals.get(id.text);
   if (globalIdx === undefined) return false;
   if (ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type.kind !== "externref") return false;
+  // (#4491 T12) The FunctionDeclaration binding carries the identical hazard
+  // and `variableDeclarationOf` below cannot see it — see
+  // reassigned-function-binding-widening.ts.
+  if (reassignedFunctionBindingIsDynamic(ctx, id)) return true;
   // Sloppy-script `var` redeclarations make the oracle's singular declaration
   // lookup intentionally return undefined. The update analysis is
   // symbol/declaration-set based, so it remains exact for that legal binding

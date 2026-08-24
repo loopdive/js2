@@ -98,6 +98,11 @@ import {
 import { emitMaterializedArgumentsVector, prepareCompiledApplyBridge } from "./apply-arguments-vector.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
+import { emitVirtualMethodDispatchByTag } from "./virtual-dispatch.js";
+
+// (#1299) Lives in its own subsystem module since 2026-08-23; re-exported here
+// because call sites import it from `calls.ts`.
+export { emitVirtualMethodDispatchByTag };
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import {
   addFuncType,
@@ -178,6 +183,8 @@ import {
   ensureArrayNativeProtoGlue,
   ensureDataViewNativeProtoGlue,
   ensureDateNativeProtoGlue,
+  ensureNumberNativeProtoGlue,
+  ensureBooleanNativeProtoGlue,
   ensureObjectNativeProtoGlue,
   ensureStringNativeProtoGlue,
   ensureGeneratorPrototypeNativeProtoGlue,
@@ -197,6 +204,7 @@ import {
   ensureStandaloneNativeMethodClosure,
   getNativeProtoBuiltinGlue,
 } from "../native-proto.js";
+import { wrapperProtoSyntacticMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
 import { BUILTIN_STATIC_METHOD_ARITY } from "../builtin-fn-meta.js";
 import { pushReflectiveCallReceiver } from "../reflective-call-receiver.js"; // (#3638)
 import {
@@ -256,6 +264,7 @@ import {
   compileClosureCall,
   compileGetterCallable,
   compileObjectPrototypeFallback,
+  runtimeSignatureParameters,
   tryExternClassMethodOnAny,
 } from "./calls-closures.js";
 import { compileOptionalCallExpression } from "./calls-optional.js";
@@ -268,6 +277,7 @@ import {
   tryStaticEvalInline,
   tryStaticFunctionCtorCall,
 } from "./eval-inline.js";
+import { tryHostDynamicFunctionCtorValue } from "./dynamic-function-ctor-value.js"; // (#4650)
 import { dynamicEvalRefusalMessages } from "./runtime-eval-provider.js";
 import {
   ensureRuntimeEvalInterpretedCallbackType,
@@ -316,7 +326,7 @@ import {
 } from "./calls-guards.js";
 import { reshapeSloppyPrimitiveThisArg } from "./sloppy-this-toobject.js"; // (#4246)
 import { planInlinedReceiver, releaseInlinedReceiver } from "./inlined-call-receiver.js"; // (#4246)
-import { seedBoundFunctionLengthOnStack } from "../bound-fn-meta.js"; // (#4562) §20.2.3.2 steps 5-8
+import { seedBoundFunctionMetaOnStack } from "../bound-fn-meta.js"; // (#4562/#4563) §20.2.3.2 steps 5-11
 import { buildHostCallFallbackArm, ensureHostCallFallbackImports, planHostCallFallback } from "./host-call-fallback.js";
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
 import {
@@ -329,13 +339,15 @@ import {
 import { ensureAnyHelpers, undefinedExternInstrs } from "../any-helpers.js";
 import { emitSymbolToString, ensureSymbolRegistry } from "../symbol-native.js";
 import { resolveStructName } from "./misc.js";
-import { tryCompileErrorCtorCallWithoutNew } from "./new-builtin-globals.js";
+import { tryCompileDateCallWithoutNew, tryCompileErrorCtorCallWithoutNew } from "./new-builtin-globals.js";
 import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-super.js";
 import { compileIdentifierCall } from "./call-identifier.js";
 import { compileBuiltinStaticCall, tryCompileFromCharCodeFamilyReflective } from "./call-builtin-static.js";
 import { compileNamespaceStaticCall } from "./call-namespace-static.js";
 import { compileReceiverMethodCall } from "./call-receiver-method.js";
 import { compileTailDispatch } from "./call-tail-dispatch.js";
+import { tryEmitIsPrototypeOfCallArm } from "./is-prototype-of-call-arm.js";
+import { tryEmitRealmGlobalMemberCall } from "./realm-global-member-call.js"; // (#4491)
 import {
   emitNativeGeneratorToVec,
   nativeGeneratorInfoForForOfSubject,
@@ -1067,6 +1079,14 @@ function tryEmitNativeProtoReflectiveCall(
   }
   if (!member || !ifaceName) return undefined;
 
+  // (#4619 family D) For the two wrapper members the brand genuinely owns, the
+  // SYNTACTIC spelling beats the symbol — `lib.es5.d.ts` declares no `toString`
+  // on `interface Boolean`, so the symbol says Object. See the module.
+  {
+    const syntactic = wrapperProtoSyntacticMember(ctx, unwrapTransparent(receiver), member);
+    if (syntactic !== undefined) ({ member, ifaceName } = syntactic);
+  }
+
   // (#4119) `Object.prototype.toString.call(v)` written in its DIRECT syntactic
   // form stays owned by the #2501 compile-time fold further down, NOT by the
   // reflective closure. The fold keys on the receiver ARGUMENT's static type, so
@@ -1090,17 +1110,23 @@ function tryEmitNativeProtoReflectiveCall(
     if (resolveObjectToStringTag(ctx, expr.arguments[0]) !== undefined) return undefined;
   }
 
-  // Map the lib interface → builtin brand. Array<T> / ReadonlyArray<T> / Object.
-  let brand: number | undefined;
-  if (ifaceName === "Array" || ifaceName === "ReadonlyArray") brand = ensureArrayNativeProtoGlue(ctx);
-  else if (ifaceName === "Object") brand = ensureObjectNativeProtoGlue(ctx);
-  else if (ifaceName === "String")
-    brand = ensureStringNativeProtoGlue(ctx); // (#2875)
-  else if (ifaceName === "DataView")
-    brand = ensureDataViewNativeProtoGlue(ctx); // (#3173)
-  else if (ifaceName === "ArrayBuffer")
-    brand = ensureArrayBufferNativeProtoGlue(ctx); // (#1595)
-  else if (ifaceName === "Date") brand = ensureDateNativeProtoGlue(ctx); // (#3219)
+  let brand = nativeProtoBrandForInterface(ctx, ifaceName);
+  // (#4582) `valueOf` ONLY — the other Number/Boolean members still refuse, and
+  // routing those here would turn today's answers into TypeErrors. Without this
+  // arm both fell to the legacy `.call` tail that drops `thisArg` and returns 0:
+  // `Boolean.prototype.valueOf.call(Object(true))` answered `false`, the Number
+  // twin `undefined` — silent wrong values, measured on base.
+  // (#4619 family D) …and `toString`, now that it has a native body too
+  // (wrapper-proto-to-string.ts). Same measured symptom as #4582's `valueOf`:
+  // `Boolean.prototype.toString.call(true)` and the Number twin both answered
+  // `undefined` on base, because the legacy `.call` tail drops `thisArg`. Both
+  // members are still enumerated one by one rather than opening the whole
+  // family — a member whose body still refuses would turn today's (wrong but
+  // non-throwing) answer into a TypeError.
+  const wrapperWiredMember = member === "valueOf" || member === "toString";
+  if (brand === undefined && wrapperWiredMember && ifaceName === "Number") brand = ensureNumberNativeProtoGlue(ctx);
+  else if (brand === undefined && wrapperWiredMember && ifaceName === "Boolean")
+    brand = ensureBooleanNativeProtoGlue(ctx);
   if (brand === undefined) return undefined;
 
   const glue = getNativeProtoBuiltinGlue(ctx, brand);
@@ -1122,10 +1148,15 @@ function tryEmitNativeProtoReflectiveCall(
  * user-arg list is just `[thisArg]`, threaded into the closure's lone `this`
  * param). Returns the result ValType, or `undefined` to fall through.
  */
-function emitReflectiveNativeProtoClosureCall(
+export function emitReflectiveNativeProtoClosureCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  expr: ts.CallExpression,
+  /**
+   * (#2875) Argument SOURCE, not necessarily the syntactic call — only
+   * `.arguments` is read. `transferred-native-proto-call.ts` supplies a
+   * synthesized `[thisArg, …userArgs]` list whose elements are all real nodes.
+   */
+  expr: { readonly arguments: readonly ts.Expression[] },
   receiver: ts.Expression,
   brand: number,
   member: string,
@@ -2156,7 +2187,7 @@ function emitBoundFnValueFromLocals(
   fctx.body.push({ op: "ref.null.extern" }); // (#4241) $bag — no expandos at birth
   fctx.body.push({ op: "struct.new", typeIdx: bfIdx });
   fctx.body.push({ op: "extern.convert_any" });
-  seedBoundFunctionLengthOnStack(ctx, fctx, targetLocal, partialArgLocals.length); // (#4562) §20.2.3.2 steps 5-8
+  seedBoundFunctionMetaOnStack(ctx, fctx, targetLocal, partialArgLocals.length); // (#4562/#4563) §20.2.3.2 steps 5-11
 }
 
 export function compileFunctionBind(
@@ -2325,6 +2356,16 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
   if (!ts.isIdentifier(expr)) return false;
   const sym = ctx.checker.getSymbolAtLocation(expr);
   const decl = sym?.valueDeclaration;
+  // (#4616) A callable PARAM of a CLASS METHOD routinely receives a host
+  // function at runtime: an any-receiver dynamic method call marshals its
+  // arrow argument through the host bridge, and test harnesses hand methods
+  // host spies (jest.fn()). Replaceable.forEach's `cb(...)` nulled the
+  // wrapper cast and trapped call_ref un-catchably. Method params get the
+  // #1712 host arm; plain function params keep the #1941 gate so pure
+  // local-closure programs stay host-import-free.
+  if (decl && ts.isParameter(decl) && decl.parent !== undefined && ts.isMethodDeclaration(decl.parent)) {
+    return !ctx.standalone && !ctx.wasi;
+  }
   if (!decl || !ts.isVariableDeclaration(decl) || !decl.initializer) return false;
 
   // (#3432 follow-up) A declaration that SKIPPED the closure match-and-recast
@@ -2350,6 +2391,16 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
     return false;
   };
 
+  // Ambient callable globals (`queueMicrotask`, `requestAnimationFrame`, and
+  // the standard global parsing/URI helpers) arrive as host externrefs when a
+  // function value is copied into a local.  That local must retain the
+  // host-call fallback; otherwise the closure-shaped dispatch path casts the
+  // externref to a null Wasm closure and traps on an indirect call.
+  const isDeclaredHostGlobal = (node: ts.Expression): boolean => {
+    const inner = unparen(node);
+    return ts.isIdentifier(inner) && ctx.declaredGlobals.has(inner.text);
+  };
+
   // (#3488) `Object.getOwnPropertyDescriptor(o, k).get`/`.set` extracts a HOST
   // accessor function (not a wasm closure), e.g. a builtin-proto getter like
   // `%TypedArray%.prototype.length`. Invoked as a bare `getter()` it must reach
@@ -2372,7 +2423,7 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
   // chains), checking whether any reachable left operand is a host builtin.
   const initMayBeHost = (node: ts.Expression): boolean => {
     const inner = ts.isParenthesizedExpression(node) ? node.expression : node;
-    if (isHostBuiltinMember(inner)) return true;
+    if (isHostBuiltinMember(inner) || isDeclaredHostGlobal(inner)) return true;
     if (isReflectiveAccessorExtraction(inner)) return true;
     if (ts.isConditionalExpression(inner)) {
       return initMayBeHost(inner.whenTrue) || initMayBeHost(inner.whenFalse);
@@ -2973,6 +3024,47 @@ export function functionExprBodyReferencesOwnName(fn: ts.FunctionExpression): bo
   };
   if (fn.body) visit(fn.body);
   return found;
+}
+
+/**
+ * (#4614) Statically resolve `ns.member(...)` through a NamespaceImport of a
+ * compiled sibling module to the equivalent named call. Returns undefined to
+ * decline (not a namespace-import receiver, external/ambient module, or a
+ * non-function export) — the caller falls through to the legacy lanes.
+ */
+function tryNamespaceImportMemberCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): InnerResult | undefined {
+  if (!ts.isPropertyAccessExpression(expr.expression)) return undefined;
+  const access = expr.expression;
+  if (!ts.isIdentifier(access.expression) || ts.isPrivateIdentifier(access.name)) return undefined;
+  const nsDecl = ctx.oracle.valueDeclarationOf(access.expression);
+  if (nsDecl === undefined || !ts.isNamespaceImport(nsDecl)) return undefined;
+  // The export symbol of `export function f` carries the FunctionDeclaration
+  // directly; deeper re-export chains resolve to the intermediate specifier
+  // and decline here (fail-closed to the legacy lane).
+  const memberDecl = ctx.oracle.valueDeclarationOf(access.name);
+  if (
+    memberDecl === undefined ||
+    !ts.isFunctionDeclaration(memberDecl) ||
+    memberDecl.name === undefined ||
+    memberDecl.body === undefined
+  ) {
+    return undefined;
+  }
+  const targetName = memberDecl.name;
+  // The target must be a function this program actually compiled — an
+  // unmapped name means the module was consumed externally (host require,
+  // deferred entry) and the legacy lane's answer stands.
+  if (!ctx.funcMap.has(targetName.text)) return undefined;
+  const synthetic = ts.factory.createCallExpression(targetName, expr.typeArguments, expr.arguments);
+  ts.setTextRange(synthetic, expr);
+  // A factory node has no parent chain, so `getSourceFile()` on it (position
+  // maps, diagnostics) crashes — anchor it where the original call sits.
+  (synthetic as { parent?: ts.Node }).parent = expr.parent;
+  return compileCallExpression(ctx, fctx, synthetic as ts.CallExpression);
 }
 
 function compileOptionalDirectCall(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression): InnerResult {
@@ -3590,7 +3682,15 @@ export function tryEmitInlineDynamicCall(
     // silent no-op, so the promise never settled (resolve-settled-*-self).
     // Void candidates needing a non-externref pad stay excluded
     // (conservative: their pad values are NaN/0/typed-null guesses).
-    if (info.paramTypes.length > arity && info.returnType === null) {
+    // (#4616) A rest-param closure's trailing formal is the packed rest VEC,
+    // not a positional param: its effective fixed-formal count excludes it.
+    // Mirror the generic `__call_fn_N` dispatcher (closure-exports.ts): only
+    // admit a rest candidate when the call supplies at least every fixed
+    // formal (fewer → conservative skip, same as `hostArity > arity` there).
+    const infoIsRest = info.hasRestParam === true && info.paramTypes.length > 0;
+    const infoFixedCount = infoIsRest ? info.paramTypes.length - 1 : info.paramTypes.length;
+    if (infoIsRest && arity < infoFixedCount) continue;
+    if (!infoIsRest && info.paramTypes.length > arity && info.returnType === null) {
       let padsAllExternref = true;
       for (let i = arity; i < info.paramTypes.length; i++) {
         if (info.paramTypes[i]!.kind !== "externref") {
@@ -3642,9 +3742,23 @@ export function tryEmitInlineDynamicCall(
 
   // Dedupe by funcTypeIdx — concrete subtypes share funcTypeIdx with their
   // base wrapper; one dispatch arm per unique funcref type is enough.
+  // (#4616) EXCEPT rest-param candidates: a rest closure's funcref signature
+  // is identical to a genuine one-vec-param closure's (`function spy(...args)`
+  // vs `function g(xs: any[])`), so rest candidates keep their own arms —
+  // guarded by their CONCRETE struct type, not just the funcref signature —
+  // and are emitted after the positional arms below so they are tested FIRST
+  // (each later arm wraps the previous dispatch chain).
   const seenFuncType = new Set<number>();
+  const seenRestStruct = new Set<number>();
   const candidates: Cand[] = [];
+  const restCandidates: Cand[] = [];
   for (const c of allCandidates) {
+    if (c.info.hasRestParam === true && c.info.paramTypes.length > 0) {
+      if (seenRestStruct.has(c.structTypeIdx)) continue;
+      seenRestStruct.add(c.structTypeIdx);
+      restCandidates.push(c);
+      continue;
+    }
     if (seenFuncType.has(c.info.funcTypeIdx)) continue;
     seenFuncType.add(c.info.funcTypeIdx);
     candidates.push(c);
@@ -3653,6 +3767,10 @@ export function tryEmitInlineDynamicCall(
   // so a value that satisfies an exact wrapper takes that arm before a
   // wider, undefined-padded one.
   candidates.sort((a, b) => a.info.paramTypes.length - arity - (b.info.paramTypes.length - arity));
+  // (#4616) Rest arms last in emission order = OUTERMOST at runtime, so a
+  // rest-struct value takes the rest arm before the same-signature positional
+  // arm can mis-cast its first arg to the vec type.
+  candidates.push(...restCandidates);
 
   // Ensure box/unbox helpers exist (standalone: registered as native defined
   // functions, no import; host: late imports). Their indices are captured AFTER
@@ -3958,9 +4076,34 @@ export function tryEmitInlineDynamicCall(
         ? (selfParam as { typeIdx: number }).typeIdx
         : cand.structTypeIdx;
 
+    // (#4616) Rest-param candidate: the trailing formal is the packed rest
+    // vec. Marshal only the fixed formals positionally, then pack every
+    // remaining call arg into a fresh vec — mirroring the generic
+    // `__call_fn_N` rest arm (closure-exports.ts). Falls back to positional
+    // marshalling when the vec/array shape can't be resolved or an element
+    // kind isn't marshalable here.
+    let restVec: { vecTypeIdx: number; arrTypeIdx: number; elemType: ValType } | undefined;
+    let fixedCount = cand.info.paramTypes.length;
+    if (cand.info.hasRestParam === true && cand.info.paramTypes.length > 0) {
+      const restFixed = cand.info.paramTypes.length - 1;
+      const restParam = funcTypeDef?.kind === "func" ? funcTypeDef.params[restFixed + 1] : undefined;
+      if (restParam && (restParam.kind === "ref" || restParam.kind === "ref_null")) {
+        const vecTypeIdx = (restParam as { typeIdx: number }).typeIdx;
+        const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+        const arrDef = ctx.mod.types[arrTypeIdx];
+        if (
+          arrDef?.kind === "array" &&
+          (arrDef.element.kind === "externref" || arrDef.element.kind === "f64" || arrDef.element.kind === "i32")
+        ) {
+          restVec = { vecTypeIdx, arrTypeIdx, elemType: arrDef.element };
+          fixedCount = restFixed;
+        }
+      }
+    }
+
     const callBody: Instr[] = [];
 
-    appendDynamicCandidateArgcSetup(ctx, fctx, callBody, cand.info.paramTypes.length, argLocals, arity);
+    appendDynamicCandidateArgcSetup(ctx, fctx, callBody, fixedCount, argLocals, arity);
     // Self arg: anyref → the concrete struct type this funcref expects.
     callBody.push({ op: "local.get", index: anyLocal });
     callBody.push({ op: "ref.cast", typeIdx: selfTypeIdx });
@@ -3970,7 +4113,7 @@ export function tryEmitInlineDynamicCall(
     // missing trailing formals (i >= arity) are padded with `undefined`
     // (#820/#1543) so the lifted method applies its default / runs the
     // spec-mandated destructure of the default value.
-    for (let i = 0; i < cand.info.paramTypes.length; i++) {
+    for (let i = 0; i < fixedCount; i++) {
       const pType = cand.info.paramTypes[i]!;
       if (i >= arity) {
         // Missing arg → `undefined`. For ref/ref_null formals there is no
@@ -4014,6 +4157,25 @@ export function tryEmitInlineDynamicCall(
       }
     }
 
+    // (#4616) Rest formal: pack every remaining call arg into a fresh vec
+    // (length first, then the fixed-size array — the vec struct field order).
+    if (restVec !== undefined) {
+      const restCount = Math.max(0, arity - fixedCount);
+      callBody.push({ op: "i32.const", value: restCount });
+      for (let i = fixedCount; i < arity; i++) {
+        callBody.push({ op: "local.get", index: argLocals[i]! });
+        if (restVec.elemType.kind === "f64") {
+          callBody.push({ op: "call", funcIdx: unboxNumberIdx });
+        } else if (restVec.elemType.kind === "i32") {
+          callBody.push({ op: "call", funcIdx: unboxNumberIdx });
+          callBody.push({ op: "i32.trunc_sat_f64_s" });
+        }
+        // externref element: raw saved arg local.
+      }
+      callBody.push({ op: "array.new_fixed", typeIdx: restVec.arrTypeIdx, length: restCount });
+      callBody.push({ op: "struct.new", typeIdx: restVec.vecTypeIdx });
+    }
+
     // Extract funcref from field 0 and call_ref.
     callBody.push({ op: "local.get", index: anyLocal });
     callBody.push({ op: "ref.cast", typeIdx: selfTypeIdx });
@@ -4043,9 +4205,14 @@ export function tryEmitInlineDynamicCall(
     // wrapper struct is a safe supertype to cast any wrapper to for that read.
     const rootStructIdx =
       (ctx as unknown as { __funcRefWrapperRootTypeIdx?: number }).__funcRefWrapperRootTypeIdx ?? selfTypeIdx;
+    // (#4616) A rest arm additionally guards on the candidate's CONCRETE
+    // struct type — its funcref signature alone is indistinguishable from a
+    // genuine vec-param closure's, and the positional arm for that signature
+    // stays in the chain below for those.
+    const structGuardIdx = restVec !== undefined ? cand.structTypeIdx : rootStructIdx;
     const testCond: Instr[] = [
       { op: "local.get", index: anyLocal },
-      { op: "ref.test", typeIdx: rootStructIdx },
+      { op: "ref.test", typeIdx: structGuardIdx },
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "i32" } },
@@ -4161,151 +4328,6 @@ export function tryEmitInlineDynamicCall(
 
   fctx.body.push(...dispatch);
   return { kind: "externref" };
-}
-
-/**
- * (#1299) Emit a tag-based virtual method dispatch for a base-typed
- * receiver where multiple subclasses provide overriding implementations.
- * Mirrors the `instanceof` codegen: load the receiver's `__tag` field
- * (i32, set in each subclass's constructor) and compare against each
- * candidate's known `classTag` value, calling the matching subclass's
- * method body. Receiver and arguments are evaluated once and saved to
- * temp locals so each branch can reference them.
- *
- * Returns the call's IR result type, or undefined if dispatch could not
- * be emitted (caller falls back to the existing static path).
- */
-export function emitVirtualMethodDispatchByTag(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  expr: ts.CallExpression,
-  propAccess: ts.PropertyAccessExpression,
-  candidates: { className: string; funcIdx: number; classTag: number }[],
-  baseClassName: string,
-): InnerResult | undefined {
-  // Resolve the base struct typeIdx for `struct.get __tag` (field 0).
-  const baseStructIdx = ctx.structMap.get(baseClassName);
-  if (baseStructIdx === undefined) return undefined;
-
-  // Validate first candidate's signature (used as the schema for arg
-  // type hints and return-type lookup; all overrides share the same
-  // user-visible signature).
-  const firstCand = candidates[0]!;
-  const firstParamTypes = getFuncParamTypes(ctx, firstCand.funcIdx);
-  if (!firstParamTypes || firstParamTypes.length === 0) return undefined;
-
-  // Compile the receiver expression — produces a ref-typed value.
-  const recvType = compileExpression(ctx, fctx, propAccess.expression);
-  if (!recvType || (recvType.kind !== "ref" && recvType.kind !== "ref_null")) return undefined;
-
-  const recvLocalType: ValType = { kind: "ref_null", typeIdx: (recvType as { typeIdx: number }).typeIdx };
-  const recvLocal = allocTempLocal(fctx, recvLocalType);
-  fctx.body.push({ op: "local.set", index: recvLocal });
-
-  // Evaluate args and save each to a temp local. Pad missing args with
-  // default values so call sites can omit trailing arguments.
-  const argLocals: { idx: number; type: ValType }[] = [];
-  const userParamCount = firstParamTypes.length - 1; // exclude self
-  const argCount = Math.min(expr.arguments.length, userParamCount);
-  for (let i = 0; i < argCount; i++) {
-    const expectedArgType = firstParamTypes[i + 1];
-    const aType = compileExpression(ctx, fctx, expr.arguments[i]!, expectedArgType);
-    if (!aType) return undefined;
-    const local = allocTempLocal(fctx, aType);
-    fctx.body.push({ op: "local.set", index: local });
-    argLocals.push({ idx: local, type: aType });
-  }
-  for (let i = expr.arguments.length + 1; i < firstParamTypes.length; i++) {
-    const paramType = firstParamTypes[i]!;
-    pushDefaultValue(fctx, paramType, ctx);
-    const local = allocTempLocal(fctx, paramType);
-    fctx.body.push({ op: "local.set", index: local });
-    argLocals.push({ idx: local, type: paramType });
-  }
-
-  // Determine return type from the first candidate's signature.
-  const sig = ctx.checker.getResolvedSignature(expr);
-  let resultType: ValType | typeof VOID_RESULT = VOID_RESULT;
-  if (sig) {
-    const retType = ctx.checker.getReturnTypeOfSignature(sig);
-    const fullName0 = `${firstCand.className}_${propAccess.name.text}`;
-    if (!isEffectivelyVoidReturn(ctx, retType, fullName0)) {
-      const wasmRet = getWasmFuncReturnType(ctx, firstCand.funcIdx);
-      resultType = wasmRet ?? resolveWasmType(ctx, retType);
-    }
-  }
-  if (resultType !== VOID_RESULT && wasmFuncReturnsVoid(ctx, firstCand.funcIdx)) {
-    resultType = VOID_RESULT;
-  }
-
-  const resultIsRef = resultType !== VOID_RESULT && (resultType.kind === "ref" || resultType.kind === "ref_null");
-
-  // (#2564) Each nested `if` in the tag cascade below MUST get its own
-  // `blockType` object — never a single shared one. `dead-elimination`'s
-  // `remapTypeIdxInBody` remaps a `ref`/`ref_null` block-type via `remapVT`,
-  // and its double-remap guard (`seen` WeakSet, #1302) keys on the *instruction*
-  // object, not on the `blockType.type` sub-object. The cascade builds one
-  // distinct `if` instruction per candidate; if they all alias the SAME
-  // `blockType.type` ValType, the second nested `if`'s visit chain-remaps the
-  // already-remapped index a second time (observed: 20→16 on the first `if`,
-  // then 16→13 on the second — the compaction map shifts each survivor down, so
-  // 13 is the fn-wrapper type), while the callee func's result type — remapped
-  // exactly once in the type table — lands on 16. The mismatch surfaces as
-  // `type error in fallthru[0] (expected (ref null 13), got (ref null 16))`.
-  // A fresh `{ ...resultType }` per `if` keeps each block-type remapped once.
-  const freshBlockType = (): { kind: "val"; type: ValType } | { kind: "empty" } =>
-    resultType === VOID_RESULT
-      ? { kind: "empty" }
-      : { kind: "val", type: resultIsRef ? { ...(resultType as ValType) } : (resultType as ValType) };
-
-  // Build the call body for one candidate. We need to ref.cast the
-  // receiver to the candidate's struct type before calling, so the
-  // function-type signature matches.
-  function callBody(cand: { className: string; funcIdx: number; classTag: number }): Instr[] {
-    const candParams = getFuncParamTypes(ctx, cand.funcIdx);
-    if (!candParams || candParams.length === 0) return [];
-    const selfType = candParams[0]!;
-    if (selfType.kind !== "ref" && selfType.kind !== "ref_null") return [];
-    const selfTypeIdx = (selfType as { typeIdx: number }).typeIdx;
-    const body: Instr[] = [];
-    body.push({ op: "local.get", index: recvLocal });
-    // ref.cast_null preserves nullability if the receiver might be null;
-    // ref.cast (non-null) traps on null. Use ref.cast_null since the
-    // receiver could be null at the static type level.
-    body.push({ op: "ref.cast_null", typeIdx: selfTypeIdx });
-    for (const a of argLocals) {
-      body.push({ op: "local.get", index: a.idx });
-    }
-    const finalIdx = ctx.funcMap.get(`${cand.className}_${propAccess.name.text}`) ?? cand.funcIdx;
-    body.push({ op: "call", funcIdx: finalIdx });
-    return body;
-  }
-
-  // Build the cascade: load __tag, compare to each candidate's classTag.
-  // Outermost: candidates[0]; deepest else: unreachable.
-  let elseInstrs: Instr[] = [{ op: "unreachable" }];
-  for (let i = candidates.length - 1; i >= 0; i--) {
-    const cand = candidates[i]!;
-    const branch: Instr[] = [
-      { op: "local.get", index: recvLocal },
-      { op: "struct.get", typeIdx: baseStructIdx, fieldIdx: 0 },
-      { op: "i32.const", value: cand.classTag },
-      { op: "i32.eq" },
-      {
-        op: "if",
-        blockType: freshBlockType(),
-        then: callBody(cand),
-        else: elseInstrs,
-      },
-    ];
-    elseInstrs = branch;
-  }
-  for (const instr of elseInstrs) fctx.body.push(instr);
-
-  for (const a of argLocals) releaseTempLocal(fctx, a.idx);
-  releaseTempLocal(fctx, recvLocal);
-
-  return resultType;
 }
 
 /**
@@ -6247,10 +6269,35 @@ function compileCallExpression(
     if (r !== undefined) return r;
   }
 
+  // (#4640 D7) `Date(...)` without `new` — §21.4.2.1 returns ToDateString(now),
+  // a String, ignoring every argument. Not spec-identical to the `new` form (so
+  // it cannot delegate like the Error arm above); without it the call produced a
+  // silent `ref.null.extern` under a checker type of `string`, and the next
+  // `Date.parse(...)` illegal-cast TRAPPED.
+  {
+    const r = tryCompileDateCallWithoutNew(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+
   // (#1540) JSX runtime call intercept — `_jsx` / `_jsxs` / `_jsxDEV`. Routed to
   // the matching `__jsx_runtime_*` host import. Extracted to calls-guards.ts (#742).
   {
     const r = tryJsxRuntimeCall(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+
+  // (#4614) `ns.f(args)` where `ns` is a NamespaceImport of a COMPILED sibling
+  // module. The namespace binding has no runtime value (it compiled to
+  // `ref.null extern`), so the generic method lane became
+  // `__extern_method_call(null, "f", …)` — every call through `import * as`
+  // threw (cookie's vitest harness: 65/63740). Namespace member access is
+  // statically resolvable per ESM semantics: resolve the alias to the target
+  // FunctionDeclaration and re-enter as the equivalent named call, which
+  // carries the full identifier-call lowering (arguments protocol, rest,
+  // dispatch). Ambient/external declarations (no body) and non-function
+  // exports decline to the legacy lane.
+  {
+    const r = tryNamespaceImportMemberCall(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
 
@@ -6269,6 +6316,14 @@ function compileCallExpression(
   // a local `Function` shadow fall through to the existing paths.
   {
     const r = tryStaticFunctionCtorCall(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+
+  // (#4650) JS-host VALUE form `Function(<args>)` called as a plain function —
+  // §20.2.1.1 makes it identical to `new Function(...)`, but only the
+  // NewExpression path routed a declined compile-away to the host shim.
+  {
+    const r = tryHostDynamicFunctionCtorValue(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
 
@@ -6765,6 +6820,18 @@ function compileCallExpression(
       fctx.body.push({ op: "call", funcIdx });
     }
     return { kind: "externref" };
+  }
+
+  // (#4491) `this.f(…)` / `this["f"](…)` where `f` is a `var`-declared script
+  // global. Must run BEFORE the receiver-type method dispatch below: that arm
+  // resolves the member against the checker's `typeof globalThis` struct, which
+  // has no field for a `var` global, and its resolved-method-is-null guard turns
+  // the miss into `TypeError: called value is not a function`. The member READ
+  // has answered from the module global since #4500 Slice A; this is the CALL
+  // twin. Narrowly gated (see the module), so every other call is unchanged.
+  {
+    const realmGlobalCall = tryEmitRealmGlobalMemberCall(ctx, fctx, expr);
+    if (realmGlobalCall !== undefined) return realmGlobalCall;
   }
 
   // Handle property access calls: console.log, Math.xxx, extern methods
@@ -8126,6 +8193,19 @@ function compileCallExpression(
     if (__idResult !== undefined) return __idResult;
   }
 
+  // (#4623) `<ordinary receiver>.isPrototypeOf(v)` — §20.1.3.4. Every arm above
+  // has declined, so what remains is the tail dispatch, whose two possible
+  // answers for this shape were both WRONG and lane-divergent: standalone took
+  // the ref.test-guarded generic closure dispatch on a member read that
+  // resolves to nothing (→ `false`), and the JS host took the graceful
+  // `ref.null.extern` fallback (→ `undefined`). Both lanes model the
+  // `[[Prototype]]` edge the predicate asks about, so route to the chain walk.
+  // See is-prototype-of-call-arm.ts for the measurements and the guards.
+  {
+    const __ipoResult = tryEmitIsPrototypeOfCallArm(ctx, fctx, expr);
+    if (__ipoResult !== undefined) return __ipoResult;
+  }
+
   // (#742 slice 5) Tail dispatch — IIFE, super, element-access, call-of-call,
   // conditional callee, and the graceful fallback. Extracted verbatim to
   // compileTailDispatch, which always returns (its final fallback is
@@ -8513,13 +8593,18 @@ function compileExpressionCallee(
   if (callSigs && callSigs.length > 0) {
     const sig = callSigs[0]!;
 
-    // Look for a matching closure type
-    const sigParamCount = sig.parameters.length;
+    // Look for a matching closure type. (#4491) `runtimeSignatureParameters`
+    // drops the synthetic `(...args: any[])` the checker gives a JS function
+    // that reads `arguments` — it has no formal slot in the compiled callee, and
+    // counting it here nulls the coerced argument and mis-reports `__argc`
+    // (`__FUNC()(__JEDI)` in S13.2_A2_T1).
+    const runtimeSigParams = runtimeSignatureParameters(sig);
+    const sigParamCount = runtimeSigParams.length;
     const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
     const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
     const sigParamWasmTypes: ValType[] = [];
     for (let i = 0; i < sigParamCount; i++) {
-      const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
+      const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
       sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
     }
 
@@ -8979,9 +9064,9 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
  *   - `__vec_*` structs that are not externref-backed (`number[]` — the Gap-4
  *     output-representation escalation documented in promise-combinators.ts);
  *     externref-backed vecs were already committed by arm 1.
- *   - strings (checker-typed OR lowering to a native string struct): strings
- *     ARE iterable per spec (§22.1.5) — the drain has no string arm yet, so
- *     routing them would produce a WRONG observable reject. Follow-up.
+ *   - strings when native strings are OFF (#2867 string-combinator slice:
+ *     with them ON the drain has a code-point string arm, so strings take
+ *     the dynamic path; with the arm absent they'd WRONGLY reject).
  *   - native-generator subjects: they iterate via the dedicated compile-time
  *     resume path (`emitNativeGeneratorToVec`), not the runtime dispatchers —
  *     the drain would wrongly reject them. Follow-up.
@@ -8993,7 +9078,7 @@ export function isDynamicCombinatorArgEligible(
   arg0: ts.Expression,
 ): boolean {
   if (argType === null) return false;
-  if (isStringType(ctx.checker.getTypeAtLocation(arg0))) return false;
+  if (ctx.nativeStrings !== true && isStringType(ctx.checker.getTypeAtLocation(arg0))) return false;
   switch (argType.kind) {
     case "f64":
     case "i32":
@@ -9008,7 +9093,7 @@ export function isDynamicCombinatorArgEligible(
       const structName = ctx.typeIdxToStructName.get(typeIdx);
       if (structName !== undefined && structName.startsWith("__vec_")) return false;
       if (typeIdx === ctx.anyStrTypeIdx || typeIdx === ctx.nativeStrTypeIdx || typeIdx === ctx.consStrTypeIdx) {
-        return false;
+        return ctx.nativeStrings === true;
       }
       if (nativeGeneratorInfoForForOfSubject(ctx, argType) !== undefined) return false;
       return true;
@@ -9100,6 +9185,25 @@ export function emitDynamicCombinatorArg(
     notIterLocal,
     rejectReason,
   });
+}
+
+/**
+ * (#2875) Lib INTERFACE name (`String`, `Array`, …) → the registered
+ * `$NativeProto` brand whose member closures model that prototype, ensuring the
+ * glue on the way. `undefined` for an interface with no wired glue.
+ *
+ * Shared with `transferred-native-proto-call.ts` so the two spellings of the
+ * same operation — `String.prototype.m.call(x)` and `x.m = String.prototype.m;
+ * x.m()` — resolve the same brand by construction rather than by coincidence.
+ */
+export function nativeProtoBrandForInterface(ctx: CodegenContext, ifaceName: string): number | undefined {
+  if (ifaceName === "Array" || ifaceName === "ReadonlyArray") return ensureArrayNativeProtoGlue(ctx);
+  if (ifaceName === "Object") return ensureObjectNativeProtoGlue(ctx);
+  if (ifaceName === "String") return ensureStringNativeProtoGlue(ctx); // (#2875)
+  if (ifaceName === "DataView") return ensureDataViewNativeProtoGlue(ctx); // (#3173)
+  if (ifaceName === "ArrayBuffer") return ensureArrayBufferNativeProtoGlue(ctx); // (#1595)
+  if (ifaceName === "Date") return ensureDateNativeProtoGlue(ctx); // (#3219)
+  return undefined;
 }
 
 export { compileCallExpression, compileIIFE, compileOptionalCallExpression };

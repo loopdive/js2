@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-08-20
+updated: 2026-08-24
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -20,6 +20,10 @@ lane: ir-retirement
 model: gpt-5.6-sol
 related: [1373b, 2855, 2950, 3090, 3142, 3143, 3341, 3517, 3529, 3520, 3521, 3522, 3523, 3525, 3526, 3527, 3528, 3678, 3681, 4382, 4576, 4577]
 origin: "2026-07-21 explicit user directive: enable IR-only by default and retire the old direct codegen path"
+oracle-ratchet-allow:
+  - src/codegen/multi-prepared-array-leaf.ts
+loc-budget-allow:
+  - src/codegen/index.ts
 ---
 # #3518 — IR-only default and direct front-end retirement
 
@@ -622,3 +626,223 @@ generic class/module shapes, WASI, and linear remain outside this bounded
 census. The next cutover must fail typed before body emission across that full
 denominator, then prove the standalone legacy walkers unreachable before shared
 direct code can be removed.
+
+### Bounded audit: `bench_array` Prepared seam (2026-08-24)
+
+The refreshed authoritative five-entry gate is green at **5/5 entries,
+38/38 terminal units, 38/38 IR-emitted units, zero legacy bodies, zero typed
+Unsupported outcomes, and zero Invariants** in both the single-host and
+standalone lanes. That denominator is still bounded and does not prove
+repository-wide IR-only readiness.
+
+The exact multi-source `website/playground/examples/benchmarks/array.ts`
+target remains a direct-body overlay: compiler-only standalone telemetry records
+two source files, six all units, five terminal units, and **16** physical legacy
+rows. `bench_array` has both `legacyBodyEmitted` and `irBodyEmitted`, with the
+two direct rows exactly `compileFunctionBody` and `compileStatement`; the other
+14 rows belong to helpers, DOM callback owners, `main`, declarations, and
+module setup. The existing direct and IR paths agree on the target's `() -> f64`
+ABI and the IR body already lowers the empty `number[]`, dense `push` fill,
+`length`/indexed reduction, i32 vector carrier, in-bounds proof, and vector
+allocation/access operations.
+
+The existing scalar and function-value route primitives are sufficient for the
+next bounded transaction, but the scalar candidate intentionally rejects array
+syntax and the generic function-value candidate is specialized to the prior
+reduction fixture. A safe implementation therefore needs one new
+`src/codegen/multi-prepared-array-leaf.ts` route, wired narrowly at the shared
+pre-body seam in `src/codegen/index.ts`. The route should reuse
+`prepareIrBodies`, `skipBodies`/`preserveSkippedBodies`, exact UnitId/terminal
+correlation, and the existing `MultiPreparedFunctionValueSupportReceipt` for
+the one direct imported callback edge. Its checker proof must require the exact
+exported no-parameter `number` declaration, `const arr: number[] = []`, the
+literal counted `push` loop, the literal counted `length`/indexed reduction,
+source-identity for every array/counter/accumulator/method use, and one stable
+imported callback target. Any alias/re-export, extra candidate, capture,
+reassignment, dynamic index, extra array method, callback/ABI tamper,
+cross-file component, class, module-init, fast, WASI, or single-source near
+miss must retain direct ownership or fail before publication.
+
+The default-on rollback must be `JS2WASM_MULTI_PREPARED_ARRAY_CUTOVER=0` and
+must restore exactly the current two target direct rows. Runtime instantiation,
+raw/optimized WAT A/B, vector/bounds/call/allocation parity, and callback ABI
+publication remain acceptance evidence for the implementation; this audit does
+not claim those route-specific checks have passed.
+
+### Implementation checkpoint: array leaf route after the first failed attempt (2026-08-24)
+
+This is a design-only checkpoint. No compiler source, runtime artifact, or
+heavy test result is accepted by this entry. The first implementation attempt
+did not produce a safe array route: adding the route to the existing scalar
+union is not enough, because the scalar recogniser rejects array syntax and the
+function-value recogniser is deliberately limited to the earlier reduction
+fixture. The next implementation must land as one independently reviewable
+array transaction; it must not widen either generic recogniser or copy a second
+array lowerer.
+
+#### Exact candidate proof
+
+Add `src/codegen/multi-prepared-array-leaf.ts`. Its exported candidate
+collector/resolver should be named and shaped like the existing scalar leaf:
+`collectMultiPreparedArrayLeafCandidates`,
+`isMultiPreparedArrayLeafCandidateEligible`,
+`tryPrepareMultiSourceArrayLeaf`,
+`planEarlyMultiPreparedArrayLeafRoute`, and
+`assertMultiPreparedArrayLeafRouteCurrent`. The route is eligible only when
+all of these facts hold before any direct body is requested:
+
+1. The shared planner is active only for `experimentalIR`, non-`disableIrFirst`,
+   standalone WasmGC, non-fast, non-WASI, and a graph with more than one source;
+   the candidate declaration is in the entry source and the array cutover
+   switch is enabled. The resolver must use the exact `IrUnitId`, source record,
+   declaration, terminal owner, claim, override, and `ProgramAbiSession`
+   joins, not the spelling `bench_array`.
+2. There is exactly one exported, bodyful, top-level, non-async,
+   non-generator, non-generic, zero-parameter function with an explicit
+   `number` return. Its five statements are exactly the benchmark shape from
+   `website/playground/examples/benchmarks/array.ts:3-9`: one `const` binding
+   with an explicit `number[]` annotation and empty literal; one counted loop
+   beginning at numeric literal zero, with a strictly increasing update and a
+   single `arr.push(i)` statement; one zero-initialised numeric accumulator; one
+   counted `i < arr.length` loop with one `total = total + arr[i]` assignment;
+   and a return of that same accumulator. Require the checker symbol for every
+   array, counter, accumulator, `length`, `push`, and indexed access to match
+   the candidate declarations. The push bound must be a safe integer literal
+   (the real fixture is `10000`); do not admit an arbitrary expression merely
+   because it currently lowers.
+3. The proof must call the shared canonical helpers rather than duplicate their
+   semantics: `canonicalCountedPushPlanForLiteral` and
+   `canonicalCountedPushPlanForCall` in
+   `src/ir/array-element-lowering.ts:226-264`, the empty-array inference and
+   `number[]` annotation contract in `array-element-lowering.ts:292-324`, and
+   the existing counted-loop/index proof in `src/ir/from-ast.ts:9278-9328`.
+   Require the canonical push plan’s single-argument, non-spread, same-symbol
+   receiver and pure non-aliasing value proof. Reject aliases, a `let` array,
+   reassignment, additional writes/methods, a dynamic or negative bound,
+   non-increasing updates, `<=`/`>=` bounds, index mutation, nested functions,
+   an escaping array, an extra array literal, or any second eligible function.
+4. The candidate’s local call/value graph is a singleton. The only runtime
+   value observation of the candidate is the one identifier passed once as the
+   fourth argument of an exact named imported call in the legacy `main` owner.
+   Resolve that import through
+   `resolveMultiPreparedFunctionValueImportTarget` in
+   `src/codegen/multi-prepared-function-value-import-target.ts:36-102` and
+   require the imported declaration to be the unique exported `addBenchCard`
+   helper from the exact `helpers.ts` source record. The caller is a distinct
+   top-level terminal with its own UnitId and remains direct-owned. Reject an
+   alias, re-export, repeated/stored/returned value, same-source target,
+   wrong-arity callback, callback type/ABI drift, an extra direct caller, or a
+   callback whose owner/source identity changes.
+5. The target must have the exact prepared `[] -> f64` override, one occupied
+   callable with the matching source UnitId, no collision/suffix/import-alias/
+   live-function binding, no class shape, no module-init/storage terminal,
+   no derived owner, no cross-file target, and no late provider. A candidate
+   that cannot be fully proven returns ordinary ineligibility before skip;
+   drift after certification is an `IrInvariantError`, never a silent direct
+   fallback after a skip was requested.
+
+#### Route and receipt API
+
+Reuse the common prepared body state from
+`src/codegen/multi-prepared-scalar-leaf.ts:239-304` (export the route base if
+needed) and add `MultiPreparedArrayLeafRoute` with `routeKind: "array"`.
+`MultiPreparedArrayLeafPlan` may extend the scalar plan’s identity, claims,
+overrides, and class-shape maps, but its receipt must retain an immutable shape
+record: target UnitId/name/declaration, the exact array declaration, push and
+reduction loop nodes, counter/accumulator declarations, source IDs, and the
+canonical callback/value-edge evidence. This lets the late assertion prove
+AST identity and symbol joins rather than trusting a name or a stale report.
+
+The planner should mirror
+`planEarlyMultiPreparedScalarLeafRoute` at
+`multi-prepared-scalar-leaf.ts:1273-1337`: build one plan per candidate source,
+compute the ordinary graph safety/selection, require exactly one eligible
+entry-source candidate, and call `prepareIrBodies` with only the target
+function. Reject any class-member, module-init, implicit-constructor, derived,
+or second free-function result. Require the same exact skip/preserve/completed
+body sets, terminal evidence, artifact evidence, nonempty prepared component,
+and `[] -> f64` allocated callable checked by
+`tryPrepareMultiSourceScalarLeaf` at `multi-prepared-scalar-leaf.ts:986-1104`.
+Do not make a second array-specific IR builder: the prepared body must be the
+existing `from-ast` result.
+
+The array route must receive a callback
+`prepareFunctionValueSupport(plan, sourceFile, unitId, legacyName)` from the
+shared planner and call the existing private
+`prepareTopLevelFunctionValueTargetSupport` in `src/codegen/index.ts:2265-2345`.
+Store the returned `MultiPreparedFunctionValueSupportReceipt` unchanged and
+revalidate it with `functionValueSupportIsCurrent` after the remaining legacy
+owners run. This freezes the candidate callable plus exactly one trampoline,
+cache global, support binding, locator, and Program ABI role before the direct
+caller can materialise `bench_array`; it does not prepare or duplicate the
+`addBenchCard` helper. The callback’s owner UnitId, imported target UnitId,
+source key, call AST node, and distinct owner must be rechecked at the late
+seam.
+
+Wire the map in `src/codegen/index.ts:3570-3623` with
+`JS2WASM_MULTI_PREPARED_ARRAY_CUTOVER` and an explicit route-overlap assertion.
+The array route must be considered before the generic function-value route and
+must never silently share a source state with scalar, Fibonacci, or bench-loop
+routes. Reuse `compileMultiPreparedScalarLeafDeclarations` at
+`index.ts:8718-8720`; in the late overlay at `index.ts:3665-3688`, dispatch an
+array-specific current-route assertion before `completePreparedIrIntegration`.
+The final assertion must check final selection, target/support allocator
+identity, immutable prepared instruction sequence, exact report receipt, and
+the unchanged callback/value edge. Any failed post-certification check is an
+Invariant.
+
+#### Existing IR shape that must remain load-bearing
+
+The implementation must preserve the already measured lowerings, not replace
+them with a fused hand-written body. `lowerArrayLiteral` uses the empty
+`number[]` hint and canonical counted-push capacity at
+`src/ir/from-ast.ts:4464-4533`; `tryLowerVecPush` emits the one-element vector
+store and length increment at `src/ir/array-element-lowering.ts:368-448`;
+`lowerPropertyAccess`/element access uses the counted-loop proof and only emits
+unchecked `vec.get` for a proven `0 <= i < arr.length` at
+`src/ir/from-ast.ts:5467-5476,5693-5781`; and `lowerForStatement` carries the
+proof into the loop body at `from-ast.ts:9605-9640`. The route is correct only
+when the resulting prepared body retains the i32 vector carrier, in-bounds
+read, vector allocation/store/get, and f64 return conversion observed in the
+baseline. If any of those facts cannot be certified, withdraw before skip.
+
+#### Kill switch and focused test contract
+
+Use `JS2WASM_MULTI_PREPARED_ARRAY_CUTOVER=0` as the exact pre-cutover control.
+Add `tests/issue-3518-bench-array-prepared-cutover.test.ts`, following the
+15/21-case structure of the existing #4589/#4590 route suites:
+
+- default-on direct-body poison must compile with no target
+  `compileFunctionBody`/`compileStatement` rows and report one `terminal-ir`
+  target with `legacyBodyEmitted: false`, `irBodyEmitted: true`, and a prepared
+  component; the kill switch must reproduce exactly the two target direct rows
+  and fail the same poison;
+- raw direct/Prepared audit rows must differ only by those two target rows;
+  target raw WAT must retain the vector allocation, counted push/store, proven
+  bounds/indexed get, i32 carrier, and `() -> f64` body shape; source callable,
+  trampoline/cache, import/export, and callback Program ABI contracts must be
+  exact and singleton;
+- raw and optimized Prepared/direct A/B must instantiate and return
+  `49_995_000`, preserve DTS/import helper/import/string-pool/public surfaces,
+  retain callback publication, and show no optimized size or call/allocation
+  regression. Runtime and WAT evidence are required for implementation
+  acceptance; this design checkpoint makes no such claim;
+- mutation cases must cover renamed-but-equivalent declarations (positive),
+  extra candidate/extra caller, alias/re-export/stored value, `let`/reassigned
+  array, non-empty or escaping array, push arity/spread/dynamic value, bound or
+  index/update changes, `<=`/`>=`, additional array method, callback source or
+  ABI tamper, support-name/allocator tamper, post-certification route tamper,
+  class/module-init/cross-file component, and fast/WASI/IR-first-disabled
+  controls. Every negative must retain the two direct rows or fail with a typed
+  pre-emission Unsupported/Invariant; none may skip first and discover drift
+  later;
+- preserve the existing #4589, #4590, #4591, #2138, standalone-floor, and
+  direct-caller suites. Add a required-route env for the positive fixture and
+  a dedicated `JS2WASM_TEST_TAMPER_MULTI_PREPARED_ARRAY_LEAF` hook so the
+  late fail-closed assertion is exercised without weakening production gates.
+
+The implementation PR must update this checkpoint with measured denominators,
+artifact hashes, raw/optimized A/B results, focused-test counts, and signed
+source/bundle/issue locks. Until those records exist, `bench_array` remains a
+direct multi-source overlay and the parent issue’s bounded 38/38 census must
+not be presented as compile-once evidence.
