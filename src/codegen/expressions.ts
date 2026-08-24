@@ -1102,7 +1102,7 @@ function compileExpressionInner(
     if (expr.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword) {
       const rhsResult = resolveInstanceOfRHS(ctx, expr.right);
       if (!rhsResult) {
-        return compileHostInstanceOf(ctx, fctx, expr);
+        return brandBooleanBinaryResult(expr.operatorToken.kind, compileHostInstanceOf(ctx, fctx, expr));
       }
       // (#1366a) Externref-backed subclasses (extends Error / TypeError / ...)
       // have instances that are real JS Error objects whose host-side
@@ -1171,13 +1171,13 @@ function compileExpressionInner(
           const leftType = compileExpression(ctx, fctx, expr.left);
           if (leftType) fctx.body.push({ op: "drop" });
           fctx.body.push({ op: "i32.const", value: staticAnswer ? 1 : 0 });
-          return { kind: "i32" };
+          return { kind: "i32", boolean: true };
         }
         // (#1455) LHS type could not be resolved statically (TS often infers
         // `any` for `class Sub extends WeakRef {}` because WeakRef<T> requires
         // type args). Fall through to the host runtime check, which consults
         // the user-class tag registry attached at construction time.
-        return compileHostInstanceOf(ctx, fctx, expr);
+        return brandBooleanBinaryResult(expr.operatorToken.kind, compileHostInstanceOf(ctx, fctx, expr));
       }
     }
     return brandBooleanBinaryResult(expr.operatorToken.kind, compileBinaryExpression(ctx, fctx, expr));

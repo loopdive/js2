@@ -18,6 +18,7 @@ import { getOrRegisterDvWindowType, usesNativeDataViewProvider } from "../datavi
 import { getArrTypeIdxFromVec, getOrRegisterResizableAbType, getOrRegisterVecType, resolveWasmType } from "../index.js";
 import { getOrRegisterHoleyArrayType } from "../registry/types.js";
 import { ensureHoleyArrayNew } from "../vec-elem-set.js";
+import { sparseArrayNewSplitInstrs } from "../vec-sparse-index.js";
 import { compileExpression } from "../shared.js";
 import { buildThrowJsErrorInstrs } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
@@ -668,16 +669,16 @@ export function tryCompileIndexedBuiltinNew(
       }
 
       fctx.body.push({ op: "local.get", index: nF64Local });
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-      const sizeLocal = allocLocal(fctx, `__arr_size_${fctx.locals.length}`, {
-        kind: "i32",
-      });
-      fctx.body.push({ op: "local.tee", index: sizeLocal });
+      const sizeLocal = allocLocal(fctx, `__arr_size_${fctx.locals.length}`, { kind: "i32" });
       if (holeyCarrier) {
+        fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+        fctx.body.push({ op: "local.tee", index: sizeLocal });
         fctx.body.push({ op: "call", funcIdx: ensureHoleyArrayNew(ctx) });
         return { kind: "ref_null", typeIdx: vecTypeIdx };
       }
-      fctx.body.push({ op: "local.get", index: sizeLocal });
+      // (#4491 lane J) LENGTH / CAPACITY split above the 16M allocation guard —
+      // `new Array(4294967295)` is legal ES5. See vec-sparse-index.ts.
+      fctx.body.push(...sparseArrayNewSplitInstrs(sizeLocal));
       fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
       fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
       return { kind: "ref_null", typeIdx: vecTypeIdx };

@@ -334,59 +334,28 @@ export function parseMeta(source: string): Test262Meta {
 
 export type FilterResult = { skip: true; reason: string } | { skip: false; reason?: undefined };
 
-// Tests that cause the compiler to hang (infinite loop during compilation)
+// Tests that cause the compiler to hang (infinite loop during compilation or
+// execution). Entries are keyed on the path with `.*test262/` stripped, which
+// LEAVES the "test/" segment in the key — an entry without that prefix never
+// matches and is dead weight (four such entries were removed 2026-08-23).
+//
+// Re-verified 2026-08-23 by running each historical entry through
+// `runTest262File` with the skip disabled:
+//   - built-ins/Array/prototype/{indexOf/15.4.4.14-3-28,15.4.4.14-3-29,
+//     lastIndexOf/15.4.4.15-3-28}.js now PASS in ~2.3s (#1589A fixed) —
+//     entries removed.
+//   - language/comments/S7.4_A6.js still runs >150s in-process, but its entry
+//     was dead, so it has been counted all along: the baseline records it as
+//     `compile_timeout (10s)`, bounded by the CompilerPool timeout. Left
+//     counted rather than resurrected as a skip (#1589 hot spot C).
 const HANGING_TESTS = new Set([
-  // (#1386) `test/built-ins/Promise/race/invoke-then.js` previously hung at
-  // compile time on the `p1.then = p2.then = p3.then = function(a, b) {…}`
-  // chained assignment. Verified 2026-05-08: compile completes in ~1.8s
-  // (well under the 5s threshold) — wrapped through `wrapTest`, the test
-  // returns 6 type-mismatch CEs about the `.then` function signature
-  // (returns void instead of `Promise<…>`). The test now registers as
-  // `compile_error`, not a hang. Reclassifying skip → compile_error is a
-  // bookkeeping move, not a regression.
-  // #859: Map/forEach/iterates-values-deleted-then-readded.js previously hung
-  // because callback captures were immutable snapshots — `if (count === 0)`
-  // never became false, so the test infinitely re-added the deleted key. The
-  // ref-cell capture pattern (compileArrowAsCallback) now propagates the
-  // count++ mutation back to the outer local, terminating the loop after the
-  // spec'd 3 iterations.
-  // #1385: Temporal/Duration/from/argument-non-string.js no longer hangs.
-  // Local probe (May 2026): wrapTest + compile + instantiate + test() runs
-  // ~1.2s total; test() throws WebAssembly.Exception immediately because
-  // `Temporal` is not defined in our runtime. No iteration, no hang. Removed.
-
-  // #1589 Hot spot C: language/comments/S7.4_A6.js calls `eval()` inside a
-  // `for (i = 0; i <= 65535; i++)` loop. Our eval stub throws each iteration
-  // but the loop continues — wall time grows linearly with iteration count
-  // (≥65s, well past the 30s vitest budget). Skip until we either (a) tighten
-  // the skip filter to catch eval anywhere in source, or (b) ship a no-op
-  // eval stub that lets such loops terminate quickly. See #1589 Findings.
-  "language/comments/S7.4_A6.js",
-
-  // #1589 Hot spot A (#1589A): Array.prototype.{indexOf,lastIndexOf}.call(obj, …)
-  // with `length: 4294967296`. Wrong object-literal field-type inference (empty
-  // {} treated as Test262Error) + __extern_has_idx returning 0 for null payload
-  // causes a 4-billion-iteration search loop → 30s timeout. Real compiler bug
-  // tracked in #1589A — skip these tests in the meantime so the longest shard
-  // doesn't pay 3 × 30s of timeout cost.
-  "built-ins/Array/prototype/indexOf/15.4.4.14-3-28.js",
-  "built-ins/Array/prototype/indexOf/15.4.4.14-3-29.js",
-  "built-ins/Array/prototype/lastIndexOf/15.4.4.15-3-28.js",
-
   // #3122 (surfaced by #3119): never-done iterator whose ONLY exit is an
   // abrupt LHS assignment (`for (x.attr of iterable)` with a throwing setter,
   // §13.7.5.13 step 6.f → IteratorClose). Our accessor-setter store does not
-  // raise on this path, so with the #3119 OBJ arm genuinely driving the
-  // iterator the loop spins to the runner timeout (previously: host lane
-  // compile_timeout / standalone fail "illegal cast" — no pass is lost by
-  // skipping). Remove when #3122 lands.
-  //
-  // NOTE the "test/" prefix: the lookups below strip `.*test262\/` from an
-  // absolute path like <root>/test262/test/language/..., which leaves the
-  // "test/" segment IN the key. The older prefix-less entries above do not
-  // match under this shape (verified 2026-07-09: S7.4_A6.js runs — and now
-  // passes — rather than skipping); they are kept as-is because activating
-  // them would flip a current pass to skip. Tracked in #3122's notes.
+  // raise on this path, so the loop spins to the runner timeout (previously:
+  // host lane compile_timeout / standalone fail "illegal cast" — no pass is
+  // lost by skipping). Still hangs (>150s) as of 2026-08-23. Remove when
+  // #3122 lands.
   "test/language/statements/for-of/body-put-error.js",
 ]);
 
@@ -427,21 +396,24 @@ export function shouldSkip(source: string, meta: Test262Meta, filePath?: string)
     }
   }
 
-  // #1696: dynamic-import tests that require host fixture-module resolution
-  // and rely on sloppy-script `var x; function x() {}` redeclarations.
-  // Two stacked runner gaps:
-  //   1. TypeScript rejects the var/function redeclaration at parse time,
-  //      before our codegen ever runs.
-  //   2. `__dynamic_import` cannot resolve test262 fixture paths
-  //      (`./eval-script-code-host-resolves-module-code-*_FIXTURE.js`)
-  //      from the runner environment — they are not real modules on disk
-  //      relative to the synthetic test source.
-  // Skip the 18-test family so the conformance report does not report
-  // these as compile errors.
+  // #1696: the 18-test `eval-script-code-host-resolves-module-code` family.
+  //
+  // Re-measured 2026-08-23 with the skip disabled — the ORIGINAL rationale is
+  // stale (they are no longer compile errors: the TypeScript var/function
+  // redeclaration rejection is gone and all 18 compile), but the family still
+  // cannot pass and skipping it still pays for itself:
+  //   - 16/18 fail in ~1.7s with `Cannot find module
+  //     '<repo>/src/runtime/module-code_FIXTURE.js'` — `__dynamic_import`
+  //     resolves the fixture relative to the runtime module, not to the test
+  //     file, so the fixture can never be found.
+  //   - 2/18 (nested-async-gen-{await,return-await}) escape as an UNHANDLED
+  //     rejection that kills the host process outright. In CI that costs a
+  //     CompilerPool worker; in-process it aborts the run.
+  // No pass is lost by skipping. Remove once fixture-relative resolution lands.
   if (filePath && /eval-script-code-host-resolves-module-code/.test(filePath)) {
     return {
       skip: true,
-      reason: "dynamic-import + sloppy-script var/fn redecl + fixture path (#1696)",
+      reason: "dynamic-import fixture path unresolvable from runtime module (#1696)",
     };
   }
 

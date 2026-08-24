@@ -36,6 +36,21 @@ import { recordStructFieldAccessor } from "./struct-field-accessor-abi.js"; // (
  * The runtime discovers these exports and uses them as fallback when
  * direct JS property access on a WasmGC struct returns undefined.
  */
+
+/**
+ * (#4616) Field names travel to the host as one comma-JOINED CSV string
+ * (`__struct_field_names`), so a field name CONTAINING a comma (cookie's
+ * snapshot table keys — `"Expires=Sun, 26 Jul …"`) made the host's split
+ * re-derive phantom names: the key was never found, and even a literal-key
+ * property read answered undefined. Escape commas with U+0001 (never present
+ * in real keys); the runtime's `_structFieldNamesRaw` reverses it after the
+ * split. The `__sget_`/`__shas_`/`__sset_` export names keep the RAW name —
+ * only the CSV wire format is escaped.
+ */
+function escapeStructFieldNameForCsv(name: string): string {
+  return name.includes(",") ? name.split(",").join("\u0001") : name;
+}
+
 export function emitStructFieldGetters(ctx: CodegenContext): void {
   try {
     _emitStructFieldGettersInner(ctx);
@@ -860,11 +875,11 @@ export function resolveSameShapeFieldNameCollisions(ctx: CodegenContext): readon
   };
 
   for (const group of byShape.values()) {
-    const distinctNameCsvs = new Set(group.map((m) => m.names.join(",")));
+    const distinctNameCsvs = new Set(group.map((m) => m.names.map(escapeStructFieldNameForCsv).join(",")));
     if (distinctNameCsvs.size < 2) continue;
 
     for (const m of group) {
-      const csv = m.names.join(",");
+      const csv = m.names.map(escapeStructFieldNameForCsv).join(",");
       const shapeId = allocateShapeId(csv);
       ctx.shapeIdByStructName.set(m.structName, shapeId);
       collidingTypeIdxs.push({ typeIdx: m.typeIdx, structName: m.structName, shapeId });
@@ -1001,7 +1016,7 @@ function emitStructFieldNamesExport(
   // Register comma-separated field name strings as string constants.
   const legacyTypeIdxToGlobalIdx = new Map<number, number>();
   for (const { typeIdx, names } of legacyEntries) {
-    const csv = names.join(",");
+    const csv = names.map(escapeStructFieldNameForCsv).join(",");
     addStringConstantGlobal(ctx, csv);
     const globalIdx = ctx.stringGlobalMap.get(csv);
     if (globalIdx !== undefined) legacyTypeIdxToGlobalIdx.set(typeIdx, globalIdx);

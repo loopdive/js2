@@ -622,3 +622,45 @@ generic class/module shapes, WASI, and linear remain outside this bounded
 census. The next cutover must fail typed before body emission across that full
 denominator, then prove the standalone legacy walkers unreachable before shared
 direct code can be removed.
+
+### Bounded audit: `bench_array` Prepared seam (2026-08-24)
+
+The refreshed authoritative five-entry gate is green at **5/5 entries,
+38/38 terminal units, 38/38 IR-emitted units, zero legacy bodies, zero typed
+Unsupported outcomes, and zero Invariants** in both the single-host and
+standalone lanes. That denominator is still bounded and does not prove
+repository-wide IR-only readiness.
+
+The exact multi-source `website/playground/examples/benchmarks/array.ts`
+target remains a direct-body overlay: compiler-only standalone telemetry records
+two source files, six all units, five terminal units, and **16** physical legacy
+rows. `bench_array` has both `legacyBodyEmitted` and `irBodyEmitted`, with the
+two direct rows exactly `compileFunctionBody` and `compileStatement`; the other
+14 rows belong to helpers, DOM callback owners, `main`, declarations, and
+module setup. The existing direct and IR paths agree on the target's `() -> f64`
+ABI and the IR body already lowers the empty `number[]`, dense `push` fill,
+`length`/indexed reduction, i32 vector carrier, in-bounds proof, and vector
+allocation/access operations.
+
+The existing scalar and function-value route primitives are sufficient for the
+next bounded transaction, but the scalar candidate intentionally rejects array
+syntax and the generic function-value candidate is specialized to the prior
+reduction fixture. A safe implementation therefore needs one new
+`src/codegen/multi-prepared-array-leaf.ts` route, wired narrowly at the shared
+pre-body seam in `src/codegen/index.ts`. The route should reuse
+`prepareIrBodies`, `skipBodies`/`preserveSkippedBodies`, exact UnitId/terminal
+correlation, and the existing `MultiPreparedFunctionValueSupportReceipt` for
+the one direct imported callback edge. Its checker proof must require the exact
+exported no-parameter `number` declaration, `const arr: number[] = []`, the
+literal counted `push` loop, the literal counted `length`/indexed reduction,
+source-identity for every array/counter/accumulator/method use, and one stable
+imported callback target. Any alias/re-export, extra candidate, capture,
+reassignment, dynamic index, extra array method, callback/ABI tamper,
+cross-file component, class, module-init, fast, WASI, or single-source near
+miss must retain direct ownership or fail before publication.
+
+The default-on rollback must be `JS2WASM_MULTI_PREPARED_ARRAY_CUTOVER=0` and
+must restore exactly the current two target direct rows. Runtime instantiation,
+raw/optimized WAT A/B, vector/bounds/call/allocation parity, and callback ABI
+publication remain acceptance evidence for the implementation; this audit does
+not claim those route-specific checks have passed.

@@ -52,12 +52,26 @@
 // directory run, not this file.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { runTest262File } from "./test262-runner.js";
 
 const HARNESS = join(__dirname, "..", "test262", "harness", "assert.js");
 const TEST262 = existsSync(HARNESS);
+
+/**
+ * (#4003 CI-LOAD MITIGATION, added by #4621 on 2026-08-23.) The header above
+ * already diagnoses the `onTaskUpdate` RPC timeout and answers it by keeping
+ * every `it` short — which is necessary but, measured today, not sufficient:
+ * this file's 18 rows still exit **1** with 18/18 green and one unhandled
+ * `[vitest-worker]: Timeout calling "onTaskUpdate"`. Yielding two macrotasks
+ * between tests lets the queued reporter RPCs drain; see the A/B in
+ * `es5-standalone-harness-selftests.test.ts`, where the same hook is measured.
+ */
+afterEach(async () => {
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+});
 
 /**
  * ONE `it` per row, never a batched loop. A test262 row costs a full compile
@@ -182,10 +196,12 @@ describe.skipIf(!TEST262)("#4485 — measured residuals (owners recorded in the 
   // around a bare `compile()` probe, which would be asserting a DIFFERENT
   // harness's answer and is how a residual gets mis-recorded as fixed.
   // Retire an entry when its row starts passing; the pin fails loudly then.
-  pinResidualRow(
-    "annexB/built-ins/Date/prototype/setYear/year-to-number-err.js",
-    "ToNumber(Symbol) throws nowhere in standalone — a value-representation gap, not Annex B",
-  );
+  // (#4621, 2026-08-23) HEALED — the pin tripped, which is what "the pin fails
+  // loudly then" above asks for. Measured on the campaign branch tip
+  // `04c0d5d42` with #4621's diff fully REVERTED, so the fix came from an
+  // earlier campaign merge, not from #4621. Retired from the residual list and
+  // kept as a positive pin so the row cannot silently regress.
+  pinRow("annexB/built-ins/Date/prototype/setYear/year-to-number-err.js", "ToNumber(Symbol) now throws");
   pinResidualRow(
     "built-ins/Error/prototype/toString/undefined-props.js",
     "§20.5.3.4 on an ARBITRARY receiver needs a real property Get; the native helper reads $Error_struct fields only",

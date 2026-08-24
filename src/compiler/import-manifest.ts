@@ -319,6 +319,14 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
 
 function buildImportManifest(mod: WasmModule): ImportDescriptor[] {
   const manifest: ImportDescriptor[] = [];
+  // Codegen can request the same adapter helper from more than one lowering
+  // path (for example, a Node fs call plus the surrounding numeric coercion
+  // both need `__box_number`). Wasm accepts repeated physical imports, but the
+  // JavaScript adapter manifest is keyed by module/name/kind and must contain
+  // one descriptor for each exact helper. Collapse only byte-for-byte-equal
+  // descriptors here; entries that share a name but differ in arity or intent
+  // remain visible so manifest validation can reject the ambiguous ABI.
+  const seenExact = new Set<string>();
   for (const imp of mod.imports) {
     if (imp.module !== "env") continue;
     // (#4150) Carry the declared parameter count for func imports so the host
@@ -328,13 +336,17 @@ function buildImportManifest(mod: WasmModule): ImportDescriptor[] {
       const t = mod.types[imp.desc.typeIdx];
       if (t && t.kind === "func") paramCount = t.params.length;
     }
-    manifest.push({
+    const descriptor: ImportDescriptor = {
       module: "env",
       name: imp.name,
       kind: imp.desc.kind === "func" ? "func" : "global",
       intent: classifyImport(imp.name, mod),
       paramCount,
-    });
+    };
+    const key = JSON.stringify(descriptor);
+    if (seenExact.has(key)) continue;
+    seenExact.add(key);
+    manifest.push(descriptor);
   }
   return manifest;
 }

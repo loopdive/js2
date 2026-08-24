@@ -199,6 +199,63 @@ function nullishReceiverGuardInstrs(ctx: CodegenContext, methodName: string): In
 }
 
 /**
+ * (#4656) The SAME guard, hoisted to the CALL SITE and reading an arbitrary
+ * receiver local instead of param 0.
+ *
+ * ## Why the call site, when the dispatcher already throws
+ *
+ * §13.3.6.1 evaluates the callee MemberExpression BEFORE
+ * ArgumentListEvaluation, so `o.bar.gar(foo())` with `o.bar === undefined`
+ * must throw while resolving the callee — `foo()` never runs. Every guard we
+ * had was inside a callee (`nullishReceiverGuardInstrs` above, `#4221`'s
+ * absent-callee arm, `#4656`'s primitive-callee arm), and a callee cannot see
+ * its arguments un-evaluated: by the time it runs, the call site has already
+ * built the argument array. Measured on the campaign base,
+ * `language/expressions/call/11.2.3-3_3.js` fails on exactly that ordering —
+ * the TypeError IS thrown and is the right error, and `fooCalled` is `true`.
+ *
+ * So the fix is not a new check, it is the same check placed one step earlier,
+ * where the receiver is already in a local and the arguments have not been
+ * compiled yet.
+ *
+ * ## Why this cannot throw where the dispatcher would not
+ *
+ * The instruction sequence is byte-for-byte {@link nullishReceiverGuardInstrs}
+ * with its leading `local.get 0` re-pointed, so it fires on exactly the same
+ * predicate (`__nullish_to_null` then `ref.is_null`) and never on a value the
+ * in-callee guard would have let through. A compiled receiver that merely
+ * FAILS to round-trip through the provider (#4647's opaque nominal structs)
+ * crosses as a non-null externref and is untouched — the guard tests
+ * nullishness, not usefulness.
+ *
+ * Empty on the host lane (the bridge's engine throws on its own) and whenever
+ * the machinery is absent, so those modules stay byte-identical.
+ */
+/**
+ * Would {@link buildCallSiteNullishReceiverGuard} emit anything? Cheap, and it
+ * exists so a call site can decide whether to spill its receiver at all: the
+ * spill costs a `local.tee` plus a pooled temp on EVERY standalone method call,
+ * and on a lane where the guard is empty that is pure code growth for nothing.
+ * Reserving is idempotent, so asking is free to repeat.
+ */
+export function callSiteNullishReceiverGuardApplies(ctx: CodegenContext, methodName: string): boolean {
+  if (!ctx.standalone && !ctx.wasi) return false;
+  if (methodName === "then") return false; // the #4394 exemption, unchanged
+  reserveNullishReceiverThrow(ctx, methodName);
+  return ctx.funcMap.get("__new_TypeError") !== undefined && ctx.exnTagIdx >= 0;
+}
+
+export function buildCallSiteNullishReceiverGuard(ctx: CodegenContext, recvLocal: number, methodName: string): Instr[] {
+  reserveNullishReceiverThrow(ctx, methodName);
+  const guard = nullishReceiverGuardInstrs(ctx, methodName);
+  if (guard.length === 0) return [];
+  // Fresh objects per call (`nullishReceiverGuardInstrs` builds a new array
+  // each time), so re-pointing the head cannot alias another splice — the
+  // `reference_shared_instr_object_dce_double_remap` hazard.
+  return [{ op: "local.get", index: recvLocal }, ...guard.slice(1)];
+}
+
+/**
  * Reserve (or fetch) the closed-struct dispatcher `__call_m_<name>_<arity>`
  * funcIdx with a placeholder body. The real body is built by
  * {@link fillClosedMethodDispatch} at finalize. Idempotent; records the

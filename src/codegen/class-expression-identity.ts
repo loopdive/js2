@@ -26,7 +26,11 @@ export function exactClassExpressionTypeName(ctx: CodegenContext, type: ts.Type)
         candidate = candidate.expression;
       }
     }
-    if (!ts.isClassExpression(candidate)) continue;
+    // (#4618) A nested class DECLARATION whose name collided with a class in
+    // another scope carries the same per-site synthetic identity (see
+    // collectClassesFromStatements) — resolve it by declaration node exactly
+    // like an anonymous class expression.
+    if (!ts.isClassExpression(candidate) && !ts.isClassDeclaration(candidate)) continue;
     const syntheticName = ctx.anonClassExprNames.get(candidate);
     if (syntheticName && ctx.structMap.has(syntheticName)) return syntheticName;
   }

@@ -186,6 +186,28 @@ const RUNTIME_EVAL_INTRINSIC_GLOBALS = [
   "AggregateError",
 ];
 
+/**
+ * (#4633) Non-error intrinsics that must ALSO cross the provider seam by
+ * identity. Same mechanism as {@link RUNTIME_EVAL_INTRINSIC_GLOBALS} — the
+ * caller's own singleton is published on the shared realm carrier, and the
+ * provider seeds its handle registry from it (`qjsSeedIntrinsicErrorIdentities`)
+ * so the realm's same-named intrinsic maps to that singleton in BOTH
+ * directions. Kept as a separate list because these are not error constructors:
+ * the `isWasiErrorName` / `$Error_struct` family registration above applies only
+ * to the error list.
+ *
+ * Measured motivation (test262 `harness/wellKnownIntrinsicObjects.js`): with the
+ * name unseeded, `new Function("return " + src)()` for `Array` handed back an
+ * opaque provider callback carrier — `typeof "function"` and `name "Array"`, but
+ * `prototype === undefined`, `isArray === undefined`, and `new a(3)` producing a
+ * zero-length non-array. So this fixes behaviour, not only `Object.is`.
+ *
+ * Scope is deliberately narrow: only names whose bare-identifier read already
+ * resolves to an identity-stable singleton via `emitBuiltinNamespaceObject`. A
+ * name that emitter declines simply stays unseeded (old box behaviour).
+ */
+const RUNTIME_EVAL_INTRINSIC_VALUE_GLOBALS = ["Array"];
+
 function runtimeEvalGlobalBindingNames(ctx: CodegenContext): string[] {
   const names: string[] = [];
   const append = (name: string): void => {
@@ -194,6 +216,7 @@ function runtimeEvalGlobalBindingNames(ctx: CodegenContext): string[] {
   for (const name of ctx.globalObjectVarBindings ?? []) append(name);
   for (const name of ctx.topLevelFunctionNames) append(name);
   for (const name of RUNTIME_EVAL_INTRINSIC_GLOBALS) append(name);
+  for (const name of RUNTIME_EVAL_INTRINSIC_VALUE_GLOBALS) append(name);
   return names;
 }
 
@@ -376,7 +399,7 @@ function emitRuntimeEvalGlobalBindingPushBody(ctx: CodegenContext, fctx: Functio
         // Externref-typed globals only — a typed closure global would reject the
         // store, and its AOT reads are static enough not to need the carrier.
         if (valueType.kind === "externref") wrapGlobalName = name;
-      } else if (RUNTIME_EVAL_INTRINSIC_GLOBALS.includes(name)) {
+      } else if (RUNTIME_EVAL_INTRINSIC_GLOBALS.includes(name) || RUNTIME_EVAL_INTRINSIC_VALUE_GLOBALS.includes(name)) {
         // Provider-originated native Error payloads cross as externrefs. Give
         // this module the structurally canonical `$Error_struct` and register
         // each ctor as an emitted family member even when AOT never constructs

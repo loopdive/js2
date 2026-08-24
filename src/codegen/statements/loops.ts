@@ -53,6 +53,10 @@ import {
   ensureAsyncIterator,
 } from "./destructuring.js";
 import { emitForInStaticUnroll } from "./for-in-static-unroll.js"; // (#4561)
+// (#4491 T9) a `new Date()` / `new RegExp()` receiver is a closed STRUCT but not a
+// closed SHAPE — it carries own properties in the #4008 bag, so it must enumerate
+// dynamically rather than unroll its declared (inherited, non-enumerable) members.
+import { forInReceiverIsDynamic } from "../builtin-instance-key-presence.js";
 import { blockLoop, restoreBlockScopedShadows, saveBlockScopedShadows, shiftLoopDepths } from "./shared.js";
 import {
   bodyHasMatchingCharRead,
@@ -79,6 +83,7 @@ import {
 import { collectPatternBindingNames } from "./tdz.js";
 import { tryCompileCountedStringAppend } from "./counted-string-append.js";
 import { emitHoleToUndefined } from "../array-holes.js"; // (#2001 S1)
+import { emitF64HoleToUndef, f64HolesActive } from "../vec-f64-hole-presence.js"; // (#4491 T11)
 import { definedFuncAt, nativeStrHelperHandle } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 
 /**
@@ -1802,6 +1807,7 @@ function compileForOfArray(
   // index — for-of uses array iterator Get, which yields undefined for holes).
   // Gated on externref element + `usesArrayHoles`.
   if (ctx.usesArrayHoles && elemType.kind === "externref") emitHoleToUndefined(ctx, fctx);
+  emitF64HoleToUndef(ctx, fctx, elemType); // (#4491 T11) f64 twin
   // Coerce from the READ value's type (packed i8/i16 arrive on the stack as the
   // widened i32, #2934) to the local's declared type.
   const elemLocalType = getLocalType(fctx, elemLocal);
@@ -3320,7 +3326,14 @@ function emitArrayForIn(
   // an early branch rather than wrapping the block in an `if`, so the user
   // body's break/continue depths are untouched. Route-inactive modules and the
   // host key path emit the bare block, byte-for-byte as before.
-  const forInHasIdx = !hostKeys && overlayRouteActive(ctx) ? ctx.funcMap.get("__extern_has_idx") : undefined;
+  // (#4491 T11) …and an f64 HOLE is the same kind of absence as a deleted
+  // index, so it joins the same gate. Leaving `for…in` out was measurable, not
+  // theoretical: `Object/keys/15.2.3.14-6-2` builds its expected list from
+  // `for…in` + `hasOwnProperty` and compares it against `Object.keys`, so once
+  // `Object.keys` learned about holes the row failed on the DISAGREEMENT until
+  // `for…in` learned too.
+  const forInHasIdx =
+    !hostKeys && (overlayRouteActive(ctx) || f64HolesActive(ctx)) ? ctx.funcMap.get("__extern_has_idx") : undefined;
   // (#4491) `[[Enumerable]]` joins the SAME gate. §14.7.5.10 EnumerateObject-
   // Properties yields only own ENUMERABLE keys, and since #3251 an array index
   // can carry `enumerable: false` — `Object.defineProperties(arr, {"0": {value:
@@ -3581,8 +3594,7 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     // `$Object` (so `__object_keys` would return empty) — those keep the
     // static-unroll path below, which is exact for a non-mutated closed shape.
     const recvWasmType = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(stmt.expression));
-    const isDynamicReceiver =
-      recvWasmType.kind === "externref" || recvWasmType.kind === "anyref" || recvWasmType.kind === "ref_extern";
+    const isDynamicReceiver = forInReceiverIsDynamic(ctx, recvWasmType);
     if (isDynamicReceiver) {
       ensureObjectRuntime(ctx);
       // #2964 — for-in must enumerate inherited enumerable keys too, so route

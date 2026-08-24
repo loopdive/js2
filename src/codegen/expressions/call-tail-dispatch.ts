@@ -53,6 +53,7 @@ import {
   compileCallableElementAccessCall,
   compileClosureCall,
   emitMatchedClosureCallArguments, // (#4394) rest-aware matched-closure args
+  runtimeSignatureParameters, // (#4491) drops the synthetic `arguments` rest
 } from "./calls-closures.js";
 import { tsSignatureHasRest } from "./closure-sig-match.js"; // (#4394)
 import {
@@ -72,6 +73,7 @@ import { classMemberFuncKey } from "../class-member-keys.js";
 import { matchClosureInfoBySignature } from "./closure-sig-match.js"; // (#4394) exact-first closure pick
 import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
 import { tryEmitDynamicElementHostMethodCall } from "./dynamic-element-host-call.js";
+import { tryNormalizeStaticStringElementCallee } from "./element-access-callee-normalization.js"; // (#4625)
 import {
   classInstanceHasField,
   coerceNumberMethodArgToF64,
@@ -1283,6 +1285,19 @@ export function compileTailDispatch(
         if (arrMethodResult !== undefined) return arrMethodResult;
       }
 
+      // (#4625) `x["toString"]()` — a static identifier-shaped string key naming
+      // an AMBIENT member is the bracket spelling of a method call, not a
+      // callable-element read. Route it onto the property-access path (the one
+      // #4619/#4481 taught about wrapper receivers) instead of letting the
+      // `cea` arm below read a value the compiler never materialises. Every arm
+      // that already lowers a bracket call correctly runs above this point, so
+      // their bytes cannot move; see the module header for the placement
+      // argument and the ambient-declaration condition.
+      {
+        const normalized = tryNormalizeStaticStringElementCallee(ctx, fctx, expr, elemAccess, compileCallExpression);
+        if (normalized !== undefined) return normalized;
+      }
+
       // ELEM ACCESS RESOLVED, NO METHOD MATCHED — try callable element type
       // (#1306). Covers `fns[0](args)` and `fns[ConstKey](args)` where
       // `fns` is an array (or other element-access-able value) of callables.
@@ -1634,12 +1649,14 @@ export function compileTailDispatch(
       // aware) — the old kind-only scan picked whichever same-arity closure
       // registered first; a wrong ref-result typeIdx makes the guarded funcref
       // cast below null → call_ref trap (standalone deepEqual-* family).
-      const sigParamCount = sig.parameters.length;
+      // (#4491) Drop the checker's synthetic `arguments`-derived rest symbol.
+      const runtimeSigParams = runtimeSignatureParameters(sig);
+      const sigParamCount = runtimeSigParams.length;
       const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
       const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
       const sigParamWasmTypes: ValType[] = [];
       for (let i = 0; i < sigParamCount; i++) {
-        const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
+        const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
         sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
       }
 
@@ -1759,12 +1776,14 @@ export function compileTailDispatch(
     if (callSigs && callSigs.length > 0) {
       const sig = callSigs[0]!;
 
-      const sigParamCount = sig.parameters.length;
+      // (#4491) See the sibling site above.
+      const runtimeSigParams = runtimeSignatureParameters(sig);
+      const sigParamCount = runtimeSigParams.length;
       const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
       const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
       const sigParamWasmTypes: ValType[] = [];
       for (let i = 0; i < sigParamCount; i++) {
-        const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
+        const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
         sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
       }
 

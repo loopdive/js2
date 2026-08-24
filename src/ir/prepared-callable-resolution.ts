@@ -44,6 +44,14 @@ export function preparedUnitProgramAbiBinding(
   }
   const signature = ctx.mod.types[func.typeIdx];
   if (!signature || signature.kind !== "func") {
+    // (#4618) A fresh allocator slot for a lifted unit whose owner is
+    // CPS-lowered (async parent) is still an unpatched placeholder here —
+    // typeIdx 0, empty body — because the async path reaches slot binding
+    // before Phase 3 lowers the lifted body and patches the real type.
+    // Defer program-ABI planning for it: the slot resolves by funcIdx (the
+    // low-level compatibility path) and the Phase-3 patch lands in place.
+    // A REAL function with a broken type index still fails loudly.
+    if (func.body.length === 0) return undefined;
     throw new IrInvariantError(
       "abi-type-index-mismatch",
       "resolve",

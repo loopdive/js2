@@ -57,6 +57,7 @@ import {
 } from "./shared.js";
 import { resolveConstantExpression } from "./literals.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
+import { highArrayIndexLiteralI32 } from "./vec-sparse-index.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
 import { VEC_PROP_GET, VEC_PROP_SET } from "./vec-props.js";
 
@@ -378,6 +379,16 @@ export function compileElementIndexI32(ctx: CodegenContext, fctx: FunctionContex
   const idx = arrayIndexConstantKey(ctx, fctx, key);
   if (idx !== undefined) {
     fctx.body.push({ op: "i32.const", value: idx });
+    return { kind: "i32" };
+  }
+  // (#4491 lane J) A numeric-literal index above `i32.MAX` — `x[2147483648]`,
+  // `x[4294967294]`. Both the range-proven emitter and the generic f64
+  // fallback SATURATE it to 2147483647, silently renaming the index. Emit the
+  // u32 bit pattern instead; every index comparison on the vec paths is
+  // unsigned. See vec-sparse-index.ts.
+  const highIdx = highArrayIndexLiteralI32(key);
+  if (highIdx !== undefined) {
+    fctx.body.push({ op: "i32.const", value: highIdx });
     return { kind: "i32" };
   }
   if (tryEmitStaticI32Expression(ctx, fctx, key)) return { kind: "i32" };
