@@ -4,7 +4,7 @@ title: "ES5 standalone: builtin-prototype methods on exotic/boxed/dynamic receiv
 status: ready
 sprint: current
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-24
 assignee: claude/es6-standalone-session
 priority: high
 horizon: m
@@ -820,8 +820,9 @@ symptom" is a better handover than a confident wrong root.
 
 ## 2026-08-24 wave-6 — the builtin-method-as-a-VALUE root (dev-4492, branch `issue-4492-builtin-as-value`)
 
-Worktree `/home/user/js2wasm/.claude/worktrees/agent-ac51f58db58631d51`, based on
-campaign tip `c84bea96e` merged into `08da97da0`. Bundle + QuickJS adapter rebuilt
+Branch `issue-4492-builtin-as-value`, worktree
+`/home/user/js2wasm/.claude/worktrees/agent-ac51f58db58631d51`, implementation
+commit `6ad3d17c6`, based on campaign tip `c84bea96e` merged into `08da97da0`. Bundle + QuickJS adapter rebuilt
 in-worktree before any measurement (bundle hash `b9841ac11de20bd2`; the adapter
 cache HIT names that same bundle, so the eval tier is this tree's compiler).
 
@@ -977,6 +978,120 @@ The third row is the forbidden trade: a loud refusal became a silent WRONG answe
 Neither target row flips either way (`S15.2.4.1_A1_T2` merely fails later, on a
 null-deref). The predicate diagnosis is correct and is handed on; the fix needs the
 intrinsic-construct path, which is `#4515`'s territory, not a predicate edit.
+
+
+### Test Results — verification floor (dev-4492 wave-6, runs executed 2026-08-24)
+
+Every figure below is from a run executed in this worktree. Arms were separated by
+file copy (`.tmp/base-*.ts` / `.tmp/new-*.ts`), never `git stash`, and the
+`git diff HEAD --stat -- src` detector was read **before each arm**: **0 files**
+on the after arm (the change is committed, so `HEAD` IS the after tree) and
+**2 files** on the base arm. Reading the bare `git diff --stat` here would have
+been blind to the restore — the correction this file's own wave-5 section made to
+the brief.
+
+#### Sweep scope — 1,087 rows per arm, and why it is this size
+
+`--target standalone`, `runTest262File` per row, `SWEEP_TIMEOUT=180000`,
+`JS2WASM_EVAL_ENGINE=quickjs TEST262_FULL_RUNTIME_EVAL=1`, serial.
+
+| rows | directory | why it is in |
+| ---: | --- | --- |
+| 320 | `built-ins/Object/create` | the direct caller of the changed helper |
+| 309 | `built-ins/Function/prototype` | the flips; the Function brand companion |
+| 248 | `built-ins/Object/prototype` | the `Object.prototype.toString` arm |
+| 59 | `built-ins/Object/keys` | the enumeration-leak question the new chain link opens |
+| 59 | `language/expressions/new` | `new F()` — the other way into `__object_create` |
+| 41 | `language/statements/function` (`S13.2.2_A*` only) | the [[Construct]]-prototype family this arm serves |
+| 39 + 12 | `built-ins/Object/{get,set}PrototypeOf` | the other two `canonicalizeProtoArg` call sites |
+
+**Dropped, and why.** `built-ins/Reflect` (153) — its `getPrototypeOf` /
+`setPrototypeOf` are the same two natives as `Object`'s, already covered. The rest
+of `language/statements/function` (410) — reachable only through a plain `new F()`
+whose prototype is the lazily-minted `$Object`, where `__proto_from_function` is
+the identity; the S13.2.2 family, which is the part that *does* test this change,
+was kept. `built-ins/Object/getOwnPropertyNames` (45) — `Object/keys` asks the
+same enumeration question. `built-ins/Array/prototype` (2,811) and
+`built-ins/String/prototype` (1,073) — the diff cannot reach a member body;
+`Object.create(Array.prototype)` is covered by `Object/create`.
+
+#### Before / after
+
+| arm | pass | fail | compile_error | rows | wall | load (median / max, sampled per minute) |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| base | 907 | 173 | 7 | 1,087 | 13:08→14:01 | 6.08 / 15.08 |
+| after | **909** | 171 | 7 | 1,087 | 12:11→13:06 | 6.68 / 10.99 |
+
+**Net +2, regressions 0.** The two arms ran at comparable load (medians 6.1 and
+6.7 on 4 cores), the **denominators are identical** (1,087 each — so no row
+disappeared to the `IT_TIMEOUT_MS` silent-kill), and **zero rows on either arm
+carry a `timeout` error**, so the contention trap did not touch these numbers.
+The 7 compile errors are the **same 7 files** on both arms (4 `Function/prototype/
+bind` rows needing `Reflect.construct` realm preservation, 3
+`Object/setPrototypeOf` rows on `__get_builtin` / BigInt) — unrelated to this
+change.
+
+#### Flip list — both flips re-verified SERIALLY on both arms, one file at a time
+
+| test262 row | base | after |
+| --- | --- | --- |
+| `built-ins/Function/prototype/call/S15.3.4.4_A1_T2.js` | `typeof obj.call` is `"undefined"` | pass |
+| `built-ins/Function/prototype/apply/S15.3.4.3_A1_T2.js` | `typeof obj.apply` is `"undefined"` | pass |
+
+#### Movement, NOT a flip — 1 row
+
+`built-ins/Object/prototype/S15.2.4_A1_T2.js` fails on both arms, but it now fails
+at a **later assertion**: base dies on the FIRST one
+(`Object.prototype.toString is not yet implemented`), after reaches
+`assert.sameValue(e instanceof TypeError, true)` — the post-`delete` half, which
+is the #4596 three-op residual above. Recorded as movement so the campaign's flip
+total stays a sum of per-lane flip counts.
+
+#### Pins
+
+`tests/issue-4492-builtin-as-value.test.ts`, counts read off vitest's own summary
+line (never the exit status):
+
+- after arm: **`Tests 13 passed (13)`** — executed 13 = total 13, file line
+  `(13 tests)` with no `skipped` suffix.
+- base arm (both source files reverted): **`Tests 6 failed | 7 passed (13)`** —
+  executed 13 = total 13. **All six positive pins fail on the arm they test**; the
+  three GUARD pins and the four `it.fails` residual pins pass on both arms by
+  design.
+- both #4492 suites together on the after arm: `Tests 47 passed (47)` across
+  `(13 tests)` + `(34 tests)` — wave-5's suite is unaffected.
+
+`tests/equivalence/`, per-file loop (a single invocation OOMs), 13 files chosen as
+the object/prototype surface the diff can reach — `arguments-object`,
+`array-prototype-methods`, `issue-4123-param-receiver-proto-method`,
+`issue-799-prototype-chain`, `object-create`, `object-keys`, `object-mutability`,
+`object-to-primitive`, `object-define-property`,
+`object-define-property-accessors`, `object-literal-getters-setters`,
+`numeric-key-object`, `empty-object-widening`: **74 tests, all passing, every file
+`executed == total` with no `skipped` suffix.**
+
+#### Byte control — the host lane is inert, standalone pays 2 bytes
+
+Five representative modules compiled on both arms, sha256 of the binary
+(`.tmp/bytes-{base,after}.txt`):
+
+| module | base → after |
+| --- | --- |
+| host lane (no `target`) | **byte-identical**, `41ed8163ef6d5d0f`, 350 bytes |
+| standalone, no proto usage | 218,121 → 218,123 (**+2**) |
+| standalone `Object.create({…})` | 209,058 → 209,060 (**+2**) |
+| standalone `new F()` | 223,715 → 223,717 (**+2**) |
+| standalone callable-as-prototype (armed by its `Object.getPrototypeOf` call) | 290,412 → 290,590 (+178) |
+
+The **+2** is one extra locals-vector entry (`__fnProto`) in
+`__proto_from_function`, declared unconditionally so the slot index cannot drift
+between the arms that use it. It is never read on those paths and cannot change
+behaviour. Declaring it conditionally — the local is last, and the only consumer,
+`bagFunctionProtoLinkInstrs`, returns `[]` under exactly the same condition —
+would restore byte-identity; it was **not** done here because the change landed
+after the sweep, and reporting a sweep of one tree as evidence for another is the
+defect this campaign documents most often. A follow-up lane can take it with its
+own measurement. The +178 is the real arm, in a module that genuinely uses it.
 
 ### Residuals — with roots, and with what would close each
 
