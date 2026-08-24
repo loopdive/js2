@@ -24,7 +24,7 @@ func-budget-allow:
   # new incoherence, not a fix — and these two live nowhere else.
   - src/codegen/object-runtime.ts::fillDynamicForinVecArms
 title: "ES5 standalone: arguments-object `length`/`callee` own-property descriptors — a NUMBER write to arguments.length sticks but a STRING write does not; gOPD reports wrong writable/configurable; typeof argObj.callee answers \"number\""
-status: in-progress
+status: in-review
 assignee: ttraenkler/dev-4658
 sprint: current
 created: 2026-08-23
@@ -100,6 +100,16 @@ pointer, not a measurement.
 5. Absent-not-wrong: if a descriptor cannot be answered faithfully, decline the
    fold rather than answer wrongly.
 
+## Status note for the merging lead
+
+`in-review`, not `done`, and deliberately so: **3 of the 4 rows are fixed**
+(`10.6-13-a-1`, `10.6-6-2`, `10.6-7-1`) and the 4th (`S10.6_A5_T4`) is
+**declined with a measured reason** — see RESIDUAL 1. The acceptance criteria
+named four rows, so whether a reasoned decline closes the issue is the lead's
+call, not this lane's. Everything else in the bar is met: 1,075-row scoped sweep
+on both arms from this lane's own runs, 3 flips, **0 regressions**, per-file
+flip list, pins revert-verified on base.
+
 ## Root cause
 
 Three defects, not one. All measured on campaign HEAD `74389b417`, standalone,
@@ -165,7 +175,7 @@ the attribute by `delete obj[name]` followed by `!hasOwnProperty(obj, name)`.
 With the brand but no tombstone the delete answered `true` and `hasOwn` still
 answered `true`, so both rows kept failing with the identical message.
 
-### Root 3 — cross-type write to `arguments.length` — DECLINED, see Residuals
+### Root 3 — cross-type write to `arguments.length` — DECLINED (RESIDUAL 1)
 
 ## Fix
 
@@ -228,10 +238,98 @@ pins must call `gOPD` and assert the specific attributes — verified failing on
 base by file-copy revert; `it.fails` pins for measured residuals with owners.
 Record `## Root cause` / `## Fix` / `## Test Results` / `## Residuals` here.
 
+## Test Results
+
+All numbers below come from runs executed by this issue's owner on
+`dev-4658-arguments-descriptors`, base `74389b417`, standalone lane, via
+`.tmp/sweep-list.mts` / `.tmp/run-one.mts`. Arms were swapped with a file-copy
+revert (`.tmp/ab.sh`), and `git diff --stat 74389b417 -- src/` was read
+immediately before each arm — EMPTY for the base arm, exactly 6 files for the
+branch arm — so neither arm measured a hybrid tree.
+
+### Scoped standalone sweep — 1,075 rows, both arms
+
+| arm | pass | fail | compile_error | driver_error |
+| --- | --- | --- | --- | --- |
+| base `74389b417` | 995 | 74 | 5 | 1 |
+| this branch | **999** | 71 | 5 | 0 |
+
+**Flips: 3. Regressions: 0. Other status changes: 0.**
+
+```
+language/arguments-object/10.6-13-a-1.js   fail -> pass   (was: typeof argObj.callee === "number")
+language/arguments-object/10.6-6-2.js      fail -> pass   (was: length descriptor should be configurable)
+language/arguments-object/10.6-7-1.js      fail -> pass   (was: length descriptor should be configurable)
+```
+
+A FOURTH apparent flip was rejected on serial re-run:
+`built-ins/Object/seal/seal-asyncfunction.js` read `driver_error` on the base
+arm with the symlink-farm `ENOENT`, and **passes on the base arm when run
+serially** — an infrastructure failure, not a status. The three real flips were
+re-verified serially on both arms after the sweep.
+
+The 5 `compile_error` rows are identical on both arms: the same five
+`language/arguments-object/gen-func-decl-args-trailing-comma-*` files hitting
+the pre-existing "native generator lowering currently supports only sequential
+numeric yields" limit.
+
+### Sweep scope, and what was dropped
+
+Sized from what the diff can reach — every consult site is `[]` unless a module
+brands an arguments object, and root 1's gate can only change an answer where
+`__vec_prop_get`'s prototype-companion tail had a value to fabricate:
+
+| directory | rows | why it is in scope |
+| --- | --- | --- |
+| `language/arguments-object` | 263 | the issue's own rows |
+| `built-ins/Object/defineProperty` (array/arguments receivers) | 325 | root 1's `__vec_dp_value` seed |
+| `built-ins/Object/getOwnPropertyDescriptor` | 310 | root 2's `__vec_gopd` |
+| `built-ins/Object/seal` + `freeze` | 147 | the §7.3.14 AND on the `configurable` bit |
+| `built-ins/Array/length` | 30 | the `__extern_set` ArraySetLength arm + revive |
+
+**Dropped, and why:** the rest of `built-ins/Object` (`keys`, `create`,
+`assign`, `getPrototypeOf`, …) and all of `built-ins/Array/prototype`. Nothing
+in the diff reaches them — no arguments object is constructed there, and the vec
+arms are inert without a brand — and the merge queue re-validates the whole
+corpus on the merged state anyway. The `defineProperty` cut to 325 is by
+RECEIVER (`new Array` / `= []` / `= [<digit>` / `arguments`); the remaining
+files define on plain objects, which root 1's gate cannot reach.
+
+### Pins — `tests/issue-4658.test.ts`
+
+`Tests 21 passed (21)` on this branch (`executed == total`; the file line
+carries no `skipped`). On base, by file-copy revert: `Tests 7 failed | 12
+passed (19)` at the time of the check — **exactly the seven cases that guard a
+fix**; the twelve controls and the residual `it.fails` pins hold on both arms.
+(The file has since grown to 21 with RESIDUAL 4 and its control, both measured
+on both arms.)
+
+The seven that fail on base:
+
+```
+root 1 > vec receiver: the new own property has value undefined, not the prototype's 7
+root 2 > gOPD(arguments, 'length') reports writable+configurable, non-enumerable
+root 2 > the same holds through a helper — the receiver is a dynamic value there
+root 2 > delete arguments.length succeeds AND hasOwnProperty then answers false
+root 2 > gOPD agrees with hasOwnProperty after the delete
+root 2 > `in` and the DYNAMIC read agree with hasOwnProperty after the delete
+root 2 > a later numeric write to length revives the property
+```
+
+### Scoped equivalence — per-file loop (the suite OOMs in one invocation)
+
+12 files covering arguments objects, `Object.defineProperty` (4 files),
+`delete`, `hasOwnProperty`, `Object.keys`, array push/pop and
+define-property TypeErrors. **69 passed, 1 failed** — and that failure is
+PRE-EXISTING, measured identical on both arms:
+`tests/equivalence/arguments-nested-and-loops.test.ts` >
+`for-loop with function declaration in body`, `expected 30 to be 33`,
+`Tests 1 failed | 45 passed (46)` on base and on this branch alike.
+
 ## Residuals
 
-All four measured on this branch by the owner of this issue; none are fixed
-here, and each carries an `it.fails` pin plus a positive control in
+All five measured on BOTH arms by the owner of this issue; none are fixed here,
+and R1–R4 each carry an `it.fails` pin plus a positive control in
 `tests/issue-4658.test.ts` so a later fix has something that flips.
 
 ### RESIDUAL 1 — a STRING write to `arguments.length` does not stick (the remaining half of `S10.6_A5_T4`)
@@ -292,3 +390,19 @@ All four *dynamic* own-property surfaces now agree that the property is gone
 inside the same function still folds to `struct.get` and answers the live vec
 length. Closing it needs the same representation change as RESIDUAL 1, not
 another consult site.
+
+### RESIDUAL 5 — the SYNTACTIC `delete arguments.length` records no tombstone
+
+Owner: #4622, which introduced that arm; **unchanged by this work** — measured
+`RESULT: 11` on base `74389b417` and on this branch alike
+(`.tmp/repro/r5-syntactic.js`: the delete answers `true`, and
+`arguments.hasOwnProperty("length")` still answers `true`).
+
+`emitArgumentsOrdinaryNamedDelete` folds `delete arguments.length` to a constant
+`true` at compile time when the arguments object provably cannot escape, and its
+own header already records that "the property still SURVIVES". It does not set
+the #4658 tombstone, so that one path keeps #4622's answer while every DYNAMIC
+delete now records it. Not folded in here deliberately: the arm fires only when
+`argumentsObjectMayBeReconfigured` proves the object is unreachable as a value,
+so the two paths are disjoint by construction and this change makes nothing
+worse — but a future slice that unifies them should set the bit there too.
