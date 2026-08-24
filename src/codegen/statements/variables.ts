@@ -7,14 +7,19 @@ import { isNullablePrimitiveType, isStringType, isVoidType } from "../../checker
 import type { Instr, ValType } from "../../ir/types.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
+import { redeclarationWidenedLocalSlotType } from "../declarations/redeclared-var-widening.js";
 import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion } from "../context/types.js";
 import { emitCoercedLocalSet, noJsHost } from "../expressions/helpers.js";
 import { emitUndefined } from "../expressions/late-imports.js";
 import { needsTdzFlag, resolveWasmType, varBindingNeedsExternrefForUndefined } from "../index.js";
 import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
 import { widenedVarKeyFromDecl } from "../widened-var-key.js";
+import { concatCallYieldsDynamicCarrier } from "../array-concat-carrier.js"; // (#4655) concat result-slot carrier
+import { emitShapeInferredVecInit } from "../shape-vec-literal-seed.js"; // (#4491) module-global array-carrier seed
 import {
+  arrayLiteralEscapeWidensToExternref,
   objectLiteralIsStandaloneAnyObjectCarrier,
+  objectLiteralForcesHostPath,
   objectLiteralSpreadTakesHostPath,
   resolveComputedKeyExpression,
 } from "../literals.js";
@@ -42,6 +47,7 @@ import {
   bindingHasMixedAssignmentCarrier,
   numericProofOverridesMixedCarrier,
 } from "../analysis/mixed-assignment-carrier.js";
+import { declarationReadsStructuralObjectFromRealmGlobal } from "../analysis/realm-global-structural-carrier.js";
 import { staticConstStringValues } from "../analysis/static-string-values.js";
 import { staticIntegerRange } from "../../ir/analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
@@ -758,6 +764,10 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
           (ts.isPropertyAssignment(p) && p.name !== undefined && ts.isComputedPropertyName(p.name)),
       );
       if (forcesHostObject) return { kind: "externref" };
+      // (#4616) Same lockstep as the main local-typing path: runtime computed
+      // keys (incl. symbols), disposal methods, and empty-string keys route the
+      // VALUE to the host plain-object path.
+      if (objectLiteralForcesHostPath(ctx, init)) return { kind: "externref" };
       if (objectLiteralSpreadTakesHostPath(ctx, init)) return { kind: "externref" };
     }
     if (isProxyConstruction(init)) return { kind: "externref" };
@@ -775,6 +785,11 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
     if (isPromiseHostCall(ctx, init) || isBindCarrierCall(init) || isStringMethodReturningHostArray(ctx, init)) {
       return null;
     }
+    // (#4655) A dynamic-carrier concat: the main path gives this binding an
+    // externref slot, which this spill layout could match — but returning
+    // `null` keeps the generator on the host path, and a conservative bail is
+    // what every other divergent-representation arm above does.
+    if (concatCallYieldsDynamicCarrier(ctx, init)) return null;
   }
   const varType = ctx.checker.getTypeAtLocation(decl);
   // Array<any> takes a decl-driven vec inference (inferArrayVecType) ≠ the
@@ -1619,15 +1634,14 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // name) must bind to the local, so suppress the module-global store here.
     const moduleGlobalIdx = hasLocalShadow || !bindsModuleGlobal ? undefined : ctx.moduleGlobals.get(name);
     if (moduleGlobalIdx !== undefined) {
-      // Shape-inferred array-like: compile {} as empty vec struct
+      // Shape-inferred array-like: seed the vec carrier (#4491 — the seed
+      // CARRIES a `[…]` initializer's elements now; it used to discard them).
       const shapeInfo = ctx.shapeMap.get(name);
       if (shapeInfo && decl.initializer) {
-        // Create an empty vec struct: struct.new(length=0, data=array.new_default(4))
-        fctx.body.push({ op: "i32.const", value: 0 }); // length = 0
-        fctx.body.push({ op: "i32.const", value: 4 }); // initial capacity
-        fctx.body.push({ op: "array.new_default", typeIdx: shapeInfo.arrTypeIdx });
-        fctx.body.push({ op: "struct.new", typeIdx: shapeInfo.vecTypeIdx });
-        fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
+        emitShapeInferredVecInit(ctx, fctx, shapeInfo, decl.initializer);
+        // Re-read the index: compiling the initializer may shift globals via
+        // addStringConstantGlobal (same discipline as the generic arm below).
+        fctx.body.push({ op: "global.set", index: ctx.moduleGlobals.get(name) ?? moduleGlobalIdx });
         // Set TDZ flag to 1 (initialized)
         emitTdzInit(ctx, fctx, name);
         continue;
@@ -1656,6 +1670,10 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     }
 
     const varType = ctx.checker.getTypeAtLocation(decl);
+    const declaredWasmType = resolveWasmType(ctx, varType);
+    const realmStructuralCarrier =
+      (declaredWasmType.kind === "ref" || declaredWasmType.kind === "ref_null") &&
+      declarationReadsStructuralObjectFromRealmGlobal(ctx, fctx, decl);
     // #1120: If this local has been detected as i32-coerced (every write
     // is wrapped in `| 0` or another bitwise int32 coercion), force its
     // Wasm type to i32. This must be checked BEFORE inferred-array logic
@@ -1702,24 +1720,18 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // (#1433) Same routing for `[Symbol.dispose]` / `[Symbol.asyncDispose]`
     // computed methods — they reach the JS-host plain-object path so the
     // native runtime can find the disposer under the real Symbol property.
+    // (#4616) Routes through the SAME predicate compileObjectLiteral's host
+    // gate uses (objectLiteralForcesHostPath — accessors, disposal methods,
+    // RUNTIME computed keys incl. symbols, empty-string keys) so the local's
+    // representation and the literal's value representation stay in lockstep.
+    // The previous inline check missed computed-key PropertyAssignments
+    // (`{ a: 1, [symbolKey]: 3 }`): the value built as a host object while an
+    // un-annotated local stayed struct-typed — the store null-cast and reads
+    // answered NULL (jest Replaceable "Type null is not support").
     const initIsAccessorLiteral =
       decl.initializer !== undefined &&
       ts.isObjectLiteralExpression(decl.initializer) &&
-      decl.initializer.properties.some((p) => {
-        if (ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) return true;
-        if (ts.isMethodDeclaration(p) && ts.isComputedPropertyName(p.name)) {
-          const inner = p.name.expression;
-          if (
-            ts.isPropertyAccessExpression(inner) &&
-            ts.isIdentifier(inner.expression) &&
-            inner.expression.text === "Symbol" &&
-            (inner.name.text === "dispose" || inner.name.text === "asyncDispose")
-          ) {
-            return true;
-          }
-        }
-        return false;
-      });
+      objectLiteralForcesHostPath(ctx, decl.initializer);
     // (#2804) A spread-containing object literal initializer that takes the host
     // plain-object path (no concrete contextual struct type — e.g.
     // `const b = { ...a, z: 3 }`) builds a host `$Object` (externref), NOT the
@@ -1831,6 +1843,17 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     const mixedCarrierProvenF64 = mixedAssignmentCarrier
       ? numericProofOverridesMixedCarrier(usageInferredLocalType(ctx, decl))
       : null;
+    // (#4531) The initializer array literal widens its element carrier to
+    // externref because its value escapes into an opaque call argument (see
+    // arrayLiteralEscapeWidensToExternref). The SLOT must widen with it — a
+    // checker-derived closed-struct vec slot would force a vec→vec converting
+    // copy whose per-element ref.test nulls every open-representation element.
+    const escapeWidenedVecType: ValType | undefined =
+      decl.initializer !== undefined &&
+      ts.isArrayLiteralExpression(decl.initializer) &&
+      arrayLiteralEscapeWidensToExternref(ctx, decl.initializer)
+        ? { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, "externref", { kind: "externref" }) }
+        : undefined;
     const wasmTypeBase: ValType =
       // (#3123) A widened fnctor-subclass binding (pre-hoist recorded it in
       // `fnctorWidenedLocals` — reassigned with a foreign/host value) must
@@ -1839,57 +1862,75 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       // plain-fn capture and does not fire for uncaptured bindings).
       mixedAssignmentCarrier
         ? (mixedCarrierProvenF64 ?? { kind: "externref" as const })
-        : isProxyTargetBinding
+        : realmStructuralCarrier
           ? { kind: "externref" as const }
-          : fctx.forInIdentifierVars?.has(name)
+          : isProxyTargetBinding
             ? { kind: "externref" as const }
-            : fctx.fnctorWidenedLocals?.has(name)
+            : fctx.forInIdentifierVars?.has(name)
               ? { kind: "externref" as const }
-              : initIsAccessorLiteral ||
-                  initIsHostSpreadLiteral ||
-                  initIsGrowableObjectLiteral ||
-                  initIsProtoReceiverLiteral
+              : fctx.fnctorWidenedLocals?.has(name)
                 ? { kind: "externref" as const }
-                : initIsAnyObjectCarrier && anyObjectCarrierTypeIdx >= 0
-                  ? { kind: "ref_null" as const, typeIdx: anyObjectCarrierTypeIdx }
-                  : initIsPropertyDescriptorResult
-                    ? { kind: "externref" as const }
-                    : isI32CoercedLocal
-                      ? { kind: "i32" }
-                      : isI32SpecializedArray
-                        ? { kind: "ref_null" as const, typeIdx: getOrRegisterVecType(ctx, "i32", { kind: "i32" }) }
-                        : widenedTypeIdx !== undefined
-                          ? { kind: "ref_null" as const, typeIdx: widenedTypeIdx }
-                          : (taViewType ??
-                            subarraySubviewType ??
-                            inferredVecType ??
-                            standaloneRegExpMatchArrayType ??
-                            (decl.initializer && isStringMethodReturningHostArray(ctx, decl.initializer)
-                              ? { kind: "externref" as const }
-                              : decl.initializer && isPromiseHostCall(ctx, decl.initializer)
+                : initIsAccessorLiteral ||
+                    initIsHostSpreadLiteral ||
+                    initIsGrowableObjectLiteral ||
+                    initIsProtoReceiverLiteral
+                  ? { kind: "externref" as const }
+                  : initIsAnyObjectCarrier && anyObjectCarrierTypeIdx >= 0
+                    ? { kind: "ref_null" as const, typeIdx: anyObjectCarrierTypeIdx }
+                    : initIsPropertyDescriptorResult
+                      ? { kind: "externref" as const }
+                      : isI32CoercedLocal
+                        ? { kind: "i32" }
+                        : isI32SpecializedArray
+                          ? { kind: "ref_null" as const, typeIdx: getOrRegisterVecType(ctx, "i32", { kind: "i32" }) }
+                          : widenedTypeIdx !== undefined
+                            ? { kind: "ref_null" as const, typeIdx: widenedTypeIdx }
+                            : (escapeWidenedVecType ??
+                              taViewType ??
+                              subarraySubviewType ??
+                              inferredVecType ??
+                              standaloneRegExpMatchArrayType ??
+                              // (#4655) `var arr = x.concat(y, z)` — the concat
+                              // lowering yields a dynamic `$ObjVec` externref
+                              // for these shapes while the checker types the
+                              // binding `number[]` from the lib signature; the
+                              // vec-typed slot ToNumber'd every non-numeric
+                              // element to NaN. Same predicate the lowering's
+                              // dispatcher asks (array-concat-carrier.ts), so
+                              // slot and value cannot disagree.
+                              (concatCallYieldsDynamicCarrier(ctx, decl.initializer)
                                 ? { kind: "externref" as const }
-                                : // (#2615/#4397) Proxy and revocable-handle results are
-                                  // externref carriers in both provider profiles. A
-                                  // checker-derived struct slot would cast them to null
-                                  // before their MOP/result fields can be observed.
-                                  initIsProxy
+                                : decl.initializer && isStringMethodReturningHostArray(ctx, decl.initializer)
                                   ? { kind: "externref" as const }
-                                  : // (#1337/#4397) In a JS environment, both the
-                                    // compatibility exotic and native `$__bound_fn`
-                                    // are externref carriers, never the target struct.
-                                    decl.initializer &&
-                                      !ctx.standalone &&
-                                      !noJsHost(ctx) &&
-                                      isBindCarrierCall(decl.initializer)
+                                  : decl.initializer && isPromiseHostCall(ctx, decl.initializer)
                                     ? { kind: "externref" as const }
-                                    : localTypeForDeclaration(ctx, varType, decl)));
+                                    : // (#2615/#4397) Proxy and revocable-handle results are
+                                      // externref carriers in both provider profiles. A
+                                      // checker-derived struct slot would cast them to null
+                                      // before their MOP/result fields can be observed.
+                                      initIsProxy
+                                      ? { kind: "externref" as const }
+                                      : // (#1337/#4397) In a JS environment, both the
+                                        // compatibility exotic and native `$__bound_fn`
+                                        // are externref carriers, never the target struct.
+                                        decl.initializer &&
+                                          !ctx.standalone &&
+                                          !noJsHost(ctx) &&
+                                          isBindCarrierCall(decl.initializer)
+                                        ? { kind: "externref" as const }
+                                        : localTypeForDeclaration(ctx, varType, decl)));
     // (#2660 S3b) A provably-monomorphic `new F(...)` binding of an approved
     // fnctor gets the reserved struct slot instead of externref. Same (cached)
     // verdict as the var hoister / let-const pre-hoister, so a reused
     // pre-hoisted slot and this cascade always agree. Applied only when the
     // cascade itself settled on externref — never overrides another inference.
+    // (#4491 wave-5 T4) A module `var` REDECLARED with a differently-tagged
+    // initializer had its global widened to externref; the module-init shadow
+    // local is the same binding and must not be narrowed back by the checker's
+    // (first-declaration) symbol type. See `redeclared-var-widening.ts`.
     const wasmType: ValType =
-      wasmTypeBase.kind === "externref" ? (resolveFnctorTypedBindingType(ctx, decl) ?? wasmTypeBase) : wasmTypeBase;
+      redeclarationWidenedLocalSlotType(ctx, decl) ??
+      (wasmTypeBase.kind === "externref" ? (resolveFnctorTypedBindingType(ctx, decl) ?? wasmTypeBase) : wasmTypeBase);
 
     // (#2814) Bug C: re-align a block-scoped let/const with its OWN pre-hoisted
     // slot. `saveBlockScopedShadows` removed this name's localMap (and TDZ-flag)

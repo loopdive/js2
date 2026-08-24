@@ -1,7 +1,7 @@
 ---
 id: 4527
 title: "axios: class rest dispatch bridge is fixed; finish the remaining dynamic callback ABI"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-16
 updated: 2026-08-21
@@ -110,3 +110,25 @@ callback ABI, which must be fixed without a module-init closure trap.
 - [ ] All 25 axios test modules validate.
 - [ ] Reduction test committed; general fix, no axios-specific casing.
 - [ ] Fresh axios pass/total recorded in this file after the fix.
+
+## 2026-08-21 checkpoint (curated-npm-tests lane)
+
+The reference-preserving bridge the previous checkpoint asked for is landed as
+the `__call_dyn_<n>` host-import family (src/runtime.ts) plus a codegen arm in
+`compileIdentifierCall`'s final fallback (call-identifier.ts): a call on a
+KNOWN `any`-typed variable that no dispatch arm claimed — the cross-module
+callback case, where the callee module compiles before the caller's arrow
+exists so `ctx.closureInfoByTypeIdx` has no candidates — now crosses the host
+boundary with the callee and every argument as externref (i32/f64 boxed and
+unboxed host-side, reference args LIVE) instead of lowering to the graceful
+`ref.null.extern` that silently never invoked the callee.
+
+Reduction tests: `tests/issue-4527-call-dyn-bridge.test.ts` (cross-module
+arrow callbacks; diff-sequences-shaped index loop — both exact previously-
+failing shapes). No module-init closure trap: the bridge is call-site-emitted,
+no function-index freeze interaction.
+
+Remaining for this issue: re-measure the axios suite (the 21/231 checkpoint
+predates this bridge) and the in-body null-deref cluster that the bridge does
+not address (diff-sequences' real `diffSequence` internals still null-deref —
+that is a capture/carrier defect, not a call-boundary one).

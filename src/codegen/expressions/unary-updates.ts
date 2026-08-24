@@ -51,6 +51,7 @@ import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { compileComputedMemberKeyAfterBaseGuard } from "./computed-member-reference.js";
 import { emitMappedArgParamSync } from "./logical-ops.js";
 import { resolveStructName } from "./misc.js";
+import { isSloppyImplicitGlobalBinding, tryEmitImplicitGlobalIncDec } from "./implicit-global-binding.js"; // (#3966) `p++` on a realm-global property
 
 /**
  * §13.4 UpdateExpression evaluation applies ToNumeric to the operand's current
@@ -440,6 +441,42 @@ function emitExternrefElementIncDec(
 }
 
 /**
+ * (#2656/#4491) Externref read-modify-write for `obj.p++` / `--obj.p`, shared by
+ * `compileMemberIncDec`'s two "the struct cannot serve this write" arms: an
+ * UNRESOLVABLE receiver type (#2656) and a resolved struct with NO SLOT for the
+ * property (#4491). Both used to emit `f64.const NaN` and drop the write.
+ *
+ * `reason` names the caller on the silent-fallback channel, which is reached only
+ * when the receiver itself will not compile — that residual NaN is the honest
+ * answer there (§13.4 on an unresolvable Reference).
+ */
+function emitMemberIncDecExternrefFallback(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  operand: ts.PropertyAccessExpression,
+  propName: string,
+  f64Op: "f64.add" | "f64.sub",
+  mode: "prefix" | "postfix",
+  reason: string,
+): ValType | null {
+  const incDecPinned =
+    (operand.expression.kind === ts.SyntaxKind.ThisKeyword && fctx.thisStructName !== undefined) ||
+    resolveReceiverStruct(ctx, fctx, operand.expression) !== undefined;
+  const objResult = compileExpression(ctx, fctx, operand.expression);
+  if (objResult) {
+    const objLocal = allocLocal(fctx, `__incdec_eobj_${fctx.locals.length}`, { kind: "externref" });
+    if (objResult.kind !== "externref") {
+      coerceType(ctx, fctx, objResult, { kind: "externref" });
+    }
+    fctx.body.push({ op: "local.set", index: objLocal });
+    return emitExternrefMemberIncDec(ctx, fctx, objLocal, propName, f64Op, mode, incDecPinned);
+  }
+  reportSilentFallback(ctx, "const-fallback", reason, operand);
+  fctx.body.push({ op: "f64.const", value: NaN });
+  return { kind: "f64" };
+}
+
+/**
  * Compile prefix/postfix increment/decrement on member expressions:
  *   ++obj.x, obj.x++, --obj[i], obj[i]--, etc.
  *
@@ -524,23 +561,15 @@ function compileMemberIncDec(
       // (#2656) Unresolvable static struct type — typically an `any`/`externref`
       // receiver. Do NOT NaN-drop the write: route through the externref
       // read-modify-write, which hits the same slot the READ uses. (#2681/#2686)
-      const incDecPinned =
-        (operand.expression.kind === ts.SyntaxKind.ThisKeyword && fctx.thisStructName !== undefined) ||
-        resolveReceiverStruct(ctx, fctx, operand.expression) !== undefined;
-      const objResult = compileExpression(ctx, fctx, operand.expression);
-      if (objResult) {
-        const objLocal = allocLocal(fctx, `__incdec_eobj_${fctx.locals.length}`, { kind: "externref" });
-        if (objResult.kind !== "externref") {
-          coerceType(ctx, fctx, objResult, { kind: "externref" });
-        }
-        fctx.body.push({ op: "local.set", index: objLocal });
-        return emitExternrefMemberIncDec(ctx, fctx, objLocal, propName, f64Op, mode, incDecPinned);
-      }
-      // Could not compile the receiver — graceful NaN (incrementing an
-      // unresolvable property is NaN in JS).
-      reportSilentFallback(ctx, "const-fallback", "unary-updates:incdec-unresolvable-receiver-type", operand);
-      fctx.body.push({ op: "f64.const", value: NaN });
-      return { kind: "f64" };
+      return emitMemberIncDecExternrefFallback(
+        ctx,
+        fctx,
+        operand,
+        propName,
+        f64Op,
+        mode,
+        "unary-updates:incdec-unresolvable-receiver-type",
+      );
     }
 
     // Check for accessor properties (get/set) before looking up struct fields
@@ -633,10 +662,21 @@ function compileMemberIncDec(
 
     const fieldIdx = fields.findIndex((f) => f.name === propName);
     if (fieldIdx === -1) {
-      // Unknown field — gracefully emit NaN (reading undefined property in numeric context)
-      reportSilentFallback(ctx, "const-fallback", "unary-updates:member-incdec-unknown-field", operand);
-      fctx.body.push({ op: "f64.const", value: NaN });
-      return { kind: "f64" };
+      // (#4491) The struct resolved but carries NO slot for this property. The
+      // old arm emitted `f64.const NaN` and DROPPED the write, so `var m = {};
+      // m.foo++` left `"foo" in m` false — §13.4 requires the update to CREATE
+      // the property holding NaN. Reuse the #2656 externref read-modify-write:
+      // the read still answers undefined → NaN (unchanged result value), and the
+      // write-back lands under a fresh key instead of vanishing.
+      return emitMemberIncDecExternrefFallback(
+        ctx,
+        fctx,
+        operand,
+        propName,
+        f64Op,
+        mode,
+        "unary-updates:member-incdec-unknown-field",
+      );
     }
 
     const fieldType = fields[fieldIdx]!.type;
@@ -1185,6 +1225,11 @@ function compilePrefixUpdate(
           // (#4079) f64 OR i32 backing slot — see compileGlobalIncDec.
           return compileGlobalIncDec(ctx, fctx, ppCapIdx, "f64.add", "prefix");
         }
+        // (#3966) sloppy implicit global — see the postfix arm below.
+        if (isSloppyImplicitGlobalBinding(ctx, fctx, ppOperand.text)) {
+          const implicit = tryEmitImplicitGlobalIncDec(ctx, fctx, ppOperand.text, "f64.add", "prefix");
+          if (implicit !== undefined) return implicit;
+        }
       }
       // ++obj.prop or ++obj[idx] — delegate to member increment helper
       return compileMemberIncDec(ctx, fctx, expr.operand, "add", "prefix");
@@ -1363,6 +1408,11 @@ function compilePrefixUpdate(
           // (#4079) f64 OR i32 backing slot — see compileGlobalIncDec.
           return compileGlobalIncDec(ctx, fctx, mmCapIdx, arithOp, "prefix");
         }
+        // (#3966) sloppy implicit global — see the postfix arm below.
+        if (isSloppyImplicitGlobalBinding(ctx, fctx, mmOperand.text)) {
+          const implicit = tryEmitImplicitGlobalIncDec(ctx, fctx, mmOperand.text, arithOp, "prefix");
+          if (implicit !== undefined) return implicit;
+        }
       }
       // --obj.prop or --obj[idx] — delegate to member decrement helper
       return compileMemberIncDec(ctx, fctx, expr.operand, "sub", "prefix");
@@ -1452,6 +1502,12 @@ function compilePostfixUnary(
         }
         // (#4079) f64 OR i32 backing slot — see compileGlobalIncDec.
         return compileGlobalIncDec(ctx, fctx, postCapIdx, arithOp, "postfix");
+      }
+      // (#3966) A sloppy implicit global has real storage on the realm global
+      // object; the `f64.const 0` fallback below dropped the store entirely.
+      if (isSloppyImplicitGlobalBinding(ctx, fctx, postOperand.text)) {
+        const implicit = tryEmitImplicitGlobalIncDec(ctx, fctx, postOperand.text, arithOp, "postfix");
+        if (implicit !== undefined) return implicit;
       }
       // Graceful fallback: emit 0 for unknown postfix increment/decrement
       fctx.body.push({ op: "f64.const", value: 0 });

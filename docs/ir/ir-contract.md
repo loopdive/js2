@@ -1,4 +1,4 @@
-# The IR interchange contract — v5.1
+# The IR interchange contract — v5.2
 
 > **Normative.** The #3030 contract is the union of this document,
 > [`ir-module.schema.json`](ir-module.schema.json), and the exported
@@ -37,13 +37,20 @@ One JSON document per compiled module.
 
 ## D2 — Versioning
 
-`IR_FORMAT_VERSION = "5.1"` (exported from `src/ir/contract.ts`). Version 5.1
-adds optional prepared callable providers on `forof.string` and oversized
-`string.const` materialization; version 5.0 made global and symbolic type
-references carry required closed structural bindings. Their `name` fields are
-compatibility/debug metadata. Source-qualified class shapes from version 4,
-callable bindings from version 3, and
-function/coverage `unitId` fields from version 2 remain required.
+`IR_FORMAT_VERSION = "5.2"` (exported from `src/ir/contract.ts`). Version 5.2
+appends the typed JS-dialect `string.repeat` instruction. It is backend-neutral
+because one semantic operation crosses host, native, and linear providers; it
+is not language-neutral core IR. Its f64 count preserves ToIntegerOrInfinity
+semantics and its callable provider is a required final dependency. Version 5.1
+added optional prepared callable providers on
+`forof.string` and oversized `string.const` materialization; version 5.0 made
+global and symbolic type references carry required closed structural bindings.
+Their `name` fields are compatibility/debug metadata. Source-qualified class
+shapes from version 4, callable bindings from version 3, and function/coverage
+`unitId` fields from version 2 remain required.
+Schema recognition of `string.repeat` does not add an executable module
+round-trip: `serializeIrModule`/`deserializeIrModule` remain future #3030-T3
+work, as recorded in the slice table below.
 
 - **Additive** (minor bump): new instruction kinds, new optional fields, new
   enum members appended at the END of their table.
@@ -88,7 +95,7 @@ function/coverage `unitId` fields from version 2 remain required.
    classification") is part of this contract; instruction order within a
    block is program order, and any reordering the compiler performed
    respected the classification (#2134). Effects are _derived_ (published
-   table), not serialized per instruction in v5.1.
+   table), not serialized per instruction in v5.2.
 6. **Source positions.** Instructions and terminators may carry
    `site: {line, column}` (1-based line, 0-based column, in the `source`
    file named by the header). Alloc-site provenance rides on `alloc`
@@ -188,7 +195,7 @@ landed.
 
 ```
 IrModuleDocument
-├─ irVersion: "5.1"
+├─ irVersion: "5.2"
 ├─ source?: string
 ├─ coverage: [{unitId, name, carrier: "ir"|"legacy", exported, reason?}]   (D3.7)
 └─ functions: [IrFunctionDoc]           (exactly the carrier:"ir" entries)
@@ -264,8 +271,18 @@ must not diverge (T4 acceptance).
 | --------------- | ------------ | ----------------- | ---------------------------------------- | ------- |
 | `string.const`  | —            | `value: string`, `storage?: GlobalRef`, `materializer?: FuncRef` | ⇒ `string`; storage and materializer are mutually exclusive | pure    |
 | `string.concat` | `lhs`, `rhs` | —                 | operands `string` ⇒ `string`             | pure    |
+| `string.repeat` | `value`, `count` | `encodingEvidence: "ascii"\|"utf8-guaranteed"\|"wtf16"`, `provider: FuncRef` | `value` is `string`, `count` is `val:f64` ⇒ `string`; ToIntegerOrInfinity; negative or +∞ throws RangeError (or the backend's documented trap where JS exceptions are unavailable) | full barrier |
 | `string.eq`     | `lhs`, `rhs` | `negate: boolean` | operands `string` ⇒ `val:i32`            | pure    |
 | `string.len`    | `value`      | —                 | operand `string` ⇒ `val:f64` (JS Number) | pure    |
+
+`string.repeat` providers validate the ToIntegerOrInfinity result before an
+empty-receiver fast path, so `"".repeat(-1)` still throws. Providers may reject
+a valid non-empty count at their documented implementation-size limit; they
+must do so before narrowing or saturating the f64 count. The native WasmGC
+adapter therefore returns an empty receiver before its `0x40000000`-code-unit
+non-empty result limit and throws above that limit instead of silently wrapping
+the historical i32 rope kernel. The linear provider analogously checks its
+exact memory-bound result length in f64 before converting to i32.
 
 ### Objects, closures, ref cells, classes
 
@@ -383,9 +400,9 @@ boxed, dynamic`.
 
 ## Slice status
 
-| Slice | What                                                        | Status at v5.1                                               |
+| Slice | What                                                        | Status at v5.2                                               |
 | ----- | ----------------------------------------------------------- | ------------------------------------------------------------ |
-| T1    | this document + schema + `IR_FORMAT_VERSION`                | **v5 structural callable/global/type identity** (#3520)      |
+| T1    | this document + schema + `IR_FORMAT_VERSION`                | **v5.2 typed `string.repeat` contract** (#3518)              |
 | T2    | purge module-relative indices from in-memory `IrType` (D5)  | open — until then, affected functions are `carrier:"legacy"` |
 | T3    | `serializeIrModule`/`deserializeIrModule` + `--emit-ir`     | open                                                         |
 | T4    | verifier re-derivation of the §Node-inventory rules (#1924) | open — D3.3 effective from here                              |

@@ -17,6 +17,9 @@ loc-budget-allow:
   - src/codegen/expressions/call-receiver-method.ts
   - src/codegen/async-cps.ts
   - src/codegen/expressions/call-namespace-static.ts
+  # string-combinator slice: the string arm belongs in the combinator
+  # subsystem module itself; +15 over the 1500 god-file threshold.
+  - src/codegen/promise-combinators.ts
 func-budget-allow:
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
@@ -397,11 +400,23 @@ branch.**
    this is the real next lever.**
 2. **84** `AsyncTestFailure: [object Object]` — drive-layer semantics, needs its
    own triage pass.
-3. **13** residual `illegal cast` — all combinator-over-**string**
-   (`Promise.all('')` → `Native-first adapter cannot bind env::Promise_all`).
-   Explicitly deferred in the Gap-4 note; the smallest bounded item left. Needs
-   `__combinator_to_vec` to iterate a string's code points; the exclusion is
-   explicit at `calls.ts:8959` and `:8973`.
+3. ~~**13** residual `illegal cast` — all combinator-over-**string**~~ **DONE
+   (string-combinator slice, 2026-08-23).** `__combinator_to_vec` gained a
+   native code-point string arm (`buildToVecStringArm`,
+   `promise-combinators.ts`): flatten once, walk with `__str_charAt_cp` (the
+   same helper the for-of/spread string lowerings use), advance by the
+   element's `.len` so surrogate pairs stay whole (§22.1.5). The arm sits in
+   the shared to-vec head, so it serves both the eager and the finalize-filled
+   body — including a string arriving at runtime inside an `any`-typed value,
+   which previously fell to the user-iterable arm and wrongly rejected. The
+   compile-time string exclusions in `isDynamicCombinatorArgEligible`
+   (calls.ts) now admit strings under the same `ctx.nativeStrings` predicate.
+   Verified host-free on BOTH carrier lanes (wasi + standalone):
+   `tests/issue-2867-string-combinator.test.ts` — 12 cases incl. `all("")`
+   empty-fulfil, surrogate-pair element, `race` first-char, any-typed string,
+   and the non-iterable→TypeError control. gc/host lane inert by construction
+   (all touched paths are behind `isStandalonePromiseActive` /
+   `nativeCombinatorEligible`).
 4. **Unrelated defect found while investigating, needs its own issue:**
    `__drain_microtasks()` in an otherwise-EMPTY module emits an **invalid
    binary** on BOTH carrier lanes — `Compiling function #17:"__str_ws_start"

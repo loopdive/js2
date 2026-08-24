@@ -13,6 +13,7 @@ import type { CodegenContext } from "./context/types.js";
 import { buildClosureRefTestArms, collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
 import { buildBuiltinCallableTestArm, hasBrandedBuiltinCarrier } from "./builtin-callable-brand.js";
 import { installCompiledClosureToStringArm } from "./coercion-engine.js";
+import { unshiftCarrierToPrimitiveArms, unshiftDateToStringArm } from "./carrier-to-primitive.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 
 /**
@@ -55,6 +56,11 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
  */
 export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   if (!ctx.nativeStrings) return;
+  // #4564: the Date half must not depend on any of the callable latches below.
+  // Both splices self-gate on their own finalized carrier types/helpers, so run
+  // them before the typeof-only early return.
+  unshiftCarrierToPrimitiveArms(ctx);
+  unshiftDateToStringArm(ctx);
   const baseTypeIdxs = collectClosureBaseWrapperTypeIdxs(ctx);
   const runtimeEvalCallbackTypeIdx = ctx.runtimeEvalInterpretedCallbackTypeIdx;
   const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;
@@ -68,13 +74,17 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   // `$Object`. A module whose only reified builtin is `Int8Array` must still
   // reach the fill, or `typeof Int8Array` silently answers `"object"`.
   const taCtorTypeIdx = ctx.taCtorTypeIdx !== undefined && ctx.taCtorTypeIdx >= 0 ? ctx.taCtorTypeIdx : undefined;
+  // (#3505 harness) A minted $Symbol carrier also needs its typeof arms — a
+  // module can box symbols without ever compiling a closure.
+  const symbolTypeIdx = ctx.symbolTypeIdx >= 0 ? ctx.symbolTypeIdx : undefined;
   if (
     baseTypeIdxs.length === 0 &&
     runtimeEvalCallbackTypeIdx === undefined &&
     !hasBrandedBuiltinCarrier(ctx) &&
     proxyTypeIdx === undefined &&
     boundaryCallableKindIdx === undefined &&
-    taCtorTypeIdx === undefined
+    taCtorTypeIdx === undefined &&
+    symbolTypeIdx === undefined
   )
     return;
 
@@ -172,7 +182,17 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
     const lastIdx = b.length - 1;
     const last = b[lastIdx] as { op?: string; value?: number } | undefined;
     if (last && last.op === "i32.const" && last.value === 1) {
-      b.splice(lastIdx, 0, ...closureI32Arms(1, 0));
+      const exclusionArms: Instr[] = closureI32Arms(1, 0);
+      // (#3505 harness) typeof Symbol() is "symbol", never "object" — exclude
+      // the $Symbol carrier exactly like closures.
+      if (symbolTypeIdx !== undefined) {
+        exclusionArms.push(
+          { op: "local.get", index: 1 },
+          { op: "ref.test", typeIdx: symbolTypeIdx },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+        );
+      }
+      b.splice(lastIdx, 0, ...exclusionArms);
     }
   }
 
@@ -203,6 +223,20 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
       // materialized native string result. Rebuild explicitly because the i32
       // predicate and value-returning helper have different result types.
       const valueArms: Instr[] = [];
+      // (#3505 harness) $Symbol carrier → the "symbol" string. Before this the
+      // carrier fell through to the terminal "object", so the propertyHelper
+      // guard `assert.sameValue(typeof desc, "object")` ACCEPTED a Symbol desc.
+      if (symbolTypeIdx !== undefined) {
+        valueArms.push(
+          { op: "local.get", index: 1 },
+          { op: "ref.test", typeIdx: symbolTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...stringConstantExternrefInstrs(ctx, "symbol"), { op: "return" }],
+          },
+        );
+      }
       const callableTypeIdxs = [
         ...baseTypeIdxs,
         ...(runtimeEvalCallbackTypeIdx === undefined ? [] : [runtimeEvalCallbackTypeIdx]),

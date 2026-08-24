@@ -81,6 +81,7 @@ tests/dogfood/.marked/
 tests/dogfood/.acorn-test-suite/
 tests/dogfood/.cookie/
 tests/dogfood/.clsx/
+tests/dogfood/.temporal-polyfill/
 tests/dogfood/.eslint/
 tests/dogfood/.eslint-upstream-suite/
 tests/dogfood/.prettier/

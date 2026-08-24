@@ -739,6 +739,20 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
       } catch {
         // type resolution may fail — skip (a runtime ToString path still applies)
       }
+      // (#4616) A DYNAMIC arg (any/unknown/union-with-string) takes the
+      // runtime string-vs-ToNumber dispatch in new-builtin-globals.ts, whose
+      // string arm calls __date_parse_host — register it up-front too.
+      if (!state.dateParseHostNeeded) {
+        const fact = ctx.oracle.typeFactOf(node.arguments[0]!);
+        if (
+          fact.kind === "any" ||
+          fact.kind === "unknown" ||
+          fact.kind === "unresolvable" ||
+          (fact.kind === "union" && fact.parts.some((p) => p.kind === "string"))
+        ) {
+          state.dateParseHostNeeded = true;
+        }
+      }
     }
   }
 

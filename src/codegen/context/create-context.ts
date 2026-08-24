@@ -144,6 +144,7 @@ export function createCodegenContext(
     holeyArrayFilterCallNodes: new Set(), // (#4222) exact direct filter consumers
     protoIndexDirty: false, // (#2001 S2, widened #4160) scanForArrayHoles: Array/Object.prototype index write
     protoNamedDirty: false, // (#4176) scanForArrayHoles: named write onto a branded builtin's .prototype
+    protoNamedWrittenMembers: new Set<string>(), // (#4492 wave-5) the member NAMES behind that flag
     protoMemberDirty: false, // (#2175 V2-S3b-1) scanForArrayHoles: branded builtin .prototype reaches the dynamic reader as a VALUE
     vecAccessorDescriptorDirty: false, // (#4159) scanForArrayHoles: a non-data descriptor may exist somewhere
     inheritedSetDescriptorDirty: false, // (#4504) scanForArrayHoles: a descriptor may affect inherited [[Set]]
@@ -339,6 +340,7 @@ export function createCodegenContext(
     methodClosureGlobals: new Map(),
     nullThisTypeErrorReady: false, // (#2025)
     funcClosureGlobals: new Map(),
+    funcClosureSingletonKeyByFuncIdx: new Map(),
     wasi: targetProfile.target === "wasi",
     nodeGlobals: options?.nodeGlobals ?? false,
     // #2783 — namespaces left as link-time imports (WASI-gated above).

@@ -3861,9 +3861,15 @@ function collectReferencedAfter(root: ts.Node, target: ts.AwaitExpression, out: 
       return; // the await's own operand executes BEFORE resumption — skip it
     }
     if (isNestedFunctionScope(node)) {
-      // A nested scope after the target may still reference our locals (closure
-      // capture), so when we're already past the target, collect from it too.
-      if (passedTarget) collectReferencedIdentifiers(node, out);
+      // A nested scope may reference our locals (closure capture) and run
+      // after the await REGARDLESS of where it is declared: a hoisted function
+      // declaration or an arrow created before the suspend point is routinely
+      // invoked from the resumed continuation (#4618 — react it-bodies declare
+      // `function ParentComponent(){…}` before `await act(...)` and render it
+      // after). Collect from every nested scope, not just ones lexically after
+      // the target; the outer `ownLocals` filter keeps this to genuine
+      // captures, and an over-approximated spill is only an extra frame field.
+      collectReferencedIdentifiers(node, out);
       return;
     }
     if (passedTarget && ts.isIdentifier(node)) {
