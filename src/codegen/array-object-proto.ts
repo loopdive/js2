@@ -72,6 +72,8 @@ import { emitObjectProtoIsPrototypeOfBody } from "./object-proto-is-prototype-of
 import { ANNEX_B_ACCESSOR_ARITY, emitObjectProtoAnnexBAccessorBody } from "./object-proto-annex-b-accessors.js";
 import { emitWrapperProtoValueOfBody, isWrapperBrandName } from "./wrapper-proto-value-of.js";
 import { emitWrapperProtoToStringBody } from "./wrapper-proto-to-string.js"; // (#4619)
+import { emitFunctionProtoToStringBody } from "./function-proto-to-string.js"; // (#4492 wave-5)
+import { emitObjectProtoValueOfBody } from "./object-proto-value-of.js"; // (#4492 wave-5)
 import { emitStringConcatMemberBody } from "./string-proto-concat.js";
 import { emitStringSubstringMemberBody } from "./string-proto-substring.js";
 import { emitStringSplitMemberBody } from "./string-proto-split.js"; // (#4220) reflective String.prototype.split
@@ -1773,6 +1775,10 @@ function makeGlue(
       // (#4619 family D) The `toString` twin of the arm above, in the same
       // position and for the same reason — routed FIRST so it serves String too.
       (member === "toString" && isWrapperBrandName(name) ? emitWrapperProtoToStringBody(c, fctx, name) : null) ??
+      // (#4492 wave-5) §20.2.3.5 `Function.prototype.toString` — the reflective
+      // VALUE. Same "ask first, emit second" contract as the two arms above, so a
+      // decline leaves the ladder byte-identical.
+      (name === "Function" && member === "toString" ? emitFunctionProtoToStringBody(c, fctx) : null) ??
       (name === "Array"
         ? emitArrayProtoMemberBody(c, fctx, member)
         : name === "String"
@@ -1793,6 +1799,10 @@ function makeGlue(
                 // lives inside it).
                 ((name === "Object" ? emitObjectProtoIsPrototypeOfBody(c, fctx, member) : null) ??
                 (name === "Object" ? emitObjectProtoAnnexBAccessorBody(c, fctx, member) : null) ??
+                // (#4492 wave-5) §20.1.3.7 — the inherited `valueOf` every
+                // OrdinaryToPrimitive walk reaches; refusing it made ToPrimitive
+                // throw where the spec just falls through to `toString`.
+                (name === "Object" ? emitObjectProtoValueOfBody(c, fctx, member) : null) ??
                 emitProtoMemberBodyRefusal(c, fctx, name, member))),
   };
 }

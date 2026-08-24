@@ -76,6 +76,15 @@ export function joinProtoHoleFallbackInstrs(
   iLocal: number,
   holeValueLocal: number,
   anyStrTypeIdx: number,
+  /**
+   * (#4655) `Array.prototype.toLocaleString`'s element step —
+   * `ToString(Invoke(elem, "toLocaleString"))` (§23.1.3.32 step 6.c.i). An
+   * inherited index is an ordinary element for that purpose, so the fallback
+   * must invoke it too (`toLocaleString/S15.4.4.3_A3_T1`: `Array.prototype[1]`
+   * holds the object whose `toLocaleString` must be the SECOND of two calls).
+   * Absent ⇒ the unchanged `__extern_toString` tail.
+   */
+  tail?: Instr[],
 ): Instr[] | undefined {
   if (holeValueLocal < 0) return undefined;
   const getIdx = ctx.funcMap.get("__extern_get_idx");
@@ -106,9 +115,11 @@ export function joinProtoHoleFallbackInstrs(
       then: [...nativeStringLiteralInstrs(ctx, ""), { op: "ref.cast", typeIdx: anyStrTypeIdx }],
       else: [
         { op: "local.get", index: holeValueLocal },
-        { op: "call", funcIdx: toStrIdx },
-        { op: "any.convert_extern" },
-        { op: "ref.cast", typeIdx: anyStrTypeIdx },
+        ...(tail ?? [
+          { op: "call", funcIdx: toStrIdx },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: anyStrTypeIdx },
+        ]),
       ],
     },
   ];

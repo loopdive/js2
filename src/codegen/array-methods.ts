@@ -86,6 +86,14 @@ import { compileArrayConcatExternHost, compileArrayMethodExtern } from "./array-
 // (#4446) The §23.1.3.1 host-free concat loop for dynamic operands.
 import { compileArrayConcatNativeSpec } from "./array-concat-spec.js";
 import { ensureJoinProtoHoleLocal, joinProtoHoleFallbackInstrs } from "./array-join-proto-hole.js";
+// (#4655) `Array.prototype.toLocaleString`'s element Invoke (§23.1.3.32 6.c.i).
+import * as tls from "./array-tolocalestring.js";
+const {
+  buildExternJoinElementToString,
+  elementToLocaleStringTail,
+  ensureElementToLocaleStringInvoke,
+  isLocalizedJoin,
+} = tls;
 import { emitFuncRefAsClosure } from "./closures/funcref-as-closure.js";
 
 // (#3264) Array.prototype-borrow subsystem extracted to array-prototype-borrow.ts;
@@ -4549,6 +4557,10 @@ function compileArrayJoinExternNative(
   const repr = nativeStringRepr(ctx);
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
   if (repr === undefined || anyStrTypeIdx < 0) return null;
+  // (#4655) Armed FIRST so its import shifts settle before any funcIdx below is
+  // read into a JS variable (the #2043 late-shift class).
+  const localized = isLocalizedJoin(propAccess);
+  const localizedArm = localized ? ensureElementToLocaleStringInvoke(ctx, fctx) : undefined;
 
   // Native extern-array boundary helpers. `__extern_length`/`__extern_get_idx`
   // carry f64 length/index (§ import-manifest); `__extern_toString` is the same
@@ -4578,8 +4590,11 @@ function compileArrayJoinExternNative(
   fctx.body.push({ op: "i32.trunc_sat_f64_s" });
   fctx.body.push({ op: "local.set", index: lenTmp });
 
-  // Separator: explicit arg (coerced to a native string) or the spec default ",".
-  if (callExpr.arguments.length >= 1) {
+  // Separator: explicit arg (coerced to a native string) or the spec default
+  // ",". (#4655) `toLocaleString`'s arguments are the reserved locales/options,
+  // never a separator, so `localized` keeps the default and does not compile
+  // them at all.
+  if (!localized && callExpr.arguments.length >= 1) {
     const argType = compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "externref" });
     if (argType === null) {
       fctx.body.push(...nativeStringLiteralInstrs(ctx, ","));
@@ -4598,15 +4613,14 @@ function compileArrayJoinExternNative(
   fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "local.set", index: iTmp });
 
-  // element → ref $AnyString: __extern_toString(__extern_get_idx(recv, i)).
+  // element → ref $AnyString: __extern_toString(__extern_get_idx(recv, i)) —
+  // or (#4655) `ToString(Invoke(elem, "toLocaleString"))` under `localized`.
   const elemToStr: Instr[] = [
     { op: "local.get", index: recvTmp },
     { op: "local.get", index: iTmp },
     { op: "f64.convert_i32_s" },
-    { op: "call", funcIdx: externGetIdx },
-    { op: "call", funcIdx: externToStrIdx },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: anyStrTypeIdx },
+    { op: "call", funcIdx: ctx.funcMap.get("__extern_get_idx") ?? externGetIdx },
+    ...buildExternJoinElementToString(ctx, fctx, anyStrTypeIdx, externToStrIdx, localizedArm),
   ];
   emitStringJoinFold(ctx, fctx, repr, foldLocals, elemToStr);
 
@@ -4753,6 +4767,9 @@ function compileArrayJoinNative(
   const needsRefToString =
     (elemType.kind === "ref" || elemType.kind === "ref_null") &&
     !isAnyStringSubtype(ctx, (elemType as { typeIdx: number }).typeIdx);
+  // (#4655) Armed BEFORE lane J for the same reason lane J is armed before
+  // `externToStrIdx`: each registration shifts the indices captured after it.
+  const localizedArm = isLocalizedJoin(propAccess) ? ensureElementToLocaleStringInvoke(ctx, fctx) : undefined;
   // (#4491 lane J) Armed FIRST so `externToStrIdx` is captured after its shifts.
   const protoHoleVal = ensureJoinProtoHoleLocal(ctx, fctx);
   if (elemType.kind === "externref" || needsRefToString) {
@@ -4781,8 +4798,10 @@ function compileArrayJoinNative(
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
   fctx.body.push({ op: "local.set", index: dataTmp });
 
-  // Separator: explicit arg (coerced to a native string) or the spec default ",".
-  if (callExpr.arguments.length >= 1) {
+  // Separator: explicit arg (coerced to a native string) or the spec default
+  // ",". (#4655) `toLocaleString`'s arguments are locales/options, not a
+  // separator — see the module header of array-tolocalestring.ts.
+  if (localizedArm === undefined && callExpr.arguments.length >= 1) {
     const argType = compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "externref" });
     if (argType === null) {
       // void/undefined arg → default ","
@@ -4846,7 +4865,16 @@ function compileArrayJoinNative(
     // holes) and a non-string GC-ref element both stringify through the runtime
     // `__extern_toString` — the SAME ToString `String(a[i])` uses. Hole ∨ null ∨
     // undefined render as "" (§23.1.3.18 step 4.b). See array-join-element.ts.
-    elemToStr.push(...buildJoinBoxedElementToString(ctx, anyStrTypeIdx, emptyElem!, externToStrIdx!, needsRefToString));
+    elemToStr.push(
+      ...buildJoinBoxedElementToString(
+        ctx,
+        anyStrTypeIdx,
+        emptyElem!,
+        externToStrIdx!,
+        needsRefToString,
+        elementToLocaleStringTail(ctx, anyStrTypeIdx, localizedArm),
+      ),
+    );
   } else {
     // String element: a (ref null $NativeString) — non-null cast up to $AnyString.
     elemToStr.push({ op: "ref.as_non_null" });
@@ -4865,7 +4893,14 @@ function compileArrayJoinNative(
   // arrays (backing ≥ length ⇒ the guard is always true).
   // (#4491 lane J) "beyond the backing" is not "absent" — a hole INHERITS
   // `Array.prototype[k]`. Re-ask [[Get]]; see array-join-proto-hole.ts.
-  const protoHoleArm = joinProtoHoleFallbackInstrs(ctx, vecTmp, foldLocals.iTmp, protoHoleVal, anyStrTypeIdx);
+  const protoHoleArm = joinProtoHoleFallbackInstrs(
+    ctx,
+    vecTmp,
+    foldLocals.iTmp,
+    protoHoleVal,
+    anyStrTypeIdx,
+    elementToLocaleStringTail(ctx, anyStrTypeIdx, localizedArm),
+  );
   const joinBoundsCheckedElemToStr: Instr[] = [
     { op: "local.get", index: foldLocals.iTmp },
     { op: "local.get", index: dataTmp },

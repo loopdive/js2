@@ -2098,7 +2098,11 @@ export function compileBinaryExpression(
     }
   }
 
-  if (!leftType || !rightType) return foldVoidOperandEquality(fctx, op, leftType, rightType, leftTsType, rightTsType);
+  if (!leftType || !rightType) {
+    const v = foldVoidOperandEquality(ctx, fctx, op, leftType, rightType, leftTsType, rightTsType);
+    if (v === null || "kind" in v) return v;
+    ({ left: leftType, right: rightType } = v); // (#4656) undefined materialised for the void side
+  }
 
   // (#4208 S1) §7.2.16 step 1 then the i32↔f64 promotion — ORDER is the fix.
   const promoted = foldTypeDisjointThenPromote(fctx, expr, op, leftType, rightType, leftTsType, rightTsType);

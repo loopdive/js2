@@ -352,6 +352,22 @@ export function ensureStrTruthyHelper(ctx: CodegenContext): number | undefined {
   return funcIdx;
 }
 
+/**
+ * (#4492 wave-5) The `ctx.nativeStrHelpers` key of the ToString dispatcher this
+ * file owns. Exported so a finalize-time arm can LOOK UP the built helper (to
+ * splice into it, or to call it back) without re-spelling the name — this file
+ * is the engine-owned home of that vocabulary (#2108 `SANCTIONED`), and a second
+ * spelling elsewhere is precisely the drift that gate measures.
+ */
+export const ANY_TO_STRING_HELPER = "__any_to_string";
+
+/**
+ * (#4492 wave-5) …and the `ctx.funcMap` key of the externref-entry ToString
+ * dispatcher, for the same reason. `__extern_toString` is an IMPORT in host mode
+ * and a defined native in standalone; the key is the same either way.
+ */
+export const EXTERN_TO_STRING_HELPER = "__extern_toString";
+
 export function ensureAnyToStringHelper(ctx: CodegenContext): number {
   ensureNativeStringHelpers(ctx);
   const existing = ctx.nativeStrHelpers.get("__any_to_string");
