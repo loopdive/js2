@@ -23,6 +23,9 @@ es_edition: n/a
 lane: ir-retirement-r2
 model: gpt-5.6-luna
 related: [2138, 2855, 3143, 3203, 3518, 3519, 3678, 4260, 4382]
+loc-budget-allow:
+  - src/ir/propagate.ts
+  - src/ir/select.ts
 origin: "#3518 R2 — invert single-source free functions from compile/patch to prepare/emit"
 files:
   - src/ir/program.ts
@@ -2045,3 +2048,18 @@ compiler, runtime, A/B, collector, or heavy-test result. The current R2 state
 therefore remains fail-closed/`needs-runtime-replay`; the next implementation
 PR must land the nominal type, operations, resolver, and static tests as one
 reviewable projection/lowering transaction.
+
+## 2026-08-24 source-qualified fnctor admission checkpoint
+
+The first implementation checkpoint is deliberately limited to admission
+evidence. `buildIrUnitTypeMap`, identity selection, and the selector accept an
+opt-in `IrFnctorAdmission` only when a source-qualified constructor proof
+establishes the reserved `Parser { input: string }` shape, direct construction,
+fixed unconditional field, and no alias/reassignment/escape/cross-source
+collision. Without a resolver, all existing propagation and selector behavior
+is unchanged and the site remains dynamic/Unsupported. This checkpoint does
+not add an IR fnctor node, constructor lowering, or ABI emission; those must be
+landed as the next signed slice with exact reserved-layout and hidden-identity
+checks from the architecture section above. The bounded source changes are
+covered by `loc-budget-allow` for the two existing god-files and are intended
+to be reviewed independently before any R2 replay.
