@@ -102,6 +102,11 @@ import { nonExtensibleFreshIndexGuard, nonWritableLengthIndexGuard } from "./vec
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { canonicalNumericKeyGuard } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
 import { holeTestInstrs } from "./array-holes.js";
+import {
+  buildArgumentsBrandBit,
+  buildArgumentsLengthDeletedBail,
+  fillArgumentsLengthBrand,
+} from "./arguments-length-brand.js"; // (#4658)
 
 /**
  * `$PropEntry.$flags` bit claimed by the overlay (see the flag table in
@@ -714,6 +719,8 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
   if (carriers.length === 0) return;
   const vecBaseIdx = getOrRegisterVecBaseType(ctx);
   const core = ensureOverlayCore(ctx, objectTypeIdx, newPlainObjectIdx);
+  // (#4658) Fill the reserved brand stubs — needs the overlay core.
+  fillArgumentsLengthBrand(ctx, objectTypeIdx, core.ensureIdx, core.lookupIdx);
   // #4504 only needs this extra logical-own screen in modules that can observe
   // an inherited descriptor. Keep the historical gOPD/hasOwn tree untouched
   // otherwise; the existing `$Hole` carrier is still used by the write path
@@ -1932,6 +1939,9 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         s3 === null
           ? bailMiss()
           : [
+              // (#4658) `length` deleted from a branded arguments object ⇒ no
+              // own property; must agree with the `__hasOwnProperty` arm.
+              ...buildArgumentsLengthDeletedBail(ctx, bailMiss),
               // wbit (reuse local 4): default 1, else the companion entry's bit
               { op: "i32.const", value: 1 },
               { op: "local.set", index: 4 },
@@ -1984,8 +1994,21 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                 { op: "i32.const", value: 0 },
                 { op: "call", funcIdx: boxBoolIdx },
               ]),
+              // (#4658) `configurable` is `false` for an Array (§10.4.2.1) and
+              // `true` for an `arguments` exotic object (§10.4.4 steps 4/7),
+              // which shares this representation. The #4658 brand on the
+              // companion's `$Object.flags` is the only runtime fact that
+              // separates them; local 3 already holds that companion (loaded
+              // above for the `writable` bit), so this costs one `struct.get`
+              // and no second lookup. Null companion ⇒ 0 ⇒ the Array answer.
+              // (#4658) `false` for an Array (§10.4.2.1), `true` for an
+              // `arguments` object (§10.4.4) — ANDed with §7.3.14 integrity, so
+              // a sealed/frozen arguments object stays non-configurable.
               ...setKey("configurable", [
-                { op: "i32.const", value: 0 },
+                ...buildArgumentsBrandBit(3, objectTypeIdx),
+                ...integrityBit(OBJ_FLAG_SEALED | OBJ_FLAG_FROZEN),
+                { op: "i32.eqz" },
+                { op: "i32.and" },
                 { op: "call", funcIdx: boxBoolIdx },
               ]),
               { op: "local.get", index: 6 },

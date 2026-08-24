@@ -324,10 +324,11 @@ describe("#4492 wave-5 — residual R1: an Array.prototype.toString override and
     ).toBe(1);
   });
 
-  it.fails('`"" + a` ignores the override even with a NAMED receiver', async () => {
-    // A SECOND residual, separable from the inline one and previously unrecorded:
-    // the `+` path reaches `__to_primitive`'s vec arm (`array-to-primitive.ts`),
-    // whose whole body is a hard-coded `join(",")` with no prototype consult.
+  it('`"" + a` honours the override with a NAMED receiver (FIXED by #4663)', async () => {
+    // Was the SECOND residual, separable from the inline one: the `+` path
+    // reaches `__to_primitive`'s vec arm (`array-to-primitive.ts`), whose whole
+    // body was a hard-coded `join(",")` with no prototype consult. #4663 added
+    // the gated Array-companion consult; full coverage in tests/issue-4663.test.ts.
     expect(
       await runStandalone(
         `${loopBuilt("want", "__ARRAY__")}` +
