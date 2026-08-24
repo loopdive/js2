@@ -42,9 +42,17 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
    arm (2026-08-23, dev-4491).** Restoring only ONE snapshot when your change
    spans two files silently measures a HYBRID tree — half your change, half
    the base — and nothing in the run announces it. The cheap detector is
-   `git diff --stat` immediately before each arm: if it names a different
+   `git diff HEAD --stat` immediately before each arm: if it names a different
    number of files than your change touches, you have a partial restore. That
    count mismatch is the only reason the one measured instance was caught.
+
+   **Use `git diff HEAD --stat`, NOT bare `git diff --stat` (2026-08-23,
+   dev-4492 — this corrects the earlier wording here).** `git checkout <commit>
+   -- <paths>` writes the INDEX as well as the worktree, so a bare `git diff`
+   compares against the already-updated index and under-reports: measured, it
+   showed **5** changed files where `git diff HEAD --stat` correctly showed
+   **15**. The detector for a silent partial restore must not itself be blind to
+   the restore.
 
    **Branch-update merges use a PLAIN `git merge <ref>` — never `--ff-only`.**
    `pre-merge.sh` treats `--ff-only` as the legacy merge-TO-main path and
