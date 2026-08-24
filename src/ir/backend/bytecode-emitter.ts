@@ -416,6 +416,9 @@ export class BytecodeEmitter implements BackendEmitter<BytecodeSink> {
   emitStringConcat(): void {
     throw new Error("BytecodeEmitter: string primitives are not in the #1584 numeric subset.");
   }
+  emitStringRepeat(): void {
+    throw new Error("BytecodeEmitter: string primitives are not in the #1584 numeric subset.");
+  }
   emitStringEquals(): void {
     throw new Error("BytecodeEmitter: string primitives are not in the #1584 numeric subset.");
   }

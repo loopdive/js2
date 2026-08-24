@@ -372,6 +372,23 @@ export class IrFunctionBuilder {
     return result;
   }
 
+  emitStringRepeat(value: IrValueId, count: IrValueId, encodingEvidence: IrStringEncoding): IrValueId {
+    const result = this.allocator.fresh();
+    const resultType: IrType = { kind: "string" };
+    this.valueTypes.set(result, resultType);
+    const alloc = this.allocId("string", resultType);
+    this.pushInstr({
+      kind: "string.repeat",
+      value,
+      count,
+      result,
+      resultType,
+      alloc,
+      encodingEvidence,
+    });
+    return result;
+  }
+
   emitStringEq(lhs: IrValueId, rhs: IrValueId, negate: boolean): IrValueId {
     const result = this.allocator.fresh();
     const resultType: IrType = { kind: "val", val: { kind: "i32" } };
