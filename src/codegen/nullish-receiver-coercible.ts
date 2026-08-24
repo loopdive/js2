@@ -116,6 +116,34 @@ export function isSyntacticallyNullishReceiver(
   return false;
 }
 
+/**
+ * (#4519) True when a member-access receiver is an identifier spelled
+ * `undefined` — the one shape where the RUNTIME nullish receiver guard must
+ * decline even though the value it is handed really is the undefined singleton.
+ *
+ * By the time a receiver reaches `emitReceiverNullGuard`, an UNSHADOWED global
+ * `undefined` has already thrown upstream (`tryEmitNullishReceiverMemberRead` /
+ * `tryEmitNullishReceiverCall`, above). So an identifier named `undefined`
+ * arriving there is necessarily a SHADOWED one — a parameter or local that
+ * happens to carry that name and may hold anything at all.
+ *
+ * Measured on this branch (`function read(undefined) { return undefined.foo; }`
+ * called with `{foo: 7}`): the receiver compiles to the tag-1 singleton, not to
+ * the parameter, so the read already answered `NaN` instead of `7` BEFORE this
+ * issue. That is an identifier-resolution defect and it is not repaired here.
+ * What matters for this guard is that the singleton it would see is SPURIOUS —
+ * the program's value is an ordinary object — so throwing on it turns a wrong
+ * value into a wrong THROW, which is strictly worse: it is catchable and
+ * therefore observable (`tests/issue-4484.test.ts`, "does NOT throw when
+ * `undefined` is shadowed by a parameter", measured regressing without this
+ * decline). Absent, not wrong.
+ */
+export function receiverIsUndefinedIdentifier(expr: ts.Expression | undefined): boolean {
+  if (expr === undefined) return false;
+  const target = unwrapReceiver(expr);
+  return ts.isIdentifier(target) && target.text === "undefined";
+}
+
 /** True when a USER binding named `undefined` shadows the global at this site. */
 function isShadowedUndefined(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): boolean {
   if (fctx.localMap.has("undefined")) return true;
