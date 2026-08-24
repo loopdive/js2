@@ -771,6 +771,29 @@ export function functionReturnsThroughWithScope(
 }
 
 /**
+ * JavaScript's optional-parameter spellings (`x?: T`, `@param {T=} x`, and
+ * `@param {T} [x]`) all admit a call that supplies no value. A native scalar
+ * slot cannot represent that value: the generic missing-argument pad for an
+ * `f64`/`i32`/`i64` is zero, while JavaScript observes `undefined`. This is
+ * especially important for JSDoc declarations imported across a module
+ * boundary, where local call-site inference cannot see the caller.
+ *
+ * Initializers are deliberately excluded. Their existing parameter-default
+ * sentinel path evaluates the initializer in the callee, so widening those
+ * parameters would change a proven numeric default ABI for no semantic gain.
+ */
+function parameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
+  const jsdocType = ts.getJSDocType(param);
+  const jsdocTags = ts.getJSDocParameterTags(param);
+  return (
+    param.initializer === undefined &&
+    (param.questionToken !== undefined ||
+      (jsdocType !== undefined && ts.isJSDocOptionalType(jsdocType)) ||
+      jsdocTags.some((tag) => tag.isBracketed === true))
+  );
+}
+
+/**
  * (#3268) Lower a single non-rest function parameter to its Wasm ValType.
  * Consolidates the four byte-identical per-parameter lowering blocks
  * (registerBodyless + collectDeclarations, generator and normal arms):
@@ -795,6 +818,15 @@ function lowerParamType(
     : restBindingOverridesToExternref(param)
       ? { kind: "externref" }
       : (nativeParam ?? resolveWasmType(ctx, paramType));
+  // A JSDoc/TypeScript optional parameter may be omitted by a caller that is
+  // compiled in another source module. Keep the ABI in the undefined-capable
+  // externref domain unless an explicit native annotation has opted into a
+  // scalar representation. Without this, `@param {number=} size` receives
+  // `0` from pushDefaultValue and `typeof size`/Number.isNaN guards observe
+  // the wrong value (webpack's formatSize is the regression witness).
+  if (nativeParam === null && parameterMayBeOmitted(param)) {
+    wasmType = { kind: "externref" };
+  }
   // If the parameter has a default value and is a non-null ref type, widen to
   // ref_null so callers can pass ref.null as a sentinel for "use default".
   if (param.initializer && wasmType.kind === "ref") {
@@ -2532,6 +2564,27 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   // run before `new Ctor()` captures the prototype, and `obj.prop = v` must run between
   // `var before = ...typeof obj.prop` and `var after = ...obj.prop === v`).
   for (const stmt of sourceFile.statements) {
+    // ESM `export default <expression>` is a live module binding, not merely
+    // metadata. In a linked graph the expression can be the default object
+    // imported by another source file (Stylelint's vendor helper is the
+    // concrete case), so retain it in the shared module initializer and give
+    // it a stable graph-global cell that import aliasing can resolve. Function
+    // declarations are represented as FunctionDeclaration nodes and continue
+    // through the ordinary function collection above.
+    if (ts.isExportAssignment(stmt) && !stmt.isExportEquals) {
+      const bindingName = `__default_expr_${ctx.anonTypeCounter++}`;
+      // Object/function expressions are routinely lowered through the open
+      // host-object/closure carrier even when the checker reports a closed
+      // structural type. An externref cell is the representation-neutral
+      // boundary for every expression default; primitive reads still coerce
+      // normally at their use site.
+      const type: ValType = { kind: "externref" };
+      registerModuleGlobal(ctx, bindingName, type);
+      (ctx.defaultExpressionGlobals ??= new WeakMap()).set(stmt, { bindingName, type });
+      ctx.moduleInitStatements.push(stmt);
+      if (isEntryFile) (ctx.deferredDefaultExpressionExports ??= new Set()).add(bindingName);
+      continue;
+    }
     if (ts.isVariableStatement(stmt)) {
       if (hasDeclareModifier(stmt)) continue;
       // Track let/const for TDZ enforcement

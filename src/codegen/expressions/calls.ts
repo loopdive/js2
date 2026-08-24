@@ -125,6 +125,7 @@ import {
   TYPED_ARRAY_NAMES,
   typedArrayVecStorage,
 } from "../index.js";
+import { getVecInfo } from "../type-coercion.js";
 import {
   compileArrayConstructorCall,
   compileObjectLiteralAsExternref,
@@ -2732,6 +2733,209 @@ export function emitBoundFunctionCall(
   fctx.body.push({ op: "ref.null.extern" }); // thisArg — bound fn carries [[BoundThis]]
   fctx.body.push({ op: "local.get", index: argsArrayLocal });
   fctx.body.push({ op: "call", funcIdx: callResolvedIdx });
+  return externRef;
+}
+
+/**
+ * Emit a host call for a dynamically stored callable whose call site contains
+ * a spread argument.  A spread parameter is represented inside Wasm as a
+ * `__vec_*` struct; passing that struct through the ordinary callable wrapper
+ * turns it into one JavaScript argument (for example, `"a,b,c"`) instead of
+ * expanding its elements.  Build the host argument array here so both Wasm
+ * closures and ordinary host functions observe the same positional arguments.
+ *
+ * This path is deliberately limited to the JS-host lane.  Standalone/WASI
+ * calls retain their native ObjVec/call_ref lowering, where the vector is a
+ * first-class Wasm value and can be expanded without a host boundary.
+ */
+export function emitDynamicSpreadCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  expectedType?: ValType,
+): InnerResult | null {
+  if (ctx.standalone || ctx.wasi || !expr.arguments.some((arg) => ts.isSpreadElement(arg))) return null;
+
+  const externRef: ValType = { kind: "externref" };
+  const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [externRef]);
+  const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [externRef, externRef], []);
+  const callIdx = ensureLateImport(ctx, "__call_function", [externRef, externRef, externRef], [externRef]);
+  // The fallback for a non-Wasm iterable uses the same host indexing helpers as
+  // the arguments/array materializer. Register them up front so a source
+  // expression that itself triggers a late import cannot invalidate the array
+  // builder indices below.
+  const iterIdx = ensureLateImport(ctx, "__array_from_iter", [externRef], [externRef]);
+  const lenIdx = ensureLateImport(ctx, "__extern_length", [externRef], [{ kind: "f64" }]);
+  const getIdx = ensureLateImport(ctx, "__extern_get_idx", [externRef, { kind: "f64" }], [externRef]);
+  flushLateImportShifts(ctx, fctx);
+  if (arrNewIdx === undefined || arrPushIdx === undefined || callIdx === undefined) return null;
+
+  // Compile the callee exactly once and retain the raw externref.  The host
+  // call adapter wraps a Wasm closure struct into a real JS function when
+  // needed, while leaving ordinary host functions untouched.
+  const calleeType = compileExpression(ctx, fctx, expr.expression, externRef);
+  if (calleeType === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (calleeType.kind !== "externref") {
+    coerceType(ctx, fctx, calleeType, externRef);
+  }
+  const calleeLocal = allocLocal(fctx, `__spread_callee_${fctx.locals.length}`, externRef);
+  fctx.body.push({ op: "local.set", index: calleeLocal });
+
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_new") ?? arrNewIdx });
+  const argsLocal = allocLocal(fctx, `__spread_args_${fctx.locals.length}`, externRef);
+  fctx.body.push({ op: "local.set", index: argsLocal });
+
+  const pushIndex = (): number => ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
+  const boxNumberIndex = (): number | undefined => ctx.funcMap.get("__box_number");
+
+  const appendElementAsExtern = (elementType: ValType, body: Instr[]): void => {
+    if (elementType.kind === "f64") {
+      const boxIdx = boxNumberIndex();
+      if (boxIdx !== undefined) body.push({ op: "call", funcIdx: boxIdx });
+      else body.push({ op: "drop" }, { op: "ref.null.extern" });
+    } else if (elementType.kind === "i32" || elementType.kind === "i8" || elementType.kind === "i16") {
+      const boxIdx = boxNumberIndex();
+      if (boxIdx !== undefined) {
+        body.push({ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxIdx });
+      } else {
+        body.push({ op: "drop" }, { op: "ref.null.extern" });
+      }
+    } else if (elementType.kind === "ref" || elementType.kind === "ref_null" || elementType.kind === "eqref") {
+      body.push({ op: "extern.convert_any" });
+    }
+  };
+
+  for (const arg of expr.arguments) {
+    if (!ts.isSpreadElement(arg)) {
+      fctx.body.push({ op: "local.get", index: argsLocal });
+      const valueType = compileExpression(ctx, fctx, arg, externRef);
+      if (valueType === null) fctx.body.push({ op: "ref.null.extern" });
+      else if (valueType.kind !== "externref") coerceType(ctx, fctx, valueType, externRef);
+      fctx.body.push({ op: "call", funcIdx: pushIndex() });
+      continue;
+    }
+
+    // Preserve the natural representation of a Wasm vector.  Coercing it to
+    // externref first would create a mirror object and lose the vector's
+    // element boundaries at precisely the call boundary we are repairing.
+    const spreadType = compileExpression(ctx, fctx, arg.expression);
+    if (spreadType && (spreadType.kind === "ref" || spreadType.kind === "ref_null")) {
+      const vecInfo = getVecInfo(ctx, spreadType.typeIdx);
+      if (vecInfo) {
+        const vecLocal = allocLocal(fctx, `__spread_vec_${fctx.locals.length}`, spreadType);
+        fctx.body.push({ op: "local.set", index: vecLocal });
+        const idxLocal = allocLocal(fctx, `__spread_idx_${fctx.locals.length}`, { kind: "i32" });
+        const lenLocal = allocLocal(fctx, `__spread_len_${fctx.locals.length}`, { kind: "i32" });
+        fctx.body.push({ op: "local.get", index: vecLocal });
+        if (spreadType.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" });
+        fctx.body.push({ op: "struct.get", typeIdx: spreadType.typeIdx, fieldIdx: 0 });
+        fctx.body.push({ op: "local.set", index: lenLocal });
+        fctx.body.push({ op: "i32.const", value: 0 }, { op: "local.set", index: idxLocal });
+        fctx.body.push({
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                { op: "local.get", index: idxLocal },
+                { op: "local.get", index: lenLocal },
+                { op: "i32.ge_s" },
+                { op: "br_if", depth: 1 },
+                { op: "local.get", index: argsLocal },
+                { op: "local.get", index: vecLocal },
+                { op: "ref.as_non_null" },
+                { op: "struct.get", typeIdx: spreadType.typeIdx, fieldIdx: 1 },
+                { op: "local.get", index: idxLocal },
+                {
+                  op: vecInfo.elemType.kind === "i8" || vecInfo.elemType.kind === "i16" ? "array.get_s" : "array.get",
+                  typeIdx: vecInfo.arrTypeIdx,
+                },
+                ...(() => {
+                  const elementBody: Instr[] = [];
+                  appendElementAsExtern(vecInfo.elemType, elementBody);
+                  return elementBody;
+                })(),
+                { op: "call", funcIdx: pushIndex() },
+                { op: "local.get", index: idxLocal },
+                { op: "i32.const", value: 1 },
+                { op: "i32.add" },
+                { op: "local.set", index: idxLocal },
+                { op: "br", depth: 0 },
+              ],
+            },
+          ],
+        });
+        continue;
+      }
+    }
+
+    // Fallback for a host iterable or an opaque object.  The host helpers
+    // materialize it into an Array and expose length/index operations; unlike
+    // the old path, every element is pushed separately.
+    if (spreadType === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    } else if (spreadType.kind !== "externref") {
+      coerceType(ctx, fctx, spreadType, externRef);
+    }
+    if (iterIdx === undefined || lenIdx === undefined || getIdx === undefined) {
+      fctx.body.push({ op: "local.get", index: argsLocal }, { op: "call", funcIdx: pushIndex() });
+      continue;
+    }
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__array_from_iter") ?? iterIdx });
+    const iterableLocal = allocLocal(fctx, `__spread_iter_${fctx.locals.length}`, externRef);
+    fctx.body.push({ op: "local.set", index: iterableLocal });
+    const idxLocal = allocLocal(fctx, `__spread_host_idx_${fctx.locals.length}`, { kind: "i32" });
+    const lenLocal = allocLocal(fctx, `__spread_host_len_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push(
+      { op: "local.get", index: iterableLocal },
+      { op: "call", funcIdx: ctx.funcMap.get("__extern_length") ?? lenIdx },
+      { op: "i32.trunc_sat_f64_s" },
+      { op: "local.set", index: lenLocal },
+      { op: "i32.const", value: 0 },
+      { op: "local.set", index: idxLocal },
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              { op: "local.get", index: idxLocal },
+              { op: "local.get", index: lenLocal },
+              { op: "i32.ge_s" },
+              { op: "br_if", depth: 1 },
+              { op: "local.get", index: argsLocal },
+              { op: "local.get", index: iterableLocal },
+              { op: "local.get", index: idxLocal },
+              { op: "f64.convert_i32_s" },
+              { op: "call", funcIdx: ctx.funcMap.get("__extern_get_idx") ?? getIdx },
+              { op: "call", funcIdx: pushIndex() },
+              { op: "local.get", index: idxLocal },
+              { op: "i32.const", value: 1 },
+              { op: "i32.add" },
+              { op: "local.set", index: idxLocal },
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+    );
+  }
+
+  fctx.body.push(
+    { op: "local.get", index: calleeLocal },
+    { op: "ref.null.extern" },
+    { op: "local.get", index: argsLocal },
+    { op: "call", funcIdx: ctx.funcMap.get("__call_function") ?? callIdx },
+  );
+  if (expectedType && expectedType.kind !== "externref") {
+    coerceType(ctx, fctx, externRef, expectedType);
+    return expectedType;
+  }
   return externRef;
 }
 

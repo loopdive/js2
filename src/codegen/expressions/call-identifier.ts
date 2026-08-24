@@ -106,6 +106,7 @@ import {
   compileCallExpression,
   ensureFuncValueWrappersRegistered,
   emitBoundFunctionCall,
+  emitDynamicSpreadCall,
   PATH_BASED_FS_FNS,
   resolveClosureInfoFromLocal,
   tryEmitArrayToStringNative,
@@ -1468,6 +1469,7 @@ export function compileIdentifierCall(
         calleeLocalIdx === undefined && calleeModGlobal === undefined ? ctx.capturedGlobals.get(funcName) : undefined;
       const isKnownVariable =
         calleeLocalIdx !== undefined || calleeModGlobal !== undefined || calleeCapturedGlobal !== undefined;
+      const hasSpreadArg = expr.arguments.some((argument) => ts.isSpreadElement(argument));
       const calleeTsType = ctx.checker.getTypeAtLocation(expr.expression);
       let callSigs = isKnownVariable ? calleeTsType.getCallSignatures?.() : undefined;
       if (isKnownVariable && (!callSigs || callSigs.length === 0)) {
@@ -1524,6 +1526,18 @@ export function compileIdentifierCall(
       if (isKnownVariable && !ctx.standalone && !noJsHost(ctx) && calleeIsCapabilityCtorParam(ctx, expr.expression)) {
         const hostCall = emitBoundFunctionCall(ctx, fctx, expr);
         if (hostCall !== null) return hostCall;
+      }
+
+      // A dynamically stored callable invoked with `fn(...args)` must expand
+      // the Wasm rest vector before crossing into the JS host.  The typed
+      // closure-dispatch ladder has no runtime-arity representation and would
+      // otherwise pass the vector itself as argument zero (Stylelint's
+      // ruleMessages produced `"baz,2,hoohah"` this way).  The helper retains
+      // the callee identity and invokes either a Wasm closure or a host
+      // function through the shared __call_function adapter.
+      if (isKnownVariable && hasSpreadArg && !noJsHost(ctx)) {
+        const spreadCall = emitDynamicSpreadCall(ctx, fctx, expr, expectedType);
+        if (spreadCall !== null) return spreadCall;
       }
       if (callSigs && callSigs.length > 0) {
         // Populate runtime callback candidates before compiling this HOF body.
