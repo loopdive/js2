@@ -3,7 +3,7 @@ id: 3521
 title: "IR-only R2: prepare-before-emit free-function ownership"
 status: in-progress
 created: 2026-07-21
-updated: 2026-08-23
+updated: 2026-08-24
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -1946,3 +1946,102 @@ The implementation delta is therefore explicitly staged as:
 This is a design checkpoint only: no source edit, commit, runtime, or collector
 result is claimed until the staged ABI seam is implemented and independently
 reviewed.
+
+### 2026-08-24 bounded source-local fnctor projection checkpoint
+
+The next parser slice is intentionally scoped to one declaration and one
+source. It is not a generic object-shape extension and it is not permission to
+make the selector tolerate a dynamic receiver. The only positive proof is the
+checker-identified `FunctionDeclaration` named `Parser` in `entry.mjs`, with
+exactly one `new Parser(stringExpression)` site in the `readNumber` call path,
+and a constructor body whose only own write is `this.input = input`. The
+constructor declaration, allocation site, field write, and owner source must
+all be the same identity records; the spelling `Parser` is only a diagnostic
+label. Any second declaration/allocation, alias, reassignment, computed field,
+extra field, foreign return, capture/`arguments` use, cross-source match, or
+non-string argument must return `Unsupported` before IR lowering.
+
+The exact pre-claim failure is unchanged and is now the first diagnostic to
+pin in the static test: `src/ir/propagate.ts::buildCallGraph` records a
+constructor call for parameter propagation but `inferExpr(NewExpression)`
+still returns `dynamic`; `src/ir/select.ts::dynamicUsesAreMoveOnly` therefore
+rejects the `parser.input` receiver, and
+`src/ir/select-identity.ts::planIrCompilationByIdentity` never admits
+`readNumber`. The parser ABI repair in `from-ast.ts` and `integration.ts` is
+downstream of this decision and must not be used as a selector bypass.
+
+The implementation is deliberately a staged transaction with this exact file
+map (the files below are the bounded seam, not a grant to refactor the legacy
+fnctor emitter):
+
+1. `src/ir/nodes.ts` adds a nominal `IrFnctorShape` and `IrType.kind ===
+   "fnctor"`. The shape carries the exact constructor declaration/unit/source
+   identity, the reserved symbolic fnctor layout reference, the hidden
+   capture/TDZ layout, the user constructor parameter types, and canonical
+   fields. It must not carry a module-local type index or a legacy name as an
+   identity key. `src/ir/propagate.ts` adds the corresponding identity-bearing
+   lattice atom and a single `NewExpression` arm; it may produce this atom only
+   after the proof above and otherwise widens to `dynamic`. The existing
+   object-literal atom remains unchanged.
+
+2. `src/ir/select.ts` (`isPhase1Expr`, the constructor/property-access shape
+   checks, and `dynamicUsesAreMoveOnly`) and
+   `src/ir/select-identity.ts` (`planIrCompilationByIdentity` plus structural
+   assessment) consume that atom by exact `IrUnitId`/source identity. The
+   selector must require one owner-local `parser.input` read and the fixed
+   `slice(0, parser.input.length)` topology. It must not accept a dynamic
+   receiver, use the callee spelling `stringToNumber` as evidence, or borrow a
+   same-spelled constructor from another source. The failed-proof outcome stays
+   `param-type-not-resolvable`/`Unsupported` at pre-claim.
+
+3. `src/ir/builder.ts`, `src/ir/lower.ts`, and `src/ir/verify.ts` add the
+   backend-neutral `fnctor.new` and `fnctor.get` operations. Their verifier
+   checks exact shape identity, field name/type, nullability, and operand
+   counts. `src/ir/from-ast.ts::lowerNewExpression` and
+   `::lowerPropertyAccess` add only the certified `Parser` arms, dispatching
+   through those operations. A selector admission without these lowering arms
+   is invalid because it would claim and then demote at the first constructor
+   or field read.
+
+4. `src/ir/integration.ts` extends the resolver with one identity-checked
+   fnctor lowering implementation. It must validate the shape against
+   `ctx.fnctorEscapeGate`, `ctx.fnctorReservedTypeIdx`, `ctx.structFields`, and
+   `ctx.funcConstructorMap`, then emit the existing synthesized constructor
+   ABI in the exact order `captures/TDZ, user params, constructor identity`.
+   `src/codegen/fnctor-ctor-decl.ts`,
+   `src/codegen/fnctor-escape-gate.ts`, and
+   `src/codegen/expressions/new-super.ts` are read-only ABI authorities for
+   this adapter: no parallel constructor, field layout, or type reservation
+   may be introduced. The `input` field must be proven to lower as the active
+   native-string carrier before the parser ABI is adopted; otherwise the
+   projection declines.
+
+5. Only after the constructor/field operation verifies should
+   `src/codegen/ir-overlay-identity.ts`,
+   `src/ir/integration.ts`'s owner-local projection, and the `compileMulti`
+   planning path add the caller edge. The edge is copy-on-write and AST-site
+   keyed to the exact `stringToNumber` unit in `entry.mjs`; the parser and
+   `readNumber` retain distinct `IrUnitId`s. No legacy-name map or shared callee
+   signature map may be mutated. The adopted parser ABI remains
+   `[string, i32-boolean] -> f64` only for standalone + native-strings +
+   enabled mode.
+
+The static gate for the implementation PR belongs in the existing
+`tests/issue-3521-linked-string-parser-abi.test.ts` file and must run without
+compiling or instantiating Wasm. It should parse a positive fixture and the
+following fail-closed mutations, then inspect the source-qualified proof
+records/selection result: unknown or ambiguous `Parser`, foreign and
+cross-source constructors, aliases and `input` reassignments, extra/computed
+fields, non-string constructor arguments, missing parser calls, changed
+`slice`/length topology, unsupported captures/`arguments`, and a same-spelled
+`Parser` in another source. The assertions must prove that only the exact
+positive AST site yields an `IrFnctorShape`; every mutation remains
+`Unsupported`, with no runtime/A-B claim. Runtime decimal/octal probes and the
+existing parser ABI matrix remain a later gate after this static seam is
+reviewed.
+
+This checkpoint is documentation-only: it intentionally contains no source,
+compiler, runtime, A/B, collector, or heavy-test result. The current R2 state
+therefore remains fail-closed/`needs-runtime-replay`; the next implementation
+PR must land the nominal type, operations, resolver, and static tests as one
+reviewable projection/lowering transaction.
