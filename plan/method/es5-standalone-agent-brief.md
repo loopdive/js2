@@ -563,3 +563,35 @@ Consequences for a lane:
 - CI's standalone cells now run at `TEST262_IT_TIMEOUT_MS=300000` (#4654 lead ruling).
   A local sweep at the 90 s default is therefore measuring a *different* denominator than
   CI. Raise it locally too when the rows you care about are eval-heavy.
+
+## Measuring the campaign's own pass rate — the cheap method, and its one caveat
+
+Do **not** run a full-corpus sweep to answer "where is the ES≤5 rate now". The
+targeted method is ~25 minutes on this box instead of hours, and it is what the goal
+loop uses:
+
+```bash
+node scripts/fetch-baseline-jsonl.mjs --standalone --force     # ~23 MB, seconds
+# tally main's ES≤5 bucket, and write the NOT-PASSING rows to a list
+# (denominator is the 8,115 rows of .tmp/es5-files.txt that have a jsonl row;
+#  the ~145 with no row are intl402 and are not ES≤5 core)
+# then sweep ONLY that list on your tree:
+JS2WASM_EVAL_ENGINE=quickjs TEST262_FULL_RUNTIME_EVAL=1 npx tsx .tmp/sweep-135.mts 0 1
+```
+
+New rate = `main_baseline_passes + (rows in the list that now pass)`.
+
+**The caveat, and state it whenever you quote the number:** this measures only rows that
+were *failing* on main, so it finds newly-passing rows and is structurally **blind to
+regressions**. That is an acceptable division of labour — the merge queue re-validates
+the whole corpus on the merged state and is the regression gate — but a lane must not
+present this number as "no regressions". It is "N rows newly pass".
+
+**Second caveat: the baseline artifact LAGS main HEAD.** The promote job runs on push to
+main, so recently-landed work can already be on main while its rows still read as failing
+in the baseline you just downloaded. So the *absolute* rate on your tree is solid; the
+*delta* attribution to your own change is not, unless you also ran the base arm yourself.
+
+Measured 2026-08-24: 135-row list, 135 verdicts, **zero timeouts**, ~25 min under two
+concurrent lanes — versus the ~4.5 h a full two-arm sweep cost the night before for the
+same question.
