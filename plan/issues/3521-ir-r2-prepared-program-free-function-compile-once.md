@@ -24,8 +24,12 @@ related: [2138, 2855, 3143, 3203, 3518, 3519, 3678, 4260, 4382]
 loc-budget-allow:
   - src/ir/propagate.ts
   - src/ir/select.ts
+  - src/codegen/expressions/new-super.ts
 oracle-ratchet-allow:
   - src/codegen/ir-fnctor-admission.ts
+  - src/codegen/program-abi-fnctor-producer.ts
+func-budget-allow:
+  - src/codegen/expressions/new-super.ts::compileNewFunctionDeclaration
 origin: "#3518 R2 — invert single-source free functions from compile/patch to prepare/emit"
 files:
   - src/ir/program.ts
@@ -1299,3 +1303,27 @@ erase an earlier call/alias escape. Constructor parameters must be a required,
 non-rest, non-default single string parameter, and an admitted `new F(...)` must
 carry exactly one non-spread argument. These are static fail-closed controls;
 they do not widen the admitted shape or enable lowering/runtime execution.
+
+## 2026-08-24 bounded host fnctor observation producer checkpoint
+
+The dormant Program-ABI sidecar now has one narrow AST producer hook. After
+`compileNewFunctionDeclaration` has filled the exact reserved
+`__fnctor_F` struct, synthesized `__fnctor_F_new` function, and constructor
+body, `program-abi-fnctor-producer.ts` re-runs the source/unit-qualified
+admission resolver for that exact `new F()` node and declaration. Only the
+fixed one-parameter string constructor with one unconditional `input` field,
+no captures or TDZ cells, no layout/cold-tail split, no widened foreign result,
+and the host ABI lane can produce a complete `IrFnctorShape` plus physical
+`ProgramAbiFnctorObservation`; the registry then performs the existing exact
+binding, signature, layout, and remapping checks. Missing planning context,
+non-approved sites, and unsupported physical layouts are no-ops and retain
+legacy output. Single- and multi-source codegen share the same hook through
+`compileNewFunctionDeclaration`.
+
+This checkpoint records planning evidence only: it does not emit
+`fnctor.new/get`, alter constructor/call-site instructions, lower an AST site,
+or claim standalone/WASI or linked-parser runtime coverage. Captures, TDZ
+ref-cell ABI, standalone internal fields, cold tails, layout families, and
+foreign-return constructors remain explicit follow-up work requiring a
+logical-to-physical layout map. Focused producer/admission/ABI tests, static
+TypeScript 7 typecheck, and formatting pass.

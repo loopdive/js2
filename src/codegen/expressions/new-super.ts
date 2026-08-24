@@ -124,6 +124,7 @@ import {
   registerFnctorCaptureParams,
 } from "../fnctor-constructor-identity.js";
 import { funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
+import { observeApprovedIrFnctor } from "../program-abi-fnctor-producer.js";
 
 // #2146: resolveEnclosingClassName now lives in shared.ts (imported above).
 
@@ -1860,6 +1861,25 @@ function compileNewFunctionDeclaration(
   } else {
     ctorFctx.body.push({ op: "local.get", index: selfLocal });
   }
+
+  // (#3521) Record only the exact source-qualified, admission-approved
+  // constructor in the dormant Program-ABI sidecar.  This observes the
+  // already-built legacy constructor and leaves the emitted call site and
+  // constructor body unchanged; unsupported physical layouts remain legacy.
+  observeApprovedIrFnctor({
+    ctx,
+    site: expr,
+    declaration: funcDecl,
+    functionName: funcName,
+    structName,
+    structTypeIdx,
+    fields,
+    captureLayout,
+    userParamTypes: userCtorParams,
+    resultIsExternref: resultIsExtern,
+    constructorFuncIdx: ctorFuncIdx,
+    constructorFunction: ctorFunc,
+  });
 
   // 5. Emit the call to the constructor at the call site
   const args = expr.arguments ?? [];
