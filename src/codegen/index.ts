@@ -205,6 +205,10 @@ import {
   type MultiPreparedScalarLeafGraphSafety,
 } from "./multi-prepared-scalar-leaf.js";
 import {
+  assertMultiPreparedArrayLeafRouteCurrent,
+  planEarlyMultiPreparedArrayLeafRoute,
+} from "./multi-prepared-array-leaf.js";
+import {
   assertMultiPreparedFibonacciPairRouteCurrent,
   planEarlyMultiPreparedFunctionValueRoutes,
 } from "./multi-prepared-fibonacci-pair.js";
@@ -3594,6 +3598,30 @@ function planEarlyMultiIrOverlay(
     lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),
     projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
   });
+  const arrayStates = planEarlyMultiPreparedArrayLeafRoute({
+    active,
+    cutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_ARRAY_CUTOVER),
+    ctx,
+    sourceFiles: multiAst.sourceFiles,
+    entryFile: multiAst.entryFile,
+    safety: () => buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker),
+    planSource: (sourceFile) => planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, undefined),
+    safeSelection: (plan, sourceFile, safety) => makeMultiIrSafeSelection(ctx, plan, sourceFile, safety),
+    lateProviderOwnerUnitIds: (plan, sourceFile) => collectMultiIrLateProviderOwnerUnitIds(ctx, sourceFile, plan),
+    prepareFunctionValueSupport: (plan, sourceFile, unitId, legacyName) =>
+      prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, new Set([legacyName])).get(unitId),
+    projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
+  });
+  for (const [sourceFile, state] of arrayStates) {
+    if (scalarStates.has(sourceFile)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `multi-source early routes both claimed ${sourceFile.fileName}`,
+      );
+    }
+    scalarStates.set(sourceFile, state);
+  }
   const functionValueStates = planEarlyMultiPreparedFunctionValueRoutes({
     active,
     leafCutoverEnabled: !explicitlyDisabledEnv(process.env.JS2WASM_MULTI_PREPARED_BENCH_LOOP_CUTOVER),
@@ -3663,7 +3691,9 @@ function compileMultiIrOverlaySource(
     ),
   );
   const { overrideMap, classShapes } = plan;
-  if (early?.route?.routeKind === "fibonacci-pair") {
+  if (early?.route?.routeKind === "array") {
+    assertMultiPreparedArrayLeafRouteCurrent({ ctx, route: early.route, finalSelection: safeSelection, safety });
+  } else if (early?.route?.routeKind === "fibonacci-pair") {
     assertMultiPreparedFibonacciPairRouteCurrent({ ctx, route: early.route, finalSelection: safeSelection, safety });
   } else if (early?.route?.routeKind === "function-value") {
     assertMultiPreparedFunctionValueLeafRouteCurrent({

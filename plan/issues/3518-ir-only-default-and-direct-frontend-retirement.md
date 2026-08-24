@@ -20,6 +20,10 @@ lane: ir-retirement
 model: gpt-5.6-sol
 related: [1373b, 2855, 2950, 3090, 3142, 3143, 3341, 3517, 3529, 3520, 3521, 3522, 3523, 3525, 3526, 3527, 3528, 3678, 3681, 4382, 4576, 4577]
 origin: "2026-07-21 explicit user directive: enable IR-only by default and retire the old direct codegen path"
+oracle-ratchet-allow:
+  - src/codegen/multi-prepared-array-leaf.ts
+loc-budget-allow:
+  - src/codegen/index.ts
 ---
 # #3518 — IR-only default and direct front-end retirement
 
