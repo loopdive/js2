@@ -139,8 +139,29 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          PR_NUMBER="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$PROMOTION_BRANCH" \
-            --state open --json number --jq '.[0].number // empty' 2>/dev/null || echo "unreadable")"
+          # A FAILING promotion PR does not count as "open" for this gate. It
+          # will never merge on its own, and both this gate and the
+          # coordinator's push gate leave its branch untouched while it is
+          # open — so a promotion that fails a required check DEADLOCKS the
+          # dashboard: PR open -> measurement skipped -> branch never
+          # regenerated -> PR never fixes itself. That is not a hypothetical;
+          # #4817 sat un-mergeable on a `quality` failure while its head went
+          # unchanged for hours and every refresh run skipped, and the fix that
+          # would have healed it (landed on main) could not reach it.
+          #
+          # Skipping is only ever worth it for a promotion that can still land.
+          # Nothing is protected by leaving a dead PR alone: it is not in the
+          # merge queue, so force-updating it cannot eject anything, and the
+          # regenerated artifact is the only thing that can make it mergeable.
+          PR_JSON="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$PROMOTION_BRANCH" \
+            --state open --json number,statusCheckRollup 2>/dev/null || echo "unreadable")"
+          if [ "$PR_JSON" = "unreadable" ]; then
+            PR_NUMBER="unreadable"
+          else
+            PR_NUMBER="$(printf '%s' "$PR_JSON" | jq -r '.[0].number // empty')"
+            PR_FAILING="$(printf '%s' "$PR_JSON" | jq -r \
+              '[.[0].statusCheckRollup[]? | select((.conclusion // "") == "FAILURE")] | length')"
+          fi
           case "$PR_NUMBER" in
             "")
               echo "No open promotion PR; measuring."
@@ -154,7 +175,12 @@ jobs:
               PR_NUMBER=""
               ;;
             *)
-              echo "::notice title=npm-compat-refresh::promotion PR #${PR_NUMBER} is still open; skipping this measurement entirely. The run after it merges will measure a fresher main."
+              if [ "${PR_FAILING:-0}" -gt 0 ]; then
+                echo "::warning title=npm-compat-refresh::promotion PR #${PR_NUMBER} is open but has ${PR_FAILING} failing check(s); it cannot land as-is, so measuring and regenerating its branch instead of waiting for it."
+                PR_NUMBER=""
+              else
+                echo "::notice title=npm-compat-refresh::promotion PR #${PR_NUMBER} is still open; skipping this measurement entirely. The run after it merges will measure a fresher main."
+              fi
               ;;
           esac
           echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
