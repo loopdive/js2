@@ -1,7 +1,8 @@
 ---
 id: 4655
 title: "ES5 standalone: Array residual — 20 rows: undefined/null elements degrade to NaN/0 through concat/toString/toLocaleString, filter/forEach callback+hole semantics, Array.prototype.concat unreachable as a value"
-status: in-review
+status: done
+completed: 2026-08-24
 sprint: current
 created: 2026-08-23
 updated: 2026-08-23
@@ -868,3 +869,21 @@ does not assert.
 - The JS-host / gc lane. Nothing here was measured there; the change is gated to
   `native-first` providers, so the host lane's bytes cannot move — but that is a
   gate argument, not a measurement.
+
+## Closed by the lead (2026-08-24) — successor named
+
+Wave-6 landed `Array.prototype.toLocaleString` (+2). Wave-7 landed the `concat`
+result-slot carrier and the prototype-index consult (+1: `concat/S15.4.4.4_A1_T2`), and
+**closed wave-1's R4**, which had been left explicitly SUSPECTED — its recorded
+counter-evidence ("`join` also says NaN") was not counter-evidence, because the per-vec
+materializer converts on the way *in*.
+
+`done` rather than `in-review`: I am the merger, so `in-review` would orphan it.
+
+The remaining rows are **not** dropped — after the value half was fixed they fail on
+element **presence**, which is a different root and now carries its own issue:
+**[#4670](https://js2wasm.loopdive.com/dashboard/issue.html?slug=4670-array-dense-element-presence-and-hole-markers)**
+(R-P `__hasOwnProperty` has no dense-element arm · R-B #4638's absent-concat marker
+survives `===` but not a boxing boundary · R-H the `[,]` operand, root **not isolated and
+not claimed**). #4670 also carries the separate live grow-gap-marker defect this lane
+found while making its pins unfoldable.
