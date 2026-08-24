@@ -1,7 +1,7 @@
 {
   "generated": "2026-08-24",
   "threshold": 1500,
-  "totalCeiling": 702799,
+  "totalCeiling": 703417,
   "files": {
     "src/codegen-linear/index.ts": 5816,
     "src/codegen-linear/runtime.ts": 4444,
@@ -84,17 +84,18 @@
     "src/emit/binary.ts": 2137,
     "src/import-resolver.ts": 1534,
     "src/interp/emitter.ts": 2139,
+    "src/ir/backend/linear-integration.ts": 1556,
     "src/ir/backend/porffor/assembler.ts": 1516,
-    "src/ir/builder.ts": 1876,
+    "src/ir/builder.ts": 1893,
     "src/ir/from-ast.ts": 13813,
-    "src/ir/integration.ts": 7341,
-    "src/ir/lower.ts": 4299,
+    "src/ir/integration.ts": 7373,
+    "src/ir/lower.ts": 4309,
     "src/ir/module-bindings.ts": 2512,
-    "src/ir/nodes.ts": 2937,
-    "src/ir/prepared-component-dependencies.ts": 1746,
+    "src/ir/nodes.ts": 2944,
+    "src/ir/prepared-component-dependencies.ts": 1760,
     "src/ir/propagate.ts": 1689,
     "src/ir/select.ts": 10105,
-    "src/ir/verify.ts": 2470,
+    "src/ir/verify.ts": 2511,
     "src/runtime.ts": 17943
   }
 }
