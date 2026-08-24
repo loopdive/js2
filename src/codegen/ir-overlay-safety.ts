@@ -251,6 +251,40 @@ export function mergeIrIntegrationReports(
       "split IR integration reports must both retain exact terminal evidence",
     );
   }
+  const requireTerminalReceiptEvidence = (report: IrIntegrationReport, side: "first" | "second"): void => {
+    if (!report.preparedCountedStringAppendReceipts?.length) return;
+    const terminalOwners = new Set(
+      (report.compiledArtifactEvidence ?? [])
+        .filter((artifact) => artifact.artifactUnitId === artifact.terminalOwnerUnitId)
+        .map((artifact) => artifact.terminalOwnerUnitId),
+    );
+    for (const receipt of report.preparedCountedStringAppendReceipts) {
+      if (!terminalOwners.has(receipt.plan.ownerUnitId)) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "patch",
+          `${side} split IR report has a counted-string receipt without an exact terminal patch for ${receipt.plan.ownerUnitId}`,
+        );
+      }
+    }
+  };
+  requireTerminalReceiptEvidence(first, "first");
+  requireTerminalReceiptEvidence(second, "second");
+  const countedStringReceipts = [
+    ...(first.preparedCountedStringAppendReceipts ?? []),
+    ...(second.preparedCountedStringAppendReceipts ?? []),
+  ];
+  const receiptLoops = new Set<object>();
+  for (const receipt of countedStringReceipts) {
+    if (receiptLoops.has(receipt.plan.syntaxPlan.loop)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "patch",
+        `split IR integration reports duplicate counted-string loop for ${receipt.plan.ownerUnitId}`,
+      );
+    }
+    receiptLoops.add(receipt.plan.syntaxPlan.loop);
+  }
   return {
     compiled: [...first.compiled, ...second.compiled],
     errors: [...first.errors, ...second.errors],
@@ -268,6 +302,9 @@ export function mergeIrIntegrationReports(
       ...(first.syntheticCompiledArtifacts ?? []),
       ...(second.syntheticCompiledArtifacts ?? []),
     ],
+    ...(countedStringReceipts.length > 0
+      ? { preparedCountedStringAppendReceipts: Object.freeze(countedStringReceipts) }
+      : {}),
   };
 }
 
