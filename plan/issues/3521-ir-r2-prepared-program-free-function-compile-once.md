@@ -2063,3 +2063,14 @@ landed as the next signed slice with exact reserved-layout and hidden-identity
 checks from the architecture section above. The bounded source changes are
 covered by `loc-budget-allow` for the two existing god-files and are intended
 to be reviewed independently before any R2 replay.
+
+## 2026-08-24 nominal ABI contract checkpoint
+
+`src/ir/fnctor-abi.ts` now defines the backend-neutral nominal shape,
+source/unit/layout identity, capture and user-parameter ABI, constructor
+identity slot, and a fail-closed `IrFnctorLowerResolver` contract. Pure tests
+cover exact acceptance plus duplicate-field, identity-index, and retargeted
+constructor rejection. This checkpoint deliberately does not widen `IrType`,
+add instructions, or emit Wasm; the next slice must consume this contract from
+the IR builder/verifier and standalone resolver rather than duplicating the
+legacy `CodegenContext` lookup.
