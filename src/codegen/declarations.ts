@@ -50,6 +50,7 @@ import {
 } from "./closures.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { widenMixedUndefinedReturn } from "./mixed-return-widening.js"; // (#4641) `T | undefined` return slots
+import { concatCallYieldsDynamicCarrier } from "./array-concat-carrier.js"; // (#4655) concat result-slot carrier
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
@@ -2457,6 +2458,14 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         return { kind: "externref" };
       }
     }
+    // (#4655) `var arr = x.concat(y, z)` — the lowering already yields a
+    // dynamic `$ObjVec` externref for these shapes, but the checker types the
+    // binding from the lib signature `concat(...items): number[]`, so the value
+    // was coerced through the per-vec materializer and every non-numeric
+    // element ToNumber'd to NaN (`concat/S15.4.4.4_A1_T2`, `_A1_T4`). Same
+    // predicate the lowering's dispatcher asks, so slot and value cannot
+    // disagree — see array-concat-carrier.ts.
+    if (concatCallYieldsDynamicCarrier(ctx, decl.initializer)) return { kind: "externref" };
     // #1914 — `var m = re.exec(s)` under standalone gets the precise
     // match-vec ref type so indexed reads stay on the static vec path
     // (externref-widened globals round-trip through __extern_get_idx,

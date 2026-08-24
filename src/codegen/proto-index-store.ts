@@ -436,6 +436,75 @@ export function protoIndexRecvHasMissInstrs(
 }
 
 /**
+ * (#4663) Presence probe against ONE brand companion, with **no
+ * `Object.prototype` fallthrough** — `[] -> i32`, leaving the companion in
+ * `scratchLocal` (an `externref` local of the caller).
+ *
+ * ## Why this is not `__protoidx_has_r`
+ *
+ * `has_r` = `has_k(key, brand_off(recv))`, and {@link fillHasKBody} probes the
+ * receiver's brand companion **and then Object's** — the two-level walk every
+ * ordinary Get needs. That tail is exactly wrong for a caller standing at a
+ * level the builtin ALREADY owns. `Array.prototype.toString` is a real builtin
+ * (§23.1.3.32), so it SHADOWS `Object.prototype.toString`: a module that writes
+ * only `Object.prototype.toString = f` must still render `"" + [1,2]` as
+ * `"1,2"`. Consulting Object's companion there is not merely coarse, it answers
+ * wrongly — and `ctx.protoNamedWrittenMembers` cannot rule it out, being member
+ * names only with no constructor qualification (`array-holes.ts` records the
+ * bare `lhs.name.text`).
+ *
+ * So the compile-time gate stays coarse ("some builtin prototype's `toString`
+ * was written") and the RUNTIME probe is made precise. The alternative —
+ * ctor-qualifying the pre-scan — means editing `isProtoNamedWrite`, whose Array
+ * exclusions are load-bearing for `protoIndexDirty`.
+ *
+ * LOOKUP, never ensure: `create = 0`, so a read cannot mint a companion. Under
+ * `protoNamedDirty` alone the companion is seeded with nothing (see
+ * builtin-proto-member-override.ts), so a hit is exactly "the user overrode
+ * this member on THIS brand's prototype".
+ *
+ * `undefined` when the store is unreserved or a dependency is missing — the
+ * caller must then emit nothing and keep its previous lowering byte-for-byte.
+ */
+export function protoIndexBrandCompanionHasInstrs(
+  ctx: CodegenContext,
+  brandOff: number,
+  key: string,
+  scratchLocal: number,
+): Instr[] | undefined {
+  const deps = resolveFillDeps(ctx);
+  if (deps === null) return undefined;
+  if (ctx.anyStrTypeIdx < 0) return undefined;
+  return [
+    { op: "i32.const", value: brandOff },
+    { op: "i32.const", value: 0 }, // LOOKUP — a read must not allocate.
+    { op: "call", funcIdx: deps.companionIdx },
+    { op: "local.tee", index: scratchLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 0 }],
+      else: [
+        { op: "local.get", index: scratchLocal },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: deps.objectTypeIdx },
+        // Finalize-safe key (no import-global add) — same construction as
+        // `fillBrandOffBody`'s [[PrimitiveValue]] probe.
+        ...nativeStringLiteralInstrs(ctx, key),
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: deps.objFindIdx },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+      ],
+    },
+  ];
+}
+
+/** (#4663) The `Array.prototype` brand offset, for the probe above. */
+export const PROTOIDX_ARRAY_BRAND_OFF = ARR_OFF;
+
+/**
  * Numeric-index consult `[idx, firstOff] -> i32` for the `$__vec_base` /
  * closed-struct Has arms. `consultArray` keeps its legacy 0/1 signature at
  * the call sites and is translated to a brand offset here. `undefined` when

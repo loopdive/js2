@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-24T09:41:45.542Z",
+  "generatedAt": "2026-08-24T14:55:23.431Z",
   "measuredRange": {
-    "oldest": "2026-08-24T06:25:33.677Z",
-    "newest": "2026-08-24T09:40:57.943Z"
+    "oldest": "2026-08-24T06:02:37.231Z",
+    "newest": "2026-08-24T14:54:38.863Z"
   },
   "correctness": {
     "definition": {
@@ -12,8 +12,8 @@
     },
     "oracle": "native Node executing the same pinned package, computed at run time; never read from a committed pin",
     "counts": {
-      "verified": 6,
-      "divergent": 18,
+      "verified": 8,
+      "divergent": 16,
       "unverified": 0
     },
     "verified": [
@@ -22,7 +22,9 @@
       "cookie",
       "jsdom",
       "styled-components",
-      "tailwindcss"
+      "stylelint",
+      "tailwindcss",
+      "webpack"
     ],
     "divergent": [
       "axios",
@@ -38,11 +40,9 @@
       "react",
       "react-dom",
       "redux",
-      "stylelint",
       "three",
       "typescript",
-      "uuid",
-      "webpack"
+      "uuid"
     ],
     "unverified": []
   },
@@ -83,11 +83,11 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 8261,
+        "durationMs": 7244,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 122552,
+        "binaryBytes": 128448,
         "categories": {}
       },
       "validation": {
@@ -99,9 +99,9 @@
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 10,
+        "passed": 28,
         "total": 75,
-        "passRatePct": 13.3,
+        "passRatePct": 37.3,
         "admitted": null,
         "executed": 75,
         "upstreamTestsSeen": 75,
@@ -125,26 +125,25 @@
         "files": [
           {
             "path": "src/test/parse.test.ts",
-            "status": "fail",
-            "passed": 1,
+            "status": "pass",
+            "passed": 5,
             "total": 5,
-            "error": "Invalid UUID",
             "tests": [
               {
                 "name": "String -> bytes parsing",
-                "status": "failed"
+                "status": "passed"
               },
               {
                 "name": "String -> bytes -> string symmetry for assorted uuids",
-                "status": "failed"
+                "status": "passed"
               },
               {
                 "name": "Case neutrality",
-                "status": "failed"
+                "status": "passed"
               },
               {
                 "name": "Null UUID case",
-                "status": "failed"
+                "status": "passed"
               },
               {
                 "name": "UUID validation",
@@ -172,7 +171,7 @@
             "status": "fail",
             "passed": 3,
             "total": 4,
-            "error": "Stringified UUID is invalid",
+            "error": "Missing expected exception",
             "tests": [
               {
                 "name": "Stringify Array (unsafe)",
@@ -184,11 +183,11 @@
               },
               {
                 "name": "Stringify Array (safe)",
-                "status": "failed"
+                "status": "passed"
               },
               {
                 "name": "Throws on not enough values (safe)",
-                "status": "passed"
+                "status": "failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/uuidjs/uuid/70177807e9229dfacde2038dc1e722f1828f358a/src/test/stringify.test.ts"
@@ -196,49 +195,49 @@
           {
             "path": "src/test/v1.test.ts",
             "status": "fail",
-            "passed": 0,
+            "passed": 3,
             "total": 10,
-            "error": "[object WebAssembly.Exception]",
+            "error": "crypto.getRandomValues: argument is not a typed-array (Uint8Array required)",
             "tests": [
               {
                 "name": "v1 sort order (default)",
-                "status": "runtime-failed"
+                "status": "failed"
               },
               {
                 "name": "v1 sort order (time option)",
-                "status": "runtime-failed"
+                "status": "failed"
               },
               {
                 "name": "v1(options)",
-                "status": "runtime-failed"
+                "status": "failed"
               },
               {
                 "name": "v1(options) equality",
-                "status": "runtime-failed"
+                "status": "failed"
               },
               {
                 "name": "fills one UUID into a buffer as expected",
-                "status": "runtime-failed"
+                "status": "failed"
               },
               {
                 "name": "fills two UUIDs into a buffer as expected",
-                "status": "runtime-failed"
+                "status": "failed"
               },
               {
                 "name": "v1() state transitions",
-                "status": "runtime-failed"
+                "status": "passed"
               },
               {
                 "name": "throws when option.random is too short",
-                "status": "runtime-failed"
+                "status": "passed"
               },
               {
                 "name": "throws when options.rng() is too short",
-                "status": "runtime-failed"
+                "status": "passed"
               },
               {
                 "name": "throws RangeError for out-of-range indexes",
-                "status": "runtime-failed"
+                "status": "failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/uuidjs/uuid/70177807e9229dfacde2038dc1e722f1828f358a/src/test/v1.test.ts"
@@ -390,7 +389,7 @@
           {
             "path": "src/test/v6.test.ts",
             "status": "fail",
-            "passed": 0,
+            "passed": 2,
             "total": 8,
             "error": "crypto.getRandomValues: argument is not a typed-array (Uint8Array required)",
             "tests": [
@@ -420,11 +419,11 @@
               },
               {
                 "name": "v1 -> v6 conversion",
-                "status": "failed"
+                "status": "passed"
               },
               {
                 "name": "v6 -> v1 conversion",
-                "status": "failed"
+                "status": "passed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/uuidjs/uuid/70177807e9229dfacde2038dc1e722f1828f358a/src/test/v6.test.ts"
@@ -432,101 +431,99 @@
           {
             "path": "src/test/v7.test.ts",
             "status": "fail",
-            "passed": 0,
+            "passed": 7,
             "total": 14,
-            "error": "[object WebAssembly.Exception]",
+            "error": "crypto.getRandomValues: argument is not a typed-array (Uint8Array required)",
             "tests": [
               {
                 "name": "subsequent UUIDs are different",
-                "status": "runtime-failed"
+                "status": "failed"
               },
               {
                 "name": "explicit options.random and options.msecs produces expected result",
-                "status": "runtime-failed"
+                "status": "passed"
               },
               {
                 "name": "explicit options.rng produces expected result",
-                "status": "runtime-failed"
+                "status": "passed"
               },
               {
                 "name": "explicit options.msecs produces expected result",
-                "status": "runtime-failed"
+                "status": "failed"
               },
               {
                 "name": "fills one UUID into a buffer as expected",
-                "status": "runtime-failed"
+                "status": "passed"
               },
               {
                 "name": "fills two UUIDs into a buffer as expected",
-                "status": "runtime-failed"
+                "status": "passed"
               },
               {
                 "name": "lexicographical sorting is preserved",
-                "status": "runtime-failed"
+                "status": "failed"
               },
               {
                 "name": "can supply seq",
-                "status": "runtime-failed"
+                "status": "failed"
               },
               {
                 "name": "internal seq is reset upon timestamp change",
-                "status": "runtime-failed"
+                "status": "failed"
               },
               {
                 "name": "v7() state transitions",
-                "status": "runtime-failed"
+                "status": "passed"
               },
               {
                 "name": "flipping bits changes the result",
-                "status": "runtime-failed"
+                "status": "failed"
               },
               {
                 "name": "throws when option.random is too short",
-                "status": "runtime-failed"
+                "status": "passed"
               },
               {
                 "name": "throws when options.rng() is too short",
-                "status": "runtime-failed"
+                "status": "passed"
               },
               {
                 "name": "throws RangeError for out-of-range indexes",
-                "status": "runtime-failed"
+                "status": "failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/uuidjs/uuid/70177807e9229dfacde2038dc1e722f1828f358a/src/test/v7.test.ts"
           },
           {
             "path": "src/test/validate.test.ts",
-            "status": "fail",
-            "passed": 0,
+            "status": "pass",
+            "passed": 1,
             "total": 1,
-            "error": "validate(null) should be true: false !== true",
             "tests": [
               {
                 "name": "TESTS cases",
-                "status": "failed"
+                "status": "passed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/uuidjs/uuid/70177807e9229dfacde2038dc1e722f1828f358a/src/test/validate.test.ts"
           },
           {
             "path": "src/test/version.test.ts",
-            "status": "fail",
-            "passed": 0,
+            "status": "pass",
+            "passed": 1,
             "total": 1,
-            "error": "version(null) threw unexpectedly",
             "tests": [
               {
                 "name": "TESTS cases",
-                "status": "failed"
+                "status": "passed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/uuidjs/uuid/70177807e9229dfacde2038dc1e722f1828f358a/src/test/version.test.ts"
           }
         ],
         "summary": {
-          "pass": 10,
-          "fail": 65,
+          "pass": 28,
+          "fail": 47,
           "compile_error": 0,
           "skip": 0,
           "total": 75
@@ -534,59 +531,152 @@
       },
       "correctness": {
         "status": "divergent",
-        "passed": 10,
+        "passed": 28,
         "total": 75,
-        "reason": "65 of 75 operations diverged from native node"
+        "reason": "47 of 75 operations diverged from native node"
       },
       "perf": {
         "sampleOp": "validate(uuid) + version(uuid)",
         "lanes": {
           "jsHost": {
-            "status": "runtime-error",
+            "status": "measured",
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "[object WebAssembly.Exception]",
+            "sampleOp": "validate(uuid) + version(uuid)",
+            "wasmUs": 1.8563122231492868,
+            "nodeUs": 0.19552506834354236,
+            "wasmStdUs": 0.09478535974810762,
+            "nodeStdUs": 0.0004146544065857846,
+            "ratio": 0.10523900139600113,
+            "ratioStd": 0.004902632027939415,
+            "ratioSamples": [
+              0.10504521179549461,
+              0.09937465881775624,
+              0.09130494553335015,
+              0.10687408673053768,
+              0.10739821250300992,
+              0.10675620427852184,
+              0.10597826774282416,
+              0.10493800909164729,
+              0.10523900139600113
+            ],
+            "measurementOrder": "alternating-paired",
+            "ratioEstimator": "median-of-paired-ratios",
+            "iters": 147417,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              1.8604071579261556,
+              1.9598079393828527,
+              2.1364555851767286,
+              1.8294899570606014,
+              1.8261411980979212,
+              1.8355851156922287,
+              1.8451441556943808,
+              1.8670568862478607,
+              1.8563122231492868
+            ],
+            "nodeSamplesUs": [
+              0.19542686393020722,
+              0.1947552453245009,
+              0.19506896083898295,
+              0.19552506834354236,
+              0.19612430045382168,
+              0.19596009958145372,
+              0.19554518135628632,
+              0.19592523250370067,
+              0.19535644464342175
+            ],
+            "compileDurationMs": 4245.396242999999,
+            "moduleCompileDurationMs": 0.4653900000012072,
+            "instantiateDurationMs": 2.0797639999982493,
+            "binaryBytes": 73179,
+            "moduleImportCount": 175,
+            "functionImportCount": 54,
+            "expectedChecksum": 2,
+            "actualChecksum": 2,
+            "testCompiledToWasm": false,
+            "target": "js-host",
             "optimizationRequested": true,
             "optimizationVerified": true,
-            "phase": "checksum",
-            "compileDurationMs": 3735.3826210000007,
-            "binaryBytes": 45597,
-            "moduleImportCount": 83,
-            "functionImportCount": 39,
             "optimizationLevel": 4
           },
           "standalone": {
             "status": "host-import-error",
             "placement": "standalone",
             "inputMode": "compile-time-static",
-            "diagnostic": "standalone binary retained 1 host import(s)",
+            "diagnostic": "standalone binary retained 6 host import(s)",
             "optimizationRequested": true,
             "optimizationVerified": true,
-            "compileDurationMs": 6208.811820000003,
-            "moduleCompileDurationMs": 1.2195859999992535,
-            "binaryBytes": 102624,
-            "moduleImportCount": 1,
-            "functionImportCount": 1,
+            "compileDurationMs": 8061.394863999998,
+            "moduleCompileDurationMs": 1.025588999997126,
+            "binaryBytes": 143536,
+            "moduleImportCount": 6,
+            "functionImportCount": 6,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
             "status": "host-import-error",
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "standalone binary retained 1 host import(s)",
+            "diagnostic": "standalone binary retained 6 host import(s)",
             "optimizationRequested": true,
             "optimizationVerified": true,
-            "compileDurationMs": 5697.818813999998,
-            "moduleCompileDurationMs": 2.57374400000117,
-            "binaryBytes": 102613,
-            "moduleImportCount": 1,
-            "functionImportCount": 1,
+            "compileDurationMs": 7638.0740860000005,
+            "moduleCompileDurationMs": 0.983379999997851,
+            "binaryBytes": 143517,
+            "moduleImportCount": 6,
+            "functionImportCount": 6,
             "optimizationLevel": 4
           }
-        }
+        },
+        "wasmUs": 1.8563122231492868,
+        "nodeUs": 0.19552506834354236,
+        "wasmStdUs": 0.09478535974810762,
+        "nodeStdUs": 0.0004146544065857846,
+        "ratio": 0.10523900139600113,
+        "ratioStd": 0.004902632027939415,
+        "ratioSamples": [
+          0.10504521179549461,
+          0.09937465881775624,
+          0.09130494553335015,
+          0.10687408673053768,
+          0.10739821250300992,
+          0.10675620427852184,
+          0.10597826774282416,
+          0.10493800909164729,
+          0.10523900139600113
+        ],
+        "measurementOrder": "alternating-paired",
+        "ratioEstimator": "median-of-paired-ratios",
+        "iters": 147417,
+        "warmupRounds": 2,
+        "measuredRounds": 9,
+        "wasmSamplesUs": [
+          1.8604071579261556,
+          1.9598079393828527,
+          2.1364555851767286,
+          1.8294899570606014,
+          1.8261411980979212,
+          1.8355851156922287,
+          1.8451441556943808,
+          1.8670568862478607,
+          1.8563122231492868
+        ],
+        "nodeSamplesUs": [
+          0.19542686393020722,
+          0.1947552453245009,
+          0.19506896083898295,
+          0.19552506834354236,
+          0.19612430045382168,
+          0.19596009958145372,
+          0.19554518135628632,
+          0.19592523250370067,
+          0.19535644464342175
+        ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T09:30:08.526Z",
+      "measuredAt": "2026-08-24T14:44:49.619Z",
       "weeklyDownloads": 275892096
     },
     {
@@ -597,7 +687,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 600153,
+        "durationMs": 600199,
         "timedOut": true,
         "timeoutMs": 600000,
         "errorCount": 0,
@@ -2027,7 +2117,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T09:40:57.943Z",
+      "measuredAt": "2026-08-24T14:54:38.863Z",
       "weeklyDownloads": 250686863
     },
     {
@@ -2038,7 +2128,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 18786,
+        "durationMs": 12002,
         "errorCount": 0,
         "binaryBytes": 685093,
         "categories": {}
@@ -2246,42 +2336,55 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parse(own 226KB dist bundle).body.length",
-            "wasmUs": 4226846.790999989,
-            "nodeUs": 10511.893999995664,
-            "wasmStdUs": 25838.40359561477,
-            "nodeStdUs": 1549.565778083491,
-            "ratio": 0.002486935183545831,
-            "ratioStd": 0.0003713028997412437,
+            "wasmUs": 1957899.6850000112,
+            "nodeUs": 6302.584999997634,
+            "wasmStdUs": 28564.54859824202,
+            "nodeStdUs": 757.8036321398979,
+            "ratio": 0.0032474002840002024,
+            "ratioStd": 0.0003834642672901756,
+            "ratioSamples": [
+              0.0032474002840002024,
+              0.004185900638813375,
+              0.0032289872416664577,
+              0.003070908198367626,
+              0.0035810471142813426,
+              0.0031346769433738264,
+              0.0035297696977954394,
+              0.003022977133419738,
+              0.00394410851661588
+            ],
+            "measurementOrder": "alternating-paired",
+            "ratioEstimator": "median-of-paired-ratios",
             "iters": 1,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              4217710.652999988,
-              4213110.014999984,
-              4226846.790999989,
-              4249890.014000004,
-              4200993.554999994,
-              4260328.918000014,
-              4286686.435000011,
-              4237784.191999992,
-              4213253.065999975
+              1940809.4009999912,
+              1955736.8189999978,
+              1942832.389999996,
+              1948063.1180000054,
+              2010621.9689999998,
+              1957899.6850000112,
+              1965506.985999993,
+              2026719.2670000077,
+              1976185.2310000104
             ],
             "nodeSamplesUs": [
-              11516.717999998946,
-              11082.727000000887,
-              15480.370000004768,
-              10407.9400000046,
-              11374.298999988241,
-              10420.496000006096,
-              10326.60100000794,
-              10349.671000003582,
-              10511.893999995664
+              6302.584999997634,
+              8186.520000002929,
+              6273.381000006339,
+              5982.323000003817,
+              7200.131999998121,
+              6137.383000008413,
+              6937.78699998802,
+              6126.726000002236,
+              7794.288999997661
             ],
-            "compileDurationMs": 24891.685953,
-            "wasmCompileMs": 1.9624279999989085,
-            "instantiateMs": 9.998783999995794,
-            "wireMs": 0.16866499999014195,
-            "wrapMs": 0.3147679999965476,
+            "compileDurationMs": 14768.726035,
+            "wasmCompileMs": 1.3157199999986915,
+            "instantiateMs": 6.776498999999603,
+            "wireMs": 0.13428200000635115,
+            "wrapMs": 0.21346099999936996,
             "binaryBytes": 381259,
             "moduleImportCount": 1178,
             "functionImportCount": 89,
@@ -2299,41 +2402,54 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parse(own 226KB dist bundle).body.length",
-            "wasmUs": 0.37642856893528787,
-            "nodeUs": 10387.732285715174,
-            "wasmStdUs": 0.06151749786118873,
-            "nodeStdUs": 221.9858866088976,
-            "ratio": 27595.493920922185,
-            "ratioStd": 3863.042803323362,
-            "iters": 7,
+            "wasmUs": 0.06146666710264981,
+            "nodeUs": 5769.949400000041,
+            "wasmStdUs": 0.08696454873115193,
+            "nodeStdUs": 348.1764081338898,
+            "ratio": 94771.14900242517,
+            "ratioStd": 285198.4750800544,
+            "ratioSamples": [
+              94771.14900242517,
+              25207.54894664715,
+              430593.2644912831,
+              29041.149086794434,
+              572543.4635425215,
+              29849.827115666023,
+              218929.0761725632,
+              37845.481845629816,
+              864671.6905831333
+            ],
+            "measurementOrder": "alternating-paired",
+            "ratioEstimator": "median-of-paired-ratios",
+            "iters": 15,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.5410000033277486,
-              0.37642856893528787,
-              0.376428577250668,
-              0.3435714336644326,
-              0.45942856896934764,
-              0.3478571473221694,
-              0.3434285754337907,
-              0.37642856893528787,
-              0.3894285681391401
+              0.06146666710264981,
+              0.22766666758495074,
+              0.013399999200676879,
+              0.19899999994474155,
+              0.012000000181918342,
+              0.19299999888365468,
+              0.026733333167309564,
+              0.15019999894623956,
+              0.006666665043060978
             ],
             "nodeSamplesUs": [
-              10196.650857139113,
-              10578.898142856944,
-              10440.333571434687,
-              10519.880714285786,
-              10086.912857144072,
-              10387.732285715174,
-              10710.59728570981,
-              10352.782571422202,
-              9987.683000001458
+              5825.2666666676905,
+              5738.918666667692,
+              5769.949400000041,
+              5779.188666667324,
+              6870.5216666664155,
+              5761.016600000828,
+              5852.703933332426,
+              5684.391333333527,
+              5764.476533335012
             ],
-            "compileDurationMs": 109136.60826600002,
-            "moduleCompileDurationMs": 0.4806179999723099,
-            "instantiateDurationMs": 0.023173999972641468,
-            "firstBatchDurationMs": 0.12372199998935685,
+            "compileDurationMs": 63634.681186000016,
+            "moduleCompileDurationMs": 0.3555950000009034,
+            "instantiateDurationMs": 0.023946000001160428,
+            "firstBatchDurationMs": 0.05173800000920892,
             "binaryBytes": 74,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -2351,8 +2467,8 @@
             "staticEvaluation": {
               "operationEvaluatedInWasm": true,
               "operationResultType": "number",
-              "stageDurationMs": 351.227688999963,
-              "stageBinaryBytes": 2228036,
+              "stageDurationMs": 454.4488859999983,
+              "stageBinaryBytes": 2228411,
               "stageModuleImportCount": 0
             }
           },
@@ -2361,43 +2477,56 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parse(runtime-suffixed own 226KB dist bundle).body.length",
-            "wasmUs": 109105.43333333528,
-            "nodeUs": 11031.549999994846,
-            "wasmStdUs": 1327.0375800895242,
-            "nodeStdUs": 462.83229657544626,
-            "ratio": 0.1011090801160344,
-            "ratioStd": 0.0038891310273291364,
-            "iters": 3,
+            "wasmUs": 10993863.786000002,
+            "nodeUs": 6614.293999999063,
+            "wasmStdUs": 6885721.500156772,
+            "nodeStdUs": 326.0520223804481,
+            "ratio": 0.0005905020406276215,
+            "ratioStd": 0.0006516586658012756,
+            "ratioSamples": [
+              0.00233407725048049,
+              0.00148547967639889,
+              0.0012449407779194005,
+              0.0007606608203991938,
+              0.0005905020406276215,
+              0.0004169214067921705,
+              0.0003917314065767635,
+              0.00032017804026597795,
+              0.00029326746840726084
+            ],
+            "measurementOrder": "alternating-paired",
+            "ratioEstimator": "median-of-paired-ratios",
+            "iters": 1,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              112787.34033333603,
-              110767.55766667581,
-              110210.05533332936,
-              108805.87666666058,
-              109471.14733333001,
-              108990.94633333152,
-              109105.43333333528,
-              108760.96266667203,
-              108172.36899999746
+              2862825.5549999885,
+              4056135.6010000166,
+              5454362.263999996,
+              8695457.716000004,
+              10993863.786000002,
+              14623895.29700001,
+              17045602.9,
+              19134260.40999999,
+              23927648.83899997
             ],
             "nodeSamplesUs": [
-              11730.076333333272,
-              11031.549999994846,
-              10886.819666658994,
-              11530.326000007335,
-              11805.073000005601,
-              11584.003333351575,
-              10636.19099999778,
-              10758.175666657431,
-              10573.527333326638
+              6682.0560000196565,
+              6025.307000003522,
+              6790.357999998378,
+              6614.293999999063,
+              6491.89900001511,
+              6097.01500000665,
+              6677.297999965958,
+              6126.370000012685,
+              7017.200999951456
             ],
-            "compileDurationMs": 105919.17002399999,
-            "moduleCompileDurationMs": 12.060808000038378,
-            "instantiateDurationMs": 7.04392900003586,
-            "moduleInitDurationMs": 23.22163400001591,
-            "firstBatchDurationMs": 303.2509480000008,
-            "binaryBytes": 2230518,
+            "compileDurationMs": 61953.44915,
+            "moduleCompileDurationMs": 7.280655999988085,
+            "instantiateDurationMs": 3.720708000008017,
+            "moduleInitDurationMs": 14.09274700001697,
+            "firstBatchDurationMs": 505.43666599999415,
+            "binaryBytes": 2230893,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 422,
@@ -2442,36 +2571,49 @@
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 4226846.790999989,
-        "nodeUs": 10511.893999995664,
-        "wasmStdUs": 25838.40359561477,
-        "nodeStdUs": 1549.565778083491,
-        "ratio": 0.002486935183545831,
-        "ratioStd": 0.0003713028997412437,
+        "wasmUs": 1957899.6850000112,
+        "nodeUs": 6302.584999997634,
+        "wasmStdUs": 28564.54859824202,
+        "nodeStdUs": 757.8036321398979,
+        "ratio": 0.0032474002840002024,
+        "ratioStd": 0.0003834642672901756,
+        "ratioSamples": [
+          0.0032474002840002024,
+          0.004185900638813375,
+          0.0032289872416664577,
+          0.003070908198367626,
+          0.0035810471142813426,
+          0.0031346769433738264,
+          0.0035297696977954394,
+          0.003022977133419738,
+          0.00394410851661588
+        ],
+        "measurementOrder": "alternating-paired",
+        "ratioEstimator": "median-of-paired-ratios",
         "iters": 1,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          4217710.652999988,
-          4213110.014999984,
-          4226846.790999989,
-          4249890.014000004,
-          4200993.554999994,
-          4260328.918000014,
-          4286686.435000011,
-          4237784.191999992,
-          4213253.065999975
+          1940809.4009999912,
+          1955736.8189999978,
+          1942832.389999996,
+          1948063.1180000054,
+          2010621.9689999998,
+          1957899.6850000112,
+          1965506.985999993,
+          2026719.2670000077,
+          1976185.2310000104
         ],
         "nodeSamplesUs": [
-          11516.717999998946,
-          11082.727000000887,
-          15480.370000004768,
-          10407.9400000046,
-          11374.298999988241,
-          10420.496000006096,
-          10326.60100000794,
-          10349.671000003582,
-          10511.893999995664
+          6302.584999997634,
+          8186.520000002929,
+          6273.381000006339,
+          5982.323000003817,
+          7200.131999998121,
+          6137.383000008413,
+          6937.78699998802,
+          6126.726000002236,
+          7794.288999997661
         ]
       },
       "knownBugs": [
@@ -2484,7 +2626,7 @@
           "summary": "linked Acorn initialization is lowered, but the cross-module parser driver is not yet runnable"
         }
       ],
-      "measuredAt": "2026-08-24T09:36:43.219Z",
+      "measuredAt": "2026-08-24T14:49:52.969Z",
       "weeklyDownloads": 240886853
     },
     {
@@ -2495,7 +2637,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 1170,
+        "durationMs": 1074,
         "errorCount": 9,
         "binaryBytes": 21343,
         "categories": {
@@ -2711,36 +2853,49 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parseCookie(8-pair header); verify a/h",
-            "wasmUs": 317.3920685537373,
-            "nodeUs": 0.5861455108361124,
-            "wasmStdUs": 162.74487105305835,
-            "nodeStdUs": 0.03717144192360572,
-            "ratio": 0.0018467553820957336,
-            "ratioStd": 0.0009982921130017865,
-            "iters": 6783,
+            "wasmUs": 279.1129317473336,
+            "nodeUs": 0.6690694011486739,
+            "wasmStdUs": 184.15272656792504,
+            "nodeStdUs": 0.044531796267007935,
+            "ratio": 0.0024017211649994966,
+            "ratioStd": 0.0013133371170857594,
+            "ratioSamples": [
+              0.005009583310743733,
+              0.0038799235984701415,
+              0.0037839045537421383,
+              0.0031324845810541315,
+              0.0024017211649994966,
+              0.0019472313639979138,
+              0.0013864225473479825,
+              0.0011769578964790197,
+              0.0010363651927474296
+            ],
+            "measurementOrder": "alternating-paired",
+            "ratioEstimator": "median-of-paired-ratios",
+            "iters": 6095,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              159.657670942061,
-              194.67449093321562,
-              230.99376691729302,
-              271.8117021966678,
-              317.3920685537373,
-              395.36119652071346,
-              456.31051629072584,
-              538.3237220993667,
-              679.9139802447289
+              133.22321230516775,
+              172.44396292042677,
+              207.57074618539784,
+              241.19322050861314,
+              279.1129317473336,
+              341.24595356849886,
+              478.6304771123876,
+              566.4510951599682,
+              705.158418867924
             ],
             "nodeSamplesUs": [
-              0.676261536193158,
-              0.5901157305029255,
-              0.5861455108361124,
-              0.5858680524837439,
-              0.5835998820589302,
-              0.5763090078145001,
-              0.5815519681561834,
-              0.6035248415156527,
-              0.6727856405717615
+              0.6673927809676374,
+              0.6690694011486739,
+              0.7854278917145805,
+              0.7555340442980197,
+              0.6703514356026311,
+              0.6644848236259568,
+              0.6635840853165367,
+              0.6666890894177132,
+              0.7308016406875287
             ],
             "binaryBytes": 16290,
             "moduleImportCount": 146,
@@ -2758,41 +2913,54 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parseCookie(8-pair header); verify a/h",
-            "wasmUs": 0.001110523495984399,
-            "nodeUs": 0.5750324312740059,
-            "wasmStdUs": 0.00000984487223045798,
-            "nodeStdUs": 0.0012692026416443675,
-            "ratio": 517.8030301504617,
-            "ratioStd": 4.183261142673884,
-            "iters": 419965,
+            "wasmUs": 0.0009636962247536859,
+            "nodeUs": 0.6211562335381651,
+            "wasmStdUs": 0.000016583530466331292,
+            "nodeStdUs": 0.00242230635784523,
+            "ratio": 645.3344493572038,
+            "ratioStd": 12.53252062332348,
+            "ratioSamples": [
+              628.0361810841869,
+              638.7751850378104,
+              660.7600784625357,
+              640.6757089237684,
+              664.1743341447857,
+              637.5037438806329,
+              663.6450325457724,
+              657.5946452366808,
+              645.3344493572038
+            ],
+            "measurementOrder": "alternating-paired",
+            "ratioEstimator": "median-of-paired-ratios",
+            "iters": 410040,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0010978605360202503,
-              0.001090348005217649,
-              0.001090586120275327,
-              0.0011094257854877673,
-              0.001110523495984399,
-              0.001117057373836533,
-              0.0011130975200326775,
-              0.0011135285083192998,
-              0.0011139094924393052
+              0.000983708906439884,
+              0.0009667495854059181,
+              0.0009360379475359695,
+              0.0009698785484107662,
+              0.0009352307091751562,
+              0.0009692908009056456,
+              0.000938503560612103,
+              0.0009499634182159872,
+              0.0009636962247536859
             ],
             "nodeSamplesUs": [
-              0.575644175109846,
-              0.5724815853701829,
-              0.5742864095817851,
-              0.5752836355410552,
-              0.577474013310636,
-              0.5745776005143266,
-              0.5750324312740059,
-              0.5746393889966717,
-              0.5758537378114976
+              0.6178047848990064,
+              0.6175356453028918,
+              0.6184965076577781,
+              0.6213776265730231,
+              0.6211562335381651,
+              0.6179265144864062,
+              0.6228332260267424,
+              0.6246908569895667,
+              0.621906372549036
             ],
-            "compileDurationMs": 467.69600199999695,
-            "moduleCompileDurationMs": 0.3804229999950621,
-            "instantiateDurationMs": 0.03688499999407213,
-            "firstBatchDurationMs": 0.08336299999791663,
+            "compileDurationMs": 494.6713349999918,
+            "moduleCompileDurationMs": 0.33789600001182407,
+            "instantiateDurationMs": 0.026920000003883615,
+            "firstBatchDurationMs": 0.0711239999945974,
             "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -2813,43 +2981,56 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parseCookie(8-pair runtime-generated header); verify a/h",
-            "wasmUs": 3.0685364193982543,
-            "nodeUs": 0.7550608724226215,
-            "wasmStdUs": 0.0101961286569451,
-            "nodeStdUs": 0.010869306398872517,
-            "ratio": 0.24606547527002803,
-            "ratioStd": 0.003911244828337344,
-            "iters": 73038,
+            "wasmUs": 3.267457617088789,
+            "nodeUs": 0.8441460633616162,
+            "wasmStdUs": 0.007299191239220659,
+            "nodeStdUs": 0.010091000225451575,
+            "ratio": 0.258874002948467,
+            "ratioStd": 0.0033375301898619252,
+            "ratioSamples": [
+              0.25773956906235007,
+              0.25666255681147604,
+              0.258874002948467,
+              0.26402357716768965,
+              0.2659205001177241,
+              0.26254513342373614,
+              0.25751542594042176,
+              0.25565815103535205,
+              0.2594808371431766
+            ],
+            "measurementOrder": "alternating-paired",
+            "ratioEstimator": "median-of-paired-ratios",
+            "iters": 69285,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              3.072903680276085,
-              3.051003929461422,
-              3.059178235986777,
-              3.0876336975273984,
-              3.0685364193982543,
-              3.069422478709557,
-              3.0584329937841312,
-              3.0619389769708087,
-              3.074124537911822
+              3.2688109547521416,
+              3.2692854153134348,
+              3.2608375261600018,
+              3.267457617088789,
+              3.251904928916842,
+              3.27501140217947,
+              3.2653955690266043,
+              3.2768982030742686,
+              3.2602216497078356
             ],
             "nodeSamplesUs": [
-              0.764121854377225,
-              0.7629542293052495,
-              0.7468247350694664,
-              0.7550608724226215,
-              0.7539559681261472,
-              0.7541239491770922,
-              0.7864966181986408,
-              0.7651722528000218,
-              0.7536506065334805
+              0.8425019268241061,
+              0.8391031536408144,
+              0.8441460633616162,
+              0.8626858483075971,
+              0.8647481850328587,
+              0.859838305549466,
+              0.8408897308218519,
+              0.8377657357290351,
+              0.8459650429384974
             ],
-            "compileDurationMs": 3988.710030000002,
-            "moduleCompileDurationMs": 0.8144879999890691,
-            "instantiateDurationMs": 0.2562800000014249,
-            "moduleInitDurationMs": 0.1291709999932209,
-            "firstBatchDurationMs": 1.6313590000063414,
-            "binaryBytes": 65428,
+            "compileDurationMs": 4133.492845000001,
+            "moduleCompileDurationMs": 0.7205560000002151,
+            "instantiateDurationMs": 0.22059500000614207,
+            "moduleInitDurationMs": 0.1126419999927748,
+            "firstBatchDurationMs": 1.56015699999989,
+            "binaryBytes": 65510,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 1,
@@ -2867,36 +3048,49 @@
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 317.3920685537373,
-        "nodeUs": 0.5861455108361124,
-        "wasmStdUs": 162.74487105305835,
-        "nodeStdUs": 0.03717144192360572,
-        "ratio": 0.0018467553820957336,
-        "ratioStd": 0.0009982921130017865,
-        "iters": 6783,
+        "wasmUs": 279.1129317473336,
+        "nodeUs": 0.6690694011486739,
+        "wasmStdUs": 184.15272656792504,
+        "nodeStdUs": 0.044531796267007935,
+        "ratio": 0.0024017211649994966,
+        "ratioStd": 0.0013133371170857594,
+        "ratioSamples": [
+          0.005009583310743733,
+          0.0038799235984701415,
+          0.0037839045537421383,
+          0.0031324845810541315,
+          0.0024017211649994966,
+          0.0019472313639979138,
+          0.0013864225473479825,
+          0.0011769578964790197,
+          0.0010363651927474296
+        ],
+        "measurementOrder": "alternating-paired",
+        "ratioEstimator": "median-of-paired-ratios",
+        "iters": 6095,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          159.657670942061,
-          194.67449093321562,
-          230.99376691729302,
-          271.8117021966678,
-          317.3920685537373,
-          395.36119652071346,
-          456.31051629072584,
-          538.3237220993667,
-          679.9139802447289
+          133.22321230516775,
+          172.44396292042677,
+          207.57074618539784,
+          241.19322050861314,
+          279.1129317473336,
+          341.24595356849886,
+          478.6304771123876,
+          566.4510951599682,
+          705.158418867924
         ],
         "nodeSamplesUs": [
-          0.676261536193158,
-          0.5901157305029255,
-          0.5861455108361124,
-          0.5858680524837439,
-          0.5835998820589302,
-          0.5763090078145001,
-          0.5815519681561834,
-          0.6035248415156527,
-          0.6727856405717615
+          0.6673927809676374,
+          0.6690694011486739,
+          0.7854278917145805,
+          0.7555340442980197,
+          0.6703514356026311,
+          0.6644848236259568,
+          0.6635840853165367,
+          0.6666890894177132,
+          0.7308016406875287
         ]
       },
       "knownBugs": [
@@ -2905,7 +3099,7 @@
           "summary": "a property assigned dynamically inside a loop/switch onto an object is silently dropped"
         }
       ],
-      "measuredAt": "2026-08-24T09:30:44.578Z",
+      "measuredAt": "2026-08-24T14:45:22.902Z",
       "weeklyDownloads": 173435452
     },
     {
@@ -2916,7 +3110,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 81722,
+        "durationMs": 59588,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 8,
@@ -3325,7 +3519,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T09:31:16.595Z",
+      "measuredAt": "2026-08-24T14:45:12.672Z",
       "weeklyDownloads": 164859858
     },
     {
@@ -3336,11 +3530,11 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 4189,
+        "durationMs": 5520,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 1758,
+        "binaryBytes": 1767,
         "categories": {}
       },
       "validation": {
@@ -4383,40 +4577,53 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "react package import + text.length",
-            "wasmUs": 0.11152163183076975,
-            "nodeUs": 0.005999239164790806,
-            "wasmStdUs": 0.00016473466131784593,
-            "nodeStdUs": 0.00004781783215141029,
-            "ratio": 0.05379439904443333,
-            "ratioStd": 0.0004938711438665972,
-            "iters": 1866370,
+            "wasmUs": 0.13426313936101927,
+            "nodeUs": 0.00746348660547617,
+            "wasmStdUs": 0.0005466822270900803,
+            "nodeStdUs": 0.000015020495775324354,
+            "ratio": 0.055624043836659816,
+            "ratioStd": 0.00028480185902809605,
+            "ratioSamples": [
+              0.05563538310947512,
+              0.05574911879097459,
+              0.055584500168930503,
+              0.055519091927383225,
+              0.055624043836659816,
+              0.05586972895231606,
+              0.05541579196676234,
+              0.05508380932028268,
+              0.056177465625544355
+            ],
+            "measurementOrder": "alternating-paired",
+            "ratioEstimator": "median-of-paired-ratios",
+            "iters": 1593114,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.11175538665966965,
-              0.11150182654028663,
-              0.11118532445335344,
-              0.11173426115936495,
-              0.11152163183076975,
-              0.1117211356804911,
-              0.11151905624286904,
-              0.11151461875190541,
-              0.1115874981916764
+              0.13426313936101927,
+              0.13387562848608667,
+              0.13436829379441892,
+              0.13435499280026564,
+              0.13408836655756676,
+              0.13358089126076586,
+              0.13468158336440758,
+              0.13549522821342627,
+              0.1336877850549208
             ],
             "nodeSamplesUs": [
-              0.006000951043998844,
-              0.0059987939154656405,
-              0.006147547378063758,
-              0.005997361723558375,
-              0.0059988319572270325,
-              0.005996829674718008,
-              0.005999239164790806,
-              0.00600609686181965,
-              0.006057920991008991
+              0.007469781195831156,
+              0.007463448315687227,
+              0.007468794449114782,
+              0.007459267196180859,
+              0.007458537179384203,
+              0.007463128187947794,
+              0.00746348660547617,
+              0.0074635933147165585,
+              0.007510240949477975
             ],
-            "compileDurationMs": 475.8703200000018,
-            "moduleCompileDurationMs": 0.2727619999932358,
-            "instantiateDurationMs": 0.9713400000036927,
+            "compileDurationMs": 618.6842550000001,
+            "moduleCompileDurationMs": 0.36249999998835847,
+            "instantiateDurationMs": 1.0470729999942705,
             "binaryBytes": 1999,
             "moduleImportCount": 18,
             "functionImportCount": 10,
@@ -4435,9 +4642,9 @@
             "diagnostic": "standalone binary retained 1 host import(s)",
             "optimizationRequested": true,
             "optimizationVerified": true,
-            "compileDurationMs": 2608.131717000011,
-            "moduleCompileDurationMs": 0.8324359999969602,
-            "binaryBytes": 100796,
+            "compileDurationMs": 3319.053497999994,
+            "moduleCompileDurationMs": 1.0595160000084434,
+            "binaryBytes": 100886,
             "moduleImportCount": 1,
             "functionImportCount": 1,
             "optimizationLevel": 4
@@ -4449,48 +4656,61 @@
             "diagnostic": "standalone binary retained 1 host import(s)",
             "optimizationRequested": true,
             "optimizationVerified": true,
-            "compileDurationMs": 2495.0069969999895,
-            "moduleCompileDurationMs": 0.8205679999955464,
-            "binaryBytes": 101039,
+            "compileDurationMs": 3100.3711119999934,
+            "moduleCompileDurationMs": 0.9249849999905564,
+            "binaryBytes": 101129,
             "moduleImportCount": 1,
             "functionImportCount": 1,
             "optimizationLevel": 4
           }
         },
-        "wasmUs": 0.11152163183076975,
-        "nodeUs": 0.005999239164790806,
-        "wasmStdUs": 0.00016473466131784593,
-        "nodeStdUs": 0.00004781783215141029,
-        "ratio": 0.05379439904443333,
-        "ratioStd": 0.0004938711438665972,
-        "iters": 1866370,
+        "wasmUs": 0.13426313936101927,
+        "nodeUs": 0.00746348660547617,
+        "wasmStdUs": 0.0005466822270900803,
+        "nodeStdUs": 0.000015020495775324354,
+        "ratio": 0.055624043836659816,
+        "ratioStd": 0.00028480185902809605,
+        "ratioSamples": [
+          0.05563538310947512,
+          0.05574911879097459,
+          0.055584500168930503,
+          0.055519091927383225,
+          0.055624043836659816,
+          0.05586972895231606,
+          0.05541579196676234,
+          0.05508380932028268,
+          0.056177465625544355
+        ],
+        "measurementOrder": "alternating-paired",
+        "ratioEstimator": "median-of-paired-ratios",
+        "iters": 1593114,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          0.11175538665966965,
-          0.11150182654028663,
-          0.11118532445335344,
-          0.11173426115936495,
-          0.11152163183076975,
-          0.1117211356804911,
-          0.11151905624286904,
-          0.11151461875190541,
-          0.1115874981916764
+          0.13426313936101927,
+          0.13387562848608667,
+          0.13436829379441892,
+          0.13435499280026564,
+          0.13408836655756676,
+          0.13358089126076586,
+          0.13468158336440758,
+          0.13549522821342627,
+          0.1336877850549208
         ],
         "nodeSamplesUs": [
-          0.006000951043998844,
-          0.0059987939154656405,
-          0.006147547378063758,
-          0.005997361723558375,
-          0.0059988319572270325,
-          0.005996829674718008,
-          0.005999239164790806,
-          0.00600609686181965,
-          0.006057920991008991
+          0.007469781195831156,
+          0.007463448315687227,
+          0.007468794449114782,
+          0.007459267196180859,
+          0.007458537179384203,
+          0.007463128187947794,
+          0.00746348660547617,
+          0.0074635933147165585,
+          0.007510240949477975
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T09:31:39.875Z",
+      "measuredAt": "2026-08-24T14:46:51.703Z",
       "weeklyDownloads": 162687688
     },
     {
@@ -4501,7 +4721,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180162,
+        "durationMs": 180092,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -4627,7 +4847,7 @@
           "summary": "the real multi-file Linter graph is still beyond the bounded mainline compile/runtime integration frontier"
         }
       ],
-      "measuredAt": "2026-08-24T09:32:45.636Z",
+      "measuredAt": "2026-08-24T14:47:08.141Z",
       "weeklyDownloads": 152308132
     },
     {
@@ -4638,11 +4858,11 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 15117225,
+        "durationMs": 11142127,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 234512596,
+        "binaryBytes": 268987582,
         "categories": {},
         "error": null
       },
@@ -4677,7 +4897,7 @@
           "implementationInvalidTests": 1,
           "compile": {
             "success": false,
-            "durationMs": 567760,
+            "durationMs": 368206,
             "binaryBytes": 21868840,
             "invalidBatches": 2
           },
@@ -4697,7 +4917,7 @@
           "implementationInvalidTests": 14,
           "compile": {
             "success": false,
-            "durationMs": 5085448,
+            "durationMs": 4621668,
             "binaryBytes": 0,
             "invalidBatches": 28
           },
@@ -4717,7 +4937,7 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": false,
-            "durationMs": 510531,
+            "durationMs": 346281,
             "binaryBytes": 7875828,
             "invalidBatches": 3
           },
@@ -4737,7 +4957,7 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": true,
-            "durationMs": 35932,
+            "durationMs": 22657,
             "binaryBytes": 1490245,
             "invalidBatches": 0
           },
@@ -10895,12 +11115,12 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T06:25:33.677Z",
+      "measuredAt": "2026-08-24T13:32:55.200Z",
       "weeklyDownloads": 139740993,
       "refresh": {
         "status": "stale",
         "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-24T06:25:33.677Z"
+        "lastMeasuredAt": "2026-08-24T13:32:55.200Z"
       }
     },
     {
@@ -10911,11 +11131,11 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 46236,
+        "durationMs": 36105,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 4,
-        "binaryBytes": 8234969,
+        "binaryBytes": 8200562,
         "categories": {
           "compiler-diagnostic": {
             "count": 4,
@@ -10962,9 +11182,9 @@
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 51,
+        "passed": 48,
         "total": 151,
-        "passRatePct": 33.8,
+        "passRatePct": 31.8,
         "admitted": 151,
         "executed": 151,
         "upstreamTestsSeen": 48,
@@ -10992,9 +11212,9 @@
       },
       "correctness": {
         "status": "divergent",
-        "passed": 51,
+        "passed": 48,
         "total": 151,
-        "reason": "100 of 151 operations diverged from native node"
+        "reason": "103 of 151 operations diverged from native node"
       },
       "perf": {
         "sampleOp": "prettier.version.length + source.length",
@@ -11029,7 +11249,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T09:38:53.923Z",
+      "measuredAt": "2026-08-24T14:52:40.431Z",
       "weeklyDownloads": 117242232
     },
     {
@@ -11040,7 +11260,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120168,
+        "durationMs": 120096,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -11402,7 +11622,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T09:31:51.370Z",
+      "measuredAt": "2026-08-24T14:47:39.500Z",
       "weeklyDownloads": 117155768
     },
     {
@@ -11413,7 +11633,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 36324,
+        "durationMs": 42542,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -11507,7 +11727,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_356 (wasm://wasm/002b7682:wasm-function[796]:0x6b39e)\n    at __call_fn_1 (wasm://wasm/002b7682:wasm-function[3149]:0x90fae)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/002b7682:wasm-function[902]:0x789ca)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_372 (wasm://wasm/002cd276:wasm-function[815]:0x6e9a7)\n    at __call_fn_1 (wasm://wasm/002cd276:wasm-function[3174]:0x95477)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/002cd276:wasm-function[927]:0x7cb35)",
             "tests": [
               {
                 "name": "returns the default message when message is not specified",
@@ -11529,7 +11749,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_338 (wasm://wasm/001ce0b6:wasm-function[791]:0x510fd)\n    at __call_fn_1 (wasm://wasm/001ce0b6:wasm-function[1295]:0x646d2)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/001ce0b6:wasm-function[895]:0x5cf33)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_354 (wasm://wasm/001e37a2:wasm-function[810]:0x54720)\n    at __call_fn_1 (wasm://wasm/001e37a2:wasm-function[1320]:0x68a5a)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/001e37a2:wasm-function[920]:0x60f79)",
             "tests": [
               {
                 "name": "returns true when value is a CanceledError",
@@ -11547,7 +11767,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_351 (wasm://wasm/001d37d2:wasm-function[829]:0x51e5e)\n    at __call_fn_1 (wasm://wasm/001d37d2:wasm-function[1359]:0x65c69)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/001d37d2:wasm-function[946]:0x5e46d)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_367 (wasm://wasm/001e8f6a:wasm-function[848]:0x5546f)\n    at __call_fn_1 (wasm://wasm/001e8f6a:wasm-function[1384]:0x6a003)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/001e8f6a:wasm-function[971]:0x624c1)",
             "tests": [
               {
                 "name": "should abort when any of the signals abort",
@@ -11569,7 +11789,7 @@
             "status": "fail",
             "passed": 0,
             "total": 28,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_417 (wasm://wasm/00375472:wasm-function[879]:0x88ea8)\n    at __call_fn_1 (wasm://wasm/00375472:wasm-function[3301]:0xbf7d8)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/00375472:wasm-function[1015]:0xa513d)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_433 (wasm://wasm/00390cbe:wasm-function[898]:0x8d47e)\n    at __call_fn_1 (wasm://wasm/00390cbe:wasm-function[3326]:0xc53b7)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/00390cbe:wasm-function[1040]:0xaa9c3)",
             "tests": [
               {
                 "name": "creates an error with message, config, code, request, response, stack and isAxiosError",
@@ -11729,7 +11949,7 @@
             "status": "fail",
             "passed": 0,
             "total": 57,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_629 (wasm://wasm/0072237a:wasm-function[1348]:0x11bfed)\n    at __call_fn_1 (wasm://wasm/0072237a:wasm-function[4359]:0x1a0616)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/0072237a:wasm-function[1587]:0x178a34)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_643 (wasm://wasm/00745512:wasm-function[1371]:0x122539)\n    at __call_fn_1 (wasm://wasm/00745512:wasm-function[4388]:0x1a8385)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/00745512:wasm-function[1616]:0x18038e)",
             "tests": [
               {
                 "name": "accepts undefined for second argument",
@@ -11967,7 +12187,7 @@
             "status": "fail",
             "passed": 0,
             "total": 12,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_383 (wasm://wasm/002068a2:wasm-function[838]:0x5aec2)\n    at __call_fn_1 (wasm://wasm/002068a2:wasm-function[1366]:0x723e1)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/002068a2:wasm-function[964]:0x6abbd)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_399 (wasm://wasm/0021de02:wasm-function[857]:0x5eaf5)\n    at __call_fn_1 (wasm://wasm/0021de02:wasm-function[1391]:0x76f64)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/0021de02:wasm-function[989]:0x6f403)",
             "tests": [
               {
                 "name": "resolves for a 200 status by default",
@@ -12025,7 +12245,7 @@
             "status": "fail",
             "passed": 0,
             "total": 4,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_552 (wasm://wasm/005e3ad6:wasm-function[1257]:0xeb17c)\n    at __call_fn_1 (wasm://wasm/005e3ad6:wasm-function[4163]:0x151bb4)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/005e3ad6:wasm-function[1460]:0x131b9b)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_566 (wasm://wasm/006040e6:wasm-function[1280]:0xf0c08)\n    at __call_fn_1 (wasm://wasm/006040e6:wasm-function[4192]:0x158e41)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/006040e6:wasm-function[1489]:0x138a13)",
             "tests": [
               {
                 "name": "supports a single transformer",
@@ -12080,7 +12300,7 @@
             "status": "fail",
             "passed": 0,
             "total": 12,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_537 (wasm://wasm/0054db3e:wasm-function[1199]:0xd1b30)\n    at __call_fn_1 (wasm://wasm/0054db3e:wasm-function[4050]:0x12e455)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/0054db3e:wasm-function[1402]:0x10fdf6)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_551 (wasm://wasm/0056e0ea:wasm-function[1220]:0xd7651)\n    at __call_fn_1 (wasm://wasm/0056e0ea:wasm-function[4077]:0x1356e7)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/0056e0ea:wasm-function[1429]:0x116bf2)",
             "tests": [
               {
                 "name": "should return buffer from data uri",
@@ -12151,7 +12371,7 @@
             "status": "fail",
             "passed": 0,
             "total": 20,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_571 (wasm://wasm/005e5752:wasm-function[1257]:0xea983)\n    at __call_fn_1 (wasm://wasm/005e5752:wasm-function[4137]:0x153265)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/005e5752:wasm-function[1471]:0x132f40)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_585 (wasm://wasm/00606326:wasm-function[1277]:0xf0842)\n    at __call_fn_1 (wasm://wasm/00606326:wasm-function[4163]:0x15a69a)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/00606326:wasm-function[1497]:0x13a08b)",
             "tests": [
               {
                 "name": "should support null params",
@@ -12270,7 +12490,7 @@
             "status": "fail",
             "passed": 0,
             "total": 8,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_281 (wasm://wasm/001a1b06:wasm-function[670]:0x48286)\n    at __call_fn_1 (wasm://wasm/001a1b06:wasm-function[1109]:0x5ba42)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/001a1b06:wasm-function[769]:0x551ed)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_285 (wasm://wasm/001ab04e:wasm-function[678]:0x497d5)\n    at __call_fn_1 (wasm://wasm/001ab04e:wasm-function[1117]:0x5d33f)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/001ab04e:wasm-function[777]:0x568d9)",
             "tests": [
               {
                 "name": "should convert a FormData Object to JSON Object",
@@ -12342,7 +12562,7 @@
             "status": "fail",
             "passed": 0,
             "total": 4,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_342 (wasm://wasm/001d1f96:wasm-function[794]:0x51aef)\n    at __call_fn_1 (wasm://wasm/001d1f96:wasm-function[1298]:0x6567f)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/001d1f96:wasm-function[900]:0x5df89)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_358 (wasm://wasm/001e79a2:wasm-function[813]:0x551a1)\n    at __call_fn_1 (wasm://wasm/001e79a2:wasm-function[1323]:0x69acf)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/001e79a2:wasm-function[925]:0x6209c)",
             "tests": [
               {
                 "name": "should return true if the error is created by core::createError",
@@ -12368,7 +12588,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_269 (wasm://wasm/0018ab76:wasm-function[650]:0x4460d)\n    at __call_fn_1 (wasm://wasm/0018ab76:wasm-function[1068]:0x5654c)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/0018ab76:wasm-function[744]:0x50b2d)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_277 (wasm://wasm/001a864a:wasm-function[661]:0x49127)\n    at __call_fn_1 (wasm://wasm/001a864a:wasm-function[1081]:0x5cbd4)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/001a864a:wasm-function[757]:0x56f4c)",
             "tests": [
               {
                 "name": "should parse headers",
@@ -12390,7 +12610,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_292 (wasm://wasm/0024d196:wasm-function[675]:0x62304)\n    at __call_fn_1 (wasm://wasm/0024d196:wasm-function[1118]:0x82d61)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/0024d196:wasm-function[777]:0x7cd66)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_298 (wasm://wasm/0025b4e6:wasm-function[683]:0x64620)\n    at __call_fn_1 (wasm://wasm/0025b4e6:wasm-function[1126]:0x855e8)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/0025b4e6:wasm-function[785]:0x7f405)",
             "tests": [
               {
                 "name": "should clamp loaded/progress and avoid negative bytes for out-of-order events",
@@ -12431,7 +12651,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_356 (wasm://wasm/00206512:wasm-function[811]:0x5a556)\n    at __call_fn_1 (wasm://wasm/00206512:wasm-function[1327]:0x71b65)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/00206512:wasm-function[923]:0x694bd)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_372 (wasm://wasm/0021d6d2:wasm-function[831]:0x5e03d)\n    at __call_fn_1 (wasm://wasm/0021d6d2:wasm-function[1353]:0x7657c)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/0021d6d2:wasm-function[949]:0x6db62)",
             "tests": [
               {
                 "name": "should throw only if unknown an option was passed",
@@ -12449,7 +12669,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_270 (wasm://wasm/0017f06a:wasm-function[646]:0x426ff)\n    at __call_fn_1 (wasm://wasm/0017f06a:wasm-function[1088]:0x52d3e)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/0017f06a:wasm-function[740]:0x4d1da)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_274 (wasm://wasm/001880aa:wasm-function[652]:0x43b68)\n    at __call_fn_1 (wasm://wasm/001880aa:wasm-function[1094]:0x5453a)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/001880aa:wasm-function[746]:0x4e7e3)",
             "tests": [
               {
                 "name": "should parse protocol part if it exists",
@@ -12510,7 +12730,7 @@
             "status": "fail",
             "passed": 0,
             "total": 6,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_551 (wasm://wasm/005cf09a:wasm-function[1261]:0xe8180)\n    at __call_fn_1 (wasm://wasm/005cf09a:wasm-function[4172]:0x14cc93)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/005cf09a:wasm-function[1465]:0x12cd9a)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_565 (wasm://wasm/005eff62:wasm-function[1284]:0xedf30)\n    at __call_fn_1 (wasm://wasm/005eff62:wasm-function[4201]:0x15414e)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/005eff62:wasm-function[1494]:0x133e44)",
             "tests": [
               {
                 "name": "parses json",
@@ -12549,7 +12769,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_265 (wasm://wasm/0017fe92:wasm-function[639]:0x426eb)\n    at __call_fn_1 (wasm://wasm/0017fe92:wasm-function[1055]:0x53b0b)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/0017fe92:wasm-function[731]:0x4e209)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_269 (wasm://wasm/00189156:wasm-function[645]:0x43bf5)\n    at __call_fn_1 (wasm://wasm/00189156:wasm-function[1061]:0x553a8)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/00189156:wasm-function[737]:0x4f8b2)",
             "tests": [
               {
                 "name": "should return object tag",
@@ -12563,7 +12783,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_271 (wasm://wasm/0018c7e6:wasm-function[647]:0x44362)\n    at __call_fn_1 (wasm://wasm/0018c7e6:wasm-function[1072]:0x56bf3)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/0018c7e6:wasm-function[742]:0x50bb5)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_275 (wasm://wasm/00195aaa:wasm-function[653]:0x4586c)\n    at __call_fn_1 (wasm://wasm/00195aaa:wasm-function[1078]:0x58490)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/00195aaa:wasm-function[748]:0x5225e)",
             "tests": [
               {
                 "name": "should be mutable",
@@ -12585,7 +12805,7 @@
             "status": "fail",
             "passed": 0,
             "total": 5,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_285 (wasm://wasm/00184d02:wasm-function[660]:0x43295)\n    at __call_fn_1 (wasm://wasm/00184d02:wasm-function[1092]:0x54c66)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/00184d02:wasm-function[762]:0x4f272)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_289 (wasm://wasm/0018dfc6:wasm-function[666]:0x4479f)\n    at __call_fn_1 (wasm://wasm/0018dfc6:wasm-function[1098]:0x56503)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/0018dfc6:wasm-function[768]:0x5091b)",
             "tests": [
               {
                 "name": "should loop over an array",
@@ -12615,7 +12835,7 @@
             "status": "fail",
             "passed": 0,
             "total": 14,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_293 (wasm://wasm/001cb45e:wasm-function[687]:0x4ec1d)\n    at __call_fn_1 (wasm://wasm/001cb45e:wasm-function[1122]:0x663b9)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/001cb45e:wasm-function[794]:0x60aa5)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_297 (wasm://wasm/001d486e:wasm-function[693]:0x5015f)\n    at __call_fn_1 (wasm://wasm/001d486e:wasm-function[1128]:0x67ca9)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/001d486e:wasm-function[800]:0x621a2)",
             "tests": [
               {
                 "name": "should validate Array",
@@ -12681,7 +12901,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_265 (wasm://wasm/0017fe92:wasm-function[639]:0x426eb)\n    at __call_fn_1 (wasm://wasm/0017fe92:wasm-function[1055]:0x53b0b)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/0017fe92:wasm-function[731]:0x4e209)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_269 (wasm://wasm/00189156:wasm-function[645]:0x43bf5)\n    at __call_fn_1 (wasm://wasm/00189156:wasm-function[1061]:0x553a8)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/00189156:wasm-function[737]:0x4f8b2)",
             "tests": [
               {
                 "name": "should return object tag",
@@ -12695,7 +12915,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_265 (wasm://wasm/0017de6a:wasm-function[639]:0x421ef)\n    at __call_fn_1 (wasm://wasm/0017de6a:wasm-function[1055]:0x53301)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/0017de6a:wasm-function[731]:0x4da8b)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_269 (wasm://wasm/00187136:wasm-function[645]:0x436fb)\n    at __call_fn_1 (wasm://wasm/00187136:wasm-function[1061]:0x54ba0)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/00187136:wasm-function[737]:0x4f137)",
             "tests": [
               {
                 "name": "should return true if the type is matched",
@@ -12709,7 +12929,7 @@
             "status": "fail",
             "passed": 0,
             "total": 9,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_281 (wasm://wasm/001afb1a:wasm-function[658]:0x493f7)\n    at __call_fn_1 (wasm://wasm/001afb1a:wasm-function[1102]:0x5f6a9)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/001afb1a:wasm-function[758]:0x58659)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_285 (wasm://wasm/001b8dde:wasm-function[664]:0x4a901)\n    at __call_fn_1 (wasm://wasm/001b8dde:wasm-function[1108]:0x60f46)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/001b8dde:wasm-function[764]:0x59d02)",
             "tests": [
               {
                 "name": "should be immutable",
@@ -12755,7 +12975,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_266 (wasm://wasm/0018e2de:wasm-function[639]:0x44c3e)\n    at __call_fn_1 (wasm://wasm/0018e2de:wasm-function[1055]:0x56fea)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/0018e2de:wasm-function[731]:0x51663)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_270 (wasm://wasm/0019760e:wasm-function[645]:0x46163)\n    at __call_fn_1 (wasm://wasm/0019760e:wasm-function[1061]:0x588a2)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/0019760e:wasm-function[737]:0x52d27)",
             "tests": [
               {
                 "name": "should return null or an array copy depending on input",
@@ -12769,7 +12989,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_265 (wasm://wasm/0017a3b2:wasm-function[639]:0x41635)\n    at __call_fn_1 (wasm://wasm/0017a3b2:wasm-function[1061]:0x523f9)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/0017a3b2:wasm-function[731]:0x4c793)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_269 (wasm://wasm/00183676:wasm-function[645]:0x42b3f)\n    at __call_fn_1 (wasm://wasm/00183676:wasm-function[1067]:0x53c96)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/00183676:wasm-function[737]:0x4de3c)",
             "tests": [
               {
                 "name": "should resolve object proto chain to a flat object representation",
@@ -12783,7 +13003,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_267 (wasm://wasm/001798b6:wasm-function[641]:0x416d0)\n    at __call_fn_1 (wasm://wasm/001798b6:wasm-function[1058]:0x52164)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/001798b6:wasm-function[734]:0x4c8ee)",
+            "error": "module init: TypeError: toLowerCase is not a function\nTypeError: toLowerCase is not a function\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13274:19)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __closure_271 (wasm://wasm/00182b8e:wasm-function[647]:0x42bde)\n    at __call_fn_1 (wasm://wasm/00182b8e:wasm-function[1064]:0x53a06)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16085:18)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)\n    at __module_init (wasm://wasm/00182b8e:wasm-function[740]:0x4df9d)",
             "tests": [
               {
                 "name": "should trim spaces",
@@ -12844,7 +13064,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T09:35:27.511Z",
+      "measuredAt": "2026-08-24T14:49:11.124Z",
       "weeklyDownloads": 112353408
     },
     {
@@ -12855,9 +13075,9 @@
       "shape": "esm-driver-epilogue",
       "compile": {
         "success": true,
-        "durationMs": 681,
+        "durationMs": 692,
         "errorCount": 0,
-        "binaryBytes": 8668,
+        "binaryBytes": 12158,
         "categories": {}
       },
       "validation": {
@@ -13039,40 +13259,53 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "op_two_strings.length (host-owned arguments)",
-            "wasmUs": 0.366671008890224,
-            "nodeUs": 0.03995375465886934,
-            "wasmStdUs": 0.0010579352106272677,
-            "nodeStdUs": 0.0007082913763680662,
-            "ratio": 0.10896349504094804,
-            "ratioStd": 0.0019313632679208784,
-            "iters": 605834,
+            "wasmUs": 0.3631368722129195,
+            "nodeUs": 0.034029738964330904,
+            "wasmStdUs": 0.00168316838017836,
+            "nodeStdUs": 0.0009006551051765408,
+            "ratio": 0.09359094957151215,
+            "ratioStd": 0.0026497298407372346,
+            "ratioSamples": [
+              0.09349201681926818,
+              0.09310604385029807,
+              0.09526147383714796,
+              0.10150632228931429,
+              0.09185391612863464,
+              0.09359094957151215,
+              0.09369435254309749,
+              0.09338408674714362,
+              0.09545892077261464
+            ],
+            "measurementOrder": "alternating-paired",
+            "ratioEstimator": "median-of-paired-ratios",
+            "iters": 594708,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.3664802190038851,
-              0.36626903904370045,
-              0.36973251253643624,
-              0.36762742269334653,
-              0.366671008890224,
-              0.36639338333602595,
-              0.3661223206356849,
-              0.36709889342624974,
-              0.3674885265600794
+              0.362806935504484,
+              0.36239749927695925,
+              0.3637708875616293,
+              0.36234891577042755,
+              0.36748802605648556,
+              0.3624655343462714,
+              0.36319946763790184,
+              0.3658763073642848,
+              0.3631368722129195
             ],
             "nodeSamplesUs": [
-              0.0394634091186661,
-              0.03995375465886934,
-              0.04031133775919223,
-              0.040440625649933365,
-              0.03985611735227772,
-              0.039199293865973775,
-              0.0409200242970864,
-              0.04010725215157976,
-              0.03838076601841321
+              0.033919552116332366,
+              0.03374139745891893,
+              0.03465335088816824,
+              0.03678070582537662,
+              0.03375521432366992,
+              0.03392349354641309,
+              0.034029738964330904,
+              0.03416702482563095,
+              0.03466465391418817
             ],
-            "binaryBytes": 2417,
-            "moduleImportCount": 20,
-            "functionImportCount": 15,
+            "binaryBytes": 4644,
+            "moduleImportCount": 25,
+            "functionImportCount": 20,
             "expectedChecksum": 7,
             "actualChecksum": 7,
             "testCompiledToWasm": false,
@@ -13086,41 +13319,54 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "op_two_strings.length (driver compiled to Wasm)",
-            "wasmUs": 0.0009474568125385238,
-            "nodeUs": 0.016637425795886732,
-            "wasmStdUs": 0.000006983214581776847,
-            "nodeStdUs": 0.00006211859299025764,
-            "ratio": 17.560088835405626,
-            "ratioStd": 0.1336901237499259,
-            "iters": 4494360,
+            "wasmUs": 0.0011529067693209088,
+            "nodeUs": 0.016266042174785764,
+            "wasmStdUs": 0.000007785021993007271,
+            "nodeStdUs": 0.00015109696782212496,
+            "ratio": 13.990096346089747,
+            "ratioStd": 0.1473051211421186,
+            "ratioSamples": [
+              14.20679603374225,
+              13.828896792543336,
+              14.00827052453555,
+              13.932343011378348,
+              13.965436196512242,
+              13.957305803670893,
+              13.990096346089747,
+              14.153607239459786,
+              14.327268177842576
+            ],
+            "measurementOrder": "alternating-paired",
+            "ratioEstimator": "median-of-paired-ratios",
+            "iters": 4725762,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0009474568125385238,
-              0.0009501317206453462,
-              0.0009485112452044282,
-              0.0009519239669270018,
-              0.0009472383164675847,
-              0.0009471737911514218,
-              0.0009469708701572165,
-              0.0009466253259644417,
-              0.0009698533272813092
+              0.0011542064539005307,
+              0.0011762357054798875,
+              0.0011638108309305793,
+              0.0011527571638182963,
+              0.0011525201650018492,
+              0.0011512291562716095,
+              0.0011530199785767322,
+              0.0011529067693209088,
+              0.0011526682892621285
             ],
             "nodeSamplesUs": [
-              0.016665183696899722,
-              0.016573202636193354,
-              0.01664224294448968,
-              0.016589712217089294,
-              0.016588225242304012,
-              0.016611192694844217,
-              0.016637425795886732,
-              0.016784452291316133,
-              0.01669273422689763
+              0.016397575671393768,
+              0.016266042174785764,
+              0.01630297695906006,
+              0.016060608215140167,
+              0.016095446829527085,
+              0.016068057384184882,
+              0.01613086058925482,
+              0.01631778959668261,
+              0.016514587700353536
             ],
-            "compileDurationMs": 467.44570399999793,
-            "moduleCompileDurationMs": 1.0099760000011884,
-            "instantiateDurationMs": 0.027631999997538514,
-            "firstBatchDurationMs": 0.04418299999815645,
+            "compileDurationMs": 454.6813350000011,
+            "moduleCompileDurationMs": 2.9291510000002745,
+            "instantiateDurationMs": 0.04005500000130269,
+            "firstBatchDurationMs": 0.06402299999899697,
             "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -13141,42 +13387,56 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "op_two_strings.length (runtime-generated arguments; driver compiled to Wasm)",
-            "wasmUs": 0.32419551536484115,
-            "nodeUs": 0.05134660001498489,
-            "wasmStdUs": 0.007666175282400192,
-            "nodeStdUs": 0.00017796223064610133,
-            "ratio": 0.15838158636217028,
-            "ratioStd": 0.003733228107184974,
-            "iters": 801180,
+            "wasmUs": 0.4179342296155816,
+            "nodeUs": 0.053865740122643266,
+            "wasmStdUs": 0.010260324719362458,
+            "nodeStdUs": 0.0010718078711167709,
+            "ratio": 0.12983959433041875,
+            "ratioStd": 0.004693158091354607,
+            "ratioSamples": [
+              0.12983959433041875,
+              0.13162746561651859,
+              0.13178329123284507,
+              0.12301680071747252,
+              0.12651781008058352,
+              0.1168409670447131,
+              0.12863200016971885,
+              0.13046816249231777,
+              0.1311366838707214
+            ],
+            "measurementOrder": "alternating-paired",
+            "ratioEstimator": "median-of-paired-ratios",
+            "iters": 224706,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.3487407711126035,
-              0.3241104308644817,
-              0.32419551536484115,
-              0.3251207893357315,
-              0.32379612821089254,
-              0.3239740370453613,
-              0.3246836753288877,
-              0.3250891884470333,
-              0.3241420554681811
+              0.4158085008856046,
+              0.4217249561649395,
+              0.4129833871814788,
+              0.42368501508637957,
+              0.42030673858285006,
+              0.4464139275319921,
+              0.4112385072049784,
+              0.4179342296155816,
+              0.41076027342391686
             ],
             "nodeSamplesUs": [
-              0.05110062657580562,
-              0.051152797124235566,
-              0.05134660001498489,
-              0.05136026985196239,
-              0.051180045682618795,
-              0.05124338475748437,
-              0.051527174916998465,
-              0.05166619361442197,
-              0.051466137447263485
+              0.05398840707412647,
+              0.05551058716722838,
+              0.054424309987263636,
+              0.05212037506786049,
+              0.05317628812761449,
+              0.05215943499506643,
+              0.05289843172858571,
+              0.054527110980587344,
+              0.053865740122643266
             ],
-            "compileDurationMs": 2236.582120999996,
-            "moduleCompileDurationMs": 0.9269199999980628,
-            "instantiateDurationMs": 0.1955069999967236,
-            "firstBatchDurationMs": 0.5922219999993104,
-            "binaryBytes": 45437,
+            "compileDurationMs": 2424.498606000001,
+            "moduleCompileDurationMs": 3.5625990000007732,
+            "instantiateDurationMs": 0.3541540000005625,
+            "moduleInitDurationMs": 0.06888299999991432,
+            "firstBatchDurationMs": 0.7648589999989781,
+            "binaryBytes": 51851,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 14,
@@ -13191,36 +13451,49 @@
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 0.366671008890224,
-        "nodeUs": 0.03995375465886934,
-        "wasmStdUs": 0.0010579352106272677,
-        "nodeStdUs": 0.0007082913763680662,
-        "ratio": 0.10896349504094804,
-        "ratioStd": 0.0019313632679208784,
-        "iters": 605834,
+        "wasmUs": 0.3631368722129195,
+        "nodeUs": 0.034029738964330904,
+        "wasmStdUs": 0.00168316838017836,
+        "nodeStdUs": 0.0009006551051765408,
+        "ratio": 0.09359094957151215,
+        "ratioStd": 0.0026497298407372346,
+        "ratioSamples": [
+          0.09349201681926818,
+          0.09310604385029807,
+          0.09526147383714796,
+          0.10150632228931429,
+          0.09185391612863464,
+          0.09359094957151215,
+          0.09369435254309749,
+          0.09338408674714362,
+          0.09545892077261464
+        ],
+        "measurementOrder": "alternating-paired",
+        "ratioEstimator": "median-of-paired-ratios",
+        "iters": 594708,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          0.3664802190038851,
-          0.36626903904370045,
-          0.36973251253643624,
-          0.36762742269334653,
-          0.366671008890224,
-          0.36639338333602595,
-          0.3661223206356849,
-          0.36709889342624974,
-          0.3674885265600794
+          0.362806935504484,
+          0.36239749927695925,
+          0.3637708875616293,
+          0.36234891577042755,
+          0.36748802605648556,
+          0.3624655343462714,
+          0.36319946763790184,
+          0.3658763073642848,
+          0.3631368722129195
         ],
         "nodeSamplesUs": [
-          0.0394634091186661,
-          0.03995375465886934,
-          0.04031133775919223,
-          0.040440625649933365,
-          0.03985611735227772,
-          0.039199293865973775,
-          0.0409200242970864,
-          0.04010725215157976,
-          0.03838076601841321
+          0.033919552116332366,
+          0.03374139745891893,
+          0.03465335088816824,
+          0.03678070582537662,
+          0.03375521432366992,
+          0.03392349354641309,
+          0.034029738964330904,
+          0.03416702482563095,
+          0.03466465391418817
         ]
       },
       "knownBugs": [
@@ -13229,7 +13502,7 @@
           "summary": "for...in over an array of heterogeneously-shaped object literals derefs null"
         }
       ],
-      "measuredAt": "2026-08-24T09:30:09.842Z",
+      "measuredAt": "2026-08-24T14:44:38.638Z",
       "weeklyDownloads": 104930549
     },
     {
@@ -13240,7 +13513,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180165,
+        "durationMs": 180163,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -13445,7 +13718,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T09:33:07.596Z",
+      "measuredAt": "2026-08-24T14:48:16.561Z",
       "weeklyDownloads": 89317829
     },
     {
@@ -13456,7 +13729,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 1432,
+        "durationMs": 915,
         "errorCount": 64,
         "binaryBytes": 0,
         "categories": {
@@ -13640,7 +13913,7 @@
           "summary": "TS 'evolving array type' inference unimplemented — blocks compile entirely"
         }
       ],
-      "measuredAt": "2026-08-24T09:29:58.101Z",
+      "measuredAt": "2026-08-24T14:44:29.979Z",
       "weeklyDownloads": 60496071
     },
     {
@@ -13651,7 +13924,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 120202,
+        "durationMs": 120203,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -13672,9 +13945,9 @@
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 15,
+        "passed": 16,
         "total": 16,
-        "passRatePct": 93.8,
+        "passRatePct": 100,
         "admitted": 16,
         "executed": 16,
         "upstreamTestsSeen": 1357,
@@ -14105,10 +14378,9 @@
           },
           {
             "path": "test/formatSize.unittest.js",
-            "status": "fail",
-            "passed": 12,
+            "status": "pass",
+            "passed": 13,
             "total": 13,
-            "error": "assertion 1 toBe: string:0 bytes != string:unknown size",
             "tests": [
               {
                 "name": "should handle zero size",
@@ -14160,7 +14432,7 @@
               },
               {
                 "name": "should handle undefined/NaN",
-                "status": "failed"
+                "status": "passed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/webpack/webpack/6a24bd65b72c43207c36ce61b54e1f5833486906/test/formatSize.unittest.js"
@@ -14265,18 +14537,17 @@
           }
         ],
         "summary": {
-          "pass": 15,
-          "fail": 1,
+          "pass": 16,
+          "fail": 0,
           "compile_error": 0,
           "skip": 95,
           "total": 111
         }
       },
       "correctness": {
-        "status": "divergent",
-        "passed": 15,
-        "total": 16,
-        "reason": "1 of 16 operations diverged from native node"
+        "status": "verified",
+        "passed": 16,
+        "total": 16
       },
       "perf": {
         "sampleOp": "typeof webpack === 'function'",
@@ -14311,7 +14582,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T09:32:00.200Z",
+      "measuredAt": "2026-08-24T14:46:30.312Z",
       "weeklyDownloads": 55617769
     },
     {
@@ -14322,11 +14593,11 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 9901,
+        "durationMs": 9980,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 428846,
+        "binaryBytes": 423345,
         "categories": {}
       },
       "validation": {
@@ -14641,7 +14912,7 @@
             "status": "fail",
             "passed": 0,
             "total": 5,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __anonClass__Hono_6___priv_addRoute (wasm://wasm/00378bea:wasm-function[264]:0x2474e)\n    at __closure_199 (wasm://wasm/00378bea:wasm-function[794]:0x679e7)\n    at __closure_198 (wasm://wasm/00378bea:wasm-function[795]:0x67ad1)\n    at __call_fn_method_2 (wasm://wasm/00378bea:wasm-function[1776]:0xc89a6)\n    at __\u0000js2_call_fn_method_argc_2 (wasm://wasm/00378bea:wasm-function[1777]:0xca50a)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1955:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13285:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17421:20)\n    at __closure_526 (wasm://wasm/00378bea:wasm-function[1333]:0xb5d80)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __anonClass__Hono_6___priv_addRoute (wasm://wasm/0037149a:wasm-function[264]:0x2474e)\n    at __closure_199 (wasm://wasm/0037149a:wasm-function[794]:0x66c6a)\n    at __closure_198 (wasm://wasm/0037149a:wasm-function[795]:0x66d54)\n    at __call_fn_method_2 (wasm://wasm/0037149a:wasm-function[1776]:0xc6bd2)\n    at __\u0000js2_call_fn_method_argc_2 (wasm://wasm/0037149a:wasm-function[1777]:0xc8736)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1955:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13285:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17421:20)\n    at __closure_526 (wasm://wasm/0037149a:wasm-function[1333]:0xb3fac)",
             "tests": [
               {
                 "name": "Should return the correct search result",
@@ -16377,41 +16648,54 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "register route + path.length",
-            "wasmUs": 149.65638881184063,
-            "nodeUs": 0.9544567730091771,
-            "wasmStdUs": 10.394428587111795,
-            "nodeStdUs": 5.07076514472711,
-            "ratio": 0.006377654710145336,
-            "ratioStd": 0.03335034747068629,
-            "iters": 2163,
+            "wasmUs": 181.63290384614925,
+            "nodeUs": 1.42872079771889,
+            "wasmStdUs": 14.48107951581155,
+            "nodeStdUs": 0.44072749560724295,
+            "ratio": 0.0076615334750795,
+            "ratioStd": 0.0030029579180374092,
+            "ratioSamples": [
+              0.0076615334750795,
+              0.006989919809431952,
+              0.006983410357456243,
+              0.0075685398396062335,
+              0.01699590296807935,
+              0.00841344126489713,
+              0.007987481212903687,
+              0.007031075036022834,
+              0.007795735018731099
+            ],
+            "measurementOrder": "alternating-paired",
+            "ratioEstimator": "median-of-paired-ratios",
+            "iters": 1404,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              164.02168932038603,
-              134.35700647248763,
-              149.65638881184063,
-              151.60990568653506,
-              138.66911049469056,
-              151.69881645861759,
-              132.86406426259464,
-              156.91911974109445,
-              136.52289089227077
+              200.57344230769075,
+              170.11228418801886,
+              201.76041666666237,
+              181.63290384614925,
+              163.37551424500614,
+              166.87777777777208,
+              180.4763283475859,
+              203.22734259258516,
+              183.2695434472888
             ],
             "nodeSamplesUs": [
-              0.9612168284820697,
-              0.9544567730091771,
-              0.9466638927358937,
-              17.182103097552915,
-              0.9447152103667487,
-              1.996706888586424,
-              0.9498173832662802,
-              0.9544845122561527,
-              0.9360933888067848
+              1.5367001424522995,
+              1.189071225073551,
+              1.4089757834746572,
+              1.374695868942949,
+              2.77671438746819,
+              1.4040163817498408,
+              1.4415512820501795,
+              1.4289066951399856,
+              1.42872079771889
             ],
-            "compileDurationMs": 12484.448462,
-            "moduleCompileDurationMs": 1.3579660000104923,
-            "instantiateDurationMs": 14.710891999973683,
-            "binaryBytes": 212702,
+            "compileDurationMs": 12666.004148999986,
+            "moduleCompileDurationMs": 1.237332000018796,
+            "instantiateDurationMs": 14.7025319999957,
+            "binaryBytes": 208951,
             "moduleImportCount": 555,
             "functionImportCount": 114,
             "expectedChecksum": 9,
@@ -16429,7 +16713,7 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 4094.5595160000084,
+            "compileDurationMs": 4358.043653000001,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -16439,44 +16723,57 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 2864.284798000008,
+            "compileDurationMs": 3050.376476000005,
             "optimizationLevel": 4
           }
         },
-        "wasmUs": 149.65638881184063,
-        "nodeUs": 0.9544567730091771,
-        "wasmStdUs": 10.394428587111795,
-        "nodeStdUs": 5.07076514472711,
-        "ratio": 0.006377654710145336,
-        "ratioStd": 0.03335034747068629,
-        "iters": 2163,
+        "wasmUs": 181.63290384614925,
+        "nodeUs": 1.42872079771889,
+        "wasmStdUs": 14.48107951581155,
+        "nodeStdUs": 0.44072749560724295,
+        "ratio": 0.0076615334750795,
+        "ratioStd": 0.0030029579180374092,
+        "ratioSamples": [
+          0.0076615334750795,
+          0.006989919809431952,
+          0.006983410357456243,
+          0.0075685398396062335,
+          0.01699590296807935,
+          0.00841344126489713,
+          0.007987481212903687,
+          0.007031075036022834,
+          0.007795735018731099
+        ],
+        "measurementOrder": "alternating-paired",
+        "ratioEstimator": "median-of-paired-ratios",
+        "iters": 1404,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          164.02168932038603,
-          134.35700647248763,
-          149.65638881184063,
-          151.60990568653506,
-          138.66911049469056,
-          151.69881645861759,
-          132.86406426259464,
-          156.91911974109445,
-          136.52289089227077
+          200.57344230769075,
+          170.11228418801886,
+          201.76041666666237,
+          181.63290384614925,
+          163.37551424500614,
+          166.87777777777208,
+          180.4763283475859,
+          203.22734259258516,
+          183.2695434472888
         ],
         "nodeSamplesUs": [
-          0.9612168284820697,
-          0.9544567730091771,
-          0.9466638927358937,
-          17.182103097552915,
-          0.9447152103667487,
-          1.996706888586424,
-          0.9498173832662802,
-          0.9544845122561527,
-          0.9360933888067848
+          1.5367001424522995,
+          1.189071225073551,
+          1.4089757834746572,
+          1.374695868942949,
+          2.77671438746819,
+          1.4040163817498408,
+          1.4415512820501795,
+          1.4289066951399856,
+          1.42872079771889
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T09:33:13.961Z",
+      "measuredAt": "2026-08-24T14:47:41.658Z",
       "weeklyDownloads": 53123258
     },
     {
@@ -16487,11 +16784,11 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 5943,
+        "durationMs": 6238,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 14242,
+        "binaryBytes": 14251,
         "categories": {}
       },
       "validation": {
@@ -17915,7 +18212,7 @@
             "status": "fail",
             "passed": 1,
             "total": 7,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_520 (wasm://wasm/00258e6a:wasm-function[954]:0x73973)\n    at __closure_388 (wasm://wasm/00258e6a:wasm-function[793]:0x53bdb)\n    at __call_fn_method_1 (wasm://wasm/00258e6a:wasm-function[1428]:0x82f26)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/00258e6a:wasm-function[1429]:0x83708)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1955:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13285:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17421:20)\n    at runUpstreamTest (wasm://wasm/00258e6a:wasm-function[257]:0x2a7a8)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime.ts:17763:36)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at __closure_520 (wasm://wasm/00259286:wasm-function[955]:0x739d7)\n    at __closure_388 (wasm://wasm/00259286:wasm-function[794]:0x53c8b)\n    at __call_fn_method_1 (wasm://wasm/00259286:wasm-function[1429]:0x82fe6)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/00259286:wasm-function[1430]:0x837c8)\n    at Proxy.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1955:15)\n    at Proxy.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13285:31)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17421:20)\n    at runUpstreamTest (wasm://wasm/00259286:wasm-function[257]:0x2a8a0)\n    at Object.invoke (/home/runner/work/js2/js2/src/runtime.ts:17763:36)",
             "tests": [
               {
                 "name": "returns the result if passed.",
@@ -18182,7 +18479,7 @@
             "status": "fail",
             "passed": 0,
             "total": 6,
-            "error": "CompileError: WebAssembly.compile(): Compiling function #947:\"__call_fn_0\" failed: not enough arguments on the stack for call_ref (need 2, got 1) @+319373",
+            "error": "CompileError: WebAssembly.compile(): Compiling function #947:\"__call_fn_0\" failed: not enough arguments on the stack for call_ref (need 2, got 1) @+319383",
             "tests": [
               {
                 "name": "runs every function in the queue.",
@@ -19354,7 +19651,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T09:33:15.351Z",
+      "measuredAt": "2026-08-24T14:47:52.956Z",
       "weeklyDownloads": 46631732
     },
     {
@@ -19365,11 +19662,11 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 28570,
+        "durationMs": 34714,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 12,
-        "binaryBytes": 1598384,
+        "binaryBytes": 2351512,
         "categories": {
           "compiler-diagnostic": {
             "count": 12,
@@ -19379,85 +19676,85 @@
         "errors": [
           {
             "message": "IR path: could not resolve types for keysIn: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
+            "line": 643,
+            "column": 16,
             "severity": "warning",
             "file": "lodash.default.js"
           },
           {
             "message": "IR path: could not resolve types for castSlice: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
+            "line": 643,
+            "column": 16,
             "severity": "warning",
             "file": "lodash.default.js"
           },
           {
             "message": "IR path: could not resolve types for cacheHas: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
+            "line": 643,
+            "column": 16,
             "severity": "warning",
             "file": "lodash.default.js"
           },
           {
             "message": "IR path: could not resolve types for conformsTo: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
+            "line": 643,
+            "column": 16,
             "severity": "warning",
             "file": "lodash.default.js"
           },
           {
             "message": "IR path: could not resolve types for functions: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
+            "line": 643,
+            "column": 16,
             "severity": "warning",
             "file": "lodash.default.js"
           },
           {
             "message": "IR path: could not resolve types for functionsIn: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
+            "line": 643,
+            "column": 16,
             "severity": "warning",
             "file": "lodash.default.js"
           },
           {
             "message": "IR path: could not resolve types for values: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
+            "line": 643,
+            "column": 16,
             "severity": "warning",
             "file": "lodash.default.js"
           },
           {
             "message": "IR path: could not resolve types for initial: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
+            "line": 643,
+            "column": 16,
             "severity": "warning",
             "file": "lodash.default.js"
           },
           {
             "message": "IR path: could not resolve types for omitBy: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
+            "line": 643,
+            "column": 16,
             "severity": "warning",
             "file": "lodash.default.js"
           },
           {
             "message": "IR path: could not resolve types for once: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
+            "line": 643,
+            "column": 16,
             "severity": "warning",
             "file": "lodash.default.js"
           },
           {
             "message": "IR path: could not resolve types for tail: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
+            "line": 643,
+            "column": 16,
             "severity": "warning",
             "file": "lodash.default.js"
           },
           {
             "message": "IR path: could not resolve types for valuesIn: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
+            "line": 643,
+            "column": 16,
             "severity": "warning",
             "file": "lodash.default.js"
           }
@@ -19780,11 +20077,11 @@
             "optimizationRequested": true,
             "optimizationVerified": true,
             "phase": "module-init",
-            "compileDurationMs": 50418.569731999996,
-            "moduleCompileDurationMs": 3.5885419999976875,
-            "binaryBytes": 790296,
-            "moduleImportCount": 1218,
-            "functionImportCount": 95,
+            "compileDurationMs": 67179.52162799999,
+            "moduleCompileDurationMs": 6.705868000004557,
+            "binaryBytes": 1754529,
+            "moduleImportCount": 1405,
+            "functionImportCount": 103,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -19794,7 +20091,7 @@
             "diagnostic": "Codegen error: String.prototype.match(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 44801.36278800001,
+            "compileDurationMs": 36463.36890200002,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -19804,13 +20101,13 @@
             "diagnostic": "Codegen error: String.prototype.match(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 43295.778676000016,
+            "compileDurationMs": 35102.867505,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T09:32:31.867Z",
+      "measuredAt": "2026-08-24T14:48:03.227Z",
       "weeklyDownloads": 42294984
     },
     {
@@ -19821,11 +20118,11 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 6670,
+        "durationMs": 6339,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 70969,
+        "binaryBytes": 69422,
         "categories": {}
       },
       "validation": {
@@ -19901,7 +20198,7 @@
             "status": "fail",
             "passed": 0,
             "total": 7,
-            "error": "RuntimeError: illegal cast\nRuntimeError: illegal cast\n    at dispatch (wasm://wasm/0018a6d6:wasm-function[377]:0x27ab4)\n    at createStore (wasm://wasm/0018a6d6:wasm-function[128]:0xf5fc)\n    at __closure_271 (wasm://wasm/0018a6d6:wasm-function[670]:0x4a86f)\n    at __call_fn_method_0 (wasm://wasm/0018a6d6:wasm-function[924]:0x55ba4)\n    at __\u0000js2_call_fn_method_argc_0 (wasm://wasm/0018a6d6:wasm-function[925]:0x5615f)\n    at Array.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1955:15)\n    at Array.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13034:38)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)",
+            "error": "RuntimeError: illegal cast\nRuntimeError: illegal cast\n    at dispatch (wasm://wasm/00187e96:wasm-function[377]:0x27ab4)\n    at createStore (wasm://wasm/00187e96:wasm-function[128]:0xf5fc)\n    at __closure_271 (wasm://wasm/00187e96:wasm-function[670]:0x49e5f)\n    at __call_fn_method_0 (wasm://wasm/00187e96:wasm-function[924]:0x55194)\n    at __\u0000js2_call_fn_method_argc_0 (wasm://wasm/00187e96:wasm-function[925]:0x5574f)\n    at Array.wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1955:15)\n    at Array.wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:13034:38)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/fixed-extern-method-call.ts:19:55)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17409:20)",
             "tests": [
               {
                 "name": "wraps the action creators with the dispatch function",
@@ -19939,7 +20236,7 @@
             "status": "fail",
             "passed": 7,
             "total": 16,
-            "error": "RuntimeError: illegal cast\nRuntimeError: illegal cast\n    at __call_fn_2 (wasm://wasm/002356ca:wasm-function[1055]:0x7d776)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at invoke (/home/runner/work/js2/js2/src/runtime/host-call-abi.ts:42:28)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/host-call-abi.ts:53:62)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17433:20)\n    at __closure_126 (wasm://wasm/002356ca:wasm-function[420]:0x3373d)\n    at combineReducers (wasm://wasm/002356ca:wasm-function[132]:0x107ff)\n    at __closure_334 (wasm://wasm/002356ca:wasm-function[733]:0x60f82)\n    at __closure_276 (wasm://wasm/002356ca:wasm-function[647]:0x4e42a)",
+            "error": "RuntimeError: illegal cast\nRuntimeError: illegal cast\n    at __call_fn_2 (wasm://wasm/002329a2:wasm-function[1055]:0x7cc2c)\n    at wasmClosureDynamicDispatch (/home/runner/work/js2/js2/src/runtime.ts:1968:23)\n    at wasmClosureDynamicBridge (/home/runner/work/js2/js2/src/runtime.ts:1974:13)\n    at invoke (/home/runner/work/js2/js2/src/runtime/host-call-abi.ts:42:28)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime/host-call-abi.ts:53:62)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:17433:20)\n    at __closure_126 (wasm://wasm/002329a2:wasm-function[420]:0x3373d)\n    at combineReducers (wasm://wasm/002329a2:wasm-function[132]:0x107ff)\n    at __closure_334 (wasm://wasm/002329a2:wasm-function[733]:0x60438)\n    at __closure_276 (wasm://wasm/002329a2:wasm-function[647]:0x4d8e0)",
             "tests": [
               {
                 "name": "returns a composite reducer that maps the state keys to given reducers",
@@ -20306,40 +20603,53 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "dispatch(action) + getState().count",
-            "wasmUs": 103.64253535757253,
-            "nodeUs": 0.22944986016964528,
-            "wasmStdUs": 11.587359200722357,
-            "nodeStdUs": 5.3407065388719435,
-            "ratio": 0.0022138580398292115,
-            "ratioStd": 0.04688767841474575,
-            "iters": 2503,
+            "wasmUs": 112.14434846574035,
+            "nodeUs": 0.22967423286993438,
+            "wasmStdUs": 9.218858986080864,
+            "nodeStdUs": 3.432516170167317,
+            "ratio": 0.0020617423191269233,
+            "ratioStd": 0.027266668682960918,
+            "ratioSamples": [
+              0.0017254967378931923,
+              0.0020918506189135,
+              0.002022448961610223,
+              0.08878768382396324,
+              0.002112766752036875,
+              0.0019925790130617847,
+              0.0020617423191269233,
+              0.0022630207974879617,
+              0.0019441822792802125
+            ],
+            "measurementOrder": "alternating-paired",
+            "ratioEstimator": "median-of-paired-ratios",
+            "iters": 2379,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              114.86839192968479,
-              97.09659648421962,
-              95.55012904514373,
-              134.51563923291582,
-              99.14326807830533,
-              110.48053895325204,
-              103.64253535757253,
-              112.43375789053331,
-              100.0634083100277
+              135.7665952080695,
+              107.93662967633345,
+              112.14434846574035,
+              125.60994661621937,
+              110.74907776376574,
+              115.1804237074401,
+              110.34815342581057,
+              104.21461832703054,
+              118.13410466582683
             ],
             "nodeSamplesUs": [
-              13.516367159407245,
-              0.22794966041019293,
-              0.23063843387950775,
-              0.22944986016964528,
-              0.23002996404371193,
-              0.2272453056329313,
-              0.2268250099849514,
-              12.612723531760535,
-              0.22729724330786294
+              0.23426481714638944,
+              0.22578730559187538,
+              0.22680622110499157,
+              11.152616225305787,
+              0.23398696931803065,
+              0.22950609499500918,
+              0.22750945775550424,
+              0.23583984867634017,
+              0.22967423286993438
             ],
-            "compileDurationMs": 2563.7415239999973,
-            "moduleCompileDurationMs": 0.7067019999958575,
-            "instantiateDurationMs": 12.883182999998098,
+            "compileDurationMs": 2555.6714470000006,
+            "moduleCompileDurationMs": 0.5845770000014454,
+            "instantiateDurationMs": 12.637612999998964,
             "binaryBytes": 42907,
             "moduleImportCount": 168,
             "functionImportCount": 58,
@@ -20358,9 +20668,9 @@
             "diagnostic": "standalone binary retained 3 host import(s)",
             "optimizationRequested": true,
             "optimizationVerified": true,
-            "compileDurationMs": 8940.19704900001,
-            "moduleCompileDurationMs": 6.466508999990765,
-            "binaryBytes": 237270,
+            "compileDurationMs": 8683.007069999992,
+            "moduleCompileDurationMs": 6.145229999994626,
+            "binaryBytes": 237352,
             "moduleImportCount": 3,
             "functionImportCount": 3,
             "optimizationLevel": 4
@@ -20372,48 +20682,61 @@
             "diagnostic": "standalone binary retained 3 host import(s)",
             "optimizationRequested": true,
             "optimizationVerified": true,
-            "compileDurationMs": 8701.660036999994,
-            "moduleCompileDurationMs": 5.156140000006417,
-            "binaryBytes": 237378,
+            "compileDurationMs": 8305.607776999997,
+            "moduleCompileDurationMs": 2.889871999999741,
+            "binaryBytes": 237460,
             "moduleImportCount": 3,
             "functionImportCount": 3,
             "optimizationLevel": 4
           }
         },
-        "wasmUs": 103.64253535757253,
-        "nodeUs": 0.22944986016964528,
-        "wasmStdUs": 11.587359200722357,
-        "nodeStdUs": 5.3407065388719435,
-        "ratio": 0.0022138580398292115,
-        "ratioStd": 0.04688767841474575,
-        "iters": 2503,
+        "wasmUs": 112.14434846574035,
+        "nodeUs": 0.22967423286993438,
+        "wasmStdUs": 9.218858986080864,
+        "nodeStdUs": 3.432516170167317,
+        "ratio": 0.0020617423191269233,
+        "ratioStd": 0.027266668682960918,
+        "ratioSamples": [
+          0.0017254967378931923,
+          0.0020918506189135,
+          0.002022448961610223,
+          0.08878768382396324,
+          0.002112766752036875,
+          0.0019925790130617847,
+          0.0020617423191269233,
+          0.0022630207974879617,
+          0.0019441822792802125
+        ],
+        "measurementOrder": "alternating-paired",
+        "ratioEstimator": "median-of-paired-ratios",
+        "iters": 2379,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          114.86839192968479,
-          97.09659648421962,
-          95.55012904514373,
-          134.51563923291582,
-          99.14326807830533,
-          110.48053895325204,
-          103.64253535757253,
-          112.43375789053331,
-          100.0634083100277
+          135.7665952080695,
+          107.93662967633345,
+          112.14434846574035,
+          125.60994661621937,
+          110.74907776376574,
+          115.1804237074401,
+          110.34815342581057,
+          104.21461832703054,
+          118.13410466582683
         ],
         "nodeSamplesUs": [
-          13.516367159407245,
-          0.22794966041019293,
-          0.23063843387950775,
-          0.22944986016964528,
-          0.23002996404371193,
-          0.2272453056329313,
-          0.2268250099849514,
-          12.612723531760535,
-          0.22729724330786294
+          0.23426481714638944,
+          0.22578730559187538,
+          0.22680622110499157,
+          11.152616225305787,
+          0.23398696931803065,
+          0.22950609499500918,
+          0.22750945775550424,
+          0.23583984867634017,
+          0.22967423286993438
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T09:31:22.487Z",
+      "measuredAt": "2026-08-24T14:45:53.412Z",
       "weeklyDownloads": 40344956
     },
     {
@@ -20424,11 +20747,11 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 22818,
+        "durationMs": 24194,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 524315,
+        "binaryBytes": 524326,
         "categories": {}
       },
       "validation": {
@@ -21184,7 +21507,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at prepareConfig (wasm://wasm/0035697a:wasm-function[393]:0x4d116)\n    at createLocalOrUTC (wasm://wasm/0035697a:wasm-function[395]:0x4e4e2)\n    at createLocal (wasm://wasm/0035697a:wasm-function[396]:0x4e57e)\n    at __fn_tramp_createLocal_104 (wasm://wasm/0035697a:wasm-function[802]:0x6ac7b)\n    at __call_fn_method_4 (wasm://wasm/0035697a:wasm-function[2095]:0xc3d27)\n    at __apply_closure (wasm://wasm/0035697a:wasm-function[529]:0x63266)\n    at hooks (wasm://wasm/0035697a:wasm-function[263]:0x39287)\n    at __fn_tramp_hooks_55 (wasm://wasm/0035697a:wasm-function[747]:0x69201)\n    at __closure_624 (wasm://wasm/0035697a:wasm-function[1568]:0xb3842)\n    at __closure_507 (wasm://wasm/0035697a:wasm-function[1423]:0x979e0)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at prepareConfig (wasm://wasm/00356a76:wasm-function[393]:0x4d11b)\n    at createLocalOrUTC (wasm://wasm/00356a76:wasm-function[395]:0x4e4e7)\n    at createLocal (wasm://wasm/00356a76:wasm-function[396]:0x4e583)\n    at __fn_tramp_createLocal_104 (wasm://wasm/00356a76:wasm-function[802]:0x6ac80)\n    at __call_fn_method_4 (wasm://wasm/00356a76:wasm-function[2095]:0xc3d32)\n    at __apply_closure (wasm://wasm/00356a76:wasm-function[529]:0x6326b)\n    at hooks (wasm://wasm/00356a76:wasm-function[263]:0x3928c)\n    at __fn_tramp_hooks_55 (wasm://wasm/00356a76:wasm-function[747]:0x69206)\n    at __closure_624 (wasm://wasm/00356a76:wasm-function[1568]:0xb3847)\n    at __closure_507 (wasm://wasm/00356a76:wasm-function[1423]:0x979e5)",
             "tests": [
               {
                 "name": "YYYYDDD should not parse DDD=000",
@@ -21290,7 +21613,7 @@
             "status": "fail",
             "passed": 1,
             "total": 2,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at prepareConfig (wasm://wasm/0035a956:wasm-function[393]:0x4d525)\n    at createLocalOrUTC (wasm://wasm/0035a956:wasm-function[395]:0x4e847)\n    at createLocal (wasm://wasm/0035a956:wasm-function[396]:0x4e8e3)\n    at __fn_tramp_createLocal_104 (wasm://wasm/0035a956:wasm-function[802]:0x6afe0)\n    at __call_fn_method_4 (wasm://wasm/0035a956:wasm-function[2110]:0xc4c25)\n    at __apply_closure (wasm://wasm/0035a956:wasm-function[529]:0x635cb)\n    at hooks (wasm://wasm/0035a956:wasm-function[263]:0x395ec)\n    at __fn_tramp_hooks_55 (wasm://wasm/0035a956:wasm-function[747]:0x69566)\n    at __closure_634 (wasm://wasm/0035a956:wasm-function[1581]:0xb40d2)\n    at __closure_517 (wasm://wasm/0035a956:wasm-function[1433]:0x984d9)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at prepareConfig (wasm://wasm/0035aa52:wasm-function[393]:0x4d52a)\n    at createLocalOrUTC (wasm://wasm/0035aa52:wasm-function[395]:0x4e84c)\n    at createLocal (wasm://wasm/0035aa52:wasm-function[396]:0x4e8e8)\n    at __fn_tramp_createLocal_104 (wasm://wasm/0035aa52:wasm-function[802]:0x6afe5)\n    at __call_fn_method_4 (wasm://wasm/0035aa52:wasm-function[2110]:0xc4c30)\n    at __apply_closure (wasm://wasm/0035aa52:wasm-function[529]:0x635d0)\n    at hooks (wasm://wasm/0035aa52:wasm-function[263]:0x395f1)\n    at __fn_tramp_hooks_55 (wasm://wasm/0035aa52:wasm-function[747]:0x6956b)\n    at __closure_634 (wasm://wasm/0035aa52:wasm-function[1581]:0xb40d7)\n    at __closure_517 (wasm://wasm/0035aa52:wasm-function[1433]:0x984de)",
             "tests": [
               {
                 "name": "is moment object",
@@ -21358,7 +21681,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at prepareConfig (wasm://wasm/0034b5d6:wasm-function[397]:0x4d3ea)\n    at createLocalOrUTC (wasm://wasm/0034b5d6:wasm-function[399]:0x4e70c)\n    at createLocal (wasm://wasm/0034b5d6:wasm-function[400]:0x4e7a8)\n    at __fn_tramp_createLocal_104 (wasm://wasm/0034b5d6:wasm-function[806]:0x6aea5)\n    at __call_fn_method_4 (wasm://wasm/0034b5d6:wasm-function[2101]:0xc0fcd)\n    at __apply_closure (wasm://wasm/0034b5d6:wasm-function[533]:0x63490)\n    at hooks (wasm://wasm/0034b5d6:wasm-function[267]:0x394b1)\n    at __fn_tramp_hooks_55 (wasm://wasm/0034b5d6:wasm-function[751]:0x6942b)\n    at __closure_626 (wasm://wasm/0034b5d6:wasm-function[1573]:0xb16c2)\n    at __closure_509 (wasm://wasm/0034b5d6:wasm-function[1428]:0x95cbc)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at prepareConfig (wasm://wasm/0034b6d2:wasm-function[397]:0x4d3ef)\n    at createLocalOrUTC (wasm://wasm/0034b6d2:wasm-function[399]:0x4e711)\n    at createLocal (wasm://wasm/0034b6d2:wasm-function[400]:0x4e7ad)\n    at __fn_tramp_createLocal_104 (wasm://wasm/0034b6d2:wasm-function[806]:0x6aeaa)\n    at __call_fn_method_4 (wasm://wasm/0034b6d2:wasm-function[2101]:0xc0fd8)\n    at __apply_closure (wasm://wasm/0034b6d2:wasm-function[533]:0x63495)\n    at hooks (wasm://wasm/0034b6d2:wasm-function[267]:0x394b6)\n    at __fn_tramp_hooks_55 (wasm://wasm/0034b6d2:wasm-function[751]:0x69430)\n    at __closure_626 (wasm://wasm/0034b6d2:wasm-function[1573]:0xb16c7)\n    at __closure_509 (wasm://wasm/0034b6d2:wasm-function[1428]:0x95cc1)",
             "tests": [
               {
                 "name": "min",
@@ -21376,7 +21699,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at prepareConfig (wasm://wasm/00348926:wasm-function[395]:0x4d36e)\n    at createLocalOrUTC (wasm://wasm/00348926:wasm-function[397]:0x4e690)\n    at createLocal (wasm://wasm/00348926:wasm-function[398]:0x4e72c)\n    at __fn_tramp_createLocal_104 (wasm://wasm/00348926:wasm-function[804]:0x6ae29)\n    at __call_fn_method_4 (wasm://wasm/00348926:wasm-function[2099]:0xc04cd)\n    at __apply_closure (wasm://wasm/00348926:wasm-function[531]:0x63414)\n    at hooks (wasm://wasm/00348926:wasm-function[265]:0x39435)\n    at __fn_tramp_hooks_55 (wasm://wasm/00348926:wasm-function[749]:0x693af)\n    at __closure_626 (wasm://wasm/00348926:wasm-function[1571]:0xb0efb)\n    at __closure_509 (wasm://wasm/00348926:wasm-function[1426]:0x95518)",
+            "error": "RuntimeError: dereferencing a null pointer\nRuntimeError: dereferencing a null pointer\n    at prepareConfig (wasm://wasm/00348a22:wasm-function[395]:0x4d373)\n    at createLocalOrUTC (wasm://wasm/00348a22:wasm-function[397]:0x4e695)\n    at createLocal (wasm://wasm/00348a22:wasm-function[398]:0x4e731)\n    at __fn_tramp_createLocal_104 (wasm://wasm/00348a22:wasm-function[804]:0x6ae2e)\n    at __call_fn_method_4 (wasm://wasm/00348a22:wasm-function[2099]:0xc04d8)\n    at __apply_closure (wasm://wasm/00348a22:wasm-function[531]:0x63419)\n    at hooks (wasm://wasm/00348a22:wasm-function[265]:0x3943a)\n    at __fn_tramp_hooks_55 (wasm://wasm/00348a22:wasm-function[749]:0x693b4)\n    at __closure_626 (wasm://wasm/00348a22:wasm-function[1571]:0xb0f00)\n    at __closure_509 (wasm://wasm/00348a22:wasm-function[1426]:0x9551d)",
             "tests": [
               {
                 "name": "manipulation methods",
@@ -21508,7 +21831,7 @@
             "optimizationRequested": true,
             "optimizationVerified": true,
             "phase": "checksum",
-            "compileDurationMs": 38694.25440100001,
+            "compileDurationMs": 33536.304319999996,
             "binaryBytes": 285675,
             "moduleImportCount": 1296,
             "functionImportCount": 99,
@@ -21521,7 +21844,7 @@
             "diagnostic": "Codegen error: standalone RegExp engine does not support replace with a function (or non-string) replacer (#1913 follow-up) (#1539 Phase 2a). Use a supported pattern/flag set, or recompile with a JS host target.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 32956.642774999986,
+            "compileDurationMs": 26204.07625699998,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -21531,13 +21854,13 @@
             "diagnostic": "Codegen error: standalone RegExp engine does not support replace with a function (or non-string) replacer (#1913 follow-up) (#1539 Phase 2a). Use a supported pattern/flag set, or recompile with a JS host target.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 29077.30450499995,
+            "compileDurationMs": 25105.87404699996,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T09:34:47.510Z",
+      "measuredAt": "2026-08-24T14:49:02.687Z",
       "weeklyDownloads": 34294671
     },
     {
@@ -21548,7 +21871,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 180197,
+        "durationMs": 180162,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -22878,7 +23201,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T09:33:57.659Z",
+      "measuredAt": "2026-08-24T14:47:27.596Z",
       "weeklyDownloads": 12487515
     },
     {
@@ -22889,11 +23212,11 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 11881,
+        "durationMs": 11880,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 415889,
+        "binaryBytes": 406204,
         "categories": {}
       },
       "validation": {
@@ -23211,9 +23534,9 @@
             "optimizationRequested": true,
             "optimizationVerified": true,
             "phase": "module-init",
-            "compileDurationMs": 14154.556852999995,
-            "moduleCompileDurationMs": 7.058457000006456,
-            "binaryBytes": 244554,
+            "compileDurationMs": 13724.032317999998,
+            "moduleCompileDurationMs": 1.4777719999983674,
+            "binaryBytes": 241577,
             "moduleImportCount": 946,
             "functionImportCount": 121,
             "optimizationLevel": 4
@@ -23225,7 +23548,7 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 6539.683453999998,
+            "compileDurationMs": 6580.444411000004,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -23235,13 +23558,13 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 5044.981360999998,
+            "compileDurationMs": 4969.551822000001,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T09:30:56.200Z",
+      "measuredAt": "2026-08-24T14:45:16.894Z",
       "weeklyDownloads": 11029759
     },
     {
@@ -23252,7 +23575,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120118,
+        "durationMs": 120172,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -23273,9 +23596,9 @@
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 105,
+        "passed": 108,
         "total": 108,
-        "passRatePct": 97.2,
+        "passRatePct": 100,
         "admitted": 108,
         "executed": 108,
         "upstreamTestsSeen": 1574,
@@ -25192,10 +25515,9 @@
           },
           {
             "path": "lib/utils/__tests__/ruleMessages.test.mjs",
-            "status": "fail",
-            "passed": 1,
+            "status": "pass",
+            "passed": 2,
             "total": 2,
-            "error": "assertion 2 toBe: string:GOOD baz,2,hoohah [undefined and undefined] (bar) != string:GOOD baz [2 and hoohah] (bar)",
             "tests": [
               {
                 "name": "ruleMessages with simple messages",
@@ -25203,7 +25525,7 @@
               },
               {
                 "name": "ruleMessages with message functions",
-                "status": "failed"
+                "status": "passed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/stylelint/stylelint/cd66b035087270dd62d33542154463266cc5e81a/lib/utils/__tests__/ruleMessages.test.mjs"
@@ -25240,36 +25562,34 @@
           },
           {
             "path": "lib/utils/__tests__/vendor.test.mjs",
-            "status": "fail",
-            "passed": 0,
+            "status": "pass",
+            "passed": 2,
             "total": 2,
-            "error": "assertion 1 toBe: object:null != string:-moz-",
             "tests": [
               {
                 "name": "returns prefix",
-                "status": "failed"
+                "status": "passed"
               },
               {
                 "name": "returns unprefixed version",
-                "status": "failed"
+                "status": "passed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/stylelint/stylelint/cd66b035087270dd62d33542154463266cc5e81a/lib/utils/__tests__/vendor.test.mjs"
           }
         ],
         "summary": {
-          "pass": 105,
-          "fail": 3,
+          "pass": 108,
+          "fail": 0,
           "compile_error": 0,
           "skip": 251,
           "total": 359
         }
       },
       "correctness": {
-        "status": "divergent",
-        "passed": 105,
-        "total": 108,
-        "reason": "3 of 108 operations diverged from native node"
+        "status": "verified",
+        "passed": 108,
+        "total": 108
       },
       "perf": {
         "sampleOp": "typeof stylelint.lint + source.length",
@@ -25304,7 +25624,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T09:33:46.094Z",
+      "measuredAt": "2026-08-24T14:49:15.277Z",
       "weeklyDownloads": 10427988
     },
     {
@@ -25315,7 +25635,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 5777,
+        "durationMs": 7569,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -27521,38 +27841,38 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "select one of two runtime-owned callbacks",
-            "wasmUs": 0.37418875128168655,
-            "nodeUs": 0.004370972426931695,
-            "wasmStdUs": 0.0006360413575093489,
-            "nodeStdUs": 0.000006459655427952006,
-            "ratio": 0.011681196754205096,
-            "ratioStd": 0.000027689387193557573,
-            "iters": 623111,
+            "wasmUs": 0.5282723670319941,
+            "nodeUs": 0.005292171593265763,
+            "wasmStdUs": 0.0013813990536259355,
+            "nodeStdUs": 0.000013186505347241404,
+            "ratio": 0.010017884567763601,
+            "ratioStd": 0.000033582484357376836,
+            "iters": 460298,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.37446023581668375,
-              0.3747852116237228,
-              0.3736922634971786,
-              0.37431662576985797,
-              0.37418875128168655,
-              0.37586608966929413,
-              0.3741678079831127,
-              0.37357279521641407,
-              0.374140114682755
+              0.5294592112069866,
+              0.5271837483542178,
+              0.5302048086237628,
+              0.5288592324976272,
+              0.5280336477672237,
+              0.5280488705143062,
+              0.5282723670319941,
+              0.5271319362672867,
+              0.5316204176422641
             ],
             "nodeSamplesUs": [
-              0.004378093148641091,
-              0.00436987952401333,
-              0.004370282341193193,
-              0.004372241864001972,
-              0.004370972426931695,
-              0.00436865823282466,
-              0.004357665006890251,
-              0.004372675173573522,
-              0.004382737585856021
+              0.005285532416065716,
+              0.005290755119426629,
+              0.0053147417542148715,
+              0.005326277758977933,
+              0.005291213518065866,
+              0.005310846451789533,
+              0.0052988954978191866,
+              0.005289753594288953,
+              0.005292171593265763
             ],
-            "compileDurationMs": 380.653476000065,
+            "compileDurationMs": 539.3116900001187,
             "binaryBytes": 1473,
             "moduleImportCount": 5,
             "functionImportCount": 5,
@@ -27577,45 +27897,45 @@
             "reason": "the pinned Lit callback probe currently covers the JS-host lane only"
           }
         },
-        "wasmUs": 0.37418875128168655,
-        "nodeUs": 0.004370972426931695,
-        "wasmStdUs": 0.0006360413575093489,
-        "nodeStdUs": 0.000006459655427952006,
-        "ratio": 0.011681196754205096,
-        "ratioStd": 0.000027689387193557573,
-        "iters": 623111,
+        "wasmUs": 0.5282723670319941,
+        "nodeUs": 0.005292171593265763,
+        "wasmStdUs": 0.0013813990536259355,
+        "nodeStdUs": 0.000013186505347241404,
+        "ratio": 0.010017884567763601,
+        "ratioStd": 0.000033582484357376836,
+        "iters": 460298,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          0.37446023581668375,
-          0.3747852116237228,
-          0.3736922634971786,
-          0.37431662576985797,
-          0.37418875128168655,
-          0.37586608966929413,
-          0.3741678079831127,
-          0.37357279521641407,
-          0.374140114682755
+          0.5294592112069866,
+          0.5271837483542178,
+          0.5302048086237628,
+          0.5288592324976272,
+          0.5280336477672237,
+          0.5280488705143062,
+          0.5282723670319941,
+          0.5271319362672867,
+          0.5316204176422641
         ],
         "nodeSamplesUs": [
-          0.004378093148641091,
-          0.00436987952401333,
-          0.004370282341193193,
-          0.004372241864001972,
-          0.004370972426931695,
-          0.00436865823282466,
-          0.004357665006890251,
-          0.004372675173573522,
-          0.004382737585856021
+          0.005285532416065716,
+          0.005290755119426629,
+          0.0053147417542148715,
+          0.005326277758977933,
+          0.005291213518065866,
+          0.005310846451789533,
+          0.0052988954978191866,
+          0.005289753594288953,
+          0.005292171593265763
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T08:53:56.447Z",
+      "measuredAt": "2026-08-24T06:02:37.231Z",
       "weeklyDownloads": 6829692,
       "refresh": {
         "status": "stale",
         "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-24T08:53:56.447Z"
+        "lastMeasuredAt": "2026-08-24T06:02:37.231Z"
       }
     }
   ]

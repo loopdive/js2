@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 8884,
-    "fail": 133,
+    "pass": 8888,
+    "fail": 129,
     "ce": 12,
     "skip": 0,
     "total": 9029,
@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 8201,
-    "fail": 2933,
+    "pass": 8200,
+    "fail": 2934,
     "ce": 569,
     "skip": 1,
     "total": 11704,
@@ -3263,8 +3263,8 @@
   },
   {
     "edition": "ES2025",
-    "pass": 561,
-    "fail": 321,
+    "pass": 562,
+    "fail": 320,
     "ce": 119,
     "skip": 0,
     "total": 1001,
@@ -3299,12 +3299,12 @@
       },
       {
         "name": "import-attributes",
-        "pass": 9,
-        "fail": 14,
+        "pass": 10,
+        "fail": 13,
         "ce": 72,
         "skip": 0,
         "total": 95,
-        "pct": 9
+        "pct": 11
       },
       {
         "name": "dynamic-import",
@@ -3326,12 +3326,12 @@
       },
       {
         "name": "globalThis",
-        "pass": 11,
-        "fail": 3,
+        "pass": 12,
+        "fail": 2,
         "ce": 9,
         "skip": 0,
         "total": 23,
-        "pct": 48
+        "pct": 52
       },
       {
         "name": "RegExp.escape",
@@ -4268,8 +4268,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4209,
-    "fail": 1137,
+    "pass": 4210,
+    "fail": 1136,
     "ce": 99,
     "skip": 0,
     "total": 5445,
