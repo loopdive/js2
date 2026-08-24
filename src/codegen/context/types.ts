@@ -2687,6 +2687,9 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Deferred `export default <variable>` where variable is a module global (#1108).
    *  Resolved after all collectDeclarations calls when global indices are final. */
   deferredDefaultGlobalExport?: string;
+  /** Synthetic globals for entry-file `export default <expression>` exports.
+   *  The module-global indices are resolved after late imports are complete. */
+  deferredDefaultExpressionExports?: Set<string>;
   /** Runtime storage for `export default <expression>` in linked modules.
    * Identifier/function defaults use their existing binding; expression
    * defaults need a stable cell that default imports can alias. */

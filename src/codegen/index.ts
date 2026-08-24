@@ -5163,6 +5163,16 @@ export function generateModule(
       }
       ctx.deferredDefaultGlobalExport = undefined;
     }
+    for (const bindingName of ctx.deferredDefaultExpressionExports ?? []) {
+      const globalName = `__mod_${bindingName}`;
+      const localIdx = ctx.mod.globals.findIndex((g) => g.name === globalName);
+      if (localIdx < 0 || ctx.mod.exports.some((e) => e.name === "default")) continue;
+      ctx.mod.exports.push({
+        name: "default",
+        desc: { kind: "global", index: ctx.numImportGlobals + localIdx },
+      });
+    }
+    ctx.deferredDefaultExpressionExports?.clear();
 
     // Copy metadata for .d.ts / helper generation — only include actually-used extern classes
     const importNames = mod.imports.map((imp) => imp.name);
@@ -8151,6 +8161,14 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
       // is registered under the synthetic name "default".
       targetName = "default";
     }
+    if (!targetName && ts.isExportAssignment(decl) && !decl.isExportEquals) {
+      // An ESM default export whose value is an expression has no declaration
+      // name for TypeScript to expose: the aliased symbol's valueDeclaration is
+      // the ExportAssignment itself. `collectDeclarations` materializes that
+      // expression in a synthetic module-global cell; follow the same cell as
+      // a normal import alias instead of falling through to the null sentinel.
+      targetName = ctx.defaultExpressionGlobals?.get(decl)?.bindingName;
+    }
     if (!targetName || targetName === localName) return;
     // Imported class bindings need the same canonical class identity as the
     // exporting module.  `classExprNameMap` normally aliases a variable-bound
@@ -8834,6 +8852,16 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       }
       ctx.deferredDefaultGlobalExport = undefined;
     }
+    for (const bindingName of ctx.deferredDefaultExpressionExports ?? []) {
+      const globalName = `__mod_${bindingName}`;
+      const localIdx = ctx.mod.globals.findIndex((g) => g.name === globalName);
+      if (localIdx < 0 || ctx.mod.exports.some((e) => e.name === "default")) continue;
+      ctx.mod.exports.push({
+        name: "default",
+        desc: { kind: "global", index: ctx.numImportGlobals + localIdx },
+      });
+    }
+    ctx.deferredDefaultExpressionExports?.clear();
 
     // Copy metadata for .d.ts / helper generation
     const importNames = mod.imports.map((imp) => imp.name);
