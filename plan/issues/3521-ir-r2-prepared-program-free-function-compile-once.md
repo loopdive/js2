@@ -55,6 +55,7 @@ files:
   - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/program-abi-export-planning.ts
   - src/codegen/program-abi-fnctor-planning.ts
+  - src/codegen/ir-fnctor-admission.ts
   - src/codegen/module-global-registration.ts
   - src/codegen/context/types.ts
   - src/codegen/context/create-context.ts
@@ -70,6 +71,7 @@ files:
   - tests/issue-3520-callable-provider-abi.test.ts
   - tests/issue-3765-numeric-locals.test.ts
   - tests/ir/fnctor-abi.test.ts
+  - tests/ir/fnctor-admission.test.ts
   - scripts/check-ir-kind-neutrality.mjs
   - scripts/ir-kind-neutrality-baseline.json
 loc-budget-allow:
@@ -1250,3 +1252,19 @@ Static typecheck, focused ABI tests, formatting, IR layering/function/LOC and
 pushRaw gates pass; the linear-IR script is environment-blocked by tsx IPC
 socket permission in this worktree. No compiler/runtime execution or R2
 replay is claimed.
+
+## 2026-08-24 source-qualified admission producer checkpoint
+
+The selector/propagation seam now receives one checker- and planning-identity-
+owned resolver. It admits only an exact escape-gate-approved `new F()` whose
+constructor declaration is in the same source, has a unique inventory unit,
+has a reserved `__fnctor_F` layout, and consists of one unconditional
+`this.input = input` assignment from a string parameter. Aliases, conditional
+or repeated writes, additional own fields, cross-source collisions, and
+unreserved constructors return Unsupported. The same resolver is passed to
+the structural TypeMap and identity selector, so no name-only projection can
+claim the site. This remains admission/planning evidence only: it does not
+plan a support callable, emit `fnctor.new/get`, or change runtime output. The
+next checkpoint must bind the admitted shape to ProgramAbiSession support
+plans and physical constructor/layout validation before AST lowering or R2
+replay.
