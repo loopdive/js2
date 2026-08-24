@@ -1724,45 +1724,6 @@ function isAnnexBValueReference(id: ts.Identifier): boolean {
 }
 
 /**
- * (#2552) Is the block-fn `name` REASSIGNED (an assignment write target) anywhere
- * inside its declaring `block`? — e.g. `{ function f() { f = 123; } }`. When it
- * is, the block-local function binding and the outer var binding hold *distinct*
- * values (per §B.3.3: the outer binding captures the function value at block
- * entry and is independent of a later in-block reassignment of the block-local
- * `f`). The flag-gated single-slot outer-binding machinery cannot model that
- * split (it shares one `localMap` slot for both), so such a shape is excluded
- * from the outer-binding allocation and reverts to the pre-Phase-2 path — which
- * already passes the `*-block-scoping` test262 files. Only assignment WRITES
- * count (not reads); the scan stays within the declaring block (nested function
- * scopes are skipped — they have their own bindings).
- */
-function annexBNameReassignedInRange(name: string, declaringRange: ts.Node): boolean {
-  let reassigned = false;
-  const visit = (node: ts.Node): void => {
-    if (reassigned) return;
-    // Descend through the WHOLE block subtree, INCLUDING the block-fn's own body:
-    // the canonical mutable-binding shape is `{ function f() { f = 123; } }`, where
-    // the reassignment lives inside `f`'s body and still mutates the binding (the
-    // block-local `f` and the outer var binding then diverge). A same-named decl in
-    // a *deeper* nested scope would shadow, but conflating it here only makes the
-    // gate MORE conservative (skip the outer binding → pre-Phase-2 path), never
-    // less correct, so we accept the slight over-approximation for soundness.
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(node.left) &&
-      node.left.text === name
-    ) {
-      reassigned = true;
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(declaringRange, visit);
-  return reassigned;
-}
-
-/**
  * (#2552) Does the enclosing Annex-B scope (the nearest function body / global
  * holding `block`) already declare a function-scoped `var name` or direct
  * `function name`? Per Annex B B.3.3 step 2 ("If instantiatedVarNames does not
