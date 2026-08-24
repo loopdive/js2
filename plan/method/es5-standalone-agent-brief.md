@@ -651,3 +651,31 @@ taken at load ≥ 8 is a **measurement failure, not a status**, and must be re-r
 before it appears in any report as a flip or a regression. This is the same trap that cost
 ~4.5 h and three false flips the night before — it just arrived through scheduling rather
 than through a single oversized sweep.
+
+## The base arm is usually unnecessary — byte identity replaces it
+
+A row can only move if its **emitted module changed**. So for any diff that is gated,
+syntactic, or otherwise reaches only part of the corpus, running a full second arm is
+paying twice for rows that were never at risk.
+
+Do this instead:
+
+1. Compile the scoped set on **both** arms and compare `wasm_sha` per module. Compiling is
+   cheap relative to executing.
+2. **Execute the base arm only for modules whose bytes differ.** That is the real reachable
+   set, and it is typically one or two orders of magnitude smaller.
+3. Report the identity result as the zero-regression argument for everything else:
+   *"N of M modules are byte-identical across arms, so no row among them can move."*
+
+**That claim is STRONGER than having run them, not weaker.** Executing a row proves it
+did not change *in that run*, under that load, with that flake surface. Byte identity
+rules the change out **by construction** — no contention artifact, no timeout, no flake
+can hide in it. This is why the argument survives a saturated box while a re-run does not.
+
+Keep the **fix** arm: a module whose bytes changed must be executed to learn which way it
+went. It is only the base side that identity replaces.
+
+Provenance: #4655 wave-1 fell back on this when its 3,082-file sweep was OOM-killed and
+got a better answer from a smaller set (adjacent tier 0 differ, 200-file sample 0 differ,
+own tier 21 differ and every one a `toLocaleString` caller). lane-4655b reused it for a
+125-file sample. It is now the preferred zero-regression argument, not the fallback.
