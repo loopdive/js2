@@ -165,7 +165,23 @@ export function mergeNpmCompatPartials(
     },
     packages: sortedPackages,
   };
-  const perfRows = npmPerfRows(freshPackages);
+  // The perf ARTIFACT is built from the WHOLE corpus, not only what this run
+  // re-measured. A carried-forward row keeps its own last measurement in
+  // `packages[]` and the card still renders it, stamped with its real
+  // `measuredAt` — so dropping it from the perf chart makes the chart disagree
+  // with the cards beside it. Since the per-package split that stopped being a
+  // cosmetic inconsistency and became a hard stop: a promotion routinely
+  // carries ONE fresh package (react-dom's lane runs on its own 3-4h cadence
+  // and promotes alone), and on 2026-08-24T02:31Z it did exactly that with all
+  // three of react-dom's lanes at `compile-error`. Fresh-only rows made
+  // `npm-compat-perf.json` come out `[]`, which
+  // `check-npm-compat-promotion.mjs` rejects — "must contain performance
+  // measurements" — failing `quality` and stranding the promotion PR.
+  //
+  // The HISTORY point stays fresh-only, deliberately: it is a time series, and
+  // appending a carried-forward measurement under this run's `generatedAt`
+  // would claim a measurement happened now that did not.
+  const perfRows = npmPerfRows(sortedPackages);
   const perfHistory = mergeNpmPerfHistory(
     existingHistory,
     freshPackages.length > 0

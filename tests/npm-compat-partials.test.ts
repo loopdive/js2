@@ -102,10 +102,62 @@ describe("npm-compat partial aggregation", () => {
       reason: "measurement worker did not produce a partial report",
       lastMeasuredAt: "2026-08-21T00:00:00.000Z",
     });
-    expect(result.perfRows.map((entry) => entry.name)).toEqual(["acorn · JS host · runtime dynamic"]);
+    // The perf ARTIFACT keeps the carried-forward row: react's card still shows
+    // its last measurement, so the chart beside it must too.
+    expect(result.perfRows.map((entry) => entry.name)).toEqual([
+      "acorn · JS host · runtime dynamic",
+      "react · JS host · runtime dynamic",
+    ]);
+    // The HISTORY point does not — a stale measurement must not be recorded as
+    // having happened in this run.
     expect(result.perfHistory.runs.at(-1)?.packages).toEqual({
       acorn: { jsHost: { dynamic: 2 }, standalone: {} },
     });
+  });
+
+  it("still produces perf rows when the only fresh package failed to compile", () => {
+    // The live failure (2026-08-24T02:31Z). react-dom's lane promotes on its
+    // own 3-4h cadence, so a promotion legitimately carries ONE fresh package;
+    // that run's three react-dom lanes were all `compile-error`. With perf rows
+    // built from fresh packages only, `npm-compat-perf.json` came out `[]` and
+    // `check-npm-compat-promotion.mjs` failed the `quality` gate with
+    // "must contain performance measurements", stranding the promotion PR with
+    // 23 packages' worth of perfectly good carried-forward measurements on it.
+    const previous = partial(["acorn", "react"], "old");
+    previous.packages = previous.packages.map((entry) => ({
+      ...entry,
+      perf: { lanes: { jsHost: { status: "measured", ratio: 1.5, wasmUs: 10, nodeUs: 15 } } },
+    })) as typeof previous.packages;
+
+    const fresh = partial(["react-dom"]);
+    (fresh.packages[0] as any).perf = {
+      lanes: {
+        jsHost: { status: "compile-error" },
+        standalone: { status: "compile-error" },
+        standaloneDynamic: { status: "compile-error" },
+      },
+    };
+
+    const result = mergeNpmCompatPartials([fresh], {
+      expectedNames: ["acorn", "react", "react-dom"],
+      sourceRevision: "source",
+      existingPackages: previous.packages,
+      existingSummaryMeta: previous.summaryMeta,
+      existingGeneratedAt: "2026-08-21T00:00:00.000Z",
+      allowStaleFallback: true,
+      generatedAt: "2026-08-24T02:31:23.145Z",
+    });
+
+    expect(result.summary.refresh.freshCount).toBe(1);
+    // Both carried-forward rows survive into the perf artifact — the exact
+    // thing that was `[]` before. Order follows the report's popularity sort.
+    expect(result.perfRows.map((entry) => entry.name)).toEqual([
+      "react · JS host · runtime dynamic",
+      "acorn · JS host · runtime dynamic",
+    ]);
+    // The history point carries no packages: the one package measured this run
+    // produced no timing. Stale rows are not backdated into it.
+    expect(result.perfHistory.runs.at(-1)?.packages).toEqual({});
   });
 
   it("keeps a stale row's OWN measurement time instead of creeping it forward each refresh", () => {
