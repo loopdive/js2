@@ -13,6 +13,15 @@ area: codegen, runtime
 es_edition: 5
 goal: es5
 related: [2200, 2552, 3626]
+loc-budget-allow:
+  - src/codegen/statements/loops.ts
+  - src/codegen/string-ops.ts
+  - src/codegen/declarations.ts
+func-budget-allow:
+  - src/codegen/statements/loops.ts::compileForInStatement
+  - src/codegen/statements/loops.ts::compileForOfArray
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/statements/exceptions.ts::compileTryStatement
 ---
 
 # ES5 standalone small bundles — ~39 rows across 6 mechanical buckets
