@@ -6255,3 +6255,178 @@ number is higher than the estimate above.
   "failures". Re-link before every row.
 - Admin-merging bypasses the merge queue, so the landing-page artifacts do not
   refresh. Dispatch Baseline Refresh after any admin merge.
+
+## Wave-7 (2026-08-24, branch `issue-4491-wave7`, base `17eb0b8d1` = campaign tip `c84bea96e` merged in)
+
+### The 22-row census, bucketed honestly — including two buckets that are not buckets
+
+All 22 rows re-verified failing on the branch base before any edit
+(`.tmp/base-census.jsonl`, single-test driver, `--target standalone`, serial).
+The dispatch note grouped them four ways; two of those groups do not survive
+measurement, and saying so is half the value of this section.
+
+| bucket | rows | verdict |
+| --- | --- | --- |
+| **§20.1.3.6 class tag on a dynamic receiver** | `create/15.2.3.5-4-15`, `defineProperties/15.2.3.7-2-16` | **ONE root, TAKEN** — see below |
+| array `length` / index domain | `defineProperty/15.2.3.6-4-183`, `defineProperties/15.2.3.7-6-a-179` | one root, **#4497** (`MAX_CANONICAL_INDEX` is `2^31-1`), already filed |
+| a kind-incompatible descriptor VALUE | `defineProperties/15.2.3.7-6-a-183` | separate root (`heterogeneousWidenedModuleGlobalType`, #4428) |
+| far-index growth fills with a non-hole | `keys/15.2.3.14-5-13` | separate root |
+| global / `Function.prototype` own function props | `getOwnPropertyDescriptor/15.2.3.3-4-4`, `-4-34`, `getOwnPropertyNames/15.2.3.4-4-1` | one root, carrier coverage |
+| `Object(v)` on a Date / function | `S15.2.2.1_A2_T5`, `_A2_T7`, `S15.2.1.1_A2_T11` | one root, and it is **NOT** what the row titles say |
+| the rest | 9 rows | separate roots, see the wave-4 residual table |
+
+**The "array-length cluster" is three roots, not one.** The dispatch note calls
+it "the biggest single cluster" on the strength of four rows whose failure text
+mentions `length`. Measured, `-4-183` / `-6-a-179` are the 2^32-2 index domain
+(#4497), `-6-a-183` is a descriptor VALUE the array's carrier cannot hold, and
+`keys/15.2.3.14-5-13` is backing growth filling with a non-hole default. Only
+the first pair shares a root.
+
+**The "propertyHelper-site cluster" is not a cluster at all.** The note reads
+`Cannot access property on null or undefined at 315:18` / `316:18` (and `320:18`
+in the `Function/prototype/{apply,call}` rows) as "ONE harness interaction, not
+four bugs". Those offsets are each test's OWN failing line mapped into the
+assembled module, and the deltas prove it: 315−13 = 302 and 316−14 = 302 for the
+two gOPD rows (same harness prefix, one extra source line in `-4-4`), but
+320−15 = **305** for the `apply` row — a different prefix, i.e. different
+includes. The gOPD pair fails because `gOPD(this,"eval")` and
+`gOPD(Function.prototype,"constructor")` are `undefined` and the test then reads
+`desc.value`; the `apply`/`call` pair is an eval-minted `Function(...)` used as a
+[[Construct]] target. Near-identical numbers, unrelated roots. **No shared root
+to hand back to the other lane.**
+
+**`Object(v)` does NOT lose identity — the row titles mislead.** Measured on the
+base (`.tmp/pObj1.js`), `Object(x) === x` is **true** for a Date, an array, a
+plain object, a function and a RegExp. What fails is the member read afterwards:
+`n_obj` types as `any`, so `n_obj.getFullYear` and `n_obj.constructor` go through
+the reflective path and answer `undefined`. The bucket is a dynamic-receiver
+member-lookup gap, not a ToObject gap; a lane taking it should start there and
+not in `Object`'s constructor. (One caveat that cost me an hour and is worth
+inheriting: the answer for `Object(d).getFullYear` **changed with unrelated
+module content** — a probe that also contained a runtime-keyed member read
+answered `function` where the minimal probe answered `undefined`. Isolate before
+concluding.)
+
+### Root taken — `Object.prototype.toString` had two lowerings and only one could see a value
+
+`Object.prototype.toString.call(v)` in its DIRECT syntactic form is owned by the
+#2501 compile-time fold (`resolveObjectToStringTag`), which keys on the
+receiver's TypeScript type. Its standalone ladder ends in
+`deferOrStandalone("Object")` for any receiver whose static type merely lowers
+to a ref/externref — which under `allowJs` is **every `any`**. So the module
+baked the constant `"[object Object]"` and nothing ever looked at the value.
+Measured on the base, standalone (`.tmp/pTag1.js`), with
+
+```js
+var t = function (v) { return Object.prototype.toString.call(v); };
+```
+
+| receiver | base | branch | spec |
+| --- | --- | --- | --- |
+| `[1,2]` | `[object Object]` | **`[object Array]`** | Array |
+| `function(){}` | `[object Object]` | **`[object Function]`** | Function |
+| `new String("a")` / `new Number(1)` / `new Boolean(true)` | `[object Object]` ×3 | **String / Number / Boolean** | ✓ |
+| `null` / `undefined` | `[object Object]` ×2 | **Null / Undefined** | ✓ |
+| `1` / `"s"` / `true` | `[object Object]` ×3 | **Number / String / Boolean** | ✓ |
+| `arguments` (all 5 spellings) | `[object Object]` | **`[object Arguments]`** | Arguments |
+| `{}` | `[object Object]` | `[object Object]` | ✓ (unchanged) |
+| `new Date(0)` / `/a/` / `new Error()` / `Math` / `JSON` | `[object Object]` ×5 | unchanged | residuals, below |
+
+Eleven of sixteen receivers were being answered wrongly, silently, by a constant.
+The identical question asked with a syntactically visible operand already
+answered correctly — one module, one value, two answers.
+
+The #4119 RUNTIME classifier (`object-proto-tostring.ts`) could already prove
+most of them. It was simply unreachable from this spelling: the interception in
+`expressions/calls.ts` (~L1110) declines the reflective path *whenever the fold
+returns a tag*, and in standalone the fold always returns one.
+
+**Reach beyond this issue.** `test262/harness/assert.js` — included by every
+single test file — contains `Object.prototype.toString.call(value)` on a
+parameter, i.e. exactly the unproven shape. So the slice changes the *emitted
+module* corpus-wide even though it changes *behaviour* only where the tag is
+observed. That is what set the sweep's shape (below).
+
+### Fix — three parts, and the composition order is the whole design
+
+1. **`object-proto-tostring-native.ts` (new)** — mint
+   `__opts_classify(externref) -> externref`: the same emitter the reflective
+   closure uses (`emitObjectProtoToStringClassifier`, now taking the receiver's
+   local index as a parameter so param 0 works as well as the closure's param 1)
+   with a **`ref.null extern` decline tail** instead of the loud refusal. Null is
+   unambiguous as "declined": every real answer is a non-null `$NativeString`,
+   and a null receiver returns the STRING `"[object Null]"`.
+2. **`expressions/calls.ts` fold site** — when the fold's answer came from its
+   UNPROVEN terminal (a new optional `ObjectToStringTagProof` out-parameter, set
+   in exactly the two terminal arms and ridden through the `Object(x)`
+   recursion), emit `classify(v) ?? <the fold's constant>`.
+
+   **Runtime-first-then-constant, never the reverse, and this is not a style
+   choice.** #4119's own record is the measurement: giving `toString` a real
+   reflective body made the interception succeed and took **27 passing rows**
+   down to the classifier's refusal. Composing this way is monotone — every
+   receiver the classifier PROVES gets a right answer, every receiver it cannot
+   keeps today's byte-for-byte constant, and nothing that passes can start
+   refusing, because this path never reaches the refusal at all.
+
+   Scoped to the unproven terminal only. A tag the fold derived from a resolved
+   symbol name — `Date`, `RegExp`, `Error`, `IArguments`, a typed array, `Math`,
+   `JSON` — is *more* precise than the classifier can be from a bare externref
+   (those carriers are nominal structs it deliberately refuses), so those keep
+   the constant. Pinned by the "a statically typed Date still folds to
+   `[object Date]`" control.
+3. **Two arms the classifier was missing.**
+   - `NATIVE_PROTO_ORDINARY_BRANDS` — the builtin prototypes that are ORDINARY
+     objects (`Object`, `Date`, `RegExp`, and the seven `*Error`s) answer the
+     step-13 default instead of throwing. An EXPLICIT list, not a default `else`
+     on `$NativeProto`: `Map.prototype`, `Set.prototype`, `Promise.prototype`,
+     `Symbol.prototype`, `DataView.prototype`, `%TypedArray%.prototype` and
+     `Generator.prototype` all carry an own `@@toStringTag`, so a blanket
+     default would convert a loud refusal into a silent mis-tag for each of
+     them — the exact trade the module's header rejects.
+   - **Arguments before Array inside the `$Vec` arm.** An `arguments` exotic and
+     an Array share `$Vec` (#4667), so `ref.test $__vec_base` claimed every
+     arguments object as `[object Array]` — a mis-tag #4119's own note records.
+     #4658 already mints the runtime fact (`OBJ_FLAG_ARGUMENTS` on the overlay
+     companion); it just never exposed a plain "is this arguments?" query, since
+     all four of its natives ask about `length`. Wave-7 adds
+     `__args_is_branded(vec) -> i32` in the same pure-query shape as
+     `__args_len_absent` (LOOKUP, never `ensure` — a query must not hand a later
+     consumer a companion the receiver never had).
+
+     **This deliberately does NOT touch `Array.isArray` / `__is_vec`.** #4667
+     documents the landing-order hazard: narrowing *that* predicate flips
+     test262's `propertyHelper.isWritable` onto a string-valued `length` probe
+     that #4658's residual 1 cannot satisfy, silently trading
+     `language/arguments-object/10.6-6-2` away. The new native is read by the
+     class-tag classifier only, so it cannot reach that harness branch — and the
+     whole `language/arguments-object` directory was swept on both arms to say
+     so with a measurement rather than an argument.
+
+### The bug inside the fix, which only a measurement found
+
+The Arguments arm did not work when first written, and it failed as a silent
+degrade rather than a wrong answer. `buildArgumentsIsBrandedCall` returns an
+EMPTY payload when the native is not in `ctx.funcMap`, and #4658 reserves its
+natives from arguments-vec **construction** — which may not have been compiled
+yet when the classifier is emitted. Measured at that moment: the brand was
+correctly applied at run time (`gOPD(args,"length").configurable` answered
+`true` where an array answered `false`) and the classifier still said
+`[object Array]`. The fix is one line — the classifier reserves the brand
+natives itself (idempotent, append-only, standalone-only) rather than reading
+whatever the map happens to hold.
+
+Worth generalising: a helper that degrades to `[]` when its native is missing is
+invisible at the call site. If you consume one, either reserve it yourself or
+assert its presence; do not read the map and hope.
+
+### A refuted hypothesis of my own, kept as a pin
+
+I wrote an `it.fails` residual for "an arguments object that never reaches a MOP
+call is unbranded, so it still reads `[object Array]`", reasoning from #4658's
+observability gate. **It does not reproduce.** All five construction spellings —
+`(function(){return arguments})()`, `new Fun()`, `new Fun(1,2)`, a declaration
+called with arguments, and `arguments` read inside its own body — answer
+`[object Arguments]` in a module containing no `defineProperty` at all: merely
+being passed to a function makes the object observable. The `it.fails` was
+flipped to a positive pin, which is what would catch the limit becoming real.
