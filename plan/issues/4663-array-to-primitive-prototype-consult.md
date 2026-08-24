@@ -166,3 +166,38 @@ and gated by `callable-any-to-string.ts`'s predicate. A module that does not ove
 `Array.prototype.toString` must compile **byte-identically** — verify that with a
 `wasm_sha` comparison, which is a stronger and far cheaper zero-regression argument
 than a wide sweep (the technique #4655 used when its own full sweep was OOM-killed).
+
+### Correction to the ruling above — the gate alone is NOT sufficient (lane-4663, 2026-08-24)
+
+The lane objected before writing any code, and it was right. Recorded here because the
+ruling as first written would have shipped a regression.
+
+`ctx.protoNamedWrittenMembers` is **member-name-only, not ctor-qualified** —
+`array-holes.ts:96` is `ctx.protoNamedWrittenMembers.add(lhs.name.text)`. And
+`__protoidx_has_k`'s walk (`fillHasKBody`, `src/codegen/proto-index-store.ts` ~L922)
+probes `firstOff`'s companion **and then falls back to Object's** whenever
+`firstOff != OBJ_OFF`.
+
+Composed, those two facts break a shape that works **today**: a module writing only
+`Object.prototype.toString = f` arms the gate, and the arm then answers *Object's*
+override for `"" + [1,2]` — where real JS keeps `Array.prototype.toString`'s join,
+because Array's builtin **shadows** Object's (`[1,2].toString()` stops at
+`Array.prototype`). Consulting Object's companion here is wrong, not merely coarse.
+
+**Ruled: make the RUNTIME probe precise, leave the compile-time gate coarse.**
+
+Build an Array-companion-**only** probe from `companionProbeArm` at `ARR_OFF` — the same
+first arm `fillHasKBody` uses, **without** the Object tail:
+
+- Object-only override → gate arms, arm builds, arm **misses** → inline join → today's
+  correct answer preserved.
+- `Array.prototype.toString` override → hits → user value applied.
+
+The gate then only decides whether to *build* the arm; it can no longer make the arm
+answer wrongly. This is strictly preferable to ctor-qualifying `protoNamedWrittenMembers`,
+which would mean editing the `array-holes.ts` pre-scan whose Array exclusions are
+load-bearing for `protoIndexDirty` — the blast radius this issue is explicitly scoped out of.
+
+**Required pin (negative control), not a note:** a module that writes ONLY
+`Object.prototype.toString = f` must still render `"" + [1,2]` as `"1,2"`. Alongside the
+positive control (no override at all → `join(",")`).
