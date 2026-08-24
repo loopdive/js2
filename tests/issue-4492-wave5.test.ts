@@ -418,6 +418,54 @@ describe("#4492 wave-5 — residual R3: no §20.1.3.6 brand classifier on the RU
       await runStandalone(`${loopBuilt("want", "[object Math]")} var m = Math; return ("" + m) === want ? 1 : 0;`),
     ).toBe(1);
   });
+
+  // Two more census rows reduce to this SAME missing classifier. Both were
+  // probed, not inferred: each has the identical signature (compile-time tag
+  // right, the other spelling wrong), which is what makes them one cluster.
+
+  it("CONTROL — the ARGUMENTS object's compile-time tag is `[object Arguments]`", async () => {
+    expect(
+      await runStandalone(
+        `${loopBuilt("want", "[object Arguments]")}` +
+          ` var argObj = function () { return arguments; }(1, 2, true);` +
+          ` return Object.prototype.toString.call(argObj) === want ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+
+  it.fails("`String(<arguments>)` answers the array join instead (test262 trim/15.5.4.20-2-51)", async () => {
+    // The census row is `String.prototype.trim.call(argObj)`, whose internal
+    // ToString lands on the same terminal and answers "1,2,true".
+    expect(
+      await runStandalone(
+        `${loopBuilt("want", "[object Arguments]")}` +
+          ` var argObj = function () { return arguments; }(1, 2, true);` +
+          ` return String(argObj) === want ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+
+  it("CONTROL — `Object.prototype.toString.call(Number.prototype)` IS `[object Number]`", async () => {
+    // Written as a NAME, the brand is resolved at compile time and is correct —
+    // so the row below is not "Number.prototype is untagged".
+    expect(
+      await runStandalone(
+        `${loopBuilt("want", "[object Number]")} return Object.prototype.toString.call(Number.prototype) === want ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+
+  it.fails("…but the SAME object obtained via `Object.getPrototypeOf` is not (test262 Number/15.7.4-1)", async () => {
+    // Identical receiver, runtime-only provenance: the classifier the
+    // compile-time site uses is unavailable, and nothing answers at runtime.
+    expect(
+      await runStandalone(
+        `${loopBuilt("want", "[object Number]")}` +
+          ` var np = Object.getPrototypeOf(new Number(42));` +
+          ` return Object.prototype.toString.call(np) === want ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
 });
 
 describe("#4492 wave-5 — residual R4: the ONE `String(<wrapper>)` spelling bypasses ToPrimitive", () => {
