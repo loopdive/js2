@@ -13,6 +13,9 @@ area: codegen, runtime
 es_edition: 5
 goal: es5
 related: [2200, 2552, 3626]
+loc-budget-allow:
+  - src/codegen/regexp-standalone.ts
+  - src/codegen/expressions/calls.ts
 ---
 
 # ES5 standalone small bundles — ~39 rows across 6 mechanical buckets
