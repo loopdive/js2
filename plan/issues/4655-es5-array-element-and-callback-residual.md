@@ -23,8 +23,26 @@ assignee: dev-4655
 # `switch` itself is byte-identical — `localized` is derived from the property
 # access inside the lowering rather than threaded through it, precisely to keep
 # `compileArrayMethodCall` from growing (it is 603 lines and func-budgeted).
+# (#4655 wave 2) The concat carrier fix. Its MECHANISM is the new leaf module
+# `array-concat-carrier.ts`; what lands in the three tracked files is call-site
+# plumbing only — one guarded early-return in `compileArrayConcat` (+14 in
+# array-methods.ts), one arm in `moduleGlobalWasmType` (+9 in declarations.ts),
+# and one arm plus a conservative spill bail (+16 in statements/variables.ts).
+# The declarations.ts / variables.ts growth is restated here rather than
+# inherited from #4491's grant: CI diffs the merge preview, so an allowance
+# living only in an issue file THIS change-set does not modify is a stranded
+# grant and fails `quality`.
 loc-budget-allow:
   - src/codegen/array-methods.ts
+  - src/codegen/declarations.ts
+  - src/codegen/statements/variables.ts
+# (#4655 wave 2) Same two functions, same reason — the slot decision is one
+# ternary arm in each cascade, and it MUST live in the cascade rather than in
+# the leaf module, because the cascade's order is what makes the slot agree with
+# the value (see the lock-step comments this file's `## Fix` section cites).
+func-budget-allow:
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/statements/variables.ts::compileVariableStatement
 # (#4655) ONE new `__extern_toString` reference, in the new module. §23.1.3.32
 # step 6.c.i is literally `ToString(Invoke(elem, "toLocaleString"))`, so the
 # ToString is the spec step, not a hand-rolled coercion matrix — and it is the
@@ -722,3 +740,131 @@ quickjs provider is not built`), exactly as wave 1 reported.
   it (`c17`) contradicts its premise. See R-H.
 - **A dense-index consult arm in `__hasOwnProperty`** — the fix for R-P. See
   above; the blast radius is the whole `propertyHelper` harness.
+
+## Test Results (wave 2)
+
+All arms run by me in this worktree. Arm state checked before each arm with
+`git diff HEAD --stat -- src` **plus an explicit presence check for the new,
+untracked-at-the-time module** — `git diff` alone is blind to an untracked file,
+so a "restore" that left it behind would have measured a hybrid tree and said
+nothing.
+
+### Scoped two-arm sweep — 358 files
+
+Sized from the blast radius, not from a directory name. Both halves of the diff
+are keyed on a `.concat(` CALL, so the list is:
+
+- **`behav.txt` (233)** — every corpus file that CAN be reached: all `.concat(`
+  callers, plus the whole `concat` directory and `built-ins/Array` top level.
+- **`bytes.txt` (125)** — a deterministic sample of files that CANNOT be reached
+  (`join`/`toString`/`toLocaleString`/`filter`/`forEach`/`slice`/`indexOf`),
+  swept on both arms for **`wasm_sha` identity**. That answers a stronger
+  question than pass/fail on the set where the claim is "nothing moved".
+
+**Dropped, and why:** the remaining ~2,700 `built-ins/Array` files and the rest
+of the corpus. The first cut of this sweep was 782 files and was running at ~8
+rows/min under 4-lane load — ~3.3 h for two arms, for a change whose reach is
+bounded by construction. The byte-identity tier is the replacement argument.
+
+**Load** (lead ruling: ≤7 with per-arm recording, because with two sibling lanes
+sweeping continuously this box never reaches <5 and the original <5 gate became
+a deadlock):
+
+```
+ARM fix  START 12:01:22 load 6.24   END 12:12:45 load 7.58   358 rows
+ARM base START 12:13:45 load 4.86   END 12:22:36 load 5.69   358 rows
+```
+
+```
+base:  pass 189   fail 115   skip 50   compile_error 4
+fix :  pass 190   fail 114   skip 50   compile_error 4
+```
+
+Denominators match exactly (358 = 358), so no row silently disappeared between
+arms. The four `compile_error` rows are the SAME four files with the SAME error
+text on both arms (three `Reflect.construct` NewTarget, one `__get_builtin`) —
+no contention artifacts to re-verify.
+
+**Flips to pass — 1:**
+
+```
++ built-ins/Array/prototype/concat/S15.4.4.4_A1_T2.js
+```
+
+Independently measured twice on each arm: once in a **serial single-process**
+run of the 15-row bucket list (`.tmp/base15.jsonl` / `.tmp/myrows-fix2.jsonl`)
+and once in this 2-shard sweep. Both agree.
+
+**Regressions — 0. Other status moves — 0.**
+
+**Movement WITHOUT a flip** (recorded separately so the campaign's row count
+stays auditable — these are NOT flips and must not be counted as any):
+
+| row | base fails at | fix fails at |
+| --- | --- | --- |
+| `concat/S15.4.4.4_A3_T1` | `arr[1] === 1` — the inherited VALUE | `arr.hasOwnProperty("1")` — PRESENCE |
+| `concat/S15.4.4.4_A3_T2` | `b[1] === undefined` — the absent VALUE | `b.hasOwnProperty("2")` — PRESENCE |
+| `concat/S15.4.4.4_A3_T3` | same as `A3_T2` | same as `A3_T2` |
+| `concat/S15.4.4.4_A1_T4` | assertion 1, `arr[0]` | assertion 3, `arr[2]` |
+
+### Byte identity — the argument for everything not swept
+
+| tier | set | identical | different |
+| --- | --- | --- | --- |
+| reachable (`behav`) | 179 rows with a `wasm_sha` on both arms | 171 | **8** |
+| unreachable sample (`bytes`) | 125 | **124** | **1** |
+
+All 8 reachable differences are `concat` sites (six `concat/S15.4.4.4_*`, one
+`concat/15.4.4.4-5-b-iii-3-b-1`, one stray `test/__probe4638__/p-holes.js` left
+in the shared checkout by another lane — it calls `.concat(`).
+
+**The single unreachable difference is a finding about my LIST, not about the
+change, and it closes exactly.** `toLocaleString/user-provided-tolocalestring-shrink.js`
+contains no `concat` — but it carries `includes: [resizableArrayBufferUtils.js]`,
+and that HARNESS file's line 67 is `const ctors = builtinCtors.concat(MyUint8Array,
+MyFloat32Array);` — a two-argument concat in a declaration initializer, i.e. the
+predicate firing exactly as designed. I built both lists by grepping the TEST
+sources and forgot that `includes:` splices harness code into the same
+compilation unit. Re-checking the whole sample against its includes:
+**exactly 1 of the 125 pulls in a concat-calling harness, and it is the same
+file.** So the byte claim is exact — 124/124 truly-unreachable files identical
+— rather than 124/125 with an unexplained exception. (Also checked: the
+differing `wasm_sha` is REPRODUCIBLE on one arm — two runs of the fix tree give
+`8bf3ab6a2612` twice — so the cross-arm difference is not compile
+nondeterminism.)
+
+### Pins
+
+| suite | base arm | fix arm |
+| --- | --- | --- |
+| `tests/issue-4655-concat-carrier.test.ts` (new) | `Tests 7 failed \| 7 passed (14)` | `Tests 14 passed (14)`, file line `(14 tests)` with no `skipped` |
+| `tests/issue-4655.test.ts` (wave 1) | — | `Tests 29 passed (29)` |
+| `tests/equivalence/array-zero-arg-methods.test.ts` | — | `3 passed (3)` |
+
+`executed = passed + failed = 14 = total` on both arms of the new suite, so
+nothing was silently skipped (brief tier 1, strong form). The 7 base failures are
+the five fix pins plus the two arms I initially mislabelled as both-arms
+controls — **the base run is what caught the mislabelling**; their notes now say
+plainly that they fail on base.
+
+**An `it.fails` that stopped failing.** Wave 1's residual
+`R4-concat-loses-the-hole` **passes** on this tree, so its `it.fails` went red
+with `Expect test to fail`. That is the mechanism the brief asks lanes to watch
+for, working: wave 1 recorded R4's root as SUSPECTED and named the observation
+that would settle it; wave 2 ran that observation, the root was right, and the
+pin is now an ordinary `it`. Its corpus row `A1_T4` still fails, at a different
+assertion and for the different root R-H, which the converted pin deliberately
+does not assert.
+
+### What I could NOT measure
+
+- `filter/15.4.4.20-5-7.js` and the `toLocaleString/{resizable-buffer,
+  user-provided-tolocalestring-grow,-shrink}` family need the quickjs provider,
+  which is not built in this worktree; they report
+  `JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not built` on BOTH
+  arms. Same environment limit wave 1 reported, and same reason for not building
+  it: the adapter cache is shared with the lanes running concurrently and its
+  freshness is a documented trap.
+- The JS-host / gc lane. Nothing here was measured there; the change is gated to
+  `native-first` providers, so the host lane's bytes cannot move — but that is a
+  gate argument, not a measurement.
