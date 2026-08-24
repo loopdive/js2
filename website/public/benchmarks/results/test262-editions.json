@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 7853,
-    "fail": 1168,
+    "pass": 7854,
+    "fail": 1167,
     "ce": 8,
     "skip": 0,
     "total": 9029,
@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9217,
-    "fail": 2383,
+    "pass": 9216,
+    "fail": 2384,
     "ce": 103,
     "skip": 1,
     "total": 11704,
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4244,
-    "fail": 1500,
+    "pass": 4246,
+    "fail": 1498,
     "ce": 48,
     "skip": 0,
     "total": 5792,
@@ -2303,12 +2303,12 @@
       },
       {
         "name": "top-level-await",
-        "pass": 180,
-        "fail": 50,
+        "pass": 182,
+        "fail": 48,
         "ce": 27,
         "skip": 0,
         "total": 257,
-        "pct": 70
+        "pct": 71
       },
       {
         "name": "async-functions",
@@ -3263,8 +3263,8 @@
   },
   {
     "edition": "ES2025",
-    "pass": 701,
-    "fail": 279,
+    "pass": 702,
+    "fail": 278,
     "ce": 21,
     "skip": 0,
     "total": 1001,
@@ -3299,12 +3299,12 @@
       },
       {
         "name": "import-attributes",
-        "pass": 48,
-        "fail": 35,
+        "pass": 49,
+        "fail": 34,
         "ce": 12,
         "skip": 0,
         "total": 95,
-        "pct": 51
+        "pct": 52
       },
       {
         "name": "dynamic-import",
@@ -3326,12 +3326,12 @@
       },
       {
         "name": "globalThis",
-        "pass": 11,
-        "fail": 4,
+        "pass": 12,
+        "fail": 3,
         "ce": 8,
         "skip": 0,
         "total": 23,
-        "pct": 48
+        "pct": 52
       },
       {
         "name": "RegExp.escape",
@@ -4268,8 +4268,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4267,
-    "fail": 1096,
+    "pass": 4274,
+    "fail": 1089,
     "ce": 82,
     "skip": 0,
     "total": 5445,

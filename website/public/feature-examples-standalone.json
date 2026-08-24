@@ -82,7 +82,7 @@
     {
       "name": "arguments object (full)",
       "testCategories": ["language/arguments-object"],
-      "passCount": 128,
+      "passCount": 131,
       "totalCount": 263
     },
     {
@@ -111,7 +111,7 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 1036,
+      "passCount": 1037,
       "totalCount": 1177
     },
     {
@@ -179,7 +179,7 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2020,
+      "passCount": 2019,
       "totalCount": 3161
     },
     {
