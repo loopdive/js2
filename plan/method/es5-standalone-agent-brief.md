@@ -479,8 +479,21 @@ Rules that make the cut honest:
 
 ## Commit rules (worktree branch, do NOT push, do NOT open PRs)
 
-- Author `Thomas Tränkler <git@thomas.traenkler.com>`:
-  `git -c user.name="Thomas Tränkler" -c user.email=git@thomas.traenkler.com commit ...`
+- Author `Thomas Tränkler <git@thomas.traenkler.com>`, **committer `Claude
+  <noreply@anthropic.com>`** — set them SEPARATELY. `-c user.name/-c user.email`
+  sets **both**, which is how 11 lane commits landed with the wrong committer on
+  2026-08-24 and tripped the unverified-commit gate:
+
+  ```bash
+  GIT_COMMITTER_NAME=Claude GIT_COMMITTER_EMAIL=noreply@anthropic.com \
+    git commit --gpg-sign --author="Thomas Tränkler <git@thomas.traenkler.com>" ...
+  ```
+
+  The repo-local `.git/config` used to pin `user.email=git@thomas.traenkler.com`,
+  which every worktree inherits and which overrides the global Claude identity —
+  so a plain `git commit` produced the wrong committer no matter what the global
+  config said. That local override is now `Claude <noreply@anthropic.com>`, but
+  pass the env vars anyway: they are what makes the intent explicit.
 - Message `fix(#<id>): <summary> ✓` — the ✓ token is required by the hooks.
 - Commit-gate failures (LOC/func budget, coercion-sites, dead-export,
   oracle-ratchet): grant a frontmatter allowance in the issue file with
