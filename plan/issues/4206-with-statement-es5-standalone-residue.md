@@ -1,10 +1,10 @@
 ---
 id: 4206
 title: "`with` statement, ES5 standalone: 73-row residue reduced to 51; first IR closure-environment slice converts 22/39 legacy gate rows"
-status: ready
+status: suspended
 sprint: current
 created: 2026-08-07
-updated: 2026-08-21
+updated: 2026-08-22
 priority: high
 horizon: xl
 feasibility: hard
@@ -963,3 +963,21 @@ it), with the two `with`-adjacent clusters already covered above:
 | `var f = function(){}` hoists carrying its VALUE | 2 | `S13.2.2_A19_T7/T8`. Re-measured with no `with` anywhere: `typeof __func` before the declaration line answers `"function"`; `this.hasOwnProperty('__func')` answers `false`. Two separate heads (hoisting model; global-binding unification) |
 | unimplemented builtin | 1 | `S13.2.1_A5_T2` — `Math.sin` in standalone |
 | unclustered singles | 8 | `S13_A6_T1`, `S13.2.2_A5_T1`, `A2`, `A4_T2`, `S13_A15_T3`, `S13_A11_T4`, `13.2-18-1`, `S13.2.1_A6_T2` |
+
+## Suspended Work — `with` residue (2026-08-22)
+
+Merged via #4723: Tier-2 `with` binding the LIVE target, eval-reachable literals
+staying open, and the implicit-global update/call arms (#3966,
+`implicit-global-binding.ts`).
+
+Two diagnoses in this issue were CORRECTED by measurement during the campaign
+and the corrections live in #4491: the `var f = function(){}` "hoists carrying
+its value" reading was wrong — the binding does not hoist its value, only the
+`typeof` const-fold was wrong, and BOTH fold sites must be guarded together; and
+the implicit-global head was narrower than scoped, since creation already worked
+(#3956 read + #4500 Slice B write) while the update and call arms did not.
+
+Still open: `S13.2.2_A19_T8` CHECK#2 (a `var` re-declared inside a second `with`
+block keeping the first block's scope) and the `with (arguments)` rows.
+
+Resume from #4491's "Suspended Work" section.

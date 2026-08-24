@@ -1,10 +1,10 @@
 ---
 id: 4491
 title: "ES5 standalone: Object.defineProperty/defineProperties/create residual (90 tests) — descriptor MOP semantics on the dynamic object runtime"
-status: ready
+status: suspended
 sprint: current
 created: 2026-08-15
-updated: 2026-08-20
+updated: 2026-08-22
 assignee: claude/es6-standalone-session
 priority: high
 horizon: m
@@ -6168,3 +6168,90 @@ answers the raw slot while `arr[1]` invokes the getter). No census row needed
 it, and the same "no measured beneficiary" rule applies. Worth knowing that
 the defect is not parameter-specific: a JS array is a REFERENCE, and any
 cross-carrier vec→vec conversion silently makes a copy of one.
+
+## Suspended Work — ES5 standalone campaign, waves 3–6 (2026-08-22)
+
+**Everything implemented is MERGED to main.** Nothing is parked in a worktree;
+all agent worktrees are removed. This section exists so the next session
+resumes from measured state rather than re-deriving it.
+
+### Where the number stands
+
+| point | ES5 standalone (host-free) |
+| --- | --- |
+| campaign start | 8,618 / 9,029 (95.45%) |
+| last full measurement (wave-3 head, 20260822-121509) | 8,748 / 9,029 (96.89%) |
+| after wave-4/5/6 + regression recovery, unmeasured | ≈8,780 / 9,029 (≈97.2%) |
+
+The landing page still shows **96.49%** because
+`website/public/benchmarks/results/test262-standalone-editions.json` is
+regenerated only by `test262-sharded.yml`'s promote job (needs a merge-QUEUE
+artifact — both campaign PRs were admin-merged, so it never ran) or by
+`refresh-baseline.yml` (cron `17 */8 * * *`). **Dispatch Baseline Refresh to
+republish it.** PR #4785's parallel campaign also landed since, so the true
+number is higher than the estimate above.
+
+### How to resume
+
+1. Dispatch Baseline Refresh (above), or run the scoped sweep locally:
+   `TEST262_PATH_FILTER_FILE=<es5 list> VITEST_FORK_MAX_OLD_SPACE_SIZE=3072 \
+    TEST262_TARGET=standalone bash scripts/run-test262-vitest.sh`
+   (the 3072 fork heap is load-bearing — the default 512 MB kills the run at
+   ~2,554 tests).
+2. Rebuild the remaining-rows list from the new jsonl; the `.tmp/` lists from
+   this campaign are stale by ~250 flips.
+3. Pick heads from "What is left" below.
+
+### What is left (measured, with the blocking mechanism named)
+
+| head | rows | state |
+| --- | ---: | --- |
+| Provider-realm carrier identity, slices C+D | ~25 | T7 landed slices A+B (tag + own keys). C = RegExp re-hydration through the QuickJS bridge; D re-counted to **1** row, not 5. `Function(src)` own `prototype` needs a mutable slot on a struct shared with the separately-compiled provider — a cross-module ABI change for 1 row, declined with price. |
+| f64-hole follow-ons | ~8 | Value + presence halves both landed. Remaining: concat OUTPUT loses the marker (the 2-arg path boxes elements, canonicalizing the payload); the `length` SETTER must mark shrunk/grown slots. Design in "Implementation Plan (T8)". |
+| `$Object.$proto` vs `$NativeProto` | 4 | Priced wall: `%Function.prototype%` exists as two objects by design, so `getPrototypeOf(f) === Function.prototype` cannot be fixed by returning the chain singleton. |
+| #2809 `null` in an f64 carrier | ~3 | `Array(undefined,1,null,3).toString()` renders `",1,0,3"`. Blocks toString/S15.4.4.2_A1_T2 past check #3.2. |
+| `typeof <symbol>` through a dynamic slot | ~2 | Implemented, measured +2/−1, REVERTED. Three exits priced in the T3 section; ends at the `$Object.$proto` wall. |
+| String.fromCodePoint as a value; `new String.fromCharCode(…)` | 2 | T6 landed the fromCharCode value path; these two are its documented non-goals. |
+| Sparse storage at index 2**32-2 | 1 | Lane J's storage wall — a hole cannot round-trip a value there. |
+| annexB `block-decl-func-skip-arguments` | 1 | Module fails to VALIDATE: `__call_fn_0` call_ref arity (need 2, got 1). Not the T12 widening family. |
+| `11.2.3-3_{3,4}` evaluation order / harness-only repro | 3 | `_3` is §13.3.6.1 arg-before-callee order; `_4`/`_8` reproduce ONLY through the real `assert.throws` — a simplified probe reports them absent. |
+
+### Owed follow-ups (not blockers, but recorded)
+
+- **F6 delete arm is DISABLED, not fixed** (`index.ts`, both finalize sites;
+  `native-proto-delete.ts` deleted). It was net-negative: ~17 rows broken for
+  3 gained. Re-enable only with a fix for the descriptor side-effect plus a
+  control run over the `Object/defineProperty` prop-desc family.
+- **Three `isPrototypeOf` modules now coexist** after PR #4785 landed in
+  parallel (`expressions/is-prototype-of-call-arm.ts`,
+  `native-is-prototype-of.ts`, `object-proto-is-prototype-of.ts`), as do three
+  presence predicates (`builtin-instance-key-presence`,
+  `vec-named-key-presence`, `vec-f64-hole-presence`). Not conflicting — wired at
+  different dispatch points — but one spec operation with three routes deserves
+  a consolidation slice.
+- **Four `tests/issue-4200.test.ts` guards are stale** — T9's `constructor`
+  seed made `gOPD(<B>.prototype, "constructor")` answer where the guards expect
+  a decline. #4200's owner should adjudicate.
+- **Three rows hang the in-process runner forever** (a `length` near 2^53 spins
+  a search loop; a synchronous Wasm loop blocks Node's event loop so
+  `TEST_TIMEOUT_MS` never fires): `lastIndexOf/length-near-integer-limit`,
+  `reverse/length-exceeding-integer-limit-with-proxy`,
+  `splice/create-species-length-exceeding-integer-limit`. They belong in
+  `HANGING_TESTS`.
+- **`wave5/T5-toprimitive-wip`** (fork branch) holds `d44becf8c3`, the T5-C
+  ToPrimitive attempt — its own message says DO NOT INTEGRATE AS-IS, one
+  measured regression. Its sibling fix (module-global array literal discarded by
+  the shape-inferred vec seed) already landed via #4723.
+
+### Process lessons worth keeping
+
+- Gate failures cost more of this campaign than compiler defects did. The rules
+  are now in `CLAUDE.md` ("Ratchet gates — run BEFORE every commit"): never pipe
+  a gate whose status you need; simulate CI's base with `LOC_GATE_BASE`;
+  run `check:dead-exports` after any supersede-style merge resolution.
+- A test262 row that a probe cannot reproduce may still be real — some rows only
+  fail through the genuine harness (`assert.throws`), and an agent worktree's
+  `test262/` symlink farm is re-materialized mid-run, fabricating ENOENT
+  "failures". Re-link before every row.
+- Admin-merging bypasses the merge queue, so the landing-page artifacts do not
+  refresh. Dispatch Baseline Refresh after any admin merge.
