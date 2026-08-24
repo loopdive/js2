@@ -303,6 +303,23 @@ const VERDICTS = {
     why: "Concatenation of two values already statically known to be strings — no ToString, no `+` overload.",
     evidence: [{ file: NODES, quote: "Concatenate two strings" }],
   },
+  "string.repeat": {
+    verdict: "js",
+    why:
+      "ECMAScript String.prototype.repeat owns both the f64 count normalization through " +
+      "ToIntegerOrInfinity and the negative/+Infinity RangeError. A non-JS producer would " +
+      "have to work around that language contract rather than merely select a backend provider.",
+    evidence: [
+      {
+        file: path.join(DIALECT_DIR, "js.ts"),
+        quote: "Repeat a string using ECMAScript `String.prototype.repeat` count semantics.",
+      },
+      {
+        file: "src/ir/string-runtime.ts",
+        quote: 'readonly negative: "range-error-or-backend-trap";',
+      },
+    ],
+  },
   "string.eq": {
     verdict: "neutral",
     why: "Value equality of two strings. No abstract equality, no coercion — `dyn.eq` covers that and is already in the dialect.",

@@ -62,6 +62,17 @@ modules injected via `buildImports(..., deps)`.
 
 ## Deferred follow-ups
 
+### 2026-08-22 Jest defaults host seam
+
+The original Jest `Defaults.test.ts` unit also imports the named
+`node:os` function `tmpdir`. The generic named-builtin path returned a null
+value for that member even though the namespace route was available. Added
+`tmpdir` to the existing `node:os` typed-function table and extended the
+classification/host-value test above. This keeps the package test on the
+same real Node host boundary; no Jest test body or expected value was changed.
+
+Implementation: [PR #4764](https://github.com/loopdive/js2/pull/4764).
+
 - **`node:fs/promises`** — the `/` in the module name breaks the
   `__nodefn__<module>__<fn>` identifier scheme (would emit an invalid
   `__nodefn__fs/promises__readFile` declaration). Needs slash-sanitisation

@@ -53,7 +53,7 @@ describe("#4033 — Program ABI callable role ordinals", () => {
   });
 
   it("reserves the fnctor constructor role after the existing callable families", () => {
-    expect(PROGRAM_ABI_CALLABLE_ROLE.fnctorConstructor).toBe(15);
+    expect(PROGRAM_ABI_CALLABLE_ROLE.fnctorConstructor).toBe(19);
     expect(PROGRAM_ABI_CALLABLE_ROLE.fnctorConstructor).not.toBe(PROGRAM_ABI_CALLABLE_ROLE.structFieldAccessor);
   });
 

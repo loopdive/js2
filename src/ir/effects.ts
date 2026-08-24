@@ -192,6 +192,7 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     // `effectsConflict` only consults the heap/slot facets, so it carries
     // the same full-barrier classification.
     case "throw":
+    case "string.repeat":
     case "br.label":
     case "await":
     case "async.return":
@@ -563,6 +564,11 @@ export function isSideEffecting(i: IrInstr): boolean {
     // a fresh value), but it may throw on bad pattern syntax — keep
     // the side-effect of the throw observable to user code.
     i.kind === "extern.regex" ||
+    // `String.prototype.repeat` validates ToIntegerOrInfinity and may throw
+    // for negative/+Infinity counts. Keep an unused result and anchor it as a
+    // full control barrier until separately verified non-throwing evidence
+    // exists on the instruction.
+    i.kind === "string.repeat" ||
     // (#1373 Phase B) Async / await IR nodes are control-flow with
     // observable suspension / Promise side effects. DCE must always
     // preserve them. Phase C lowering (CPS transform) does not change

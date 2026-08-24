@@ -291,6 +291,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   ctx.capturedGlobals.clear();
   ctx.capturedGlobalsWidened.clear();
   ctx.capturedBoxGlobals?.clear();
+  ctx.capturedGlobalsOwner?.clear();
   const sig = ctx.checker.getSignatureFromDeclaration(decl);
   if (!sig) {
     reportError(ctx, decl, `Cannot resolve signature for function '${func.name}'`);

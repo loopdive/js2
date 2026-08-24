@@ -24,10 +24,11 @@
 // machinery: per-element status objects (`$Object` via the object runtime) and
 // a native `AggregateError` (`$Error_struct`, `.errors` on `$props`), lazily
 // registered ONLY when a module compiles one (ensureSettledAnyCombinators) so
-// all/race-only modules stay byte-identical. String arguments, f64-backed
-// `number[]` vecs (the Gap-4 output-representation escalation), and
-// generator-state arguments still fall through to the existing host path
-// (follow-ups).
+// all/race-only modules stay byte-identical. (#2867 string-combinator slice)
+// String arguments drain through `__combinator_to_vec`'s code-point string arm
+// under native strings. f64-backed `number[]` vecs (the Gap-4
+// output-representation escalation) and generator-state arguments still fall
+// through to the existing host path (follow-ups).
 //
 // **THE WIDEN HAS LANDED — this module is LIVE on `--target standalone`.**
 // (#2867 S2 correction, 2026-08-15.) This header said "inert until the widen …
@@ -44,9 +45,10 @@
 // error mentions emitted host imports, and a direct compile probe of eight
 // combinator shapes (array literal, array var, `race`, `resolve`,
 // `new Promise`, ctor-input, `all([])`, `any`-typed arg) returns `imports=[]`.
-// The one genuine remaining host-route is a **string** argument
-// (`Promise.all('')` → `Native-first adapter cannot bind env::Promise_all`),
-// which is the separately-documented deferred case in the Scope note above.
+// The last host-route — a **string** argument (`Promise.all('')` →
+// `Native-first adapter cannot bind env::Promise_all`) — closed with the
+// (#2867 string-combinator slice): `__combinator_to_vec` now has a native
+// code-point string arm (see `buildToVecStringArm`).
 
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { Instr, LocalDef, ValType } from "../ir/types.js";
@@ -57,7 +59,7 @@ import {
   getOrRegisterVecType,
 } from "./registry/types.js";
 import { allocLocal } from "./context/locals.js";
-import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable mint/push
+import { definedFuncAt, mintDefinedFunc, nativeStrHelperHandle, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable mint/push
 // (#3137) allSettled/any additions: status objects live on the object runtime
 // ($Object via __new_plain_object/__extern_set), the AggregateError is a native
 // $Error_struct (tag from builtin-tags), and the "status"/"fulfilled"/… keys are
@@ -66,7 +68,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 // all/race-only modules stay byte-identical.
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
 import { BUILTIN_TYPE_TAGS } from "./builtin-tags.js";
 import {
   ensureAsyncDriveRuntime,
@@ -1162,6 +1164,21 @@ const TOVEC_CAP = 5;
 const TOVEC_LEN = 6;
 const TOVEC_DATA = 7;
 const TOVEC_GROW = 8;
+// (#2867 string-combinator slice) String-arm locals — present only when the
+// native-string arm is emitted (`toVecStringArmAvailable`).
+const TOVEC_SFLAT = 9;
+const TOVEC_SI = 10;
+const TOVEC_SCH = 11;
+
+/**
+ * (#2867 string-combinator slice) The string arm exists only under native
+ * strings — the same predicate gates the `isDynamicCombinatorArgEligible`
+ * string admission in calls.ts, so the compile-time gate and the runtime arm
+ * can never disagree.
+ */
+function toVecStringArmAvailable(ctx: CodegenContext): boolean {
+  return ctx.nativeStrings === true;
+}
 
 /** Idempotently register `__combinator_to_vec` with the vec-only eager body. */
 export function ensureCombinatorToVec(ctx: CodegenContext): void {
@@ -1169,6 +1186,10 @@ export function ensureCombinatorToVec(ctx: CodegenContext): void {
   const vecTypeIdx = getOrRegisterVecType(ctx, "externref", EXTERNREF);
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   const arrRefNull: ValType = { kind: "ref_null", typeIdx: arrTypeIdx };
+  const stringArm = toVecStringArmAvailable(ctx);
+  // The string arm calls __str_flatten / __str_charAt_cp — register them
+  // BEFORE minting our funcIdx so their stable handles exist at body build.
+  if (stringArm) ensureNativeStringHelpers(ctx);
   const typeIdx = addFuncType(ctx, [EXTERNREF], [EXTERNREF]);
   const funcIdx = mintDefinedFunc(ctx); // (#1916 S3) stable handle
   pushDefinedFunc(ctx, funcIdx, {
@@ -1183,8 +1204,15 @@ export function ensureCombinatorToVec(ctx: CodegenContext): void {
       { name: "$len", type: { kind: "i32" } },
       { name: "$data", type: arrRefNull },
       { name: "$grow", type: arrRefNull },
+      ...(stringArm
+        ? [
+            { name: "$sflat", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } as ValType },
+            { name: "$si", type: { kind: "i32" } as ValType },
+            { name: "$sch", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } as ValType },
+          ]
+        : []),
     ],
-    body: buildToVecCommonHead(vecTypeIdx).concat([{ op: "ref.null.extern" }]),
+    body: buildToVecCommonHead(ctx, vecTypeIdx).concat([{ op: "ref.null.extern" }]),
     exported: false,
   });
   ctx.funcMap.set("__combinator_to_vec", funcIdx);
@@ -1192,11 +1220,14 @@ export function ensureCombinatorToVec(ctx: CodegenContext): void {
 
 /**
  * The head shared by both bodies: null → return null (not iterable);
- * canonical `$Vec` → return the input unchanged. Falls through otherwise.
+ * canonical `$Vec` → return the input unchanged; native string → a fresh
+ * `$Vec` of its code-point substrings (§22.1.5 String iteration — the
+ * (#2867 string-combinator) arm, present only under native strings).
+ * Falls through otherwise.
  * Built FRESH per call — never alias one Instr[] into two bodies (#2169b:
  * a shared instruction object is double-remapped by DCE's type-index pass).
  */
-function buildToVecCommonHead(vecTypeIdx: number): Instr[] {
+function buildToVecCommonHead(ctx: CodegenContext, vecTypeIdx: number): Instr[] {
   return [
     { op: "local.get", index: TOVEC_X },
     { op: "ref.is_null" },
@@ -1212,6 +1243,102 @@ function buildToVecCommonHead(vecTypeIdx: number): Instr[] {
       op: "if",
       blockType: { kind: "empty" },
       then: [{ op: "local.get", index: TOVEC_X }, { op: "return" }],
+    },
+    ...buildToVecStringArm(ctx, vecTypeIdx),
+  ];
+}
+
+/**
+ * (#2867 string-combinator slice) Strings ARE iterable per §22.1.5: the String
+ * iterator yields code POINTS (a well-formed surrogate pair is one 2-code-unit
+ * element). Flatten once, then walk with `__str_charAt_cp` (the same helper
+ * the for-of / spread string lowerings use), advancing the cursor by the
+ * returned element's `.len`. The result vec is sized at the code-UNIT count —
+ * an upper bound on code points; `$Vec.len` carries the true element count, so
+ * the tail slack is never read. Empty string → `$Vec{0}` (fulfils `all` with
+ * `[]`, leaves `race` pending — spec behaviour for an empty iterable).
+ */
+function buildToVecStringArm(ctx: CodegenContext, vecTypeIdx: number): Instr[] {
+  if (!toVecStringArmAvailable(ctx) || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return [];
+  const flattenIdx = nativeStrHelperHandle(ctx, "__str_flatten");
+  const charAtCpIdx = nativeStrHelperHandle(ctx, "__str_charAt_cp");
+  if (flattenIdx === undefined || charAtCpIdx === undefined) return [];
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+  return [
+    { op: "local.get", index: TOVEC_X },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        // sflat = __str_flatten(x)
+        { op: "local.get", index: TOVEC_X },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+        { op: "call", funcIdx: flattenIdx },
+        { op: "local.set", index: TOVEC_SFLAT },
+        // cap = sflat.len (code units — upper bound on code points)
+        { op: "local.get", index: TOVEC_SFLAT },
+        { op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 0 },
+        { op: "local.set", index: TOVEC_CAP },
+        // data = new arr[cap]; len = 0; si = 0
+        { op: "local.get", index: TOVEC_CAP },
+        { op: "array.new_default", typeIdx: arrTypeIdx },
+        { op: "local.set", index: TOVEC_DATA },
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: TOVEC_LEN },
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: TOVEC_SI },
+        {
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                { op: "local.get", index: TOVEC_SI },
+                { op: "local.get", index: TOVEC_CAP },
+                { op: "i32.ge_s" },
+                { op: "br_if", depth: 1 },
+                // sch = __str_charAt_cp(sflat, si) — 1 unit, or 2 for a pair
+                { op: "local.get", index: TOVEC_SFLAT },
+                { op: "ref.as_non_null" },
+                { op: "local.get", index: TOVEC_SI },
+                { op: "call", funcIdx: charAtCpIdx },
+                { op: "ref.cast", typeIdx: ctx.nativeStrTypeIdx },
+                { op: "local.set", index: TOVEC_SCH },
+                // data[len] = sch; len++
+                { op: "local.get", index: TOVEC_DATA },
+                { op: "local.get", index: TOVEC_LEN },
+                { op: "local.get", index: TOVEC_SCH },
+                { op: "extern.convert_any" },
+                { op: "array.set", typeIdx: arrTypeIdx },
+                { op: "local.get", index: TOVEC_LEN },
+                { op: "i32.const", value: 1 },
+                { op: "i32.add" },
+                { op: "local.set", index: TOVEC_LEN },
+                // si += sch.len (skips the low surrogate of a pair)
+                { op: "local.get", index: TOVEC_SI },
+                { op: "local.get", index: TOVEC_SCH },
+                { op: "ref.as_non_null" },
+                { op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 0 },
+                { op: "i32.add" },
+                { op: "local.set", index: TOVEC_SI },
+                { op: "br", depth: 0 },
+              ],
+            },
+          ],
+        },
+        // return $Vec{len, data}
+        { op: "local.get", index: TOVEC_LEN },
+        { op: "local.get", index: TOVEC_DATA },
+        { op: "ref.as_non_null" },
+        { op: "struct.new", typeIdx: vecTypeIdx },
+        { op: "extern.convert_any" },
+        { op: "return" },
+      ],
     },
   ];
 }
@@ -1300,7 +1427,7 @@ export function fillCombinatorToVec(ctx: CodegenContext): void {
   }
 
   fn.body = [
-    ...buildToVecCommonHead(vecTypeIdx),
+    ...buildToVecCommonHead(ctx, vecTypeIdx),
 
     // it = __call_@@iterator(x)  (null when x has no @@iterator method)
     { op: "local.get", index: TOVEC_X },

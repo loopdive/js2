@@ -42,8 +42,15 @@ export const PROGRAM_ABI_CALLABLE_ROLE = Object.freeze({
   // encoding; the family was previously the largest population left on the
   // positional `retainedModuleFunction` fallback.
   structFieldAccessor: 14,
+  // (#3520 C35) The last four compiler-authored callable families that were
+  // still falling through to the positional `retainedModuleFunction` label.
+  // See compiler-support-abi.ts for each family's derived-ordinal encoding.
+  closureArgcDispatcher: 15,
+  asyncFrameMachinery: 16,
+  vecFromExternMaterializer: 17,
+  stdlibMathHelper: 18,
   /** (#3521) Source/unit-qualified fnctor constructor support callable. */
-  fnctorConstructor: 15,
+  fnctorConstructor: 19,
 } as const);
 
 /**

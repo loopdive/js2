@@ -7,6 +7,7 @@ import {
   irTypeBindingKey,
 } from "./abi-bindings.js";
 import { irCallableBindingKey, irUnitCallableBindingId } from "./callable-bindings.js";
+import { IR_STRING_REPEAT_FN } from "./string-runtime.js";
 import type { IrBindingId, IrClassId, IrTerminalUnitRecord, IrUnitId, IrUnitInventory } from "./identity.js";
 import {
   forEachInstrDeep,
@@ -630,6 +631,7 @@ function implicitSupportRequirement(
         ? null
         : `${instr.kind} resolves string globals/types/helpers without an explicit symbolic ref`;
     case "string.concat":
+    case "string.repeat":
     case "string.eq":
     case "string.char_at":
     case "string.char_code_at":
@@ -1156,7 +1158,18 @@ function recordExternalCallable(
       bindingId: match.id,
       kind: "external-callable",
       structuralReferenceKey: key,
-      expected: (intent) => externalCallableIntentMatches(intent, ref.binding),
+      expected: (intent) =>
+        externalCallableIntentMatches(intent, ref.binding) &&
+        (ref.binding.kind !== "intrinsic" ||
+          ref.binding.symbol !== IR_STRING_REPEAT_FN ||
+          (intent.kind === "callable" &&
+            intent.signature.params.length === 2 &&
+            intent.signature.params[1] === '{"kind":"f64"}' &&
+            intent.signature.results.length === 1 &&
+            intent.signature.params[0] === intent.signature.results[0] &&
+            (intent.signature.params[0] === '{"kind":"externref"}' ||
+              intent.signature.params[0] === '{"kind":"i32"}' ||
+              intent.signature.params[0]?.startsWith('{"kind":"ref"')))),
     });
   }
   evidence.externalCallables.set(
@@ -1500,6 +1513,7 @@ function collectFunctionEvidence(
         }
       } else if (
         (nested.kind === "string.concat" ||
+          nested.kind === "string.repeat" ||
           nested.kind === "string.eq" ||
           nested.kind === "string.char_at" ||
           nested.kind === "string.char_code_at" ||

@@ -99,6 +99,9 @@ export class StubEmitter implements BackendEmitter<StubSink> {
   emitStringConcat(_alloc: AllocSiteId | undefined, mode: IrStringConcatMode, out: StubSink): void {
     out.push(`string.concat:${mode}`);
   }
+  emitStringRepeat(_alloc: AllocSiteId | undefined, inputEncoding: IrStringEncoding, out: StubSink): void {
+    out.push(`string.repeat:${inputEncoding}`);
+  }
   emitStringEquals(negate: boolean, out: StubSink): void {
     out.push(`string.eq:${negate}`);
   }

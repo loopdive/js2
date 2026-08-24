@@ -20,7 +20,7 @@ import { PROGRAM_ABI_CALLABLE_ROLE } from "./program-abi-planning.js";
 import { addUnionImports } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { flushLateImportShifts } from "./shared.js";
-import { UNDEF_F64_BITS } from "./value-tags.js"; // (#3315)
+import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#3315, #4491 T11)
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js";
 import { guardVecElementRead } from "./vec-oob-read.js";
 
@@ -414,9 +414,23 @@ function collectVecMutationEntries(
     // of truth for mutation, just as __vec_get already does (#2669).
     const physicalExternref =
       arrDef?.kind === "array" && (arrDef.element.kind === "externref" || arrDef.element.kind === "ref_extern");
-    const mutationKey = physicalExternref ? "externref" : elemKey;
+    // (#4531/#4527) Struct-ref element carrier (`[{ f, g }]` — a typed vec of
+    // closed object structs). Push/pop through the host boundary previously
+    // reported UNSUPPORTED for these, so `callbacks.push({...})` on a vec that
+    // crossed an `any`-typed parameter silently mutated only the materialized
+    // mirror — diff-sequences' transposed-callbacks push read back null. The
+    // push arm guard-tests the incoming value against the element type and
+    // answers -1 (unsupported) on a mismatch, so only provably-compatible
+    // elements take the native store.
+    const elemIsStructRef =
+      !physicalExternref &&
+      arrDef?.kind === "array" &&
+      (arrDef.element.kind === "ref" || arrDef.element.kind === "ref_null") &&
+      nativeStrVecElemTypeIdx(ctx, vecTypeIdx) < 0;
+    const mutationKey = physicalExternref ? "externref" : elemIsStructRef ? "structref" : elemKey;
     const supported =
       mutationKey === "externref" ||
+      mutationKey === "structref" ||
       ((mutationKey === "f64" || mutationKey === "i32") && unboxNumIdx !== undefined && boxNumIdx !== undefined) ||
       // (#3311) native-string carrier (`string[]` standalone) — no numeric
       // unbox; recover the `$AnyString` ref at the store.
@@ -542,7 +556,17 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
       return gu !== undefined ? [{ op: "call", funcIdx: gu } as Instr] : undefined;
     })();
     const f64ScratchIdx = holeMapInVecGet ? 4 : 3;
+    // (#4491 T11) The ABSENCE-marker compare is gated on the marker having been
+    // EMITTED, not merely on the program containing some elision — a module
+    // whose only elisions sit in `any[]` literals sets `usesArrayHoles` and
+    // never mints an f64 marker. `__vec_get` is built at FINALIZE, after every
+    // body, so the narrower flag is readable here. Measured: without it
+    // `benchmarks/array.ts` grew 19 bytes for a compare that cannot fire.
+    const f64HoleMapInVecGet = ctx.f64HoleMarkerEmitted === true;
+    /** Second scratch, holding the reinterpreted bits so both payloads compare without re-reading. */
+    const bitsScratchIdx = f64ScratchIdx + 1;
     let usedF64Scratch = false;
+    let usedF64BitsScratch = false;
     const oobUndefinedInstrs = f64SentinelUndefInstrs?.map((instr) => ({ ...instr })) ?? [
       { op: "ref.null.extern" as const },
     ];
@@ -600,11 +624,25 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
         // (#3315) Sentinel-aware f64 box — see f64SentinelUndefInstrs above.
         if (f64SentinelUndefInstrs !== undefined) {
           usedF64Scratch = true;
+          // (#4491 T11) BOTH f64 markers leave as `undefined`: the value one
+          // (an explicit `undefined` element) and the absence one (a hole).
+          // The host cannot see the difference, and per Get neither may cross
+          // as a sNaN number.
+          if (f64HoleMapInVecGet) usedF64BitsScratch = true;
           boxInstrs = [
             { op: "local.tee", index: f64ScratchIdx },
             { op: "i64.reinterpret_f64" },
-            { op: "i64.const", value: UNDEF_F64_BITS },
-            { op: "i64.eq" },
+            ...(f64HoleMapInVecGet
+              ? ([
+                  { op: "local.tee", index: bitsScratchIdx },
+                  { op: "i64.const", value: UNDEF_F64_BITS },
+                  { op: "i64.eq" },
+                  { op: "local.get", index: bitsScratchIdx },
+                  { op: "i64.const", value: HOLE_F64_BITS },
+                  { op: "i64.eq" },
+                  { op: "i32.or" },
+                ] satisfies Instr[])
+              : ([{ op: "i64.const", value: UNDEF_F64_BITS }, { op: "i64.eq" }] satisfies Instr[])),
             {
               op: "if",
               blockType: { kind: "val", type: { kind: "externref" } },
@@ -697,6 +735,9 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
     // without it keep byte-identical `__vec_get` bodies.
     if (usedF64Scratch) {
       getLocals.push({ name: "__f64_scratch", type: { kind: "f64" } as ValType });
+      if (usedF64BitsScratch) {
+        getLocals.push({ name: "__f64_bits_scratch", type: { kind: "i64" } as ValType }); // (#4491 T11)
+      }
     }
     fillVecHostBridge(ctx, "get", getLocals, body);
   }
@@ -788,6 +829,16 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
       );
       // value unboxing per element kind (value param is local 1)
       const strElemIdx = nativeStrVecElemTypeIdx(ctx, vecTypeIdx);
+      // (#4531/#4527) Struct-ref element: recover the typed element from the
+      // externref value. The guard below already proved the ref.test, so the
+      // cast cannot trap.
+      const pushArrDef = ctx.mod.types[arrTypeIdx];
+      const structElemTypeIdx =
+        elemKey === "structref" &&
+        pushArrDef?.kind === "array" &&
+        (pushArrDef.element.kind === "ref" || pushArrDef.element.kind === "ref_null")
+          ? pushArrDef.element.typeIdx
+          : -1;
       const valueInstrs: Instr[] =
         elemKey === "externref"
           ? [{ op: "local.get", index: 1 }]
@@ -798,11 +849,37 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
               ]
             : elemKey === "i32"
               ? [{ op: "local.get", index: 1 }, { op: "call", funcIdx: unboxNumIdx! }, { op: "i32.trunc_sat_f64_s" }]
-              : // (#3311) native-string carrier: the boxed externref value is a
-                // `$NativeString` (<: `$AnyString`); recover the ref element for
-                // `array.set` — no numeric unbox.
-                [{ op: "local.get", index: 1 }, { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: strElemIdx }];
+              : elemKey === "structref"
+                ? [
+                    { op: "local.get", index: 1 },
+                    { op: "any.convert_extern" },
+                    { op: "ref.cast", typeIdx: structElemTypeIdx },
+                  ]
+                : // (#3311) native-string carrier: the boxed externref value is a
+                  // `$NativeString` (<: `$AnyString`); recover the ref element for
+                  // `array.set` — no numeric unbox.
+                  [
+                    { op: "local.get", index: 1 },
+                    { op: "any.convert_extern" },
+                    { op: "ref.cast", typeIdx: strElemIdx },
+                  ];
       const thenBranch: Instr[] = [
+        // (#4531/#4527) An incompatible value must NOT trap the cast in
+        // `valueInstrs` — answer the -1 unsupported sentinel so the runtime
+        // keeps its legacy fallback for that call.
+        ...(elemKey === "structref"
+          ? ([
+              { op: "local.get", index: 1 },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: structElemTypeIdx },
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [{ op: "i32.const", value: -1 }, { op: "return" }],
+              },
+            ] as Instr[])
+          : []),
         { op: "local.get", index: 2 },
         { op: "ref.cast", typeIdx: vecTypeIdx },
         { op: "local.set", index: vecL },
@@ -919,7 +996,8 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
           ? []
           : // (#3311) native-string element (`ref null $AnyString`) → externref via
             // the plain anyref→externref box (no `__box_number`).
-            isNativeStr
+            // (#4531/#4527) struct-ref elements box the same way.
+            isNativeStr || elemKey === "structref"
             ? [{ op: "extern.convert_any" }]
             : elemKey === "f64"
               ? [{ op: "call", funcIdx: boxNumIdx2! }]

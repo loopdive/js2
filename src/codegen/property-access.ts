@@ -19,6 +19,7 @@ import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { emitBoundsCheckedArrayGet } from "./array-methods.js";
 import { emitHoleToUndefined } from "./array-holes.js"; // (#2001 S1)
+import { emitF64HoleToUndef } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys; (#2963) method-owner chain
@@ -55,11 +56,14 @@ import {
 // (#4157) provably-dead null guards
 import { type ReceiverProofHint, emitReceiverNullGuard, receiverProofHolds } from "./nonnull-proof.js";
 import {
+  ab4519RevertsToBase,
   emitIsNullishAnyAt,
   ensureAnyFromExternHelper,
+  nullishExternTestInstrs,
   undefinedExternInstrs,
   undefinedSingletonActive,
 } from "./any-helpers.js";
+import { receiverIsUndefinedIdentifier } from "./nullish-receiver-coercible.js"; // (#4519) the one decline that guard needs
 import {
   emitUndefined,
   ensureExternIsUndefinedImport,
@@ -231,6 +235,7 @@ import { tryBuiltinPrototypeGetterBrandThrow } from "./builtin-prototype-brand.j
 import { tryCompileFunctionPoisonRead } from "./function-poison-pill-access.js";
 import { isFnctorLayoutStructName } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
 import { tryEmitPrimitiveAbsentPropertyRead } from "./primitive-absent-property.js"; // (#4483) absent prop of a number/boolean primitive → undefined
+import { tryEmitPrimitiveProtoMemberGet } from "./primitive-proto-member-get.js"; // (#4668) PRESENT prop of a number/boolean primitive → chain walk
 import {
   finalizeStructAndDynamicMemberGet,
   PA_FALLTHROUGH,
@@ -1540,7 +1545,27 @@ export function emitNullGuardedStructGet(
     // the receiver is proven non-null it contributes nothing and is skipped
     // wholesale. `provenNonNull` already excludes the guarded-cast case, which
     // is the one where this null does NOT mean "null receiver".
+    // (#4519) The BACKUP arm below is `emitNullCheckThrow`'s twin: it reads
+    // nullness of the pre-cast value as "unset", which the tag-1 `$undefined`
+    // singleton (#4489) is not. Widened to NULLISH for the same reason and with
+    // the same helper. Measured caveat, recorded so the next reader does not
+    // re-derive it: across 120 standalone test262 modules this guard was emitted
+    // **0 times** (the live member-read receiver check is
+    // `emitReceiverNullGuard`'s `dispatch:extern-get-recv`, 2,598 emissions over
+    // the same 120). It is widened because the arm is WRONG as written, not
+    // because the corpus exercises it.
+    //
+    // Built INSIDE the `!provenNonNull` arm on purpose: `emitIsNullishAnyAt`
+    // reserves `$AnyValue` (and, first time, the `__undefined` global), and an
+    // elided guard must not mint module state the base emission never had.
+    let backupNullishTest: Instr[] | undefined;
     if (!provenNonNull) {
+      if (backupLocal !== undefined && !ab4519RevertsToBase()) {
+        const savedForNullish = pushBody(fctx);
+        const widened = emitIsNullishAnyAt(ctx, fctx, backupLocal);
+        if (widened) backupNullishTest = fctx.body;
+        popBody(fctx, savedForNullish);
+      }
       fctx.body.push({ op: "local.get", index: tmpAny });
       fctx.body.push({ op: "ref.is_null" });
       fctx.body.push({
@@ -1549,10 +1574,9 @@ export function emitNullGuardedStructGet(
         then:
           backupLocal !== undefined
             ? ([
-                // Value is null — could be wrong struct type or genuinely null.
+                // Value is null — could be wrong struct type or genuinely NULLISH.
                 // Check the backup anyref to distinguish.
-                { op: "local.get", index: backupLocal },
-                { op: "ref.is_null" },
+                ...(backupNullishTest ?? [{ op: "local.get", index: backupLocal }, { op: "ref.is_null" }]),
                 {
                   op: "if",
                   blockType: { kind: "empty" },
@@ -3323,6 +3347,10 @@ function emitExternRecvNullGuard(
     recvTmp,
     { site, compiled: recvType, expr: recvExpr, syntacticNonNull: isProvablyNonNull(recvExpr, ctx.checker) },
     () => typeErrorThrowInstrs(ctx, throwNode),
+    // (#4519) The same §7.3.2 widening as the `dispatch:extern-get-recv` guard —
+    // both callers of `emitReceiverNullGuard` are member-access receiver checks,
+    // and both hold the receiver in an externref local.
+    () => (receiverIsUndefinedIdentifier(recvExpr) ? undefined : nullishExternTestInstrs(ctx, recvTmp)),
   );
 }
 
@@ -3359,6 +3387,36 @@ function tryEmitRealmGlobalModuleGlobalRead(
   const globalIdx = ctx.moduleGlobals.get(propName);
   if (globalIdx === undefined) return undefined;
   if (!receiverIsRealmGlobalObject(ctx, fctx, expr.expression)) return undefined;
+  fctx.body.push({ op: "global.get", index: globalIdx });
+  return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
+}
+
+/**
+ * (#4491) The BRACKET spelling of the #4500 Slice A arm above — `this["p"]` /
+ * `globalThis["p"]` where `p` is a `var`-declared script global.
+ *
+ * §13.3.3 makes the two spellings the same [[Get]], and the compiler's own
+ * global-object model makes them disagree: the dot form has read the module
+ * global since Slice A, while the bracket form kept falling to the
+ * `typeof globalThis` struct and answered `undefined`. Measured on this head:
+ *
+ *     var count = 0;   this.count      // 0          — Slice A
+ *     var count = 0;   this["count"]   // undefined  — this arm
+ *
+ * Only a key the compiler can resolve to a fixed string qualifies; a genuinely
+ * dynamic key (`this[k]`) keeps the existing dynamic read, which consults the
+ * real global object. Declining is byte-identical.
+ */
+function tryEmitRealmGlobalModuleGlobalElementRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.ElementAccessExpression,
+): ValType | undefined {
+  if (!receiverIsRealmGlobalObject(ctx, fctx, expr.expression)) return undefined;
+  const key = resolveComputedKeyExpression(ctx, expr.argumentExpression);
+  if (key === undefined) return undefined;
+  const globalIdx = ctx.moduleGlobals.get(key);
+  if (globalIdx === undefined) return undefined;
   fctx.body.push({ op: "global.get", index: globalIdx });
   return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
 }
@@ -3535,6 +3593,15 @@ export function compilePropertyAccess(
   // claim on the shapes it already handles; declines for every other receiver.
   {
     const __r = tryEmitPrimitiveAbsentPropertyRead(ctx, fctx, expr, propName);
+    if (__r !== undefined) return __r;
+  }
+
+  // (#4668) The complement of the arm above: when the module DOES extend a
+  // primitive prototype, #4483 declines and the read used to reach the legacy
+  // tail's `ref.null.extern`. Box the primitive and let `__extern_get` walk the
+  // chain — its boxed-primitive handling is already correct (measured).
+  {
+    const __r = tryEmitPrimitiveProtoMemberGet(ctx, fctx, expr, propName);
     if (__r !== undefined) return __r;
   }
 
@@ -3891,6 +3958,10 @@ function emitPlainArrayUndefinedOobGet(
   fctx.body.push({ op: "local.get", index: arrLocal });
   fctx.body.push({ op: "local.get", index: idxLocal });
   emitBoundsCheckedArrayGet(fctx, arrTypeIdx, elementType, ctx, false);
+  // (#4491 T11) Canonicalize the ABSENCE marker to the UNDEFINED marker before
+  // the sentinel test below, so the existing `emitIsUndefF64` observer catches
+  // both without learning a second bit pattern.
+  emitF64HoleToUndef(ctx, fctx, elementType);
   let elementIsUndefinedLocal: number | undefined;
   if (ctx.usesArrayHoles && elementType.kind === "f64") {
     const rawValueLocal = allocLocal(fctx, `__oobu_raw_${fctx.locals.length}`, { kind: "f64" });
@@ -4373,6 +4444,11 @@ export function compileElementAccess(
 
   const functionPoisonResult = tryCompileFunctionPoisonRead(ctx, fctx, expr);
   if (functionPoisonResult !== undefined) return functionPoisonResult;
+
+  // (#4491) `this["p"]` / `globalThis["p"]` on a `var`-declared script global —
+  // the bracket twin of the #4500 Slice A dot arm.
+  const realmGlobalElementRead = tryEmitRealmGlobalModuleGlobalElementRead(ctx, fctx, expr);
+  if (realmGlobalElementRead !== undefined) return realmGlobalElementRead;
 
   const jsonParseElementType = tryEmitJsonParseElementAccess(ctx, fctx, expr);
   if (jsonParseElementType !== undefined) return jsonParseElementType;
@@ -5306,6 +5382,48 @@ export function compileElementAccessBody(
       if (isTuple) {
         // Tuple element access requires a literal numeric index
         if (!ts.isNumericLiteral(expr.argumentExpression)) {
+          // (#4536) Dynamic index into a HOMOGENEOUS tuple — webpack's groupBy
+          // accumulator (`@returns {[T[], T[]]}`) does `groups[fn(v) ? 0 : 1]`.
+          // All fields share one ValType, so `t[i]` lowers to an i32 ladder of
+          // `struct.get` arms (an out-of-range index reads the last field —
+          // acceptable for the checker-typed tuple shapes that reach here).
+          // Mixed-type tuples keep the literal-index requirement.
+          const firstFieldType = typeDef.fields[0]?.type;
+          const tupleHomogeneous =
+            firstFieldType !== undefined && typeDef.fields.every((f) => valTypesMatch(f.type, firstFieldType));
+          if (tupleHomogeneous) {
+            const recvLocal = allocLocal(fctx, `__tup_recv_${fctx.locals.length}`, { kind: "ref_null", typeIdx });
+            fctx.body.push({ op: "local.set", index: recvLocal });
+            const idxType = compileExpression(ctx, fctx, expr.argumentExpression, { kind: "i32" });
+            if (idxType && typeof idxType === "object" && (idxType as ValType).kind === "f64") {
+              fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+            }
+            const idxLocal = allocLocal(fctx, `__tup_idx_${fctx.locals.length}`, { kind: "i32" });
+            fctx.body.push({ op: "local.set", index: idxLocal });
+            const lastIdx = typeDef.fields.length - 1;
+            const armFor = (i: number): Instr[] =>
+              i >= lastIdx
+                ? [
+                    { op: "local.get", index: recvLocal },
+                    { op: "struct.get", typeIdx, fieldIdx: lastIdx },
+                  ]
+                : [
+                    { op: "local.get", index: idxLocal },
+                    { op: "i32.const", value: i },
+                    { op: "i32.eq" },
+                    {
+                      op: "if",
+                      blockType: { kind: "val", type: firstFieldType },
+                      then: [
+                        { op: "local.get", index: recvLocal },
+                        { op: "struct.get", typeIdx, fieldIdx: i },
+                      ],
+                      else: armFor(i + 1),
+                    },
+                  ];
+            fctx.body.push(...armFor(0));
+            return firstFieldType;
+          }
           reportError(ctx, expr, "Tuple element access requires a numeric literal index");
           return null;
         }
@@ -5680,6 +5798,9 @@ export function compileElementAccessBody(
       // (#2001 S1) Even bounds-eliminated externref reads must map a `$Hole`
       // slot back to `undefined` — the loop guard proves in-bounds, not present.
       if (ctx.usesArrayHoles && arrDef.element.kind === "externref") emitHoleToUndefined(ctx, fctx);
+      // (#4491 T11) f64 twin: an in-bounds slot holding the absence marker
+      // reads back as `undefined`, never as the marker itself.
+      emitF64HoleToUndef(ctx, fctx, arrDef.element);
     } else if (oobUndefined && f1BoxType !== null) {
       // (#2760 F1, #2785 type-aware box) Plain-array OOB → `undefined` for a
       // PRIMITIVE element: widen the SAFE result to externref (box the in-bounds
@@ -5801,6 +5922,7 @@ export function compileElementAccessBody(
     // (#2001 S1) Map a `$Hole` slot back to `undefined` on bounds-eliminated
     // externref reads too (in-bounds ≠ present).
     if (ctx.usesArrayHoles && typeDef.element.kind === "externref") emitHoleToUndefined(ctx, fctx);
+    emitF64HoleToUndef(ctx, fctx, typeDef.element); // (#4491 T11)
   } else if (oobUndefinedArr && f1BoxTypeArr !== null) {
     // (#2760 F1, #2785/#2792 type-aware box) Plain-array OOB → `undefined` for a
     // PRIMITIVE element: widen to a boxed-or-undefined externref, boxed by the

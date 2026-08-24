@@ -1145,7 +1145,20 @@ function findUnboxedCaptureLocal(
  */
 function pushCaptureCell(ctx: CodegenContext, fctx: FunctionContext, cap: ArrowClosureCapture): void {
   const boxed = fctx.boxedCaptures?.get(cap.name);
-  const boxedLocalIdx = cap.localIdx;
+  // A recursive sibling can materialize this binding while an outer closure's
+  // construction is still walking its capture list. That promotion updates
+  // `boxedCaptures` and `localMap`, but the capture descriptor's `localIdx`
+  // was computed before the promotion and still names the raw value slot.
+  // Prefer the live mapped cell only when its type agrees with the box; keep
+  // the descriptor slot for ordinary captures and stale-map cases.
+  const mappedLocalIdx = fctx.localMap.get(cap.name);
+  const mappedType = mappedLocalIdx === undefined ? undefined : getLocalType(fctx, mappedLocalIdx);
+  const mappedIsCell =
+    boxed !== undefined &&
+    mappedType !== undefined &&
+    (mappedType.kind === "ref" || mappedType.kind === "ref_null") &&
+    mappedType.typeIdx === boxed.refCellTypeIdx;
+  const boxedLocalIdx = mappedIsCell ? mappedLocalIdx! : cap.localIdx;
   const boxedType = getLocalType(fctx, boxedLocalIdx);
   const valueType = boxed?.valType;
   const rawLocalIdx = valueType ? findUnboxedCaptureLocal(fctx, cap.name, boxedLocalIdx, valueType) : undefined;
