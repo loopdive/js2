@@ -24,7 +24,8 @@ func-budget-allow:
   # new incoherence, not a fix — and these two live nowhere else.
   - src/codegen/object-runtime.ts::fillDynamicForinVecArms
 title: "ES5 standalone: arguments-object `length`/`callee` own-property descriptors — a NUMBER write to arguments.length sticks but a STRING write does not; gOPD reports wrong writable/configurable; typeof argObj.callee answers \"number\""
-status: in-review
+status: done
+completed: 2026-08-24
 assignee: ttraenkler/dev-4658
 sprint: current
 created: 2026-08-23
@@ -406,3 +407,14 @@ delete now records it. Not folded in here deliberately: the arm fires only when
 `argumentsObjectMayBeReconfigured` proves the object is unreachable as a value,
 so the two paths are disjoint by construction and this change makes nothing
 worse — but a future slice that unifies them should set the bit there too.
+
+## Successor for the unclaimed residuals (lead, 2026-08-24)
+
+R1, R4 and R5 name their owners (the `[[ParameterMap]]` / descriptor-sidecar
+representation behind #3251/#4622). R2 and R3 were unclaimed, so they are filed as
+**[#4667](https://js2wasm.loopdive.com/dashboard/issue.html?slug=4667-arguments-array-identity-vec-shared-rep)**
+— together, deliberately, because R2 carries a landing-order hazard that is invisible
+from either row alone: `propertyHelper.isWritable` takes its Array branch *because*
+`Array.isArray(arguments)` wrongly answers `true`, and that branch is the only reason
+`10.6-6-2` — a row this issue just fixed — passes. Fixing R2 without R1 trades one row
+for another silently.
