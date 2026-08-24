@@ -1,7 +1,7 @@
 ---
 id: 4666
 title: "npm-compat: make relative-speed history use order-balanced paired measurements"
-status: in-progress
+status: done
 created: 2026-08-24
 updated: 2026-08-24
 priority: high
@@ -82,4 +82,4 @@ an actual same-round comparison.
       a quotient of independently selected medians.
 - [x] Raw paired ratios and estimator/order metadata are retained in each lane.
 - [x] Deterministic focused tests pin the order and estimator.
-- [ ] Focused npm-compat tests, typecheck, issue gate, and formatting pass.
+- [x] Focused npm-compat tests, typecheck, issue gate, and formatting pass.
