@@ -139,6 +139,25 @@ const NATIVE_PROTO_BRAND_TAGS: ReadonlyArray<readonly [string, string]> = [
   // makes `Object.prototype.toString.call(Function.prototype)` answer
   // `[object Function]` (test262 `built-ins/Function/prototype/S15.3.4_A1.js`).
   ["Function", "Function"],
+  // (#4492, §20.1.3.6 step 13) `%Object.prototype%` is the one entry here whose
+  // tag is the DEFAULT rather than an exotic slot — it is listed because it is
+  // reached as a RECEIVER (`Object.prototype.toString()`, i.e. `this` is
+  // `%Object.prototype%` itself) and, being a `$NativeProto`, it matched no arm
+  // and hit the loud refusal. Measured on this branch's base
+  // (`.tmp/probes/b4.js`, `--target standalone`): `o.getClass()` and
+  // `arr.getClass()` answer `[object Object]` / `[object Array]` while
+  // `Object.prototype.getClass2()` threw `Object.prototype.toString is not yet
+  // implemented`. That is test262 `built-ins/Object/prototype/S15.2.4_A1_T2`'s
+  // FIRST assertion.
+  //
+  // It is added ALONE, and the table's "not a catch-all" rule is why. A blanket
+  // `$NativeProto ⇒ Object` default would be wrong for every brand carrying a
+  // `@@toStringTag` (`Map.prototype` is `[object Map]`, `Set`/`Promise`/
+  // `DataView`/`ArrayBuffer`/… likewise), and the ES5-era-exotic trio
+  // (`Date`/`RegExp`/`Error`.prototype) is `[object Object]` from ES2015 on but
+  // was not measured here — those keep the loud refusal rather than an
+  // unmeasured widening.
+  ["Object", "Object"],
 ];
 
 /**
