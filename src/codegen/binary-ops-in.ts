@@ -35,7 +35,11 @@ import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) o
 // a carrier bag the receiver's field list cannot see — route the folded `false`.
 import { carrierBagKeyNeedsRuntime } from "./builtin-instance-key-presence.js";
 // (#4491 T4) %Object.prototype%'s own names are `in` every ordinary object.
-import { inReceiverIsObjectShaped, objectPrototypeInheritsInName } from "./object-proto-name-in.js";
+import {
+  hasExplicitNullObjectPrototype,
+  inReceiverIsObjectShaped,
+  objectPrototypeInheritsInName,
+} from "./object-proto-name-in.js";
 
 /**
  * (#3714) `emitThrowTypeError` pushes directly onto `fctx.body`; to nest its
@@ -62,6 +66,12 @@ function publicPhysicalFieldNames(rightType: ts.Type, fields: FieldDef[]): strin
   return fields
     .map((field) => field.name)
     .filter((name): name is string => name !== undefined && publicPropertyNames.has(name));
+}
+
+/** Return true for an approved standalone fnctor instance struct. */
+function isFnctorInstanceWasm(ctx: CodegenContext, wasmType: ValType): boolean {
+  if (wasmType.kind !== "ref" && wasmType.kind !== "ref_null") return false;
+  return ctx.typeIdxToStructName.get(wasmType.typeIdx)?.startsWith("__fnctor_") ?? false;
 }
 
 /**
@@ -407,7 +417,9 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // `__extern_has` already answers correctly — stays byte-identical.
     // See `object-proto-name-in.ts`.
     const inheritsFromObjectPrototype =
-      ctx.standalone && objectPrototypeInheritsInName(staticKey, inReceiverIsObjectShaped(rightWasm.kind));
+      ctx.standalone &&
+      !hasExplicitNullObjectPrototype(ctx, expr.right) &&
+      objectPrototypeInheritsInName(staticKey, inReceiverIsObjectShaped(rightWasm.kind));
     const has = inheritsFromObjectPrototype || (!growableReceiver && (hasInStruct || tsTypeHasProperty));
     // (#1444) When RHS is externref/anyref AND static analysis came up empty
     // (no struct field, no TS-typed prop), the answer is NOT reliably false
@@ -422,6 +434,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // overlay and the #3537 bag, so routing makes `in` agree with the read — and
     // only a folded `false` is routed, so no affirmative answer moves.
     const vecNamedKeyRoute = !has && carrierBagKeyNeedsRuntime(ctx, rightWasm, staticKey, 0);
+    const fnctorProtoRoute = !has && ctx.standalone && isFnctorInstanceWasm(ctx, rightWasm);
     // (#4515 wave-5) The SECOND half of the #4484 D guard above. That one
     // stopped a reassigned binding's stale static type from producing a wrong
     // THROW; the same staleness also produces a wrong ANSWER here, because
@@ -445,7 +458,11 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     const reassignedReceiverRoute = rhsIsReassignedBinding && rightWasm.kind !== "ref" && rightWasm.kind !== "ref_null";
     if (
       !has &&
-      (rightWasm.kind === "externref" || rightWasm.kind === "anyref" || vecNamedKeyRoute || reassignedReceiverRoute)
+      (rightWasm.kind === "externref" ||
+        rightWasm.kind === "anyref" ||
+        vecNamedKeyRoute ||
+        reassignedReceiverRoute ||
+        fnctorProtoRoute)
     ) {
       const hasIdx = ensureLateImport(
         ctx,
