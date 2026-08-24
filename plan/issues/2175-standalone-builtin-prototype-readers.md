@@ -1,12 +1,12 @@
 ---
 id: 2175
 title: "architect spec: standalone builtin-prototype object representation + native-method-closure dispatch"
-status: ready
+status: suspended
 model: fable
 fable_role: spec
 sprint: current
 created: 2026-06-16
-updated: 2026-07-17
+updated: 2026-08-22
 priority: high
 feasibility: hard
 model: fable
@@ -2304,3 +2304,21 @@ biome clean; `tsc --noEmit` clean on all three touched files.
 spec-correct for user TypeScript that declares an explicit `this` parameter,
 but that surface was reasoned about (no top-level `this:` in any other bundled
 `lib.*.d.ts` method signature) rather than measured.
+
+## Suspended Work — builtin-prototype readers (2026-08-22)
+
+Merged via #4723: `arguments` inside `new F(…)` (the __extras_argv/__argc
+protocol at the ctor call site, `fnctor-ctor-arguments.ts`) and instanceof
+boolean branding. Wave-5 T9 later seeded `constructor` into the builtin-proto
+companion — which turned out to also break the QuickJS provider canary until
+#4491's T10 stopped `constructor` taking the `Object.prototype` fallthrough in
+the proto-index walk.
+
+Open, with prices attached in #4491: the `memberCsv` exclusion is load-bearing
+(a CSV entry would mint a brand-keyed closure, making `Error.prototype.
+constructor` a callable refusal stub); `Date`/`Function` decline the seed for
+want of an identity-stable carrier (#4200 follow-ups); `Iterator` needs an
+accessor pair. Four `tests/issue-4200.test.ts` guards are now stale against the
+seed and need #4200's owner to adjudicate.
+
+Resume from #4491's "Suspended Work" section.
