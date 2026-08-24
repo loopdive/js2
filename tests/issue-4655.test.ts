@@ -299,27 +299,38 @@ describe("#4655 — measured residuals, each with the control that pins its root
     "CONTROL for R3 — the SAME expression in a fresh var is fully correct",
   );
 
-  // ── R4. concat loses hole / inherited-index resolution ──────────────────
-  // MEASURED: a hole and an `Array.prototype[k]`-inherited index are both
-  // correct when read directly (the control below) and both become a plain NaN
-  // after crossing `concat` — `typeof arr[0]` is `"number"` where the spec says
-  // `"undefined"`, and `arr.join("|")` renders `"NaN|1|NaN"`.
-  // SUSPECTED ROOT (labelled, not asserted — I did not falsify it): the §23.1.3.1
-  // loop pushes into a `$ObjVec` of externref while the result SLOT is still
-  // statically `number[]`. The one observation that would discriminate is
-  // whether the value INSIDE the container is already NaN or only becomes one
-  // on the way out; `join` on the result also says NaN, which is evidence
-  // AGAINST a pure read-side unbox and was not chased further.
-  // test262 `concat/S15.4.4.4_A1_T4.js`, `A3_T{1,2,3}.js`. Owner: value-rep /
-  // the concat result-carrier slice.
-  failSource(
+  // ── R4. concat loses hole / inherited-index resolution — RETIRED (wave 2) ──
+  // MEASURED (wave 1): a hole and an `Array.prototype[k]`-inherited index are
+  // both correct when read directly (the control below) and both became a plain
+  // NaN after crossing `concat`.
+  // SUSPECTED ROOT, labelled not asserted: "the §23.1.3.1 loop pushes into a
+  // `$ObjVec` of externref while the result SLOT is still statically `number[]`
+  // … the one observation that would discriminate is whether the value INSIDE
+  // the container is already NaN or only becomes one on the way out."
+  //
+  // Wave 2 (2026-08-24) ran that observation and the suspected root was RIGHT:
+  // `x.concat(y)[1] === y` is **true** read off the call expression and **false**
+  // through a `var`. Fixed in `src/codegen/array-concat-carrier.ts` — the slot
+  // typers and the concat dispatcher now ask ONE predicate. So this is no longer
+  // a residual and the pin below is an ordinary pin.
+  //
+  // (The wave-1 counter-evidence — "`join` on the result also says NaN, which is
+  // evidence AGAINST a pure read-side unbox" — was not counter-evidence: the
+  // materializer ToNumbers on the way IN, so `join` reads real NaNs out of a
+  // real f64 vec. Both observations are consistent with the slot.)
+  //
+  // Its corpus row `concat/S15.4.4.4_A1_T4.js` still fails, now at `arr[2]` —
+  // an operand literal whose ONLY element is an elision. That is wave 2's
+  // residual R-H (`tests/issue-4655-concat-carrier.test.ts`), a different root,
+  // and it is deliberately NOT asserted here.
+  pinSource(
     "R4-concat-loses-the-hole",
     `${LOOP_CARRIED}
      var x = [, __n];
      var arr = x.concat([], [, ]);
      assert.sameValue(arr.length, 3, "length: " + arr.length);
      assert.sameValue(arr[0], undefined, "hole through concat: " + String(arr[0]));`,
-    "a hole crossing concat becomes NaN — the result slot is still number[]",
+    "a hole crossing concat keeps its absence — FIXED in wave 2 (was an it.fails residual)",
   );
   // POSITIVE CONTROL for R4 — the hole itself is represented correctly; only
   // the trip through concat loses it.

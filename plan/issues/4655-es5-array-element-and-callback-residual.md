@@ -23,8 +23,26 @@ assignee: dev-4655
 # `switch` itself is byte-identical — `localized` is derived from the property
 # access inside the lowering rather than threaded through it, precisely to keep
 # `compileArrayMethodCall` from growing (it is 603 lines and func-budgeted).
+# (#4655 wave 2) The concat carrier fix. Its MECHANISM is the new leaf module
+# `array-concat-carrier.ts`; what lands in the three tracked files is call-site
+# plumbing only — one guarded early-return in `compileArrayConcat` (+14 in
+# array-methods.ts), one arm in `moduleGlobalWasmType` (+9 in declarations.ts),
+# and one arm plus a conservative spill bail (+16 in statements/variables.ts).
+# The declarations.ts / variables.ts growth is restated here rather than
+# inherited from #4491's grant: CI diffs the merge preview, so an allowance
+# living only in an issue file THIS change-set does not modify is a stranded
+# grant and fails `quality`.
 loc-budget-allow:
   - src/codegen/array-methods.ts
+  - src/codegen/declarations.ts
+  - src/codegen/statements/variables.ts
+# (#4655 wave 2) Same two functions, same reason — the slot decision is one
+# ternary arm in each cascade, and it MUST live in the cascade rather than in
+# the leaf module, because the cascade's order is what makes the slot agree with
+# the value (see the lock-step comments this file's `## Fix` section cites).
+func-budget-allow:
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/statements/variables.ts::compileVariableStatement
 # (#4655) ONE new `__extern_toString` reference, in the new module. §23.1.3.32
 # step 6.c.i is literally `ToString(Invoke(elem, "toLocaleString"))`, so the
 # ToString is the spec step, not a hand-rolled coercion matrix — and it is the
@@ -482,3 +500,371 @@ The sweep numbers above are NOT re-run on that tree; they are stated against
   its `for (const { label, args } of testCases)` — a for-of destructuring
   failure over an array of object literals, plausibly the same #1888 tag lie as
   R6. It never reaches the element step this issue fixes.
+
+---
+
+# Wave 2 (senior-dev, 2026-08-24) — the `built-ins/Array/prototype` bucket
+
+Worktree `/home/user/js2wasm/.claude/worktrees/agent-aa266c5cd1b8b9cc8`, branch
+`issue-4655-array-prototype-bucket`, base = the campaign branch
+`claude/es5-standalone-pass-rate-6tk9rb` @ `95d61ae34`.
+
+Scope taken: the **concat** sub-family (5 rows). The other two sub-families of
+this bucket (`filter` ×5, `toString` ×2, `forEach` ×1) were re-measured but not
+touched — wave 1 already rooted them (R3, R5–R9) and my measurements agree.
+Every number below comes from a run I executed on this branch.
+
+**Two rows in this directory are NOT mine and are excluded from every claim**:
+`concat/S15.4.4.4_A2_T{1,2}` fail with `Array.prototype.concat is not yet
+callable as a value in --target standalone`. That refusal site is live work in
+another lane (#4492 / the #4515 C1 builtin-as-value family). They still fail
+verbatim on both arms of my change, which touches neither the refusal nor a
+builtin read as a value.
+
+## Root cause — two roots, both in `concat`, both measured before any edit
+
+### C1 — the result SLOT, not the lowering (`A1_T2`, `A1_T4`)
+
+The obvious reading of "undefined/null elements degrade to NaN **through**
+concat" is that the concat lowering loses them. **It does not.** One probe pair
+separates the two:
+
+| probe | `x.concat(y)[1] === y` |
+| --- | --- |
+| `.tmp/probes/c3-object-arg-nostore.js` — read off the CALL EXPRESSION | **true** |
+| `.tmp/probes/c4-store-vs-nostore.js` — the same call stored in a `var` first | **false** |
+| …the same call stored in a var TypeScript cannot type `number[]` | **true** |
+
+The §23.1.3.1 native spec loop (`array-concat-spec.ts`, #4446) already produces
+a correct `$ObjVec` externref. TypeScript then types the binding from the lib
+signature `concat(...items): number[]`, `resolveWasmType` turns that into
+`(ref null $__vec_f64)`, and the `externref → ref_null` arm of `coerceType`
+routes through the per-vec materializer, which **ToNumbers every element**.
+
+The values identify the mechanism rather than merely being wrong:
+`[0].concat(new Object(), new Array(1,2), -1, true, "NaN")` came out
+`[0, NaN, 1, 2, -1, 1, NaN]` — `true` boxed as **1** and the string `"NaN"` as a
+**real NaN**. That is a per-element ToNumber, not a lost value.
+
+This is the defect wave 1 recorded as **R4** and explicitly left SUSPECTED — "I
+did not falsify whether the value is already `NaN` inside the container". The
+no-store probe is that falsification: it is not.
+
+It is also wave 1's **R3** seen from the other side. R3 is a REUSED var whose
+carrier was fixed by an earlier assignment; C1 is a FRESH var whose carrier is
+fixed by a lib signature that is not true of JavaScript. Both are "the slot
+decided the representation and the value did not survive it".
+
+### C2 — the typed fast path never performs `Get(O, k)` (`A3_T1`, `A3_T2`, `A3_T3`)
+
+§23.1.3.1 steps 5.c.i/ii are `HasProperty(E, k)` and `Get(E, k)` — full MOP
+walks. `compileArrayConcat`'s fast paths `array.copy` the receiver's own backing,
+so an index living on `Array.prototype`/`Object.prototype` is invisible to them.
+Measured, with the control that refutes the wider reading:
+
+| probe | result |
+| --- | --- |
+| `c7-proto-index-noconcat.js` — `a[2]` with `Array.prototype[2] = 2`, NO concat | `a[2] === 2` **true**, `a.hasOwnProperty("2")` false — the direct read already walks the chain |
+| `c5-proto-index.js` — the same index through a 0-arg `concat` | `b[2] === 2` **false** |
+| `c1b-sparse-concat.js` — a sparse receiver, NO prototype write | already fully correct (#4638's marker) — so the axis is the inherited index, not sparseness |
+
+So it is not "the inherited index is never seen"; the READ path and the COPY
+path disagree about one index. That is the shape #4491 lane J fixed for `join`
+(`array-join-proto-hole.ts`), including its gate.
+
+### A measurement trap this bucket sets, worth recording
+
+Two probes disagreed with the corpus row for a while, both times because of the
+**observation vehicle**, not the tree:
+
+- Reporting `"" + b[1]` renders an ABSENT f64 slot as the string `"NaN"`, so a
+  string-concatenation report cannot tell absent from a real NaN. Every observer
+  in these probes is therefore `x === undefined` / `typeof x`, never `"" + x`.
+- The inline `b[1] === undefined` is hole-aware; `assert.sameValue(b[1],
+  undefined)` — the corpus row's own vehicle — boxes the element first and is
+  not. `c10-a3t2-minimal-edit.js` (the row VERBATIM with exactly one assertion
+  replaced) reports `inline=true` on the very tree where the row reports NaN.
+  Adding a helper function or a `try`/`catch` to the probe perturbed the program
+  enough to move the answer (`c9` trapped outright), which is why the settling
+  probe is a one-line edit of the row rather than a rewrite of it.
+
+## Fix
+
+New leaf module `src/codegen/array-concat-carrier.ts` holding the ONE predicate
+both sides ask, plus three call sites:
+
+- `concatMustConsultPrototypeChain(ctx)` = `native-first && ctx.protoIndexDirty`.
+  `compileArrayConcat` routes the whole call to `compileArrayConcatNativeSpec`
+  when true. Flag clear ⇒ never reached ⇒ bytes unchanged. JS-host lane
+  excluded (its `env::__array_concat_any` bridge already delegates the walk).
+- `concatCallYieldsDynamicCarrier(ctx, initializer)` — true for **≥2 arguments**
+  or `concatMustConsultPrototypeChain`. Consumed by the module-global slot typer
+  (`declarations.ts` `moduleGlobalWasmType`), the function-local slot cascade
+  (`statements/variables.ts`), and the generator spill typer (conservative bail).
+
+**Why one shared predicate rather than a check at each site.** The defect is a
+slot/value DESYNC; if the slot typer and the dispatcher disagree about which
+concats are dynamic, the desync merely moves (a vec value in an externref slot,
+or the reverse). `statements/variables.ts` carries half a dozen "MUST stay in
+lock-step with …" comments for exactly this class.
+
+**What the predicate deliberately declines.** The typed fast path also turns on
+the runtime-probed receiver carrier (`receiverIsExternref`) and on the argument's
+registered vec type index vs the receiver's. The **single-argument** case turns
+on precisely those, so the predicate answers `false` there and that shape keeps
+today's behaviour. Absent-not-wrong: a missing widening leaves a pre-existing bug
+in place; a wrong widening creates a new one. None of the five rows needs it.
+
+It also uses a SYMBOL-NAME test for "is the receiver array-shaped" rather than
+`resolveArrayInfo`. The slot typers run in `collectDeclarations`, before any body
+is compiled, and `resolveArrayInfo` → `resolveWasmType` MINTS vec types on
+demand; minting one earlier than the base tree does would renumber the type
+section for every module containing a concat — byte churn indistinguishable from
+a real change in a `wasm_sha` comparison.
+
+## What moved, and what did not
+
+| row | base | after |
+| --- | --- | --- |
+| `concat/S15.4.4.4_A1_T2` | `arr[1] === y` → NaN | **pass** |
+| `concat/S15.4.4.4_A1_T4` | fails at `arr[0]` (assertion 1) | fails at `arr[2]` (assertion 3) — residual R-H |
+| `concat/S15.4.4.4_A3_T1` | fails at `arr[1] === 1` (VALUE) | fails at `arr.hasOwnProperty("1")` (PRESENCE) — residual R-P |
+| `concat/S15.4.4.4_A3_T2` | fails at `b[1] === undefined` (VALUE) | fails at `b.hasOwnProperty("2")` (PRESENCE) — residual R-P |
+| `concat/S15.4.4.4_A3_T3` | same as `A3_T2` | same as `A3_T2` |
+
+One row flips. Three move from wrong values to correct values with wrong
+presence — progress the pass/fail column cannot show, which is why each residual
+pin carries a positive control asserting the value half, so a future presence fix
+cannot be credited for it.
+
+## Residuals from this wave
+
+### R-P — own-index PRESENCE on a dynamic array carrier. Owner: value-rep, NOT this lowering.
+
+`hasOwnProperty` answers **false for every index** of a `$ObjVec`, including one
+holding a live `0` — measured **identically on BOTH arms**
+(`c11-objvec-hasown.js`, `c14-hasown-controls.js`), so it is a PRE-EXISTING gap
+that the carrier fix routes more values into, not one it introduces. Reading the
+native: `__hasOwnProperty` (`object-runtime.ts` ~L4181) has `$Object`,
+string-exotic, builtin-fn-meta and carrier-bag arms and **no dense-element arm**;
+a non-`$Object` receiver falls to `bagHasIfAbsent` and answers 0. A statically
+vec-typed receiver only answers correctly via the `provesDenseLiteralOwnIndex`
+FOLD in `object-ops.ts` — `var plain = [10,11]; plain.hasOwnProperty("0")` is
+true, and the same array after `a.length = 3` is **false**.
+
+Deliberately not fixed here. The obvious shape — a consult-only prologue that can
+only turn `false` into `true` — is monotone and looks safe, but
+`__hasOwnProperty` is what the entire test262 `propertyHelper` harness runs
+through, and this issue has no measurement for that blast radius. It wants its
+own issue and its own sweep.
+
+### R-H — an all-elisions array literal as a concat operand. Root NOT isolated; do not inherit it as one.
+
+`A1_T4` is `[,1].concat([], [,])`. The measured axis is whether the elision has
+a NON-HOLE SIBLING in the literal:
+
+| operand | spread through concat |
+| --- | --- |
+| `[, 5]` (`c15`, `c16`) | element reads back absent ✓ |
+| `[,]` inline (`c16`) | reads back a plain **number** ✗ |
+| `[,]` via a `var` (`c12`) | reads back an **object** ✗ |
+| `[,][0]` read directly (`c12`) | `=== undefined` **true** — the static read is correct |
+
+The natural story — "the dynamic read chokepoint hands back the raw marker" — is
+**not established**: `Array.prototype.indexOf.call([,], undefined)` answers `0`
+on BOTH arms (`c17`), which is inconsistent with it, and `indexOf` has its own
+scan (`array-indexof-scan.ts`). I did not determine which path answers. Recorded
+as the axis plus its control, not as a root. Owner: value-rep hole-marker
+carrier selection (#4491 T11 family).
+
+### R-B — #4638's absent concat marker survives `===` and NOT a boxing boundary. Owner: value-rep.
+
+Found by a pin that was written as a CONTROL and went red. In a module where the
+gate is CLEAR and neither half of this change can execute (0 arguments, no
+prototype-index write), `var a = [0,1,2]; a.length = 5; var b = a.concat();`
+gives (`.tmp/probes/c18-absent-tail-boxing.js`):
+
+```
+b.length = 5   b[2] = 2   b[3] === undefined  →  true
+                          assert.sameValue(b[3], undefined)  →  NaN
+```
+
+So #4638's `emitConcatResultBacking` marker is only **half** observable: the
+comparison fold reads it, the `f64 → externref` box does not. **This is the root
+of `A3_T{2,3}`'s BASE failure** (`b[1] expected undefined, got NaN`) — the
+element was already marked absent and the boxing threw the mark away. The C2 fix
+sidesteps it for gate-dirty modules by making the result an `$ObjVec`, where
+absence is a null externref; it does not repair the marker, and gate-clear
+modules keep it.
+
+The seam already exists: `coerceType`'s `f64 → externref` arm selects
+`undefSentinelAwareBoxInstrs` for an f64 branded `{ undefSentinel: true }`, and
+that arm's own comment names "a value read from a slot that genuinely holds
+`undefined`" as the intended trigger — an f64 **vec element read** is one. Not
+taken here: the brand reaches every f64 vec element boxed to `any`, and this
+issue has no measurement for that. (Note the arm tests `UNDEF_F64_BITS` only, so
+a successor also has to decide the `HOLE_F64_BITS` twin.)
+
+### An incidental measurement worth keeping: two spellings of "a sparse array" are not the same carrier
+
+The first draft of the prototype-chain pins built the receiver as
+`var a = []; a[0] = 0; a.length = 3` rather than the corpus spelling
+`var a = [0]; a.length = 3`. **Five pins went red on the fix arm, including a
+control that passes on both arms by construction.** With the loop-built
+spelling, even the DIRECT read misbehaves: `a[2]` does not see
+`Array.prototype[2]`, and `a[1]` reads `0` instead of absent. The literal
+spelling gets both right. That is a separate defect from anything in this issue
+(the grow-gap marker on an empty-literal-then-indexed-write array, #4491 T8-A
+territory) and it is also a live methodology hazard: "make the pin unfoldable"
+moved the pin to a different carrier, which is #4655's own R8 lesson repeating
+in a new costume. The pins below keep the array LITERAL and loop-carry only the
+element values (`[__n - 3]` is `[0]`).
+
+### Re-measured, unchanged, agreeing with wave 1
+
+`filter/15.4.4.20-9-b-{14,15,16}` (R6), `filter/15.4.4.20-9-b-2` (R7),
+`forEach/15.4.4.18-3-23` (R5), `toString/S15.4.4.2_A1_T2` (R3),
+`toString/S15.4.4.2_A1_T4` (R8) all fail with the identical error text on both
+arms of this wave. `filter/15.4.4.20-5-7` is still unmeasurable in an agent
+worktree — it needs the quickjs provider (`JS2WASM_EVAL_ENGINE=quickjs but the
+quickjs provider is not built`), exactly as wave 1 reported.
+
+## Things I considered and rejected
+
+- **Widening the slot on the JS-host lane too.** `compileArrayConcatExternHost`
+  also returns externref, so the same desync exists there. Excluded anyway: it
+  would move bytes on the lane where the dogfood corpus and the npm-compat
+  suites live, for zero rows in this campaign, with no measurement of the cost.
+- **Making `__extern_get_idx` map the `$Hole` struct to `undefined`** — the
+  first-guess fix for R-H. Dropped because the probe that would have justified
+  it (`c17`) contradicts its premise. See R-H.
+- **A dense-index consult arm in `__hasOwnProperty`** — the fix for R-P. See
+  above; the blast radius is the whole `propertyHelper` harness.
+
+## Test Results (wave 2)
+
+All arms run by me in this worktree. Arm state checked before each arm with
+`git diff HEAD --stat -- src` **plus an explicit presence check for the new,
+untracked-at-the-time module** — `git diff` alone is blind to an untracked file,
+so a "restore" that left it behind would have measured a hybrid tree and said
+nothing.
+
+### Scoped two-arm sweep — 358 files
+
+Sized from the blast radius, not from a directory name. Both halves of the diff
+are keyed on a `.concat(` CALL, so the list is:
+
+- **`behav.txt` (233)** — every corpus file that CAN be reached: all `.concat(`
+  callers, plus the whole `concat` directory and `built-ins/Array` top level.
+- **`bytes.txt` (125)** — a deterministic sample of files that CANNOT be reached
+  (`join`/`toString`/`toLocaleString`/`filter`/`forEach`/`slice`/`indexOf`),
+  swept on both arms for **`wasm_sha` identity**. That answers a stronger
+  question than pass/fail on the set where the claim is "nothing moved".
+
+**Dropped, and why:** the remaining ~2,700 `built-ins/Array` files and the rest
+of the corpus. The first cut of this sweep was 782 files and was running at ~8
+rows/min under 4-lane load — ~3.3 h for two arms, for a change whose reach is
+bounded by construction. The byte-identity tier is the replacement argument.
+
+**Load** (lead ruling: ≤7 with per-arm recording, because with two sibling lanes
+sweeping continuously this box never reaches <5 and the original <5 gate became
+a deadlock):
+
+```
+ARM fix  START 12:01:22 load 6.24   END 12:12:45 load 7.58   358 rows
+ARM base START 12:13:45 load 4.86   END 12:22:36 load 5.69   358 rows
+```
+
+```
+base:  pass 189   fail 115   skip 50   compile_error 4
+fix :  pass 190   fail 114   skip 50   compile_error 4
+```
+
+Denominators match exactly (358 = 358), so no row silently disappeared between
+arms. The four `compile_error` rows are the SAME four files with the SAME error
+text on both arms (three `Reflect.construct` NewTarget, one `__get_builtin`) —
+no contention artifacts to re-verify.
+
+**Flips to pass — 1:**
+
+```
++ built-ins/Array/prototype/concat/S15.4.4.4_A1_T2.js
+```
+
+Independently measured twice on each arm: once in a **serial single-process**
+run of the 15-row bucket list (`.tmp/base15.jsonl` / `.tmp/myrows-fix2.jsonl`)
+and once in this 2-shard sweep. Both agree.
+
+**Regressions — 0. Other status moves — 0.**
+
+**Movement WITHOUT a flip** (recorded separately so the campaign's row count
+stays auditable — these are NOT flips and must not be counted as any):
+
+| row | base fails at | fix fails at |
+| --- | --- | --- |
+| `concat/S15.4.4.4_A3_T1` | `arr[1] === 1` — the inherited VALUE | `arr.hasOwnProperty("1")` — PRESENCE |
+| `concat/S15.4.4.4_A3_T2` | `b[1] === undefined` — the absent VALUE | `b.hasOwnProperty("2")` — PRESENCE |
+| `concat/S15.4.4.4_A3_T3` | same as `A3_T2` | same as `A3_T2` |
+| `concat/S15.4.4.4_A1_T4` | assertion 1, `arr[0]` | assertion 3, `arr[2]` |
+
+### Byte identity — the argument for everything not swept
+
+| tier | set | identical | different |
+| --- | --- | --- | --- |
+| reachable (`behav`) | 179 rows with a `wasm_sha` on both arms | 171 | **8** |
+| unreachable sample (`bytes`) | 125 | **124** | **1** |
+
+All 8 reachable differences are `concat` sites (six `concat/S15.4.4.4_*`, one
+`concat/15.4.4.4-5-b-iii-3-b-1`, one stray `test/__probe4638__/p-holes.js` left
+in the shared checkout by another lane — it calls `.concat(`).
+
+**The single unreachable difference is a finding about my LIST, not about the
+change, and it closes exactly.** `toLocaleString/user-provided-tolocalestring-shrink.js`
+contains no `concat` — but it carries `includes: [resizableArrayBufferUtils.js]`,
+and that HARNESS file's line 67 is `const ctors = builtinCtors.concat(MyUint8Array,
+MyFloat32Array);` — a two-argument concat in a declaration initializer, i.e. the
+predicate firing exactly as designed. I built both lists by grepping the TEST
+sources and forgot that `includes:` splices harness code into the same
+compilation unit. Re-checking the whole sample against its includes:
+**exactly 1 of the 125 pulls in a concat-calling harness, and it is the same
+file.** So the byte claim is exact — 124/124 truly-unreachable files identical
+— rather than 124/125 with an unexplained exception. (Also checked: the
+differing `wasm_sha` is REPRODUCIBLE on one arm — two runs of the fix tree give
+`8bf3ab6a2612` twice — so the cross-arm difference is not compile
+nondeterminism.)
+
+### Pins
+
+| suite | base arm | fix arm |
+| --- | --- | --- |
+| `tests/issue-4655-concat-carrier.test.ts` (new) | `Tests 7 failed \| 7 passed (14)` | `Tests 14 passed (14)`, file line `(14 tests)` with no `skipped` |
+| `tests/issue-4655.test.ts` (wave 1) | — | `Tests 29 passed (29)` |
+| `tests/equivalence/array-zero-arg-methods.test.ts` | — | `3 passed (3)` |
+
+`executed = passed + failed = 14 = total` on both arms of the new suite, so
+nothing was silently skipped (brief tier 1, strong form). The 7 base failures are
+the five fix pins plus the two arms I initially mislabelled as both-arms
+controls — **the base run is what caught the mislabelling**; their notes now say
+plainly that they fail on base.
+
+**An `it.fails` that stopped failing.** Wave 1's residual
+`R4-concat-loses-the-hole` **passes** on this tree, so its `it.fails` went red
+with `Expect test to fail`. That is the mechanism the brief asks lanes to watch
+for, working: wave 1 recorded R4's root as SUSPECTED and named the observation
+that would settle it; wave 2 ran that observation, the root was right, and the
+pin is now an ordinary `it`. Its corpus row `A1_T4` still fails, at a different
+assertion and for the different root R-H, which the converted pin deliberately
+does not assert.
+
+### What I could NOT measure
+
+- `filter/15.4.4.20-5-7.js` and the `toLocaleString/{resizable-buffer,
+  user-provided-tolocalestring-grow,-shrink}` family need the quickjs provider,
+  which is not built in this worktree; they report
+  `JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not built` on BOTH
+  arms. Same environment limit wave 1 reported, and same reason for not building
+  it: the adapter cache is shared with the lanes running concurrently and its
+  freshness is a documented trap.
+- The JS-host / gc lane. Nothing here was measured there; the change is gated to
+  `native-first` providers, so the host lane's bytes cannot move — but that is a
+  gate argument, not a measurement.
