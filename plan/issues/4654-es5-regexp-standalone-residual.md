@@ -1,10 +1,10 @@
 ---
 id: 4654
-title: "ES5 standalone: RegExp residual — 12 rows: a NUL (\\u0000) in regexp source truncates the pattern (7 rows, one root), prototype accessor own-ness (3), dynamic-pattern refusal (3)"
-status: ready
+title: "ES5 standalone: RegExp residual — 12 rows: a RegExp crossing OUT of runtime eval loses its RegExp-ness (7 rows, one root — NOT the filed NUL-truncation), prototype accessor own-ness (3), dynamic-pattern refusal (3)"
+status: in-review
 sprint: current
 created: 2026-08-23
-updated: 2026-08-23
+updated: 2026-08-24
 priority: high
 horizon: m
 feasibility: medium
@@ -385,7 +385,81 @@ Options, in the order I would rank them:
 
 ## Test Results
 
-(placeholder — filled in below once the after-arm sweep lands)
+All runs below are mine, on this branch's tree after merging `origin/main`
+(merge commit `90b9ae88d`, main at `f6e094cdb`). One source file separates the
+arms — `scripts/quickjs-eval-provider.mjs` — and `git diff --stat` was checked
+against exactly that count before each arm. Compiler bundle AND quickjs eval
+adapter were rebuilt on BOTH arms (base adapter key `70afda182fdbfd59`, after
+key `39960556f160d67a`), so neither arm is reading a stale artifact.
+
+### Scoped standalone sweep — `built-ins/RegExp` + `annexB/built-ins/RegExp` + `language/literals/regexp`
+
+2,179 files, every file run on both arms.
+
+| arm   | pass      | fail | compile_error |
+| ----- | --------- | ---- | ------------- |
+| base  | 1,781     | 287  | 111           |
+| after | **1,790** | 277  | 111           |
+
+Raw tallies above; corrected for the three INFRASTRUCTURE artifacts identified
+below they are base 1,783 → after 1,791, i.e. **+8, zero regressions**.
+
+### Flips (fail → pass), all re-run SERIALLY to clear contention
+
+| file                                                    | after-arm ms | why it flipped                       |
+| ------------------------------------------------------- | ------------ | ------------------------------------ |
+| `annexB/built-ins/RegExp/RegExp-leading-escape-BMP.js`  | 201,630      | 65,536-iteration eval loop           |
+| `annexB/built-ins/RegExp/RegExp-trailing-escape-BMP.js` | 200,093      | 65,536-iteration eval loop           |
+| `language/literals/regexp/S7.8.5_A2.1_T2.js`            | 134,965      | 65,536-iteration eval loop           |
+| `language/literals/regexp/S7.8.5_A1.4_T2.js`            | 128,062      | 65,536-iteration eval loop           |
+| `language/literals/regexp/S7.8.5_A1.1_T2.js`            | 127,666      | 65,536-iteration eval loop           |
+| `language/literals/regexp/S7.8.5_A2.4_T2.js`            | 126,603      | 65,536-iteration eval loop           |
+| `built-ins/RegExp/prototype/source/value-line-terminator.js` | 10,959  | `re.test(…)` on an eval'd regexp     |
+| `built-ins/RegExp/prototype/source/value-slash.js`      | 10,196       | `re.test(…)` on an eval'd regexp     |
+
+The last two are the clearest single-line evidence for the root cause: on base
+they fail with **`TypeError: called value is not a function`** at
+`re.test('\n')` / `re.test('/')` — the mirrored box had no `test` method
+because `test` lives on %RegExp.prototype%, which the box never copied.
+
+`built-ins/RegExp/S15.10.2_A1_T1.js` did NOT flip, exactly as the root-cause
+section predicts: it is part C's dynamic-pattern grammar gap (`[^<]+`), and its
+error text is byte-identical on both arms.
+
+### Regressions: ZERO
+
+The sweep showed ONE apparent regression and TWO apparent flips that are
+**measurement artifacts, not results** — each identified by re-running it
+serially on BOTH arms, per the brief's contention rule:
+
+| row                                                     | sweep said                       | serial re-run, base | serial re-run, after | verdict |
+| ------------------------------------------------------- | -------------------------------- | ------------------- | -------------------- | ------- |
+| `…/property-escapes/generated/Script_-_Buginese.js`     | after: `driver_killed`           | pass, 7,228 ms      | pass, 7,835 ms       | my sweep WORKER was cgroup-OOM-killed at 2.4 GB RSS after 233 files; the file is fine |
+| `built-ins/RegExp/escape/length.js`                     | base: `DRIVER: test262 repoint failed` | pass, 5,852 ms | pass, 6,382 ms       | the worktree symlink-farm race, on the BASE arm — would have read as a flip |
+| `built-ins/RegExp/prototype/Symbol.search/this-val-non-obj.js` | base: same driver error   | pass, 2,318 ms      | pass, 2,343 ms       | same |
+
+Neither of the two base-arm driver errors touches `eval`, which is what made
+them suspicious enough to re-run: a file that never reaches the eval membrane
+cannot be affected by a change confined to the eval adapter. The OOM was fixed
+for the remainder of the run by chunking the sweep into fresh node processes
+(`.tmp/chunkrun.sh`), which is a harness fix, not a product one.
+
+### Pins — `tests/issue-4654.test.ts`, 17 tests
+
+- **17 passed (17)** on the after arm (`executed == total`).
+- **17 passed (17)** under `JS2WASM_EVAL_ENGINE=interpreter` with the quickjs
+  artifact still present.
+- **9 passed | 8 skipped (17)** with `.test262-cache` pointed at an EMPTY
+  directory — the shape CI's refusal tier actually sees. The 8 eval-gated cases
+  skip through `describe.skipIf`, the 9 that compile a plain `new RegExp` still
+  run and pass. This is the tier arm the brief requires; the middle run above
+  does NOT establish it, because the artifact was reachable.
+- **Negative control:** with `qjsFindReRow` stubbed to always answer "not
+  registered" and the adapter rebuilt, the run is **1 failed | 16 passed (17)** —
+  and the one failure is the reverse-index pin
+  (`…the compiled RegExp pushed back IN resolves to the same realm object`,
+  `expected +0 to be 1`). So that pin is sensitive to exactly the index it
+  guards, and nothing else in the file is.
 
 ## Residuals
 
