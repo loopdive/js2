@@ -67,7 +67,14 @@ function hasFixedInputConstructor(
 ): boolean {
   if (!declaration.body || !ts.isBlock(declaration.body) || declaration.parameters.length !== 1) return false;
   const parameter = declaration.parameters[0];
-  if (!ts.isIdentifier(parameter.name) || parameter.name.text !== "input" || !isStringType(checker, parameter)) {
+  if (
+    !ts.isIdentifier(parameter.name) ||
+    parameter.name.text !== "input" ||
+    parameter.initializer !== undefined ||
+    parameter.questionToken !== undefined ||
+    parameter.dotDotDotToken !== undefined ||
+    !isStringType(checker, parameter)
+  ) {
     return false;
   }
   if (
@@ -123,28 +130,42 @@ function hasNoEscape(checker: ts.TypeChecker, site: ts.NewExpression): boolean {
     }
   }
   let sawUse = false;
+  let invalidUse = false;
   let nestedFunctionUse = false;
-  const sourceFile = site.getSourceFile();
+  const root: ts.Node = ownerFunction?.body ?? site.getSourceFile();
+  const referencesBinding = (node: ts.Node): boolean => {
+    let found = false;
+    const scan = (candidate: ts.Node): void => {
+      if (found) return;
+      if (ts.isIdentifier(candidate) && candidate !== binding && aliasedSymbol(checker, candidate) === symbol) {
+        found = true;
+        return;
+      }
+      forEachChild(candidate, scan);
+    };
+    scan(node);
+    return found;
+  };
   const visit = (node: ts.Node): void => {
-    if (node !== sourceFile && ts.isFunctionLike(node) && node !== ownerFunction) {
-      nestedFunctionUse = true;
+    if (node !== root && ts.isFunctionLike(node)) {
+      if (referencesBinding(node)) nestedFunctionUse = true;
       return;
     }
     if (ts.isIdentifier(node) && aliasedSymbol(checker, node) === symbol && node !== binding) {
-      sawUse = true;
       const use = node.parent;
       if (
         !(ts.isPropertyAccessExpression(use) && use.expression === node) &&
         !(ts.isElementAccessExpression(use) && use.expression === node)
       ) {
-        sawUse = false;
+        invalidUse = true;
         return;
       }
+      sawUse = true;
     }
     forEachChild(node, visit);
   };
-  visit(sourceFile);
-  return sawUse && !nestedFunctionUse;
+  visit(root);
+  return sawUse && !invalidUse && !nestedFunctionUse;
 }
 
 function resolveAdmission(
@@ -169,6 +190,8 @@ function resolveAdmission(
   if (reservedTypeIdx === undefined || ctx.structMap.get(`__fnctor_${name}`) !== reservedTypeIdx) return undefined;
   if (!hasFixedInputConstructor(checker, declaration)) return undefined;
   if (!hasNoEscape(checker, site)) return undefined;
+  const argumentsList = site.arguments ?? [];
+  if (argumentsList.length !== 1 || argumentsList.some((argument) => ts.isSpreadElement(argument))) return undefined;
 
   return {
     kind: "fnctor-admission",

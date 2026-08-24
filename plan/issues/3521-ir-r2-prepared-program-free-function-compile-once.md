@@ -1289,3 +1289,13 @@ legacy constructor output, or claim linked-parser runtime coverage. The next
 slice must connect the admitted AST producer to this observation only after
 the exact capture/TDZ/user ABI and struct fields are available, then add a
 source-local lowering proof and focused A/B replay.
+
+## 2026-08-24 admission escape/arity hardening checkpoint
+
+The source-qualified admission proof now scopes local-use analysis to the
+owning function (or module body), ignores unrelated sibling functions, and
+records invalid uses monotonically instead of allowing a later member read to
+erase an earlier call/alias escape. Constructor parameters must be a required,
+non-rest, non-default single string parameter, and an admitted `new F(...)` must
+carry exactly one non-spread argument. These are static fail-closed controls;
+they do not widen the admitted shape or enable lowering/runtime execution.

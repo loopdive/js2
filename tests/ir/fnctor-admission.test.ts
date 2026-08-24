@@ -117,6 +117,41 @@ describe("#3521 source-qualified fnctor admission", () => {
     expect(resolve(site)).toBeUndefined();
   });
 
+  it("does not forget an invalid use before a later member read", () => {
+    const { resolve, site } = resolverFor(`
+      function Parser(input: string) { this.input = input; }
+      function consume(value: unknown) { return value; }
+      function run() { const parser = new Parser("x"); consume(parser); return parser.input; }
+    `);
+    expect(resolve(site)).toBeUndefined();
+  });
+
+  it("ignores unrelated sibling functions while checking a local binding", () => {
+    const { resolve, site } = resolverFor(`
+      function Parser(input: string) { this.input = input; }
+      function unrelated() { return 1; }
+      function run() { const parser = new Parser("x"); return parser.input; }
+    `);
+    expect(resolve(site)).toBeDefined();
+  });
+
+  it.each([
+    ["a default parameter", `function Parser(input: string = "x") { this.input = input; }`],
+    [
+      "a missing constructor argument",
+      `function Parser(input: string) { this.input = input; } function run() { return new Parser().input; }`,
+    ],
+    [
+      "a spread constructor argument",
+      `function Parser(input: string) { this.input = input; } function run() { return new Parser(...["x"]).input; }`,
+    ],
+  ])("rejects %s", (_label, source) => {
+    const { resolve, site } = resolverFor(
+      source.includes("function run") ? source : `${source} function run() { return new Parser("x").input; }`,
+    );
+    expect(resolve(site)).toBeUndefined();
+  });
+
   it("rejects a value captured by a nested function", () => {
     const { resolve, site } = resolverFor(`
       function Parser(input: string) { this.input = input; }
