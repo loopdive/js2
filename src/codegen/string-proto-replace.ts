@@ -111,5 +111,19 @@ export function isPrimitiveToStringOperand(ctx: CodegenContext, expr: ts.Express
  */
 export function isCallableReplacement(ctx: CodegenContext, replExpr: ts.Expression): boolean {
   const fact = ctx.oracle.typeFactOf(stripStaticWrapper(replExpr));
-  return fact.kind === "function";
+  // (#4639 C6) `{kind:"builtin", name:"Function"}` is the SAME proof as
+  // `{kind:"function"}`, not a weaker one. The oracle classifies an object type
+  // by NAME before it looks for call signatures, and lib.d.ts's `Function`
+  // interface declares none (it declares `apply`/`call`/`bind`), so every value
+  // whose static type is `Function` — which is exactly what `Function(…)`
+  // returns (§20.2.1.1) — landed in `builtin` and answered `false` here while
+  // also answering `false` from `isPlainToStringReplacement`. That is the
+  // "neither arm" hole the doc above describes, reached for a value the spec
+  // says IS callable, so `"gnulluna".replace(null, Function())` was a
+  // compile_error (`built-ins/String/prototype/replace/S15.5.4.11_A1_T5`).
+  //
+  // Not a widening of the conservative rule: `Function` is the one builtin name
+  // whose instances all have [[Call]] by definition. Every other builtin fact
+  // (`RegExp`, `Date`, `Map`, …) still answers `false` here.
+  return fact.kind === "function" || (fact.kind === "builtin" && fact.name === "Function");
 }

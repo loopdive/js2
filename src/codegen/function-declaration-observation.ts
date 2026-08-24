@@ -227,9 +227,19 @@ export function prepareHoistedFunctionValueBindings(
     ) {
       continue;
     }
-    if (!hasStableFunctionValueCaptureAbi(fctx, stmt)) continue;
+    // (#4618) An observed declaration with an UNSTABLE capture ABI (a
+    // captured local whose value is not final at function entry — the jest
+    // `__jestFn` shape: `function mock()` capturing `var impl` assigned just
+    // above it, with `mock.mock = {…}` written after) used to be SKIPPED
+    // here, leaving every read — including SELF-reads inside the body — to
+    // re-materialize a fresh closure struct, so `mock.mock.calls` answered
+    // null inside the invoked mock. Route it through the same ref-cell
+    // strategy as cyclic values: the CELL's identity is fixed at entry, and
+    // the closure is materialized into it at the declaration statement,
+    // where every captured value is live.
+    const stableAbi = hasStableFunctionValueCaptureAbi(fctx, stmt);
     if (!fctx.localMap.has(stmt.name.text)) {
-      const cyclic = functionValueDependencyIsCyclic(ctx, stmt, stmts);
+      const cyclic = !stableAbi || functionValueDependencyIsCyclic(ctx, stmt, stmts);
       if (cyclic) {
         const valueType = { kind: "externref" } as const;
         const refCellTypeIdx = getOrRegisterRefCellType(ctx, valueType);
@@ -336,8 +346,29 @@ function hasStableFunctionValueCaptureAbi(fctx: FunctionContext, decl: ts.Functi
     if (ts.isIdentifier(node) && isRuntimeIdentifierReference(node) && !ownLocals.has(node.text)) {
       const localIdx = fctx.localMap.get(node.text);
       if (localIdx !== undefined) {
+        // (#4616) Entry-hoisted materialization is safe whenever the captured
+        // slot's VALUE is already final at function entry:
+        //   - numeric scalars (the historical rule),
+        //   - the enclosing function's own PARAMS (bound before any statement
+        //     runs — jest's vi.fn `spy` captures the `implementation` param;
+        //     without a stable binding every self-read inside spy's body
+        //     re-materialized a fresh struct, so `spy.mock` written on the
+        //     invoked instance answered undefined in every spy body),
+        //   - boxed capture CELLS (`__ref_cell_*` refs — a mutated capture
+        //     shares the cell, whose identity is fixed at entry even though
+        //     its contents change).
+        const isParamSlot = localIdx < fctx.params.length;
         const type = getLocalType(fctx, localIdx);
-        if (!type || (type.kind !== "i32" && type.kind !== "i64" && type.kind !== "f32" && type.kind !== "f64")) {
+        const isRefCellSlot =
+          type !== undefined &&
+          type !== null &&
+          (type.kind === "ref" || type.kind === "ref_null") &&
+          fctx.boxedCaptures?.has(node.text) === true;
+        if (
+          !isParamSlot &&
+          !isRefCellSlot &&
+          (!type || (type.kind !== "i32" && type.kind !== "i64" && type.kind !== "f32" && type.kind !== "f64"))
+        ) {
           stable = false;
           return;
         }

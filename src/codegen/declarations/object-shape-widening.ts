@@ -1022,7 +1022,14 @@ export function collectGrowableObjectLiterals(
               markStandaloneDeleteTargets(s, varName, mopSet);
               markStandaloneAccessorDefineTargets(s, varName, mopSet);
               markStandaloneOutOfShapeDataDefineTargets(s, varName, shape, mopSet); // #4524
+              // (#4491) `m.foo++` on a field the literal typed non-numerically —
+              // or on no field at all — cannot land in the closed struct.
+              markStandaloneNumericUpdateKindChangeTargets(s, varName, decl.initializer, mopSet);
             }
+            // (#4491) `for…in` over a literal that out-of-shape writes GREW:
+            // the closed struct has no slots for the added keys, so the
+            // enumeration is a reason to OPEN the object, not to leave it shut.
+            markStandaloneEnumeratedGrowthTargets(stmts, varName, shape, mopSet);
             if (evalMutableNames.has(varName)) mopSet.add(varName); // (#4206)
             // Consumer-safety (#1897/#2837): when the var ALSO flows into a
             // CONCRETE nominal-struct-typed position (call/new arg, return,
@@ -1403,6 +1410,168 @@ function isValueUseOfIdentifier(id: ts.Identifier): boolean {
  * (#2872) already proved correct in every lane. Parenthesized targets
  * (`delete (o.k)`) are unwrapped like the module-init collector does.
  */
+/**
+ * (#4491) Compound/update operators whose result is ALWAYS a Number, whatever the
+ * current value is (§13.4 UpdateExpression, §13.15.3 with a numeric operator).
+ * `+=` is deliberately ABSENT: `"a" += x` stays a String, so it does not change
+ * a string field's kind.
+ */
+function isAlwaysNumericCompoundOperator(kind: ts.SyntaxKind): boolean {
+  return (
+    kind === ts.SyntaxKind.MinusEqualsToken ||
+    kind === ts.SyntaxKind.AsteriskEqualsToken ||
+    kind === ts.SyntaxKind.SlashEqualsToken ||
+    kind === ts.SyntaxKind.PercentEqualsToken ||
+    kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken
+  );
+}
+
+/**
+ * (#4491) Does an ALWAYS-numeric update of `propName` disagree with the kind the
+ * object literal's own initializer pins into the closed struct slot?
+ *
+ * Returns true only when we can PROVE the disagreement from the literal's own
+ * syntax — the field is absent (the update must CREATE it), or its initializer is
+ * a syntactically non-numeric primitive/aggregate. Anything we cannot read off the
+ * initializer (a call, an identifier, a numeric literal) answers false and stays
+ * on the closed-struct path: the same when-in-doubt-don't-mark discipline the rest
+ * of this pass uses.
+ */
+function numericUpdateChangesLiteralFieldKind(literal: ts.ObjectLiteralExpression, propName: string): boolean {
+  for (const property of literal.properties) {
+    const name = property.name;
+    if (!name || (!ts.isIdentifier(name) && !ts.isStringLiteral(name) && !ts.isNumericLiteral(name))) continue;
+    if (name.text !== propName) continue;
+    if (!ts.isPropertyAssignment(property)) return false; // shorthand/method — unknown kind
+    let initializer: ts.Expression = property.initializer;
+    while (ts.isParenthesizedExpression(initializer)) initializer = initializer.expression;
+    return (
+      ts.isStringLiteral(initializer) ||
+      ts.isNoSubstitutionTemplateLiteral(initializer) ||
+      ts.isTemplateExpression(initializer) ||
+      initializer.kind === ts.SyntaxKind.TrueKeyword ||
+      initializer.kind === ts.SyntaxKind.FalseKeyword ||
+      initializer.kind === ts.SyntaxKind.NullKeyword ||
+      ts.isObjectLiteralExpression(initializer) ||
+      ts.isArrayLiteralExpression(initializer) ||
+      ts.isFunctionExpression(initializer) ||
+      ts.isArrowFunction(initializer)
+    );
+  }
+  return true; // absent from the literal — the update has to CREATE the property
+}
+
+/**
+ * (#4491, standalone-only caller) Poison `varName` when an ALWAYS-numeric member
+ * UPDATE (`V.k++`, `--V.k`, `V.k -= n`, …) targets a field whose closed-struct slot
+ * cannot hold the numeric result.
+ *
+ * Two shapes, one defect — the slot's storage type is pinned by the literal:
+ *
+ * | source                                   | closed struct  | observed        | spec |
+ * | ---------------------------------------- | -------------- | --------------- | ---- |
+ * | `var m = {foo:"bar"}; m.foo++`           | `foo: stringref` | `m.foo` is null | NaN  |
+ * | `var m = {a:1};       m.foo++`           | no `foo` slot  | write DROPPED   | NaN, `"foo" in m` |
+ *
+ * The first stores a boxed NaN through a string-typed slot (later reads null-deref
+ * in `__str_concat`); the second takes `unary-updates.ts`'s unknown-field arm,
+ * which emits `f64.const NaN` and drops the write entirely, so the property is
+ * never created. Routing the var to the open `$Object` builder puts BOTH on the
+ * `__extern_get`/`__extern_set` read-modify-write, which stores a boxed number
+ * under a fresh key. Mirrors the #4250 write-kind-disagreement pattern.
+ */
+function markStandaloneNumericUpdateKindChangeTargets(
+  node: ts.Node,
+  varName: string,
+  literal: ts.ObjectLiteralExpression,
+  poisonSet: Set<string>,
+): void {
+  const considerTarget = (target: ts.Expression): void => {
+    let expression: ts.Expression = target;
+    while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
+    if (!ts.isPropertyAccessExpression(expression)) return;
+    if (!ts.isIdentifier(expression.expression) || expression.expression.text !== varName) return;
+    if (ts.isPrivateIdentifier(expression.name)) return;
+    if (numericUpdateChangesLiteralFieldKind(literal, expression.name.text)) poisonSet.add(varName);
+  };
+  const visit = (n: ts.Node): void => {
+    if (ts.isPostfixUnaryExpression(n)) {
+      considerTarget(n.operand);
+    } else if (
+      ts.isPrefixUnaryExpression(n) &&
+      (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      considerTarget(n.operand);
+    } else if (ts.isBinaryExpression(n) && isAlwaysNumericCompoundOperator(n.operatorToken.kind)) {
+      considerTarget(n.left);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+}
+
+/**
+ * (#4491, standalone-only caller) Poison `varName` when a NON-EMPTY literal is
+ * both GROWN by an out-of-shape write and ENUMERATED by `for…in`.
+ *
+ *     var o = { bar: true };
+ *     o.some = 1; o.foo = "a";
+ *     for (var k in o) count++;      // observed 1, spec 3
+ *
+ * The #2837 growable pre-pass already recognises the growth, but its
+ * consumer-safety poison for `for…in` then cancels the marking — and that
+ * poison is a HOST-lane statement ("for…in lowers against V's STATIC struct
+ * type, so an externref `$Object` would fail the cast"). In standalone the
+ * relation inverts, exactly as #2992 S6 argued for `delete`: the closed struct
+ * is precisely what cannot serve the consumer, because the added keys have no
+ * slots to enumerate. So the enumeration is a REASON to open the object here,
+ * not a reason to leave it closed.
+ *
+ * The one #2837 poison that still has force in standalone is kept by hand: an
+ * ARITHMETIC read of a field off `V` wants the `struct.get` f64 contract
+ * (#1897), so a var with one declines and keeps its closed struct — with the
+ * enumeration gap intact, which is the documented trade.
+ */
+function markStandaloneEnumeratedGrowthTargets(
+  stmts: readonly ts.Statement[],
+  varName: string,
+  shape: ReadonlySet<string>,
+  poisonSet: Set<string>,
+): void {
+  let enumerated = false;
+  let grown = false;
+  let arithmeticFieldRead = false;
+  const visit = (n: ts.Node): void => {
+    if (ts.isForInStatement(n) && ts.isIdentifier(n.expression) && n.expression.text === varName) {
+      enumerated = true;
+    }
+    if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(n.left) &&
+      ts.isIdentifier(n.left.expression) &&
+      n.left.expression.text === varName &&
+      !ts.isPrivateIdentifier(n.left.name) &&
+      !shape.has(n.left.name.text)
+    ) {
+      grown = true;
+    }
+    if (
+      ts.isBinaryExpression(n) &&
+      isArithmeticOperator(n.operatorToken.kind) &&
+      (isFieldReadOf(n.left, varName) || isFieldReadOf(n.right, varName))
+    ) {
+      arithmeticFieldRead = true;
+    }
+    ts.forEachChild(n, visit);
+  };
+  // The three signals routinely sit in DIFFERENT statements (the literal, the
+  // writes, the loop), so the scan is over the whole statement list at once —
+  // a per-statement call would never see them together.
+  for (const s of stmts) visit(s);
+  if (enumerated && grown && !arithmeticFieldRead) poisonSet.add(varName);
+}
+
 function markStandaloneDeleteTargets(node: ts.Node, varName: string, poisonSet: Set<string>): void {
   const visit = (n: ts.Node): void => {
     if (ts.isDeleteExpression(n)) {

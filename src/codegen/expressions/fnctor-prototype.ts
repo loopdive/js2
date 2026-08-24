@@ -37,7 +37,9 @@
 import { ts } from "../../ts-api.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { allocLocal } from "../context/locals.js";
 import { resolveFnctorSymbol } from "../fnctor-escape-gate.js";
+import { FUNCTION_FROM_PROTO, PROTO_FROM_FUNCTION } from "../proto-function-value.js"; // (#4643) callable → proto-view at the S2 store
 import { nextModuleGlobalIdx } from "../registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { compileObjectLiteralAsExternref } from "../literals.js";
@@ -45,7 +47,7 @@ import { coerceType, compileExpression } from "../shared.js";
 import { emitCachedFuncClosureExternref } from "../closures/method-trampolines.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
-import { addStringConstantGlobal } from "../registry/imports.js";
+import { addStringConstantGlobal, localGlobalIdx } from "../registry/imports.js";
 
 /**
  * (#4480 S1) Is `sym` an ORDINARY function — a plain, non-generator, non-async
@@ -99,6 +101,15 @@ export function resolveUserFnctorName(ctx: CodegenContext, expr: ts.Expression):
   // `(Con as any).prototype` must still resolve to `Con`.
   const sym = resolveFnctorSymbol(ctx.checker, expr);
   if (!sym) return undefined;
+  // The JS-host lane already has a live fnctor sidecar (`_getOrVivifyFnPrototype`)
+  // that represents every ordinary function's `.prototype`. Its module-init
+  // assignments must therefore be retained even when the standalone escape
+  // gate classified the constructor as `keep-typed`/`keep-static`; otherwise a
+  // chained write such as `HydrationRoot.prototype.render = Root.prototype.render
+  // = fn` is dropped before the sidecar can observe it. Standalone/WASI keep the
+  // stricter gate below because their native prototype representation is only
+  // sound for the approved population.
+  if (!ctx.standalone && !ctx.wasi) return sym.name;
   // RECONSTRUCT-GATE (#2660 S2): only materialize the per-fnctor prototype
   // `$Object` for a constructor S3 will reconstruct (≥1 `reconstruct`-classified
   // `new F()` site). A `keep-typed` / `keep-static` / never-`new`'d function keeps
@@ -234,6 +245,59 @@ function getOrMintFnctorProtoGlobal(ctx: CodegenContext, fnctorName: string): nu
 const CONSTRUCTOR_FLAGS = 0x01 | 0x04;
 
 /**
+ * (#4491) The `var F = function(){}` half of the `constructor` back-ref.
+ *
+ * §13.2 step 10 does not care HOW the function object was produced, but this
+ * compiler does: a top-level `function F(){}` is read through the
+ * `__fn_closure_<F>` singleton, while `var F = function(){}` is read out of a
+ * module global holding a separately-built closure. Installing the singleton for
+ * the second shape would publish a DIFFERENT function object and make the
+ * observable identity assertion false; installing the module global publishes
+ * the very value the identifier read yields, so the identity holds by
+ * construction.
+ *
+ * Measured before the change (`--target standalone`): `function __func(){}`
+ * already satisfied `__func.prototype.constructor === __func`, while
+ * `var __gunc = function(){}` answered `[object Object]` — the bare prototype
+ * object, i.e. the property was simply absent and the read walked on.
+ *
+ * Declines (leaving the property absent, never wrong) unless:
+ *  - the binding really is `var F = <function expression>` — a re-assignable
+ *    name whose declaration is something else must not have its own initializer
+ *    published as a constructor; and
+ *  - a module global actually backs it, since a function-local `var F =
+ *    function(){}` has no stable global to read and its prototype global is
+ *    shared across activations.
+ */
+function moduleGlobalConstructorInstallInstrs(
+  ctx: CodegenContext,
+  fnctorName: string,
+  ownerDecl: ts.Node | undefined,
+  protoGlobalIdx: number,
+): Instr[] | undefined {
+  // A name this compiler DID resolve to a declaration is not this shape: the
+  // caller's own arm owns the `function F(){}` case, and any other declaration
+  // kind must not have its binding published as a constructor.
+  if (ownerDecl !== undefined) return undefined;
+  if (ctx.topLevelFunctionNames.has(fnctorName)) return undefined;
+  const valueGlobalIdx = ctx.moduleGlobals.get(fnctorName);
+  if (valueGlobalIdx === undefined) return undefined;
+  if (ctx.mod.globals[localGlobalIdx(ctx, valueGlobalIdx)]?.type.kind !== "externref") return undefined;
+  ensureObjectRuntime(ctx);
+  const defineIdx = ctx.funcMap.get("__defineProperty_value");
+  if (defineIdx === undefined) return undefined;
+  addStringConstantGlobal(ctx, "constructor");
+  return [
+    { op: "global.get", index: protoGlobalIdx },
+    ...stringConstantExternrefInstrs(ctx, "constructor"),
+    { op: "global.get", index: valueGlobalIdx },
+    { op: "f64.const", value: CONSTRUCTOR_FLAGS },
+    { op: "call", funcIdx: defineIdx },
+    { op: "drop" }, // the helper returns its target
+  ];
+}
+
+/**
  * (#4480 S1) The instructions that install `F.prototype.constructor = F` onto
  * the just-minted prototype `$Object` held in the prototype global `g`, or
  * `undefined` when this module cannot resolve a STABLE function value for `F`.
@@ -288,7 +352,16 @@ function fnctorConstructorInstallInstrs(
   // future widening of the singleton path would silently break.
   const ownerDecl: ts.Node | undefined =
     ctx.funcMapOwnerDecl.get(fnctorName) ?? ctx.topLevelFunctionDeclarations.get(fnctorName);
-  if (ownerDecl === undefined || !ts.isFunctionDeclaration(ownerDecl)) return undefined;
+  if (ownerDecl === undefined || !ts.isFunctionDeclaration(ownerDecl)) {
+    // (#4491) `var F = function(){}` — the shape the note above scopes out. It
+    // has no `__fn_closure_<F>` singleton, but it does have something just as
+    // identity-stable and strictly CLOSER to the observable: the module global
+    // the ordinary `F` identifier read itself returns. Installing that value
+    // makes `F.prototype.constructor === F` true BY CONSTRUCTION — the two
+    // sides are the same `global.get` — rather than plausible-but-different,
+    // which is the trade this helper refuses.
+    return moduleGlobalConstructorInstallInstrs(ctx, fnctorName, ownerDecl, protoGlobalIdx);
+  }
   const funcIdx = ctx.funcMap.get(fnctorName);
   if (funcIdx === undefined || funcIdx < ctx.numImportFuncs) return undefined;
   ensureObjectRuntime(ctx);
@@ -361,7 +434,48 @@ export function emitFnctorProtoGet(ctx: CodegenContext, fctx: FunctionContext, f
     else: [],
   });
   fctx.body.push({ op: "global.get", index: g });
+  // (#4643) The global is STORAGE and holds the canonical `$Object` view (see
+  // `emitProtoStoreCanonicalization`); this function hands out the
+  // PROGRAM-VISIBLE value, so map a registered proto-view back to the callable
+  // it stands for. Identity for everything else — a module that never assigned a
+  // function-valued prototype has an empty registry and `__function_from_proto`
+  // returns its argument after one null check.
+  const fromProtoIdx = ctx.funcMap.get(FUNCTION_FROM_PROTO);
+  if (fromProtoIdx !== undefined) fctx.body.push({ op: "call", funcIdx: fromProtoIdx });
   return true;
+}
+
+/**
+ * (#4643) Canonicalize the value about to be stored into a per-fnctor prototype
+ * global: a CALLABLE becomes its `$Object` own-property bag (#4637's
+ * `__proto_from_function`), anything else is unchanged.
+ *
+ * ## Why the WRITE and not each consumer
+ *
+ * `__fnctor_proto_<F>` is not a general value slot — it is the `[[Prototype]]`
+ * LINK for every `__fnctor_<F>` instance, and every consumer of it already
+ * assumes an `$Object`:
+ *
+ *  - `__extern_get`'s fnctor arm casts the proto-start answer to `$Object` to
+ *    start its walk (`object-runtime.ts`; a naked `ref.cast` there was the
+ *    UNCATCHABLE trap #4639 measured, mitigated to a test-and-miss);
+ *  - `fillFnctorPrototypeDispatchArms`' per-key method caches bake
+ *    `global.get <proto> ; ref.cast $Object` in TWO more places;
+ *  - `__closure_proto_of` publishes it as the function's prototype object to
+ *    `native-dynamic-instanceof`, which feeds it to `__isPrototypeOf`.
+ *
+ * `F.prototype = <function>` was the one write that broke that invariant, so
+ * three consumers each answered differently for one store. Repairing the store
+ * makes all of them right at once and needs no new walk: the bag IS an
+ * `$Object`, so the existing `$proto` walk resolves inherited reads through it
+ * (the #4637 A1 decision, recorded in `proto-function-value.ts`).
+ *
+ * Emitted with the value on the stack; leaves the canonical value on the stack.
+ * A module without the reserved helpers (gc/host) gets no instructions at all.
+ */
+function emitProtoStoreCanonicalization(ctx: CodegenContext, fctx: FunctionContext): void {
+  const toProtoIdx = ctx.funcMap.get(PROTO_FROM_FUNCTION);
+  if (toProtoIdx !== undefined) fctx.body.push({ op: "call", funcIdx: toProtoIdx });
 }
 
 /**
@@ -404,6 +518,16 @@ export function tryCompileFnctorPrototypeAssign(
   // Reserve the late import + global BEFORE building the RHS so any index shift
   // the RHS compile triggers reaches the already-emitted instrs via currentFunc.
   const g = getOrMintFnctorProtoGlobal(ctx, fnctorName);
+  // (#4643) The store below must be canonical, so the proto-view helpers have to
+  // exist. They are reserved by `ensureObjectRuntime`, which every READ of this
+  // global reaches through `emitFnctorProtoGet`'s `__new_plain_object` late
+  // import — but a module whose FIRST touch of the global is this write would
+  // otherwise store a raw callable and only canonicalize later reads. Idempotent,
+  // and it registers DEFINED functions only (appended indices, no shift) — but
+  // flush anyway, at this statement boundary before a single byte of the RHS is
+  // emitted, so a pending import shift can never reach a half-built expression.
+  ensureObjectRuntime(ctx);
+  flushLateImportShifts(ctx, fctx);
 
   // Build the RHS as an externref (a native `$Object` when it is a plain object
   // literal — the #2580 Stage-A `compileProtoArg` precedent, replicated here to
@@ -424,8 +548,21 @@ export function tryCompileFnctorPrototypeAssign(
     else if (t.kind !== "externref") coerceType(ctx, fctx, t, { kind: "externref" });
   }
 
-  // Stack: [rhs externref]. Store into the prototype global, leaving the value.
+  // Stack: [rhs externref]. Store the CANONICAL form (a callable becomes its
+  // `$Object` proto-view — see `emitProtoStoreCanonicalization`), but yield the
+  // RHS itself: §13.15.2 makes the value of an assignment the assigned value, so
+  // `var x = (F.prototype = P)` must be `P` and `F.prototype === P` must hold.
+  // Held in a local rather than re-read through `__function_from_proto` so the
+  // identity is exact by construction, independent of registry state.
+  if (ctx.funcMap.get(PROTO_FROM_FUNCTION) === undefined) {
+    fctx.body.push({ op: "global.set", index: g });
+    fctx.body.push({ op: "global.get", index: g });
+    return { kind: "externref" };
+  }
+  const rawLocal = allocLocal(fctx, `__fnproto_rhs_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.tee", index: rawLocal });
+  emitProtoStoreCanonicalization(ctx, fctx);
   fctx.body.push({ op: "global.set", index: g });
-  fctx.body.push({ op: "global.get", index: g });
+  fctx.body.push({ op: "local.get", index: rawLocal });
   return { kind: "externref" };
 }

@@ -433,6 +433,61 @@ function graphql(query, vars = {}) {
 }
 
 /**
+ * (2026-08-23, PR #4785 incident) ARM native auto-merge on a fully-eligible PR,
+ * best-effort, so GitHub itself retries queue entry on its own events. Two gaps
+ * this closes, both measured that day:
+ *
+ *   1. QUEUE DROPS: the serial queue drops a PR when main advances under it,
+ *      and the only re-add was this sweep's ≤30-min cron (the workflow_run
+ *      trigger fires on CI completion, not on queue membership changes). With
+ *      auto-merge armed, GitHub re-queues the dropped PR the moment it is
+ *      eligible again — no cron wait.
+ *   2. THE workflow_run ALLOWLIST (#3889): a green transition produced by a
+ *      workflow outside ["Test262 Sharded", "CI"] never fires the responsive
+ *      trigger. GitHub's native arming keys on check state directly and does
+ *      not depend on that allowlist.
+ *
+ * WHY THIS IS SAFE against the #1758 serial-queue hazards: arming auto-merge is
+ * NOT an enqueue mutation — it never adds, removes, or re-adds a queue entry
+ * itself, so it cannot poke a forming head or cancel an in-flight group. GitHub
+ * performs the eventual entry as a normal trailing add.
+ *
+ * WHY THIS DOES NOT re-open #3878 (red non-required checks reaching the queue):
+ * this is called ONLY after the caller's FULL eligibility gate has passed —
+ * author trust, zero FAILURE-conclusion checks of ANY kind, required checks
+ * green by ruleset name, not draft, no hold label. GitHub's own auto-merge
+ * would key on required checks alone, which is why this helper must never be
+ * hoisted above those gates.
+ *
+ * Idempotent: "already enabled" (and its clean-status refusal twin) count as
+ * ok. All failures are telemetry, never a skip — the direct enqueue that
+ * follows is still the primary mechanism.
+ */
+function armAutoMerge(pullRequestId) {
+  try {
+    graphql(
+      `
+        mutation ($id: ID!) {
+          enablePullRequestAutoMerge(input: { pullRequestId: $id }) {
+            clientMutationId
+          }
+        }
+      `,
+      { id: pullRequestId },
+    );
+    return { ok: true, why: "auto-merge armed" };
+  } catch (e) {
+    const msg = String(e.stderr || e.message || e)
+      .split("\n")[0]
+      .slice(0, 120);
+    // Benign shapes: already armed, or GitHub refuses because the PR is in a
+    // state where arming is unnecessary (already queued / already mergeable).
+    if (/already.*(enabled|auto.?merge)|clean status/i.test(msg)) return { ok: true, why: "auto-merge already armed" };
+    return { ok: false, why: `auto-merge arm failed: ${msg}` };
+  }
+}
+
+/**
  * #4094 — the full commit messages of every commit `main` is ahead of `headOid` by,
  * read from the SERVER-SIDE compare API (never local refs: this checkout's remote
  * tracking refs are unreliable, and CI has no local main to compare against).
@@ -690,14 +745,30 @@ function freshPrForEnqueue(number) {
 // to the BASE repo, loopdive/js2wasm). A number missing from the map (e.g. >100 open
 // PRs, or a transient GraphQL hiccup) is treated as untrusted by the caller —
 // fail closed, never enqueue a PR whose association we could not confirm.
+//
+// It also returns the author LOGIN, from this same query, and that is
+// deliberate (#4826 follow-up). `gh pr list --json author` does carry an
+// `author` object, and the login taken from it is what the login allowlist was
+// matched against until 2026-08-24 — but for a GitHub **App** author it does
+// not yield the app slug the allowlist names, so the promotion PR opened by
+// `js2-merge-queue-bot` was skipped `untrusted-author:CONTRIBUTOR` even after
+// BOTH spellings (`js2-merge-queue-bot` and `js2-merge-queue-bot[bot]`) were
+// allowlisted. The GraphQL `author { login }` selection resolves a Bot actor's
+// login unambiguously, so the gate no longer depends on which spelling a
+// particular gh version emits. This narrows nothing and widens nothing: the
+// same single app is trusted, it is simply identified from a source that
+// actually names it. The observed login is logged on every untrusted skip so a
+// future mismatch is visible in the run log instead of being inferred.
 function authorAssociations() {
   const r = graphql(
-    `{ repository(owner:"${OWNER}",name:"${NAME}"){ pullRequests(first:100,states:OPEN){ nodes { number authorAssociation } } } }`,
+    `{ repository(owner:"${OWNER}",name:"${NAME}"){ pullRequests(first:100,states:OPEN){ nodes { number authorAssociation author { login } } } } }`,
   );
   const nodes = r?.data?.repository?.pullRequests?.nodes || [];
   const byNumber = new Map();
   for (const n of nodes) {
-    if (n?.number != null) byNumber.set(n.number, n.authorAssociation || "NONE");
+    if (n?.number != null) {
+      byNumber.set(n.number, { assoc: n.authorAssociation || "NONE", login: n.author?.login || "" });
+    }
   }
   return byNumber;
 }
@@ -881,8 +952,8 @@ export function blockedDiagnosis(pr, authorAssoc) {
   // Do not label a stranger's PR: an external PR is *supposed* to require a
   // deliberate human enqueue (#2549), so "needs manual enqueue" is not news.
   const trust = isTrustedAuthor({
-    assoc: authorAssoc.get(pr.number) || "UNKNOWN",
-    authorLogin: pr.author?.login,
+    assoc: authorAssoc.get(pr.number)?.assoc || "UNKNOWN",
+    authorLogin: authorAssoc.get(pr.number)?.login || pr.author?.login,
     headRepoOwner: pr.headRepositoryOwner?.login,
   });
   if (!trust.trusted) return { suspected: false, reason: "", annotated: state };
@@ -1256,14 +1327,22 @@ function runSweep() {
     // ALWAYS needs a deliberate human enqueue. "Approve CI" ≠ "approve merge." A
     // PR missing from the association map (assoc unknown) and not on the
     // login/fork allowlist is untrusted. See isTrustedAuthor() for the decision.
-    const assoc = authorAssoc.get(pr.number) || "UNKNOWN";
+    const authorInfo = authorAssoc.get(pr.number);
+    const assoc = authorInfo?.assoc || "UNKNOWN";
+    // Prefer the GraphQL login (resolves App/Bot actors); fall back to whatever
+    // `gh pr list --json author` gave us if the GraphQL page missed this PR.
+    const authorLogin = authorInfo?.login || pr.author?.login || "";
     const trust = isTrustedAuthor({
       assoc,
-      authorLogin: pr.author?.login,
+      authorLogin,
       headRepoOwner: pr.headRepositoryOwner?.login,
     });
     if (!trust.trusted) {
-      skipped.push([pr.number, trust.reason]);
+      // Log the login we actually saw. Without it, a skip only says WHICH
+      // association was rejected, so an allowlist that names the right actor
+      // under the wrong spelling looks identical to a genuinely untrusted
+      // stranger — which is how the promotion PR stalled unnoticed.
+      skipped.push([pr.number, `${trust.reason} (login=${authorLogin || "(none)"})`]);
       continue;
     }
     const checks = visibleCheckState(pr.number);
@@ -1373,6 +1452,12 @@ function runSweep() {
       enqueued.push([pr.number, `would-enqueue (green ${ageMin}m >= ${GRACE_MINUTES}m grace)`]);
       continue;
     }
+    // Arm native auto-merge FIRST (see armAutoMerge's header): if the direct
+    // enqueue below races a head move or a queue drop, GitHub's own retry is
+    // already in place. Placed after every eligibility gate on purpose — the
+    // arming must never widen what can reach the queue (#3878 note in the
+    // helper). Best-effort: an arm failure never blocks the direct enqueue.
+    const arm = armAutoMerge(pr.id);
     try {
       graphql(
         `
@@ -1400,7 +1485,7 @@ function runSweep() {
       } catch {
         /* telemetry only */
       }
-      enqueued.push([pr.number, `enqueued (green ${ageMin}m${behindNote})`]);
+      enqueued.push([pr.number, `enqueued (green ${ageMin}m${behindNote}; ${arm.why})`]);
       // #3584: a PR flagged on an earlier sweep and enqueued now was a false
       // positive (or was rescued); drop the label so it cannot rot and dilute
       // the signal. No-op when the label is absent.
@@ -1440,7 +1525,10 @@ function runSweep() {
           continue;
         }
         refusals.push([pr.number, msg]);
-        skipped.push([pr.number, `enqueue-failed: ${msg}`]);
+        // The arm status matters most on THIS path: a failed direct enqueue
+        // with auto-merge armed is self-healing (GitHub retries entry), while
+        // one without it strands until the next sweep.
+        skipped.push([pr.number, `enqueue-failed: ${msg} (${arm.why})`]);
       }
     }
   }

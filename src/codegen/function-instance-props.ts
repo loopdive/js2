@@ -109,6 +109,7 @@ import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closure
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 // (#4437) the per-declaration `name` / §15.1.5 `length` carrier — read surface
 import { fnMetaArms, type FnMetaArms } from "./function-instance-meta-arms.js";
+import { fillFnIntrinsicSeed } from "./fn-intrinsic-seed.js"; // (#4562) intrinsic length/name record
 
 /** `(externref fn, externref key) -> i32` — 1 iff fn's bag holds ANY entry for key. */
 export const FNINST_BAG_OWNS = "__fninst_bag_owns";
@@ -482,6 +483,15 @@ export function fillFunctionInstanceProps(ctx: CodegenContext): void {
   }
 
   spliceOwnNamesArm(ctx, { meta, isClosure, bagOwnsIdx, objVecPushIdx });
+
+  // (#4562) The define appliers' intrinsic-`length`/`name` seed is filled from
+  // HERE, at the tail, rather than from the finalize driver — reaching this
+  // line IS the proof that `__fninst_bag_owns` got a real body, which the seed
+  // depends on for correctness and not merely for effect (a placeholder answers
+  // "the bag never owns this key", which would make the seed re-fire on every
+  // define and revert the merged record). Every early return above therefore
+  // leaves the seed unfilled, i.e. a no-op, which is the right degrade.
+  fillFnIntrinsicSeed(ctx);
 }
 
 /**

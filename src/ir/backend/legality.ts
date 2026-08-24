@@ -245,6 +245,10 @@ function linearInstrError(instr: IrInstr): string | null {
         default:
           return `linear backend does not support semantic intrinsic '${instr.id}' without a native backend operation`;
       }
+    case "string.repeat":
+      return instr.encodingEvidence === "ascii"
+        ? null
+        : `linear backend requires authenticated ASCII evidence for string.repeat, got '${instr.encodingEvidence}'`;
     case "binary":
     case "unary":
     case "select":

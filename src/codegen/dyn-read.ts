@@ -379,9 +379,37 @@ export function emitDynGet(ctx: CodegenContext, fctx: FunctionContext, keyName: 
         },
       ];
     }
+    // (#4649) ONE `ref.test $__vec_base` replaces the per-vec-type ladder,
+    // which was built from an emission-time `ctx.vecTypeMap` snapshot: a
+    // carrier registered LATER (in a test262 file, anything the BODY mints
+    // after the harness PREFIX compiled — e.g. `boolean[]`) fell through to
+    // `__extern_get(vec,"length")`, which answers 0 for an opaque struct.
+    // `$__vec_base` is the declared supertype of every concrete vec with
+    // `length` at field 0 (#2186), so this is a strict SUPERSET of the ladder
+    // (the byte vecs it also matches were in `vecTypeMap`, hence in the ladder).
+    const vecBaseIdx = ctx.vecBaseTypeIdx;
+    const lateBoundVecArm = vecBaseIdx >= 0;
+    if (lateBoundVecArm) {
+      chain = [
+        { op: "local.get", index: anyTmp },
+        { op: "ref.test", typeIdx: vecBaseIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } as ValType },
+          then: [
+            { op: "local.get", index: anyTmp },
+            { op: "ref.cast", typeIdx: vecBaseIdx },
+            { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 },
+            { op: "f64.convert_i32_s" },
+            { op: "call", funcIdx: boxNumIdx },
+          ],
+          else: chain,
+        },
+      ];
+    }
     // Wrap from the innermost (last) vec type outward: each layer is
     // `if ref.test $vec { box_number(f64(struct.get field0)) } else { <chain> }`.
-    for (let i = vecEntries.length - 1; i >= 0; i--) {
+    for (let i = lateBoundVecArm ? -1 : vecEntries.length - 1; i >= 0; i--) {
       const vecTypeIdx = vecEntries[i]!;
       const def = ctx.mod.types[vecTypeIdx];
       if (def?.kind !== "struct" || def.fields[0]?.name !== "length" || def.fields[1]?.name !== "data") {

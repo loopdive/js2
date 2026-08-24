@@ -34,20 +34,41 @@ async function loadNodeHostDependencies() {
   const { createRequire } = await import("node:module");
   const require = createRequire(import.meta.url);
   const dependencies = Object.create(null);
+  const { DOM_GLOBALS } = await import("./react-test-environment.mjs");
   // Resolve both the namespace-qualified import and the exported class/function
   // names. This keeps the worker generic for upstream suites that use a small
   // Node builtin surface without replacing any package implementation.
   for (const moduleName of [
     "node:async_hooks",
     "node:assert",
+    "node:assert/strict",
     "node:buffer",
+    "node:child_process",
     "node:crypto",
+    "node:dns",
     "node:events",
+    "node:fs",
+    "node:fs/promises",
+    "node:http",
+    "node:https",
+    "node:module",
+    "node:net",
     "node:os",
+    "node:perf_hooks",
+    "node:process",
+    "node:querystring",
+    "node:readline",
     "node:stream",
+    "node:string_decoder",
     "node:timers",
+    "node:timers/promises",
+    "node:tls",
+    "node:tty",
     "node:url",
     "node:util",
+    "node:vm",
+    "node:worker_threads",
+    "node:zlib",
   ]) {
     try {
       const namespace = require(moduleName);
@@ -63,6 +84,26 @@ async function loadNodeHostDependencies() {
   // map. Forward the same host constructors so upstream Node tests can use
   // TextEncoder/TextDecoder and related Web APIs without a package shim.
   Object.assign(dependencies, getWebHostConstructors());
+  for (const name of DOM_GLOBALS) {
+    const value = globalThis[name];
+    if (value !== undefined) dependencies[name] = value;
+  }
+  return dependencies;
+}
+
+// The compiler's default web import object is intentionally hermetic and
+// therefore cannot see the JSDOM globals installed by this worker. Upstream
+// ReactDOM tests need the actual document/window objects and their constructors
+// at the Wasm boundary, so bind exactly the explicit environment surface rather
+// than relying on an ambient empty-object provider.
+async function loadWebHostDependencies() {
+  const { DOM_GLOBALS } = await import("./react-test-environment.mjs");
+  const dependencies = Object.create(null);
+  Object.assign(dependencies, getWebHostConstructors());
+  for (const name of DOM_GLOBALS) {
+    const value = globalThis[name];
+    if (value !== undefined) dependencies[name] = value;
+  }
   return dependencies;
 }
 
@@ -92,6 +133,12 @@ async function main() {
       skipSemanticDiagnostics: true,
       target: "gc",
       platform,
+      // A package opts into the Node host lane explicitly when it imports
+      // path-based `node:fs` APIs. Keep the default web lane hermetic, but do
+      // enable the compiler's real-fs capability gate for that same opt-in;
+      // otherwise the worker resolves the namespace and still emits a null
+      // provider for `readFileSync`/`existsSync`.
+      allowFs: platform === "node" || process.env.DOGFOOD_NODE_HOST_DEPS === "1",
       experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
       // The upstream compatibility lane only needs the binary. WAT is a
       // diagnostic artifact and can become quadratic for large generated
@@ -112,6 +159,7 @@ async function main() {
             experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
             sourceMap: true,
             platform,
+            allowFs: platform === "node" || process.env.DOGFOOD_NODE_HOST_DEPS === "1",
             deferTopLevelInit: true,
           })
         : await compileProject(generatedPath, projectOptions);
@@ -164,10 +212,12 @@ async function main() {
   }
 
   try {
-    const imports =
+    const imports = buildCompiledImports(
+      result,
       platform === "node" || process.env.DOGFOOD_NODE_HOST_DEPS === "1"
-        ? buildCompiledImports(result, await loadNodeHostDependencies())
-        : (result.importObject ?? {});
+        ? await loadNodeHostDependencies()
+        : await loadWebHostDependencies(),
+    );
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
     imports.setInstance?.(instance);
     imports.__setInstance?.(instance);
@@ -237,6 +287,7 @@ async function main() {
       statuses = Array.from(exports.runUpstreamTests(), (value) => Number(value) === 1);
       errors = Array.from(exports.upstreamTestErrors(), String);
     }
+    await exports.cleanupUpstreamTestEnvironment?.();
     emit({
       compile: { success: true, validates: true, durationMs, binaryBytes: result.binary.length, errors: [] },
       wasm: { count: Number(exports.upstreamTestCount()), statuses, errors },

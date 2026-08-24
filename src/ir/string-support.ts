@@ -19,6 +19,7 @@ import {
   IR_STRING_CONCAT_OWNED_FN,
   IR_STRING_EQUALS_FN,
   IR_STRING_ITERATOR_CHAR_AT_FN,
+  IR_STRING_REPEAT_FN,
 } from "./string-runtime.js";
 
 export interface IrStringSupportProviders {
@@ -55,6 +56,8 @@ export function irStringCallableProviderRef(instr: IrInstr): IrFuncRef | undefin
   switch (instr.kind) {
     case "string.concat":
       return irIntrinsicFuncRef(instr.concatMode === "owned-append" ? IR_STRING_CONCAT_OWNED_FN : IR_STRING_CONCAT_FN);
+    case "string.repeat":
+      return irIntrinsicFuncRef(IR_STRING_REPEAT_FN);
     case "string.eq":
       return irIntrinsicFuncRef(IR_STRING_EQUALS_FN);
     case "string.char_at":
@@ -123,6 +126,7 @@ export function attachIrStringSupport(fn: IrFunction, providers: IrStringSupport
     }
     if (
       nested.kind === "string.concat" ||
+      nested.kind === "string.repeat" ||
       nested.kind === "string.eq" ||
       nested.kind === "string.char_at" ||
       nested.kind === "string.char_code_at" ||

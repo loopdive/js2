@@ -73,6 +73,11 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
 import { emitMathValueReadBody } from "./math-value-read.js"; // (#4565)
+import { ensureHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649)
+import {
+  emitStringFromCharCodeValueBody,
+  prepareStringFromCharCodeValueRead,
+} from "./string-fromcharcode-value-read.js"; // (#4491 wave-5 T6)
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureExternStrictEqHelper } from "./any-helpers.js";
 import { sameValueNumberOps } from "./same-value-number-ops.js";
 import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
@@ -454,16 +459,15 @@ export function emitArrayIsArrayExternrefPredicate(ctx: CodegenContext, fctx: Fu
   fctx.body.push({ op: "local.set", index: externTmp });
   let emittedTerm = false;
 
-  if (vecTypeIdxs.length > 0) {
-    const anyTmp = allocLocal(fctx, `__isarr_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  // (#4649) The compiled-carrier half is a CALL to the finalize-filled
+  // `__host_array_carrier`, not an inline `ref.test` ladder over
+  // `ctx.vecTypeMap` — that ladder was an emission-time snapshot, so a carrier
+  // registered LATER (a `boolean[]` first minted by a test262 body, after the
+  // harness prefix baked its ladder) answered `false`. See host-array-carrier.ts.
+  const carrierIdx = vecTypeIdxs.length > 0 ? ensureHostArrayCarrierPredicate(ctx) : undefined;
+  if (carrierIdx !== undefined) {
     fctx.body.push({ op: "local.get", index: externTmp });
-    fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "local.set", index: anyTmp });
-    for (let vi = 0; vi < vecTypeIdxs.length; vi++) {
-      fctx.body.push({ op: "local.get", index: anyTmp });
-      fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdxs[vi]! });
-      if (vi > 0) fctx.body.push({ op: "i32.or" });
-    }
+    fctx.body.push({ op: "call", funcIdx: carrierIdx });
     emittedTerm = true;
   }
 
@@ -1011,6 +1015,39 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       returnType = { kind: "externref" };
       break;
     }
+    // (#4491 wave-5 T6) `String.fromCharCode` as a VALUE — genuinely VARIADIC
+    // (§22.1.2.1 takes a code-unit LIST). Reified on the SAME canonical variadic
+    // convention as `Math.max`/`Math.min` above — ONE `(ref null $vec_externref)`
+    // args param, `externref` result — so all three share ONE lifted func type
+    // and the single variadic dispatch arm in call-identifier.ts serves them
+    // all. Body lives in string-fromcharcode-value-read.ts. Falls through to the
+    // Phase-3 generic throw body when the native-string / any-value substrate is
+    // unavailable (identity + reflective `.name`/`.length` still work).
+    case "String.fromCharCode": {
+      addUnionImports(ctx);
+      if (!prepareStringFromCharCodeValueRead(ctx)) {
+        const genericArity = BUILTIN_STATIC_METHOD_ARITY[builtinName]?.[propName];
+        if (genericArity === undefined) return null;
+        paramTypes = [];
+        for (let i = 0; i < genericArity; i++) paramTypes.push({ kind: "externref" });
+        returnType = { kind: "externref" };
+        genericThrowBody = true;
+        break;
+      }
+      const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
+      if (getArrTypeIdxFromVec(ctx, vecTypeIdx) < 0) {
+        const genericArity = BUILTIN_STATIC_METHOD_ARITY[builtinName]?.[propName];
+        if (genericArity === undefined) return null;
+        paramTypes = [];
+        for (let i = 0; i < genericArity; i++) paramTypes.push({ kind: "externref" });
+        returnType = { kind: "externref" };
+        genericThrowBody = true;
+        break;
+      }
+      paramTypes = [{ kind: "ref_null", typeIdx: vecTypeIdx }];
+      returnType = { kind: "externref" };
+      break;
+    }
     // (#2963 Tier 2a) `Number.is{Integer,Finite,NaN,SafeInteger}` as first-class
     // VALUES. Fixed 1-arg predicates: the reified closure takes the boxed arg as
     // externref (the all-externref convention — coercion moves INSIDE the body)
@@ -1389,6 +1426,12 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
         { op: "local.get", index: accLocal },
         { op: "call", funcIdx: boxNumIdx },
       );
+    } else if (key === "String.fromCharCode" && !genericThrowBody) {
+      // (#4491 wave-5 T6) Variadic fold body. Params: 0=self, 1=argsVec.
+      const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
+      if (!emitStringFromCharCodeValueBody(ctx, closureFctx, vecTypeIdx, getArrTypeIdxFromVec(ctx, vecTypeIdx))) {
+        return null;
+      }
     } else if (
       (key === "Number.isInteger" ||
         key === "Number.isFinite" ||
@@ -1458,6 +1501,10 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
         },
       );
     } else if (genericThrowBody && builtinName === "Math" && emitMathValueReadBody(ctx, closureFctx, propName)) {
+      // (#4565; supersedes the #4491 wave-4 lane G arm, same defect) — the
+      // upstream module mints the `Math_<fn>` kernel late itself, so it needs
+      // no collector-phase seeding. Kept BEFORE the `genericThrowBody` arm
+      // below because that arm claims every `default:` case.
     } else if (genericThrowBody) {
       // (#2984 Phase 3) Degrade-to-catchable body: a real TypeError instance +
       // `throw` — the EXACT helper the Phase-2 proto refusal bodies use,
@@ -1483,7 +1530,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
   // Math.min share the SAME lifted func type (one vec param → one `ref.test`
   // arm serves both; `call_ref` dispatches to the right body via the funcref
   // value). Idempotent — the wrapper types are cached per signature.
-  if ((key === "Math.max" || key === "Math.min") && !genericThrowBody) {
+  if ((key === "Math.max" || key === "Math.min" || key === "String.fromCharCode") && !genericThrowBody) {
     const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
     ctx.variadicBuiltinClosure = {
       funcTypeIdx: wrapperTypes.liftedFuncTypeIdx,
