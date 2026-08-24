@@ -1,7 +1,8 @@
 ---
 id: 4668
 title: "ES5 standalone: a property read on a number/boolean PRIMITIVE never walks the wrapper prototype chain — `(5).x` answers null (language/ bucket)"
-status: in-review
+status: done
+completed: 2026-08-24
 sprint: current
 created: 2026-08-24
 updated: 2026-08-24
@@ -314,3 +315,15 @@ Singles, rooted where the source made it cheap:
   first cut regressed. The claim was true of the rows it was checked against and
   false of the family; it survived because it was only ever tested on the cells
   that were already failing.
+
+## Closed by the lead (2026-08-24) — successors named
+
+§10.4.3 primitive-receiver reads are fixed (+3: `10.4.3-1-{103,104,106}`, 0 regressions).
+`done` rather than `in-review`: I am the merger.
+
+The rooting of the rest of the `language/` bucket above is NOT dropped — it is carried
+forward by **[#4671](https://js2wasm.loopdive.com/dashboard/issue.html?slug=4671-language-scope-roots-with-eval-catch-var)**
+(`with` scope · direct-eval scope · catch-binding leak · `var` hoisting), which points back
+at the table here rather than duplicating it. The arguments-object rows were routed to
+**#4667**, and `expressions/in/S8.12.6_A2_T2` to the #4639/#4643 fnctor-prototype family,
+both per this lane's recommendation.

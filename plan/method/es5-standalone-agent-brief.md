@@ -716,3 +716,38 @@ than the one under test.
 So: after making a pin unfoldable, **re-derive that it still exercises the same carrier as the
 corpus row**. A pin that is unfoldable but lands elsewhere tests something real and answers the
 wrong question.
+
+## ⚠ A sweep scoped to FAILING rows cannot see a row that passes for the WRONG reason
+
+This is the blast-radius rule's real failure mode, and it nearly shipped a regression
+today (#4668). It also constrains the campaign's own pass-rate measurement, so read it
+before quoting a number.
+
+The #4668 lane's first cut scored **+3 flips, zero regressions** against its own row list —
+and **regressed `language/function-code/10.4.3-1-105.js`**, which was *passing on the base
+for the wrong reason*. That row is `noStrict` and asserts `(5).x === 5` is **false** and
+`typeof (5).x` is `"object"`. Both are satisfied by the correct answer **and** by the
+terminal `ref.null.extern` the base was returning. The row was green because two wrongs
+agreed.
+
+Why no probe table caught it: every cell that reads through an assertion which `null` also
+satisfies is blind by construction. Varying receiver type and strictness — the obvious two
+axes — still could not see it. **Only the wider sweep found it**, because the row was never
+in the failing set to begin with.
+
+Consequences, in order of how much they cost if ignored:
+
+1. **Size the sweep from what the diff can REACH, never from the rows you intend to fix.**
+   Those are different sets, and the difference is exactly where this class of regression
+   lives. The #4668 lane derived its scope from the gate — the arm can only fire in a
+   module naming `Object`/`Number`/`Boolean.prototype`, so a text grep is a strict superset
+   of the gate: 375 files ∪ its own 38 = 408. That is the right shape of argument.
+2. **Grep the `harness/` directory separately.** A harness file that arms your gate makes
+   the reachable set the whole corpus. #4668 checked: `assert.js` and `propertyHelper.js`
+   both *name* a prototype but neither matches the gate; only `testIntl.js` does, and it is
+   intl402-only. Without that check the 408-file scope would have been unjustified.
+3. **The campaign's targeted pass-rate sweep inherits this blind spot.** Re-running only
+   main's not-passing rows finds newly-passing rows and cannot see a row that was passing
+   for the wrong reason and is now correctly failing. That is a *third* blind spot on top
+   of the two already recorded. The merge queue's full-corpus re-validation remains the
+   only thing that catches it — so never present a targeted-sweep delta as "no regressions".
