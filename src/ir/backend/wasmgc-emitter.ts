@@ -76,6 +76,17 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
     out.push(...ops);
   }
 
+  emitStringRepeat(
+    alloc: AllocSiteId | undefined,
+    inputEncoding: IrStringEncoding,
+    out: Instr[],
+    provider?: IrFuncRef,
+  ): void {
+    const ops = this.stringRuntime?.emitStringRepeat?.(alloc, inputEncoding, provider);
+    if (!ops) throw new Error("WasmGcEmitter: string.repeat runtime is unavailable");
+    out.push(...ops);
+  }
+
   emitStringEquals(negate: boolean, out: Instr[], provider?: IrFuncRef): void {
     const ops = this.stringRuntime?.emitStringEquals?.(provider);
     if (!ops) throw new Error("WasmGcEmitter: string.eq runtime is unavailable");

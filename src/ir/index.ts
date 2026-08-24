@@ -12,6 +12,7 @@ export * from "./alloc-registry.js";
 export * from "./builder.js";
 export * from "./verify.js";
 export * from "./verify-alloc.js";
+export * from "./instruction-digest.js";
 export * from "./lower.js";
 export * from "./backend/legality.js";
 export * from "./select.js";

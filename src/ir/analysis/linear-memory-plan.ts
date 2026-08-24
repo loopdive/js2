@@ -788,6 +788,7 @@ function layoutForAllocation(
       return planLinearVectorLayout(instr.elementType);
     case "string.const":
     case "string.concat":
+    case "string.repeat":
       return planLinearStringLayout();
     default:
       return site.kind === "string" ? planLinearStringLayout() : opaqueLayout(site);

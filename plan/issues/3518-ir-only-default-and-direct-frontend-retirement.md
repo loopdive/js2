@@ -24,6 +24,21 @@ oracle-ratchet-allow:
   - src/codegen/multi-prepared-array-leaf.ts
 loc-budget-allow:
   - src/codegen/index.ts
+  - src/ir/backend/linear-integration.ts
+  - src/ir/builder.ts
+  - src/ir/integration.ts
+  - src/ir/lower.ts
+  - src/ir/nodes.ts
+  - src/ir/prepared-component-dependencies.ts
+  - src/ir/verify.ts
+func-budget-allow:
+  - src/ir/backend/linear-integration.ts::compileLinearIrFunctions
+  - src/ir/backend/linear-integration.ts::makeLinearIrResolver
+  - src/ir/integration.ts::makeResolver
+  - src/ir/lower.ts::emitInstrTree
+  - src/ir/lower.ts::lowerIrFunctionBody
+  - src/ir/passes/inline-small.ts::renameInstrOperands
+  - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
 ---
 # #3518 — IR-only default and direct front-end retirement
 
@@ -943,10 +958,33 @@ bounds and nonzero starts use the same checked arithmetic as #1004. Overflow,
 non-safe integers, negative/non-finite derived counts, or changed source nodes
 withdraw before body skipping.
 
-#### Transaction B — backend-neutral `string.repeat`
+#### Transaction B — backend-neutral JS-dialect `string.repeat`
 
-Add `string.repeat` to the typed IR dialect rather than encoding the
-optimization as a backend helper call in the frontend. The instruction owns a
+Land Transaction B as two signed, queueable checkpoints rather than one large
+cutover commit:
+
+1. **B1 — dialect/provider foundation.** Add the v5.2 JS-dialect instruction,
+   verifier/effect/clone/digest coverage, exact host/native/linear provider
+   ABIs, reservation/authentication, and executable provider tests. This
+   checkpoint is intentionally producer-free: it must not remove the selector
+   deferral or claim that `bench_string` moved. Its PR description and evidence
+   say exactly that.
+2. **B2 — counted-plan consumer and cutover.** Starting only after A and B1
+   land, consume the shared proof in `from-ast`, implement the `N=0/1/>=2`
+   shapes, reserve the linear provider from the prepared receipt before slots,
+   remove only the unconditional counted-append deferral, and prove the exact
+   builder-off rollback. This is the first checkpoint allowed to claim that the
+   single-source counted loop is Prepared.
+
+Transaction C remains a third PR because its source-qualified multi-module
+callback composition and rollback are independently reviewable. Do not fold C
+into B2 merely to make the bounded standalone census turn green sooner.
+
+Add `string.repeat` to the typed JavaScript IR dialect rather than encoding the
+optimization as a backend helper call in the frontend. “Backend-neutral” here
+means that host WasmGC, native WasmGC, and linear consume one typed semantic
+operation; it does not misclassify ECMAScript `ToIntegerOrInfinity`/RangeError
+behavior as language-neutral core IR. The instruction owns a
 typed string operand, a JS-number count operand, one string result/allocation,
 producer encoding evidence, and an optional provider reference filled only by
 final preparation. Extend the builder, node union, in-memory clone and digest
