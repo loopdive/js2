@@ -36,7 +36,7 @@ import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
 import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
 import { functionPrototypeMemberSpecLength } from "./function-prototype-callable.js"; // (§20.2.3)
 import { emitSymbolDescLoad, ensureNativeSymbolBoundaryBridge, usesNativeSymbolProvider } from "./symbol-native.js";
-import { ensureObjectRuntime } from "./object-runtime.js";
+import { ensureObjectRuntime, ensureWrapperStringValueHelper } from "./object-runtime.js";
 import { rollbackSpeculative, snapshotSpeculative } from "./context/speculative.js";
 import {
   tryCompileNativeGeneratorResultProperty,
@@ -3407,22 +3407,22 @@ export function tryStringLengthIteratorAndExternClassReads(
 
   // #1910 R4 — String-wrapper `.length` in standalone. `new String("ab")` builds
   // a `$Object` wrapper carrying its [[StringData]] native string in the reserved
-  // FLAG_INTERNAL slot (#1910 S2). `.length` is a String-exotic own property whose
-  // value is the underlying string's length (§22.1.4.1). Recover the slot string
-  // via `__to_primitive(recv, "string")` (reads the slot first, §7.1.1.1), then
-  // read `$AnyString.len` (field 0). Standalone only — host mode keeps the wrapper
-  // host-object machinery and its own `.length` reader.
+  // FLAG_INTERNAL slot (#1910 S2); `.length` is the String-exotic own property
+  // holding that string's length (§22.1.4.1), read off `$AnyString.len` (field 0).
+  // Standalone only — host mode has its own wrapper `.length` reader.
+  //
+  // (#4492 wave-5) The slot read is `__wrapper_string_value`, NOT
+  // `__to_primitive(recv, "string")`: §22.1.4.1 fixes `length` at construction and
+  // no user `valueOf`/`toString` can move it. ToPrimitive was only standing in for
+  // the slot read ("reads the slot first"), and once it began honouring an own
+  // override — which §7.1.1.1 requires — the two stopped being the same operation
+  // (measured: `new String("ABCABC").length` became 2 after `s.valueOf = …`).
   if (ctx.standalone && isStringWrapperType(objType) && propName === "length" && ctx.anyStrTypeIdx >= 0) {
     ensureObjectRuntime(ctx);
-    const toPrimIdx = ctx.funcMap.get("__to_primitive");
-    if (toPrimIdx !== undefined) {
+    const slotIdx = ensureWrapperStringValueHelper(ctx);
+    if (slotIdx >= 0) {
       compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
-      addStringConstantGlobal(ctx, "string");
-      fctx.body.push(...stringConstantExternrefInstrs(ctx, "string"));
-      fctx.body.push({ op: "call", funcIdx: toPrimIdx });
-      // __to_primitive returns the [[StringData]] string as externref; coerce to
-      // $AnyString and read its `len` field.
-      coerceType(ctx, fctx, { kind: "externref" }, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+      fctx.body.push({ op: "call", funcIdx: slotIdx });
       fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
       return { kind: "i32" };
     }

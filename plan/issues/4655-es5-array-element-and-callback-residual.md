@@ -1,7 +1,7 @@
 ---
 id: 4655
 title: "ES5 standalone: Array residual — 20 rows: undefined/null elements degrade to NaN/0 through concat/toString/toLocaleString, filter/forEach callback+hole semantics, Array.prototype.concat unreachable as a value"
-status: ready
+status: in-review
 sprint: current
 created: 2026-08-23
 updated: 2026-08-23
@@ -15,6 +15,24 @@ es_edition: 5
 language_feature: arrays
 goal: standalone-gap
 related: [4641, 4491, 1888, 2141]
+assignee: dev-4655
+# (#4655) The mechanism lives in the new leaf module `array-tolocalestring.ts`.
+# What lands in the god-file is DISPATCH PLUMBING only: one import, one
+# `isLocalizedJoin` call in each of the two native join lowerings, the
+# separator-argument condition, and the three tail hook-ups. The dispatch
+# `switch` itself is byte-identical — `localized` is derived from the property
+# access inside the lowering rather than threaded through it, precisely to keep
+# `compileArrayMethodCall` from growing (it is 603 lines and func-budgeted).
+loc-budget-allow:
+  - src/codegen/array-methods.ts
+# (#4655) ONE new `__extern_toString` reference, in the new module. §23.1.3.32
+# step 6.c.i is literally `ToString(Invoke(elem, "toLocaleString"))`, so the
+# ToString is the spec step, not a hand-rolled coercion matrix — and it is the
+# SAME `__extern_toString` the join lane it sits next to already calls, so the
+# two cannot disagree about how a value stringifies. Named once as `TO_STRING`
+# and used from the three sites that need it.
+coercion-sites-allow:
+  - src/codegen/array-tolocalestring.ts
 origin: "wave-6 lead sweep (2026-08-23) on the merged wave-4 tree (7,959/8,115). These 20 rows are owned by NO active lane: #4641 measured them and DECLINED the element half with a recorded +1/-2 observer trade-off; dev-4491 owns only the Object/* MOP directories."
 ---
 
@@ -109,3 +127,358 @@ verified failing on base by revert); `it.fails` pins for measured residuals with
 owners. Record `## Root cause` per cluster / `## Fix` / `## Test Results` /
 `## Residuals` here. A decline with a measured observer table is a valid
 outcome; an unmeasured fix is not.
+
+---
+
+# Result (dev-4655, 2026-08-23)
+
+Every number below comes from a run **I executed**. Two worktrees are involved
+because a container restart killed the first session mid-sweep:
+
+| | |
+| --- | --- |
+| first session | `/workspace/.claude/worktrees/agent-aa58d929ef0455b8c`, branch `issue-4655-array-element-callback`, base `3e8adf0d8` |
+| this session | `/workspace/.claude/worktrees/agent-a44258edd957935c5`, branch `issue-4655-array-element-callback-r2`, base `origin/main` @ `f6e094cdb` |
+
+The work survived (the commit plus two uncommitted files were recovered and
+committed first thing); the **branch name changed** only because the original
+branch is still checked out in the dead worktree and the isolation layer refuses
+both `git worktree remove` and `checkout --ignore-other-worktrees`.
+
+**Every measurement in `## Test Results` was RE-RUN on the post-merge base**, so
+nothing here is inherited from the pre-restart artifacts. Base arms are file-copy
+reverts (`.tmp/base-array-methods.ts` / `-join-element` / `-join-proto-hole`,
+captured from `origin/main`), swapped by `.tmp/to-base.sh` / `.tmp/to-fix.sh`,
+with `git diff --stat -- src` read before each arm — it must name the same four
+files the change touches, which is the brief's partial-restore detector. Probes
+are in `.tmp/probes/`, one module per claim, each named for the question it
+answers.
+
+## What this does that #4641's declined option did not
+
+#4641 declined the ELEMENT half after measuring the naive "reuse
+`UNDEF_F64_BITS` for a `null` element" fix at **+1 / −2** observers, and
+recorded the remaining work as "needs a third sNaN payload (`NULL_F64_BITS`),
+a #4491-T8-sized slice, for ONE corpus row".
+
+**I did not take that option, and the measurement says nobody should.** The
+row it was sized for (`toString/S15.4.4.2_A1_T2`) does not need a new payload
+at all:
+
+| probe                                                         | `x.toString()` | `x[2] === null` | `typeof x[2]` |
+| ------------------------------------------------------------- | -------------- | --------------- | ------------- |
+| `.tmp/probes/nullelem.js` — `var x = Array(undefined,1,null,3)` | `",1,,3"` ✓  | **true** ✓      | `"object"` ✓  |
+| `.tmp/probes/nullelem2.js` — the row's own shape: `var x = new Array(0,1,2,3); x = Array(undefined,1,null,3)` | `",1,0,3"` ✗ | false ✗ | `"number"` ✗ |
+
+The compiler **already has a correct nullish element representation** — the
+boxed/union element carrier answers all three observers. The failing row fails
+because `x` is a REUSED variable whose wasm carrier was fixed to `f64` by the
+earlier `new Array(0,1,2,3)`, so the reassignment coerces `null` into it. That
+is #3580's union-collapse **at the var slot**, not a missing element payload,
+and building `NULL_F64_BITS` would have been a #4491-T8-sized slice aimed at
+the wrong layer. Recorded as residual R3 with the discriminating control.
+
+Instead I took a root the prior measurement did not look for, because its two
+`toLocaleString` rows were filed under the element-representation heading:
+`Array.prototype.toLocaleString` asks each element for the wrong METHOD.
+
+## Root cause — cluster A(iii), `toLocaleString` (FIXED)
+
+`Array.prototype.toLocaleString` shares the `join`/`toString` lowering
+(`array-methods.ts`, the `case "toLocaleString": case "toString":` fallthrough,
+#2863 Phase 2). Sharing the separator is right; sharing the ELEMENT step is not
+— §23.1.3.32 step 6.c.i is `ToString(? Invoke(nextElement, "toLocaleString"))`,
+not `ToString(nextElement)`.
+
+Measured with a **positive control that refutes the obvious root**:
+
+```js
+var n = 0, obj = { toLocaleString: function () { n++; return "L"; } };
+[obj, obj].toLocaleString();   // base: n === 0, "[object Object],[object Object]"
+
+var m = 0, o2 = { toString: function () { m++; return "T"; } };
+[o2, o2].toString();           // base: m === 2, "T,T"   ← reflective dispatch WORKS
+```
+
+So it is not "an element's own method is never consulted" (which is the shape
+dev-4492 owns for the String conversion path, and would have been the wrong
+handover); it is the method NAME. `.tmp/probes/tls-1.js` / `tls-2.js`.
+
+A second consequence of the aliasing, same root: `toLocaleString`'s reserved
+`locales`/`options` arguments were being compiled as `join`'s **separator**.
+
+## Fix
+
+New leaf module `src/codegen/array-tolocalestring.ts` (the mechanism + its
+rationale) and dispatch plumbing in `array-methods.ts`:
+
+- `isLocalizedJoin(propAccess)` — read off the property access inside the two
+  native join lowerings rather than threaded from the dispatcher, so the
+  `compileArrayMethodCall` switch stays **byte-identical** (it is func-budgeted
+  at 603 lines).
+- `elementToLocaleStringTail` replaces the `__extern_toString` tail on the arms
+  whose element can carry a user method: the boxed-any / GC-ref element arm
+  (`buildJoinBoxedElementToString` gains an optional `tail`), the extern-receiver
+  lane, and the #4491 lane-J prototype-hole fallback
+  (`joinProtoHoleFallbackInstrs` gains the same optional `tail`). `join` /
+  `toString` pass no tail and emit unchanged bytes.
+- The separator argument is not compiled at all in localized mode.
+
+**The Invoke is `__extern_get` + `__apply_closure`, not `__extern_method_call`.**
+The first cut used the generic dispatcher and threw `TypeError: called value is
+not a function` on the issue's own shape. Its method-resolution arm is gated on
+`ref.test $Object(recv)` — the OPEN dynamic-object carrier — and an object
+LITERAL is a CLOSED `$__anon_N` struct, which falls to the
+`$Vec`/closure-own-property else arm and resolves null. Worth recording because
+a JS-level probe does NOT establish this: the same object reached through a
+computed member call `arr[0][k]()` works, because that spelling is a typed
+member dispatch and never enters `__extern_method_call`
+(`.tmp/probes/dyncall.js` answers `zzz=Z tls=L`).
+
+**Scope, deliberately: boxed elements only.** The primitive arms (numeric,
+the #2105 boolean arm) keep rendering natively. Host-free there is no `Intl`
+and `Number.prototype.toLocaleString` degrades to ToString, so the reflective
+Invoke would compute the same answer while putting a method dispatch in
+`[1,2,3].toLocaleString()`. The case it leaves wrong — an OVERRIDDEN primitive
+prototype method — is residual R1, pinned with its control.
+
+**Absent-not-wrong on the method miss.** A null resolution falls back to
+`ToString(elem)` (today's answer) rather than §23.1.3.32's TypeError: the
+reflective read does not see every builtin prototype method, so a
+`toLocaleString` this lowering cannot find is far more likely to be one it
+cannot SEE than one genuinely absent.
+
+## Root cause — the other 18 rows, and why none of them is fixed here
+
+Every one was probed, not assumed. **Six of the twelve entries below refute an
+attribution that was already written down somewhere — four of them mine.** That
+is the most useful thing in this report, so the last column names the claim and
+WHOSE it was rather than just saying "not X". It is also why the issue's own
+row groupings (A/B/C) do not survive contact: the 20 rows carry **eight**
+distinct roots, and the grouping that predicts them is not "which method
+failed" but "which conversion or carrier decision was made before the method
+ran".
+
+| # | rows | root — as MEASURED | the attribution it REFUTES, and whose |
+| --- | --- | --- | --- |
+| **FIXED** | `toLocaleString/S15.4.4.3_A{1,3}_T1` | the element step asked for `toString` | **the issue's own note** ("may be a DIFFERENT root — an object element's own `toLocaleString` not consulted … the same shape dev-4492 is chasing … hand over if it is theirs"). It is NOT theirs: `[o,o].toString()` with `o = {toString: …}` calls `o.toString` TWICE on base. Element dispatch was already reflective; the method NAME was wrong. Handing it to dev-4492 would have been the wrong route |
+| R1 | `toLocaleString/primitive_this_value{,_getter}` | primitive→string conversion never consults an overridden wrapper-prototype method — `String(true)` answers `"true"` with `Boolean.prototype.toString` overridden | **MINE**, written in `array-tolocalestring.ts`'s own header: "that row needs per-element boxing on the primitive arms". It does not — `typeof true.toLocaleString` is already `"function"`, and calling it still ignores the override, so a boxed element would inherit the same wrong answer |
+| R3 | `toString/S15.4.4.2_A1_T2` | a `null` element assigned into a var whose wasm carrier was already fixed to `f64` (#3580 union-collapse at the var slot) | **#4641's R4**: "needs a third sNaN payload `NULL_F64_BITS`, a #4491-T8-sized slice". The SAME expression in a fresh var is fully correct — `",1,,3"`, `x[2] === null`, `typeof "object"` — so the payload would have been built at the wrong layer |
+| R4 | `concat/S15.4.4.4_A1_T{2,4}`, `A3_T{1,2,3}` | the `concat` RESULT slot is still statically `number[]`, so a hole / an inherited index / an object element comes out `NaN` | **the issue title's** "undefined/null elements degrade to NaN/0 **through** concat/toString/toLocaleString" reads as one element-representation defect. Read directly, every one of these elements is already correct; only the trip through `concat` loses them. SUSPECTED-not-established beyond that: I did not falsify whether the value is already `NaN` inside the container |
+| R5 | `forEach/15.4.4.18-3-23` | an array-like whose `length` object inherits `valueOf` from a constructor prototype visits no index | **#4641's R7**: "`length` is an OBJECT needing ToPrimitive". An OWN `valueOf` on the length object works end to end through the same borrow, so ToPrimitive-on-`length` is not the missing piece; inheritance is |
+| R6 | `filter/15.4.4.20-9-b-{14,15,16}` | the #1888 / #2141-S4 heterogeneous-element tag lie | nothing new — this **CONFIRMS #4641's** isolation of these rows away from the descriptor MOP, and I re-measured it rather than inheriting it |
+| R7 | `filter/15.4.4.20-9-b-2` | a `{}` that is both given a self-writing `length` accessor AND borrowed as an array-like is materialised carrying **Array's own** `length` (`value=0,w=true,e=false,c=false`) | **MINE** — I wrote "the descriptor MOP treats a `length` accessor as the array's" and probed it: seven single-axis probes ALL pass, only the combination fails. §10.1.6.3 step 4.a is behaving correctly; the carrier is pre-seeded. Owner is value-rep, **not #4491** |
+| R8 | `toString/S15.4.4.2_A1_T4` | **`new Array(elem)` hands the element a carrier that loses the throw.** Same element, same call, three constructions: `new Array(both)` renders `""`; `[both]` throws; a loop-built `x[j] = both` throws | **MINE, TWICE.** First "ToPrimitive does not throw" — refuted, `String(o)` throws correctly. Then "the element tail and `String()` are different ToStrings" — refuted by my **own pin**, which was loop-carried for unfoldability, landed in a cell that WORKS, and reported `Expect test to fail` while the corpus row stayed red |
+| R9 | `Array/S15.4_A1.1_T9` | ToPropertyKey does not use ToPrimitive's `valueOf` fallback | **MINE**, same wrong guess as R8 — `String(o)` on the same object answers `"1"`. Only the KEY position ignores the fallback |
+| — | `concat/S15.4.4.4_A2_T{1,2}` | `Array.prototype.concat` read as a VALUE (#4515 cluster C1) | **the expectation that #4515's landing closed these.** It has landed; they still fail verbatim — see below |
+| — | `Array/S15.4_A1.1_T10` | sparse array indexed up to 2³²−2 → `array element access out of bounds`; the dense backing store | — |
+| — | `isArray/15.4.3.2-1-13` | `arguments` is materialised as a real Array, so `Array.isArray` says `true` | — |
+| — | `filter/15.4.4.20-5-7` | `eval` used as a `thisArg` VALUE. **NOT MEASURED HERE** — see `## Test Results` | — |
+
+The pattern in the four that were mine is worth naming, because it is cheap to
+repeat: **every one was a plausible root read off the failure TEXT, and every
+one died to a two-line probe that moved a single axis.** "Cannot redefine
+property" reads as a descriptor-MOP bug; "expected a throw, none" reads as a
+ToPrimitive bug; "the primitive arms render natively" reads as a boxing gap.
+The probe that refutes each costs about a minute, and none of them needed the
+compiler to be understood first.
+
+### The cluster-C re-verification the task asked for
+
+**#4515 has landed and the two `concat`-as-a-value rows still fail, unchanged.**
+Measured on `origin/main` @ `f6e094cdb` (this session's base), both rows report
+verbatim `TypeError: Array.prototype.concat is not yet callable as a value in
+--target standalone`. Do not close them as covered by #4515. The same error
+text, on the same base, also covers `Array.prototype.toLocaleString` read as a
+value (residual R2), so the family is one root and it is still open.
+
+## Residuals
+
+Nine, every one pinned in `tests/issue-4655.test.ts` as an `it.fails` **plus a
+positive control that passes**. The control is not decoration: an `it.fails`
+alone protects whatever root you attributed from ever being tested, and in this
+issue four attributions were wrong. The control is the cell that discriminates,
+so if a future change repairs the residual for the WRONG reason — or breaks the
+surrounding area so thoroughly that the residual "passes" — the control goes red.
+
+| id | shape | owner | the control that pins it |
+| --- | --- | --- | --- |
+| R1 | an element whose PRIMITIVE prototype method is overridden (`Boolean.prototype.toString = …`) is still rendered natively | **primitive wrapper-prototype dispatch — NOT this lowering** (see below) | an UN-overridden boolean still renders `true`/`false` |
+| R2 | `Array.prototype.toLocaleString` read as a VALUE | #4515 cluster C1 (builtin-as-value) — **still open, re-verified above** | the same method CALLED works |
+| | *R2 rests on its own pin, not on a corpus row.* An earlier draft cited `toLocaleString/{resizable-buffer,user-provided-tolocalestring-grow,-shrink}`; on this base all three fail with `JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not built` — this worktree's environment, not a root. | | |
+| R3 | a `null` element assigned into a var already typed `number[]` | #3580 union-collapse at the var slot | the same expression in a FRESH var is fully correct, including `x[2] === null` and `typeof x[2] === "object"` |
+| R4 | a hole / inherited index / object element crossing `concat` becomes `NaN` | value-rep — the concat result-carrier slice | the same hole read WITHOUT `concat` is already correct |
+| R5 | an array-like whose `length` object has an INHERITED `valueOf` visits no index | unclaimed | the OWN-`valueOf` twin works end to end |
+| R6 | a heterogeneous element reads back as `[object Object]` after `filter` | #1888 / #2141-S4 | the HOMOGENEOUS twin — including the mid-iteration `length` shrink a prior lane suspected — passes |
+| R7 | self-writing `length` accessor + array-like borrow ⇒ the object carries Array's own non-configurable `length` | array-like borrow carrier selection (value-rep). **NOT #4491** | both single-axis halves pass; only the combination fails |
+| R8 | an element passed to `new Array(elem)` renders `""` where the spec throws | value-rep, with R3/R4 — the carrier `new Array()` hands out | the same element in an array LITERAL throws; and `String()` on it throws |
+| R9 | an object property KEY whose `toString` returns an object ignores `valueOf` | computed-member key coercion (core-semantics) | `String()` on the same object DOES use the fallback |
+
+**R1's obvious next step is measurably the wrong one — and it was MY OWN
+attribution, written in the fix's module header before I probed it.** The
+module says the primitive arms are declined because they would need per-element
+boxing. One probe on the base arm, with `Boolean.prototype.toString` overridden
+to return `typeof this`, refutes that:
+
+```
+typeof true.toLocaleString   →  "function"     the reflective read RESOLVES
+true.toLocaleString()        →  "true"         spec: "boolean"
+String(true)                 →  "true"         spec: "boolean"
+```
+
+The read already finds the method; the CALL ignores the override, and so does
+plain `String()`. Boxing the element and Invoking would therefore inherit the
+same wrong answer — the defect is one level down, in primitive→string
+conversion, and no amount of work in the array lowering reaches it.
+(`.tmp/probes/primitive-element-invoke-feasibility.js`.) This is the fifth
+attribution in this issue that a two-minute probe refuted, and the only one that
+was mine; the module header's "Deliberate scope" paragraph is correct that the
+primitive arms are out of scope and wrong about why.
+
+**R8 is the one I nearly "fixed" in the wrong place, and the pin is what
+stopped me.** I had it written down as "the element tail's `__extern_toString`
+is not `String()`'s ToString — re-point it", which sits in the exact tail this
+change already edits and looked like a one-row rider. The pin I wrote for it —
+loop-carried, per this brief's unfoldability rule — **passed on the fix arm**
+while the corpus row stayed red, and three probes then located the real axis:
+
+| construction (same element, same call) | `x.toString()` |
+| --- | --- |
+| `new Array(both)` — the corpus row's spelling | renders `""`, no throw ✗ |
+| `[both]` | TypeError ✓ |
+| `x = []; x[j] = both` — my pin's spelling | TypeError ✓ |
+
+So the element tail is CORRECT for two of the three carriers, and re-pointing
+it would have moved bytes on `join` to fix nothing. R8 belongs with R3 and R4
+in value-rep: what differs is the carrier `new Array()` hands out.
+
+**The transferable lesson is narrower than "write unfoldable pins".** The rule
+is right in general and was wrong here: when the defect IS the spelling,
+rewriting the spelling for unfoldability moves the pin to a cell that passes.
+Check that a residual pin still fails on the arm it claims to test, exactly as
+you would for a fix pin — an `it.fails` that has stopped failing looks green
+from every angle except the one that matters.
+(`.tmp/probes/r8-newarray-literal.js`, `r8-array-literal.js`, `r8-loop-built.js`.)
+
+## Recommendation on this issue's own status
+
+Left at **`in-review`, not `done`** — deliberately, and the lead should decide
+rather than inherit my judgement. The brief's acceptance bar IS met (two-arm
+sweep from my own runs, per-file flip list, zero regressions with every apparent
+flip and regression re-verified serially, pins that fail on the arm they claim,
+`it.fails` residuals with positive controls and owners, all four required
+sections). But **2 of the 20 rows flip**; the other 18 are rooted, pinned and
+attributed rather than fixed. Closing this issue `done` would retire the only
+place those 18 rows are written down together with the probes that root them.
+
+Two clean options: close it `done` and spin the residual table into issues
+(R3/R4/R8 into one value-rep carrier issue — they are the same defect seen from
+three directions; R5, R7, R9 separately; R1 into wrapper-prototype dispatch;
+R2 onto #4515), or keep it open as the tracking issue for the remaining 18. The
+work is the same either way; what must not happen is `done` with no successor.
+
+## Test Results
+
+Both arms run by me, serially, in this worktree, against the same 649-file list
+(`.tmp/sweepB.txt`), base = the main tip merged into this branch, `f6e094cdb`.
+Arm state checked with `git diff --stat f6e094cdb -- src` before each arm: EMPTY
+on base, exactly the four changed files on fix.
+
+### Scoped standalone sweep — 649 files, `.tmp/B-base.jsonl` / `.tmp/B-fix.jsonl`
+
+```
+base:  pass 272   fail 203   skip 170   compile_error 4
+fix :  pass 274   fail 199   skip 170   compile_error 6      (before re-verification)
+```
+
+**Flips to pass — 2, both re-run SERIALLY and confirmed:**
+
+```
++ built-ins/Array/prototype/toLocaleString/S15.4.4.3_A1_T1.js
++ built-ins/Array/prototype/toLocaleString/S15.4.4.3_A3_T1.js
+```
+
+**Regressions — 0.** Two rows moved `fail → compile_error`; **both are the
+contention trap, neither is a change**, and I only know that because I re-ran
+them serially rather than reporting the tally:
+
+| row | serial re-run |
+| --- | --- |
+| `Array/prototype/reduceRight/resizable-buffer-grow-mid-iteration.js` | back to `fail` — same eval-provider error as base |
+| `TypedArray/prototype/toLocaleString/BigInt/detached-buffer.js` | still `compile_error` at the runner's 20 s bound; **with a 300 s bound it compiles in 26.2 s and reports the same `fail` as base.** `runTest262File`'s timeout is a POST-HOC check, so "compile_error" here means "slower than 20 s under load 15", not "broken" |
+
+Had I reported the raw tally, this issue would have shipped claiming
+`compile_error 4 → 6`.
+
+### The zero-regression argument is byte-level, not just status-level
+
+The change is gated on one thing: a property access spelled `toLocaleString`.
+A module without that token must emit identical bytes, and the sweep records a
+`wasm_sha` per row, so that is checkable rather than assertable:
+
+| tier | what it is | identical `wasm_sha` | different |
+| --- | --- | --- | --- |
+| tier 1 | every corpus file mentioning `toLocaleString` (290) | 98 | **21** |
+| tier 2 | `Array/prototype/{join,toString,concat}` + `built-ins/Array/*.js` (153) | 149 | **0** |
+| tier 3 | deterministic 200-file sample of the other 2,916 `built-ins/Array` files | 199 | **0** |
+
+- **Tier 2 = 0 different** is the load-bearing one: `join` and `toString` share
+  both modified helper modules with `toLocaleString`, and their emitted bytes do
+  not move at all. That is what makes "byte-neutral for `join`" a measurement.
+- **Tier 3 = 0 different** is the empirical support for the ~2,700
+  `built-ins/Array` files NOT swept: identical bytes ⇒ identical behaviour, so
+  the un-swept remainder is covered by the gate argument plus this sample rather
+  than by an assertion.
+- All **21** tier-1 differences are files that call `toLocaleString` (Array,
+  TypedArray, intl402). The gate is exact — nothing outside it moved.
+
+**Scope stated plainly:** this is 366 of the 3,082 `built-ins/Array` files plus
+277 files outside it, not all 3,082. The full-directory sweep was attempted
+first and its shards were OOM-killed by the box under 5-lane load; the
+tier-3 + `wasm_sha` design is the replacement, and it answers a stronger
+question (bytes) on a smaller set.
+
+### Pins — `tests/issue-4655.test.ts`, 29 tests, both arms
+
+```
+BASE arm:  Tests 6 failed | 23 passed (29)     exit 1
+FIX  arm:  Tests 29 passed (29)                exit 0
+```
+
+`executed = passed + failed = 29 = total` on both arms, so nothing was silently
+skipped. The 6 base failures are exactly the fixed family (the two corpus rows,
+`element-invoke`, `nullish-elements-render-empty`,
+`reserved-arguments-are-not-a-separator`, `borrowed-receiver`); the 3 controls
+and all 9 residuals with their 11 controls pass on BOTH arms, which is what
+makes the controls controls.
+
+### Post-merge re-run
+
+`origin/main` advanced 88 commits while the two arms were running, so after the
+measurements I merged it in (plain `git merge origin/main`, tip `58fc17eae`,
+clean) and **re-ran the pins on the combined tree: 29 passed (29), exit 0.**
+Main's only touch to a file this change edits is `array-methods.ts`'s
+`CLOSURE_SAFE_AMBIENT_GLOBALS` gaining `"Function"` (#4657) — no interaction —
+but a sibling's change alters what is REACHABLE, not just what is correct, so
+the re-run is the check rather than the reasoning.
+
+The sweep numbers above are NOT re-run on that tree; they are stated against
+`f6e094cdb`, which is the base both arms shared.
+
+### What I could NOT measure
+
+- `filter/15.4.4.20-5-7.js` — uses `eval` as a `thisArg` VALUE, and this
+  worktree has no quickjs provider built, so the row reports
+  `JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not built` on BOTH
+  arms. Its real root is the builtin-as-value family (#4515 C1), by inspection
+  of the source, **not by measurement**. The same environment blocks
+  `toLocaleString/{resizable-buffer,user-provided-tolocalestring-grow,-shrink}`
+  and `reduceRight/resizable-buffer-grow-mid-iteration`. I did not build the
+  provider because the adapter cache is shared with the lanes running
+  concurrently and its freshness is a documented trap; an unshared measurement
+  was not worth poisoning theirs.
+- `toLocaleString/invoke-element-tolocalestring.js` stays red for an unrelated
+  reason worth knowing: `TypeError: Cannot destructure 'null' or 'undefined'` at
+  its `for (const { label, args } of testCases)` — a for-of destructuring
+  failure over an array of object literals, plausibly the same #1888 tag lie as
+  R6. It never reaches the element step this issue fixes.

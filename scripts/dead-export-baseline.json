@@ -1,4 +1,8 @@
 [
+  "src/codegen/array-tolocalestring.ts#buildExternJoinElementToString",
+  "src/codegen/array-tolocalestring.ts#elementToLocaleStringTail",
+  "src/codegen/array-tolocalestring.ts#ensureElementToLocaleStringInvoke",
+  "src/codegen/array-tolocalestring.ts#isLocalizedJoin",
   "src/codegen/builtin-tags.ts#getBuiltinParent",
   "src/codegen/extern-declarations.ts#getPseudoExternClassInfo",
   "src/codegen/extern-declarations.ts#resolveMethodDispatchTarget",

@@ -84,8 +84,17 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (!ctx.protoIndexDirty && isProtoIndexWrite(node)) {
       ctx.protoIndexDirty = true;
     }
-    if (!ctx.protoNamedDirty && isProtoNamedWrite(node)) {
+    if (isProtoNamedWrite(node)) {
       ctx.protoNamedDirty = true;
+      // (#4492 wave-5) …and WHICH member. The flag is on in nearly every
+      // test262 module (the harness prelude writes some builtin prototype), so
+      // only the name can answer "did this program override
+      // `Function.prototype.toString`?" — the question that decides whether a
+      // callable's INHERITED `toString` may be believed by the ToPrimitive walk.
+      if (ts.isBinaryExpression(node)) {
+        const lhs = unwrapExpr(node.left);
+        if (ts.isPropertyAccessExpression(lhs)) ctx.protoNamedWrittenMembers.add(lhs.name.text);
+      }
     }
     if (!ctx.protoMemberDirty && isProtoMemberValueUse(node)) {
       ctx.protoMemberDirty = true;
