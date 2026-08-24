@@ -6430,3 +6430,181 @@ called with arguments, and `arguments` read inside its own body — answer
 `[object Arguments]` in a module containing no `defineProperty` at all: merely
 being passed to a function makes the object observable. The `it.fails` was
 flipped to a positive pin, which is what would catch the limit becoming real.
+
+### Test Results — every number below is from a run executed in this worktree
+
+**Flips: 4. Regressions: 0.** All four re-verified SERIALLY on both arms, one row
+per process, after the parallel sweep (per the campaign's contention rule):
+
+| row | base | branch | in the 22-row census? |
+| --- | --- | --- | --- |
+| `built-ins/Object/create/15.2.3.5-4-15` | fail `result !== true` | **pass** | yes |
+| `built-ins/Object/defineProperties/15.2.3.7-2-16` | fail `result !== true` | **pass** | yes |
+| `built-ins/Number/15.7.4-1` | fail `SameValue(«"[object Object]"», «"[object Number]"»)` | **pass** | no — out-of-census gain |
+| `built-ins/Error/prototype/S15.11.4_A2` | fail `TypeError: Object.prototype.toString is not yet implemented` | **pass** | no — out-of-census gain |
+
+**MOVEMENT, not a flip** (reported separately so the campaign total stays
+auditable): `built-ins/Object/prototype/S15.2.4_A1_T2` fails on both arms, but
+the failing assertion MOVED. On base it fails at assertion 1
+(`Object.prototype.toString()` refused); on the branch assertion 1 passes and it
+now fails at the second half — `delete Object.prototype.toString` must make the
+method unfindable and a subsequent call must throw TypeError. That surviving
+half is the deleted-member-observability shape of **#4664** (`__nproto_hasown`
+answers from the brand's `$memberCsv`, and the companion ladder that would see a
+tombstone is `kind === "method"`-only). **Handed to #4664**, not carried as a
+residual here — it may come for free when that lands.
+
+#### The sweep, and why it had to be a full one
+
+Scope: **3,114 rows** (the raw list is 3,132; 18 are excluded, see the
+contamination note below), composed as
+
+| slice | rows | why |
+| --- | ---: | --- |
+| every corpus file naming `Object.prototype.toString` | 2,656 (with the below) | the behavioural reach |
+| `language/arguments-object` (full) | 263 | the #4658 brand's home; `10.6-6-2` is #4667's canary |
+| `built-ins/Array/prototype/{slice,splice,concat}` (full) | 245 | the #4119 `getClass` genericity family — the arm whose ORDER this slice changed |
+| `built-ins/Object/{create,defineProperties,keys,freeze,preventExtensions,getOwnPropertyDescriptor,getOwnPropertyNames,prototype,seal}` + top-level | — | the issue's own directories, including every dir holding a flip |
+| deterministic breadth sample of the rest of `built-ins` + `language` (every 95th) | 476 | the EMISSION reach — see below |
+
+**Dropped, and named:** `built-ins/Object/defineProperty` (1,131 rows) except the
+files that mention `Object.prototype.toString`. My diff contains no descriptor
+code and cannot reach it except through the class tag; its census rows are
+covered by the 22-row both-arms run instead.
+
+**The byte-identity shortcut does NOT apply to this diff — measured, 145 of 149.**
+The campaign's preferred zero-regression argument is "compare `wasm_sha` per
+module and execute only the ones that differ". I ran it
+(`.tmp/shasweep.mts`, compile-only, `assembleOriginalHarness` + the runner's exact
+compile options, 149-row sample across the list, both arms):
+
+```
+identical: 4    differ: 145    no-binary: 0
+```
+
+**97% of modules differ**, because `test262/harness/assert.js` — included in
+every single assembled test — carries `Object.prototype.toString.call(value)` on
+a parameter, i.e. exactly the unproven shape this slice re-routes. So every
+module mints `__opts_classify` and every module's bytes move. The identity
+technique is right for a diff behind a narrow syntactic gate; this diff is behind
+a gate the harness itself trips, and the full execution sweep was the correct
+instrument. Worth recording as the boundary condition of that technique.
+
+**Arms.**
+
+| arm | rows | pass | fail | compile_error | skip | measured 1-min load |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| branch | 3,114 | 2,483 | 412 | 21 | 198 | 4.4 – 9.6 |
+| base (subset, below) | 954 | 521 | 412 | 21 | 0 | 3.5 – 5.1 |
+
+**UP 0, DOWN 0 across the base-arm subset**, which is
+`{every row that is NOT passing on the branch}` ∪ `language/arguments-object` ∪
+`Array/prototype/{slice,splice,concat}` ∪ `built-ins/Object/prototype`. The first
+term is the load-bearing one: a regression is by definition a row that PASSES on
+base and does not on the branch, so measuring the base for every branch-non-pass
+row rules out a regression **anywhere in the 3,114**, not merely in the subset.
+What the subset does NOT establish is the complete UP list outside those
+families — flips are claimed only from the both-arms runs (the 22-row census, the
+14-row `Object.prototype.toString` candidate set, and the serial re-verification
+above).
+
+**Zero infrastructure failures.** No `compilation timeout`, no ENOENT symlink
+race, no `THREW` in either arm — unusual for this box and worth stating, since it
+means no row in the counts above needed the flake-exclusion treatment.
+
+**The two families most at risk are unchanged, row for row:**
+
+| family | base | branch |
+| --- | --- | --- |
+| `language/arguments-object` | 216 pass / 47 fail | 216 pass / 47 fail |
+| `Array/prototype/{slice,splice,concat}` | 116 pass / 105 fail | 116 pass / 105 fail |
+
+`10.6-6-2` and `10.6-7-1` — the two rows #4667 names as the canary for touching
+the arguments/Array split — **pass on both arms.** That is the measurement behind
+the claim that reading `OBJ_FLAG_ARGUMENTS` inside the class-tag classifier does
+not trip #4667's landing-order hazard.
+
+#### Reconciling one mid-sweep source edit
+
+A one-line guard (propagate `null` from the receiver's `compileExpression`
+instead of falling through onto a partially-emitted operand stack) was added
+after 2,067 of the branch arm's rows had already run, so those rows were measured
+on a tree one line behind the commit. The guard can only affect a row whose
+receiver expression fails to compile, so all **21** `compile_error` rows were
+re-run on the FINAL tree: **21 of 21 unchanged.** Stated rather than hidden — the
+right move would have been to freeze the tree, and the reconciliation is what
+makes the numbers usable anyway.
+
+#### Pins
+
+`tests/issue-4491-wave7.test.ts` — **19 passed (19)** on the branch (file line
+carries no `skipped` suffix). On the reverted sources: **11 failed / 8 passed**,
+i.e. **every one of the 11 positive pins fails on the arm it claims to test**,
+and the 3 controls + 5 `it.fails` residuals pass on both arms.
+
+Getting there took two corrections, both instances of the same rule:
+
+1. **The pin harness's compile options were not the runner's.** `runStandalone`
+   compiled without `deferTopLevelInit` / `hostBridge: "always"`; the runner uses
+   both. Fixed (and `__module_init` is now invoked before `main`, as the runner
+   does after `setInstance`).
+2. **Two pins were written in the corpus row's own spelling and were INSENSITIVE
+   in it.** `Error.prototype.toString = Object.prototype.toString; …toString()`
+   PASSES on the reverted sources in bare source — it answers `[object Object]`
+   without ever consulting the classifier. Bisected across seven spellings on the
+   revert arm:
+
+   | spelling | base | branch |
+   | --- | --- | --- |
+   | the corpus spelling | answers | answers — **insensitive** |
+   | …plus an unrelated `O.p.toString.call(x)` fold site | answers | answers — **insensitive** |
+   | via a dynamic holder (`box.p = Error.prototype`) | refuses | **answers** ✔ |
+   | via a helper parameter | refuses | **answers** ✔ |
+   | via a variable (`Error.prototype.getClass = m`) | refuses | refuses |
+   | `m.call(Object.prototype)` | refuses | refuses |
+   | `m.call(box.p)` | refuses | refuses |
+
+   The pins now use the dynamic-holder shape; the last three rows of that table
+   are pinned `it.fails` as a residual with an owner.
+
+Neighbouring suites on the branch — `issue-4491-wave4`, `issue-4658`,
+`issue-2885`, `issue-4506`, `issue-4491-proto-index-constructor-shadow`,
+`issue-4491-function-binding-widening`, `issue-4491-t4-add-parity`:
+**77 passed (77)**, seven files, none with a `skipped` suffix. `issue-4658` (the
+arguments brand this slice reads) and `issue-2885` (the `RegExp.prototype`
+accessor read the #4654 handover flags as fragile) are both green.
+
+#### Residuals from this slice, with owners
+
+| residual | measured | owner |
+| --- | --- | --- |
+| a Date / RegExp / Error **instance** through a dynamic receiver still answers `[object Object]` | both arms | needs instance-carrier arms in the classifier; today those are the nominal structs it deliberately refuses |
+| `Math` / `JSON` through a dynamic receiver still answer `[object Object]` | both arms | the fold knows both (`symName` arms, wave-5 T1); the classifier has no `@@toStringTag` step-15 arm |
+| a SYNTACTIC `X.prototype` receiver (`X.prototype.m()` / `m.call(X.prototype)`) still refuses | both arms | the borrowed `X.prototype` receiver path (`transferred-proto-assignment.ts` / #1888), not this classifier |
+| `Date.prototype` answers a non-`Object` tag | both arms, PRE-EXISTING | the fold's `.prototype` arm — its four-exception table is where `Date.prototype → Object` belongs |
+| `String.prototype.trim.call(<arguments>)` coerces via element-join instead of the class tag (`"1,2,true"` vs `"[object Arguments]"`) — `String/prototype/trim/15.5.4.20-2-51` | branch | `emitBorrowedStringReceiverToString` (#3254), a different subsystem |
+
+#### Two environment findings for the next lane
+
+- **The shared `test262/test/` tree is CONTAMINATED with another lane's probe
+  files.** `test/__probe4481__/` holds 18 `.js` files left behind by #4481 (a
+  lane closed 2026-08-15). Any `find`-built row list silently includes them and
+  they compile and "pass", inflating a denominator by 18 with rows that are not
+  test262 at all. They are excluded from every number above. Worth deleting; at
+  minimum, filter `__probe` out of any generated list.
+- **A helper that degrades to an empty payload is invisible at the call site.**
+  `buildArgumentsIsBrandedCall` returns `[]` when its native is unreserved, which
+  is how the Arguments arm silently did nothing while the brand was demonstrably
+  correct at run time. If you consume one of these builders, reserve the native
+  yourself rather than reading `ctx.funcMap` and hoping.
+
+#### Gates
+
+`check:loc-budget`, `check:func-budget`, `check:coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports` — all run BARE (not piped) and all
+exit 0. No frontmatter allowance needed: the bulk of the change is a new module
+(`src/codegen/object-proto-tostring-native.ts`), and `expressions/calls.ts` grows
+by one guarded block at the single fold site.
+
+`test262` gitlink verified untouched: `git status --short -- test262` empty
+throughout, and no commit on this branch touches the submodule.

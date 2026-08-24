@@ -40,18 +40,35 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
+/**
+ * `deferTopLevelInit` + `hostBridge: "always"` are NOT decoration — they are the
+ * options `tests/test262-runner.ts` compiles every standalone row with, and two
+ * of the pins below are INSENSITIVE without them. Measured while verifying the
+ * revert arm: the `Error.prototype` / `Object.prototype` refusal pins passed on
+ * the reverted sources under the simpler option set, i.e. they were assertions
+ * about the code rather than tests of it. Under the runner's options all four
+ * spellings of the idiom (`Error.prototype.toString`, `.getClass`, through a
+ * dynamic holder, and `Object.prototype.toString()`) throw on base — so the pin
+ * fails on the arm it claims to test. Deferring top-level init means the module
+ * body runs from `__module_init`, which the caller must invoke, exactly as the
+ * runner does after `setInstance`.
+ */
 async function runStandalone(source: string): Promise<unknown> {
   const result = await compile(source, {
     target: "standalone",
     allowJs: true,
     skipSemanticDiagnostics: true,
+    deferTopLevelInit: true,
+    hostBridge: "always",
   });
   expect(result.success, `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`).toBe(
     true,
   );
   expect(WebAssembly.validate(result.binary!), "module must be valid Wasm").toBe(true);
   const { instance } = await WebAssembly.instantiate(result.binary!, {});
-  return (instance.exports as { main: () => unknown }).main();
+  const exports = instance.exports as { main: () => unknown; __module_init?: () => unknown };
+  if (typeof exports.__module_init === "function") exports.__module_init();
+  return exports.main();
 }
 
 /**
@@ -140,25 +157,63 @@ describe("#4491 wave-7 — the runtime classifier is reachable from `.call(v)`",
 });
 
 describe("#4491 wave-7 — the ORDINARY builtin prototypes stop throwing", () => {
-  // `built-ins/Error/prototype/S15.11.4_A2.js`. The stored-method idiom, which
-  // is what routes a receiver to the runtime classifier rather than the fold:
-  // on the base this THREW "Object.prototype.toString is not yet implemented in
-  // --target standalone" because `Error.prototype` is a `$NativeProto` that
-  // matched none of the five exotic brands.
+  // `built-ins/Error/prototype/S15.11.4_A2.js`. On the base this THREW
+  // "Object.prototype.toString is not yet implemented in --target standalone",
+  // because `Error.prototype` is a `$NativeProto` that matched none of the five
+  // exotic brands and fell out of the chain into the refusal.
+  //
+  // The receiver arrives through a DYNAMIC holder, and that detail is the whole
+  // pin. Written the way the corpus row writes it —
+  // `Error.prototype.toString = Object.prototype.toString; …toString()` — this
+  // pin PASSES on the reverted sources: bare (un-harnessed) source takes a
+  // lowering that answers `[object Object]` without ever consulting the
+  // classifier, so the pin would have been an assertion about the code rather
+  // than a test of it.
+  //
+  // Bisected on the revert arm across seven spellings. Refuse on base and
+  // answer on the branch: via a dynamic holder, via a helper parameter. Refuse
+  // on BOTH: the syntactic `X.prototype.m()` receiver and `m.call(X.prototype)`
+  // — pinned as residuals below. Answer on both (so, insensitive): the corpus
+  // spelling, and the corpus spelling plus an unrelated
+  // `Object.prototype.toString.call(x)` fold site elsewhere in the module.
+  // The corpus row refuses under the full test262 harness assembly; this is the
+  // smallest source that refuses without it.
   it("Error.prototype answers [object Object] instead of refusing", async () => {
     expect(
       await runStandalone(`
-        Error.prototype.toString = Object.prototype.toString;
-        var t = Error.prototype.toString();
+        var box = {};
+        box.p = Error.prototype;
+        box.p.getClass = Object.prototype.toString;
+        var t = box.p.getClass();
         export function main() { return t === "[object Object]" ? 1 : 0; }
       `),
     ).toBe(1);
   });
 
+  // `built-ins/Object/prototype/S15.2.4_A1_T2.js`'s first assertion, same
+  // dynamic-holder shape for the same sensitivity reason.
   it("Object.prototype answers [object Object] instead of refusing", async () => {
     expect(
       await runStandalone(`
-        var t = Object.prototype.toString();
+        var box = {};
+        box.p = Object.prototype;
+        box.p.getClass = Object.prototype.toString;
+        var t = box.p.getClass();
+        export function main() { return t === "[object Object]" ? 1 : 0; }
+      `),
+    ).toBe(1);
+  });
+
+  // RegExp.prototype is the third member of the ordinary-prototype list that
+  // the census did not point at, included so the list is exercised rather than
+  // merely declared.
+  it("RegExp.prototype answers [object Object] instead of refusing", async () => {
+    expect(
+      await runStandalone(`
+        var box = {};
+        box.p = RegExp.prototype;
+        box.p.getClass = Object.prototype.toString;
+        var t = box.p.getClass();
         export function main() { return t === "[object Object]" ? 1 : 0; }
       `),
     ).toBe(1);
@@ -319,6 +374,42 @@ describe("#4491 wave-7 — measured residuals (it.fails)", () => {
           export function main() { return T === "[object Math]" ? 1 : 0; }
         `),
       ),
+    ).toBe(1);
+  });
+
+  // The ordinary-prototype arms are reached only when the receiver arrives as a
+  // runtime value. A SYNTACTIC `X.prototype` receiver — either as the call
+  // receiver or as `m.call(X.prototype)` — is intercepted earlier and still
+  // refuses on this branch, exactly as on base. Measured, not assumed: both
+  // spellings THROW on both arms. Owner: whichever path owns the borrowed
+  // `X.prototype` receiver (`transferred-proto-assignment.ts` / the #1888
+  // borrowed-method dispatch), not this classifier.
+  it.fails("a SYNTACTIC X.prototype receiver still refuses", async () => {
+    expect(
+      await runStandalone(`
+        var m = Object.prototype.toString;
+        var t = m.call(Object.prototype);
+        export function main() { return t === "[object Object]" ? 1 : 0; }
+      `),
+    ).toBe(1);
+  });
+
+  // §20.1.3.6 makes `Date.prototype` an ORDINARY object from ES2015 on, so this
+  // must be `[object Object]`. It is not, on EITHER arm — the fold's
+  // `symName === "Date"` arm is a proof as far as this slice is concerned, so
+  // the receiver never reaches the classifier's ordinary-prototype arm and the
+  // `Date` instance tag is emitted for the prototype. PRE-EXISTING: measured
+  // identical on the reverted sources. Owner: the fold's `.prototype` handling,
+  // which already has the four-exception table this case belongs in.
+  it.fails("Date.prototype through a dynamic holder answers [object Object]", async () => {
+    expect(
+      await runStandalone(`
+        var box = {};
+        box.p = Date.prototype;
+        box.p.getClass = Object.prototype.toString;
+        var t = box.p.getClass();
+        export function main() { return t === "[object Object]" ? 1 : 0; }
+      `),
     ).toBe(1);
   });
 
