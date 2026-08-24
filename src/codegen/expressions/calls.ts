@@ -201,6 +201,11 @@ import {
 // rather than in this driver.
 import { resolveObjectToStringTag } from "../object-proto-tostring.js";
 import {
+  OBJECT_PROTO_TOSTRING_CLASSIFY_FN,
+  emitClassifierSelect,
+  ensureObjectProtoToStringClassifierFn,
+} from "../object-proto-tostring-native.js";
+import {
   emitBrandCheckTypeError,
   ensureStandaloneNativeMethodClosure,
   getNativeProtoBuiltinGlue,
@@ -7918,8 +7923,43 @@ function compileCallExpression(
           // Symbol.toStringTag (§20.1.3.6 step 15) is deferred to phase-2 (it needs
           // dynamic @@toStringTag property lookup → the dynamic-property epic).
           if (typeName === "Object" && methodName === "toString") {
-            const tag = resolveObjectToStringTag(ctx, expr.arguments[0]);
+            const proof = { unprovenDefault: false };
+            const tag = resolveObjectToStringTag(ctx, expr.arguments[0], proof);
             if (tag !== undefined) {
+              // (#4491 wave-7) The fold's standalone terminal is a FALLBACK, not
+              // a classification — under `allowJs` every `any` receiver lands
+              // there and bakes `"[object Object]"`, so a dynamic receiver was
+              // answered by a constant that had never looked at it. Ask the
+              // #4119 runtime classifier first and keep this constant as ITS
+              // fallback (object-proto-tostring-native.ts explains why the
+              // composition has to be this way round and not the reverse).
+              const receiverExpr = expr.arguments[0];
+              if (ctx.standalone && proof.unprovenDefault && receiverExpr !== undefined) {
+                // Flush against the CALLER's fctx before minting: the classifier
+                // adds late imports, and only this body needs its own funcIdx
+                // operands shifted (the minted helper starts from an empty body).
+                flushLateImportShifts(ctx, fctx);
+                const classifyIdx = ensureObjectProtoToStringClassifierFn(ctx);
+                if (classifyIdx !== undefined) {
+                  const recvResult = compileExpression(ctx, fctx, receiverExpr, { kind: "externref" });
+                  // `null` means the receiver reported a compile error, and by
+                  // then partial operand instructions are already in the body —
+                  // so PROPAGATE rather than falling through to the constant
+                  // path, which would push a string on top of them and leave the
+                  // block unbalanced.
+                  if (recvResult === null) return null;
+                  if (recvResult.kind !== "externref") {
+                    coerceType(ctx, fctx, recvResult, { kind: "externref" });
+                  }
+                  flushLateImportShifts(ctx, fctx);
+                  return emitClassifierSelect(
+                    ctx,
+                    fctx,
+                    ctx.funcMap.get(OBJECT_PROTO_TOSTRING_CLASSIFY_FN) ?? classifyIdx,
+                    tag,
+                  );
+                }
+              }
               const tagStr = `[object ${tag}]`;
               addStringConstantGlobal(ctx, tagStr);
               // Dual-mode string-constant push (externref in both host and

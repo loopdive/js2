@@ -81,6 +81,11 @@ import {
 } from "../codegen/ir-native-map.js"; // (#4461) externref-ABI adapters over the $Map helpers
 import { ensureIrNativePromiseDelayProvider } from "../codegen/ir-native-promise-delay.js";
 import { ensureIrNativePromiseAllProvider } from "../codegen/ir-native-async-runtime.js";
+import { ensureIrNativeStringRepeatProvider } from "../codegen/ir-native-string-repeat.js";
+import {
+  ensureIrHostStringRepeatProvider,
+  hasExactIrStringRepeatProviderAbi,
+} from "../codegen/ir-host-string-repeat.js";
 import {
   ensureStandaloneWrapperInstanceOfHelper,
   type StandaloneWrapperConstructorName,
@@ -378,6 +383,7 @@ import {
   IR_STRING_EQUALS_FN,
   IR_STRING_ITERATOR_CHAR_AT_FN,
   IR_STRING_LITERAL_MATERIALIZE_FN,
+  IR_STRING_REPEAT_FN,
 } from "./string-runtime.js";
 export {
   buildIrIntegrationReport,
@@ -4954,6 +4960,15 @@ function resolveAndObserveCallableProvider(
       const field = symbol === IR_STRING_EQUALS_FN ? "equals" : "concat";
       index = exactCallableImportIndex(ctx, "wasm:js-string", field);
     }
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_REPEAT_FN) {
+    index = ctx.nativeStrings ? ensureIrNativeStringRepeatProvider(ctx) : ensureIrHostStringRepeatProvider(ctx);
+    if (index !== undefined && index !== null && !hasExactIrStringRepeatProviderAbi(ctx, index)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "prepared string.repeat provider has a malformed physical ABI",
+      );
+    }
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_CHAR_AT_FN) {
     if (ctx.nativeStrings) {
       ensureNativeStringHelpers(ctx);
@@ -5276,6 +5291,11 @@ function makeResolver(
       if (idx === undefined) throw new Error("ir/integration: wasm:js-string concat not registered");
       return [{ op: "call", funcIdx: idx }];
     },
+    emitStringRepeat(_alloc, _inputEncoding, provider): readonly Instr[] {
+      if (!provider) throw new Error("ir/integration: string.repeat has no prepared provider");
+      const call = { op: "call" as const, funcIdx: resolver.resolveFunc(provider) };
+      return ctx.nativeStrings ? [call, { op: "ref.as_non_null" }] : [call];
+    },
     emitStringEquals(provider): readonly Instr[] {
       if (provider) {
         return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
@@ -5426,6 +5446,7 @@ function callableProviderRef(instr: IrInstr): IrFuncRef | undefined {
     case "string.const":
       return instr.materializer;
     case "string.concat":
+    case "string.repeat":
     case "string.eq":
     case "string.char_at":
     case "string.char_code_at":
@@ -5600,11 +5621,13 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
   let usesStringOp = false;
   let usesStringLen = false;
   let usesStringCharAt = false;
+  let usesStringRepeat = false;
   const visit = (instr: IrInstr): void => {
     if (instrUsesStrings(instr)) usesStringOp = true;
     if (instr.kind === "string.const") literals.add(instr.value);
     if (instr.kind === "string.len") usesStringLen = true;
     if (instr.kind === "string.char_at") usesStringCharAt = true;
+    if (instr.kind === "string.repeat") usesStringRepeat = true;
     // (#3156) The host guarded-charCodeAt helper wraps the `wasm:js-string`
     // charCodeAt/length builtins — its materialization (resolveFunc) reads
     // `ctx.jsStringImports`, so `addStringImports` must have run BEFORE
@@ -5666,6 +5689,14 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
       if (exactCallableImportIndex(ctx, "env", "string_charAt") === undefined) {
         throw new Error("ir/integration: prepared string.char_at has no exact env.string_charAt import");
       }
+    }
+    if (usesStringRepeat) {
+      ensureIrHostStringRepeatProvider(ctx);
+    }
+  } else if (usesStringRepeat) {
+    const index = ensureIrNativeStringRepeatProvider(ctx);
+    if (!hasExactIrStringRepeatProviderAbi(ctx, index)) {
+      throw new Error("ir/integration: prepared native string.repeat provider has a malformed ABI");
     }
   }
   // Native strings: nothing to pre-register here. The native-string struct
@@ -5763,6 +5794,7 @@ function instrUsesStrings(instr: IrInstr): boolean {
   return (
     instr.kind === "string.const" ||
     instr.kind === "string.concat" ||
+    instr.kind === "string.repeat" ||
     instr.kind === "string.eq" ||
     instr.kind === "string.len" ||
     instr.kind === "string.char_at" ||

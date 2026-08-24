@@ -147,6 +147,9 @@ function classifyInstr(
       // the lattice already forces `wtf16` whenever either operand is.)
       record(instr.result, instr.alloc, instr.encodingEvidence ?? joinEncoding(enc(instr.lhs), enc(instr.rhs)));
       return;
+    case "string.repeat":
+      record(instr.result, instr.alloc, instr.encodingEvidence);
+      return;
     case "string.char_at":
       record(instr.result, instr.alloc, instr.encodingEvidence);
       return;

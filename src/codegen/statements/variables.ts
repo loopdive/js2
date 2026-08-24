@@ -14,6 +14,7 @@ import { emitUndefined } from "../expressions/late-imports.js";
 import { needsTdzFlag, resolveWasmType, varBindingNeedsExternrefForUndefined } from "../index.js";
 import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
 import { widenedVarKeyFromDecl } from "../widened-var-key.js";
+import { concatCallYieldsDynamicCarrier } from "../array-concat-carrier.js"; // (#4655) concat result-slot carrier
 import { emitShapeInferredVecInit } from "../shape-vec-literal-seed.js"; // (#4491) module-global array-carrier seed
 import {
   arrayLiteralEscapeWidensToExternref,
@@ -784,6 +785,11 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
     if (isPromiseHostCall(ctx, init) || isBindCarrierCall(init) || isStringMethodReturningHostArray(ctx, init)) {
       return null;
     }
+    // (#4655) A dynamic-carrier concat: the main path gives this binding an
+    // externref slot, which this spill layout could match — but returning
+    // `null` keeps the generator on the host path, and a conservative bail is
+    // what every other divergent-representation arm above does.
+    if (concatCallYieldsDynamicCarrier(ctx, init)) return null;
   }
   const varType = ctx.checker.getTypeAtLocation(decl);
   // Array<any> takes a decl-driven vec inference (inferArrayVecType) ≠ the
@@ -1892,25 +1898,35 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
                               subarraySubviewType ??
                               inferredVecType ??
                               standaloneRegExpMatchArrayType ??
-                              (decl.initializer && isStringMethodReturningHostArray(ctx, decl.initializer)
+                              // (#4655) `var arr = x.concat(y, z)` — the concat
+                              // lowering yields a dynamic `$ObjVec` externref
+                              // for these shapes while the checker types the
+                              // binding `number[]` from the lib signature; the
+                              // vec-typed slot ToNumber'd every non-numeric
+                              // element to NaN. Same predicate the lowering's
+                              // dispatcher asks (array-concat-carrier.ts), so
+                              // slot and value cannot disagree.
+                              (concatCallYieldsDynamicCarrier(ctx, decl.initializer)
                                 ? { kind: "externref" as const }
-                                : decl.initializer && isPromiseHostCall(ctx, decl.initializer)
+                                : decl.initializer && isStringMethodReturningHostArray(ctx, decl.initializer)
                                   ? { kind: "externref" as const }
-                                  : // (#2615/#4397) Proxy and revocable-handle results are
-                                    // externref carriers in both provider profiles. A
-                                    // checker-derived struct slot would cast them to null
-                                    // before their MOP/result fields can be observed.
-                                    initIsProxy
+                                  : decl.initializer && isPromiseHostCall(ctx, decl.initializer)
                                     ? { kind: "externref" as const }
-                                    : // (#1337/#4397) In a JS environment, both the
-                                      // compatibility exotic and native `$__bound_fn`
-                                      // are externref carriers, never the target struct.
-                                      decl.initializer &&
-                                        !ctx.standalone &&
-                                        !noJsHost(ctx) &&
-                                        isBindCarrierCall(decl.initializer)
+                                    : // (#2615/#4397) Proxy and revocable-handle results are
+                                      // externref carriers in both provider profiles. A
+                                      // checker-derived struct slot would cast them to null
+                                      // before their MOP/result fields can be observed.
+                                      initIsProxy
                                       ? { kind: "externref" as const }
-                                      : localTypeForDeclaration(ctx, varType, decl)));
+                                      : // (#1337/#4397) In a JS environment, both the
+                                        // compatibility exotic and native `$__bound_fn`
+                                        // are externref carriers, never the target struct.
+                                        decl.initializer &&
+                                          !ctx.standalone &&
+                                          !noJsHost(ctx) &&
+                                          isBindCarrierCall(decl.initializer)
+                                        ? { kind: "externref" as const }
+                                        : localTypeForDeclaration(ctx, varType, decl)));
     // (#2660 S3b) A provably-monomorphic `new F(...)` binding of an approved
     // fnctor gets the reserved struct slot instead of externref. Same (cached)
     // verdict as the var hoister / let-const pre-hoister, so a reused

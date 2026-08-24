@@ -42,6 +42,7 @@ import { defaultTagDomain } from "./producer.js";
 import type { TagDomain } from "./tag-domain.js";
 import { verifyIrIntrinsicInstruction } from "./intrinsic-support.js";
 import { verifyIrAsyncPlan } from "./async-plan.js";
+import { IR_STRING_REPEAT_FN } from "./string-runtime.js";
 // #4418 — shared, cached dominance analysis (formerly a private set-based
 // computation in this file, #1850).
 import { crossCheckDominance, dominanceOf, type DominanceInfo } from "./analysis/dominance.js";
@@ -304,6 +305,7 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
           return;
         } else if (
           (nested.kind === "string.concat" ||
+            nested.kind === "string.repeat" ||
             nested.kind === "string.eq" ||
             nested.kind === "string.char_at" ||
             nested.kind === "string.char_code_at" ||
@@ -1117,6 +1119,8 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
     case "string.concat":
     case "string.eq":
       return [instr.lhs, instr.rhs];
+    case "string.repeat":
+      return [instr.value, instr.count];
     case "string.len":
       return [instr.value];
     case "string.char_at":
@@ -1637,7 +1641,7 @@ export function typeRuleCategoryOf(status: TypeRuleStatus): TypeRuleCategory | n
 }
 
 export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
-  // --- checked here (32 — 16 from #4523, +16 from #4603) -----------------
+  // --- checked here (33 — 16 from #4523, +16 from #4603, + repeat) --------
   binary: "checked",
   intrinsic: "checked",
   "slot.read": "checked",
@@ -1645,6 +1649,7 @@ export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
   "string.char_at": "checked",
   "string.char_code_at": "checked",
   "string.concat": "checked",
+  "string.repeat": "checked",
   "string.const": "checked",
   "string.eq": "checked",
   "string.len": "checked",
@@ -2175,6 +2180,38 @@ function checkSymbolicRefCoherence(instr: RoadmapSymbolicInstr, blockId: number,
   }
 }
 
+/** Full typed contract for the throwing ECMAScript repeat instruction. */
+function checkStringRepeatTypeRule(
+  instr: Extract<IrInstr, { kind: "string.repeat" }>,
+  blockId: number,
+  ctx: RoadmapRuleCtx,
+): void {
+  if (instr.result === null || instr.resultType?.kind !== "string") {
+    roadmapError(ctx, blockId, "string.repeat must produce a string result");
+  }
+  if (instr.alloc === undefined) {
+    roadmapError(ctx, blockId, "string.repeat must carry a string allocation site");
+  }
+  const valueType = ctx.typeOf.get(instr.value);
+  if (valueType && valueType.kind !== "string") {
+    roadmapError(ctx, blockId, `string.repeat value must be string, got ${valueType.kind}`);
+  }
+  const countType = ctx.typeOf.get(instr.count);
+  const countKind = countType ? asVal(countType)?.kind : undefined;
+  if (countType && countKind !== "f64") {
+    roadmapError(ctx, blockId, `string.repeat count must be f64, got ${countKind ?? countType.kind}`);
+  }
+  if (!(["ascii", "utf8-guaranteed", "wtf16"] as readonly unknown[]).includes(instr.encodingEvidence)) {
+    roadmapError(ctx, blockId, `string.repeat has invalid encoding evidence ${String(instr.encodingEvidence)}`);
+  }
+  if (
+    instr.provider &&
+    (instr.provider.binding.kind !== "intrinsic" || instr.provider.binding.symbol !== IR_STRING_REPEAT_FN)
+  ) {
+    roadmapError(ctx, blockId, "string.repeat carries a non-canonical provider binding");
+  }
+}
+
 function verifyInstrTypeRules(
   func: IrFunction,
   typeOf: ReadonlyMap<IrValueId, IrType>,
@@ -2329,6 +2366,10 @@ function verifyInstrTypeRules(
             });
           }
         }
+        break;
+      }
+      case "string.repeat": {
+        checkStringRepeatTypeRule(instr, blockId, roadmap);
         break;
       }
       case "string.char_code_at": {
