@@ -751,3 +751,44 @@ Consequences, in order of how much they cost if ignored:
    for the wrong reason and is now correctly failing. That is a *third* blind spot on top
    of the two already recorded. The merge queue's full-corpus re-validation remains the
    only thing that catches it — so never present a targeted-sweep delta as "no regressions".
+
+## …and when byte identity does NOT apply — `harness/assert.js` is in every test
+
+The rule above (identity replaces the base arm) has a hard limit, measured by the #4491
+wave-7 lane on 2026-08-24: of a 149-row two-arm compile-only sample, **4 identical, 145
+differ**. Its diff touched `Object.prototype.toString`, and `test262/harness/assert.js` —
+spliced into essentially every assembled test — carries
+`Object.prototype.toString.call(value)` on a parameter. So ~97% of modules changed bytes
+and the full execution sweep was the correct instrument. It ran 3,114 rows on the branch
+arm and a 954-row base arm covering every branch-non-pass row, which rules out a regression
+anywhere in the 3,114.
+
+**Take the identity sample FIRST, and let it decide the instrument.** Identity is cheap to
+measure and expensive to assume:
+
+- mostly identical ⇒ execute only the differing modules, and the identity result is your
+  zero-regression argument for the rest;
+- mostly differing ⇒ your diff really does reach the corpus; run the sweep.
+
+Deciding by intuition is how a lane either wastes hours on rows that could not move, or —
+worse — claims "cannot move" for modules that all changed.
+
+Note this is the **same mechanism** as the `includes:` finding above, arriving from the
+other side: there it made a scoped file list too small, here it makes an identity shortcut
+inapplicable. Both reduce to: *harness code is your code*.
+
+## Stray files in the shared `test262/` tree contaminate `find`-built row lists
+
+`test262/test/__probe4481__/` holds stray probe files from a lane closed 2026-08-15, and
+they are **untracked in the submodule**, so they survive a normal status check while any
+`find`-built row list silently includes them — they compile and "pass", inflating a
+denominator with files that are not test262.
+
+Two defences:
+
+- **Build row lists from the baseline JSONL, not from `find`.** Intersecting the corpus
+  with rows that exist in `test262-standalone-current.jsonl` excludes anything that is not
+  really in the corpus, by construction. The campaign's own pass-rate measurement does
+  this, which is why its numbers were unaffected.
+- If you must use `find`, diff your list against `git -C test262 ls-files` and account for
+  every extra.
