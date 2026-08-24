@@ -85,6 +85,8 @@ import { countedPushIndexOfUnroll, emitArrayIndexOfScan } from "./array-indexof-
 import { compileArrayConcatExternHost, compileArrayMethodExtern } from "./array-method-host.js";
 // (#4446) The §23.1.3.1 host-free concat loop for dynamic operands.
 import { compileArrayConcatNativeSpec } from "./array-concat-spec.js";
+// (#4655) Shared concat carrier/dispatch predicate — see array-concat-carrier.ts.
+import { concatMustConsultPrototypeChain } from "./array-concat-carrier.js";
 import { ensureJoinProtoHoleLocal, joinProtoHoleFallbackInstrs } from "./array-join-proto-hole.js";
 // (#4655) `Array.prototype.toLocaleString`'s element Invoke (§23.1.3.32 6.c.i).
 import * as tls from "./array-tolocalestring.js";
@@ -4372,6 +4374,18 @@ function compileArrayConcat(
   arrTypeIdx: number,
   elemType: ValType,
 ): ValType | null {
+  // (#4655) An index that resolves through the PROTOTYPE CHAIN is invisible to
+  // every path below: they `array.copy` the receiver's own backing and never
+  // perform `Get(O, k)`. §23.1.3.1 step 5.c.i is `HasProperty(E, k)` and 5.c.ii
+  // is `Get(E, k)`, both full MOP walks. Route the whole call to the spec loop
+  // when the module could observe the difference — the same `protoIndexDirty`
+  // gate, and the same argument, as `array-join-proto-hole.ts` (#4491 lane J)
+  // uses for `join`. Flag clear ⇒ not reached ⇒ bytes unchanged.
+  // See array-concat-carrier.ts; the SLOT typers ask that same predicate.
+  if (concatMustConsultPrototypeChain(ctx)) {
+    const spec = compileArrayConcatNativeSpec(ctx, fctx, propAccess, callExpr);
+    if (spec !== undefined) return spec;
+  }
   // 0-arg concat: shallow copy of the receiver array
   if (callExpr.arguments.length === 0) {
     const vecA = allocLocal(fctx, `__arr_cat_va_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });

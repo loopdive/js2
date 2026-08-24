@@ -95,3 +95,19 @@ current coherent miss. Absent-not-wrong. Respect that reasoning here.
   R2 half open rather than closing it as covered.
 - Blast-radius sweep sized per the brief: `__is_vec` / `__isArray` sit under Array *and*
   arguments, so the sweep covers both directories, not just `language/arguments-object`.
+
+## Routed in from #4668 (2026-08-24): three more rows, same representation question
+
+The #4668 lane rooted the `language/` bucket while fixing §10.4.3 and recommended these
+be handled by this issue's owner rather than its own. Agreed — they are `$Vec`
+element-representation questions, which is this issue's subject:
+
+| row | measured base behaviour |
+| --- | --- |
+| `language/statements/function/S13_A2_T2` | `(function(arg){return arg + arguments[1]})(1,"1")` must be `"11"`; base answers **`2`** — `arguments[1]` was read at the **first parameter's numeric representation**, so the string `"1"` became `1`. |
+| `language/statements/function/S13_A15_T3` | a PARAMETER named `arguments` must shadow the arguments object; base returns the object. |
+| `language/arguments-object/S10.6_A5_T4` | the string-write half already recorded as #4658 RESIDUAL 1. |
+
+`S13_A2_T2` is the informative one: it shows the arguments object and the parameter share
+a representation closely enough that a *type* leaks across the alias. Take it with R-P/R2
+rather than separately.

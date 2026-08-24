@@ -4,7 +4,7 @@ title: "ES5 standalone: builtin-prototype methods on exotic/boxed/dynamic receiv
 status: ready
 sprint: current
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-24
 assignee: claude/es6-standalone-session
 priority: high
 horizon: m
@@ -23,6 +23,10 @@ loc-budget-allow:
   - src/codegen/property-access-dispatch.ts
   - src/codegen/context/types.ts
   - src/codegen/native-strings.ts
+  # (#4492 wave-6, 2026-08-24) The builtin-method-as-a-VALUE lane. Rationale in
+  # "## 2026-08-24 wave-6" below, under "Gate grants".
+  - src/codegen/proto-function-value.ts
+  - src/codegen/object-proto-tostring.ts
 func-budget-allow:
   - src/codegen/object-runtime.ts::ensureObjectRuntime
   - src/codegen/index.ts::generateModule
@@ -813,3 +817,305 @@ symptom" is a better handover than a confident wrong root.
 | `language/function-code/10.4.3-1-{103,104,106}.js` | `(5).x` — primitive-`this` box; `typeof (5).x` is `"object"`, expected `"number"` |
 
 (The last line covers three rows, which is how 11 table lines carry 13 rows.)
+
+## 2026-08-24 wave-6 — the builtin-method-as-a-VALUE root (dev-4492, branch `issue-4492-builtin-as-value`)
+
+Branch `issue-4492-builtin-as-value`, worktree
+`/home/user/js2wasm/.claude/worktrees/agent-ac51f58db58631d51`, implementation
+commit `6ad3d17c6`, based on campaign tip `c84bea96e` merged into `08da97da0`. Bundle + QuickJS adapter rebuilt
+in-worktree before any measurement (bundle hash `b9841ac11de20bd2`; the adapter
+cache HIT names that same bundle, so the eval tier is this tree's compiler).
+
+### The dispatch's framing — "five messages, one root" — is REFUTED
+
+The lane was handed ten rows showing five different messages and asked to confirm
+or refute that they are one root. They are **five distinct mechanisms**, and the
+refutation was cheap: one differential probe each, one module per probe. The table
+is the deliverable, because mis-sizing this issue as one fix is what the framing
+risked.
+
+| rows | message | mechanism (probe) | same root as any other? |
+| --- | --- | --- | --- |
+| `Function/prototype/{call,apply}/…_A1_T2` | `typeof obj.call is expected to be "function"` | `__object_create` cannot store a `$NativeProto` in `$Object.$proto` (`a3.js`) | no |
+| `…_A1_T1` (same two methods) | identical message | the **callable** proto-view's own `$proto` is null, so `%Function.prototype%` is one hop away (`f1.js`) | shares the choke point, different link |
+| `Function/prototype/bind/S15.3.4.5_A5` | `Function.prototype.bind is not yet implemented` | no reflective `bind` body at all (`makeGlue` refusal) | no |
+| `Array/prototype/concat/S15.4.4.4_A2_T{1,2}` | `Array.prototype.concat is not yet callable as a value` | `emitArrayProtoMemberBody` has native cores for `slice` + the HOF family only (`d1.js`) | no |
+| `{String,Object}/prototype/constructor/…_A1_T2` | `is not a constructor` | `new X.prototype.<name>` is classified a prototype METHOD; `constructor` is the intrinsic (`c1.js`, `c3.js`) | no |
+| `Object/prototype/S15.2.4_A1_T2` | `Object.prototype.toString is not yet implemented` | the reflective §20.1.3.6 classifier has no `$NativeProto` receiver arm (`b4.js`) | no |
+
+The one thing they DO share is the phrase in the dispatch, not a mechanism: each
+is a place where a builtin's *own* answer is right and the path that reaches it as
+a value is not. Two of the six were tractable in this lane; the other four are
+recorded below with roots, not with resemblances.
+
+The wording difference the dispatch flagged (`not yet callable as a value` vs
+`not yet implemented`) is real and does name two sites —
+`array-object-proto.ts:826` (`emitArrayProtoMemberBody`, Array members with no
+native core) and `object-proto-tostring.ts:401`/`native-proto.ts:794`
+(`emitObjectProtoOrRefusal` / the generic `makeGlue` tail) — but neither is the
+cheaper one: both are the same "no body yet" refusal wearing different text.
+
+### Root cause 1 — a `$NativeProto` in `[[Prototype]]` position is dropped to null
+
+`$Object.$proto` is `(mut (ref null $Object))` (object-runtime.ts), and a builtin
+prototype object is a `$NativeProto`, so `__object_create`'s `ref.test $Object`
+misses and stores **null**. That is the SAME shape #4637 fixed for a callable in
+the same position, at the same three choke points
+(`__object_create`, `__object_setPrototypeOf`, `__isPrototypeOf` — all three go
+through `canonicalizeProtoArg` in `object-runtime-prototype.ts`).
+
+Measured on the branch base, `--target standalone`, one module per cell
+(`.tmp/probes/a3.js`, `e2.js`). The axis varied is **what is assigned**, held
+fixed: the constructor shape, the read spelling, the target.
+
+| `.prototype` assigned | `getPrototypeOf(new F()) === it` | an inherited member |
+| --- | --- | --- |
+| a plain object literal | true | `function` |
+| another user function's `.prototype` | true | `function` |
+| `Array.prototype` | **false** | **undefined** |
+| `Object.prototype` | **false** | (`hasOwnProperty` is `function` for an unrelated reason) |
+| `Function.prototype` | **false** | **undefined** |
+
+Two facts make this a REPAIR rather than a widening, and they are why the fix is
+small: `F.prototype === Function.prototype` already answered **true** (the fnctor
+prototype global is `externref`), and `Function.prototype["call"]` already answered
+a real function (#4248's `$NativeProto` receiver arm on `__extern_get`). Both
+endpoints were right; only the edge between them was missing.
+
+### Root cause 2 — the callable proto-view's own `$proto` is null
+
+#4637's header states this itself under *"What this does NOT claim"*. Measured
+(`.tmp/probes/f1.js`): `function H(){}; H.prototype = G; Object.getPrototypeOf(new H()) === G`
+was already **true** while `typeof new H().call` was **undefined** — the link
+exists, the level above it does not.
+
+### Root cause 3 — the reflective `Object.prototype.toString` has no `$NativeProto` arm
+
+`NATIVE_PROTO_BRAND_TAGS` deliberately lists only the five prototypes whose tag is
+NOT the step-13 default. `%Object.prototype%` is not in it, so a receiver that IS
+`Object.prototype` matched no arm and hit the loud refusal. Measured
+(`.tmp/probes/b4.js`), one module, receiver varied and everything else fixed:
+
+| receiver of the stored-slot `getClass()` | base |
+| --- | --- |
+| `[1,2]` | `[object Array]` |
+| `{}` | `[object Object]` |
+| `Object.prototype` | **refusal** |
+
+### Fix
+
+| file | what |
+| --- | --- |
+| `src/codegen/proto-function-value.ts` | roots 1+2. A `$NativeProto` arm on `__proto_from_function` mapping the brand to its proto-index COMPANION `$Object` (`__protoidx_brand_off` + `__protoidx_companion(off, create=1)`), registered in the SAME bag registry so `__function_from_proto` maps it back; and `bagFunctionProtoLinkInstrs`, which gives a callable bag the `%Function.prototype%` companion as its own `$proto` when that slot is still null. |
+| `src/codegen/object-proto-tostring.ts` | root 3. One `["Object", "Object"]` entry in `NATIVE_PROTO_BRAND_TAGS`. |
+
+Three design points worth carrying forward:
+
+- **The companion was already the right view, and already existed.** #4637 chose
+  a proto-VIEW over widening `$proto` to `anyref`; the same argument applies
+  verbatim here (every `struct.get $Object 0` feeds a `(ref null $Object)` local),
+  and `proto-index-store.ts` already maintains a per-brand `$Object` companion
+  holding that brand's own members — `__protoidx_own_recv` already substitutes it
+  for own-property queries. So this is population of an existing mechanism, not a
+  new MOP: **no new struct field, no new walk, no change to `$Object`'s layout.**
+- **`create = 1` is the demand gate.** `__protoidx_own_recv` probes with
+  `create = 0` deliberately (an own-property query must not mint). A
+  `[[Prototype]]` link is the opposite: the read IS the demand, and minting also
+  runs `__nativeproto_seed_<brand>`, which is what puts `call`/`apply`/`bind`/
+  `toString` in the Function companion.
+- **The register step is factored (`registerViewInstrs`) so the two arms cannot
+  diverge.** `__function_from_proto` is the only thing standing between this
+  change and `Object.getPrototypeOf(o)` publishing an internal object the program
+  can never name — one arm forgetting it is exactly the wrong-answer trade the
+  campaign forbids.
+
+Declines built into the arm, all "absent, never wrong": a **class** `$NativeProto`
+(`$isClass` set) is guarded out, because `__protoidx_brand_off` answers its
+`Object` DEFAULT for a tag it cannot classify and mapping one would publish
+`%Object.prototype%`'s companion as a class's prototype; an unreserved
+proto-index store emits no arm and no bytes; a companion that is not an `$Object`
+returns the receiver unchanged rather than cast-trapping.
+
+### Gate grants (frontmatter, per-file rationale)
+
+- `src/codegen/proto-function-value.ts` (377 → 587, **+210**). The module already
+  owns "a value that is not an `$Object` in `[[Prototype]]` position"; a second
+  shape of the same question belongs with the first, and splitting it out would
+  have meant exporting `walkRegistry`, the three `$ProtoFnEntry` field indices
+  and the local-slot numbering — four layout facts in two files, which is the
+  drift this campaign keeps paying for. About **130 of the 210** are the two
+  doc-comments (the measured base tables, the rejected `anyref` widening, and the
+  ARMING residual that stops a reader re-deriving it); the executable part is two
+  arm builders plus the extraction of the shared `registerViewInstrs` tail, which
+  is net-negative against the duplication it replaces.
+- `src/codegen/object-proto-tostring.ts` (689 → 708, **+19**). One entry in
+  `NATIVE_PROTO_BRAND_TAGS` plus the comment saying why it is added ALONE — the
+  table's own "deliberately NOT a catch-all" rule is what makes a blanket
+  `$NativeProto ⇒ Object` default wrong (every `@@toStringTag` brand), and an
+  unexplained entry in that table is how the next lane widens it.
+
+No `func-budget-allow`, no `coercion-sites-allow`, no `oracle-ratchet-allow` was
+needed: all five gates pass clean (`check-loc-budget`, `check-func-budget`,
+`check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports` — run bare,
+exit statuses read individually, never through a pipe).
+
+### A fix that was implemented, measured, and DELIBERATELY NOT SHIPPED
+
+Root "`new X.prototype.constructor` is not a constructor" has a one-token fix:
+`isNewOnNonConstructablePrototype` (new-super.ts) and `classifyNonConstructableValue`
+(non-constructable.ts) both read every `X.prototype.<name>` as a prototype METHOD,
+and `constructor` is the intrinsic constructor. Excluding that one name was
+written, type-checked and measured. **It is reverted; the branch carries no code
+from it.** What the measurement showed (`.tmp/probes/c4.js`):
+
+| spelling | base | with the exclusion |
+| --- | --- | --- |
+| `new Object.prototype.constructor()` | `TypeError: is not a constructor` | builds, tag `[object Object]` |
+| `…then `obj.constructor === Object`` | (unreachable) | **traps**: `Cannot access property on null or undefined` |
+| `new String.prototype.constructor("choosing one")` | `TypeError: is not a constructor` | **builds a plain object**, `== "choosing one"` is **false**, no throw |
+
+The third row is the forbidden trade: a loud refusal became a silent WRONG answer.
+Neither target row flips either way (`S15.2.4.1_A1_T2` merely fails later, on a
+null-deref). The predicate diagnosis is correct and is handed on; the fix needs the
+intrinsic-construct path, which is `#4515`'s territory, not a predicate edit.
+
+
+### Test Results — verification floor (dev-4492 wave-6, runs executed 2026-08-24)
+
+Every figure below is from a run executed in this worktree. Arms were separated by
+file copy (`.tmp/base-*.ts` / `.tmp/new-*.ts`), never `git stash`, and the
+`git diff HEAD --stat -- src` detector was read **before each arm**: **0 files**
+on the after arm (the change is committed, so `HEAD` IS the after tree) and
+**2 files** on the base arm. Reading the bare `git diff --stat` here would have
+been blind to the restore — the correction this file's own wave-5 section made to
+the brief.
+
+#### Sweep scope — 1,087 rows per arm, and why it is this size
+
+`--target standalone`, `runTest262File` per row, `SWEEP_TIMEOUT=180000`,
+`JS2WASM_EVAL_ENGINE=quickjs TEST262_FULL_RUNTIME_EVAL=1`, serial.
+
+| rows | directory | why it is in |
+| ---: | --- | --- |
+| 320 | `built-ins/Object/create` | the direct caller of the changed helper |
+| 309 | `built-ins/Function/prototype` | the flips; the Function brand companion |
+| 248 | `built-ins/Object/prototype` | the `Object.prototype.toString` arm |
+| 59 | `built-ins/Object/keys` | the enumeration-leak question the new chain link opens |
+| 59 | `language/expressions/new` | `new F()` — the other way into `__object_create` |
+| 41 | `language/statements/function` (`S13.2.2_A*` only) | the [[Construct]]-prototype family this arm serves |
+| 39 + 12 | `built-ins/Object/{get,set}PrototypeOf` | the other two `canonicalizeProtoArg` call sites |
+
+**Dropped, and why.** `built-ins/Reflect` (153) — its `getPrototypeOf` /
+`setPrototypeOf` are the same two natives as `Object`'s, already covered. The rest
+of `language/statements/function` (410) — reachable only through a plain `new F()`
+whose prototype is the lazily-minted `$Object`, where `__proto_from_function` is
+the identity; the S13.2.2 family, which is the part that *does* test this change,
+was kept. `built-ins/Object/getOwnPropertyNames` (45) — `Object/keys` asks the
+same enumeration question. `built-ins/Array/prototype` (2,811) and
+`built-ins/String/prototype` (1,073) — the diff cannot reach a member body;
+`Object.create(Array.prototype)` is covered by `Object/create`.
+
+#### Before / after
+
+| arm | pass | fail | compile_error | rows | wall | load (median / max, sampled per minute) |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| base | 907 | 173 | 7 | 1,087 | 13:08→14:01 | 6.08 / 15.08 |
+| after | **909** | 171 | 7 | 1,087 | 12:11→13:06 | 6.68 / 10.99 |
+
+**Net +2, regressions 0.** The two arms ran at comparable load (medians 6.1 and
+6.7 on 4 cores), the **denominators are identical** (1,087 each — so no row
+disappeared to the `IT_TIMEOUT_MS` silent-kill), and **zero rows on either arm
+carry a `timeout` error**, so the contention trap did not touch these numbers.
+The 7 compile errors are the **same 7 files** on both arms (4 `Function/prototype/
+bind` rows needing `Reflect.construct` realm preservation, 3
+`Object/setPrototypeOf` rows on `__get_builtin` / BigInt) — unrelated to this
+change.
+
+#### Flip list — both flips re-verified SERIALLY on both arms, one file at a time
+
+| test262 row | base | after |
+| --- | --- | --- |
+| `built-ins/Function/prototype/call/S15.3.4.4_A1_T2.js` | `typeof obj.call` is `"undefined"` | pass |
+| `built-ins/Function/prototype/apply/S15.3.4.3_A1_T2.js` | `typeof obj.apply` is `"undefined"` | pass |
+
+#### Movement, NOT a flip — 1 row
+
+`built-ins/Object/prototype/S15.2.4_A1_T2.js` fails on both arms, but it now fails
+at a **later assertion**: base dies on the FIRST one
+(`Object.prototype.toString is not yet implemented`), after reaches
+`assert.sameValue(e instanceof TypeError, true)` — the post-`delete` half, which
+is the #4596 three-op residual above. Recorded as movement so the campaign's flip
+total stays a sum of per-lane flip counts.
+
+#### Pins
+
+`tests/issue-4492-builtin-as-value.test.ts`, counts read off vitest's own summary
+line (never the exit status):
+
+- after arm: **`Tests 13 passed (13)`** — executed 13 = total 13, file line
+  `(13 tests)` with no `skipped` suffix.
+- base arm (both source files reverted): **`Tests 6 failed | 7 passed (13)`** —
+  executed 13 = total 13. **All six positive pins fail on the arm they test**; the
+  three GUARD pins and the four `it.fails` residual pins pass on both arms by
+  design.
+- both #4492 suites together on the after arm: `Tests 47 passed (47)` across
+  `(13 tests)` + `(34 tests)` — wave-5's suite is unaffected.
+
+`tests/equivalence/`, per-file loop (a single invocation OOMs), 13 files chosen as
+the object/prototype surface the diff can reach — `arguments-object`,
+`array-prototype-methods`, `issue-4123-param-receiver-proto-method`,
+`issue-799-prototype-chain`, `object-create`, `object-keys`, `object-mutability`,
+`object-to-primitive`, `object-define-property`,
+`object-define-property-accessors`, `object-literal-getters-setters`,
+`numeric-key-object`, `empty-object-widening`: **74 tests, all passing, every file
+`executed == total` with no `skipped` suffix.**
+
+#### Byte control — the host lane is inert, standalone pays 2 bytes
+
+Five representative modules compiled on both arms, sha256 of the binary
+(`.tmp/bytes-{base,after}.txt`):
+
+| module | base → after |
+| --- | --- |
+| host lane (no `target`) | **byte-identical**, `41ed8163ef6d5d0f`, 350 bytes |
+| standalone, no proto usage | 218,121 → 218,123 (**+2**) |
+| standalone `Object.create({…})` | 209,058 → 209,060 (**+2**) |
+| standalone `new F()` | 223,715 → 223,717 (**+2**) |
+| standalone callable-as-prototype (armed by its `Object.getPrototypeOf` call) | 290,412 → 290,590 (+178) |
+
+The **+2** is one extra locals-vector entry (`__fnProto`) in
+`__proto_from_function`, declared unconditionally so the slot index cannot drift
+between the arms that use it. It is never read on those paths and cannot change
+behaviour. Declaring it conditionally — the local is last, and the only consumer,
+`bagFunctionProtoLinkInstrs`, returns `[]` under exactly the same condition —
+would restore byte-identity; it was **not** done here because the change landed
+after the sweep, and reporting a sweep of one tree as evidence for another is the
+defect this campaign documents most often. A follow-up lane can take it with its
+own measurement. The +178 is the real arm, in a module that genuinely uses it.
+
+### Residuals — with roots, and with what would close each
+
+| rows | root (probed) | owner / what it needs |
+| --- | --- | --- |
+| `Function/prototype/{call,apply}/…_A1_T1` (2) | the mechanism WORKS; the module never names a builtin prototype, so `protoMemberDirty` stays clear, `reserveProtoIndexStore` never fires and the companion is never seeded. Proven by adding one line — `var arm = Function.prototype` — to the identical probe (`f1.js` → `f2.js`), which flips both reads to `function`. | #4492. Closing it means ARMING `protoMemberDirty` on "a non-literal value is assigned to a `.prototype`" (`isProtoMemberValueUse`, array-holes.ts). Declined here: that arms the whole proto-index store — companion seeder, ~4-36 member closures per brand — for every module that assigns a `.prototype`, and `isProtoMemberValueUse`'s own comment records that the seeder's extra functions perturb IR eligibility (#2855 ratchet). Two rows is not the price of that; it wants its own measured issue. |
+| `Object/prototype/S15.2.4_A1_T2` (1, half-closed) | the FIRST assertion now passes. The rest needs `delete Object.prototype.toString` to be visible to the **syntactic** member call. Measured (`b5.js`): after the delete, `hasOwnProperty` is `false` and the DYNAMIC read is `undefined`, while the static read and the call keep the compile-time answer. | the three-op-agreement family (#4596) — the consult-order asymmetry wave-2 recorded. Not a value-read defect. |
+| `Array/prototype/concat/S15.4.4.4_A2_T{1,2}` (2) | no reflective `concat` body; `emitArrayProtoMemberBody` covers `slice` + the non-reduce HOF family. T2 needs only "build `[thisArg]` at runtime"; T1 additionally needs heterogeneous element representation, which wave-2 already routed to the value-rep lane. | #4492 / the Array lane. T2 is the tractable half and should be sized on its own. |
+| `Function/prototype/bind/S15.3.4.5_A5` (1) | no reflective `bind` body, and the row additionally needs bind's [[Construct]] currying plus `.apply` ON the resulting builtin value. | #4656 (`fn-proto-residual-bind-membrane-intrinsic`). |
+| `{String,Object}/prototype/constructor/…_A1_T2` (2) | the predicate diagnosis above. | #4515. |
+
+Adjacent defects found while probing, NOT fixed and NOT claimed as roots of any row:
+
+- `typeof Function.prototype` answers `"object"`; §20.2.3 makes it a callable, so
+  it must be `"function"` (`.tmp/probes/f2.js`, first line).
+- `var C = Object; new C()` emits a host import `env::Object_new` under
+  `--target standalone` and therefore cannot instantiate (`.tmp/probes/c2.js`).
+  This is a different spelling from the `X.prototype.constructor` rows and was not
+  investigated further.
+- `Function.prototype.isPrototypeOf(o)` and `Array.prototype.isPrototypeOf(a)`
+  answer `false` even with the link in place — measured **identically on both
+  arms** (`.tmp/probes/g1.js`, base and after), so this change neither fixes nor
+  regresses it. `__isPrototypeOf` is the third `canonicalizeProtoArg` call site,
+  so the receiver IS canonicalized; the spelling evidently does not reach that
+  native. #4480's record attributes the `isPrototypeOf` read point to the #2660
+  escape gate rather than to the chain walk; this lane did not re-derive that and
+  does not claim it.

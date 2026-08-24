@@ -235,6 +235,7 @@ import { tryBuiltinPrototypeGetterBrandThrow } from "./builtin-prototype-brand.j
 import { tryCompileFunctionPoisonRead } from "./function-poison-pill-access.js";
 import { isFnctorLayoutStructName } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
 import { tryEmitPrimitiveAbsentPropertyRead } from "./primitive-absent-property.js"; // (#4483) absent prop of a number/boolean primitive → undefined
+import { tryEmitPrimitiveProtoMemberGet } from "./primitive-proto-member-get.js"; // (#4668) PRESENT prop of a number/boolean primitive → chain walk
 import {
   finalizeStructAndDynamicMemberGet,
   PA_FALLTHROUGH,
@@ -3592,6 +3593,15 @@ export function compilePropertyAccess(
   // claim on the shapes it already handles; declines for every other receiver.
   {
     const __r = tryEmitPrimitiveAbsentPropertyRead(ctx, fctx, expr, propName);
+    if (__r !== undefined) return __r;
+  }
+
+  // (#4668) The complement of the arm above: when the module DOES extend a
+  // primitive prototype, #4483 declines and the read used to reach the legacy
+  // tail's `ref.null.extern`. Box the primitive and let `__extern_get` walk the
+  // chain — its boxed-primitive handling is already correct (measured).
+  {
+    const __r = tryEmitPrimitiveProtoMemberGet(ctx, fctx, expr, propName);
     if (__r !== undefined) return __r;
   }
 
