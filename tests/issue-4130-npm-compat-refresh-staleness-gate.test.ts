@@ -25,8 +25,9 @@
  * lands on somebody else's PR.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -39,10 +40,9 @@ const ROOT = resolve(fileURLToPath(new URL("../", import.meta.url)));
 // which file a step happens to live in, so read both. Order matters for the
 // `at()` comparisons and promotion runs after measurement, so concatenate in
 // pipeline order — that keeps "sanity check precedes push" meaningful.
-const workflow = [
-  readFileSync(resolve(ROOT, ".github/workflows/npm-compat-refresh.yml"), "utf8"),
-  readFileSync(resolve(ROOT, ".github/workflows/npm-compat-promote.yml"), "utf8"),
-].join("\n");
+const refresh = readFileSync(resolve(ROOT, ".github/workflows/npm-compat-refresh.yml"), "utf8");
+const promote = readFileSync(resolve(ROOT, ".github/workflows/npm-compat-promote.yml"), "utf8");
+const workflow = [refresh, promote].join("\n");
 
 const at = (needle: string): number => workflow.indexOf(needle);
 
@@ -249,5 +249,121 @@ describe("the promotion PR must survive auto-enqueue's author-trust gate", () =>
       env: { ...process.env, TRUSTED_AUTHOR_LOGINS: "ttraenkler" },
     });
     expect(JSON.parse(withoutAllowlist).trusted).toBe(false);
+  });
+});
+
+describe("a promotion PR that cannot land must not hold the dashboard", () => {
+  // THE DEADLOCK. Two gates skip while a promotion PR is open: the refresh
+  // workflow skips the measurement, and the coordinator skips the push. Both
+  // exist so an in-flight promotion is never force-updated out from under
+  // itself. But a promotion that FAILS a required check never merges, and the
+  // artifact that would fix it is exactly what both gates are refusing to
+  // produce — so the PR cannot heal, and the dashboard freezes behind it.
+  //
+  // Observed 2026-08-24: #4817 failed `quality` on an empty
+  // npm-compat-perf.json at 02:32Z. The fix landed on main at 04:32Z and could
+  // not reach the branch; #4817's head did not move for hours while every
+  // refresh run skipped, and npm-compat.json stayed at 2026-08-23T20:03:12.
+  //
+  // These run the real gate scripts against a stubbed `gh`, because the bug is
+  // in what the shell DECIDES, not in which words the file contains.
+
+  /** Pull one step's `run:` body out of a workflow, by step name. */
+  function stepScript(workflow: string, stepName: string): string {
+    const start = workflow.indexOf(`- name: ${stepName}`);
+    expect(start).toBeGreaterThan(-1);
+    const runAt = workflow.indexOf("\n        run: |\n", start);
+    expect(runAt).toBeGreaterThan(-1);
+    const body = workflow.slice(runAt + "\n        run: |\n".length);
+    const lines: string[] = [];
+    for (const line of body.split("\n")) {
+      if (line.trim() !== "" && !line.startsWith("          ")) break;
+      lines.push(line.slice(10));
+    }
+    return lines.join("\n");
+  }
+
+  /**
+   * Run a gate script with `gh pr list` stubbed to return `prJson`, and give
+   * back the step's GITHUB_OUTPUT.
+   */
+  function runGate(script: string, prJson: string): Record<string, string> {
+    const dir = mkdtempSync(join(tmpdir(), "npm-compat-gate-"));
+    try {
+      const bin = join(dir, "bin");
+      mkdirSync(bin);
+      writeFileSync(join(bin, "gh"), `#!/bin/sh\ncat <<'JSON'\n${prJson}\nJSON\n`, { mode: 0o755 });
+      const outFile = join(dir, "out");
+      writeFileSync(outFile, "");
+      execFileSync("bash", ["-c", script], {
+        cwd: dir,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH}`,
+          GITHUB_OUTPUT: outFile,
+          GITHUB_REPOSITORY: "loopdive/js2",
+          PROMOTION_BRANCH: "ci/npm-compat-refresh",
+        },
+      });
+      return Object.fromEntries(
+        readFileSync(outFile, "utf8")
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => {
+            const eq = line.indexOf("=");
+            return [line.slice(0, eq), line.slice(eq + 1)];
+          }),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  const NO_PR = "[]";
+  const HEALTHY_PR = JSON.stringify([
+    { number: 4817, statusCheckRollup: [{ conclusion: "SUCCESS" }, { conclusion: "SKIPPED" }] },
+  ]);
+  // The real shape of #4817 at 02:32Z: `quality` and `changes` both FAILURE.
+  const FAILING_PR = JSON.stringify([
+    {
+      number: 4817,
+      statusCheckRollup: [{ conclusion: "SUCCESS" }, { conclusion: "FAILURE" }, { conclusion: "FAILURE" }],
+    },
+  ]);
+
+  describe("the refresh workflow's measurement gate", () => {
+    const script = () => stepScript(refresh, "Is a promotion PR already open?");
+
+    it("measures when no promotion PR is open", () => {
+      expect(runGate(script(), NO_PR).pr_number).toBe("");
+    });
+
+    it("still skips for a promotion PR that can land", () => {
+      expect(runGate(script(), HEALTHY_PR).pr_number).toBe("4817");
+    });
+
+    it("measures anyway when the open PR is failing a check", () => {
+      // An empty pr_number is what un-gates the measure-* jobs.
+      expect(runGate(script(), FAILING_PR).pr_number).toBe("");
+    });
+  });
+
+  describe("the coordinator's push gate", () => {
+    const script = () => stepScript(promote, "Skip the push while a promotion PR is open");
+
+    it("publishes when no promotion PR is open", () => {
+      expect(runGate(script(), NO_PR).skip).toBe("0");
+    });
+
+    it("still holds off for a promotion PR that can land", () => {
+      expect(runGate(script(), HEALTHY_PR).skip).toBe("1");
+    });
+
+    it("publishes over a failing PR's branch so the fresh artifact can heal it", () => {
+      // Both gates must agree. A measurement let through upstream and then
+      // refused here would deadlock exactly the same way.
+      expect(runGate(script(), FAILING_PR).skip).toBe("0");
+    });
   });
 });

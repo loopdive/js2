@@ -235,8 +235,22 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          PR_NUMBER="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$PROMOTION_BRANCH" \
-            --state open --json number --jq '.[0].number // empty' 2>/dev/null || echo "unreadable")"
+          # Same rule as the refresh workflow's measurement gate: a promotion
+          # PR that is FAILING a check does not hold the branch. Leaving it
+          # untouched protects a PR that can still land; a PR that cannot land
+          # is instead held together with the dashboard behind it, because the
+          # regenerated artifact is the only thing that can make it mergeable.
+          # Both gates have to agree — a measurement allowed through upstream
+          # and then refused here would deadlock just the same.
+          PR_JSON="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$PROMOTION_BRANCH" \
+            --state open --json number,statusCheckRollup 2>/dev/null || echo "unreadable")"
+          if [ "$PR_JSON" = "unreadable" ]; then
+            PR_NUMBER="unreadable"
+          else
+            PR_NUMBER="$(printf '%s' "$PR_JSON" | jq -r '.[0].number // empty')"
+            PR_FAILING="$(printf '%s' "$PR_JSON" | jq -r \
+              '[.[0].statusCheckRollup[]? | select((.conclusion // "") == "FAILURE")] | length')"
+          fi
           echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
 
           case "$PR_NUMBER" in
@@ -252,8 +266,13 @@ jobs:
               echo "skip=1" >> "$GITHUB_OUTPUT"
               ;;
             *)
-              echo "::notice title=npm-compat-refresh::promotion PR #${PR_NUMBER} is open; leaving its branch untouched so it can land. This measurement is uploaded as an artifact; the run after #${PR_NUMBER} merges publishes a fresher one."
-              echo "skip=1" >> "$GITHUB_OUTPUT"
+              if [ "${PR_FAILING:-0}" -gt 0 ]; then
+                echo "::warning title=npm-compat-refresh::promotion PR #${PR_NUMBER} has ${PR_FAILING} failing check(s) and cannot land as-is; publishing over its branch so the fresh artifact can heal it."
+                echo "skip=0" >> "$GITHUB_OUTPUT"
+              else
+                echo "::notice title=npm-compat-refresh::promotion PR #${PR_NUMBER} is open; leaving its branch untouched so it can land. This measurement is uploaded as an artifact; the run after #${PR_NUMBER} merges publishes a fresher one."
+                echo "skip=1" >> "$GITHUB_OUTPUT"
+              fi
               ;;
           esac
 
