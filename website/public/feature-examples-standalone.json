@@ -185,7 +185,7 @@
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1603,
+      "passCount": 1605,
       "totalCount": 1896
     },
     {
