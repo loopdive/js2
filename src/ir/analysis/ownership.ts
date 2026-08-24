@@ -260,6 +260,11 @@ function applyInstrEffect(
     case "string.len":
       touch(state, instr.value, allocOf, null, "read");
       break;
+    case "string.repeat":
+      // Strings are immutable, but the semantic provider consumes the exact
+      // source value while producing a distinct allocation.
+      touch(state, instr.value, allocOf, null, "read");
+      break;
 
     // --- field writes -> `write` on the receiver; value may escape into it ---
     case "object.set":

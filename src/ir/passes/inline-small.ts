@@ -575,6 +575,12 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       if (l === inst.lhs && r === inst.rhs) return inst;
       return { ...inst, lhs: l, rhs: r };
     }
+    case "string.repeat": {
+      const value = mapId(rename, inst.value);
+      const count = mapId(rename, inst.count);
+      if (value === inst.value && count === inst.count) return inst;
+      return { ...inst, value, count };
+    }
     case "dyn.member_get": {
       const recv = mapId(rename, inst.recv);
       const key = mapId(rename, inst.key);

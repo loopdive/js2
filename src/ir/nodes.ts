@@ -44,6 +44,7 @@ import type {
   IrInstrRegExpLiteral,
   IrInstrStringCharAt,
   IrInstrStringCharCodeAt,
+  IrInstrStringRepeat,
 } from "./dialect/js.js";
 import type { IrBindingId, IrClassId, IrFunctionIdentity, IrUnitId } from "./identity.js";
 import type { IntrinsicId, IntrinsicSignatureVersion } from "./intrinsics.js";
@@ -2142,6 +2143,7 @@ export type {
   IrInstrRegExpLiteral,
   IrInstrStringCharAt,
   IrInstrStringCharCodeAt,
+  IrInstrStringRepeat,
   IrInstrForOfString,
 } from "./dialect/js.js";
 
@@ -2167,6 +2169,7 @@ export type IrInstr =
   | IrInstrDynMemberSet
   | IrInstrStringConst
   | IrInstrStringConcat
+  | IrInstrStringRepeat
   | IrInstrStringEq
   | IrInstrStringLen
   | IrInstrStringCharAt
@@ -2522,6 +2525,7 @@ export function forEachNestedBuffer(instr: IrInstr, fn: (buffer: readonly IrInst
     case "dyn.member_set":
     case "string.const":
     case "string.concat":
+    case "string.repeat":
     case "string.eq":
     case "string.len":
     case "string.char_at":
@@ -2688,6 +2692,7 @@ export function mapNestedBuffers(
     case "dyn.member_set":
     case "string.const":
     case "string.concat":
+    case "string.repeat":
     case "string.eq":
     case "string.len":
     case "string.char_at":
@@ -2792,6 +2797,8 @@ export function directUses(instr: IrInstr): readonly IrValueId[] {
     case "string.concat":
     case "string.eq":
       return [instr.lhs, instr.rhs];
+    case "string.repeat":
+      return [instr.value, instr.count];
     case "dyn.member_get":
       return [instr.recv, instr.key];
     case "dyn.member_set":
