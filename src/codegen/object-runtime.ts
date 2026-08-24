@@ -208,6 +208,11 @@ import { ensureWrapperConstructorCarriers, wrapperConstructorArmInstrs } from ".
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 import { backedBoundsGuard, canonicalIndexDigitStep } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
 import { fillHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649) js-host late-bound carrier test
+import {
+  buildOwnToPrimitiveOverridePresent,
+  buildWrapperSlotShortCircuit,
+  type ToPrimitiveSlotDeps,
+} from "./to-primitive-wrapper-slot.js"; // (#4492 wave-5) __to_primitive's [[PrimitiveValue]] arms
 export { fillProxyDispatch } from "./object-runtime-proxy.js";
 
 /** Initial `$PropMap` capacity. Must be a power of two (mask = cap - 1).
@@ -4613,6 +4618,21 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       },
     ];
 
+    // (#4492 wave-5) FACTORIES — each call returns fresh `Instr` objects, so the
+    // two emission sites below never alias one array into two tree positions.
+    const slotDeps: ToPrimitiveSlotDeps = {
+      anyLocal: L_ANY,
+      slotLocal: L_SLOT,
+      objectTypeIdx,
+      propEntryTypeIdx,
+      objFindIdx,
+      wrapperPrimitiveKey: WRAPPER_PRIMITIVE_KEY,
+      flagInternal: FLAG_INTERNAL,
+      stringExtern,
+    };
+    const wrapperSlotShortCircuit = (): Instr[] => buildWrapperSlotShortCircuit(slotDeps);
+    const ownToPrimitiveOverridePresent = (): Instr[] => buildOwnToPrimitiveOverridePresent(slotDeps);
+
     const body: Instr[] = [
       // Non-objects return unchanged (ToPrimitive step 1).
       { op: "local.get", index: 0 },
@@ -4752,45 +4772,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               ]
             : [{ op: "local.get", index: 0 }, { op: "return" }],
       },
-      // #1910/#1472 S2 — boxed primitive wrapper short-circuit. A `new Number`/
-      // `new String`/`new Boolean` wrapper carries its [[PrimitiveValue]] in the
-      // reserved, FLAG_INTERNAL own-slot. §7.1.1.1: the wrapper's intrinsic
-      // valueOf/toString return that internal primitive, so when the slot exists
-      // we return it directly (BEFORE the ordinary valueOf/toString own-prop
-      // probe) — the slot value is already a primitive, and the caller applies the
-      // final ToNumber/ToString per its hint. Plain objects lack this slot, so
-      // __obj_find returns null and we fall through to OrdinaryToPrimitive.
-      { op: "local.get", index: L_ANY },
-      { op: "ref.cast", typeIdx: objectTypeIdx },
-      ...stringExtern(WRAPPER_PRIMITIVE_KEY),
-      { op: "call", funcIdx: objFindIdx },
-      { op: "local.tee", index: L_SLOT },
-      { op: "ref.is_null" },
+      // #1910/#1472 S2 — boxed primitive wrapper short-circuit, now GATED on "no
+      // own valueOf/toString" (#4492 wave-5). Full rationale + the measured
+      // failure on `buildWrapperSlotShortCircuit` / `buildOwnToPrimitiveOverridePresent`.
+      ...ownToPrimitiveOverridePresent(),
       { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          // entry present — confirm it is the internal slot (FLAG_INTERNAL), then
-          // return extern.convert_any(entry.value).
-          { op: "local.get", index: L_SLOT },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 }, // flags
-          { op: "i32.const", value: FLAG_INTERNAL },
-          { op: "i32.and" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: L_SLOT },
-              { op: "ref.as_non_null" },
-              { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 }, // value (anyref)
-              { op: "extern.convert_any" },
-              { op: "return" },
-            ],
-          },
-        ],
-      },
+      { op: "if", blockType: { kind: "empty" }, then: wrapperSlotShortCircuit() },
       ...isStringHint,
       {
         op: "if",
@@ -4798,6 +4785,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         then: [...tryOrdinaryMethod("toString", true), ...tryOrdinaryMethod("valueOf", false)],
         else: [...tryOrdinaryMethod("valueOf", false), ...tryOrdinaryMethod("toString", true)],
       },
+      ...wrapperSlotShortCircuit(),
       ...throwTypeError(),
     ];
 
@@ -6156,58 +6144,77 @@ export function ensureWrapperStringValueHelper(ctx: CodegenContext): number {
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
     { op: "local.tee", index: 1 },
-    { op: "ref.test", typeIdx: objectTypeIdx },
+    // (#4492 wave-5) A PRIMITIVE string is its own [[StringData]] (§7.1.1 step
+    // 1), so identity here makes this helper the complete "read the string data,
+    // never the user's valueOf/toString" operation — which is what the String
+    // exotic own properties (`.length`, `w[i]`) need, and what they were
+    // (wrongly) asking `__to_primitive` for. Unreachable from the #2161-B1
+    // coercion caller, whose `else` branch runs only after `ref.test $AnyString`
+    // has already FAILED, so that site stays byte-identical.
+    { op: "ref.test", typeIdx: anyStrTypeIdx },
     {
       op: "if",
       blockType: { kind: "val", type: anyStrRefNull },
       then: [
-        // e = __obj_find(cast<$Object>(a), WRAPPER_PRIMITIVE_KEY)
         { op: "local.get", index: 1 },
-        { op: "ref.cast", typeIdx: objectTypeIdx },
-        ...((): Instr[] => {
-          addStringConstantGlobal(ctx, WRAPPER_PRIMITIVE_KEY);
-          return stringConstantExternrefInstrs(ctx, WRAPPER_PRIMITIVE_KEY);
-        })(),
-        { op: "call", funcIdx: objFindIdx },
-        { op: "local.tee", index: 2 },
-        { op: "ref.is_null" },
+        { op: "ref.cast", typeIdx: anyStrTypeIdx },
+      ],
+      else: [
+        { op: "local.get", index: 1 },
+        { op: "ref.test", typeIdx: objectTypeIdx },
         {
           op: "if",
           blockType: { kind: "val", type: anyStrRefNull },
-          then: [{ op: "ref.null", typeIdx: anyStrTypeIdx }],
-          else: [
-            // confirm the entry is the internal slot (FLAG_INTERNAL)
-            { op: "local.get", index: 2 },
-            { op: "ref.as_non_null" },
-            { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 }, // flags
-            { op: "i32.const", value: FLAG_INTERNAL },
-            { op: "i32.and" },
+          then: [
+            // e = __obj_find(cast<$Object>(a), WRAPPER_PRIMITIVE_KEY)
+            { op: "local.get", index: 1 },
+            { op: "ref.cast", typeIdx: objectTypeIdx },
+            ...((): Instr[] => {
+              addStringConstantGlobal(ctx, WRAPPER_PRIMITIVE_KEY);
+              return stringConstantExternrefInstrs(ctx, WRAPPER_PRIMITIVE_KEY);
+            })(),
+            { op: "call", funcIdx: objFindIdx },
+            { op: "local.tee", index: 2 },
+            { op: "ref.is_null" },
             {
               op: "if",
               blockType: { kind: "val", type: anyStrRefNull },
-              then: [
-                // v = entry.value (anyref); if it is a native string, return it
+              then: [{ op: "ref.null", typeIdx: anyStrTypeIdx }],
+              else: [
+                // confirm the entry is the internal slot (FLAG_INTERNAL)
                 { op: "local.get", index: 2 },
                 { op: "ref.as_non_null" },
-                { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 }, // value
-                { op: "local.tee", index: 3 },
-                { op: "ref.test", typeIdx: anyStrTypeIdx },
+                { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 }, // flags
+                { op: "i32.const", value: FLAG_INTERNAL },
+                { op: "i32.and" },
                 {
                   op: "if",
                   blockType: { kind: "val", type: anyStrRefNull },
                   then: [
-                    { op: "local.get", index: 3 },
-                    { op: "ref.cast", typeIdx: anyStrTypeIdx },
+                    // v = entry.value (anyref); if it is a native string, return it
+                    { op: "local.get", index: 2 },
+                    { op: "ref.as_non_null" },
+                    { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 }, // value
+                    { op: "local.tee", index: 3 },
+                    { op: "ref.test", typeIdx: anyStrTypeIdx },
+                    {
+                      op: "if",
+                      blockType: { kind: "val", type: anyStrRefNull },
+                      then: [
+                        { op: "local.get", index: 3 },
+                        { op: "ref.cast", typeIdx: anyStrTypeIdx },
+                      ],
+                      else: [{ op: "ref.null", typeIdx: anyStrTypeIdx }],
+                    },
                   ],
                   else: [{ op: "ref.null", typeIdx: anyStrTypeIdx }],
                 },
               ],
-              else: [{ op: "ref.null", typeIdx: anyStrTypeIdx }],
             },
           ],
+          else: [{ op: "ref.null", typeIdx: anyStrTypeIdx }],
         },
       ],
-      else: [{ op: "ref.null", typeIdx: anyStrTypeIdx }],
     },
   ];
 

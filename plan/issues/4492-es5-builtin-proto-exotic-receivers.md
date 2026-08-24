@@ -14,6 +14,21 @@ area: codegen
 es_edition: es5
 goal: standalone-mode
 related: [4444, 2175, 4161, 1461]
+# (#4492 wave-5) Per-file rationale for each grant is in "## 2026-08-23 wave-5
+# results" below, under "Gate grants".
+loc-budget-allow:
+  - src/codegen/object-runtime.ts
+  - src/codegen/array-object-proto.ts
+  - src/codegen/index.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/context/types.ts
+  - src/codegen/native-strings.ts
+func-budget-allow:
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  # +1 line: the initializer for the new `protoNamedWrittenMembers` field.
+  - src/codegen/context/create-context.ts::createCodegenContext
 ---
 
 # #4492 — ES5 builtin-proto methods on exotic receivers
@@ -453,3 +468,348 @@ standalone` is a distinct, explicit gap (2 rows here, more elsewhere) —
 implementing it is in scope for this lane if the measurement supports it.
 `is not a constructor` rows belong to the builtin-as-value family — check
 whether a sibling lane owns them before fixing.
+
+## 2026-08-23 wave-5 results (dev-4492, branch `issue-4492-wave5`)
+
+Worktree `/home/user/js2wasm/.claude/worktrees/agent-a52996008417c674b`, based on
+campaign HEAD `c42bdbe3e`. Bundle + quickjs adapter rebuilt in-worktree before
+any measurement (the adapter cache MISSED and rebuilt, so the eval tier is this
+tree's compiler, not the shared 8-day-old artifact).
+
+### The census's named sub-root is FALSE AS STATED — measured, then narrowed
+
+The census asks to measure "an object's own `toString`/`valueOf` override is not
+consulted by the String conversion path" first. It is not true in general:
+`String({toString(){…}})`, `String({valueOf(){…}})` and the object-returning-
+`toString`→`valueOf` fall-through **all already pass** on `c42bdbe3e`
+(`.tmp/probes/t1.js`). What is true is much narrower, and the narrowing is what
+made the fix tractable. Measured in ONE module (`.tmp/probes/t6.js`), with
+`f1.toString = function(){ return "OWN_F_TS" }`:
+
+| spelling | `f1` (own toString) | `f2` (plain) |
+| --- | --- | --- |
+| `f.toString()` | `OWN_F_TS` | `function f2() {}` |
+| `"" + f` | `OWN_F_TS` | `function () { [native code] }` |
+| `` `${f}` `` | `[object Object]` | — |
+| `String(f)` | `[object Object]` | `[object Object]` |
+
+**One value, four renderings.** `+` was right because #4491's
+`emitAddOrdinaryToPrimitiveResidue` runs a REAL runtime §7.1.1.1 walk
+(`__extern_get` + `__call_accessor_get`) — and that residue is deliberately
+scoped to the `+` operator. Every other dynamic spelling lands on
+`__any_to_string`, whose object terminal is the literal `"[object Object]"`. So
+the defect is not "overrides are ignored", it is "the ONE place that resolves an
+override at runtime is reachable from ONE operator".
+
+**Method note, because it cost two probes:** every one of these differences is
+MODULE-SENSITIVE. `f2.toString()` answers the source text in a 5-line module and
+`"SHIFTED"` in a 50-line one; `String(new F())` is wrong until the module
+contains a single `"toString" in inst`. Reading any of these off a multi-case
+probe attributes the wrong cause — the isolation rule (methodology 3) is not
+about compiler state here, it is about the compiler's own arming flags.
+
+## Root cause — four, in the order they were found
+
+1. **`Function.prototype.toString` and `Object.prototype.valueOf` had no
+   reflective body.** `makeGlue` (array-object-proto.ts) wires none for those
+   families, so every route that reifies them as a VALUE minted the #2984
+   Phase-2 catchable-TypeError closure. `built-ins/String/prototype/slice/
+   S15.5.4.13_A1_T5` and `.../substring/S15.5.4.15_A1_T5` fail on exactly those
+   two messages, in that order — fixing `toString` alone moves the failure to
+   `Object.prototype.valueOf is not yet implemented`.
+2. **ToString of a CALLABLE never reached §20.2.3.5.** `__any_to_string`'s
+   terminal is `Object.prototype.toString`'s answer, which §20.2.3.5 says a
+   function must never get.
+3. **A `toString`/`valueOf` installed on a PROTOTYPE is invisible to every
+   compile-time dispatcher.** `__call_valueOf`/`__call_toString` are keyed by
+   struct TYPE; `F.prototype.toString = …` and
+   `Function.prototype.toString = …` land in the runtime prototype bag.
+   `__extern_get` walks that bag; nothing in the ToPrimitive path asked it.
+4. **A boxed wrapper's `[[PrimitiveValue]]` short-circuit ran BEFORE the
+   §7.1.1.1 walk.** §7.1.1.1 reads `Get(O, "valueOf")`, and an own slot wins
+   over `String.prototype.valueOf` — so
+   `var s = new String("ABCABC"); s.valueOf = function(){ return "ed" }; s == "ed"`
+   was false for EVERY ToPrimitive consumer at once.
+
+## Fix
+
+| commit | what |
+| --- | --- |
+| `fefaa9ab4` | §20.2.3.5 `Function.prototype.toString` + §20.1.3.7 `Object.prototype.valueOf` reflective bodies (`function-proto-to-string.ts`, `object-proto-value-of.ts`, wired in `makeGlue`); the CALLABLE arm spliced onto `__any_to_string` (`callable-any-to-string.ts`) |
+| `c4e1d7c91` | one shared runtime §7.1.1.1 walk (`ordinary-to-primitive-probe.ts`), used by the callable arm AND by a new prototype-aware TAIL on `__class_to_primitive` |
+| `6811828f5` | the wrapper `[[PrimitiveValue]]` short-circuit gated on "no own valueOf/toString" (`to-primitive-wrapper-slot.ts`), plus `.length` / `w[i]` moved off `__to_primitive` onto the bare `__wrapper_string_value` slot probe |
+
+Three deliberate design choices worth carrying forward:
+
+- **The walk is ONE builder, not a third copy.** `ordinary-to-primitive-probe.ts`
+  is what both new call sites use, so the `+` residue's answer and the ToString
+  answer cannot drift the way the four renderings above did.
+- **`null` is not an accepted primitive result.** In standalone `undefined` and
+  `null` are the same null externref, and the module already contains BOTH
+  renderings of that one value (`normaliseToString` says `"undefined"`, the
+  #4621-D raw-null arm says `"null"`). Picking either would make the walk
+  disagree with one of them for a value it cannot distinguish, so it declines.
+- **Widening ToPrimitive forced `.length` off it.** `new String("ABCABC").length`
+  became **2** the moment the override was honoured — §22.1.4.1 fixes `length`
+  at construction. `__to_primitive` had only ever been standing in for the slot
+  read ("reads the slot first", its own comment); the two stopped being the same
+  operation and had to be separated. Same for the §10.4.3.5 index read. Both are
+  pinned as regression guards.
+
+### Gate grants (frontmatter, per-file rationale)
+
+- `src/codegen/object-runtime.ts` (+7 LOC) and
+  `ensureObjectRuntime` (func budget): the `[[PrimitiveValue]]` arms were
+  extracted to `to-primitive-wrapper-slot.ts` to keep the god-file growth to the
+  call sites; +7 is the `__wrapper_string_value` identity arm plus the deps
+  literal. `ensureObjectRuntime` is a 5.5k-line function no slice of this size
+  can split further.
+- `src/codegen/array-object-proto.ts` (+10) — two `??` arms in `makeGlue`'s
+  ladder (Function/toString, Object/valueOf); the bodies live in their own files.
+- `src/codegen/index.ts` (+10, `generateModule`/`generateMultiModule`) — one
+  `fillCallableAnyToStringArm` call plus its comment on each of the two
+  finalize paths.
+- `src/codegen/property-access-dispatch.ts` — the `.length` slot-read switch is
+  net-negative code with a longer comment.
+- `src/codegen/context/types.ts` (+16) — one new field,
+  `protoNamedWrittenMembers`, and the doc explaining why `protoNamedDirty` alone
+  cannot gate a ToPrimitive consult (the harness prelude sets it in nearly every
+  test262 module). A context field has to live in the context type.
+- `src/codegen/native-strings.ts` (+16) — two exported helper-KEY constants
+  (`ANY_TO_STRING_HELPER`, `EXTERN_TO_STRING_HELPER`) plus their doc. They live
+  here because this file is the engine-owned home of that vocabulary under the
+  #2108 gate; spelling the names anywhere else is the drift that gate measures.
+
+No `coercion-sites-allow` was needed, and the reason is worth keeping: the first
+cut of `callable-any-to-string.ts` hand-rolled its own boxed-number / i31 /
+boxed-boolean → string matrix and the #2108 gate caught it
+(`number_toString 0→1, __any_to_string 0→1`). The fix was not an allowance but a
+SELF-CALL back into `__any_to_string` on a value already proven primitive — which
+removes the fourth copy of the §7.1.17 cascade, inherits the `$undefined`-
+singleton and i31 arms for free, and terminates by construction (the recursive
+argument is non-callable, so the arm's own guard fails on re-entry).
+`native-strings.ts` now exports `ANY_TO_STRING_HELPER` so the lookup key has one
+spelling in the file that owns it.
+
+## Handover — NOT this lane's row
+
+`built-ins/String/prototype/constructor/S15.5.4.1_A1_T2.js` is
+`var __constr = String.prototype.constructor; new __constr("choosing one")` — a
+builtin CONSTRUCTOR read as a value and then `new`'d ("TypeError: is not a
+constructor"). That is the builtin-as-value family, **dev-4515's lane**; nothing
+in this change-set touches constructor reification, and it did not move.
+
+**Re-verified 2026-08-24 rather than assumed**, because #4515's C1 cluster has
+since landed on `main` and this branch carries it: on the after arm the row still
+reports the identical `TypeError: is not a constructor`. So C1 did not close this
+spelling. Back to #4515 with that evidence.
+
+## Test Results — wave-5 verification floor (dev-4492, runs executed 2026-08-23/24)
+
+Branch `issue-4492-wave5-cont`, worktree
+`/home/user/js2wasm/.claude/worktrees/agent-a49a0d0d70faf5d03`. The container
+restart killed the original lane; the four commits were recovered onto this
+branch from `d47ae4583` and `origin/main` `f6e094cdb` was merged in cleanly (no
+conflicts) BEFORE any measurement below. Every figure here is from a run
+executed in this worktree — nothing is inherited.
+
+### Arm separation, proved rather than asserted
+
+The eval adapter is a js2wasm-compiled artifact whose cache key hashes the
+compiler BUNDLE, so a stale bundle yields a self-consistent cache HIT with a
+weeks-old compiler. Both arms were rebuilt (`pnpm run build:compiler-bundle` +
+`build-quickjs-eval-provider`) and reported **cache MISS**, with distinct keys:
+
+| arm | bundle hash | adapter key |
+| --- | --- | --- |
+| after (`HEAD`) | `41adcd1b2b8d58b8` | `c2de6d0184cddb5d` |
+| base (src reverted to `f6e094cdb`) | `27deb1cc9f8a236c` | `70afda182fdbfd59` |
+
+The base shards' own banner line confirms `adapter key 70afda182fdbfd59` was the
+one in use, so neither arm was measured with the other's compiler. Restoring the
+after arm afterwards reproduced key `c2de6d0184cddb5d` as a cache HIT — i.e. the
+restored tree is bit-for-bit the tree that produced the after numbers.
+
+The revert was checked with `git diff HEAD --stat -- src` = **15 files** before
+the base arm and **0** before the after arm. `git diff --stat` alone is the wrong
+detector here and would have hidden a partial restore: `git checkout <commit> --
+<paths>` writes the INDEX too, so ten of the fifteen files were invisible to it
+(it listed only the five deleted new files).
+
+### Sweep scope — 2,005 rows per arm, and why it is this size
+
+`--target standalone`, `runTest262File` per row, `SWEEP_TIMEOUT=120000`.
+
+Kept in full: `built-ins/String` (1,223), `built-ins/Number` (340),
+`built-ins/Boolean` (51), `built-ins/Function/prototype/toString` (80),
+`built-ins/Object/prototype/valueOf` (20) + `.../toString` (41),
+`built-ins/Object/S15.2.*` (49), `language/function-code/10.4.3-1-*` (200),
+plus `language/expressions/object/S11.1.5_A2.js`.
+
+Dropped (505 rows): the rest of `built-ins/Object/prototype`, the rest of
+`built-ins/Object` top-level, the rest of `language/function-code`, and
+`language/expressions/object` top-level — wide and not reachable from this diff.
+The two `Object/prototype` subdirs and the `10.4.3-1-*` family were deliberately
+KEPT against a wider drop proposal: `fefaa9ab4` wires the very methods the first
+two test, and `6811828f5` changes exactly when a wrapper's `[[PrimitiveValue]]`
+short-circuit fires, which is what the third exercises. A scope cut that removes
+the directory testing one of your own fixes is deleting the evidence.
+
+### Before / after
+
+| arm | pass | fail | compile_error |
+| --- | --- | --- | --- |
+| base | 1,748 | 241 | 16 |
+| after | **1,753** | 236 | 16 |
+
+**Net +5, regressions 0.** The 16 compile errors are the SAME 16 files on both
+arms (standalone RegExp/`matchAll` refusals, unrelated to this change), and
+**zero rows on either arm carry a `timeout` error** — so the contention trap
+that manufactured false flips elsewhere this session did not touch these numbers.
+
+### Flip list (all 5 re-run SERIALLY on both arms, one file at a time)
+
+| test262 row | base | after |
+| --- | --- | --- |
+| `built-ins/String/S15.5.2.1_A1_T8.js` | `new String(fn)` = `[object Object]` | pass |
+| `built-ins/String/S15.5.2.1_A1_T11.js` | `new String(__obj)` = `[object Object]` | pass |
+| `built-ins/String/S15.5.5.1_A5.js` | own `valueOf` ignored, `==` saw `ABCABC` | pass |
+| `built-ins/String/prototype/slice/S15.5.4.13_A1_T5.js` | `Function.prototype.toString is not yet implemented` | pass |
+| `built-ins/String/prototype/substring/S15.5.4.15_A1_T5.js` | same refusal | pass |
+
+Root ↔ flip mapping: root 1 (missing reflective bodies) closes the two
+`_A1_T5` rows; roots 2+3 (callable ToString + prototype-installed method)
+close `_A1_T8`/`_A1_T11`; root 4 (wrapper slot gating) closes `S15.5.5.1_A5`.
+
+### Pins
+
+`tests/issue-4492-wave5.test.ts`, read off vitest's own summary line (never the
+exit status — it is uncorrelated in both directions):
+
+- after arm: **`Tests 34 passed (34)`** — executed 34 = total 34.
+- base arm (before the four R3 pins were added): **`Tests 10 failed | 20 passed
+  (30)`** — executed 30 = total 30. All **nine** positive family pins fail on the
+  arm they test, plus one R4 control, so every pin is sensitive to this
+  change-set. The three GUARD pins pass on both arms by design.
+
+### Census drift worth recording
+
+`built-ins/String/prototype/replace/S15.5.4.11_A1_T5.js` is listed in the wave-5
+census as failing, but it **passes on the BASE arm** — a sibling lane closed it
+between the census sweep and this one. It is not a flip of this change-set.
+
+## Residuals — 18 census rows still failing, with owners
+
+Every attribution below that says "root" was PROBED; the ones that say
+"suspected" were not, and are labelled so on purpose. `it.fails` pins protect a
+wrong root from ever being tested, so each cluster carries positive controls
+chosen to claim the specific root rather than the area.
+
+### R1 — an `Array.prototype.toString` override and the receiver spelling
+
+Census row: `built-ins/String/S15.5.1.1_A1_T8.js`. **This corrects the earlier
+write-up in this file**, which said `String(<array>)` folds to the native join
+"before any consult". Measured, one module per cell:
+
+| receiver | `String(x)` | `x.toString()` | `"" + x` |
+| --- | --- | --- | --- |
+| `new Array` inline | ✗ | — | — |
+| `[]` inline | ✗ | — | — |
+| `[1, 2]` inline | ✗ | — | — |
+| `var a = new Array` | **✓** | ✓ | ✗ |
+| `var a = [1, 2]` | **✓** | — | — |
+
+Axes varied: receiver spelling, array emptiness, operation. Held fixed:
+standalone target, override installed at the top of the same exported function,
+one exported function per module. The previous note attributed the var form's
+success to "the literal's own dynamic index reads" — refuted: `var a = [1, 2];
+String(a)` has no index read and still passes.
+
+Two separable defects fall out:
+
+1. **INLINE receiver** — `String(new Array)` / `String([1,2])` ignore the
+   override. Mechanism **suspected, not established**: an inline array-typed
+   receiver plausibly keeps a concrete vec struct the compile-time array→string
+   lowering claims before the runtime consult is reachable. A WAT read did not
+   settle it (emitted names are numeric).
+2. **`"" + a` ignores it even with a named receiver** — previously unrecorded.
+   The `+` path reaches `__to_primitive`'s vec arm
+   (`src/codegen/array-to-primitive.ts`), whose body is a hard-coded `join(",")`
+   with no prototype consult. This is the self-contained one.
+
+Owner: the Array lane (dev-4655 / #4556 bucket A). Relayed with this table.
+
+### R2 — `F.prototype.toString` is unreachable FROM the instance
+
+Census row: `built-ins/String/prototype/slice/S15.5.4.13_A3_T4.js`. **Also a
+correction**: the earlier note said the fnctor instance "stays a closed nominal
+struct with no chain for `__extern_get` to walk". Refuted by probe —
+
+| observation | result |
+| --- | --- |
+| `"toString" in F.prototype` / `hasOwnProperty` | ✓ |
+| `typeof F.prototype[k] === "function"`, `F.prototype[k].call({value:7})` | ✓ `"v7"` |
+| `Object.getPrototypeOf(inst) === F.prototype` | ✓ |
+| `inst.toString()` (compile-time member dispatch) | ✓ `"v7"` |
+| `"toString" in inst` | **✗** |
+| `inst[k]()` (computed key, runtime walk) | **✗** — neither `"v7"` nor the `[object Object]` tag |
+| `String(inst)` / `"" + inst` / `` `${inst}` `` | **✗** |
+
+So the prototype object carries the override, the link identity is right, and
+the miss is specifically the **instance→prototype edge used by the runtime
+property walk** — which is the edge `__class_to_primitive`'s new tail asks
+`__extern_get` for. Owner: #2660 S3 / #2175 (fnctor instance representation),
+upstream of everything this change-set touches.
+
+### R3 — the runtime ToString terminal has no §20.1.3.6 brand classifier
+
+**Three census rows, one root, each confirmed by probe rather than grouped by
+resemblance.** In all three the compile-time tag site is CORRECT and the
+runtime-provenance spelling is wrong — that identical signature is what makes
+them one cluster:
+
+| census row | correct spelling | wrong spelling |
+| --- | --- | --- |
+| `built-ins/String/prototype/split/instance-is-math.js` | `Object.prototype.toString.call(Math)` ✓ | `String(Math)`, `"" + m` ✗ |
+| `built-ins/String/prototype/trim/15.5.4.20-2-51.js` | `Object.prototype.toString.call(argObj)` ✓ `[object Arguments]` | `String(argObj)` ✗ — answers the array join `"1,2,true"` |
+| `built-ins/Number/15.7.4-1.js` | `…call(Number.prototype)` ✓, `…call(new Number(42))` ✓ | `…call(Object.getPrototypeOf(new Number(42)))` ✗ |
+
+The last one is the sharpest: same receiver object, two provenances. Written as
+a NAME the brand is resolved at compile time; obtained from `getPrototypeOf` it
+is only known at runtime and nothing classifies it. Owner: #4492 residual —
+needs the §20.1.3.6 classifier reachable from the runtime terminal AND from
+`Object.prototype.toString`'s dynamic-receiver arm.
+
+### R4 — the one `String(<wrapper>)` spelling bypasses ToPrimitive
+
+Negative case probed FIRST: after this change-set `s.toString()`, `s == want`,
+`"" + s` and a template substitution all answer the own method. Only `String(s)`
+does not, because that spelling is lowered as the `[[StringData]]` coercion
+(`__wrapper_string_value`) rather than §7.1.17 → ToPrimitive. Owner: #4492
+residual. No census row rides on it alone; it is pinned so a future widening of
+ToPrimitive does not silently re-break `.length` instead.
+
+### Measured but NOT attributed — 13 rows
+
+Arithmetic: 24 census paths − 5 flips − 1 already-passing (the drift row above) =
+**18 still failing**; R1/R2/R3 account for 5 of them, leaving these 13. One of
+the 13 (the `constructor` row) has an owner but no root from this lane. The rest
+were re-measured failing on the after arm and their exact symptom is recorded,
+but no root was probed, so **no root is claimed** — "root unknown, here is the
+symptom" is a better handover than a confident wrong root.
+
+| row | after-arm symptom |
+| --- | --- |
+| `built-ins/String/S15.5.1.1_A1_T9.js` | `String(this)` at top level → `TypeError: Cannot convert object to primitive value` |
+| `built-ins/String/prototype/constructor/S15.5.4.1_A1_T2.js` | `TypeError: is not a constructor` — #4515, re-verified above |
+| `built-ins/String/prototype/replace/S15.5.4.11_A1_T9.js` | `{valueOf: function(){}, toString: void 0}` receiver — wrong replace result |
+| `built-ins/String/prototype/split/argument-is-regexp-and-instance-is-number.js` | `__split.length` is 1, expected 4 |
+| `built-ins/String/prototype/split/separator-regexp-limit-string-via-eval.js` | `__split[0]` keeps the fractional tail |
+| `built-ins/String/prototype/concat/S15.5.4.6_A2.js` | `concat` with 128 arguments throws |
+| `built-ins/Object/S15.2.1.1_A2_T11.js` | `n_obj.constructor` is `undefined` |
+| `built-ins/Object/S15.2.2.1_A2_T7.js` | `n_obj.constructor` is a Function but not the expected one |
+| `built-ins/Object/S15.2.2.1_A2_T5.js` | `new Object(<Date>)` loses `getFullYear` |
+| `language/expressions/object/S11.1.5_A2.js` | `{prop: new Boolean(true)}` — `object.prop === x` is false (wrapper identity) |
+| `language/function-code/10.4.3-1-{103,104,106}.js` | `(5).x` — primitive-`this` box; `typeof (5).x` is `"object"`, expected `"number"` |
+
+(The last line covers three rows, which is how 11 table lines carry 13 rows.)
