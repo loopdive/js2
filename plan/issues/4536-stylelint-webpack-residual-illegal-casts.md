@@ -19,6 +19,10 @@ loc-budget-allow:
   - src/codegen/property-access.ts
   - src/codegen/declarations.ts
   - src/codegen/closures.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/index.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/context/types.ts
 func-budget-allow:
   - src/codegen/property-access.ts::compileElementAccessBody
   - src/codegen/declarations.ts::lowerParamType
