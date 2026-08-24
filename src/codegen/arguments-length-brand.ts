@@ -107,6 +107,23 @@ const MARK_NAME = "__args_brand_mark";
 const ABSENT_NAME = "__args_len_absent";
 const DELETE_NAME = "__args_len_delete";
 const REVIVE_NAME = "__args_len_revive";
+/**
+ * (#4491 wave-7) `__args_is_branded(vec) -> i32` — the plain "is this vec an
+ * `arguments` exotic?" query, which #4658 minted the brand for but never
+ * exposed on its own (every one of its four natives asks about `length`).
+ * §20.1.3.6 step 12 needs exactly that question and nothing about `length`:
+ * `Object.prototype.toString.call(<arguments>)` must be `[object Arguments]`,
+ * and the runtime classifier's `ref.test $__vec_base` arm answers
+ * `[object Array]` because both share `$Vec` (the same conflation #4667 records
+ * for `Array.isArray`).
+ *
+ * Deliberately NOT routed through `Array.isArray`/`__is_vec`: #4667's landing
+ * hazard is that narrowing THAT predicate flips test262's `propertyHelper`
+ * onto a string-valued `length` probe that #4658's residual 1 cannot satisfy,
+ * silently trading `10.6-6-2` away. This native is read by the class-tag
+ * classifier only, so it cannot reach that harness branch.
+ */
+const IS_BRANDED_NAME = "__args_is_branded";
 
 /**
  * Reserve `__args_brand_mark(externref vec) -> ()` as a no-op stub. Idempotent;
@@ -130,6 +147,7 @@ export function reserveArgumentsLengthBrand(ctx: CodegenContext): number | undef
   reserve(ABSENT_NAME, [EXT], [I32], [{ op: "i32.const", value: 0 }]);
   reserve(DELETE_NAME, [EXT, EXT], [I32], [{ op: "i32.const", value: 0 }]);
   reserve(REVIVE_NAME, [EXT], [], []);
+  reserve(IS_BRANDED_NAME, [EXT], [I32], [{ op: "i32.const", value: 0 }]);
   return markIdx;
 }
 
@@ -212,6 +230,20 @@ export function buildArgumentsLengthAbsentMiss(ctx: CodegenContext, objParam: nu
   const call = buildArgumentsLengthAbsentCall(ctx, objParam);
   if (call.length === 0) return [];
   return [...call, { op: "if", blockType: { kind: "empty" }, then: [...miss(), { op: "return" }] }];
+}
+
+/**
+ * (#4491 wave-7) `i32` on the stack: is the vec in `objParam` a branded
+ * `arguments` exotic? `[]` when the native was never reserved (host/gc lane),
+ * so a caller must keep its own unconditional answer in that case.
+ */
+export function buildArgumentsIsBrandedCall(ctx: CodegenContext, objParam = 0): Instr[] {
+  const idx = ctx.funcMap.get(IS_BRANDED_NAME);
+  if (idx === undefined) return [];
+  return [
+    { op: "local.get", index: objParam },
+    { op: "call", funcIdx: idx },
+  ];
 }
 
 /** `__args_len_revive(obj)` — a store to `length` recreates the property. */
@@ -364,6 +396,14 @@ export function fillArgumentsLengthBrand(
   setFn(REVIVE_NAME, comp(), [
     ...loadCompanion(1, [{ op: "return" }]),
     ...updateFlags(1, 0, OBJ_FLAG_ARGS_LENGTH_ABSENT),
+  ]);
+
+  // ── __args_is_branded(vec) -> i32 ────────────────────────────────────────
+  // (#4491 wave-7) The same pure-query shape as ABSENT_NAME — LOOKUP, never
+  // ensure — reading the brand bit itself rather than the length tombstone.
+  setFn(IS_BRANDED_NAME, comp(), [
+    ...loadCompanion(1, [{ op: "i32.const", value: 0 }, { op: "return" }]),
+    ...testFlag(1, OBJ_FLAG_ARGUMENTS),
   ]);
 }
 
