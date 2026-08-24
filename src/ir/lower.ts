@@ -51,6 +51,7 @@ import type {
   IrClassLowering,
   IrClosureLowering,
   IrDynamicLowering,
+  IrFnctorLowering,
   IrObjectStructLowering,
   IrRefCellLowering,
   IrUnionLowering,
@@ -102,6 +103,7 @@ export type {
   IrClassLowering,
   IrClosureLowering,
   IrDynamicLowering,
+  IrFnctorLowering,
   IrObjectStructLowering,
   IrRefCellLowering,
   IrUnionLowering,
@@ -188,6 +190,8 @@ export interface IrLowerResolver {
    * collection pass — that's a selector bug.
    */
   resolveClass?(shape: IrClassShape): IrClassLowering | null;
+  /** Resolve one source/unit-qualified fnctor against finalized ABI state. */
+  resolveFnctor?(shape: import("./fnctor-abi.js").IrFnctorShape): IrFnctorLowering | null;
   /**
    * Slice 6 (#1169e): resolve a vec struct given its top-level Wasm
    * ValType. The IR carries the vec's value as a `ref`/`ref_null` to a
@@ -477,7 +481,7 @@ export function lowerIrFunctionBody<S, Slot>(
       `ir/lower: backend contract mismatch for ${func.name}: emitter=${emitter.backend}, type-converter=${typeConverter.backend}`,
     );
   }
-  const legalityErrors = verifyIrBackendLegality(func, emitter.backend);
+  const legalityErrors = verifyIrBackendLegality(func, emitter.backend, resolver);
   if (legalityErrors.length > 0) {
     const shown = legalityErrors.slice(0, 3).map((err) => err.message);
     throw new IrInvariantError(
@@ -1371,9 +1375,52 @@ export function lowerIrFunctionBody<S, Slot>(
       case "const":
         emitter.emitConst(instr, func.name, out);
         return;
-      case "fnctor.new":
-      case "fnctor.get":
-        throw new Error(`ir/lower: ${instr.kind} has no backend resolver yet (${func.name})`);
+      case "fnctor.new": {
+        const lowering = resolver.resolveFnctor?.(instr.shape);
+        if (!lowering || lowering.resultIsExternref || lowering.carrierType.kind === "externref") {
+          throw new Error(
+            `ir/lower: fnctor.new ${instr.shape.constructorName} has no exact struct ABI resolver (${func.name})`,
+          );
+        }
+        if (lowering.hiddenIdentity !== (instr.constructorIdentity !== null)) {
+          throw new Error(`ir/lower: fnctor.new hidden identity disagrees with resolved ABI (${func.name})`);
+        }
+        for (const value of instr.captureArgs) emitValue(value, out);
+        for (const value of instr.args) emitValue(value, out);
+        if (instr.constructorIdentity !== null) emitValue(instr.constructorIdentity, out);
+        if (emitter.backend !== "wasmgc") {
+          throw new Error(
+            `ir/lower: fnctor.new backend ${emitter.backend} has no representation contract (${func.name})`,
+          );
+        }
+        // The validated WasmGC fnctor constructor handle is lowered as a plain call;
+        // non-Wasm backends are rejected above.
+        emitter.pushRaw(out, { op: "call", funcIdx: resolver.resolveFunc(lowering.constructorFunc) }); // pushraw-ok(#3521): validated fnctor constructor call
+        return;
+      }
+      case "fnctor.get": {
+        const lowering = resolver.resolveFnctor?.(instr.shape);
+        if (!lowering || lowering.structTypeIdx === undefined || lowering.carrierType.kind === "externref") {
+          throw new Error(
+            `ir/lower: fnctor.get ${instr.shape.constructorName} has no exact struct ABI resolver (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        if (emitter.backend !== "wasmgc") {
+          throw new Error(
+            `ir/lower: fnctor.get backend ${emitter.backend} has no representation contract (${func.name})`,
+          );
+        }
+        // struct.get follows the validated nominal layout/field handle and
+        // WasmGC backend checks above.
+        // pushraw-ok(#3521): validated fnctor struct field read
+        emitter.pushRaw(out, {
+          op: "struct.get",
+          typeIdx: lowering.structTypeIdx,
+          fieldIdx: lowering.fieldIdx(instr.fieldName),
+        });
+        return;
+      }
       case "call": {
         const dateGetter =
           instr.target.binding.kind === "intrinsic"
@@ -4066,7 +4113,11 @@ export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcN
     return dyn;
   }
   if (t.kind === "fnctor") {
-    throw new Error(`ir/lower: fnctor ${t.shape.constructorName} has no backend resolver/lowering yet (${funcName})`);
+    const lowering = resolver.resolveFnctor?.(t.shape);
+    if (!lowering || lowering.resultIsExternref || lowering.carrierType.kind === "externref") {
+      throw new Error(`ir/lower: fnctor ${t.shape.constructorName} has no exact struct ABI resolver (${funcName})`);
+    }
+    return lowering.carrierType;
   }
   // boxed (refcell)
   // Slice 3 (#1169c): the resolver delegates to the legacy ref-cell

@@ -684,6 +684,39 @@ function verifyInstrStructure(
         block: block.id as number,
       });
     }
+    if (instr.shape.hiddenIdentity !== (instr.constructorIdentity !== null)) {
+      errors.push({
+        message: `fnctor.new hidden identity ${instr.shape.hiddenIdentity ? "must be present" : "must be absent"}`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    // Match the synthesized constructor ABI: every capture value is followed
+    // by the complete TDZ-flag segment, never an interleaved value/flag pair.
+    const expectedCaptureTypes: IrType[] = instr.shape.captures.map((capture) => capture.type);
+    for (const capture of instr.shape.captures) {
+      if (capture.hasTdzFlag) expectedCaptureTypes.push({ kind: "val", val: { kind: "i32" } });
+    }
+    for (let i = 0; i < expectedCaptureTypes.length && i < instr.captureArgs.length; i++) {
+      const actual = operandIrType(func, block, instr.captureArgs[i]!, localDefs);
+      if (actual && !irTypeEquals(actual, expectedCaptureTypes[i]!)) {
+        errors.push({
+          message: `fnctor.new capture ${i} type does not match the nominal capture ABI`,
+          func: func.name,
+          block: block.id as number,
+        });
+      }
+    }
+    for (let i = 0; i < instr.args.length && i < instr.shape.userParamTypes.length; i++) {
+      const actual = operandIrType(func, block, instr.args[i]!, localDefs);
+      if (actual && !irTypeEquals(actual, instr.shape.userParamTypes[i]!)) {
+        errors.push({
+          message: `fnctor.new argument ${i} type does not match the nominal constructor ABI`,
+          func: func.name,
+          block: block.id as number,
+        });
+      }
+    }
     if (
       instr.resultType === null ||
       instr.resultType.kind !== "fnctor" ||

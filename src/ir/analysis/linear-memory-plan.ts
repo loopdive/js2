@@ -27,6 +27,7 @@ import { analyzeEscape, type EscapeClass, type EscapeInfo } from "./escape.js";
 import type { Ownership } from "./lattice.js";
 import { analyzeOwnership } from "./ownership.js";
 import { findStackAllocCandidates } from "./stack-alloc.js";
+import { irFnctorShapeKey } from "../type-key.js";
 
 /** JS2's current linear address width. Kept here rather than in an emitter. */
 export const LINEAR_POINTER_BYTES = 4;
@@ -975,28 +976,10 @@ function linearIrTypeKey(type: IrType): string {
     case "boxed":
       return `boxed:${linearIrTypeKey(type.inner)}`;
     case "fnctor":
-      return `fnctor:${JSON.stringify({
-        sourceId: type.shape.sourceId,
-        constructorUnitId: type.shape.constructorUnitId,
-        constructorTarget: canonicalFnctorRef(type.shape.constructorTarget),
-        reservedLayout: canonicalFnctorRef(type.shape.reservedLayout),
-      })}`;
+      return irFnctorShapeKey(type.shape);
     case "dynamic":
       return "dynamic";
   }
-}
-
-function canonicalFnctorRef(ref: { readonly kind: string; readonly binding: unknown }): string {
-  return `${ref.kind}:${canonicalFnctorJson(ref.binding)}`;
-}
-
-function canonicalFnctorJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalFnctorJson).join(",")}]`;
-  return `{${Object.entries(value as Record<string, unknown>)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalFnctorJson(entry)}`)
-    .join(",")}}`;
 }
 
 function shapeKey(shape: IrObjectShape): string {

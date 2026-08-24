@@ -30,6 +30,8 @@ files:
   - src/ir/prepare.ts
   - src/ir/integration.ts
   - src/ir/abi-bindings.ts
+  - src/ir/callable-bindings.ts
+  - src/ir/fnctor-abi.ts
   - src/ir/nodes.ts
   - src/ir/prepared-component-dependencies.ts
   - src/ir/string-carrier.ts
@@ -52,6 +54,7 @@ files:
   - src/codegen/ir-overlay-safety.ts
   - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/program-abi-export-planning.ts
+  - src/codegen/program-abi-fnctor-planning.ts
   - src/codegen/module-global-registration.ts
   - src/codegen/context/types.ts
   - src/codegen/context/create-context.ts
@@ -66,6 +69,9 @@ files:
   - tests/issue-3520-program-abi-import-callable-planning.test.ts
   - tests/issue-3520-callable-provider-abi.test.ts
   - tests/issue-3765-numeric-locals.test.ts
+  - tests/ir/fnctor-abi.test.ts
+  - scripts/check-ir-kind-neutrality.mjs
+  - scripts/ir-kind-neutrality-baseline.json
 loc-budget-allow:
   - src/codegen/context/types.ts
   - src/codegen/program-abi-session.ts
@@ -89,6 +95,7 @@ func-budget-allow:
   - src/ir/lower.ts::emitInstrTree
   - src/ir/verify.ts::verifyInstrStructure
   - src/ir/passes/inline-small.ts::renameInstrOperands
+  - src/codegen/context/create-context.ts::createCodegenContext
 ---
 
 # #3521 — IR-only R2: prepare-before-emit free-function ownership
@@ -1198,3 +1205,48 @@ are canonicalized independent of object insertion order, recursive anonymous
 fnctor graphs are rejected by validation/keying, and fnctor returns require an
 exact nominal match. No standalone lowering, ABI emission, compiler/runtime
 execution, or R2 replay is claimed here.
+
+## 2026-08-24 fnctor instruction contract hardening checkpoint
+
+The follow-up review closed the remaining instruction-contract gaps before the
+physical resolver slice. `fnctor.new` now has an explicit `hiddenIdentity`
+mode; the builder, verifier, symbolic resolution validator, and operand checks
+require the mode and flattened capture/TDZ/user ABI to agree. Ownership and
+escape analyses treat constructor operands as an opaque heap boundary and
+`fnctor.get` as a heap read. Prepared-closure support rejects the opaque arm
+explicitly, and every backend legality profile rejects fnctor instructions
+before raw lowering rather than allowing a late emitter throw.
+
+The monomorphization and linear-memory planners now consume the shared full
+semantic fnctor key, including fields, captures, user parameters, hidden
+identity, and nominal bindings. The lowering seam is present as an optional
+`IrLowerResolver.resolveFnctor(shape)` returning a physical handle; lowering
+still fails closed when no source/unit-qualified prepared handle is installed.
+The next checkpoint must add the Program-ABI fnctor sidecar and synthesized
+constructor support binding before any AST producer or runtime replay is
+enabled. No compiler/runtime execution or R2 replay is claimed here.
+
+## 2026-08-24 source/unit fnctor resolver seam checkpoint
+
+The next static slice adds `ProgramAbiFnctorRegistry` as the only permitted
+source/unit-qualified observation sidecar. Its observations require exact
+`fnctor-constructor` and `fnctor-layout` support binding IDs, authoritative
+planning identity membership, a live constructor function handle/object pair,
+physical capture/TDZ/user arities, field order, hidden-identity mode, and
+immutable one-observation-per-source/unit equality. The IR resolver delegates
+to this sidecar and the WasmGC legality check accepts a fnctor instruction only
+when that resolver returns a non-null handle; resolver-free callers and all
+other backends remain fail-closed. Constructor operands use the legacy ABI
+order (all capture values, then all TDZ flags, then user args, then optional
+identity), and hidden identity participates in equality and canonical keys.
+
+This is still a dormant resolver seam: no AST producer currently records an
+observation or plans the synthesized support callable/layout, so no fnctor
+instruction can pass the final resolver gate in this checkpoint. The next
+implementation slice must attach the producer to ProgramAbiSession planning,
+verify the physical struct/function signatures and support locators, and add
+the source-local linked-parser lowering before any compiler/runtime replay.
+Static typecheck, focused ABI tests, formatting, IR layering/function/LOC and
+pushRaw gates pass; the linear-IR script is environment-blocked by tsx IPC
+socket permission in this worktree. No compiler/runtime execution or R2
+replay is claimed.
