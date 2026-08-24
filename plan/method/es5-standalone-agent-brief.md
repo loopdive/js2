@@ -611,9 +611,40 @@ Two rules follow.
 
 1. **Spawn on the count of ACTIVE lanes, not on instantaneous load.** On this 4-core box
    the cap is four lanes total, and load at spawn time is not evidence about the fourth.
-2. **The lane, not the lead, holds the measurement gate.** A lane must run `uptime` and
-   wait for the 1-min average below ~5 *immediately before launching a sweep arm* — not
-   when it was dispatched. Analysis parallelises fine; measurement does not.
+2. **The lane, not the lead, holds the measurement gate.** A lane must run `uptime`
+   *immediately before launching a sweep arm* — not when it was dispatched. Analysis
+   parallelises fine; measurement does not.
+
+**Correction, same day: a bare `wait for load < 5` is a DEADLOCK, not a gate.** It was
+written for a box with one marginal sweeper. With two siblings sweeping continuously the
+threshold is never reached, so a lane that obeys it literally sits on a finished
+implementation until its pacer times out and then reports nothing — which is strictly
+worse than a slightly noisier measurement. A lane asked instead of waiting the full two
+hours, and it was right to.
+
+The gate is therefore conditional on whether **your** sweep is the marginal load:
+
+- **Load is low and you would be the one raising it** → go, and stagger against siblings.
+- **Load is already saturated by siblings and yours is not the marginal contribution**
+  → waiting buys nothing. Go at whatever the load is, with **two** obligations:
+  **record the measured load per arm in the report**, and **serially re-verify every
+  apparent flip AND every apparent regression** before it enters the report. A sweep at
+  load 7 with those two things is sound evidence; a sweep at load 2 without them is not.
+- **Either way, commit your implementation BEFORE you sweep.** A container restart today
+  killed four lanes and only committed work survived. Holding a finished fix in an
+  uncommitted tree through a multi-hour pacer window is the avoidable half of that risk;
+  A/B arms live in `.tmp/` and do not require a dirty tree.
+
+## Movement is not a flip — say which one you measured
+
+A row that goes from failing at assertion 1 to failing at assertion 3, or from *wrong
+values* to *correct values with wrong presence*, has **moved** but has **not flipped**.
+Report it as movement, name the new failing assertion, and keep it out of the flip count.
+
+This matters more than it sounds. The campaign's rate is a sum of per-lane flip counts,
+and the tempting shorthand — "4 rows improved" — makes that total unauditable, because
+the next reader cannot tell which rows a later measurement should find passing. Movement
+is real evidence that the root was correctly identified; it is just not a row.
 
 Corollary for reading results: a `compilation timeout` or `driver_error` row from a sweep
 taken at load ≥ 8 is a **measurement failure, not a status**, and must be re-run serially
