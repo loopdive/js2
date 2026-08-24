@@ -792,3 +792,42 @@ Two defences:
   this, which is why its numbers were unaffected.
 - If you must use `find`, diff your list against `git -C test262 ls-files` and account for
   every extra.
+
+## Implement, measure, REVERT — a refusal beats a silent wrong answer
+
+The #4492 wave-6 lane built a fix for `new X.prototype.constructor`, measured it, and
+**reverted it**. That was the right call and the pattern is worth naming, because the
+temptation runs the other way: code already written feels like sunk value.
+
+What it measured: excluding the `constructor` name from the "prototype METHOD"
+classification turns a **loud refusal** into a **silent wrong answer**.
+`new String.prototype.constructor("choosing one")` builds a plain object, `== "choosing one"`
+answers `false`, and **nothing throws**. Neither target row flips either way — so the change
+bought zero rows and cost the diagnostic.
+
+The rule: **when a fix converts an explicit refusal into a wrong value, it is a regression
+even if no test262 row records it.** A `TypeError: … is not yet callable as a value` is a
+correct statement about the compiler's coverage; a plain object that silently compares
+false is not. Absent-not-wrong applies to *fixes*, not only to features you decline to
+start.
+
+Report the reverted attempt anyway — the diagnosis is the deliverable. This one routed to
+#4515 with the real requirement named (the intrinsic-construct path, not a predicate edit),
+which is worth more than the two rows it did not move.
+
+## "Arming" is a separate blocker from "the mechanism is broken"
+
+Same lane, second decline worth copying. Two rows fail not because the mechanism is wrong
+but because it is never **armed**: their modules never name a builtin prototype, so
+`protoMemberDirty` stays clear and the store is never reserved. Adding one line
+(`var arm = Function.prototype`) to the probe flips both.
+
+That is a genuinely different finding from "broken", and it changes the cost estimate
+completely — closing it means arming on "a non-literal is assigned to a `.prototype`",
+which turns the seeder on for every such module, and `isProtoMemberValueUse`'s own comment
+records that perturbing IR eligibility (#2855) is expensive. The lane priced it and
+declined: two rows is not that price.
+
+**So when a row fails, establish which of the two you have** — a broken mechanism, or a
+correct mechanism that never armed. The probe that distinguishes them is one line, and the
+answer changes the issue's size by an order of magnitude.
