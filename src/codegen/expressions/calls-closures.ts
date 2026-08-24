@@ -434,6 +434,17 @@ function compileRestClosureArguments(
     pushDefaultValue(fctx, restType, ctx);
     return { fixedParamCount, restExternLocals: [] };
   }
+  // TypeScript represents an unused `...rest` parameter as an empty tuple
+  // struct rather than the ordinary `(length, data)` vec.  It is still a
+  // non-null lifted formal, so padding it with `pushDefaultValue(ref)` emits
+  // `ref.null; ref.as_non_null` and traps before the callee can materialize its
+  // `arguments` object.  Construct the canonical empty tuple instead; the
+  // arguments-object builder treats the parameter as a normal boxed formal.
+  const restDef = ctx.mod.types[restType.typeIdx];
+  if (restDef?.kind === "struct" && restDef.fields.length === 0) {
+    fctx.body.push({ op: "struct.new", typeIdx: restType.typeIdx });
+    return { fixedParamCount, restExternLocals: [] };
+  }
   const vecInfo = getVecInfo(ctx, restType.typeIdx);
   if (vecInfo === null) {
     pushDefaultValue(fctx, restType, ctx);

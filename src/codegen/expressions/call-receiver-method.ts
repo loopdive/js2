@@ -117,6 +117,7 @@ import { ensureTaMapFilterHelper } from "../ta-hof-map-filter.js";
 import { ensureUint8ToBase64, ensureUint8ToHex } from "../uint8-codec.js";
 import { tryCompileTemporalMethodCall } from "../temporal-native.js";
 import { ensureTextEncodingHelpers } from "../text-encoding-native.js";
+import { isArgumentsObjectIdentifier } from "../arguments-object-mop.js";
 import { defaultValueInstrs, emitGuardedRefCast, pushDefaultValue } from "../type-coercion.js";
 import { compileDateMethodCall } from "./builtins.js";
 import {
@@ -2186,6 +2187,25 @@ export function compileReceiverMethodCall(
   // Do not specialize it as a Wasm vec from the method spelling alone: the
   // generic object-runtime call preserves the admitted raw JS receiver and
   // reaches the boundary-object adapter only on its non-native fallback.
+  // Standalone/WASI represent the implicit `arguments` object as a packed vec,
+  // so the array-method dispatcher must not claim its inherited toString.
+  // §10.6 exposes the ordinary-object tag instead. Keep this before the array
+  // arm and binding-aware so an explicit local/parameter named `arguments`
+  // remains on the ordinary property path.
+  if (
+    (ctx.standalone || ctx.wasi) &&
+    propAccess.name.text === "toString" &&
+    expr.arguments.length === 0 &&
+    ts.isIdentifier(propAccess.expression) &&
+    isArgumentsObjectIdentifier(ctx, fctx, propAccess.expression) &&
+    !sourceOverridesMethodOnReceiver(propAccess.expression, "toString", ctx)
+  ) {
+    const tag = "[object Arguments]";
+    addStringConstantGlobal(ctx, tag);
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, tag));
+    return { kind: "externref" };
+  }
+
   if (
     !(
       ctx.targetProfile.semanticProviders === "native-first" &&

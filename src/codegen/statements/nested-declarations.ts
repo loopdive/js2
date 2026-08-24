@@ -1851,7 +1851,10 @@ function annexBBlockNestedEligible(fnDecl: ts.FunctionDeclaration): ts.Node | nu
   const scope = enclosingVarScope(fnDecl);
   if (scope && hasInterveningLexicalBinder(fnDecl.parent, name, scope)) return null;
   if (!annexBNameObservedOutsideRange(name, declaringRange)) return null; // (#2552) not observed → no binding
-  if (annexBNameReassignedInRange(name, declaringRange)) return null; // (#2552) mutable split → pre-Phase-2 path
+  // The block function's own lexical binding may be reassigned by its body;
+  // that does not mutate the Annex-B outer var binding. Keep the declaration
+  // on the TDZ/closure path so the outer value remains callable after the
+  // block's function activation changes its self binding.
   if (annexBSameNameVarOrFunctionInScope(name, declaringRange)) return null; // (#2552) existing F → use it
   return declaringRange;
 }

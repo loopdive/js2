@@ -541,6 +541,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
       vecTypeIdx: number;
       arrTypeIdx: number;
       elemType: ValType;
+      emptyStruct?: boolean;
     };
   }[] = [];
   const restEntries: (typeof entries)[number][] = [];
@@ -580,6 +581,23 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
             selfTypeIdx,
             closureArity: hostArity,
             rest: { matchTypeIdx: typeIdx, vecTypeIdx, arrTypeIdx, elemType: arrDef.element },
+          });
+          continue;
+        }
+        const vecDef = mod.types[vecTypeIdx];
+        if (vecDef?.kind === "struct" && vecDef.fields.length === 0) {
+          restEntries.push({
+            funcTypeIdx: info.funcTypeIdx,
+            returnType: info.returnType,
+            selfTypeIdx,
+            closureArity: hostArity,
+            rest: {
+              matchTypeIdx: typeIdx,
+              vecTypeIdx,
+              arrTypeIdx: -1,
+              elemType: { kind: "externref" },
+              emptyStruct: true,
+            },
           });
           continue;
         }
@@ -684,7 +702,9 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
         funcTypeDef?.kind === "func" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;
       argInstrs.push(...buildArgConversion(i + 1, paramType));
     }
-    if (entry.rest) {
+    if (entry.rest?.emptyStruct) {
+      argInstrs.push({ op: "struct.new", typeIdx: entry.rest.vecTypeIdx });
+    } else if (entry.rest) {
       const restCount = arity - entry.closureArity;
       argInstrs.push({ op: "i32.const", value: restCount });
       for (let i = entry.closureArity; i < arity; i++) {
@@ -731,10 +751,22 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
       setupInstrs.push({ op: "global.set", index: extrasArgvGlobalIdx });
     }
 
+    // Most closure trampolines receive their closure self as parameter 0.
+    // The synthetic `arguments` function used for an Annex-B declaration that
+    // collides with the enclosing function's implicit arguments binding is a
+    // genuine zero-parameter function, however: it has no self parameter at
+    // all.  Supplying the wrapper self to that `call_ref` leaves one extra
+    // value on the stack and makes the generated dispatcher invalid.
+    const directZeroParam = funcTypeDef?.kind === "func" && funcTypeDef.params.length === 0;
+    const selfArgInstrs: Instr[] = directZeroParam
+      ? []
+      : [
+          { op: "local.get", index: anyLocal },
+          { op: "ref.cast", typeIdx: entry.selfTypeIdx },
+        ];
     const callBody: Instr[] = [
       ...setupInstrs,
-      { op: "local.get", index: anyLocal },
-      { op: "ref.cast", typeIdx: entry.selfTypeIdx },
+      ...selfArgInstrs,
       ...argInstrs,
       { op: "local.get", index: funcLocal },
       { op: "ref.cast", typeIdx: entry.funcTypeIdx },
@@ -971,6 +1003,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
       vecTypeIdx: number;
       arrTypeIdx: number;
       elemType: ValType;
+      emptyStruct?: boolean;
     };
   }[] = [];
   const restEntries: (typeof entries)[number][] = [];
@@ -1006,6 +1039,23 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
             selfTypeIdx,
             closureArity: hostArity,
             rest: { matchTypeIdx: typeIdx, vecTypeIdx, arrTypeIdx, elemType: arrDef.element },
+          });
+          continue;
+        }
+        const vecDef = mod.types[vecTypeIdx];
+        if (vecDef?.kind === "struct" && vecDef.fields.length === 0) {
+          restEntries.push({
+            funcTypeIdx: info.funcTypeIdx,
+            returnType: info.returnType,
+            selfTypeIdx,
+            closureArity: hostArity,
+            rest: {
+              matchTypeIdx: typeIdx,
+              vecTypeIdx,
+              arrTypeIdx: -1,
+              elemType: { kind: "externref" },
+              emptyStruct: true,
+            },
           });
           continue;
         }
@@ -1135,7 +1185,9 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
         funcTypeDef?.kind === "func" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;
       argInstrs.push(...buildArgConversion(i + 2, i, paramType));
     }
-    if (entry.rest) {
+    if (entry.rest?.emptyStruct) {
+      argInstrs.push({ op: "struct.new", typeIdx: entry.rest.vecTypeIdx });
+    } else if (entry.rest) {
       const restCount = arity - entry.closureArity;
       argInstrs.push({ op: "i32.const", value: restCount });
       for (let i = entry.closureArity; i < arity; i++) {

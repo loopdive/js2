@@ -22,9 +22,9 @@ import {
   hasInterveningLexicalBinder,
 } from "./annexb-cancel.js";
 import { tryCompileAnnexBModuleBlockFnEvaluation } from "./annexb-global-live-binding.js";
-import { emitCachedFuncClosureAccess } from "./closures.js";
+import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "./closures.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
-import { getLocalType } from "./context/locals.js";
+import { allocLocal, getLocalType } from "./context/locals.js";
 import { attachSourcePos, getSourcePos } from "./context/source-pos.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { compileExpression, registerCompileStatement } from "./shared.js";
@@ -32,6 +32,7 @@ import { restoreBlockScopedShadows, saveBlockScopedShadows } from "./statements/
 import { sinkExpressionStatementValue } from "./statements/eval-completion-value.js";
 import { compileWithStatement } from "./with-scope.js";
 import { expressionRunsUserCode } from "./module-init-collection.js"; // (#4433) bare `typeof f();`
+import { noJsHost } from "./js-errors.js";
 
 // Sub-module imports — statement-family functions
 import {
@@ -56,6 +57,7 @@ import {
   compileNestedFunctionDeclaration,
 } from "./statements/nested-declarations.js";
 import { compileVariableStatement } from "./statements/variables.js";
+import { emitLocalTdzInit } from "./statements/tdz.js";
 import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { coerceType } from "./type-coercion.js";
 
@@ -227,13 +229,68 @@ function tryCompileAnnexBExistingDirectFunctionUpdate(
     }
   }
   if (innerIdx !== undefined) {
-    const closureType = emitCachedFuncClosureAccess(ctx, fctx, funcName, innerIdx);
+    const closureType = emitAnnexBFunctionClosure(ctx, fctx, stmt, funcName, innerIdx);
     if (closureType) {
       if (closureType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
       fctx.body.push({ op: "local.set", index: bindingLocal });
     }
   }
   return true;
+}
+
+/**
+ * Ordinary function declarations carry the nominal constructible marker in
+ * standalone/WASI closure values. Annex-B evaluation sites used to omit this
+ * flag while identifier reads supplied it, so both sites shared one cache
+ * global but disagreed about its struct type; the first site to initialize the
+ * cache then made the other site's ref.cast trap. Keep all declaration-value
+ * paths on the same wrapper family.
+ */
+function isOrdinaryFunctionDeclaration(ctx: CodegenContext, stmt: ts.FunctionDeclaration): boolean {
+  return (
+    (noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first") &&
+    stmt.asteriskToken === undefined &&
+    !(stmt.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false)
+  );
+}
+
+/**
+ * Annex-B function values may carry TDZ/capture cells when the declaration's
+ * body mutates its own binding. The cached singleton helper models the full
+ * function signature as user parameters and therefore cannot represent those
+ * hidden capture parameters; use the per-activation closure path for such
+ * declarations and retain the singleton for capture-free functions.
+ */
+function emitAnnexBFunctionClosure(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.FunctionDeclaration,
+  funcName: string,
+  funcIdx: number,
+): ReturnType<typeof emitCachedFuncClosureAccess> {
+  const constructible = isOrdinaryFunctionDeclaration(ctx, stmt);
+  const captures = ctx.nestedFuncCaptures.get(funcName);
+  const closureType =
+    captures && captures.length > 0
+      ? emitFuncRefAsClosure(ctx, fctx, funcName, funcIdx, constructible)
+      : emitCachedFuncClosureAccess(ctx, fctx, funcName, funcIdx, constructible);
+  const boxed = fctx.boxedCaptures?.get(funcName);
+  if (!closureType || !boxed || boxed.valType.kind !== "externref") return closureType;
+
+  // A function body that assigns to its own Annex-B name captures the mutable
+  // outer binding through a ref cell.  The closure must publish itself into
+  // that cell after construction; otherwise its first `f` read observes the
+  // null value captured while the box was being allocated.
+  if (closureType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+  const closureLocal = allocLocal(fctx, `__annexb_closure_${funcName}_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  fctx.body.push({ op: "local.tee", index: closureLocal });
+  fctx.body.push({ op: "local.get", index: fctx.localMap.get(funcName)! });
+  fctx.body.push({ op: "local.get", index: closureLocal });
+  fctx.body.push({ op: "struct.set", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.get", index: closureLocal });
+  return { kind: "externref" };
 }
 
 /**
@@ -481,15 +538,14 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
       }
       const fnIdx = ctx.funcMap.get(funcName);
       if (outerLocal !== undefined && flagLocal !== undefined && fnIdx !== undefined) {
-        const closureType = emitCachedFuncClosureAccess(ctx, fctx, funcName, fnIdx);
+        const closureType = emitAnnexBFunctionClosure(ctx, fctx, stmt, funcName, fnIdx);
         if (closureType) {
           // Closure value is on the stack; widen to externref for the outer local.
           if (closureType.kind !== "externref") {
             fctx.body.push({ op: "extern.convert_any" });
           }
           fctx.body.push({ op: "local.set", index: outerLocal });
-          fctx.body.push({ op: "i32.const", value: 1 });
-          fctx.body.push({ op: "local.set", index: flagLocal });
+          emitLocalTdzInit(fctx, funcName);
         }
       }
       // The function body itself was already compiled during the hoist pre-pass;
@@ -537,7 +593,7 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
       // through to today's wrong-but-valid behaviour instead.
       if (varLocal === undefined || fnIdx === undefined) return;
       if (getLocalType(fctx, varLocal)?.kind !== "externref") return;
-      const closureType = emitCachedFuncClosureAccess(ctx, fctx, funcName, fnIdx);
+      const closureType = emitAnnexBFunctionClosure(ctx, fctx, stmt, funcName, fnIdx);
       if (!closureType) return;
       if (closureType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
       fctx.body.push({ op: "local.set", index: varLocal });
