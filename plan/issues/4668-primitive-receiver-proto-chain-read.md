@@ -1,7 +1,7 @@
 ---
 id: 4668
 title: "ES5 standalone: a property read on a number/boolean PRIMITIVE never walks the wrapper prototype chain — `(5).x` answers null (language/ bucket)"
-status: in-progress
+status: in-review
 sprint: current
 created: 2026-08-24
 updated: 2026-08-24
@@ -15,12 +15,27 @@ es_edition: 5
 language_feature: property-access
 goal: standalone-gap
 assignee: ttraenkler/lane-language
+loc-budget-allow:
+  # CONSUMED by the shipped diff, not speculative. The local gate run on
+  # 2026-08-24 satisfied this growth from #4491's grant instead — that grant
+  # belongs to another lane's issue file, which this change-set does not touch,
+  # so it is a STRANDED grant under CI's merge-preview base. Restated here.
+  #   src/codegen/property-access.ts  +10  the arm's dispatch line (six lines)
+  #                                        plus the comment that says why it
+  #                                        sits immediately after #4483's arm
+  #                                        and before the legacy tail — the
+  #                                        position IS the design, since the two
+  #                                        arms' gates are exact complements.
+  #                                        The arm's body lives in its own new
+  #                                        module, primitive-proto-member-get.ts.
+  - src/codegen/property-access.ts
 ---
 
 # Primitive receiver property read does not walk the wrapper prototype chain
 
 `--target standalone`. Owner lane: the `language/` bucket of the ES≤5
-conformance campaign (38 remaining rows as of 2026-08-24).
+conformance campaign (38 remaining rows as of 2026-08-24; 35 after this
+change).
 
 ## Root cause
 
@@ -38,53 +53,88 @@ The terminal also never compiles the receiver, so the read has **no side
 effects at all** — which is the sharpest available discriminator and is what
 the probes below use.
 
-### What the deciding axis actually is
+### Two axes, and the second one nearly shipped wrong
 
-The issue was handed to this lane framed as the §10.4.3 primitive-`this`
-boxing rule — "strictness × this-value-type" — with
+The issue was handed to this lane framed as the §10.4.3 primitive-`this` boxing
+rule — "strictness × this-value-type" — with
 `language/function-code/10.4.3-1-{103,104,106,17-s,83-s,84-s}` named as one
-likely root. **Measured, that framing is wrong on both counts**, and the
-correction is the reason the fix is six lines of dispatch rather than a
-this-binding change:
+likely root. Half of that framing was wrong and half was right, and finding out
+which half took a row that was not on the failing list.
 
-1. **It is not one root.** `103/104/106` share a root; `17-s` (direct-eval
-   `this` in a strict function) and `83-s`/`84-s` (`Function(...)`-minted
-   strict function calling a global `this.f`) are three different roots and are
-   untouched by this fix. Their distinct error text (`TypeError: not a
-   function`) was the tell.
-2. **Strictness decides nothing here.** The axis the harness had held fixed was
-   the receiver's STATIC type. Same program, same strictness, two receiver
-   spellings:
+**Wrong: it is not one root.** `103/104/106` share a root; `17-s` (direct-eval
+`this` in a strict function) and `83-s`/`84-s` (a `Function(...)`-minted strict
+function calling a global `this.f`) are two further, unrelated roots, untouched
+by this fix. Their distinct error text — `TypeError: not a function` — was the
+tell.
 
-   | probe (`Object.defineProperty(Object.prototype,"x",{get(){…}})`) | receiver static type | getter ran? | value |
-   | --- | --- | --- | --- |
-   | `(5).x`                             | `number`   | **no** (`ran=0`) | `null` |
-   | `({}).x`                            | object     | yes (`ran=1`)    | `42`   |
-   | `function f(v){return v.x}; f(5)`   | `any`      | yes (`ran=1`)    | `42`   |
-   | `Object.prototype.z = 7; (5).z`     | `number`   | — (data prop)    | `null` |
-   | `Number.prototype.q = 9; f(5)`      | `any`      | —                | `9`    |
+**Wrong: strictness is not what makes the three rows FAIL.** The axis the
+probes had held fixed was the receiver's STATIC type. Same program, same
+strictness, two receiver spellings:
 
-   The `any`-typed rows are the load-bearing ones: **the runtime was already
-   correct.** `__extern_get` (`object-runtime.ts`) handles a boxed-primitive
-   receiver — its chain-exhausted miss arm has been receiver-aware since
-   #4160/#4176 and consults the receiver's own brand companion before
-   `Object.prototype`'s. Only the static dispatch never got there.
-3. **The accessor `this` is the unboxed primitive, in both modes** (measured
-   via the `any`-typed path, `typeof this` → `"number"` under `onlyStrict` and
-   under `noStrict`). That is correct for the two `onlyStrict` rows (104, 106)
-   and is *not observable* by the non-strict row: 103 asserts `(5).x == 5` and
-   `(5).x == 0`, on which a `Number` wrapper and the primitive `5` agree. So
-   all three rows flip without any §10.4.3 work — see Residuals for the part
-   that genuinely remains.
+| probe (`Object.defineProperty(Object.prototype,"x",{get(){…}})`) | receiver static type | getter ran? | value |
+| --- | --- | --- | --- |
+| `(5).x`                             | `number`   | **no** (`ran=0`) | `null` |
+| `({}).x`                            | object     | yes (`ran=1`)    | `42`   |
+| `function f(v){return v.x}; f(5)`   | `any`      | yes (`ran=1`)    | `42`   |
+| `Object.prototype.z = 7; (5).z`     | `number`   | — (data prop)    | `null` |
+| `Number.prototype.q = 9; f(5)`      | `any`      | —                | `9`    |
+
+The `any`-typed rows are the load-bearing ones: **the runtime was already
+correct.** `__extern_get` (`object-runtime.ts`) services a boxed-primitive
+receiver — its chain-exhausted miss arm has been receiver-aware since
+#4160/#4176 and consults the receiver's own brand companion before
+`Object.prototype`'s. Only the static dispatch never got there.
+
+**Right, and this is the part that nearly shipped broken: strictness decides
+WHICH value the accessor sees.** A first cut of the arm always handed over the
+raw primitive. It flipped all three failing rows and **regressed
+`10.4.3-1-105`** — a row that was PASSING on the base *for the wrong reason*.
+105 is `noStrict` and asserts `(5).x === 5` is false and `typeof (5).x` is
+`"object"`; the base's `null` satisfies both. The four rows together pin all
+four cells:
+
+| row | flags      | asserts                              | accessor `this` must be |
+| --- | ---------- | ------------------------------------ | ----------------------- |
+| 103 | noStrict   | `(5).x == 5` true, `== 0` false      | either — blind to it    |
+| 105 | noStrict   | `(5).x === 5` false, typeof "object" | **wrapper object**      |
+| 104 | onlyStrict | `(5).x === 5`                        | **primitive**           |
+| 106 | onlyStrict | `typeof (5).x` is "number"           | **primitive**           |
+
+Two things follow that are worth more than the fix itself:
+
+1. This is brief methodology 6 turned on its author. The probe table above
+   varies receiver type and strictness and still could not see the defect,
+   because every cell in it read a value through an assertion a `null` also
+   satisfies. The cell that decided the answer was a row **outside the failing
+   list**, reachable only by sweeping a scope wider than the bucket.
+2. **A passing row is not evidence the behaviour is right.** 105 passed on the
+   base by coincidence of `typeof null === "object"`. Any change in this area
+   that reports "+3, 0 regressions" without sweeping the sibling rows is
+   reporting an artifact of what it chose to look at.
 
 ## Fix
 
 New leaf module `src/codegen/primitive-proto-member-get.ts`
 (`tryEmitPrimitiveProtoMemberGet`), spliced into `compilePropertyAccess`
 (`src/codegen/property-access.ts`) immediately after #4483's arm and before
-`finalizeStructAndDynamicMemberGet`. It compiles the receiver, boxes it
-(`__box_number` / `__box_boolean` — the boolean brand matters, it is what makes
-the walk start at `Boolean.prototype`), and calls `__extern_get`.
+`finalizeStructAndDynamicMemberGet`. It compiles the receiver, converts it, and
+calls `__extern_get`. The conversion is where §10.4.3 lives:
+
+| read site is | receiver becomes | helper |
+| --- | --- | --- |
+| sloppy code | a real wrapper `$Object` (`typeof` "object", ToPrimitive recovers the value) | `__new_Number` / `__new_Boolean` |
+| strict code | the primitive carrier | `__box_number` / `__box_boolean` |
+
+Strictness comes from `isStrictContext(expr, ctx.inferModuleStrictArguments)` —
+the same flag `explicit-null-receiver.ts` uses, and the one that stops the
+test262 harness's synthetic `export function test()` wrapper from reading every
+sloppy script as strict module code (#2119). It is a **proxy**: §10.4.3 keys on
+the strictness of the ACCESSOR, which a read site cannot know because the getter
+is found by a runtime chain walk. The proxy is exact whenever the read and the
+accessor share a strictness region, which is every corpus shape. See Residuals.
+
+On the strict side the boolean BRAND still matters: `__box_boolean`, not
+`__box_number`, is what makes the walk start at `Boolean.prototype`.
 
 `src/codegen/primitive-absent-property.ts` changes only by exporting three
 symbols it already had (`WRAPPER_CHAIN_MEMBERS`, `isWriteOrDeleteTarget`,
@@ -120,9 +170,11 @@ All runs executed by this lane in
 `runTest262File(…, "standalone")` with
 `JS2WASM_EVAL_ENGINE=quickjs TEST262_FULL_RUNTIME_EVAL=1`, per-arm
 `pnpm run build:compiler-bundle && node scripts/build-quickjs-eval-provider.mjs`
-(the base arm's adapter key `f4f5b1dab5dbd655`, the change arm's
-`dfbd71041fad8f34` — two different adapters, so neither arm was measured
-through the other's).
+(the base arm's adapter key `f4f5b1dab5dbd655`, the final change arm's
+`b8c074a3dda7224c` — different adapters, so neither arm was measured through
+the other's). The box has 4 cores and three sibling lanes were sweeping
+throughout; 1-min load averages are recorded per arm below, and **every flip and
+every regression named here was re-verified serially**.
 
 ### The lane's own 38 rows (`.tmp/rows-language.txt`)
 
@@ -132,24 +184,84 @@ through the other's).
 | with the fix | **3** | 35 | 38 | 0 |
 
 Flips: `language/function-code/10.4.3-1-103.js`, `-104.js`, `-106.js`.
-Regressions: **0**. Rows whose status was unchanged but whose error text moved:
-**0**.
+Regressions: 0. Rows whose status was unchanged but whose error text moved: 0.
 
 A first `after` run had six rows reading `the quickjs provider is not built` —
-an infrastructure failure, not a status. Those rows are excluded from the
-figures above; both arms in the table were re-run with the provider built for
-that arm.
+an infrastructure failure, not a status. Those rows are excluded; both arms in
+the table were run with the provider built for that arm.
 
-### Scoped regression sweep
+### Scoped regression sweep — 408 rows, both arms
 
-<!-- SWEEP -->
+**Scope, and why it is the complete reachable set rather than a directory
+guess.** The arm can only fire in a module whose source names
+`Object.prototype` / `Number.prototype` / `Boolean.prototype`
+(`moduleExtendsPrimitiveProtos` is a necessary condition). A plain text grep for
+that is a strict SUPERSET of the AST condition, and over the campaign's 8,260
+ES≤5 files it selects **375**. Union with this lane's own 38 rows = **408**.
+
+Two things had to be checked for that argument to hold, and both were:
+
+- the **harness** is prepended to every module, so a harness file that armed the
+  gate would make the reachable set the whole corpus. `assert.js`
+  (`Object.prototype.toString.call(v)`) and `propertyHelper.js`
+  (`…bind(Object.prototype.hasOwnProperty)`) both name a prototype but neither
+  matches the gate's shapes. The only harness file that DOES is `testIntl.js`
+  (`taintDataProperty(Object.prototype, …)`), which is intl402-only.
+- the sweep list therefore includes every `intl402` row that grep selected.
+
+Directories NOT swept: everything outside that 408 — because the arm provably
+cannot be reached there, not because it was expensive. No directory testing one
+of this change's own fixes was dropped (`language/function-code` is in the list,
+and it is where all three flips are).
+
+| arm | rows | pass | fail | timeouts / driver errors | 1-min load during the run |
+| --- | --- | --- | --- | --- | --- |
+| base | 408 | 321 | 87 | 0 | 4.2 – 9.5 |
+| with the fix | 408 | **324** | 84 | 0 | 4.9 – 8.6 |
+
+- **Flips (+3):** `language/function-code/10.4.3-1-{103,104,106}.js`
+- **Regressions: 0**
+- **Same-status error-text changes: 0** — so no row "moved" without flipping
+  either.
+
+Both arms produced a verdict for all 408 rows with zero timeouts, so the
+denominators are comparable despite the load. The four `10.4.3-1-10x` rows were
+re-run **serially** on the final tree (load 4.6) and all four pass.
+
+**The interim result this replaced is the finding, not a footnote.** An earlier
+version of the arm measured `+3 / −1` on this same 408-row scope, the −1 being
+`10.4.3-1-105`. That regression is what produced the strictness work above. Had
+the sweep been scoped to the 38 failing rows, the change would have shipped as
+"+3, zero regressions" while making a passing row wrong.
+
+### Pins — `tests/issue-4668.test.ts`
+
+13 tests, `13 passed (13)`, file line `(13 tests)` with no `skipped` suffix.
+Reverted to the base (`git diff HEAD --stat` empty, module parked), the 7
+behavioural pins of the first cut **all failed** and the 4 controls passed —
+`7 failed | 4 passed (11)`. The sensitivity of the two later §10.4.3 pins is
+established by `10.4.3-1-105` itself, which the first cut regressed.
+
+No eval-tier arm is needed: the suite mints no module from a body string, so it
+runs identically under `JS2WASM_EVAL_ENGINE=interpreter`.
+
+### Gates
+
+`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports` — all exit 0, run bare (not piped).
+The LOC gate satisfies `property-access.ts`'s +10 from #4491's grant; since this
+change-set does not touch that file, the grant is **restated in this issue's
+frontmatter** so it is not stranded under CI's merge-preview base.
 
 ## Residuals
 
-- **§10.4.3 non-strict accessor boxing** — a NON-strict getter invoked with a
-  primitive receiver should see a boxed `Number`/`Boolean`, and standalone
-  passes the raw primitive. No ES≤5 corpus row detects it (103 is the closest
-  and is insensitive by construction). Not fixed here.
+- **Mixed-strictness modules** — the accessor's strictness is approximated by
+  the READ SITE's. A sloppy accessor reached from strict code (or the reverse)
+  gets the wrong `this`. Not a regression — the base answered `null` for every
+  one of these reads — and no ES≤5 corpus row exercises it, because test262's
+  `onlyStrict`/`noStrict` variants are whole-file. The exact fix is per-function
+  strictness carried on the closure and applied at the callee, which is a
+  §10.4.3 change in the call machinery, not here.
 - **JS-host / `gc` lane** — the arm is standalone/WASI-gated and the host lane
   was not measured. Whether the host path has the same terminal-null behaviour
   is open.
@@ -197,3 +309,8 @@ Singles, rooted where the source made it cheap:
   `any`-typed probes prove it on the unmodified base.
 - This lane's own first hypothesis, "the getter is invoked with a `null`
   `this`". Refuted by a counter in the getter: `ran=0` — it is not invoked.
+- This lane's own second claim, "strictness decides nothing here, so all three
+  rows flip without any §10.4.3 work". Refuted by `10.4.3-1-105`, which the
+  first cut regressed. The claim was true of the rows it was checked against and
+  false of the family; it survived because it was only ever tested on the cells
+  that were already failing.

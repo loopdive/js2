@@ -25,19 +25,42 @@
  * chain-exhausted miss arm is receiver-aware (#4160/#4176) and consults the
  * receiver's own brand companion before `Object.prototype`'s. Only the STATIC
  * dispatch was missing: a receiver whose checker type is `number`/`boolean`
- * never reached the boxing site, so the deciding axis is the receiver's static
- * type, not strictness and not the property.
+ * never reached the boxing site. The axis that decides WHETHER the read works
+ * at all is the receiver's static type; the axis that decides WHICH value the
+ * accessor sees is strictness (next section).
  *
- * ## Why this is not the §10.4.3 primitive-`this` boxing rule
+ * ## The §10.4.3 axis IS load-bearing — and the row that proves it was the one
+ * ## not in the failing list
  *
- * `language/function-code/10.4.3-1-{103,104,106}` were grouped as a
- * strictness × this-value-type family. Measured, they are not: with the arm
- * below the getter receives the UNBOXED primitive in both strictness modes,
- * which is right for the two `onlyStrict` rows (104, 106) and is not
- * observable by the non-strict row (103 asserts `== 5` / `== 0`, and a
- * `Number` wrapper and the primitive `5` agree on both). The genuine §10.4.3
- * residual — a NON-strict accessor should see a boxed `Number` — survives and
- * is recorded in the issue file; no ES≤5 row in the corpus detects it.
+ * A first cut of this arm always handed the accessor the UNBOXED primitive.
+ * That passed all three failing rows — `10.4.3-1-{103,104,106}` — and REGRESSED
+ * `10.4.3-1-105`, which was *passing on the base for the wrong reason*: it is
+ * `noStrict` and asserts `(5).x === 5` is **false** and `typeof (5).x` is
+ * `"object"`, both of which a `null` satisfies. Boxing is therefore not
+ * optional garnish; the four rows pin all four cells:
+ *
+ * | row | flags      | asserts                              | `this` must be |
+ * | --- | ---------- | ------------------------------------ | -------------- |
+ * | 103 | noStrict   | `(5).x == 5`, `(5).x == 0` false     | either (blind) |
+ * | 105 | noStrict   | `(5).x === 5` false, typeof "object" | **wrapper**    |
+ * | 104 | onlyStrict | `(5).x === 5`                        | **primitive**  |
+ * | 106 | onlyStrict | `typeof (5).x` is "number"           | **primitive**  |
+ *
+ * So the receiver representation is chosen by strictness: `__new_Number` /
+ * `__new_Boolean` (a real wrapper `$Object`, `typeof` "object", ToPrimitive
+ * recovers the value) in sloppy code, `__box_number` / `__box_boolean` (the
+ * primitive carrier) in strict code.
+ *
+ * ## What decides strictness here, and where the proxy can be wrong
+ *
+ * §10.4.3 keys on the strictness of the FUNCTION BEING CALLED — the accessor —
+ * and the read site cannot know it, because the getter is found by a runtime
+ * chain walk. `isStrictContext(expr, …)` on the read site is a proxy: it is
+ * exact whenever the read and the accessor share a strictness region, which is
+ * every corpus shape (a whole-file `"use strict"`, or none). A sloppy accessor
+ * reached from strict code (or the reverse) gets the wrong `this` — a genuine
+ * residual, recorded in the issue file. It is not a regression: the base
+ * answered `null` for every one of these reads.
  *
  * ## Narrowing (absent-not-wrong)
  *
@@ -70,6 +93,7 @@ import {
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal, addUnionImports } from "./registry/imports.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { isStrictContext } from "./helpers/is-strict-function.js";
 import { emitRuntimeEvalSharedValueUnwrap } from "./global-environment.js";
 
 /** True when this member expression is the callee of a call — `(5).m()`. */
@@ -120,11 +144,37 @@ export function tryEmitPrimitiveProtoMemberGet(
   flushLateImportShifts(ctx, fctx);
   if (getIdx === undefined) return undefined;
 
+  // §10.4.3 — a NON-strict accessor sees the primitive boxed to its wrapper
+  // OBJECT; a strict one sees the primitive itself. What decides it is the
+  // strictness of the ACCESSOR, which the read site cannot know (the getter is
+  // found by a runtime chain walk). The best available proxy is the read's own
+  // lexical strictness region: in every corpus shape the read and the accessor
+  // sit in the same one — a whole-file `"use strict"` makes both strict, its
+  // absence makes both sloppy. `ctx.inferModuleStrictArguments` is the same
+  // flag `explicit-null-receiver.ts` uses, and it is what stops the test262
+  // harness's synthetic `export function test()` wrapper from reading every
+  // sloppy script as strict module code (#2119).
+  const strictReceiver = isStrictContext(expr, ctx.inferModuleStrictArguments);
+
   addUnionImports(ctx);
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   const boxBooleanIdx = ctx.funcMap.get("__box_boolean");
   if (boxNumberIdx === undefined) return undefined;
   if (fact.kind === "boolean" && boxBooleanIdx === undefined) return undefined;
+
+  // The ToObject helpers, needed only on the sloppy side. `__new_Boolean` takes
+  // an f64 (calls-guards.ts converts the same way).
+  let toObjectIdx: number | undefined;
+  if (!strictReceiver) {
+    const ctorName = fact.kind === "boolean" ? "__new_Boolean" : "__new_Number";
+    const lateIdx = ensureLateImport(ctx, ctorName, [{ kind: "f64" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    toObjectIdx = ctx.funcMap.get(ctorName) ?? lateIdx;
+    // Absent-not-wrong: with no ToObject helper, answering the strict
+    // (unboxed) shape in sloppy code would be a WRONG `this`, so decline and
+    // leave the read to the legacy tail. Nothing has been emitted yet.
+    if (toObjectIdx === undefined) return undefined;
+  }
 
   // Feasibility probe only — the instructions actually emitted are recomputed
   // AFTER the receiver, matching every other `__extern_get` call site: a
@@ -141,11 +191,18 @@ export function tryEmitPrimitiveProtoMemberGet(
     // future receiver shape cannot turn this into a validation failure.
     fctx.body.push({ op: "ref.null.extern" });
   } else if (recvType.kind === "f64") {
-    fctx.body.push({ op: "call", funcIdx: boxNumberIdx });
+    fctx.body.push(
+      toObjectIdx !== undefined ? { op: "call", funcIdx: toObjectIdx } : { op: "call", funcIdx: boxNumberIdx },
+    );
   } else if (recvType.kind === "i32") {
-    // A boolean-branded i32 must box as a Boolean so the walk starts at
-    // `Boolean.prototype`; an unbranded i32 is a number in disguise.
-    if ((recvType.boolean === true || fact.kind === "boolean") && boxBooleanIdx !== undefined) {
+    const asBoolean = recvType.boolean === true || fact.kind === "boolean";
+    if (toObjectIdx !== undefined) {
+      // Both `__new_Number` and `__new_Boolean` take an f64.
+      fctx.body.push({ op: "f64.convert_i32_s" });
+      fctx.body.push({ op: "call", funcIdx: toObjectIdx });
+    } else if (asBoolean && boxBooleanIdx !== undefined) {
+      // A boolean-branded i32 must box as a Boolean so the walk starts at
+      // `Boolean.prototype`; an unbranded i32 is a number in disguise.
       fctx.body.push({ op: "call", funcIdx: boxBooleanIdx });
     } else {
       fctx.body.push({ op: "f64.convert_i32_s" });

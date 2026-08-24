@@ -34,12 +34,19 @@ const OPTS = {
   fileName: "test.ts",
 } as const;
 
-async function runStandalone(body: string): Promise<number> {
-  const result: any = await compile(`export function test(): any { ${body} }`, OPTS as any);
+async function runStandalone(body: string, extra: Record<string, unknown> = {}): Promise<number> {
+  const result: any = await compile(`export function test(): any { ${body} }`, { ...OPTS, ...extra } as any);
   expect(result.success).toBe(true);
   const { instance } = await WebAssembly.instantiate(result.binary, result.importObject ?? {});
   return (instance.exports as any).test();
 }
+
+// The harness's `export function test()` makes TypeScript call every module
+// here a MODULE, and module code is strict — which is the branch that hands the
+// accessor the raw primitive. `inferModuleStrictArguments: false` is the same
+// flag `tests/test262-runner.ts` passes for a `noStrict` script test; it is what
+// lets these pins reach the SLOPPY branch at all.
+const SLOPPY = { inferModuleStrictArguments: false } as const;
 
 describe("#4668 — number/boolean primitive receivers walk the wrapper prototype chain", () => {
   it("an Object.prototype ACCESSOR is actually invoked for a primitive receiver", async () => {
@@ -56,11 +63,38 @@ describe("#4668 — number/boolean primitive receivers walk the wrapper prototyp
     ).toBe(11);
   });
 
-  it("the accessor receives the primitive as `this` (§10.4.3 under a strict getter)", async () => {
+  it("§10.4.3 STRICT — the accessor receives the raw primitive", async () => {
+    // `10.4.3-1-104` / `-106`.
     expect(
       await runStandalone(
         `Object.defineProperty(Object.prototype, "x", { get: function () { return this; } });` +
-          ` var n = 5; return n.x === 5 ? 1 : 0;`,
+          ` var n = 5; return (n.x === 5 && typeof n.x === "number") ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+
+  it("§10.4.3 SLOPPY — the accessor receives the WRAPPER object, not the primitive", async () => {
+    // `10.4.3-1-105`, which was passing on the base for the wrong reason: it
+    // asserts `=== 5` is false and `typeof` is "object", and the base's `null`
+    // satisfied both. A first cut of this arm that always passed the primitive
+    // flipped three rows and regressed this one.
+    expect(
+      await runStandalone(
+        `Object.defineProperty(Object.prototype, "x", { get: function () { return this; } });` +
+          ` var n = 5;` +
+          ` return (n.x === 5 ? 0 : 1) * (typeof n.x === "object" ? 1 : 0) * (n.x == 5 ? 1 : 0);`,
+        SLOPPY,
+      ),
+    ).toBe(1);
+  });
+
+  it("§10.4.3 SLOPPY — a boolean receiver boxes to a Boolean wrapper", async () => {
+    expect(
+      await runStandalone(
+        `Object.defineProperty(Object.prototype, "x", { get: function () { return this; } });` +
+          ` var b = true;` +
+          ` return (b.x === true ? 0 : 1) * (typeof b.x === "object" ? 1 : 0) * (b.x == true ? 1 : 0);`,
+        SLOPPY,
       ),
     ).toBe(1);
   });
