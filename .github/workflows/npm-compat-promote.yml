@@ -202,7 +202,32 @@ jobs:
       # gate — which is #4130, the failure this repo has already paid for once.
       # The current-head check gate below is deliberately fail-closed instead:
       # an unreadable check state must not knowingly cancel the CI it protects.
-      - name: Check whether the promotion PR is already in the merge queue
+      # NEVER re-push while a promotion PR is open (stakeholder, 2026-08-23).
+      #
+      # The branch is force-updated, which ejects its PR from the merge queue
+      # and restarts it. The previous guard tried to allow a push whenever the
+      # PR happened to be neither queued nor check-busy — but that is a
+      # point-in-time read of a state that changes constantly, and between
+      # "ejected by the last push" and "re-enqueued by auto-enqueue" the PR
+      # looks idle. Measured on run 827: the guard passed at 20:02:34, the
+      # forced update landed at 20:03:20, and auto-enqueue still reported the
+      # PR queued at 20:40. Before the per-package split the fleet promoted
+      # about once per 25 minutes, so that window was rarely hit; the fast lane
+      # now promotes on every merge and hit it repeatedly, leaving the
+      # dashboard frozen at 15:27Z for six hours while every job reported
+      # success.
+      #
+      # So: an open PR means hands off, full stop. This run's measurement is
+      # still uploaded as an artifact, and the run AFTER the PR merges
+      # publishes a fresher one — the artifact is never more than one cycle
+      # behind. No check-runs probe, no merge-queue probe, nothing to race.
+      #
+      # The cost is that a genuinely wedged PR (a permanently red check nobody
+      # clears) freezes promotion instead of trampling it. That is deliberate,
+      # and npm-compat-staleness.yml is the alarm for it — a frozen artifact
+      # that shouts is strictly better than the silent 6-hour freeze this
+      # replaces.
+      - name: Skip the push while a promotion PR is open
         if: steps.partials.outputs.count != '0'
         id: queue_state
         env:
@@ -210,87 +235,25 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          PR_INFO="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$PROMOTION_BRANCH" \
-            --state open --json number,headRefOid \
-            --jq '.[0] | if . == null then empty else "\(.number) \(.headRefOid)" end' \
-            2>/dev/null || true)"
-          PR_NUMBER="${PR_INFO%% *}"
-          PR_HEAD_SHA="${PR_INFO#* }"
-          if [ "$PR_INFO" = "$PR_NUMBER" ]; then
-            PR_HEAD_SHA=""
-          fi
+          PR_NUMBER="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$PROMOTION_BRANCH" \
+            --state open --json number --jq '.[0].number // empty' 2>/dev/null || echo "unreadable")"
           echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
 
-          if [ -z "$PR_NUMBER" ]; then
-            echo "No open promotion PR on ${PROMOTION_BRANCH}; nothing can be queued."
-            echo "skip=0" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "Open promotion PR: #${PR_NUMBER}"
-
-          # Do not replace the promotion branch while its current PR checks are
-          # running. A force-update fires `pull_request:synchronize`; GitHub
-          # cancels the checks for the old head before starting a new one. On a
-          # long npm-compat refresh cadence that turns every PR run into a
-          # moving target and can keep the artifact PR permanently pending.
-          # Let the current head finish; a later refresh will publish the newer
-          # measurement. Do not age this guard out: the refresh matrix itself
-          # has a 350-minute timeout, so a two-hour cutoff would knowingly
-          # cancel a valid long-running check. A genuinely wedged PR is
-          # surfaced by the staleness workflow and needs human intervention.
-          ACTIVE_CHECKS="unreadable"
-          if [ -n "$PR_HEAD_SHA" ]; then
-            if ! ACTIVE_CHECKS="$(gh api \
-              --paginate \
-              "/repos/${GITHUB_REPOSITORY}/commits/${PR_HEAD_SHA}/check-runs?per_page=100" \
-              --jq '[.check_runs[] | select(.status == "queued" or .status == "in_progress")] | length' \
-              2>/dev/null | awk '{ total += $1 } END { print total + 0 }')"; then
-              ACTIVE_CHECKS="unreadable"
-            fi
-          fi
-          case "$ACTIVE_CHECKS" in
+          case "$PR_NUMBER" in
+            "")
+              echo "No open promotion PR on ${PROMOTION_BRANCH}; safe to publish."
+              echo "skip=0" >> "$GITHUB_OUTPUT"
+              ;;
             unreadable)
-              echo "::warning title=npm-compat-refresh::could not read checks for promotion PR #${PR_NUMBER}; leaving its branch untouched to avoid cancelling CI."
+              # Fail CLOSED, unlike the gate this replaces. Pushing on an
+              # unreadable read is what the race exploited; skipping costs one
+              # cycle and the staleness workflow notices if it persists.
+              echo "::warning title=npm-compat-refresh::could not list promotion PRs; skipping the push this cycle."
               echo "skip=1" >> "$GITHUB_OUTPUT"
-              exit 0
-              ;;
-            ''|*[!0-9]*)
-              echo "::warning title=npm-compat-refresh::invalid active-check count (${ACTIVE_CHECKS}); leaving promotion PR #${PR_NUMBER} untouched."
-              echo "skip=1" >> "$GITHUB_OUTPUT"
-              exit 0
-              ;;
-            0)
-              echo "No checks are running on promotion PR #${PR_NUMBER}; continuing."
               ;;
             *)
-              echo "Promotion PR #${PR_NUMBER} has ${ACTIVE_CHECKS} check(s) in flight; leaving its branch untouched."
+              echo "::notice title=npm-compat-refresh::promotion PR #${PR_NUMBER} is open; leaving its branch untouched so it can land. This measurement is uploaded as an artifact; the run after #${PR_NUMBER} merges publishes a fresher one."
               echo "skip=1" >> "$GITHUB_OUTPUT"
-              exit 0
-              ;;
-          esac
-
-          QUEUED="$(gh api graphql -f query="
-            query(\$owner: String!, \$name: String!) {
-              repository(owner: \$owner, name: \$name) {
-                mergeQueue(branch: \"main\") {
-                  entries(first: 100) { nodes { pullRequest { number } } }
-                }
-              }
-            }" -f owner="${GITHUB_REPOSITORY%%/*}" -f name="${GITHUB_REPOSITORY##*/}" \
-            --jq "[.data.repository.mergeQueue.entries.nodes[].pullRequest.number] | index(${PR_NUMBER}) != null" 2>/dev/null || echo "unreadable")"
-
-          case "$QUEUED" in
-            true)
-              echo "::notice title=npm-compat-refresh::PR #${PR_NUMBER} is in the merge queue; leaving it alone. This measurement is uploaded as an artifact and the next run publishes a fresher one."
-              echo "skip=1" >> "$GITHUB_OUTPUT"
-              ;;
-            false)
-              echo "PR #${PR_NUMBER} is not queued; safe to force-update its branch."
-              echo "skip=0" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "::warning title=npm-compat-refresh::could not read the merge queue; proceeding (an unreadable gate must never freeze the artifact — #4130)."
-              echo "skip=0" >> "$GITHUB_OUTPUT"
               ;;
           esac
 
