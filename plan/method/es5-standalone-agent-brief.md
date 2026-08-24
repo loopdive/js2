@@ -595,3 +595,28 @@ in the baseline you just downloaded. So the *absolute* rate on your tree is soli
 Measured 2026-08-24: 135-row list, 135 verdicts, **zero timeouts**, ~25 min under two
 concurrent lanes — versus the ~4.5 h a full two-arm sweep cost the night before for the
 same question.
+
+## Load at DISPATCH time does not predict load at SWEEP time (measured 2026-08-24)
+
+The lead's concurrency gate has been "check `uptime`, spawn if load is low". That gate is
+wrong, and the failure is structural rather than a misjudgement:
+
+A lane spends its first stretch reading source and forming a root-cause hypothesis — cheap,
+near-zero CPU — and only then starts sweeping, which pins a core. So four lanes dispatched
+across a 45-minute window against a load average of 1.5–2.0 each looked individually safe,
+and then **all four reached their sweep phase at once**: load 1.57 at the last dispatch,
+**9.58** twenty minutes later on a 4-core box.
+
+Two rules follow.
+
+1. **Spawn on the count of ACTIVE lanes, not on instantaneous load.** On this 4-core box
+   the cap is four lanes total, and load at spawn time is not evidence about the fourth.
+2. **The lane, not the lead, holds the measurement gate.** A lane must run `uptime` and
+   wait for the 1-min average below ~5 *immediately before launching a sweep arm* — not
+   when it was dispatched. Analysis parallelises fine; measurement does not.
+
+Corollary for reading results: a `compilation timeout` or `driver_error` row from a sweep
+taken at load ≥ 8 is a **measurement failure, not a status**, and must be re-run serially
+before it appears in any report as a flip or a regression. This is the same trap that cost
+~4.5 h and three false flips the night before — it just arrived through scheduling rather
+than through a single oversized sweep.
