@@ -10,6 +10,8 @@
 // These tests pin the trust decision (`isTrustedAuthor`) directly — they make
 // no `gh` calls (the live sweep is guarded behind an import.meta.url check).
 
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 import { isTrustedAuthor } from "../scripts/enqueue-green-prs.mjs";
 
@@ -64,5 +66,39 @@ describe("#2550 author-trust gate fork allowlist", () => {
     // Set membership is exact — guard against accidental substring trust.
     const r = isTrustedAuthor({ assoc: "NONE", authorLogin: "not-ttraenkler-evil", headRepoOwner: "evil-fork" });
     expect(r.trusted).toBe(false);
+  });
+});
+
+describe("the promotion bot is allowlisted in BOTH login spellings", () => {
+  // `gh pr list --json author` resolves through GraphQL, where a GitHub App's
+  // `Bot.login` is the BARE slug; REST reports the same account as
+  // `<slug>[bot]`. auto-enqueue.yml wrote the allowlist in the REST form only,
+  // so the comparison against the GraphQL form never matched: PR #4817 sat
+  // CLEAN and unenqueued for three hours on 2026-08-24 with
+  // `untrusted-author:CONTRIBUTOR` in the log, while the npm-compat dashboard
+  // stayed frozen. The workflow now names both forms.
+  const workflow = readFileSync(new URL("../.github/workflows/auto-enqueue.yml", import.meta.url), "utf8");
+
+  it("passes the app slug to the allowlist with and without the [bot] suffix", () => {
+    const line = workflow.split("\n").find((l) => l.includes("TRUSTED_AUTHOR_LOGINS:"));
+    expect(line).toBeDefined();
+    expect(line).toContain("${{ steps.app-token.outputs.app-slug }},");
+    expect(line).toContain("${{ steps.app-token.outputs.app-slug }}[bot]");
+  });
+
+  it("trusts an allowlisted login regardless of which spelling the API returned", () => {
+    // The decision function itself is spelling-agnostic: it just matches the
+    // configured set. Both entries are what makes either API form work.
+    for (const login of ["promo-bot", "promo-bot[bot]"]) {
+      const r = isTrustedAuthor({
+        assoc: "CONTRIBUTOR",
+        authorLogin: login,
+        headRepoOwner: "loopdive",
+      });
+      // With the default allowlist neither is trusted; this pins that the
+      // gate still FAILS CLOSED for a login nobody configured.
+      expect(r.trusted).toBe(false);
+      expect(r.reason).toBe("untrusted-author:CONTRIBUTOR");
+    }
   });
 });
