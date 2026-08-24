@@ -4778,6 +4778,7 @@ export function generateModule(
           { kind: "externref" },
           { kind: "externref" },
           { kind: "externref" },
+          { kind: "i32" },
         ],
         [],
       );
@@ -6426,7 +6427,6 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
   // must keep matching subclass instances for inherited-method dispatch).
   // Returns undefined — zero byte change — when no collision exists.
   const classDispatchTagCondition = (
-    entriesAll: readonly { structName: string }[],
     structName: string,
     typeIdx: number,
     receiverLocal: number,
@@ -6439,7 +6439,13 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
     };
     const own = layoutSig(structName);
     if (own === undefined) return undefined;
-    const conflict = entriesAll.some((e) => e.structName !== structName && layoutSig(e.structName) === own);
+    // Compare against every emitted struct, not only the classes that also
+    // declare this member. A same-layout sibling that does NOT declare the
+    // key is the important negative case: without a tag guard its instance
+    // passes this arm's structural ref.test and appears to inherit an
+    // unrelated sibling-only lifecycle method (React's repeated `class Foo`
+    // tests observed UNSAFE_componentWillMount from a later sibling).
+    const conflict = [...ctx.structFields.keys()].some((name) => name !== structName && layoutSig(name) === own);
     if (!conflict) return undefined;
     const ownTag = ctx.classTagMap.get(structName);
     if (ownTag === undefined) return undefined;
@@ -6602,19 +6608,32 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
         instrs.push({ op: "extern.convert_any" });
       } else if (resultType.kind === "f64") {
         const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
+        instrs.push(
+          ...(boxIdx !== undefined
+            ? ([{ op: "call", funcIdx: boxIdx }] satisfies Instr[])
+            : ([{ op: "drop" }, { op: "ref.null.extern" }] satisfies Instr[])),
+        );
       } else if (resultType.kind === "i32") {
-        instrs.push({ op: "f64.convert_i32_s" });
         const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
+        instrs.push(
+          ...(boxIdx !== undefined
+            ? ([{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxIdx }] satisfies Instr[])
+            : ([{ op: "drop" }, { op: "ref.null.extern" }] satisfies Instr[])),
+        );
       } else if (resultType.kind === "i64") {
-        instrs.push({ op: "f64.convert_i64_s" });
         const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
+        instrs.push(
+          ...(boxIdx !== undefined
+            ? ([{ op: "f64.convert_i64_s" }, { op: "call", funcIdx: boxIdx }] satisfies Instr[])
+            : ([{ op: "drop" }, { op: "ref.null.extern" }] satisfies Instr[])),
+        );
       } else if (resultType.kind === "f32") {
-        instrs.push({ op: "f64.promote_f32" });
         const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
+        instrs.push(
+          ...(boxIdx !== undefined
+            ? ([{ op: "f64.promote_f32" }, { op: "call", funcIdx: boxIdx }] satisfies Instr[])
+            : ([{ op: "drop" }, { op: "ref.null.extern" }] satisfies Instr[])),
+        );
       }
     };
 
@@ -6767,41 +6786,11 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
       }
       testAndCall.push({ op: "call", funcIdx: entry.funcIdx });
 
-      if (classMember && classArity === -1 && entry.restInfo) {
-        appendResultBoxing(testAndCall, entry.resultType);
-      } else if (entry.resultType === undefined) {
-        const undefinedIdx = ctx.funcMap.get("__get_undefined");
-        testAndCall.push(
-          ...(undefinedIdx !== undefined
-            ? ([{ op: "call", funcIdx: undefinedIdx }] satisfies Instr[])
-            : ([{ op: "ref.null.extern" }] satisfies Instr[])),
-        );
-      } else if (entry.resultType.kind === "ref" || entry.resultType.kind === "ref_null") {
-        testAndCall.push({ op: "extern.convert_any" });
-      } else if (entry.resultType.kind === "f64") {
-        const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) {
-          testAndCall.push({ op: "call", funcIdx: boxIdx });
-        }
-      } else if (entry.resultType.kind === "i32") {
-        testAndCall.push({ op: "f64.convert_i32_s" });
-        const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) {
-          testAndCall.push({ op: "call", funcIdx: boxIdx });
-        }
-      } else if (entry.resultType.kind === "i64") {
-        testAndCall.push({ op: "f64.convert_i64_s" });
-        const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) testAndCall.push({ op: "call", funcIdx: boxIdx });
-      } else if (entry.resultType.kind === "f32") {
-        testAndCall.push({ op: "f64.promote_f32" });
-        const boxIdx = ctx.funcMap.get("__box_number");
-        if (boxIdx !== undefined) testAndCall.push({ op: "call", funcIdx: boxIdx });
-      }
+      appendResultBoxing(testAndCall, entry.resultType);
       // externref: no conversion needed
 
       const tagCond = classMember
-        ? classDispatchTagCondition(entries, entry.structName, entry.typeIdx, receiverAnyLocal)
+        ? classDispatchTagCondition(entry.structName, entry.typeIdx, receiverAnyLocal)
         : undefined;
       current = [
         { op: "local.get", index: receiverAnyLocal },
@@ -6896,17 +6885,6 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
       if (typeIdx === undefined || isSyntheticStructName(structName)) continue;
       for (const key of keys) {
         const fullName = `${structName}_${key}`;
-        if (process.env.DEBUG_MARKED_CODEGEN === "1" && key === "parseInline") {
-          console.error(
-            "[marked-class-bridge-scan]",
-            structName,
-            fullName,
-            ctx.classMethodSet.has(fullName),
-            ctx.staticMethodSet.has(fullName),
-            ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")),
-            ctx.funcMap.get(fullName),
-          );
-        }
         if (!ctx.classMethodSet.has(fullName)) continue;
         const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
         const method = methodIdx === undefined ? undefined : definedFuncAt(ctx, methodIdx);
@@ -7031,7 +7009,6 @@ function emitExternrefClassMethodDispatch(ctx: CodegenContext, className: string
 // dispatch working.
 function classArmTagCondition(
   ctx: CodegenContext,
-  entriesAll: readonly { structName: string }[],
   structName: string,
   typeIdx: number,
   receiverLocal: number,
@@ -7044,7 +7021,11 @@ function classArmTagCondition(
   };
   const own = layoutSig(structName);
   if (own === undefined) return undefined;
-  if (!entriesAll.some((e) => e.structName !== structName && layoutSig(e.structName) === own)) return undefined;
+  // A class-member arm must also reject same-layout classes that do not own
+  // this member. Restricting the collision universe to `methodEntries` made a
+  // singleton entry look safe even though a structurally identical sibling
+  // could pass its ref.test and acquire the method.
+  if (![...ctx.structFields.keys()].some((name) => name !== structName && layoutSig(name) === own)) return undefined;
   const ownTag = ctx.classTagMap.get(structName);
   if (ownTag === undefined) return undefined;
   const tags = [ownTag];
@@ -7085,30 +7066,23 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
     paramTypes: ValType[];
     isRest?: boolean;
   };
-  const collect = (nameOf: (structName: string) => string): KindEntry[] => {
+  const collect = (
+    nameOf: (structName: string) => string,
+    memberKind: "method" | "getter" | "setter",
+    memberKey: string,
+  ): KindEntry[] => {
     const entries: KindEntry[] = [];
     for (const [structName] of ctx.structFields) {
       const typeIdx = ctx.structMap.get(structName);
       if (typeIdx === undefined || skipStruct(structName)) continue;
       const fullName = nameOf(structName);
-      if (process.env.DEBUG_MARKED_CODEGEN === "1" && fullName.endsWith("_parseInline")) {
-        console.error(
-          "[marked-member-kind-scan]",
-          structName,
-          fullName,
-          ctx.classMethodSet.has(fullName),
-          ctx.staticMethodSet.has(fullName),
-          ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")),
-          ctx.funcMap.get(fullName),
-        );
-      }
       const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
       if (funcIdx === undefined) continue;
       const funcDef = definedFuncAt(ctx, funcIdx);
       const funcType = funcDef ? mod.types[funcDef.typeIdx] : undefined;
       if (!funcType || funcType.kind !== "func") continue;
-      const memberKey = fullName.slice(fullName.lastIndexOf("_") + 1);
-      const isGetter = fullName.includes("_get_");
+      const isGetter = memberKind === "getter";
+      const isSetter = memberKind === "setter";
       const restInfo = ctx.funcRestParams.get(fullName);
       if (!isGetter && restInfo) {
         if (!ctx.hostDynamicClassMethodNames.has(memberKey)) continue;
@@ -7116,7 +7090,14 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
         entries.push({ structName, typeIdx, funcIdx, resultType, paramTypes: funcType.params, isRest: true });
         continue;
       }
-      if ((isGetter || !ctx.hostDynamicClassMethodNames.has(memberKey)) && funcType.params.length !== 1) continue;
+      if (isSetter) {
+        // Dynamic host writes can forward an erased externref without a
+        // representation guess. Typed setter parameters keep their existing
+        // compiled/static path until that ABI has an explicit coercion rule.
+        if (funcType.params.length !== 2 || funcType.params[1]!.kind !== "externref") continue;
+      } else if ((isGetter || !ctx.hostDynamicClassMethodNames.has(memberKey)) && funcType.params.length !== 1) {
+        continue;
+      }
       if (funcType.params.length < 1) continue;
       if (funcType.params.slice(1).some((param) => !supportsHostClassBridgeParam(param))) continue;
       const resultType: ValType | undefined = funcType.results.length > 0 ? funcType.results[0]! : undefined;
@@ -7130,9 +7111,10 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
 
   for (const key of keys) {
     if (ctx.funcMap.has(`__member_kind_${key}`)) continue; // idempotent
-    const methodEntries = collect((s) => `${s}_${key}`);
-    const getterEntries = collect((s) => `${s}_get_${key}`);
-    if (methodEntries.length === 0 && getterEntries.length === 0) continue;
+    const methodEntries = collect((s) => `${s}_${key}`, "method", key);
+    const getterEntries = collect((s) => `${s}_get_${key}`, "getter", key);
+    const setterEntries = collect((s) => `${s}_set_${key}`, "setter", key);
+    if (methodEntries.length === 0 && getterEntries.length === 0 && setterEntries.length === 0) continue;
 
     // __member_kind_<key>: ref.test cascade → 1 (method) / 2 (getter) / 0.
     {
@@ -7140,7 +7122,7 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
       let current: Instr[] = [{ op: "i32.const", value: 0 }];
       const allEntries = [...methodEntries, ...getterEntries];
       const arm = (entry: KindEntry, kind: number, tail: Instr[]): Instr[] => {
-        const tagCond = classArmTagCondition(ctx, allEntries, entry.structName, entry.typeIdx, 1);
+        const tagCond = classArmTagCondition(ctx, entry.structName, entry.typeIdx, 1);
         return [
           { op: "local.get", index: 1 },
           { op: "ref.test", typeIdx: entry.typeIdx },
@@ -7183,7 +7165,7 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
       const funcIdx = ctx.numImportFuncs + mod.functions.length;
       let current: Instr[] = [{ op: "i32.const", value: -1 }];
       for (const e of methodEntries) {
-        const tagCond = classArmTagCondition(ctx, methodEntries, e.structName, e.typeIdx, 1);
+        const tagCond = classArmTagCondition(ctx, e.structName, e.typeIdx, 1);
         current = [
           { op: "local.get", index: 1 },
           { op: "ref.test", typeIdx: e.typeIdx },
@@ -7244,9 +7226,20 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
           const boxIdx = ctx.funcMap.get("__box_number");
           if (boxIdx !== undefined) callArm.push({ op: "call", funcIdx: boxIdx });
         }
+        const tagCond = classArmTagCondition(ctx, e.structName, e.typeIdx, 1);
         current = [
           { op: "local.get", index: 1 },
           { op: "ref.test", typeIdx: e.typeIdx },
+          ...(tagCond
+            ? ([
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "i32" } },
+                  then: tagCond,
+                  else: [{ op: "i32.const", value: 0 }],
+                },
+              ] satisfies Instr[])
+            : []),
           {
             op: "if",
             blockType: { kind: "val", type: { kind: "externref" } },
@@ -7261,6 +7254,62 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
         typeIdx: dispatchTypeIdx,
         locals: [{ name: "__any", type: { kind: "anyref" } }],
         body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }, ...current],
+        exported: true,
+      } as WasmFunction);
+      exportFunc(mod, exportName, funcIdx);
+      ctx.funcMap.set(exportName, funcIdx);
+    }
+
+    // __call_set_<key>(receiver, value) -> i32. A successful arm invokes the
+    // real compiled prototype setter and returns 1; 0 means this receiver has
+    // no matching setter. The runtime uses that positive result before its
+    // sidecar fallback, preserving setter side effects such as Hono Context's
+    // `res` setter also marking `finalized = true`.
+    if (setterEntries.length > 0) {
+      const setterTypeIdx = addFuncType(
+        ctx,
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "i32" }],
+        `$call_set_${key}_type`,
+      );
+      const funcIdx = ctx.numImportFuncs + mod.functions.length;
+      let current: Instr[] = [{ op: "i32.const", value: 0 }];
+      for (const e of setterEntries) {
+        const callArm: Instr[] = [
+          { op: "local.get", index: 2 },
+          { op: "ref.cast", typeIdx: e.typeIdx },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: e.funcIdx },
+          { op: "i32.const", value: 1 },
+        ];
+        const tagCond = classArmTagCondition(ctx, e.structName, e.typeIdx, 2);
+        current = [
+          { op: "local.get", index: 2 },
+          { op: "ref.test", typeIdx: e.typeIdx },
+          ...(tagCond
+            ? ([
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "i32" } },
+                  then: tagCond,
+                  else: [{ op: "i32.const", value: 0 }],
+                },
+              ] satisfies Instr[])
+            : []),
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: callArm,
+            else: current,
+          },
+        ];
+      }
+      const exportName = `__call_set_${key}`;
+      mod.functions.push({
+        name: exportName,
+        typeIdx: setterTypeIdx,
+        locals: [{ name: "__any", type: { kind: "anyref" } }],
+        body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 2 }, ...current],
         exported: true,
       } as WasmFunction);
       exportFunc(mod, exportName, funcIdx);
@@ -8109,16 +8158,6 @@ function registerReassignedFunctionGlobals(
 function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly ts.SourceFile[]): void {
   const aliasOneBinding = (localId: ts.Identifier): void => {
     const localName = localId.text;
-    // Already resolvable under the local name (e.g. `import { add }` where the
-    // local name equals the export) — nothing to alias.
-    const existingLocalFunc = ctx.funcMap.get(localName);
-    if (
-      ctx.moduleGlobals.has(localName) ||
-      ctx.closureMap.has(localName) ||
-      (existingLocalFunc !== undefined && !isImportFuncIdx(ctx, existingLocalFunc))
-    ) {
-      return;
-    }
     let sym: ts.Symbol | undefined;
     try {
       sym = ctx.checker.getSymbolAtLocation(localId);
@@ -8134,9 +8173,59 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
         return;
       }
     }
-    if (!target) return;
-    const decl = target.valueDeclaration ?? target.declarations?.[0];
+    const binding = ctx.oracle.valueDeclarationOf(localId);
+    if (!target || !binding) return;
+    let decl = target.valueDeclaration ?? target.declarations?.[0];
+    // TypeScript follows a default import of `export default <expression>`
+    // through the expression's inferred value symbol. For example, importing
+    // `Function.prototype.bind` resolves to lib.d.ts's `MethodSignature`, not
+    // to the exporting module's `ExportAssignment`. The module specifier's
+    // oracle declaration is the exact source module, so retain the live export
+    // cell identity at this one established import-resolution boundary.
+    const importsDefault =
+      ts.isImportClause(binding) ||
+      (ts.isImportSpecifier(binding) && (binding.propertyName?.text ?? binding.name.text) === "default");
+    const importDecl = ts.isImportClause(binding)
+      ? binding.parent
+      : ts.isImportSpecifier(binding)
+        ? binding.parent.parent.parent
+        : undefined;
+    if (importsDefault && importDecl && ts.isImportDeclaration(importDecl)) {
+      const targetSource = ctx.oracle.declarationsOf(importDecl.moduleSpecifier).find(ts.isSourceFile);
+      const expressionDefault = targetSource?.statements.find(
+        (statement): statement is ts.ExportAssignment =>
+          ts.isExportAssignment(statement) && statement.isExportEquals !== true,
+      );
+      if (expressionDefault) decl = expressionDefault;
+    }
     if (!decl) return;
+    if (binding && (ts.isImportClause(binding) || ts.isImportSpecifier(binding))) {
+      (ctx.importBindingTargets ??= new WeakMap()).set(binding, decl);
+    }
+
+    // Already resolvable under the local name (e.g. `import { add }` where the
+    // local name equals the export) — the exact target above is still recorded
+    // for declaration-identity consumers, but no registry aliases are needed.
+    const existingLocalFunc = ctx.funcMap.get(localName);
+    if (
+      ctx.moduleGlobals.has(localName) ||
+      ctx.closureMap.has(localName) ||
+      (existingLocalFunc !== undefined && !isImportFuncIdx(ctx, existingLocalFunc))
+    ) {
+      return;
+    }
+    // `export default <expression>` owns a synthetic live cell rather than a
+    // named declaration. Alias the import directly to that cell. This must run
+    // before the declaration-name path below because ExportAssignment has no
+    // `.name` to resolve.
+    if (ts.isExportAssignment(decl)) {
+      const expressionGlobal = ctx.defaultExpressionGlobals?.get(decl);
+      const globalIdx = expressionGlobal ? ctx.moduleGlobals.get(expressionGlobal.bindingName) : undefined;
+      if (globalIdx !== undefined && !ctx.moduleGlobals.has(localName)) {
+        ctx.moduleGlobals.set(localName, globalIdx);
+      }
+      return;
+    }
     // The name the target was registered under in funcMap/moduleGlobals/closureMap.
     let targetName: string | undefined;
     const declName = (decl as { name?: ts.Node }).name;
@@ -8401,6 +8490,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
           { kind: "externref" },
           { kind: "externref" },
           { kind: "externref" },
+          { kind: "i32" },
         ],
         [],
       );
@@ -9904,6 +9994,8 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
   // Check aliasSymbol first — TypeScript preserves the alias name on the type.
   const nativeType = resolveNativeTypeAnnotation(tsType);
   if (nativeType) return nativeType;
+  const jsBodyArrayReturnOverride = ctx.jsBodyArrayReturnOverrides?.get(tsType);
+  if (jsBodyArrayReturnOverride) return jsBodyArrayReturnOverride;
 
   // Fast mode: string → ref $AnyString (not externref).
   // The String WRAPPER object (`new String(x)`) is excluded here — `isStringType`

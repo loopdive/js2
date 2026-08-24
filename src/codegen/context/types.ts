@@ -2327,6 +2327,12 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   forceExternrefCallbackParams?: boolean;
   /**
+   * Transient runtime carrier for the first parameter of an inline `Array.map`
+   * callback. It keeps the closure ABI aligned with the receiver's actual vec
+   * element representation when stale JavaScript JSDoc disagrees.
+   */
+  arrayMapCallbackFirstParamOverride?: ValType;
+  /**
    * (#3137) True while compiling a native `.then`/`.catch` callback closure
    * (`compileStandalonePromiseThenCallback` window). TUPLE-typed callback
    * params widen to externref in `computeClosureWrapperSig`: the native
@@ -2691,6 +2697,20 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * Identifier/function defaults use their existing binding; expression
    * defaults need a stable cell that default imports can alias. */
   defaultExpressionGlobals?: WeakMap<ts.ExportAssignment, { bindingName: string; type: ValType }>;
+  /**
+   * Exact target declaration for each linked import binding. Populated once by
+   * the import-alias registration pass, which is the existing checker-owned
+   * module-resolution boundary. Expression lowering consumes this map through
+   * `ctx.oracle` binding identities instead of resolving aliases with the raw
+   * checker at each use site.
+   */
+  importBindingTargets?: WeakMap<ts.Declaration, ts.Declaration>;
+  /**
+   * JavaScript signature array types whose JSDoc element carrier conflicts
+   * with the value actually returned by the closure body. The body carrier is
+   * representation-safe and must also be used at typed call-result sites.
+   */
+  jsBodyArrayReturnOverrides?: WeakMap<ts.Type, ValType>;
   /** Module-level variable initializers (compiled into __module_init) */
   moduleInitStatements: ts.Statement[];
   /**
@@ -2788,7 +2808,17 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * share one store. Keyed by resolved class name → captured name →
    * the pass-1 global index (+ widened flag).
    */
-  classMemberCaptureGlobals?: Map<ts.Node, Map<string, { globalIdx: number; widened: boolean }>>;
+  classMemberCaptureGlobals?: Map<
+    ts.Node,
+    Map<
+      string,
+      {
+        globalIdx: number;
+        widened: boolean;
+        boxed?: { refCellTypeIdx: number; valType: ValType };
+      }
+    >
+  >;
   /**
    * (#4618) Which FunctionContext value-promoted each `capturedGlobals` name.
    * `capturedGlobals` is name-keyed and not cleared between sibling callback

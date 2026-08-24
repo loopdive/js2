@@ -87,14 +87,31 @@ export function emitKnownRestMethodArguments(
   restInfo: RestParamInfo,
   selfOffset: number,
 ): boolean {
-  if (expr.arguments.some((argument) => ts.isSpreadElement(argument))) return false;
   const fixedCount = restInfo.restIndex;
+  const spreadArguments = expr.arguments.filter(ts.isSpreadElement);
+  // A trailing spread that starts exactly at the callee's rest slot already
+  // has the hidden vec ABI the direct method expects. Forward that vec intact
+  // instead of falling through to the fixed-arity spread expander, which reads
+  // element zero and turns `m(...[])` into `m(undefined)`. Marked's
+  // `constructor(...args) { this.use(...args) }` exercises this exact shape at
+  // module start. Spreads that can also fill fixed parameters still require
+  // runtime expansion and deliberately keep the generic fallback.
+  const forwardsRestVec =
+    spreadArguments.length === 1 &&
+    expr.arguments.length === fixedCount + 1 &&
+    ts.isSpreadElement(expr.arguments[fixedCount]!);
+  if (spreadArguments.length > 0 && !forwardsRestVec) return false;
   for (let index = 0; index < fixedCount; index++) {
     if (index < expr.arguments.length) {
       compileInternalCallArgument(ctx, fctx, expr.arguments[index]!, paramTypes?.[selfOffset + index]);
     } else {
       pushDefaultValue(fctx, paramTypes?.[selfOffset + index] ?? { kind: "f64" }, ctx);
     }
+  }
+  if (forwardsRestVec) {
+    const spread = expr.arguments[fixedCount] as ts.SpreadElement;
+    compileInternalCallArgument(ctx, fctx, spread.expression, paramTypes?.[selfOffset + fixedCount]);
+    return true;
   }
   const restCount = Math.max(0, expr.arguments.length - fixedCount);
   fctx.body.push({ op: "i32.const", value: restCount });

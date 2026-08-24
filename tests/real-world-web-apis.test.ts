@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { getWebHostConstructors } from "../src/runtime/web-host-constructors.js";
 import { compileValid, hostImportNames, instantiate } from "./real-world-helpers.js";
 
 /**
@@ -91,8 +92,8 @@ describe("real-world: Web APIs", () => {
     expect(uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   });
 
-  it("compiles assorted Web globals (structuredClone, queueMicrotask, btoa, AbortController)", async () => {
-    await compileValid(`
+  it("runs Web base64 globals and compiles assorted Web globals", async () => {
+    const source = `
       export function clone(o: any): any {
         return structuredClone(o);
       }
@@ -102,12 +103,22 @@ describe("real-world: Web APIs", () => {
       export function base64(s: string): string {
         return btoa(s);
       }
+      export function unbase64(s: string): string {
+        return atob(s);
+      }
       export function abortable(): any {
         const c = new AbortController();
         c.abort();
         return c.signal;
       }
-    `);
+    `;
+    const result = await compileValid(source);
+    expect(hostImportNames(result)).toEqual(expect.arrayContaining(["atob", "btoa"]));
+    const webHost = getWebHostConstructors();
+    expect(webHost).toMatchObject({ atob: expect.any(Function), btoa: expect.any(Function) });
+    const exports = await instantiate(source, webHost);
+    expect(exports.base64("foo")).toBe("Zm9v");
+    expect(exports.unbase64("Zm9v")).toBe("foo");
   });
 
   it("compiles a Headers map", async () => {

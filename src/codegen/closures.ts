@@ -267,6 +267,40 @@ function inferExplicitClosureReturnType(
 }
 
 /**
+ * Prefer a JavaScript closure's returned array carrier when stale JSDoc gives
+ * that array a different element representation.
+ *
+ * JSDoc remains useful for API shape, but it is not runtime authority. Axios's
+ * `matchAll` is documented as `Array<boolean>` while its body returns an array
+ * populated with `RegExp.exec()` match arrays. Lowering the documented return
+ * to an i32 vec irreversibly turns every match into `true`; the following
+ * `.map(match => match[0])` can then only produce `undefined`. The returned
+ * expression's vec is conservative (usually externref for an evolving `[]`)
+ * and preserves both documented and undocumented values.
+ */
+function preferJavaScriptBodyArrayReturn(
+  ctx: CodegenContext,
+  fn: ts.ArrowFunction | ts.FunctionExpression,
+  declaredTsReturn: ts.Type,
+  declaredReturn: ValType,
+): ValType {
+  if (!/\.(?:[cm]?js|jsx)$/i.test(fn.getSourceFile().fileName)) return declaredReturn;
+  if (declaredReturn.kind !== "ref" && declaredReturn.kind !== "ref_null") return declaredReturn;
+
+  const bodyReturn = inferExplicitClosureReturnType(ctx, fn);
+  if (!bodyReturn || (bodyReturn.kind !== "ref" && bodyReturn.kind !== "ref_null")) return declaredReturn;
+  const declaredArrTypeIdx = getArrTypeIdxFromVec(ctx, declaredReturn.typeIdx);
+  const bodyArrTypeIdx = getArrTypeIdxFromVec(ctx, bodyReturn.typeIdx);
+  if (declaredArrTypeIdx < 0 || bodyArrTypeIdx < 0) return declaredReturn;
+  const declaredArr = ctx.mod.types[declaredArrTypeIdx];
+  const bodyArr = ctx.mod.types[bodyArrTypeIdx];
+  if (declaredArr?.kind !== "array" || bodyArr?.kind !== "array") return declaredReturn;
+  if (valTypesMatch(declaredArr.element, bodyArr.element)) return declaredReturn;
+  (ctx.jsBodyArrayReturnOverrides ??= new WeakMap()).set(declaredTsReturn, bodyReturn);
+  return bodyReturn;
+}
+
+/**
  * (#3096) Collect free-variable references that appear in a parameter list's
  * default initializers — both top-level param defaults (`param.initializer`,
  * e.g. `(a, b = outer) => ...`) and defaults / computed keys nested inside a
@@ -475,7 +509,10 @@ export function promoteAccessorCapturesToGlobals(
   /** (#4618) When provided, records the names this call value-promoted from
    *  THIS fctx's locals (name → pass-local global index + widened flag) so
    *  the caller can re-bind the same globals on a later re-compile pass. */
-  promotedRecord?: Map<string, { globalIdx: number; widened: boolean }>,
+  promotedRecord?: Map<
+    string,
+    { globalIdx: number; widened: boolean; boxed?: { refCellTypeIdx: number; valType: ValType } }
+  >,
 ): void {
   if (!accessorBody && (!extraNodes || extraNodes.length === 0)) return;
 
@@ -492,7 +529,6 @@ export function promoteAccessorCapturesToGlobals(
       collectReferencedIdentifiers(node, referencedNames);
     }
   }
-
   // (#2029 family A) Transitive captures of referenced NESTED FUNCTIONS.
   // When the accessor body references a nested function declaration (e.g.
   // `get() { return next; }` with `function next() { return count; }` in the
@@ -549,7 +585,13 @@ export function promoteAccessorCapturesToGlobals(
           continue;
         }
         // Mutable: box-promote (shared ref cell aliased in a global).
-        if (ctx.capturedBoxGlobals?.has(cap.name)) continue;
+        if (ctx.capturedBoxGlobals?.has(cap.name)) {
+          const owner = ctx.capturedGlobalsOwner?.get(cap.name);
+          // The registry is name-keyed but callback/member bodies from sibling
+          // frames are compiled in one pass. Reuse only this frame's box; a
+          // live same-named local in another frame needs its own cell/global.
+          if (owner === fctx || !fctx.localMap.has(cap.name)) continue;
+        }
         if (ctx.capturedGlobals.has(cap.name) || ctx.moduleGlobals.has(cap.name)) continue;
         const capLocalIdx = fctx.localMap.get(cap.name);
         if (capLocalIdx === undefined) continue;
@@ -581,6 +623,7 @@ export function promoteAccessorCapturesToGlobals(
         fctx.body.push({ op: "local.get", index: boxedLocalIdx });
         fctx.body.push({ op: "global.set", index: boxGlobalIdx });
         (ctx.capturedBoxGlobals ??= new Map()).set(cap.name, { globalIdx: boxGlobalIdx, refCellTypeIdx });
+        (ctx.capturedGlobalsOwner ??= new Map()).set(cap.name, fctx);
       }
     }
   }
@@ -606,7 +649,10 @@ export function promoteAccessorCapturesToGlobals(
     // now points at the shared ref-cell box; value-promoting that box would
     // orphan the rebind (and the accessor body sources it via
     // `ctx.capturedBoxGlobals`, not `ctx.capturedGlobals`).
-    if (ctx.capturedBoxGlobals?.has(name)) continue;
+    if (ctx.capturedBoxGlobals?.has(name)) {
+      const owner = ctx.capturedGlobalsOwner?.get(name);
+      if (owner === fctx || !fctx.localMap.has(name)) continue;
+    }
 
     const localIdx = fctx.localMap.get(name);
     if (localIdx === undefined) continue;
@@ -677,8 +723,6 @@ export function promoteAccessorCapturesToGlobals(
       ctx.capturedGlobalsWidened.delete(name);
     }
     (ctx.capturedGlobalsOwner ??= new Map()).set(name, fctx);
-    promotedRecord?.set(name, { globalIdx, widened: localType.kind === "ref" });
-
     // (#3039) When the promoted local is a BOXED mutable capture (a ref cell:
     // a sibling closure mutates it, so `fctx.boxedCaptures.has(name)`), the
     // global we just created holds the ref-cell BOX, not the scalar value.
@@ -693,6 +737,10 @@ export function promoteAccessorCapturesToGlobals(
     // transitively-captured boxed var emits garbage (read → f64/ref default;
     // write → computes the value, drops it, then NULLs the box global).
     const boxedInfo = fctx.boxedCaptures?.get(name);
+    // A foreign same-named boxed registration may have survived from a sibling
+    // body. This new value-global owns the name now; remove that foreign box
+    // unless THIS local is itself boxed and replaces it below.
+    ctx.capturedBoxGlobals?.delete(name);
     if (boxedInfo) {
       (ctx.capturedBoxGlobals ??= new Map()).set(name, {
         globalIdx,
@@ -700,6 +748,11 @@ export function promoteAccessorCapturesToGlobals(
         valType: boxedInfo.valType,
       });
     }
+    promotedRecord?.set(name, {
+      globalIdx,
+      widened: localType.kind === "ref",
+      boxed: boxedInfo ? { refCellTypeIdx: boxedInfo.refCellTypeIdx, valType: boxedInfo.valType } : undefined,
+    });
 
     // If this variable has a local TDZ flag, also promote it to a global TDZ flag
     const tdzFlagLocalIdx = fctx.tdzFlagLocals?.get(name);
@@ -1557,12 +1610,14 @@ export function computeClosureWrapperSig(
 
   // 1. Parameter types. (#3359) A TS `this` param is type-level only — exclude it.
   const arrowParams: ValType[] = [];
-  for (const p of runtimeParameters(arrow)) {
+  for (const [paramIndex, p] of runtimeParameters(arrow).entries()) {
     const paramType = ctx.checker.getTypeAtLocation(p);
     let wasmType =
-      !ts.isFunctionDeclaration(arrow) && setAccessorParamIsDynamic(arrow)
-        ? EXTERNREF_PARAM
-        : resolveWasmType(ctx, paramType);
+      paramIndex === 0 && ctx.arrayMapCallbackFirstParamOverride
+        ? ctx.arrayMapCallbackFirstParamOverride
+        : !ts.isFunctionDeclaration(arrow) && setAccessorParamIsDynamic(arrow)
+          ? EXTERNREF_PARAM
+          : resolveWasmType(ctx, paramType);
     // An unannotated JavaScript parameter whose default is object-valued is
     // still structurally open: callers may supply any property bag. TypeScript
     // infers the default's exact closed shape, but using that shape as the Wasm
@@ -1614,10 +1669,12 @@ export function computeClosureWrapperSig(
   const isAsync = arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
   const sig = ctx.checker.getSignatureFromDeclaration(arrow);
   let closureReturnType: ValType | null = null;
+  let checkerReturnWasNever = false;
   if (isGenerator) {
     closureReturnType = { kind: "externref" };
   } else if (sig) {
     let retType = ctx.checker.getReturnTypeOfSignature(sig);
+    checkerReturnWasNever = (retType.flags & ts.TypeFlags.Never) !== 0;
     if (isAsync) {
       retType = unwrapPromiseType(retType, ctx.checker);
     }
@@ -1629,10 +1686,26 @@ export function computeClosureWrapperSig(
       // externref — the runtime value is a HOST plain object; a struct-typed
       // return null-drops it on the failed ref.test (see
       // resolveWasmTypeForClosureReturn).
-      closureReturnType = widenClosureReturnForPreInitVar(ctx, arrow, resolveWasmTypeForClosureReturn(ctx, retType));
+      const resolvedReturn = widenClosureReturnForPreInitVar(ctx, arrow, resolveWasmTypeForClosureReturn(ctx, retType));
+      closureReturnType = ts.isFunctionDeclaration(arrow)
+        ? resolvedReturn
+        : preferJavaScriptBodyArrayReturn(ctx, arrow, retType, resolvedReturn);
     }
   }
   if (closureReturnType === null && !ts.isFunctionDeclaration(arrow) && isAssignedToSymbolIterator(arrow)) {
+    closureReturnType = inferExplicitClosureReturnType(ctx, arrow);
+  }
+  // A value-bearing closure can be contextually inferred as `never` after an
+  // earlier semantic error even though its JS body still produces a runtime
+  // value. This is common in `allowJs` packages with stale JSDoc: Axios declares
+  // `matchAll` as `Array<boolean>`, so `matches.map(match => match[0])` gives the
+  // callback a `never` return even though every actual element is a RegExp match
+  // array. We deliberately compile with `skipSemanticDiagnostics`; therefore a
+  // checker `never` must not turn a syntactically value-returning callback into
+  // a void Wasm ABI and drop its result. Recover the body's concrete lowering
+  // type. Genuinely non-returning bodies have no value-bearing return and stay
+  // void; the contextual-void rule below still preserves #585 call ABIs.
+  if (closureReturnType === null && checkerReturnWasNever && !ts.isFunctionDeclaration(arrow)) {
     closureReturnType = inferExplicitClosureReturnType(ctx, arrow);
   }
   if (closureReturnType !== null && !ts.isFunctionDeclaration(arrow)) {
@@ -3559,7 +3632,22 @@ export function compileArrowAsCallback(
   const cbArrowParams = runtimeParameters(arrow);
   for (const p of cbArrowParams) {
     const paramType = ctx.checker.getTypeAtLocation(p);
-    const resolved = resolveWasmType(ctx, paramType);
+    const staticallyResolved = resolveWasmType(ctx, paramType);
+    // A callback exported to the JS host receives ordinary host objects as
+    // externrefs. A binding-pattern annotation/inference can nevertheless
+    // describe the parameter as a closed Wasm struct (Axios' descriptor
+    // reducer: `({ value }, key) => ...`). Eagerly casting that host object to
+    // the inferred struct yields null and the first destructuring field read
+    // traps. Keep binding-pattern parameters dynamic at this boundary so the
+    // existing externref destructuring lane performs ordinary property/index
+    // reads; compiled structs still work through the same runtime bridge.
+    const resolved =
+      !ctx.standalone &&
+      !ctx.wasi &&
+      (ts.isObjectBindingPattern(p.name) || ts.isArrayBindingPattern(p.name)) &&
+      (staticallyResolved.kind === "ref" || staticallyResolved.kind === "ref_null")
+        ? ({ kind: "externref" } as ValType)
+        : staticallyResolved;
     cbResolvedParams.push(resolved);
     // JS host passes all values as externref for GC ref types — they cannot
     // be passed as (ref N) or (ref null N) directly from JS
@@ -3891,6 +3979,14 @@ export function compileArrowAsCallback(
     const refCellLocals: { refCellLocal: number; outerLocalIdx: number; refCellTypeIdx: number; valType: ValType }[] =
       [];
     for (const cap of captures) {
+      // A host callback is itself a dynamic value use of its captured nested
+      // FunctionDeclarations. Their stable activation-local closure stays in
+      // a preallocated null externref slot until first materialization; copy
+      // the value, not that sentinel. Capture-free declarations already use
+      // the canonical module singleton path and need no eager work here.
+      if ((ctx.nestedFuncCaptures.get(cap.name)?.length ?? 0) > 0) {
+        materializeHoistedFunctionValueBinding(ctx, fctx, cap.name);
+      }
       if (cap.mutable && !cap.alreadyBoxed) {
         const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.type);
         // (#2128) Reuse the literal's shared cell when a sibling callback

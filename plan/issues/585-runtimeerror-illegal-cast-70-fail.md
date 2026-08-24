@@ -3,7 +3,7 @@ id: 585
 title: "RuntimeError: illegal cast (70 FAIL)"
 status: done
 created: 2026-03-19
-updated: 2026-04-14
+updated: 2026-08-24
 completed: 2026-03-19
 priority: medium
 feasibility: medium
@@ -51,3 +51,24 @@ Using TypeScript's contextual type system to determine the correct wrapper struc
 ### What didn't work / remaining
 - 7 tests still have illegal cast in generator+destructuring patterns (different code path)
 - The approach doesn't help closures passed through module globals where the contextual type isn't available at creation time
+
+## 2026-08-24 class host-bridge validation repair
+
+The retained seven-test regression file exposed a later, adjacent validation
+defect in its class-expression case. The compiler emits host-callable class
+method dispatchers even when the source only calls the method inside Wasm.
+`getVal(): number` therefore left an `f64` result on an `externref` dispatcher
+path when the module had no `__box_number` helper, and WebAssembly validation
+rejected `__class_call_getVal_0` before the original closure regression could
+run.
+
+Numeric class-dispatch results now fail closed when boxing infrastructure is
+absent: the dispatcher drops the raw `f64`, `f32`, `i32`, or `i64` result and
+returns a null externref host fallback instead of emitting an invalid stack
+type. When `__box_number` is present, the existing exact boxed-number path is
+unchanged. This is host-bridge availability handling, not a change to the
+compiled direct call, so the in-Wasm `obj.getVal()` still returns `99`.
+
+Exact evidence: `tests/illegal-cast-closures-585.test.ts` compiles, validates,
+and passes **7/7**. This repairs the retained harness; it does not reclassify
+the historical generator/destructuring residuals documented above.

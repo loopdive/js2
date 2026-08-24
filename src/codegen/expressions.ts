@@ -50,6 +50,7 @@ import { compileStringLiteral } from "./string-ops.js";
 import { ensureImportMetaObject } from "./import-meta.js";
 import { coerceType as coerceTypeImpl, pushDefaultValue } from "./type-coercion.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
+import { emitVoidOperandSideEffects } from "./expressions/void-operand.js";
 
 // ── Sub-module imports ─────────────────────────────────────────────────
 
@@ -656,24 +657,6 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
   );
 }
 
-/**
- * Check whether the last instruction emitted since bodyLenBefore is a
- * void-returning call.
- */
-function _isLastInstrVoidCall(ctx: CodegenContext, fctx: FunctionContext, bodyLenBefore: number): boolean {
-  if (fctx.body.length <= bodyLenBefore) return true;
-  const lastInstr = fctx.body[fctx.body.length - 1];
-  if (!lastInstr) return false;
-  const op = (lastInstr as any).op;
-  if (op === "call" && (lastInstr as any).funcIdx !== undefined) {
-    return wasmFuncReturnsVoid(ctx, (lastInstr as any).funcIdx);
-  }
-  if (op === "call_ref" && (lastInstr as any).typeIdx !== undefined) {
-    return wasmFuncTypeReturnsVoid(ctx, (lastInstr as any).typeIdx);
-  }
-  return false;
-}
-
 // ── Recursion depth guard ──────────────────────────────────────────────
 
 let __compileDepth = 0;
@@ -764,13 +747,7 @@ function compileExpressionBody(
       }
     }
     if (ts.isVoidExpression(inner)) {
-      const bodyLenBefore = fctx.body.length;
-      const operandType = compileExpressionInner(ctx, fctx, inner.expression);
-      if (operandType !== null && operandType !== VOID_RESULT) {
-        if (!_isLastInstrVoidCall(ctx, fctx, bodyLenBefore)) {
-          fctx.body.push({ op: "drop" });
-        }
-      }
+      emitVoidOperandSideEffects(ctx, fctx, () => compileExpressionInner(ctx, fctx, inner.expression));
       if (expectedType.kind === "f64") {
         fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
         fctx.body.push({ op: "f64.reinterpret_i64" });
@@ -840,13 +817,7 @@ function compileExpressionBody(
       }
     }
     if (ts.isVoidExpression(inner)) {
-      const bodyLenBefore2 = fctx.body.length;
-      const operandType = compileExpressionInner(ctx, fctx, inner.expression);
-      if (operandType !== null && operandType !== VOID_RESULT) {
-        if (!_isLastInstrVoidCall(ctx, fctx, bodyLenBefore2)) {
-          fctx.body.push({ op: "drop" });
-        }
-      }
+      emitVoidOperandSideEffects(ctx, fctx, () => compileExpressionInner(ctx, fctx, inner.expression));
       ensureAnyHelpers(ctx);
       const funcIdx = ctx.funcMap.get("__any_box_undefined");
       if (funcIdx !== undefined) {
@@ -1458,13 +1429,7 @@ function compileExpressionInner(
   }
 
   if (ts.isVoidExpression(expr)) {
-    const voidBodyLen = fctx.body.length;
-    const operandType = compileExpressionInner(ctx, fctx, expr.expression);
-    if (operandType !== null && operandType !== VOID_RESULT) {
-      if (!_isLastInstrVoidCall(ctx, fctx, voidBodyLen)) {
-        fctx.body.push({ op: "drop" });
-      }
-    }
+    emitVoidOperandSideEffects(ctx, fctx, () => compileExpressionInner(ctx, fctx, expr.expression));
     emitUndefined(ctx, fctx);
     return { kind: "externref" };
   }

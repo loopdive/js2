@@ -26,6 +26,8 @@ import { rollbackSpeculative } from "../context/speculative.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import { collectDirectEvalBindingNames, functionMayReachDirectEval } from "../direct-eval-environment.js";
 import {
+  destructureParamArray,
+  destructureParamObject,
   getArrTypeIdxFromVec,
   getOrRegisterVecType,
   hoistLetConstWithTdz,
@@ -198,6 +200,7 @@ export function compileTailDispatch(
             (fctx.inlinedIifeNodes ??= new Set()).add(callee);
             // Allocate locals for parameters and compile arguments
             const paramLocals: number[] = [];
+            const paramLocalTypes: ValType[] = [];
             const allArgLocals: { idx: number; type: ValType }[] = [];
             for (let i = 0; i < params.length; i++) {
               const param = params[i]!;
@@ -207,6 +210,7 @@ export function compileTailDispatch(
               const idx = allocLocal(fctx, paramName, localType);
               fctx.body.push({ op: "local.set", index: idx });
               paramLocals.push(idx);
+              paramLocalTypes.push(localType);
               if (iifeNeedsArguments) {
                 allArgLocals.push({ idx, type: localType });
               }
@@ -295,6 +299,25 @@ export function compileTailDispatch(
               fctx.body.push({ op: "local.set", index: argsLocal });
             }
 
+            // An inlined IIFE still performs ordinary parameter binding
+            // initialization. The fast path previously stored a binding-
+            // pattern argument only in its synthetic `__iife_pN` local and
+            // never created or initialized the pattern's lexical bindings.
+            // A nested closure therefore could not capture them and could
+            // fall through to an unrelated same-named module global (Axios's
+            // `hasOwnProperty` helper then called itself forever). Run this
+            // after every argument has been evaluated and after `arguments`
+            // exists, matching function-entry ordering without sacrificing
+            // the inline path.
+            for (let i = 0; i < params.length; i++) {
+              const param = params[i]!;
+              if (ts.isObjectBindingPattern(param.name)) {
+                destructureParamObject(ctx, fctx, paramLocals[i]!, param.name, paramLocalTypes[i]!);
+              } else if (ts.isArrayBindingPattern(param.name)) {
+                destructureParamArray(ctx, fctx, paramLocals[i]!, param.name, paramLocalTypes[i]!);
+              }
+            }
+
             // Compile body
             if (ts.isArrowFunction(callee) && !ts.isBlock(callee.body)) {
               // Concise body: expression — no return issue
@@ -346,12 +369,20 @@ export function compileTailDispatch(
             // returns — nested function boundaries keep their own return type.
             if (iifeWasmRetType && (iifeWasmRetType.kind === "ref" || iifeWasmRetType.kind === "ref_null")) {
               let divertedObjlitReturn = false;
+              let realmGlobalReturn = false;
               const scanReturns = (node: ts.Node): void => {
-                if (divertedObjlitReturn) return;
+                if (divertedObjlitReturn || realmGlobalReturn) return;
                 if (ts.isFunctionLike(node) && node !== callee) return;
                 if (ts.isReturnStatement(node) && node.expression) {
                   let retExpr: ts.Expression = node.expression;
-                  while (ts.isParenthesizedExpression(retExpr)) retExpr = retExpr.expression;
+                  while (
+                    ts.isParenthesizedExpression(retExpr) ||
+                    ts.isAsExpression(retExpr) ||
+                    ts.isTypeAssertionExpression(retExpr) ||
+                    ts.isNonNullExpression(retExpr)
+                  ) {
+                    retExpr = retExpr.expression;
+                  }
                   if (
                     ts.isObjectLiteralExpression(retExpr) &&
                     objectLiteralTakesStandaloneAnyObjectPath(ctx, retExpr)
@@ -359,11 +390,26 @@ export function compileTailDispatch(
                     divertedObjlitReturn = true;
                     return;
                   }
+                  // The realm global object is a host externref (or native open
+                  // object), never the enormous closed `typeof globalThis`
+                  // struct inferred by TypeScript. Axios's global-object IIFE
+                  // returns it from a statement body; typing this return local
+                  // as that struct guard-casts the real global to null.
+                  if (
+                    ts.isIdentifier(retExpr) &&
+                    retExpr.text === "globalThis" &&
+                    !ctx.moduleGlobals.has("globalThis")
+                  ) {
+                    if (!ctx.oracle.declarationsOf(retExpr).some((decl) => !decl.getSourceFile().isDeclarationFile)) {
+                      realmGlobalReturn = true;
+                      return;
+                    }
+                  }
                 }
                 forEachChild(node, scanReturns);
               };
               for (const stmt of bodyStmts) scanReturns(stmt);
-              if (divertedObjlitReturn) {
+              if (divertedObjlitReturn || realmGlobalReturn) {
                 iifeWasmRetType = { kind: "externref" };
               }
             }

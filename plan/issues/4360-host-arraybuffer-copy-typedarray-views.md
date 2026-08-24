@@ -4,7 +4,7 @@ title: "host dynamic closure bind: copying bytes between host ArrayBuffers throu
 status: ready
 sprint: current
 created: 2026-08-10
-updated: 2026-08-10
+updated: 2026-08-24
 priority: medium
 horizon: s
 feasibility: medium
@@ -70,3 +70,32 @@ Lift the single failing case out of
 of that branch — the five issue files, the `src/` diff, the
 `scripts/test262-sandbox.mjs` extraction — is not worth carrying: written
 against a 2026-07-03 tree, and the test262 runner has been restructured since.
+
+## 2026-08-24 Hono-derived TypedArray carrier checkpoint
+
+The same boundary has a smaller direct reproduction in Hono's original
+`src/utils/encode.test.ts`: an unannotated package helper receives a host
+ArrayBuffer and executes `new Uint8Array(buf)`. The checker sees `buf` as
+`any`; the compiled constructor previously treated it only as a numeric count,
+so `ToNumber(ArrayBuffer)` became `NaN`, then length `0`.
+
+The current patch routes a genuinely `any`/`unknown` first argument through the
+existing host TypedArray construct bridge and keeps the receiving local on the
+externref representation in lock-step. The Hono file first moves from **23/44
+to 27/44** after the Web-global provider fix is held constant.
+
+The inverse direction is now covered too. Codegen registers the concrete brand
+only for vecs produced from TypedArray values. The runtime uses that brand to
+materialize one identity-stable host TypedArray/ArrayBuffer pair, including
+when the vec crosses through `__make_iterable` inside a heterogeneous test-case
+row. Ordinary vecs are deliberately unregistered, so a plain compiled Array
+still returns `undefined` for `.buffer`. The exact unchanged Hono
+`src/utils/encode.test.ts` is now **44/44**, and the focused
+`tests/issue-3097.test.ts` suite is **11/11**.
+
+This remains a one-time boundary copy. Mutations after the first host
+materialization do not provide true bidirectional backing-store aliasing; that
+larger representation problem remains with
+[#2773](https://github.com/loopdive/js2wasm/blob/main/plan/issues/2773-value-rep-substrate-epic.md).
+The original #3416 residual also still needs to be rerun before this issue can
+be marked done.

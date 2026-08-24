@@ -4,7 +4,7 @@ title: "axios: class rest dispatch bridge is fixed; finish the remaining dynamic
 status: in-progress
 sprint: current
 created: 2026-08-16
-updated: 2026-08-21
+updated: 2026-08-24
 priority: high
 horizon: m
 feasibility: medium
@@ -15,17 +15,49 @@ language_feature: classes, rest-parameters
 goal: npm-library-support
 related: [3995, 4302]
 loc-budget-allow:
+  - src/codegen/array-methods.ts
+  - src/codegen/array-nonindex-key.ts
+  - src/codegen/closures.ts
+  - src/codegen/context/types.ts
+  - src/codegen/declarations.ts
+  - src/codegen/default-expression-import-global.ts
   - src/codegen/index.ts
+  - src/codegen/named-this-call.ts
+  - src/codegen/property-access.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/expressions/identifiers.ts
   - src/runtime.ts
 func-budget-allow:
+  - src/codegen/closures.ts::preferJavaScriptBodyArrayReturn
+  - src/codegen/declarations.ts::jsArrayParamNeedsOpenObjectCarrier
+  - src/codegen/named-this-call.ts::resolveObjectBindingFunction
+  - src/codegen/expressions/calls.ts::calleeMayBeHostCallable
   - src/codegen/index.ts::emitIteratorMethodExport
   - src/codegen/index.ts::emitMethodDispatch
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
   - src/runtime.ts::resolveImport
   - src/codegen/index.ts::resolveWasmType
 files:
+  - src/codegen/array-methods.ts
+  - src/codegen/array-nonindex-key.ts
+  - src/codegen/closures.ts
+  - src/codegen/context/types.ts
+  - src/codegen/declarations.ts
   - src/codegen/index.ts
+  - src/codegen/default-expression-import-global.ts
+  - src/codegen/named-this-call.ts
+  - src/codegen/property-access.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/expressions/identifiers.ts
   - tests/dogfood/axios-upstream-suite.mjs
   - tests/issue-4527.test.ts
+  - tests/issue-4527-call-dyn-bridge.test.ts
   - tests/dogfood/axios-upstream-suite-pin.json
   - tests/dogfood/upstream-suite-compile-worker.mjs
 ---
@@ -132,3 +164,112 @@ Remaining for this issue: re-measure the axios suite (the 21/231 checkpoint
 predates this bridge) and the in-body null-deref cluster that the bridge does
 not address (diff-sequences' real `diffSequence` internals still null-deref —
 that is a capture/carrier defect, not a call-boundary one).
+
+## 2026-08-24 checkpoint (destructured inline-IIFE parameters)
+
+Axios's shared `utils.hasOwnProperty` helper exposed a separate generic
+inline-IIFE defect:
+
+```js
+const hasOwnProperty = (({hasOwnProperty}) =>
+  (object, property) => hasOwnProperty.call(object, property)
+)(Object.prototype);
+```
+
+The inline fast path stored the argument only in a synthetic `__iife_p0`
+local. It never initialized the binding pattern, so the returned closure had
+no lexical `hasOwnProperty` to capture. Its read fell through to the
+same-named module global being initialized with that closure, and `.call`
+recursively invoked the closure itself until the stack overflowed. The generic
+fix now applies the existing object/array parameter destructuring machinery
+after all IIFE arguments and the `arguments` object have been prepared, before
+the body is compiled.
+
+Measured on the exact pinned Axios 1.16.1 files after the fix:
+
+- focused compiler regression: 13/13 passed, including the ordinary capture
+  and same-named-module-binding cases;
+- `tests/unit/utils/merge.test.js`: 8/9 passed (previously 0/9; the remaining
+  `should support caseless option` is an assertion-value mismatch);
+- `tests/unit/helpers/formDataToJSON.test.js`: 0/8 passed, but all 8 now run to
+  assertion comparison with zero runtime failures instead of stack-overflowing.
+  Its remaining failures are result-shape/value mismatches, not this call loop.
+
+## 2026-08-24 checkpoint (default-expression imports and current Axios census)
+
+An imported `default` whose source module exports an expression could be
+silently rebound by the graph-wide name registries. In the reduced case,
+`import bind from "./bind.js"` selected an unrelated same-named `bind`
+declaration instead of the source module's default-expression global. This
+made `Function.prototype.bind` either non-callable or gave its derived
+`hasOwnProperty` helper the wrong identity.
+
+The generic reduction now resolves that import through the TypeScript symbol
+of its exact `export default <expression>` declaration and reads the matching
+module global before consulting the legacy name-keyed function/closure maps.
+The exact reductions in `tests/issue-4527-call-dyn-bridge.test.ts` are green:
+
+- a default import stays distinct from an unrelated same-named function;
+- `Function.prototype.bind` remains callable in a default-export fallback;
+- the derived bound `hasOwnProperty` remains callable across modules and
+  before a dynamically read alias table.
+
+The final unfiltered pinned Axios run on the combined shared tree improved
+from the last honest **61/231** baseline to **135/231** original tests passing
+in Wasm. The fresh split is 135 passed and 96 scored failures, with zero
+suite-level runtime failures; native remains 231/231. Thirty-two of 33
+admitted modules compile and validate. Sixteen upstream files (414
+registrations) remain explicitly deferred as unavailable infrastructure. This
++74 result is a combined-tree measurement and is not attributed solely to the
+default-import fix.
+
+The former `mergeConfig` module-initialization frontier at
+`lib/defaults/index.js:173` (`utils.forEach`) was cleared by the concurrent
+generic object/array carrier work recorded below. The file now executes its
+whole original suite and passes **27/57**; the remaining 30 callbacks report
+`null is not a function`, so the next reduction starts in the in-test merged-
+property callback path, not in module initialization. The one admitted module
+that still does not complete compilation is `composeSignals.test.js`: a
+timer-driven Wasm callback dereferences null/undefined after compilation. Any
+follow-up must remain generic and must not special-case Axios names.
+
+Two adjacent residuals remain deliberately unclaimed by this checkpoint:
+the CommonJS `Function.prototype.bind || implementation` reduction in
+`tests/issue-1279.test.ts` returns false, and host `Object.getPrototypeOf`
+results do not yet compare identical to the imported host prototype. Neither
+case traps in the focused reductions.
+
+## 2026-08-24 checkpoint (Axios array/object carriers and caseless merge)
+
+The two remaining exact upstream slices are now green against the original
+Axios 1.16.1 tests:
+
+- `tests/unit/helpers/formDataToJSON.test.js`: **8/8 Wasm**. Axios's stale
+  `@returns {Array<boolean>}` on `matchAll` no longer destroys the actual
+  `RegExp.exec()` match arrays: JavaScript closure returns prefer the body's
+  representation-safe array carrier when its element representation conflicts
+  with JSDoc, and inline `map` callbacks use that carrier. Dynamic string keys
+  on JS-host native vecs now take the host property bridge, preserving named
+  array expandos such as `target.bar`. A JSDoc `Array<any>` parameter that
+  enumerates/string-indexes those named properties remains externref across the
+  declaration ABI rather than copying only indexed elements into a native vec.
+- `tests/unit/utils/merge.test.js`: **9/9 Wasm**. The last caseless assertion
+  was receiver loss in `merge.call({caseless: true}, ...)` after
+  `const {merge} = utils`. The named receiver trampoline now resolves an
+  immutable object-destructured shorthand through its default-export object to
+  the exact function declaration. Rest-parameter targets are admitted because
+  the existing call lowering already packs source arguments into the target's
+  declared vec ABI before invoking the trampoline.
+
+Focused generic regressions cover stale JSDoc match arrays, named array
+properties across a JSDoc array parameter, and both direct and imported-object
+rest-function `.call` receiver preservation. No Axios source or test was
+patched.
+
+The full curated Axios run now passes **135/231** admitted original tests (up
+from the 21/231 checkpoint). Native remains 231/231. Thirty-two of 33 selected
+modules compile and validate; `composeSignals.test.js` is the one exception,
+where an asynchronous timer callback throws after the isolated compile worker
+has finished its scored test body. Sixteen files / 414 registrations remain
+explicitly reported as unavailable infrastructure. This full count was
+measured from the pinned `v1.16.1` suite after the focused 8/8 and 9/9 runs.

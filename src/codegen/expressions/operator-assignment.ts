@@ -105,6 +105,12 @@ export function compileLogicalAssignment(
   // Resolve the variable storage location
   let storage:
     | { kind: "local"; index: number; type: ValType }
+    | {
+        kind: "boxedLocal";
+        index: number;
+        box: { refCellTypeIdx: number; valType: ValType };
+        type: ValType;
+      }
     | { kind: "captured"; index: number; type: ValType }
     | { kind: "capturedBox"; box: { globalIdx: number; refCellTypeIdx: number; valType: ValType }; type: ValType }
     | { kind: "module"; index: number; type: ValType }
@@ -112,13 +118,18 @@ export function compileLogicalAssignment(
 
   const localIdx = fctx.localMap.get(name);
   if (localIdx !== undefined) {
-    const localType =
-      localIdx < fctx.params.length ? fctx.params[localIdx]!.type : fctx.locals[localIdx - fctx.params.length]?.type;
-    storage = {
-      kind: "local",
-      index: localIdx,
-      type: localType ?? { kind: "f64" },
-    };
+    const boxedLocal = fctx.boxedCaptures?.get(name);
+    if (boxedLocal) {
+      storage = { kind: "boxedLocal", index: localIdx, box: boxedLocal, type: boxedLocal.valType };
+    } else {
+      const localType =
+        localIdx < fctx.params.length ? fctx.params[localIdx]!.type : fctx.locals[localIdx - fctx.params.length]?.type;
+      storage = {
+        kind: "local",
+        index: localIdx,
+        type: localType ?? { kind: "f64" },
+      };
+    }
   }
   if (!storage) {
     // (#3039) Boxed captured global — read/write THROUGH the ref cell.
@@ -173,6 +184,18 @@ export function compileLogicalAssignment(
   const emitGet = () => {
     if (storage!.kind === "capturedBox") {
       emitCapturedBoxGlobalRead(ctx, fctx, storage!.box);
+    } else if (storage!.kind === "boxedLocal") {
+      fctx.body.push({ op: "local.get", index: storage!.index });
+      emitNullGuardedStructGet(
+        ctx,
+        fctx,
+        { kind: "ref_null", typeIdx: storage!.box.refCellTypeIdx },
+        storage!.box.valType,
+        storage!.box.refCellTypeIdx,
+        0,
+        undefined,
+        false,
+      );
     } else if (storage!.kind === "local") {
       fctx.body.push({ op: "local.get", index: getStorageIndex() });
     } else {
@@ -186,6 +209,24 @@ export function compileLogicalAssignment(
       fctx.body.push({ op: "local.set", index: tmpVal });
       emitCapturedBoxGlobalWrite(fctx, storage!.box, tmpVal);
       emitCapturedBoxGlobalRead(ctx, fctx, storage!.box);
+    } else if (storage!.kind === "boxedLocal") {
+      const tmpVal = allocLocal(fctx, `__box_llog_${fctx.locals.length}`, storage!.box.valType);
+      fctx.body.push(
+        { op: "local.set", index: tmpVal },
+        { op: "local.get", index: storage!.index },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [],
+          else: [
+            { op: "local.get", index: storage!.index },
+            { op: "local.get", index: tmpVal },
+            { op: "struct.set", typeIdx: storage!.box.refCellTypeIdx, fieldIdx: 0 },
+          ],
+        },
+        { op: "local.get", index: tmpVal },
+      );
     } else if (storage!.kind === "local") {
       fctx.body.push({ op: "local.tee", index: getStorageIndex() });
     } else {
@@ -2233,6 +2274,58 @@ export function emitCompoundOp(ctx: CodegenContext, fctx: FunctionContext, op: t
 }
 
 /**
+ * Compile `obj.field += rhs` when a resolved Wasm struct stores the field as
+ * externref. JavaScript `+` must choose concatenation after ToPrimitive when
+ * either operand is a string; treating every resolved field as numeric turns
+ * inferred string accumulators (for example a token's `raw` field) into NaN.
+ *
+ * The receiver and current field value have already been evaluated. `undefined`
+ * means this is not the externref `+=` shape; `null` means RHS compilation
+ * failed; otherwise the returned externref is both stored and left as the
+ * assignment expression's value.
+ */
+function tryCompileExternrefStructFieldPlusEquals(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  rhs: ts.Expression,
+  op: ts.SyntaxKind,
+  fieldType: ValType,
+  objTmp: number,
+  typeIdx: number,
+  fieldIdx: number,
+): ValType | null | undefined {
+  if (op !== ts.SyntaxKind.PlusEqualsToken || fieldType.kind !== "externref") return undefined;
+
+  const leftTmp = allocTempLocal(fctx, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: leftTmp });
+
+  const rhsType = compileExpression(ctx, fctx, rhs, { kind: "externref" });
+  if (!rhsType) {
+    releaseTempLocal(fctx, leftTmp);
+    return null;
+  }
+  if (rhsType.kind !== "externref") {
+    coerceType(ctx, fctx, rhsType, { kind: "externref" });
+  }
+  const rightTmp = allocTempLocal(fctx, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: rightTmp });
+
+  const addType = emitAnyAddFromExternTemps(ctx, fctx, leftTmp, rightTmp);
+  if (addType.kind !== "externref") {
+    coerceType(ctx, fctx, addType, { kind: "externref" });
+  }
+  const resultTmp = allocTempLocal(fctx, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: resultTmp });
+
+  fctx.body.push({ op: "local.get", index: objTmp });
+  fctx.body.push({ op: "local.get", index: resultTmp });
+  fctx.body.push({ op: "struct.set", typeIdx, fieldIdx });
+  fctx.body.push({ op: "local.get", index: resultTmp });
+  releaseTempLocal(fctx, resultTmp);
+  return { kind: "externref" };
+}
+
+/**
  * Compile compound assignment on a property access target: obj.prop += value
  * Pattern: read obj.prop, compile RHS, apply op, store back into obj.prop
  */
@@ -2411,6 +2504,18 @@ function compilePropertyCompoundAssignment(
   fctx.body.push({ op: "local.get", index: objTmp });
   fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
 
+  const externrefPlusEquals = tryCompileExternrefStructFieldPlusEquals(
+    ctx,
+    fctx,
+    rhs,
+    op,
+    fieldType,
+    objTmp,
+    structTypeIdx,
+    fieldIdx,
+  );
+  if (externrefPlusEquals !== undefined) return externrefPlusEquals;
+
   // Coerce field value to f64 for arithmetic
   if (fieldType.kind !== "f64") {
     coerceType(ctx, fctx, fieldType, { kind: "f64" });
@@ -2442,6 +2547,33 @@ function compilePropertyCompoundAssignment(
   return { kind: "f64" };
 }
 
+function resolveOrAddCompoundPropertyField(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.PropertyAccessExpression,
+  propName: string,
+  typeIdx: number,
+  resolvedTypeName: string,
+): { fields: FieldDef[]; fieldIdx: number } | undefined {
+  const fields = ctx.structFields.get(resolvedTypeName);
+  if (!fields) return undefined;
+  let fieldIdx = fields.findIndex((field) => field.name === propName);
+  if (fieldIdx !== -1 || ctx.classSet.has(resolvedTypeName)) return { fields, fieldIdx };
+
+  const objTsType = ctx.checker.getTypeAtLocation(target.expression);
+  const tsProp = objTsType.getProperties?.().find((prop) => prop.name === propName);
+  if (!tsProp) return { fields, fieldIdx };
+  const propWasmType = resolveWasmType(ctx, ctx.checker.getTypeOfSymbolAtLocation(tsProp, target));
+  const newField: FieldDef = { name: propName, type: propWasmType, mutable: true };
+  fields.push(newField);
+  patchStructNewForAddedField(ctx, fctx, typeIdx, propWasmType);
+  const typeDef = ctx.mod.types[typeIdx];
+  if (typeDef?.kind === "struct" && typeDef.fields !== fields) typeDef.fields.push(newField);
+  patchStructNewForDynamicField(ctx, typeIdx, propWasmType);
+  fieldIdx = fields.length - 1;
+  return { fields, fieldIdx };
+}
+
 /**
  * Fallback for compound assignment on a property access target when the
  * struct type cannot be resolved statically.
@@ -2471,39 +2603,9 @@ function compilePropertyCompoundAssignmentExternref(
     // Find the struct fields by looking up which typeName maps to this typeIdx
     const resolvedTypeName = ctx.typeIdxToStructName.get(typeIdx);
     if (resolvedTypeName) {
-      const fields = ctx.structFields.get(resolvedTypeName);
-      if (fields) {
-        let fieldIdx = fields.findIndex((f) => f.name === propName);
-
-        // If the field doesn't exist yet, try to add it dynamically from TS type info
-        // but NEVER for class struct types — their fields are fixed at collection time
-        if (fieldIdx === -1 && !ctx.classSet.has(resolvedTypeName)) {
-          const objTsType = ctx.checker.getTypeAtLocation(target.expression);
-          const tsProps = objTsType.getProperties?.();
-          if (tsProps) {
-            const tsProp = tsProps.find((p) => p.name === propName);
-            if (tsProp) {
-              const propTsType = ctx.checker.getTypeOfSymbolAtLocation(tsProp, target);
-              const propWasmType = resolveWasmType(ctx, propTsType);
-              const newField: FieldDef = {
-                name: propName,
-                type: propWasmType,
-                mutable: true,
-              };
-              fields.push(newField);
-              // fields === typeDef.fields (same array ref from structFields map)
-              patchStructNewForAddedField(ctx, fctx, typeIdx, propWasmType);
-              const typeDef = ctx.mod.types[typeIdx];
-              if (typeDef?.kind === "struct" && typeDef.fields !== fields) {
-                typeDef.fields.push(newField);
-              }
-              // Patch existing struct.new instructions to include the new field
-              patchStructNewForDynamicField(ctx, typeIdx, propWasmType);
-              fieldIdx = fields.length - 1;
-            }
-          }
-        }
-
+      const resolvedField = resolveOrAddCompoundPropertyField(ctx, fctx, target, propName, typeIdx, resolvedTypeName);
+      if (resolvedField) {
+        const { fields, fieldIdx } = resolvedField;
         if (fieldIdx !== -1) {
           const fieldType = fields[fieldIdx]!.type;
           // Save object to temp local
@@ -2513,6 +2615,18 @@ function compilePropertyCompoundAssignmentExternref(
           // Read current value
           fctx.body.push({ op: "local.get", index: objTmp });
           fctx.body.push({ op: "struct.get", typeIdx, fieldIdx });
+
+          const externrefPlusEquals = tryCompileExternrefStructFieldPlusEquals(
+            ctx,
+            fctx,
+            rhs,
+            op,
+            fieldType,
+            objTmp,
+            typeIdx,
+            fieldIdx,
+          );
+          if (externrefPlusEquals !== undefined) return externrefPlusEquals;
 
           // Coerce field value to f64 for arithmetic
           if (fieldType.kind !== "f64") {

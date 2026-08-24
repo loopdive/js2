@@ -658,6 +658,66 @@ export function functionReturnsDynamicObjectCarrier(stmt: ts.FunctionDeclaration
   return false;
 }
 
+function resolvesToAmbientConstructorAlias(ctx: CodegenContext, expr: ts.Expression, depth = 0): boolean {
+  if (depth > 3 || !ts.isIdentifier(expr)) return false;
+  const declaration = ctx.oracle.valueDeclarationOf(expr);
+  if (KNOWN_CONSTRUCTORS.has(expr.text) && (!declaration || declaration.getSourceFile().isDeclarationFile)) {
+    return true;
+  }
+  return (
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined &&
+    resolvesToAmbientConstructorAlias(ctx, declaration.initializer, depth + 1)
+  );
+}
+
+/**
+ * An untyped wrapper around an extracted host builtin returns a host value, not
+ * the nominal anonymous struct TypeScript infers from the builtin signature.
+ * Keep that value on the externref carrier across the wrapper's Wasm ABI.
+ */
+function functionReturnsExtractedHostCall(ctx: CodegenContext, stmt: ts.FunctionDeclaration): boolean {
+  if (ctx.standalone || ctx.wasi || !stmt.body) return false;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      node !== stmt &&
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node) ||
+        ts.isAccessor(node) ||
+        ts.isConstructorDeclaration(node))
+    ) {
+      return;
+    }
+    if (ts.isReturnStatement(node) && node.expression && ts.isCallExpression(node.expression)) {
+      const callee = node.expression.expression;
+      if (ts.isIdentifier(callee)) {
+        const declaration = ctx.oracle.valueDeclarationOf(callee);
+        const initializer = declaration && ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
+        if (
+          initializer &&
+          ts.isPropertyAccessExpression(initializer) &&
+          resolvesToAmbientConstructorAlias(ctx, initializer.expression)
+        ) {
+          found = true;
+          return;
+        }
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(stmt.body);
+  return found;
+}
+
+function functionReturnsReferenceBoundaryCarrier(ctx: CodegenContext, stmt: ts.FunctionDeclaration): boolean {
+  return functionReturnsDynamicObjectCarrier(stmt) || functionReturnsExtractedHostCall(ctx, stmt);
+}
+
 const withScopedReturnByFunction = new WeakMap<ts.FunctionDeclaration, boolean>();
 
 /**
@@ -771,6 +831,79 @@ export function functionReturnsThroughWithScope(
 }
 
 /**
+ * A JSDoc `Array` can still be used as an ordinary JavaScript object. Native
+ * vecs preserve indexed elements, but cannot preserve named expando properties
+ * across a function boundary. Keep parameters that enumerate or dynamically
+ * read those properties on the open externref carrier in JS-host builds.
+ */
+function jsArrayParamNeedsOpenObjectCarrier(
+  ctx: CodegenContext,
+  param: ts.ParameterDeclaration,
+  stmt: ts.FunctionDeclaration,
+  wasmType: ValType,
+): boolean {
+  if (
+    ctx.standalone ||
+    ctx.wasi ||
+    !stmt.body ||
+    !ts.isIdentifier(param.name) ||
+    ts.getJSDocType(param) === undefined ||
+    !((wasmType.kind === "ref" || wasmType.kind === "ref_null") && getArrTypeIdxFromVec(ctx, wasmType.typeIdx) >= 0)
+  ) {
+    return false;
+  }
+
+  const isParam = (node: ts.Expression): boolean =>
+    ts.isIdentifier(node) && ctx.oracle.valueDeclarationOf(node) === param;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      node !== stmt &&
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node) ||
+        ts.isAccessor(node) ||
+        ts.isConstructorDeclaration(node))
+    ) {
+      return;
+    }
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "Object" &&
+      (node.expression.name.text === "keys" ||
+        node.expression.name.text === "values" ||
+        node.expression.name.text === "entries" ||
+        node.expression.name.text === "getOwnPropertyNames") &&
+      node.arguments.length > 0 &&
+      isParam(node.arguments[0]!)
+    ) {
+      found = true;
+      return;
+    }
+    if (ts.isElementAccessExpression(node) && isParam(node.expression) && node.argumentExpression) {
+      const keyFact = ctx.oracle.typeFactOf(node.argumentExpression);
+      if (
+        keyFact.kind === "string" ||
+        keyFact.kind === "any" ||
+        keyFact.kind === "unknown" ||
+        (keyFact.kind === "union" &&
+          keyFact.parts.some((part) => part.kind === "string" || part.kind === "any" || part.kind === "unknown"))
+      ) {
+        found = true;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(stmt.body, visit);
+  return found;
+}
+
+/**
  * (#3268) Lower a single non-rest function parameter to its Wasm ValType.
  * Consolidates the four byte-identical per-parameter lowering blocks
  * (registerBodyless + collectDeclarations, generator and normal arms):
@@ -795,6 +928,9 @@ function lowerParamType(
     : restBindingOverridesToExternref(param)
       ? { kind: "externref" }
       : (nativeParam ?? resolveWasmType(ctx, paramType));
+  if (jsArrayParamNeedsOpenObjectCarrier(ctx, param, stmt, wasmType)) {
+    wasmType = { kind: "externref" };
+  }
   // If the parameter has a default value and is a non-null ref type, widen to
   // ref_null so callers can pass ref.null as a sentinel for "use default".
   if (param.initializer && wasmType.kind === "ref") {
@@ -1023,7 +1159,7 @@ function registerBodylessFunctionDeclaration(
 
   const retType = ctx.checker.getReturnTypeOfSignature(sig);
   const unwrappedRetType = isAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
-  if (functionReturnsDynamicObjectCarrier(stmt)) ctx.objectHashConsumerTypes.add(unwrappedRetType);
+  if (functionReturnsReferenceBoundaryCarrier(ctx, stmt)) ctx.objectHashConsumerTypes.add(unwrappedRetType);
   if (!isGenerator && !isVoidType(unwrappedRetType)) ensureStructForType(ctx, unwrappedRetType);
   for (const p of stmt.parameters) {
     ensureStructForType(ctx, ctx.checker.getTypeAtLocation(p));
@@ -1085,7 +1221,9 @@ function registerBodylessFunctionDeclaration(
             // (#3673) `function f(): i32` pins the result type syntactically —
             // the alias identity is only on the return TYPE NODE.
             nativeTypeFromTypeNode(ctx.checker, stmt.type) ??
-              (functionReturnsDynamicObjectCarrier(stmt) ? { kind: "externref" } : resolveWasmType(ctx, rUnwrapped)),
+              (functionReturnsReferenceBoundaryCarrier(ctx, stmt)
+                ? { kind: "externref" }
+                : resolveWasmType(ctx, rUnwrapped)),
           ];
     }
   }
@@ -1772,7 +1910,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       const retType = ctx.checker.getReturnTypeOfSignature(sig);
       // For async functions, unwrap Promise<T> to get T for struct registration
       const unwrappedRetType = isAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
-      if (functionReturnsDynamicObjectCarrier(stmt)) ctx.objectHashConsumerTypes.add(unwrappedRetType);
+      if (functionReturnsReferenceBoundaryCarrier(ctx, stmt)) ctx.objectHashConsumerTypes.add(unwrappedRetType);
       if (!isGenerator && !isVoidType(unwrappedRetType)) ensureStructForType(ctx, unwrappedRetType);
       for (const p of stmt.parameters) {
         const pt = ctx.checker.getTypeAtLocation(p);
@@ -1846,7 +1984,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
                 // (#3673) `function f(): i32` pins the result type syntactically —
                 // the alias identity is only on the return TYPE NODE.
                 nativeTypeFromTypeNode(ctx.checker, stmt.type) ??
-                  (functionReturnsDynamicObjectCarrier(stmt)
+                  (functionReturnsReferenceBoundaryCarrier(ctx, stmt)
                     ? { kind: "externref" }
                     : // (#4641) `function f(c) { if (c) return; return 5; }` — a
                       // MIXED-return declaration. `resolveWasmType`'s union arm
@@ -2532,6 +2670,32 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   // run before `new Ctor()` captures the prototype, and `obj.prop = v` must run between
   // `var before = ...typeof obj.prop` and `var after = ...obj.prop === v`).
   for (const stmt of sourceFile.statements) {
+    // A non-identifier default export has no declaration binding that an
+    // importing module can alias. Give the expression a graph-local live cell
+    // and execute the ExportAssignment in source order so
+    // `import value from "./module"` observes the evaluated value instead of
+    // the old graceful-null fallback. Identifier/function defaults continue
+    // to use their canonical declaration binding.
+    if (
+      ts.isExportAssignment(stmt) &&
+      !stmt.isExportEquals &&
+      !ts.isIdentifier(stmt.expression) &&
+      !(ts.isFunctionExpression(stmt.expression) && stmt.expression.name)
+    ) {
+      const expressionGlobals = (ctx.defaultExpressionGlobals ??= new WeakMap());
+      if (!expressionGlobals.has(stmt)) {
+        let ordinal = ctx.mod.globals.length;
+        let bindingName = `__default_expr_${ordinal}`;
+        while (ctx.moduleGlobals.has(bindingName)) {
+          ordinal += 1;
+          bindingName = `__default_expr_${ordinal}`;
+        }
+        registerModuleGlobal(ctx, bindingName, { kind: "externref" });
+        expressionGlobals.set(stmt, { bindingName, type: { kind: "externref" } });
+      }
+      ctx.moduleInitStatements.push(stmt);
+      continue;
+    }
     if (ts.isVariableStatement(stmt)) {
       if (hasDeclareModifier(stmt)) continue;
       // Track let/const for TDZ enforcement
@@ -3491,11 +3655,69 @@ export function compileDeclarations(
 
   // Recursively scan for class expressions and compile the class bodies
   const compiledAnonClasses = new Set<ts.ClassExpression>();
+  function isAssignmentClassExpressionInsideFunction(classExpr: ts.ClassExpression): boolean {
+    let value: ts.Expression = classExpr;
+    while (
+      ts.isParenthesizedExpression(value.parent) ||
+      ts.isAsExpression(value.parent) ||
+      ts.isTypeAssertionExpression(value.parent) ||
+      ts.isSatisfiesExpression(value.parent) ||
+      ts.isNonNullExpression(value.parent)
+    ) {
+      value = value.parent;
+    }
+    const assignment = value.parent;
+    if (
+      !ts.isBinaryExpression(assignment) ||
+      assignment.right !== value ||
+      assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken
+    ) {
+      return false;
+    }
+    let owner: ts.Node | undefined = assignment.parent;
+    while (owner !== undefined && !ts.isFunctionLike(owner) && !ts.isSourceFile(owner)) owner = owner.parent;
+    return owner !== undefined && ts.isFunctionLike(owner);
+  }
+
+  function classExpressionBodiesAreFullyPrepared(classExpr: ts.ClassExpression): boolean {
+    const bodyUnits = classExpr.members
+      .filter(
+        (
+          member,
+        ): member is
+          | ts.ConstructorDeclaration
+          | ts.MethodDeclaration
+          | ts.GetAccessorDeclaration
+          | ts.SetAccessorDeclaration =>
+          (ts.isConstructorDeclaration(member) ||
+            ts.isMethodDeclaration(member) ||
+            ts.isGetAccessorDeclaration(member) ||
+            ts.isSetAccessorDeclaration(member)) &&
+          member.body !== undefined,
+      )
+      .map((member) => ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(member));
+    return (
+      bodyUnits.length > 0 &&
+      bodyUnits.every((unitId) => unitId !== undefined && classBodyRouting?.skipBodyUnitIds?.has(unitId) === true)
+    );
+  }
+
   function compileAnonClassIfNeeded(classExpr: ts.ClassExpression): void {
     if (compiledAnonClasses.has(classExpr)) return;
     const syntheticName = ctx.anonClassExprNames.get(classExpr);
     if (syntheticName) {
       compiledAnonClasses.add(classExpr);
+      // (#4618) `x = class { method() { use(local); } }` is an in-scope class
+      // definition just like `const x = class { ... }`. Eagerly compiling the
+      // assignment form here runs at module scope, before the enclosing
+      // function's locals exist, so captured host values are permanently
+      // compiled as null (React's beforeEach assigns `Inner = class extends
+      // React.Component` and every render then sees a null `React`). Defer the
+      // legacy bodies to the RHS expression site; prepared IR bodies already
+      // own their lexical environment and stay on their exact route.
+      if (isAssignmentClassExpressionInsideFunction(classExpr) && !classExpressionBodiesAreFullyPrepared(classExpr)) {
+        ctx.deferredClassBodies.add(syntheticName);
+      }
       // (#3045 Bug 2) A class-expression body deferred to the in-scope variable
       // path (see the VariableStatement branch in `compileClassesFromStatements`)
       // must NOT be eagerly compiled here at module scope — its ctor/method

@@ -17,6 +17,38 @@ describe("issue-1279: CJS require() static module graph", () => {
       expect(out).not.toContain("require(");
     });
 
+    it("rewrites `require('Y').member` to a named import", () => {
+      const out = rewriteCjsRequire(`var Stream = require("stream").Stream;`);
+      expect(out).toBe(`import { Stream as Stream } from "node:stream";`);
+    });
+
+    it("surfaces an `exports.member` CommonJS leaf as its default export", () => {
+      const out = rewriteCjsRequire(`exports.lookup = function lookup() {};`);
+      expect(out).toContain(`const exports = __cjs_default_export;`);
+      expect(out).toContain(`exports.lookup = function lookup() {};`);
+      expect(out).toContain(`export { __cjs_default_export as default };`);
+    });
+
+    it("links and preserves an immediately invoked CommonJS factory", () => {
+      const out = rewriteCjsRequire(`var hasSymbols = require("has-symbols")();`);
+      expect(out).toMatch(/import __cjs_require_hasSymbols_\d+ from "has-symbols";/);
+      expect(out).toMatch(/var hasSymbols = __cjs_require_hasSymbols_\d+\(\);/);
+      expect(out).not.toContain("require(");
+    });
+
+    it("rewrites a single callable module.exports assignment directly", () => {
+      const out = rewriteCjsRequire(`module.exports = function factory() { return 7; };`);
+      expect(out).toBe(`export default function factory() { return 7; };`);
+      expect(out).not.toContain("__cjs_default_export");
+    });
+
+    it("links a single module.exports require as a static default re-export", () => {
+      const out = rewriteCjsRequire(`module.exports = require("./db.json");`);
+      expect(out).toMatch(/import __cjs_default_export_value_\d+ from "\.\/db\.json";/);
+      expect(out).toMatch(/export default __cjs_default_export_value_\d+;/);
+      expect(out).not.toContain("require(");
+    });
+
     it("rewrites `const { a } = require('Y')` to `import { a } from 'Y'`", () => {
       const out = rewriteCjsRequire(`const { join } = require("node:path");`);
       expect(out).toContain(`import { join } from "node:path";`);
@@ -170,6 +202,114 @@ export function g(): number { return x(6); }`,
       const imports = buildImports(r.imports, undefined, r.stringPool);
       const { instance } = await WebAssembly.instantiate(r.binary, imports);
       expect((instance.exports as { g: () => number }).g()).toBe(7);
+    });
+
+    it("catches a strict arguments.callee poison read inside a CommonJS-style IIFE", async () => {
+      const result = await compile(
+        `
+          "use strict";
+          var value = (function () {
+            try {
+              arguments.callee;
+              return 1;
+            } catch (error) {
+              return error instanceof TypeError ? 2 : 3;
+            }
+          }());
+          export function read() { return value; }
+        `,
+        {
+          allowJs: true,
+          fileName: "cjs-iife.js",
+          skipSemanticDiagnostics: true,
+          deferTopLevelInit: true,
+        },
+      );
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      const imports = buildImports(result.imports, undefined, result.stringPool);
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      imports.setInstance?.(instance);
+      (instance.exports as Record<string, Function>).__module_init?.();
+      expect((instance.exports as { read: () => number }).read()).toBe(2);
+    });
+
+    it("links the replaced callable value of module.exports, not its empty prelude object", async () => {
+      const result = await compileMulti(
+        {
+          "./factory.js": `module.exports = function factory() { return 7; };`,
+          "./entry.js": `import factory from "./factory.js"; export function read() { return factory(); }`,
+        },
+        "./entry.js",
+        { allowJs: true, skipSemanticDiagnostics: true, deferTopLevelInit: true },
+      );
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      const imports = buildImports(result.imports, undefined, result.stringPool);
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      imports.setInstance?.(instance);
+      (instance.exports as Record<string, Function>).__module_init?.();
+      expect((instance.exports as { read: () => number }).read()).toBe(7);
+    });
+
+    it("preserves the receiver when a required compiled function is invoked with .call", async () => {
+      const result = await compileMulti(
+        {
+          "./bind.js": `
+            "use strict";
+            module.exports = function bind(value) {
+              return this === Function.prototype.call && value === Object.prototype.hasOwnProperty ? 1 : 0;
+            };
+          `,
+          "./hasown.js": `
+            "use strict";
+            var call = Function.prototype.call;
+            var bind = require("./bind");
+            module.exports = bind.call(call, Object.prototype.hasOwnProperty);
+          `,
+          "./entry.js": `
+            import result from "./hasown.js";
+            export function read() { return result; }
+          `,
+        },
+        "./entry.js",
+        { allowJs: true, skipSemanticDiagnostics: true, deferTopLevelInit: true },
+      );
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      const imports = buildImports(result.imports, undefined, result.stringPool);
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      imports.setInstance?.(instance);
+      (instance.exports as Record<string, Function>).__module_init?.();
+      expect((instance.exports as { read: () => number }).read()).toBe(1);
+    });
+
+    it("keeps a callable Function.prototype fallback ahead of a required implementation", async () => {
+      const result = await compileMulti(
+        {
+          "./implementation.js": `
+            "use strict";
+            module.exports = function implementation() { return 0; };
+          `,
+          "./bind.js": `
+            "use strict";
+            var implementation = require("./implementation");
+            module.exports = Function.prototype.bind || implementation;
+          `,
+          "./entry.js": `
+            import bind from "./bind.js";
+            export function read() {
+              var hasOwn = bind.call(Function.prototype.call, Object.prototype.hasOwnProperty);
+              return hasOwn({ value: 1 }, "value") ? 1 : 0;
+            }
+          `,
+        },
+        "./entry.js",
+        { allowJs: true, skipSemanticDiagnostics: true, deferTopLevelInit: true },
+      );
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      const imports = buildImports(result.imports, undefined, result.stringPool);
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      imports.setInstance?.(instance);
+      (instance.exports as Record<string, Function>).__module_init?.();
+      expect((instance.exports as { read: () => number }).read()).toBe(1);
     });
   });
 

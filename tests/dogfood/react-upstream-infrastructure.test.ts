@@ -42,6 +42,8 @@ describe("React upstream test infrastructure", () => {
       expect(infrastructure.reactNativeRenderer?.version).toBe(infrastructure.react?.version);
       expect(infrastructure.reactJsxRuntime?.jsx).toBeTypeOf("function");
       expect(infrastructure.require("scheduler").unstable_now).toBeTypeOf("function");
+      const refCell = { current: null };
+      expect(infrastructure.prepareReactValue(refCell)).toBe(refCell);
       expect(globalThis.HTMLAnchorElement).toBeTypeOf("function");
       expect(globalThis.HTMLFieldSetElement).toBeTypeOf("function");
       expect(globalThis.HTMLLinkElement).toBeTypeOf("function");

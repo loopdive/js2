@@ -242,6 +242,15 @@ export function compileNestedClassDeclaration(
         if (entry.widened) ctx.capturedGlobalsWidened.add(name);
         else ctx.capturedGlobalsWidened.delete(name);
         (ctx.capturedGlobalsOwner ??= new Map()).set(name, fctx);
+        if (entry.boxed) {
+          (ctx.capturedBoxGlobals ??= new Map()).set(name, {
+            globalIdx: entry.globalIdx,
+            refCellTypeIdx: entry.boxed.refCellTypeIdx,
+            valType: entry.boxed.valType,
+          });
+        } else {
+          ctx.capturedBoxGlobals?.delete(name);
+        }
         const localIdx = fctx.localMap.get(name);
         if (localIdx !== undefined) {
           // Sync only when the fresh local's type matches the recorded
@@ -283,7 +292,10 @@ export function compileNestedClassDeclaration(
     // variables from the enclosing function scope. Also scan parameter-default
     // initializers so e.g. `method([x] = iter)` can resolve `iter` against the
     // enclosing function scope (#1161).
-    const promotedRecord = new Map<string, { globalIdx: number; widened: boolean }>();
+    const promotedRecord = new Map<
+      string,
+      { globalIdx: number; widened: boolean; boxed?: { refCellTypeIdx: number; valType: ValType } }
+    >();
     for (const member of decl.members) {
       if (ts.isMethodDeclaration(member) && member.body) {
         const paramInits = member.parameters.map((p) => p.initializer).filter((e): e is ts.Expression => !!e);
@@ -2194,15 +2206,42 @@ export function hoistFunctionDeclarations(
   // no-op.
   if (isTopLevelHoist) {
     for (const stmt of stmts) {
-      if (ts.isClassDeclaration(stmt) && stmt.name && !ctx.structMap.has(stmt.name.text)) {
-        try {
-          collectClassDeclaration(ctx, stmt);
-          // Bodies are NOT compiled here — mark deferred so the statement-
-          // position compileNestedClassDeclaration still fills ctor/method
-          // bodies (its structMap-membership early-return honors this flag).
-          ctx.deferredClassBodies.add(stmt.name.text);
-        } catch {
-          /* leave the statement-position compile to surface any real error */
+      if (ts.isClassDeclaration(stmt) && stmt.name) {
+        const sourceName = stmt.name.text;
+        const existingOwner = ctx.classDeclarationMap.get(sourceName);
+        let classIdentity = sourceName;
+        // (#4618) The graph-wide class tables are name-keyed, but a callback
+        // body is discovered after the enclosing source-level collection pass.
+        // If that earlier pass already registered a same-named class from a
+        // different scope, the old `structMap.has(name)` guard silently skipped
+        // THIS declaration and its statement later reused the other class's
+        // methods. Give the late-discovered owner the same per-site synthetic
+        // identity used by the main declaration collector.
+        if (existingOwner !== undefined && existingOwner !== stmt) {
+          let synthetic = ctx.anonClassExprNames.get(stmt);
+          if (synthetic === undefined) {
+            synthetic = `__anonClass_${sourceName}_${ctx.anonTypeCounter++}`;
+            ctx.anonClassExprNames.set(stmt, synthetic);
+          }
+          classIdentity = synthetic;
+        }
+        if (!ctx.structMap.has(classIdentity)) {
+          try {
+            collectClassDeclaration(ctx, stmt, classIdentity === sourceName ? undefined : classIdentity);
+            if (classIdentity !== sourceName) {
+              // collectClassDeclaration publishes the source symbol globally;
+              // this late callback-local identity is selected by the declaration
+              // node/local binding instead and must not hijack other scopes.
+              if (ctx.classExprNameMap.get(sourceName) === classIdentity) ctx.classExprNameMap.delete(sourceName);
+              ctx.functionNameMap.set(classIdentity, sourceName);
+            }
+            // Bodies are NOT compiled here — mark deferred so the statement-
+            // position compileNestedClassDeclaration still fills ctor/method
+            // bodies (its structMap-membership early-return honors this flag).
+            ctx.deferredClassBodies.add(classIdentity);
+          } catch {
+            /* leave the statement-position compile to surface any real error */
+          }
         }
       }
     }

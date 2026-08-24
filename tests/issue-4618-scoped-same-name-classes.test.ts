@@ -242,4 +242,123 @@ describe("#4618 same-layout sibling classes dispatch host-side by tag", () => {
     expect(ia.m!()).toBe("A");
     expect(ib.m!()).toBe("B");
   });
+
+  it("does not expose a method owned only by a same-layout sibling", async () => {
+    // A method with only ONE dispatch entry still needs a tag guard. The
+    // negative class is absent from that method's entry list, but its
+    // same-layout instance passes the sibling's structural ref.test. React
+    // observed a later test's UNSAFE_componentWillMount on an earlier Foo.
+    let ClassA: (new () => Record<string, unknown>) | undefined;
+    (globalThis as Record<string, unknown>).__grab4618sc = (v: unknown) => {
+      ClassA = v as new () => Record<string, unknown>;
+    };
+    const result = await compile(
+      `
+      export function a(): any {
+        class Foo { common(): any { return "A"; } }
+        (globalThis as any).__grab4618sc(Foo);
+        return 1;
+      }
+      export function b(): any {
+        class Foo {
+          common(): any { return "B"; }
+          onlyOnB(): any { return "wrong"; }
+        }
+        return Foo;
+      }`,
+      { testRuntime: true, fileName: "issue-4618-absent-member-tag-dispatch.ts", skipSemanticDiagnostics: true },
+    );
+    expect(result.success).toBe(true);
+    const importObject = (result as { importObject?: WebAssembly.Imports }).importObject ?? {};
+    const { instance } = await WebAssembly.instantiate(result.binary!, importObject);
+    (importObject as { __setInstance?: (i: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    const exp = wrapExports(instance, {
+      signatures: (result as { exportSignatures?: unknown }).exportSignatures,
+    }) as Record<string, () => unknown>;
+    exp.a!();
+    expect(ClassA).toBeDefined();
+    const instanceA = new ClassA!();
+    expect(instanceA.common).toBeTypeOf("function");
+    expect(instanceA.onlyOnB).toBeUndefined();
+  });
+
+  it("a host write for one same-layout class does not overwrite a sibling field", async () => {
+    const captured: unknown[] = [];
+    (globalThis as Record<string, unknown>).__grab4618fields = (value: unknown) => {
+      captured.push(value);
+    };
+    const result = await compile(
+      `
+      export function capture(): number {
+        class Foo {
+          mutativeValue: any = "keep";
+          read(): any { return this.mutativeValue; }
+        }
+        (globalThis as any).__grab4618fields(Foo);
+        class Bar {
+          state: any = "initial";
+          read(): any { return this.state; }
+        }
+        (globalThis as any).__grab4618fields(Bar);
+        return 1;
+      }`,
+      { testRuntime: true, fileName: "issue-4618-tagged-field-setter.ts", skipSemanticDiagnostics: true },
+    );
+    expect(result.success).toBe(true);
+    const importObject = (result as { importObject?: WebAssembly.Imports }).importObject ?? {};
+    const { instance } = await WebAssembly.instantiate(result.binary!, importObject);
+    (importObject as { __setInstance?: (i: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    const exp = wrapExports(instance, {
+      signatures: (result as { exportSignatures?: unknown }).exportSignatures,
+    }) as Record<string, () => unknown>;
+    exp.capture!();
+    const [Foo, Bar] = captured as [new () => any, new () => any];
+    const foo = new Foo();
+    const bar = new Bar();
+    foo.state = "host-only";
+    bar.state = "updated";
+    expect(foo.read()).toBe("keep");
+    expect(foo.state).toBe("host-only");
+    expect(bar.read()).toBe("updated");
+  });
+
+  it("keeps static methods on their own same-named class declaration", async () => {
+    const captured: unknown[] = [];
+    (globalThis as Record<string, unknown>).__grab4618static = (value: unknown) => {
+      captured.push(value);
+    };
+    const result = await compile(
+      `
+      function Component(this: any, props: any): any { (this as any).props = props; }
+      Component.prototype.isReactComponent = {};
+      const React: any = { Component };
+      export function a(): any {
+        class Foo extends React.Component {
+          static derive(props: any, state: any): any { return { foo: props.foo, bar: state.bar }; }
+        }
+        (globalThis as any).__grab4618static(Foo);
+        return 1;
+      }
+      export function b(): any {
+        class Foo extends React.Component {
+          static derive(props: any, state: any): any { return "other"; }
+        }
+        (globalThis as any).__grab4618static(Foo);
+        return 1;
+      }`,
+      { testRuntime: true, fileName: "issue-4618-static-tag-dispatch.ts", skipSemanticDiagnostics: true },
+    );
+    expect(result.success).toBe(true);
+    const importObject = (result as { importObject?: WebAssembly.Imports }).importObject ?? {};
+    const { instance } = await WebAssembly.instantiate(result.binary!, importObject);
+    (importObject as { __setInstance?: (i: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    const exp = wrapExports(instance, {
+      signatures: (result as { exportSignatures?: unknown }).exportSignatures,
+    }) as Record<string, () => unknown>;
+    exp.a!();
+    exp.b!();
+    const [First, Second] = captured as Array<{ derive(props: any, state: any): unknown }>;
+    expect(First!.derive({ foo: "next" }, { bar: "prev" })).toEqual({ foo: "next", bar: "prev" });
+    expect(Second!.derive({ foo: "next" }, { bar: "prev" })).toBe("other");
+  });
 });

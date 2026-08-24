@@ -90,6 +90,7 @@ import {
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
+import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { tryEmitUndeclaredCalleeReferenceError } from "./undeclared-callee.js"; // undeclared-identifier call → ReferenceError
 import { compileInternalCallArgument } from "./internal-call-argument.js";
@@ -151,6 +152,52 @@ function hasLiveFunctionBinding(ctx: CodegenContext, fctx: FunctionContext, name
     ctx.runtimeEvalGlobalFunctionBindings ||
     (ctx.annexBModuleBindings?.has(name) === true && fctx.localMap.get(name) === undefined);
   return hasModuleBinding && ctx.liveFuncBindingGlobals?.has(name) === true;
+}
+
+/**
+ * True when this local callable is populated from a runtime element read in
+ * its own function, for example Hono's `handler = middleware[i][0][0]`.
+ * Such a table can hold several unrelated closure-wrapper structs, so the
+ * signature-selected inline ladder is not authoritative for the value read at
+ * runtime. This is deliberately narrower than "no direct initializer":
+ * ordinary `const fn = makeFn()` closures retain the zero-import typed path.
+ */
+function bindingIsAssignedFromElementRead(ctx: CodegenContext, identifier: ts.Identifier): boolean {
+  const declaration = ctx.oracle.valueDeclarationOf(identifier);
+  if (!declaration || !ts.isVariableDeclaration(declaration)) return false;
+
+  let scope: ts.Node | undefined = declaration;
+  while (scope && !ts.isFunctionLike(scope) && !ts.isSourceFile(scope)) scope = scope.parent;
+  if (!scope) return false;
+
+  const containsElementRead = (node: ts.Node): boolean => {
+    if (ts.isElementAccessExpression(node)) return true;
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) return false;
+    let found = false;
+    ts.forEachChild(node, (child) => {
+      if (!found && containsElementRead(child)) found = true;
+    });
+    return found;
+  };
+
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (node !== scope && (ts.isFunctionLike(node) || ts.isClassLike(node))) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      ctx.oracle.valueDeclarationOf(node.left) === declaration &&
+      containsElementRead(node.right)
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(scope);
+  return found;
 }
 
 /**
@@ -1255,6 +1302,7 @@ export function compileIdentifierCall(
   // Regular function call
   if (ts.isIdentifier(expr.expression)) {
     const funcName = expr.expression.text;
+    const defaultExpressionImport = resolveDefaultExpressionImportGlobal(ctx, expr.expression);
 
     // Linked runtime eval can replace a script function binding with an
     // interpreted closure. Such a binding must call its live externref global
@@ -1423,12 +1471,13 @@ export function compileIdentifierCall(
     let closureInfo =
       isLocallyShadowed ||
       nestedBindingVisible ||
+      defaultExpressionImport !== undefined ||
       calleeIsParameterBinding ||
       (!hasVisibleClosureStorage && ctx.funcMap.has(funcName))
         ? undefined
         : ctx.closureMap.get(funcName);
 
-    if (!closureInfo && !nestedBindingVisible) {
+    if (!closureInfo && !nestedBindingVisible && defaultExpressionImport === undefined) {
       closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
     }
     // (#4133) An out-of-scope nested binding lets the closure/local paths above
@@ -1456,14 +1505,17 @@ export function compileIdentifierCall(
     // local `const funcIdx` would hold the pre-shift value.
     // (#1301) Skip funcMap when locally shadowed; the local-callable fallback
     // below handles dispatch via call_ref through the param/local.
-    let funcIdx = isLocallyShadowed ? undefined : ctx.funcMap.get(funcName);
+    let funcIdx = isLocallyShadowed || defaultExpressionImport !== undefined ? undefined : ctx.funcMap.get(funcName);
     if (funcIdx === undefined) {
       // Before giving up, check if this identifier is a local/param with callable TS type
       // (e.g. function parameter `fn: (x: number) => number` stored as externref).
       // If so, create or find a matching closure wrapper type and dispatch via call_ref.
       // Only attempt this for actual locals/params — not for unknown imported functions.
       const calleeLocalIdx = fctx.localMap.get(funcName);
-      const calleeModGlobal = calleeLocalIdx === undefined ? ctx.moduleGlobals.get(funcName) : undefined;
+      const calleeModGlobal =
+        calleeLocalIdx === undefined
+          ? (defaultExpressionImport?.globalIdx ?? ctx.moduleGlobals.get(funcName))
+          : undefined;
       const calleeCapturedGlobal =
         calleeLocalIdx === undefined && calleeModGlobal === undefined ? ctx.capturedGlobals.get(funcName) : undefined;
       const isKnownVariable =
@@ -2406,7 +2458,9 @@ export function compileIdentifierCall(
       // program created (`this.beep = fn` / bare `getRight = fn`) is legitimate —
       // see implicit-global-binding.ts for why the two arms below got it wrong.
       const implicitCallee = isSloppyImplicitGlobalBinding(ctx, fctx, funcName);
-      const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, isKnownVariable || isRuntimeEvalGlobal || implicitCallee);
+      const dyn = bindingIsAssignedFromElementRead(ctx, expr.expression)
+        ? null
+        : tryEmitInlineDynamicCall(ctx, fctx, expr, isKnownVariable || isRuntimeEvalGlobal || implicitCallee);
       if (dyn !== null) return dyn;
 
       // (#4527) Reference-preserving dynamic-call bridge. A call on a KNOWN

@@ -409,6 +409,8 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
     fieldType: ValType;
     shapeId?: number;
     shapeFieldIdx?: number;
+    classTags?: number[];
+    classTagFieldIdx?: number;
   };
   const fieldMap = new Map<string, SetterEntry[]>();
 
@@ -420,6 +422,26 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
 
     const shapeId = ctx.shapeIdByStructName.get(structName);
     const shapeFieldIdx = shapeId !== undefined ? fields.findIndex((f) => f && f.name === "$shape") : -1;
+    const classTag = ctx.classTagMap.get(structName);
+    const classTagFieldIdx = classTag !== undefined ? fields.findIndex((f) => f && f.name === "__tag") : -1;
+    const classTags =
+      process.env.JS2WASM_AB_LEGACY_REACT_STRUCT !== "1" && classTag !== undefined && classTagFieldIdx >= 0
+        ? [
+            classTag,
+            ...[...ctx.classTagMap]
+              .filter(([candidate]) => {
+                let parent = ctx.classParentMap.get(candidate);
+                const seen = new Set<string>();
+                while (parent !== undefined && !seen.has(parent)) {
+                  if (parent === structName) return true;
+                  seen.add(parent);
+                  parent = ctx.classParentMap.get(parent);
+                }
+                return false;
+              })
+              .map(([, tag]) => tag),
+          ]
+        : undefined;
 
     for (let i = 0; i < fields.length; i++) {
       const field = fields[i];
@@ -439,6 +461,7 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
         fieldIdx: i,
         fieldType: field.type,
         ...(shapeId !== undefined && shapeFieldIdx >= 0 ? { shapeId, shapeFieldIdx } : {}),
+        ...(classTags !== undefined && classTagFieldIdx >= 0 ? { classTags, classTagFieldIdx } : {}),
       });
     }
   }
@@ -585,7 +608,15 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
 /** Build nested if/else for struct field setter dispatch. */
 function buildSetterNestedIfElse(
   ctx: CodegenContext,
-  entries: { typeIdx: number; fieldIdx: number; fieldType: ValType; shapeId?: number; shapeFieldIdx?: number }[],
+  entries: {
+    typeIdx: number;
+    fieldIdx: number;
+    fieldType: ValType;
+    shapeId?: number;
+    shapeFieldIdx?: number;
+    classTags?: number[];
+    classTagFieldIdx?: number;
+  }[],
   anyLocal: number,
   valMode: "extern" | "f64" | "i32",
   wroteLocal: number,
@@ -605,21 +636,49 @@ function buildSetterNestedIfElse(
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
     let thenBranch = buildSetterStore(ctx, entry, anyLocal, valMode, wroteLocal, unboxNumIdx, unboxSymbolIdx);
+    const legacyReactStruct = process.env.JS2WASM_AB_LEGACY_REACT_STRUCT === "1";
+    const condition: Instr[] = [
+      { op: "local.get", index: anyLocal },
+      { op: "ref.test", typeIdx: entry.typeIdx },
+    ];
 
     // (#2009) Colliding struct: `ref.test typeIdx` matched, but same-shape
     // canonicalization means the instance might be a DIFFERENT struct that
-    // lacks this field. Gate the store on `struct.get $shape === entry.shapeId`
-    // so a mismatched write no-ops (sidecar carries it) instead of corrupting
-    // a same-slot field of the wrong struct.
+    // lacks this field. Include the shape identity in the OUTER arm condition
+    // so a mismatch falls through to the next structurally-equal candidate;
+    // an inner no-op would incorrectly stop before the receiver's real shape.
     if (entry.shapeId !== undefined && entry.shapeFieldIdx !== undefined) {
-      thenBranch = [
+      const shapeCondition: Instr[] = [
         { op: "local.get", index: anyLocal },
         { op: "ref.cast", typeIdx: entry.typeIdx },
         { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.shapeFieldIdx },
         { op: "i32.const", value: entry.shapeId },
         { op: "i32.eq" },
-        { op: "if", blockType: { kind: "empty" }, then: thenBranch },
       ];
+      if (legacyReactStruct) {
+        thenBranch = [...shapeCondition, { op: "if", blockType: { kind: "empty" }, then: thenBranch }];
+      } else {
+        condition.push(...shapeCondition, { op: "i32.and" });
+      }
+    }
+
+    // (#4618) User classes carry a nominal `__tag`, but WasmGC `ref.test`
+    // remains structural. Same-layout sibling classes therefore match each
+    // other's field setter arms. A host write such as React's `instance.state`
+    // could otherwise overwrite an unrelated field at the same physical slot
+    // (`mutativeValue` in the forceUpdate test). Require the declaring class's
+    // tag (or a descendant tag for inherited fields) before the struct.set.
+    if (entry.classTags !== undefined && entry.classTagFieldIdx !== undefined) {
+      const readTag: Instr[] = [
+        { op: "local.get", index: anyLocal },
+        { op: "ref.cast", typeIdx: entry.typeIdx },
+        { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.classTagFieldIdx },
+      ];
+      const tagCondition: Instr[] = [...readTag, { op: "i32.const", value: entry.classTags[0]! }, { op: "i32.eq" }];
+      for (const tag of entry.classTags.slice(1)) {
+        tagCondition.push(...readTag, { op: "i32.const", value: tag }, { op: "i32.eq" }, { op: "i32.or" });
+      }
+      condition.push(...tagCondition, { op: "i32.and" });
     }
 
     const ifInstr: Instr = {
@@ -629,7 +688,7 @@ function buildSetterNestedIfElse(
       else: current,
     };
 
-    current = [{ op: "local.get", index: anyLocal }, { op: "ref.test", typeIdx: entry.typeIdx }, ifInstr];
+    current = [...condition, ifInstr];
   }
 
   body.push(...current);

@@ -92,6 +92,7 @@ import {
 import { tryEmitStandaloneGlobalFunctionIdentifier } from "../standalone-global-functions.js";
 import { evaluateInstanceOfRhsForEffects } from "../instanceof-rhs-evaluation.js"; // (#4491 T3) §13.10.1 step 3
 import { resolveBuiltinCtorAssignedAliasName } from "../builtin-ctor-assigned-alias.js"; // (#4491 T3)
+import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
 
 /**
  * #1473 — Build the set of `$Error_struct` `$tag` values compatible with an
@@ -955,6 +956,36 @@ function compileIdentifierCore(
     }
   }
 
+  // An imported default expression is identified by its checker declaration,
+  // not by the import's bare local spelling. This must precede every graph-wide
+  // name registry: an unrelated same-named function/closure/global in another
+  // source file is not visible through this import binding.
+  const importedDefaultExpression = resolveDefaultExpressionImportGlobal(ctx, id);
+  if (importedDefaultExpression) {
+    fctx.body.push({ op: "global.get", index: importedDefaultExpression.globalIdx });
+    return importedDefaultExpression.type;
+  }
+
+  // (#4618) A class declaration is already represented by its canonical,
+  // identity-stable class-object singleton, so it never needs a value-copy
+  // capture. Resolve the checker-verified declaration before the graph-wide,
+  // name-keyed capture tables below. Otherwise a sibling callback that
+  // previously promoted its own same-named class (React's many per-test
+  // `class Foo` declarations) can intercept this read with a foreign null
+  // capture global. Per-site synthetic identities keep duplicate lexical
+  // declarations distinct while preserving the ordinary class name for the
+  // first declaration.
+  const declaredClass = ctx.oracle.valueDeclarationOf(id);
+  if (declaredClass && (ts.isClassDeclaration(declaredClass) || ts.isClassExpression(declaredClass))) {
+    const classIdentity =
+      ctx.anonClassExprNames.get(declaredClass) ??
+      (declaredClass.name?.text && ctx.classObjectGlobals?.has(declaredClass.name.text)
+        ? declaredClass.name.text
+        : (ctx.classExprNameMap.get(name) ?? name));
+    if (ctx.classObjectGlobals?.has(classIdentity) && emitLazyClassObjectGet(ctx, fctx, classIdentity)) {
+      return { kind: "externref" };
+    }
+  }
   // (#3039) Check BOXED captured globals FIRST — a transitively-captured
   // mutable var (ref cell) that a method-shorthand / class-method / accessor
   // body reads. The promoted global holds the box; deref it (global.get;
@@ -2410,7 +2441,8 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     ts.isIdentifier(expr.right) &&
     !isBuiltinTypeName(ctorName) &&
     identifierHasSourceDeclaration(ctx, expr.right) &&
-    userErrorParent === undefined
+    userErrorParent === undefined &&
+    !ctx.classExternrefBackedSet.has(ctorName)
   ) {
     // (#3962) Host-free answer for a plain user function constructor — the
     // `e instanceof Test262Error` shape, 26 of the 36 ≤ES5 sole leaks of
@@ -2419,6 +2451,15 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     if (nativeCtor) return nativeCtor;
     return emitDynamicInstanceOf(ctx, fctx, expr);
   }
+
+  // An externref-backed user Error subclass has no callable Wasm constructor
+  // value to hand to `__instanceof_check`: reading the class binding through
+  // the ordinary dynamic RHS path currently produces null. Construction has
+  // already registered the exact synthetic class name via
+  // `__set_subclass_proto` / `__tag_user_class`, so keep this shape on the
+  // name-based `__instanceof(value, ctorName)` path below. This is required for
+  // caught/dynamic values, where the typed static shortcut cannot answer (the
+  // Hono `error instanceof UnsupportedPathError` router fallback).
 
   // #1473 — no JS host: `e instanceof TypeError` (and other Error subtypes)
   // where the LHS is a dynamic value (any/externref). The caught value is the

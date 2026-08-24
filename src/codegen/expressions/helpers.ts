@@ -102,8 +102,18 @@ export function resolveDeclaringClassForPrivateName(
         // was skipped → a wrong-brand receiver (`C.B.fieldAccess(C)`) read the
         // field instead of throwing TypeError (#3045). Same-named `#m` on a
         // nested class now each resolve to their own synthetic struct.
-        const className =
-          current.name?.text ?? (ts.isClassExpression(current) ? ctx.anonClassExprNames.get(current) : undefined);
+        // A NAMED class expression has two source spellings: its lexical
+        // self-name (`class _Node`) and the outer binding (`var Node = ...`).
+        // The registered Wasm class identity is still the per-declaration
+        // synthetic name. Prefer that exact identity for every class
+        // expression, named or anonymous; falling back to `_Node` makes a
+        // widened receiver such as `let cur = this; cur = cur.#children[key]`
+        // miss the private-field arm and incorrectly reach the host property
+        // bridge, where private slots are intentionally invisible. Hono's
+        // recursive TrieRouter then observes `cur.#methods` as null.
+        const className = ts.isClassExpression(current)
+          ? (ctx.anonClassExprNames.get(current) ?? current.name?.text)
+          : current.name?.text;
         // Guard: the field must exist in the resolved struct (own private
         // *fields* live in structFields; a private method/getter is handled by
         // the accessor path in property-access, so require the field slot here).

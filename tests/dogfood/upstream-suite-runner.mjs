@@ -832,14 +832,21 @@ export async function runUpstreamTest(index: number): Promise<number> {
     return 0;
   }
   if (result && typeof result.then === "function") {
-    const outcome = await result.then(
-      () => ({ passed: true, error: "" }),
-      (error) => ({
-        passed: false,
-        error: error && error.message !== undefined ? String(error.message) : String(error),
-      }),
-    );
-    __upstreamErrors[index] = outcome.error;
+    // Await the test promise directly. Returning an anonymous object from the
+    // Promise.then callbacks makes the harness result depend on that object's
+    // inferred Wasm struct identity. In a large package graph (Hono's
+    // trailing-slash tests), an unrelated same-shape carrier can then make
+    // outcome.passed read as false even though the original callback and all
+    // assertions completed successfully.
+    let outcomePassed = true;
+    let outcomeError = "";
+    try {
+      await result;
+    } catch (error) {
+      outcomePassed = false;
+      outcomeError = error && error.message !== undefined ? String(error.message) : String(error);
+    }
+    __upstreamErrors[index] = outcomeError;
     if (index === __upstreamTests.length - 1) {
       const afterAllHooks = __upstreamTests[index].afterAllHooks || [];
       for (let hookIndex = afterAllHooks.length - 1; hookIndex >= 0; hookIndex--) {
@@ -847,7 +854,7 @@ export async function runUpstreamTest(index: number): Promise<number> {
         if (!hook.__upstreamRan) { hook(); hook.__upstreamRan = true; }
       }
     }
-    return outcome.passed ? 1 : 0;
+    return outcomePassed ? 1 : 0;
   }
   __upstreamErrors[index] = "";
   if (index === __upstreamTests.length - 1) {

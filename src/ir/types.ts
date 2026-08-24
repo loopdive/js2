@@ -194,6 +194,12 @@ export interface FieldDef {
   type: ValType;
   mutable: boolean;
   /**
+   * An uninitialized optional numeric class field starts as JavaScript
+   * `undefined`, represented in an f64 slot by the canonical signaling-NaN
+   * sentinel rather than Wasm's numeric zero default.
+   */
+  undefinedDefault?: true;
+  /**
    * The field's constructor initializer is a call proven to return the native
    * open `$Object` carrier (for example acorn's `this.options = getOptions()`).
    * This is an optimisation hint only: consumers must keep the canonical

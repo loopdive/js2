@@ -3,7 +3,7 @@ id: 3995
 title: "npm-compat: pin and adapt original upstream test suites for catalog packages"
 status: ready
 created: 2026-07-30
-updated: 2026-08-22
+updated: 2026-08-24
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -27,18 +27,36 @@ loc-budget-allow:
   - src/codegen/expressions/identifiers.ts
   - src/codegen/expressions/call-identifier.ts
   - src/codegen/property-access-dispatch.ts
+  - src/codegen/expressions/assignment.ts
   - src/codegen/context/types.ts
   - src/codegen/declarations/import-collector.ts
   - src/codegen/literals.ts
   - src/codegen/index.ts
   - src/codegen/declarations.ts
   - src/codegen/statements/control-flow.ts
+  # Hono's typed-array carrier keeps the ArrayBuffer overload and `.buffer`
+  # identity without exposing TypedArray-only properties on ordinary vecs.
+  # Its route-table spread also needs a runtime-sized native/host copy path;
+  # the implementation is isolated below the array-method dispatcher.
+  - src/codegen/array-methods.ts
+  - src/codegen/type-coercion.ts
+  - src/codegen/statements/variables.ts
+  - src/codegen/expressions/new-builtin-globals.ts
   - src/compiler.ts
   - src/codegen/extern-declarations.ts
 func-budget-allow:
+  # The dispatcher adds one narrow selector for `vec.push(...runtimeSource)`;
+  # the runtime-sized copy lives in extracted helpers below the switch.
+  - src/codegen/array-methods.ts::compileArrayMethodCall
   - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/expressions/calls.ts::compileIIFE
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/expressions/identifiers.ts::compileHostInstanceOf
+  - src/runtime.ts::_safeSet
   - src/codegen/expressions/calls.ts::tryEmitInlineDynamicCall
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/type-coercion.ts::buildVecFromExternref
+  - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
   - src/codegen/object-runtime.ts::fillApplyClosure
   - src/codegen/declarations/import-collector.ts::finalizeUnifiedCollector
   - src/codegen/closures.ts::compileArrowAsCallback
@@ -1199,3 +1217,116 @@ document-carrier validation failures. The four deferred files
 reported as unavailable infrastructure rather than silently disappearing. The
 pinned inventory counts direct `it`/`test` call sites; table-driven
 registrations are expanded separately by the runner.
+
+## 2026-08-24 Hono Web-base64 infrastructure checkpoint
+
+The fresh npm-compat artifact reports Hono at **105/324** scored upstream
+callbacks. Its single largest exact failure file is the unchanged
+`src/utils/encode.test.ts`: **0/44** before this checkpoint. The first shared
+infrastructure defect was that the upstream worker exposed Web constructors
+but not Node/browser's real `atob` and `btoa` functions, so both imports were
+bound to the missing-provider fallback. Adding those standard globals to the
+Web host provider changes the exact file to **23/44**: all decode callbacks
+execute instead of throwing on an undefined `atob` result.
+
+A second generic boundary fix routes `new Uint8Array(value)` through the real
+host constructor when `value` is genuinely `any`/`unknown`. This preserves the
+runtime ArrayBuffer overload used by unannotated package JavaScript instead of
+coercing a host ArrayBuffer to the numeric length `0`. The exact Hono file then
+measures **27/44**. The focused
+[#3097](./3097-compiled-arraybuffer-host-ta-ctor-boundary.md) suite is
+**11/11**, including the new
+host-ArrayBuffer-through-untyped-helper regression.
+
+The final **17/44** failures were encode rows whose input was created by Hono's
+compiled `str2UInt8Array` helper. Indexed bytes and `.length` were correct, but
+the compiled vec lost its concrete TypedArray identity when it crossed inside
+a heterogeneous table-test row. Codegen now registers only compiler-created
+TypedArray carriers, and `__make_iterable` preserves that brand as an
+identity-stable host TypedArray mirror. A plain compiled Array remains
+unbranded and still has no `.buffer` property. The exact original file now
+passes **44/44** without changing any upstream callback or expected value.
+
+A full Hono rerun has not been performed, so no whole-suite numerator is
+inferred from this one-file measurement. The next largest measured Hono file,
+unchanged `src/middleware/trailing-slash/index.test.ts`, declares **36**
+callbacks. Its async outcome transport first exposed a generic runner defect:
+reading a promise-result object after `.then()` could lose the anonymous object
+carrier. The runner now awaits the callback directly and stores the pass/error
+outcome in scalar locals. The shared focused async-runner regression passes.
+
+That correction exposes three separate compiler/runtime findings in Hono's
+dispatch path. Dynamic writes such as `context.res = response` now call a
+positively matched compiled prototype setter before the host sidecar fallback;
+this preserves the setter's `finalized = true` side effect. A compiled class
+method invoked as `router.add(...route)` now uses the runtime-sized vararg
+dispatcher and receives three positional arguments instead of one nested
+route vector. Both changes have package-independent regressions in this issue.
+
+The exact original file now reaches the next boundary but is not green: it
+compiles and validates, exposes **1/36** declared callbacks, and that callback
+fails. In `RegExpRouter.#buildMatcher`, native
+`routes.push(...ownRoute)` still treats its dynamic spread source as one
+compile-time argument, appending the complete `ownRoute` vector as a nested
+row. Consequently `buildMatcherFromPreprocessedRoutes` observes an array in
+`route[0]` where the route path string belongs and eventually throws
+`TypeError: null is not iterable`. The generic runtime-sized native-vector
+push helper exists but is not yet selected by the array-method call lowering.
+This remains a scored compiler finding, not unavailable infrastructure; the
+next handoff is to wire that helper for an exact single dynamic spread while
+preserving ordinary fixed-arity `push`.
+
+## 2026-08-24 Hono trailing-slash async-CFG handoff
+
+The native-vector spread and nested row-carrier fixes described above are now
+covered by the focused regressions in this issue. That suite is **11/11**, including
+an out-of-bounds nested member read that still throws a catchable `TypeError`.
+The exact original Hono trailing-slash file is restored to all **36** declared
+callbacks and compiles and validates in about 17 seconds. A binary exposure
+run now passes callbacks 1 and 2, then callback 3 reaches an unhandled late
+continuation (`Context is not finalized`, followed by `new URL(undefined)`).
+Therefore the exact current result is **2/36 before a fatal worker exit**, not
+an inferred whole-file score. The generated callback source and expectations
+were not changed.
+
+The remaining failure is a generic async lowering gap, not unavailable test
+infrastructure. Hono's recursive `compose` helper defines `async function
+dispatch(i)` and awaits handlers inside `if` branches. Host async-drive
+admission currently accepts the linear-await and try/catch planners, but an
+await buried in an `if` has no matching CFG plan. It consequently falls back
+to legacy synchronous await passthrough. The minimal reduction is:
+
+```ts
+export async function test(): Promise<number> {
+  async function inner(depth: number): Promise<number> {
+    if (depth > 0) return await (() => inner(depth - 1))();
+    return 7;
+  }
+  return await inner(1);
+}
+```
+
+It currently returns `NaN`. The emitted WAT gives `$inner` the direct
+`(param f64) (result f64)` ABI and emits no `$__async_resume_finner`; the
+branch creates a Promise and then tries to unbox it as the synchronous numeric
+return. This localizes the next implementation to the branch-capable
+host-drive CFG/resume planner owned by
+[1042](./1042-async-await-state-machine-lowering.md) and
+[2906](./2906-async-drive-multistate-cfg-resume-machine.md). Merely widening
+the admission gate is insufficient: the planner must create condition and
+branch states, split each branch at awaits, join them, and preserve the union
+of live spills across both successors.
+
+Exact reproduction:
+
+```sh
+node --import tsx tests/dogfood/upstream-suite-compile-worker.mjs \
+  .hono-upstream-suite-generated/src/middleware/trailing-slash/index.test.ts project
+```
+
+The separate exact Hono encode file remains **44/44**. Focused evidence is
+**11/11** in `tests/issue-3995-hono-class-boundary.test.ts`, **11/11** in the
+typed-array [#3097](./3097-compiled-arraybuffer-host-ta-ctor-boundary.md)
+suite, and **1/1** for the upstream runner's async callback
+transport. No full Hono rerun has been performed, so the artifact's overall
+105/324 numerator must not be adjusted from these file-local results.

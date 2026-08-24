@@ -34,6 +34,10 @@ import { adjustRethrowDepth } from "./shared.js";
 import { definedFuncAt } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 import { emitUndefined } from "../expressions/late-imports.js";
 import { emitConstructReturnSelect } from "../construct-return-value.js"; // (#4464)
+import {
+  emitHostTypedArrayCarrierRegistration,
+  isHostTypedArrayCarrierName,
+} from "../expressions/typed-array-host-carrier.js";
 
 /**
  * (#2061) Compute the extra nesting depth between a finally-inline site and the
@@ -383,6 +387,18 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
     // Coerce expression result to match function return type if they differ
     if (exprType && fctx.returnType && !valTypesMatch(exprType, fctx.returnType)) {
       coerceType(ctx, fctx, exprType, fctx.returnType);
+    }
+    // A JS-host TypedArray constructor can return an externref which is then
+    // materialized into the function's native vec return ABI. That fresh vec
+    // did not pass through a TypedArray constructor emission site, so retain the
+    // source-level TypedArray brand here. This is deliberately type-gated:
+    // ordinary Array returns sharing the same vec type remain unbranded and
+    // therefore do not acquire a `.buffer` property.
+    if (exprType && fctx.returnType && (fctx.returnType.kind === "ref" || fctx.returnType.kind === "ref_null")) {
+      const returnedName = ctx.oracle.builtinReceiverOf(stmt.expression) ?? ctx.oracle.declaredNameOf(stmt.expression);
+      if (isHostTypedArrayCarrierName(returnedName)) {
+        emitHostTypedArrayCarrierRegistration(ctx, fctx, returnedName, fctx.returnType);
+      }
     }
     // (#585) If the function is void (no return type) but the expression produced
     // a value, drop it — Wasm requires an empty stack before `return` in void funcs.

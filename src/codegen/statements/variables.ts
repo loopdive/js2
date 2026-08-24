@@ -1008,6 +1008,14 @@ export function inferTaViewType(ctx: CodegenContext, initializer: ts.Expression 
   // stay on the legacy path here too.
   if (!noJsHost(ctx)) {
     if (argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer") return { kind: "externref" };
+    // Keep the local representation aligned with hostTaBufferArgSymName: a
+    // genuinely dynamic first argument is constructed by the real host
+    // TypedArray constructor, whose result is an externref rather than a
+    // compiled vec.  This covers unannotated JavaScript helpers such as
+    // `function encode(buf) { new Uint8Array(buf) }` when `buf` is a host
+    // ArrayBuffer returned by TextEncoder/TypedArray.prototype.buffer.
+    const argFact = ctx.oracle.typeFactOf(args[0]!);
+    if (argFact.kind === "any" || argFact.kind === "unknown") return { kind: "externref" };
     return null;
   }
   if (argSymName !== "ArrayBuffer" && argSymName !== "SharedArrayBuffer" && argSymName !== "DataView") return null;
