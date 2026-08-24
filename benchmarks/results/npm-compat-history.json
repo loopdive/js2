@@ -8864,6 +8864,61 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-08-24T09:30:34.172Z",
+      "sourceRevision": "3c0abc9faa48d1ebe69681d281ce7b1109f6d2f6",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "acorn": {
+          "jsHost": {
+            "dynamic": 0.002735694878921554
+          },
+          "standalone": {
+            "static": 25160.628331072247,
+            "dynamic": 0.12900876430222205
+          }
+        },
+        "cookie": {
+          "jsHost": {
+            "dynamic": 0.0012341408352248623
+          },
+          "standalone": {
+            "static": 891.8068101338239,
+            "dynamic": 0.2386569535988698
+          }
+        },
+        "react": {
+          "jsHost": {
+            "dynamic": 0.05486613180077383
+          },
+          "standalone": {}
+        },
+        "clsx": {
+          "jsHost": {
+            "dynamic": 0.11223542557840482
+          },
+          "standalone": {
+            "static": 17.59716771459639,
+            "dynamic": 0.15649565614629252
+          }
+        },
+        "hono": {
+          "jsHost": {
+            "dynamic": 0.0064678623842327814
+          },
+          "standalone": {}
+        },
+        "redux": {
+          "jsHost": {
+            "dynamic": 0.002559212985690158
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }
