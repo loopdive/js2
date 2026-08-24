@@ -11,7 +11,7 @@ import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext, HoistedCharRead } from "../context/types.js";
-import { emitCoercedLocalSet, emitWebCompatCallAssignmentTarget } from "../expressions/helpers.js";
+import { emitCoercedLocalSet, emitWebCompatCallAssignmentTarget, updateLocalType } from "../expressions/helpers.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
 import { nativeGeneratorInfoForForOfSubject, tryCompileNativeGeneratorForOf } from "../generators-native.js";
 import {
@@ -1645,7 +1645,12 @@ function compileForOfArray(
   // (`array.get_u`); the storage kind alone cannot distinguish them (#2648).
   // For non-packed elements both are identity (`readElemType === elemType`,
   // plain `array.get`), so host mode and plain arrays emit byte-identical code.
-  const readElemType = unpackedElemType(elemType);
+  // Numeric vec storage also carries the signaling-NaN undefined marker for
+  // explicit `undefined`/holes (the storage ABI remains plain f64). Preserve
+  // that identity on the loop value so consumers that distinguish undefined
+  // from a numeric NaN, such as optional String arguments, can inspect it.
+  const readElemType =
+    elemType.kind === "f64" ? { kind: "f64" as const, undefSentinel: true as const } : unpackedElemType(elemType);
   const elemReadOp = elemGetOp(elemType, typedArraySearchSignedness(ctx, iterableOverride ?? stmt.expression));
 
   // Save vec ref to temp local. With `preVec` the vec is already in `vecLocal`.
@@ -3536,6 +3541,54 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     return;
   }
 
+  // Annex B B.3.5 keeps the legacy initializer in a sloppy `for (var x =
+  // value in expr)` head.  The initializer runs once, before the receiver is
+  // evaluated, and its value is observable both from the receiver expression
+  // and after the loop.  The normal for-in lowering only used the declaration
+  // to choose `keyLocal`, silently dropping this expression (and its effects).
+  // Keep the existing key slot/capture representation and use the same
+  // expected-type/coercion path as an ordinary variable initializer.
+  if (ts.isVariableDeclarationList(init) && init.declarations.length > 0) {
+    const decl = init.declarations[0]!;
+    if (ts.isIdentifier(decl.name) && decl.initializer) {
+      const boxed = fctx.boxedCaptures?.get(varName);
+      let targetType = boxed?.valType ?? getLocalType(fctx, keyLocal) ?? { kind: "externref" as const };
+      // A legacy for-in head is normally inferred as a native string because
+      // its per-iteration value is an enumerable key. B.3.5 makes the same
+      // slot observable as an arbitrary initializer value before the first
+      // iteration, so a string-ref slot cannot represent `a = 0` without
+      // changing the value to "0". Widen an unboxed ref slot to externref;
+      // subsequent key writes remain externrefs and the receiver sees the
+      // original number/string/object identity.
+      if (!boxed && (targetType.kind === "ref" || targetType.kind === "ref_null")) {
+        targetType = { kind: "externref" };
+        updateLocalType(fctx, keyLocal, targetType);
+      }
+      const initType = compileExpression(ctx, fctx, decl.initializer, targetType);
+      if (initType) {
+        if (!valTypesMatch(initType, targetType)) coerceType(ctx, fctx, initType, targetType);
+        if (boxed) {
+          const valueLocal = allocLocal(fctx, `__forin_init_${fctx.locals.length}`, targetType);
+          fctx.body.push({ op: "local.set", index: valueLocal });
+          fctx.body.push({ op: "local.get", index: keyLocal });
+          fctx.body.push({ op: "ref.is_null" });
+          fctx.body.push({
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [],
+            else: [
+              { op: "local.get", index: keyLocal },
+              { op: "local.get", index: valueLocal },
+              { op: "struct.set", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 },
+            ],
+          });
+        } else {
+          emitCoercedLocalSet(ctx, fctx, keyLocal, targetType);
+        }
+      }
+    }
+  }
+
   // (#2705) §14.7.5.6 step 7: a `null`/`undefined` receiver yields zero
   // iterations. When the receiver is statically the `null`/`undefined`/`void`
   // literal, emit NO loop — the body is never reached (so a body that would
@@ -3616,6 +3669,12 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     // fallback when no enumeration primitive is available. (#4561) It owns its
     // own `block $break` / per-iteration `block $continue` scaffolding; see
     // `for-in-static-unroll.ts` for why it had none.
+    // Evaluate the receiver even though its statically-known keys let the
+    // unroller avoid runtime enumeration. Its effects (notably the Annex B
+    // `stored = a` receiver in `for (var a = init in stored = a, obj)`) are
+    // still observable and must run before the first iteration.
+    const receiverType = compileExpression(ctx, fctx, stmt.expression);
+    if (receiverType) fctx.body.push({ op: "drop" });
     emitForInStaticUnroll(
       ctx,
       fctx,
