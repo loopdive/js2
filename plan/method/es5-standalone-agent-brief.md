@@ -479,8 +479,21 @@ Rules that make the cut honest:
 
 ## Commit rules (worktree branch, do NOT push, do NOT open PRs)
 
-- Author `Thomas Tränkler <git@thomas.traenkler.com>`:
-  `git -c user.name="Thomas Tränkler" -c user.email=git@thomas.traenkler.com commit ...`
+- Author `Thomas Tränkler <git@thomas.traenkler.com>`, **committer `Claude
+  <noreply@anthropic.com>`** — set them SEPARATELY. `-c user.name/-c user.email`
+  sets **both**, which is how 11 lane commits landed with the wrong committer on
+  2026-08-24 and tripped the unverified-commit gate:
+
+  ```bash
+  GIT_COMMITTER_NAME=Claude GIT_COMMITTER_EMAIL=noreply@anthropic.com \
+    git commit --gpg-sign --author="Thomas Tränkler <git@thomas.traenkler.com>" ...
+  ```
+
+  The repo-local `.git/config` used to pin `user.email=git@thomas.traenkler.com`,
+  which every worktree inherits and which overrides the global Claude identity —
+  so a plain `git commit` produced the wrong committer no matter what the global
+  config said. That local override is now `Claude <noreply@anthropic.com>`, but
+  pass the env vars anyway: they are what makes the intent explicit.
 - Message `fix(#<id>): <summary> ✓` — the ✓ token is required by the hooks.
 - Commit-gate failures (LOC/func budget, coercion-sites, dead-export,
   oracle-ratchet): grant a frontmatter allowance in the issue file with
@@ -503,3 +516,50 @@ Rules that make the cut honest:
 - Construct/return semantics: `src/codegen/construct-return-value.ts` (#4464).
 - Nominal-brand guards (`ref.test` on branded structs, never structural):
   `function-instance-meta-arms.ts` family-arm comments.
+
+## Two false-green mechanisms measured on 2026-08-24 — both cost real time
+
+### 1. A stale compiler bundle silently SKIPS every eval-gated pin
+
+Symptom: `tests/issue-4654.test.ts` printed `9 passed | 8 skipped (17)` and exited **0**.
+That is not a pass, and the exit status agreed with the wrong answer.
+
+Chain: `scripts/compiler-bundle.mjs` was older than files under `src/` →
+`computeCompilerBundleHash()` differs → the QuickJS **adapter cache key** differs →
+`quickjsProviderAvailable()` returns `null` → `describe.skipIf(!quickjsEnabled)` drops the
+eight corpus-backed pins with no diagnostic at all.
+
+Forcing `JS2WASM_EVAL_ENGINE=quickjs` does **not** fix it — it converts the silent skip
+into a *suite-level* error (`the quickjs provider is not built (missing …-<hash>.wasm)`)
+while the counts line **still** reads `9 passed | 8 skipped (17)`. Two different runs, two
+different exit statuses, the same misleading counts line.
+
+Before measuring anything eval-gated, per arm:
+
+```bash
+pnpm run build:compiler-bundle && node scripts/build-quickjs-eval-provider.mjs
+```
+
+Then read **rung 2**: the file line must say `(17 tests)` with **no** `skipped` suffix.
+`(17 tests | 8 skipped)` is an unrun suite wearing a green checkmark.
+
+### 2. A per-test timeout kill writes NO jsonl row — the denominator shrinks silently
+
+`tests/test262-shared.ts` kills a test that exceeds `IT_TIMEOUT_MS` (default 90 s)
+**without recording a result**. The row does not become a failure; it *disappears*. So the
+run under-reports its own denominator, and it does so **as a function of load**, which
+means the same tree measures differently depending on what else is on the box.
+
+This is not hypothetical twice over: the constant's own header records the mechanism
+costing **202 of 816 eval-code rows at 2 workers**, and #4654 then produced six
+`language/literals/regexp/` files that legitimately need 130–200 s.
+
+Consequences for a lane:
+
+- A pass-rate delta computed from two runs at different load levels is **not a delta**.
+  If your arms did not run under comparable load, say so rather than reporting the number.
+- If your sweep's row count differs between arms, that difference is a **finding**, not
+  noise to be normalised away — reconcile it before reporting flips.
+- CI's standalone cells now run at `TEST262_IT_TIMEOUT_MS=300000` (#4654 lead ruling).
+  A local sweep at the 90 s default is therefore measuring a *different* denominator than
+  CI. Raise it locally too when the rows you care about are eval-heavy.
