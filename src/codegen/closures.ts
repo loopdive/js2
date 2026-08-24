@@ -1618,6 +1618,20 @@ export function computeClosureWrapperSig(
         : !ts.isFunctionDeclaration(arrow) && setAccessorParamIsDynamic(arrow)
           ? EXTERNREF_PARAM
           : resolveWasmType(ctx, paramType);
+    // JSDoc optional parameters (for example `@param {number=} size`) are
+    // commonly exported from JavaScript modules and called from a different
+    // source file. The local call-site scan cannot see those callers, so a
+    // numeric ABI would pad `fn()` with zero instead of JavaScript's
+    // `undefined`. Keep the closure boundary dynamic unless the source has an
+    // initializer (whose existing default sentinel is handled below).
+    const jsdocType = p.type === undefined ? ts.getJSDocType(p) : undefined;
+    const jsdocOptional =
+      jsdocType !== undefined
+        ? ts.isJSDocOptionalType(jsdocType)
+        : ts.getJSDocParameterTags(p).some((tag) => tag.isBracketed === true);
+    if (p.type === undefined && p.initializer === undefined && jsdocOptional) {
+      wasmType = { kind: "externref" };
+    }
     // An unannotated JavaScript parameter whose default is object-valued is
     // still structurally open: callers may supply any property bag. TypeScript
     // infers the default's exact closed shape, but using that shape as the Wasm

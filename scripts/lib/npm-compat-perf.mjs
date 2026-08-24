@@ -35,6 +35,32 @@ function stddev(values) {
   return Math.sqrt(variance);
 }
 
+/**
+ * Run one Wasm/Node timing pair.  Reversing the order on every round keeps
+ * scheduler, CPU-frequency, and thermal drift from always favouring the lane
+ * measured second.
+ */
+function measurePair(round, measureWasm, measureNode) {
+  if (round % 2 === 0) {
+    return { wasm: measureWasm(), node: measureNode() };
+  }
+  const node = measureNode();
+  const wasm = measureWasm();
+  return { wasm, node };
+}
+
+export function summarizePairedRatios(wasmSamplesUs, nodeSamplesUs) {
+  const nodeFallbackUs = median(nodeSamplesUs);
+  const ratioSamples = wasmSamplesUs.map(
+    (wasmSample, index) => Number(nodeSamplesUs[index] ?? nodeFallbackUs) / Math.max(Number(wasmSample), 0.000001),
+  );
+  return {
+    ratio: median(ratioSamples),
+    ratioStd: stddev(ratioSamples),
+    ratioSamples,
+  };
+}
+
 function timingConfig(options) {
   return {
     calibrationMs: options.calibrationMs ?? 100,
@@ -52,9 +78,7 @@ function inputModeForPlacement(placement) {
 function measuredResult(sampleOp, placement, inputMode, iterations, wasmSamplesUs, nodeSamplesUs, config) {
   const wasmUs = median(wasmSamplesUs);
   const nodeUs = median(nodeSamplesUs);
-  const ratioSamples = wasmSamplesUs.map(
-    (wasmSample, index) => (nodeSamplesUs[index] ?? nodeUs) / Math.max(wasmSample, 0.000001),
-  );
+  const ratioSummary = summarizePairedRatios(wasmSamplesUs, nodeSamplesUs);
   return {
     status: "measured",
     placement,
@@ -64,8 +88,9 @@ function measuredResult(sampleOp, placement, inputMode, iterations, wasmSamplesU
     nodeUs,
     wasmStdUs: stddev(wasmSamplesUs),
     nodeStdUs: stddev(nodeSamplesUs),
-    ratio: nodeUs / Math.max(wasmUs, 0.000001),
-    ratioStd: stddev(ratioSamples),
+    ...ratioSummary,
+    measurementOrder: "alternating-paired",
+    ratioEstimator: "median-of-paired-ratios",
     iters: iterations,
     warmupRounds: config.warmupRounds,
     measuredRounds: config.measuredRounds,
@@ -89,14 +114,22 @@ export function measureJsHostPerf(sampleOp, wasmOperation, nodeOperation, option
     calibrate(nodeOperation, config.calibrationMs, config.targetMs),
   );
   for (let round = 0; round < config.warmupRounds; round++) {
-    timeIt(wasmOperation, iterations);
-    timeIt(nodeOperation, iterations);
+    measurePair(
+      round,
+      () => timeIt(wasmOperation, iterations),
+      () => timeIt(nodeOperation, iterations),
+    );
   }
   const wasmSamplesUs = [];
   const nodeSamplesUs = [];
   for (let round = 0; round < config.measuredRounds; round++) {
-    wasmSamplesUs.push((timeIt(wasmOperation, iterations) / iterations) * 1000);
-    nodeSamplesUs.push((timeIt(nodeOperation, iterations) / iterations) * 1000);
+    const sample = measurePair(
+      round,
+      () => (timeIt(wasmOperation, iterations) / iterations) * 1000,
+      () => (timeIt(nodeOperation, iterations) / iterations) * 1000,
+    );
+    wasmSamplesUs.push(sample.wasm);
+    nodeSamplesUs.push(sample.node);
   }
   return measuredResult(
     sampleOp,
@@ -124,18 +157,30 @@ export function measureStandalonePerf(sampleOp, wasmBatch, nodeBatch, options = 
     calibrate(() => nodeBatch(1), config.calibrationMs, config.targetMs),
   );
   for (let round = 0; round < config.warmupRounds; round++) {
-    wasmBatch(iterations);
-    nodeBatch(iterations);
+    measurePair(
+      round,
+      () => wasmBatch(iterations),
+      () => nodeBatch(iterations),
+    );
   }
   const wasmSamplesUs = [];
   const nodeSamplesUs = [];
   for (let round = 0; round < config.measuredRounds; round++) {
-    const wasmStarted = performance.now();
-    wasmBatch(iterations);
-    wasmSamplesUs.push(((performance.now() - wasmStarted) / iterations) * 1000);
-    const nodeStarted = performance.now();
-    nodeBatch(iterations);
-    nodeSamplesUs.push(((performance.now() - nodeStarted) / iterations) * 1000);
+    const sample = measurePair(
+      round,
+      () => {
+        const started = performance.now();
+        wasmBatch(iterations);
+        return ((performance.now() - started) / iterations) * 1000;
+      },
+      () => {
+        const started = performance.now();
+        nodeBatch(iterations);
+        return ((performance.now() - started) / iterations) * 1000;
+      },
+    );
+    wasmSamplesUs.push(sample.wasm);
+    nodeSamplesUs.push(sample.node);
   }
   return measuredResult(
     sampleOp,
@@ -209,6 +254,9 @@ export function packagePerfRecord(sampleOp, jsHost, standalone, additionalLanes 
       "nodeStdUs",
       "ratio",
       "ratioStd",
+      "ratioSamples",
+      "measurementOrder",
+      "ratioEstimator",
       "iters",
       "warmupRounds",
       "measuredRounds",

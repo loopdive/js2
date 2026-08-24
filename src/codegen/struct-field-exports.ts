@@ -425,7 +425,7 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
     const classTag = ctx.classTagMap.get(structName);
     const classTagFieldIdx = classTag !== undefined ? fields.findIndex((f) => f && f.name === "__tag") : -1;
     const classTags =
-      process.env.JS2WASM_AB_LEGACY_REACT_STRUCT !== "1" && classTag !== undefined && classTagFieldIdx >= 0
+      classTag !== undefined && classTagFieldIdx >= 0
         ? [
             classTag,
             ...[...ctx.classTagMap]
@@ -635,8 +635,7 @@ function buildSetterNestedIfElse(
 
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
-    let thenBranch = buildSetterStore(ctx, entry, anyLocal, valMode, wroteLocal, unboxNumIdx, unboxSymbolIdx);
-    const legacyReactStruct = process.env.JS2WASM_AB_LEGACY_REACT_STRUCT === "1";
+    const thenBranch = buildSetterStore(ctx, entry, anyLocal, valMode, wroteLocal, unboxNumIdx, unboxSymbolIdx);
     const condition: Instr[] = [
       { op: "local.get", index: anyLocal },
       { op: "ref.test", typeIdx: entry.typeIdx },
@@ -648,18 +647,14 @@ function buildSetterNestedIfElse(
     // so a mismatch falls through to the next structurally-equal candidate;
     // an inner no-op would incorrectly stop before the receiver's real shape.
     if (entry.shapeId !== undefined && entry.shapeFieldIdx !== undefined) {
-      const shapeCondition: Instr[] = [
+      condition.push(
         { op: "local.get", index: anyLocal },
         { op: "ref.cast", typeIdx: entry.typeIdx },
         { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.shapeFieldIdx },
         { op: "i32.const", value: entry.shapeId },
         { op: "i32.eq" },
-      ];
-      if (legacyReactStruct) {
-        thenBranch = [...shapeCondition, { op: "if", blockType: { kind: "empty" }, then: thenBranch }];
-      } else {
-        condition.push(...shapeCondition, { op: "i32.and" });
-      }
+        { op: "i32.and" },
+      );
     }
 
     // (#4618) User classes carry a nominal `__tag`, but WasmGC `ref.test`

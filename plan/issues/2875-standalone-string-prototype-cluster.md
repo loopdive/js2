@@ -1,9 +1,9 @@
 ---
 id: 2875
 title: "Standalone: String.prototype.* cluster (159 host-pass/standalone-fail, de-masked from #2862)"
-status: ready
+status: suspended
 created: 2026-06-30
-updated: 2026-08-21
+updated: 2026-08-22
 priority: high
 task_type: bug
 area: codegen
@@ -783,3 +783,24 @@ wrong one.)
 batch fail identically before and after (`built-ins/eval/{length-non-configurable,
 name,not-a-constructor}` — `eval` has no own `length`/`name` and no
 [[Construct]] refusal) and are excluded.
+
+## Suspended Work — String/RegExp surface (2026-08-22)
+
+Wave-4 lane F landed six slices (merged in #4723): primitive-string
+`.constructor`, String statics seeded on the ctor carrier, getter-only RegExp
+accessor writes as sloppy no-ops, String-exotic `length` immutability, no-arg
+`eval()` returning undefined, and `delete` on builtin prototype methods — the
+last of which was later **retired as net-negative** (see #4491's suspended-work
+section: it broke ~17 descriptor rows for 3 gained; `native-proto-delete.ts` is
+deleted and the finalize call sites are commented with the re-enable
+conditions).
+
+Still open in this cluster, each with a measured verdict in the lane-F triage:
+transferred `String.prototype.{split,slice,substring,trim}` on non-String
+receivers (the sized L-slice), eval-returned RegExp losing `.source`/`.global`
+(the QuickJS bridge marshals it as a plain object carrying only `lastIndex` —
+#4491's T7 slice C), dynamic RegExp patterns, `String.prototype.replace` with a
+RegExp (#1474), and `String.fromCodePoint` as a value.
+
+Resume from #4491's "Suspended Work" section — it carries the campaign-level
+state, the measurement recipe, and the row counts.

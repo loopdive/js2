@@ -904,6 +904,29 @@ function jsArrayParamNeedsOpenObjectCarrier(
 }
 
 /**
+ * JavaScript's optional-parameter spellings (`x?: T`, `@param {T=} x`, and
+ * `@param {T} [x]`) all admit a call that supplies no value. A native scalar
+ * slot cannot represent that value: the generic missing-argument pad for an
+ * `f64`/`i32`/`i64` is zero, while JavaScript observes `undefined`. This is
+ * especially important for JSDoc declarations imported across a module
+ * boundary, where local call-site inference cannot see the caller.
+ *
+ * Initializers are deliberately excluded. Their existing parameter-default
+ * sentinel path evaluates the initializer in the callee, so widening those
+ * parameters would change a proven numeric default ABI for no semantic gain.
+ */
+function parameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
+  const jsdocType = ts.getJSDocType(param);
+  const jsdocTags = ts.getJSDocParameterTags(param);
+  return (
+    param.initializer === undefined &&
+    (param.questionToken !== undefined ||
+      (jsdocType !== undefined && ts.isJSDocOptionalType(jsdocType)) ||
+      jsdocTags.some((tag) => tag.isBracketed === true))
+  );
+}
+
+/**
  * (#3268) Lower a single non-rest function parameter to its Wasm ValType.
  * Consolidates the four byte-identical per-parameter lowering blocks
  * (registerBodyless + collectDeclarations, generator and normal arms):
@@ -928,6 +951,15 @@ function lowerParamType(
     : restBindingOverridesToExternref(param)
       ? { kind: "externref" }
       : (nativeParam ?? resolveWasmType(ctx, paramType));
+  // A JSDoc/TypeScript optional parameter may be omitted by a caller that is
+  // compiled in another source module. Keep the ABI in the undefined-capable
+  // externref domain unless an explicit native annotation has opted into a
+  // scalar representation. Without this, `@param {number=} size` receives
+  // `0` from pushDefaultValue and `typeof size`/Number.isNaN guards observe
+  // the wrong value (webpack's formatSize is the regression witness).
+  if (nativeParam === null && parameterMayBeOmitted(param)) {
+    wasmType = { kind: "externref" };
+  }
   if (jsArrayParamNeedsOpenObjectCarrier(ctx, param, stmt, wasmType)) {
     wasmType = { kind: "externref" };
   }
@@ -2690,8 +2722,10 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           ordinal += 1;
           bindingName = `__default_expr_${ordinal}`;
         }
-        registerModuleGlobal(ctx, bindingName, { kind: "externref" });
-        expressionGlobals.set(stmt, { bindingName, type: { kind: "externref" } });
+        const type: ValType = { kind: "externref" };
+        registerModuleGlobal(ctx, bindingName, type);
+        expressionGlobals.set(stmt, { bindingName, type });
+        if (isEntryFile) (ctx.deferredDefaultExpressionExports ??= new Set()).add(bindingName);
       }
       ctx.moduleInitStatements.push(stmt);
       continue;

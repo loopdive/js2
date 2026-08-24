@@ -1,10 +1,10 @@
 ---
 id: 4536
 title: "stylelint arrayEqual + webpack groupBy/formatSize residuals: illegal casts on mixed-element compares and NaN branch — 5 tests"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-16
-updated: 2026-08-23
+updated: 2026-08-24
 priority: low
 horizon: s
 feasibility: medium
@@ -17,11 +17,27 @@ related: [3995, 4531, 4303]
 budget_allowance: "granted 2026-08-23 — curated-npm lane, tuple/host-boundary fix slice on PR #4728"
 loc-budget-allow:
   - src/codegen/property-access.ts
+  - src/codegen/declarations.ts
+  - src/codegen/closures.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/index.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/context/types.ts
 func-budget-allow:
   - src/codegen/property-access.ts::compileElementAccessBody
+  - src/codegen/declarations.ts::lowerParamType
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/closures.ts::computeClosureWrapperSig
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 files:
   - tests/dogfood/stylelint-upstream-suite.mjs
   - tests/dogfood/webpack-upstream-suite.mjs
+  - tests/issue-4536-jsdoc-optional-number.test.ts
+  - tests/issue-4536-callable-spread.test.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/expressions/call-identifier.ts
 ---
 
 # Last-mile residuals in the stylelint (7/9) and webpack (13/16) suites
@@ -173,3 +189,45 @@ pre-existing, `link` options iterability + object-rest default NaN).
 
 Remaining #4536 residuals: webpack formatSize NaN (`"0 bytes"` vs
 `"unknown size"`), stylelint ruleMessages arg forwarding, stylelint vendor ×2.
+
+## 2026-08-24 optional-JSDoc ABI fix
+
+The remaining webpack failure was the first assertion in the unchanged
+`formatSize()` test: its `@param {number=} size` declaration was lowered to an
+`f64` because the caller lived in a different source module. The missing-arg
+pad therefore supplied `0`, so the upstream `typeof size !== "number"` guard
+returned `"0 bytes"` instead of observing JavaScript `undefined`.
+
+The declaration and closure ABI paths now recognize optional TypeScript/JSDoc
+parameters without initializers and keep them in the undefined-capable
+`externref` representation (explicit native annotations remain authoritative;
+initializer parameters retain their existing default sentinel path). This is a
+generic boundary rule, not a webpack-specific case. A compact regression in
+`tests/issue-4536-jsdoc-optional-number.test.ts` covers omitted, numeric, and
+explicit-NaN calls across a module boundary.
+
+Fresh unchanged-suite result: **webpack 16/16** Wasm tests, all three selected
+modules compile and validate. Stylelint remains **105/108**; its three
+remaining failures are the unrelated `ruleMessages` argument-forwarding and
+vendor string/regex residuals listed above.
+
+## 2026-08-24 completion
+
+The two remaining classes were fixed generically:
+
+- ESM `export default <expression>` assignments now retain a graph-global
+  externref cell through module initialization. Late default-import aliases
+  resolve to that cell, so cross-module default object/function values are
+  initialized before their consumers run. This repaired Stylelint's vendor
+  formatter callbacks without package-specific handling.
+- A dynamically stored callable invoked as `fn(...args)` now uses the host call
+  adapter with a real argument array. Wasm `__vec_*` rest values are expanded
+  element-by-element (opaque host iterables use the existing length/index
+  helpers), preserving argument order and count for both Wasm closures and JS
+  functions. The reduction is covered by
+  `tests/issue-4536-callable-spread.test.ts`.
+
+Fresh unchanged-suite results: **Stylelint 108/108** and **Webpack 16/16**
+admitted upstream tests pass, all selected modules compile and validate, and
+neither suite has runtime-only failures. The remaining upstream registrations
+are explicitly reported as unavailable infrastructure by their adapters.
