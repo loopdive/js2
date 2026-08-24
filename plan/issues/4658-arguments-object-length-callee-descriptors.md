@@ -18,11 +18,17 @@ func-budget-allow:
   # owns `missExtern`/`integrityBit`/`setKey`), so a consult that has to sit in
   # the `length` arm cannot be hoisted out without duplicating that scope.
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
+  # +9 lines: the `in` (`__extern_has`) and dynamic-read (`__extern_get`)
+  # `length` arms are built inside this one closure. All four own-property
+  # surfaces have to read the same tombstone — wiring only some of them is a
+  # new incoherence, not a fix — and these two live nowhere else.
+  - src/codegen/object-runtime.ts::fillDynamicForinVecArms
 title: "ES5 standalone: arguments-object `length`/`callee` own-property descriptors — a NUMBER write to arguments.length sticks but a STRING write does not; gOPD reports wrong writable/configurable; typeof argObj.callee answers \"number\""
-status: ready
+status: in-progress
+assignee: ttraenkler/dev-4658
 sprint: current
 created: 2026-08-23
-updated: 2026-08-23
+updated: 2026-08-24
 priority: high
 horizon: m
 feasibility: medium
@@ -94,6 +100,124 @@ pointer, not a measurement.
 5. Absent-not-wrong: if a descriptor cannot be answered faithfully, decline the
    fold rather than answer wrongly.
 
+## Root cause
+
+Three defects, not one. All measured on campaign HEAD `74389b417`, standalone,
+with `.tmp/run-one.mts` / probe files under `.tmp/probes*`.
+
+### Root 1 — the vec companion value-seed is a CHAIN read (fixes `10.6-13-a-1`)
+
+`buildBagValueSeed` (`src/codegen/vec-bag-seed.ts`, #4010 S1′) seeds the #3251
+companion's pre-state before `__vec_dp_value` delegates, so that a define
+carrying no `[[Value]]` preserves the existing one (§10.1.6.3). It sourced that
+pre-state from **`__vec_prop_get`** — which is **not** a bag read. Since #4176
+its miss tail consults the prototype-property companions
+(`protoIndexRecvGetMissInstrs`), so for a key the bag does not hold it answers
+with `Object.prototype`'s / `Array.prototype`'s value. The seed then installed
+that INHERITED value as an OWN companion entry, with `SEED_FLAGS` (w/e/c all
+true, value present).
+
+The seed lands **before** the incoming define is applied, and a define whose
+flags specify neither a value nor any attribute is a no-op against an existing
+entry — so the fabricated value SURVIVES. Measured, base sources:
+
+```js
+Object.defineProperty(Object.prototype, "zzz", { value: 7, writable: true, configurable: true });
+var a = [1, 2];
+Object.defineProperty(a, "zzz", { writable: false });
+Object.getOwnPropertyDescriptor(a, "zzz")
+//  vec receiver:  {value: 7,         writable:false, enumerable:true,  configurable:true}
+//  plain object:  {value: undefined, writable:false, enumerable:false, configurable:false}   ← spec
+```
+
+`10.6-13-a-1` defines `Object.prototype.callee` FIRST, so #4243's callee seed
+(`__defineProperty_value(args, "callee", <func>, 0x05)`) ran against a
+pre-seeded entry holding the inherited `1` and became a no-op — `typeof
+argObj.callee` answered `"number"`.
+
+**This is NOT the kind-incompatible-carrier defect the issue's lead 1 pointed
+at, and it does NOT share a root with the `length` half.** The pointer was worth
+following; the discriminator that settled it (`.tmp/probes4/s5`): the same
+program with `Object.prototype.callee = 1` written by plain ASSIGNMENT answers
+`"function"` — correct. Only the `Object.defineProperty` spelling breaks it,
+because only that spelling creates the proto-index companion entry
+`__vec_prop_get`'s tail can find.
+
+### Root 2 — `arguments` has no runtime brand (fixes `10.6-6-2`, `10.6-7-1`)
+
+`arguments` shares the opaque `$Vec` representation with array literals, so
+`__vec_gopd`'s `length` arm answered with §10.4.2's Array rules —
+`configurable: false`, hard-coded. Right for `[1,2]`, wrong for an arguments
+object, whose `length` is `{writable: true, enumerable: false, configurable:
+true}` in BOTH CreateMappedArgumentsObject (§10.4.4 step 7) and
+CreateUnmappedArgumentsObject (step 4). Measured: `{value: 0, writable: true,
+enumerable: false, configurable: false}`.
+
+`arguments-object-mop.ts` records why #4622 could not fix this: *"there is no
+runtime brand to split them on"*, and it used a syntactic arm instead. A
+syntactic arm cannot serve here — both rows hand the object to `verifyProperty`,
+a harness FUNCTION, so the gOPD receiver is a dynamic value with no syntactic
+connection to any `arguments` binding.
+
+A `configurable: true` descriptor alone is also **not enough**, which is the
+part that only shows up by running it: `propertyHelper.isConfigurable` decides
+the attribute by `delete obj[name]` followed by `!hasOwnProperty(obj, name)`.
+With the brand but no tombstone the delete answered `true` and `hasOwn` still
+answered `true`, so both rows kept failing with the identical message.
+
+### Root 3 — cross-type write to `arguments.length` — DECLINED, see Residuals
+
+## Fix
+
+New leaf module **`src/codegen/arguments-length-brand.ts`**; the god-file
+changes are call sites only.
+
+1. **`vec-bag-seed.ts`** — gate the value seed on `__carrier_bag_has(vec, key)`,
+   the own-only, tombstone-filtered, LOOKUP-not-ENSURE predicate for this
+   substrate. Strictly NARROWS which keys are seeded, so #4010's bag→companion
+   seam keeps every case it was written for (pinned).
+2. **`OBJ_FLAG_ARGUMENTS = 0x40`** on the #3251 overlay COMPANION's
+   `$Object.flags` — the same internal-slot channel as `OBJ_FLAG_RAWJSON`
+   (#3176) and the #4120 callable/ctor brand; `object-runtime.ts`'s flag table
+   listed `0x40+` as free. Set by a reserve-then-fill `__args_brand_mark` stub
+   emitted from `emitArgumentsVecBody` (the one construction site all three
+   arguments paths share).
+   - **Gated on the same `shouldRegisterArgumentsWithHost` proof #4578 uses.**
+     `__vec_overlay_ensure` APPENDS to a linearly scanned table, so branding
+     every arguments object on every call would grow it unboundedly (the hazard
+     `ensureOverlayCore` documents for per-exec RegExp match results). Where the
+     proof says "observable", `arguments-callee.ts` has already created that
+     companion; where it says "not observable", nothing is marked and no
+     companion is created.
+3. **`__vec_gopd` length arm** — `configurable` = brand AND NOT
+   (sealed|frozen), so §7.3.14 SetIntegrityLevel still wins (pinned).
+4. **`OBJ_FLAG_ARGS_LENGTH_ABSENT = 0x80`** tombstone. The vec has no per-key
+   storage for `length` (`__vec_prop_set` refuses the key outright so the real
+   vec length can never be shadowed), so a successful delete is recorded as a
+   bit: set by a `__delete_property` arm placed AFTER the `configurable` gate
+   (a sealed/frozen arguments object still refuses), read by **all four**
+   own-property surfaces — `__hasOwnProperty` / `__object_hasOwn`,
+   `__extern_has` (`in`), `__vec_gopd`, and `__extern_get`'s dynamic `length`
+   read — and cleared by a store to `length`.
+   - Wiring only some of them was tried and rejected mid-change: a delete that
+     `hasOwnProperty` can see but `in` cannot is a NEW incoherence, not a fix.
+     The compile-time `.length` fold on a vec-typed receiver is the one surface
+     that cannot follow (RESIDUAL 4 below).
+
+Every arm is `[]` when no arguments object was ever branded, so an Array-only
+module is byte-identical.
+
+### Hazard worth carrying forward
+
+Assigning ONE `{name, type}` locals array to all four filled stubs made the
+finalize type-remap rewrite that single `ValType` object once **per function**
+while the `struct.get` immediates (built fresh) were remapped once each. The
+module came out with `(local $comp (ref null 153))` beside `struct.get 159 4`
+and V8 rejected it — attributed to `testcase`, because the stub had been
+INLINED there, which is why the error named a user function that contains no
+such code. `reference_shared_instr_object_dce_double_remap` governs local TYPE
+objects too, not only `Instr`s.
+
 ## Acceptance
 
 Scoped standalone sweep over `language/arguments-object` before AND after from
@@ -103,3 +227,68 @@ shape — the pin must EXECUTE the write and read it back, and the descriptor
 pins must call `gOPD` and assert the specific attributes — verified failing on
 base by file-copy revert; `it.fails` pins for measured residuals with owners.
 Record `## Root cause` / `## Fix` / `## Test Results` / `## Residuals` here.
+
+## Residuals
+
+All four measured on this branch by the owner of this issue; none are fixed
+here, and each carries an `it.fails` pin plus a positive control in
+`tests/issue-4658.test.ts` so a later fix has something that flips.
+
+### RESIDUAL 1 — a STRING write to `arguments.length` does not stick (the remaining half of `S10.6_A5_T4`)
+
+Owner: the `[[ParameterMap]]` / descriptor-sidecar arguments representation
+#3251 and #4622 both defer to.
+
+§10.4.4 makes `length` an ORDINARY data property, so `arguments.length = "abc"`
+must stick and read back as the string. It does not, and the two halves of why
+are independent:
+
+- the WRITE goes through `__extern_set`'s vec `length` arm, which is
+  ArraySetLength-lite — a non-numeric value is a silent no-op (a NUMBER write
+  DOES stick, which is the control; it sticks by RESIZING the vec, which is its
+  own §10.4.4 divergence);
+- a `.length` READ on a vec-typed receiver folds at compile time to a
+  `struct.get` on the vec's length FIELD, so there is nowhere for a non-numeric
+  length to live.
+
+**Deliberately not half-fixed.** Storing the string in the #3537 bag and
+teaching only the DYNAMIC read to find it would leave the static fold answering
+the old numeric value — two surfaces disagreeing about the same property, which
+is worse than the current coherent miss (absent-not-wrong).
+
+### RESIDUAL 2 — `Array.isArray(arguments)` answers `true`
+
+Owner: unclaimed. An arguments object is an ordinary Object, not an Array exotic
+object, so this must be `false`. It answers `true` because the two share the
+`$Vec` representation and `__is_vec` is the predicate behind `Array.isArray`.
+
+**Load-bearing for whoever fixes it, and for reading this issue's own result:**
+`propertyHelper.isWritable` branches on `__isArray(obj) && name === "length"` to
+pick a NUMERIC probe value instead of the string `"unlikelyValue"`. That branch
+is the only reason `10.6-6-2`'s `writable` check passes today. Fixing
+`Array.isArray` sends that check down the string path, where it needs
+RESIDUAL 1 first — so these two must land together or `10.6-6-2` regresses.
+
+### RESIDUAL 3 — `arr["length"]` answers `arr[0]`
+
+Owner: unclaimed. Found while building this change's Array controls;
+**measured IDENTICAL on base `74389b417` and on this branch** (`RESULT: 1111`
+from `.tmp/repro/arrget2.js` on both arms), so it is not caused here.
+
+On an Array receiver the BRACKET form numeric-coerces the key
+(`ToNumber("length")` is `NaN`, `trunc_sat` takes it to `0`) and the index lane
+consumes it before any named-key lane sees it — the exact shape `vec-props.ts`
+warns about in its `VEC_PROP_GET` header ("that is right for an ordinary index
+and wrong for a §10.4.2.2 non-index key"). All three spellings answer `1` for
+`[1, 2]`: a top-level `a["length"]`, a generic `get(o, n)` helper, and an inline
+IIFE. The DOT form `a.length` is correct, which is why this hides.
+
+### RESIDUAL 4 — after `delete args.length`, the compile-time `.length` fold still reads the field
+
+Owner: same as RESIDUAL 1 (one representation, one fix).
+
+All four *dynamic* own-property surfaces now agree that the property is gone
+(`hasOwnProperty`, `in`, `gOPD`, `__extern_get`). A syntactic `arguments.length`
+inside the same function still folds to `struct.get` and answers the live vec
+length. Closing it needs the same representation change as RESIDUAL 1, not
+another consult site.

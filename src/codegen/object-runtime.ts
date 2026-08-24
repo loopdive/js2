@@ -58,6 +58,7 @@
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { buildArgumentsLengthAbsentMiss, buildArgumentsLengthAbsentTail } from "./arguments-length-brand.js"; // (#4658)
 import { BFN_ID_FIELD_IDX, BFN_STATE_FIELD_IDX } from "./builtin-fn-meta.js"; // (#4241) header-derived
 import { ensureNativeCharCodeAtHelper } from "./char-code-at-helpers.js";
 import { getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js"; // (#3673 round 19b)
@@ -9654,7 +9655,9 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
             {
               op: "if",
               blockType: { kind: "empty" },
-              then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+              // (#4658) `in` must agree with `hasOwnProperty` and gOPD after a
+              // §10.4.4 `delete args.length`; all three read the same tombstone.
+              then: [...buildArgumentsLengthAbsentTail(ctx, 0), { op: "i32.const", value: 1 }, { op: "return" }],
             },
           ] satisfies Instr[])
         : []),
@@ -9746,6 +9749,13 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
               op: "if",
               blockType: { kind: "empty" },
               then: [
+                // (#4658) A branded arguments object whose `length` was deleted
+                // has no own `length` and no inherited one either, so the
+                // DYNAMIC read answers `undefined` — keeping it in step with
+                // `in` / `hasOwnProperty` / gOPD. The compile-time `.length`
+                // fold on a vec-typed receiver still reads the field; that
+                // residual is pinned in tests/issue-4658.test.ts.
+                ...buildArgumentsLengthAbsentMiss(ctx, 0, getMiss),
                 { op: "local.get", index: gAny },
                 { op: "ref.cast", typeIdx: vecBaseIdx },
                 { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 },

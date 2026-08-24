@@ -187,6 +187,33 @@ export function buildArgumentsLengthDeletedBail(ctx: CodegenContext, miss: () =>
   return [...call, { op: "if", blockType: { kind: "empty" }, then: miss() }];
 }
 
+/**
+ * `if (__args_len_absent(vec)) return 0;` — the presence tail for a site whose
+ * next instruction is the unconditional "yes, `length` is here" answer
+ * (`__hasOwnProperty` / `__object_hasOwn` / `__extern_has`). `[]` when nothing
+ * was branded, so those sites keep their pre-#4658 constant.
+ *
+ * A FACTORY: this payload is spliced into several functions and a shared
+ * `Instr` object reachable from more than one is remapped more than once by the
+ * finalize walks (`reference_shared_instr_object_dce_double_remap`).
+ */
+export function buildArgumentsLengthAbsentTail(ctx: CodegenContext, objParam = 0): Instr[] {
+  const call = buildArgumentsLengthAbsentCall(ctx, objParam);
+  if (call.length === 0) return [];
+  return [...call, { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] }];
+}
+
+/**
+ * `if (__args_len_absent(vec)) return <miss>;` — the same tail for a VALUE site
+ * (`__extern_get`'s `length` arm), where the absent answer is `undefined`
+ * rather than `0`. `miss` is a factory for the same reason as above.
+ */
+export function buildArgumentsLengthAbsentMiss(ctx: CodegenContext, objParam: number, miss: () => Instr[]): Instr[] {
+  const call = buildArgumentsLengthAbsentCall(ctx, objParam);
+  if (call.length === 0) return [];
+  return [...call, { op: "if", blockType: { kind: "empty" }, then: [...miss(), { op: "return" }] }];
+}
+
 /** `__args_len_revive(obj)` — a store to `length` recreates the property. */
 export function buildArgumentsLengthReviveCall(ctx: CodegenContext, objParam = 0): Instr[] {
   const idx = ctx.funcMap.get(REVIVE_NAME);

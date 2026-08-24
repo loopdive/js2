@@ -45,7 +45,7 @@
  */
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
-import { buildArgumentsLengthAbsentCall, buildArgumentsLengthReviveCall } from "./arguments-length-brand.js"; // (#4658)
+import { buildArgumentsLengthAbsentTail, buildArgumentsLengthReviveCall } from "./arguments-length-brand.js"; // (#4658)
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "./native-strings.js";
 import { NON_ARRAY_BYTE_VEC_ELEM_KINDS } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
@@ -271,17 +271,9 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
 
   // ── 2. `__hasOwnProperty` / `__object_hasOwn`: vec + "length" → 1 ───────
   // (#4658) …unless this is a branded `arguments` object whose `length` was
-  // deleted. A FACTORY: the payload is spliced into two functions and a shared
-  // `Instr` object reachable from both is remapped twice by the finalize walks
-  // (`reference_shared_instr_object_dce_double_remap`).
-  const absentTail = (): Instr[] => {
-    const call = buildArgumentsLengthAbsentCall(ctx, 0);
-    if (call.length === 0) return [];
-    return [
-      ...call,
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
-    ];
-  };
+  // deleted. Called per function — the helper is a factory for the shared-Instr
+  // reason its own doc gives.
+  const absentTail = (): Instr[] => buildArgumentsLengthAbsentTail(ctx, 0);
   for (const name of ["__hasOwnProperty", "__object_hasOwn"]) {
     const fn = findFn(name);
     if (!fn) continue;

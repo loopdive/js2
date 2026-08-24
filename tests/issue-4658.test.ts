@@ -218,6 +218,38 @@ describe("#4658 root 2 — the delete is observable, not just permitted", () => 
     ).toBe(921);
   });
 
+  it("`in` and the DYNAMIC read agree with hasOwnProperty after the delete", async () => {
+    // Four surfaces read the same tombstone; a delete that only some of them
+    // can see would be a new incoherence, not a fix. 0 = `"length" in args` is
+    // false AND the dynamic read is undefined.
+    expect(
+      await runModule(`
+        function del(o, n) { return delete o[n]; }
+        function has(o, n) { return n in o; }
+        function get(o, n) { return o[n]; }
+        function f() {
+          del(arguments, "length");
+          return (has(arguments, "length") ? 10 : 0) + (get(arguments, "length") === undefined ? 0 : 1);
+        }
+        var r = f(1, 2);
+        export function test() { return r; }`),
+    ).toBe(0);
+  });
+
+  it('an ARRAY control keeps `"length" in arr` true', async () => {
+    // Only `in` is asserted for the Array receiver. The dynamic READ of
+    // `arr["length"]` is a SEPARATE pre-existing defect — see RESIDUAL 3 —
+    // measured identical on base and on this branch, so pinning it here would
+    // pin someone else's bug to this fix.
+    expect(
+      await runModule(`
+        function has(o, n) { return n in o; }
+        var a = [1, 2];
+        var out = has(a, "length") ? 1 : 0;
+        export function test() { return out; }`),
+    ).toBe(1);
+  });
+
   it("a later numeric write to length revives the property", async () => {
     expect(
       await runModule(`
@@ -291,5 +323,77 @@ describe("#4658 residuals — measured, NOT fixed here", () => {
         var out = (Array.isArray([1, 2]) ? 10 : 0) + (Array.isArray({}) ? 1 : 0);
         export function test() { return out; }`),
     ).toBe(10);
+  });
+
+  // RESIDUAL 3 (owner: unclaimed — found while building this file's Array
+  // controls, NOT caused by this change; measured IDENTICAL on base
+  // `74389b417` and on this branch, `RESULT: 1111` both arms).
+  //
+  // On an Array receiver the BRACKET form `arr["length"]` answers `arr[0]`.
+  // The key is numeric-coerced (`ToNumber("length")` is NaN, `trunc_sat` takes
+  // it to 0) and the index lane consumes it before any named-key lane sees it
+  // — the exact shape `vec-props.ts` warns about in its `VEC_PROP_GET` header
+  // ("that is right for an ordinary index and wrong for a §10.4.2.2 non-index
+  // key"). All three spellings answer 1 for `[1, 2]`: a top-level
+  // `a["length"]`, a generic `get(o, n)` helper, and an inline
+  // `(function (o) { return o["length"]; })(a)`. The DOT form `a.length` is
+  // correct (2) — it folds to the vec length field — which is why this hides.
+  it.fails('RESIDUAL: arr["length"] answers arr[0] instead of the length', async () => {
+    expect(
+      await runModule(`
+        var a = [1, 2];
+        var out = a["length"];
+        export function test() { return out; }`),
+    ).toBe(2);
+  });
+
+  // Positive control for RESIDUAL 3: the DOT form is correct, so the pin above
+  // is measuring the bracket/dynamic key lane and not a broken array literal.
+  it("control: the DOT form arr.length is correct", async () => {
+    expect(
+      await runModule(`
+        var a = [1, 2];
+        var out = a.length;
+        export function test() { return out; }`),
+    ).toBe(2);
+  });
+
+  // RESIDUAL 4 (owner: same as RESIDUAL 1 — one representation, one fix).
+  //
+  // All four DYNAMIC own-property surfaces now agree the property is gone after
+  // `delete args.length` (pinned above). A SYNTACTIC `arguments.length` in the
+  // same function still folds to `struct.get` on the vec's length field and
+  // answers the live length. Measured both arms: base `74389b417` returns 902
+  // (the strict delete THREW, fold 2), this branch returns 102 (delete
+  // succeeded, fold still 2) — so the fold is unchanged by this work, and only
+  // the delete's own answer moved.
+  it.fails("RESIDUAL: the compile-time .length fold survives the delete", async () => {
+    expect(
+      await runModule(`
+        function del(o, n) { return delete o[n]; }
+        function f() {
+          del(arguments, "length");
+          return arguments.length === undefined ? 1 : 0;
+        }
+        var r = f(1, 2);
+        export function test() { return r; }`),
+    ).toBe(1);
+  });
+
+  // Positive control for RESIDUAL 4: in the SAME program the dynamic read does
+  // answer undefined, so the pin isolates the compile-time fold rather than a
+  // tombstone that was never recorded.
+  it("control: the dynamic read in that same program does answer undefined", async () => {
+    expect(
+      await runModule(`
+        function del(o, n) { return delete o[n]; }
+        function get(o, n) { return o[n]; }
+        function f() {
+          del(arguments, "length");
+          return get(arguments, "length") === undefined ? 1 : 0;
+        }
+        var r = f(1, 2);
+        export function test() { return r; }`),
+    ).toBe(1);
   });
 });
