@@ -24,6 +24,8 @@ related: [2138, 2855, 3143, 3203, 3518, 3519, 3678, 4260, 4382]
 loc-budget-allow:
   - src/ir/propagate.ts
   - src/ir/select.ts
+oracle-ratchet-allow:
+  - src/codegen/ir-fnctor-admission.ts
 origin: "#3518 R2 — invert single-source free functions from compile/patch to prepare/emit"
 files:
   - src/ir/program.ts
@@ -1268,3 +1270,22 @@ plan a support callable, emit `fnctor.new/get`, or change runtime output. The
 next checkpoint must bind the admitted shape to ProgramAbiSession support
 plans and physical constructor/layout validation before AST lowering or R2
 replay.
+
+## 2026-08-24 Program-ABI fnctor observation planning checkpoint
+
+The next bounded producer seam is now explicit but remains dormant until an
+admitted AST site supplies a complete physical observation. `ProgramAbiFnctorRegistry.observe`
+now fail-closes on the live reserved struct layout and synthesized constructor
+function signature, including capture values, TDZ flags, user parameters, the
+optional hidden identity externref, and the exact struct-reference result. A
+valid observation registers the source/unit-qualified `fnctor-constructor`
+support callable and remappable `fnctor-layout` type plan through the existing
+Program ABI session/type registry. Structural role ordinals are centralized
+(`fnctorConstructor=15`, `fnctorLayout=13`), and allocator-owned function/type
+locators are retained for late compaction.
+
+This checkpoint does not synthesize observations, lower `fnctor.new/get`, alter
+legacy constructor output, or claim linked-parser runtime coverage. The next
+slice must connect the admitted AST producer to this observation only after
+the exact capture/TDZ/user ABI and struct fields are available, then add a
+source-local lowering proof and focused A/B replay.
