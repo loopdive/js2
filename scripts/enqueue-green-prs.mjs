@@ -745,14 +745,30 @@ function freshPrForEnqueue(number) {
 // to the BASE repo, loopdive/js2wasm). A number missing from the map (e.g. >100 open
 // PRs, or a transient GraphQL hiccup) is treated as untrusted by the caller —
 // fail closed, never enqueue a PR whose association we could not confirm.
+//
+// It also returns the author LOGIN, from this same query, and that is
+// deliberate (#4826 follow-up). `gh pr list --json author` does carry an
+// `author` object, and the login taken from it is what the login allowlist was
+// matched against until 2026-08-24 — but for a GitHub **App** author it does
+// not yield the app slug the allowlist names, so the promotion PR opened by
+// `js2-merge-queue-bot` was skipped `untrusted-author:CONTRIBUTOR` even after
+// BOTH spellings (`js2-merge-queue-bot` and `js2-merge-queue-bot[bot]`) were
+// allowlisted. The GraphQL `author { login }` selection resolves a Bot actor's
+// login unambiguously, so the gate no longer depends on which spelling a
+// particular gh version emits. This narrows nothing and widens nothing: the
+// same single app is trusted, it is simply identified from a source that
+// actually names it. The observed login is logged on every untrusted skip so a
+// future mismatch is visible in the run log instead of being inferred.
 function authorAssociations() {
   const r = graphql(
-    `{ repository(owner:"${OWNER}",name:"${NAME}"){ pullRequests(first:100,states:OPEN){ nodes { number authorAssociation } } } }`,
+    `{ repository(owner:"${OWNER}",name:"${NAME}"){ pullRequests(first:100,states:OPEN){ nodes { number authorAssociation author { login } } } } }`,
   );
   const nodes = r?.data?.repository?.pullRequests?.nodes || [];
   const byNumber = new Map();
   for (const n of nodes) {
-    if (n?.number != null) byNumber.set(n.number, n.authorAssociation || "NONE");
+    if (n?.number != null) {
+      byNumber.set(n.number, { assoc: n.authorAssociation || "NONE", login: n.author?.login || "" });
+    }
   }
   return byNumber;
 }
@@ -936,8 +952,8 @@ export function blockedDiagnosis(pr, authorAssoc) {
   // Do not label a stranger's PR: an external PR is *supposed* to require a
   // deliberate human enqueue (#2549), so "needs manual enqueue" is not news.
   const trust = isTrustedAuthor({
-    assoc: authorAssoc.get(pr.number) || "UNKNOWN",
-    authorLogin: pr.author?.login,
+    assoc: authorAssoc.get(pr.number)?.assoc || "UNKNOWN",
+    authorLogin: authorAssoc.get(pr.number)?.login || pr.author?.login,
     headRepoOwner: pr.headRepositoryOwner?.login,
   });
   if (!trust.trusted) return { suspected: false, reason: "", annotated: state };
@@ -1311,14 +1327,22 @@ function runSweep() {
     // ALWAYS needs a deliberate human enqueue. "Approve CI" ≠ "approve merge." A
     // PR missing from the association map (assoc unknown) and not on the
     // login/fork allowlist is untrusted. See isTrustedAuthor() for the decision.
-    const assoc = authorAssoc.get(pr.number) || "UNKNOWN";
+    const authorInfo = authorAssoc.get(pr.number);
+    const assoc = authorInfo?.assoc || "UNKNOWN";
+    // Prefer the GraphQL login (resolves App/Bot actors); fall back to whatever
+    // `gh pr list --json author` gave us if the GraphQL page missed this PR.
+    const authorLogin = authorInfo?.login || pr.author?.login || "";
     const trust = isTrustedAuthor({
       assoc,
-      authorLogin: pr.author?.login,
+      authorLogin,
       headRepoOwner: pr.headRepositoryOwner?.login,
     });
     if (!trust.trusted) {
-      skipped.push([pr.number, trust.reason]);
+      // Log the login we actually saw. Without it, a skip only says WHICH
+      // association was rejected, so an allowlist that names the right actor
+      // under the wrong spelling looks identical to a genuinely untrusted
+      // stranger — which is how the promotion PR stalled unnoticed.
+      skipped.push([pr.number, `${trust.reason} (login=${authorLogin || "(none)"})`]);
       continue;
     }
     const checks = visibleCheckState(pr.number);

@@ -101,4 +101,31 @@ describe("the promotion bot is allowlisted in BOTH login spellings", () => {
       expect(r.reason).toBe("untrusted-author:CONTRIBUTOR");
     }
   });
+
+  // --- the login has to come from a source that names an App author ---
+  //
+  // Allowlisting both spellings (above) was necessary but not sufficient: the
+  // sweep matched against the login from `gh pr list --json author`, which for
+  // a GitHub App author does not yield the app slug, so the promotion PR kept
+  // being skipped `untrusted-author:CONTRIBUTOR` with a correct allowlist in
+  // place. The login is now read from the same GraphQL page that already
+  // returns authorAssociation, where a Bot actor's login resolves.
+
+  it("selects the author login in the association GraphQL query", () => {
+    const script = readFileSync(new URL("../scripts/enqueue-green-prs.mjs", import.meta.url), "utf8");
+    const query = script.slice(script.indexOf("function authorAssociations()"));
+    expect(query).toContain("number authorAssociation author { login }");
+  });
+
+  it("carries both association and login per PR, and logs the login it saw on a skip", () => {
+    const script = readFileSync(new URL("../scripts/enqueue-green-prs.mjs", import.meta.url), "utf8");
+    // The map value is a record, not a bare association string — a caller that
+    // reads it as a string would silently compare "[object Object]".
+    expect(script).toContain(
+      'byNumber.set(n.number, { assoc: n.authorAssociation || "NONE", login: n.author?.login || "" })',
+    );
+    // A skip must name the login, otherwise a spelling mismatch is
+    // indistinguishable in the log from a genuinely untrusted stranger.
+    expect(script).toContain('`${trust.reason} (login=${authorLogin || "(none)"})`');
+  });
 });
