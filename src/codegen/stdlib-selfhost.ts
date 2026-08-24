@@ -289,6 +289,12 @@ function irTypeContainsContextIndex(type: IrType, seen = new Set<object>()): boo
       return type.members.some((member) => irTypeContainsContextIndex(member, seen));
     case "boxed":
       return irTypeContainsContextIndex(type.inner, seen);
+    case "fnctor":
+      return (
+        type.shape.fields.some((field) => irTypeContainsContextIndex(field.type, seen)) ||
+        type.shape.captures.some((capture) => irTypeContainsContextIndex(capture.type, seen)) ||
+        type.shape.userParamTypes.some((param) => irTypeContainsContextIndex(param, seen))
+      );
     case "string":
     case "extern":
     case "dynamic":

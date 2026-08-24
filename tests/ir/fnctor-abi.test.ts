@@ -8,7 +8,7 @@ import {
   type IrFnctorResolution,
   type IrFnctorShape,
 } from "../../src/ir/fnctor-abi.js";
-import { irVal } from "../../src/ir/nodes.js";
+import { irFnctor, irTypeEquals, irVal } from "../../src/ir/nodes.js";
 
 const sourceId = "ir-source:test:entry:parser.ts" as IrSourceId;
 const unitId = "ir-unit:test:parser" as IrUnitId;
@@ -67,5 +67,21 @@ describe("fnctor ABI contract", () => {
     expect(validateIrFnctorResolution({ ...parserResolution(shape), structType: wrongLayout })).toMatch(
       /reserved layout identity/,
     );
+  });
+
+  it("keeps nominal IrType equality sensitive to the full fnctor shape", () => {
+    const shape = parserShape();
+    const type = irFnctor(shape);
+    expect(irTypeEquals(type, irFnctor(parserShape()))).toBe(true);
+    expect(
+      irTypeEquals(
+        type,
+        irFnctor({
+          ...shape,
+          fields: [{ ...shape.fields[0]!, type: irVal({ kind: "f64" }) }],
+        }),
+      ),
+    ).toBe(false);
+    expect(irTypeEquals(type, { kind: "dynamic" })).toBe(false);
   });
 });
