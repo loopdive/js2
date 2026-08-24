@@ -45,6 +45,7 @@
  */
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { buildArgumentsLengthAbsentTail, buildArgumentsLengthReviveCall } from "./arguments-length-brand.js"; // (#4658)
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "./native-strings.js";
 import { NON_ARRAY_BYTE_VEC_ELEM_KINDS } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
@@ -249,6 +250,10 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
                   { op: "ref.cast", typeIdx: vecBaseIdx },
                   { op: "local.get", index: lNew },
                   { op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 },
+                  // (#4658) A store to `length` recreates the property after a
+                  // §10.4.4 `delete args.length`; clear the tombstone so
+                  // `hasOwnProperty` / gOPD see it again.
+                  ...buildArgumentsLengthReviveCall(ctx, 0),
                   ...publishSuccess(),
                 ],
               },
@@ -265,6 +270,10 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
   }
 
   // ── 2. `__hasOwnProperty` / `__object_hasOwn`: vec + "length" → 1 ───────
+  // (#4658) …unless this is a branded `arguments` object whose `length` was
+  // deleted. Called per function — the helper is a factory for the shared-Instr
+  // reason its own doc gives.
+  const absentTail = (): Instr[] => buildArgumentsLengthAbsentTail(ctx, 0);
   for (const name of ["__hasOwnProperty", "__object_hasOwn"]) {
     const fn = findFn(name);
     if (!fn) continue;
@@ -284,7 +293,18 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+            then: [
+              // (#4658) §10.4.4 makes `length` configurable on an `arguments`
+              // object, so a successful `delete args.length` must make this
+              // answer 0 — `propertyHelper.isConfigurable` decides the
+              // attribute by exactly that delete-then-hasOwn round trip. The
+              // tombstone lives on the overlay companion; `[]` (and therefore
+              // the unconditional 1 below) for any module that never branded an
+              // arguments object, so Array receivers are byte-identical.
+              ...absentTail(),
+              { op: "i32.const", value: 1 },
+              { op: "return" },
+            ],
           },
         ],
       },
