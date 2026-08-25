@@ -1499,17 +1499,6 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
               then: [
                 { op: "i32.const", value: 1 },
                 { op: "local.set", index: GROUP_SEEN },
-                { op: "local.get", index: GROUP_DEPTH },
-                { op: "i32.eqz" },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [],
-                  else: [
-                    { op: "i32.const", value: 0 },
-                    { op: "local.set", index: SIMPLE },
-                  ],
-                },
                 { op: "i32.const", value: 0 },
                 { op: "local.set", index: PLAIN },
                 ...tk.value(),
