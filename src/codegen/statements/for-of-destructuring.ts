@@ -1572,11 +1572,11 @@ export function compileForOfAssignDestructuring(
  * (a JS array host-side / native array standalone); we then PutValue it to the
  * rest target.
  *
- * Only IDENTIFIER rest targets are handled (local OR pre-declared module global
- * — the shape every test262 array-rest case + #2602 uses). A rest target that is
- * a property/element access (`[...obj.x]`) is rare and left as a no-op (matching
- * the pre-#2602 drop — no regression). Returns `true` when the spread element was
- * consumed (the caller should `continue`), `false` to fall through.
+ * Identifier targets use the existing local/global path. Property/element
+ * targets are materialized into a temporary and routed through the existing
+ * PutValue dispatcher (`emitAssignToTarget`) so setters run without reading the
+ * property first. Returns `true` when the spread element was consumed (the
+ * caller should `continue`), `false` to fall through.
  */
 function emitForOfRestAssignment(
   ctx: CodegenContext,
@@ -1616,11 +1616,12 @@ function emitForOfRestAssignment(
     return true;
   }
 
+  const isMemberTarget = ts.isPropertyAccessExpression(restTarget) || ts.isElementAccessExpression(restTarget);
   // Pop the source externref the caller pushed — we only need it when the target
   // resolves; for an unhandled target shape, drop it to keep the stack balanced.
-  if (!ts.isIdentifier(restTarget)) {
-    // Unhandled rest target (property/element access). Drop the source externref
-    // the caller pushed so the value stack stays balanced, then bail.
+  if (!ts.isIdentifier(restTarget) && !isMemberTarget) {
+    // Unhandled rest target. Drop the source externref the caller pushed so the
+    // value stack stays balanced, then bail.
     fctx.body.push({ op: "drop" });
     return true;
   }
@@ -1637,6 +1638,18 @@ function emitForOfRestAssignment(
   if (sliceIdx === undefined) {
     // Could not register the slice helper — drop the source to keep balance.
     fctx.body.push({ op: "drop" });
+    return true;
+  }
+
+  if (isMemberTarget) {
+    // §13.15.5.5 evaluates the target reference only for PutValue; do not read
+    // `obj.prop` before invoking its setter (the `no-get` Test262 case relies on
+    // this). The source is already on the stack from the caller.
+    const restLocal = allocLocal(fctx, `__forof_restmem_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "f64.const", value: restStartIndex });
+    fctx.body.push({ op: "call", funcIdx: sliceIdx });
+    fctx.body.push({ op: "local.set", index: restLocal });
+    emitAssignToTarget(ctx, fctx, restTarget, restLocal, { kind: "externref" });
     return true;
   }
 
@@ -1686,9 +1699,9 @@ function emitForOfRestAssignment(
  * fresh vec of the SAME struct type as the source. This mirrors the binding-form
  * vec rest (loops.ts ~1488) so behaviour is byte-identical between
  * `const [a,...r]=…` and `[a,...r]=…`. The fresh vec is PutValue'd to the rest
- * target (identifier local OR pre-declared module global). Only identifier
- * targets are handled (the test262 array-rest shape + #2602); a property/element
- * rest target is left unwritten (matching the pre-#2602 drop — no regression).
+ * target (identifier local OR pre-declared module global). Property and element
+ * targets are assigned through the existing PutValue dispatcher after the fresh
+ * vec is materialized.
  */
 function emitVecRestAssignment(
   ctx: CodegenContext,
@@ -1709,21 +1722,26 @@ function emitVecRestAssignment(
   // A nested pattern rest target (`for ([...[x]] of …)`): build the rest vec
   // into a temp, then recurse into the nested assignment pattern with the fresh
   // rest vec as the element (mirror of the binding-form rest recursion,
-  // loops.ts ~1551). Identifier targets store directly; property/element rest
-  // targets are not handled (matching the pre-#2602 drop — no regression).
+  // loops.ts ~1551). Identifier targets store directly; member targets are
+  // assigned after materialization through the existing PutValue dispatcher.
   const isNestedPattern = ts.isArrayLiteralExpression(restTarget) || ts.isObjectLiteralExpression(restTarget);
+  const isMemberTarget = ts.isPropertyAccessExpression(restTarget) || ts.isElementAccessExpression(restTarget);
   let targetLocal: number | undefined;
   let restSyncGlobalIdx: number | undefined;
   if (isNestedPattern) {
     targetLocal = allocLocal(fctx, `__forof_rest_${fctx.locals.length}`, restVecType);
   } else {
-    if (!ts.isIdentifier(restTarget)) return; // property/element rest target — not handled (no regression)
-    targetLocal = fctx.localMap.get(restTarget.text);
-    if (targetLocal === undefined) {
-      const globalIdx = ctx.moduleGlobals.get(restTarget.text);
-      if (globalIdx === undefined) return; // unresolvable identifier — nothing to write
-      targetLocal = allocLocal(fctx, restTarget.text, restVecType);
-      restSyncGlobalIdx = globalIdx;
+    if (isMemberTarget) {
+      targetLocal = allocLocal(fctx, `__forof_restmem_${fctx.locals.length}`, restVecType);
+    } else {
+      if (!ts.isIdentifier(restTarget)) return;
+      targetLocal = fctx.localMap.get(restTarget.text);
+      if (targetLocal === undefined) {
+        const globalIdx = ctx.moduleGlobals.get(restTarget.text);
+        if (globalIdx === undefined) return; // unresolvable identifier — nothing to write
+        targetLocal = allocLocal(fctx, restTarget.text, restVecType);
+        restSyncGlobalIdx = globalIdx;
+      }
     }
   }
 
@@ -1781,6 +1799,15 @@ function emitVecRestAssignment(
       outerArrTypeIdx,
       stmt,
     );
+    return;
+  }
+
+  if (isMemberTarget) {
+    // Materialize the fresh vector in the temporary before PutValue reads it.
+    // Without this store, emitAssignToTarget observes the local's null default
+    // even though the vector is still on the value stack.
+    fctx.body.push({ op: "local.set", index: targetLocal });
+    emitAssignToTarget(ctx, fctx, restTarget, targetLocal, restVecType);
     return;
   }
 
