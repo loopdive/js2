@@ -606,6 +606,28 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       if (value === inst.value && index === inst.index) return inst;
       return { ...inst, value, index };
     }
+    case "fnctor.new": {
+      let changed = false;
+      const captureArgs = inst.captureArgs.map((value) => {
+        const next = mapId(rename, value);
+        changed ||= next !== value;
+        return next;
+      });
+      const args = inst.args.map((value) => {
+        const next = mapId(rename, value);
+        changed ||= next !== value;
+        return next;
+      });
+      const constructorIdentity = inst.constructorIdentity === null ? null : mapId(rename, inst.constructorIdentity);
+      changed ||= constructorIdentity !== inst.constructorIdentity;
+      if (!changed) return inst;
+      return { ...inst, captureArgs, args, constructorIdentity };
+    }
+    case "fnctor.get": {
+      const value = mapId(rename, inst.value);
+      if (value === inst.value) return inst;
+      return { ...inst, value };
+    }
     case "object.new": {
       let changed = false;
       const newValues: IrValueId[] = [];
