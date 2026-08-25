@@ -341,7 +341,7 @@ export function tryEmitStoredMemberClosureCall(
     sourceInstallsArrayConcat(ctx, recvExpr, memberName)
   ) {
     const nativeResult = compileArrayConcatNativeSpec(ctx, fctx, callee, expr);
-    if (nativeResult !== undefined) return nativeResult;
+    if (nativeResult !== undefined && nativeResult !== null) return nativeResult;
   }
 
   // Register the bridge + the arg-vector builders BEFORE compiling anything, so
