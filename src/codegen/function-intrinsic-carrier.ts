@@ -104,6 +104,7 @@ import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitStandaloneIntrinsicFunctionValue } from "./expressions/eval-inline.js";
 import { emitUndefined } from "./expressions/late-imports.js";
+import { objectCoercionPreservesFunction } from "./object-ctor-primitive-receiver.js";
 import { moduleTouchesConstructorProp } from "./property-access.js";
 import { compileExpression } from "./shared.js";
 
@@ -214,9 +215,13 @@ export function tryEmitFunctionValueConstructorRead(
   expr: ts.PropertyAccessExpression,
   propName: string,
   objType: ts.Type,
+  objectCoercionFunction = false,
 ): ValType | undefined {
   if (!ctx.standalone || propName !== "constructor") return undefined;
-  if (!isFunctionValuedReceiverType(objType)) return undefined;
+  // `Object(fn)` / `new Object(fn)` is typed as `Object`, although ToObject
+  // returns the function argument unchanged. The caller proves that narrow
+  // producer shape with the codegen oracle and opts into this same arm.
+  if (!objectCoercionFunction && !isFunctionValuedReceiverType(objType)) return undefined;
   if (moduleTouchesConstructorProp(expr.getSourceFile())) return undefined;
 
   // Spec order: the object expression is evaluated for its side effects before
@@ -230,4 +235,21 @@ export function tryEmitFunctionValueConstructorRead(
   // push the pre-#4442 answer rather than leaving the stack short.
   emitUndefined(ctx, fctx);
   return { kind: "externref" };
+}
+
+export function tryEmitObjectCoercionFunctionConstructorRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+  propName: string,
+  objType: ts.Type,
+): ValType | undefined {
+  return tryEmitFunctionValueConstructorRead(
+    ctx,
+    fctx,
+    expr,
+    propName,
+    objType,
+    objectCoercionPreservesFunction(ctx, expr.expression),
+  );
 }

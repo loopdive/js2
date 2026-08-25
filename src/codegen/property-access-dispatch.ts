@@ -189,7 +189,7 @@ import { tryEmitProvenReceiverFieldGet, tryEmitTypedThisFieldGet } from "./typed
 import { tryEmitFnctorTypedFieldGet } from "./fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
 import {
   emitStandaloneFunctionIntrinsicValue,
-  tryEmitFunctionValueConstructorRead,
+  tryEmitObjectCoercionFunctionConstructorRead,
 } from "./function-intrinsic-carrier.js"; // (#4442) `<fn>.constructor`; (#4484) `<Builtin>.constructor`
 import { tryEmitBuiltinStaticExpandoRead } from "./builtin-static-expando.js"; // (#4639 C2) ordinary [[Get]] tail
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
@@ -443,7 +443,7 @@ export function tryConstructorPrototypeIdentity(
 
   // (#4442) `<fn>.constructor` → `%Function%` (§20.2.3.1); the arm and the
   // emitter the bare `Function` read shares live in function-intrinsic-carrier.ts.
-  const fnValueCtor = tryEmitFunctionValueConstructorRead(ctx, fctx, expr, propName, objType);
+  const fnValueCtor = tryEmitObjectCoercionFunctionConstructorRead(ctx, fctx, expr, propName, objType);
   if (fnValueCtor !== undefined) return fnValueCtor;
 
   // (#3006) Standalone `<Builtin>.prototype.constructor` / `<instance>.constructor`

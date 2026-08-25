@@ -25,6 +25,7 @@ import { emitSymbolArgToNumberThrow } from "../tonumber-symbol-throw.js"; // (#4
 import { emitThrowRangeError, emitThrowTypeError } from "./helpers.js";
 import { isStaticNaN, tryStaticToNumber } from "./misc.js";
 import { sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
+import { objectCoercionPreservesDate } from "../object-ctor-primitive-receiver.js";
 
 // ── Builtins ─────────────────────────────────────────────────────────
 
@@ -1798,8 +1799,7 @@ export function emitDateProtoMemberBody(ctx: CodegenContext, fctx: FunctionConte
 }
 
 /**
- * Compile a Date method call on a Date struct receiver.
- * Returns undefined if this is not a Date method (caller should continue).
+ * Compile a Date method call on a Date struct receiver; return undefined if this is not a Date method.
  */
 function compileDateMethodCall(
   ctx: CodegenContext,
@@ -1810,7 +1810,7 @@ function compileDateMethodCall(
 ): InnerResult | undefined {
   const methodName = propAccess.name.text;
   const symName = receiverType.getSymbol()?.name;
-  if (symName !== "Date") return undefined;
+  if (symName !== "Date" && !objectCoercionPreservesDate(ctx, propAccess.expression)) return undefined;
 
   const DATE_METHODS = new Set([
     "getTime",
