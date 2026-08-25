@@ -2272,18 +2272,31 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   function moduleInitForcesExternref(decl: ts.VariableDeclaration): boolean {
     if (!decl.initializer) return false;
     if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) return true;
-    // (#4707) `new Proxy` returns an externref carrier even though TypeScript
-    // gives it the target's structural type. Keep the module global dynamic so
-    // a proxy is not cast back to that target struct and nulled on assignment.
+    // (#4721) `new Proxy(target, handler)` is an externref carrier even though
+    // TypeScript gives the expression the target's structural type.  Top-level
+    // `var`/`let`/`const` bindings are module globals and bypass the function-local
+    // Proxy slot override in variables.ts; retaining the inferred target struct
+    // here would guarded-cast the host/native Proxy to null before `p[key]` can
+    // reach the Proxy MOP.  The revocable result is likewise a dynamic handle.
+    let proxyInit = decl.initializer;
+    while (
+      ts.isParenthesizedExpression(proxyInit) ||
+      ts.isAsExpression(proxyInit) ||
+      ts.isTypeAssertionExpression(proxyInit) ||
+      ts.isNonNullExpression(proxyInit) ||
+      ts.isSatisfiesExpression(proxyInit)
+    ) {
+      proxyInit = proxyInit.expression;
+    }
     if (
-      (ts.isNewExpression(decl.initializer) &&
-        ts.isIdentifier(decl.initializer.expression) &&
-        decl.initializer.expression.text === "Proxy") ||
-      (ts.isCallExpression(decl.initializer) &&
-        ts.isPropertyAccessExpression(decl.initializer.expression) &&
-        decl.initializer.expression.name.text === "revocable" &&
-        ts.isIdentifier(decl.initializer.expression.expression) &&
-        decl.initializer.expression.expression.text === "Proxy")
+      (ts.isNewExpression(proxyInit) &&
+        ts.isIdentifier(proxyInit.expression) &&
+        proxyInit.expression.text === "Proxy") ||
+      (ts.isCallExpression(proxyInit) &&
+        ts.isPropertyAccessExpression(proxyInit.expression) &&
+        ts.isIdentifier(proxyInit.expression.expression) &&
+        proxyInit.expression.expression.text === "Proxy" &&
+        proxyInit.expression.name.text === "revocable")
     ) {
       return true;
     }
