@@ -4,7 +4,7 @@ title: "axios: class rest dispatch bridge is fixed; finish the remaining dynamic
 status: in-progress
 sprint: current
 created: 2026-08-16
-updated: 2026-08-25
+updated: 2026-08-26
 priority: high
 horizon: m
 feasibility: medium
@@ -481,3 +481,15 @@ only open Axios-related PR and supplies this branch's shared baseline. It
 touches the same broad compiler and regression files but does not implement
 class-declaration default routing or assignment-created static cells; this
 checkpoint remains a necessary continuation rather than duplicate work.
+
+## 2026-08-26 combined integration report audit
+
+The fresh combined report now measures **186/231 Wasm** and **231/231 Node** on
+the unchanged admitted Axios denominator. The other **45/231** admitted rows
+are scored compatibility failures; this branch-wide result is not attributed
+to any one integrated slice. A paired comparison against the isolated
+**176/231** Axios branch finds **10 improvements and zero withdrawals**: eight
+original `settle` rows and both original `spread` rows. All **33/33 selected
+modules compile and validate**. Separately, **414 registrations in 16 deferred
+files** remain unavailable infrastructure and are not included in the 231
+scored rows.

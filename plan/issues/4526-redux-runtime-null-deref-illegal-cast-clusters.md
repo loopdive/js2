@@ -4,7 +4,7 @@ title: "Redux: 55/82 — remaining observable, lexical-shadowing, and dynamic-ca
 status: ready
 sprint: current
 created: 2026-08-16
-updated: 2026-08-25
+updated: 2026-08-26
 priority: high
 horizon: l
 feasibility: hard
@@ -152,3 +152,10 @@ infrastructure, caching answers, or introducing Redux-specific rewrites:
       suppressing failures.
 - [ ] Focused closure/call tests, typecheck, compiler ratchets, and the full
       pinned Redux suite remain green.
+
+## 2026-08-26 combined integration report audit
+
+The fresh combined report reproduces **55/82 Wasm** and **82/82 Node** on all
+82 original Redux registrations. The **27/82** remaining rows are scored
+compatibility failures, not skipped tests. All **9/9 modules compile and
+validate**, and unavailable infrastructure remains **0**.

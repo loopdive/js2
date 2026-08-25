@@ -1454,3 +1454,14 @@ The trailing-slash module contributes the directly measured **36/36**. This is
 a branch-wide result rather than attribution of all 32 additional passes to
 the final nested-await slice; the report preserves each remaining package
 failure and the separately deferred upstream inventory.
+
+## 2026-08-26 combined integration report audit
+
+The fresh combined report preserves the exact Hono result: **170/322** admitted
+original callbacks pass in Wasm and **152/322** are scored compatibility
+failures. Node passes the same **322/322** admitted denominator; two additional
+registrations fail natively and are not admitted. Of 20 selected modules,
+**18/20 compile** and **16/20 validate**. The unchanged
+`src/middleware/trailing-slash/index.test.ts` module itself compiles, validates,
+and passes **36/36**. Separately, **2,031 registrations in 100 deferred files**
+remain unavailable infrastructure; they are not counted as scored failures.
