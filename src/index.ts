@@ -180,6 +180,21 @@ export interface LinkedModuleArtifact {
   cacheHit?: boolean;
   /** Provider-owned imported string globals, retained for direct instantiation. */
   stringPool?: string[];
+  /** Serializable adapter/import metadata for an isolated provider runtime. */
+  providerMetadata?: LinkedProviderMetadata;
+  /** Deferred provider initialization export, when present. */
+  initExport?: "__module_init";
+}
+
+/** Serializable subset of a provider CompileResult used at instantiation. */
+export interface LinkedProviderMetadata {
+  imports: ImportDescriptor[];
+  stringPool: string[];
+  targetProfile?: import("./target-profile.js").CompileTargetProfile;
+  adapterManifest?: import("./adapter-manifest.js").JavaScriptAdapterManifestV1;
+  capabilityRequirements?: import("./capability-registry.js").PlatformCapabilityRequirement[];
+  capabilityProviderDiagnostics?: readonly import("./capability-registry.js").CapabilityProviderDiagnostic[];
+  exportBoundaryPolicies?: Readonly<Record<string, import("./boundary-policy.js").ExportBoundaryPolicy>>;
 }
 
 /** Project-level decision and diagnostics for npm package module linking. */
@@ -1040,6 +1055,7 @@ import { ModuleResolver, resolveAllImports } from "./resolve.js";
 import { buildCompiledImports as buildCompiledImportsRuntime } from "./runtime.js";
 import { buildStringConstants, buildStringConstants16 } from "./runtime/string-constants.js";
 import { compileLinkedProject } from "./package-linker.js";
+import { instantiateLinkedProviders, wireCompiledInstance } from "./linked-provider-runtime.js";
 
 /**
  * Compile TypeScript source to Wasm GC binary.
@@ -1127,10 +1143,6 @@ function buildHostImportObject(result: CompileResult): WebAssembly.Imports {
   return imports;
 }
 
-function wasmBytes(binary: Uint8Array): BufferSource {
-  return binary as unknown as BufferSource;
-}
-
 function withImportObject(result: CompileResult): CompileResult {
   let cached: WebAssembly.Imports | undefined;
   Object.defineProperty(result, "importObject", {
@@ -1145,25 +1157,7 @@ function withImportObject(result: CompileResult): CompileResult {
       // remain valid for linked projects. `instantiateLinkedProject` below
       // creates fresh provider instances when lifecycle isolation is desired.
       if (result.linkedModules && result.linkedModules.length > 0) {
-        const providerExports = new Map<string, WebAssembly.Exports>();
-        for (const artifact of result.linkedModules) {
-          const providerImports: WebAssembly.Imports = { ...cached };
-          if (artifact.stringPool) {
-            providerImports.string_constants = buildStringConstants(artifact.stringPool);
-            providerImports.string_constants16 = buildStringConstants16(artifact.stringPool);
-          }
-          for (const dependency of artifact.dependencies) {
-            const exports = providerExports.get(dependency);
-            if (!exports) throw new Error(`Missing linked provider dependency ${dependency}`);
-            providerImports[dependency] = exports;
-          }
-          const instance = new WebAssembly.Instance(
-            new WebAssembly.Module(wasmBytes(artifact.binary)),
-            providerImports,
-          );
-          providerExports.set(artifact.namespace, instance.exports);
-          cached[artifact.namespace] = instance.exports;
-        }
+        instantiateLinkedProviders(result.linkedModules, cached);
       }
       return cached;
     },
@@ -1179,23 +1173,12 @@ export async function instantiateLinkedProject(
   if (!result.success)
     throw new Error(`Cannot instantiate a failed compile: ${result.errors.map((e) => e.message).join("; ")}`);
   const rootImports: WebAssembly.Imports = imports ? { ...imports } : buildHostImportObject(result);
-  const providerExports = new Map<string, WebAssembly.Exports>();
-  for (const artifact of result.linkedModules ?? []) {
-    const providerImports: WebAssembly.Imports = { ...rootImports };
-    if (artifact.stringPool) {
-      providerImports.string_constants = buildStringConstants(artifact.stringPool);
-      providerImports.string_constants16 = buildStringConstants16(artifact.stringPool);
-    }
-    for (const dependency of artifact.dependencies) {
-      const exports = providerExports.get(dependency);
-      if (!exports) throw new Error(`Missing linked provider dependency ${dependency}`);
-      providerImports[dependency] = exports;
-    }
-    const instance = new WebAssembly.Instance(new WebAssembly.Module(wasmBytes(artifact.binary)), providerImports);
-    providerExports.set(artifact.namespace, instance.exports);
-    rootImports[artifact.namespace] = instance.exports;
-  }
-  const instance = new WebAssembly.Instance(new WebAssembly.Module(wasmBytes(result.binary)), rootImports);
+  const providerExports = instantiateLinkedProviders(result.linkedModules ?? [], rootImports);
+  const instance = new WebAssembly.Instance(
+    new WebAssembly.Module(result.binary as unknown as BufferSource),
+    rootImports,
+  );
+  wireCompiledInstance(rootImports, instance);
   return { instance, providers: providerExports };
 }
 

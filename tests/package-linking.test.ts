@@ -106,6 +106,61 @@ describe("#2527 npm package module linking", () => {
     expect(linked.instance.exports.run?.()).toBe(7);
   });
 
+  it("defers provider initialization until its own runtime is wired and isolates state", async () => {
+    const root = project("package-link-lifecycle");
+    writePackage(
+      root,
+      "stateful",
+      "let counter = 0; export function next(): number { counter += 1; return counter; }\n",
+    );
+    writeFileSync(
+      join(root, "main.ts"),
+      'import { next } from "stateful"; export function run(): number { return next(); }\n',
+    );
+    const result = await compile(root, "main.ts", join(root, ".cache"));
+    expect(result.linkPlan?.mode).toBe("separate");
+    expect(result.linkedModules?.[0]?.initExport).toBe("__module_init");
+
+    const first = await instantiateLinkedProject(result);
+    const second = await instantiateLinkedProject(result);
+    expect(first.instance.exports.run?.()).toBe(1);
+    expect(first.instance.exports.run?.()).toBe(2);
+    expect(second.instance.exports.run?.()).toBe(1);
+  });
+
+  it("builds provider and consumer host/runtime adapters independently", async () => {
+    const root = project("package-link-host-runtime");
+    writePackage(root, "formatter", "export function format(value: number): string { return value.toFixed(2); }\n");
+    writeFileSync(
+      join(root, "main.ts"),
+      'import { format } from "formatter"; export function run(): string { return format(1.5) + (2.5).toFixed(1); }\n',
+    );
+    const result = await compile(root, "main.ts", join(root, ".cache"));
+    expect(result.linkPlan?.mode).toBe("separate");
+    expect(result.linkedModules?.[0]?.providerMetadata?.imports.some((entry) => entry.module === "env")).toBe(true);
+    const first = await instantiateLinkedProject(result);
+    const second = await instantiateLinkedProject(result);
+    expect(first.instance.exports.run?.()).toBe("1.502.5");
+    expect(second.instance.exports.run?.()).toBe("1.502.5");
+  });
+
+  it("validates provider-only host imports with the provider adapter", async () => {
+    const root = project("package-link-provider-host-only");
+    writePackage(
+      root,
+      "formatter-only",
+      "export function format(value: number): string { return value.toFixed(2); }\n",
+    );
+    writeFileSync(
+      join(root, "main.ts"),
+      'import { format } from "formatter-only"; export function run(): string { return format(1.5); }\n',
+    );
+    const result = await compile(root, "main.ts", join(root, ".cache"));
+    expect(result.linkPlan?.mode).toBe("separate");
+    const linked = await instantiateLinkedProject(result);
+    expect(linked.instance.exports.run?.()).toBe("1.50");
+  });
+
   it("falls back monolithically for value/class exports instead of dropping them", async () => {
     const root = project("package-link-boundary");
     writePackage(

@@ -13,16 +13,32 @@
 import * as path from "path";
 import { createHash } from "node:crypto";
 import { ts } from "./ts-api.js";
-import type { CompileOptions, CompileResult, LinkedModuleArtifact, PackageLinkPlan } from "./index.js";
+import type {
+  CompileOptions,
+  CompileResult,
+  LinkedModuleArtifact,
+  LinkedProviderMetadata,
+  PackageLinkPlan,
+} from "./index.js";
 import { compileMultiSource } from "./compiler.js";
 import type { ProjectModuleResolutions } from "./checker/index.js";
 import { getBarePackageName } from "./resolve.js";
 import { getDefaultEnvironment } from "./env.js";
 import { buildCompiledImports } from "./runtime.js";
-import { buildStringConstants, buildStringConstants16 } from "./runtime/string-constants.js";
 import { RUNTIME_RECGROUP_ABI_VERSION } from "./emit/canonical-recgroup.js";
+import {
+  appendProviderManifest,
+  decodeProviderManifest,
+  providerArtifactHash,
+  PROVIDER_COMPILER_ABI_VERSION,
+  PROVIDER_MANIFEST_FORMAT_VERSION,
+  PROVIDER_MANIFEST_SECTION_NAME,
+  PROVIDER_LINKER_ABI_VERSION,
+  type ProviderDependencyManifest,
+  type ProviderManifestV1,
+} from "./provider-manifest.js";
 
-const LINKER_VERSION = "npm-link-v1";
+const LINKER_VERSION = PROVIDER_LINKER_ABI_VERSION;
 
 export interface PackageLinkInput {
   allFiles: Map<string, string>;
@@ -42,6 +58,8 @@ export type PackageLinkAttempt =
 interface FunctionExport {
   name: string;
   declaration: ts.FunctionDeclaration;
+  /** A missing/any/unknown annotation requires engine signature validation. */
+  uncertain: boolean;
 }
 
 interface PackageNode {
@@ -54,6 +72,7 @@ interface PackageNode {
   dependencyTargets: Map<string, string>;
   externalImporters: string[];
   entryTargets: Set<string>;
+  requiresSignatureValidation: boolean;
 }
 
 interface ExternalBinding {
@@ -69,13 +88,18 @@ interface CachedProvider {
   binary: Uint8Array;
   exports: string[];
   exportSignatures: Record<string, string>;
-  stringPool?: string[];
+  manifest: ProviderManifestV1;
 }
 
 // The disk cache is the cross-process boundary; this in-process cache also
 // makes repeated benchmark consumers in one worker provably compile each
 // provider once even when their entry files live under different directories.
 const memoryProviderCache = new Map<string, CachedProvider>();
+
+/** @internal Test seam for exercising disk-cache recovery and tamper rejection. */
+export function clearPackageProviderMemoryCacheForTests(): void {
+  memoryProviderCache.clear();
+}
 
 function wasmBytes(binary: Uint8Array): BufferSource {
   return binary as unknown as BufferSource;
@@ -165,8 +189,15 @@ function functionSignature(exported: FunctionExport, sourceFile: ts.SourceFile):
   return `export declare function ${exported.name}${typeParameters}(${parameters}): ${returnType};`;
 }
 
-function isPrimitiveTypeNode(node: ts.TypeNode | undefined): boolean {
-  if (!node) return false;
+type BoundaryTypeState = "safe" | "uncertain" | "unsupported";
+
+function primitiveTypeState(node: ts.TypeNode | undefined): BoundaryTypeState {
+  // JS sources and explicit any/unknown declarations are provisionally
+  // accepted. Their actual Wasm type is checked by the engine after the
+  // provider and consumer binaries are connected.
+  if (!node || node.kind === ts.SyntaxKind.AnyKeyword || node.kind === ts.SyntaxKind.UnknownKeyword) {
+    return "uncertain";
+  }
   switch (node.kind) {
     case ts.SyntaxKind.NumberKeyword:
     case ts.SyntaxKind.StringKeyword:
@@ -176,27 +207,31 @@ function isPrimitiveTypeNode(node: ts.TypeNode | undefined): boolean {
     case ts.SyntaxKind.UndefinedKeyword:
     case ts.SyntaxKind.NullKeyword:
     case ts.SyntaxKind.NeverKeyword:
-      return true;
+      return "safe";
     case ts.SyntaxKind.ParenthesizedType:
-      return isPrimitiveTypeNode((node as ts.ParenthesizedTypeNode).type);
+      return primitiveTypeState((node as ts.ParenthesizedTypeNode).type);
     case ts.SyntaxKind.LiteralType: {
       const literal = (node as ts.LiteralTypeNode).literal;
-      return (
-        ts.isStringLiteral(literal) ||
+      return ts.isStringLiteral(literal) ||
         ts.isNumericLiteral(literal) ||
         literal.kind === ts.SyntaxKind.TrueKeyword ||
         literal.kind === ts.SyntaxKind.FalseKeyword
-      );
+        ? "safe"
+        : "unsupported";
     }
     default:
-      return false;
+      return "unsupported";
   }
 }
 
-function isPrimitiveFunction(declaration: ts.FunctionDeclaration): boolean {
-  if (declaration.typeParameters && declaration.typeParameters.length > 0) return false;
-  if (!isPrimitiveTypeNode(declaration.type)) return false;
-  return declaration.parameters.every((parameter) => isPrimitiveTypeNode(parameter.type));
+function primitiveFunctionState(declaration: ts.FunctionDeclaration): BoundaryTypeState {
+  if (declaration.typeParameters && declaration.typeParameters.length > 0) return "unsupported";
+  const states = [
+    primitiveTypeState(declaration.type),
+    ...declaration.parameters.map((parameter) => primitiveTypeState(parameter.type)),
+  ];
+  if (states.includes("unsupported")) return "unsupported";
+  return states.includes("uncertain") ? "uncertain" : "safe";
 }
 
 /**
@@ -215,8 +250,13 @@ function inspectFunctionExports(
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement) && statement.name && isExported(statement)) {
       if (isDefault(statement)) return { reason: "default package exports are not yet link-safe" };
-      if (!isPrimitiveFunction(statement)) return { reason: "package function has a non-primitive ABI signature" };
-      exports.set(statement.name.text, { name: statement.name.text, declaration: statement });
+      const boundaryState = primitiveFunctionState(statement);
+      if (boundaryState === "unsupported") return { reason: "package function has a non-primitive ABI signature" };
+      exports.set(statement.name.text, {
+        name: statement.name.text,
+        declaration: statement,
+        uncertain: boundaryState === "uncertain",
+      });
       sawRuntimeExport = true;
       continue;
     }
@@ -280,6 +320,18 @@ function exportSignaturesFor(node: PackageNode): Record<string, string> {
   );
 }
 
+function providerMetadata(result: CompileResult): LinkedProviderMetadata {
+  return {
+    imports: result.imports,
+    stringPool: result.stringPool,
+    targetProfile: result.targetProfile,
+    adapterManifest: result.adapterManifest,
+    capabilityRequirements: result.capabilityRequirements,
+    capabilityProviderDiagnostics: result.capabilityProviderDiagnostics,
+    exportBoundaryPolicies: result.exportBoundaryPolicies,
+  };
+}
+
 function nodeSource(node: PackageNode, fileName: string): string {
   // Filled by the caller through the temporary source map property below.
   return (node as PackageNode & { sourceByFile?: Map<string, string> }).sourceByFile?.get(fileName) ?? "";
@@ -298,68 +350,166 @@ function packageKeyToPhysical(root: string, key: string): string {
   return normalizePhysical(path.join(root, key.replace(/^\.\//, "")));
 }
 
-function cachePaths(cacheDir: string, cacheKey: string): { wasm: string; json: string } {
-  return {
-    wasm: path.join(cacheDir, `${cacheKey}.wasm`),
-    json: path.join(cacheDir, `${cacheKey}.json`),
-  };
+function cachePaths(cacheDir: string, cacheKey: string): { wasm: string } {
+  return { wasm: path.join(cacheDir, `${cacheKey}.wasm`) };
 }
 
-function readCachedArtifact(
-  cacheDir: string,
-  cacheKey: string,
-):
-  | {
-      binary: Uint8Array;
-      exports: string[];
-      exportSignatures: Record<string, string>;
-      stringPool?: string[];
-    }
-  | undefined {
-  const memory = memoryProviderCache.get(cacheKey);
-  if (memory) {
-    return {
-      binary: memory.binary,
-      exports: memory.exports,
-      exportSignatures: memory.exportSignatures,
-      stringPool: memory.stringPool,
-    };
+function cacheIndexPath(cacheDir: string, sourceFingerprint: string): string {
+  return path.join(cacheDir, `${sourceFingerprint}.ref.json`);
+}
+
+interface ProviderCacheExpectation {
+  sourceFingerprint: string;
+  packageName: string;
+  dependencies: readonly ProviderDependencyManifest[];
+  exports: readonly string[];
+  exportSignatures: Readonly<Record<string, string>>;
+}
+
+function manifestMatchesExpectation(manifest: ProviderManifestV1, expected: ProviderCacheExpectation): boolean {
+  if (manifest.sourceFingerprint !== expected.sourceFingerprint || manifest.packageName !== expected.packageName)
+    return false;
+  if (
+    manifest.exports.length !== expected.exports.length ||
+    manifest.exports.some((name, i) => name !== expected.exports[i])
+  ) {
+    return false;
   }
-  const fs = getDefaultEnvironment().fs;
-  if (!fs) return undefined;
-  const paths = cachePaths(cacheDir, cacheKey);
+  if (
+    manifest.dependencies.length !== expected.dependencies.length ||
+    manifest.dependencies.some((dependency, index) => {
+      const candidate = expected.dependencies[index];
+      return (
+        !candidate ||
+        dependency.packageName !== candidate.packageName ||
+        dependency.cacheKey !== candidate.cacheKey ||
+        dependency.namespace !== candidate.namespace
+      );
+    })
+  ) {
+    return false;
+  }
+  const expectedSignatures = expected.exportSignatures;
+  const actualSignatureNames = Object.keys(manifest.exportSignatures);
+  const expectedSignatureNames = Object.keys(expectedSignatures);
+  return (
+    actualSignatureNames.length === expectedSignatureNames.length &&
+    expectedSignatureNames.every((name) => manifest.exportSignatures[name] === expectedSignatures[name])
+  );
+}
+
+function decodeCachedProvider(binary: Uint8Array, fileKey: string): CachedProvider | undefined {
   try {
-    const metadata = JSON.parse(fs.readFileSync(paths.json, "utf8")) as {
-      version?: string;
-      exports?: string[];
-      stringPool?: string[];
-      exportSignatures?: Record<string, string>;
-    };
-    if (metadata.version !== LINKER_VERSION || !Array.isArray(metadata.exports)) return undefined;
-    const binary = new Uint8Array(fs.readFileSync(paths.wasm));
-    // Do not trust stale or manually edited cache entries.
+    // The custom section is the authority. A filename or optional JSON index
+    // may only nominate a candidate; neither is trusted until the embedded
+    // manifest, Wasm validator, and final-byte content hash agree.
     new WebAssembly.Module(wasmBytes(binary));
+    const manifest = decodeProviderManifest(binary, {
+      linkerAbiVersion: LINKER_VERSION,
+      compilerAbiVersion: PROVIDER_COMPILER_ABI_VERSION,
+      recgroupAbiVersion: RUNTIME_RECGROUP_ABI_VERSION,
+    });
+    const derivedKey = providerArtifactHash(binary, manifest);
+    if (fileKey && derivedKey !== fileKey) return undefined;
     return {
       binary,
-      exports: metadata.exports.filter((name): name is string => typeof name === "string"),
-      exportSignatures:
-        metadata.exportSignatures && typeof metadata.exportSignatures === "object" ? metadata.exportSignatures : {},
-      stringPool: Array.isArray(metadata.stringPool)
-        ? metadata.stringPool.filter((value): value is string => typeof value === "string")
-        : undefined,
+      exports: manifest.exports,
+      exportSignatures: manifest.exportSignatures,
+      manifest,
     };
   } catch {
     return undefined;
   }
 }
 
+function readCachedArtifact(
+  cacheDir: string,
+  expected: ProviderCacheExpectation,
+): (CachedProvider & { cacheKey: string }) | undefined {
+  const fs = getDefaultEnvironment().fs;
+  const tryMemory = (): (CachedProvider & { cacheKey: string }) | undefined => {
+    for (const [cacheKey, memory] of memoryProviderCache) {
+      if (!manifestMatchesExpectation(memory.manifest, expected)) continue;
+      if (providerArtifactHash(memory.binary, memory.manifest) !== cacheKey) continue;
+      return { ...memory, cacheKey };
+    }
+    return undefined;
+  };
+
+  if (fs) {
+    const indexedKeys: string[] = [];
+    try {
+      for (const entry of fs.readdirSync(cacheDir, { withFileTypes: true })) {
+        const name = entry.name;
+        if (!name.endsWith(".ref.json")) continue;
+        try {
+          const index = JSON.parse(fs.readFileSync(path.join(cacheDir, name), "utf8")) as {
+            version?: string;
+            cacheKey?: string;
+            sourceFingerprint?: string;
+          };
+          if (
+            index.version === LINKER_VERSION &&
+            index.sourceFingerprint === expected.sourceFingerprint &&
+            typeof index.cacheKey === "string"
+          ) {
+            indexedKeys.push(index.cacheKey);
+          }
+        } catch {
+          // An optional index is never authoritative; malformed entries are
+          // ignored and the Wasm directory scan below can still recover.
+        }
+      }
+    } catch {
+      // The cache directory may not exist yet.
+    }
+
+    const tried = new Set<string>();
+    const tryDiskKey = (cacheKey: string): (CachedProvider & { cacheKey: string }) | undefined => {
+      if (tried.has(cacheKey)) return undefined;
+      tried.add(cacheKey);
+      try {
+        const binary = new Uint8Array(fs.readFileSync(cachePaths(cacheDir, cacheKey).wasm));
+        const candidate = decodeCachedProvider(binary, cacheKey);
+        if (!candidate || !manifestMatchesExpectation(candidate.manifest, expected)) return undefined;
+        return { ...candidate, cacheKey };
+      } catch {
+        return undefined;
+      }
+    };
+
+    for (const cacheKey of indexedKeys) {
+      const candidate = tryDiskKey(cacheKey);
+      if (candidate) return candidate;
+    }
+
+    // Sidecars are optional indexes. If one is absent, stale, or tampered,
+    // recover by scanning provider Wasm files and trusting only their embedded
+    // manifests and derived content hashes.
+    try {
+      for (const entry of fs.readdirSync(cacheDir, { withFileTypes: true })) {
+        const name = entry.name;
+        if (!name.endsWith(".wasm")) continue;
+        const cacheKey = name.slice(0, -5);
+        const candidate = tryDiskKey(cacheKey);
+        if (candidate) return candidate;
+      }
+    } catch {
+      // A missing/read-only cache is an optimization miss.
+    }
+  }
+
+  // Browser embedders have no filesystem; Node also gets this fallback when a
+  // cache directory is unavailable. Memory entries still carry decoded
+  // manifests and are independently hash-checked above.
+  return tryMemory();
+}
+
 function writeCachedArtifact(
   cacheDir: string,
   cacheKey: string,
   binary: Uint8Array,
-  exports: string[],
-  exportSignatures: Record<string, string>,
-  stringPool: readonly string[],
+  manifest: ProviderManifestV1,
 ): void {
   const fs = getDefaultEnvironment().fs;
   if (!fs) return;
@@ -367,9 +517,11 @@ function writeCachedArtifact(
     fs.mkdirSync(cacheDir, { recursive: true });
     const paths = cachePaths(cacheDir, cacheKey);
     fs.writeFileSync(paths.wasm, binary);
+    // Optional lookup index only. Provider metadata, exports, signatures, and
+    // all ABI checks come from the embedded custom section on cache load.
     fs.writeFileSync(
-      paths.json,
-      JSON.stringify({ version: LINKER_VERSION, exports, exportSignatures, stringPool }, null, 2),
+      cacheIndexPath(cacheDir, manifest.sourceFingerprint),
+      JSON.stringify({ version: LINKER_VERSION, cacheKey, sourceFingerprint: manifest.sourceFingerprint }, null, 2),
     );
   } catch {
     // A read-only cache is an optimization miss, never a compilation failure.
@@ -388,6 +540,44 @@ function makeFallback(reason: string): PackageLinkAttempt {
       cachedProviders: 0,
     },
   };
+}
+
+/**
+ * Build the adapter imports from the provider's frozen metadata while doing
+ * compile-time signature validation.  Reusing the root adapter here is
+ * incorrect: a package may use a host helper (for example number formatting)
+ * that the consumer does not import.  In that case the root env object has no
+ * such field and validation would downgrade an otherwise link-safe graph to a
+ * bundled build.  This function only constructs wrappers; deferred provider
+ * initialization is deliberately not invoked by the validation path.
+ */
+function buildProviderValidationImports(artifact: LinkedModuleArtifact): WebAssembly.Imports {
+  const metadata = artifact.providerMetadata;
+  if (!metadata) throw new Error(`linked provider ${artifact.namespace} has no adapter metadata`);
+  const providerResult = {
+    binary: artifact.binary,
+    wat: "",
+    dts: "",
+    importsHelper: "",
+    success: true,
+    errors: [],
+    stringPool: metadata.stringPool,
+    imports: metadata.imports,
+    hasMain: false,
+    hasTopLevelStatements: artifact.initExport !== undefined,
+    targetProfile: metadata.targetProfile,
+    adapterManifest: metadata.adapterManifest,
+    capabilityRequirements: metadata.capabilityRequirements,
+    capabilityProviderDiagnostics: metadata.capabilityProviderDiagnostics,
+    exportBoundaryPolicies: metadata.exportBoundaryPolicies,
+  } as CompileResult;
+  const built = buildCompiledImports(providerResult);
+  return {
+    env: built.env,
+    "wasm:js-string": built["wasm:js-string"],
+    string_constants: built.string_constants,
+    string_constants16: built.string_constants16,
+  } as unknown as WebAssembly.Imports;
 }
 
 /**
@@ -411,11 +601,7 @@ function validateLinkedSignatures(
     } as unknown as WebAssembly.Imports;
     const providerExports = new Map<string, WebAssembly.Exports>();
     for (const artifact of artifacts) {
-      const providerImports: WebAssembly.Imports = { ...baseImports };
-      if (artifact.stringPool) {
-        providerImports.string_constants = buildStringConstants(artifact.stringPool);
-        providerImports.string_constants16 = buildStringConstants16(artifact.stringPool);
-      }
+      const providerImports = buildProviderValidationImports(artifact);
       for (const dependency of artifact.dependencies) {
         const dependencyExports = providerExports.get(dependency);
         if (!dependencyExports) return `missing provider dependency ${dependency}`;
@@ -494,6 +680,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
         dependencyTargets: new Map(),
         externalImporters: [],
         entryTargets: new Set(),
+        requiresSignatureValidation: false,
       };
       packages.set(root, node);
     }
@@ -553,6 +740,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     const inspected = inspectFunctionExports(node.entry, sourceByPhysical.get(node.entry)!);
     if (!inspected.exports) return makeFallback(`${node.name}: ${inspected.reason ?? "unsupported exports"}`);
     node.exports = inspected.exports;
+    node.requiresSignatureValidation = Array.from(node.exports.values()).some((entry) => entry.uncertain);
     (node as PackageNode & { sourceByFile?: Map<string, string> }).sourceByFile = sourceByPhysical;
   }
   const topo = topoPackages(packages);
@@ -586,45 +774,66 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
   // declaration-stubbed inside the provider and linked by the same namespace
   // metadata as the application root.
   for (const node of topo.order) {
-    const dependencyKeys = Array.from(
-      node.dependencies,
-      (dependency) => artifactByRoot.get(dependency)?.cacheKey ?? "",
+    const dependencyIdentities: ProviderDependencyManifest[] = Array.from(node.dependencies, (dependency) => {
+      const dependencyNode = packages.get(dependency);
+      const dependencyArtifact = artifactByRoot.get(dependency);
+      const dependencyNamespace = namespaceByRoot.get(dependency);
+      if (!dependencyNode || !dependencyArtifact || !dependencyNamespace) {
+        return undefined;
+      }
+      return {
+        packageName: dependencyNode.name,
+        cacheKey: dependencyArtifact.cacheKey,
+        namespace: dependencyNamespace,
+      };
+    }).filter((identity): identity is ProviderDependencyManifest => identity !== undefined);
+    if (dependencyIdentities.length !== node.dependencies.size) {
+      return makeFallback(`provider dependency was not built for ${node.name}`);
+    }
+    dependencyIdentities.sort(
+      (a, b) => a.packageName.localeCompare(b.packageName) || a.cacheKey.localeCompare(b.cacheKey),
     );
-    if (dependencyKeys.some((key) => !key)) return makeFallback(`provider dependency was not built for ${node.name}`);
     const sourceParts = node.files
       .slice()
       .sort()
       .map((file) => `${packageFileKey(node.root, file)}\n${sourceByPhysical.get(file) ?? ""}`);
     const exportNames = Array.from(node.exports.keys()).sort();
-    const cacheKey = hashText([
+    const expectedSignatures = exportSignaturesFor(node);
+    const sourceFingerprint = hashText([
       LINKER_VERSION,
+      PROVIDER_COMPILER_ABI_VERSION,
+      String(RUNTIME_RECGROUP_ABI_VERSION),
       node.name,
       ...sourceParts,
-      ...dependencyKeys,
+      ...dependencyIdentities.flatMap((dependency) => [dependency.packageName, dependency.cacheKey]),
       ...exportNames,
       compilerOptionFingerprint(input.options),
     ]);
-    const namespace = providerNamespace(node, cacheKey);
-    namespaceByRoot.set(node.root, namespace);
-    const expectedSignatures = exportSignaturesFor(node);
 
-    const cached = readCachedArtifact(cacheDir, cacheKey);
-    if (
-      cached &&
-      exportNames.every((name) => cached.exports.includes(name)) &&
-      exportNames.every((name) => cached.exportSignatures[name] === expectedSignatures[name])
-    ) {
+    const cached = readCachedArtifact(cacheDir, {
+      sourceFingerprint,
+      packageName: node.name,
+      dependencies: dependencyIdentities,
+      exports: exportNames,
+      exportSignatures: expectedSignatures,
+    });
+    if (cached) {
+      const cacheKey = cached.cacheKey;
+      const namespace = providerNamespace(node, cacheKey);
+      namespaceByRoot.set(node.root, namespace);
       cachedProviders++;
       artifactByRoot.set(node.root, {
         namespace,
         binary: cached.binary,
         cacheKey,
-        dependencies: Array.from(node.dependencies, (dependency) => namespaceByRoot.get(dependency)!).filter(Boolean),
-        exports: cached.exports,
-        exportSignatures: cached.exportSignatures,
+        dependencies: cached.manifest.dependencies.map((dependency) => dependency.namespace),
+        exports: cached.manifest.exports,
+        exportSignatures: cached.manifest.exportSignatures,
         packageName: node.name,
         cacheHit: true,
-        stringPool: cached.stringPool,
+        stringPool: cached.manifest.stringPool,
+        providerMetadata: cached.manifest.providerMetadata,
+        initExport: cached.manifest.initExport,
       });
       continue;
     }
@@ -677,6 +886,9 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       ...input.options,
       packageLinking: false,
       packageCacheDir: undefined,
+      // Provider module initialization is exported and invoked only after its
+      // own host adapter has been wired to its own instance.
+      deferTopLevelInit: true,
       link: [...new Set([...(input.options.link ?? []), ...Array.from(dependencyBindings.values(), (v) => v.module)])],
       linkedPackageBindings: dependencyBindings,
     };
@@ -688,20 +900,33 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       providerResolutions,
     );
     if (!providerResult.success) return makeFallback(`${node.name} provider compilation failed`);
-    if (providerResult.hasTopLevelStatements) {
-      return makeFallback(`${node.name} provider has unsupported top-level initialization`);
-    }
     let providerExports: WebAssembly.ModuleExportDescriptor[];
     try {
       providerExports = WebAssembly.Module.exports(new WebAssembly.Module(wasmBytes(providerResult.binary)));
     } catch {
       return makeFallback(`${node.name} provider emitted invalid Wasm`);
     }
-    const actualExportNames = providerExports.filter((entry) => entry.kind === "function").map((entry) => entry.name);
-    if (!exportNames.every((name) => actualExportNames.includes(name))) {
+    const actualFunctionNames = providerExports.filter((entry) => entry.kind === "function").map((entry) => entry.name);
+    if (!exportNames.every((name) => actualFunctionNames.includes(name))) {
       return makeFallback(`${node.name} provider did not export its declared function boundary`);
     }
+    const actualExportNames = exportNames.slice();
+    const initExport = providerExports.some((entry) => entry.kind === "function" && entry.name === "__module_init")
+      ? "__module_init"
+      : undefined;
+    // A provider must not run its initializer during validation and then run
+    // it again (or never run it) during real linking.  The deferred export is
+    // unavailable for WASI, whose startup contract is `_start`; retain the
+    // safe bundled route for that target until provider startup can be wired
+    // through its own lifecycle as well.
+    if (providerResult.hasTopLevelStatements && !initExport) {
+      return makeFallback(`${node.name} provider initialization cannot be deferred for this target`);
+    }
     const allowedProviderModules = new Set([
+      "env",
+      "wasm:js-string",
+      "string_constants",
+      "string_constants16",
       ...(input.options.link ?? []),
       ...Array.from(dependencyBindings.values(), (binding) => binding.module),
     ]);
@@ -709,42 +934,64 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     const unsupportedImport = WebAssembly.Module.imports(providerImportModules).find(
       (entry) => !allowedProviderModules.has(entry.module),
     );
-    if (unsupportedImport) {
-      // Host calls need a lifecycle-aware adapter. Provider-owned string globals
-      // are structural data and can be rebuilt from the artifact string pool.
-      if (
-        unsupportedImport &&
-        unsupportedImport.module !== "string_constants" &&
-        unsupportedImport.module !== "string_constants16"
-      ) {
-        return makeFallback(`${node.name} provider requires unsupported import ${unsupportedImport.module}`);
-      }
+    if (unsupportedImport)
+      return makeFallback(`${node.name} provider requires unsupported import ${unsupportedImport.module}`);
+    const metadata = providerMetadata(providerResult);
+    const rawManifest: ProviderManifestV1 = {
+      section: PROVIDER_MANIFEST_SECTION_NAME,
+      version: PROVIDER_MANIFEST_FORMAT_VERSION,
+      compilerAbiVersion: PROVIDER_COMPILER_ABI_VERSION,
+      linkerAbiVersion: LINKER_VERSION,
+      recgroupAbiVersion: RUNTIME_RECGROUP_ABI_VERSION,
+      sourceFingerprint,
+      packageName: node.name,
+      dependencies: dependencyIdentities,
+      exports: actualExportNames,
+      exportSignatures: expectedSignatures,
+      ...(initExport === undefined ? {} : { initExport }),
+      stringPool: providerResult.stringPool,
+      providerMetadata: metadata,
+    };
+    let finalBinary: Uint8Array;
+    let manifest: ProviderManifestV1;
+    try {
+      finalBinary = appendProviderManifest(providerResult.binary, rawManifest);
+      manifest = decodeProviderManifest(finalBinary, {
+        linkerAbiVersion: LINKER_VERSION,
+        compilerAbiVersion: PROVIDER_COMPILER_ABI_VERSION,
+        recgroupAbiVersion: RUNTIME_RECGROUP_ABI_VERSION,
+      });
+      // Custom sections are ignored by validation, so explicitly validate the
+      // finalized bytes before making them visible as a provider artifact.
+      new WebAssembly.Module(wasmBytes(finalBinary));
+    } catch (error) {
+      return makeFallback(
+        `${node.name} provider manifest emission failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
+    const cacheKey = providerArtifactHash(finalBinary, manifest);
+    const namespace = providerNamespace(node, cacheKey);
+    namespaceByRoot.set(node.root, namespace);
     compiledProviders++;
     memoryProviderCache.set(cacheKey, {
-      binary: providerResult.binary,
-      exports: actualExportNames,
-      exportSignatures: expectedSignatures,
-      stringPool: providerResult.stringPool,
+      binary: finalBinary,
+      exports: manifest.exports,
+      exportSignatures: manifest.exportSignatures,
+      manifest,
     });
-    writeCachedArtifact(
-      cacheDir,
-      cacheKey,
-      providerResult.binary,
-      actualExportNames,
-      expectedSignatures,
-      providerResult.stringPool,
-    );
+    writeCachedArtifact(cacheDir, cacheKey, finalBinary, manifest);
     artifactByRoot.set(node.root, {
       namespace,
-      binary: providerResult.binary,
+      binary: finalBinary,
       cacheKey,
-      dependencies: Array.from(node.dependencies, (dependency) => namespaceByRoot.get(dependency)!).filter(Boolean),
-      exports: actualExportNames,
-      exportSignatures: expectedSignatures,
+      dependencies: manifest.dependencies.map((dependency) => dependency.namespace),
+      exports: manifest.exports,
+      exportSignatures: manifest.exportSignatures,
       packageName: node.name,
       cacheHit: false,
-      stringPool: providerResult.stringPool,
+      stringPool: manifest.stringPool,
+      providerMetadata: manifest.providerMetadata,
+      initExport: manifest.initExport,
     });
   }
 
@@ -802,6 +1049,9 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
   const result = await compileMultiSource(rootFiles, input.entryKey, rootOptions, undefined, rootResolutions);
   if (!result.success) return makeFallback("linked root compilation failed; using bundled project");
   const artifacts = topo.order.map((node) => artifactByRoot.get(node.root)!).filter(Boolean);
+  if (topo.order.some((node) => node.requiresSignatureValidation) && result.hasTopLevelStatements) {
+    return makeFallback("inferred/any package signatures require side-effect-free engine validation");
+  }
   const signatureFailure = validateLinkedSignatures(result, artifacts);
   if (signatureFailure) return makeFallback(`linked signature validation failed: ${signatureFailure}`);
   const plan: PackageLinkPlan = {

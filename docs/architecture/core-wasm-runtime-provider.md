@@ -65,19 +65,36 @@ content-addressed namespace such as `js2wasm:npm:pkg:<hash>`. Package-to-package
 edges are compiled in dependency order, and the binary plus its export/signature
 manifest is cached in `.js2wasm-cache/npm-modules` (or `packageCacheDir`).
 
+Every provider binary carries one canonical-JSON `js2wasm.provider.v1` custom
+section. It records the source fingerprint, package/dependency identities,
+exports/signatures, deferred initializer, string pool, adapter metadata, and
+compiler/linker/rec-group ABI versions. The cache filename is the SHA-256 of
+the finalized Wasm bytes. A `<sourceFingerprint>.ref.json` file may accelerate
+lookup, but is only an index: cache loading and instantiation decode and
+validate the embedded section, and a missing or malformed index is recovered
+by scanning provider `.wasm` files.
+
 ```ts
 const result = await compileProject("main.ts", { packageCacheDir: ".cache" });
 const { instance } = await instantiateLinkedProject(result);
 ```
 
 `result.importObject` also materializes provider instances, preserving existing
-`WebAssembly.instantiate(result.binary, result.importObject)` callers. The
-explicit helper creates fresh providers for repeated isolated benchmark runs.
-`result.linkPlan` reports `compiledProviders` and `cachedProviders` telemetry.
+`WebAssembly.instantiate(result.binary, result.importObject)` callers. Provider
+adapter metadata is retained with the cached artifact, so each provider gets a
+fresh host/runtime adapter and its own string pool. Provider top-level work is
+emitted as `__module_init`; the linker wires that provider's `setInstance`
+callback before invoking the initializer. `instantiateLinkedProject` therefore
+creates fresh provider state for every call, which is the lifecycle boundary
+used by repeated benchmark runs. `result.linkPlan` reports `compiledProviders`
+and `cachedProviders` telemetry.
 
 The first ABI deliberately falls back to deterministic monolithic compilation
 for cycles, ambiguous/multiple entrypoints, re-exports/default/namespace
-imports, host-dependent providers, and runtime value/class/object exports.
-Those boundaries need a stable global/object/closure ABI before they can be
-split safely; they must not be routed through `externals`, which can silently
-erase a value import.
+imports, targets that cannot defer provider initialization, and runtime
+value/class/object exports. Host/runtime imports are link-safe when the
+provider's generated import manifest can rebuild their adapter; arbitrary
+user-supplied capabilities still need an explicit dependency injection path.
+Those value/object boundaries need a stable global/object/closure ABI before
+they can be split safely; they must not be routed through `externals`, which
+can silently erase a value import.
