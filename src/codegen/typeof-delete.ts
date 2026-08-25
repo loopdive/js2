@@ -14,6 +14,7 @@ import { elementReadOfRebindWidenedArray } from "./declarations/array-rebind-ele
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { typeofFoldContradictedByFieldVerdict } from "./fnctor-ctor-param-types.js";
 import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#4637 A2) §10.2.1.3 step 13
+import { overlayRouteActive } from "./typed-lane-overlay-route.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -1786,6 +1787,21 @@ export function compileTypeofExpression(
     if (elementReadOfRebindWidenedArray(ctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
+    // (#2668) Indexed reads can become `undefined` after a descriptor-overlay
+    // mutation (`delete a[i]`, an accessor descriptor, or an inherited index),
+    // even when TypeScript still reports the element's declared type. A static
+    // `typeof a[i]` fold would therefore hide the runtime tombstone/getter
+    // result. Keep the read on the normal runtime typeof path whenever the
+    // standalone overlay route is armed; the route's dynamic get helper then
+    // supplies the actual value before `__typeof` classifies it.
+    if (
+      !forceRuntimeTypeof &&
+      ctx.standalone === true &&
+      overlayRouteActive(ctx) &&
+      ts.isElementAccessExpression(bareTdz)
+    ) {
+      forceRuntimeTypeof = true;
+    }
     // (#4394) JSDoc-typed JS parameter — the declared type is not enforced at
     // runtime, so the fold is unsound (see typeofFoldUnsoundForJsParam).
     if (!forceRuntimeTypeof && typeofFoldUnsoundForJsParam(ctx, bareTdz)) {
@@ -2078,6 +2094,19 @@ export function compileTypeofComparison(
   // (#4428) Element read off an array whose ELEMENT representation was widened
   // — the checker still reports the first declaration's element type.
   if (staticTypeof !== null && elementReadOfRebindWidenedArray(ctx, operand)) {
+    staticTypeof = null;
+  }
+  // (#2668) A descriptor-overlay mutation can make an indexed read disappear
+  // (or invoke an accessor with a different value) without changing the
+  // checker-visible element type. Do not fold `typeof a[i]` while the
+  // standalone overlay route is armed; compile the indexed read and classify
+  // its actual runtime result instead.
+  if (
+    staticTypeof !== null &&
+    ctx.standalone === true &&
+    overlayRouteActive(ctx) &&
+    ts.isElementAccessExpression(operand)
+  ) {
     staticTypeof = null;
   }
   // (#2623 P-7) Same unsound-fold guard as compileTypeofExpression: a
