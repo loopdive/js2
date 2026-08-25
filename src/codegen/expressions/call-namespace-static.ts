@@ -59,6 +59,7 @@ import {
   tryEmitJsonStringifyStatic,
 } from "../json-standalone.js";
 import { compileObjectLiteralAsExternref } from "../literals.js";
+import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { emitCollectionIteratorVec } from "../map-runtime.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "../native-strings.js";
 import { emitHostExternrefToNativeString, emitNativeStringToHostExternref } from "../string-ops.js";
@@ -2918,8 +2919,12 @@ export function compileNamespaceStaticCall(
         const paramTypes = getFuncParamTypes(ctx, funcIdx);
         const staticParamCount = paramTypes ? paramTypes.length : expr.arguments.length;
         const calleeReadsArgsEarly = ctx.funcUsesArguments.has(fullName);
+        const memberDecl = ctx.fnMetaMemberDecls?.get(fullName);
         for (let i = 0; i < Math.min(expr.arguments.length, staticParamCount); i++) {
-          compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
+          const sourceParam =
+            memberDecl !== undefined && ts.isMethodDeclaration(memberDecl) ? memberDecl.parameters[i] : undefined;
+          const forceArrayLiteralVec = sourceParam !== undefined && ts.isArrayBindingPattern(sourceParam.name);
+          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i], forceArrayLiteralVec);
         }
         if (expr.arguments.length > staticParamCount) {
           if (calleeReadsArgsEarly) {
