@@ -35,6 +35,7 @@ import { htmlWrapperFor } from "./html-wrapper-native.js"; // (#4445) shared wit
 import { emitFlattenWithInlineFlatFastPath } from "./string-materialize.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { collectConcatOperands, ensureNativeBatchedConcat } from "./native-batched-concat.js";
+import { emitIsUndefF64 } from "./value-tags.js";
 import {
   emitStandaloneRegExpToStringFromExpr,
   isStaticallyUndefinedExpr,
@@ -2323,6 +2324,7 @@ export function compileStringIntegerArg(
   fctx: FunctionContext,
   arg: ts.Expression,
   nanFallback = 0,
+  undefinedFallback = nanFallback,
 ): void {
   if (tryThrowOnBigIntOrSymbolArg(ctx, fctx, arg)) {
     // After unreachable, the wasm stack is polymorphic — but we still
@@ -2364,21 +2366,38 @@ export function compileStringIntegerArg(
     }
     // Coerce ToNumber → f64 via the engine, then ToIntegerOrInfinity.
     coerceType(ctx, fctx, argType, { kind: "f64" }, "number");
-    const fTmp = allocLocal(fctx, `__strint_f_${fctx.locals.length}`, {
-      kind: "f64",
-    });
+    const fTmpType: ValType =
+      argType.kind === "f64" && argType.undefSentinel === true ? { kind: "f64", undefSentinel: true } : { kind: "f64" };
+    const fTmp = allocLocal(fctx, `__strint_f_${fctx.locals.length}`, fTmpType);
     fctx.body.push({ op: "local.set", index: fTmp });
     // ToIntegerOrInfinity: NaN → the caller's method-specific fallback, else
-    // trunc toward zero (±∞ saturates).
-    fctx.body.push({ op: "local.get", index: fTmp });
-    fctx.body.push({ op: "local.get", index: fTmp });
-    fctx.body.push({ op: "f64.ne" }); // self != self ⇒ NaN
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "val", type: { kind: "i32" } },
-      then: [{ op: "i32.const", value: nanFallback }],
-      else: [{ op: "local.get", index: fTmp }, { op: "i32.trunc_sat_f64_s" }],
-    });
+    // trunc toward zero (±∞ saturates). A f64 read from an identity-carrying
+    // numeric vec may instead be the dedicated undefined signaling-NaN
+    // sentinel. Optional string bounds/counts treat that value as an omitted
+    // argument, so preserve it separately from an explicit numeric NaN.
+    const toIntegerInstrs: Instr[] = [
+      { op: "local.get", index: fTmp },
+      { op: "local.get", index: fTmp },
+      { op: "f64.ne" }, // self != self ⇒ NaN
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "i32.const", value: nanFallback }],
+        else: [{ op: "local.get", index: fTmp }, { op: "i32.trunc_sat_f64_s" }],
+      },
+    ];
+    if (argType.kind === "f64" && argType.undefSentinel === true && undefinedFallback !== nanFallback) {
+      fctx.body.push({ op: "local.get", index: fTmp });
+      emitIsUndefF64(fctx.body);
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "i32.const", value: undefinedFallback }],
+        else: toIntegerInstrs,
+      });
+    } else {
+      fctx.body.push(...toIntegerInstrs);
+    }
     return;
   }
   const argType = compileExpression(ctx, fctx, arg, { kind: "i32" });
@@ -2876,7 +2895,7 @@ export function compileNativeStringMethodCall(
     }
     // end — explicit `undefined` defaults to length (§22.1.3.24), same as absent (#2124)
     if (expr.arguments.length > 1 && !isStaticUndefinedArg(expr.arguments[1])) {
-      compileStringIntegerArg(ctx, fctx, expr.arguments[1]!);
+      compileStringIntegerArg(ctx, fctx, expr.arguments[1]!, 0, 0x7fffffff);
     } else {
       // Default end = string length
       // We need to get the receiver again — use a temp local
@@ -2901,7 +2920,7 @@ export function compileNativeStringMethodCall(
     }
     // end — explicit `undefined` defaults to length (§22.1.3.22), same as absent (#2124)
     if (expr.arguments.length > 1 && !isStaticUndefinedArg(expr.arguments[1])) {
-      compileStringIntegerArg(ctx, fctx, expr.arguments[1]!);
+      compileStringIntegerArg(ctx, fctx, expr.arguments[1]!, 0, 0x7fffffff);
     } else {
       fctx.body.push({ op: "i32.const", value: 0x7fffffff });
     }
@@ -2926,7 +2945,7 @@ export function compileNativeStringMethodCall(
     // length — absent or explicit `undefined` means "to the end" (§B.2.2.1
     // step 4 sets length = +∞ when the arg is undefined).
     if (expr.arguments.length > 1 && !isStaticUndefinedArg(expr.arguments[1])) {
-      compileStringIntegerArg(ctx, fctx, expr.arguments[1]!);
+      compileStringIntegerArg(ctx, fctx, expr.arguments[1]!, 0, 0x7fffffff);
     } else {
       fctx.body.push({ op: "i32.const", value: 0x7fffffff });
     }
