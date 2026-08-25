@@ -269,6 +269,8 @@ const STRING_PROTO_METHODS = [
   "toWellFormed",
   "trim",
   "trimEnd",
+  "trimLeft",
+  "trimRight",
   "trimStart",
   "valueOf",
 ] as const;
@@ -548,6 +550,8 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
     toLocaleUpperCase: 0,
     trim: 0,
     trimEnd: 0,
+    trimLeft: 0,
+    trimRight: 0,
     trimStart: 0,
     isWellFormed: 0,
     toWellFormed: 0,
@@ -1757,10 +1761,18 @@ function makeGlue(
     memberParamSlots: (member) => (name === "String" ? (STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0) : 0),
     // (#4485) §B.2.4.3 — `Date.prototype.toGMTString` IS `Date.prototype.
     // toUTCString` (one function object, asserted by test262 annexB
-    // .../toGMTString/value.js). Alias the closure identity, not the member
-    // set: `toGMTString` stays in `DATE_PROTO_METHODS` so it is still an own
-    // property for hasOwnProperty/gOPD. No other family has an identity alias.
-    memberAliasOf: (member) => (name === "Date" && member === "toGMTString" ? "toUTCString" : undefined),
+    // .../toGMTString/value.js). The Annex B String aliases have the same
+    // identity rule: trimLeft→trimStart and trimRight→trimEnd. Alias the
+    // closure identity, not the member set: each spelling stays in its own
+    // proto CSV entry for hasOwnProperty/gOPD.
+    memberAliasOf: (member) =>
+      name === "Date" && member === "toGMTString"
+        ? "toUTCString"
+        : name === "String" && member === "trimLeft"
+          ? "trimStart"
+          : name === "String" && member === "trimRight"
+            ? "trimEnd"
+            : undefined,
     // (#2193 PR-B) Array.prototype.slice is now a real native closure body;
     // (#2875 slice 1) String.prototype.{charAt,at} likewise. Other Array/String
     // members + all Object members still degrade to a catchable TypeError.
