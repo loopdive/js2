@@ -1028,7 +1028,7 @@ export function collectGrowableObjectLiterals(
             for (const s of stmts) {
               markStandaloneDeleteTargets(s, varName, mopSet);
               markStandaloneAccessorDefineTargets(s, varName, mopSet);
-              markStandaloneOutOfShapeDataDefineTargets(s, varName, shape, mopSet); // #4524
+              markStandaloneOutOfShapeDataDefineTargets(ctx, s, varName, shape, mopSet); // #4524
               // (#4491) `m.foo++` on a field the literal typed non-numerically —
               // or on no field at all — cannot land in the closed struct.
               markStandaloneNumericUpdateKindChangeTargets(s, varName, decl.initializer, mopSet);
@@ -1763,13 +1763,28 @@ function staticDefineKey(keyArg: ts.Expression | undefined): string | undefined 
  * #739. This decides only whether the define can land at all.
  */
 function markStandaloneOutOfShapeDataDefineTargets(
+  ctx: CodegenContext,
   node: ts.Node,
   varName: string,
   shapeNames: ReadonlySet<string>,
   poisonSet: Set<string>,
 ): void {
   const outOfShapeDataDefine = (keyArg: ts.Expression | undefined, descArg: ts.Expression | undefined): boolean => {
-    if (!descArg || descriptorHasAccessorKey(descArg)) return false; // accessors: other marker
+    // A descriptor variable is applied through the native `$Object` runtime,
+    // even when its eventual key is already in the literal shape.  Keeping the
+    // receiver as a closed struct would split the define from subsequent reads:
+    // `__obj_define_from_desc` updates the open runtime store while a typed
+    // member access still reads the fixed field.  The empty-literal widening
+    // pass already guards this case; keep non-empty literals on the same
+    // representation for parity.
+    if (!descArg) return false;
+    if (!ts.isObjectLiteralExpression(descArg)) {
+      ctx.dynamicDescriptorWidenVars.add(varName);
+      const key = staticDefineKey(keyArg);
+      if (key !== undefined) ctx.sidecarDefinedPropertyKeys.add(`${varName}:${key}`);
+      return true;
+    }
+    if (descriptorHasAccessorKey(descArg)) return false; // accessors: other marker
     const key = staticDefineKey(keyArg);
     return key === undefined || !shapeNames.has(key);
   };
@@ -2148,6 +2163,7 @@ export function collectPropsFromStatements(
           // reflects back through the live-mirror Proxy onto the struct sidecar).
           if (ctx.standalone && !ts.isObjectLiteralExpression(descArg)) {
             ctx.dynamicDescriptorWidenVars.add(varName);
+            ctx.sidecarDefinedPropertyKeys.add(`${varName}:${propName}`);
           }
           recordDefinePropertyWiden(ctx, checker, varKey, propName, descArg, extraProps, seenProps);
         }

@@ -437,10 +437,10 @@ describe("#4491 wave-4 — measured residuals", () => {
   });
 
   // §6.2.5.6 reads descriptor fields with HasProperty, and `__desc_has_own`
-  // does walk the chain — but the define still leaves the old value in place
-  // when the inherited field is an accessor with no getter.
+  // walks the prototype chain. An inherited accessor with no getter therefore
+  // supplies an explicit `undefined` value to the target descriptor.
   // (`defineProperty/15.2.3.6-3-138`.)
-  it.fails("an INHERITED accessor `value` field is honored by ToPropertyDescriptor", async () => {
+  it("an INHERITED accessor `value` field is honored by ToPropertyDescriptor", async () => {
     expect(
       await runStandalone(`
         export function main() {
@@ -453,6 +453,18 @@ describe("#4491 wave-4 — measured residuals", () => {
           Object.defineProperty(obj, "property", child);
           return (Object.prototype.hasOwnProperty.call(obj, "property") &&
                   typeof obj.property === "undefined") ? 1 : 0;
+        }
+      `),
+    ).toBe(1);
+  });
+
+  it("keeps an inline data descriptor's numeric value on the fast path", async () => {
+    expect(
+      await runStandalone(`
+        export function main() {
+          var obj = { property: 120 };
+          Object.defineProperty(obj, "property", { value: 42 });
+          return (typeof obj.property === "number" && obj.property === 42) ? 1 : 0;
         }
       `),
     ).toBe(1);

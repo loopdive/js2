@@ -1886,6 +1886,19 @@ export function compileTypeofExpression(
     ) {
       forceRuntimeTypeof = true;
     }
+    // (#4491) A dynamic descriptor may replace a statically-typed field with
+    // undefined. The pre-pass records the receiver/key pair only for the
+    // runtime-descriptor route, so an unrelated field on the same open object
+    // keeps its ordinary static typeof fold.
+    if (
+      !forceRuntimeTypeof &&
+      ctx.standalone &&
+      ts.isPropertyAccessExpression(bareTdz) &&
+      ts.isIdentifier(bareTdz.expression) &&
+      ctx.sidecarDefinedPropertyKeys.has(`${bareTdz.expression.text}:${bareTdz.name.text}`)
+    ) {
+      forceRuntimeTypeof = true;
+    }
     // (#2623 P-7) `typeof x` where x's FLOW-narrowed type is null/undefined but
     // the binding is ASSIGNED elsewhere in the source must NOT const-fold: TS
     // does not apply assignments made inside nested closures to the outer flow,
@@ -2021,6 +2034,15 @@ export function compileTypeofComparison(
   // Static resolution: if the typeof result is known at compile time,
   // emit a constant comparison result without any runtime call.
   const operand = typeofExpr.expression;
+  let guardOperand = operand;
+  while (
+    ts.isParenthesizedExpression(guardOperand) ||
+    ts.isAsExpression(guardOperand) ||
+    ts.isTypeAssertionExpression(guardOperand) ||
+    ts.isNonNullExpression(guardOperand)
+  ) {
+    guardOperand = (guardOperand as ts.ParenthesizedExpression | ts.AsExpression).expression;
+  }
 
   // typeof UndeclaredIdentifier -> "undefined" (#1050)
   {
@@ -2186,8 +2208,20 @@ export function compileTypeofComparison(
   if (
     staticTypeof !== null &&
     ctx.standalone &&
-    (ts.isPropertyAccessExpression(operand) || ts.isElementAccessExpression(operand)) &&
-    chainRootIsGrowable(ctx, operand.expression)
+    (ts.isPropertyAccessExpression(guardOperand) || ts.isElementAccessExpression(guardOperand)) &&
+    chainRootIsGrowable(ctx, guardOperand.expression)
+  ) {
+    staticTypeof = null;
+  }
+  // A dynamic descriptor may replace an existing typed field with undefined
+  // while the checker retains the initializer type. The pre-pass marker is
+  // receiver/key-specific, so an unrelated field keeps its static result.
+  if (
+    staticTypeof !== null &&
+    ctx.standalone &&
+    ts.isPropertyAccessExpression(guardOperand) &&
+    ts.isIdentifier(guardOperand.expression) &&
+    ctx.sidecarDefinedPropertyKeys.has(`${guardOperand.expression.text}:${guardOperand.name.text}`)
   ) {
     staticTypeof = null;
   }

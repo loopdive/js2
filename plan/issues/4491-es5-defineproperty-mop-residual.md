@@ -4,7 +4,7 @@ title: "ES5 standalone: Object.defineProperty/defineProperties/create residual (
 status: ready
 sprint: current
 created: 2026-08-15
-updated: 2026-08-22
+updated: 2026-08-25
 assignee: claude/es6-standalone-session
 priority: high
 horizon: m
@@ -354,6 +354,12 @@ func-budget-allow:
   # whose arms cannot be reordered without changing precedence.
   - src/codegen/expressions/unary-updates.ts::compileMemberIncDec
   - src/codegen/typeof-delete.ts::compileTypeofComparison
+  # 2026-08-25 #4491 inherited-descriptor slice: the standalone typeof fold
+  # gains a receiver/key runtime-descriptor guard. It stays in this ordered
+  # ladder so the guard runs after TDZ/eval/accessor checks but before the
+  # checker-derived static result; moving it to a helper would obscure that
+  # precedence and duplicate the transparent-operand handling.
+  - src/codegen/typeof-delete.ts::compileTypeofExpression
   # 2026-08-21 wave-3 lane A, realm-global member CALL/READ: two guard clauses
   # that must sit at a specific point in a long ordered dispatch chain — the
   # call one BEFORE `compileReceiverMethodCall` (which resolves the member
@@ -5953,7 +5959,7 @@ all — they surfaced while writing the pins.
 | `freeze/15.2.3.9-2-a-12`, `preventExtensions/15.2.3.10-3-5` | a String object's INDEX read misses through a dynamic receiver: measured `readThrough(new String("abc"), "0")` → `undefined`, while the module-level literal-key read answers `"a"`. `preventExtensions` additionally does not stop `new String()` from answering a character for an out-of-range index. | `string-exotic-own-props.ts` (the #4232 §10.4.3 lane). Unowned. |
 | `getOwnPropertyDescriptor/15.2.3.3-4-4`, `-4-34`, `getOwnPropertyNames/15.2.3.4-4-1` | the GLOBAL object and `Function.prototype` expose no own function properties: `gOPD(this,"eval")` and `gOPD(Function.prototype,"constructor")` are `undefined`, and `gOPN(this)` reports a name set missing every global function. The comparable tables DO work — `Math.abs` and `Array.prototype.push` both answer the full `{w:true,e:false,c:true}` triple — so this is a carrier-coverage gap, not a MOP gap. | needs a global-object own-property carrier + `constructor` on the `Function.prototype` proto (which has no identity-stable carrier, per the T9/T10 note above). Unowned. **Distinct from #4651**: `gOPN(this)` also TRAPS with `illegal cast` in some module shapes (surfaced by this lane's probe, filed by the lead as #4651). `15.2.3.4-4-1` itself does NOT trap — it fails its own `assert` on a short name list — so the row belongs here, not to #4651. |
 | `defineProperty/S15.2.3.6_A1` | §13.5.3 says `typeof` of an unresolvable Reference is `"undefined"`, but a name the TS DOM lib declares gets an ambient `valueDeclaration`, so `typeof-delete.ts`'s undeclared-fold does not fire and the static type fold answers `"object"` — then `document.createElement` null-derefs and the test never reaches its own guard. | closing it needs the standalone PROVIDED-globals set; today `structuredClone` has a hand-written arm for exactly this shape. Unowned. Worth more than one row: `typeof document !== "undefined"` is a very common npm guard. |
-| `defineProperty/15.2.3.6-3-138` | a descriptor object whose `value` field is INHERITED and is an accessor with no getter must make the property `undefined`. `__desc_has_own` does walk the chain (`"value" in child` → true, `child.value` → undefined), yet the define leaves the old value in place. | root not isolated — the presence and read halves both answer correctly, so the loss is inside `__obj_define_from_desc`'s field ACCUMULATION for this receiver shape (a fnctor instance). Unowned. |
+| `defineProperty/15.2.3.6-3-138` | **Landed 2026-08-25.** `__desc_has_own` already walks the chain (`"value" in child` → true, `child.value` → undefined); the remaining split was a closed non-empty receiver's static field versus the dynamic descriptor store. Standalone pre-scan now opens receivers of non-inline descriptor defines and records the affected receiver/key for typeof-fold invalidation. Exact row, 136/137/139/140 neighbors, and inline numeric control pass; the 131-row census has no regressions. | `src/codegen/declarations/object-shape-widening.ts`, `src/codegen/typeof-delete.ts`; focused regression/control in `tests/issue-4491-wave4.test.ts`. |
 | `defineProperties/15.2.3.7-2-16` | `Object.defineProperties(obj, argumentsObject)`: the descriptor-map getter must run with `this` = the arguments object and `Object.prototype.toString.call(this)` must be `"[object Arguments]"`. | the `Properties`-map own-key source for an arguments receiver. Unowned. |
 | `defineProperty/15.2.3.6-4-589` | `teamMeeting.startTime = dateObj` through an INHERITED setter that stores into `var data1 = 1001` reads back `NaN`: the numeric-carrier binding cannot hold a Date. Same defect FAMILY as root 3, different trigger (a numeric initializer rebound to an object, not an `undefined` one). | `mixed-assignment-carrier` / `heterogeneousWidenedModuleGlobalType` (#4428). Unowned. |
 | `defineProperty/15.2.3.6-4-243-2` | the `onlyStrict` twin of a fixed row: a STRICT-mode write to an array-index accessor with no setter must throw a TypeError. The sloppy no-op is correct; the strict-throw is the documented boundary in `__extern_set`'s accessor arm. | the shared `__extern_set_decide` refusal channel already exists (root 2 uses it); wiring the accessor arm to it is a small follow-up. Unowned. |
@@ -6666,7 +6672,7 @@ deleted-member-observability root.
 
 String-exotic index reads (`keys/15.2.3.14-5-a-4`, `preventExtensions/15.2.3.10-3-5`), the
 three Array-length roots above, and the singles (`create/15.2.3.5-4-15`'s neighbours,
-`defineProperty/15.2.3.6-3-138`, `-4-243-2`, `-4-589`, `freeze/15.2.3.9-2-a-12`,
+`-4-243-2`, `-4-589`, `freeze/15.2.3.9-2-a-12`,
 `getOwnPropertyNames/15.2.3.4-4-1`, `prototype/valueOf/S15.2.4.4_A14`, the `n_obj.constructor`
 pair). Explicitly **out of scope**: `defineProperty/S15.2.3.6_A1.js`, which fails on
 `standalone target emitted host imports: env::Document_createElement (#2961)` — a DOM-import
