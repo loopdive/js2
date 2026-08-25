@@ -59,6 +59,7 @@ import {
   tryEmitJsonStringifyStatic,
 } from "../json-standalone.js";
 import { compileObjectLiteralAsExternref } from "../literals.js";
+import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { emitCollectionIteratorVec } from "../map-runtime.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "../native-strings.js";
 import { emitHostExternrefToNativeString, emitNativeStringToHostExternref } from "../string-ops.js";
@@ -2779,7 +2780,7 @@ export function compileNamespaceStaticCall(
         const staticParamCount = paramTypes ? paramTypes.length : expr.arguments.length;
         const calleeReadsArgsEarly = ctx.funcUsesArguments.has(fullName);
         for (let i = 0; i < Math.min(expr.arguments.length, staticParamCount); i++) {
-          compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
+          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i], true);
         }
         if (expr.arguments.length > staticParamCount) {
           if (calleeReadsArgsEarly) {

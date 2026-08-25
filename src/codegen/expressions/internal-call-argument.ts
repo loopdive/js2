@@ -27,7 +27,28 @@ export function compileInternalCallArgument(
   fctx: FunctionContext,
   expression: ts.Expression,
   expectedType: ValType | undefined,
+  forceArrayLiteralVec = false,
 ): ValType | null {
+  // Class bodies are emitted before their call sites. When an unannotated class
+  // method parameter is an externref binding pattern, a contextual tuple at the
+  // call site can therefore be a type the callee never saw while building its
+  // tuple fast path. Force the ordinary array carrier only for the explicitly
+  // opted-in class-method call sites; this keeps present null distinct from an
+  // absent element without widening unrelated argument lowering.
+  const compileWithArrayLiteralVec = (): ValType | null => {
+    const shouldForce =
+      forceArrayLiteralVec &&
+      expectedType?.kind === "externref" &&
+      (ctx.standalone || ctx.wasi) &&
+      ts.isArrayLiteralExpression(expression);
+    const previous = (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec;
+    if (shouldForce) (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = true;
+    try {
+      return compileExpression(ctx, fctx, expression, expectedType);
+    } finally {
+      if (shouldForce) (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = previous;
+    }
+  };
   // A native `externref` parameter is an open JavaScript-value boundary. A
   // plain object literal must therefore use the runtime `$Object` carrier,
   // even when TypeScript gives the literal a concrete contextual object type.
@@ -52,7 +73,7 @@ export function compileInternalCallArgument(
   }
 
   if (expectedType?.kind !== "externref" || ctx.standalone || ctx.wasi) {
-    return compileExpression(ctx, fctx, expression, expectedType);
+    return compileWithArrayLiteralVec();
   }
 
   let carrier = expression;
@@ -73,7 +94,7 @@ export function compileInternalCallArgument(
     return compilePropertyAccessForNullishObservation(ctx, fctx, carrier);
   }
   if (!ts.isIdentifier(carrier)) {
-    return compileExpression(ctx, fctx, expression, expectedType);
+    return compileWithArrayLiteralVec();
   }
 
   const localIdx = fctx.localMap.get(carrier.text);
@@ -89,10 +110,10 @@ export function compileInternalCallArgument(
     (localType.kind !== "ref" && localType.kind !== "ref_null") ||
     getArrTypeIdxFromVec(ctx, localType.typeIdx) < 0
   ) {
-    return compileExpression(ctx, fctx, expression, expectedType);
+    return compileWithArrayLiteralVec();
   }
 
-  const actualType = compileExpression(ctx, fctx, expression);
+  const actualType = compileWithArrayLiteralVec();
   if (
     actualType &&
     (actualType.kind === "ref" || actualType.kind === "ref_null") &&
