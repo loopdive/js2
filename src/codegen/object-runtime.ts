@@ -86,7 +86,7 @@ import {
   isVecBaseSubtype,
 } from "./registry/types.js";
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3140) __bind_dyn callable gate
-import { builtinCtorCallableArmInstrs } from "./builtin-ctor-callable.js"; // (#4394) wrapper-ctor [[Call]] arm
+import * as bc from "./builtin-ctor-callable.js"; // (#4394/#4656) constructor [[Call]] arms
 import { buildApplyClosureArityWidening, buildTransferredCharAtApplyArm } from "./closure-exports.js"; // (#3592) under-application widening
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
@@ -7279,14 +7279,14 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     );
   }
 
+  body.unshift(...bc.appendBuiltinObjectArrayCallableArms(ctx, ARG_OF, emitStandaloneArrayConstructor, locals));
   // (#4394) Wrapper-constructor carrier [[Call]] arm — `String`/`Number`/
   // `Boolean` used as a first-class callable (a HOF callback, `fn.call(...)`).
-  // The carrier is a `$Object` singleton (identity is load-bearing — see the
-  // reverted conversion-closure attempt in #4394), so the closure-cast ladder
-  // below can never dispatch it; this identity-compare guard performs the
+  // The carrier is a `$Object` singleton; the closure-cast ladder below cannot
+  // dispatch it; this identity-compare guard performs the
   // spec's no-`new` conversion instead. Empty for modules that never demanded
   // a wrapper carrier.
-  body.unshift(...builtinCtorCallableArmInstrs(ctx, ARG_OF));
+  body.unshift(...bc.builtinCtorCallableArmInstrs(ctx, ARG_OF));
 
   bridgeFn.body = [...buildTransferredCharAtApplyArm(ctx, ARG_OF), ...body];
   bridgeFn.locals = locals;
@@ -7417,11 +7417,11 @@ export function fillBindDynHelper(ctx: CodegenContext): void {
     { op: "extern.convert_any" },
     { op: "return" },
   ];
-
   const body: Instr[] = [
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
     { op: "local.set", index: ANY },
+    ...bc.builtinConstructorBindArmInstrs(ctx, ANY, mintArm),
     ...buildClosureRefTestArms(ctx, ANY, mintArm),
   ];
   const jsBoundaryFallback =

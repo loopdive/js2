@@ -48,8 +48,11 @@
 // (R2, and %Object.prototype% too). So this is the builtin-as-value family
 // (#4480/#4481/#4483, dev-4515's C1), not a prototype-link gap.
 import { describe, expect, it } from "vitest";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { compile } from "../src/index.js";
 import { instantiateTest262Module } from "../scripts/test262-import-object.mjs";
+import { runTest262File } from "./test262-runner.js";
 
 /**
  * CI's changed-root `quality` lane runs `JS2WASM_EVAL_ENGINE=interpreter` with
@@ -465,4 +468,65 @@ describe("#4656 R4 — a function declaration does not override a same-named PAR
       `),
     ).toBe(1);
   });
+});
+
+// ───────────────────── Function.bind residual cluster ─────────────────────
+// These are the exact standalone Test262 rows owned by the bind lane. The
+// controls below exercise both direct and indirect bind for an ordinary user
+// function, so a constructor-only arm cannot silently regress closure binding.
+const BIND_TEST262_ROOT = join(__dirname, "..", "test262");
+const BIND_TEST262 = existsSync(join(BIND_TEST262_ROOT, "harness", "assert.js"));
+const BIND_CONTROL_DIR = join(__dirname, "..", ".tmp", "issue-4656-bind-controls");
+
+function pinBindRow(rel: string, note: string): void {
+  it.skipIf(!BIND_TEST262)(rel, { timeout: 60_000 }, async () => {
+    const result = await runTest262File(join(BIND_TEST262_ROOT, "test", rel), "issue-4656-bind", 30_000, "standalone");
+    expect(`${result.status}: ${result.error ?? ""}`, note).toBe("pass: ");
+  });
+}
+
+function pinBindSource(name: string, source: string, note: string): void {
+  it.skipIf(!BIND_TEST262)(name, { timeout: 60_000 }, async () => {
+    mkdirSync(BIND_CONTROL_DIR, { recursive: true });
+    const path = join(BIND_CONTROL_DIR, `${name}.js`);
+    writeFileSync(path, source);
+    const result = await runTest262File(path, "issue-4656-bind", 30_000, "standalone");
+    expect(`${result.status}: ${result.error ?? ""}`, note).toBe("pass: ");
+  });
+}
+
+describe("#4656 — Function.prototype.bind standalone residuals", () => {
+  pinBindRow(
+    "built-ins/Function/prototype/bind/15.3.4.5-2-6.js",
+    "Object.bind(null)(42) must return the boxed argument",
+  );
+  pinBindRow(
+    "built-ins/Function/prototype/bind/15.3.4.5-2-8.js",
+    "Array.bind(null)(42) must preserve Array length and indexed writes",
+  );
+  pinBindRow(
+    "built-ins/Function/prototype/bind/S15.3.4.5_A5.js",
+    "bind.apply(Date, [null].concat(args)) must curry [[Construct]]",
+  );
+
+  pinBindSource(
+    "ordinary-direct-bind",
+    `
+      function add(a, b) { return this.base + a + b; }
+      var bound = add.bind({ base: 1 }, 2);
+      assert.sameValue(bound(3), 6);
+    `,
+    "direct bind must preserve its receiver and partial argument",
+  );
+
+  pinBindSource(
+    "ordinary-indirect-bind-apply",
+    `
+      function add(a, b) { return a + b; }
+      var args = [2];
+      var bound = Function.prototype.bind.apply(add, [null].concat(args));
+      assert.sameValue(bound(3), 5);
+    `,
+    "indirect bind.apply must preserve partial arguments for an ordinary function",
+  );
 });

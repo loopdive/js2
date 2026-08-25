@@ -95,7 +95,7 @@ import {
   buildArgcExtrasSetupFromLocals,
   buildArgcResetNoLazyExtras,
 } from "./argc-extras.js";
-import { emitMaterializedArgumentsVector, prepareCompiledApplyBridge } from "./apply-arguments-vector.js";
+import { emitMaterializedArgumentsVector, prepareCompiledApplyBridge, tryBindApply } from "./apply-arguments-vector.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
 import { emitVirtualMethodDispatchByTag } from "./virtual-dispatch.js";
@@ -2090,7 +2090,6 @@ function isStaticallyNonCallableBindTarget(ctx: CodegenContext, fctx: FunctionCo
   // generic object/`any` value as non-callable.
   return ts.isIdentifier(target) && ctx.oracle.builtinReceiverOf(target) === "RegExp";
 }
-
 /**
  * Compile `Function.prototype.bind.call(target, thisArg, ...args)`.
  * Callable targets reshape to the ordinary `.bind` path. Under standalone,
@@ -2103,6 +2102,7 @@ function tryCompileIndirectFunctionBindCall(
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
 ): InnerResult | undefined {
+  if (propAccess.name.text === "apply") return tryBindApply(ctx, fctx, expr, propAccess);
   if (
     propAccess.name.text !== "call" ||
     !ts.isPropertyAccessExpression(propAccess.expression) ||

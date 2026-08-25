@@ -42,6 +42,7 @@
  * | `[object String]`      | `__typeof_string`                             |
  * | `[object Number]`      | `__typeof_number`                             |
  * | `[object Boolean]`     | `__typeof_boolean`                            |
+ * | `[object Date]`        | `ref.test $__Date`                            |
  * | `[object Object]`      | `ref.test $Object` (§20.1.3.6 step 13 default) |
  *
  * Using `__typeof_function` rather than an inline closure `ref.test` is
@@ -61,7 +62,7 @@
  * The chain is deliberately NOT exhaustive, and the fallthrough is the
  * pre-existing `emitThrowTypeError` refusal — not a default `[object Object]`.
  * Receivers this classifier cannot prove (nominal class-instance structs,
- * `$Proxy`, primitive-wrapper OBJECTS, Date/RegExp/Error carriers, boxed
+ * `$Proxy`, primitive-wrapper OBJECTS, RegExp/Error carriers, boxed
  * symbols/bigints) keep throwing exactly as they do today. Widening the last
  * arm to "anything else is an ordinary object" would convert a loud refusal
  * into a silent mis-tag, which the acceptance bar counts as negative value —
@@ -85,6 +86,7 @@ import { resolveArrayInfo } from "./array-methods.js";
 import { isBooleanType, isNumberType, isStringType } from "../checker/type-mapper.js";
 import { TYPED_ARRAY_NAMES, resolveWasmType } from "./index.js";
 import { bindingIsSingleAssignment } from "./single-assignment-binding.js";
+import { ensureDateStruct } from "./expressions/builtins.js";
 
 /** §20.1.3.6 result string for a builtin tag. */
 const tagString = (tag: string): string => `[object ${tag}]`;
@@ -342,6 +344,23 @@ export function emitObjectProtoToStringClassifier(
       { op: "local.get", index: receiverIndex },
       { op: "call", funcIdx: idx },
       { op: "if", blockType: { kind: "empty" }, then: returnTag(tag) },
+    );
+  }
+
+  // Date instances are native `__Date` carriers, not `$Object`s.  The
+  // standalone runtime classifier must brand them before its `$Object`
+  // fallback, otherwise an any-typed value such as the result of a bound
+  // constructor is silently reported as `[object Object]`.
+  if (ctx.builtinObjectGlobals.has("ctor:Date")) {
+    const dateTypeIdx = ensureDateStruct(ctx);
+    const dateAnyLocal = allocLocal(fctx, `__opts_date_${fctx.locals.length}`, { kind: "anyref" });
+    fctx.body.push(
+      { op: "local.get", index: receiverIndex },
+      { op: "any.convert_extern" },
+      { op: "local.set", index: dateAnyLocal },
+      { op: "local.get", index: dateAnyLocal },
+      { op: "ref.test", typeIdx: dateTypeIdx },
+      { op: "if", blockType: { kind: "empty" }, then: returnTag("Date") },
     );
   }
 
