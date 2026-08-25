@@ -762,6 +762,7 @@ function buildSubscribeBody(ids: CombinatorRuntime, rt: AsyncDriveRuntimeT): Ins
         { op: "i32.const", value: PROMISE_STATE_FULFILLED },
         { op: "local.get", index: INPUT },
         { op: "ref.null.extern" },
+        { op: "ref.null.extern" },
         { op: "struct.new", typeIdx: ids.promiseTypeIdx },
         { op: "local.set", index: P },
       ],
@@ -1191,6 +1192,7 @@ export function emitStandalonePromiseCombinator(
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "struct.new", typeIdx: ids.promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: resultLocal });
 
@@ -1344,6 +1346,7 @@ export function emitStandalonePromiseCombinatorRuntime(
 
   // Pending result promise.
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
+  fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "struct.new", typeIdx: ids.promiseTypeIdx });
