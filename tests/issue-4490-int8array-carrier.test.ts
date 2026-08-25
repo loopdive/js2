@@ -74,4 +74,35 @@ describe("#4490 wave 2 — Int8Array's own-property carrier coherence", () => {
       `),
     ).toBe(1);
   });
+
+  it("keeps inherited TypedArray statics on the migrated carrier", async () => {
+    expect(
+      await runStandalone(`
+        export function test(): number {
+          const C: any = Int8Array;
+          const from: any = C.from([3, 4]);
+          const of: any = C.of(5, 6);
+          return from.length === 2 && from[0] === 3 && from[1] === 4 &&
+            of.length === 2 && of[0] === 5 && of[1] === 6 &&
+            from.constructor === C && of.constructor === C ? 1 : 0;
+        }
+      `),
+    ).toBe(1);
+  });
+
+  it("throws when the migrated constructor is called without new", async () => {
+    expect(
+      await runStandalone(`
+        export function test(): number {
+          const C: any = Int8Array;
+          try {
+            C();
+            return 0;
+          } catch (error) {
+            return error instanceof TypeError ? 1 : 0;
+          }
+        }
+      `),
+    ).toBe(1);
+  });
 });

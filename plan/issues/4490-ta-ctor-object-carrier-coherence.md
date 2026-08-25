@@ -7,10 +7,15 @@ created: 2026-08-15
 updated: 2026-08-25
 loc-budget-allow:
   - src/codegen/dataview-native.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/expressions/calls.ts
   - src/codegen/expressions/new-super.ts
   - src/codegen/property-access-dispatch.ts
 func-budget-allow:
   - src/codegen/dataview-native.ts::emitTaDynCtorConstructFromLocals
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  - src/codegen/expressions/call-receiver-method.ts::tryEmitTaStaticOfFrom
+  - src/codegen/expressions/calls.ts::tryEmitInlineDynamicCall
   - src/codegen/ta-dyn-mop.ts::fillTaDynViewMopArms
   - src/codegen/property-access-dispatch.ts::tryConstructorPrototypeIdentity
 priority: high
@@ -88,11 +93,13 @@ verification step.
 - Route typed-view `.constructor`, dynamic-view `.constructor`, dynamic
   `BYTES_PER_ELEMENT`, and dynamic `new C(...)` through the same carrier
   identity; retire kind-0 `$__ta_ctor` metadata for Int8Array only.
+- Recognize that carrier in the inherited `TypedArray.from/of`, dynamic
+  call-without-`new`, and cross-realm intrinsic-prototype dispatch paths.
 - Keep all other TypedArray constructors on their existing `$__ta_ctor` path.
 
 ### Test Results
 
-Focused coherence test (`tests/issue-4490-int8array-carrier.test.ts`): **3/3
+Focused coherence test (`tests/issue-4490-int8array-carrier.test.ts`): **5/5
 passed**.  TypeScript typecheck: **passed**.
 
 Standalone test262 rows run through `runTest262File`:
@@ -100,6 +107,13 @@ Standalone test262 rows run through `runTest262File`:
 - `built-ins/TypedArrayConstructors/Int8Array/{length,name,BYTES_PER_ELEMENT,constructor,is-a-constructor}.js`: **5/5 passed**.
 - `built-ins/TypedArrayConstructors/ctors/no-args/returns-object.js`: **passed** (dynamic `new TA()` control across the constructor harness).
 - `built-ins/TypedArrayConstructors/ctors/length-arg/new-instance-extensibility.js`: **passed**.
+- `built-ins/TypedArrayConstructors/ctors/buffer-arg/proto-from-ctor-realm.js`: **passed**.
+
+The merge-queue standalone regression guard originally identified 32
+Int8Array-only regressions across inherited `from/of`, constructor calls
+without `new`, and cross-realm prototype selection. The carrier-aware
+dispatch repairs cover each cluster while leaving the legacy `$__ta_ctor`
+arms unchanged.
 
 ### Remaining blockers / follow-up
 

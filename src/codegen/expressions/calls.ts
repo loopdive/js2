@@ -370,6 +370,7 @@ import { ensureTextEncodingHelpers } from "../text-encoding-native.js";
 import { emitVariadicStringConcat, hostStringRepr, nativeStringRepr } from "../builtin-scaffold.js";
 import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import {
+  buildInt8ArrayCarrierMatch,
   emitArrayBufferResize,
   emitArrayBufferSlice,
   emitDataViewAccessor,
@@ -3945,7 +3946,9 @@ export function tryEmitInlineDynamicCall(
   // shape. Armed only when a `$__ta_ctor` value can exist in the module
   // (byte-inert otherwise). Standalone/WASI lane; the host lane's callee is a
   // real host constructor whose [[Call]] already throws.
-  const wantTaCtorArm = (ctx.standalone === true || ctx.wasi === true) && ctx.taCtorTypeIdx >= 0;
+  const wantTaCtorArm =
+    (ctx.standalone === true || ctx.wasi === true) &&
+    (ctx.taCtorTypeIdx >= 0 || ctx.builtinObjectGlobals.has("ctor:Int8Array"));
   const wantApplyFallback = ctx.standalone === true || ctx.wasi === true;
   if (allCandidates.length === 0 && !wantProxyArm && !wantBoundArm && !wantTaCtorArm && !wantApplyFallback) return null;
 
@@ -4523,16 +4526,21 @@ export function tryEmitInlineDynamicCall(
     const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "Constructor cannot be invoked without 'new'", {
       flush: fctx,
     });
-    dispatch = [
-      { op: "local.get", index: anyLocal },
-      { op: "ref.test", typeIdx: ctx.taCtorTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: throwInstrs, // terminal throw — stack-polymorphic, validates as externref
-        else: dispatch,
-      },
-    ];
+    const int8CarrierThrow = buildInt8ArrayCarrierMatch(ctx, anyLocal, throwInstrs);
+    if (ctx.taCtorTypeIdx >= 0) {
+      dispatch = [
+        { op: "local.get", index: anyLocal },
+        { op: "ref.test", typeIdx: ctx.taCtorTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: throwInstrs, // terminal throw — stack-polymorphic, validates as externref
+          else: [...int8CarrierThrow, ...dispatch],
+        },
+      ];
+    } else {
+      dispatch = [...int8CarrierThrow, ...dispatch];
+    }
   }
 
   fctx.body.push(...dispatch);

@@ -53,6 +53,7 @@ import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.
 import { effectiveLocalCarrier } from "../analysis/mixed-assignment-carrier.js";
 import { staticIntegerRange } from "../../ir/analysis/static-numeric-range.js";
 import {
+  buildInt8ArrayCarrierMatch,
   emitArrayBufferResize,
   emitArrayBufferSlice,
   emitArrayBufferTransfer,
@@ -262,6 +263,10 @@ function tryEmitTaStaticOfFrom(
   else if (recvT === null) fctx.body.push({ op: "ref.null.extern" });
   const recvLocal = allocLocal(fctx, `__tastat_recv_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: recvLocal });
+  const recvAnyLocal = allocLocal(fctx, `__tastat_recv_any_${fctx.locals.length}`, { kind: "anyref" });
+  fctx.body.push({ op: "local.get", index: recvLocal });
+  fctx.body.push({ op: "any.convert_extern" });
+  fctx.body.push({ op: "local.set", index: recvAnyLocal });
 
   // Args → locals (evaluated once, spec order — the else arm reuses them).
   const argLocals: number[] = [];
@@ -345,9 +350,17 @@ function tryEmitTaStaticOfFrom(
   const elseArm: Instr[] = [{ op: "local.get", index: recvLocal }];
   for (const aLocal of argLocals) elseArm.push({ op: "local.get", index: aLocal });
   elseArm.push({ op: "call", funcIdx: dispatchIdx });
-  fctx.body.push({ op: "local.get", index: recvLocal });
-  fctx.body.push({ op: "any.convert_extern" });
+  const isTaCtorLocal = allocLocal(fctx, `__tastat_is_ctor_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "local.get", index: recvAnyLocal });
   fctx.body.push({ op: "ref.test", typeIdx: ctx.taCtorTypeIdx });
+  fctx.body.push({ op: "local.set", index: isTaCtorLocal });
+  fctx.body.push(
+    ...buildInt8ArrayCarrierMatch(ctx, recvAnyLocal, [
+      { op: "i32.const", value: 1 },
+      { op: "local.set", index: isTaCtorLocal },
+    ]),
+  );
+  fctx.body.push({ op: "local.get", index: isTaCtorLocal });
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: { kind: "externref" } },
@@ -3678,7 +3691,11 @@ export function compileReceiverMethodCall(
         flushLateImportShifts(ctx, fctx);
         // (#3177 slice 5) `%TypedArray%.of` / `%TypedArray%.from` STATIC methods
         // on a `$__ta_ctor` receiver VALUE — see `tryEmitTaStaticOfFrom`.
-        if (noJsHost(ctx) && ctx.taCtorTypeIdx >= 0 && (methodName === "of" || methodName === "from")) {
+        if (
+          noJsHost(ctx) &&
+          (ctx.taCtorTypeIdx >= 0 || ctx.builtinObjectGlobals.has("ctor:Int8Array")) &&
+          (methodName === "of" || methodName === "from")
+        ) {
           const taStatic = tryEmitTaStaticOfFrom(ctx, fctx, propAccess, dispatchArgs, methodName, dispatchIdx);
           if (taStatic !== null) return taStatic;
         }

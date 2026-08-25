@@ -93,6 +93,7 @@ import {
   ensureTypedArrayViewNativeProtoGlue,
 } from "./array-object-proto.js";
 import {
+  buildInt8ArrayCarrierMatch,
   dvDetachedThrowInstrs,
   emitTaCtorBytesPerElement,
   emitTaCtorValue,
@@ -352,13 +353,40 @@ export function tryConstructorPrototypeIdentity(
           { op: "local.set", index: kindLocal },
           ...chain,
         ];
+        const int8MatchLocal = allocLocal(fctx, `__realm_int8_match_${fctx.locals.length}`, { kind: "i32" });
+        fctx.body.push({ op: "i32.const", value: 0 });
+        fctx.body.push({ op: "local.set", index: int8MatchLocal });
+        fctx.body.push(
+          ...buildInt8ArrayCarrierMatch(ctx, anyLocal, [
+            { op: "i32.const", value: 1 },
+            { op: "local.set", index: int8MatchLocal },
+          ]),
+        );
+        let int8Proto: Instr[] = [{ op: "ref.null.extern" }];
+        const int8Brand = ensureTypedArrayViewNativeProtoGlue(ctx, "Int8Array");
+        if (int8Brand !== undefined) {
+          const emitted: Instr[] = [];
+          const saved = fctx.body;
+          fctx.body = emitted;
+          const ok = emitLazyNativeProtoGet(ctx, fctx, int8Brand);
+          fctx.body = saved;
+          if (ok) int8Proto = emitted;
+        }
         fctx.body.push({ op: "local.get", index: anyLocal });
         fctx.body.push({ op: "ref.test", typeIdx: ctx.taCtorTypeIdx });
         fctx.body.push({
           op: "if",
           blockType: { kind: "val", type: { kind: "externref" } },
           then: matched,
-          else: [{ op: "ref.null.extern" }],
+          else: [
+            { op: "local.get", index: int8MatchLocal },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              then: int8Proto,
+              else: [{ op: "ref.null.extern" }],
+            },
+          ],
         });
         return { kind: "externref" };
       }
