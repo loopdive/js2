@@ -208,6 +208,7 @@ import {
   TYPED_ARRAY_BYTES_PER_ELEMENT,
   tryCompileStandaloneBuiltinProtoMemberMeta,
   tryCompileStandaloneBuiltinProtoMemberRead,
+  tryCompileStandaloneBuiltinProtoIteratorRead,
   tryEmitBuiltinNamespaceConstantValue,
   tryEnsureNativeProtoBrand,
   typedArrayViewSignedness,
@@ -4531,6 +4532,12 @@ export function compileElementAccess(
 
   const functionHasInstanceRead = tryCompileStandaloneFunctionHasInstanceRead(ctx, fctx, expr);
   if (functionHasInstanceRead !== undefined) return functionHasInstanceRead;
+
+  // (#4731) Resolve the static Set/Map prototype iterator alias before the
+  // generic computed read materializes a `$NativeProto` and asks `__extern_get`
+  // for a symbol key (which has no standalone symbol-key arm).
+  const builtinProtoIteratorRead = tryCompileStandaloneBuiltinProtoIteratorRead(ctx, fctx, expr);
+  if (builtinProtoIteratorRead !== undefined) return builtinProtoIteratorRead;
 
   // #1886 Slice B: linear-backed Uint8Array read `buf[i]` → i32.load8_u(ptr+i).
   // Only fires when `buf` is a registered linear-safe buffer in this function;
