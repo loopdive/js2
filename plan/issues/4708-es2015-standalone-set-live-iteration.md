@@ -19,6 +19,8 @@ assignee: codex/4708-es2015-standalone-set-live-iteration
 loc-budget-max-source: 180
 loc-budget-allow:
   - src/codegen/statements/loops.ts
+oracle-ratchet-allow:
+  - src/codegen/statements/loops.ts
 related: [4704, 4680, 4696, 4702]
 files:
   - src/codegen/statements/loops.ts
