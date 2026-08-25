@@ -101,12 +101,7 @@ import {
   type IrType,
   type IrTypeRef,
 } from "../nodes.js";
-import {
-  buildIrUnitInventory,
-  type BuildIrUnitInventoryOptions,
-  type IrTerminalUnitRecord,
-  type IrUnitId,
-} from "../identity.js";
+import { buildIrUnitInventory, type BuildIrUnitInventoryOptions, type IrUnitId } from "../identity.js";
 import {
   buildIrPlanningIdentityContext,
   IrPlanningIdentityInvariantError,
@@ -136,6 +131,12 @@ import { prepareIrRuntimeManifest } from "../intrinsic-support.js";
 import type { TypeConverter } from "./contract.js";
 import { verifyIrBackendLegality } from "./legality.js";
 import { LinearEmitter } from "./linear-emitter.js";
+import * as linearCoverage from "./linear-ir-coverage.js";
+import type {
+  LinearIrSourceOwner,
+  LinearIrSourceOwnerIndex,
+  PreparedLinearIrCoveragePopulation,
+} from "./linear-ir-coverage.js";
 import type {
   IrRefCellLowering,
   IrVecLowering,
@@ -199,16 +200,6 @@ export interface LinearIrResult {
   readonly preparedCountedStringAppendReceipts: readonly PreparedCountedStringAppendReceipt[];
 }
 
-export interface LinearIrSourceOwner {
-  readonly ownerUnitId: IrUnitId;
-  readonly legacyName: string;
-  readonly declaration: ts.Node;
-}
-
-export interface LinearIrSourceOwnerIndex {
-  readonly owners: readonly LinearIrSourceOwner[];
-}
-
 /** Direct-backend registration before the ProgramAbiSession cutover. */
 export interface LinearIrLegacySlotInput {
   readonly declaration: ts.Node;
@@ -258,69 +249,26 @@ function requireUniqueLinearOwner(
   return owners[0]!;
 }
 
-function isLinearIrAttemptRoot(terminal: IrTerminalUnitRecord): boolean {
-  return !(
-    terminal.kind === "synthetic-support" &&
-    terminal.syntheticRole === "compiler-unit:timer-shim:set-timeout" &&
-    terminal.terminalOwnerId === terminal.id &&
-    terminal.lexicalOwnerId === null
-  );
-}
+export const indexLinearIrSourceOwners = linearCoverage.indexLinearIrSourceOwners;
+const isLinearIrAttemptRoot = linearCoverage.isLinearIrAttemptRoot;
 
-/**
- * Validate the complete structural population received by the linear source
- * seam. Every direction is checked against the same authoritative planning
- * context. Display-label collisions remain distinct here; only the explicit
- * legacy-slot adapter below is permitted to cross into concrete slot names.
- */
-export function indexLinearIrSourceOwners(
-  sourceFile: ts.SourceFile,
-  identityContext: IrPlanningIdentityContext,
-): LinearIrSourceOwnerIndex {
-  const sourceId = requireIrPlanningSourceId(identityContext, sourceFile);
-  if (identityContext.sourceFileBySourceId.get(sourceId) !== sourceFile) {
-    return linearOwnerInvariant(
-      "source-record-mismatch",
-      `linear IR source ${sourceId} does not resolve back to the exact planning SourceFile`,
-    );
-  }
-
-  const expected = identityContext.inventory.terminalUnits.filter(
-    (terminal) =>
-      terminal.sourceId === sourceId &&
-      (terminal.observedKind === "function" || terminal.observedKind === "class-member") &&
-      isLinearIrAttemptRoot(terminal),
-  );
-  const liveNodes = new Set<ts.Node>();
-  const visit = (node: ts.Node): void => {
-    liveNodes.add(node);
-    ts.forEachChild(node, visit);
-  };
-  visit(sourceFile);
-
-  const owners = expected.map((terminal): LinearIrSourceOwner => {
-    const declaration = identityContext.declarationByUnitId.get(terminal.id);
-    if (
-      identityContext.unitByUnitId.get(terminal.id) !== terminal ||
-      identityContext.terminalByUnitId.get(terminal.id) !== terminal ||
-      terminal.terminalOwnerId !== terminal.id ||
-      !declaration ||
-      !liveNodes.has(declaration) ||
-      declaration.getSourceFile() !== sourceFile ||
-      identityContext.unitIdByDeclaration.get(declaration) !== terminal.id
-    ) {
-      return linearOwnerInvariant(
-        "terminal-record-mismatch",
-        `linear IR source owner ${terminal.id} does not round-trip through the authoritative population`,
-      );
-    }
-    return Object.freeze({
-      ownerUnitId: terminal.id,
-      legacyName: terminal.legacyMatchName,
-      declaration,
-    });
+export function prepareLinearIrCoveragePopulation(
+  sourceFiles: readonly ts.SourceFile[],
+  entrySource: ts.SourceFile,
+  checker: ts.TypeChecker,
+  inventoryOptions: BuildIrUnitInventoryOptions = {},
+): PreparedLinearIrCoveragePopulation {
+  const inventory = buildIrUnitInventory(sourceFiles, {
+    ...inventoryOptions,
+    entrySource,
+    checker,
   });
-  return Object.freeze({ owners: Object.freeze(owners) });
+  return linearCoverage.prepareLinearIrCoveragePopulation(
+    sourceFiles,
+    entrySource,
+    checker,
+    buildIrPlanningIdentityContext(inventory),
+  );
 }
 
 /**
@@ -419,14 +367,20 @@ function planLinearIrOverlay(
   sourceFile: ts.SourceFile,
   inventoryOptions: BuildIrUnitInventoryOptions,
   oracle: TypeOracle,
+  coveragePopulation?: PreparedLinearIrCoveragePopulation,
 ) {
   const sourceFiles = [sourceFile];
-  const inventory = buildIrUnitInventory(sourceFiles, {
-    ...inventoryOptions,
-    entrySource: sourceFile,
-    checker: ctx.checker,
-  });
-  const identityContext = buildIrPlanningIdentityContext(inventory);
+  if (coveragePopulation) {
+    linearCoverage.authenticateLinearIrCoveragePopulation(coveragePopulation, sourceFiles, sourceFile, ctx.checker);
+  }
+  const inventory =
+    coveragePopulation?.identityContext.inventory ??
+    buildIrUnitInventory(sourceFiles, {
+      ...inventoryOptions,
+      entrySource: sourceFile,
+      checker: ctx.checker,
+    });
+  const identityContext = coveragePopulation?.identityContext ?? buildIrPlanningIdentityContext(inventory);
   const propagated = buildIrUnitTypeMap(sourceFiles, ctx.checker, identityContext);
   const recursiveTypeEvidence = buildIrRecursiveTypeEvidence(sourceFiles, ctx.checker, propagated, identityContext);
   const evidenceChecker = overlayCertifiedCheckerTypes(ctx.checker, recursiveTypeEvidence.checkerTypeOverrides);
@@ -536,6 +490,7 @@ export function prepareLinearIrOverlay(
   sourceFile: ts.SourceFile,
   inventoryOptions: BuildIrUnitInventoryOptions = {},
   directReservation?: LinearStringRepeatReservation,
+  coveragePopulation?: PreparedLinearIrCoveragePopulation,
 ): PreparedLinearIrOverlay {
   const oracle = ctx.oracle;
   if (!oracle) {
@@ -551,7 +506,7 @@ export function prepareLinearIrOverlay(
     oracle: TypeOracle;
     reservationReceipt?: LinearStringRepeatReservationReceipt;
   } = {
-    ...planLinearIrOverlay(ctx, sourceFile, inventoryOptions, oracle),
+    ...planLinearIrOverlay(ctx, sourceFile, inventoryOptions, oracle, coveragePopulation),
     context: ctx,
     sourceFile,
     oracle,
@@ -667,6 +622,23 @@ let lastReport: LinearIrResult | undefined;
 export function getLastLinearIrReport(): LinearIrResult | undefined {
   return lastReport;
 }
+
+export function resetLastLinearIrReport(): void {
+  if (linearCoverage.linearIrCoverageGenerationIsActive()) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "linear-ir: cannot reset the compatibility report during an active coverage generation",
+    );
+  }
+  lastReport = undefined;
+}
+
+export type {
+  LinearIrSourceOwner,
+  LinearIrSourceOwnerIndex,
+  PreparedLinearIrCoveragePopulation,
+} from "./linear-ir-coverage.js";
 
 function prepareLinearIntrinsicFunctions(functions: readonly IrFunction[], sourceFile: string): readonly IrFunction[] {
   return (
