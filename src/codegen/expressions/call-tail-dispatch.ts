@@ -1316,9 +1316,9 @@ export function compileTailDispatch(
       // arrays with a concrete primitive element type keep their existing
       // TypeError/fallback behavior.
       {
-        const elementType = ctx.checker.getTypeAtLocation(elemAccess);
+        const elementFact = ctx.oracle.typeFactOf(elemAccess);
         const elementIsUnresolved =
-          (elementType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) !== 0;
+          elementFact.kind === "any" || elementFact.kind === "unknown" || elementFact.kind === "unresolvable";
         if (ctx.standalone && elementIsUnresolved && resolveArrayInfo(ctx, receiverType)) {
           const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
           if (dyn !== null) return dyn;
