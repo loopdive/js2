@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // (#4653) `language/statements/function` residual — the three families this
-// issue closed, plus `it.fails` pins on the nine it did not, each with the
-// measured root that owns it.
+// issue originally closed, plus executable pins for the remaining measured
+// roots. The call-dispatch residual is repaired by the focused alias arm below.
 //
 // Scoped sweep, standalone lane, over `language/statements/function` +
 // `language/statements/{return,try}` (668 files), run by the same driver on
@@ -233,7 +233,7 @@ describe("#4653 D — a var initialized from a REDECLARED function gets a neutra
 // with the root measured on this branch. They are `it.fails` so the suite
 // records the current answer and flips loudly when the owning lane lands.
 
-describe("#4653 residuals — measured, not fixed here", () => {
+describe("#4653 residuals — measured standalone", () => {
   // ROWS S13.2.2_A18_T1 / _T2. `arguments.callee` is synthesized by a
   // compile-time property-access arm; it is NOT an own property of the runtime
   // vec that backs the arguments object, so the dynamic `with` HasBinding gate
@@ -335,11 +335,10 @@ describe("#4653 residuals — measured, not fixed here", () => {
   });
 
   // ROW S13.2.2_A2. Calling a NON-callable instance must throw TypeError
-  // (§7.3.14 Call step 1). Measured: `rose()` does not throw at all — it
-  // evaluates to undefined — so the test's own `throw new Test262Error(...)`
-  // runs inside the try and is caught as the "exception", which is why the row
-  // reports `[object Object]` rather than a missing throw.
-  it.fails("(#4653 residual, call-dispatch) calling a non-callable throws TypeError", async () => {
+  // (§7.3.14 Call step 1). The single-assignment `new FACTORY()` alias used
+  // to fall through to undefined; the call-dispatch arm now proves that its
+  // constructor returns an ordinary, non-callable object.
+  it("(#4653 call-dispatch) calling a non-callable instance throws TypeError", async () => {
     expect(
       await runScript(`
         function PROTO() {}
@@ -354,19 +353,26 @@ describe("#4653 residuals — measured, not fixed here", () => {
     ).toBe(null);
   });
 
+  it("keeps a reassigned instance alias callable", async () => {
+    expect(
+      await runScript(`
+        function FACTORY() {}
+        var rose = new FACTORY();
+        rose = function () { return "callable"; };
+        if (rose() !== "callable") throw new Error("rose() was not callable");
+      `),
+    ).toBe(null);
+  });
+
   // ROW S13.2.2_A8_T3 — root corrected TWICE; see the issue file for both
   // superseded versions and why each was wrong. Final measured rule: inside
-  // eval'd / minted code, an UPDATE expression (`++`/`--`) throws
-  // ReferenceError for any name whose binding lives in a FUNCTION variable
-  // environment (the enclosing function's locals or parameters, a Function
-  // mint's own parameters, or an eval-local `var` when the eval runs inside a
-  // function); it works for names bound in the MODULE/global environment.
-  // Reads and compound assignment work in every case. The axis is WHERE THE
-  // NAME IS BOUND — not the surrounding syntax, and not whether an enclosing
-  // function exists. Filed as #4662; owner is the runtime-eval lane.
+  // eval'd / minted code, UPDATE expressions must resolve bindings in every
+  // supported environment. #4662 landed independently while this branch was
+  // being rebased, so these former expected-failure pins are now positive
+  // controls for that upstream behavior.
   //
   // This is the row's own shape: `++` on a Function-mint parameter.
-  it.fails("(#4662) `++` on a Function-mint PARAMETER resolves", async () => {
+  it("(#4662) `++` on a Function-mint PARAMETER resolves", async () => {
     expect(
       await runScript(`
         function host() { return new Function("p", "p++; return p;")(1); }
@@ -379,7 +385,7 @@ describe("#4653 residuals — measured, not fixed here", () => {
   // top level throws too, because a Function parameter is always bound in a
   // function environment. This pin is what falsifies the enclosing-function
   // reading, so it must stay separate from the one above.
-  it.fails("(#4662) `++` on a mint parameter resolves at MODULE TOP LEVEL too", async () => {
+  it("(#4662) `++` on a mint parameter resolves at MODULE TOP LEVEL too", async () => {
     expect(
       await runScript(`
         var mint = new Function("p", "p++; return p;");
@@ -392,7 +398,7 @@ describe("#4653 residuals — measured, not fixed here", () => {
   // root missed: the name is a local of the ENCLOSING function — neither
   // eval-local nor module-level. No loop, so this also rules out the
   // "loop-test position" reading on its own.
-  it.fails("(#4662) `++` on an ENCLOSING-FUNCTION local resolves inside eval", async () => {
+  it("(#4662) `++` on an ENCLOSING-FUNCTION local resolves inside eval", async () => {
     expect(
       await runScript(`
         function host() { var d = 0; eval("d++;"); return d; }
@@ -402,7 +408,7 @@ describe("#4653 residuals — measured, not fixed here", () => {
   });
 
   // Same environment, eval-local spelling.
-  it.fails("(#4662) `++` on an eval-LOCAL var resolves inside a function", async () => {
+  it("(#4662) `++` on an eval-LOCAL var resolves inside a function", async () => {
     expect(
       await runScript(`
         function host() { return eval("var i = 0; i++; i"); }
@@ -411,11 +417,8 @@ describe("#4653 residuals — measured, not fixed here", () => {
     ).toBe(null);
   });
 
-  // POSITIVE CONTROLS. These must PASS, and they are what make the four
-  // `it.fails` above a claim about `++`-on-a-function-env-binding rather than
-  // about eval scope in general. A fix that widens the wrong thing would repair
-  // these — which they already do — while leaving the four above failing; a fix
-  // that flips these instead of those is fixing the wrong thing.
+  // Additional positive controls distinguish update-expression resolution from
+  // ordinary reads and assignments through the same environments.
   it("binds a Function parameter for a plain read and for `p = p + 1`", async () => {
     expect(
       await runScript(`

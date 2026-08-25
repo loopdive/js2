@@ -2568,6 +2568,14 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     }
   }
 
+  // Var declarations are function-scoped, so a declaration nested in a later
+  // top-level `try`/loop/branch is already in scope for earlier statements.
+  // Register the complete hoisted set before the source-order collection below
+  // classifies assignments; otherwise `foo = value` before
+  // `try { ... } catch (foo) { var foo = ... }` is mistaken for an unbound write
+  // and the legacy Annex B outer binding is never initialized.
+  for (const stmt of sourceFile.statements) walkModuleStmtForVars(stmt);
+
   // Single pass preserves source order, which matters for statements that depend on
   // side effects from earlier statements (e.g. `(Ctor as any).prototype = proto` must
   // run before `new Ctor()` captures the prototype, and `obj.prop = v` must run between

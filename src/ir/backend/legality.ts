@@ -10,6 +10,7 @@
 
 import type { IrBinop, IrBlock, IrClassShape, IrFunction, IrInstr, IrType } from "../nodes.js";
 import { asVal } from "../nodes.js";
+import type { IrFnctorShape } from "../fnctor-abi.js";
 import type { ValType } from "../types.js";
 import type { CompileTargetProfile } from "../../target-profile.js";
 
@@ -124,11 +125,26 @@ export interface IrBackendLegalityError {
   readonly instr?: string;
 }
 
-export function verifyIrBackendLegality(func: IrFunction, backend: IrBackendKind): IrBackendLegalityError[] {
+/** Optional finalized ABI authority used only by the WasmGC fnctor seam. */
+export interface IrBackendFnctorResolver {
+  resolveFnctor?(shape: IrFnctorShape): unknown | null;
+}
+
+export function verifyIrBackendLegality(
+  func: IrFunction,
+  backend: IrBackendKind,
+  fnctorResolver?: IrBackendFnctorResolver,
+): IrBackendLegalityError[] {
   const errors: IrBackendLegalityError[] = [];
   const checkedClassShapes = new Set<IrClassShape>();
   const checkType = (type: IrType, block: number | undefined, where: string): void => {
-    const msg = backendTypeError(backend, type);
+    const fnctorResolved =
+      type.kind === "fnctor" &&
+      backend === "wasmgc" &&
+      fnctorResolver !== undefined &&
+      fnctorResolver.resolveFnctor !== undefined &&
+      fnctorResolver.resolveFnctor(type.shape) !== null;
+    const msg = backendTypeError(backend, type, fnctorResolved);
     if (msg) errors.push({ message: `${where}: ${msg}`, func: func.name, block });
     checkNestedTypeShapes(type, block, where, checkType, checkedClassShapes);
   };
@@ -141,7 +157,7 @@ export function verifyIrBackendLegality(func: IrFunction, backend: IrBackendKind
   for (const block of func.blocks) {
     const blockId = block.id as number;
     for (let i = 0; i < block.blockArgTypes.length; i++) checkType(block.blockArgTypes[i]!, blockId, `block arg ${i}`);
-    for (const instr of block.instrs) checkInstr(func, backend, block, instr, errors, checkType);
+    for (const instr of block.instrs) checkInstr(func, backend, block, instr, errors, checkType, fnctorResolver);
   }
   return errors;
 }
@@ -153,6 +169,7 @@ function checkInstr(
   instr: IrInstr,
   errors: IrBackendLegalityError[],
   checkType: (type: IrType, block: number | undefined, where: string) => void,
+  fnctorResolver?: IrBackendFnctorResolver,
 ): void {
   const blockId = block.id as number;
   const reject = (reason: string): void => {
@@ -165,6 +182,16 @@ function checkInstr(
   };
 
   if (instr.resultType) checkType(instr.resultType, blockId, `${instr.kind} result`);
+
+  // A nominal fnctor type may cross this boundary only for WasmGC after a
+  // concrete resolver has supplied the constructor/layout handle. Other
+  // backends and resolver-free callers remain fail-closed.
+  if (instr.kind === "fnctor.new" || instr.kind === "fnctor.get") {
+    if (backend !== "wasmgc") reject("nominal fnctor instruction is only legal for the WasmGC ABI");
+    else if (!fnctorResolver?.resolveFnctor || fnctorResolver.resolveFnctor(instr.shape) === null) {
+      reject("nominal fnctor instruction requires an explicit validated resolver");
+    }
+  }
 
   if (backend === "linear") {
     const reason = linearInstrError(instr);
@@ -179,7 +206,7 @@ function checkInstr(
 
   checkInstrEmbeddedTypes(instr, blockId, checkType);
   for (const nested of nestedInstrBuffers(instr)) {
-    for (const sub of nested) checkInstr(func, backend, block, sub, errors, checkType);
+    for (const sub of nested) checkInstr(func, backend, block, sub, errors, checkType, fnctorResolver);
   }
 }
 
@@ -438,8 +465,8 @@ function porfforBinopLegal(op: IrBinop): boolean {
   }
 }
 
-function backendTypeError(backend: IrBackendKind, type: IrType): string | null {
-  if (type.kind === "fnctor") {
+function backendTypeError(backend: IrBackendKind, type: IrType, fnctorResolved = false): string | null {
+  if (type.kind === "fnctor" && !fnctorResolved) {
     return `${backend} backend does not support nominal fnctor types until an explicit ABI resolver is installed`;
   }
   if (backend === "wasmgc") return null;
@@ -627,6 +654,12 @@ function checkInstrEmbeddedTypes(
       return;
     case "vec.new_fixed":
       checkType(instr.elementType, block, "vec.new_fixed element");
+      return;
+    case "fnctor.new":
+      checkType({ kind: "fnctor", shape: instr.shape }, block, "fnctor.new shape");
+      return;
+    case "fnctor.get":
+      checkType({ kind: "fnctor", shape: instr.shape }, block, "fnctor.get shape");
       return;
     default:
       return;

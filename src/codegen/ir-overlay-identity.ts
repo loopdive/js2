@@ -28,6 +28,7 @@ import {
 import {
   buildIrUnitTypeMap,
   projectIrUnitTypeMapToLegacy,
+  type IrFnctorPropagationAdmissionResolver,
   type IrUnitTypeMap,
   type TypeMap,
   type TypeMapEntry,
@@ -64,6 +65,11 @@ export interface IrOverlayIdentityMaps {
   readonly projectedTypeMap: TypeMap;
 }
 
+export interface IrOverlayIdentityMapOptions {
+  /** Exact source-qualified constructor evidence; absent means no fnctor extension. */
+  readonly resolveFnctorAdmission?: IrFnctorPropagationAdmissionResolver;
+}
+
 function mismatch(detail: string): never {
   throw new IrInvariantError("selection-preparation-mismatch", "resolve", detail);
 }
@@ -75,8 +81,15 @@ export function buildIrOverlayIdentityMaps(
   // (#743) Shared `.d.ts` entrypoint seed map (flag-gated upstream) — the same
   // object the legacy lane consults, so IR/legacy seed facts cannot diverge.
   entrypointSeeds?: import("../checker/dts-entrypoint-seeds.js").DtsEntrypointSeeds,
+  options?: IrOverlayIdentityMapOptions,
 ): IrOverlayIdentityMaps {
-  const unitTypeMap = buildIrUnitTypeMap([sourceFile], checker, identityContext, entrypointSeeds);
+  const unitTypeMap = buildIrUnitTypeMap(
+    [sourceFile],
+    checker,
+    identityContext,
+    entrypointSeeds,
+    options?.resolveFnctorAdmission ? { resolveFnctorAdmission: options.resolveFnctorAdmission } : undefined,
+  );
   const projectedTypeMap = projectIrUnitTypeMapToLegacy([sourceFile], unitTypeMap, identityContext);
   return { unitTypeMap, projectedTypeMap };
 }

@@ -17,11 +17,18 @@ loc-budget-allow:
   - src/codegen/array-object-proto.ts
   - src/codegen/expressions/assignment.ts
   - src/codegen/expressions/builtins.ts
+  - src/codegen/statements/loops.ts
+  - src/codegen/string-ops.ts
+  - src/codegen/declarations.ts
   - src/codegen/regexp-standalone.ts
   - src/codegen/expressions/calls.ts
 func-budget-allow:
   - src/codegen/expressions/assignment.ts::compileAssignment
   - src/codegen/expressions/builtins.ts::compileDateMethodCall
+  - src/codegen/statements/loops.ts::compileForInStatement
+  - src/codegen/statements/loops.ts::compileForOfArray
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/statements/exceptions.ts::compileTryStatement
   - src/codegen/regexp-standalone.ts::ensureDynamicStandaloneRegExpCompiler
   - src/codegen/regexp-dynamic-pattern.ts::ensureDynamicPatternTokenDecoder
 ---
