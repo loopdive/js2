@@ -65,6 +65,15 @@ describe("#4220 — String.prototype.split in --target standalone", () => {
       expect(await runStandalone(src)).toBe(1);
     });
 
+    it("dispatches backend-created RegExp separators through @@split", async () => {
+      const src = `var re = new RegExp("00");
+        Number.prototype.split = String.prototype.split;
+        var n = 6776767677.006771122677555;
+        var r = n.split(re, eval("\\"1\\""));
+        return (r.length === 1 && r[0] === "6776767677.") ? 1 : 0;`;
+      expect(await runStandalone(src)).toBe(1);
+    });
+
     it("an empty-string separator splits into code units", async () => {
       const src = `var s = new String("abc"); s.split = String.prototype.split;
         var r = s.split("");
