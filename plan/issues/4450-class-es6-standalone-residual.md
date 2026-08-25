@@ -20,6 +20,9 @@ loc-budget-allow:
   - src/codegen/class-bodies.ts
   - src/codegen/literals.ts
   - src/codegen/statements/control-flow.ts
+func-budget-allow:
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
+  - src/codegen/statements/control-flow.ts::compileReturnStatement
 ---
 
 # #4450 — class ES6 standalone residual
