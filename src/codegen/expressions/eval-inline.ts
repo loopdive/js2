@@ -1559,7 +1559,7 @@ export function tryStaticNewFunction(
 ): ValType | undefined {
   const synth = synthesizeStaticNewFunction(ctx, fctx, args);
   if (!synth) return undefined;
-
+  emitRuntimeEvalFunctionPrototypeSeed(ctx);
   // Materialize the callable value (closure struct over the funcref), then wrap
   // to externref to match `new Function`'s `any`/callable result.
   const closureRef = emitFuncRefAsClosure(ctx, fctx, synth.fnName, synth.funcIdx);
