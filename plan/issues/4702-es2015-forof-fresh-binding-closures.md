@@ -23,6 +23,12 @@ loc-budget-allow:
   - src/codegen/expressions/calls-guards.ts
 func-budget-allow:
   - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+trap-growth-allow:
+  count: 2
+  reason: "#3596 fail-to-fail reclassification only: the two named explicit-resource-management rows are baseline `fail` (the old static undefined-array call guard throws before invoking the saved closure). #4702 correctly makes that runtime externref element callable, so those already-failing rows execute farther and expose the separate pre-existing `using`/`await using` loop-head capture gap as `null_deref`. Neither row passed before this change, both are outside #4702's explicitly const/let-only scope, and the target const/let rows now pass."
+  tests:
+    - test/language/statements/for-of/head-using-fresh-binding-per-iteration.js
+    - test/language/statements/for-of/head-await-using-fresh-binding-per-iteration.js
 ---
 
 # #4702 — ES2015 for-of fresh-binding closures
@@ -113,3 +119,12 @@ Baseline recorded above. Post-fix results on the same worktree:
 
 Changed compiler source is 39 lines including replaced lines (below the
 180-line limit).
+
+The merge-group Test262 comparison also reports two bounded fail-to-fail trap
+reclassifications. Both explicit-resource-management rows named in
+`trap-growth-allow` were baseline failures: before #4702, their saved closure
+calls stopped at the same static `undefined is not a function` guard as the
+target rows. With that guard corrected, they execute the closures and expose a
+pre-existing null capture for `using`/`await using` loop-head bindings. This PR
+does not change resource acquisition, disposal, or using-binding lowering; no
+previously passing Test262 row regressed.
