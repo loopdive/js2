@@ -92,6 +92,7 @@ import {
 } from "./shared.js";
 import { buildVecFromExternref, getVecInfo, pushDefaultValue } from "./type-coercion.js";
 import { emitDrainCustomIterableToVec, isCustomIterable } from "./custom-iterable.js";
+import { compileOneElementArray, widenDenseArrayElementType } from "./expressions/array-constructor-carrier.js";
 import {
   S5C_STRUCT_ACCESSOR_CLOSURE,
   buildAccessorClosure,
@@ -5685,6 +5686,9 @@ export function compileArrayConstructorCall(
     elemWasm = { kind: "f64" };
   }
 
+  const widenedElemWasm = widenDenseArrayElementType(args, elemWasm);
+  if (widenedElemWasm.kind !== elemWasm.kind) elemWasm = widenedElemWasm;
+
   const elemKind =
     elemWasm.kind === "ref" || elemWasm.kind === "ref_null"
       ? `ref_${(elemWasm as { typeIdx: number }).typeIdx}`
@@ -5713,17 +5717,7 @@ export function compileArrayConstructorCall(
     // number) take this path; `mixed` (any-typed) keeps length behavior.
     const argTag = ctx.oracle.staticJsTypeOf(args[0]!);
     if (argTag !== "number" && argTag !== "mixed" && !ts.isSpreadElement(args[0]!)) {
-      const oneVecIdx =
-        elemWasm.kind === "externref" ? vecTypeIdx : getOrRegisterVecType(ctx, "externref", { kind: "externref" });
-      const oneArrIdx = getArrTypeIdxFromVec(ctx, oneVecIdx);
-      compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
-      fctx.body.push({ op: "array.new_fixed", typeIdx: oneArrIdx, length: 1 });
-      const oneData = allocLocal(fctx, `__arr_data_${fctx.locals.length}`, { kind: "ref", typeIdx: oneArrIdx });
-      fctx.body.push({ op: "local.set", index: oneData });
-      fctx.body.push({ op: "i32.const", value: 1 });
-      fctx.body.push({ op: "local.get", index: oneData });
-      fctx.body.push({ op: "struct.new", typeIdx: oneVecIdx });
-      return { kind: "ref_null", typeIdx: oneVecIdx };
+      return compileOneElementArray(ctx, fctx, args[0]!, elemWasm, vecTypeIdx);
     }
     // Array(n) → sparse array of length n with default values.
     // #2000 — §23.1.1.1 step 4.b: when the single argument is a Number it is a
