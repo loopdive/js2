@@ -13,6 +13,9 @@ area: codegen, conformance
 es_edition: es6
 goal: standalone-mode
 related: [4444, 4447, 2158, 2175]
+oracle-ratchet-allow:
+  - src/codegen/class-bodies.ts
+  - src/codegen/literals.ts
 ---
 
 # #4450 — class ES6 standalone residual
