@@ -277,12 +277,11 @@ describe.skipIf(!TEST262)("#4639 — measured residuals (see the issue's Residua
   // RegExp's counterpart landed in upstream PR #4867 before this branch was
   // rebased; keep it as a positive upstream control alongside our three rows.
   pinRow("built-ins/RegExp/prototype/S15.10.6.1_A1_T2.js", "C3 — RegExp counterpart fixed upstream in PR #4867");
-  // C4: `delete RegExp.prototype.global` is not observable, because the flag
-  // ACCESSORS are deliberately not seeded into the brand companion — seeding
-  // them regresses `tests/issue-2885.test.ts` by a mechanism the #2175 V2-S3b-1
-  // note records as unidentified. Do not re-attempt without starting from that
-  // inline/bound split.
-  pinResidualRow("built-ins/RegExp/prototype/global/S15.10.7.2_A9.js", "C4 — proto accessor delete not observable");
+  // C4: bounded deletion updates the RegExp prototype member tombstone without
+  // seeding accessors into the brand companion.
+  pinRow("built-ins/RegExp/prototype/global/S15.10.7.2_A9.js", "C4 — bounded proto accessor delete");
+  pinRow("built-ins/RegExp/prototype/ignoreCase/S15.10.7.3_A9.js", "C4 — bounded proto accessor delete");
+  pinRow("built-ins/RegExp/prototype/multiline/S15.10.7.4_A9.js", "C4 — bounded proto accessor delete");
   // C5/T15 landed upstream in PR #4882; retain it as a positive control.
   pinRow("built-ins/RegExp/S15.10.2.8_A3_T15.js", "C5 — dynamic pattern fixed upstream in PR #4882");
 });
