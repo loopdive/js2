@@ -178,7 +178,7 @@ const L_PROTO = 3;
  * unavailable — in which case the caller MUST keep its existing lowering rather
  * than emit a partial answer.
  */
-function ensureDynamicInstanceOfHelper(ctx: CodegenContext): number | undefined {
+export function ensureNativeDynamicInstanceOf(ctx: CodegenContext): number | undefined {
   const existing = ctx.funcMap.get(HELPER_NAME);
   if (existing !== undefined) return existing;
 
@@ -486,7 +486,7 @@ export function tryEmitNativeDynamicInstanceOf(
   // Reserve the helper (and everything it calls) BEFORE either operand is
   // compiled, so any index shift it triggers reaches the already-emitted
   // instructions through `currentFunc`.
-  const helperIdx = ensureDynamicInstanceOfHelper(ctx);
+  const helperIdx = ensureNativeDynamicInstanceOf(ctx);
   if (helperIdx === undefined) return null;
   flushLateImportShifts(ctx, fctx);
 

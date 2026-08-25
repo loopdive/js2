@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts, forEachChild } from "../ts-api.js";
+import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import type { IrClassId, IrSourceId, IrTerminalUnitRecord, IrUnitId, IrUnitRecord } from "./identity.js";
 import { collectModuleInitPopulation } from "./module-init.js";
 import {
@@ -88,12 +89,49 @@ export interface IrIdentitySelection {
   readonly localCallees?: ReadonlyMap<IrUnitId, ReadonlySet<IrUnitId>>;
   /** Exact admitted fnctor allocation sites owned by claimed function units. */
   readonly fnctorAdmissions?: ReadonlyMap<IrUnitId, ReadonlyArray<IrFnctorAdmission>>;
+  /** Exact counted-string plans owned by claimed function units. */
+  readonly countedStringAppendPlans?: ReadonlyMap<IrUnitId, readonly IrCountedStringAppendPlan[]>;
   readonly moduleInit?: IrIdentityModuleInitAssessment;
   /** Policy needed only while projecting back through the legacy name seam. */
   readonly legacyProjection?: {
     readonly includeEmptyModuleInit: boolean;
     readonly demoteOnLegacyCaller: boolean;
   };
+}
+
+function collectCountedStringAppendPlans(
+  sourceFile: ts.SourceFile,
+  claimedUnitIds: ReadonlySet<IrUnitId>,
+  functions: readonly IndexedFunction[],
+  plan: IrIdentitySelectionOptions["planCountedStringAppend"],
+): ReadonlyMap<IrUnitId, readonly IrCountedStringAppendPlan[]> | undefined {
+  if (!plan) return undefined;
+  const declarationByUnitId = new Map(functions.map((entry) => [entry.unit.unitId, entry.declaration] as const));
+  const result = new Map<IrUnitId, readonly IrCountedStringAppendPlan[]>();
+  for (const unitId of claimedUnitIds) {
+    const declaration = declarationByUnitId.get(unitId);
+    if (!declaration?.body) continue;
+    const plans: IrCountedStringAppendPlan[] = [];
+    const visit = (node: ts.Node): void => {
+      if (node !== declaration.body && ts.isFunctionLike(node)) return;
+      if (ts.isForStatement(node)) {
+        const candidate = plan(node);
+        if (candidate) {
+          if (candidate.loop !== node || candidate.sourceFile !== sourceFile) {
+            selectorIdentityInvariant(
+              "source-record-mismatch",
+              `counted-string plan for ${unitId} does not retain its exact loop/source identity`,
+            );
+          }
+          plans.push(candidate);
+        }
+      }
+      forEachChild(node, visit);
+    };
+    visit(declaration.body);
+    if (plans.length > 0) result.set(unitId, Object.freeze([...plans]));
+  }
+  return result.size > 0 ? result : undefined;
 }
 
 export type IrIdentitySelectionOptions = Omit<IrSelectionOptions, "recursiveTypeEvidence"> & {
@@ -768,8 +806,32 @@ export function planIrCompilationByIdentity(
       .filter(([, candidates]) => candidates.length === 1 && asyncUnitIds.has(candidates[0]!.unit.unitId))
       .map(([name]) => name),
   );
-  const { recursiveTypeEvidence: _recursive, isPreparedInjectedTimerShim: _timer, ...runtimeOptions } = options;
-  configureIrStructuralSelectorPredicates(sourceFile, runtimeOptions, uniqueClasses, uniqueFunctions, asyncNames);
+  const countedStringAppendPlanCache = options.planCountedStringAppend
+    ? new Map<ts.ForStatement, IrCountedStringAppendPlan | null>()
+    : undefined;
+  const cachedCountedStringAppendPlan = options.planCountedStringAppend
+    ? (loop: ts.ForStatement): IrCountedStringAppendPlan | null => {
+        if (countedStringAppendPlanCache!.has(loop)) return countedStringAppendPlanCache!.get(loop)!;
+        const plan = options.planCountedStringAppend!(loop);
+        countedStringAppendPlanCache!.set(loop, plan);
+        return plan;
+      }
+    : undefined;
+  const {
+    recursiveTypeEvidence: _recursive,
+    isPreparedInjectedTimerShim: _timer,
+    planCountedStringAppend: _countedStringAppend,
+    ...runtimeOptions
+  } = options;
+  configureIrStructuralSelectorPredicates(
+    sourceFile,
+    cachedCountedStringAppendPlan
+      ? { ...runtimeOptions, planCountedStringAppend: cachedCountedStringAppendPlan }
+      : runtimeOptions,
+    uniqueClasses,
+    uniqueFunctions,
+    asyncNames,
+  );
   const trackFallbacks = options.trackFallbacks === true;
   const reasons = new Map<IrUnitId, IrFallbackReason>();
   const details = new Map<IrUnitId, string>();
@@ -1127,6 +1189,12 @@ export function planIrCompilationByIdentity(
     identityContext,
     options.resolveFnctorAdmission,
   );
+  const countedStringAppendPlans = collectCountedStringAppendPlans(
+    sourceFile,
+    new Set(claimed.keys()),
+    functions,
+    cachedCountedStringAppendPlan,
+  );
   const moduleInit = assessIdentityModuleInit(
     sourceFile,
     sourceId,
@@ -1158,6 +1226,7 @@ export function planIrCompilationByIdentity(
     ...(fallbacks ? { fallbacks } : {}),
     ...(localCallees ? { localCallees } : {}),
     ...(fnctorAdmissions ? { fnctorAdmissions } : {}),
+    ...(countedStringAppendPlans ? { countedStringAppendPlans } : {}),
     ...(moduleInit ? { moduleInit } : {}),
     legacyProjection: { includeEmptyModuleInit: true, demoteOnLegacyCaller },
   };

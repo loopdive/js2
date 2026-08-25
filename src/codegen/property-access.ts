@@ -231,11 +231,78 @@ export {
   TYPED_ARRAY_BYTES_PER_ELEMENT,
   tryEnsureNativeProtoBrand,
 } from "./builtin-value-read.js";
+
+/**
+ * Standalone computed-read arm for the inherited Function @@hasInstance
+ * method. The generic symbol-key path has no `$NativeProto` symbol-cell
+ * lookup, so a callable receiver would otherwise return the undefined
+ * sentinel before its method call. Keep this arm limited to checker-certified
+ * function receivers; uncertain/object receivers retain the dynamic path.
+ */
+function tryCompileStandaloneFunctionHasInstanceRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.ElementAccessExpression,
+): ValType | undefined {
+  if (!ctx.standalone || fctx.localMap.has("Symbol")) return undefined;
+  if (resolveComputedKeyExpression(ctx, expr.argumentExpression) !== FUNCTION_PROTO_HAS_INSTANCE_MEMBER) {
+    return undefined;
+  }
+
+  const receiver = skipTransparentExpressions(expr.expression);
+  const fact = ctx.oracle.typeFactOf(receiver);
+  const directFunctionProto =
+    ts.isPropertyAccessExpression(receiver) &&
+    receiver.name.text === "prototype" &&
+    ts.isIdentifier(receiver.expression) &&
+    receiver.expression.text === "Function" &&
+    !fctx.localMap.has("Function") &&
+    !(fctx.boxedCaptures?.has("Function") ?? false);
+  if (fact.kind !== "function" && !(fact.kind === "builtin" && fact.name === "Function") && !directFunctionProto) {
+    return undefined;
+  }
+
+  // An own `prototype` write/getter is observable by OrdinaryHasInstance and
+  // must remain on the existing generic path until the native closure edge can
+  // model that own property. The conservative source gate covers both direct
+  // assignments and Object.defineProperty/defineProperties forms while keeping
+  // the common ordinary-function path native.
+  const sourceText = expr.getSourceFile().text;
+  if (
+    sourceText.includes("prototype") &&
+    (sourceText.includes("defineProperty") || /\.prototype\s*=/.test(sourceText))
+  ) {
+    return undefined;
+  }
+
+  // `__closure_proto_of` is filled from the compile-time fnctor/prototype
+  // registry. A method-only read does not otherwise touch `F.prototype`, so
+  // reserve the edge without evaluating or initializing the prototype.
+  ensureFunctionProtoEdge(ctx, fctx, receiver);
+
+  // Evaluate the receiver in source order even though the inherited method
+  // value is identity-stable and independent of the particular function.
+  const receiverType = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
+  if (!receiverType) return undefined;
+  if (receiverType.kind !== "externref") coerceType(ctx, fctx, receiverType, { kind: "externref" });
+  fctx.body.push({ op: "drop" });
+
+  const brand = ensureFunctionNativeProtoGlue(ctx);
+  if (brand === undefined) return undefined;
+  const closure = ensureStandaloneNativeMethodClosure(ctx, brand, FUNCTION_PROTO_HAS_INSTANCE_MEMBER, "method", {
+    refusalBodyFallback: true,
+  });
+  if (!closure) return undefined;
+  fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure));
+  fctx.body.push({ op: "extern.convert_any" });
+  return { kind: "externref" };
+}
 import { tryBuiltinPrototypeGetterBrandThrow } from "./builtin-prototype-brand.js";
 import { tryCompileFunctionPoisonRead } from "./function-poison-pill-access.js";
 import { isFnctorLayoutStructName } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
 import { tryEmitPrimitiveAbsentPropertyRead } from "./primitive-absent-property.js"; // (#4483) absent prop of a number/boolean primitive → undefined
 import { tryEmitPrimitiveProtoMemberGet } from "./primitive-proto-member-get.js"; // (#4668) PRESENT prop of a number/boolean primitive → chain walk
+import { ensureFunctionProtoEdge, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
 import {
   finalizeStructAndDynamicMemberGet,
   PA_FALLTHROUGH,
@@ -4461,6 +4528,9 @@ export function compileElementAccess(
 
   const jsonParseElementType = tryEmitJsonParseElementAccess(ctx, fctx, expr);
   if (jsonParseElementType !== undefined) return jsonParseElementType;
+
+  const functionHasInstanceRead = tryCompileStandaloneFunctionHasInstanceRead(ctx, fctx, expr);
+  if (functionHasInstanceRead !== undefined) return functionHasInstanceRead;
 
   // #1886 Slice B: linear-backed Uint8Array read `buf[i]` → i32.load8_u(ptr+i).
   // Only fires when `buf` is a registered linear-safe buffer in this function;
