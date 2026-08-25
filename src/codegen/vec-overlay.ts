@@ -78,7 +78,7 @@ import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-k
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecBaseType } from "./registry/types.js";
+import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
 import { ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { reserveAccessorGetDriver } from "./accessor-driver.js";
@@ -107,6 +107,12 @@ import {
   buildArgumentsLengthDeletedBail,
   fillArgumentsLengthBrand,
 } from "./arguments-length-brand.js"; // (#4658)
+import {
+  allowedCarriers,
+  carrierDefaultInstrs,
+  carrierRefWriteBack,
+  type OverlayCarrier,
+} from "./vec-overlay-carriers.js";
 
 /**
  * `$PropEntry.$flags` bit claimed by the overlay (see the flag table in
@@ -215,58 +221,6 @@ export function reserveVecOverlayHelpers(ctx: CodegenContext): VecOverlayReserve
   // driver — reserve it now (idempotent) so its funcIdx is stable.
   reserveAccessorGetDriver(ctx);
   return { dpValueIdx, dpAccessorIdx, gopdIdx };
-}
-
-/** JS-array element carriers the overlay serves (TypedArray storage + subviews
- *  keep the legacy no-op — integer-indexed-exotic semantics are out of scope). */
-interface OverlayCarrier {
-  vecTypeIdx: number;
-  arrTypeIdx: number;
-  elemType: ValType;
-  kind: "f64" | "externref" | "anystr";
-}
-
-function allowedCarriers(ctx: CodegenContext): OverlayCarrier[] {
-  const seen = new Set<number>();
-  const out: OverlayCarrier[] = [];
-  const addCarrier = (vecTypeIdx: number): void => {
-    if (seen.has(vecTypeIdx)) return;
-    seen.add(vecTypeIdx);
-    const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
-    if (arrTypeIdx < 0) return;
-    const arrDef = ctx.mod.types[arrTypeIdx];
-    if (!arrDef || arrDef.kind !== "array") return;
-    const elemType = arrDef.element as ValType;
-    if (elemType.kind === "f64") {
-      out.push({ vecTypeIdx, arrTypeIdx, elemType, kind: "f64" });
-    } else if (elemType.kind === "externref") {
-      out.push({ vecTypeIdx, arrTypeIdx, elemType, kind: "externref" });
-    } else if (elemType.kind === "ref" || elemType.kind === "ref_null") {
-      const ti = (elemType as { typeIdx: number }).typeIdx;
-      if (ti >= 0 && (ti === ctx.anyStrTypeIdx || ti === ctx.nativeStrTypeIdx)) {
-        out.push({ vecTypeIdx, arrTypeIdx, elemType, kind: "anystr" });
-      }
-    }
-  };
-  for (const vecTypeIdx of ctx.vecTypeMap.values()) {
-    addCarrier(vecTypeIdx);
-  }
-  // `$ObjVec` is the growable externref-array carrier used by Object
-  // enumeration and RegExp `d`-flag indices. It deliberately lives outside
-  // `vecTypeMap`, but is still a genuine Array and therefore participates in
-  // the same dense-index and named-property descriptor overlay.
-  const objVec = ctx.objectRuntimeTypes;
-  if (objVec) addCarrier(objVec.objVecTypeIdx);
-  // RegExp exec results are an extended native-string vec subtype rather than
-  // a direct `vecTypeMap` entry. Include that exact exotic so its spec own
-  // properties (`index`, `input`, `groups`, `indices`) can be materialised in
-  // the overlay without broadening the carrier whitelist to arbitrary structs.
-  const regexpMatchVecTypeIdx = ctx.structMap.get("__regexp_match_vec");
-  if (regexpMatchVecTypeIdx !== undefined) {
-    addCarrier(regexpMatchVecTypeIdx);
-  }
-  out.sort((a, b) => a.vecTypeIdx - b.vecTypeIdx);
-  return out;
 }
 
 /** Overlay-core state minted by the fill (types, global, lookup/ensure). */
@@ -939,19 +893,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
     for (const c of carriers) {
       const elemSetIdx = ensureVecElemSet(ctx, c.vecTypeIdx);
       if (elemSetIdx === null) continue;
-      const defaultVal: Instr[] =
-        c.kind === "f64"
-          ? [{ op: "f64.const", value: 0 }]
-          : c.kind === "externref"
-            ? // (#4491) A DATA define with no [[Value]] gives the property
-              // `undefined` (CompletePropertyDescriptor), not the carrier's
-              // null hole — `arr[0]` must read `undefined`. Opt-in, so the
-              // accessor arm (whose slot is dead, the getter answers) and the
-              // ArraySetLength growth keep the null default.
-              externAsUndefined
-              ? missExtern()
-              : [{ op: "ref.null.extern" }]
-            : [{ op: "ref.null", typeIdx: NONE_HEAP }];
+      const defaultVal = carrierDefaultInstrs(ctx, c, externAsUndefined, missExtern);
       arms.push(
         { op: "local.get", index: anyLocal },
         { op: "ref.test", typeIdx: c.vecTypeIdx },
@@ -1472,22 +1414,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
           }
           inner = arms;
         } else {
-          // anystr carrier: value must be an $AnyString.
-          inner = [
-            { op: "local.get", index: 12 },
-            { op: "ref.test", typeIdx: anyStrTypeIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                ...castVecAndIdx,
-                { op: "local.get", index: 12 },
-                { op: "ref.cast", typeIdx: anyStrTypeIdx },
-                { op: "call", funcIdx: elemSetIdx },
-                ...wrote,
-              ],
-            },
-          ];
+          inner = carrierRefWriteBack(c, castVecAndIdx, wrote, elemSetIdx, anyStrTypeIdx);
         }
         writeBackArms.push(
           { op: "local.get", index: 4 },

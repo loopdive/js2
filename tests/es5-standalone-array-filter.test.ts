@@ -101,6 +101,49 @@ describe("§15.4.4.20 filter — HasProperty is re-evaluated per index", () => {
 });
 
 describe("§15.4.4.20 filter — accessor indices installed by defineProperty", () => {
+  it("keeps the captured result length after an accessor shrinks a heterogeneous array", async () => {
+    // The accessor fires while filter is visiting index 0. The captured len is
+    // four, but ArraySetLength leaves indices 0..2 present, so only three
+    // values may be copied into the result.
+    expect(
+      await run(
+        `const arr = [0, 1, 2, "last"];
+        Object.defineProperty(arr, "0", { get: function (): number { arr.length = 3; return 0; }, configurable: true });
+        export function test(): number {
+          return arr.filter(function (): boolean { return true; }).length;
+        }`,
+        "standalone",
+      ),
+    ).toBe(3);
+  });
+
+  it("does not truncate a non-configurable accessor during filter", async () => {
+    // The getter at index 1 requests a shrink to two, but index 2 is
+    // non-configurable. ArraySetLength must stop at three and filter must keep
+    // the captured index 2 in its result.
+    expect(
+      await run(
+        `const arr = [0, 1, 2];
+        Object.defineProperty(arr, "2", { get: function (): string { return "unconfigurable"; }, configurable: false });
+        Object.defineProperty(arr, "1", {
+          get: function (): number {
+            // The test source is an ES module, so catch strict-mode's
+            // TypeError here; the noStrict Test262 variant suppresses it.
+            try {
+              arr.length = 2;
+            } catch (_) {}
+            return 1;
+          },
+          configurable: true,
+        });
+        export function test(): number {
+          return arr.filter(function (): boolean { return true; }).length;
+        }`,
+        "standalone",
+      ),
+    ).toBe(3);
+  });
+
   it("invokes an own accessor over an existing element (standalone overlay route)", async () => {
     expect(
       await run(
