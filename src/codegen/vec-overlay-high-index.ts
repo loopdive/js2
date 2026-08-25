@@ -63,9 +63,15 @@ export function growHighArrayIndexLength(
   keyNumLocal: number,
   highArrayIndexLocal: number,
   vecBaseIdx: number,
+  descriptorFlagsLocal: number,
+  ordinarySetFlags: number,
 ): Instr[] {
   return [
     { op: "local.get", index: highArrayIndexLocal },
+    { op: "local.get", index: descriptorFlagsLocal },
+    { op: "f64.const", value: ordinarySetFlags },
+    { op: "f64.ne" },
+    { op: "i32.and" },
     {
       op: "if",
       blockType: { kind: "empty" },
