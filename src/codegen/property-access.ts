@@ -5731,7 +5731,7 @@ export function compileElementAccessBody(
       elementAccessTypedArrayName(ctx, expr.expression) === undefined &&
       !(ts.isIdentifier(expr.expression) && expr.expression.text === "arguments") &&
       !isRegexMatchVec &&
-      isDynamicPropertyKeyExpression(ctx, expr.argumentExpression)
+      isDynamicPropertyKeyExpression(ctx, expr.argumentExpression, expr.expression)
     ) {
       const dynamic = emitDynamicVecElementGet(ctx, fctx, objType, expr.argumentExpression, (e, h) =>
         compileExpression(ctx, fctx, e, h),

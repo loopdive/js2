@@ -82,7 +82,30 @@ function factNeedsPropertyKeyRuntime(fact: TypeFact): boolean {
  * Constant spellings are classified by the helpers below first; this predicate
  * covers the remaining dynamic values (notably `x[object]` from ES5 T9).
  */
-export function isDynamicPropertyKeyExpression(ctx: CodegenContext, key: ts.Expression): boolean {
+function isOrdinaryArrayReceiver(ctx: CodegenContext, receiver: ts.Expression): boolean {
+  const type = ctx.checker.getTypeAtLocation(receiver);
+  const typeName = type.getSymbol()?.name ?? type.aliasSymbol?.name;
+  if (typeName === "Array" || typeName === "ReadonlyArray") return true;
+  const inner = skipTransparentExpressions(receiver);
+  if (ts.isArrayLiteralExpression(inner)) return true;
+  if (ts.isNewExpression(inner) && ts.isIdentifier(inner.expression) && inner.expression.text === "Array") return true;
+  if (!ts.isIdentifier(inner)) return false;
+  const declaration = ctx.oracle.valueDeclarationOf(inner);
+  if (!declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
+  const initializer = skipTransparentExpressions(declaration.initializer);
+  return (
+    ts.isArrayLiteralExpression(initializer) ||
+    (ts.isNewExpression(initializer) &&
+      ts.isIdentifier(initializer.expression) &&
+      initializer.expression.text === "Array")
+  );
+}
+
+export function isDynamicPropertyKeyExpression(
+  ctx: CodegenContext,
+  key: ts.Expression,
+  receiver?: ts.Expression,
+): boolean {
   const keyFact = ctx.oracle.typeFactOf(key);
   if (factNeedsPropertyKeyRuntime(keyFact)) return true;
   const inner = skipTransparentExpressions(key);
@@ -93,7 +116,12 @@ export function isDynamicPropertyKeyExpression(ctx: CodegenContext, key: ts.Expr
   // Constant numeric expressions and simple variable indices stay on their
   // existing dense path.
   if (keyFact.kind === "number") {
-    return ts.isBinaryExpression(inner) && typeof resolveConstantExpression(ctx, inner) !== "number";
+    return (
+      receiver !== undefined &&
+      isOrdinaryArrayReceiver(ctx, receiver) &&
+      ts.isBinaryExpression(inner) &&
+      typeof resolveConstantExpression(ctx, inner) !== "number"
+    );
   }
   // A literal ordinary name (for example `"[object Object]"`) is also a
   // property key, not a numeric index. Numeric spellings and the historical
