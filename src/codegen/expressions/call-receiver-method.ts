@@ -149,6 +149,7 @@ import {
 } from "./standalone-primitive-tail.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { tryCompileStandaloneErrorPrototypeToString } from "./error-prototype-tostring.js";
+import { resolveObjectToStringTag } from "../object-proto-tostring.js";
 import {
   directObjectMethodFuncIdx,
   emitKnownRestMethodArguments,
@@ -3247,6 +3248,28 @@ export function compileReceiverMethodCall(
 
   const errorPrototypeToString = tryCompileStandaloneErrorPrototypeToString(ctx, fctx, expr, propAccess);
   if (errorPrototypeToString !== undefined) return errorPrototypeToString;
+
+  // `Array` is a Function-valued builtin constructor.  When source transfers
+  // `Object.prototype.toString` onto `Function.prototype.toString`, the
+  // inherited call must use Object's brand classifier (`[object Function]`),
+  // not the captured callable-source fast path below.  This is deliberately
+  // an exact transferred-intrinsic proof; arbitrary user functions stay on
+  // their existing dynamic/refusal path.
+  if (
+    ctx.standalone &&
+    propAccess.name.text === "toString" &&
+    expr.arguments.length === 0 &&
+    resolveBuiltinNamespaceValueName(ctx, propAccess.expression) === "Array" &&
+    sourceOverridesBuiltinPrototypeMember(ctx, expr, "Function", "toString", "Object", "toString")
+  ) {
+    const tag = resolveObjectToStringTag(ctx, propAccess.expression);
+    if (tag !== undefined) {
+      const result = `[object ${tag}]`;
+      addStringConstantGlobal(ctx, result);
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, result));
+      return { kind: "externref" };
+    }
+  }
 
   if (
     propAccess.name.text === "toString" &&

@@ -84,6 +84,10 @@ import { compileStringLiteral } from "./string-ops.js";
 import { tryCompileCoercedStringMatch, tryCompileCoercedStringSearch } from "./string-search-value.js";
 import { isPlainToStringReplacement } from "./string-proto-replace.js";
 import { tryCompileStandaloneRegExpFunctionReplace } from "./regex-replace-fn.js";
+import {
+  resolveAssignedTransferredProtoMember,
+  tryEmitTransferredObjectToStringCall,
+} from "./expressions/transferred-proto-assignment.js";
 import { nativeStringRepr } from "./builtin-scaffold.js";
 import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -4693,6 +4697,24 @@ export function tryCompileStandaloneRegExpToString(
 ): ValType | null | undefined {
   if (!usesNativeRegExpProvider(ctx) || propAccess.name.text !== "toString" || expr.arguments.length !== 0) {
     return undefined;
+  }
+
+  // `new RegExp; re.toString = Object.prototype.toString; re.toString()` is
+  // the assignment spelling of the genericity idiom.  The native carrier has
+  // no open property bag, so send this one statically-provable transferred
+  // intrinsic through the already-correct Object.prototype classifier before
+  // the intrinsic `/source/flags` renderer claims the call.
+  if (ts.isIdentifier(propAccess.expression)) {
+    const transferred = resolveAssignedTransferredProtoMember(
+      propAccess.expression.getSourceFile(),
+      propAccess.expression.text,
+      "toString",
+      expr.getStart(),
+    );
+    if (transferred !== undefined) {
+      const result = tryEmitTransferredObjectToStringCall(ctx, fctx, expr, propAccess.expression, transferred);
+      if (result !== undefined) return result;
+    }
   }
   return emitStandaloneRegExpToStringFromExpr(ctx, fctx, propAccess.expression);
 }

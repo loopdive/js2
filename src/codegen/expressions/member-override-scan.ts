@@ -104,7 +104,10 @@ export function sourceHasMethodOverride(ctx: CodegenContext, anchor: ts.Node, me
  * precise than the historical whole-file reassignment scan: the Test262
  * harness commonly assigns `Test262Error.prototype.toString`, which must not
  * disable an unrelated Number/Boolean prototype fast path, while a direct
- * `Number.prototype.toString = …` write must.
+ * `Number.prototype.toString = …` write must.  When the optional final pair
+ * is supplied, the write must also transfer that exact builtin intrinsic and
+ * precede `anchor`; this is used for the one carrier whose static callable
+ * arm otherwise hides `Object.prototype.toString`.
  */
 const _builtinPrototypeOverrideCache = new WeakMap<ts.SourceFile, Map<string, boolean>>();
 export function sourceOverridesBuiltinPrototypeMember(
@@ -112,10 +115,14 @@ export function sourceOverridesBuiltinPrototypeMember(
   anchor: ts.Node,
   builtinName: string,
   methodName: string,
+  valueBuiltinName?: string,
+  valueMethodName?: string,
 ): boolean {
   const sf = anchor.getSourceFile();
   if (!sf) return false;
-  const key = `${builtinName}.prototype.${methodName}`;
+  if ((valueBuiltinName === undefined) !== (valueMethodName === undefined)) return false;
+  const exactTransfer = valueBuiltinName !== undefined;
+  const key = `${builtinName}.prototype.${methodName}${exactTransfer ? `=${valueBuiltinName}.prototype.${valueMethodName}` : ""}`;
   let perFile = _builtinPrototypeOverrideCache.get(sf);
   if (perFile === undefined) {
     perFile = new Map<string, boolean>();
@@ -128,14 +135,15 @@ export function sourceOverridesBuiltinPrototypeMember(
     const declaration = ctx.oracle.valueDeclarationOf(id);
     return declaration === undefined || declaration.getSourceFile().isDeclarationFile;
   };
-  const isTarget = (node: ts.Expression): boolean =>
+  const isBuiltinPrototypeMember = (node: ts.Node, name: string, member: string): boolean =>
     ts.isPropertyAccessExpression(node) &&
-    node.name.text === methodName &&
+    node.name.text === member &&
     ts.isPropertyAccessExpression(node.expression) &&
     node.expression.name.text === "prototype" &&
     ts.isIdentifier(node.expression.expression) &&
-    node.expression.expression.text === builtinName &&
+    node.expression.expression.text === name &&
     isAmbientBuiltin(node.expression.expression);
+  const isTarget = (node: ts.Node): boolean => isBuiltinPrototypeMember(node, builtinName, methodName);
 
   let found = false;
   const visit = (node: ts.Node): void => {
@@ -143,13 +151,15 @@ export function sourceOverridesBuiltinPrototypeMember(
     if (
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isPropertyAccessExpression(node.left) &&
-      isTarget(node.left)
+      isTarget(node.left) &&
+      (!exactTransfer ||
+        (node.getStart() < anchor.getStart() &&
+          isBuiltinPrototypeMember(node.right, valueBuiltinName!, valueMethodName!)))
     ) {
       found = true;
       return;
     }
-    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+    if (!exactTransfer && ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
       const callee = node.expression;
       if (
         callee.name.text === "defineProperty" &&

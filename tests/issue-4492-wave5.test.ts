@@ -156,6 +156,28 @@ describe("#4492 wave-5 — ToString of a CALLABLE (§20.2.3.5, never Object.prot
   // a test of it.
 });
 
+describe("#4492 residual — builtin carriers observe transferred toString", () => {
+  it("Array constructor uses Object.prototype.toString after Function prototype transfer", async () => {
+    expect(
+      await runStandalone(
+        `${loopBuilt("want", "[object Function]")}` +
+          ` Function.prototype.toString = Object.prototype.toString;` +
+          ` var got = Array.toString(); return got === want ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+
+  it("a RegExp own toString transfer observes the RegExp brand", async () => {
+    expect(
+      await runStandalone(
+        `${loopBuilt("want", "[object RegExp]")}` +
+          ` var re = new RegExp(); re.toString = Object.prototype.toString;` +
+          ` var got = re.toString(); return got === want ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+});
+
 describe("#4492 wave-5 — a PROTOTYPE-installed toString reaches the runtime ToPrimitive walk", () => {
   it("`Function.prototype.toString = …` is honoured through the EXTERNREF dispatcher too", async () => {
     // The `__extern_toString` twin of the `String(f)` override pin above: inside
