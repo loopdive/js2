@@ -7,6 +7,8 @@ updated: 2026-08-25
 completed: 2026-08-25
 loc-budget-allow:
   - src/codegen/map-runtime.ts
+oracle-ratchet-allow:
+  - src/codegen/map-runtime.ts
 priority: medium
 feasibility: medium
 reasoning_effort: high
