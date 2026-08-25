@@ -1743,7 +1743,7 @@ function compileForOfArrayFromLocal(
   compileForOfArray(ctx, fctx, stmt, undefined, { vecLocal, vecType });
 }
 
-/** #4700 — outer descriptors shadowed by a simple lexical for-of head. */
+/** Saved surrounding descriptors for a lexical for-of head. */
 interface ForOfHeadSaved {
   name: string;
   localMap: number | undefined;
@@ -1753,7 +1753,24 @@ interface ForOfHeadSaved {
   isConst: boolean;
 }
 
-/** Restore the binding descriptors that surround a bounded lexical for-of. */
+function saveForOfHeads(fctx: FunctionContext, stmt: ts.ForOfStatement): ForOfHeadSaved[] {
+  if (!ts.isVariableDeclarationList(stmt.initializer)) return [];
+  if (!(stmt.initializer.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const))) return [];
+  const names = new Set<string>();
+  for (const decl of stmt.initializer.declarations) {
+    for (const name of collectPatternBindingNames(decl.name)) names.add(name);
+  }
+  return [...names].map((name) => ({
+    name,
+    localMap: fctx.localMap.get(name),
+    tdz: fctx.tdzFlagLocals?.get(name),
+    boxed: fctx.boxedCaptures?.get(name),
+    boxedTdz: fctx.boxedTdzFlags?.get(name),
+    isConst: fctx.constBindings?.has(name) ?? false,
+  }));
+}
+
+/** Restore descriptors shadowed by the loop head after its body is lowered. */
 function restoreForOfHead(fctx: FunctionContext, saved: ForOfHeadSaved): void {
   fctx.localMap.delete(saved.name);
   fctx.tdzFlagLocals?.delete(saved.name);
@@ -1820,7 +1837,7 @@ function compileForOfArray(
     ts.isIdentifier(headDecl.name) &&
     !!(stmt.initializer.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
   const headName = isLexicalIdentifierHead ? (headDecl!.name as ts.Identifier).text : undefined;
-  const savedHead: ForOfHeadSaved | undefined =
+  const savedReceiverHead: ForOfHeadSaved | undefined =
     headName === undefined
       ? undefined
       : {
@@ -1857,7 +1874,7 @@ function compileForOfArray(
   const vecType = preVec ? preVec.vecType : compileExpression(ctx, fctx, iterableOverride ?? stmt.expression);
   if (preserveUndefElem) (ctx as any)._forOfPreserveUndefElem = prevPreserveUndefElem;
   if (!vecType || (vecType.kind !== "ref" && vecType.kind !== "ref_null")) {
-    if (savedHead) restoreForOfHead(fctx, savedHead);
+    if (savedReceiverHead) restoreForOfHead(fctx, savedReceiverHead);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array expression");
     return;
@@ -1867,7 +1884,7 @@ function compileForOfArray(
   const vecTypeIdx = vecType.typeIdx;
   const vecDef = ctx.mod.types[vecTypeIdx];
   if (!vecDef || vecDef.kind !== "struct") {
-    if (savedHead) restoreForOfHead(fctx, savedHead);
+    if (savedReceiverHead) restoreForOfHead(fctx, savedReceiverHead);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
@@ -1876,7 +1893,7 @@ function compileForOfArray(
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   const arrDef = ctx.mod.types[arrTypeIdx];
   if (!arrDef || arrDef.kind !== "array") {
-    if (savedHead) restoreForOfHead(fctx, savedHead);
+    if (savedReceiverHead) restoreForOfHead(fctx, savedReceiverHead);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
@@ -1885,7 +1902,12 @@ function compileForOfArray(
   // loop's per-iteration binding is installed. The emitted receiver reads
   // retain the temporary locals/flag; only the compiler's active descriptors
   // are restored here.
-  if (savedHead) restoreForOfHead(fctx, savedHead);
+  if (savedReceiverHead) restoreForOfHead(fctx, savedReceiverHead);
+
+  // A lexical ForDeclaration shadows every surrounding descriptor while the
+  // loop is lowered. Save the outer view before binding the first iteration so
+  // body/default closures cannot leave the final head value active afterward.
+  const savedLoopHeads = saveForOfHeads(fctx, stmt);
   const elemType = arrDef.element;
   // (#2934 1b) Packed i8/i16 typed-array elements (Uint8Array/Int8Array/
   // Int16Array/… standalone, #2593) are STORAGE-only types: a local declared
@@ -2166,7 +2188,7 @@ function compileForOfArray(
   }
   // #4700 — lexical head bindings end with the loop and must not leak into
   // later code in the surrounding function.
-  if (savedHead) restoreForOfHead(fctx, savedHead);
+  for (const saved of savedLoopHeads) restoreForOfHead(fctx, saved);
 }
 
 /**
