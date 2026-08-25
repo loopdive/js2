@@ -223,6 +223,20 @@ describe("#4638 concat absent-tail", () => {
     `);
   });
 
+  // The same marker must survive more than one spread operand: both source
+  // holes count toward the result length while their reads remain undefined.
+  // test262: built-ins/Array/prototype/concat/S15.4.4.4_A1_T4.js.
+  it("preserves holes across multiple concat operands", async () => {
+    await runScript(`
+      var x = [, 1];
+      var b = x.concat([], [, ]);
+      if (b.length !== 3) { throw new Error("length"); }
+      if (b[0] !== undefined) { throw new Error("b[0]"); }
+      if (b[1] !== 1) { throw new Error("b[1]"); }
+      if (b[2] !== undefined) { throw new Error("b[2]"); }
+    `);
+  });
+
   it("leaves a dense concat unchanged", async () => {
     expect(
       await runModule(`
