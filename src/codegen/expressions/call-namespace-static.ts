@@ -819,6 +819,16 @@ export function compileNamespaceStaticCall(
           fctx.body.push({ op: "i32.const", value: 0 });
           return { kind: "i32" };
         }
+        // §26.1.13 step 1: Reflect.set requires an Object target. The native
+        // standalone helper implements the supported [[Set]] subset but its
+        // non-$Object refusal is not the Reflect TypeError, so validate the
+        // statically primitive target at the call site (including Symbol via
+        // the shared #4945 ESSymbolLike guard) before emitting native args.
+        const targetArg = expr.arguments[0]!;
+        if (emitNonObjectArgGuard(ctx, fctx, targetArg, "Reflect.set")) {
+          fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
+          return { kind: "i32" };
+        }
         emitReflectArgs(3);
         const funcIdx = ensureLateImport(ctx, "__reflect_set", [externRef, externRef, externRef], [i32Ty]);
         flushLateImportShifts(ctx, fctx);
