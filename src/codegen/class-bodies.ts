@@ -40,7 +40,7 @@ import {
   isNullOrUndefinedLiteral,
   structHintForBindingPattern,
 } from "./destructuring-params.js";
-import { emitThrowReferenceError, getFuncParamTypes } from "./expressions/helpers.js";
+import { emitThrowReferenceError, emitThrowTypeError, getFuncParamTypes } from "./expressions/helpers.js";
 import { pushDefaultValue } from "./type-coercion.js";
 import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import {
@@ -2283,15 +2283,39 @@ function compileClassBodiesInner(
     const ctorMissingSuper = isDerivedClass && ctor?.body !== undefined && !constructorBodyHasSuperCall(ctor.body);
 
     if (ctorMissingSuper) {
-      // (#1682) Throw a real ReferenceError instance (not a bare string) so
-      // `e instanceof ReferenceError` holds for the caller. emitThrowReferenceError
-      // constructs via __new_ReferenceError and degrades to a string throw only
-      // when the constructor import is unavailable.
-      emitThrowReferenceError(
-        ctx,
-        fctx,
-        "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
-      );
+      // A derived constructor that returns a primitive before calling
+      // `super()` still reaches [[Construct]]'s return-value check.  The
+      // missing-`super` ReferenceError is correct when the body falls through
+      // (or returns undefined), but a primitive return is the specified
+      // TypeError instead.  Keep this deliberately narrow: a single return
+      // statement with a checker-proven primitive can be diagnosed without
+      // replaying the whole constructor body, while all other missing-super
+      // bodies retain the established ReferenceError path. (#4450)
+      const onlyStatement = ctor?.body?.statements.length === 1 ? ctor.body.statements[0] : undefined;
+      if (
+        onlyStatement &&
+        ts.isReturnStatement(onlyStatement) &&
+        onlyStatement.expression &&
+        (ctx.checker.getTypeAtLocation(onlyStatement.expression).flags &
+          (ts.TypeFlags.NumberLike |
+            ts.TypeFlags.BooleanLike |
+            ts.TypeFlags.BigIntLike |
+            ts.TypeFlags.StringLike |
+            ts.TypeFlags.ESSymbolLike)) !==
+          0
+      ) {
+        emitThrowTypeError(ctx, fctx, "Derived constructors may only return an object or undefined");
+      } else {
+        // (#1682) Throw a real ReferenceError instance (not a bare string) so
+        // `e instanceof ReferenceError` holds for the caller. emitThrowReferenceError
+        // constructs via __new_ReferenceError and degrades to a string throw only
+        // when the constructor import is unavailable.
+        emitThrowReferenceError(
+          ctx,
+          fctx,
+          "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
+        );
+      }
     } else if (ctor?.body) {
       // (#2641) Hoist var + let/const declarations BEFORE the body loop, just
       // like free functions (function-body.ts). Without this, a constructor-local
