@@ -4,6 +4,7 @@
 // declaration driver so the god-file remains within its LOC budget.
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { getArgumentsVecTypeIdx } from "./arguments-carrier-brand.js";
 import { allocLocal } from "./context/locals.js";
 
 interface ArgumentsVecTailOptions {
@@ -101,7 +102,9 @@ export function emitArgumentsVecTail(
         { op: "local.get", index: argcLocal },
         { op: "local.get", index: extrasLocal },
         { op: "ref.as_non_null" },
-        { op: "struct.get", typeIdx: vti, fieldIdx: 1 },
+        // `extrasLocal` is the canonical protocol vec even when `vti` is the
+        // nominal arguments subtype being constructed.
+        { op: "struct.get", typeIdx: ctx.extrasArgvVecTypeIdx, fieldIdx: 1 },
         { op: "i32.const", value: 0 },
         { op: "local.get", index: extrasLenLocal },
         { op: "array.copy", dstTypeIdx: ati, srcTypeIdx: ati },
@@ -114,6 +117,15 @@ export function emitArgumentsVecTail(
   );
 
   if (numArgs !== 0) {
+    fctx.body.push(...buildArgsBody);
+    return;
+  }
+
+  // The extras global is the canonical parent vec. A nominal arguments child
+  // cannot alias that value into its more-specific local, so always build the
+  // child for zero-formal arguments objects as well. This preserves the brand
+  // that IsArray must reject while retaining the same indexed contents.
+  if (vti === getArgumentsVecTypeIdx(ctx)) {
     fctx.body.push(...buildArgsBody);
     return;
   }

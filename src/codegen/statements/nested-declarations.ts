@@ -3174,9 +3174,10 @@ export function emitArgumentsVecBody(
     flushLateImportShifts(ctx, fctx);
   }
 
-  const { globalIdx: extrasGlobalIdx } = ensureExtrasArgvGlobal(ctx);
+  const { globalIdx: extrasGlobalIdx, vecTypeIdx: extrasVecTypeIdx } = ensureExtrasArgvGlobal(ctx);
   const argcGlobalIdx = ensureArgcGlobal(ctx);
-  const extrasVecType: ValType = { kind: "ref_null", typeIdx: vti };
+  // Keep extras at the canonical parent type; materialize the branded child below.
+  const extrasVecType: ValType = { kind: "ref_null", typeIdx: extrasVecTypeIdx };
   const extrasLocal = allocLocal(fctx, "__extras_argv_local", extrasVecType);
   const extrasLenLocal = allocLocal(fctx, "__extras_len", { kind: "i32" });
   const totalLenLocal = allocLocal(fctx, "__args_total_len", { kind: "i32" });
@@ -3212,7 +3213,7 @@ export function emitArgumentsVecBody(
   // don't see stale data.
   fctx.body.push({ op: "global.get", index: extrasGlobalIdx });
   fctx.body.push({ op: "local.set", index: extrasLocal });
-  fctx.body.push({ op: "ref.null", typeIdx: vti });
+  fctx.body.push({ op: "ref.null", typeIdx: extrasVecTypeIdx });
   fctx.body.push({ op: "global.set", index: extrasGlobalIdx });
 
   // extrasLen = extrasLocal != null ? extrasLocal.length : 0
@@ -3225,7 +3226,7 @@ export function emitArgumentsVecBody(
     else: [
       { op: "local.get", index: extrasLocal },
       { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: vti, fieldIdx: 0 },
+      { op: "struct.get", typeIdx: extrasVecTypeIdx, fieldIdx: 0 },
     ],
   });
   fctx.body.push({ op: "local.set", index: extrasLenLocal });
@@ -3287,8 +3288,7 @@ export function emitArgumentsObject(
   unmapped = false,
 ): void {
   const numArgs = paramTypes.length;
-  const elemType: ValType = { kind: "externref" };
-  const vti = getOrRegisterVecType(ctx, "externref", elemType);
+  const vti = getOrRegisterVecType(ctx, "arguments");
   const ati = getArrTypeIdxFromVec(ctx, vti);
   const vecRef: ValType = { kind: "ref", typeIdx: vti };
   const argsLocal = allocLocal(fctx, "arguments", vecRef);
