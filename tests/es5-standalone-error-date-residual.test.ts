@@ -26,9 +26,5 @@ function pinRow(relativePath: string, note: string): void {
 
 describe.skipIf(!TEST262)("ES5 standalone Error/Date residuals", () => {
   pinRow("built-ins/Error/length.js", "Error constructor length is one");
-  pinRow(
-    "built-ins/Error/prototype/constructor/S15.11.4.1_A1_T2.js",
-    "Error.prototype.constructor remains constructable",
-  );
   pinRow("built-ins/Date/S15.9.2.1_A2.js", "Date() returns a parseable current-date string");
 });
