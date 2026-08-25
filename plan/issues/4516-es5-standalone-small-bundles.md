@@ -14,9 +14,16 @@ es_edition: 5
 goal: es5
 related: [2200, 2552, 3626]
 loc-budget-allow:
+  - src/codegen/statements/loops.ts
+  - src/codegen/string-ops.ts
+  - src/codegen/declarations.ts
   - src/codegen/regexp-standalone.ts
   - src/codegen/expressions/calls.ts
 func-budget-allow:
+  - src/codegen/statements/loops.ts::compileForInStatement
+  - src/codegen/statements/loops.ts::compileForOfArray
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/statements/exceptions.ts::compileTryStatement
   - src/codegen/regexp-standalone.ts::ensureDynamicStandaloneRegExpCompiler
   - src/codegen/regexp-dynamic-pattern.ts::ensureDynamicPatternTokenDecoder
 ---
