@@ -45,6 +45,7 @@ interface PreparedCallableProviderDenominatorEntry {
 
 interface PreparedCallableProviderSessionSnapshot {
   readonly draft: ProgramAbiDraft | undefined;
+  readonly structuralOrderOwner: IrBindingId | undefined;
   readonly structuralReferenceBindingIds: readonly IrBindingId[];
   readonly locatorOwner: IrBindingId | undefined;
   readonly hasExactLocator: boolean;
@@ -195,6 +196,26 @@ function exactBindingIdsEqual(left: readonly IrBindingId[], right: readonly IrBi
 
 function exactStringsEqual(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function draftStructuralOrderOwner(session: ProgramAbiSession, draft: ProgramAbiDraft): IrBindingId | undefined {
+  const sourceOrder = session.inventory.sources.find(({ id }) => id === draft.structuralOrder.sourceId)?.order;
+  if (sourceOrder === undefined) {
+    throw new ProgramAbiInvariantError(
+      "unknown-draft-source",
+      `ABI draft ${draft.id} references source ${draft.structuralOrder.sourceId} outside this inventory`,
+    );
+  }
+  const order = draft.structuralOrder;
+  const key = [
+    sourceOrder,
+    order.declarationOrdinal,
+    order.domainOrdinal,
+    order.roleOrdinal,
+    order.derivedOrdinal,
+  ].join(":");
+  const state = session as unknown as { readonly draftOrderOwners: ReadonlyMap<string, IrBindingId> };
+  return state.draftOrderOwners.get(key);
 }
 
 /**
@@ -695,6 +716,7 @@ export class ProgramAbiCallableProviderRegistry {
         }
         const session = Object.freeze({
           draft: this.session.getDraft(bindingId),
+          structuralOrderOwner: draftStructuralOrderOwner(this.session, draft),
           structuralReferenceBindingIds: Object.freeze([
             ...this.session.bindingIdsForStructuralReference(entry.provider.structuralReferenceKey),
           ]),
@@ -708,6 +730,7 @@ export class ProgramAbiCallableProviderRegistry {
             : session.locatorOwner === (owner.kind === "batch-provider" ? undefined : owner.id);
         if (
           !callableDraftsEqual(session.draft, planned ? draft : undefined) ||
+          session.structuralOrderOwner !== (planned ? bindingId : undefined) ||
           !exactBindingIdsEqual(session.structuralReferenceBindingIds, expectedIds) ||
           !ownerCurrent ||
           session.hasExactLocator !== (planned !== undefined && ownsLocator)
@@ -776,6 +799,7 @@ export class ProgramAbiCallableProviderRegistry {
       !callableTypeContractsEqual(expected.typeContract, actual.typeContract) ||
       !callableDraftsEqual(expected.draft, actual.draft) ||
       !callableDraftsEqual(expected.session.draft, actual.session.draft) ||
+      expected.session.structuralOrderOwner !== actual.session.structuralOrderOwner ||
       !exactBindingIdsEqual(
         expected.session.structuralReferenceBindingIds,
         actual.session.structuralReferenceBindingIds,

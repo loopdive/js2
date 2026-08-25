@@ -30,9 +30,14 @@ type PreparedImportDescriptor = ReturnType<CallableImportRegistry["describePrepa
 
 function sessionPublicationCardinalities(session: ProgramAbiSession) {
   const state = session as unknown as Record<string, ReadonlyMap<unknown, unknown>>;
-  return ["drafts", "draftOrderOwners", "locators", "structuralReferenceKeys", "callableTypeContracts"].map(
-    (key) => state[key]!.size,
-  );
+  return [
+    "drafts",
+    "draftOrderOwners",
+    "locators",
+    "locatorOwners",
+    "structuralReferenceKeys",
+    "callableTypeContracts",
+  ].map((key) => state[key]!.size);
 }
 
 function importPublicationSnapshot(registry: CallableImportRegistry, session: ProgramAbiSession) {
@@ -90,6 +95,35 @@ function preparedImportFixture(
   const registry = result.ctx.programAbiCallableImports;
   if (!registry) throw new Error("missing callable-import registry");
   return { ...result, module, registry };
+}
+
+function planForeignCallableOrder(
+  session: ProgramAbiSession,
+  roleOrdinal: number,
+  derivedOrdinal: number,
+  label: string,
+) {
+  const entrySource = session.inventory.sources.find(({ kind }) => kind === "entry")!;
+  const id = createIrBindingId({
+    ownerId: entrySource.id,
+    domain: "callable",
+    role: `foreign-${label}`,
+    ordinal: derivedOrdinal,
+  });
+  session.plan({
+    id,
+    structuralOrder: session.structuralOrder.forSource(entrySource.id, {
+      domain: "callable",
+      roleOrdinal,
+      derivedOrdinal,
+    }),
+    structuralReferenceKey: `foreign:${label}`,
+    displayName: label,
+    slotPolicy: "required",
+    slotSpace: "function",
+    intent: { kind: "callable", origin: "runtime", signature: { params: [], results: [] } },
+  });
+  return id;
 }
 
 function structuralKey(module: string, field: string, adapterName = field): string {
@@ -334,6 +368,79 @@ describe("#3520 production imported-callable Program ABI planning", () => {
 
     expect([...explicitCatalog]).toEqual([...compatibilityCatalog]);
     expect(explicitEntries).toEqual(compatibilityEntries);
+  });
+
+  it("authenticates import descriptors and keeps empty compatibility preparation a no-op", () => {
+    const selected = functionImport("env", "selected", 0);
+    const target = preparedImportFixture([selected]);
+    const descriptor = describePreparedImportsWithoutPublishing(target.registry, target.session, new Set([selected]));
+    const forged = Object.freeze({ kind: "prepared-callable-import-descriptor" }) as PreparedImportDescriptor;
+
+    const foreignImport = functionImport("env", "foreign", 0);
+    const foreign = preparedImportFixture([foreignImport]);
+    const foreignDescriptor = describePreparedImportsWithoutPublishing(
+      foreign.registry,
+      foreign.session,
+      new Set([foreignImport]),
+    );
+
+    for (const candidate of [forged, foreignDescriptor]) {
+      expectPreparedImportFailureWithoutPublishing(target.registry, target.session, () =>
+        target.registry.assertPreparedDescriptorCurrent(candidate),
+      );
+      expectPreparedImportFailureWithoutPublishing(target.registry, target.session, () =>
+        target.registry.publishPreparedDescriptor(candidate),
+      );
+    }
+    target.registry.assertPreparedDescriptorCurrent(descriptor);
+
+    const beforeFreshEmpty = importPublicationSnapshot(target.registry, target.session);
+    target.registry.planPrepared(new Set());
+    expect(importPublicationSnapshot(target.registry, target.session)).toEqual(beforeFreshEmpty);
+    expect(beforeFreshEmpty.sealedEntries).toBeNull();
+
+    const retained = preparedImportFixture([functionImport("env", "retained", 0)]);
+    retained.registry.planRetained();
+    const beforeEmpty = importPublicationSnapshot(retained.registry, retained.session);
+    retained.registry.planPrepared(new Set());
+    expect(importPublicationSnapshot(retained.registry, retained.session)).toEqual(beforeEmpty);
+  });
+
+  it("rejects occupied prepared-import order slots without sealing and tolerates unrelated order", () => {
+    {
+      const selected = functionImport("env", "selected", 0);
+      const { registry, session } = preparedImportFixture([selected]);
+      planForeignCallableOrder(session, 4, 0, "before-import-description");
+      expectPreparedImportFailureWithoutPublishing(registry, session, () =>
+        registry.describePrepared(new Set([selected])),
+      );
+    }
+
+    {
+      const selected = functionImport("env", "selected", 0);
+      const { registry, session } = preparedImportFixture([selected]);
+      const descriptor = describePreparedImportsWithoutPublishing(registry, session, new Set([selected]));
+      planForeignCallableOrder(session, 4, 0, "after-import-description");
+      expectPreparedImportFailureWithoutPublishing(registry, session, () =>
+        registry.assertPreparedDescriptorCurrent(descriptor),
+      );
+      expectPreparedImportFailureWithoutPublishing(registry, session, () =>
+        registry.publishPreparedDescriptor(descriptor),
+      );
+    }
+
+    {
+      const selected = functionImport("env", "selected", 0);
+      const { registry, session } = preparedImportFixture([selected]);
+      const descriptor = describePreparedImportsWithoutPublishing(registry, session, new Set([selected]));
+      const foreignId = planForeignCallableOrder(session, 4, 1, "unrelated-import-order");
+      const beforeCurrentness = importPublicationSnapshot(registry, session);
+      registry.assertPreparedDescriptorCurrent(descriptor);
+      expect(importPublicationSnapshot(registry, session)).toEqual(beforeCurrentness);
+      registry.publishPreparedDescriptor(descriptor);
+      expect(session.getDraft(foreignId)?.structuralOrder.derivedOrdinal).toBe(1);
+      expect(session.locatorBindingId(selected)).toBeDefined();
+    }
   });
 
   it("rejects invalid import descriptions and one-fact descriptor drift without publishing", () => {

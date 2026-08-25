@@ -9,9 +9,10 @@ import {
   catalogProgramAbiCallableImports,
   planProgramAbiCallableImports,
 } from "../src/codegen/program-abi-import-planning.js";
+import { PROGRAM_ABI_CALLABLE_ROLE } from "../src/codegen/program-abi-planning.js";
 import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
 import { irCallableBindingKey, irIntrinsicFuncRef, irRuntimeFuncRef } from "../src/ir/callable-bindings.js";
-import { buildIrUnitInventory } from "../src/ir/identity.js";
+import { buildIrUnitInventory, createIrBindingId } from "../src/ir/identity.js";
 import { IR_STRING_COMPARE_FN } from "../src/ir/from-ast.js";
 import { ProgramAbiInvariantError } from "../src/ir/program-abi.js";
 import {
@@ -50,12 +51,18 @@ function fixture(module: WasmModule) {
 type CallableProviderRegistry = ReturnType<typeof fixture>["providers"];
 type PreparedProviderDescriptor = ReturnType<CallableProviderRegistry["describePrepared"]>;
 type CallableImportRegistry = NonNullable<ReturnType<typeof fixture>["ctx"]["programAbiCallableImports"]>;
+type PreparedImportDescriptor = ReturnType<CallableImportRegistry["describePrepared"]>;
 
 function sessionPublicationCardinalities(session: ProgramAbiSession) {
   const state = session as unknown as Record<string, ReadonlyMap<unknown, unknown>>;
-  return ["drafts", "draftOrderOwners", "locators", "structuralReferenceKeys", "callableTypeContracts"].map(
-    (key) => state[key]!.size,
-  );
+  return [
+    "drafts",
+    "draftOrderOwners",
+    "locators",
+    "locatorOwners",
+    "structuralReferenceKeys",
+    "callableTypeContracts",
+  ].map((key) => state[key]!.size);
 }
 
 function providerPublicationSnapshot(registry: CallableProviderRegistry, session: ProgramAbiSession) {
@@ -146,6 +153,30 @@ function observeRuntimeProvider(providers: CallableProviderRegistry, name: strin
   const ref = irRuntimeFuncRef(name);
   providers.observe(ref, index);
   return irCallableBindingKey(ref.binding);
+}
+
+function planForeignProviderOrder(session: ProgramAbiSession, derivedOrdinal: number, label: string) {
+  const entrySource = session.inventory.sources.find(({ kind }) => kind === "entry")!;
+  const id = createIrBindingId({
+    ownerId: entrySource.id,
+    domain: "callable",
+    role: `foreign-${label}`,
+    ordinal: derivedOrdinal,
+  });
+  session.plan({
+    id,
+    structuralOrder: session.structuralOrder.forSource(entrySource.id, {
+      domain: "callable",
+      roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.callableProvider,
+      derivedOrdinal,
+    }),
+    structuralReferenceKey: `foreign:${label}`,
+    displayName: label,
+    slotPolicy: "required",
+    slotSpace: "function",
+    intent: { kind: "callable", origin: "runtime", signature: { params: [], results: [] } },
+  });
+  return id;
 }
 
 function sealedProviderSuffixFixture() {
@@ -312,6 +343,72 @@ describe("#3520 runtime/intrinsic callable-provider Program ABI", () => {
     expect(previewed.ids).toHaveLength(2);
   });
 
+  it("authenticates provider descriptors without changing provider or session state", () => {
+    const target = definedProviderFixture("target");
+    const targetKey = observeRuntimeProvider(target.providers, "target", 0);
+    const descriptor = describePreparedProvidersWithoutPublishing(
+      target.providers,
+      target.session,
+      new Set([targetKey]),
+    );
+    const forged = Object.freeze({ kind: "prepared-callable-provider-descriptor" }) as PreparedProviderDescriptor;
+
+    const foreign = definedProviderFixture("foreign");
+    const foreignKey = observeRuntimeProvider(foreign.providers, "foreign", 0);
+    const foreignDescriptor = describePreparedProvidersWithoutPublishing(
+      foreign.providers,
+      foreign.session,
+      new Set([foreignKey]),
+    );
+
+    for (const candidate of [forged, foreignDescriptor]) {
+      expectPreparedProviderFailureWithoutPublishing(target.providers, target.session, () =>
+        target.providers.assertPreparedDescriptorCurrent(candidate),
+      );
+      expectPreparedProviderFailureWithoutPublishing(target.providers, target.session, () =>
+        target.providers.publishPreparedDescriptor(candidate),
+      );
+    }
+    target.providers.assertPreparedDescriptorCurrent(descriptor);
+  });
+
+  it("rejects occupied prepared-provider order slots without sealing and tolerates unrelated order", () => {
+    {
+      const { providers, session } = definedProviderFixture("selected");
+      const key = observeRuntimeProvider(providers, "selected", 0);
+      planForeignProviderOrder(session, 0, "before-provider-description");
+      expectPreparedProviderFailureWithoutPublishing(providers, session, () =>
+        providers.describePrepared(new Set([key])),
+      );
+    }
+
+    {
+      const { providers, session } = definedProviderFixture("selected");
+      const key = observeRuntimeProvider(providers, "selected", 0);
+      const descriptor = describePreparedProvidersWithoutPublishing(providers, session, new Set([key]));
+      planForeignProviderOrder(session, 0, "after-provider-description");
+      expectPreparedProviderFailureWithoutPublishing(providers, session, () =>
+        providers.assertPreparedDescriptorCurrent(descriptor),
+      );
+      expectPreparedProviderFailureWithoutPublishing(providers, session, () =>
+        providers.publishPreparedDescriptor(descriptor),
+      );
+    }
+
+    {
+      const { functions, providers, session } = definedProviderFixture("selected");
+      const key = observeRuntimeProvider(providers, "selected", 0);
+      const descriptor = describePreparedProvidersWithoutPublishing(providers, session, new Set([key]));
+      const foreignId = planForeignProviderOrder(session, 1, "unrelated-provider-order");
+      const beforeCurrentness = providerPublicationSnapshot(providers, session);
+      providers.assertPreparedDescriptorCurrent(descriptor);
+      expect(providerPublicationSnapshot(providers, session)).toEqual(beforeCurrentness);
+      const ids = providers.publishPreparedDescriptor(descriptor);
+      expect(session.getDraft(foreignId)?.structuralOrder.derivedOrdinal).toBe(1);
+      expect(session.hasLocator(ids.get(key)!, functions[0])).toBe(true);
+    }
+  });
+
   it("freezes the sorted provider prefix and retains the appended discovery-order suffix", () => {
     const { aKey, middleKey, providers, sealedSnapshot, session, zKey } = sealedProviderSuffixFixture();
     expect(sealedSnapshot).toMatchObject({
@@ -460,6 +557,17 @@ describe("#3520 runtime/intrinsic callable-provider Program ABI", () => {
     };
 
     const positive = createImportBackedFixture();
+    const forgedImportDescriptor = Object.freeze({
+      kind: "prepared-callable-import-descriptor",
+    }) as PreparedImportDescriptor;
+    expectPreparedProviderFailureWithoutPublishing(positive.providers, positive.session, () =>
+      positive.providers.describePrepared(new Set([positive.key]), forgedImportDescriptor),
+    );
+    const foreign = createImportBackedFixture();
+    const foreignImportDescriptor = foreign.imports.describePrepared(new Set([foreign.targetImport]));
+    expectPreparedProviderFailureWithoutPublishing(positive.providers, positive.session, () =>
+      positive.providers.describePrepared(new Set([positive.key]), foreignImportDescriptor),
+    );
     expectPreparedProviderFailureWithoutPublishing(positive.providers, positive.session, () =>
       positive.providers.describePrepared(new Set([positive.key])),
     );
