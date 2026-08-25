@@ -18,7 +18,7 @@ import {
   resolveWasmType,
 } from "./index.js";
 import { isUndefWidenedBindingElement, resolveBindingElementType } from "../checker/type-mapper.js";
-import { UNDEF_F64_BITS } from "./value-tags.js"; // (#3315)
+import { boxToAny, UNDEF_F64_BITS } from "./value-tags.js"; // (#3315)
 import { addImport, addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { usesNativeJsErrors } from "./js-errors.js";
@@ -96,8 +96,9 @@ export function coerceArrayBindingExternrefToAnyValue(
   addUnionImports(ctx);
   ensureAnyHelpers(ctx);
   const honestIdx = ensureAnyFromExternHelper(ctx, { forceHonest: true });
-  const boxNullIdx = ctx.funcMap.get("__any_box_null");
-  if (honestIdx === undefined || boxNullIdx === undefined) return false;
+  const nullBoxBody: Instr[] = [];
+  const nullBoxed = boxToAny(ctx, { body: nullBoxBody } as FunctionContext, { kind: "externref" }, "null");
+  if (honestIdx === undefined || !nullBoxed) return false;
 
   const sourceLocal = allocLocal(fctx, `__dparam_any_src_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: sourceLocal });
@@ -106,7 +107,7 @@ export function coerceArrayBindingExternrefToAnyValue(
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: { kind: "ref_null", typeIdx: ctx.anyValueTypeIdx } },
-    then: [{ op: "call", funcIdx: boxNullIdx }],
+    then: [{ op: "local.get", index: sourceLocal }, ...nullBoxBody],
     else: [
       { op: "local.get", index: sourceLocal },
       { op: "call", funcIdx: honestIdx },
