@@ -38,7 +38,13 @@ import {
   getSubviewArrTypeIdx,
   isTaViewTypeIdx,
 } from "./registry/types.js";
-import { emitTaDynViewToVec, emitTaDynViewValidate, emitTaViewToVec, emitTaViewWriteBack } from "./dataview-native.js"; // (#3054 B1 Option A) de-view; (B3) write-through; (#3058) dyn-view materialize+validate
+import {
+  emitTaDynViewToVec,
+  emitTaDynViewValidate,
+  emitTaViewToVec,
+  emitTaViewValidate,
+  emitTaViewWriteBack,
+} from "./dataview-native.js"; // (#3054 B1 Option A) de-view; (B3) write-through; (#3058) dyn-view materialize+validate
 import { ensureNativeIteratorRuntime, getOrRegisterIterRecType } from "./iterator-native.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
 import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
@@ -1519,6 +1525,14 @@ export function compileArrayMethodCall(
       // measured regression: `ta.fill(...)`/`ta.includes(...)`); other receiver
       // shapes are rarer and fall through unchanged.
       if (isTaViewTypeIdx(ctx, actualVecIdx) && ts.isIdentifier(receiverExpr) && fctx.localMap.has(receiverExpr.text)) {
+        // ValidateTypedArray is the first step of every TypedArray prototype
+        // method.  The shared-backing view is otherwise materialized into an
+        // ordinary vector, which would hide a detached/OOB backing buffer and
+        // let argument coercion run before the required TypeError.
+        const originalViewLocal = fctx.localMap.get(receiverExpr.text);
+        if (originalViewLocal !== undefined) {
+          emitTaViewValidate(ctx, fctx, actualVecIdx, originalViewLocal);
+        }
         const matLocal = allocLocal(fctx, `__tav_mrecv_${fctx.locals.length}`, {
           kind: "ref_null",
           typeIdx: vecTypeIdx,
