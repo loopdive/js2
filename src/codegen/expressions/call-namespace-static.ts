@@ -1111,8 +1111,8 @@ export function compileNamespaceStaticCall(
         //   step 2: proto not Object and not null → throw a TypeError. Reuse
         //     the same static guard on the proto arg, but `null` is a LEGAL
         //     proto here (unlike target), so only reject a statically-
-        //     primitive NON-null proto. A `null`/`undefined`/object proto
-        //     passes; a number/string/boolean proto literal throws.
+        //     primitive NON-null proto. A `null`/object proto passes;
+        //     undefined, number/string/boolean, and Symbol proto literals throw.
         //   step 4: return the boolean [[SetPrototypeOf]] result. The native
         //     has no failure channel (a refused set — non-extensible target or
         //     a cycle — silently no-ops and still returns obj), so we drop obj
@@ -1129,14 +1129,10 @@ export function compileNamespaceStaticCall(
           fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
           return { kind: "i32" };
         }
-        // §28.1.14 step 2: a statically-primitive proto that is NOT null/
-        // undefined is illegal. `null`/`undefined` set the prototype to null
-        // (legal), so let them through to the native (which maps a non-$Object
-        // proto to a null $proto).
-        const protoIsNullish =
-          protoArg.kind === ts.SyntaxKind.NullKeyword ||
-          (ts.isIdentifier(protoArg) && protoArg.text === "undefined") ||
-          protoArg.kind === ts.SyntaxKind.UndefinedKeyword;
+        // §28.1.14 step 2: a statically-primitive proto that is not null is
+        // illegal. Only `null` is a legal primitive prototype; undefined and
+        // void expressions must take the shared TypeError guard below.
+        const protoIsNullish = protoArg.kind === ts.SyntaxKind.NullKeyword;
         if (!protoIsNullish && emitNonObjectArgGuard(ctx, fctx, protoArg, "Reflect.setPrototypeOf")) {
           fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
           return { kind: "i32" };

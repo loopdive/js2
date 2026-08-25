@@ -536,7 +536,8 @@ function maybeEmitVecLengthGrowth(
 /**
  * Check if the first argument to Object.defineProperty / defineProperties
  * is statically known to be a non-object type (undefined, null, boolean,
- * number, string).  If so, emit `throw TypeError` and return true.
+ * number, string, bigint, or Symbol).  If so, emit `throw TypeError` and
+ * return true.
  *
  * Per ES spec (19.1.2.4 step 1): "If Type(O) is not Object, throw a TypeError."
  */
@@ -557,7 +558,8 @@ export function emitNonObjectArgGuard(
     ts.TypeFlags.BooleanLike |
     ts.TypeFlags.NumberLike |
     ts.TypeFlags.StringLike |
-    ts.TypeFlags.BigIntLike;
+    ts.TypeFlags.BigIntLike |
+    ts.TypeFlags.ESSymbolLike;
 
   if (flags & NON_OBJECT_FLAGS) {
     // Compile the argument for side effects (it might have side effects)
