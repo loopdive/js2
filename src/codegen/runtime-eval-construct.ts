@@ -117,6 +117,8 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
+import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js";
+import { ensureNativeProtoCompanionSeeder } from "./native-proto.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { RUNTIME_EVAL_AOT_CALLABLE_BRAND_A, RUNTIME_EVAL_AOT_CALLABLE_BRAND_B } from "./runtime-eval-boundary.js";
@@ -197,6 +199,19 @@ function nodeCanSeeRuntimeEvalCallable(site: ts.Node): boolean {
 }
 
 /**
+ * Register the Function constructor's native prototype companion at a
+ * source-known `Function(...)` site. Both the runtime-eval and constant
+ * constructor lanes create a callable from the Function constructor, but only
+ * the former otherwise enters the native-prototype value-read machinery.
+ */
+export function ensureFunctionConstructorPrototypeInheritance(ctx: CodegenContext): void {
+  if (!ctx.standalone) return;
+  ensureObjectRuntime(ctx);
+  const functionBrand = ensureFunctionNativeProtoGlue(ctx);
+  if (functionBrand !== undefined) ensureNativeProtoCompanionSeeder(ctx, functionBrand);
+}
+
+/**
  * (#4438) Seed the §20.2.1.1 `prototype` / `constructor` pair onto a freshly
  * minted runtime-eval callable.
  *
@@ -206,10 +221,18 @@ function nodeCanSeeRuntimeEvalCallable(site: ts.Node): boolean {
  *
  * Emits nothing at all (leaving the site byte-identical) when the object
  * runtime cannot supply `__new_plain_object` / `__defineProperty_value`.
+ * A missing `fctx` is the constant-AOT constructor lane: it only registers
+ * the shared Function.prototype companion and emits no seed instructions.
  */
-export function emitRuntimeEvalFunctionPrototypeSeed(ctx: CodegenContext, fctx: FunctionContext): void {
+export function emitRuntimeEvalFunctionPrototypeSeed(ctx: CodegenContext, fctx?: FunctionContext): void {
   if (!ctx.standalone) return;
-  ensureObjectRuntime(ctx);
+  // A `Function()` value is source-known to be callable and constructable, but
+  // its carrier is minted by the runtime-eval provider rather than by the
+  // ordinary builtin-value path. Register the Function prototype companion at
+  // this same source-known site so an inherited `apply`/`call` read on a
+  // `Function()`-backed prototype sees the real native methods.
+  ensureFunctionConstructorPrototypeInheritance(ctx);
+  if (fctx === undefined) return;
   const newObjIdx = ensureLateImport(ctx, "__new_plain_object", [], [EXTERNREF]);
   const defineIdx = ensureLateImport(
     ctx,
