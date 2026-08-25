@@ -1599,6 +1599,59 @@ function compileForOfArrayFromLocal(
   compileForOfArray(ctx, fctx, stmt, undefined, { vecLocal, vecType });
 }
 
+/** Saved surrounding descriptors for a lexical for-of head. */
+interface ForOfHeadSaved {
+  name: string;
+  localMap: number | undefined;
+  tdz: number | undefined;
+  boxed: { refCellTypeIdx: number; valType: ValType } | undefined;
+  boxedTdz: { localIdx: number; refCellTypeIdx: number } | undefined;
+  isConst: boolean;
+}
+
+function saveForOfHeads(fctx: FunctionContext, stmt: ts.ForOfStatement): ForOfHeadSaved[] {
+  if (!ts.isVariableDeclarationList(stmt.initializer)) return [];
+  if (!(stmt.initializer.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const))) return [];
+  const names = new Set<string>();
+  for (const decl of stmt.initializer.declarations) {
+    for (const name of collectPatternBindingNames(decl.name)) names.add(name);
+  }
+  return [...names].map((name) => ({
+    name,
+    localMap: fctx.localMap.get(name),
+    tdz: fctx.tdzFlagLocals?.get(name),
+    boxed: fctx.boxedCaptures?.get(name),
+    boxedTdz: fctx.boxedTdzFlags?.get(name),
+    isConst: fctx.constBindings?.has(name) ?? false,
+  }));
+}
+
+/** Restore descriptors shadowed by the loop head after its body is lowered. */
+function restoreForOfHead(fctx: FunctionContext, saved: ForOfHeadSaved): void {
+  fctx.localMap.delete(saved.name);
+  fctx.tdzFlagLocals?.delete(saved.name);
+  fctx.boxedCaptures?.delete(saved.name);
+  fctx.boxedTdzFlags?.delete(saved.name);
+  fctx.constBindings?.delete(saved.name);
+  if (saved.localMap !== undefined) fctx.localMap.set(saved.name, saved.localMap);
+  if (saved.tdz !== undefined) {
+    if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
+    fctx.tdzFlagLocals.set(saved.name, saved.tdz);
+  }
+  if (saved.boxed !== undefined) {
+    if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
+    fctx.boxedCaptures.set(saved.name, saved.boxed);
+  }
+  if (saved.boxedTdz !== undefined) {
+    if (!fctx.boxedTdzFlags) fctx.boxedTdzFlags = new Map();
+    fctx.boxedTdzFlags.set(saved.name, saved.boxedTdz);
+  }
+  if (saved.isConst) {
+    if (!fctx.constBindings) fctx.constBindings = new Set();
+    fctx.constBindings.add(saved.name);
+  }
+}
+
 // (#2769) Does this for-of need the in-bounds undefined/hole sentinel preserved
 // through the OUTER array-literal construction? True ONLY when the subject is a
 // *direct array literal* AND the for-of binding pattern has an element default
@@ -1657,6 +1710,10 @@ function compileForOfArray(
     reportError(ctx, stmt, "for-of requires an array type");
     return;
   }
+  // A lexical ForDeclaration shadows every surrounding descriptor while the
+  // loop is lowered. Save the outer view before binding the first iteration so
+  // body/default closures cannot leave the final head value active afterward.
+  const savedHead = saveForOfHeads(fctx, stmt);
   const elemType = arrDef.element;
   // (#2934 1b) Packed i8/i16 typed-array elements (Uint8Array/Int8Array/
   // Int16Array/… standalone, #2593) are STORAGE-only types: a local declared
@@ -1932,6 +1989,8 @@ function compileForOfArray(
       });
     }
   }
+
+  for (const saved of savedHead) restoreForOfHead(fctx, saved);
 }
 
 /**
