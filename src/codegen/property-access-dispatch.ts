@@ -2532,6 +2532,61 @@ function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): Va
   return ctx.fast ? { kind: "i32" } : { kind: "f64" };
 }
 
+/**
+ * True when a class method returns an anonymous function-valued field. The
+ * checker gives the call result a function signature, but that signature does
+ * not carry the particular field initializer's NamedEvaluation name. Keep the
+ * static `.name` fold for method returns and other call results; only this
+ * measured field-return shape must use the runtime closure metadata.
+ */
+function returnsAnonymousClassFieldInitializer(ctx: CodegenContext, value: ts.Expression): boolean {
+  if (!ts.isCallExpression(value) || !ts.isPropertyAccessExpression(value.expression)) return false;
+  const methodSymbol = ctx.checker.getSymbolAtLocation(value.expression.name);
+  const methodDecl = methodSymbol?.valueDeclaration;
+  if (!methodDecl || !ts.isMethodDeclaration(methodDecl) || !methodDecl.body) return false;
+  const classDecl = methodDecl.parent;
+  if (!ts.isClassDeclaration(classDecl) && !ts.isClassExpression(classDecl)) return false;
+
+  let returned: ts.Expression | undefined;
+  for (const statement of methodDecl.body.statements) {
+    if (!ts.isReturnStatement(statement) || statement.expression === undefined) continue;
+    if (returned !== undefined) return false;
+    returned = statement.expression;
+  }
+  if (returned === undefined) return false;
+  while (ts.isParenthesizedExpression(returned)) returned = returned.expression;
+
+  let fieldName: string | undefined;
+  if (ts.isPropertyAccessExpression(returned) && returned.expression.kind === ts.SyntaxKind.ThisKeyword) {
+    fieldName = returned.name.text;
+  } else if (
+    ts.isElementAccessExpression(returned) &&
+    returned.expression.kind === ts.SyntaxKind.ThisKeyword &&
+    ts.isStringLiteral(returned.argumentExpression)
+  ) {
+    fieldName = returned.argumentExpression.text;
+  }
+  if (fieldName === undefined) return false;
+
+  return classDecl.members.some((member) => {
+    if (!ts.isPropertyDeclaration(member) || member.name === undefined || member.initializer === undefined)
+      return false;
+    let initializer = member.initializer;
+    while (ts.isParenthesizedExpression(initializer)) initializer = initializer.expression;
+    // Class-expression names have their own class-definition precedence and do
+    // not use the closure `$fnmeta` field this bounded arm repairs.
+    if (ts.isClassExpression(initializer)) return false;
+    const memberName =
+      ts.isIdentifier(member.name) ||
+      ts.isPrivateIdentifier(member.name) ||
+      ts.isStringLiteral(member.name) ||
+      ts.isNumericLiteral(member.name)
+        ? member.name.text
+        : undefined;
+    return memberName === fieldName && isAnonymousFunctionDefinition(member.initializer);
+  });
+}
+
 export function tryLengthAndNameReads(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2703,7 +2758,7 @@ export function tryLengthAndNameReads(
   }
 
   // Handle Function.name — return the function name as a string
-  if (propName === "name") {
+  if (propName === "name" && !returnsAnonymousClassFieldInitializer(ctx, expr.expression)) {
     // (#1632a) `.name` on the result of `.bind(...)` must NOT be statically
     // resolved to the target's symbol name — per spec it's `"bound " +
     // target.name`. Fall through to the runtime __extern_get path so the
