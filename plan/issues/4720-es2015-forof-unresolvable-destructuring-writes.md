@@ -1,7 +1,7 @@
 ---
 id: 4720
 title: "ES2015 for-of array assignment writes to unresolvable references"
-status: blocked
+status: in-progress
 created: 2026-08-25
 updated: 2026-08-25
 assignee: codex/4720-es2015-forof-unresolvable-destructuring-writes
@@ -13,19 +13,22 @@ area: codegen, destructuring, for-of
 es_edition: es6
 language_feature: for-of-assignment-destructuring
 related: [2602, 4715]
-depends_on: [4939]
+depends_on: [4715]
 loc-budget: 180
 loc-budget-allow:
   - src/codegen/statements/for-of-destructuring.ts
+func-budget-allow:
+  - src/codegen/statements/for-of-destructuring.ts::compileForOfAssignDestructuringExternref
 ---
 
 # #4720 — for-of assignment destructuring must preserve unresolvable PutValue
 
 ## Scope and live baseline
 
-Baseline was measured on `upstream/main` commit `aeaad6e90` (2026-08-25) in
-the assembled `runTest262File` seam. The pinned package-manager invocation was
-`pnpm dlx pnpm@10.30.2 exec node --import tsx`.
+The initial baseline was measured on `upstream/main` commit `aeaad6e90`
+(2026-08-25) in the assembled `runTest262File` seam. After stacking repaired
+#4939 tip `1b585f27a`, the live baseline below was rerun with pinned
+`pnpm@10.30.2`.
 
 The requested three rows fail in both compiler lanes. The array-rest strict
 counterpart has the same unresolved-reference write root cause and is retained
@@ -38,18 +41,8 @@ as the only sibling in this bounded array-pattern cluster:
 | `language/statements/for-of/dstr/array-elem-put-unresolvable-strict.js` | fail | fail | strict PutValue throws a null/non-object payload, not a `ReferenceError` instance |
 | `language/statements/for-of/dstr/array-rest-put-unresolvable-strict.js` | fail | fail | strict PutValue throws a null/non-object payload, not a `ReferenceError` instance |
 
-The host run reported 10 failures, one missing-file error from an exploratory
-object-rest path, and two passes across the 13-file probe. The standalone run
-reported 10 failures and two passes across the 12 existing files. The missing
-object-rest filename is not part of this issue and is not counted as a result.
-
-The passing controls were:
-
-- `language/statements/for-of/dstr/array-rest-put-prop-ref.js`
-- `language/statements/for-of/dstr/array-elem-put-prop-ref.js`
-
-These controls show that the ordinary array assignment writer and member
-PutValue dispatcher are reachable. The lexical/const controls owned by the
+On the repaired dependency baseline, the four unresolved rows fail in both
+lanes while all seven controls pass. The lexical/const controls owned by the
 dependency PR are the four rows from #4715:
 
 - `array-rest-put-let.js`
@@ -57,8 +50,8 @@ dependency PR are the four rows from #4715:
 - `array-elem-put-let.js`
 - `array-elem-put-const.js`
 
-They remain failing on upstream/main as expected and must pass when #4939 is
-stacked. Do not broaden this issue into the object-pattern family: its reader
+They pass once #4939 is stacked. Do not broaden this issue into the
+object-pattern family: its reader
 and write paths are separate; only the array rows above are in scope.
 
 ## Root cause
@@ -71,19 +64,20 @@ strict targets do not produce a proper `ReferenceError` object. Rest and
 element writes use different tuple/vec/externref paths, so the fix must be
 wired at each actual identifier write point after source-value evaluation.
 
-## Dependency and blocker
+## Dependency and repaired baseline
 
 Depends on #4939 (PR `codex/4715-es2015-forof-destructuring-write-errors`) for
 the lexical/const write guards and proper TDZ `ReferenceError` payloads. The
-dependency currently has a reproducible cross-backend failure in
-`control/try-finally-early-exit`; source work for this issue is paused until
-that regression is repaired. No speculative compiler edits are present in
-this branch.
+dependency is now stacked at repaired tip `1b585f27a` (merged locally as
+`2b6637f3c`); its `control/try-finally-early-exit` regression is repaired.
+Before implementation, the four #4715 lexical/const controls passed in both
+host/GC and standalone, while the four unresolved-reference rows above still
+failed in both lanes. The member controls also remained passing.
 
 ## Implementation plan
 
-1. Once #4939 is repaired, stack this branch on its head and rerun the baseline
-   controls before changing code.
+1. Stack this branch on the repaired #4939 head and rerun the baseline controls
+   before changing code. (Complete.)
 2. Extend the for-of assignment writer with the existing global-environment
    `PutValue` machinery: evaluate each element/default/rest value first, then
    write an unresolvable sloppy identifier through the realm global object and
@@ -123,5 +117,20 @@ pnpm dlx pnpm@10.30.2 exec node --import tsx scripts/harness-flip-probe.ts \
   --target standalone --paths <in-scope rows and controls> --timeout 60000
 ```
 
-Implementation results are intentionally pending the #4939 repair; this
-issue-only checkpoint is not a code PR.
+Implementation matrix (repaired #4939 stacked) is green: 11/11 pass in host
+and 11/11 pass in standalone (four unresolved rows, four lexical/const
+controls, and three member/rest controls). The focused `tests/issue-4720.test.ts`
+also passed in both lanes.
+
+Typecheck and formatting gates passed with pinned pnpm 10:
+
+- `pnpm run typecheck:ts5`
+- `pnpm run typecheck:ts7` / `pnpm run typecheck`
+- targeted Biome lint on the changed source/test files
+- `pnpm run format:check`
+
+The repository-wide `pnpm run lint` reports the existing baseline diagnostic
+population (1672 diagnostics, including unchanged files), while the changed
+source and focused test lint cleanly; the pre-push lint gate completed
+successfully. The full pre-push gate also passed its format, oracle-ratchet,
+coercion-site, numeric-local parity, and issue-integrity checks.
