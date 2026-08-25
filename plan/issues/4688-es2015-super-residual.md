@@ -37,6 +37,11 @@ func-budget-allow:
   # Exact measured growth on the current upstream/main merge-base.
   - src/codegen/closures.ts::compileArrowAsClosure
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+trap-growth-allow:
+  count: 1
+  reason: "#4688 promotes dynamic-prototype object literals and exposes their super-read path. test/language/computed-property-names/object/method/super.js was already baseline fail and is explicitly outside this issue's static-key scope; its computed method names now reach the pre-existing missing computed-home-object path and null-deref instead of failing an assertion. This is a bounded fail-to-trap flavour change, not a baseline-pass regression."
+  tests:
+    - test/language/computed-property-names/object/method/super.js
 ---
 
 # #4688 — ES2015 standalone object-literal `super` value reads
