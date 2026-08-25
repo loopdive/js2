@@ -60,6 +60,9 @@ const analysisCache = new WeakMap<CodegenContext, Map<ts.SourceFile, ReadonlySet
 /** The domain a single whole-array write stores into the binding. */
 type WriteDomain = "object" | "primitive";
 
+/** `typeof null` is "object", but it is not an object-element carrier. */
+type WriteTag = JsTag | "nullish";
+
 /** Tags whose values are references with observable identity. */
 const OBJECT_TAGS: ReadonlySet<JsTag> = new Set<JsTag>(["object", "function"]);
 
@@ -147,18 +150,25 @@ function isModuleScoped(node: ts.Node): boolean {
  * not a syntactically classifiable array construction.
  *
  * `undefined` means "an array with no statically known elements" (`[]`, or the
- * `new Array(len)` length form): carries no element evidence, and — unlike
- * `null` — does not abandon the binding.
+ * `new Array(len)` length form): carries no element evidence, and — unlike an
+ * unclassifiable `null` result — does not abandon the binding.
  */
-function writtenElementTags(ctx: CodegenContext, expr: ts.Expression): readonly JsTag[] | undefined | null {
+function writtenElementTags(ctx: CodegenContext, expr: ts.Expression): readonly WriteTag[] | undefined | null {
   if (ts.isArrayLiteralExpression(expr)) {
     if (expr.elements.length === 0) return undefined;
-    const tags: JsTag[] = [];
+    const tags: WriteTag[] = [];
     for (const element of expr.elements) {
       if (ts.isSpreadElement(element) || ts.isOmittedExpression(element)) return null;
-      const tag = ctx.oracle.staticJsTypeOf(element);
-      if (tag === "mixed") return null;
-      tags.push(tag);
+      // Keep null separate from ordinary objects: null can share the
+      // externref element carrier, but it cannot be represented by a closed
+      // object struct (and `typeof null` otherwise hides this distinction).
+      if (element.kind === ts.SyntaxKind.NullKeyword) {
+        tags.push("nullish");
+      } else {
+        const tag = ctx.oracle.staticJsTypeOf(element);
+        if (tag === "mixed") return null;
+        tags.push(tag);
+      }
     }
     return tags;
   }
@@ -167,12 +177,16 @@ function writtenElementTags(ctx: CodegenContext, expr: ts.Expression): readonly 
     if (!ts.isIdentifier(callee) || callee.text !== "Array") return null;
     const args = expr.arguments;
     if (args === undefined || args.length === 0) return undefined;
-    const tags: JsTag[] = [];
+    const tags: WriteTag[] = [];
     for (const argument of args) {
       if (ts.isSpreadElement(argument)) return null;
-      const tag = ctx.oracle.staticJsTypeOf(argument);
-      if (tag === "mixed") return null;
-      tags.push(tag);
+      if (argument.kind === ts.SyntaxKind.NullKeyword) {
+        tags.push("nullish");
+      } else {
+        const tag = ctx.oracle.staticJsTypeOf(argument);
+        if (tag === "mixed") return null;
+        tags.push(tag);
+      }
     }
     // §23.1.1.1 step 5 / ES5 §15.4.2.2: a SINGLE Number argument is a LENGTH,
     // so the array has no statically known elements. Every other single
@@ -184,9 +198,17 @@ function writtenElementTags(ctx: CodegenContext, expr: ts.Expression): readonly 
 }
 
 /** The domain of one write, or `undefined` when it carries no element evidence. */
-function writeDomain(tags: readonly JsTag[] | undefined): WriteDomain | undefined {
+function writeDomain(tags: readonly WriteTag[] | undefined): WriteDomain | undefined {
   if (tags === undefined || tags.length === 0) return undefined;
-  const objectElements = tags.filter((tag) => OBJECT_TAGS.has(tag)).length;
+  const objectElements = tags.filter((tag) => tag !== "nullish" && OBJECT_TAGS.has(tag)).length;
+  const nullishElements = tags.filter((tag) => tag === "nullish").length;
+  // A null-containing write needs the universal element carrier even when all
+  // its other values are primitive. Treat that representation as object-domain
+  // evidence so a preceding numeric/boolean/string write widens the rebinding.
+  if (nullishElements > 0) {
+    const nonNullElements = tags.length - nullishElements;
+    if (objectElements === 0 || objectElements === nonNullElements) return "object";
+  }
   if (objectElements === tags.length) return "object";
   if (objectElements === 0) return "primitive";
   // Mixed within a single write — the array-literal element-typing lane's job.
