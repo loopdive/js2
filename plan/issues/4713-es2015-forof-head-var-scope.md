@@ -1,10 +1,11 @@
 ---
 id: 4713
 title: "ES2015 for-of head scope without a variable environment"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-25
 updated: 2026-08-25
+completed: 2026-08-25
 priority: high
 horizon: m
 feasibility: medium
@@ -95,7 +96,7 @@ eval-created names remain on their existing paths.
    controls; retain the passing bound-name/body-var rows as guards. (Complete.)
 4. Re-run the exact and control rows, type-check/lint the touched files, merge
    the latest upstream main without rebasing, and record post-merge results.
-   (Scoped checks complete; merge and final verification pending.)
+   (Complete.)
 
 ## Acceptance
 
@@ -141,17 +142,19 @@ for-of/head-var-bound-names-let.js:  pass
 for-of/scope-body-var-none.js:       pass
 ```
 
-Post-fix scoped checks on the same baseline before upstream merge:
+Post-fix scoped checks after merging latest upstream main:
 
 ```text
+upstream/main `598cb2f226dc1c60376a5d19f858b2db99f91b06` merged via branch
+merge commit `34b9ae6aa51f7c471a9fc5c0de719ff4b73e9df8` (2026-08-25):
 node --import tsx ... runTest262File(...):
-  for-of/scope-head-var-none.js:       pass
-  for-in/scope-head-var-none.js:       pass
-  for/scope-head-var-none.js:          pass
-  for-of/head-var-bound-names-dup.js:  pass
-  for-of/head-var-bound-names-in-stmt.js: pass
-  for-of/head-var-bound-names-let.js:  pass
-  for-of/scope-body-var-none.js:       pass
+  for-of/scope-head-var-none.js:       pass — wasm SHA 5561f42dff04
+  for-in/scope-head-var-none.js:       pass — wasm SHA ce983230424f
+  for/scope-head-var-none.js:          pass — wasm SHA ce3b5849e40f
+  for-of/head-var-bound-names-dup.js:  pass — wasm SHA 3898a9d35a2b
+  for-of/head-var-bound-names-in-stmt.js: pass — wasm SHA 713e3fa93932
+  for-of/head-var-bound-names-let.js:  pass — wasm SHA c1e1f3d5d71b
+  for-of/scope-body-var-none.js:       pass — wasm SHA 3d7b7ac1c4c3
 
 vitest run tests/issue-4713.test.ts --pool=forks \
   --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot:
