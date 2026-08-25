@@ -17,6 +17,8 @@ es_edition: 2015
 goal: es6
 related: [4706]
 loc-budget-max: 180
+loc-budget-allow:
+  - src/codegen/index.ts
 ---
 
 # #4713 — ES2015 for-of head scope without a variable environment
