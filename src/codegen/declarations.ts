@@ -57,6 +57,7 @@ import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./conte
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
+import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 import {
   addArrayIteratorImports,
   addForInImports,
@@ -76,6 +77,7 @@ import {
   KNOWN_CONSTRUCTORS,
   MATH_HOST_METHODS_1ARG,
   MATH_HOST_METHODS_2ARG,
+  nativeGeneratorBindingType,
   parseRegExpLiteral,
   resolveIdentifierType,
   resolveWasmType,
@@ -920,6 +922,18 @@ function lowerParamType(
     runtimeEvalParamStructName !== undefined &&
     ctx.structFields.has(runtimeEvalParamStructName) &&
     !ctx.classTagMap.has(runtimeEvalParamStructName)
+  ) {
+    wasmType = { kind: "externref" };
+  }
+  // #4701: an inferred numeric formal in a mapped-arguments function can be
+  // written through Object.defineProperty/arguments[i] with a nonnumeric JS
+  // value. Keep ordinary numeric ABIs unchanged; widen only this measured
+  // direct-write shape so reverse sync can preserve the exact externref value.
+  if (
+    !param.type &&
+    ts.getJSDocType(param) === undefined &&
+    (wasmType.kind === "f64" || wasmType.kind === "i32") &&
+    mappedFormalNeedsExternref(ctx, stmt, index)
   ) {
     wasmType = { kind: "externref" };
   }
@@ -2258,6 +2272,21 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   function moduleInitForcesExternref(decl: ts.VariableDeclaration): boolean {
     if (!decl.initializer) return false;
     if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) return true;
+    // (#4707) `new Proxy` returns an externref carrier even though TypeScript
+    // gives it the target's structural type. Keep the module global dynamic so
+    // a proxy is not cast back to that target struct and nulled on assignment.
+    if (
+      (ts.isNewExpression(decl.initializer) &&
+        ts.isIdentifier(decl.initializer.expression) &&
+        decl.initializer.expression.text === "Proxy") ||
+      (ts.isCallExpression(decl.initializer) &&
+        ts.isPropertyAccessExpression(decl.initializer.expression) &&
+        decl.initializer.expression.name.text === "revocable" &&
+        ts.isIdentifier(decl.initializer.expression.expression) &&
+        decl.initializer.expression.expression.text === "Proxy")
+    ) {
+      return true;
+    }
     // (#3365) Script top-level `this` is the host global object. The checker
     // describes it as the enormous structural `typeof globalThis` type, but
     // module init receives a genuine host externref. Keep the storage and all
@@ -2359,6 +2388,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
    * let/const pass so both scopes register the same type.
    */
   function moduleGlobalWasmType(decl: ts.VariableDeclaration, varType: ts.Type): ValType {
+    const nativeGeneratorType = nativeGeneratorBindingType(ctx, decl.initializer);
+    if (nativeGeneratorType) return nativeGeneratorType;
     // (#4222 ES5 residual) The bounded sized-Array carrier is a nominal
     // subtype of the ordinary externref vec.  Module globals need the same
     // concrete slot as function-local bindings; otherwise the initializer can

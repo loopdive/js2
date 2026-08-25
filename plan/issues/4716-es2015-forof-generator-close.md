@@ -93,3 +93,8 @@ standalone:
 
 Focused regression: `tests/issue-4716.test.ts` covers the two requested files
 and all six host/standalone controls above.
+
+After merging current main, #4696's native binding-slot and IteratorClose
+implementation subsumed this branch's overlapping compiler changes. The
+duplicate lowering was dropped; the stronger 12-case host/standalone Test262
+pin suite remains and passes against the shared implementation.

@@ -1820,37 +1820,6 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
     return false;
   };
 
-  const bindingHasGeneratorInitializer = (node: ts.Node): boolean => {
-    if (!ts.isIdentifier(node)) return false;
-    const binding = ctx.oracle.variableDeclarationOf(node);
-    if (!binding?.initializer) return false;
-    let init = binding.initializer;
-    while (ts.isParenthesizedExpression(init)) init = init.expression;
-    if (!ts.isCallExpression(init) || !ts.isIdentifier(init.expression)) return false;
-    const targetDeclarations = ctx.oracle.declarationsOf(init.expression);
-    return (
-      targetDeclarations.some((d) => {
-        return (
-          (ts.isFunctionDeclaration(d) || ts.isFunctionExpression(d) || ts.isMethodDeclaration(d)) && !!d.asteriskToken
-        );
-      }) ?? false
-    );
-  };
-
-  const forOfBodyHasThrow = (statement: ts.Statement): boolean => {
-    let found = false;
-    const visit = (child: ts.Node): void => {
-      if (found || isFunctionLikeScope(child)) return;
-      if (ts.isThrowStatement(child)) {
-        found = true;
-        return;
-      }
-      ts.forEachChild(child, visit);
-    };
-    visit(statement);
-    return found;
-  };
-
   /** Every reference of a RESULT binding is an allowlisted result consumer? */
   const resultBindingUsesAreSafe = (bindingName: ts.Identifier): boolean => {
     const sym = checker.getSymbolAtLocation(bindingName);
@@ -1890,11 +1859,19 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
    *     native state-struct ValType directly, so they lower to the WasmGC
    *     native path (`tryCompileNativeGeneratorForOf` / `emitNativeGeneratorToVec`).
    *
-   *   - `true` — the node is a REFERENCE to a `var/let iter = g()` binding.
-   *     The binding's inferred TS type is `Generator<T>` and its slot is often
-   *     externref, but the for-of driver can recover the underlying native
-   *     state ref before iterating. Other drains over a binding still use the
-   *     conservative host-path rule until they gain the same recovery.
+   *   - `true` — the node is a REFERENCE to a `var/let iter = g()` binding
+   *     (`for (x of iter)`, `[...iter]`, `Array.from(iter)`). The binding's
+   *     inferred TS type is `Generator<T>`, which resolves to **externref**, so
+   *     the generator result is `extern.convert_any`-coerced on assignment and
+   *     the state-struct type is LOST at the reference. An iteration/drain
+   *     consumer over that externref falls to the JS-host iterator protocol,
+   *     which cannot drive a raw WasmGC struct — `next()` reports `done` on the
+   *     first call and the loop body is silently skipped (#3468: for-of
+   *     break/continue/return-label tests over `var it = values()` regressed to
+   *     "unreachable following for..of"). Only `.next()/.throw()/.return()`
+   *     member CALLS have a native-aware lowering that recognises the struct
+   *     through the externref; every host-protocol iteration consumer of a
+   *     binding is unsafe and keeps the generator on the eager host path.
    */
   const useIsSafe = (node: ts.Node, viaBinding: boolean): boolean => {
     const p = node.parent;
@@ -1913,12 +1890,11 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
       }
       return true;
     }
-    // A direct call exposes the state-struct ValType. A binding used as a
-    // for-of subject is also safe when its initializer is a native generator;
-    // the loop driver recovers the state ref from the externref slot.
-    if (ts.isForOfStatement(p) && p.expression === node && !p.awaitModifier) {
-      return !viaBinding || (bindingHasGeneratorInitializer(node) && !forOfBodyHasThrow(p.statement));
-    }
+    // A for-of consumer over a binding is native-safe once the binding slot
+    // preserves the generator state-struct type (the slot typer below mirrors
+    // the direct-call result). Keep spread/Array.from/destructure over a
+    // binding conservative: those drains still use the generic vec carrier.
+    if (ts.isForOfStatement(p) && p.expression === node && !p.awaitModifier) return true;
     if (!viaBinding) {
       if (ts.isSpreadElement(p)) return true;
       if (isArrayFromArg(node)) return true;
@@ -4332,7 +4308,6 @@ export {
   isNativeGeneratorResultStruct,
   sentinelAwareF64BoxInstrs,
   nativeGeneratorInfoForForOfSubject,
-  nativeGeneratorInfoForForOfBinding,
   tryCompileNativeGeneratorForOf,
   emitNativeGeneratorToVec,
 } from "./generators-native-consumer.js";

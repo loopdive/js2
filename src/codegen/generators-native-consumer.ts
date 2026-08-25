@@ -271,6 +271,64 @@ function readResultField(local: number, resultTypeIdx: number, fieldIdx: number)
   ];
 }
 
+// GeneratorResumeAbrupt uses mode 1 for a `.return()` completion. Keep this
+// local to the native for-of consumer; the frame core exposes the throw mode
+// because other frame users do not currently need to manufacture returns.
+const MODE_RETURN = 1;
+
+/**
+ * Emit GeneratorResumeAbrupt(undefined) for a native generator consumed by a
+ * direct-call for-of loop. The generic iterator loop has an externref
+ * `__iterator_return` hook, but a native generator is a nominal WasmGC state
+ * struct and bypasses that protocol. A fresh or completed generator is
+ * already closed; a suspended one receives mode=return so its resume machine
+ * runs yielding-finally handlers before transitioning to done.
+ */
+function nativeGeneratorCloseInstrs(
+  info: NativeGeneratorInfo,
+  iterLocal: number,
+  resumeIdx: number,
+  closeValue: readonly Instr[],
+): Instr[] {
+  const resumeAbrupt: Instr[] = [
+    { op: "local.get", index: iterLocal },
+    ...closeValue,
+    { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.abruptFieldIdx },
+    { op: "local.get", index: iterLocal },
+    { op: "i32.const", value: MODE_RETURN },
+    { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx },
+    { op: "local.get", index: iterLocal },
+    { op: "call", funcIdx: resumeIdx },
+    { op: "drop" },
+  ];
+  return [
+    { op: "local.get", index: iterLocal },
+    { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD },
+    { op: "i32.const", value: 0 },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...setStateI32FromConst(info, iterLocal, STATE_FIELD, info.doneState),
+        ...setStateI32FromConst(info, iterLocal, info.modeFieldIdx, 0),
+      ],
+      else: [
+        { op: "local.get", index: iterLocal },
+        { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD },
+        { op: "i32.const", value: info.doneState },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [],
+          else: resumeAbrupt,
+        },
+      ],
+    },
+  ];
+}
+
 function buildNativeGeneratorDispatch(
   ctx: CodegenContext,
   anyLocal: number,
@@ -976,30 +1034,6 @@ export function nativeGeneratorInfoForForOfSubject(
 }
 
 /**
- * Resolve a native generator hidden behind a local/module binding. Generator
- * values crossing an externref binding retain their GC identity, so a for-of
- * consumer can recover the state struct before selecting the native driver.
- */
-export function nativeGeneratorInfoForForOfBinding(
-  ctx: CodegenContext,
-  subject: ts.Expression,
-): NativeGeneratorInfo | undefined {
-  let expr = subject;
-  while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
-  if (!ts.isIdentifier(expr)) return undefined;
-  const binding = ctx.oracle.variableDeclarationOf(expr);
-  if (!binding?.initializer) return undefined;
-  let init = binding.initializer;
-  while (ts.isParenthesizedExpression(init)) init = init.expression;
-  if (!ts.isCallExpression(init) || !ts.isIdentifier(init.expression)) return undefined;
-  const targetDeclarations = ctx.oracle.declarationsOf(init.expression);
-  for (const info of ctx.nativeGenerators.values()) {
-    if (targetDeclarations.includes(info.decl)) return info;
-  }
-  return undefined;
-}
-
-/**
  * #1665 — drive a `for (… of gen())` loop over a Wasm-native generator state
  * machine WITHOUT the JS-host iterator protocol. The generator state ref is
  * expected to already be on the stack (the caller compiled the iterable
@@ -1071,28 +1105,6 @@ export function tryCompileNativeGeneratorForOf(
 
   const resultLocal = allocLocal(fctx, `__nativegen_res_${fctx.locals.length}`, resultRef);
 
-  // IteratorClose on an abrupt loop exit resumes the generator with an
-  // implicit `return(undefined)`. Keep the carrier in a local so every
-  // break/return/outer-continue site can inline the same close sequence.
-  const closeValueLocal = emitCarrierValue(ctx, fctx, undefined, info);
-  const doneFlag = allocLocal(fctx, `__nativegen_done_${fctx.locals.length}`, { kind: "i32" });
-  const closeGenerator = (): Instr[] => [
-    { op: "local.get", index: doneFlag },
-    { op: "i32.eqz" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        ...setStateFieldFromLocal(info, iterLocal, info.abruptFieldIdx, closeValueLocal),
-        ...setStateI32FromConst(info, iterLocal, info.modeFieldIdx, 1),
-        { op: "local.get", index: iterLocal },
-        { op: "call", funcIdx: resumeIdx },
-        { op: "drop" },
-      ],
-      else: [],
-    },
-  ];
-
   // Loop variable: the generator's element ValType (f64 numeric, or the native
   // string ref for a string generator — #2171). const-ness recorded so
   // shadowing/TDZ logic downstream stays consistent.
@@ -1101,6 +1113,14 @@ export function tryCompileNativeGeneratorForOf(
     if (!fctx.constBindings) fctx.constBindings = new Set();
     fctx.constBindings.add(loopVarName);
   }
+
+  // Native generator for-of bypasses the generic iterator protocol, so install
+  // the equivalent IteratorClose finalizer before compiling the loop body.
+  // The value is only used to resume a suspended generator; it is discarded
+  // after GeneratorResumeAbrupt completes.
+  const closeValue: Instr[] = carrierIsAny(info.elemValType)
+    ? canonicalUndefinedExternInstrs(ctx)
+    : [{ op: "i64.const", value: UNDEF_F64_BITS }, { op: "f64.reinterpret_i64" }];
 
   // block { loop { … } } — break = depth 1 (exit block), continue = depth 0.
   const savedBody = pushBody(fctx);
@@ -1112,10 +1132,12 @@ export function tryCompileNativeGeneratorForOf(
 
   const closeBreakStackLen = fctx.breakStack.length;
   const closeContinueStackLen = fctx.continueStack.length;
+  const cloneNativeGeneratorClose = (): Instr[] =>
+    structuredClone(nativeGeneratorCloseInstrs(info, iterLocal, resumeIdx, closeValue));
   if (!fctx.finallyStack) fctx.finallyStack = [];
   fctx.finallyStack.push({
-    cloneFinally: closeGenerator,
-    cloneFinallyAtDepth: closeGenerator,
+    cloneFinally: cloneNativeGeneratorClose,
+    cloneFinallyAtDepth: cloneNativeGeneratorClose,
     breakStackLen: closeBreakStackLen,
     continueStackLen: closeContinueStackLen,
     breakDepthBaseline: fctx.breakStack.slice(),
@@ -1138,11 +1160,7 @@ export function tryCompileNativeGeneratorForOf(
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
-    then: [
-      { op: "i32.const", value: 1 },
-      { op: "local.set", index: doneFlag },
-      { op: "br", depth: 2 },
-    ], // if + loop = depth 2 to exit block
+    then: [{ op: "br", depth: 2 }], // if + loop = depth 2 to exit block
     else: [],
   });
 
@@ -1165,7 +1183,10 @@ export function tryCompileNativeGeneratorForOf(
   fctx.breakStack.pop();
   fctx.continueStack.pop();
 
-  fctx.finallyStack.pop();
+  // The close finalizer applies to return/outer-break/outer-continue sites
+  // compiled inside the body. A for-of-local break exits the block normally;
+  // its close is emitted after the block below.
+  if (fctx.finallyStack.length > 0) fctx.finallyStack.pop();
 
   // Restore depths.
   for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]! -= 2;
@@ -1185,9 +1206,10 @@ export function tryCompileNativeGeneratorForOf(
       },
     ],
   });
-  // A break targeting this for-of loop is handled here; return, outer break,
-  // and outer continue have already inlined `closeGenerator` above.
-  fctx.body.push(...closeGenerator());
+
+  // IteratorClose for a break of this for-of loop. Normal exhaustion has
+  // already marked the native frame done, so the state guard is a no-op there.
+  fctx.body.push(...nativeGeneratorCloseInstrs(info, iterLocal, resumeIdx, closeValue));
   return true;
 }
 
