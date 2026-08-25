@@ -3068,11 +3068,20 @@ export function compileNativeStringMethodCall(
     return { kind: "i32" };
   }
 
-  // trim, trimStart, trimEnd: native helpers
-  if (method === "trim" || method === "trimStart" || method === "trimEnd") {
+  // trim, trimStart/trimLeft, trimEnd/trimRight: native helpers. Annex B's
+  // aliases intentionally share the canonical helper, just as their
+  // String.prototype function values share identity in the proto glue.
+  if (
+    method === "trim" ||
+    method === "trimStart" ||
+    method === "trimEnd" ||
+    method === "trimLeft" ||
+    method === "trimRight"
+  ) {
     emitReceiver();
     emitFlatten();
-    const helperName = `__str_${method}`;
+    const helperName =
+      method === "trimLeft" ? "__str_trimStart" : method === "trimRight" ? "__str_trimEnd" : `__str_${method}`;
     const funcIdx = ctx.nativeStrHelpers.get(helperName)!;
     fctx.body.push({ op: "call", funcIdx });
     return nativeStringType(ctx);

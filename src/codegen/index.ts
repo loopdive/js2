@@ -9478,6 +9478,8 @@ export const STRING_METHODS: Record<string, { params: ValType[]; result: ValType
   trim: { params: [], result: { kind: "externref" } },
   trimStart: { params: [], result: { kind: "externref" } },
   trimEnd: { params: [], result: { kind: "externref" } },
+  trimLeft: { params: [], result: { kind: "externref" } },
+  trimRight: { params: [], result: { kind: "externref" } },
   charAt: { params: [{ kind: "f64" }], result: { kind: "externref" } },
   slice: {
     params: [{ kind: "f64" }, { kind: "f64" }],
@@ -10953,8 +10955,7 @@ export function nativeGeneratorBindingType(
   )
     expr = expr.expression;
   if (!expr || !ts.isCallExpression(expr) || !ts.isIdentifier(expr.expression)) return null;
-  const sym = ctx.checker.getSymbolAtLocation(expr.expression);
-  const decl = sym?.declarations?.find((d) => ts.isFunctionDeclaration(d) && !!d.asteriskToken);
+  const decl = ctx.oracle.declarationsOf(expr.expression).find((d) => ts.isFunctionDeclaration(d) && !!d.asteriskToken);
   if (!decl) return null;
   for (const info of ctx.nativeGenerators.values()) {
     if (info.decl === decl) return { kind: "ref_null", typeIdx: info.stateTypeIdx };

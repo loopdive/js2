@@ -192,6 +192,8 @@ const ENCODING_PRESERVING_METHODS: ReadonlySet<string> = new Set([
   "trim",
   "trimStart",
   "trimEnd",
+  "trimLeft",
+  "trimRight",
   "normalize",
   "padStart",
   "padEnd",
