@@ -1194,6 +1194,7 @@ export function emitNullCheckThrow(
   refType: ValType,
   node?: ts.Node,
   proof?: ReceiverProofHint,
+  isUndefinedIdx?: number,
 ): void {
   const backupLocal: number | undefined = (fctx as any).__lastGuardedCastBackup;
   if (receiverProofHolds(ctx, fctx, proof, (e) => isProvablyNonNull(e, ctx.checker))) return;
@@ -1247,6 +1248,16 @@ export function emitNullCheckThrow(
       then: typeErrorThrowInstrs(ctx, node),
       else: [],
     });
+  }
+
+  // Under the standalone undefined-singleton regime, a dynamic member read
+  // can leave a non-null externref carrying JavaScript `undefined`.  Element
+  // access has the same RequireObjectCoercible obligation as dot access, so
+  // test that carrier in addition to the structural null check.
+  if (isUndefinedIdx !== undefined && refType.kind === "externref") {
+    fctx.body.push({ op: "local.get", index: tmp });
+    fctx.body.push({ op: "call", funcIdx: isUndefinedIdx });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: typeErrorThrowInstrs(ctx, node), else: [] });
   }
 
   fctx.body.push({ op: "local.get", index: tmp });
@@ -3237,10 +3248,17 @@ function tryOpenObjectDynamicGet(
   } else if (recvType.kind !== "externref") {
     coerceType(ctx, fctx, recvType, { kind: "externref" });
   }
+  // A dynamic member read can itself produce JavaScript `undefined` without
+  // using the null externref (standalone's tag-1 singleton regime). Reserve
+  // the predicate AFTER compiling the receiver, because that compilation may
+  // register imports which must be settled before the guard captures its idx.
+  const baseExpr = skipTransparentExpressions(expr.expression);
+  const isUndefinedIdx = ts.isIdentifier(baseExpr) ? undefined : ensureExternIsUndefinedImport(ctx);
+  flushLateImportShifts(ctx, fctx);
   // §13.3 member access on null/undefined throws TypeError (keep parity with
   // the default read path's null guard).
   const recvTmp = allocTempLocal(fctx, { kind: "externref" });
-  emitExternRecvNullGuard(ctx, fctx, recvTmp, recvType, expr.expression, expr, "growable-get:recv");
+  emitExternRecvNullGuard(ctx, fctx, recvTmp, recvType, expr.expression, expr, "growable-get:recv", isUndefinedIdx);
   fctx.body.push({ op: "local.get", index: recvTmp });
   releaseTempLocal(fctx, recvTmp);
   fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
@@ -3318,8 +3336,10 @@ function tryKnownFnctorDynamicObjectCarrierGet(
   } else if (recvType.kind !== "externref") {
     coerceType(ctx, fctx, recvType, { kind: "externref" });
   }
+  const isUndefinedIdx = ensureExternIsUndefinedImport(ctx);
+  flushLateImportShifts(ctx, fctx);
   const recvTmp = allocTempLocal(fctx, { kind: "externref" });
-  emitExternRecvNullGuard(ctx, fctx, recvTmp, recvType, carrierRead, expr, "carrier-get:recv");
+  emitExternRecvNullGuard(ctx, fctx, recvTmp, recvType, carrierRead, expr, "carrier-get:recv", isUndefinedIdx);
   fctx.body.push({ op: "local.get", index: recvTmp });
   releaseTempLocal(fctx, recvTmp);
   fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
@@ -3340,6 +3360,7 @@ function emitExternRecvNullGuard(
   recvExpr: ts.Expression,
   throwNode: ts.Node,
   site: string,
+  isUndefinedIdx?: number,
 ): void {
   emitReceiverNullGuard(
     ctx,
@@ -3352,6 +3373,14 @@ function emitExternRecvNullGuard(
     // and both hold the receiver in an externref local.
     () => (receiverIsUndefinedIdentifier(recvExpr) ? undefined : nullishExternTestInstrs(ctx, recvTmp)),
   );
+  // `ref.is_null` catches the legacy null/undefined carrier, but standalone
+  // now preserves a distinct undefined singleton.  A chained dynamic read
+  // such as `o.missing.x` must reject that value before the second lookup.
+  if (isUndefinedIdx !== undefined && recvType?.kind === "externref") {
+    fctx.body.push({ op: "local.get", index: recvTmp });
+    fctx.body.push({ op: "call", funcIdx: isUndefinedIdx });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: typeErrorThrowInstrs(ctx, throwNode), else: [] });
+  }
 }
 
 /**
@@ -4748,7 +4777,10 @@ export function compileElementAccess(
   // Null-guard for externref: null[x] and undefined[x] throw TypeError (#775)
   if (objType.kind === "externref") {
     if (!isProvablyNonNull(expr.expression, ctx.checker)) {
-      emitNullCheckThrow(ctx, fctx, objType, expr);
+      const receiverExpr = skipTransparentExpressions(expr.expression);
+      const isUndefinedIdx = ts.isIdentifier(receiverExpr) ? undefined : ensureExternIsUndefinedImport(ctx);
+      flushLateImportShifts(ctx, fctx);
+      emitNullCheckThrow(ctx, fctx, objType, expr, undefined, isUndefinedIdx);
     }
   }
 
