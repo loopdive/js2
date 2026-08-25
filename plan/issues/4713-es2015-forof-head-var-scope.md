@@ -58,7 +58,7 @@ row was run in a fresh Node process to avoid cross-test compiler state.
 The exact failing row's compiled wasm SHA was `6b306f04aa4b`; the related
 `for-in` and classic `for` rows were `58781f0affce` and `193b5a1a6a25`.
 
-## Signature and working hypothesis
+## Signature and confirmed root cause
 
 The exact row evaluates `eval('var x = 2;')` in the right-hand side of a
 lexical for-of head whose names are not referenced by that expression. Under
@@ -67,24 +67,35 @@ the surrounding variable environment, so all existing closures and post-loop
 reads observe `2`. Current lowering leaves the outer `x` at `1`; the failure
 appears before any post-loop restoration or fresh-binding assertion.
 
-The working hypothesis is that the direct-eval environment classification
-incorrectly treats this lexical iteration head as a binding boundary even when
-the head does not require a TDZ environment. The implementation must confirm
-that hypothesis against the for-of lowering and preserve the already-green
-bound-name and body-var controls.
+The direct-eval call is statically inlined during `__module_init`. Its foreign
+`var x` declaration was sent through `hoistVarDeclarations`, which allocated a
+private module-init local even though `x` was already registered as a script
+module global. The subsequent initializer therefore wrote that private local;
+the closures and reads compiled against the module global continued to observe
+`1`. The loop lowering itself correctly evaluates this receiver without a
+temporary head environment: the destructuring head name `_` is not referenced
+by the receiver, so `uninitializedBoundNames` is empty under §14.7.5.6.
+
+The bounded fix leaves an eval var name out of the private hoist when compiling
+the module initializer and the name already has a registered module global.
+The normal variable-declaration path then emits the live global store. Function
+activations, fresh bindings, TDZ setup, post-loop restoration, and unrelated
+eval-created names remain on their existing paths.
 
 ## Plan
 
 1. Trace direct-eval classification and synchronous for-of head setup on the
    exact failing row, then confirm the smallest shared cause with the `for-in`
-   and classic-`for` controls.
+   and classic-`for` controls. (Complete.)
 2. Implement a bounded correction for the no-variable-environment head path,
    without changing lexical TDZ setup, per-iteration binding creation,
    post-loop restoration, iterator choice, or IteratorClose handling.
+   (Complete: 7 compiler-source lines in `hoistVarDecl`.)
 3. Add a focused regression test covering the exact row and the related
-   controls; retain the passing bound-name/body-var rows as guards.
+   controls; retain the passing bound-name/body-var rows as guards. (Complete.)
 4. Re-run the exact and control rows, type-check/lint the touched files, merge
    the latest upstream main without rebasing, and record post-merge results.
+   (Scoped checks complete; merge and final verification pending.)
 
 ## Acceptance
 
@@ -98,6 +109,19 @@ bound-name and body-var controls.
 - Changed compiler source stays at or below the 180-line budget.
 - The exact commands, commit, and before/after statuses are recorded in
   `## Test Results`.
+
+## Implementation Notes
+
+- Spec grounding: ECMAScript §14.7.5.6 `ForIn/OfHeadEvaluation` evaluates the
+  receiver under `oldEnv` when the uninitialized-name list is empty; the exact
+  row has no receiver reference to `_`, so no temporary TDZ environment is
+  involved.
+- The source change is limited to existing module-global reuse in
+  `src/codegen/index.ts::hoistVarDecl`; changed compiler source is 7 lines,
+  below the 180-line budget.
+- The regression test is `tests/issue-4713.test.ts` and covers the exact row,
+  the for-in/classic-for controls, and four existing passing for-of var/body
+  controls.
 
 ## Test Results
 
@@ -115,4 +139,31 @@ for-of/head-var-bound-names-dup.js:  pass
 for-of/head-var-bound-names-in-stmt.js: pass
 for-of/head-var-bound-names-let.js:  pass
 for-of/scope-body-var-none.js:       pass
+```
+
+Post-fix scoped checks on the same baseline before upstream merge:
+
+```text
+node --import tsx ... runTest262File(...):
+  for-of/scope-head-var-none.js:       pass
+  for-in/scope-head-var-none.js:       pass
+  for/scope-head-var-none.js:          pass
+  for-of/head-var-bound-names-dup.js:  pass
+  for-of/head-var-bound-names-in-stmt.js: pass
+  for-of/head-var-bound-names-let.js:  pass
+  for-of/scope-body-var-none.js:       pass
+
+vitest run tests/issue-4713.test.ts --pool=forks \
+  --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot:
+  3/3 tests passed
+
+vitest run tests/issue-2929-evaldecl-early-errors.test.ts \
+  tests/issue-4653.test.ts --pool=forks \
+  --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot:
+  52/52 tests passed
+
+node typescript/lib/tsc.js --noEmit --types node --pretty false: pass
+biome lint src/codegen/index.ts tests/issue-4713.test.ts \
+  --diagnostic-level=error: pass
+prettier --check tests/issue-4713.test.ts: pass
 ```
