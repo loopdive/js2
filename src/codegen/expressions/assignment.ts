@@ -1153,6 +1153,16 @@ function compileDestructuringAssignment(
       ? symName
       : (ctx.anonTypeMap.get(rhsType) ?? symName);
 
+  // The checker can erase an object-literal's contextual fields (for example,
+  // `{}` is typed as `{}` even when the codegen shape carries the `x` slot
+  // needed by `{ x: [x] } = {}`). Prefer the actual struct emitted for the RHS
+  // when it is available; otherwise this assignment would skip the nested
+  // pattern before it can observe the missing value as `undefined` (#4717).
+  const actualTypeIdx = (resultType as any).typeIdx as number | undefined;
+  const actualName = actualTypeIdx !== undefined ? ctx.typeIdxToStructName.get(actualTypeIdx) : undefined;
+  const actualFields = actualName ? ctx.structFields.get(actualName) : undefined;
+  const hasActualStruct = actualTypeIdx !== undefined && actualFields !== undefined;
+
   // Auto-register anonymous object types (same as resolveWasmType logic)
   if (
     typeName &&
@@ -1169,7 +1179,7 @@ function compileDestructuringAssignment(
   // we just need the RHS value as the expression result.  For non-empty
   // patterns the bindings stay at their defaults (mimics JS behaviour for
   // destructuring primitives — the properties simply do not exist). (#379)
-  if (!typeName || !ctx.structMap.has(typeName) || !ctx.structFields.get(typeName)) {
+  if ((!typeName || !ctx.structMap.has(typeName) || !ctx.structFields.get(typeName)) && !hasActualStruct) {
     // Null/undefined check — throw TypeError (#783, #1260, #1701).
     // In JS, `{...} = null` and `{...} = undefined` always throw TypeError per
     // §13.15.5.2 ObjectAssignmentPattern step 1 (RequireObjectCoercible(value)),
@@ -1393,9 +1403,6 @@ function compileDestructuringAssignment(
   // ref-typed fields, but the TS checker sees externref fields). (#822)
   let structTypeIdx: number;
   let fields: { name: string; type: ValType; mutable?: boolean }[];
-  const actualTypeIdx = (resultType as any).typeIdx as number | undefined;
-  const actualName = actualTypeIdx !== undefined ? ctx.typeIdxToStructName.get(actualTypeIdx) : undefined;
-  const actualFields = actualName ? ctx.structFields.get(actualName) : undefined;
   if (actualTypeIdx !== undefined && actualFields) {
     structTypeIdx = actualTypeIdx;
     fields = actualFields;
@@ -1963,7 +1970,18 @@ function compileArrayDestructuringAssignment(
   }
 
   // §6.2.4 PutValue: strict-mode assignment to unresolvable reference throws.
-  if (isStrictContext(target, ctx.inferModuleStrictArguments) && findUnresolvableInArrayPattern(ctx, fctx, target)) {
+  // Nested patterns must observe a nullish element before PutValue resolves
+  // their leaf targets. In `[[x]] = []`, the missing outer element therefore
+  // throws the required TypeError before strict-mode's unresolved `x` check
+  // (#4719). Leaf-only patterns retain the existing early ReferenceError path.
+  const hasNestedPattern = target.elements.some(
+    (element) => ts.isArrayLiteralExpression(element) || ts.isObjectLiteralExpression(element),
+  );
+  if (
+    isStrictContext(target, ctx.inferModuleStrictArguments) &&
+    findUnresolvableInArrayPattern(ctx, fctx, target) &&
+    !hasNestedPattern
+  ) {
     emitStrictPutValueThrow(ctx, fctx);
     fctx.body.push({ op: "ref.null.extern" });
     return { kind: "externref" };
@@ -3163,7 +3181,10 @@ function emitArrayDestructureFromLocal(
     if (isVecStruct) {
       fctx.body.push({ op: "struct.get", typeIdx: srcTypeIdx, fieldIdx: 1 });
       fctx.body.push({ op: "i32.const", value: i });
-      emitBoundsCheckedArrayGet(fctx, arrTypeIdx, arrDef!.element);
+      // Nested assignment patterns read an array-like value, so an absent
+      // element is the JS `undefined` value (and a sparse-array hole must not
+      // leak its internal sentinel). (#4717)
+      emitBoundsCheckedArrayGet(fctx, arrTypeIdx, arrDef!.element, ctx, true);
     } else {
       // Tuple: direct struct.get on field index i
       fctx.body.push({ op: "struct.get", typeIdx: srcTypeIdx, fieldIdx: i });
