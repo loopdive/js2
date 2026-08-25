@@ -1,13 +1,11 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#3265) Standalone Proxy meta-object dispatch subsystem — extracted VERBATIM
- * from `object-runtime.ts` (subtask of #3182, god-file split). Pure relocation:
- * the two top-level functions (`ensureProxyRuntime`, `fillProxyDispatch`) and
- * their 12 `PROXY_CALL_*` driver-name consts moved here unchanged — no logic
- * changes. `object-runtime.ts` re-exports `fillProxyDispatch` (so `index.ts`s
- * `from "./object-runtime.js"` keeps resolving) and imports `ensureProxyRuntime`
- * back (still called from `ensureObjectRuntime`). Byte-identity IDENTICAL across
- * gc/standalone/wasi is the acceptance gate (`scripts/prove-emit-identity.mjs`).
+ * (#3265) Standalone Proxy meta-object dispatch subsystem — extracted from
+ * `object-runtime.ts` (subtask of #3182, god-file split). The two top-level
+ * functions (`ensureProxyRuntime`, `fillProxyDispatch`) and their 12
+ * `PROXY_CALL_*` driver-name consts live here. `object-runtime.ts` re-exports
+ * `fillProxyDispatch` (so `index.ts`s from "./object-runtime.js" keep resolving)
+ * and imports `ensureProxyRuntime` back (still called from `ensureObjectRuntime`).
  */
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { Instr, ValType } from "../ir/types.js";
@@ -21,6 +19,7 @@ import { addFuncType } from "./registry/types.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureReflectIsConstructor } from "./reflect-construct-native.js";
+import { ensureExternStrictEqHelper } from "./any-helpers.js";
 
 /** (#1100/#1355) Reserved trap-invoke driver names — filled by `fillProxyDispatch`. */
 const PROXY_CALL_GET = "__proxy_call_get";
@@ -529,21 +528,28 @@ export function ensureProxyRuntime(
   //      (§7.3.18 step 2) requires the trap result to be an Object — otherwise a
   //      TypeError. This is acceptance criterion #3 of #1355
   //      (`ownKeys/return-not-list-object-throws.js`: `ownKeys` returning
-  //      `undefined`). We implement the top-level Object-type check here: the
-  //      result is an Object iff it is non-null and not a boxed primitive
-  //      (number / boolean / string) — exactly the complement of ToObject's
-  //      primitive cases. The PER-ELEMENT String|Symbol check (CreateListFromArrayLike
-  //      element-type step) and the §10.5.11 result-invariants (no duplicate keys;
-  //      non-extensible target → result must equal the target's exact own keys)
+  //      `undefined`). The result is an Object iff it is non-null and not a
+  //      primitive carrier (number / boolean / bigint / string / symbol /
+  //      undefined). The same list materialisation then checks each entry for
+  //      String|Symbol and rejects duplicate entries. Target key-set invariants
+  //      (non-extensible target → result must equal the target's exact own keys)
   //      stay deferred to the dedicated invariant slice.
-  // params: 0=proxyExtern, 1=unused. locals: 2=p, 3=trap.
+  // params: 0=proxyExtern, 1=unused. locals: 2=p, 3=trap/result, 4=len, 5=i,
+  // 6=j, 7=elem.
+  const ownKeysStrictEqIdx = ensureExternStrictEqHelper(ctx) ?? ctx.funcMap.get("__host_eq")!;
+  const ownKeysLengthIdx = ctx.funcMap.get("__extern_length")!;
+  const ownKeysGetIdx = ctx.funcMap.get("__extern_get_idx")!;
+  const ownKeysTypeofUndefinedIdx = ctx.funcMap.get("__typeof_undefined")!;
+  const ownKeysTypeofBigIntIdx = ctx.funcMap.get("__typeof_bigint")!;
+  const ownKeysSymbolTypeIdx = ctx.symbolTypeIdx;
   const buildOwnKeysDispatch = (forwardName: string): Instr[] => {
     const forwardIdx = ctx.funcMap.get(forwardName)!;
     const isObjectNumIdx = ctx.funcMap.get("__typeof_number")!;
     const isObjectBoolIdx = ctx.funcMap.get("__typeof_boolean")!;
     const isObjectStrIdx = ctx.funcMap.get("__typeof_string")!;
-    // The trap arm: invoke driver(handler, trap, target), then enforce the
-    // CreateListFromArrayLike Object-type check on the result before returning.
+    // The trap arm: invoke driver(handler, trap, target), then enforce
+    // CreateListFromArrayLike and the ownKeys duplicate-entry rule before
+    // returning the result.
     const trapArm: Instr[] = [
       // result = driver(handler, trap, target)
       { op: "local.get", index: 2 },
@@ -555,12 +561,10 @@ export function ensureProxyRuntime(
       { op: "extern.convert_any" },
       { op: "call", funcIdx: callOwnKeysIdx },
       // Stash the result in the trap local (reused — its prior value is dead here)
-      // so we can both type-check and return it. trap local (3) is externref.
+      // so we can both validate and return it. trap local (3) is externref.
       { op: "local.set", index: 3 },
       // §7.3.18 step 2 / §10.5.11: if Type(result) is not Object → TypeError.
-      // not-Object ⇔ is_null OR __typeof_number OR __typeof_boolean OR
-      // __typeof_string. Compute (isNumber | isBoolean | isString), OR with
-      // is_null, and throw if set.
+      // not-Object ⇔ null, a boxed primitive, or a native Symbol carrier.
       { op: "local.get", index: 3 },
       { op: "ref.is_null" },
       { op: "local.get", index: 3 },
@@ -572,8 +576,104 @@ export function ensureProxyRuntime(
       { op: "local.get", index: 3 },
       { op: "call", funcIdx: isObjectStrIdx },
       { op: "i32.or" },
+      { op: "local.get", index: 3 },
+      { op: "call", funcIdx: ownKeysTypeofBigIntIdx },
+      { op: "i32.or" },
+      { op: "local.get", index: 3 },
+      { op: "call", funcIdx: ownKeysTypeofUndefinedIdx },
+      { op: "i32.or" },
+      ...(ownKeysSymbolTypeIdx >= 0
+        ? ([
+            { op: "local.get", index: 3 },
+            { op: "any.convert_extern" },
+            { op: "ref.test", typeIdx: ownKeysSymbolTypeIdx },
+            { op: "i32.or" },
+          ] satisfies Instr[])
+        : []),
       { op: "if", blockType: { kind: "empty" }, then: throwNotListObject() },
-      // result is an Object → return it.
+      // len = ToLength(result.length), represented as a saturated i32 for the
+      // bounded Wasm walk below. The existing helper performs the full
+      // array-like length conversion before this narrowing.
+      { op: "local.get", index: 3 },
+      { op: "call", funcIdx: ownKeysLengthIdx },
+      { op: "i32.trunc_sat_f64_s" },
+      { op: "local.set", index: 4 },
+      { op: "i32.const", value: 0 },
+      { op: "local.set", index: 5 },
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              { op: "local.get", index: 5 },
+              { op: "local.get", index: 4 },
+              { op: "i32.ge_s" },
+              { op: "br_if", depth: 1 },
+              // elem = result[i]
+              { op: "local.get", index: 3 },
+              { op: "local.get", index: 5 },
+              { op: "f64.convert_i32_s" },
+              { op: "call", funcIdx: ownKeysGetIdx },
+              { op: "local.set", index: 7 },
+              // Every ownKeys list element must be a String or a Symbol.
+              { op: "local.get", index: 7 },
+              { op: "call", funcIdx: isObjectStrIdx },
+              ...(ownKeysSymbolTypeIdx >= 0
+                ? ([
+                    { op: "local.get", index: 7 },
+                    { op: "any.convert_extern" },
+                    { op: "ref.test", typeIdx: ownKeysSymbolTypeIdx },
+                    { op: "i32.or" },
+                  ] satisfies Instr[])
+                : []),
+              { op: "i32.eqz" },
+              { op: "if", blockType: { kind: "empty" }, then: throwNotListObject() },
+              // Compare this entry with all preceding entries. The native
+              // helper compares string values and symbol identity; the host
+              // fallback preserves the JS-host Strict Equality behavior.
+              { op: "i32.const", value: 0 },
+              { op: "local.set", index: 6 },
+              {
+                op: "block",
+                blockType: { kind: "empty" },
+                body: [
+                  {
+                    op: "loop",
+                    blockType: { kind: "empty" },
+                    body: [
+                      { op: "local.get", index: 6 },
+                      { op: "local.get", index: 5 },
+                      { op: "i32.ge_s" },
+                      { op: "br_if", depth: 1 },
+                      { op: "local.get", index: 7 },
+                      { op: "local.get", index: 3 },
+                      { op: "local.get", index: 6 },
+                      { op: "f64.convert_i32_s" },
+                      { op: "call", funcIdx: ownKeysGetIdx },
+                      { op: "call", funcIdx: ownKeysStrictEqIdx },
+                      { op: "if", blockType: { kind: "empty" }, then: throwNotListObject() },
+                      { op: "local.get", index: 6 },
+                      { op: "i32.const", value: 1 },
+                      { op: "i32.add" },
+                      { op: "local.set", index: 6 },
+                      { op: "br", depth: 0 },
+                    ],
+                  },
+                ],
+              },
+              { op: "local.get", index: 5 },
+              { op: "i32.const", value: 1 },
+              { op: "i32.add" },
+              { op: "local.set", index: 5 },
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+      // result is a validated Object → return it.
       { op: "local.get", index: 3 },
     ];
     const forwardArm: Instr[] = [
@@ -715,6 +815,14 @@ export function ensureProxyRuntime(
     { name: "p", type: { kind: "ref", typeIdx: proxyTypeIdx } as ValType },
     { name: "trap", type: { kind: "externref" } as ValType },
   ];
+  const ownKeysDispatchLocals = (): { name: string; type: ValType }[] => [
+    { name: "p", type: { kind: "ref", typeIdx: proxyTypeIdx } as ValType },
+    { name: "trap", type: { kind: "externref" } as ValType },
+    { name: "len", type: { kind: "i32" } },
+    { name: "i", type: { kind: "i32" } },
+    { name: "j", type: { kind: "i32" } },
+    { name: "elem", type: { kind: "externref" } },
+  ];
 
   registerNative(
     "__proxy_get_dispatch",
@@ -823,14 +931,14 @@ export function ensureProxyRuntime(
     "__proxy_ownkeys_keys_dispatch",
     [externref, externref],
     [externref],
-    dispatchLocals(),
+    ownKeysDispatchLocals(),
     buildOwnKeysDispatch("__object_keys"),
   );
   registerNative(
     "__proxy_ownkeys_names_dispatch",
     [externref, externref],
     [externref],
-    dispatchLocals(),
+    ownKeysDispatchLocals(),
     buildOwnKeysDispatch("__getOwnPropertyNames"),
   );
   // (#1355 Slice F) __proxy_define_dispatch(proxy, key, desc) -> externref
