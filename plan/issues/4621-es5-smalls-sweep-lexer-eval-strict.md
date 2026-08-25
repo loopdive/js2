@@ -2,11 +2,11 @@
 id: 4621
 title: "ES5 standalone: smalls sweep — regexp-literal lexing code-units, strict eval/arguments-assignment TypeErrors, switch(null), with-scope writes, comment compile-timeouts, Math_random host-import CE (~35 rows)"
 status: done
-completed: 2026-08-23
+completed: 2026-08-25
 assignee: ttraenkler/dev-4621
 sprint: current
 created: 2026-08-16
-updated: 2026-08-23
+updated: 2026-08-25
 priority: medium
 horizon: m
 feasibility: medium
@@ -61,6 +61,8 @@ loc-budget-allow:
   - src/codegen/expressions/assignment.ts
   - src/codegen/binary-ops.ts
   - src/codegen/expressions/new-super.ts
+  - src/codegen/math-helpers.ts
+  - src/codegen/declarations/import-collector.ts
 func-budget-allow:
   # The same three edits seen per-function; the fourth (`compileNewExpression`)
   # is already granted by #4506 for this path.
@@ -357,6 +359,22 @@ caused by this diff, all verified by re-running with #4621 fully REVERTED at
    `es5-standalone-harness-selftests.test.ts` to both. Measured on this branch:
    without it exit 1 / 45 green / 1 error, with it exit 0 / 45 green / 0 errors.
    The same hook is in `tests/issue-4621.test.ts` for the same measured reason.
+
+## Aggregate remeasurement (2026-08-25)
+
+The earlier conclusion that `Math.random` already passed no longer held on the
+authoritative aggregate standalone branch: the exact ES5 row emitted
+`env::Math_random` and was rejected as a host-import leak. Standalone now emits
+a module-local xorshift64 generator with no entropy capability; WASI retains
+`random_get`, and the default GC target retains `env::Math_random`. Evidence:
+the exact row is 1/1, `tests/issue-1322.test.ts` is 7/7, and typecheck, lint,
+format, LOC/function, coercion, oracle, dead-export, and stack-balance gates
+pass.
+
+The same aggregate run tripped three intentionally stale residual pins, proving
+that `S12.10_A5_T5`, `S8.12.6_A2_T2`, and `S7.8.5_A1.1_T2` now pass. They are
+positive pins in `tests/issue-4621.test.ts`; the historical table below records
+the earlier branch measurement rather than the current aggregate state.
 
 ## Residuals
 
