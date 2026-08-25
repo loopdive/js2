@@ -261,7 +261,8 @@ describe.skipIf(!TEST262)("#4639 — measured residuals (see the issue's Residua
   // C3: prototype constructor carriers now route through the intrinsic
   // String/Object/Error constructor paths. The Error row also checks that a
   // live Error.prototype.toString replacement remains visible on the newly
-  // constructed instance.
+  // constructed instance. The String row is also exercised on the aggregate
+  // with #4870, whose deleted-prototype fallback keeps check #3 exact.
   pinRow(
     "built-ins/String/prototype/constructor/S15.5.4.1_A1_T2.js",
     "C3 — String prototype constructor is constructable",
