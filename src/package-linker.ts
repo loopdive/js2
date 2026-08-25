@@ -28,12 +28,14 @@ import { buildCompiledImports } from "./runtime.js";
 import { RUNTIME_RECGROUP_ABI_VERSION } from "./emit/canonical-recgroup.js";
 import {
   appendProviderManifest,
+  canonicalProviderManifestJson,
   decodeProviderManifest,
   providerArtifactHash,
   PROVIDER_COMPILER_ABI_VERSION,
   PROVIDER_MANIFEST_FORMAT_VERSION,
   PROVIDER_MANIFEST_SECTION_NAME,
   PROVIDER_LINKER_ABI_VERSION,
+  type ProviderBoundaryManifest,
   type ProviderDependencyManifest,
   type ProviderManifestV1,
 } from "./provider-manifest.js";
@@ -41,7 +43,7 @@ import {
 const LINKER_VERSION = PROVIDER_LINKER_ABI_VERSION;
 // The generated entry facade is part of the provider ABI. Bump this when its
 // source shape changes so an old provider cannot be reused with new wrappers.
-const PROVIDER_FACADE_ABI_VERSION = 3;
+const PROVIDER_FACADE_ABI_VERSION = 4;
 const LINKED_DEFAULT_DECLARATION = "__js2wasm_default";
 
 export interface PackageLinkInput {
@@ -61,24 +63,35 @@ export type PackageLinkAttempt =
 
 interface FunctionExport {
   name: string;
-  declaration: ts.FunctionDeclaration;
+  declaration: ts.FunctionLikeDeclaration;
   /** Physical source file containing the declaration (aliases may cross files). */
   sourceFile: string;
   /** A missing/any/unknown annotation requires engine signature validation. */
   uncertain: boolean;
 }
 
+interface ValueExport {
+  name: string;
+  sourceFile: string;
+  kind: "value" | "class";
+  callable?: FunctionExport;
+}
+
+type PackageBoundary = { kind: "function"; exported: FunctionExport } | { kind: "value"; exported: ValueExport };
+
 interface PackageNode {
   root: string;
   name: string;
   files: string[];
   entry: string;
-  exports: Map<string, FunctionExport>;
+  exports: Map<string, PackageBoundary>;
   dependencies: Set<string>;
   dependencyTargets: Map<string, string>;
   externalImporters: string[];
   entryTargets: Set<string>;
   requiresSignatureValidation: boolean;
+  /** A namespace import requires a complete, unambiguous object surface. */
+  namespaceRequested: boolean;
 }
 
 interface ExternalBinding {
@@ -88,6 +101,9 @@ interface ExternalBinding {
   target: string;
   exportName: string;
   localName: string;
+  namespace?: boolean;
+  typePosition?: boolean;
+  typeOnly?: boolean;
 }
 
 function linkedBindingLookupNames(binding: Pick<ExternalBinding, "exportName" | "localName">): string[] {
@@ -245,7 +261,7 @@ function primitiveTypeState(node: ts.TypeNode | undefined): BoundaryTypeState {
   }
 }
 
-function primitiveFunctionState(declaration: ts.FunctionDeclaration): BoundaryTypeState {
+function primitiveFunctionState(declaration: ts.FunctionLikeDeclaration): BoundaryTypeState {
   if (declaration.typeParameters && declaration.typeParameters.length > 0) return "unsupported";
   const states = [
     primitiveTypeState(declaration.type),
@@ -255,7 +271,10 @@ function primitiveFunctionState(declaration: ts.FunctionDeclaration): BoundaryTy
   return states.includes("uncertain") ? "uncertain" : "safe";
 }
 
-type ExportResolution = { kind: "function"; exported: FunctionExport } | { kind: "unsupported"; reason: string };
+type ExportResolution =
+  | { kind: "function"; exported: FunctionExport }
+  | { kind: "value"; exported: ValueExport }
+  | { kind: "unsupported"; reason: string };
 
 interface PackageExportAnalysis {
   exports: Map<string, ExportResolution>;
@@ -277,6 +296,14 @@ function unsupportedExport(reason: string): ExportResolution {
 
 function cloneFunctionExport(exported: FunctionExport, name: string): FunctionExport {
   return { ...exported, name };
+}
+
+function cloneValueExport(exported: ValueExport, name: string): ValueExport {
+  return {
+    ...exported,
+    name,
+    ...(exported.callable ? { callable: { ...exported.callable, name } } : {}),
+  };
 }
 
 function localDeclarationMaps(
@@ -330,17 +357,55 @@ function localDeclarationMaps(
     if (ts.isVariableStatement(statement)) {
       for (const declaration of statement.declarationList.declarations) {
         const name = ts.isIdentifier(declaration.name) ? declaration.name.text : undefined;
-        if (name) values.set(name, unsupportedExport("package exports a value boundary"));
+        if (name) {
+          const initializer = declaration.initializer;
+          const callable =
+            initializer && (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer))
+              ? initializer
+              : undefined;
+          const state = callable ? primitiveFunctionState(callable) : "unsupported";
+          values.set(name, {
+            kind: "value",
+            exported: {
+              name,
+              sourceFile: fileName,
+              kind: "value",
+              ...(callable && state !== "unsupported"
+                ? {
+                    callable: {
+                      name,
+                      declaration: callable,
+                      sourceFile: fileName,
+                      uncertain: state === "uncertain",
+                    },
+                  }
+                : {}),
+            },
+          });
+        }
       }
       continue;
     }
     if (ts.isClassDeclaration(statement)) {
-      if (statement.name) values.set(statement.name.text, unsupportedExport("package exports a class boundary"));
-      if (isDefault(statement)) defaultExport = unsupportedExport("package exports a class boundary");
+      if (statement.name) {
+        values.set(statement.name.text, {
+          kind: "value",
+          exported: { name: statement.name.text, sourceFile: fileName, kind: "class" },
+        });
+      }
+      if (isDefault(statement)) {
+        defaultExport = {
+          kind: "value",
+          exported: { name: "default", sourceFile: fileName, kind: "class" },
+        };
+      }
       continue;
     }
     if (ts.isEnumDeclaration(statement)) {
-      values.set(statement.name.text, unsupportedExport("package exports an enum boundary"));
+      values.set(statement.name.text, {
+        kind: "value",
+        exported: { name: statement.name.text, sourceFile: fileName, kind: "value" },
+      });
     }
   }
   return { functions, values, defaultExport };
@@ -442,11 +507,29 @@ function analyzePackageExports(analyzer: PackageExportAnalyzer): PackageExportAn
       }
       if (isExported(statement) && ts.isClassDeclaration(statement)) {
         const name = isDefault(statement) ? "default" : statement.name?.text;
-        if (name) publish(name, unsupportedExport("package exports a class boundary"));
+        if (name) {
+          publish(
+            name,
+            locals.defaultExport && isDefault(statement)
+              ? locals.defaultExport
+              : (locals.values.get(statement.name?.text ?? name) ??
+                  ({
+                    kind: "value",
+                    exported: { name, sourceFile: fileName, kind: "class" },
+                  } as ExportResolution)),
+          );
+        }
         continue;
       }
       if (isExported(statement) && ts.isEnumDeclaration(statement)) {
-        publish(statement.name.text, unsupportedExport("package exports an enum boundary"));
+        publish(
+          statement.name.text,
+          locals.values.get(statement.name.text) ??
+            ({
+              kind: "value",
+              exported: { name: statement.name.text, sourceFile: fileName, kind: "value" },
+            } as ExportResolution),
+        );
         continue;
       }
       if (ts.isExportAssignment(statement)) {
@@ -455,7 +538,10 @@ function analyzePackageExports(analyzer: PackageExportAnalyzer): PackageExportAn
         } else if (ts.isIdentifier(statement.expression)) {
           publish("default", resolveLocalExport(locals, statement.expression.text));
         } else {
-          publish("default", unsupportedExport("default value expression is not link-safe"));
+          publish("default", {
+            kind: "value",
+            exported: { name: "default", sourceFile: fileName, kind: "value" },
+          });
         }
         continue;
       }
@@ -517,35 +603,108 @@ function importBindings(
   sourceFile: ts.SourceFile,
   specifier: string,
 ):
-  | { bindings: Array<{ exportName: string; localName: string }>; unsupported?: undefined }
+  | {
+      bindings: Array<{
+        exportName: string;
+        localName: string;
+        namespace?: boolean;
+        typePosition?: boolean;
+        typeOnly?: boolean;
+      }>;
+      unsupported?: undefined;
+    }
   | { bindings?: undefined; unsupported: string } {
-  const bindings: Array<{ exportName: string; localName: string }> = [];
+  const bindings: Array<{
+    exportName: string;
+    localName: string;
+    namespace?: boolean;
+    typePosition?: boolean;
+    typeOnly?: boolean;
+  }> = [];
   for (const statement of sourceFile.statements) {
     if (!ts.isImportDeclaration(statement)) continue;
     if (!ts.isStringLiteral(statement.moduleSpecifier) || statement.moduleSpecifier.text !== specifier) continue;
     const clause = statement.importClause;
     if (!clause) continue; // side-effect imports are permitted; provider init runs on instantiation.
-    if (clause.name) bindings.push({ exportName: "default", localName: clause.name.text });
+    if (clause.name)
+      bindings.push({
+        exportName: "default",
+        localName: clause.name.text,
+        typeOnly: clause.isTypeOnly,
+        typePosition: identifierUsedInTypePosition(sourceFile, clause.name.text),
+      });
     if (!clause.namedBindings) continue;
     if (ts.isNamespaceImport(clause.namedBindings)) {
-      return { unsupported: `namespace import from ${specifier}` };
+      bindings.push({
+        exportName: "*",
+        localName: clause.namedBindings.name.text,
+        namespace: true,
+        typeOnly: clause.isTypeOnly,
+        typePosition: identifierUsedInTypePosition(sourceFile, clause.namedBindings.name.text),
+      });
+      continue;
     }
     for (const element of clause.namedBindings.elements) {
       const exportName = element.propertyName?.text ?? element.name.text;
-      bindings.push({ exportName, localName: element.name.text });
+      bindings.push({
+        exportName,
+        localName: element.name.text,
+        typeOnly: clause.isTypeOnly || element.isTypeOnly,
+        typePosition: identifierUsedInTypePosition(sourceFile, element.name.text),
+      });
     }
   }
   return { bindings };
 }
 
+function identifierUsedInTypePosition(sourceFile: ts.SourceFile, localName: string): boolean {
+  const isTypeNode = (node: ts.Node): boolean => {
+    const predicate = (ts as typeof ts & { isTypeNode?: (candidate: ts.Node) => boolean }).isTypeNode;
+    return predicate?.(node) ?? false;
+  };
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isIdentifier(node) && node.text === localName) {
+      const parent = node.parent;
+      if (!ts.isImportSpecifier(parent) && !ts.isNamespaceImport(parent) && !ts.isImportClause(parent)) {
+        let current: ts.Node | undefined = parent;
+        while (current && !ts.isSourceFile(current)) {
+          if (isTypeNode(current) || ts.isExpressionWithTypeArguments(current)) {
+            found = true;
+            return;
+          }
+          current = current.parent;
+        }
+      }
+    }
+    node.forEachChild(visit);
+  };
+  sourceFile.forEachChild(visit);
+  return found;
+}
+
+interface LinkedRewriteBinding {
+  specifier: string;
+  exportName: string;
+  localName: string;
+  namespace?: boolean;
+  boundary: ProviderBoundaryManifest;
+}
+
+function getterLocalName(binding: Pick<LinkedRewriteBinding, "specifier" | "exportName" | "localName">): string {
+  const safe = binding.exportName === "*" ? "namespace" : binding.exportName.replace(/[^$A-Z_a-z0-9]/g, "_");
+  return `__js2wasm_get_${safe}_${hashText([binding.specifier, binding.exportName, binding.localName]).slice(0, 8)}`;
+}
+
 /**
- * The regular codegen path treats a declaration-file default import as a
- * module global rather than a callable function. Provider stubs expose a
- * stable named alias as well, so rewrite only linked default imports to that
- * alias while leaving the user's source untouched on the bundled fallback.
+ * Rewrite linked value/class/namespace imports to a hidden getter plus one
+ * module-global initialization. Function imports retain their direct Wasm
+ * call ABI; this rewrite therefore cannot accidentally turn a primitive
+ * function edge into an opaque host value.
  */
-function rewriteLinkedDefaultImports(fileName: string, source: string, linkedSpecifiers: ReadonlySet<string>): string {
-  if (linkedSpecifiers.size === 0) return source;
+function rewriteLinkedImports(fileName: string, source: string, linked: readonly LinkedRewriteBinding[]): string {
+  if (linked.length === 0) return source;
   const sourceFile = parseSource(fileName, source);
   const replacements: Array<{ start: number; end: number; text: string }> = [];
   for (const statement of sourceFile.statements) {
@@ -556,19 +715,57 @@ function rewriteLinkedDefaultImports(fileName: string, source: string, linkedSpe
     ) {
       continue;
     }
-    if (!statement.importClause.name || !linkedSpecifiers.has(statement.moduleSpecifier.text)) continue;
-    const defaultName = statement.importClause.name.text;
+    const specifier = statement.moduleSpecifier.text;
+    const statementBindings = linked.filter((binding) => binding.specifier === specifier);
+    if (statementBindings.length === 0) continue;
     const namedBindings = statement.importClause.namedBindings;
-    if (namedBindings && !ts.isNamedImports(namedBindings)) continue;
-    const named =
-      namedBindings && ts.isNamedImports(namedBindings)
-        ? namedBindings.elements.map((element) => element.getText(sourceFile))
-        : [];
-    const imports = [`${LINKED_DEFAULT_DECLARATION} as ${defaultName}`, ...named].join(", ");
+    const imports: string[] = [];
+    const initializers: string[] = [];
+    const findBinding = (exportName: string, localName: string): LinkedRewriteBinding | undefined =>
+      statementBindings.find((binding) => binding.exportName === exportName && binding.localName === localName);
+    if (statement.importClause.name) {
+      const localName = statement.importClause.name.text;
+      const binding = findBinding("default", localName);
+      if (binding?.boundary.kind === "function") {
+        imports.push(`${LINKED_DEFAULT_DECLARATION} as ${localName}`);
+      } else if (binding) {
+        const getter = getterLocalName(binding);
+        imports.push(`${binding.boundary.field} as ${getter}`);
+        initializers.push(`const ${localName} = ${getter}();`);
+      } else {
+        imports.push(`${localName}`);
+      }
+    }
+    if (namedBindings && ts.isNamespaceImport(namedBindings)) {
+      const binding = findBinding("*", namedBindings.name.text);
+      if (binding) {
+        const getter = getterLocalName(binding);
+        imports.push(`${binding.boundary.field} as ${getter}`);
+        initializers.push(`const ${namedBindings.name.text} = ${getter}();`);
+      }
+    } else if (namedBindings && ts.isNamedImports(namedBindings)) {
+      for (const element of namedBindings.elements) {
+        const exportName = element.propertyName?.text ?? element.name.text;
+        const localName = element.name.text;
+        const binding = findBinding(exportName, localName);
+        if (binding?.boundary.kind === "function") {
+          imports.push(element.getText(sourceFile));
+        } else if (binding) {
+          const getter = getterLocalName(binding);
+          imports.push(`${binding.boundary.field} as ${getter}`);
+          initializers.push(`const ${localName} = ${getter}();`);
+        } else {
+          imports.push(element.getText(sourceFile));
+        }
+      }
+    }
+    if (imports.length === 0) continue;
     replacements.push({
       start: statement.getStart(sourceFile),
       end: statement.end,
-      text: `import { ${imports} } from ${statement.moduleSpecifier.getText(sourceFile)};`,
+      text: `import { ${imports.join(", ")} } from ${statement.moduleSpecifier.getText(sourceFile)};${
+        initializers.length > 0 ? `\n${initializers.join("\n")}` : ""
+      }`,
     });
   }
   let rewritten = source;
@@ -578,24 +775,43 @@ function rewriteLinkedDefaultImports(fileName: string, source: string, linkedSpe
   return rewritten;
 }
 
-function declarationSourceFile(node: PackageNode, exported: FunctionExport): ts.SourceFile {
+function declarationSourceFile(node: PackageNode, exported: FunctionExport | ValueExport): ts.SourceFile {
   const source = nodeSource(node, exported.sourceFile);
   return parseSource(exported.sourceFile, source);
 }
 
+function boundaryGetterField(exportName: string, packageName: string): string {
+  const safe = exportName === "default" ? "default" : exportName.replace(/[^$A-Z_a-z0-9]/g, "_");
+  return `__js2wasm_get_${safe}_${hashText([packageName, exportName]).slice(0, 8)}`;
+}
+
+function namespaceGetterField(packageName: string): string {
+  return `__js2wasm_get_namespace_${hashText([packageName]).slice(0, 8)}`;
+}
+
 function buildDeclarationStub(node: PackageNode): string {
-  const declarations = Array.from(node.exports.values(), (exported) =>
-    functionSignature(exported, declarationSourceFile(node, exported)),
-  );
-  if (node.exports.has("default")) declarations.push(`export { ${LINKED_DEFAULT_DECLARATION} as default };`);
+  const declarations: string[] = [];
+  for (const [name, boundary] of node.exports) {
+    if (boundary.kind === "function") {
+      declarations.push(functionSignature(boundary.exported, declarationSourceFile(node, boundary.exported)));
+      continue;
+    }
+    declarations.push(`export declare function ${boundaryGetterField(name, node.name)}(): any;`);
+  }
+  if (node.namespaceRequested) declarations.push(`export declare function ${namespaceGetterField(node.name)}(): any;`);
+  if (node.exports.get("default")?.kind === "function") {
+    declarations.push(`export { ${LINKED_DEFAULT_DECLARATION} as default };`);
+  }
   return `${declarations.join("\n")}\n`;
 }
 
 function exportSignaturesFor(node: PackageNode): Record<string, string> {
   return Object.fromEntries(
-    Array.from(node.exports.values(), (exported) => [
-      exported.name,
-      functionSignature(exported, declarationSourceFile(node, exported)),
+    Array.from(node.exports.entries(), ([name, boundary]) => [
+      name,
+      boundary.kind === "function"
+        ? functionSignature(boundary.exported, declarationSourceFile(node, boundary.exported))
+        : "any",
     ]),
   );
 }
@@ -603,43 +819,78 @@ function exportSignaturesFor(node: PackageNode): Record<string, string> {
 interface ProviderFacade {
   key: string;
   source: string;
+  boundaries: Record<string, { kind: "function" | "getter" | "namespaceGetter"; field: string }>;
+}
+
+function plannedProviderBoundaries(node: PackageNode): Record<string, ProviderBoundaryManifest> {
+  const boundaries: Record<string, ProviderBoundaryManifest> = {};
+  for (const [name, boundary] of node.exports) {
+    boundaries[name] =
+      boundary.kind === "function"
+        ? { kind: "function", field: name === "default" ? "default" : name }
+        : { kind: "getter", field: boundaryGetterField(name, node.name) };
+  }
+  if (node.namespaceRequested) {
+    boundaries["*"] = { kind: "namespaceGetter", field: namespaceGetterField(node.name) };
+  }
+  return boundaries;
 }
 
 function buildProviderFacade(node: PackageNode): ProviderFacade | undefined {
   const lines = [
     "// Generated by js2wasm package linker; the original package entry remains the source of truth.",
-    "// Facade ABI: 1",
+    "// Facade ABI: 4",
   ];
   const wrappers: string[] = [];
   const entrySpecifier = "./__js2wasm_provider_entry";
-  const ordered = Array.from(node.exports.values()).sort((a, b) => a.name.localeCompare(b.name));
-  for (const [index, exported] of ordered.entries()) {
-    const sourceFile = declarationSourceFile(node, exported);
-    const fn = exported.declaration;
-    const params: string[] = [];
-    const args: string[] = [];
-    for (const parameter of fn.parameters) {
-      if (!ts.isIdentifier(parameter.name) || parameter.name.text === "this") return undefined;
-      const parameterText = parameter.getText(sourceFile);
-      params.push(parameterText);
-      args.push(parameter.dotDotDotToken ? `...${parameter.name.text}` : parameter.name.text);
-    }
+  const boundaries: ProviderFacade["boundaries"] = {};
+  const ordered = Array.from(node.exports.entries()).sort(([a], [b]) => a.localeCompare(b));
+  const sourceBindings: Array<{ name: string; binding: string }> = [];
+  const namespaceBindings: Array<{ name: string; binding: string }> = [];
+  for (const [index, [name, boundary]] of ordered.entries()) {
     const sourceBinding = `__js2wasm_provider_source_${index}`;
-    const wrapper = `__js2wasm_provider_export_${index}`;
-    const importedName = exported.name === "default" ? "default" : exported.name;
+    const importedName = name === "default" ? "default" : name;
     if (!/^[$A-Z_a-z][$\w]*$/.test(importedName)) return undefined;
     lines.push(`import { ${importedName} as ${sourceBinding} } from "${entrySpecifier}";`);
-    const typeParameters = fn.typeParameters
-      ? `<${fn.typeParameters.map((parameter) => parameter.getText(sourceFile)).join(", ")}>`
-      : "";
-    const returnType = fn.type?.getText(sourceFile) ?? "any";
-    lines.push(
-      `export function ${wrapper}${typeParameters}(${params.join(", ")}): ${returnType} { return ${sourceBinding}(${args.join(", ")}); }`,
-    );
-    wrappers.push(`export { ${wrapper} as ${exported.name === "default" ? "default" : exported.name} };`);
+    sourceBindings.push({ name, binding: sourceBinding });
+    if (boundary.kind === "function") {
+      const sourceFile = declarationSourceFile(node, boundary.exported);
+      const fn = boundary.exported.declaration;
+      const params: string[] = [];
+      const args: string[] = [];
+      for (const parameter of fn.parameters) {
+        if (!ts.isIdentifier(parameter.name) || parameter.name.text === "this") return undefined;
+        const parameterText = parameter.getText(sourceFile);
+        params.push(parameterText);
+        args.push(parameter.dotDotDotToken ? `...${parameter.name.text}` : parameter.name.text);
+      }
+      const wrapper = `__js2wasm_provider_export_${index}`;
+      const typeParameters = fn.typeParameters
+        ? `<${fn.typeParameters.map((parameter) => parameter.getText(sourceFile)).join(", ")}>`
+        : "";
+      const returnType = fn.type?.getText(sourceFile) ?? "any";
+      lines.push(
+        `export function ${wrapper}${typeParameters}(${params.join(", ")}): ${returnType} { return ${sourceBinding}(${args.join(", ")}); }`,
+      );
+      wrappers.push(`export { ${wrapper} as ${name === "default" ? "default" : name} };`);
+      namespaceBindings.push({ name, binding: wrapper });
+      boundaries[name] = { kind: "function", field: name === "default" ? "default" : name };
+    } else {
+      const field = boundaryGetterField(name, node.name);
+      const getter = `export function ${field}(): any { return ${sourceBinding}; }`;
+      lines.push(getter);
+      namespaceBindings.push({ name, binding: sourceBinding });
+      boundaries[name] = { kind: "getter", field };
+    }
+  }
+  if (node.namespaceRequested) {
+    const fields = namespaceBindings.map(({ name, binding }) => `${name === "default" ? "default" : name}: ${binding}`);
+    const namespaceField = namespaceGetterField(node.name);
+    lines.push(`export function ${namespaceField}(): any { return { ${fields.join(", ")} }; }`);
+    boundaries["*"] = { kind: "namespaceGetter", field: namespaceField };
   }
   lines.push(...wrappers);
-  return { key: "./__js2wasm_provider_facade.ts", source: `${lines.join("\n")}\n` };
+  return { key: "./__js2wasm_provider_facade.ts", source: `${lines.join("\n")}\n`, boundaries };
 }
 
 function providerMetadata(result: CompileResult): LinkedProviderMetadata {
@@ -686,6 +937,7 @@ interface ProviderCacheExpectation {
   dependencies: readonly ProviderDependencyManifest[];
   exports: readonly string[];
   exportSignatures: Readonly<Record<string, string>>;
+  exportBoundaries: Readonly<Record<string, ProviderBoundaryManifest>>;
 }
 
 function manifestMatchesExpectation(manifest: ProviderManifestV1, expected: ProviderCacheExpectation): boolean {
@@ -714,10 +966,16 @@ function manifestMatchesExpectation(manifest: ProviderManifestV1, expected: Prov
   const expectedSignatures = expected.exportSignatures;
   const actualSignatureNames = Object.keys(manifest.exportSignatures);
   const expectedSignatureNames = Object.keys(expectedSignatures);
-  return (
+  if (
     actualSignatureNames.length === expectedSignatureNames.length &&
     expectedSignatureNames.every((name) => manifest.exportSignatures[name] === expectedSignatures[name])
-  );
+  ) {
+    return (
+      canonicalProviderManifestJson(manifest.exportBoundaries) ===
+      canonicalProviderManifestJson(expected.exportBoundaries)
+    );
+  }
+  return false;
 }
 
 function decodeCachedProvider(binary: Uint8Array, fileKey: string): CachedProvider | undefined {
@@ -1003,6 +1261,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
         externalImporters: [],
         entryTargets: new Set(),
         requiresSignatureValidation: false,
+        namespaceRequested: false,
       };
       packages.set(root, node);
     }
@@ -1051,6 +1310,9 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
           target,
           exportName: binding.exportName,
           localName: binding.localName,
+          namespace: binding.namespace,
+          typePosition: binding.typePosition,
+          typeOnly: binding.typeOnly,
         });
       }
     }
@@ -1070,25 +1332,49 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       projectResolutions: input.projectResolutions,
     });
     if (analysis.cycle) return makeFallback(`${node.name}: cyclic relative export graph`);
+    node.namespaceRequested = bindings.some((binding) => binding.packageRoot === node.root && binding.namespace);
     const requested = new Set(
-      bindings.filter((binding) => binding.packageRoot === node.root).map((binding) => binding.exportName),
+      node.namespaceRequested
+        ? analysis.exports.keys()
+        : bindings.filter((binding) => binding.packageRoot === node.root).map((binding) => binding.exportName),
     );
-    if (requested.size === 0) return makeFallback(`${node.name}: package has no named function boundary`);
+    if (requested.size === 0) return makeFallback(`${node.name}: package has no linkable export boundary`);
     node.exports = new Map();
     for (const name of requested) {
       const resolution = analysis.exports.get(name);
       if (!resolution) return makeFallback(`${node.name} does not expose ${name}`);
       if (resolution.kind === "unsupported") return makeFallback(`${node.name}: ${resolution.reason}`);
-      node.exports.set(name, cloneFunctionExport(resolution.exported, name));
+      node.exports.set(
+        name,
+        resolution.kind === "function"
+          ? { kind: "function", exported: cloneFunctionExport(resolution.exported, name) }
+          : resolution.exported.callable
+            ? { kind: "function", exported: cloneFunctionExport(resolution.exported.callable, name) }
+            : { kind: "value", exported: cloneValueExport(resolution.exported, name) },
+      );
     }
-    node.requiresSignatureValidation = Array.from(node.exports.values()).some((entry) => entry.uncertain);
+    if (
+      node.namespaceRequested &&
+      Array.from(analysis.exports.values()).some((resolution) => resolution.kind === "unsupported")
+    ) {
+      return makeFallback(`${node.name}: namespace export surface is not unambiguous`);
+    }
+    for (const binding of bindings.filter((candidate) => candidate.packageRoot === node.root)) {
+      if (binding.typeOnly || (binding.typePosition && binding.exportName !== "*")) {
+        return makeFallback(`${node.name}: TypeScript type-position package boundary ${binding.exportName}`);
+      }
+    }
+    node.requiresSignatureValidation = Array.from(node.exports.values()).some(
+      (entry) => entry.kind === "function" && entry.exported.uncertain,
+    );
   }
   const topo = topoPackages(packages);
   if (!topo.order) return makeFallback(topo.reason ?? "cyclic npm package dependency graph");
 
-  // The first provider ABI is intentionally named-function-only. Reject name
-  // collisions within one consumer module rather than mapping one local import
-  // to the wrong provider (the old externals path silently did exactly that).
+  // Reject name collisions within one consumer module rather than mapping one
+  // local import to the wrong provider (the old externals path silently did
+  // exactly that). Getter fields are package-qualified, so two packages may
+  // expose the same logical value without sharing a codegen alias.
   const collisionCheck = new Map<string, string>();
   for (const binding of bindings) {
     const owner = packageByFile.get(binding.importer) ?? "<root>";
@@ -1099,8 +1385,10 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     }
     collisionCheck.set(key, binding.packageRoot);
     const targetNode = packages.get(binding.packageRoot)!;
-    if (!targetNode.exports.has(binding.exportName)) {
-      return makeFallback(`${targetNode.name} does not expose link-safe function ${binding.exportName}`);
+    if (binding.namespace) {
+      if (!targetNode.namespaceRequested) return makeFallback(`${targetNode.name} namespace boundary was not planned`);
+    } else if (!targetNode.exports.has(binding.exportName)) {
+      return makeFallback(`${targetNode.name} does not expose linkable export ${binding.exportName}`);
     }
   }
 
@@ -1139,6 +1427,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       .map((file) => `${packageFileKey(node.root, file)}\n${sourceByPhysical.get(file) ?? ""}`);
     const exportNames = Array.from(node.exports.keys()).sort();
     const expectedSignatures = exportSignaturesFor(node);
+    const expectedBoundaries = plannedProviderBoundaries(node);
     const sourceFingerprint = hashText([
       LINKER_VERSION,
       PROVIDER_COMPILER_ABI_VERSION,
@@ -1147,6 +1436,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       ...sourceParts,
       ...dependencyIdentities.flatMap((dependency) => [dependency.packageName, dependency.cacheKey]),
       ...exportNames,
+      JSON.stringify(expectedBoundaries),
       String(PROVIDER_FACADE_ABI_VERSION),
       compilerOptionFingerprint(input.options),
     ]);
@@ -1157,6 +1447,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       dependencies: dependencyIdentities,
       exports: exportNames,
       exportSignatures: expectedSignatures,
+      exportBoundaries: expectedBoundaries,
     });
     if (cached) {
       const cacheKey = cached.cacheKey;
@@ -1170,6 +1461,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
         dependencies: cached.manifest.dependencies.map((dependency) => dependency.namespace),
         exports: cached.manifest.exports,
         exportSignatures: cached.manifest.exportSignatures,
+        exportBoundaries: cached.manifest.exportBoundaries,
         packageName: node.name,
         cacheHit: true,
         stringPool: cached.manifest.stringPool,
@@ -1185,12 +1477,15 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     for (const file of node.files) {
       const key = packageFileKey(node.root, file);
       providerKeyByPhysical.set(file, key);
-      const linkedDefaultSpecifiers = new Set(
-        bindings
-          .filter((binding) => binding.importer === file && binding.exportName === "default")
-          .map((binding) => binding.specifier),
-      );
-      providerFiles[key] = rewriteLinkedDefaultImports(file, sourceByPhysical.get(file)!, linkedDefaultSpecifiers);
+      const rewrites: LinkedRewriteBinding[] = [];
+      for (const binding of bindings.filter((candidate) => candidate.importer === file)) {
+        const dependencyNode = packages.get(binding.packageRoot);
+        if (!dependencyNode) return makeFallback(`missing package node for ${binding.specifier}`);
+        const boundary = plannedProviderBoundaries(dependencyNode)[binding.namespace ? "*" : binding.exportName];
+        if (!boundary) return makeFallback(`missing boundary for ${dependencyNode.name}:${binding.exportName}`);
+        rewrites.push({ ...binding, boundary });
+      }
+      providerFiles[key] = rewriteLinkedImports(file, sourceByPhysical.get(file)!, rewrites);
     }
     const facade = buildProviderFacade(node);
     if (!facade) return makeFallback(`${node.name} export cannot be represented by the function facade`);
@@ -1201,8 +1496,21 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     for (const binding of bindings.filter((candidate) => packageByFile.get(candidate.importer) === node.root)) {
       const dependencyNamespace = namespaceByRoot.get(binding.packageRoot);
       if (!dependencyNamespace) return makeFallback(`missing dependency namespace for ${node.name}`);
-      for (const lookupName of linkedBindingLookupNames(binding)) {
-        dependencyBindings.set(lookupName, { module: dependencyNamespace, field: binding.exportName });
+      const dependencyNode = packages.get(binding.packageRoot);
+      if (!dependencyNode) return makeFallback(`missing package node for ${binding.specifier}`);
+      const boundary = plannedProviderBoundaries(dependencyNode)[binding.namespace ? "*" : binding.exportName];
+      if (!boundary) return makeFallback(`missing dependency boundary for ${binding.exportName}`);
+      if (boundary.kind === "function") {
+        for (const lookupName of linkedBindingLookupNames(binding)) {
+          dependencyBindings.set(lookupName, { module: dependencyNamespace, field: boundary.field });
+        }
+      } else {
+        const getterBinding = { module: dependencyNamespace, field: boundary.field };
+        dependencyBindings.set(getterLocalName(binding), getterBinding);
+        // The checker resolves the imported declaration by its exported field
+        // name even when the source alias is synthetic. Keep both spellings
+        // in the narrow linked seam so the getter cannot fall back to env.
+        dependencyBindings.set(boundary.field, getterBinding);
       }
     }
     // Preserve relative edges inside the provider and replace bare dependency
@@ -1256,12 +1564,16 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     let providerExports: WebAssembly.ModuleExportDescriptor[];
     try {
       providerExports = WebAssembly.Module.exports(new WebAssembly.Module(wasmBytes(providerResult.binary)));
-    } catch {
-      return makeFallback(`${node.name} provider emitted invalid Wasm`);
+    } catch (error) {
+      return makeFallback(
+        `${node.name} provider emitted invalid Wasm: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
     const actualFunctionNames = providerExports.filter((entry) => entry.kind === "function").map((entry) => entry.name);
-    if (!exportNames.every((name) => actualFunctionNames.includes(name))) {
-      return makeFallback(`${node.name} provider did not export its declared function boundary`);
+    for (const boundary of Object.values(facade.boundaries)) {
+      if (!actualFunctionNames.includes(boundary.field)) {
+        return makeFallback(`${node.name} provider did not export its declared ${boundary.kind} boundary`);
+      }
     }
     const actualExportNames = exportNames.slice();
     const initExport = providerExports.some((entry) => entry.kind === "function" && entry.name === "__module_init")
@@ -1301,6 +1613,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       dependencies: dependencyIdentities,
       exports: actualExportNames,
       exportSignatures: expectedSignatures,
+      exportBoundaries: facade.boundaries,
       ...(initExport === undefined ? {} : { initExport }),
       stringPool: providerResult.stringPool,
       providerMetadata: metadata,
@@ -1340,6 +1653,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       dependencies: manifest.dependencies.map((dependency) => dependency.namespace),
       exports: manifest.exports,
       exportSignatures: manifest.exportSignatures,
+      exportBoundaries: manifest.exportBoundaries,
       packageName: node.name,
       cacheHit: false,
       stringPool: manifest.stringPool,
@@ -1354,12 +1668,15 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     if (packageByFile.has(physical)) continue;
     const key = input.fileKeys.get(physical);
     if (key) {
-      const linkedDefaultSpecifiers = new Set(
-        bindings
-          .filter((binding) => binding.importer === physical && binding.exportName === "default")
-          .map((binding) => binding.specifier),
-      );
-      rootFiles[key] = rewriteLinkedDefaultImports(physical, source, linkedDefaultSpecifiers);
+      const rewrites: LinkedRewriteBinding[] = [];
+      for (const binding of bindings.filter((candidate) => candidate.importer === physical)) {
+        const targetNode = packages.get(binding.packageRoot);
+        if (!targetNode) return makeFallback(`missing package node for ${binding.specifier}`);
+        const boundary = plannedProviderBoundaries(targetNode)[binding.namespace ? "*" : binding.exportName];
+        if (!boundary) return makeFallback(`missing root boundary for ${targetNode.name}:${binding.exportName}`);
+        rewrites.push({ ...binding, boundary });
+      }
+      rootFiles[key] = rewriteLinkedImports(physical, source, rewrites);
     }
   }
   const rootResolutions: ProjectModuleResolutions = {};
@@ -1386,9 +1703,6 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       const namespace = namespaceByRoot.get(targetRoot);
       if (!namespace) return makeFallback(`missing root provider namespace for ${targetNode.name}`);
       for (const binding of parsed.bindings ?? []) {
-        if (!targetNode.exports.has(binding.exportName)) {
-          return makeFallback(`${targetNode.name} does not expose ${binding.exportName}`);
-        }
         const externalBinding: ExternalBinding = {
           importer,
           specifier,
@@ -1396,13 +1710,25 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
           target,
           exportName: binding.exportName,
           localName: binding.localName,
+          namespace: binding.namespace,
         };
-        for (const lookupName of linkedBindingLookupNames(externalBinding)) {
+        const boundary = plannedProviderBoundaries(targetNode)[binding.namespace ? "*" : binding.exportName];
+        if (!boundary) return makeFallback(`${targetNode.name} does not expose ${binding.exportName}`);
+        const lookupNames =
+          boundary.kind === "function" ? linkedBindingLookupNames(externalBinding) : [getterLocalName(externalBinding)];
+        for (const lookupName of lookupNames) {
           const existing = rootBindings.get(lookupName);
           if (existing && existing.module !== namespace) {
             return makeFallback(`ambiguous root package export ${binding.exportName}`);
           }
-          rootBindings.set(lookupName, { module: namespace, field: binding.exportName });
+          rootBindings.set(lookupName, { module: namespace, field: boundary.field });
+        }
+        if (boundary.kind !== "function") {
+          const existing = rootBindings.get(boundary.field);
+          if (existing && existing.module !== namespace) {
+            return makeFallback(`ambiguous root package getter ${binding.exportName}`);
+          }
+          rootBindings.set(boundary.field, { module: namespace, field: boundary.field });
         }
       }
     }

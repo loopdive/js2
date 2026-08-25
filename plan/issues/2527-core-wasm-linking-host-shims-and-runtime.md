@@ -21,12 +21,15 @@ loc-budget-allow:
   - src/codegen/context/types.ts
   - src/codegen/registry/imports.ts
   - src/codegen/number-format-native.ts
+  - src/package-linker.ts
+  - src/runtime.ts
 func-budget-allow:
   - src/codegen/context/create-context.ts::createCodegenContext
   - src/compiler.ts::runPipeline
   - src/emit/binary.ts::emitBinaryWithSourceMapUnguarded
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+  - src/codegen/index.ts::emitIteratorMethodExport
   - src/package-linker.ts::compileLinkedProject
 ---
 

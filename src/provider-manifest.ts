@@ -18,12 +18,19 @@ export const PROVIDER_MANIFEST_FORMAT_VERSION = 1 as const;
 /** Bump when the compiler's provider-byte/metadata contract changes. */
 export const PROVIDER_COMPILER_ABI_VERSION = "js2wasm-provider-compiler-v1" as const;
 /** The package-linker ABI is versioned independently from the section format. */
-export const PROVIDER_LINKER_ABI_VERSION = "npm-link-v2" as const;
+export const PROVIDER_LINKER_ABI_VERSION = "npm-link-v3" as const;
 
 export interface ProviderDependencyManifest {
   packageName: string;
   cacheKey: string;
   namespace: string;
+}
+
+export type ProviderBoundaryKind = "function" | "getter" | "namespaceGetter";
+
+export interface ProviderBoundaryManifest {
+  kind: ProviderBoundaryKind;
+  field: string;
 }
 
 export interface ProviderManifestV1 {
@@ -38,6 +45,7 @@ export interface ProviderManifestV1 {
   dependencies: ProviderDependencyManifest[];
   exports: string[];
   exportSignatures: Record<string, string>;
+  exportBoundaries: Record<string, ProviderBoundaryManifest>;
   initExport?: "__module_init";
   stringPool: string[];
   providerMetadata: LinkedProviderMetadata;
@@ -157,6 +165,40 @@ function signatures(value: unknown): Record<string, string> {
   return result;
 }
 
+function boundaries(value: unknown, exports: readonly string[]): Record<string, ProviderBoundaryManifest> {
+  if (!isRecord(value)) throw new Error("provider manifest has invalid export boundaries");
+  const result: Record<string, ProviderBoundaryManifest> = {};
+  for (const name of exports) {
+    const boundary = value[name];
+    if (
+      !isRecord(boundary) ||
+      (boundary.kind !== "function" && boundary.kind !== "getter" && boundary.kind !== "namespaceGetter")
+    ) {
+      throw new Error(`provider manifest has invalid boundary for ${name}`);
+    }
+    if (typeof boundary.field !== "string" || boundary.field.length === 0) {
+      throw new Error(`provider manifest has an invalid boundary field for ${name}`);
+    }
+    result[name] = { kind: boundary.kind, field: boundary.field };
+  }
+  if (value["*"] !== undefined) {
+    const boundary = value["*"];
+    if (!isRecord(boundary) || boundary.kind !== "namespaceGetter") {
+      throw new Error("provider manifest has invalid namespace boundary");
+    }
+    if (typeof boundary.field !== "string" || boundary.field.length === 0) {
+      throw new Error("provider manifest has an invalid namespace boundary field");
+    }
+    result["*"] = { kind: "namespaceGetter", field: boundary.field };
+  }
+  if (Object.keys(value).some((name) => name !== "*" && !exports.includes(name))) {
+    throw new Error("provider manifest has a boundary for an undeclared export");
+  }
+  const fields = Object.values(result).map((boundary) => boundary.field);
+  if (new Set(fields).size !== fields.length) throw new Error("provider manifest has duplicate boundary fields");
+  return result;
+}
+
 function validateProviderMetadata(value: unknown): asserts value is LinkedProviderMetadata {
   if (!isRecord(value) || !Array.isArray(value.imports) || !Array.isArray(value.stringPool)) {
     throw new Error("provider manifest has invalid provider metadata");
@@ -216,6 +258,7 @@ function validateManifest(value: unknown, expectations: ProviderManifestExpectat
   if (Object.keys(exportSignatures).some((name) => !exports.includes(name))) {
     throw new Error("provider manifest has a signature for an undeclared export");
   }
+  const exportBoundaries = boundaries(value.exportBoundaries, exports);
   if (value.initExport !== undefined && value.initExport !== "__module_init") {
     throw new Error("provider manifest has an unsupported initializer export");
   }
@@ -256,6 +299,7 @@ function validateManifest(value: unknown, expectations: ProviderManifestExpectat
     dependencies,
     exports,
     exportSignatures,
+    exportBoundaries,
     ...(value.initExport === undefined ? {} : { initExport: value.initExport }),
     stringPool: stringPoolValues,
     providerMetadata: value.providerMetadata,

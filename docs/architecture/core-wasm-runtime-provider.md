@@ -57,21 +57,27 @@ the compiler never emits an unsatisfied runtime import by default.
 
 ## npm package providers
 
-`compileProject` now has a conservative function-only package linker. A bare
-package whose selected entry exposes the *requested* function bindings with
-primitive-compatible signatures is compiled into a real provider binary. The
+`compileProject` compiles supported bare-package edges into real provider
+binaries. Requested function declarations keep their direct Wasm function ABI.
+Requested primitive values, plain objects, and provider-owned closures use a
+deterministic getter field; the consumer rewrites the import to one module-init
+assignment. Provider getters and namespace getters are wrapped with the
+provider's own callback/export view before being exposed to the consumer, so
+object methods and closure calls retain provider identity and lifecycle. The
 consumer receives declaration-only stubs and imports the provider under a
 content-addressed namespace such as `js2wasm:npm:pkg:<hash>`. Package-to-package
 edges are compiled in dependency order, and the binary plus its export/signature
-manifest is cached in `.js2wasm-cache/npm-modules` (or `packageCacheDir`).
+and boundary-kind manifest is cached in `.js2wasm-cache/npm-modules` (or
+`packageCacheDir`).
 
 The export analyzer follows exact relative package edges, including named
 aliases, `export { fn } from`, `export * from`, and default function
 re-exports. A generated provider facade gives each requested binding a stable
-Wasm field. An unused class or value in the same package does not disable a
-function provider; requesting that value/class still selects the monolithic
-fallback. Default imports use the same stable declaration/import path in the
-consumer and provider DAG.
+Wasm field and records whether it is a direct function, value getter, or
+namespace getter. An unused class or value in the same package does not disable
+a function provider. Default values use getter fields; default functions use
+the direct declaration/import path in the consumer and provider DAG. Namespace
+imports are linked when the complete selected entry surface is unambiguous.
 
 Every provider binary carries one canonical-JSON `js2wasm.provider.v1` custom
 section. It records the source fingerprint, package/dependency identities,
@@ -97,12 +103,12 @@ creates fresh provider state for every call, which is the lifecycle boundary
 used by repeated benchmark runs. `result.linkPlan` reports `compiledProviders`
 and `cachedProviders` telemetry.
 
-The first ABI deliberately falls back to deterministic monolithic compilation
-for package cycles, ambiguous/multiple entrypoints, namespace imports or
-re-exports outside the exact relative graph, targets that cannot defer provider
-initialization, and requested runtime value/class/object exports. Host/runtime imports are link-safe when the
-provider's generated import manifest can rebuild their adapter; arbitrary
-user-supplied capabilities still need an explicit dependency injection path.
-Those value/object boundaries need a stable global/object/closure ABI before
-they can be split safely; they must not be routed through `externals`, which
-can silently erase a value import.
+The linker still falls back to deterministic monolithic compilation for package
+cycles, ambiguous/multiple entrypoints, re-exports outside the exact relative
+graph, TypeScript type-position imports whose identity cannot be preserved,
+class facades that fail Wasm validation, and targets that cannot defer provider
+initialization. Host/runtime imports are link-safe when the provider's generated
+import manifest can rebuild its adapter; arbitrary user-supplied capabilities
+still need an explicit dependency injection path. Unsupported boundaries must
+remain loud fallbacks rather than being routed through `externals`, which can
+silently erase a value import.

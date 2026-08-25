@@ -187,7 +187,7 @@ describe("#2527 npm package module linking", () => {
     expect(linked.instance.exports.run?.()).toBe(5);
   });
 
-  it("falls back when a value or class is the requested package boundary", async () => {
+  it("links a primitive package value through a getter boundary", async () => {
     const root = project("package-link-requested-value");
     writePackage(
       root,
@@ -199,11 +199,100 @@ describe("#2527 npm package module linking", () => {
       'import { answer } from "mixed-value"; export function run(): number { return answer; }\n',
     );
     const result = await compile(root, "main.ts", join(root, ".cache"));
+    expect(result.linkPlan?.mode).toBe("separate");
+    expect(result.linkedModules?.[0]?.exportBoundaries?.answer).toMatchObject({ kind: "getter" });
+    const linked = await instantiateLinkedProject(result);
+    expect(linked.instance.exports.run?.()).toBe(42);
+    const direct = await WebAssembly.instantiate(result.binary, result.importObject);
+    expect(direct.instance.exports.run?.()).toBe(42);
+  });
+
+  it("links a stateful object through one isolated getter value", async () => {
+    const root = project("package-link-object-getter");
+    writePackage(
+      root,
+      "object-pkg",
+      "export const state = { count: 0, next() { this.count += 1; return this.count; } };\n",
+    );
+    writeFileSync(
+      join(root, "main.ts"),
+      'import { state } from "object-pkg"; export function run(): number { return state.next(); }\n',
+    );
+    const result = await compile(root, "main.ts", join(root, ".cache"));
+    expect(result.linkPlan?.mode).toBe("separate");
+    expect(result.linkedModules?.[0]?.exportBoundaries?.state).toMatchObject({ kind: "getter" });
+    const first = await instantiateLinkedProject(result);
+    const second = await instantiateLinkedProject(result);
+    expect(first.instance.exports.run?.()).toBe(1);
+    expect(first.instance.exports.run?.()).toBe(2);
+    expect(second.instance.exports.run?.()).toBe(1);
+  });
+
+  it("links exported closures through a getter while preserving calls", async () => {
+    const root = project("package-link-closure-getter");
+    writePackage(root, "closure-pkg", "export const add = (x: number): number => x + 7;\n");
+    writeFileSync(
+      join(root, "main.ts"),
+      'import { add } from "closure-pkg"; export function run(): number { return add(5); }\n',
+    );
+    const result = await compile(root, "main.ts", join(root, ".cache"));
+    expect(result.linkPlan?.mode).toBe("separate");
+    expect(result.linkedModules?.[0]?.exportBoundaries?.add).toMatchObject({ kind: "function" });
+    const linked = await instantiateLinkedProject(result);
+    expect(linked.instance.exports.run?.()).toBe(12);
+  });
+
+  it("links an exported class constructor through an isolated getter", async () => {
+    const root = project("package-link-class-getter");
+    writePackage(
+      root,
+      "class-pkg",
+      "export class Box { value: number; constructor(value: number) { this.value = value; } get(): number { return this.value; } }\n",
+    );
+    writeFileSync(
+      join(root, "main.ts"),
+      'import { Box } from "class-pkg"; export function run(): number { return new Box(9).get(); }\n',
+    );
+    const result = await compile(root, "main.ts", join(root, ".cache"));
+    expect(result.linkPlan?.mode).toBe("separate");
+    expect(result.linkedModules?.[0]?.exportBoundaries?.Box).toMatchObject({ kind: "getter" });
+    const linked = await instantiateLinkedProject(result);
+    expect(linked.instance.exports.run?.()).toBe(9);
+  });
+
+  it("links a default object value and a complete namespace getter", async () => {
+    const root = project("package-link-namespace-getter");
+    writePackage(
+      root,
+      "namespace-pkg",
+      "export const answer = 4; export function inc(x: number): number { return x + 1; } export default { answer };\n",
+    );
+    writeFileSync(
+      join(root, "main.ts"),
+      'import value, * as ns from "namespace-pkg"; export function run(): number { return value.answer + ns.inc(ns.answer); }\n',
+    );
+    const result = await compile(root, "main.ts", join(root, ".cache"));
+    expect(result.linkPlan?.mode).toBe("separate");
+    expect(result.linkedModules?.[0]?.exportBoundaries?.["*"]).toMatchObject({ kind: "namespaceGetter" });
+    const linked = await instantiateLinkedProject(result);
+    expect(linked.instance.exports.run?.()).toBe(9);
+  });
+
+  it("falls back for a TypeScript type-position value boundary", async () => {
+    const root = project("package-link-type-position");
+    writePackage(root, "type-pkg", "export class Box {}\n");
+    writeFileSync(
+      join(root, "main.ts"),
+      'import { Box } from "type-pkg"; let value: Box | undefined; export function run(): number { return value ? 1 : 0; }\n',
+    );
+    const result = await compileProject(join(root, "main.ts"), {
+      allowJs: false,
+      emitWat: false,
+      packageCacheDir: join(root, ".cache"),
+    });
+    expect(result.success).toBe(true);
     expect(result.linkPlan?.mode).toBe("bundled");
-    expect(result.linkedModules).toBeUndefined();
-    expect(result.linkPlan?.fallbackReason).toMatch(/value|class/i);
-    const instance = await WebAssembly.instantiate(result.binary, result.importObject);
-    expect(instance.instance.exports.run?.()).toBe(42);
+    expect(result.linkPlan?.fallbackReason).toMatch(/type-position/i);
   });
 
   it("links relative barrels, aliases, export-star functions, and default re-exports", async () => {

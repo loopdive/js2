@@ -6434,6 +6434,35 @@ function supportsHostClassBridgeParam(type: ValType): boolean {
   return type.kind === "externref" || type.kind === "ref_extern";
 }
 
+/**
+ * Return whether a host-visible class bridge will need to box a numeric
+ * result. The bridge bodies below have an `(externref, ...externref) ->
+ * externref` ABI, so every numeric class method/accessor result must go through
+ * `__box_number`. Keep this scan ahead of bridge entry collection: adding the
+ * union imports shifts defined-function indices, and collecting `funcIdx`
+ * values before that shift would make the emitted bridge call the wrong
+ * function.
+ */
+function classBridgeNeedsNumberBox(ctx: CodegenContext): boolean {
+  const numeric = new Set(["f64", "f32", "i32", "i64"]);
+  for (const [structName] of ctx.structFields) {
+    if (isSyntheticStructName(structName)) continue;
+    for (const key of ctx.hostDynamicClassMethodNames) {
+      for (const fullName of [`${structName}_${key}`, `${structName}_get_${key}`]) {
+        if (!ctx.classMethodSet.has(fullName) && !ctx.classAccessorSet.has(fullName)) continue;
+        const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
+        if (methodIdx === undefined) continue;
+        const method = definedFuncAt(ctx, methodIdx);
+        const methodType = method === undefined ? undefined : ctx.mod.types[method.typeIdx];
+        const resultType =
+          methodType && methodType.kind === "func" && methodType.results.length > 0 ? methodType.results[0] : undefined;
+        if (resultType !== undefined && numeric.has(resultType.kind)) return true;
+      }
+    }
+  }
+  return false;
+}
+
 function emitIteratorMethodExport(ctx: CodegenContext): void {
   // The iterator protocol and the host-side dynamic class-member bridge share
   // the same `(externref) -> externref` dispatcher shape.  Keep the old
@@ -6465,6 +6494,13 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
     ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
     ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, null);
+  }
+  // Numeric class methods/accessors return a Wasm primitive but the dynamic
+  // host bridge must return externref. Ensure the boxing helper exists before
+  // the bridge entry loop captures any function indices; addUnionImports owns
+  // the required index shift and is idempotent with the rest-parameter path.
+  if (classBridgeNeedsNumberBox(ctx)) {
+    addUnionImports(ctx);
   }
   // A host dynamic call supplies externrefs.  A class bridge may therefore
   // only target methods whose formal arguments are already externref-shaped;

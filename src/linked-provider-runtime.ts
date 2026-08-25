@@ -12,7 +12,7 @@ import {
   PROVIDER_LINKER_ABI_VERSION,
   type ProviderManifestV1,
 } from "./provider-manifest.js";
-import { buildCompiledImports as buildCompiledImportsRuntime } from "./runtime.js";
+import { buildCompiledImports as buildCompiledImportsRuntime, wrapLinkedProviderValue } from "./runtime.js";
 
 function wasmBytes(binary: Uint8Array): BufferSource {
   return binary as unknown as BufferSource;
@@ -64,6 +64,19 @@ function decodeLinkedProviderManifest(artifact: LinkedModuleArtifact): ProviderM
       canonicalProviderManifestJson(manifest.exportSignatures)
   ) {
     throw new Error(`Linked provider ${artifact.namespace} has mismatched export signatures`);
+  }
+  if (
+    artifact.exportBoundaries &&
+    canonicalProviderManifestJson(artifact.exportBoundaries) !==
+      canonicalProviderManifestJson(manifest.exportBoundaries)
+  ) {
+    throw new Error(`Linked provider ${artifact.namespace} has mismatched export boundaries`);
+  }
+  const moduleExports = WebAssembly.Module.exports(new WebAssembly.Module(wasmBytes(artifact.binary)));
+  for (const boundary of Object.values(manifest.exportBoundaries)) {
+    if (!moduleExports.some((entry) => entry.kind === "function" && entry.name === boundary.field)) {
+      throw new Error(`Linked provider ${artifact.namespace} is missing boundary ${boundary.field}`);
+    }
   }
   if (
     artifact.stringPool &&
@@ -182,8 +195,19 @@ export function instantiateLinkedProviders(
     }
     const instance = new WebAssembly.Instance(new WebAssembly.Module(wasmBytes(artifact.binary)), providerImports);
     wireProviderInstance(artifact, providerImports, instance);
-    providerExports.set(artifact.namespace, instance.exports);
-    rootImports[artifact.namespace] = instance.exports;
+    const manifest = decodeLinkedProviderManifest(artifact);
+    const rawExports = instance.exports as Record<string, Function>;
+    const exposedExports: Record<string, any> = { ...rawExports };
+    for (const boundary of Object.values(manifest.exportBoundaries)) {
+      if (boundary.kind === "function") continue;
+      const getter = rawExports[boundary.field];
+      if (typeof getter !== "function") {
+        throw new Error(`Linked provider ${artifact.namespace} has no getter ${boundary.field}`);
+      }
+      exposedExports[boundary.field] = (...args: any[]) => wrapLinkedProviderValue(getter(...args), rawExports);
+    }
+    providerExports.set(artifact.namespace, exposedExports as WebAssembly.Exports);
+    rootImports[artifact.namespace] = exposedExports as WebAssembly.Exports;
   }
   return providerExports;
 }

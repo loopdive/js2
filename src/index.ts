@@ -174,6 +174,12 @@ export interface LinkedModuleArtifact {
   exports: string[];
   /** Canonical declaration signatures used by the package manifest. */
   exportSignatures?: Readonly<Record<string, string>>;
+  /**
+   * Boundary kind and Wasm field for every logical package export.  Function
+   * exports retain their logical name as the field; values/classes and
+   * namespace objects are exposed through deterministic getter functions.
+   */
+  exportBoundaries?: Readonly<Record<string, { kind: "function" | "getter" | "namespaceGetter"; field: string }>>;
   /** Package name as resolved from node_modules, when available. */
   packageName?: string;
   /** True when the provider bytes came from the content-addressed cache. */
