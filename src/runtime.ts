@@ -4804,7 +4804,7 @@ function _safeGet(
 ): any {
   if (obj == null) return undefined;
   const scAccessor = typeof key === "string" ? _wasmStructProps.get(obj) : undefined;
-  if (scAccessor && typeof scAccessor[`__get_${key}`] === "function")
+  if (_argumentsObjects.has(obj) && scAccessor && typeof scAccessor[`__get_${key}`] === "function")
     return (scAccessor[`__get_${key}`] as Function).call(obj);
   // Coerce WasmGC struct keys to primitives via ToPrimitive (#1090, #1716).
   // Passing callbackState lets a key with a WasmGC-closure valueOf / toString /
@@ -4840,7 +4840,7 @@ function _safeGet(
       try {
         if (isVec(obj) === 1) {
           const own = _readOwnDescriptor(obj, String(index), exports);
-          if (own && ("get" in own || "set" in own))
+          if (_argumentsObjects.has(obj) && own && ("get" in own || "set" in own))
             return typeof own.get === "function" ? own.get.call(_hostProxyCache.get(obj) ?? obj) : undefined;
           return index < vecLen(obj) ? vecGet(obj, index) : undefined;
         }
@@ -5124,7 +5124,7 @@ function _safeSet(
   obj = _unwrapForHost(obj);
   const accessorKey = typeof key === "number" && Number.isInteger(key) ? String(key) : key;
   const scAccessor = typeof accessorKey === "string" ? _wasmStructProps.get(obj) : undefined;
-  if (scAccessor && typeof scAccessor[`__set_${accessorKey}`] === "function") {
+  if (_argumentsObjects.has(obj) && scAccessor && typeof scAccessor[`__set_${accessorKey}`] === "function") {
     (scAccessor[`__set_${accessorKey}`] as Function).call(obj, val);
     return;
   }
@@ -6998,6 +6998,7 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
   if (cached) return cached;
   const lenFn = exports.__vec_len as ((v: any) => number) | undefined;
   const getFn = exports.__vec_get as ((v: any, i: number) => any) | undefined;
+  const mappedArguments = _argumentsObjects.has(vec);
   const vecState = { getExports: () => exports };
   // Defensive: if the read exports are missing, fall back to the generic
   // object proxy rather than producing a broken array view.
@@ -7086,6 +7087,7 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
       if (typeof key === "string") {
         const idx = _asArrayIndex(key);
         if (idx !== undefined) {
+          if (!mappedArguments) return idx < liveLen() ? elemAt(idx) : undefined;
           const desc = rawDesc(key);
           if (!desc) return undefined;
           if ("get" in desc || "set" in desc) return typeof desc.get === "function" ? desc.get.call(proxy) : undefined;
@@ -7102,7 +7104,7 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
       if (key === "length") return true;
       if (typeof key === "string") {
         const idx = _asArrayIndex(key);
-        if (idx !== undefined) return rawDesc(key) !== undefined;
+        if (idx !== undefined) return mappedArguments ? rawDesc(key) !== undefined : idx < liveLen();
       }
       if (sidecarGet(key).hit) return true;
       return key in target;
@@ -7111,13 +7113,14 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
       const n = liveLen();
       const keys: (string | symbol)[] = [];
       for (let i = 0; i < n; i++) {
-        if (rawDesc(String(i)) !== undefined) keys.push(String(i));
+        if (!mappedArguments || rawDesc(String(i)) !== undefined) keys.push(String(i));
       }
       keys.push("length");
       return keys;
     },
     getOwnPropertyDescriptor(_t, key) {
       if (key === "length") {
+        if (!mappedArguments) return { value: liveLen(), writable: true, enumerable: false, configurable: false };
         const desc = hostDesc("length") ?? { value: liveLen(), writable: true, enumerable: false, configurable: false };
         materializeNonConfigurable("length", desc);
         return desc;
@@ -7125,6 +7128,7 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
       if (typeof key === "string") {
         const idx = _asArrayIndex(key);
         if (idx !== undefined && idx < liveLen()) {
+          if (!mappedArguments) return { value: elemAt(idx), writable: true, enumerable: true, configurable: true };
           const desc = hostDesc(key);
           materializeNonConfigurable(key, desc);
           return desc;
@@ -7133,7 +7137,7 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
       return undefined;
     },
     defineProperty(_t, key, descriptor) {
-      if (typeof key === "string" && (key === "length" || _asArrayIndex(key) !== undefined)) {
+      if (mappedArguments && typeof key === "string" && (key === "length" || _asArrayIndex(key) !== undefined)) {
         const desc: PropertyDescriptor = { ...descriptor };
         if ("value" in desc) desc.value = _unwrapForHost(desc.value);
         if (_vecDefineOwnProperty(vec, key, desc, vecState)) {
@@ -7149,7 +7153,7 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
       return Reflect.defineProperty(_t, key, descriptor);
     },
     deleteProperty(_t, key) {
-      if (typeof key === "string" && (key === "length" || _asArrayIndex(key) !== undefined)) {
+      if (mappedArguments && typeof key === "string" && (key === "length" || _asArrayIndex(key) !== undefined)) {
         if (key === "length") return false;
         const desc = rawDesc(key);
         if (!desc || desc.configurable === false) return desc === undefined;
@@ -7180,13 +7184,15 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
         return typeof setLen === "function" && setLen(vec, uint32) === 1;
       }
       if (typeof key === "string" && _asArrayIndex(key) !== undefined) {
-        const desc = rawDesc(key);
-        if (desc && ("get" in desc || "set" in desc)) {
-          if (typeof desc.set !== "function") return false;
-          desc.set.call(proxy, _unwrapForHost(value));
-          return true;
+        if (mappedArguments) {
+          const desc = rawDesc(key);
+          if (desc && ("get" in desc || "set" in desc)) {
+            if (typeof desc.set !== "function") return false;
+            desc.set.call(proxy, _unwrapForHost(value));
+            return true;
+          }
+          if (desc?.writable === false) return false;
         }
-        if (desc?.writable === false) return false;
         return _trySetWasmVecElement(vec, key, value, exports);
       }
       _safeSet(vec, key, value, exports);
@@ -15844,7 +15850,11 @@ assert._isSameValue = isSameValue;
           }
           const exports = callbackState?.getExports();
           if (!exports) return obj;
-          if (_argumentsObjects.has(obj)) {
+          const argumentDescriptors = _argumentsObjects.has(obj) ? _wasmPropDescs.get(obj) : undefined;
+          const needsIndexedDescriptorView =
+            argumentDescriptors !== undefined &&
+            [...argumentDescriptors.keys()].some((key) => typeof key === "string" && _asArrayIndex(key) !== undefined);
+          if (needsIndexedDescriptorView) {
             const view = _wrapVecForHost(obj, exports);
             if (view !== undefined) return view;
           }
