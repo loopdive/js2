@@ -354,10 +354,10 @@ describe("#4491 wave-4 — measured residuals", () => {
     ).toBe(1);
   });
 
-  // Defining a far index grows the backing with a NON-hole default, so
-  // `Object.keys` enumerates the whole filled range.
+  // Defining a far index must preserve the intervening slots as holes rather
+  // than growing the f64 backing with a non-hole default.
   // (`keys/15.2.3.14-5-13`.)
-  it.fails("a far-index define leaves the intervening slots as holes", async () => {
+  it("a far-index define leaves the intervening slots as holes", async () => {
     expect(
       await runStandalone(`
         export function main() {
