@@ -127,6 +127,7 @@ import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { emitNativeGlobalThisObject } from "../array-object-proto.js"; // (#4630)
 import { resolveEffectiveStructName } from "../property-access.js";
 import { emitOverlayRoutedElementSet, overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4159 S5)
+import { buildOverlayArrayLengthSet } from "../array-filter-length-set.js";
 import {
   elementAccessTypedArrayName,
   emitNonIndexVecElementSet,
@@ -4238,15 +4239,14 @@ function compilePropertyAssignment(
         { op: "local.get", index: newLenTmp },
         { op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 },
       ];
+      const selectedStore = buildOverlayArrayLengthSet(ctx, fctx, vecTmp, newLenTmp, target) ?? lengthStore;
       if (receiverProvenVec) {
-        // Byte-identical to pre-#4638 for a statically proven vec receiver.
-        for (const instr of lengthStore) fctx.body.push(instr);
+        for (const instr of selectedStore) fctx.body.push(instr);
       } else {
         // The guarded cast above parks `null` when the receiver was not a vec;
-        // `struct.set` on null is the same uncatchable trap, so skip the store.
         fctx.body.push({ op: "local.get", index: vecTmp });
         fctx.body.push({ op: "ref.is_null" });
-        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: [], else: lengthStore });
+        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: [], else: selectedStore });
       }
       // Assignment result — UNSIGNED widening (#4491, see array-length-define.ts).
       fctx.body.push({ op: "local.get", index: newLenTmp });

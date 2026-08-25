@@ -39,8 +39,9 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
-import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { ensureLateImport, flushLateImportShifts, isAnyValue } from "./shared.js";
 import { overlayRouteActive } from "./typed-lane-overlay-route.js";
+import { ensureAnyFromExternHelper } from "./any-helpers.js";
 
 /** The subset of the HOF loop locals these builders need. */
 export interface FilterLoopView {
@@ -100,13 +101,14 @@ export function overlayFilterAccess(
   elemLocal: number,
 ): OverlayFilterAccess | null {
   if (!overlayRouteActive(ctx)) return null;
-  if (elemType.kind !== "f64" && elemType.kind !== "externref") return null;
+  const anyValueElem = isAnyValue(elemType, ctx);
+  if (elemType.kind !== "f64" && elemType.kind !== "externref" && !anyValueElem) return null;
   // (#2001) A module with array-literal elisions keeps the `$Hole` dense route:
   // `__extern_has_idx`'s vec arm answers on `i < length` alone, so it would
   // report a `$Hole` slot as PRESENT and leak the sentinel through
   // `__extern_get_idx`. Holes and accessor descriptors together are rare; the
   // dense route is the conservative answer for that intersection.
-  if (ctx.usesArrayHoles && elemType.kind === "externref") return null;
+  if (ctx.usesArrayHoles && (elemType.kind === "externref" || anyValueElem)) return null;
 
   const hasIdxFn = ensureLateImport(
     ctx,
@@ -122,8 +124,17 @@ export function overlayFilterAccess(
   );
   const unboxFn =
     elemType.kind === "f64" ? ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]) : 0;
+  let anyFromExternFn: number | undefined;
+  if (anyValueElem) {
+    // The vec carrier itself stores boxed AnyValue structs. The externref
+    // chokepoint unwraps those back to the canonical box (and classifies
+    // accessor results such as primitive numbers) rather than wrapping the
+    // carrier externref as a new tag-5 value.
+    anyFromExternFn = ensureAnyFromExternHelper(ctx);
+  }
   flushLateImportShifts(ctx, fctx);
   if (hasIdxFn === undefined || getIdxFn === undefined || unboxFn === undefined) return null;
+  if (anyValueElem && anyFromExternFn === undefined) return null;
 
   const recvLocal = allocLocal(fctx, `__arr_flt_ovr_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.get", index: loop.vecTmp });
@@ -141,6 +152,7 @@ export function overlayFilterAccess(
       ...idxArg,
       { op: "call", funcIdx: getIdxFn },
       ...(elemType.kind === "f64" ? ([{ op: "call", funcIdx: unboxFn }] satisfies Instr[]) : []),
+      ...(anyValueElem ? ([{ op: "call", funcIdx: anyFromExternFn! }] satisfies Instr[]) : []),
       { op: "local.set", index: elemLocal },
     ],
   };
