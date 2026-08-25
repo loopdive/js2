@@ -1930,12 +1930,12 @@ export function tryCompileNativeCollectionForEach(
   // the user args (mirrors array-methods.ts callClosure).
   const callClosure: Instr[] = [
     ...(thisArgTmp !== undefined && prevThisTmp !== undefined && currentThisGlobalIdx !== undefined
-      ? [
+      ? ([
           { op: "global.get", index: currentThisGlobalIdx },
           { op: "local.set", index: prevThisTmp },
           { op: "local.get", index: thisArgTmp },
           { op: "global.set", index: currentThisGlobalIdx },
-        ]
+        ] satisfies Instr[])
       : []),
     { op: "local.get", index: closureTmp },
     // entry.value / entry.key are stored as `anyref` (boxed numbers are
@@ -1981,10 +1981,10 @@ export function tryCompileNativeCollectionForEach(
     // forEach ignores the callback result; drop whatever it returned.
     ...((closureInfo.returnType === null ? [] : [{ op: "drop" }]) satisfies Instr[]),
     ...(thisArgTmp !== undefined && prevThisTmp !== undefined && currentThisGlobalIdx !== undefined
-      ? [
+      ? ([
           { op: "local.get", index: prevThisTmp },
           { op: "global.set", index: currentThisGlobalIdx },
-        ]
+        ] satisfies Instr[])
       : []),
   ];
 
