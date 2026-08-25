@@ -53,6 +53,7 @@ import type { ValType } from "../../ir/types.js";
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
 import { getOrRegisterVecType } from "../registry/types.js";
+import { descriptorArrayCarrierType } from "./descriptor-array-carrier.js";
 
 /** Per-(context, file) memo — `moduleGlobalWasmType` asks once per declaration. */
 const analysisCache = new WeakMap<CodegenContext, Map<ts.SourceFile, ReadonlySet<string>>>();
@@ -73,6 +74,8 @@ export function rebindWidenedArrayVecType(
   decl: ts.VariableDeclaration,
 ): ValType | undefined {
   if (!ts.isIdentifier(decl.name)) return undefined;
+  const descriptorCarrier = descriptorArrayCarrierType(ctx, decl);
+  if (descriptorCarrier !== undefined) return descriptorCarrier;
   if (!widenedVarsOf(ctx, sourceFile).has(decl.name.text)) return undefined;
   return { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, "externref", { kind: "externref" }) };
 }

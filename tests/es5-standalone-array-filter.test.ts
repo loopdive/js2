@@ -28,8 +28,13 @@
 // read is gated on the #4159 `vecAccessorDescriptorDirty` pre-scan flag, so a
 // module that never installs a non-data descriptor keeps the dense kernel.
 import { describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { runTest262File } from "./test262-runner.js";
+
+const TEST262 = existsSync(join(__dirname, "..", "test262", "harness", "assert.js"));
 
 async function run(src: string, target: "standalone" | "gc"): Promise<unknown> {
   const opts = target === "standalone" ? { target: "standalone" as const } : {};
@@ -198,4 +203,18 @@ describe("§15.4.4.20 filter — accessor indices installed by defineProperty", 
       ),
     ).toBe(22);
   });
+});
+
+describe("§15.4.4.20 filter — exact ES5 descriptor rows", () => {
+  for (const file of ["15.4.4.20-9-b-14.js", "15.4.4.20-9-b-16.js"] as const) {
+    it.skipIf(!TEST262)(`${file} passes in full through the Test262 runner`, { timeout: 60_000 }, async () => {
+      const result = await runTest262File(
+        join(__dirname, "..", "test262", "test", "built-ins/Array/prototype/filter", file),
+        "array-filter-exact-rows",
+        30_000,
+        "standalone",
+      );
+      expect(`${result.status}: ${result.error ?? ""}`).toBe("pass: ");
+    });
+  }
 });
