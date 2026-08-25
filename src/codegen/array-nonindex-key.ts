@@ -230,6 +230,7 @@ export function nonArrayIndexNumericKey(
   ctx: CodegenContext,
   fctx: FunctionContext,
   key: ts.Expression,
+  allowHighArrayIndex = false,
 ): string | undefined {
   // `skipTransparentExpressions` unwraps parens AND the type-only wrappers
   // (`x as any`, `<any>x`, `!`), which carry no runtime meaning — the key
@@ -281,14 +282,18 @@ export function nonArrayIndexNumericKey(
 
   const n = resolveNumericKey(ctx, fctx, key);
   if (n !== undefined) {
-    if (isArrayIndexNumber(n)) return undefined;
+    if (isArrayIndexNumber(n)) return allowHighArrayIndex && n > 0x7fffffff ? String(n) : undefined;
     // `String(n)` IS ECMAScript `ToString(Number)` for every finite and
     // non-finite double, including `"1e+21"` and `"-Infinity"`.
     return String(n);
   }
 
   const s = resolveStringKey(ctx, fctx, key);
-  if (s === undefined || isArrayIndexString(s) || !isNamedNumericOrBooleanSpelling(s)) return undefined;
+  if (s === undefined || !isNamedNumericOrBooleanSpelling(s)) return undefined;
+  if (isArrayIndexString(s)) {
+    const n = Number(s);
+    return allowHighArrayIndex && n > 0x7fffffff ? s : undefined;
+  }
   return s;
 }
 

@@ -30,7 +30,10 @@
  * a later lane's fix flips a red test to green rather than landing unnoticed.
  */
 import { describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { compile } from "../src/index.js";
+import { runTest262File } from "./test262-runner.js";
 
 async function runStandalone(source: string): Promise<unknown> {
   const result = await compile(source, {
@@ -315,11 +318,12 @@ describe("#4491 wave-4 — measured residuals", () => {
     ).toBe(1);
   });
 
-  // #4497. `MAX_CANONICAL_INDEX` is 2^31-1 because `__obj_index_of_key`'s
-  // result doubles as a SIGNED sort key, so an index in [2^31, 2^32-2] is
-  // treated as an ordinary string key and never bumps `length`.
+  // #4497. `__obj_index_of_key` still uses a signed sort key, so the upper
+  // half of the legal u32 index domain stays out of the i32 element lane. The
+  // descriptor sidecar retains the value and the logical length is updated
+  // without allocating an unbackable backing array.
   // (`defineProperty/15.2.3.6-4-183`, `defineProperties/15.2.3.7-6-a-179`.)
-  it.fails("an array index at 2^32-2 bumps length to 2^32-1", async () => {
+  it("an array index at 2^32-2 bumps length to 2^32-1", async () => {
     expect(
       await runStandalone(`
         export function main() {
@@ -332,23 +336,42 @@ describe("#4491 wave-4 — measured residuals", () => {
   });
 
   // A data-only descriptor whose VALUE is kind-incompatible with the array's
-  // carrier (a string into a `__vec_f64`) cannot be written back into the
-  // element, so it lands in the companion with FLAG_COMPANION_VALUE — but
-  // `isNonDataDescriptorDefine` calls `{value: "abc"}` data-only, so the module
-  // is not descriptor-dirty and the typed read never consults the companion.
-  // Fixing it in the PRE-SCAN would route every element access in any module
-  // containing `Object.defineProperty(x, k, {value: <non-numeric>})` through
-  // the dynamic lane; the narrow fix is to widen the array's own CARRIER
-  // (`heterogeneousWidenedModuleGlobalType`, #4428) for that binding.
+  // carrier (a string into a `__vec_f64`) must remain authoritative on the
+  // typed read path. The narrow fix widens only the affected binding's element
+  // carrier; compatible numeric descriptors retain the dense representation.
   // (`defineProperties/15.2.3.7-6-a-183`.)
-  it.fails("a string value defined on a numeric array is read back", async () => {
+  it("a string value defined on a numeric array is read back", async () => {
+    expect(
+      await runStandalone(`
+        var arr = [1, 2, 3];
+        Object.defineProperty(arr, "length", { writable: false });
+        Object.defineProperties(arr, { "1": { value: "abc" } });
+        export function main() {
+          return (arr[0] === 1 && arr[1] === "abc" && arr[2] === 3) ? 1 : 0;
+        }
+      `),
+    ).toBe(1);
+  });
+
+  it("keeps a non-index numeric-looking property out of length", async () => {
+    expect(
+      await runStandalone(`
+        export function main() {
+          var arr = [];
+          Object.defineProperties(arr, { "4294967295": { value: 100 } });
+          return (arr.length === 0 && arr[4294967295] === 100) ? 1 : 0;
+        }
+      `),
+    ).toBe(1);
+  });
+
+  it("keeps compatible data descriptors on the dense numeric carrier", async () => {
     expect(
       await runStandalone(`
         export function main() {
           var arr = [1, 2, 3];
-          Object.defineProperty(arr, "length", { writable: false });
-          Object.defineProperties(arr, { "1": { value: "abc" } });
-          return (arr[0] === 1 && arr[1] === "abc" && arr[2] === 3) ? 1 : 0;
+          Object.defineProperties(arr, { "1": { value: 42 } });
+          return (arr.length === 3 && arr[0] === 1 && arr[1] === 42 && arr[2] === 3) ? 1 : 0;
         }
       `),
     ).toBe(1);
@@ -429,4 +452,24 @@ describe("#4491 wave-4 — measured residuals", () => {
       `),
     ).toBe(1);
   });
+});
+
+const TEST262_HARNESS = join(__dirname, "..", "test262", "harness", "assert.js");
+const TEST262 = existsSync(TEST262_HARNESS);
+
+describe.skipIf(!TEST262)("#4491 wave-4 — exact defineProperties residuals", () => {
+  for (const rel of [
+    "built-ins/Object/defineProperties/15.2.3.7-6-a-179.js",
+    "built-ins/Object/defineProperties/15.2.3.7-6-a-183.js",
+  ]) {
+    it(`${rel} passes on the standalone lane`, { timeout: 60_000 }, async () => {
+      const result = await runTest262File(
+        join(__dirname, "..", "test262", "test", rel),
+        "issue-4491-wave4",
+        30_000,
+        "standalone",
+      );
+      expect(`${result.status}: ${result.reason ?? ""}`).toBe("pass: ");
+    });
+  }
 });
