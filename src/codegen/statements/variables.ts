@@ -44,6 +44,7 @@ import { compileStringBuilderInit } from "../string-builder.js";
 import { tryEmitLinearU8New } from "../linear-uint8-codegen.js";
 import { tryCompileWithScopedVarDeclaration } from "../with-var-decl.js";
 import {
+  bindingHasAnnexBExistingVarUpdate,
   bindingHasMixedAssignmentCarrier,
   numericProofOverridesMixedCarrier,
 } from "../analysis/mixed-assignment-carrier.js";
@@ -678,12 +679,11 @@ function isPropertyDescriptorResultExpression(expr: ts.Expression | undefined): 
  * `any`/`unknown`-typed local binding is ToNumber-invariant — otherwise `null`,
  * leaving the caller's boxed-carrier resolution in place. Gated by
  * `ctx.useUsageInfer`. This is the SINGLE codegen entry point for the inference,
- * shared by all local-slot minting sites (var hoister, let/const pre-hoister,
- * `localTypeForDeclaration`) so every site agrees on the slot type.
+ * shared by all local-slot minting sites so every site agrees on the slot type.
  */
 export function usageInferredLocalType(ctx: CodegenContext, decl: ts.VariableDeclaration | undefined): ValType | null {
   if (!decl || !ctx.useUsageInfer) return null;
-  if (!ts.isIdentifier(decl.name)) return null;
+  if (!ts.isIdentifier(decl.name) || bindingHasAnnexBExistingVarUpdate(decl)) return null;
   return ctx.usageInference.scalarForDecl(decl) === "number" ? { kind: "f64" } : null;
 }
 
