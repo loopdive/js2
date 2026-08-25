@@ -491,10 +491,10 @@ function providerPackageFiles(packageName, source) {
 // without running the 3-4 hour suite.
 export function buildProjectFiles({ reactSource, sharedSource, clientSource, tests }) {
   const entry = [
-    'import { __reactExports } from "js2-react-provider";',
-    'import { __sharedExports } from "js2-react-dom-shared-provider";',
-    'import { __clientExports } from "js2-react-dom-client-provider";',
-    'import { __schedulerExports } from "js2-react-scheduler-provider";',
+    'import { __reactExports } from "react";',
+    'import { __sharedExports } from "react-dom-shared";',
+    'import { __clientExports } from "react-dom-client";',
+    'import { __schedulerExports } from "scheduler";',
     "const __REACT__ = __reactExports;",
     "const __REACTDOM_SHARED__ = __sharedExports;",
     "const __REACTDOM__ = __clientExports;",
@@ -509,11 +509,11 @@ export function buildProjectFiles({ reactSource, sharedSource, clientSource, tes
   ].join("\n");
   return {
     ...providerPackageFiles(
-      "js2-react-provider",
+      "react",
       buildProjectModuleSource({ exportName: "__reactExports", moduleName: "react", imports: "", source: reactSource }),
     ),
     ...providerPackageFiles(
-      "js2-react-scheduler-provider",
+      "scheduler",
       buildProjectModuleSource({
         exportName: "__schedulerExports",
         moduleName: "scheduler",
@@ -522,24 +522,24 @@ export function buildProjectFiles({ reactSource, sharedSource, clientSource, tes
       }),
     ),
     ...providerPackageFiles(
-      "js2-react-dom-shared-provider",
+      "react-dom-shared",
       buildProjectModuleSource({
         exportName: "__sharedExports",
         moduleName: "shared",
-        imports: 'import { __reactExports } from "js2-react-provider";',
+        imports: 'import { __reactExports } from "react";',
         bindings: "var __REACT__ = __reactExports;",
         source: wireRequires(sharedSource),
       }),
     ),
     ...providerPackageFiles(
-      "js2-react-dom-client-provider",
+      "react-dom-client",
       buildProjectModuleSource({
         exportName: "__clientExports",
         moduleName: "client",
         imports:
-          'import { __reactExports } from "js2-react-provider";\n' +
-          'import { __sharedExports } from "js2-react-dom-shared-provider";\n' +
-          'import { __schedulerExports } from "js2-react-scheduler-provider";',
+          'import { __reactExports } from "react";\n' +
+          'import { __sharedExports } from "react-dom-shared";\n' +
+          'import { __schedulerExports } from "scheduler";',
         bindings:
           "var __REACT__ = __reactExports;\n" +
           "var __REACTDOM_SHARED__ = __sharedExports;\n" +
@@ -570,12 +570,12 @@ export function buildServerProjectFiles({
   const rendererExport = isFizz ? "__fizzExports" : "__serverExports";
   const rendererBinding = isFizz ? "__REACTDOM_FIZZ__" : "__REACTDOM_SERVER__";
   const rendererImport = isFizz ? "__fizzExports" : "__serverExports";
-  const rendererPackage = isFizz ? "js2-react-dom-fizz-provider" : "js2-react-dom-server-provider";
+  const rendererPackage = isFizz ? "react-dom-fizz" : "react-dom-server";
   const entry = [
-    'import { __reactExports } from "js2-react-provider";',
-    'import { __sharedExports } from "js2-react-dom-shared-provider";',
+    'import { __reactExports } from "react";',
+    'import { __sharedExports } from "react-dom-shared";',
     `import { ${rendererImport} } from ${JSON.stringify(rendererPackage)};`,
-    'import { __schedulerExports } from "js2-react-scheduler-provider";',
+    'import { __schedulerExports } from "scheduler";',
     "const __REACT__ = __reactExports;",
     "const __REACTDOM_SHARED__ = __sharedExports;",
     "const __REACTDOM__ = __sharedExports;",
@@ -599,11 +599,11 @@ export function buildServerProjectFiles({
   ].join("\n");
   return {
     ...providerPackageFiles(
-      "js2-react-provider",
+      "react",
       buildProjectModuleSource({ exportName: "__reactExports", moduleName: "react", imports: "", source: reactSource }),
     ),
     ...providerPackageFiles(
-      "js2-react-scheduler-provider",
+      "scheduler",
       buildProjectModuleSource({
         exportName: "__schedulerExports",
         moduleName: "scheduler",
@@ -612,13 +612,11 @@ export function buildServerProjectFiles({
       }),
     ),
     ...providerPackageFiles(
-      "js2-react-dom-shared-provider",
+      "react-dom-shared",
       buildProjectModuleSource({
         exportName: "__sharedExports",
         moduleName: "shared",
-        imports:
-          'import { __reactExports } from "js2-react-provider";\n' +
-          'import { __schedulerExports } from "js2-react-scheduler-provider";',
+        imports: 'import { __reactExports } from "react";\n' + 'import { __schedulerExports } from "scheduler";',
         bindings:
           "var __REACT__ = __reactExports;\n" +
           "var __SCHEDULER__ = __schedulerExports;\n" +
@@ -632,9 +630,9 @@ export function buildServerProjectFiles({
         exportName: rendererExport,
         moduleName: rendererName,
         imports:
-          'import { __reactExports } from "js2-react-provider";\n' +
-          'import { __sharedExports } from "js2-react-dom-shared-provider";\n' +
-          'import { __schedulerExports } from "js2-react-scheduler-provider";',
+          'import { __reactExports } from "react";\n' +
+          'import { __sharedExports } from "react-dom-shared";\n' +
+          'import { __schedulerExports } from "scheduler";',
         bindings:
           "var __REACT__ = __reactExports;\n" +
           "var __REACTDOM_SHARED__ = __sharedExports;\n" +

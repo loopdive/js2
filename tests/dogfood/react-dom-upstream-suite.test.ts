@@ -235,11 +235,11 @@ describe("react-dom upstream suite", () => {
       serverSource: "exports.renderToString = function () { return '<div></div>'; };",
       tests: [test],
     });
-    expect(Object.keys(legacy)).toContain("node_modules/js2-react-dom-server-provider/index.ts");
-    expect(Object.keys(legacy)).toContain("node_modules/js2-react-dom-shared-provider/index.ts");
-    expect(legacy["entry.ts"]).toContain('import { __serverExports } from "js2-react-dom-server-provider";');
+    expect(Object.keys(legacy)).toContain("node_modules/react-dom-server/index.ts");
+    expect(Object.keys(legacy)).toContain("node_modules/react-dom-shared/index.ts");
+    expect(legacy["entry.ts"]).toContain('import { __serverExports } from "react-dom-server";');
     expect(legacy["entry.ts"]).toContain("export function upstreamTestCount() { return 1; }");
-    expect(legacy["node_modules/js2-react-dom-server-provider/index.ts"]).toContain("__serverExports");
+    expect(legacy["node_modules/react-dom-server/index.ts"]).toContain("__serverExports");
 
     const fizz = buildServerProjectFiles({
       reactSource: "exports.createElement = function () {};",
@@ -249,8 +249,8 @@ describe("react-dom upstream suite", () => {
       tests: [test],
       fizzPlatform: "node",
     });
-    expect(Object.keys(fizz)).toContain("node_modules/js2-react-dom-fizz-provider/index.ts");
-    expect(fizz["entry.ts"]).toContain('import { __fizzExports } from "js2-react-dom-fizz-provider";');
+    expect(Object.keys(fizz)).toContain("node_modules/react-dom-fizz/index.ts");
+    expect(fizz["entry.ts"]).toContain('import { __fizzExports } from "react-dom-fizz";');
     expect(fizz["entry.ts"]).toContain("__REACTDOM_FIZZ__");
   });
 
@@ -261,16 +261,14 @@ describe("react-dom upstream suite", () => {
       clientSource: "exports.createRoot = function () {};",
       tests: [],
     });
-    expect(files["entry.ts"]).toContain('from "js2-react-dom-client-provider"');
-    expect(files["node_modules/js2-react-dom-client-provider/index.ts"]).toContain(
-      'from "js2-react-dom-shared-provider"',
-    );
-    expect(files["node_modules/js2-react-dom-client-provider/package.json"]).toContain('"exports":"./index.ts"');
+    expect(files["entry.ts"]).toContain('from "react-dom-client"');
+    expect(files["node_modules/react-dom-client/index.ts"]).toContain('from "react-dom-shared"');
+    expect(files["node_modules/react-dom-client/package.json"]).toContain('"exports":"./index.ts"');
     expect(Object.keys(files).some((name) => /^react\.ts$|^client\.ts$/.test(name))).toBe(false);
   });
 
   it("compiles generated React DOM providers once across test entries", async () => {
-    const root = mkdtempSync(join(tmpdir(), "js2-react-dom-providers-"));
+    const root = mkdtempSync(join(tmpdir(), "js2-react-dom-packages-"));
     const cacheDir = join(root, ".cache");
     const files = buildProjectFiles({
       reactSource: "exports.createElement = function () { return 1; };",
@@ -286,6 +284,12 @@ describe("react-dom upstream suite", () => {
     const options = { allowJs: true, emitWat: false, skipSemanticDiagnostics: true, packageCacheDir: cacheDir };
     const first = await compileProject(join(root, "entry.ts"), options);
     expect(first.linkPlan).toMatchObject({ mode: "separate", compiledProviders: 4, cachedProviders: 0 });
+    expect(first.linkedModules?.map((artifact) => artifact.packageName).sort()).toEqual([
+      "react",
+      "react-dom-client",
+      "react-dom-shared",
+      "scheduler",
+    ]);
     const linked = await instantiateLinkedProject(first);
     expect(linked.instance.exports.upstreamTestCount?.()).toBe(0);
 

@@ -313,6 +313,12 @@ and provider-local host callbacks retain the existing separate-module runtime
 and report `PackageLinkPlan.mergeFallbackReason`. This is an explicit semantic
 fallback, not a silent source bundle or erased boundary.
 
+React DOM dogfood artifacts use package-derived identities (`react`,
+`scheduler`, `react-dom-shared`, `react-dom-client`, `react-dom-server`, and
+`react-dom-fizz`) rather than exposing the linker's internal “provider” role in
+their package or module names. “Provider” remains terminology for a module that
+satisfies another module's imports, not part of the user-facing filename ABI.
+
 ## Measurement rule for whoever packages the runtime-eval provider (#2928 E7)
 
 The first real consumer of this linker is #2928's `js2wasm:runtime-eval`
