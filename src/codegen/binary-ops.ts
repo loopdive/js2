@@ -5,6 +5,7 @@
  * bitwise, modulo, boolean, and any-typed binary operations.
  */
 import { ts } from "../ts-api.js";
+import type { TypeFact } from "../checker/oracle.js";
 import {
   getNullablePrimitiveInfo,
   isBigIntType,
@@ -68,6 +69,32 @@ import { foldTypeDisjointThenPromote } from "./strict-eq-type-disjoint.js";
 import { compileInOperator } from "./binary-ops-in.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { emitIsUndefF64 } from "./value-tags.js";
+
+/**
+ * (#1930) Keep the nullish AnyValue gate on the oracle side of the checker
+ * boundary.  This mirrors `isHeterogeneousPrimitiveUnion` without exposing a
+ * `ts.Type`: nullable heterogeneous bindings are the only unions whose
+ * non-null parts must retain distinct primitive tags.
+ */
+function isOracleHeterogeneousPrimitiveUnion(fact: TypeFact): boolean {
+  if (fact.kind !== "union" || fact.parts.length < 2) return false;
+  const primitiveKinds = new Set<TypeFact["kind"]>();
+  for (const part of fact.parts) {
+    if (part.kind !== "number" && part.kind !== "string" && part.kind !== "boolean") return false;
+    primitiveKinds.add(part.kind);
+  }
+  return primitiveKinds.size >= 2;
+}
+
+function isDeclaredOracleHeterogeneousPrimitiveUnion(ctx: CodegenContext, expr: ts.Expression): boolean {
+  let current = expr;
+  while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current) || ts.isNonNullExpression(current)) {
+    current = current.expression;
+  }
+  if (!ts.isIdentifier(current)) return false;
+  const declaration = ctx.oracle.valueDeclarationOf(current);
+  return declaration !== undefined && isOracleHeterogeneousPrimitiveUnion(ctx.oracle.typeFactOf(declaration));
+}
 import { compileModulo } from "./remainder.js";
 export { emitModulo } from "./remainder.js";
 
@@ -652,11 +679,11 @@ export function compileBinaryExpression(
     // boxed null and `ref.is_null` would report false.  Let the AnyValue
     // equality dispatch below compare the carrier tag instead (#4447).
     const nullishComparedExpr = rightIsNullish ? expr.left : expr.right;
-    const nullishComparedType = ctx.checker.getTypeAtLocation(nullishComparedExpr);
+    const nullishComparedFact = ctx.oracle.typeFactOf(nullishComparedExpr);
     const nullishUnionCarrier =
       ctx.unionAnyRep &&
-      (isHeterogeneousPrimitiveUnion(nullishComparedType) ||
-        isDeclaredHeterogeneousPrimitiveUnion(ctx.checker, nullishComparedExpr));
+      (isOracleHeterogeneousPrimitiveUnion(nullishComparedFact) ||
+        isDeclaredOracleHeterogeneousPrimitiveUnion(ctx, nullishComparedExpr));
     if ((rightIsNullish || leftIsNullish) && !nullishUnionCarrier) {
       // Determine which side is the literal null/undefined and which is the expression
       const nonNullExpr = rightIsNullish ? expr.left : expr.right;
