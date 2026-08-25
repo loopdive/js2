@@ -101,6 +101,7 @@ import {
 } from "./struct-accessor-closure.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { registerCountedPushArray } from "./array-indexof-scan.js";
+
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -670,10 +671,12 @@ function compileRuntimeComputedPropertyKey(
   fctx: FunctionContext,
   expression: ts.Expression,
 ): void {
-  const keyType = compileExpression(ctx, fctx, expression);
+  const keyTag = ctx.oracle.staticJsTypeOf(expression);
+  const objectKey = keyTag === "object" || keyTag === "function";
+  const keyType = compileExpression(ctx, fctx, expression, objectKey ? undefined : { kind: "externref" });
   if (!keyType) {
     fctx.body.push({ op: "ref.null.extern" });
-  } else if ((keyType.kind === "ref" || keyType.kind === "ref_null") && !isAnyValue(keyType, ctx)) {
+  } else if (objectKey && (keyType.kind === "ref" || keyType.kind === "ref_null") && !isAnyValue(keyType, ctx)) {
     coerceType(ctx, fctx, keyType, { kind: "externref" });
     const toPropertyKeyIdx = ensureLateImport(
       ctx,

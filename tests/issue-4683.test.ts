@@ -50,4 +50,32 @@ describe("#4683 computed property key evaluation", () => {
       `),
     ).resolves.toBe(1);
   });
+
+  it("preserves large numeric computed keys without i32 truncation", async () => {
+    await expect(
+      runModule(`
+        var object = {
+          12345678900: true,
+          b: true,
+          1: true,
+          a: true,
+          [Number.MAX_SAFE_INTEGER]: true,
+          12345678901: true,
+          4294967294: true,
+          4294967295: true,
+        };
+        var answer = object[Number.MAX_SAFE_INTEGER] === true && object[12345678901] === true && object[-1] !== true ? 1 : 0;
+      `),
+    ).resolves.toBe(1);
+  });
+
+  it("uses undefined returned from a function as the computed key", async () => {
+    await expect(
+      runModule(`
+        function f() {}
+        var object = { [f()]: 1 };
+        var answer = object[f()] === 1 && object[String(f())] === 1 ? 1 : 0;
+      `),
+    ).resolves.toBe(1);
+  });
 });

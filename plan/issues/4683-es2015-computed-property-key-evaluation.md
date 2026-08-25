@@ -23,6 +23,11 @@ loc-budget-allow:
   - src/codegen/expressions/call-receiver-method.ts
 func-budget-allow:
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+trap-growth-allow:
+  count: 1
+  reason: "The open-object dispatch repair advances computed-property-names/object/method/number.js from its baseline assertion failure (named methods returned null) into the pre-existing native closure-dispatch illegal_cast. The merge-group gate verified the baseline row was already fail, so this is a bounded fail-to-trap reclassification rather than a passing-test regression; the exact row is named per #3596."
+  tests:
+    - test/language/computed-property-names/object/method/number.js
 ---
 
 # #4683 — ES2015 object-literal computed property key evaluation order
@@ -77,6 +82,13 @@ change — `computed-property-names/basics/{number,string}.js` and
 `computed-property-names/object/property/number-duplicates.js`.
 The related `computed-property-names/object/method/string.js` also passes
 after the change.
+
+Merge-group follow-up fixed two unintended pass regressions: large numeric
+computed keys retain their full f64 value and a function returning `undefined`
+still creates the `"undefined"` property. The existing
+`computed-property-names/object/method/number.js` baseline failure now reaches
+a native closure-dispatch `illegal_cast` instead of returning null; the named
+`trap-growth-allow` above records that one fail-to-trap reclassification.
 
 Scoped gates: TypeScript 5 and TypeScript 7 typechecks passed; targeted
 Prettier and Biome checks passed; `git diff --check` passed. Full Test262 and
