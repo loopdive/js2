@@ -118,6 +118,7 @@ import { isArrayProtoIteratorAssignTarget } from "./expressions/proto-override.j
 import { isFnctorPrototypeAssignTarget } from "./expressions/fnctor-prototype.js";
 import { shouldKeepBuiltinReceiverWrite } from "./builtin-write-keeps.js"; // (#4176/#4199) builtin-receiver write keeps
 import { compileExpression, compileStatement } from "./shared.js";
+import { functionReturnsPreInitVarValue } from "./function-declaration-observation.js";
 import { expandLinearU8ParamTypes } from "./linear-uint8-signatures.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { pushProgramAbiModuleInitCallable } from "./program-abi-module-init-planning.js";
@@ -1863,12 +1864,13 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // numeric kernel (catches e.g. recursive `function fib(n) {...}`).
         const isImplicitAnyReturn = (rUnwrapped.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
         const withScopedReturn = functionReturnsThroughWithScope(ctx, stmt);
+        const preInitVarReturn = functionReturnsPreInitVarValue(ctx, stmt);
         const inferredNumericRet = withScopedReturn
           ? null
           : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
         if (inferredNumericRet) {
           results = [inferredNumericRet];
-        } else if (withScopedReturn) {
+        } else if (withScopedReturn || preInitVarReturn) {
           // See `functionReturnsThroughWithScope`: the checker resolved the
           // returned name against the SHADOWED outer binding, so the inferred
           // type describes the wrong value. Carry it as `any`.

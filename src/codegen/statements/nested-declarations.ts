@@ -19,6 +19,7 @@ import { functionReturnsThroughWithScope } from "../declarations.js";
 import {
   collectNestedCaptureReferences,
   functionDeclarationObservesBindingValue,
+  functionReturnsPreInitVarValue,
   observesHoistedFunctionValueBinding,
   observesOnlyHoistedFunctionValue,
   prepareHoistedFunctionBindings,
@@ -731,7 +732,8 @@ function compileNestedFunctionDeclarationInScope(
       retType = unwrapPromiseType(retType, ctx.checker);
     }
     if (!isVoidType(retType)) {
-      returnType = resolveWasmType(ctx, retType);
+      const inferredReturn = resolveWasmType(ctx, retType);
+      returnType = functionReturnsPreInitVarValue(ctx, stmt) ? { kind: "externref" } : inferredReturn;
     }
   }
   // Analyze captured variables from the enclosing scope. Use scope-aware

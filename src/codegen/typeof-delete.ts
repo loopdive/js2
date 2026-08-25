@@ -1579,6 +1579,16 @@ function typeofFoldUnsoundForJsParam(ctx: CodegenContext, operand: ts.Expression
   return /\.(js|mjs|cjs|jsx)$/.test(fileName);
 }
 
+/** Same-name function declarations replace an existing var/parameter binding. */
+function hoistedFnTypeof(ctx: CodegenContext, fctx: FunctionContext, ident: ts.Identifier): string | null {
+  return fctx.hoistedFunctionValueBindings?.has(ident.text) === true &&
+    ctx.oracle
+      .declarationsOf(ident)
+      .some((declaration) => ts.isFunctionDeclaration(declaration) && !declaration.getSourceFile().isDeclarationFile)
+    ? "function"
+    : null;
+}
+
 export function compileTypeofExpression(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1640,7 +1650,7 @@ export function compileTypeofExpression(
       ident = (ident as ts.ParenthesizedExpression | ts.AsExpression).expression;
     }
     if (ts.isIdentifier(ident)) {
-      const argumentsTypeof = staticTypeofForArgumentsIdentifier(ctx, fctx, ident);
+      const argumentsTypeof = staticTypeofForArgumentsIdentifier(ctx, fctx, ident) ?? hoistedFnTypeof(ctx, fctx, ident);
       if (argumentsTypeof !== null) return compileStringLiteral(ctx, fctx, argumentsTypeof);
       // (#2200 Phase 2) An Annex B B.3.3 block-fn outer binding must be handled
       // BEFORE the `!hasValueDecl` const-fold below: the checker reports its

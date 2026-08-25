@@ -7,6 +7,61 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { annexBDeclaringRange, annexBUpdatesExistingVarBinding } from "./annexb-cancel.js";
 import { getOrRegisterRefCellType } from "./registry/types.js";
 
+/**
+ * A nested function can return the pre-initialization value of a `var` owned
+ * by an enclosing activation. TypeScript's signature still reports the
+ * declaration's eventual type, but the closure may run before that initializer
+ * executes (`function g(){ return x; } return g(); var x = 1`). Keep the
+ * return ABI dynamic for that source-proven shape, and propagate it through a
+ * direct nested-function call (`return g()`) in the owner.
+ */
+export function functionReturnsPreInitVarValue(
+  ctx: CodegenContext,
+  fn: ts.FunctionLikeDeclaration,
+  seen = new Set<ts.FunctionLikeDeclaration>(),
+): boolean {
+  if (seen.has(fn) || !fn.body || !ts.isBlock(fn.body)) return false;
+  seen.add(fn);
+  const isPreInitVar = (id: ts.Identifier): boolean => {
+    const decl = ctx.oracle.variableDeclarationOf(id);
+    return (
+      decl !== undefined &&
+      decl.initializer !== undefined &&
+      ts.isIdentifier(decl.name) &&
+      (decl.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) ===
+        0 &&
+      id.getStart() < decl.name.getStart()
+    );
+  };
+  const visit = (node: ts.Node): boolean => {
+    if (ts.isReturnStatement(node) && node.expression) {
+      let expression = node.expression;
+      while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
+      if (ts.isIdentifier(expression) && isPreInitVar(expression)) {
+        return true;
+      }
+      if (ts.isCallExpression(expression) && ts.isIdentifier(expression.expression)) {
+        const target = ctx.oracle.valueDeclarationOf(expression.expression);
+        if (
+          target &&
+          (ts.isFunctionDeclaration(target) || ts.isFunctionExpression(target)) &&
+          functionReturnsPreInitVarValue(ctx, target, new Set(seen))
+        ) {
+          return true;
+        }
+      }
+      return false;
+    }
+    if (node !== fn && ts.isFunctionLike(node)) return false;
+    let found = false;
+    ts.forEachChild(node, (child) => {
+      if (!found && visit(child)) found = true;
+    });
+    return found;
+  };
+  return visit(fn.body);
+}
+
 /** Whether a closure observes a binding outside a direct call position. */
 export function closureObservesBindingValue(closure: ts.ArrowFunction | ts.FunctionExpression, name: string): boolean {
   let observed = false;
@@ -217,13 +272,14 @@ export function prepareHoistedFunctionValueBindings(
   stmts: ts.NodeArray<ts.Statement> | readonly ts.Statement[],
 ): void {
   for (const stmt of stmts) {
+    const hasExistingBinding = ts.isFunctionDeclaration(stmt) && !!stmt.name && fctx.localMap.has(stmt.name.text);
     if (
       !ts.isFunctionDeclaration(stmt) ||
       !stmt.name ||
       !stmt.body ||
       annexBDeclaringRange(stmt) !== null ||
       functionDeclarationHasAnnexBUpdater(stmt) ||
-      !functionDeclarationValueIsObserved(ctx, stmt)
+      (!functionDeclarationValueIsObserved(ctx, stmt) && !hasExistingBinding)
     ) {
       continue;
     }
@@ -238,7 +294,7 @@ export function prepareHoistedFunctionValueBindings(
     // the closure is materialized into it at the declaration statement,
     // where every captured value is live.
     const stableAbi = hasStableFunctionValueCaptureAbi(fctx, stmt);
-    if (!fctx.localMap.has(stmt.name.text)) {
+    if (!hasExistingBinding) {
       const cyclic = !stableAbi || functionValueDependencyIsCyclic(ctx, stmt, stmts);
       if (cyclic) {
         const valueType = { kind: "externref" } as const;
@@ -254,6 +310,20 @@ export function prepareHoistedFunctionValueBindings(
       } else {
         allocLocal(fctx, stmt.name.text, { kind: "externref" });
       }
+      (fctx.hoistedFunctionValueBindings ??= new Set()).add(stmt.name.text);
+    } else {
+      // FunctionDeclarationInstantiation installs a same-named function value
+      // into the existing var/parameter binding (ES5 §10.2.1, steps 5/8).
+      // Keeping the parameter/var slot in localMap made `return x` observe its
+      // entry value instead of the hoisted function for shapes such as
+      // `function f(x) { return x; function x() {} }` and
+      // `function f() { var x; return x; function x() {} }`.
+      // Preserve the old slot for any source-position machinery, but route
+      // subsequent identifier reads/writes through a stable function-value
+      // slot. The value remains lazy, matching the identity-observed path
+      // above and avoiding a closure construction in skipped control flow.
+      const bindingLocal = allocLocal(fctx, stmt.name.text, { kind: "externref" });
+      fctx.localMap.set(stmt.name.text, bindingLocal);
       (fctx.hoistedFunctionValueBindings ??= new Set()).add(stmt.name.text);
     }
   }
