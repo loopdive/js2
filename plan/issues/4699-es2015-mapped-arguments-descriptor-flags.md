@@ -56,40 +56,40 @@ artifact (fetched 2026-08-25, `oracle_version: 13`, `oracle_lane: honest`,
 the following exact 20 paths; the final path is explicitly excluded:
 
 ```
-test/language/arguments-object/mapped/enumerable-configurable-accessor-descriptor.js
-test/language/arguments-object/mapped/nonconfigurable-descriptors-basic.js
-test/language/arguments-object/mapped/nonconfigurable-descriptors-define-failure.js
-test/language/arguments-object/mapped/nonconfigurable-descriptors-set-value-by-arguments.js
-test/language/arguments-object/mapped/nonconfigurable-descriptors-set-value-with-define-property.js
-test/language/arguments-object/mapped/nonconfigurable-descriptors-with-param-assign.js
-test/language/arguments-object/mapped/nonconfigurable-nonenumerable-nonwritable-descriptors-basic.js
-test/language/arguments-object/mapped/nonconfigurable-nonenumerable-nonwritable-descriptors-set-by-arguments.js
-test/language/arguments-object/mapped/nonconfigurable-nonenumerable-nonwritable-descriptors-set-by-param.js
-test/language/arguments-object/mapped/nonconfigurable-nonwritable-descriptors-basic.js
-test/language/arguments-object/mapped/nonconfigurable-nonwritable-descriptors-define-property-consecutive.js
-test/language/arguments-object/mapped/nonconfigurable-nonwritable-descriptors-set-by-arguments.js
-test/language/arguments-object/mapped/nonconfigurable-nonwritable-descriptors-set-by-param.js
-test/language/arguments-object/mapped/nonwritable-nonconfigurable-descriptors-basic.js
-test/language/arguments-object/mapped/nonwritable-nonconfigurable-descriptors-set-by-arguments.js
-test/language/arguments-object/mapped/nonwritable-nonconfigurable-descriptors-set-by-param.js
-test/language/arguments-object/mapped/nonwritable-nonenumerable-nonconfigurable-descriptors-basic.js
-test/language/arguments-object/mapped/nonwritable-nonenumerable-nonconfigurable-descriptors-set-by-arguments.js
-test/language/arguments-object/mapped/nonwritable-nonenumerable-nonconfigurable-descriptors-set-by-define-property.js
-test/language/arguments-object/mapped/nonwritable-nonenumerable-nonconfigurable-descriptors-set-by-param.js
+test262/test/language/arguments-object/mapped/enumerable-configurable-accessor-descriptor.js
+test262/test/language/arguments-object/mapped/nonconfigurable-descriptors-basic.js
+test262/test/language/arguments-object/mapped/nonconfigurable-descriptors-define-failure.js
+test262/test/language/arguments-object/mapped/nonconfigurable-descriptors-set-value-by-arguments.js
+test262/test/language/arguments-object/mapped/nonconfigurable-descriptors-set-value-with-define-property.js
+test262/test/language/arguments-object/mapped/nonconfigurable-descriptors-with-param-assign.js
+test262/test/language/arguments-object/mapped/nonconfigurable-nonenumerable-nonwritable-descriptors-basic.js
+test262/test/language/arguments-object/mapped/nonconfigurable-nonenumerable-nonwritable-descriptors-set-by-arguments.js
+test262/test/language/arguments-object/mapped/nonconfigurable-nonenumerable-nonwritable-descriptors-set-by-param.js
+test262/test/language/arguments-object/mapped/nonconfigurable-nonwritable-descriptors-basic.js
+test262/test/language/arguments-object/mapped/nonconfigurable-nonwritable-descriptors-define-property-consecutive.js
+test262/test/language/arguments-object/mapped/nonconfigurable-nonwritable-descriptors-set-by-arguments.js
+test262/test/language/arguments-object/mapped/nonconfigurable-nonwritable-descriptors-set-by-param.js
+test262/test/language/arguments-object/mapped/nonwritable-nonconfigurable-descriptors-basic.js
+test262/test/language/arguments-object/mapped/nonwritable-nonconfigurable-descriptors-set-by-arguments.js
+test262/test/language/arguments-object/mapped/nonwritable-nonconfigurable-descriptors-set-by-param.js
+test262/test/language/arguments-object/mapped/nonwritable-nonenumerable-nonconfigurable-descriptors-basic.js
+test262/test/language/arguments-object/mapped/nonwritable-nonenumerable-nonconfigurable-descriptors-set-by-arguments.js
+test262/test/language/arguments-object/mapped/nonwritable-nonenumerable-nonconfigurable-descriptors-set-by-define-property.js
+test262/test/language/arguments-object/mapped/nonwritable-nonenumerable-nonconfigurable-descriptors-set-by-param.js
 ```
 
 The excluded row is:
 
 ```
-test/language/arguments-object/mapped/writable-enumerable-configurable-descriptor.js
+test262/test/language/arguments-object/mapped/writable-enumerable-configurable-descriptor.js
 ```
 
 The three adjacent non-descriptor controls are:
 
 ```
-test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-1.js
-test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-2.js
-test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-4.js
+test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-1.js
+test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-2.js
+test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-4.js
 ```
 
 ## Baseline on current upstream/main
