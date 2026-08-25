@@ -14,11 +14,11 @@ language_feature: map-foreach
 es_edition: es2015
 goal: spec-completeness
 sprint: 77
+oracle-ratchet-allow:
+  - src/codegen/map-runtime.ts
 loc-budget-allow:
   - src/codegen/map-runtime.ts
   - src/codegen/closures.ts
-oracle-ratchet-allow:
-  - src/codegen/map-runtime.ts
 func-budget-allow:
   - src/codegen/closures.ts::compileArrowAsClosure
 ---
