@@ -93,6 +93,8 @@ import { tryEmitStandaloneGlobalFunctionIdentifier } from "../standalone-global-
 import { evaluateInstanceOfRhsForEffects } from "../instanceof-rhs-evaluation.js"; // (#4491 T3) §13.10.1 step 3
 import { resolveBuiltinCtorAssignedAliasName } from "../builtin-ctor-assigned-alias.js"; // (#4491 T3)
 
+const switchCaseLexicalDeclarationCache = new WeakMap<ts.SourceFile, Map<string, ts.Node[]>>();
+
 /**
  * #1473 — Build the set of `$Error_struct` `$tag` values compatible with an
  * `instanceof <ctorName>` test in no-JS-host mode. For `instanceof Error` this
@@ -224,7 +226,7 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
 
 /** Resolve the lexical value read by an identifier, including `{ value }`. */
 function identifierValueSymbol(ctx: CodegenContext, id: ts.Identifier): ts.Symbol | undefined {
-  if (ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id) {
+  if (id.parent && ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id) {
     const shorthand = (
       ctx.checker as typeof ctx.checker & {
         getShorthandAssignmentValueSymbol?: (node: ts.ShorthandPropertyAssignment) => ts.Symbol | undefined;
@@ -233,6 +235,117 @@ function identifierValueSymbol(ctx: CodegenContext, id: ts.Identifier): ts.Symbo
     if (shorthand !== undefined) return shorthand;
   }
   return ctx.checker.getSymbolAtLocation(id);
+}
+
+/**
+ * Return the direct CaseBlock declaration denoted by an identifier outside its
+ * switch.  CaseBlock names are not module/function bindings, but the flat
+ * codegen registries still know about class/function names and the module-init
+ * collector deliberately drops inert bare identifiers.  Keep the runtime
+ * ReferenceError observable for this small, well-defined lexical shape.
+ */
+function switchCaseLexicalDeclarationOutside(ctx: CodegenContext, id: ts.Identifier): ts.Node | undefined {
+  const symbol = identifierValueSymbol(ctx, id);
+  const symbolDecl = symbol?.valueDeclaration;
+  const direct = symbolDecl && directSwitchCaseLexicalDeclaration(symbolDecl);
+  if (direct && !identifierInsideSwitchCaseBlock(id, direct)) return direct;
+
+  // TypeScript leaves an out-of-scope CaseBlock reference unresolved in some
+  // script/module combinations. Recover the declaration syntactically so the
+  // runtime path does not fall through to a class/function registry entry.
+  if (symbol !== undefined) return undefined;
+  const sourceFile = id.getSourceFile();
+  if (!sourceFile) return undefined;
+  const declarations = switchCaseLexicalDeclarations(sourceFile).get(id.text);
+  if (!declarations) return undefined;
+  return declarations.find((declaration) => !identifierInsideSwitchCaseBlock(id, declaration));
+}
+
+function switchCaseLexicalDeclarations(sourceFile: ts.SourceFile): Map<string, ts.Node[]> {
+  const cached = switchCaseLexicalDeclarationCache.get(sourceFile);
+  if (cached) return cached;
+  const declarations = new Map<string, ts.Node[]>();
+  const add = (declaration: ts.Node): void => {
+    const name = declarationName(declaration);
+    if (!name) return;
+    const entries = declarations.get(name);
+    if (entries) entries.push(declaration);
+    else declarations.set(name, [declaration]);
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isSwitchStatement(node)) {
+      for (const clause of node.caseBlock.clauses) {
+        for (const stmt of clause.statements) {
+          if (ts.isVariableStatement(stmt)) {
+            for (const variable of stmt.declarationList.declarations) {
+              const declaration = directSwitchCaseLexicalDeclaration(variable);
+              if (declaration) add(declaration);
+            }
+          } else {
+            const declaration = directSwitchCaseLexicalDeclaration(stmt);
+            if (declaration) add(declaration);
+          }
+        }
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  switchCaseLexicalDeclarationCache.set(sourceFile, declarations);
+  return declarations;
+}
+
+function directSwitchCaseLexicalDeclaration(node: ts.Node | undefined): ts.Node | undefined {
+  if (!node) return undefined;
+  let clause: ts.CaseClause | ts.DefaultClause | undefined;
+  if (ts.isVariableDeclaration(node)) {
+    const stmt = node.parent?.parent;
+    if (ts.isVariableStatement(stmt)) {
+      const flags = stmt.declarationList.flags;
+      if (
+        (flags & ts.NodeFlags.Let) !== 0 ||
+        (flags & ts.NodeFlags.Const) !== 0 ||
+        (flags & ts.NodeFlags.Using) !== 0 ||
+        (flags & ts.NodeFlags.AwaitUsing) !== 0
+      ) {
+        clause = ts.isCaseClause(stmt.parent) || ts.isDefaultClause(stmt.parent) ? stmt.parent : undefined;
+      }
+    }
+  } else if (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) {
+    clause = ts.isCaseClause(node.parent) || ts.isDefaultClause(node.parent) ? node.parent : undefined;
+  }
+  if (!clause) return undefined;
+  // Annex B's ordinary sloppy function extension is intentionally left to its
+  // existing var-binding machinery; the ES2015 residuals here are lexical
+  // variables, classes, generators, and async functions.
+  if (ts.isFunctionDeclaration(node) && node.asteriskToken === undefined) {
+    const isAsync = node.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+    if (!isAsync) return undefined;
+  }
+  return node;
+}
+
+function declarationName(node: ts.Node | undefined): string | undefined {
+  if (node && (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) return node.name.text;
+  if (node && ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) return node.name.text;
+  return undefined;
+}
+
+function identifierInsideSwitchCaseBlock(id: ts.Identifier, declaration: ts.Node | undefined): boolean {
+  if (!declaration) return false;
+  let clause: ts.Node | undefined = declaration.parent;
+  while (clause && !ts.isCaseClause(clause) && !ts.isDefaultClause(clause)) clause = clause.parent;
+  const caseBlock = clause?.parent;
+  const switchStmt = caseBlock?.parent;
+  return (
+    caseBlock !== undefined &&
+    switchStmt !== undefined &&
+    ts.isCaseBlock(caseBlock) &&
+    ts.isSwitchStatement(switchStmt) &&
+    id.getSourceFile() === switchStmt.getSourceFile() &&
+    id.getStart() >= caseBlock.getStart() &&
+    id.getEnd() <= caseBlock.getEnd()
+  );
 }
 
 /**
@@ -646,6 +759,16 @@ function compileIdentifierCore(
   skipRuntimeEvalState = false,
 ): ValType | null {
   const name = id.text;
+
+  // A direct CaseBlock lexical declaration is visible only while evaluating
+  // that switch's clauses.  Keep an outside reference from falling through to
+  // the flat class/function registries, which otherwise make the name appear
+  // callable even though the binding is out of scope.
+  const switchDeclaration = switchCaseLexicalDeclarationOutside(ctx, id);
+  if (switchDeclaration !== undefined) {
+    emitStaticTdzThrow(ctx, fctx, name);
+    return { kind: "externref" };
+  }
 
   // (#4630) A top-level function reassigned via `globalThis.<name> = …` must
   // resolve bare reads through the override slot (§16.1.7 — the declaration
