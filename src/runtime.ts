@@ -4803,6 +4803,9 @@ function _safeGet(
   rawCallable = false,
 ): any {
   if (obj == null) return undefined;
+  const scAccessor = typeof key === "string" ? _wasmStructProps.get(obj) : undefined;
+  if (_argumentsObjects.has(obj) && scAccessor && typeof scAccessor[`__get_${key}`] === "function")
+    return (scAccessor[`__get_${key}`] as Function).call(obj);
   // Coerce WasmGC struct keys to primitives via ToPrimitive (#1090, #1716).
   // Passing callbackState lets a key with a WasmGC-closure valueOf / toString /
   // @@toPrimitive be dispatched (ToPropertyKey §7.1.19 → ToPrimitive §7.1.1);
@@ -4835,7 +4838,12 @@ function _safeGet(
       typeof vecGet === "function"
     ) {
       try {
-        if (isVec(obj) === 1) return index < vecLen(obj) ? vecGet(obj, index) : undefined;
+        if (isVec(obj) === 1) {
+          const own = _readOwnDescriptor(obj, String(index), exports);
+          if (_argumentsObjects.has(obj) && own && ("get" in own || "set" in own))
+            return typeof own.get === "function" ? own.get.call(_hostProxyCache.get(obj) ?? obj) : undefined;
+          return index < vecLen(obj) ? vecGet(obj, index) : undefined;
+        }
       } catch {
         // Not a compatible live vec; continue through the ordinary struct path.
       }
@@ -5114,6 +5122,12 @@ function _safeSet(
   // view. Numeric writes must target the canonical raw WasmGC vec so the
   // module's element-set dispatcher can mutate the backing array.
   obj = _unwrapForHost(obj);
+  const accessorKey = typeof key === "number" && Number.isInteger(key) ? String(key) : key;
+  const scAccessor = typeof accessorKey === "string" ? _wasmStructProps.get(obj) : undefined;
+  if (_argumentsObjects.has(obj) && scAccessor && typeof scAccessor[`__set_${accessorKey}`] === "function") {
+    (scAccessor[`__set_${accessorKey}`] as Function).call(obj, val);
+    return;
+  }
   // #2847: dynamic writes can cross a generic bridge after the Wasm boolean
   // carrier was widened to an unbranded numeric externref. The compiler emits
   // a marker only for property names whose complete visible write set is
@@ -6885,7 +6899,15 @@ function _vecDefineOwnProperty(
   // synthesis (_readOwnDescriptor) still reports w/e/c=true for untouched
   // in-bounds elements, which matches §10.4.2 defaults for literal elements.
   const nKey = _normalizeDescKey(keyStr);
-  const hadEntry = sDescs.has(nKey);
+  let hadEntry = sDescs.has(nKey);
+  // Numeric arguments elements already exist as ordinary mapped data
+  // properties. Their omitted descriptor fields therefore preserve the
+  // default writable/enumerable/configurable attributes; treating the first
+  // sidecar write as a fresh array element incorrectly cleared those bits.
+  if (!hadEntry && _argumentsObjects.has(obj) && idx < oldLen) {
+    sDescs.set(nKey, _SC_ELEM_DEFAULT);
+    hadEntry = true;
+  }
 
   let existingVal: any;
   let existingDesc: PropertyDescriptor | undefined;
@@ -6976,6 +6998,8 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
   if (cached) return cached;
   const lenFn = exports.__vec_len as ((v: any) => number) | undefined;
   const getFn = exports.__vec_get as ((v: any, i: number) => any) | undefined;
+  const mappedArguments = _argumentsObjects.has(vec);
+  const vecState = { getExports: () => exports };
   // Defensive: if the read exports are missing, fall back to the generic
   // object proxy rather than producing a broken array view.
   if (typeof lenFn !== "function" || typeof getFn !== "function") return undefined;
@@ -7002,6 +7026,36 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
     } catch {
       return undefined;
     }
+  };
+  const rawDesc = (key: string): PropertyDescriptor | undefined => _readOwnDescriptor(vec, key, exports);
+  const hostDesc = (key: string): PropertyDescriptor | undefined => {
+    const desc = rawDesc(key);
+    if (!desc) return undefined;
+    if ("value" in desc) desc.value = _wrapForHost(desc.value, exports);
+    return desc;
+  };
+  const materializeNonConfigurable = (key: string, desc: PropertyDescriptor | undefined): void => {
+    if (!desc || desc.configurable !== false) return;
+    try {
+      Object.defineProperty(target, key, desc);
+    } catch {
+      /* The target may already carry the matching non-configurable slot. */
+    }
+  };
+  const markDeleted = (key: string): void => {
+    const sc = _wasmStructProps.get(vec);
+    if (sc) {
+      delete sc[key];
+      delete sc[`__get_${key}`];
+      delete sc[`__set_${key}`];
+    }
+    _wasmPropDescs.get(vec)?.delete(key);
+    let tomb = _wasmStructDeletedKeys.get(vec);
+    if (!tomb) {
+      tomb = new Set<string | symbol>();
+      _wasmStructDeletedKeys.set(vec, tomb);
+    }
+    tomb.add(key);
   };
   liveLen();
   // (#3201) Expando sidecar lookup. Compiled writes of non-index properties
@@ -7032,7 +7086,13 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
       if (key === "length") return liveLen();
       if (typeof key === "string") {
         const idx = _asArrayIndex(key);
-        if (idx !== undefined) return idx < liveLen() ? elemAt(idx) : undefined;
+        if (idx !== undefined) {
+          if (!mappedArguments) return idx < liveLen() ? elemAt(idx) : undefined;
+          const desc = rawDesc(key);
+          if (!desc) return undefined;
+          if ("get" in desc || "set" in desc) return typeof desc.get === "function" ? desc.get.call(proxy) : undefined;
+          return idx < liveLen() ? elemAt(idx) : undefined;
+        }
       }
       const sc = sidecarGet(key);
       if (sc.hit) return sc.value;
@@ -7044,7 +7104,7 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
       if (key === "length") return true;
       if (typeof key === "string") {
         const idx = _asArrayIndex(key);
-        if (idx !== undefined) return idx < liveLen();
+        if (idx !== undefined) return mappedArguments ? rawDesc(key) !== undefined : idx < liveLen();
       }
       if (sidecarGet(key).hit) return true;
       return key in target;
@@ -7052,21 +7112,64 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
     ownKeys() {
       const n = liveLen();
       const keys: (string | symbol)[] = [];
-      for (let i = 0; i < n; i++) keys.push(String(i));
+      for (let i = 0; i < n; i++) {
+        if (!mappedArguments || rawDesc(String(i)) !== undefined) keys.push(String(i));
+      }
       keys.push("length");
       return keys;
     },
     getOwnPropertyDescriptor(_t, key) {
       if (key === "length") {
-        return { value: liveLen(), writable: true, enumerable: false, configurable: false };
+        if (!mappedArguments) return { value: liveLen(), writable: true, enumerable: false, configurable: false };
+        const desc = hostDesc("length") ?? { value: liveLen(), writable: true, enumerable: false, configurable: false };
+        materializeNonConfigurable("length", desc);
+        return desc;
       }
       if (typeof key === "string") {
         const idx = _asArrayIndex(key);
         if (idx !== undefined && idx < liveLen()) {
-          return { value: elemAt(idx), writable: true, enumerable: true, configurable: true };
+          if (!mappedArguments) return { value: elemAt(idx), writable: true, enumerable: true, configurable: true };
+          const desc = hostDesc(key);
+          materializeNonConfigurable(key, desc);
+          return desc;
         }
       }
       return undefined;
+    },
+    defineProperty(_t, key, descriptor) {
+      if (mappedArguments && typeof key === "string" && (key === "length" || _asArrayIndex(key) !== undefined)) {
+        const desc: PropertyDescriptor = { ...descriptor };
+        if ("value" in desc) desc.value = _unwrapForHost(desc.value);
+        if (_vecDefineOwnProperty(vec, key, desc, vecState)) {
+          const current = hostDesc(key);
+          if (current?.configurable === false) materializeNonConfigurable(key, current);
+          else {
+            const targetDesc = Reflect.getOwnPropertyDescriptor(_t, key);
+            if (targetDesc?.configurable) Reflect.deleteProperty(_t, key);
+          }
+          return true;
+        }
+      }
+      return Reflect.defineProperty(_t, key, descriptor);
+    },
+    deleteProperty(_t, key) {
+      if (mappedArguments && typeof key === "string" && (key === "length" || _asArrayIndex(key) !== undefined)) {
+        if (key === "length") return false;
+        const desc = rawDesc(key);
+        if (!desc || desc.configurable === false) return desc === undefined;
+        markDeleted(key);
+        try {
+          const setElem = exports.__vec_set_elem as ((v: any, i: number, x: any) => number) | undefined;
+          const idx = _asArrayIndex(key);
+          if (idx !== undefined && typeof setElem === "function") setElem(vec, idx, undefined);
+        } catch {
+          /* Tombstone state still hides the deleted slot from host MOPs. */
+        }
+        const targetDesc = Reflect.getOwnPropertyDescriptor(_t, key);
+        if (targetDesc?.configurable) Reflect.deleteProperty(_t, key);
+        return true;
+      }
+      return Reflect.deleteProperty(_t, key);
     },
     // Keep the array facade live in both directions. The target stays a shape
     // facade; values and length are written through the generated vec bridge so
@@ -7081,6 +7184,15 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
         return typeof setLen === "function" && setLen(vec, uint32) === 1;
       }
       if (typeof key === "string" && _asArrayIndex(key) !== undefined) {
+        if (mappedArguments) {
+          const desc = rawDesc(key);
+          if (desc && ("get" in desc || "set" in desc)) {
+            if (typeof desc.set !== "function") return false;
+            desc.set.call(proxy, _unwrapForHost(value));
+            return true;
+          }
+          if (desc?.writable === false) return false;
+        }
         return _trySetWasmVecElement(vec, key, value, exports);
       }
       _safeSet(vec, key, value, exports);
@@ -15741,6 +15853,14 @@ assert._isSameValue = isSameValue;
           }
           const exports = callbackState?.getExports();
           if (!exports) return obj;
+          const argumentDescriptors = _argumentsObjects.has(obj) ? _wasmPropDescs.get(obj) : undefined;
+          const needsIndexedDescriptorView =
+            argumentDescriptors !== undefined &&
+            [...argumentDescriptors.keys()].some((key) => typeof key === "string" && _asArrayIndex(key) !== undefined);
+          if (needsIndexedDescriptorView) {
+            const view = _wrapVecForHost(obj, exports);
+            if (view !== undefined) return view;
+          }
           // Try tuple struct FIRST (e.g. [string, number] for Map entries).
           // Must check before vec because __vec_len returns 0 for non-vec structs,
           // which would incorrectly produce an empty array.

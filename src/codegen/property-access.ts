@@ -5829,6 +5829,37 @@ export function compileElementAccessBody(
       return null;
     }
 
+    if (
+      fctx.mappedArgsInfo?.accessorIndices &&
+      ts.isIdentifier(expr.expression) &&
+      expr.expression.text === "arguments"
+    ) {
+      const idxArg = expr.argumentExpression;
+      const idxText = ts.isNumericLiteral(idxArg) ? idxArg.text : ts.isStringLiteral(idxArg) ? idxArg.text : undefined;
+      const argIndex = idxText !== undefined ? Number(idxText) : NaN;
+      if (Number.isInteger(argIndex) && fctx.mappedArgsInfo.accessorIndices.has(argIndex)) {
+        fctx.body.push({ op: "extern.convert_any" });
+        const keyType = compileExpression(ctx, fctx, idxArg, { kind: "externref" });
+        if (!keyType) {
+          fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
+          return { kind: "externref" };
+        }
+        const getIdx = ensureLateImport(
+          ctx,
+          "__extern_get",
+          [{ kind: "externref" }, { kind: "externref" }],
+          [{ kind: "externref" }],
+        );
+        flushLateImportShifts(ctx, fctx);
+        if (getIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: getIdx });
+          return { kind: "externref" };
+        }
+        fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
+        return { kind: "externref" };
+      }
+    }
+
     // (#4247) READ twin of the element-write routing in assignment.ts: a
     // constant key that is NOT an array index per §10.4.2.2 names an ordinary
     // property in the #3537 expando bag, not an element. Without this the

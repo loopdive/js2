@@ -1280,7 +1280,11 @@ export function compileObjectDefineProperty(
   ) {
     const idxKey = propName ?? (ts.isNumericLiteral(propArg) ? propArg.text : undefined);
     const argIndex = idxKey !== undefined ? Number(idxKey) : NaN;
-    if (Number.isInteger(argIndex) && argIndex >= 0 && argIndex < fctx.mappedArgsInfo.paramCount) {
+    if (
+      Number.isInteger(argIndex) &&
+      argIndex >= 0 &&
+      (argIndex < fctx.mappedArgsInfo.paramCount || getNode || setNode || getExpr || setExpr)
+    ) {
       const info = fctx.mappedArgsInfo;
       const isAccessor =
         getNode !== undefined || setNode !== undefined || getExpr !== undefined || setExpr !== undefined;
@@ -1298,6 +1302,9 @@ export function compileObjectDefineProperty(
       const applyAttributeState = (): void => {
         if (breaksLink) {
           (info.unmappedIndices ??= new Set<number>()).add(argIndex);
+        }
+        if (isAccessor) {
+          (info.accessorIndices ??= new Set<number>()).add(argIndex);
         }
         // (#2667) Track non-configurable / non-writable attribute state so the
         // delete + element-write emitters can apply §10.4.4 semantics for the
