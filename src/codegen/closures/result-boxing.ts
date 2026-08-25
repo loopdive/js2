@@ -25,12 +25,21 @@ import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { ensureAnyToExternHelper, isAnyValue, undefinedExternInstrs } from "../any-helpers.js";
 
-/** Preserve the structural boolean brand when an i32 crosses the externref ABI. */
+/** Preserve structural boolean/Symbol brands across the externref ABI. */
 function boxI32ClosureResult(
   ctx: CodegenContext,
-  returnType: { kind: "i32"; boolean?: true },
+  returnType: { kind: "i32"; boolean?: true; symbol?: true },
   boxNumberIdx: number | undefined,
 ): Instr[] {
+  // Native standalone Symbols are represented as branded i32 ids until they
+  // cross an externref boundary.  A dynamically dispatched ToPrimitive method
+  // is exactly such a boundary: treating the id as an ordinary number loses
+  // the Symbol carrier, so ToPropertyKey searches for a numeric property
+  // instead of preserving the returned Symbol.
+  const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+  if (returnType.symbol === true && boxSymbolIdx !== undefined) {
+    return [{ op: "call", funcIdx: boxSymbolIdx }];
+  }
   const boxBooleanIdx = ctx.funcMap.get("__box_boolean");
   if (returnType.boolean === true && boxBooleanIdx !== undefined) {
     return [{ op: "call", funcIdx: boxBooleanIdx }];
