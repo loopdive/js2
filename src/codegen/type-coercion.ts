@@ -2702,6 +2702,23 @@ export function coerceType(
   //   breaking `typeof obj === "object"`, downstream `obj + n`, `obj != 0`, and
   //   any host method that runs its own ToPrimitive on the wasmGC arg.
   if ((from.kind === "ref" || from.kind === "ref_null") && to.kind === "externref") {
+    // (#4741) A missing native-string description is represented internally by
+    // a null `$AnyString` reference, but its public value is `undefined`, not
+    // JavaScript `null`. Keep the nullable native string on the stack long
+    // enough to distinguish that sentinel before crossing into externref.
+    if (ctx.nativeStrings && from.kind === "ref_null" && ctx.anyStrTypeIdx >= 0 && from.typeIdx === ctx.anyStrTypeIdx) {
+      const nativeString = allocTempLocal(fctx, from);
+      fctx.body.push({ op: "local.tee", index: nativeString });
+      fctx.body.push({ op: "ref.is_null" });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: canonicalUndefinedExternInstrs(ctx),
+        else: [{ op: "local.get", index: nativeString }, { op: "extern.convert_any" }],
+      });
+      releaseTempLocal(fctx, nativeString);
+      return;
+    }
     const typeIdx = (from as { typeIdx: number }).typeIdx;
     const name = ctx.typeIdxToStructName.get(typeIdx);
     if (name !== undefined && toPrimitiveHint !== undefined) {
