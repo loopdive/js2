@@ -5937,6 +5937,105 @@ export function emitTaViewWriteBack(
 }
 
 /**
+ * Validate a statically typed `$__ta_view` before a prototype method runs.
+ *
+ * Integer-indexed element access intentionally treats a detached or
+ * out-of-bounds view as empty, but every TypedArray prototype method begins
+ * with ValidateTypedArray and must throw a real TypeError instead.  The
+ * method dispatcher materializes views into ordinary native vectors, so this
+ * check must run before that copy (and, consequently, before any argument
+ * coercion performed by the method body).
+ *
+ * A detached backing buffer is represented by the shared byte-vector's
+ * negative length marker.  Fixed-length views use field 0 as their element
+ * count; auto-length views over a resizable buffer use -1 and are out of
+ * bounds only when their byte offset is past the current buffer length.
+ */
+export function emitTaViewValidate(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  taViewTypeIdx: number,
+  viewLocal: number,
+): void {
+  const desc = taViewDecode(ctx, taViewTypeIdx);
+  if (!desc) return;
+  const { vecTypeIdx } = i32ByteVec(ctx);
+  const bufLocal = allocLocal(fctx, `__tav_valbuf_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: vecTypeIdx,
+  });
+  const storedLocal = allocLocal(fctx, `__tav_valslen_${fctx.locals.length}`, { kind: "i32" });
+  const offsetLocal = allocLocal(fctx, `__tav_valoff_${fctx.locals.length}`, { kind: "i32" });
+  const bufLenLocal = allocLocal(fctx, `__tav_valblen_${fctx.locals.length}`, { kind: "i32" });
+
+  // Keep the backing reference so the null check and the byte-length read
+  // share exactly the same [[ViewedArrayBuffer]] value.
+  fctx.body.push({ op: "local.get", index: viewLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: bufLocal });
+
+  // A null backing ref is defensive-only (constructors normally reject it),
+  // but it is indistinguishable from a detached view for ValidateTypedArray.
+  // Store -1 for null so the same negative-length test covers both cases.
+  fctx.body.push({ op: "local.get", index: bufLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: [{ op: "i32.const", value: -1 }],
+    else: [
+      { op: "local.get", index: bufLocal },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+    ],
+  });
+  fctx.body.push({ op: "local.set", index: bufLenLocal });
+
+  const throwArm: Instr[] = [];
+  const saved = fctx.body;
+  fctx.savedBodies.push(saved);
+  fctx.body = throwArm;
+  emitThrowTypeError(ctx, fctx, "TypeError: Cannot perform operation on a detached or out-of-bounds TypedArray");
+  fctx.body = saved;
+  fctx.savedBodies.pop();
+
+  // Save the fields used by the fixed/auto-length OOB test.  The detached
+  // test is emitted first, preserving ValidateTypedArray's step ordering.
+  fctx.body.push({ op: "local.get", index: bufLenLocal });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "i32.lt_s" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwArm, else: [] });
+
+  fctx.body.push({ op: "local.get", index: viewLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: storedLocal });
+  fctx.body.push({ op: "local.get", index: viewLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 2 });
+  fctx.body.push({ op: "local.set", index: offsetLocal });
+
+  // OOB = fixed ? offset + length*elementSize > byteLength
+  //             : offset > byteLength
+  fctx.body.push({ op: "local.get", index: storedLocal });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "i32.ge_s" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: [
+      { op: "local.get", index: offsetLocal },
+      { op: "local.get", index: storedLocal },
+      { op: "i32.const", value: desc.bytes },
+      { op: "i32.mul" },
+      { op: "i32.add" },
+      { op: "local.get", index: bufLenLocal },
+      { op: "i32.gt_s" },
+    ],
+    else: [{ op: "local.get", index: offsetLocal }, { op: "local.get", index: bufLenLocal }, { op: "i32.gt_s" }],
+  });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwArm, else: [] });
+}
+
+/**
  * (#3058) ValidateTypedArray (§10.4.5.11 IsTypedArrayOutOfBounds, §23.2.3.* step 1)
  * for a boxed `$__ta_dyn_view` reached through an `any` receiver: throw a TypeError
  * when the view is out-of-bounds over its (resizable) backing buffer. A
