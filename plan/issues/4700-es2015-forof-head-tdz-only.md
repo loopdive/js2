@@ -12,7 +12,6 @@ language_feature: for-of-lexical-head-tdz
 task_type: bug
 feasibility: medium
 goal: test262-conformance
-depends_on: [4698]
 loc-budget-allow:
   - src/codegen/statements/loops.ts
 func-budget-allow:
