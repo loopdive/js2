@@ -1820,6 +1820,22 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
     return false;
   };
 
+  const bindingHasGeneratorInitializer = (node: ts.Node): boolean => {
+    if (!ts.isIdentifier(node)) return false;
+    const binding = ctx.oracle.variableDeclarationOf(node);
+    if (!binding?.initializer) return false;
+    let init = binding.initializer;
+    while (ts.isParenthesizedExpression(init)) init = init.expression;
+    if (!ts.isCallExpression(init) || !ts.isIdentifier(init.expression)) return false;
+    const targetDeclarations = ctx.oracle.declarationsOf(init.expression);
+    return (
+      targetDeclarations.some((d) => {
+        return (
+          (ts.isFunctionDeclaration(d) || ts.isFunctionExpression(d) || ts.isMethodDeclaration(d)) && !!d.asteriskToken
+        );
+      }) ?? false
+    );
+  };
   /** Every reference of a RESULT binding is an allowlisted result consumer? */
   const resultBindingUsesAreSafe = (bindingName: ts.Identifier): boolean => {
     const sym = checker.getSymbolAtLocation(bindingName);
@@ -1890,11 +1906,13 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
       }
       return true;
     }
-    // A for-of consumer over a binding is native-safe once the binding slot
-    // preserves the generator state-struct type (the slot typer below mirrors
-    // the direct-call result). Keep spread/Array.from/destructure over a
-    // binding conservative: those drains still use the generic vec carrier.
-    if (ts.isForOfStatement(p) && p.expression === node && !p.awaitModifier) return true;
+    // A direct call exposes the state-struct ValType. A binding used as a
+    // for-of subject is also safe when its initializer is a native generator;
+    // the loop driver recovers the state ref from the externref slot. Its
+    // throw path now closes the native state machine before rethrowing.
+    if (ts.isForOfStatement(p) && p.expression === node && !p.awaitModifier) {
+      return !viaBinding || bindingHasGeneratorInitializer(node);
+    }
     if (!viaBinding) {
       if (ts.isSpreadElement(p)) return true;
       if (isArrayFromArg(node)) return true;

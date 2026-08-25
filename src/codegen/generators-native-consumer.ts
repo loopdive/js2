@@ -33,6 +33,7 @@ import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#2864 wav
 import { addUnionImports } from "./index.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { ensureGetUndefined, flushLateImportShifts } from "./expressions/late-imports.js";
+import { buildStandardTryTable } from "../ir/try-table.js";
 import {
   STATE_FIELD,
   ERROR_FIELD,
@@ -1105,6 +1106,28 @@ export function tryCompileNativeGeneratorForOf(
 
   const resultLocal = allocLocal(fctx, `__nativegen_res_${fctx.locals.length}`, resultRef);
 
+  // IteratorClose on an abrupt loop exit resumes the generator with an
+  // implicit `return(undefined)`. Keep the carrier in a local so every
+  // break/return/outer-continue site can inline the same close sequence.
+  const closeValueLocal = emitCarrierValue(ctx, fctx, undefined, info);
+  const doneFlag = allocLocal(fctx, `__nativegen_done_${fctx.locals.length}`, { kind: "i32" });
+  const closeGenerator = (): Instr[] => [
+    { op: "local.get", index: doneFlag },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...setStateFieldFromLocal(info, iterLocal, info.abruptFieldIdx, closeValueLocal),
+        ...setStateI32FromConst(info, iterLocal, info.modeFieldIdx, 1),
+        { op: "local.get", index: iterLocal },
+        { op: "call", funcIdx: resumeIdx },
+        { op: "drop" },
+      ],
+      else: [],
+    },
+  ];
+
   // Loop variable: the generator's element ValType (f64 numeric, or the native
   // string ref for a string generator — #2171). const-ness recorded so
   // shadowing/TDZ logic downstream stays consistent.
@@ -1114,30 +1137,23 @@ export function tryCompileNativeGeneratorForOf(
     fctx.constBindings.add(loopVarName);
   }
 
-  // Native generator for-of bypasses the generic iterator protocol, so install
-  // the equivalent IteratorClose finalizer before compiling the loop body.
-  // The value is only used to resume a suspended generator; it is discarded
-  // after GeneratorResumeAbrupt completes.
-  const closeValue: Instr[] = carrierIsAny(info.elemValType)
-    ? canonicalUndefinedExternInstrs(ctx)
-    : [{ op: "i64.const", value: UNDEF_F64_BITS }, { op: "f64.reinterpret_i64" }];
-
-  // block { loop { … } } — break = depth 1 (exit block), continue = depth 0.
+  // block { loop { … } } inside a try — break = depth 1 (exit block), continue
+  // = depth 0. The try is needed for body throws: IteratorClose must resume the
+  // generator with return(undefined), then preserve the original throw.
   const savedBody = pushBody(fctx);
 
-  // Adjust existing break/continue/return/rethrow depths: block + loop add 2.
-  for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]! += 2;
-  for (let i = 0; i < fctx.continueStack.length; i++) fctx.continueStack[i]! += 2;
-  if (fctx.generatorReturnDepth !== undefined) fctx.generatorReturnDepth += 2;
+  // Adjust existing break/continue/return/rethrow depths: try + block + loop
+  // add 3. The loop's own break/continue targets remain depth 1/0.
+  for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]! += 3;
+  for (let i = 0; i < fctx.continueStack.length; i++) fctx.continueStack[i]! += 3;
+  if (fctx.generatorReturnDepth !== undefined) fctx.generatorReturnDepth += 3;
 
   const closeBreakStackLen = fctx.breakStack.length;
   const closeContinueStackLen = fctx.continueStack.length;
-  const cloneNativeGeneratorClose = (): Instr[] =>
-    structuredClone(nativeGeneratorCloseInstrs(info, iterLocal, resumeIdx, closeValue));
   if (!fctx.finallyStack) fctx.finallyStack = [];
   fctx.finallyStack.push({
-    cloneFinally: cloneNativeGeneratorClose,
-    cloneFinallyAtDepth: cloneNativeGeneratorClose,
+    cloneFinally: closeGenerator,
+    cloneFinallyAtDepth: closeGenerator,
     breakStackLen: closeBreakStackLen,
     continueStackLen: closeContinueStackLen,
     breakDepthBaseline: fctx.breakStack.slice(),
@@ -1160,7 +1176,11 @@ export function tryCompileNativeGeneratorForOf(
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
-    then: [{ op: "br", depth: 2 }], // if + loop = depth 2 to exit block
+    then: [
+      { op: "i32.const", value: 1 },
+      { op: "local.set", index: doneFlag },
+      { op: "br", depth: 2 },
+    ], // if + loop = depth 2 to exit block
     else: [],
   });
 
@@ -1183,19 +1203,16 @@ export function tryCompileNativeGeneratorForOf(
   fctx.breakStack.pop();
   fctx.continueStack.pop();
 
-  // The close finalizer applies to return/outer-break/outer-continue sites
-  // compiled inside the body. A for-of-local break exits the block normally;
-  // its close is emitted after the block below.
-  if (fctx.finallyStack.length > 0) fctx.finallyStack.pop();
+  fctx.finallyStack.pop();
 
   // Restore depths.
-  for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]! -= 2;
-  for (let i = 0; i < fctx.continueStack.length; i++) fctx.continueStack[i]! -= 2;
-  if (fctx.generatorReturnDepth !== undefined) fctx.generatorReturnDepth -= 2;
+  for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]! -= 3;
+  for (let i = 0; i < fctx.continueStack.length; i++) fctx.continueStack[i]! -= 3;
+  if (fctx.generatorReturnDepth !== undefined) fctx.generatorReturnDepth -= 3;
 
   popBody(fctx, savedBody);
 
-  fctx.body.push({
+  const blockLoopInstr: Instr = {
     op: "block",
     blockType: { kind: "empty" },
     body: [
@@ -1205,11 +1222,70 @@ export function tryCompileNativeGeneratorForOf(
         body: loopBody,
       },
     ],
-  });
+  };
 
-  // IteratorClose for a break of this for-of loop. Normal exhaustion has
-  // already marked the native frame done, so the state guard is a no-op there.
-  fctx.body.push(...nativeGeneratorCloseInstrs(info, iterLocal, resumeIdx, closeValue));
+  // §7.4.11 step 5: when the loop body throws, close the unexhausted
+  // generator, suppressing any close error, and rethrow the original body
+  // exception. This mirrors the generic iterator driver's #1347 wrapper.
+  const closeOnThrow = (): Instr[] => {
+    const closeBody = closeGenerator();
+    const innerCloseTry: Instr =
+      ctx.wasi || ctx.standalone
+        ? buildStandardTryTable({ kind: "empty" }, closeBody, [
+            {
+              kind: "catch",
+              tagIdx: ensureExnTag(ctx),
+              payloadType: { kind: "externref" },
+              body: [{ op: "drop" }],
+            },
+          ])
+        : {
+            op: "try",
+            blockType: { kind: "empty" },
+            body: closeBody,
+            catches: [],
+            catchAll: [],
+          };
+    return [
+      { op: "local.get", index: doneFlag },
+      { op: "i32.eqz" },
+      { op: "if", blockType: { kind: "empty" }, then: [innerCloseTry], else: [] },
+    ];
+  };
+
+  if (ctx.wasi || ctx.standalone) {
+    const exnLocal = allocLocal(fctx, `__nativegen_forof_exn_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push(
+      buildStandardTryTable(
+        { kind: "empty" },
+        [blockLoopInstr],
+        [
+          {
+            kind: "catch",
+            tagIdx: ensureExnTag(ctx),
+            payloadType: { kind: "externref" },
+            body: [
+              { op: "local.set", index: exnLocal },
+              ...closeOnThrow(),
+              { op: "local.get", index: exnLocal },
+              { op: "throw", tagIdx: ensureExnTag(ctx) },
+            ],
+          },
+        ],
+      ),
+    );
+  } else {
+    fctx.body.push({
+      op: "try",
+      blockType: { kind: "empty" },
+      body: [blockLoopInstr],
+      catches: [],
+      catchAll: [...closeOnThrow(), { op: "rethrow", depth: 0 }],
+    });
+  }
+  // A break targeting this for-of loop is handled here; return, outer break,
+  // and outer continue have already inlined `closeGenerator` above.
+  fctx.body.push(...closeGenerator());
   return true;
 }
 
