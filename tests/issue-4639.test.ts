@@ -257,17 +257,17 @@ describe.skipIf(!TEST262)("#4639 — measured residuals (see the issue's Residua
   // C1 rest: a FUNCTION object with own `valueOf`/`toString` (T11) and a
   // replaced `Function.prototype.toString` (T8) are a different receiver family
   // from the fnctor instance T10 fixes — a callable, not a `$Object`.
-  pinResidualRow("built-ins/String/S15.5.2.1_A1_T11.js", "C1 rest — function object with own valueOf/toString");
-  pinResidualRow("built-ins/String/S15.5.2.1_A1_T8.js", "C1 rest — replaced Function.prototype.toString");
+  pinRow("built-ins/String/S15.5.2.1_A1_T11.js", "C1 rest — already green on current upstream/main");
+  pinRow("built-ins/String/S15.5.2.1_A1_T8.js", "C1 rest — already green on current upstream/main");
   // C3: the carrier has no [[Construct]] arm.
   pinResidualRow("built-ins/String/prototype/constructor/S15.5.4.1_A1_T2.js", "C3 — carrier is not constructable");
-  pinResidualRow("built-ins/RegExp/prototype/S15.10.6.1_A1_T2.js", "C3 — carrier is not constructable");
-  // C4: `delete RegExp.prototype.global` is not observable, because the flag
-  // ACCESSORS are deliberately not seeded into the brand companion — seeding
-  // them regresses `tests/issue-2885.test.ts` by a mechanism the #2175 V2-S3b-1
-  // note records as unidentified. Do not re-attempt without starting from that
-  // inline/bound split.
-  pinResidualRow("built-ins/RegExp/prototype/global/S15.10.7.2_A9.js", "C4 — proto accessor delete not observable");
+  pinRow("built-ins/RegExp/prototype/S15.10.6.1_A1_T2.js", "C3 — already green on current upstream/main");
+  // C4: keep the accessors unseeded (seeding regresses the #2885 plain-read
+  // controls), but make deletion observable through the bounded RegExp proto
+  // CSV tombstone. The same mechanism covers all three ES5 accessor rows.
+  pinRow("built-ins/RegExp/prototype/global/S15.10.7.2_A9.js", "C4 — bounded proto accessor delete");
+  pinRow("built-ins/RegExp/prototype/ignoreCase/S15.10.7.3_A9.js", "C4 — bounded proto accessor delete");
+  pinRow("built-ins/RegExp/prototype/multiline/S15.10.7.4_A9.js", "C4 — bounded proto accessor delete");
   // C5: the dynamic-pattern grammar cannot take 200 nested capture groups.
   pinResidualRow("built-ins/RegExp/S15.10.2.8_A3_T15.js", "C5 — dynamic pattern out of subset");
 });
