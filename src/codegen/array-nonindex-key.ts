@@ -26,7 +26,8 @@
 // to the array's NAMED store: the #3537 expando bag in standalone, the host
 // `__extern_*` bridge in gc. Both spellings route, so they cannot disagree.
 //
-// Scope discipline — COMPILE-TIME CONSTANT keys only, and among those:
+// Scope discipline — compile-time constants use the dedicated fast routes,
+// while dynamic numeric/object keys use the property-key dispatch:
 //   * A numeric constant, a boolean literal, or a string constant whose
 //     `String(Number(s))` round-trips. That last condition is what keeps the
 //     reserved names out: `arr["length"]`, `arr["push"]`, `arr["constructor"]`
@@ -38,16 +39,19 @@
 //   * A key that IS an array index (including `-0`, whose ToString is `"0"`)
 //     returns `undefined` and falls through to the untouched vec path, so a
 //     module with only ordinary indices is byte-identical.
-//   * A non-constant key (`a[i]`, `x[object]` with a user `valueOf`) is
-//     untouched. Deciding index-ness at runtime needs the dispatch inside the
-//     element helper itself; the measured cluster is constant-keyed. Named in
-//     the issue as a known leftover.
+//   * A non-constant key is routed through the property-key dispatch when its
+//     type is numeric or object-like. That keeps runtime values such as
+//     `x[k - 2]` in the same property-key lane as object coercions; the
+//     receiver-specific helper can then preserve sparse array indices without
+//     saturating them to a signed i32.
 import ts from "typescript";
+import type { TypeFact } from "../checker/oracle.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
+import { emitToPropertyKeyOnce } from "./expressions/computed-member-reference.js";
 import {
   coerceType,
   compileExpression,
@@ -62,6 +66,40 @@ import { TYPED_ARRAY_NAMES } from "./index.js";
 import { VEC_PROP_GET, VEC_PROP_SET } from "./vec-props.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
+
+/** Whether a type fact can change the property-key lane at runtime. */
+function factNeedsPropertyKeyRuntime(fact: TypeFact): boolean {
+  if (fact.kind === "union") return fact.parts.some(factNeedsPropertyKeyRuntime);
+  return fact.kind !== "number" && fact.kind !== "string";
+}
+
+/**
+ * True when a computed key must stay on the JavaScript property-key path.
+ *
+ * A vec's fast element lane is intentionally numeric, but an object/function,
+ * Symbol, boolean, nullish, or BigInt key is converted with ToPropertyKey — it
+ * must not be coerced to an i32 before the receiver-specific runtime sees it.
+ * Constant spellings are classified by the helpers below first; this predicate
+ * covers the remaining dynamic values (notably `x[object]` from ES5 T9).
+ */
+export function isDynamicPropertyKeyExpression(ctx: CodegenContext, key: ts.Expression): boolean {
+  const keyFact = ctx.oracle.typeFactOf(key);
+  if (factNeedsPropertyKeyRuntime(keyFact)) return true;
+  const inner = skipTransparentExpressions(key);
+  // A mutable arithmetic expression cannot be classified as an array index at
+  // compile time. Keep it on the runtime property-key path so values above
+  // i32's signed range (for example `k - 2` at 2^32 - 2) retain their exact
+  // canonical string instead of saturating before the vec dispatch sees them.
+  // Constant numeric expressions and simple variable indices stay on their
+  // existing dense path.
+  if (keyFact.kind === "number") {
+    return ts.isBinaryExpression(inner) && typeof resolveConstantExpression(ctx, inner) !== "number";
+  }
+  // A literal ordinary name (for example `"[object Object]"`) is also a
+  // property key, not a numeric index. Numeric spellings and the historical
+  // named-key constants are handled by their dedicated routes first.
+  return ts.isStringLiteral(inner) && !isArrayIndexString(inner.text) && !isNamedNumericOrBooleanSpelling(inner.text);
+}
 
 /** 2^32 − 1 — the exclusive upper bound on array indices (§10.4.2.2). */
 const MAX_ARRAY_INDEX_EXCLUSIVE = 4294967295;
@@ -393,6 +431,49 @@ export function compileElementIndexI32(ctx: CodegenContext, fctx: FunctionContex
   }
   if (tryEmitStaticI32Expression(ctx, fctx, key)) return { kind: "i32" };
   return compileExpression(ctx, fctx, key, { kind: "i32" });
+}
+
+/**
+ * Dynamic object-key READ for a vec receiver. The receiver is already on the
+ * stack; canonicalize the key once with ToPropertyKey, then let the existing
+ * standalone/host `__extern_get` dispatch choose element, expando, prototype,
+ * or ordinary-object semantics.
+ */
+export function emitDynamicVecElementGet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  recvType: ValType,
+  key: ts.Expression,
+  compile: (expr: ts.Expression, hint?: ValType) => ValType | null,
+): ValType | null {
+  const recvLocal = allocLocal(fctx, `__dynkey_recv_${fctx.locals.length}`, recvType);
+  fctx.body.push({ op: "local.set", index: recvLocal });
+  fctx.body.push({ op: "local.get", index: recvLocal });
+  fctx.body.push({ op: "extern.convert_any" });
+  const keyFact = ctx.oracle.typeFactOf(key);
+  // Numeric expressions can use the indexed helper directly. It formats the
+  // f64 key canonically for the overlay read, avoiding a string round-trip
+  // that would otherwise lose the sparse-tail distinction at i32.max.
+  const numericKey = keyFact.kind === "number";
+  const keyResult = compile(key, numericKey ? { kind: "f64" } : EXTERNREF);
+  if (!keyResult) return null;
+  let getIdx: number | undefined;
+  if (numericKey) {
+    if (keyResult.kind !== "f64") coerceType(ctx, fctx, keyResult, { kind: "f64" });
+    getIdx = ensureLateImport(ctx, "__extern_get_idx", [EXTERNREF, { kind: "f64" }], [EXTERNREF]);
+  } else {
+    emitToPropertyKeyOnce(ctx, fctx);
+    getIdx = ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
+  }
+  flushLateImportShifts(ctx, fctx);
+  if (getIdx === undefined) {
+    fctx.body.push({ op: "drop" });
+    fctx.body.push({ op: "drop" });
+    fctx.body.push({ op: "ref.null.extern" });
+    return EXTERNREF;
+  }
+  fctx.body.push({ op: "call", funcIdx: getIdx });
+  return EXTERNREF;
 }
 
 /**
