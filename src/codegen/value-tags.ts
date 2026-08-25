@@ -170,14 +170,10 @@ export function boxToAny(ctx: CodegenContext, fctx: FunctionContext, from: ValTy
     case "null":
       // Only honor when the value is a discardable reference carrier; otherwise
       // fall through (a non-ref "null" hint shouldn't drop a live scalar).
-      // (#2106 S1) Under the `undefinedSingleton` regime (inline mirror of
-      // any-helpers' `undefinedSingletonActive` — kept import-free here), a
-      // statically-null reference carrier boxes tag-0 directly instead of
-      // falling into the Wasm-kind dispatch (whose externref arm tags it 5,
-      // the #1888 lie, or — honest — routes through __any_from_extern).
+      // A statically-null reference must always box as tag 0.  Keeping this
+      // dispatch in the canonical entry point lets specialized callers retain
+      // null identity without opening a direct __any_box_null site (#2104).
       if (
-        ctx.undefinedSingleton === true &&
-        (ctx.standalone || ctx.nativeStrings) &&
         (from.kind === "externref" || from.kind === "ref" || from.kind === "ref_null") &&
         emit("__any_box_null", [{ op: "drop" }])
       ) {
