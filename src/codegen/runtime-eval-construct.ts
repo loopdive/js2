@@ -226,13 +226,17 @@ export function ensureFunctionConstructorPrototypeInheritance(ctx: CodegenContex
  */
 export function emitRuntimeEvalFunctionPrototypeSeed(ctx: CodegenContext, fctx?: FunctionContext): void {
   if (!ctx.standalone) return;
-  // A `Function()` value is source-known to be callable and constructable, but
-  // its carrier is minted by the runtime-eval provider rather than by the
-  // ordinary builtin-value path. Register the Function prototype companion at
-  // this same source-known site so an inherited `apply`/`call` read on a
-  // `Function()`-backed prototype sees the real native methods.
-  ensureFunctionConstructorPrototypeInheritance(ctx);
-  if (fctx === undefined) return;
+  if (fctx === undefined) {
+    // The constant-AOT `Function()` lane mints a local closure and therefore
+    // needs the compiler's native Function.prototype companion. A callable
+    // produced by the runtime-eval provider already carries that engine's own
+    // Function prototype identity; globally installing the native companion
+    // for that lane intercepts `.constructor` / `.apply` and breaks the
+    // QuickJS function-parity canary.
+    ensureFunctionConstructorPrototypeInheritance(ctx);
+    return;
+  }
+  ensureObjectRuntime(ctx);
   const newObjIdx = ensureLateImport(ctx, "__new_plain_object", [], [EXTERNREF]);
   const defineIdx = ensureLateImport(
     ctx,
