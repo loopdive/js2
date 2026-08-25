@@ -2972,6 +2972,14 @@ export function compileArrowAsClosure(
   const body = recordClosureBody(ctx, "compileArrowAsClosure", closureName, arrow);
   reportClosureNameMap(arrow, closureName);
 
+  // Native callback paths install an explicit receiver in this global before
+  // `call_ref`. Ensure a function expression that reads its own `this` emits
+  // the dynamic read even when the closure is created before the callback
+  // method call (for example `const cb = function () { return this; }`).
+  if (ts.isFunctionExpression(arrow) && bodyReferencesOwnThis(body)) {
+    ensureCurrentThisGlobal(ctx);
+  }
+
   // Check if this is a generator function expression (function*() { ... })
   const isGenerator = ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined;
   if (isGenerator) ctx.generatorFunctions.add(closureName);
