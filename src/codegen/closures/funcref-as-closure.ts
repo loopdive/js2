@@ -197,8 +197,18 @@ function emitMemoizedNestedFnClosure(
         }
         fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
       } else {
-        // Stage 1 localMap-first lookup reverted — see calls.ts comment.
-        fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
+        // `cap.outerLocalIdx` belongs to the frame that declared the nested
+        // function.  When a lifted transitive caller materializes that
+        // function as a VALUE, the same binding lives in one of the caller's
+        // recorded capture slots instead.  This is the function-value twin of
+        // the direct-call repair in call-identifier.ts: keep the deliberately
+        // narrow resolver so owner-frame behaviour remains unchanged while an
+        // explicitly recorded lifted capture cannot reuse a stale parent
+        // index.  Deno's published `runImmediateCallbacks` closure reaches
+        // this path while materializing `runImmediates` and forwarding its
+        // mutable `queue` / `runNextTicks` dependencies.
+        const capSourceIdx = captureSourceSlot(fctx, cap);
+        fctx.body.push({ op: "local.get", index: capSourceIdx });
         fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
         const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, {
           kind: "ref",
