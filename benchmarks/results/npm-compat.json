@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-25T01:00:59.603Z",
+  "generatedAt": "2026-08-25T01:36:32.998Z",
   "measuredRange": {
     "oldest": "2026-08-24T21:09:29.786Z",
-    "newest": "2026-08-25T01:00:10.265Z"
+    "newest": "2026-08-25T01:35:45.983Z"
   },
   "correctness": {
     "definition": {
@@ -83,7 +83,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 7234,
+        "durationMs": 6926,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -545,7 +545,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 7468.5644699999975,
+            "compileDurationMs": 7252.740095999998,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -555,7 +555,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 7134.602715000001,
+            "compileDurationMs": 6892.940077999996,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -565,13 +565,13 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 6676.331515999998,
+            "compileDurationMs": 6433.253809000002,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T00:50:08.837Z",
+      "measuredAt": "2026-08-25T01:25:12.690Z",
       "weeklyDownloads": 275892096
     },
     {
@@ -582,7 +582,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 600213,
+        "durationMs": 600137,
         "timedOut": true,
         "timeoutMs": 600000,
         "errorCount": 0,
@@ -2012,7 +2012,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T01:00:10.265Z",
+      "measuredAt": "2026-08-25T01:35:11.934Z",
       "weeklyDownloads": 250686863
     },
     {
@@ -2023,7 +2023,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 19301,
+        "durationMs": 19058,
         "errorCount": 0,
         "binaryBytes": 685093,
         "categories": {}
@@ -2240,54 +2240,54 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parse(own 226KB dist bundle).body.length",
-            "wasmUs": 0.03700000082102159,
-            "nodeUs": 10176.892782609566,
-            "wasmStdUs": 0.07329873961002241,
-            "nodeStdUs": 106.50182817980246,
-            "ratio": 282515.89149839175,
-            "ratioStd": 448496.4701116372,
+            "wasmUs": 0.03254166707241287,
+            "nodeUs": 9167.270708333186,
+            "wasmStdUs": 0.06118088339425737,
+            "nodeStdUs": 293.68045674892215,
+            "ratio": 287228.3869436939,
+            "ratioStd": 297609.069923211,
             "ratioSamples": [
-              282515.89149839175,
-              60785.97789781443,
-              921529.613423465,
-              65575.33690463215,
-              791005.6457351058,
-              67060.82062506107,
-              875026.271942046,
-              58668.40492288358,
-              1272920.1130585722
+              287228.3869436939,
+              68841.96191593504,
+              663347.1165568688,
+              61077.861840186524,
+              543877.2951482608,
+              69345.33904727247,
+              876829.5634689635,
+              61542.51647581677,
+              586425.3229435501
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 23,
+            "iters": 24,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.03700000082102159,
-              0.16969565236333597,
-              0.011043478836021994,
-              0.1554782603583906,
-              0.012782608594178506,
-              0.15121739251417635,
-              0.011565216877700195,
-              0.17252173932755122,
-              0.008000000177518181
+              0.03254166707241287,
+              0.13354166609739573,
+              0.013750000410558036,
+              0.14900000072278394,
+              0.016708333229568478,
+              0.12891666726015197,
+              0.010458332932709405,
+              0.1489583337388467,
+              0.017083333659684286
             ],
             "nodeSamplesUs": [
-              10453.08821739214,
-              10315.116173912942,
-              10176.892782609566,
-              10195.539304347576,
-              10111.115565217282,
-              10140.762434782631,
-              10119.868608695231,
-              10121.575260868944,
-              10183.36113043504
+              9346.890541667866,
+              9193.270291667432,
+              9121.023124999434,
+              9100.60145833389,
+              9087.283083333508,
+              8939.76999999965,
+              9170.175500000672,
+              9167.270708333186,
+              10018.099458332776
             ],
-            "compileDurationMs": 109198.82224699999,
-            "moduleCompileDurationMs": 0.3088850000058301,
-            "instantiateDurationMs": 0.03656000000773929,
-            "firstBatchDurationMs": 0.07143999999971129,
+            "compileDurationMs": 103358.085616,
+            "moduleCompileDurationMs": 0.34220600000116974,
+            "instantiateDurationMs": 0.04453699997975491,
+            "firstBatchDurationMs": 0.06751200000871904,
             "binaryBytes": 74,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -2305,7 +2305,7 @@
             "staticEvaluation": {
               "operationEvaluatedInWasm": true,
               "operationResultType": "number",
-              "stageDurationMs": 1309.4219599999778,
+              "stageDurationMs": 761.2697430000117,
               "stageBinaryBytes": 2227764,
               "stageModuleImportCount": 0
             }
@@ -2315,22 +2315,22 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parse(runtime-suffixed own 226KB dist bundle).body.length",
-            "wasmUs": 19030743.251000006,
-            "nodeUs": 11064.824000000954,
-            "wasmStdUs": 9283182.038961608,
-            "nodeStdUs": 12914.373760107626,
-            "ratio": 0.0008007631138393938,
-            "ratioStd": 0.0003219226089149163,
+            "wasmUs": 15444850.23099999,
+            "nodeUs": 10133.219000010286,
+            "wasmStdUs": 10431644.308634387,
+            "nodeStdUs": 11589.702645026131,
+            "ratio": 0.0008221183630750931,
+            "ratioStd": 0.0004907895333708675,
             "ratioSamples": [
-              0.0011973044691212,
-              0.0009260724080052693,
-              0.0008007631138393938,
-              0.0006797203873594943,
-              0.0005967400143123888,
-              0.0004943330531979063,
-              0.0013391001449759733,
-              0.00035256510359418217,
-              0.0011641268735733518
+              0.0018161726927467055,
+              0.0013750125206890838,
+              0.0011613616431522002,
+              0.0008221183630750931,
+              0.0006643431853693,
+              0.0004586229148444257,
+              0.00035693096315528804,
+              0.00033494466974496467,
+              0.0013103192563353604
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
@@ -2338,32 +2338,32 @@
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              9506030.666000035,
-              11770665.99300003,
-              13817849.259999989,
-              15882232.166000001,
-              19030743.251000006,
-              21882554.544999965,
-              28136382.585999962,
-              30454148.44099997,
-              39320370.51899999
+              5609423.069000011,
+              7137177.190999966,
+              8725291.608999949,
+              11891683.04600002,
+              15444850.23099999,
+              21386173.003000032,
+              28754484.927000012,
+              29621402.864999954,
+              35788227.009000026
             ],
             "nodeSamplesUs": [
-              11381.613000005018,
-              10900.488999963272,
-              11064.824000000954,
-              10795.47700000694,
-              11356.405999977142,
-              10817.269999999553,
-              37677.434000012,
-              10737.069999973755,
-              45773.90000002924
+              10187.68099998124,
+              9813.708000001498,
+              10133.219000010286,
+              9776.370999985375,
+              10260.681000014301,
+              9808.18900000304,
+              10263.366000028327,
+              9921.530999999959,
+              46894.00299999397
             ],
-            "compileDurationMs": 108514.54571,
-            "moduleCompileDurationMs": 14.5248680000077,
-            "instantiateDurationMs": 7.836535000009462,
-            "moduleInitDurationMs": 24.395123000023887,
-            "firstBatchDurationMs": 1184.0124349999824,
+            "compileDurationMs": 105185.72150499996,
+            "moduleCompileDurationMs": 12.670842999999877,
+            "instantiateDurationMs": 7.4452690000180155,
+            "moduleInitDurationMs": 23.717930000042543,
+            "firstBatchDurationMs": 747.8526800000109,
             "binaryBytes": 2230246,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -2420,7 +2420,7 @@
           "summary": "linked Acorn initialization is lowered, but the cross-module parser driver is not yet runnable"
         }
       ],
-      "measuredAt": "2026-08-25T00:57:50.870Z",
+      "measuredAt": "2026-08-25T01:32:10.832Z",
       "weeklyDownloads": 240886853
     },
     {
@@ -2431,7 +2431,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 1206,
+        "durationMs": 1096,
         "errorCount": 9,
         "binaryBytes": 21343,
         "categories": {
@@ -2656,54 +2656,54 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parseCookie(8-pair header); verify a/h",
-            "wasmUs": 0.0009630674338946231,
-            "nodeUs": 0.6444470420098439,
-            "wasmStdUs": 0.000011884592257692516,
-            "nodeStdUs": 0.0010816186073784489,
-            "ratio": 670.7598339041832,
-            "ratioStd": 8.476082978727261,
+            "wasmUs": 0.000961202741581088,
+            "nodeUs": 0.6217180573104533,
+            "wasmStdUs": 0.000016392742782255684,
+            "nodeStdUs": 0.013647468711758898,
+            "ratio": 647.7269665380898,
+            "ratioStd": 20.8898821114981,
             "ratioSamples": [
-              665.4595605954905,
-              674.2244370456967,
-              666.031163957969,
-              670.7598339041832,
-              675.6909457226259,
-              671.7084285473005,
-              660.4527940775557,
-              690.4924568118855,
-              662.7987065207592
+              638.7734877594842,
+              708.0518842401791,
+              647.7269665380898,
+              640.6565743933614,
+              642.5746717759828,
+              667.8781069873228,
+              667.979737067378,
+              660.1561281785634,
+              643.5447690539993
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 398835,
+            "iters": 413921,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0009674401695079213,
-              0.0009564606917654246,
-              0.0009716574523306838,
-              0.0009630674338946231,
-              0.0009530457457465836,
-              0.0009589479358667032,
-              0.0009746712299566855,
-              0.0009343563127580942,
-              0.0009723118582906581
+              0.0009642999509633648,
+              0.0009352775046521851,
+              0.0009626039751495706,
+              0.000961202741581088,
+              0.000967542115521166,
+              0.0009353258230498861,
+              0.00092712135891285,
+              0.0009333423527706506,
+              0.0009698420713150106
             ],
             "nodeSamplesUs": [
-              0.6437923101031682,
-              0.644869171461881,
-              0.6471541439442401,
-              0.6459869519976853,
-              0.6439643812604343,
-              0.6441334110597007,
-              0.6437243371319008,
-              0.645165985934031,
-              0.6444470420098439
+              0.615969242923168,
+              0.6622249994564325,
+              0.6235045528011381,
+              0.6158008557188472,
+              0.6217180573104533,
+              0.6246836401149176,
+              0.6192982815561557,
+              0.6161516738701436,
+              0.6241367918032708
             ],
-            "compileDurationMs": 529.7325830000045,
-            "moduleCompileDurationMs": 0.3500819999972009,
-            "instantiateDurationMs": 0.05776699999842094,
-            "firstBatchDurationMs": 0.05660599999828264,
+            "compileDurationMs": 555.5309439999983,
+            "moduleCompileDurationMs": 0.3712320000049658,
+            "instantiateDurationMs": 0.030607000000600237,
+            "firstBatchDurationMs": 0.05866000000241911,
             "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -2724,55 +2724,55 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parseCookie(8-pair runtime-generated header); verify a/h",
-            "wasmUs": 3.43134080186942,
-            "nodeUs": 0.818810550601136,
-            "wasmStdUs": 0.017022913551936743,
-            "nodeStdUs": 0.0071917616424828825,
-            "ratio": 0.23880145388160195,
-            "ratioStd": 0.0017106079411949157,
+            "wasmUs": 3.447601684087458,
+            "nodeUs": 0.8365986207108719,
+            "wasmStdUs": 0.07502459011756908,
+            "nodeStdUs": 0.014455001716045583,
+            "ratio": 0.24362032298736502,
+            "ratioStd": 0.007224372422985797,
             "ratioSamples": [
-              0.23868801211957782,
-              0.24266430219534993,
-              0.23903508265029555,
-              0.23880145388160195,
-              0.23831841156146572,
-              0.23998028212247496,
-              0.24280642277625925,
-              0.238457112978831,
-              0.23824987246695667
+              0.2505026090077993,
+              0.25372559348060403,
+              0.2441996241054616,
+              0.24362032298736502,
+              0.24497025675022432,
+              0.22653186793559674,
+              0.2395639509899517,
+              0.2399182597383337,
+              0.2422934978334902
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 67617,
+            "iters": 64961,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              3.430463655589576,
-              3.434792522590476,
-              3.423021355576363,
-              3.43134080186942,
-              3.431913024831022,
-              3.4813817531093876,
-              3.42117547362346,
-              3.426396912019138,
-              3.432781001819028
+              3.441379966441466,
+              3.451138098243513,
+              3.4258800511075855,
+              3.447601684087458,
+              3.4415913394190847,
+              3.6805081664383064,
+              3.4874960514771156,
+              3.4718580071119147,
+              3.4272578931975146
             ],
             "nodeSamplesUs": [
-              0.818810550601136,
-              0.8335015306802236,
-              0.8182221926439226,
-              0.8194091722496794,
-              0.8178880606948342,
-              0.8354629752872273,
-              0.8306833784403868,
-              0.8170487155596652,
-              0.8178596358903751
+              0.86207466018076,
+              0.8756420621603584,
+              0.8365986207108719,
+              0.8399058358091701,
+              0.8430875140468416,
+              0.8337523898954877,
+              0.8354783331537138,
+              0.8329621311248899,
+              0.8304023029202642
             ],
-            "compileDurationMs": 3608.893342000003,
-            "moduleCompileDurationMs": 0.730810000000929,
-            "instantiateDurationMs": 0.2044610000011744,
-            "moduleInitDurationMs": 0.13469000000623055,
-            "firstBatchDurationMs": 1.5867739999957848,
+            "compileDurationMs": 3712.099647999996,
+            "moduleCompileDurationMs": 0.7404890000034356,
+            "instantiateDurationMs": 0.2126159999970696,
+            "moduleInitDurationMs": 0.09093900000152644,
+            "firstBatchDurationMs": 1.6501740000021528,
             "binaryBytes": 65521,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -2798,7 +2798,7 @@
           "summary": "a property assigned dynamically inside a loop/switch onto an object is silently dropped"
         }
       ],
-      "measuredAt": "2026-08-25T00:50:21.896Z",
+      "measuredAt": "2026-08-25T01:25:35.442Z",
       "weeklyDownloads": 173435452
     },
     {
@@ -2809,7 +2809,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 77216,
+        "durationMs": 69908,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 8,
@@ -3218,7 +3218,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T00:51:01.426Z",
+      "measuredAt": "2026-08-25T01:25:56.127Z",
       "weeklyDownloads": 164859858
     },
     {
@@ -3229,7 +3229,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 5401,
+        "durationMs": 5642,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -4278,7 +4278,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 3988.727497999993,
+            "compileDurationMs": 4410.748154999979,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -4288,8 +4288,8 @@
             "diagnostic": "standalone binary retained 1 host import(s)",
             "optimizationRequested": true,
             "optimizationVerified": true,
-            "compileDurationMs": 3050.263390999986,
-            "moduleCompileDurationMs": 1.125069000001531,
+            "compileDurationMs": 3109.290054000012,
+            "moduleCompileDurationMs": 1.2530810000025667,
             "binaryBytes": 101354,
             "moduleImportCount": 1,
             "functionImportCount": 1,
@@ -4302,8 +4302,8 @@
             "diagnostic": "standalone binary retained 1 host import(s)",
             "optimizationRequested": true,
             "optimizationVerified": true,
-            "compileDurationMs": 2889.840755000012,
-            "moduleCompileDurationMs": 1.0423250000167172,
+            "compileDurationMs": 2908.8957639999862,
+            "moduleCompileDurationMs": 1.1942909999925178,
             "binaryBytes": 101597,
             "moduleImportCount": 1,
             "functionImportCount": 1,
@@ -4312,7 +4312,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T00:52:22.978Z",
+      "measuredAt": "2026-08-25T01:27:18.915Z",
       "weeklyDownloads": 162687688
     },
     {
@@ -4323,7 +4323,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180173,
+        "durationMs": 180155,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -4449,7 +4449,7 @@
           "summary": "the real multi-file Linter graph is still beyond the bounded mainline compile/runtime integration frontier"
         }
       ],
-      "measuredAt": "2026-08-25T00:52:33.898Z",
+      "measuredAt": "2026-08-25T01:27:52.962Z",
       "weeklyDownloads": 152308132
     },
     {
@@ -10733,7 +10733,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 41359,
+        "durationMs": 57329,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 4,
@@ -10851,7 +10851,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T00:58:36.634Z",
+      "measuredAt": "2026-08-25T01:35:45.983Z",
       "weeklyDownloads": 117242232
     },
     {
@@ -10862,7 +10862,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120124,
+        "durationMs": 120116,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -11224,7 +11224,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T00:51:39.711Z",
+      "measuredAt": "2026-08-25T01:26:55.692Z",
       "weeklyDownloads": 117155768
     },
     {
@@ -11235,7 +11235,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 51487,
+        "durationMs": 57182,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -12666,7 +12666,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T00:55:46.491Z",
+      "measuredAt": "2026-08-25T01:31:38.647Z",
       "weeklyDownloads": 112353408
     },
     {
@@ -12677,7 +12677,7 @@
       "shape": "esm-driver-epilogue",
       "compile": {
         "success": true,
-        "durationMs": 566,
+        "durationMs": 709,
         "errorCount": 0,
         "binaryBytes": 12158,
         "categories": {}
@@ -12870,54 +12870,54 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "op_two_strings.length (driver compiled to Wasm)",
-            "wasmUs": 0.0005597945710594644,
-            "nodeUs": 0.011830596870569345,
-            "wasmStdUs": 7.335252360824063e-7,
-            "nodeStdUs": 0.0001069830927517827,
-            "ratio": 21.137052815261587,
-            "ratioStd": 0.1849302301284603,
+            "wasmUs": 0.0010643898024368845,
+            "nodeUs": 0.016070830537235778,
+            "wasmStdUs": 0.000006904609188143263,
+            "nodeStdUs": 0.000048191027110747004,
+            "ratio": 15.083550798537207,
+            "ratioStd": 0.13050955969435676,
             "ratioSamples": [
-              21.215717155579142,
-              21.07453930860111,
-              21.095751636887076,
-              21.07953463006549,
-              21.50174916452977,
-              21.495996983880357,
-              21.058387324561266,
-              21.137052815261587,
-              21.476032824456375
+              15.119740702626451,
+              15.057021608659385,
+              14.85064971190956,
+              15.051506808728227,
+              15.083550798537207,
+              15.251431949789303,
+              14.942986131904204,
+              15.215384290844149,
+              15.260807960732627
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 5650421,
+            "iters": 4616554,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.000560734324044324,
-              0.0005591121440333438,
-              0.0005586493466592646,
-              0.0005597945710594644,
-              0.0005586068719485173,
-              0.0005604869088516621,
-              0.0005601113616140221,
-              0.0005597089137245897,
-              0.000560278428811216
+              0.0010629038455959839,
+              0.001070936893621913,
+              0.0010784881970408117,
+              0.0010646807120641831,
+              0.0010643898024368845,
+              0.001058855804567167,
+              0.0010715875954236474,
+              0.0010576323812088628,
+              0.001056532426567734
             ],
             "nodeSamplesUs": [
-              0.011896380818349239,
-              0.01178303085734695,
-              0.011785127869233077,
-              0.011800209046370637,
-              0.012011024842219619,
-              0.012048224902179754,
-              0.011795041997755475,
-              0.011830596870569345,
-              0.01203255792798452
+              0.016070830537235778,
+              0.0161251199487757,
+              0.01601625043268199,
+              0.01602504898675567,
+              0.01605477765450173,
+              0.01614906724799555,
+              0.016012718577536136,
+              0.01609228311853342,
+              0.016123538466137035
             ],
-            "compileDurationMs": 438.16867400000046,
-            "moduleCompileDurationMs": 0.2435940000032133,
-            "instantiateDurationMs": 0.029419999998935964,
-            "firstBatchDurationMs": 0.04785000000265427,
+            "compileDurationMs": 516.4267469999977,
+            "moduleCompileDurationMs": 0.28667399999903864,
+            "instantiateDurationMs": 0.030685000001540175,
+            "firstBatchDurationMs": 0.06965299999865238,
             "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -12938,55 +12938,55 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "op_two_strings.length (runtime-generated arguments; driver compiled to Wasm)",
-            "wasmUs": 0.325787886570916,
-            "nodeUs": 0.03955673550686986,
-            "wasmStdUs": 0.0030045035395961507,
-            "nodeStdUs": 0.0008675700169068458,
-            "ratio": 0.12173803095111248,
-            "ratioStd": 0.0022080484821072376,
+            "wasmUs": 0.3155629163071967,
+            "nodeUs": 0.05515042347829593,
+            "wasmStdUs": 0.002265386621391227,
+            "nodeStdUs": 0.000502140722640325,
+            "ratio": 0.17426993044653297,
+            "ratioStd": 0.0020925941841319785,
             "ratioSamples": [
-              0.12202704576830806,
-              0.12311703225673926,
-              0.12173803095111248,
-              0.12146608908247644,
-              0.12237014191800584,
-              0.1204227421339119,
-              0.12040620139039952,
-              0.1279009262309585,
-              0.12036954409628364
+              0.17426993044653297,
+              0.17528704135100817,
+              0.1738258462028691,
+              0.1746612125369893,
+              0.179513457028189,
+              0.17590855713721093,
+              0.17383637041723052,
+              0.17118053825067267,
+              0.17409859433029748
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 953900,
+            "iters": 913388,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.33286188803858135,
-              0.325787886570916,
-              0.3254493311667884,
-              0.3230424258308007,
-              0.32248087640213724,
-              0.3246521805220669,
-              0.3262086969283985,
-              0.32827831324038015,
-              0.3286274431282087
+              0.3148301948350569,
+              0.3155629163071967,
+              0.31619136007917276,
+              0.31575655909646405,
+              0.3146885452841554,
+              0.31560153297393745,
+              0.31510387808905216,
+              0.3223752611157542,
+              0.3148553035511782
             ],
             "nodeSamplesUs": [
-              0.0406181528462094,
-              0.04011003773980638,
-              0.03961956075060134,
-              0.03923870007338332,
-              0.039462030611172434,
-              0.03909550581822108,
-              0.03927755005766055,
-              0.04198710032498135,
-              0.03955673550686986
+              0.05486543615637379,
+              0.05531408995958432,
+              0.05496223072779828,
+              0.05515042347829593,
+              0.05649082865113054,
+              0.05551701029573724,
+              0.05477651447139432,
+              0.05518437071649595,
+              0.054815865765699245
             ],
-            "compileDurationMs": 1843.1860860000015,
-            "moduleCompileDurationMs": 0.6863410000005388,
-            "instantiateDurationMs": 0.17638499999884516,
-            "moduleInitDurationMs": 0.037295000001904555,
-            "firstBatchDurationMs": 0.5059609999989334,
+            "compileDurationMs": 2305.854177999998,
+            "moduleCompileDurationMs": 4.025647999995272,
+            "instantiateDurationMs": 0.475561999999627,
+            "moduleInitDurationMs": 0.08468500000162749,
+            "firstBatchDurationMs": 1.1072060000005877,
             "binaryBytes": 51848,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -13009,7 +13009,7 @@
           "summary": "for...in over an array of heterogeneously-shaped object literals derefs null"
         }
       ],
-      "measuredAt": "2026-08-25T00:49:57.153Z",
+      "measuredAt": "2026-08-25T01:25:05.726Z",
       "weeklyDownloads": 104930549
     },
     {
@@ -13020,7 +13020,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180168,
+        "durationMs": 180147,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -13225,7 +13225,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T00:52:43.287Z",
+      "measuredAt": "2026-08-25T01:27:49.382Z",
       "weeklyDownloads": 89317829
     },
     {
@@ -13236,7 +13236,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 1179,
+        "durationMs": 1225,
         "errorCount": 64,
         "binaryBytes": 0,
         "categories": {
@@ -13420,7 +13420,7 @@
           "summary": "TS 'evolving array type' inference unimplemented — blocks compile entirely"
         }
       ],
-      "measuredAt": "2026-08-25T00:49:54.894Z",
+      "measuredAt": "2026-08-25T01:24:59.781Z",
       "weeklyDownloads": 60496071
     },
     {
@@ -13431,7 +13431,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 120190,
+        "durationMs": 120192,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -14089,7 +14089,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T00:51:55.051Z",
+      "measuredAt": "2026-08-25T01:27:04.889Z",
       "weeklyDownloads": 55617769
     },
     {
@@ -14100,7 +14100,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 10013,
+        "durationMs": 10191,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -16157,7 +16157,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 14430.643723000016,
+            "compileDurationMs": 14526.351538999996,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -16167,7 +16167,7 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 4200.735148000007,
+            "compileDurationMs": 4128.356721000018,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -16177,13 +16177,13 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 2927.9799170000188,
+            "compileDurationMs": 2843.8068260000146,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T00:53:01.764Z",
+      "measuredAt": "2026-08-25T01:28:03.620Z",
       "weeklyDownloads": 53123258
     },
     {
@@ -16194,7 +16194,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 5684,
+        "durationMs": 5677,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -19061,7 +19061,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T00:52:54.450Z",
+      "measuredAt": "2026-08-25T01:28:12.432Z",
       "weeklyDownloads": 46631732
     },
     {
@@ -19072,7 +19072,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 39634,
+        "durationMs": 41554,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 12,
@@ -19486,7 +19486,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 78416.59129800001,
+            "compileDurationMs": 84131.55022599999,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -19496,7 +19496,7 @@
             "diagnostic": "Codegen error: String.prototype.match(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 40134.661448,
+            "compileDurationMs": 42814.73402100001,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -19506,13 +19506,13 @@
             "diagnostic": "Codegen error: String.prototype.match(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 39294.44758199999,
+            "compileDurationMs": 42190.470053,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T00:53:08.707Z",
+      "measuredAt": "2026-08-25T01:28:20.900Z",
       "weeklyDownloads": 42294984
     },
     {
@@ -19523,7 +19523,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 6164,
+        "durationMs": 3791,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -20010,7 +20010,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 5727.030101000011,
+            "compileDurationMs": 3633.4309120000034,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -20020,7 +20020,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 7927.323981000009,
+            "compileDurationMs": 5043.758993000003,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -20030,13 +20030,13 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 7303.042369999996,
+            "compileDurationMs": 4418.408962999994,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T00:51:04.273Z",
+      "measuredAt": "2026-08-25T01:25:44.218Z",
       "weeklyDownloads": 40344956
     },
     {
@@ -20047,7 +20047,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 19176,
+        "durationMs": 24320,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -21130,7 +21130,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 28238.557402999984,
+            "compileDurationMs": 37866.845634,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -21140,7 +21140,7 @@
             "diagnostic": "Codegen error: standalone RegExp engine does not support replace with a function (or non-string) replacer (#1913 follow-up) (#1539 Phase 2a). Use a supported pattern/flag set, or recompile with a JS host target.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 21198.949357000005,
+            "compileDurationMs": 27954.793093999993,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -21150,13 +21150,13 @@
             "diagnostic": "Codegen error: standalone RegExp engine does not support replace with a function (or non-string) replacer (#1913 follow-up) (#1539 Phase 2a). Use a supported pattern/flag set, or recompile with a JS host target.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 18613.998970000015,
+            "compileDurationMs": 25685.859077,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T00:53:27.602Z",
+      "measuredAt": "2026-08-25T01:29:44.032Z",
       "weeklyDownloads": 34294671
     },
     {
@@ -21167,7 +21167,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 180118,
+        "durationMs": 180126,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -22497,7 +22497,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T00:52:50.090Z",
+      "measuredAt": "2026-08-25T01:27:58.347Z",
       "weeklyDownloads": 12487515
     },
     {
@@ -22508,7 +22508,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 11271,
+        "durationMs": 11052,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -22829,7 +22829,7 @@
             "diagnostic": "wasm-opt -O4 did not produce the measured artifact: wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 15806.960088,
+            "compileDurationMs": 15633.383705,
             "optimizationLevel": 4
           },
           "standalone": {
@@ -22839,7 +22839,7 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 6238.526886,
+            "compileDurationMs": 6150.853971000004,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -22849,13 +22849,13 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 4847.087836999999,
+            "compileDurationMs": 4799.374598000009,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T00:50:35.410Z",
+      "measuredAt": "2026-08-25T01:25:34.957Z",
       "weeklyDownloads": 11029759
     },
     {
@@ -22866,7 +22866,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120146,
+        "durationMs": 120153,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -24915,7 +24915,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-25T00:54:35.117Z",
+      "measuredAt": "2026-08-25T01:29:34.517Z",
       "weeklyDownloads": 10427988
     },
     {
@@ -24926,7 +24926,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 7706,
+        "durationMs": 7486,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -27132,51 +27132,51 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "select one of two runtime-owned callbacks",
-            "wasmUs": 0.5145641993086219,
-            "nodeUs": 0.005285317189610787,
-            "wasmStdUs": 0.0019245434073097431,
-            "nodeStdUs": 0.00018106378523541412,
-            "ratio": 0.010269297779847995,
-            "ratioStd": 0.00035670726213265765,
+            "wasmUs": 0.47001854235795765,
+            "nodeUs": 0.0056234444622745485,
+            "wasmStdUs": 0.0005287957107025236,
+            "nodeStdUs": 0.0000426002461314228,
+            "ratio": 0.01197745023803084,
+            "ratioStd": 0.00009007300290153855,
             "ratioSamples": [
-              0.009179855994978713,
-              0.010238629718654035,
-              0.010364912776395466,
-              0.010323507915860059,
-              0.010294208900767099,
-              0.010425505654064839,
-              0.010269297779847995,
-              0.010250541335891712,
-              0.010209039458687308
+              0.011962962470710398,
+              0.01197745023803084,
+              0.011970515574731827,
+              0.011981177445949355,
+              0.012088440350669763,
+              0.012246935689945532,
+              0.01195089435764951,
+              0.011973962808301647,
+              0.01198674728827487
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 459047,
+            "iters": 431121,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.5145641993086219,
-              0.5156803573493455,
-              0.5124695597618383,
-              0.5118718344747262,
-              0.513426261363021,
-              0.5128092461123421,
-              0.5151116813748141,
-              0.5149276740725057,
-              0.5185581672466139
+              0.4700712282632958,
+              0.47001854235795765,
+              0.46977462475759146,
+              0.4700759902675426,
+              0.4703055058791842,
+              0.4695435063473403,
+              0.47021149514875166,
+              0.4688149289871234,
+              0.46885751100026707
             ],
             "nodeSamplesUs": [
-              0.0047236252498246735,
-              0.005279860232083141,
-              0.005311702287489237,
-              0.005284312935105645,
-              0.005285317189610787,
-              0.00534629569480095,
-              0.0052898352459161465,
-              0.005278287408074795,
-              0.005293980791045253
+              0.0056234444622745485,
+              0.005629623702044229,
+              0.0056234444622745485,
+              0.00563206385247579,
+              0.005685260054412085,
+              0.005750469125867409,
+              0.005619447904275156,
+              0.005613572523668393,
+              0.0056200764985697566
             ],
-            "compileDurationMs": 4054.073811000213,
+            "compileDurationMs": 3842.973555999808,
             "binaryBytes": 1484,
             "moduleImportCount": 5,
             "functionImportCount": 5,
@@ -27201,58 +27201,58 @@
             "reason": "the pinned Lit callback probe currently covers the JS-host lane only"
           }
         },
-        "wasmUs": 0.5145641993086219,
-        "nodeUs": 0.005285317189610787,
-        "wasmStdUs": 0.0019245434073097431,
-        "nodeStdUs": 0.00018106378523541412,
-        "ratio": 0.010269297779847995,
-        "ratioStd": 0.00035670726213265765,
+        "wasmUs": 0.47001854235795765,
+        "nodeUs": 0.0056234444622745485,
+        "wasmStdUs": 0.0005287957107025236,
+        "nodeStdUs": 0.0000426002461314228,
+        "ratio": 0.01197745023803084,
+        "ratioStd": 0.00009007300290153855,
         "ratioSamples": [
-          0.009179855994978713,
-          0.010238629718654035,
-          0.010364912776395466,
-          0.010323507915860059,
-          0.010294208900767099,
-          0.010425505654064839,
-          0.010269297779847995,
-          0.010250541335891712,
-          0.010209039458687308
+          0.011962962470710398,
+          0.01197745023803084,
+          0.011970515574731827,
+          0.011981177445949355,
+          0.012088440350669763,
+          0.012246935689945532,
+          0.01195089435764951,
+          0.011973962808301647,
+          0.01198674728827487
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
-        "iters": 459047,
+        "iters": 431121,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          0.5145641993086219,
-          0.5156803573493455,
-          0.5124695597618383,
-          0.5118718344747262,
-          0.513426261363021,
-          0.5128092461123421,
-          0.5151116813748141,
-          0.5149276740725057,
-          0.5185581672466139
+          0.4700712282632958,
+          0.47001854235795765,
+          0.46977462475759146,
+          0.4700759902675426,
+          0.4703055058791842,
+          0.4695435063473403,
+          0.47021149514875166,
+          0.4688149289871234,
+          0.46885751100026707
         ],
         "nodeSamplesUs": [
-          0.0047236252498246735,
-          0.005279860232083141,
-          0.005311702287489237,
-          0.005284312935105645,
-          0.005285317189610787,
-          0.00534629569480095,
-          0.0052898352459161465,
-          0.005278287408074795,
-          0.005293980791045253
+          0.0056234444622745485,
+          0.005629623702044229,
+          0.0056234444622745485,
+          0.00563206385247579,
+          0.005685260054412085,
+          0.005750469125867409,
+          0.005619447904275156,
+          0.005613572523668393,
+          0.0056200764985697566
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-08-24T23:37:28.430Z",
+      "measuredAt": "2026-08-25T01:17:44.573Z",
       "weeklyDownloads": 6829692,
       "refresh": {
         "status": "stale",
         "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-08-24T23:37:28.430Z"
+        "lastMeasuredAt": "2026-08-25T01:17:44.573Z"
       }
     }
   ]
