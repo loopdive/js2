@@ -2420,7 +2420,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // converge the global slot with the eval literal's host-object
     // representation here, otherwise a later `o.foo` read is compiled as a
     // closed-struct field load and bypasses the installed accessor descriptor.
-    if (ts.isIdentifier(decl.name) && ctx.externrefAccessorVars.has(decl.name.text)) {
+    if (ts.isIdentifier(decl.name) && ctx.evalAccessorObjectVars.has(decl.name.text)) {
       return { kind: "externref" };
     }
     if (moduleInitForcesExternref(decl) && ts.isIdentifier(decl.name)) {

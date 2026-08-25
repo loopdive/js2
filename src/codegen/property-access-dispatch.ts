@@ -4155,11 +4155,12 @@ export function finalizeStructAndDynamicMemberGet(
     // that binding. `resolveStructNameForExpr` already treats the binding as
     // dynamic, but the old representation test below only looked at the
     // checker/local slot and therefore still fell through to the null default
-    // for `o.foo`. The accessor marker is the authoritative convergence fact:
-    // the value is a host object regardless of whether it is held in a module
-    // global, an ordinary local, or a direct-eval cell.
+    // for `o.foo`. Keep this marker separate from the broader
+    // `externrefAccessorVars` set: that set also tracks growable objects and
+    // proxies, and treating every such name as an eval accessor regresses
+    // ordinary same-named closed-struct consumers.
     const isEvalAccessorReceiver =
-      ts.isIdentifier(expr.expression) && ctx.externrefAccessorVars.has(expr.expression.text);
+      ts.isIdentifier(expr.expression) && ctx.evalAccessorObjectVars.has(expr.expression.text);
     const isExternObj =
       isEvalAccessorReceiver ||
       objWasmType.kind === "externref" ||

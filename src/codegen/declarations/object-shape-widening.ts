@@ -1009,6 +1009,7 @@ export function collectGrowableObjectLiterals(
   // foreign AST, so seed the same representation guard used by ordinary
   // accessor literals before shape inference runs.
   for (const name of collectEvalAccessorObjectNames(sourceFile)) {
+    ctx.evalAccessorObjectVars.add(name);
     ctx.externrefAccessorVars.add(name);
   }
 

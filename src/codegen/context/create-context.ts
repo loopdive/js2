@@ -40,6 +40,13 @@ function createRedeclaredObjectIdentityState() {
   };
 }
 
+function createAccessorObjectState() {
+  return {
+    externrefAccessorVars: new Set<string>(),
+    evalAccessorObjectVars: new Set<string>(),
+  };
+}
+
 export function createCodegenContext(
   mod: WasmModule,
   checker: ts.TypeChecker,
@@ -306,7 +313,7 @@ export function createCodegenContext(
     ordinaryToPrimitiveObjectLiterals: new Set(),
     ...createRedeclaredObjectIdentityState(),
     hostSpreadObjectGlobals: new Set(),
-    externrefAccessorVars: new Set(),
+    ...createAccessorObjectState(),
     pendingMathMethods: new Set(),
     pendingMethodTrampolines: [],
     needsToUint32: false,

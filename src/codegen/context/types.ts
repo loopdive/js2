@@ -3280,6 +3280,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * to short-circuit the struct-resolution chain back to `undefined`.
    */
   externrefAccessorVars: Set<string>;
+  /** Names assigned accessor-bearing object literals by constant direct eval. */
+  evalAccessorObjectVars: Set<string>;
   /** Math methods that need inline Wasm implementations */
   pendingMathMethods: Set<string>;
   /**
