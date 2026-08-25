@@ -376,3 +376,103 @@ export function closurePrototypeEdgeGetArm(
     },
   ];
 }
+
+/**
+ * (#4637 A4) The same edge, on the OWN-PROPERTY VISIBILITY surface —
+ * `f.hasOwnProperty("prototype")` / `Object.hasOwn(f, "prototype")`.
+ *
+ * §20.2.4.2: an ordinary function's `prototype` is an OWN property of the
+ * function. The edge already answers the VALUE read (`closurePrototypeEdgeGetArm`
+ * above), so before this arm the two surfaces contradicted each other. Measured
+ * on this branch's base (`.tmp/p13.js`, `--target standalone`):
+ *
+ *     function f(){}
+ *     typeof f.prototype            // "object"   — the edge answers
+ *     f.hasOwnProperty("prototype") // false      — nothing answers
+ *
+ * — `built-ins/Function/prototype/S15.3.5.2_A1_T1`.
+ *
+ * ## Why this cannot answer a wrong `true`
+ *
+ * `__closure_proto_of` is an `ref.eq` identity match against the singletons the
+ * compiler minted for functions that HAVE a prototype object (`collectPrototypeEdges`
+ * pairs a `__fn_closure_<name>` / `__class_<Name>` value global with a prototype
+ * global). A value with no edge — an arrow, a bound function, a `Function(src)`
+ * product, a plain `$Object`, a host externref — answers `null` here exactly as
+ * it does for the value read, and this arm falls through to the receiver's
+ * existing answer. §15.3 requires an arrow to have NO `prototype`, and it keeps
+ * that answer because it never gets an edge, not because of an ad-hoc exclusion.
+ *
+ * Unlike the GET arm this does NOT consult the bag first, and the asymmetry is
+ * deliberate: an own bag entry `f.prototype = v` must WIN on the value read, but
+ * on the visibility question both the bag entry and the edge answer the same
+ * `true`, so the precedence question does not arise. The bag arm runs first in
+ * the spliced body anyway (this arm is a prologue that only fires on a miss for
+ * the interned `"prototype"` key).
+ *
+ * Splices into the FRONT of the named natives' bodies and adds NO locals, so no
+ * local index in those bodies moves. Returns an empty array — leaving every
+ * consumer byte-identical — unless the module has an edge and both the helper
+ * and the interned key literal are available.
+ */
+export function closurePrototypeEdgeHasOwnArm(ctx: CodegenContext, recvSlot: number, keySlot: number): Instr[] {
+  if (!hasClosurePrototypeEdges(ctx)) return [];
+  const protoOfIdx = ctx.funcMap.get(CLOSURE_PROTO_OF);
+  const nativeStrTypeIdx = ctx.nativeStrTypeIdx;
+  if (protoOfIdx === undefined) return [];
+  if (!ctx.nativeStrings || nativeStrTypeIdx < 0) return [];
+  return [
+    { op: "local.get", index: keySlot },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: nativeStrTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: keySlot },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: nativeStrTypeIdx },
+        ...nativeStringLiteralInstrs(ctx, "prototype"),
+        { op: "ref.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: recvSlot },
+            { op: "call", funcIdx: protoOfIdx },
+            { op: "ref.is_null" },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * (#4637 A4) Splice {@link closurePrototypeEdgeHasOwnArm} into the own-property
+ * visibility natives at FINALIZE, after `fillClosurePrototypeEdge` has given
+ * `__closure_proto_of` its real body.
+ *
+ * Only the OWN-property pair is targeted. `__extern_has` (§7.3.12 HasProperty)
+ * is deliberately left alone: it already reaches the value through
+ * `__closure_prop_get`'s edge arm, and splicing a second answer in would give
+ * one question two independent sources.
+ */
+export function spliceClosurePrototypeEdgeHasOwn(ctx: CodegenContext): void {
+  const arm = closurePrototypeEdgeHasOwnArm(ctx, 0, 1);
+  if (arm.length === 0) return;
+  for (const name of ["__hasOwnProperty", "__object_hasOwn"]) {
+    const fn = ctx.mod.functions.find((candidate) => candidate.name === name);
+    if (!fn) continue;
+    // A FACTORY per target: one shared `Instr` object reachable from two bodies
+    // is double-remapped by the finalize index walks
+    // (`reference_shared_instr_object_dce_double_remap`).
+    fn.body.unshift(...closurePrototypeEdgeHasOwnArm(ctx, 0, 1));
+  }
+}

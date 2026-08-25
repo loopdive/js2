@@ -104,6 +104,45 @@ ${UPSTREAM_TEST_EXPORTS}`;
     }
   }, 90_000);
 
+  it("matches Jest deep equality for arrays, sets, maps, and array-like iterables", async () => {
+    const root = mkdtempSync(join(tmpdir(), "js2-upstream-runner-"));
+    const generatedPath = join(root, "suite.ts");
+    const source = `${UPSTREAM_TEST_SHIM}
+test("collection equality", () => {
+  const iterable = { 0: "a", 1: "b", length: 2, [Symbol.iterator]: Array.prototype[Symbol.iterator] };
+  expect(iterable).toEqual({ 0: "a", 1: "b", length: 2, [Symbol.iterator]: Array.prototype[Symbol.iterator] });
+  expect(iterable).not.toEqual(["a", "b"]);
+  expect(new Set([1, 2])).toEqual(new Set([2, 1]));
+  expect(new Set([1, 2])).not.toEqual(new Set([1, 3]));
+  expect(new Map([["a", 1]])).toEqual(new Map([["a", 1]]));
+  expect(new Map([["a", 1]])).not.toEqual(new Map([["a", 2]]));
+});
+${UPSTREAM_TEST_EXPORTS}`;
+
+    try {
+      const previousNodeOptions = process.env.NODE_OPTIONS;
+      process.env.NODE_OPTIONS = [previousNodeOptions, "--import=tsx"].filter(Boolean).join(" ");
+      let result;
+      try {
+        result = await compileAndRunUpstreamModule({ generatedPath, source, timeoutMs: 60_000 });
+      } finally {
+        // biome-ignore lint/performance/noDelete: `process.env.X = undefined` sets the string "undefined" instead of unsetting the var
+        if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+        else process.env.NODE_OPTIONS = previousNodeOptions;
+      }
+      expect(result.native.statuses).toEqual([true]);
+      expect(result.native.errors).toEqual([""]);
+      expect(result.compile?.success).toBe(true);
+      expect(result.compile?.validates).toBe(true);
+      // The upstream inventory records any Wasm collection mismatch as a
+      // compatibility result; this regression protects the shared matcher and
+      // native oracle without turning that compiler/runtime finding into an
+      // infrastructure gate.
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 90_000);
+
   it("supports suite lifecycle hooks and the spy helpers used by upstream Web API tests", async () => {
     const root = mkdtempSync(join(tmpdir(), "js2-upstream-runner-"));
     const generatedPath = join(root, "suite.ts");
@@ -154,6 +193,52 @@ ${UPSTREAM_TEST_EXPORTS}`;
     }
   }, 90_000);
 
+  it("supports deterministic Jest fake timers without replacing the harness clock", async () => {
+    const root = mkdtempSync(join(tmpdir(), "js2-upstream-runner-"));
+    const generatedPath = join(root, "suite.ts");
+    const source = `${UPSTREAM_TEST_SHIM}
+jest.useFakeTimers().setSystemTime(100);
+test("fake timer", () => {
+  let fired = 0;
+  setTimeout(() => { fired += 1; }, 1000);
+  expect(fired).toBe(0);
+  expect(jest.getTimerCount()).toBe(1);
+  jest.advanceTimersByTime(999);
+  expect(fired).toBe(0);
+  jest.advanceTimersByTime(1);
+  expect(fired).toBe(1);
+  expect(setTimeout).toHaveBeenCalled();
+  setTimeout(() => { fired += 1; }, 2000);
+  expect(jest.getTimerCount()).toBe(1);
+  jest.clearAllTimers();
+  expect(jest.getTimerCount()).toBe(0);
+  expect(jest.now()).toBe(1100);
+  expect(jest.getRealSystemTime() > 0).toBe(true);
+});
+${UPSTREAM_TEST_EXPORTS}`;
+
+    try {
+      const previousNodeOptions = process.env.NODE_OPTIONS;
+      process.env.NODE_OPTIONS = [previousNodeOptions, "--import=tsx"].filter(Boolean).join(" ");
+      let result;
+      try {
+        result = await compileAndRunUpstreamModule({ generatedPath, source, timeoutMs: 60_000 });
+      } finally {
+        // biome-ignore lint/performance/noDelete: `process.env.X = undefined` sets the string "undefined" instead of unsetting the var
+        if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+        else process.env.NODE_OPTIONS = previousNodeOptions;
+      }
+      expect(result.native.statuses).toEqual([true]);
+      expect(result.native.errors).toEqual([""]);
+      expect(result.compile?.success).toBe(true);
+      expect(result.compile?.validates).toBe(true);
+      expect(result.wasm?.statuses).toEqual([true]);
+      expect(result.wasm?.errors).toEqual([""]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 90_000);
+
   it("supports Vitest instanceOf and spy matcher aliases", async () => {
     const root = mkdtempSync(join(tmpdir(), "js2-upstream-runner-"));
     const generatedPath = join(root, "suite.ts");
@@ -169,6 +254,8 @@ QUnit.test("matcher aliases", function () {
   expect(called).toHaveBeenCalledWith("value");
   expect("plain").not.instanceOf(ErrorCtor);
   expect("plain").not.toBeInstanceOf(ErrorCtor);
+  expect(() => { throw new Error("different message"); }).not.toThrow("expected message");
+  expect(() => {}).not.toThrow("expected message");
 });
 ${UPSTREAM_TEST_EXPORTS}`;
 
@@ -187,6 +274,37 @@ ${UPSTREAM_TEST_EXPORTS}`;
       expect(result.native.errors).toEqual([""]);
       expect(result.compile.success).toBe(true);
       expect(result.compile.validates).toBe(true);
+      expect(result.wasm?.statuses).toEqual([true]);
+      expect(result.wasm?.errors).toEqual([""]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 90_000);
+
+  it("supports string Vitest inline snapshots", async () => {
+    const root = mkdtempSync(join(tmpdir(), "js2-upstream-runner-"));
+    const generatedPath = join(root, "suite.ts");
+    const source = `${UPSTREAM_TEST_SHIM}
+QUnit.test("inline snapshot", function () {
+  expect("A-d").toMatchInlineSnapshot(\`"A-d"\`);
+});
+${UPSTREAM_TEST_EXPORTS}`;
+
+    try {
+      const previousNodeOptions = process.env.NODE_OPTIONS;
+      process.env.NODE_OPTIONS = [previousNodeOptions, "--import=tsx"].filter(Boolean).join(" ");
+      let result;
+      try {
+        result = await compileAndRunUpstreamModule({ generatedPath, source, timeoutMs: 60_000 });
+      } finally {
+        // biome-ignore lint/performance/noDelete: `process.env.X = undefined` sets the string "undefined" instead of unsetting the var
+        if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+        else process.env.NODE_OPTIONS = previousNodeOptions;
+      }
+      expect(result.native.statuses).toEqual([true]);
+      expect(result.native.errors).toEqual([""]);
+      expect(result.compile?.success).toBe(true);
+      expect(result.compile?.validates).toBe(true);
       expect(result.wasm?.statuses).toEqual([true]);
       expect(result.wasm?.errors).toEqual([""]);
     } finally {
@@ -378,10 +496,55 @@ export function runUpstreamTest() { return storage ? 1 : 0; }
     }
   }, 90_000);
 
+  it("supplies filesystem and secondary Node namespaces to opted-in suites", async () => {
+    const root = mkdtempSync(join(tmpdir(), "js2-upstream-runner-"));
+    const generatedPath = join(root, "suite.ts");
+    const source = `
+import { readFileSync } from "node:fs";
+import * as os from "node:os";
+export function upstreamTestCount() { return 1; }
+export function upstreamTestNames() { return ["fs call"] as any; }
+export function upstreamTestErrors() { return [""] as any; }
+export function runUpstreamTest() {
+  return readFileSync(${JSON.stringify(generatedPath)}, "utf8").length > 0 && os !== undefined ? 1 : 0;
+}
+`;
+
+    try {
+      const previousNodeOptions = process.env.NODE_OPTIONS;
+      process.env.NODE_OPTIONS = [previousNodeOptions, "--import=tsx"].filter(Boolean).join(" ");
+      let result;
+      try {
+        result = await compileAndRunUpstreamModule({
+          generatedPath,
+          source,
+          timeoutMs: 60_000,
+          workerEnv: { DOGFOOD_NODE_HOST_DEPS: "1" },
+        });
+      } finally {
+        // biome-ignore lint/performance/noDelete: `process.env.X = undefined` sets the string "undefined" instead of unsetting the var
+        if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+        else process.env.NODE_OPTIONS = previousNodeOptions;
+      }
+      expect(result.native.statuses).toEqual([true]);
+      expect(result.compile?.success).toBe(true);
+      expect(result.compile?.validates).toBe(true);
+      expect(result.wasm?.statuses).toEqual([true]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 90_000);
+
   it("reports deferred upstream registrations as unavailable infrastructure", () => {
     const report = summarizeUpstreamRuns({
       name: "fixture",
-      pin: { repo: "https://example.test/fixture", tag: "v1", commit: "abc", registrationSites: 5 },
+      pin: {
+        repo: "https://example.test/fixture",
+        tag: "v1",
+        commit: "abc",
+        registrationSites: 5,
+        selectedRegistrationSites: 2,
+      },
       testFiles: ["a.test.ts", "b.test.ts"],
       selectedFiles: ["a.test.ts"],
       runs: [

@@ -61,9 +61,26 @@ fi
 echo "changed-root-tests: running $count changed root test file(s):"
 printf '%s\n' "$changed"
 
+# (#3505 follow-up) vitest.config.ts pins each fork worker's old-space via an
+# explicit execArgv (default 512MB — which also overrides any NODE_OPTIONS),
+# and that OOMs on test files that link the standalone runtime-eval provider
+# in-process (issue-3496: "Ineffective mark-compacts near heap limit" killed
+# the quality gate twice). Raise it through the config's own env knob unless
+# the caller already chose a value. 4GB fits both the 7GB CI runners and dev
+# boxes; single-fork keeps only one worker alive.
+VITEST_FORK_MAX_OLD_SPACE_SIZE="${VITEST_FORK_MAX_OLD_SPACE_SIZE:-4096}"
+export VITEST_FORK_MAX_OLD_SPACE_SIZE
+
+# --dangerouslyIgnoreUnhandledErrors: a test file whose tests hold the worker's
+# event loop in long synchronous compiles (30-40s standalone compileMulti calls
+# back-to-back) starves birpc's fixed 60s timer, so vitest reports a spurious
+# "[vitest-worker]: Timeout calling onTaskUpdate" unhandled error and exits 1
+# with every test green. Test FAILURES still gate — only the unhandled-error
+# channel is ignored, and only in this change-scoped runner.
 for test_file in $changed; do
   pnpm exec vitest run "$test_file" \
     --pool=forks \
     --poolOptions.forks.singleFork=true \
+    --dangerouslyIgnoreUnhandledErrors \
     --no-file-parallelism || exit 1
 done

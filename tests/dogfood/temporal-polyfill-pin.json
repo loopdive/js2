@@ -1,0 +1,20 @@
+{
+  "name": "@js-temporal/polyfill",
+  "version": "0.5.1",
+  "tarball": "fixtures/js-temporal-polyfill-0.5.1.tgz",
+  "registryTarball": "https://registry.npmjs.org/@js-temporal/polyfill/-/polyfill-0.5.1.tgz",
+  "shasum": "c9726fdb7fbdbc6419292ba94294b10a08852c32",
+  "integrity": "sha512-hloP58zRVCRSpgDxmqCWJNlizAlUgJFqG2ypq79DCvyv9tHjRYMDOcPFjzfl/A1/YxDvRCZz8wvZvmapQnKwFQ==",
+  "entryModule": "package/dist/index.esm.js",
+  "umdModule": "package/dist/index.umd.js",
+  "dependency": {
+    "name": "jsbi",
+    "version": "4.3.0",
+    "tarball": "fixtures/jsbi-4.3.0.tgz",
+    "registryTarball": "https://registry.npmjs.org/jsbi/-/jsbi-4.3.0.tgz",
+    "shasum": "b54ee074fb6fcbc00619559305c8f7e912b04741",
+    "integrity": "sha512-SnZNcinB4RIcnEyZqFPdGPVgrg2AcnykiBy0sHVJQKHYeaLUvi3Exj+iaPpLnFVkDPZIV4U0yvgC9/R4uEAZ9g==",
+    "entryModule": "package/dist/jsbi.mjs"
+  },
+  "_note": "Pinned for the #4628 Temporal runtime-object SPIKE, following the same acquisition rule as acorn (#1710) / clsx (#3748): a pinned npm-pack tarball committed as a fixture, NOT a vendored source copy and NOT an unpinned live fetch, so the harness reproduces from a clean checkout with no run-time network. shasum is the canonical npm sha1 (`npm view <pkg>@<ver> dist.shasum`); integrity is the canonical sha512. TWO tarballs are pinned because the polyfill's published ESM bundle is NOT self-contained: dist/index.esm.js carries exactly one import, `import e from\"jsbi\";`, against its single runtime dependency jsbi@^4.3.0. The harness links them into one module by concatenation (jsbi.mjs with its trailing `export default JSBI;` removed, then the polyfill bundle with the import statement rewritten to `const e=JSBI;`). That is safe by construction here, verified by parsing both bundles: jsbi.mjs declares exactly ONE top-level binding (`JSBI`) and the polyfill's 340 top-level bindings do not include it, so the concatenation introduces no shadowing. The link is the ONLY edit made to published bytes. dist/index.umd.js is measured as a second, link-free lane: it is self-contained (jsbi bundled in) but Babel-transpiled to ES5, so it exercises a different compiler surface than the modern ESM bundle. To refresh: `npm pack @js-temporal/polyfill@<ver> jsbi@<ver>`, update this file, re-run the harness."
+}

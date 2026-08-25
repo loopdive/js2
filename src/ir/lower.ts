@@ -275,6 +275,8 @@ export interface IrLowerResolver {
   ): readonly Instr[];
   /** `[call concat]` (host) or `[call __str_concat]` (native). */
   emitStringConcat?(alloc?: AllocSiteId, mode?: IrStringConcatMode, provider?: IrFuncRef): readonly Instr[];
+  /** Full-semantics `(string, f64) -> string` repeat provider call. */
+  emitStringRepeat?(alloc?: AllocSiteId, inputEncoding?: IrStringEncoding, provider?: IrFuncRef): readonly Instr[];
   /** `[call equals]` (host) or `[call __str_equals]` (native). */
   emitStringEquals?(provider?: IrFuncRef): readonly Instr[];
   /**
@@ -1994,6 +1996,12 @@ export function lowerIrFunctionBody<S, Slot>(
         emitter.emitStringConcat(instr.alloc, instr.concatMode ?? "immutable", out, instr.provider);
         return;
       }
+      case "string.repeat": {
+        emitValue(instr.value, out);
+        emitValue(instr.count, out);
+        emitter.emitStringRepeat(instr.alloc, instr.encodingEvidence, out, instr.provider);
+        return;
+      }
       case "string.eq": {
         emitValue(instr.lhs, out);
         emitValue(instr.rhs, out);
@@ -3702,6 +3710,8 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
     case "string.concat":
     case "string.eq":
       return [instr.lhs, instr.rhs];
+    case "string.repeat":
+      return [instr.value, instr.count];
     case "string.len":
       return [instr.value];
     case "string.char_at":
@@ -4054,6 +4064,9 @@ export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcN
     }
     return dyn;
   }
+  if (t.kind === "fnctor") {
+    throw new Error(`ir/lower: fnctor ${t.shape.constructorName} has no backend resolver/lowering yet (${funcName})`);
+  }
   // boxed (refcell)
   // Slice 3 (#1169c): the resolver delegates to the legacy ref-cell
   // registry so legacy and IR ref cells share one WasmGC struct.
@@ -4097,6 +4110,7 @@ function describeIrTypeShallow(t: IrType): string {
   }
   if (t.kind === "class") return `class<${t.shape.className}>`;
   if (t.kind === "extern") return `extern<${t.className}>`;
+  if (t.kind === "fnctor") return `fnctor<${t.shape.constructorName}>`;
   // #1926 — union members / boxed inner are IrTypes; recurse.
   if (t.kind === "union") return `union<${t.members.map(describeIrTypeShallow).join(",")}>`;
   // #2949 — dynamic leaf; render the optional JsTag refinement when present.

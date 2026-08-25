@@ -38,6 +38,7 @@ import { compileLogicalAnd, compileLogicalOr, compileNullishCoalescing } from ".
 import { tryStaticToNumber } from "./expressions/misc.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
+import { admitsObjectAddition, emitObjectAdd } from "./addition-to-primitive.js";
 import { admitsObjectRelational, reduceRelationalOperandsToPrimitive } from "./relational-to-primitive.js";
 // (#4491 T4) §13.15.3 `+` over object operands.
 import {
@@ -1288,11 +1289,42 @@ export function compileBinaryExpression(
   // well-tested lowering for no measured gain.
   const leftIsWidenedPrimitiveGlobal =
     isEqualityOp && ts.isIdentifier(expr.left) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, expr.left);
-  const rightIsAbstractNonString =
+  // (#4621 D) …and the same exclusion for a right operand the checker types as a
+  // structural OBJECT. The #2503 comment above already named this case — "or an
+  // object (must ToPrimitive then recurse, so `"x" == {valueOf:()=>"x"}` is
+  // `true`)" — but the flag it wrote only tested `any`/`unknown`, so an operand
+  // with a REAL object type (an object literal, the common spelling in the
+  // suite) still took the pure content-compare route and answered `false`
+  // WITHOUT calling `valueOf` or `toString` at all. Measured on
+  // `language/expressions/{equals/S11.9.1_A7.9, does-not-equals/S11.9.2_A7.8}`:
+  // `"+1" == {valueOf(){return 1}, toString(){return {}}}` answered false with an empty
+  // call log, where §7.2.15 step 9 requires `"+1" == ToPrimitive(y)` → `"+1" ==
+  // 1` → true.
+  //
+  // Deliberately the `object` fact ONLY. `class` / `builtin` / `function`
+  // receivers are left on their existing route: their §7.2.15 answer is also
+  // reached through ToPrimitive, but re-routing them would change hot, long-
+  // tested lowerings (wrapper equality, Date, RegExp) for rows this slice did
+  // not measure. Absent-not-wrong — a declined arm keeps today's behaviour.
+  const rightIsObjectOperand =
     !rightIsStrLike &&
-    (rightTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 &&
     ctx.nativeStrings &&
-    ctx.anyStrTypeIdx >= 0;
+    ctx.anyStrTypeIdx >= 0 &&
+    ctx.oracle.typeFactOf(expr.right).kind === "object";
+  const rightIsAbstractNonString =
+    (!rightIsStrLike &&
+      (rightTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 &&
+      ctx.nativeStrings &&
+      ctx.anyStrTypeIdx >= 0) ||
+    rightIsObjectOperand;
+  // (#4564) §13.15.3 step 5 reduces BOTH operands BEFORE step 7 asks whether
+  // either is a string: `o + ""` must take `valueOf`, but the string routes just
+  // below call ToString on the object, which takes `toString`. Standalone only —
+  // see addition-to-primitive.ts.
+  const objectPlus = op === ts.SyntaxKind.PlusToken && !isBigIntType(leftTsType) && !isBigIntType(rightTsType);
+  if (objectPlus && admitsObjectAddition(ctx, leftTsType, rightTsType, expr.left, expr.right)) {
+    return emitObjectAdd(ctx, fctx, expr);
+  }
   if (
     !wrapperEquality &&
     isStringType(leftTsType) &&
@@ -1641,27 +1673,17 @@ export function compileBinaryExpression(
     op === ts.SyntaxKind.GreaterThanGreaterThanToken ||
     op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken;
 
-  // (#2058) `+` where an operand is statically `any`/`unknown` (so it lowers to a
-  // dynamic externref that may hold a runtime string). §13.15.3 requires
-  // concatenation when either ToPrimitive result is a string, but the numeric
-  // paths below compile both operands with an f64 hint — ToNumber-coercing a
-  // runtime string, so `1 + "2"` wrongly produced `3` instead of `"12"`. Route
-  // these through a runtime-dispatched add BEFORE the f64 hint is applied. We
-  // require at least one `any`/`unknown` operand: provably-numeric and
-  // provably-string `+` were already handled above (string concat at the
-  // isStringType gate, numeric via the typed fast paths), so this leaves their
-  // codegen untouched. `ctx.fast` mode keeps its i32/f64 numeric semantics for
-  // statically-typed operands and is unaffected (those aren't `any`/`unknown`).
-  //
-  // Fast mode (`anyValueTypeIdx >= 0`) is excluded: there `any + any` is routed
-  // through `compileAnyBinaryDispatch` (the AnyValue `__any_add` helper) earlier,
-  // and the `__host_add` host import isn't part of that ABI. Per the #2058 design
-  // rule, this per-site recovery is **default-mode only**.
-  if (op === ts.SyntaxKind.PlusToken && ctx.anyValueTypeIdx < 0) {
-    const leftIsAnyish = (leftTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    const rightIsAnyish = (rightTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    if ((leftIsAnyish || rightIsAnyish) && !isBigIntType(leftTsType) && !isBigIntType(rightTsType)) {
-      return emitAnyAdd(ctx, fctx, expr);
+  // §13.15.3 reduces BOTH operands with ToPrimitive before choosing between
+  // concatenation and numeric addition, but the paths below apply an f64 hint to
+  // the RAW operands. Two arms recover that, gated differently and for different
+  // reasons — the `any`/`unknown` arm (#2058, host `__host_add`, default-mode
+  // only), here, and the OBJECT arm (#4564, in-module, standalone only), which
+  // has to sit above the string routes. Both live in addition-to-primitive.ts.
+  if (op === ts.SyntaxKind.PlusToken && !isBigIntType(leftTsType) && !isBigIntType(rightTsType)) {
+    if (ctx.anyValueTypeIdx < 0) {
+      const leftIsAnyish = (leftTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+      const rightIsAnyish = (rightTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+      if (leftIsAnyish || rightIsAnyish) return emitAnyAdd(ctx, fctx, expr);
     }
   }
 
@@ -2076,7 +2098,11 @@ export function compileBinaryExpression(
     }
   }
 
-  if (!leftType || !rightType) return foldVoidOperandEquality(fctx, op, leftType, rightType, leftTsType, rightTsType);
+  if (!leftType || !rightType) {
+    const v = foldVoidOperandEquality(ctx, fctx, op, leftType, rightType, leftTsType, rightTsType);
+    if (v === null || "kind" in v) return v;
+    ({ left: leftType, right: rightType } = v); // (#4656) undefined materialised for the void side
+  }
 
   // (#4208 S1) §7.2.16 step 1 then the i32↔f64 promotion — ORDER is the fix.
   const promoted = foldTypeDisjointThenPromote(fctx, expr, op, leftType, rightType, leftTsType, rightTsType);

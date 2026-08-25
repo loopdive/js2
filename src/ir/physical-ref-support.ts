@@ -59,6 +59,7 @@ export function attachIrPhysicalRefTypeRefs(
       case "string":
       case "class":
       case "extern":
+      case "fnctor":
       case "dynamic":
         return [];
       case "object":
@@ -199,6 +200,7 @@ export function attachIrPhysicalRefTypeRefs(
       }
       case "string":
       case "extern":
+      case "fnctor":
       case "dynamic":
         mapped = type;
         break;

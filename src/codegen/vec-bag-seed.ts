@@ -81,7 +81,8 @@
 import type { Instr, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { CARRIER_BAG_DELETE } from "./carrier-bag-delete.js";
-import { buildBagGopdFallback, buildBagHasFallback } from "./carrier-bag-visibility.js"; // (#4010 S3)
+import { buildArgumentsLengthDeleteArm } from "./arguments-length-brand.js"; // (#4658) §10.4.4 `length`
+import { CARRIER_BAG_HAS, buildBagGopdFallback, buildBagHasFallback } from "./carrier-bag-visibility.js"; // (#4010 S3)
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 
 /**
@@ -182,6 +183,50 @@ export function buildBagValueSeed(
   const vecPropGetIdx = ctx.funcMap.get(VEC_PROP_GET);
   const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
   if (vecPropGetIdx === undefined || isUndefinedIdx === undefined) return [];
+  // (#4658) OWN-ness gate. `__vec_prop_get` is a CHAIN read, not a bag read:
+  // since #4176 its miss tail consults the prototype-property companions
+  // (`protoIndexRecvGetMissInstrs`), so for a key the bag does not hold it
+  // answers with `Array.prototype`'s / `Object.prototype`'s value. Seeding
+  // THAT into the companion manufactures an own property out of an inherited
+  // one — and because the seed lands with `SEED_FLAGS` (w/e/c all true, value
+  // present) while the incoming define may specify neither, the fabricated
+  // value SURVIVES the define. Measured on the base sources, standalone:
+  //
+  //   Object.defineProperty(Object.prototype, "zzz", {value: 7, …});
+  //   var a = [1, 2];
+  //   Object.defineProperty(a, "zzz", { writable: false });
+  //   Object.getOwnPropertyDescriptor(a, "zzz")
+  //   //   vec receiver:   {value: 7,         writable:false, enumerable:true,  configurable:true}
+  //   //   plain object:   {value: undefined, writable:false, enumerable:false, configurable:false}
+  //
+  // The §10.4.4 `arguments` fallout is `language/arguments-object/10.6-13-a-1`:
+  // that test defines `Object.prototype.callee` FIRST, so the #4243 callee seed
+  // (`__defineProperty_value(args, "callee", <func>, 0x05)` — flags with no
+  // "specified"/hasValue bits, correct only against an ABSENT property) ran
+  // against a pre-seeded entry holding the inherited `1` and became a no-op:
+  // `typeof argObj.callee` answered `"number"`.
+  //
+  // `__carrier_bag_has` is the own-only predicate for exactly this substrate
+  // (`__carrier_bag_of` → `__vec_bag_lookup` → `__obj_find`, tombstone-filtered,
+  // and LOOKUP not ENSURE so a seed attempt never allocates a bag). Adding it
+  // as a precondition strictly NARROWS which keys are seeded, so #4010's
+  // bag→companion seam keeps every case it was written for.
+  //
+  // When the visibility natives were never reserved there is no own-only
+  // predicate available; that cannot happen while `__vec_prop_get` exists
+  // (`reserveCarrierBagVisibility` gates on the same `__is_vec_prop_carrier`
+  // that mints it), so the fallback below preserves the pre-#4658 body rather
+  // than silently disabling a landed fix on an unreachable path.
+  const bagHasIdx = ctx.funcMap.get(CARRIER_BAG_HAS);
+  const ownGate = (inner: Instr[]): Instr[] =>
+    bagHasIdx === undefined
+      ? inner
+      : [
+          { op: "local.get", index: l.vec },
+          { op: "local.get", index: l.key },
+          { op: "call", funcIdx: bagHasIdx },
+          { op: "if", blockType: { kind: "empty" }, then: inner },
+        ];
   return [
     // named (non-index) key only — the index case is seedIfRealElement's
     { op: "local.get", index: l.i },
@@ -200,7 +245,9 @@ export function buildBagValueSeed(
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: [
+          // ...and the #3537 bag OWNS the key (#4658 — not merely answers for
+          // it through the prototype-companion tail of `__vec_prop_get`)...
+          then: ownGate([
             // ...and the #3537 bag holds a real value for it
             { op: "local.get", index: l.vec },
             { op: "local.get", index: l.key },
@@ -221,7 +268,7 @@ export function buildBagValueSeed(
                 { op: "drop" },
               ],
             },
-          ],
+          ]),
         },
       ],
     },
@@ -477,6 +524,14 @@ export function buildVecDeletePrologue(ctx: CodegenContext, fn: WasmFunction, d:
         { op: "local.get", index: anyLocal },
         { op: "call", funcIdx: d.ensureIdx },
         { op: "local.set", index: compLocal },
+        // (#4658) §10.4.4 `delete <argumentsObject>.length`. The vec has no
+        // per-key storage for `length` (`__vec_prop_set` refuses the key so the
+        // real vec length can never be shadowed), so the deletion is recorded
+        // as a tombstone bit on the companion and read back by the
+        // `__hasOwnProperty` / `__vec_gopd` length arms. Reached only after the
+        // `configurable` gate above, so a sealed/frozen arguments object still
+        // refuses. `[]` for any module with no branded arguments object.
+        ...buildArgumentsLengthDeleteArm(ctx, 0, keyLocal),
         ...d.parseIndex(keyLocal, indexLocal),
         { op: "local.get", index: indexLocal },
         { op: "i32.const", value: 0 },

@@ -109,6 +109,7 @@ const EXPECTED_KINDS: readonly string[] = [
   "string.const",
   "string.eq",
   "string.len",
+  "string.repeat",
   "switch",
   "tag.test",
   "throw",
@@ -127,11 +128,12 @@ const EXPECTED_KINDS: readonly string[] = [
  * Ratchet floor for the checked-kind count.
  *
  * 16 when #4523 landed; #4603 implemented a real rule for 16 of the 17
- * `rule-worth-adding` kinds, so the floor moves to 32. The 17th
+ * `rule-worth-adding` kinds, moving the floor to 32. Typed `string.repeat`
+ * adds a verifier-owned rule, so the floor is now 33. The 17th
  * (`early.return`) was a misclassification — `verifyIrFunction` has applied
  * its rule since #2856 — and is now `checked-elsewhere`, not a checked arm.
  */
-const BASELINE_CHECKED_COUNT = 32;
+const BASELINE_CHECKED_COUNT = 33;
 
 /** Per-category triage counts (#4523 triage, as retired by #4603). */
 const BASELINE_CATEGORY_COUNTS: Readonly<Record<TypeRuleCategory, number>> = {
@@ -230,8 +232,8 @@ describe("#4523 TYPE_RULE_STATUS / checkInstr parity", () => {
     expect(Object.keys(TYPE_RULE_STATUS).sort()).toEqual([...EXPECTED_KINDS].sort());
   });
 
-  it("the union has 78 kinds", () => {
-    expect(Object.keys(TYPE_RULE_STATUS)).toHaveLength(78);
+  it("the union has 79 kinds", () => {
+    expect(Object.keys(TYPE_RULE_STATUS)).toHaveLength(79);
   });
 
   it("ratchet: the checked-kind count never decreases", () => {
@@ -261,7 +263,7 @@ describe("#4523 TYPE_RULE_STATUS / checkInstr parity", () => {
     }
     expect(counts).toEqual(BASELINE_CATEGORY_COUNTS);
     const skipped = Object.values(BASELINE_CATEGORY_COUNTS).reduce((a, b) => a + b, 0);
-    expect(checkedKinds.length + skipped).toBe(78);
+    expect(checkedKinds.length + skipped).toBe(79);
   });
 
   it("the roadmap denominator (rule-worth-adding) matches the recorded count", () => {

@@ -2,25 +2,30 @@
 id: 3521
 title: "IR-only R2: prepare-before-emit free-function ownership"
 status: in-progress
-sprint: current
 created: 2026-07-21
-updated: 2026-08-12
+updated: 2026-08-24
 priority: critical
-horizon: xl
-complexity: XL
 feasibility: hard
 reasoning_effort: max
 task_type: refactor
 area: ir, codegen, compiler
 language_feature: compiler-internals
-es_edition: n/a
 goal: ir-full-coverage
-lane: ir-retirement-r2
-model: gpt-5.6-sol
+sprint: current
 parent: 3518
-depends_on: [3520]
-required_by: [3522, 3523, 3525, 3526]
+depends_on: [3520, 4260]
+required_by: [3522, 3523, 3525, 3526, 3792, 4601]
+assignee: ttraenkler/codex-ir-lead
+branch: codex/3521-r2-replay-4608-5d55
+horizon: xl
+complexity: XL
+es_edition: n/a
+lane: ir-retirement-r2
+model: gpt-5.6-luna
 related: [2138, 2855, 3143, 3203, 3518, 3519, 3678, 4260, 4382]
+loc-budget-allow:
+  - src/ir/propagate.ts
+  - src/ir/select.ts
 origin: "#3518 R2 — invert single-source free functions from compile/patch to prepare/emit"
 files:
   - src/ir/program.ts
@@ -59,6 +64,8 @@ files:
   - tests/issue-3521-prepared-ir-program.test.ts
   - tests/issue-3521-prepared-component-dependencies.test.ts
   - tests/issue-3521-prepared-free-function-routing.test.ts
+  - tests/issue-3521-linked-final-context-caller-abi.test.ts
+  - tests/issue-3521-linked-string-parser-abi.test.ts
   - tests/issue-3521-scoped-prepared-abi-seal.test.ts
   - tests/issue-3520-program-abi-import-callable-planning.test.ts
   - tests/issue-3520-callable-provider-abi.test.ts
@@ -82,7 +89,6 @@ func-budget-allow:
   - src/ir/integration.ts::makeResolver
   - src/ir/lower.ts::lowerIrFunctionBody
 ---
-
 # #3521 — IR-only R2: prepare-before-emit free-function ownership
 
 ## Objective
@@ -1115,3 +1121,970 @@ discard failed-only plans on abort while retaining one canonical provider for a
 healthy component that shares it. Keeping a dead import or weakening the
 missing-locator invariant does not satisfy this parent issue's transaction
 acceptance.
+
+## 2026-08-22 lane handover (fable-lead)
+
+Claimed to ttraenkler/fable-lead on the assignment ref (the prior lane is
+dead). Not started this session. **Recommended first slice for the next
+dispatch: the linked-lane late-preparation gap** measured by PR #4732 and
+recorded in #2949's "linked-lane preparation gap" section — the #2949
+runtime-dynamic acorn driver compiled as a multi-source project
+(`compileProject`) emits **1/43** versus 31/43 inline, with **21 units
+selector-accepted but absent from the prepared selection** at
+`late-preparation-unsupported` and no recorded preparation failure. The gap
+is in final-context preparation (`reconcileIrOverlayOutcomes` bookkeeping),
+i.e. this issue's territory jointly with #3520's identity records, and
+fixing it makes every claim #2949 has banked visible on the linked lane.
+Session-wide context: `plan/agent-context/fable-lead.md`.
+
+## 2026-08-22 next slice plan — linked final-context caller ABI
+
+This slice was re-grounded on authoritative `main`
+`31ce53569ec8dd9aab90a34eb16b1d53deb4bc74` with a fresh Acorn 8.16.0
+linked-versus-inline measurement and a two-file reduced reproduction. The
+handover's historical production ledger reported linked `1/43` versus inline
+`31/43`. A fresh pre-optimizer run, used because the current Binaryen O4 lane
+returns an unrelated optimizer error before publishing its ledger, reports
+linked **1/42 free functions with 21 late drops** versus inline **31/42 with
+zero late drops**. The linked run took 33.588 seconds and inline 31.176 seconds.
+
+The honest ceiling for this slice is linked **1 -> 22/42**, not 31/42. Nine
+inline wins are already rejected at selection: `isIdentifierStart`,
+`isIdentifierChar`, `nextLineBreak`, `codePointToString`, `functionFlags`,
+`isRegExpIdentifierStart`, `isRegExpIdentifierPart`, `parse`, and
+`parseExpressionAt`. They belong to a later selector/project-type-parity
+slice and must not be absorbed here.
+
+### Exact cause and bounded production change
+
+`reconcileIrOverlayOutcomes` reports the consequence but is not the cause.
+`planIrOverlay` already invokes the exact per-declaration
+`legacyCallerAbiIsProjected` proof. Selection retains those targets, but
+`makeMultiIrSafeSelection` later blocks them unconditionally when
+`collectLocalCallEdgesByIdentity` reports an unowned/direct caller or a
+non-function/non-module-init terminal owner. Acorn's prototype-assigned
+function expressions enter through that second caller-direction gate, so 21
+certified functions disappear as generic `late-preparation-unsupported`
+outcomes without a concrete preparation failure.
+
+Keep production ownership to `src/codegen/index.ts` and add one focused test.
+Do not change `select.ts`, `select-identity.ts`, `ir-first-gate.ts`,
+`ir-prepared-free-functions.ts`, integration, or the reconciler.
+
+1. When `planIrOverlay` applies `legacyCallerAbiIsProjected`, freeze the exact
+   certified target `IrUnitId`s on the overlay plan.
+2. In `makeMultiIrSafeSelection`, exempt only those certified target IDs from
+   the two duplicated outside/direct-caller blocks. Preserve every other
+   cross-file mode, callable-boundary, collision, import-alias, name-registry,
+   nested/generic/import-use, forward-callee, and closed-component gate.
+3. Record a concrete typed preparation failure for every uncertified target
+   removed by the caller gate, with detail that the multi-source direct-caller
+   ABI was not certified. The reconciler must not invent a generic reason for
+   a known removal.
+4. Keep final integration's allocated-slot type-index parity as the last
+   fail-closed backstop. A mismatch retains the legacy body and reports the
+   existing `abi-signature-parity` outcome.
+
+The certificate is per source-qualified UnitId, never a name or fixture
+allowlist. A callable parameter, string-array parameter, implicit return,
+collision, unresolved import alias, or unprojected outside caller remains
+legacy.
+
+### Mutation-proof acceptance
+
+Add `tests/issue-3521-linked-final-context-caller-abi.test.ts` around a measured
+sub-two-second two-file standalone fixture: a dependency declares a JSDoc
+`(number) -> number` scalar, and a prototype-assigned function expression calls
+it; the entry imports the dependency export. On current main the linked scalar
+is selected then dropped as `late-preparation-unsupported`, with legacy true,
+IR false, and no compiled function. The same dependency inline emits IR.
+
+- Require linked `compileMulti` and disk `compileProject` to emit the exact
+  source-qualified scalar UnitId, run with the inline result, instantiate as
+  valid Wasm, and publish no late caller-ABI row.
+- Require callable-parameter `apply`, `string[]`, and implicit-return controls
+  to remain fail-closed with precise preparation failures. Preserve the
+  existing #2138 cross-file numeric/callable and collision controls.
+- Add a test-only switch around only the certificate consult. With it disabled,
+  the exact positive must restore the current late row and legacy body. A
+  mutant that deletes or negates the certificate branch must fail the matrix.
+
+Before and after editing, capture the reduced fixture and full linked Acorn
+histograms in fresh processes. Acceptance is linked **1 -> 22/42**, all 21
+named late drops removed, no new withdrawal/post-claim errors, every other
+linked bucket identical, and inline still 31/42 with the same withdrawal set.
+The 21 names are `isNewLine`, `isPrivateNameConflicted`, `checkKeyName`,
+`isLocalVariableAccess`, `isPrivateFieldAccess`, `hasProp`,
+`isRegularExpressionModifier`, `isSyntaxCharacter`, `isControlLetter`,
+`isValidUnicode`, `isCharacterClassEscape`,
+`isUnicodePropertyNameCharacter`, `isUnicodePropertyValueCharacter`,
+`isClassSetReservedDoublePunctuatorCharacter`, `isClassSetSyntaxCharacter`,
+`isClassSetReservedPunctuator`, `isDecimalDigit`, `isHexDigit`, `hexToInt`,
+`isOctalDigit`, and `stringToNumber`. If fewer move, stop and report the exact
+residual IDs; do not widen the selector.
+
+Run the focused test, #2138 adjacency, typecheck, fallback, oracle, LOC, and
+function gates before the full Acorn measurement. Release validation uses all
+eight equivalence shards in fresh processes, never an unsharded suite. O4
+dashboard timing remains a separate known Binaryen optimizer blocker unless a
+working native optimizer lane is available.
+
+Open PRs #4728 and #4723 also touched `src/codegen/index.ts`; re-ground current
+main immediately before implementation and merge. PR #4747 is file-disjoint.
+The issue checkpoint remains in the single documentation PR; the implementation
+worker owns only `index.ts` and the new focused test.
+
+## 2026-08-22 stop checkpoint — caller-gate exemption was inert on Acorn
+
+The proposed `makeMultiIrSafeSelection` exemption above was implemented only far
+enough to run its mandatory stop/go measurement on pinned `main`
+`3f8b6e6e6bef2e8336e68291bc9330c20afb49b0`, then fully unwound. The worktree is
+clean and no implementation commit or PR exists.
+
+The reduced class-member/direct-caller fixture did prove that the exact
+source-qualified `legacyCallerAbiIsProjected` certificate can move that narrow
+gate: the certified target emitted through IR, and disabling only the consult
+restored the precise `multi-source direct-caller ABI was not certified` late
+row. That result was not representative of Acorn. The full pre-optimizer linked
+Acorn run completed successfully in 127.1 seconds and remained exactly **1/42**
+free functions with the same **21** `late-preparation-unsupported` rows. None of
+the named target IDs moved, so the required 1 -> 22/42 stop gate failed.
+
+The grounded cause is one layer later. Acorn's prototype-assigned helper calls
+are attributed to the source `module-init`. `makeMultiIrSafeSelection` seeds that
+module-init owner as blocked, then `closeRetainedIrOwnersByIdentity` propagates
+the blocked caller through the caller-to-callee closure. The two explicit
+unowned/non-function caller blocks are therefore not the load-bearing rejection
+for the real project.
+
+The next slice must be re-planned at that owner-closure boundary, not by widening
+the rejected `makeMultiIrSafeSelection` patch:
+
+1. Pass the exact source-qualified certified-target set into the retained-owner
+   fixed point (or an equivalent typed edge policy).
+2. Preserve the blocked module-init owner and every uncertified callee edge, but
+   do not propagate that blocked caller into a target whose direct/allocated ABI
+   certificate is exact.
+3. Publish a concrete typed late-preparation failure for every uncertified edge;
+   do not infer success from absence of a generic row.
+4. Prove the rule first with a reduced **module-init/prototype-assignment**
+   fixture, not the class-member fixture, and keep the same kill switch.
+5. Re-run the full linked Acorn stop gate. Acceptance remains exactly 1 -> 22/42
+   with all 21 late rows removed and the nine selector-stage rejects unchanged.
+
+This necessarily expands the production ownership beyond `src/codegen/index.ts`.
+Re-ground the exact fixed-point implementation and its dependency/atomicity
+contract before dispatch; do not resume the rejected patch or relax selection.
+
+### Re-grounded fixed-point slice
+
+The load-bearing production seam is
+`src/codegen/ir-overlay-finalize.ts::closeRetainedIrOwnersByIdentity`. Its
+blocked-caller arm currently deletes every retained callee. In the linked Acorn
+shape, `makeMultiIrSafeSelection` first places the exact source module-init unit
+in `blocked`, then this arm propagates module-init ownership into all 21 helpers.
+The reverse arm (retained caller depending on a blocked callee) is a different
+correctness rule and must remain unchanged.
+
+The smallest implementation owns `src/codegen/index.ts` and
+`src/codegen/ir-overlay-finalize.ts` plus the focused test:
+
+1. Wrap the existing per-declaration `legacyCallerAbiIsProjected` callback at
+   selection time. When and only when the existing proof returns true, resolve
+   the declaration through `identityContext.unitIdByDeclaration`, require the
+   exact same-source bodyful function terminal, and add that source-qualified
+   UnitId to an idempotent frozen certificate set on `IrOverlayPlan`.
+2. Extend only the M0 `closeIrBlockedComponentByIdentity` call with that exact
+   set. Default every other caller to today's behavior; timer, prepared-free,
+   overlay-safety, and later support-finalization closures must not inherit the
+   exemption.
+3. In the blocked-caller-to-retained-callee arm, suppress propagation only when
+   the exact callee UnitId is in the validated certificate set. Do not exempt an
+   initially blocked certified unit, do not unblock the caller, and do not alter
+   retained-caller-to-blocked-callee propagation. A certified target with any
+   other blocked dependency still withdraws through the unchanged reverse arm.
+4. Return or callback exact propagation evidence to M0 so every uncertified
+   target removed by this edge gets a concrete typed
+   `late-preparation-unsupported` failure. The reconciler must not fabricate a
+   generic reason. The callback/result is diagnostic only; closure and failure
+   publication must be computed before Prepared skipping, as one transaction.
+5. Keep allocated-slot function-type parity in final integration as the last
+   fail-closed backstop. A late mismatch preserves the direct body and reports
+   the existing ABI-parity failure; it never retries after an IR-only skip.
+
+Validate every supplied certificate ID before closure: exact source, exact
+function terminal/declaration round trip, and presence in the plan's function
+claims. A foreign, cloned, non-function, or stale ID is an invariant. The set is
+not a name allowlist and does not make an unselected/initially blocked function
+retained.
+
+Replace the earlier class-member reproducer with the actual owner shape: a
+two-file standalone dependency containing an annotated numeric scalar plus a
+top-level prototype/property assignment whose function expression calls that
+scalar, and an entry importing the dependency export. Assert the call is owned
+by the source module-init, the scalar has the exact certificate, and the linked
+compile emits it while the identical inline source remains unchanged. A
+test-only switch around only the fixed-point exemption must restore the exact
+late row and direct body. Callable, array, implicit-return, collision, foreign
+source, uncertified module-init, and reverse-blocked-dependency controls remain
+direct with precise failures. Mutants that apply the exemption to every closure
+caller, use names, skip validation, or exempt the reverse arm must fail.
+
+The mandatory stop/go remains the fresh pre-optimizer Acorn ledger: linked must
+move **1 -> 22/42**, all 21 named late rows must disappear, no other linked
+bucket may move, and inline must remain 31/42 with the same nine selector-stage
+rejects. Any residual stops the slice; do not widen selection. Current active
+branches #3523 and #4615 overlap `index.ts`, so dispatch only from a main that
+contains those predecessors (or rebase immediately before editing).
+
+## 2026-08-22 second stop checkpoint — two prerequisites remain
+
+The bounded fixed-point policy above was implemented on `cf9394a65`, exercised
+against linked Acorn, and then fully unwound. The stop gate missed: linked moved
+from 1/42 to **20/42**, not 22/42. Nineteen of the 21 late helpers emitted,
+`checkKeyName` remained `late-preparation-unsupported`, and `stringToNumber`
+reached final integration but withdrew at `abi-signature-parity` (IR type 134,
+legacy type 141). The worktree is clean; no partial implementation, commit, or
+PR remains.
+
+Both residuals were independently re-grounded on authoritative `main`
+`e15b07b` and form an ordered two-stage prerequisite:
+
+1. **Native-string ABI parity for `stringToNumber`.** Linked local analysis
+   makes the direct first parameter `(ref null $AnyString)`, while IR leaves it
+   dynamic/externref. Reuse the existing exact
+   `isExactDynamicStringReplaceNumberParser` proof in `src/ir/integration.ts`:
+   only when the exact legacy slot is the native-string carrier, the second
+   slot is the existing boolean `i32`, and the fixed parser shape matches,
+   adopt `{ kind: "string" }` for override parameter zero. In
+   `src/ir/from-ast.ts`, reuse the existing string-replace helper for that exact
+   `str.replace(/_/g, "")` receiver and add a narrowly paired direct-call
+   boundary for parameter zero of the exact parser's `parseInt`/`parseFloat`
+   calls, coercing the proven string to externref. Do not add a generic
+   string-to-externref rule or change selection. A two-file reduced
+   `Parser`/`readNumber` fixture must flip ABI withdrawal to IR emission and
+   return 12345.5/15; disabling only first-parameter adoption restores the
+   exact parity failure. Pattern, radix, replacement, non-native-string, and
+   unrelated direct-call controls remain fail-closed.
+2. **Mixed unresolved/native-string caller certification plus owner closure.**
+   `checkKeyName` has the exact direct/inline signature
+   `(externref, ref null $AnyString) -> i32`, but the current certificate omits
+   the mixed unresolved+string surface. Extend only the non-fast stable
+   certificate when allocated evidence proves unresolved=externref,
+   string=`AnyString`, and the existing boolean result. Then apply the prior
+   source-qualified certificate set only to M0's blocked-caller-to-retained-
+   callee fixed point, preserving initial deletion, blocked module init,
+   reverse dependency propagation, and all other callers. The reduced fixture
+   must pin the exact source-module-init UnitId to `checkKeyName` edge; separate
+   mutations of mixed-string certification and closure exemption must each
+   restore the precise late row.
+
+After both stages, rerun the original fresh linked/inline stop gate. Linked must
+be exactly **22/42**, with zero late-preparation and zero ABI-parity rows;
+`checkKeyName` and `stringToNumber` both emit. The unchanged linked buckets are
+regexp-constructor 2, return-type 3, param-type 1, logical-value 1,
+body-shape 11, and call-graph-closure 2; inline remains 31/42. Any miss again
+stops and unwinds. Stage one overlaps active #3522/#4608 `integration.ts`;
+stage two overlaps #3522/#3523/#4615 `index.ts`. Do not dispatch either until
+those predecessors land and the branch is rebased.
+
+## 2026-08-22 stage-one plan — linked native-string parser ABI parity
+
+This prerequisite is READY for implementation from authoritative `main`
+`15a8a813379bc1821eb46bec66be23ba313eb45a`, subject to rebasing after #4608
+because both touch `src/ir/integration.ts`. It is deliberately an ABI-parity
+overlay checkpoint, **not** a prepare-before-direct or compile-once claim.
+Success means `stringToNumber` changes from legacy-only after an IR parity
+withdrawal to legacy-plus-IR patching. The raw UnitId override remains dynamic,
+so the R2 stable-signature gate may still decline early ownership until the
+later fixed-point slice.
+
+### Measured reproducer and root cause
+
+The exact preserved two-file fixture is JavaScript-shaped source compiled with
+`allowJs: true`:
+
+```js
+// entry.mjs
+import "./empty.mjs";
+function Parser(input) {
+  this.input = input;
+}
+function stringToNumber(str, isLegacyOctalNumericLiteral) {
+  if (isLegacyOctalNumericLiteral) return parseInt(str, 8);
+  return parseFloat(str.replace(/_/g, ""));
+}
+function readNumber(parser) {
+  var octal = false;
+  return stringToNumber(parser.input.slice(0, parser.input.length), octal);
+}
+export function run() {
+  return readNumber(new Parser("12_3"));
+}
+
+// empty.mjs
+export const unused = 0;
+```
+
+Use `compileMulti` with entry `entry.mjs`, `skipSemanticDiagnostics: true`,
+`target: "standalone"`, `deferTopLevelInit: true`, `trackIrOutcomes: true`,
+`optimize: 0`, `preserveDebugNames: true`, and a function-only WAT view for
+`stringToNumber`. On the measured base the compile succeeds, but no function is
+IR-emitted. `stringToNumber` reaches patch-time parity and reports
+`function typeIdx parity mismatch: IR=123, legacy=43`; its direct header is
+`(ref null $AnyString, i32) -> f64`. The filtered outcome ledger was empty in
+that diagnostic probe, so the first focused test must prove the attempt through
+the parity diagnostic/compile audit rather than inventing a literal base
+outcome row.
+
+Linked local string analysis makes the direct first parameter native
+`$AnyString`. The shared IR override remains `dynamic`, while the existing
+exact parser repair changes only parameter 1 to boolean `i32`. Final IR patching
+therefore compares `(externref, i32) -> f64` against
+`(ref null $AnyString, i32) -> f64` and keeps the legacy body.
+
+### Bounded production contract
+
+Own only `src/ir/integration.ts`, `src/ir/from-ast.ts`, and
+`tests/issue-3521-linked-string-parser-abi.test.ts`.
+
+1. Cache one effective row per exact selected top-level declaration and UnitId:
+   `{ signature, exactNativeStringNumberParser }`. Never mutate the raw
+   name-keyed or UnitId-keyed override object or either shared map; preparation,
+   inherited-skip safety, and other backend consumers must continue to observe
+   the original dynamic signature.
+2. Resolve the legacy function slot through the exact source-qualified UnitId
+   and `ProgramAbiSourceCallableRegistry.handleForUnit`, then require the live
+   allocator object through `definedFuncAt`. Do not certify the native string
+   carrier through `ctx.funcMap.get(name)`: a same-spelled function in another
+   source can overwrite that display-name map. The compatibility path may use
+   its historical lookup only when no production identity context exists.
+3. Preserve the existing parameter-1 repair independently. Adopt parameter 0
+   as semantic `{ kind: "string" }` only when all of these are true: the exact
+   `isExactDynamicStringReplaceNumberParser` AST predicate; raw parameter 0 is
+   dynamic; the exact legacy slot is `ref`/`ref_null` of `ctx.anyStrTypeIdx`;
+   parameter 1 is the already-proven boolean `i32`; standalone native strings;
+   non-fast mode; and the dedicated test switch is off. The switch suppresses
+   only parameter-0 adoption, never the older boolean repair.
+4. Thread an owner-local proof bit through `AstToIrOptions` / `LowerCtx`. It is
+   false for every nested or lifted body and confers no generic string-method,
+   parse-provider, or string-to-externref capability.
+5. Reconcile direct-call plans locally. For a source call whose exact UnitId is
+   the adopted parser, clone/replace only that call target's signature with the
+   effective row. Preserve an existing exact source target ahead of any runtime
+   spelling. A local/same-spelled `parseInt` or `parseFloat` declaration must
+   never be replaced by a runtime target; missing or ambiguous target identity
+   fails closed. Leave `loweringPlans.signaturesByUnitId` and shared plan maps
+   untouched.
+6. Make the `parseInt` and `parseFloat` runtime targets available only inside
+   the proof-bearing parser owner. Remove the former global
+   `selected.funcs.has("stringToNumber")` name exposure. Runtime availability
+   and lowering must resolve through the existing
+   `ctx.ambientBuiltinFuncMap`, whose contract explicitly prevents a
+   same-spelled user function in another source from stealing the ambient
+   alias. Do not consult `funcMap` for these two runtime refs, and do not let an
+   unrelated owner gain either target.
+7. Reuse one exact dynamic string-replace sequence. A proven native-string
+   receiver may enter it only for `str.replace(/_/g, "")`: canonical-box the
+   receiver and empty replacement, then call the existing
+   `IR_DYN_STRING_REPLACE_FN`. The prior dynamic-receiver path must remain byte-
+   and behavior-identical.
+8. At direct-call argument 0 only, the proof-bearing parser may cross a
+   concrete string to the existing externref `parseInt` / `parseFloat` boundary
+   with `emitCoerceToExternref`. A dynamic value is accepted there only when
+   `dynamicCarrierIsExternref()` is true. Do not use the DOM-only native-string
+   marker and do not introduce a general string-to-externref rule. Fast mode
+   remains excluded because its `$AnyValue` dynamic carrier is not that host
+   boundary.
+
+### Anti-vacuity and mutation matrix
+
+The focused suite must first reproduce the exact base parity failure on the
+fixture above. A class-member replacement is invalid: multi-source final
+selection currently clears class members and would make both dirty integration
+paths unreachable. Keep `readNumber` as the measured top-level caller so the
+test exercises source-caller signature reconciliation.
+
+With the change enabled, require valid Wasm and runtime `run() === 123`; add an
+otherwise identical true-branch entry proving octal `"17" -> 15` without
+changing the exact parser/caller topology. Require `stringToNumber` to be
+IR-emitted, retain its honest legacy-body flag, and publish no ABI-parity or
+post-claim failure. If a Prepared component ID appears, it is correlation
+evidence only; do not describe this stage as direct=0 or compile-once.
+
+Disabling only parameter-0 adoption must restore the exact parity diagnostic,
+legacy body, and absence from the IR-compiled set while leaving the parameter-1
+boolean repair active. Mutation controls must cover radix 10/missing radix,
+`/x/g`, non-empty replacement, a same-name wrong-shape parser, a source/local
+`parseInt` collision, an unrelated parse caller, a same-spelled function in a
+second source, host strings, fast native mode, and a source caller whose call
+plan would still carry the raw dynamic target without local reconciliation.
+None may gain the proof or a runtime parse target.
+
+Keep `tests/issue-3794-ir-dynamic-replace.test.ts` and
+`tests/issue-4585-npm-compat-refresh-resilience.test.ts` as adjacent controls.
+Run the focused stop gate before typecheck or broader gates. Then run
+typecheck, Prettier/diff, LOC/function, oracle, fallback, and the relevant
+multi-source adjacency. Release still requires eight separate equivalence
+shards. The full Acorn 22/42 measurement belongs only after stage two restores
+the owner-closure change; stage one alone must not claim that denominator.
+
+The folded production overlay is +180 net lines in `integration.ts` and +84 in
+`from-ast.ts`; both are already listed in this issue's
+`loc-budget-allow`. Its new focused test currently contains 13 cases. Keep
+helpers bounded and the existing functions within the declared function
+allowance. This issue file and the new test path must be in the implementation
+PR so the change-scoped budget gate reads the grant. Never edit shared budget
+baselines.
+
+### 2026-08-22 signed current-stack implementation checkpoint
+
+The R2 worktree at `/private/tmp/js2-3521-r2-replay-4608-5d55` is clean at
+signed commit `62a87e822a598f1c260366c17ba768059dbbf597`, with signed #4608
+parent `6d553d0ba2382d4caabbf4932c8bb7f37b9787a5`, tree
+`cf3dd3e571ef445f29003f98057fdb24d586c666`, source/test stable patch ID
+`8efd040fb983d40d58e253cbae85063f220ca111`, and full binary-diff SHA-256
+`d0e08a72069418a5e0408c209cb86ca924a88ff0b862f3adb05252ed5505b65d`.
+Its SSH signature verifies with Thomas's ED25519 key
+`SHA256:DR95AGYro71Tam9UvWGtJZtdhbvNVI+qlGMp/naIyHc`; author and committer are
+Thomas Tränkler, with the Codex co-author trailer. The commit owns exactly:
+
+- this issue file, changed by 25 additions and 1 deletion to activate only its
+  existing change-scoped allowances and record the bounded replay;
+- `src/ir/from-ast.ts`, changed by 131 additions and 47 deletions;
+- `src/ir/integration.ts`, changed by 241 additions and 61 deletions; and
+- `tests/issue-3521-linked-string-parser-abi.test.ts`, added at 510 lines.
+
+The historical signed source checkpoints remain
+`b1f1ebd198f633c1addc5bc8f6152138c3f22ae2` (tree
+`6f3a5b2fb30e215cc23462fab5bcc484ee9e1a9a`) plus type-predicate child
+`4755b1347292c344efac794b3b103ff6f1fa6046` (combined tree
+`33758421a30c7f01b94e88cb612bc27257d42706`). The current commit folds both
+into one atomic replay, preserves their production blobs after composition,
+and adds only the issue metadata plus the reviewed host-string byte-identity
+assertion. Static review is **APPROVE** for the exact signed current-stack tree.
+Prettier, Biome, cached diff, IR layering (83/83), IR dialect, LOC, and function
+budgets pass. The LOC gate reports the existing grants as +84 for `from-ast.ts`
+and +177 for the composed `integration.ts` relative to the current change base;
+no shared baseline changed. Runtime and release acceptance remain deferred to
+the low-load gates below.
+
+The child changes only the TypeScript predicate that narrows numeric-separator
+`replace` receivers. Its return-type annotation is erased, so it is neutral to
+runtime and Wasm byte semantics. The current atomic commit incorporates that
+child; any future replay must keep the type narrowing folded with R2 rather
+than resurrecting the standalone `b1f1ebd1` checkpoint.
+
+Static review tightened the original one-bit contract into two owner-local
+facts:
+
+- `exactStringNumberParserRuntimeOwner` proves the exact parser AST and the
+  non-fast externref runtime boundary. It alone may construct the parser's
+  `parseInt` / `parseFloat` direct-call plans from
+  `ctx.ambientBuiltinFuncMap`, and it admits only the authenticated dynamic to
+  externref argument-zero boundary.
+- `exactNativeStringNumberParser` depends on that first proof and additionally
+  requires standalone native strings, the exact `$AnyString` legacy slot, the
+  already-repaired boolean parameter, and the dedicated switch. It alone may
+  adopt semantic string for parameter zero, box the exact native
+  `replace(/_/g, "")` receiver, or coerce a proven concrete string into the
+  parse boundary.
+
+Effective signature adoption is copy-only: it clones the parameter array and
+copies `preparedDirectCalls` before any owner-local replacement. It does not
+mutate the shared name, UnitId signature, or call-plan maps. Production
+allocator and signature lookup stays UnitId-qualified; compatibility name
+fallback does not authorize this proof. Exact source parse bindings beat
+runtime spelling. Ambiguous or mixed identities, cross-source collisions, and
+wrong-AST/UnitId declarations withdraw. Ambient providers come only from
+`ambientBuiltinFuncMap`, never `funcMap`. Both proof facts reset for nested and
+lifted bodies, forced-fast integration remains excluded, and host strings keep
+the existing dynamic route.
+
+The 13-case focused matrix covers disabled exact ABI-parity withdrawal,
+parameter-one boolean retention, enabled decimal and octal routes, caller-plan
+reconciliation, same-source and cross-source identity, ambiguity and wrong
+AST/UnitId, radix/pattern/replacement mutations, an unrelated parse caller,
+host strings, and forced-fast integration. The host enabled/disabled case
+now asserts exact enabled/disabled binary equality before the two results are
+independently validated, instantiated, and required to return `123`.
+
+C36 `5573344c`, C37 `b1e974aa`, #4608 `6d553d0b`, and R2 `62a87e82` are now a
+literal signed chain on exact main `5d55b338`. C37's exact declaration-owned
+direct allocator is the semantic prerequisite for R2's UnitId signature
+adoption. #4608 and R2 both touch `src/ir/integration.ts`; the signed composed
+tree preserves #4608's post-inline and post-monomorphization
+`programAbiModuleDeclarations` hooks exactly while R2 owns the parser-signature
+and direct-call reconciliation blocks. The remaining order is **#3522 after
+R2**.
+
+The later signed #3522 checkpoint `c549dded` has a real composition conflict in
+the direct-call-plan block of `src/ir/integration.ts`. #3522 replaces the
+inline collector with `makeIrDirectCallPlanReconciler` and adds
+`constructorFieldCalls` exclusions plus exact `requireConstructorInitializer`
+handling; R2 adds owner-local ambient/source parser target selection and exact
+adopted-UnitId signature replacement at that block. Resolve the conflict by
+preserving #3522's constructor-owned field-call exclusions and exact
+initializer requirement, then extending or using its reconciler for R2's
+owner-local targets and adopted-signature replacement. Taking only the R2 side
+would regress field-initializer ownership; taking only #3522 would lose parser
+identity and adopted ABI. `src/ir/from-ast.ts` and the focused tests otherwise
+compose cleanly.
+
+When a low-load window opens, run the focused R2 stop gate first:
+
+```sh
+VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 pnpm exec vitest run \
+  tests/issue-3521-linked-string-parser-abi.test.ts \
+  tests/issue-3794-ir-dynamic-replace.test.ts \
+  tests/issue-4585-npm-compat-refresh-resilience.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+```
+
+After composing #3522, run the ownership adjacency in one bounded fork:
+
+```sh
+VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 pnpm exec vitest run \
+  tests/issue-3521-linked-string-parser-abi.test.ts \
+  tests/issue-3522-nested-class-field-call-ownership.test.ts \
+  tests/issue-3522-nested-class-field.test.ts \
+  tests/issue-3522-nested-implicit-constructor.test.ts \
+  tests/issue-3522-nested-class-accessor.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+```
+
+Only after those focused gates pass, run:
+
+```sh
+pnpm run typecheck
+pnpm run check:ir-fallbacks -- --verbose
+```
+
+Also complete the existing LOC/function, oracle, and relevant multi-source
+adjacency gates without changing shared budget baselines or adding speculative
+grants. The exact A/B pair is the immediate composed parent versus the composed
+R2 candidate under the same lane, harness, and options. It must prove:
+
+- disabled adoption restores the exact ABI-parity diagnostic, keeps the parser
+  and caller out of the IR-compiled set, and returns `123` through legacy;
+- enabled adoption patches the parser and caller with honest `legacy=true` and
+  `ir=true`, returning decimal `123` and octal `15`;
+- host enabled/disabled binaries are byte-identical, and the dynamic receiver
+  replacement parent/candidate binaries are byte-identical;
+- every near-miss mutation and the forced-fast control retain their original
+  routes.
+
+This stage makes no `direct=0`, compile-once, or emission-ownership acceptance
+claim. Release still requires all eight equivalence shards as separate
+processes:
+
+```sh
+SHARD=1/8 EQUIVALENCE_FORK_HEAP_MB=4096 node scripts/equivalence-gate.mjs
+SHARD=2/8 EQUIVALENCE_FORK_HEAP_MB=4096 node scripts/equivalence-gate.mjs
+SHARD=3/8 EQUIVALENCE_FORK_HEAP_MB=4096 node scripts/equivalence-gate.mjs
+SHARD=4/8 EQUIVALENCE_FORK_HEAP_MB=4096 node scripts/equivalence-gate.mjs
+SHARD=5/8 EQUIVALENCE_FORK_HEAP_MB=4096 node scripts/equivalence-gate.mjs
+SHARD=6/8 EQUIVALENCE_FORK_HEAP_MB=4096 node scripts/equivalence-gate.mjs
+SHARD=7/8 EQUIVALENCE_FORK_HEAP_MB=4096 node scripts/equivalence-gate.mjs
+SHARD=8/8 EQUIVALENCE_FORK_HEAP_MB=4096 node scripts/equivalence-gate.mjs
+```
+
+## 2026-08-23 root implementation sequence — close R2 honestly
+
+1. Qualify the signed linked parser/caller ABI checkpoint in the composed
+   stack, including enabled/disabled parser lanes, direct/prepared routes,
+   host/standalone targets, decimal/octal runtime values, and exact artifact
+   controls. This checkpoint does not by itself prove `direct=0`.
+2. Land #4260 before any wider late-preparation claim. Provider, import, and
+   in-module implementation requests must publish atomically with their
+   prepared component and retract cleanly on abort.
+3. Replace the remaining caller/final-context and late-preparation seams with
+   one fixed-point `PreparedIrProgram` transaction. Every adopted callee,
+   caller, provider, signature, and Program ABI binding must be resolved before
+   body emission.
+4. Delete only the R2 compatibility paths made unreachable by that
+   transaction; typed Unsupported remains policy until #4652/R9.
+5. Re-run free-function/provider/component/fallback/multi-source adjacency,
+   both policy gates, cross-backend validation, and all eight literal
+   equivalence shards before marking R2 done.
+
+The root agent owns the issue plan and acceptance; Luna-max developers execute
+file-bounded commits sequentially, with an independent review and signed
+landing for every transaction.
+
+## 2026-08-23 collector follow-up — linked parser caller selection repair
+
+The bounded R2 collector captured all 32 children and retained their raw
+records. In the candidate standalone/prepared/native-strings/enabled tuple,
+`stringToNumber` is emitted but `readNumber` is rejected at selection with
+`unsupported/select/param-type-not-resolvable`. This is a production routing
+gap, not an acceptance-oracle relaxation and not a new load failure: every
+captured one-minute sample was finite, non-negative, and strictly below the
+10-core limit of 8.
+
+### Root cause and ownership boundary
+
+The stage-06 parser delta correctly repairs the exact parser ABI in
+`src/ir/from-ast.ts` and `src/ir/integration.ts`, but those repairs run only
+after the identity selector has produced a claim. `src/ir/propagate.ts` keeps
+`new Parser(input)` as `dynamic`; the `readNumber(parser)` body then reads
+`parser.input.slice(...)`, which fails `dynamicUsesAreMoveOnly` in
+`src/ir/select.ts`. Consequently `planIrCompilationByIdentity` omits the
+`readNumber` unit before `compileIrPathFunctions` or
+`projectIrIntegrationLoweringPlans` can build an owner-local signature or
+direct-call plan. The final `compileMulti` composition did not drop a caller
+plan: the caller never entered the active selection/override maps. The
+two-source path is relevant because selection and projection are source
+qualified, but this fixture's caller and parser are both in `entry.mjs`.
+
+Amend #3521 and keep the existing
+`tests/issue-3521-linked-string-parser-abi.test.ts` ownership. Do not create a
+new issue or move this into #3522: #3521 owns free-function pre-claim and
+parser ABI routing, while #3522's direct-call-plan composition remains a
+consumer that must preserve the owner-local adopted-signature replacement.
+
+### Minimal implementation plan
+
+1. **Add a bounded pre-claim proof.** In `src/ir/propagate.ts`, extend the
+   source-local expression lattice for the exact function-constructor pattern
+   used by this slice: a unique `new Parser(value)` declaration whose body
+   assigns a fixed `this.input` field from a string value. Reuse the existing
+   fnctor/constructor identity evidence; do not infer arbitrary JavaScript
+   objects or aliases. The resulting atom must be an exact object shape with
+   `input: string`, and must widen to `dynamic` when the constructor is
+   ambiguous, imported/foreign, reassigned, has another field write, or its
+   input is not proven string. Add the `NewExpression` arm to `inferExpr` and
+   preserve the existing source-qualified call graph/fixpoint. If the current
+   fnctor evidence cannot be consumed by propagation without broadening its
+   contract, add a small identity-keyed adapter rather than a name-keyed
+   fallback.
+
+2. **Feed that proof into selection, not into a post-selection override.** In
+   `src/ir/select-identity.ts` (`planIrCompilationByIdentity` and its
+   structural assessment path) and the corresponding
+   `src/ir/select.ts` selector helpers, allow `readNumber` to resolve its
+   parameter as the proven object shape. The normal body-shape and
+   `dynamicUsesAreMoveOnly` checks must then see `parser.input` as `string`,
+   so the existing `from-ast` property/string lowering is used. Do not add a
+   generic exception for a dynamic receiver and do not accept a caller merely
+   because its callee is named `stringToNumber`.
+
+3. **Retain the stage-06 parser ABI repair and make the composed plan exact.**
+   Keep `AstToIrOptions`/`LowerCtx`,
+   `reconcileExactParserExternArgument`, and `lowerMethodCall` in
+   `src/ir/from-ast.ts` as the lowering boundary for the parser's first
+   argument. In `src/ir/integration.ts` (`compileIrPathFunctions` and the
+   effective top-level signature resolver), materialize the adopted parser
+   signature only for the exact `stringToNumber` unit in `entry.mjs` and only
+   in standalone + native-strings + enabled mode. Its effective ABI is
+   `[string, i32-boolean] -> f64`; the caller remains a distinct
+   `IrUnitId` with its own exact structural receiver parameter and `f64`
+   result.
+
+   In `src/codegen/ir-overlay-identity.ts`,
+   `projectIrIntegrationLoweringPlans`, and the `compileMulti` planning path,
+   build the caller edge as a copy-on-write, AST-site keyed plan:
+
+   ```text
+   readNumber(CallExpression) ->
+     irUnitFuncRef({ unitId: exactStringToNumberUnitId,
+                     legacyName: "stringToNumber" })
+   ```
+
+   `calleeTypes` and the effective signature map must be keyed by the exact
+   callee `IrUnitId`; preserve the source ID and the parser/caller unit IDs,
+   and require distinct units with the same `entry.mjs` source. Reconcile the
+   effective parser signature after the owner-local projection is built, but
+   never mutate shared legacy-name maps, borrow a same-spelled function from a
+   different source, or replace unrelated AST call sites. Keep the
+   #4608 declaration hooks at both existing post-inline and
+   post-monomorphization boundaries.
+
+4. **Keep the proof narrow and optimization-neutral.** The repair must not
+   disable inline-small, monomorphization, allocation provenance, string
+   carrier lowering, or the normal component ownership checks. A failed proof
+   remains `Unsupported` and direct-emits once. There is no direct/IR retry and
+   no generic widening of dynamic member reads.
+
+### Required tests and mutations
+
+Extend the existing linked-parser test (and its static selftest where
+applicable) with the following exact controls:
+
+- A two-source `compileMulti` fixture with `Parser`, `stringToNumber`,
+  `readNumber`, and `run` in `entry.mjs`, plus an unrelated `empty.mjs`.
+  Standalone/native-strings/enabled must emit both parser and caller with
+  `legacyBodyEmitted=true`, `irBodyEmitted=true`; parser and caller must have
+  distinct unit IDs, the same exact source ID, the effective parser ABI above,
+  and one exact owner-local direct-call edge. Execute decimal and octal inputs
+  (including the signed `15`/`123` cases) and validate the resulting Wasm.
+- Selector mutations for an unknown/ambiguous/foreign constructor, a
+  cross-source or same-spelled parser, an alias/reassignment of `input`, a
+  non-string constructor argument, a missing parser call, and a changed
+  `slice`/parser topology must all fail closed as `Unsupported`; no mutation
+  may make a same-named function from another source eligible.
+- Preserve the existing parser param-1 repair and disabled param-0 parity
+  failure tests, fast-mode rejection, collision/near-miss/ambiguous binding
+  tests, and unrelated parse caller tests. Add a regression asserting that
+  host-string and base/disabled tuples retain their existing outcomes.
+- The acceptance matrix is intentionally asymmetric: candidate standalone
+  prepared enabled is the one positive parser+caller route; base and disabled
+  caller routes may remain preselection `param-type-not-resolvable`, and host
+  lanes may emit the parser while retaining the unsupported caller. No caller
+  warning relaxation changes the mandatory exact `irOutcomes` contract.
+- Run static/type/format/layering and optimization-ledger gates before any
+  runtime. Then run the repaired candidate A/B and the full 32-child R2
+  collector once under finite, non-negative per-child load `< logical cores -
+  2`; retain every raw record and fail closed on any route, source, ABI, or
+  optimization drift. The unchanged #4035 size ceiling is not a new
+  regression.
+
+### Signed-delta and relock policy
+
+The frozen R2 composite, preserved failure envelopes, and their hashes remain
+immutable evidence. Implement this as a new signed repair delta appended on
+top of the frozen commits; do not amend/rewrite the earlier signed commit or
+retroactively change its bundle. After the source repair, regenerate the
+source/bundle manifests and issue inventory, obtain an independent static
+review, rerun pins-only, and only then schedule the bounded runtime/A-B and
+final aggregate gates. The strict load gate remains exactly
+`Number.isFinite(sample) && sample >= 0 && sample < (logicalCores - 2)`.
+
+### 2026-08-23 source-trace correction — projection requires lowering
+
+The initial bounded-proof wording above is not sufficient by itself. The current IR
+lowerer has no plain function-constructor arm in `lowerNewExpression` and no
+`ref_null $__fnctor_*` arm in `lowerPropertyAccess`; a selector-only
+object/fnctor admission would therefore create a claim-then-demote path.
+
+The repair must ship as one bounded projection/lowering transaction:
+
+- certify the exact declaration identity of the approved `Parser` fnctor, its
+  unique constructor site, fixed `this.input` string field, and source-qualified
+  owner; all ambiguity, aliases, foreign constructors, reassignment, extra
+  fields, and non-string inputs widen/reject;
+- carry a symbolic fnctor-instance projection (reserved fnctor type identity plus
+  exact field shape) through propagation, selector, identity planning, and the
+  override map; do not encode the module-local type index in the lattice;
+- add the matching `from-ast` lowering for the certified plain `new Parser(...)`
+  site and `parser.input`/string-slice field access, reusing the existing
+  fnctor reservation/constructor semantics and preserving null/ref ownership;
+- retain the exact parser ABI and owner-local direct-call plan reconciliation
+  already present in the R2 stage; the caller and parser remain distinct
+  source-qualified `IrUnitId`s;
+- add fail-closed tests for each unsupported projection and for successful
+  Wasm/runtime output. A selector bypass without these lowerer and identity
+  checks is explicitly rejected.
+
+The withdrawal denominator remains asymmetric: pre-claim caller rejection is valid
+for base/disabled/host lanes, while candidate standalone/native-strings/enabled
+must emit both parser and caller with exact outcome evidence.
+
+### 2026-08-23 implementation checkpoint — no unsafe selector bypass
+
+The first Luna-max implementation pass was intentionally stopped before source
+edits. The existing fnctor constructor ABI carries hidden capture/identity
+parameters and reserved internal fields; constructing an `object.new` from the
+checker-visible `{ input: string }` shape would produce the wrong nominal type
+and field arity. An IR call is likewise not a valid substitute until an exact
+constructor-plan seam and resolver support exist. Therefore no selector-only
+bypass, generic dynamic admission, or naïve object construction is accepted.
+
+The next implementation checkpoint must identify the existing reservation,
+constructor, and field-load plan objects and add a bounded source-qualified
+projection/lowering path that reuses them. Until that seam is proven, R2 stays
+`needs-runtime-replay`/fail-closed and the frozen composite plus all prior
+failure evidence remain unchanged. Static issue-plan checkpoints may land
+independently; no runtime replay is authorized by this checkpoint.
+
+### 2026-08-23 Luna architecture result — exact ABI seam required
+
+The existing reservation/layout is in `linear-type-reservations.ts`, while
+constructor synthesis and its hidden capture/identity parameter are in
+`expressions/new-super.ts` and `fnctor-constructor-identity.ts`. The current
+`fnctor-typed-instances.ts` path exposes only the reserved `ref_null` carrier;
+it does not provide an IR constructor or field operation. In particular,
+`fnctor-ctor-param-types.ts` deliberately does not infer string/reference
+fields, so this fixture's `Parser.input` is currently an `externref` field.
+
+The implementation must therefore add an identity-bearing, backend-neutral
+`fnctor.new`/`fnctor.get` seam (or an exactly equivalent existing abstraction),
+with resolver validation against the declaration identity, escape gate, reserved
+type/layout, and synthesized constructor map. It must either prove a native
+string field ABI or add a bounded field-to-string conversion before using
+native `slice`. A checker-shaped anonymous object, raw `ref_null` override, or
+selector-only admission is invalid. Unsupported captures, `arguments`, foreign
+returns, aliases, rebinding, cross-source collisions, and parser escape remain
+fail-closed. The focused test collection is still deferred; no source edit or
+runtime result is claimed by this checkpoint.
+
+### 2026-08-23 Luna max ABI design checkpoint
+
+The second Luna-max pass confirmed that the current IR has no fnctor type,
+`fnctor.new`/`fnctor.get` instructions, builder methods, lowering resolver, or
+selector propagation kind. Existing `class.*` machinery is not a safe
+substitute: fnctor construction is an ABI-specific call whose operand order
+includes captures/TDZ values, user parameters, and the trailing constructor
+identity parameter.
+
+The implementation delta is therefore explicitly staged as:
+
+1. Add a nominal `IrFnctorShape` and `IrType.kind === "fnctor"` carrying exact
+   source/unit identity, constructor target, capture layout, hidden-identity
+   requirement, user parameter types, and a symbolic reserved-layout reference.
+2. Add builder/verifier `fnctorNew` and `fnctorGet` operations. Enforce hidden
+   argument ordering and reject missing/extra capture or identity operands.
+3. Extend `IrLowerResolver.resolveFnctor(shape)` to cross-check declaration
+   identity, source/unit, `fnctorReservedTypeIdx`, `structFields`,
+   `funcConstructorMap`, capture layout, constructor params, and the defined
+   function. No name fallback is permitted.
+4. Add selector admissions for the exact direct same-source unaliased
+   constructor, fixed string field, proven constructor identity, and no
+   reassignment/escape; aliases, computed keys, foreign/cross-source joins,
+   unsupported captures/returns, and ambiguous propagation demote to dynamic.
+5. Add one positive linked-parser test plus negative alias, foreign,
+   reassignment, cross-source collision, computed/non-string field, and missing
+   reservation mutations.
+
+This is a design checkpoint only: no source edit, commit, runtime, or collector
+result is claimed until the staged ABI seam is implemented and independently
+reviewed.
+
+### 2026-08-24 bounded source-local fnctor projection checkpoint
+
+The next parser slice is intentionally scoped to one declaration and one
+source. It is not a generic object-shape extension and it is not permission to
+make the selector tolerate a dynamic receiver. The only positive proof is the
+checker-identified `FunctionDeclaration` named `Parser` in `entry.mjs`, with
+exactly one `new Parser(stringExpression)` site in the `readNumber` call path,
+and a constructor body whose only own write is `this.input = input`. The
+constructor declaration, allocation site, field write, and owner source must
+all be the same identity records; the spelling `Parser` is only a diagnostic
+label. Any second declaration/allocation, alias, reassignment, computed field,
+extra field, foreign return, capture/`arguments` use, cross-source match, or
+non-string argument must return `Unsupported` before IR lowering.
+
+The exact pre-claim failure is unchanged and is now the first diagnostic to
+pin in the static test: `src/ir/propagate.ts::buildCallGraph` records a
+constructor call for parameter propagation but `inferExpr(NewExpression)`
+still returns `dynamic`; `src/ir/select.ts::dynamicUsesAreMoveOnly` therefore
+rejects the `parser.input` receiver, and
+`src/ir/select-identity.ts::planIrCompilationByIdentity` never admits
+`readNumber`. The parser ABI repair in `from-ast.ts` and `integration.ts` is
+downstream of this decision and must not be used as a selector bypass.
+
+The implementation is deliberately a staged transaction with this exact file
+map (the files below are the bounded seam, not a grant to refactor the legacy
+fnctor emitter):
+
+1. `src/ir/nodes.ts` adds a nominal `IrFnctorShape` and `IrType.kind ===
+   "fnctor"`. The shape carries the exact constructor declaration/unit/source
+   identity, the reserved symbolic fnctor layout reference, the hidden
+   capture/TDZ layout, the user constructor parameter types, and canonical
+   fields. It must not carry a module-local type index or a legacy name as an
+   identity key. `src/ir/propagate.ts` adds the corresponding identity-bearing
+   lattice atom and a single `NewExpression` arm; it may produce this atom only
+   after the proof above and otherwise widens to `dynamic`. The existing
+   object-literal atom remains unchanged.
+
+2. `src/ir/select.ts` (`isPhase1Expr`, the constructor/property-access shape
+   checks, and `dynamicUsesAreMoveOnly`) and
+   `src/ir/select-identity.ts` (`planIrCompilationByIdentity` plus structural
+   assessment) consume that atom by exact `IrUnitId`/source identity. The
+   selector must require one owner-local `parser.input` read and the fixed
+   `slice(0, parser.input.length)` topology. It must not accept a dynamic
+   receiver, use the callee spelling `stringToNumber` as evidence, or borrow a
+   same-spelled constructor from another source. The failed-proof outcome stays
+   `param-type-not-resolvable`/`Unsupported` at pre-claim.
+
+3. `src/ir/builder.ts`, `src/ir/lower.ts`, and `src/ir/verify.ts` add the
+   backend-neutral `fnctor.new` and `fnctor.get` operations. Their verifier
+   checks exact shape identity, field name/type, nullability, and operand
+   counts. `src/ir/from-ast.ts::lowerNewExpression` and
+   `::lowerPropertyAccess` add only the certified `Parser` arms, dispatching
+   through those operations. A selector admission without these lowering arms
+   is invalid because it would claim and then demote at the first constructor
+   or field read.
+
+4. `src/ir/integration.ts` extends the resolver with one identity-checked
+   fnctor lowering implementation. It must validate the shape against
+   `ctx.fnctorEscapeGate`, `ctx.fnctorReservedTypeIdx`, `ctx.structFields`, and
+   `ctx.funcConstructorMap`, then emit the existing synthesized constructor
+   ABI in the exact order `captures/TDZ, user params, constructor identity`.
+   `src/codegen/fnctor-ctor-decl.ts`,
+   `src/codegen/fnctor-escape-gate.ts`, and
+   `src/codegen/expressions/new-super.ts` are read-only ABI authorities for
+   this adapter: no parallel constructor, field layout, or type reservation
+   may be introduced. The `input` field must be proven to lower as the active
+   native-string carrier before the parser ABI is adopted; otherwise the
+   projection declines.
+
+5. Only after the constructor/field operation verifies should
+   `src/codegen/ir-overlay-identity.ts`,
+   `src/ir/integration.ts`'s owner-local projection, and the `compileMulti`
+   planning path add the caller edge. The edge is copy-on-write and AST-site
+   keyed to the exact `stringToNumber` unit in `entry.mjs`; the parser and
+   `readNumber` retain distinct `IrUnitId`s. No legacy-name map or shared callee
+   signature map may be mutated. The adopted parser ABI remains
+   `[string, i32-boolean] -> f64` only for standalone + native-strings +
+   enabled mode.
+
+The static gate for the implementation PR belongs in the existing
+`tests/issue-3521-linked-string-parser-abi.test.ts` file and must run without
+compiling or instantiating Wasm. It should parse a positive fixture and the
+following fail-closed mutations, then inspect the source-qualified proof
+records/selection result: unknown or ambiguous `Parser`, foreign and
+cross-source constructors, aliases and `input` reassignments, extra/computed
+fields, non-string constructor arguments, missing parser calls, changed
+`slice`/length topology, unsupported captures/`arguments`, and a same-spelled
+`Parser` in another source. The assertions must prove that only the exact
+positive AST site yields an `IrFnctorShape`; every mutation remains
+`Unsupported`, with no runtime/A-B claim. Runtime decimal/octal probes and the
+existing parser ABI matrix remain a later gate after this static seam is
+reviewed.
+
+This checkpoint is documentation-only: it intentionally contains no source,
+compiler, runtime, A/B, collector, or heavy-test result. The current R2 state
+therefore remains fail-closed/`needs-runtime-replay`; the next implementation
+PR must land the nominal type, operations, resolver, and static tests as one
+reviewable projection/lowering transaction.
+
+## 2026-08-24 source-qualified fnctor admission checkpoint
+
+The first implementation checkpoint is deliberately limited to admission
+evidence. `buildIrUnitTypeMap`, identity selection, and the selector accept an
+opt-in `IrFnctorAdmission` only when a source-qualified constructor proof
+establishes the reserved `Parser { input: string }` shape, direct construction,
+fixed unconditional field, and no alias/reassignment/escape/cross-source
+collision. Without a resolver, all existing propagation and selector behavior
+is unchanged and the site remains dynamic/Unsupported. This checkpoint does
+not add an IR fnctor node, constructor lowering, or ABI emission; those must be
+landed as the next signed slice with exact reserved-layout and hidden-identity
+checks from the architecture section above. The bounded source changes are
+covered by `loc-budget-allow` for the two existing god-files and are intended
+to be reviewed independently before any R2 replay.
+
+## 2026-08-24 nominal ABI contract checkpoint
+
+`src/ir/fnctor-abi.ts` now defines the backend-neutral nominal shape,
+source/unit/layout identity, capture and user-parameter ABI, constructor
+identity slot, and a fail-closed `IrFnctorLowerResolver` contract. Pure tests
+cover exact acceptance plus duplicate-field, identity-index, and retargeted
+constructor rejection. This checkpoint deliberately does not widen `IrType`,
+add instructions, or emit Wasm; the next slice must consume this contract from
+the IR builder/verifier and standalone resolver rather than duplicating the
+legacy `CodegenContext` lookup.
+
+## 2026-08-24 nominal IrType utility checkpoint
+
+The next static slice widens the backend-neutral `IrType` union with a nominal
+`fnctor` arm carrying the validated source/unit/layout-qualified
+`IrFnctorShape`. Type equality, canonical keys, debug descriptions, context
+index scans, and preparation walks now recurse through fields, captures, and
+user parameters without assigning a physical carrier. Linear-memory, string,
+vector, and physical-reference preparation preserve the opaque arm unchanged;
+lowering fails closed with an explicit missing-resolver diagnostic. No
+`fnctor.new`/`fnctor.get` instruction, ABI emission, or runtime behavior is
+claimed by this checkpoint. The next signed slice must add those instructions,
+builder/verifier effects, and an exact standalone resolver before this arm can
+reach lowering.

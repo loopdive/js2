@@ -1,10 +1,10 @@
 ---
 id: 4522
-title: "Inventory and retirement plan for the 13 JS2WASM_IR_* env kill-switches — R9 requires them gone, nobody owns the list"
+title: "Inventory and retirement plan for IR/direct env kill-switches"
 status: done
 sprint: current
 created: 2026-08-16
-updated: 2026-08-21
+updated: 2026-08-24
 completed: 2026-08-21
 priority: medium
 horizon: s
@@ -55,6 +55,9 @@ kind of last-minute audit R9 should not depend on.
 - [x] A one-line guard is added to the R9 acceptance checklist in #3518
       pointing at this inventory, so the flip consumes it rather than
       re-auditing.
+- [x] Later bounded multi-source route switches are appended here when they
+      land; a `JS2WASM_MULTI_PREPARED_*_CUTOVER` reader is R9 debt even though
+      it is outside the historical `JS2WASM_IR_*` prefix census.
 
 ## The inventory (measured 2026-08-21)
 
@@ -73,6 +76,10 @@ toggles are the R9 debt" is corrected accordingly, per-var below.
 | `JS2WASM_IR_STRING_BUILDER` | on | `=0` forces builder loops to legacy (`string-builder-candidate`) | **retire-at-R9** — legacy escape hatch; its always-deferred sibling arm (`containsCountedLiteralStringAppend`, the #1004 repeat-fold) is a selector gap #3518's coverage closure must own, not an env var | R9 |
 | `JS2WASM_IR_ASYNC` | on | `=0` clears `supportsAsyncIr` — async bodies route to legacy | **retire-at-R9** | R7 (#3527/#1373b) then R9 |
 | `JS2WASM_IR_OBJECT_SHAPES` | on | `=0` reverts to the legacy boxed-externref object representation | **retire-at-R9** — legacy-representation escape hatch | R9 |
+| `JS2WASM_MULTI_PREPARED_SCALAR_LEAF_CUTOVER` | on | `=0` restores direct-first ownership for the bounded scalar leaf | **retire-at-R9** — bounded direct-route escape hatch | #3518 R9 |
+| `JS2WASM_MULTI_PREPARED_ARRAY_CUTOVER` | on | `=0` restores direct-first ownership for the bounded array leaf | **retire-at-R9** — bounded direct-route escape hatch | #3518 R9 |
+| `JS2WASM_MULTI_PREPARED_BENCH_LOOP_CUTOVER` | on | `=0` restores direct-first ownership for the bounded benchmark loop leaf | **retire-at-R9** — bounded direct-route escape hatch | #3518 R9 |
+| `JS2WASM_MULTI_PREPARED_FIB_PAIR_CUTOVER` | on | `=0` restores direct-first ownership for the bounded Fibonacci pair | **retire-at-R9** — bounded direct-route escape hatch | #3518 R9 |
 | `JS2WASM_IR_INLINE` | on | `=0`/tuned sets control the IR-level inliner (#4157) | keep-as-tuning — IR pass config, no legacy involvement (a `-O`-style knob) | — |
 | `JS2WASM_IR_GVN` | off | `1` enables the GVN pass; `poison` runs the liveness self-check | keep-as-experiment + self-check — IR pass, no legacy; its owner decides the default flip | — |
 | `JS2WASM_IR_GVN_DEBUG` | off | debug prints for GVN | keep-as-diagnostic | — |
@@ -87,9 +94,10 @@ toggles are the R9 debt" is corrected accordingly, per-var below.
 Nothing is retire-now-already-dead: every var has a live reader under `src/`
 (verified by the per-var grep above the table's compilation, 2026-08-21).
 
-The four retire-at-R9 vars are exactly the ones whose removal is already part
-of R9's own acceptance text ("hybrid demotion, `experimentalIR: false`,
-`JS2WASM_IR_FIRST`, `disableIrFirst`, skip allowlists, and compile-twice
-switches are gone") — this table makes the "compile-twice switches" set
-concrete: `JS2WASM_IR_FIRST`, `JS2WASM_IR_STRING_BUILDER`,
-`JS2WASM_IR_ASYNC`, `JS2WASM_IR_OBJECT_SHAPES`.
+The original four `JS2WASM_IR_*` retire-at-R9 vars remain exactly
+`JS2WASM_IR_FIRST`, `JS2WASM_IR_STRING_BUILDER`, `JS2WASM_IR_ASYNC`, and
+`JS2WASM_IR_OBJECT_SHAPES`. The four current
+`JS2WASM_MULTI_PREPARED_*_CUTOVER` vars are additional bounded direct-route
+escape hatches introduced after the 2026-08-21 census. R9 consumes the complete
+live retire-at-R9 table, not the historical cardinality. Every new bounded
+route switch must update this table in the same landing PR.

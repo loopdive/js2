@@ -9,6 +9,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { allocLocal, allocTempLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion } from "../context/types.js";
+import { emitEagerAsyncPromiseWrap } from "../async-eager-promise.js"; // (#4630)
 import { emitToNumber } from "../coercion-engine.js";
 import { emitThrowTypeError } from "../expressions/helpers.js";
 import {
@@ -475,6 +476,13 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
     else if (fctx.returnType.kind === "externref") emitUndefined(ctx, fctx);
     else if (fctx.returnType.kind === "ref_null") fctx.body.push({ op: "ref.null", typeIdx: fctx.returnType.typeIdx });
     else if (fctx.returnType.kind === "ref") fctx.body.push({ op: "ref.null", typeIdx: fctx.returnType.typeIdx });
+  }
+
+  // (#4630) A parked async closure whose result was promoted to a `$Promise`
+  // settles its completion value here — `Promise.resolve(v)`, idempotent for a
+  // value that already IS a native `$Promise` (§27.2.4.7 step 2).
+  if (fctx.eagerAsyncPromiseReturn === true) {
+    emitEagerAsyncPromiseWrap(ctx, fctx);
   }
 
   emitReturnTail(ctx, fctx, hasPendingFinally);
@@ -1251,7 +1259,7 @@ function emitSwitchStrictEq(ctx: CodegenContext, fctx: FunctionContext, lTmp: nu
     }
     if (!stringArmEmitted) refArm.push(...identityArm);
 
-    fctx.body.push(
+    const taggedCascade: Instr[] = [
       { op: "local.get", index: lTmp },
       { op: "call", funcIdx: typeofNum },
       { op: "local.get", index: rTmp },
@@ -1304,6 +1312,39 @@ function emitSwitchStrictEq(ctx: CodegenContext, fctx: FunctionContext, lTmp: nu
             ],
           },
         ],
+      },
+    ];
+
+    // (#4621 D) NULL arm, ahead of the tag cascade. `null` is the null
+    // externref, so `any.convert_extern` hands the identity arm a null anyref —
+    // and `ref.test (ref eq)` on a null answers 0. The cascade therefore fell
+    // all the way through to an identity test that CANNOT be true for two
+    // nulls, making `switch (null) { case null: }` miss its own case and take
+    // `default` (measured: `language/statements/switch/S12.11_A1_T{3,4}`,
+    // "SwitchTest(null) === 192. Actual: 32"). §7.2.16 step 1: same Type ⇒
+    // Null === Null is true.
+    //
+    // `undefined` is NOT null in this representation — it is the tag-1
+    // singleton (#4489), so `ref.is_null` is false for it and `null ===
+    // undefined` still answers false through the both-must-be-null test below.
+    // The JS-host branch further down needs no arm: `__host_eq` is JS `===`.
+    fctx.body.push(
+      { op: "local.get", index: lTmp },
+      { op: "ref.is_null" },
+      { op: "local.get", index: rTmp },
+      { op: "ref.is_null" },
+      { op: "i32.or" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: lTmp },
+          { op: "ref.is_null" },
+          { op: "local.get", index: rTmp },
+          { op: "ref.is_null" },
+          { op: "i32.and" },
+        ],
+        else: taggedCascade,
       },
     );
     return;

@@ -562,6 +562,10 @@ export class PorfforEmitter implements BackendEmitter<PorfforSink> {
     out.push(pointer!);
   }
 
+  emitStringRepeat(): void {
+    throw new Error("PorfforEmitter: string.repeat is outside the typed Porffor subset");
+  }
+
   emitStringEquals(_negate: boolean, _out: PorfforSink): void {
     throw new Error("porffor backend does not yet support string.eq");
   }

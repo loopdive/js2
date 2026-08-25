@@ -788,6 +788,7 @@ function layoutForAllocation(
       return planLinearVectorLayout(instr.elementType);
     case "string.const":
     case "string.concat":
+    case "string.repeat":
       return planLinearStringLayout();
     default:
       return site.kind === "string" ? planLinearStringLayout() : opaqueLayout(site);
@@ -974,6 +975,27 @@ function linearIrTypeKey(type: IrType): string {
       return `union:${type.members.map(linearIrTypeKey).join("|")}`;
     case "boxed":
       return `boxed:${linearIrTypeKey(type.inner)}`;
+    case "fnctor":
+      return `fnctor:${JSON.stringify({
+        sourceId: type.shape.sourceId,
+        constructorUnitId: type.shape.constructorUnitId,
+        constructorName: type.shape.constructorName,
+        constructorTarget: type.shape.constructorTarget,
+        reservedLayout: type.shape.reservedLayout,
+        constructorIdentity: type.shape.constructorIdentity,
+        fields: type.shape.fields.map((field) => ({
+          name: field.name,
+          ordinal: field.ordinal,
+          type: linearIrTypeKey(field.type),
+        })),
+        captures: type.shape.captures.map((capture) => ({
+          name: capture.name,
+          ordinal: capture.ordinal,
+          hasTdzFlag: capture.hasTdzFlag,
+          type: linearIrTypeKey(capture.type),
+        })),
+        userParamTypes: type.shape.userParamTypes.map(linearIrTypeKey),
+      })}`;
     case "dynamic":
       return "dynamic";
   }

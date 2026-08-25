@@ -4,7 +4,7 @@ title: "generateMultiModule is missing ~19 fill*() driver calls that generateMod
 status: ready
 sprint: Backlog
 created: 2026-07-28
-updated: 2026-07-28
+updated: 2026-08-22
 priority: high
 horizon: l
 feasibility: medium
@@ -69,7 +69,6 @@ fillBindDynHelper
 fillProxyDispatch
 fillPromiseThenableHelpers
 fillSetRecFieldGetters
-fillExternIsArray
 fillExternSetVecArms
 fillExternArrayLikeStructArms
 fillDynamicForinVecArms
@@ -80,6 +79,13 @@ fillDynamicProtoHelpers
 
 (`fillArrayToPrimitive` and `fillClassToPrimitive` are no longer on this list —
 landed in #3707.)
+
+`fillExternIsArray` is also no longer on the list. The #4376 Deno bootstrap
+slice proved that its multi-source reserve body remained the fail-closed
+`i32.const 0`, making every dynamic `Array.isArray(array)` answer false. That
+slice now runs the fill at the matching finalization point and pins both the
+positive array and negative scalar cases in a focused `compileMulti`
+regression. The other drivers remain open here.
 
 Reproduce the diff yourself against current `main`:
 
@@ -129,6 +135,7 @@ verify the test traps before / passes after, ship in small batches.
 
 ## Acceptance criteria
 
+- [x] Wire and value-test `fillExternIsArray` in `generateMultiModule`.
 - [ ] Every `fill*(ctx)` call present in `generateModule` has a corresponding
       call in `generateMultiModule` (or a documented reason it's single-file-only).
 - [ ] A regression test per newly-wired driver (or one comprehensive test suite

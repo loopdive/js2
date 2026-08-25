@@ -22,6 +22,14 @@ files:
   - tests/issue-3505-host-compilemulti-harness-callable-init.test.ts
 loc-budget-allow:
   - src/codegen/declarations.ts
+  - src/codegen/index.ts
+  - src/codegen/generators-native.ts
+  - src/codegen/expressions/identifiers.ts
+func-budget-allow:
+  - src/codegen/generators-native.ts::registerNativeGenerator
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/function-body.ts::compileFunctionBody
 ---
 
 # #3505 — Host compileMulti must initialize harness callables after exports wiring
@@ -146,3 +154,41 @@ and was not used.
   budget, and Test262 hard-error gates pass. The hard-error gate reports zero
   hard errors; the intentional seven-line `declarations.ts` invariant is
   covered by this issue's scoped LOC allowance.
+
+## 2026-08-21 follow-up — suite regressed after later merges; fixed
+
+The pinned path `language/module-code/instn-uniq-env-rec.js` regressed on both
+lanes after this issue closed (bisected to the 2026-08-09 Redux-closures
+commit for the gc lane; the standalone lane accumulated the #4035 hostBridge
+default and the runtime-eval provider link on top). Root causes fixed in the
+same change-set that carries this note:
+
+- `ctx.nativeGenerators` / `ctx.inlinableFunctions` are name-keyed and
+  graph-wide, so two module files declaring `function* sixth` aliased every
+  consumer to one state machine (the fixture's empty body — the observed
+  `sameValue(«NaN», «"sixth"»)`). Fixed with per-declaration registration plus
+  the #4133-style per-source re-binding in `generateMultiModule`.
+- Module-goal per-module binding isolation: an import/export-free module file
+  is a TS global SCRIPT, so `seventh`…`twelfth` from the fixture resolved by
+  bare name in the entry module instead of throwing ReferenceError. The
+  identifier arms now treat that cross-file scope leak as undeclared.
+- `function* g() { return 'str'; }` now participates in the generator carrier
+  decision via its return expression, so it plans natively (standalone was a
+  #680 refusal through the legacy path).
+
+Verified 2026-08-21: the exact FYI record passes gc AND standalone through
+`runTest`, the vitest suite is 3/3, equivalence 8/8 shards no new regressions.
+
+## 2026-08-22 hotfix — decl-aware lookup scoped to same-name aliases
+
+PR #4740 merged with an over-broad `nativeGeneratorInfoForDecl`: it scanned
+EVERY registry entry by decl, so a declaration registered under several names
+(class method under its classMemberFuncKey plus a second key from another emit
+site) answered with the other name's state machine — 617 class gen-method
+standalone tests flipped pass→compile_error ('unresolved call target') in the
+merge_group, breaching the #2097 standalone floor. The follow-up PR scopes the
+scan to the requested name's bare key and its ' shadowedN' aliases. The
+`loc-budget-allow` / `func-budget-allow` entries above cover the +8 LOC this
+adds to generators-native.ts. Verified: the 5 named + 20 random of the 617
+flipped tests pass standalone again; equivalence spot-shards clean.
+

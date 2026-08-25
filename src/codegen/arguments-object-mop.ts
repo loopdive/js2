@@ -125,6 +125,160 @@ export function emitArgumentsTypeofComparison(
   return true;
 }
 
+/**
+ * (#4622) Own NAMED keys of an arguments object that §10.4.4 makes
+ * `[[Configurable]]: true`, so `delete arguments.<key>` must succeed.
+ *
+ * Only `length` is listed, and the omission of `callee` is deliberate, not an
+ * oversight:
+ *
+ * - `length` is `{writable: true, enumerable: false, configurable: true}` in
+ *   BOTH CreateMappedArgumentsObject (§10.4.4 step 7) and
+ *   CreateUnmappedArgumentsObject (step 4) — mapped or unmapped, sloppy or
+ *   strict, deleting it succeeds.
+ * - `callee` splits: mapped ⇒ a configurable data property (delete ⇒ `true`),
+ *   unmapped ⇒ the `%ThrowTypeError%` accessor with `configurable: false`
+ *   (delete ⇒ `false`, i.e. a TypeError in the strict code that alone can
+ *   observe it). Both halves are ALREADY correct on this branch — measured
+ *   2026-08-23, `__probe4622__/{sloppy,strict}-delete-callee.js` both pass on
+ *   the base sources — because the `arguments-callee-poison*` lane owns them.
+ *   Adding `callee` here would replace a correct split answer with a flat
+ *   `true` and regress the strict half.
+ */
+const ORDINARY_DELETABLE_ARGUMENTS_KEYS: ReadonlySet<string> = new Set(["length"]);
+
+/** The static property key of a member expression, or `null` when dynamic. */
+function staticMemberKey(inner: ts.PropertyAccessExpression | ts.ElementAccessExpression): string | null {
+  if (ts.isPropertyAccessExpression(inner)) {
+    return ts.isPrivateIdentifier(inner.name) ? null : inner.name.text;
+  }
+  const arg = inner.argumentExpression;
+  if (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) return arg.text;
+  return null;
+}
+
+/** The nearest enclosing function that BINDS `arguments` (arrows do not). */
+function owningArgumentsFunction(node: ts.Node): ts.Node | undefined {
+  let cur: ts.Node | undefined = node.parent;
+  while (cur) {
+    if (
+      ts.isFunctionDeclaration(cur) ||
+      ts.isFunctionExpression(cur) ||
+      ts.isMethodDeclaration(cur) ||
+      ts.isConstructorDeclaration(cur) ||
+      ts.isGetAccessorDeclaration(cur) ||
+      ts.isSetAccessorDeclaration(cur)
+    ) {
+      return cur;
+    }
+    cur = cur.parent;
+  }
+  return undefined;
+}
+
+/**
+ * Could the attributes of this function's arguments object have been changed
+ * out from under a purely syntactic answer?
+ *
+ * The §10.4.4 attribute table describes a FRESH arguments object. Anything that
+ * can reach the object as a value can redefine `length`
+ * (`Object.defineProperty(arguments, "length", {configurable: false})`) or make
+ * it non-configurable wholesale (`Object.seal` / `Object.freeze`), after which
+ * the spec-mandated answer flips to `false`. There is no runtime brand
+ * separating the arguments vec from an ordinary array (#4620's family-B
+ * finding), so codegen cannot ASK at runtime — which makes this the
+ * absent-not-wrong boundary: decline whenever the object is reachable as a
+ * value, and let the generic `__delete_property` path keep its own answer.
+ *
+ * Reachable-as-a-value means any `arguments` reference in this function that is
+ * NOT the base of a member expression, plus the two constructs that can smuggle
+ * a reference without naming one: `with` (its object can alias the binding) and
+ * a direct `eval` (its code can name `arguments` in this scope). Nested
+ * non-arrow functions are not walked — they rebind `arguments`.
+ */
+function argumentsObjectMayBeReconfigured(fn: ts.Node): boolean {
+  let escapes = false;
+  const visit = (node: ts.Node): void => {
+    if (escapes) return;
+    if (ts.isWithStatement(node)) {
+      escapes = true;
+      return;
+    }
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") {
+      escapes = true;
+      return;
+    }
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isMethodDeclaration(node) ||
+      ts.isConstructorDeclaration(node) ||
+      ts.isGetAccessorDeclaration(node) ||
+      ts.isSetAccessorDeclaration(node)
+    ) {
+      return;
+    }
+    if (ts.isIdentifier(node) && node.text === "arguments") {
+      const parent = node.parent;
+      const isMemberBase =
+        parent !== undefined &&
+        (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+        parent.expression === node;
+      const isPropertyName =
+        parent !== undefined && ts.isPropertyAccessExpression(parent) && (parent.name as ts.Node) === node;
+      if (!isMemberBase && !isPropertyName) escapes = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(fn, visit);
+  return escapes;
+}
+
+/**
+ * (#4622) `delete arguments.length` — §10.4.4 ordinary-object semantics for the
+ * one own named key the `$Vec` representation gets WRONG.
+ *
+ * The arguments object is an opaque `$Vec` copy of the parameters, so the
+ * generic delete path routes through `__delete_property`, whose vec arm asks
+ * `__vec_gopd` for the descriptor. `__vec_gopd` answers with ARRAY rules, where
+ * `length` is `{configurable: false}` — correct for `[1,2]`, wrong for an
+ * arguments object. The delete was therefore refused: `false` in sloppy code
+ * and, via `emitStrictDeleteCheck`, a thrown TypeError in strict code — the
+ * "compiler crash" #4620 recorded (a wasm exception with an empty JS-side
+ * message).
+ *
+ * Fixing `__vec_gopd` is not available: it is shared with real arrays and there
+ * is no runtime brand to split them on. So the arm is syntactic, and fires only
+ * for the compiler-materialized `arguments` local of THIS function with a
+ * static key, guarded by `argumentsObjectMayBeReconfigured`.
+ *
+ * What it does NOT do: the property still SURVIVES. `arguments.length` reads
+ * fold to the vec's length field and `hasOwnProperty` goes through the shared
+ * vec helper, so both still report the pre-delete state. Making the deletion
+ * observable needs the [[ParameterMap]]/descriptor-sidecar representation of
+ * #3251; pinned as measured residuals in `tests/issue-4622.test.ts`.
+ *
+ * Returns `true` when it emitted the boolean result (caller returns it).
+ */
+export function emitArgumentsOrdinaryNamedDelete(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  inner: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+): boolean {
+  const receiver = inner.expression;
+  if (!ts.isIdentifier(receiver) || !isArgumentsObjectIdentifier(ctx, fctx, receiver)) return false;
+  const key = staticMemberKey(inner);
+  if (key === null || !ORDINARY_DELETABLE_ARGUMENTS_KEYS.has(key)) return false;
+  const owner = owningArgumentsFunction(receiver);
+  if (owner === undefined || argumentsObjectMayBeReconfigured(owner)) return false;
+  // The receiver is a plain local read — no side effects to preserve. §13.5.1.2
+  // step 6: OrdinaryDelete succeeded, so the expression is `true` (a BOOLEAN,
+  // not the number 1 — see the #4231 note in the delete driver).
+  fctx.body.push({ op: "i32.const", value: 1 });
+  return true;
+}
+
 /** Locals holding a runtime `arguments[<expr>]` delete key as an array index. */
 export interface DynamicArgumentsDeleteIndex {
   /** i32 — the truncated index; only meaningful when `isIndexLocal` is 1. */
