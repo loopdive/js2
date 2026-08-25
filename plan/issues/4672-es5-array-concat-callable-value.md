@@ -13,6 +13,7 @@ loc-budget-allow:
 func-budget-allow:
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
   - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
+  - src/codegen/closure-exports.ts::emitClosureCallExportN
 ---
 # Issue 4672: ES5 standalone Array.prototype.concat callable-value cluster
 
