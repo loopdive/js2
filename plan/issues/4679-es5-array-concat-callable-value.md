@@ -1,5 +1,5 @@
 ---
-id: 4672
+id: 4679
 title: "ES5 standalone Array.prototype.concat callable-value cluster"
 status: done
 created: 2026-08-25
@@ -15,7 +15,7 @@ func-budget-allow:
   - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
   - src/codegen/closure-exports.ts::emitClosureCallExportN
 ---
-# Issue 4672: ES5 standalone Array.prototype.concat callable-value cluster
+# Issue 4679: ES5 standalone Array.prototype.concat callable-value cluster
 
 The native variadic closure ABI and exact intrinsic installation path make the
 two residual ES5 concat rows executable without host imports.
