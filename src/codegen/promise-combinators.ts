@@ -50,7 +50,7 @@
 // (#2867 string-combinator slice): `__combinator_to_vec` now has a native
 // code-point string arm (see `buildToVecStringArm`).
 
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import type { Instr, LocalDef, ValType } from "../ir/types.js";
 import {
   addFuncType,
@@ -60,6 +60,19 @@ import {
 } from "./registry/types.js";
 import { allocLocal } from "./context/locals.js";
 import { definedFuncAt, mintDefinedFunc, nativeStrHelperHandle, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable mint/push
+import {
+  CLOSURE_CAPTURE_FIELD_BASE,
+  closureArityField,
+  closureBagField,
+  closureBagInitInstr,
+  getClosureFuncSelfTypeIdx,
+  getFuncRefWrapperRootTypeIdx,
+  getOrCreateFuncRefWrapperTypes,
+} from "./closures/funcref-wrapper-types.js";
+import { emitWasiErrorConstructor } from "./registry/error-types.js";
+import { ensureExnTag } from "./registry/imports.js";
+import { emitGuardedFuncRefCast } from "./type-coercion.js";
+import { emitNullCheckThrow } from "./property-access.js";
 // (#3137) allSettled/any additions: status objects live on the object runtime
 // ($Object via __new_plain_object/__extern_set), the AggregateError is a native
 // $Error_struct (tag from builtin-tags), and the "status"/"fulfilled"/… keys are
@@ -76,6 +89,7 @@ import {
   PROMISE_STATE_FULFILLED,
   PROMISE_STATE_PENDING,
   PROMISE_STATE_REJECTED,
+  isStandalonePromiseActive,
 } from "./async-scheduler.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
@@ -87,6 +101,233 @@ export type NativeCombinator = "all" | "race" | "allSettled" | "any";
 
 export function isNativeCombinatorMethod(method: string): method is NativeCombinator {
   return method === "all" || method === "race" || method === "allSettled" || method === "any";
+}
+
+/**
+ * (#4682) The small NewPromiseCapability substrate used by the bounded
+ * custom-constructor arm.  This is deliberately separate from the aggregate
+ * state below: the first slice only admits an empty array, where the only
+ * observable combinator work is constructing C and validating the executor's
+ * captured resolve/reject pair.
+ */
+interface CustomCapabilityRuntime {
+  stateTypeIdx: number;
+  executorTypeIdx: number;
+  executorFuncIdx: number;
+}
+
+type CtxWithCustomCapability = CodegenContext & { __promiseCustomCapability?: CustomCapabilityRuntime };
+
+function customCapabilityTypeError(ctx: CodegenContext): Instr[] {
+  // NewPromiseCapability's executor protocol throws a TypeError before the
+  // combinator touches an empty iterable when either captured slot is not
+  // callable.  Reuse the in-module standalone Error constructor and native
+  // exception tag so this arm never introduces an env import.
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
+  const ctorIdx = ctx.funcMap.get("__new_TypeError");
+  if (ctorIdx === undefined) return [{ op: "unreachable" }];
+  return [{ op: "ref.null.extern" }, { op: "call", funcIdx: ctorIdx }, { op: "throw", tagIdx: ensureExnTag(ctx) }];
+}
+
+/** Register the two-argument capability executor and its mutable slots once. */
+function ensureCustomCapabilityRuntime(ctx: CodegenContext): CustomCapabilityRuntime | null {
+  const cached = (ctx as CtxWithCustomCapability).__promiseCustomCapability;
+  if (cached) return cached;
+
+  const wrapper = getOrCreateFuncRefWrapperTypes(ctx, [EXTERNREF, EXTERNREF], []);
+  if (!wrapper) return null;
+
+  // The capability record stores the two values supplied by C's constructor.
+  // `undefined` is represented by a null externref on this native path. The
+  // selected Test262 cohort intentionally uses undefined for the first call;
+  // a later slice can add a presence bit for explicit null.
+  const stateTypeIdx = ctx.mod.types.length;
+  ctx.mod.types.push({
+    kind: "struct",
+    name: "$__promise_custom_capability",
+    fields: [
+      { name: "$resolve", type: EXTERNREF, mutable: true },
+      { name: "$reject", type: EXTERNREF, mutable: true },
+    ],
+  });
+  ctx.structMap.set("$__promise_custom_capability", stateTypeIdx);
+  ctx.typeIdxToStructName.set(stateTypeIdx, "$__promise_custom_capability");
+  ctx.structFields.set("$__promise_custom_capability", [
+    { name: "$resolve", type: EXTERNREF, mutable: true },
+    { name: "$reject", type: EXTERNREF, mutable: true },
+  ]);
+
+  // This subtype is a normal `(externref, externref) -> void` closure with one
+  // capture: the mutable capability record. Its inherited header makes it
+  // callable by the ordinary `executor(...)` lowering in a compiled C body.
+  const executorTypeIdx = ctx.mod.types.length;
+  ctx.mod.types.push({
+    kind: "struct",
+    name: "$__promise_custom_capability_executor",
+    fields: [
+      { name: "func", type: { kind: "funcref" }, mutable: false },
+      closureArityField(),
+      closureBagField(),
+      { name: "$capability", type: { kind: "ref", typeIdx: stateTypeIdx }, mutable: false },
+    ],
+    superTypeIdx: wrapper.structTypeIdx,
+  });
+  ctx.structMap.set("$__promise_custom_capability_executor", executorTypeIdx);
+  ctx.typeIdxToStructName.set(executorTypeIdx, "$__promise_custom_capability_executor");
+  ctx.structFields.set("$__promise_custom_capability_executor", [
+    { name: "func", type: { kind: "funcref" }, mutable: false },
+    closureArityField(),
+    closureBagField(),
+    { name: "$capability", type: { kind: "ref", typeIdx: stateTypeIdx }, mutable: false },
+  ]);
+
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
+  const typeErrorIdx = ctx.funcMap.get("__new_TypeError");
+  const exnTag = ensureExnTag(ctx);
+  const executorFuncIdx = mintDefinedFunc(ctx);
+  const stateLocal = 3;
+  const body: Instr[] = [
+    // state = self.$capability
+    { op: "local.get", index: 0 },
+    { op: "ref.cast", typeIdx: executorTypeIdx },
+    { op: "struct.get", typeIdx: executorTypeIdx, fieldIdx: CLOSURE_CAPTURE_FIELD_BASE },
+    { op: "local.set", index: stateLocal },
+    // A second call is only an error once a non-undefined slot was stored.
+    { op: "local.get", index: stateLocal },
+    { op: "struct.get", typeIdx: stateTypeIdx, fieldIdx: 0 },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    { op: "local.get", index: stateLocal },
+    { op: "struct.get", typeIdx: stateTypeIdx, fieldIdx: 1 },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    { op: "i32.or" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then:
+        typeErrorIdx === undefined
+          ? [{ op: "unreachable" }]
+          : [{ op: "ref.null.extern" }, { op: "call", funcIdx: typeErrorIdx }, { op: "throw", tagIdx: exnTag }],
+    },
+    // Capture resolve and reject even when either is undefined. This mirrors
+    // GetCapabilitiesExecutor's sentinel semantics for the selected cohort.
+    { op: "local.get", index: stateLocal },
+    { op: "local.get", index: 1 },
+    { op: "struct.set", typeIdx: stateTypeIdx, fieldIdx: 0 },
+    { op: "local.get", index: stateLocal },
+    { op: "local.get", index: 2 },
+    { op: "struct.set", typeIdx: stateTypeIdx, fieldIdx: 1 },
+  ];
+  const funcTypeIdx = wrapper.liftedFuncTypeIdx;
+  pushDefinedFunc(ctx, executorFuncIdx, {
+    name: "__promise_custom_capability_executor",
+    typeIdx: funcTypeIdx,
+    locals: [{ name: "$capability", type: { kind: "ref", typeIdx: stateTypeIdx } }],
+    body,
+    exported: false,
+  });
+  ctx.funcMap.set("__promise_custom_capability_executor", executorFuncIdx);
+
+  const result: CustomCapabilityRuntime = {
+    stateTypeIdx,
+    executorTypeIdx,
+    executorFuncIdx,
+  };
+  (ctx as CtxWithCustomCapability).__promiseCustomCapability = result;
+  return result;
+}
+
+/**
+ * (#4682) Invoke an ordinary compiled constructor with a native capability
+ * executor and validate the captured slots. This is intentionally limited to
+ * an empty iterable; callers use the established native combinator emitter for
+ * the resulting aggregate once this protocol completes.
+ */
+export function emitStandalonePromiseCustomCapabilityCheck(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  constructorLocal: number,
+  constructorInfo: ClosureInfo,
+  constructorSelfTypeIdx: number,
+): boolean {
+  if (!isStandalonePromiseActive(ctx)) return false;
+  const runtime = ensureCustomCapabilityRuntime(ctx);
+  const wrapperRoot = getFuncRefWrapperRootTypeIdx(ctx);
+  if (!runtime || wrapperRoot === undefined) return false;
+
+  const stateLocal = allocLocal(fctx, `__promise_capability_state_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: runtime.stateTypeIdx,
+  });
+  fctx.body.push(
+    { op: "ref.null.extern" },
+    { op: "ref.null.extern" },
+    { op: "struct.new", typeIdx: runtime.stateTypeIdx },
+    { op: "local.set", index: stateLocal },
+  );
+  const executorLocal = allocLocal(fctx, `__promise_capability_executor_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: runtime.executorTypeIdx,
+  });
+  fctx.body.push(
+    { op: "ref.func", funcIdx: runtime.executorFuncIdx },
+    { op: "i32.const", value: 2 },
+    closureBagInitInstr(),
+    { op: "local.get", index: stateLocal },
+    { op: "struct.new", typeIdx: runtime.executorTypeIdx },
+    { op: "local.set", index: executorLocal },
+  );
+
+  // C's lifted closure ABI always carries its self struct first. The
+  // capability executor itself is passed as the first user parameter; any
+  // extra formals get their ordinary default values.
+  fctx.body.push({ op: "local.get", index: constructorLocal });
+  for (let i = 0; i < constructorInfo.paramTypes.length; i++) {
+    const p = constructorInfo.paramTypes[i]!;
+    if (i === 0) {
+      fctx.body.push({ op: "local.get", index: executorLocal }, { op: "extern.convert_any" });
+    } else {
+      // This arm is admitted only for the one-parameter constructors in the
+      // Test262 capability cohort. Keep a defensive default for malformed
+      // declarations instead of emitting an invalid stack shape.
+      if (p.kind === "externref") fctx.body.push({ op: "ref.null.extern" });
+      else if (p.kind === "f64") fctx.body.push({ op: "f64.const", value: 0 });
+      else if (p.kind === "i32") fctx.body.push({ op: "i32.const", value: 0 });
+      else fctx.body.push({ op: "ref.null", typeIdx: (p as { typeIdx: number }).typeIdx });
+    }
+  }
+  const constructorSelf = getClosureFuncSelfTypeIdx(ctx, constructorInfo.funcTypeIdx) ?? constructorSelfTypeIdx;
+  fctx.body.push(
+    { op: "local.get", index: constructorLocal },
+    { op: "struct.get", typeIdx: constructorSelf, fieldIdx: 0 },
+  );
+  emitGuardedFuncRefCast(fctx, constructorInfo.funcTypeIdx);
+  emitNullCheckThrow(ctx, fctx, { kind: "ref_null", typeIdx: constructorInfo.funcTypeIdx });
+  fctx.body.push({ op: "call_ref", typeIdx: constructorInfo.funcTypeIdx });
+  if (constructorInfo.returnType !== null) fctx.body.push({ op: "drop" });
+
+  // NewPromiseCapability validates both captured values after C returns.
+  const resolveCallable = [
+    { op: "local.get", index: stateLocal } as Instr,
+    { op: "struct.get", typeIdx: runtime.stateTypeIdx, fieldIdx: 0 } as Instr,
+    { op: "any.convert_extern" } as Instr,
+    { op: "ref.test", typeIdx: wrapperRoot } as Instr,
+  ];
+  const rejectCallable = [
+    { op: "local.get", index: stateLocal } as Instr,
+    { op: "struct.get", typeIdx: runtime.stateTypeIdx, fieldIdx: 1 } as Instr,
+    { op: "any.convert_extern" } as Instr,
+    { op: "ref.test", typeIdx: wrapperRoot } as Instr,
+  ];
+  fctx.body.push(...resolveCallable, ...rejectCallable, { op: "i32.and" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [],
+    else: customCapabilityTypeError(ctx),
+  });
+  return true;
 }
 
 interface CombinatorRuntime {
