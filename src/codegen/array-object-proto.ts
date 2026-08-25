@@ -1730,6 +1730,9 @@ function makeCollectionGlue(brand: number, name: "Map" | "Set", members: readonl
     memberCsv: [...members, "size"].join(","),
     memberKind: (member) => (member === "size" ? "getter" : "method"),
     memberLength: (member) => (member === "size" ? 0 : (PROTO_METHOD_LENGTH[member] ?? 1)),
+    // ES2015 §23.2.3: Set.prototype.keys and .values are the same function
+    // object (and Set.prototype[@@iterator] aliases that object as well).
+    memberAliasOf: (member) => (name === "Set" && member === "keys" ? "values" : undefined),
     emitMemberBody: (c, fctx, member) =>
       member === "size"
         ? emitCollectionSizeGetterBody(c, fctx, name)
