@@ -17,7 +17,7 @@ import {
 } from "../ir/analysis/counted-string-append.js";
 import { irSupportGlobalRef, sameIrGlobalBinding } from "../ir/abi-bindings.js";
 import type { IrCountedStringAppendLoweringPlan, IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
-import { irSupportFuncRef, sameIrCallableBinding } from "../ir/callable-bindings.js";
+import { irSupportFuncRef, irUnitCallableBindingId, sameIrCallableBinding } from "../ir/callable-bindings.js";
 import { requireCurrentIrCountedStringAppendPlanSite } from "../ir/counted-string-append-provenance.js";
 import type { IrSourceId, IrUnitId } from "../ir/identity.js";
 import { asVal } from "../ir/nodes.js";
@@ -205,6 +205,7 @@ function inspectShape(
     !ts.isReturnStatement(returnStatement) ||
     !returnStatement.expression ||
     !ts.isPropertyAccessExpression(returnStatement.expression) ||
+    returnStatement.expression.questionDotToken !== undefined ||
     returnStatement.expression.name.text !== "length" ||
     !ts.isIdentifier(returnStatement.expression.expression) ||
     proofContext.oracle.valueDeclarationOf(returnStatement.expression.expression) !== plan.accumulatorDeclaration
@@ -479,6 +480,17 @@ function exactCandidateComponent(
   return true;
 }
 
+function exactTargetProgramAbiAuthority(ctx: CodegenContext, unitId: IrUnitId, targetFunction: object): boolean {
+  const session = ctx.programAbiSession;
+  const targetBindingId = irUnitCallableBindingId(unitId);
+  return (
+    session !== undefined &&
+    !session.hasPlan(targetBindingId) &&
+    !session.hasLocator(targetBindingId) &&
+    session.locatorBindingId(targetFunction) === undefined
+  );
+}
+
 function exactInitialSupportNamespace(ctx: CodegenContext, unitId: IrUnitId, legacyName: string, targetHandle: number) {
   const trampolineName = `__fn_tramp_${legacyName}_cached`;
   const cacheName = `__fn_closure_${legacyName}`;
@@ -491,9 +503,13 @@ function exactInitialSupportNamespace(ctx: CodegenContext, unitId: IrUnitId, leg
     session !== undefined &&
     !session.hasPlan(trampolineRef.binding.bindingId) &&
     !session.hasPlan(cacheRef.binding.bindingId) &&
+    !session.hasLocator(trampolineRef.binding.bindingId) &&
+    !session.hasLocator(cacheRef.binding.bindingId) &&
     ![...ctx.funcMap.keys()].some((key) => key === trampolineName || key.startsWith(`${trampolineName}$`)) &&
     !ctx.funcClosureGlobals.has(legacyName) &&
-    !ctx.funcClosureSingletonKeyByFuncIdx.has(targetHandle) &&
+    ![...ctx.funcClosureSingletonKeyByFuncIdx].some(
+      ([handle, key]) => handle === targetHandle || key === legacyName || key.startsWith(`${legacyName}$`),
+    ) &&
     !ctx.mod.functions.some((func) => func.name === trampolineName || func.name.startsWith(`${trampolineName}$`)) &&
     !ctx.mod.globals.some((global) => global.name === cacheName || global.name.startsWith(`${cacheName}$`)) &&
     ![...ctx.funcMap.keys()].some((key) => key.startsWith(`${legacyName}$`)) &&
@@ -564,6 +580,7 @@ function resolveCandidateFacts<Plan extends MultiPreparedFunctionValuePlan>(
     !selectionContainsOnly(plan.selection, legacyName) ||
     plan.selection !== identityPlan.selectionProjection.selection ||
     !selectionContainsOnly(safeSelection, legacyName) ||
+    identityPlan.identitySelection.units.size !== 2 ||
     identityPlan.identitySelection.funcs.size !== 1 ||
     !terminal ||
     !selectedFunction ||
@@ -581,6 +598,7 @@ function resolveCandidateFacts<Plan extends MultiPreparedFunctionValuePlan>(
     identityPlan.functionClaims[0]?.legacyName !== legacyName ||
     identityPlan.functionUnitIdByLegacyName.size !== 1 ||
     identityPlan.functionUnitIdByLegacyName.get(legacyName) !== unitId ||
+    identityPlan.unitIdByLegacyName.size !== 2 ||
     identityPlan.unitIdByLegacyName.get(legacyName) !== unitId ||
     identityPlan.declarationByLegacyName.size !== 1 ||
     identityPlan.declarationByLegacyName.get(legacyName) !== declaration ||
@@ -653,6 +671,7 @@ function resolveCandidateFacts<Plan extends MultiPreparedFunctionValuePlan>(
     safety.occupiedFunctionKeys.some((key) => key.startsWith(`${legacyName}$`)) ||
     ctx.mod.functions.some((func) => func.name.startsWith(`${legacyName}$`)) ||
     ctx.liveFuncBindingGlobals?.has(legacyName) === true ||
+    !exactTargetProgramAbiAuthority(ctx, unitId, allocated.func) ||
     !exactCandidateComponent(input, unitId) ||
     input.hasForeignLateProvider(unitId) ||
     (boundary === "before-support" && !exactInitialSupportNamespace(ctx, unitId, legacyName, allocated.handle))
@@ -691,6 +710,8 @@ function resolveCandidateFacts<Plan extends MultiPreparedFunctionValuePlan>(
   }
   const callerDeclaration = nearestFunctionOwner(importedCall, entrySource);
   const callerUnitId = callerDeclaration ? identityContext.unitIdByDeclaration.get(callerDeclaration) : undefined;
+  const callerSelectedUnit = callerUnitId ? identityPlan.identitySelection.units.get(callerUnitId) : undefined;
+  const callerTerminal = callerUnitId ? identityContext.terminalByUnitId.get(callerUnitId) : undefined;
   if (
     !callerDeclaration ||
     !callerUnitId ||
@@ -698,6 +719,13 @@ function resolveCandidateFacts<Plan extends MultiPreparedFunctionValuePlan>(
     callerDeclaration.name?.text !== "main" ||
     !exactVoidTopLevelCaller(callerDeclaration, entrySource) ||
     !exactIdentityTerminal({ identityContext, declaration: callerDeclaration, sourceId, unitId: callerUnitId }) ||
+    !callerSelectedUnit ||
+    !callerTerminal ||
+    callerSelectedUnit.kind !== "function" ||
+    callerSelectedUnit.unitId !== callerUnitId ||
+    callerSelectedUnit.displayName !== callerTerminal.displayName ||
+    callerSelectedUnit.legacyMatchName !== callerTerminal.legacyMatchName ||
+    identityPlan.unitIdByLegacyName.get("main") !== callerUnitId ||
     plan.selection.funcs.has("main") ||
     safeSelection.funcs.has("main") ||
     identityPlan.safeFunctionUnitIds.has(callerUnitId) ||
@@ -881,7 +909,15 @@ function exactSupportReceipt(
   const cacheName = `__fn_closure_${candidate.legacyName}`;
   const expectedTrampoline = irSupportFuncRef(candidate.unitId, "function-value-trampoline", trampolineName);
   const expectedCache = irSupportGlobalRef(candidate.unitId, "function-value-cache", cacheName);
-  if (expectedTrampoline.binding.kind !== "support" || expectedCache.binding.kind !== "support") return false;
+  const session = ctx.programAbiSession;
+  if (
+    expectedTrampoline.binding.kind !== "support" ||
+    expectedCache.binding.kind !== "support" ||
+    session === undefined ||
+    !exactTargetProgramAbiAuthority(ctx, candidate.unitId, support.targetFunction)
+  ) {
+    return false;
+  }
   return (
     support.trampolineRef.name === trampolineName &&
     support.cacheGlobalRef.name === cacheName &&
@@ -889,6 +925,12 @@ function exactSupportReceipt(
     sameIrGlobalBinding(support.cacheGlobalRef.binding, expectedCache.binding) &&
     support.trampolineBindingId === expectedTrampoline.binding.bindingId &&
     support.cacheGlobalBindingId === expectedCache.binding.bindingId &&
+    session.hasPlan(support.trampolineBindingId) &&
+    session.hasPlan(support.cacheGlobalBindingId) &&
+    session.hasLocator(support.trampolineBindingId, support.trampolineFunction) &&
+    session.hasLocator(support.cacheGlobalBindingId, support.cacheGlobal) &&
+    session.locatorBindingId(support.trampolineFunction) === support.trampolineBindingId &&
+    session.locatorBindingId(support.cacheGlobal) === support.cacheGlobalBindingId &&
     ctx.funcClosureSingletonKeyByFuncIdx.get(support.targetHandle) === candidate.legacyName &&
     [...ctx.funcClosureSingletonKeyByFuncIdx].filter(([, key]) => key === candidate.legacyName).length === 1 &&
     ctx.mod.functions.filter((func) => func.name === trampolineName || func.name.startsWith(`${trampolineName}$`))

@@ -36,10 +36,19 @@ import { ensureFuncClosureSingleton } from "../src/codegen/closures/method-tramp
 import { localGlobalIdx } from "../src/codegen/registry/imports.js";
 import { planCountedStringAppend } from "../src/ir/analysis/counted-string-append.js";
 import { irSupportGlobalRef } from "../src/ir/abi-bindings.js";
-import { irIntrinsicFuncRef, irSupportFuncRef, irUnitFuncRef } from "../src/ir/callable-bindings.js";
+import {
+  irIntrinsicFuncRef,
+  irSupportFuncRef,
+  irUnitCallableBindingId,
+  irUnitFuncRef,
+} from "../src/ir/callable-bindings.js";
 import { buildIrUnitInventory, type IrSourceId, type IrUnitId } from "../src/ir/identity.js";
 import { irVal } from "../src/ir/nodes.js";
-import { buildIrPlanningIdentityContext, type IrPlanningIdentityContext } from "../src/ir/planning-identity.js";
+import {
+  buildIrLegacyUnitProjection,
+  buildIrPlanningIdentityContext,
+  type IrPlanningIdentityContext,
+} from "../src/ir/planning-identity.js";
 import { createEmptyModule } from "../src/ir/types.js";
 import { ts } from "../src/ts-api.js";
 
@@ -57,15 +66,6 @@ interface Fixture {
 interface PlannedFixture {
   readonly input: Fixture["input"];
   readonly candidate: MultiPreparedStringLeafCandidateEvidence | undefined;
-}
-
-function exactFunction(sourceFile: ts.SourceFile, name: string): ts.FunctionDeclaration {
-  const declarations = sourceFile.statements.filter(
-    (statement): statement is ts.FunctionDeclaration =>
-      ts.isFunctionDeclaration(statement) && statement.name?.text === name,
-  );
-  if (declarations.length !== 1 || !declarations[0]?.body) throw new Error(`fixture lost ${name}`);
-  return declarations[0];
 }
 
 function replaceOnce(source: string, search: string, replacement: string): string {
@@ -223,6 +223,7 @@ function plannerCardinalities(input: Fixture["input"]) {
     lowering: projectedLoweringPlans.countedStringAppends?.size ?? 0,
     programAbiPlans: hiddenMap(session, "drafts").size,
     programAbiLocators: hiddenMap(session, "locators").size,
+    programAbiLocatorOwners: hiddenMap(session, "locatorOwners").size,
     programAbiDerivedUnits: [...(session?.derivedUnitRecords() ?? [])].length,
     sourceCallableObservations: hiddenMap(sourceCallables, "observations").size,
     sourceCallableSupports: hiddenMap(sourceCallables, "supports").size,
@@ -371,6 +372,18 @@ describe("#3518 dormant multi-source string-leaf planner", () => {
     ["generic declaration", CANONICAL_LEAF.replace("bench_string()", "bench_string<T>()")],
     ["parameter", CANONICAL_LEAF.replace("bench_string()", "bench_string(value: number)")],
     ["wrong result", CANONICAL_LEAF.replace(": number", ": string")],
+    ["missing loop", CANONICAL_LEAF.replace('  for (let i = 0; i < 1000; i++) str = str + "abcde";\n', "")],
+    ["const accumulator", CANONICAL_LEAF.replace("let str", "const str")],
+    ["var accumulator", CANONICAL_LEAF.replace("let str", "var str")],
+    [
+      "proof const after its use",
+      `export function bench_string(): number {
+  let str = "";
+  for (let i = 0; i < 2; i++) str += fragment;
+  const fragment = "xy";
+  return str.length;
+}`,
+    ],
     ["extra local", CANONICAL_LEAF.replace('  let str = "";', '  const unused = 1;\n  let str = "";')],
     ["extra statement", CANONICAL_LEAF.replace("  return str.length;", "  void 0;\n  return str.length;")],
     ["extra loop", CANONICAL_LEAF.replace("  return str.length;", "  for (;;) break;\n  return str.length;")],
@@ -378,6 +391,7 @@ describe("#3518 dormant multi-source string-leaf planner", () => {
     ["extra property read", CANONICAL_LEAF.replace("  return str.length;", "  str.length;\n  return str.length;")],
     ["wrong receiver", CANONICAL_LEAF.replace("return str.length", 'return "x".length')],
     ["wrong property", CANONICAL_LEAF.replace("return str.length", "return str.byteLength")],
+    ["optional length", CANONICAL_LEAF.replace("return str.length", "return str?.length")],
     ["accumulator alias", CANONICAL_LEAF.replace("  return str.length;", "  const alias = str;\n  return str.length;")],
     [
       "accumulator reassignment",
@@ -420,6 +434,13 @@ describe("#3518 dormant multi-source string-leaf planner", () => {
     expect(
       candidateForSource(replaceOnce(ENTRY_SOURCE, "export function main(): void", "export function run(): void")),
     ).toBeUndefined();
+  });
+
+  it.each([
+    ["caller parameter", "export function main(value: number): void"],
+    ["caller result", "export function main(): number"],
+  ])("declines %s ABI drift", (_label, signature) => {
+    expect(candidateForSource(replaceOnce(ENTRY_SOURCE, "export function main(): void", signature))).toBeUndefined();
   });
 
   it.each([
@@ -527,6 +548,9 @@ describe("#3518 dormant multi-source string-leaf planner", () => {
       const fixture = buildFixture();
       const identityPlan = fixture.input.plan.identityPlan;
       const selectedFunction = identityPlan.identitySelection.funcs.get(fixture.candidate.unitId)!;
+      expect(identityPlan.identitySelection.units.size).toBe(2);
+      expect(identityPlan.unitIdByLegacyName.size).toBe(2);
+      expect(identityPlan.unitIdByLegacyName.get("main")).toBe(fixture.candidate.legacyOwnerUnitId);
       const staleSelectedUnit = { ...selectedFunction, displayName: "stale" };
       expectPlannerDecline({
         ...fixture.input,
@@ -539,6 +563,61 @@ describe("#3518 dormant multi-source string-leaf planner", () => {
               units: new Map(identityPlan.identitySelection.units).set(fixture.candidate.unitId, staleSelectedUnit),
               funcs: new Map(identityPlan.identitySelection.funcs).set(fixture.candidate.unitId, staleSelectedUnit),
             },
+          },
+        },
+      });
+      expectPlannerDecline({
+        ...fixture.input,
+        plan: {
+          ...fixture.input.plan,
+          identityPlan: {
+            ...identityPlan,
+            identitySelection: {
+              ...identityPlan.identitySelection,
+              units: new Map(identityPlan.identitySelection.units).set(
+                fixture.candidate.legacyOwnerUnitId,
+                selectedFunction,
+              ),
+            },
+          },
+        },
+      });
+      expectPlannerDecline({
+        ...fixture.input,
+        plan: {
+          ...fixture.input.plan,
+          identityPlan: {
+            ...identityPlan,
+            identitySelection: {
+              ...identityPlan.identitySelection,
+              units: new Map(
+                [...identityPlan.identitySelection.units].filter(
+                  ([unitId]) => unitId !== fixture.candidate.legacyOwnerUnitId,
+                ),
+              ),
+            },
+          },
+        },
+      });
+      expectPlannerDecline({
+        ...fixture.input,
+        plan: {
+          ...fixture.input.plan,
+          identityPlan: {
+            ...identityPlan,
+            unitIdByLegacyName: new Map(
+              [...identityPlan.unitIdByLegacyName].filter(([legacyName]) => legacyName !== "main"),
+            ),
+          },
+        },
+      });
+      expectPlannerDecline({
+        ...fixture.input,
+        plan: {
+          ...fixture.input.plan,
+          identityPlan: {
+            ...identityPlan,
+            unitIdByLegacyName: new Map(identityPlan.unitIdByLegacyName).set("main", fixture.candidate.unitId),
           },
         },
       });
@@ -591,6 +670,136 @@ describe("#3518 dormant multi-source string-leaf planner", () => {
         },
       });
       expectPlannerDecline({ ...fixture.input, hasForeignLateProvider: () => true });
+    }
+  });
+
+  it("fails closed on complete identity, override, ownership, and authority populations", () => {
+    {
+      type IdentityPlan = Fixture["input"]["plan"]["identityPlan"];
+      const mutations: readonly ((plan: IdentityPlan) => IdentityPlan)[] = [
+        (plan) => ({ ...plan, safeFunctionUnitIds: new Set() }),
+        (plan) => ({ ...plan, functionClaims: [] }),
+        (plan) => ({ ...plan, functionUnitIdByLegacyName: new Map() }),
+        (plan) => ({ ...plan, declarationByLegacyName: new Map() }),
+      ];
+      for (const mutate of mutations) {
+        const fixture = buildFixture();
+        expectPlannerDecline({
+          ...fixture.input,
+          plan: { ...fixture.input.plan, identityPlan: mutate(fixture.input.plan.identityPlan) },
+        });
+      }
+    }
+    for (const kind of ["params", "return"] as const) {
+      const fixture = buildFixture();
+      const current = fixture.input.plan.overrideMapByUnitId.get(fixture.candidate.unitId)!;
+      const override = Object.freeze({
+        params: kind === "params" ? Object.freeze([irVal({ kind: "f64" })]) : current.params,
+        returnType: kind === "return" ? irVal({ kind: "i32" }) : current.returnType,
+      });
+      expectPlannerDecline({
+        ...fixture.input,
+        plan: {
+          ...fixture.input.plan,
+          overrideMapByUnitId: new Map([[fixture.candidate.unitId, override]]),
+          overrideMap: new Map([[fixture.candidate.legacyName, override]]),
+        },
+        projectedLoweringPlans: {
+          ...fixture.input.projectedLoweringPlans,
+          signaturesByUnitId: new Map([[fixture.candidate.unitId, override]]),
+        },
+      });
+    }
+    {
+      const fixture = buildFixture();
+      const override = fixture.input.plan.overrideMapByUnitId.get(fixture.candidate.unitId)!;
+      expectPlannerDecline({
+        ...fixture.input,
+        plan: {
+          ...fixture.input.plan,
+          overrideMap: new Map([[fixture.candidate.legacyName, { ...override }]]),
+        },
+      });
+      expectPlannerDecline({
+        ...fixture.input,
+        projectedLoweringPlans: {
+          ...fixture.input.projectedLoweringPlans,
+          signaturesByUnitId: new Map([[fixture.candidate.unitId, { ...override }]]),
+        },
+      });
+    }
+    {
+      const fixture = buildFixture();
+      expectPlannerDecline({
+        ...fixture.input,
+        projectedLoweringPlans: {
+          ...fixture.input.projectedLoweringPlans,
+          ownerProjection: buildIrLegacyUnitProjection([
+            {
+              unitId: fixture.candidate.importedTargetUnitId,
+              legacyName: fixture.candidate.legacyName,
+            },
+          ]),
+        },
+      });
+      expectPlannerDecline({
+        ...fixture.input,
+        projectedLoweringPlans: {
+          ...fixture.input.projectedLoweringPlans,
+          ownerUnitIdByLegacyName: new Map([[fixture.candidate.legacyName, fixture.candidate.importedTargetUnitId]]),
+        },
+      });
+    }
+    {
+      const fixture = buildFixture();
+      fixture.input.ctx.irPlanningIdentityContext = { ...fixture.input.plan.identityPlan.identityContext };
+      expectPlannerDecline(fixture.input);
+    }
+    {
+      const fixture = buildFixture();
+      expectPlannerDecline({
+        ...fixture.input,
+        projectedLoweringPlans: {
+          ...fixture.input.projectedLoweringPlans,
+          identityContext: { ...fixture.input.plan.identityPlan.identityContext },
+        },
+      });
+    }
+    {
+      const fixture = buildFixture();
+      const registry = fixture.input.ctx.programAbiSourceCallables;
+      if (!registry) throw new Error("fixture lost source-callable registry");
+      Object.assign(registry, { identityContext: { ...fixture.input.plan.identityPlan.identityContext } });
+      expectPlannerDecline(fixture.input);
+    }
+    {
+      const fixture = buildFixture();
+      hiddenMap(fixture.input.ctx.programAbiSession, "derivedUnits").set("ir-unit:v1:derived:stale", {
+        terminalOwnerId: fixture.candidate.unitId,
+      });
+      expectPlannerDecline(fixture.input);
+    }
+    {
+      const fixture = buildFixture();
+      expectPlannerDecline({
+        ...fixture.input,
+        plan: {
+          ...fixture.input.plan,
+          selection: { ...fixture.input.plan.selection, classMembers: new Set(["stale"]) },
+        },
+      });
+      expectPlannerDecline({
+        ...fixture.input,
+        safeSelection: { ...fixture.input.safeSelection, moduleInit: { stmtCount: 1, reason: null } },
+      });
+      expectPlannerDecline({
+        ...fixture.input,
+        plan: { ...fixture.input.plan, classShapes: new Map([["stale", {} as never]]) },
+      });
+      expectPlannerDecline({
+        ...fixture.input,
+        plan: { ...fixture.input.plan, classShapesById: new Map([["ir-class:v1:stale" as never, {} as never]]) },
+      });
     }
   });
 
@@ -711,16 +920,78 @@ describe("#3518 dormant multi-source string-leaf planner", () => {
     }
     {
       const fixture = buildFixture();
-      fixture.input.ctx.funcMap.set(
-        `__fn_tramp_${fixture.candidate.legacyName}_cached`,
-        fixture.candidate.targetHandle,
-      );
+      const targetHandle = fixture.input.ctx.programAbiSourceCallables?.handleForUnit(fixture.candidate.unitId);
+      if (targetHandle === undefined) throw new Error("fixture lost candidate target handle");
+      fixture.input.ctx.funcMap.set(`__fn_tramp_${fixture.candidate.legacyName}_cached`, targetHandle);
       expectPlannerDecline(fixture.input);
     }
     {
       const fixture = buildFixture();
       fixture.input.ctx.funcClosureGlobals.set(fixture.candidate.legacyName, 0);
       expectPlannerDecline(fixture.input);
+    }
+  });
+
+  it("fails closed on every pre-support Program ABI and singleton namespace owner", () => {
+    type Mutation = (fixture: Fixture) => void;
+    const mutations: readonly (readonly [string, Mutation])[] = [
+      [
+        "target plan",
+        (fixture) => {
+          hiddenMap(fixture.input.ctx.programAbiSession, "drafts").set(
+            irUnitCallableBindingId(fixture.candidate.unitId),
+            {},
+          );
+        },
+      ],
+      [
+        "target locator",
+        (fixture) => {
+          hiddenMap(fixture.input.ctx.programAbiSession, "locators").set(
+            irUnitCallableBindingId(fixture.candidate.unitId),
+            {},
+          );
+        },
+      ],
+      [
+        "target locator owner",
+        (fixture) => {
+          const target = fixture.input.ctx.programAbiSourceCallables?.functionForUnit(fixture.candidate.unitId);
+          if (!target) throw new Error("fixture lost candidate target");
+          hiddenMap(fixture.input.ctx.programAbiSession, "locatorOwners").set(
+            target,
+            irUnitCallableBindingId(fixture.candidate.unitId),
+          );
+        },
+      ],
+      [
+        "same-name singleton on another handle",
+        (fixture) => {
+          const targetHandle = fixture.input.ctx.programAbiSourceCallables?.handleForUnit(fixture.candidate.unitId);
+          if (targetHandle === undefined) throw new Error("fixture lost candidate target handle");
+          fixture.input.ctx.funcClosureSingletonKeyByFuncIdx.set(
+            targetHandle + 1_000_000,
+            fixture.candidate.legacyName,
+          );
+        },
+      ],
+    ];
+    for (const [, mutate] of mutations) {
+      const fixture = buildFixture();
+      mutate(fixture);
+      expectPlannerDecline(fixture.input);
+    }
+    for (const role of ["function-value-trampoline", "function-value-cache"] as const) {
+      for (const namespace of ["drafts", "locators"] as const) {
+        const fixture = buildFixture();
+        const ref =
+          role === "function-value-trampoline"
+            ? irSupportFuncRef(fixture.candidate.unitId, role, `__fn_tramp_${fixture.candidate.legacyName}_cached`)
+            : irSupportGlobalRef(fixture.candidate.unitId, role, `__fn_closure_${fixture.candidate.legacyName}`);
+        if (ref.binding.kind !== "support") throw new Error("fixture lost support binding");
+        hiddenMap(fixture.input.ctx.programAbiSession, namespace).set(ref.binding.bindingId, {});
+        expectPlannerDecline(fixture.input);
+      }
     }
   });
 
@@ -775,6 +1046,7 @@ describe("#3518 dormant multi-source string-leaf planner", () => {
 
   it("throws the shared invariant when frozen candidate evidence drifts", () => {
     const fixture = buildFixture();
+    const before = plannerCardinalities(fixture.input);
     for (const candidate of [
       { ...fixture.candidate },
       Object.freeze({ ...fixture.candidate, sourceId: "ir-source:v1:stale" as IrSourceId }),
@@ -788,6 +1060,7 @@ describe("#3518 dormant multi-source string-leaf planner", () => {
           candidate as MultiPreparedStringLeafCandidateEvidence,
         ),
       ).toThrow(/multi-source string leaf .* drifted after certification/);
+      expect(plannerCardinalities(fixture.input)).toEqual(before);
     }
   });
 
@@ -819,6 +1092,36 @@ describe("#3518 dormant multi-source string-leaf planner", () => {
     const mutations: readonly (readonly [string, Mutation])[] = [
       ["unfrozen receipt", (_fixture, support) => ({ ...support })],
       [
+        "unfrozen trampoline reference",
+        (_fixture, support) => Object.freeze({ ...support, trampolineRef: { ...support.trampolineRef } }),
+      ],
+      [
+        "unfrozen trampoline binding",
+        (_fixture, support) =>
+          Object.freeze({
+            ...support,
+            trampolineRef: Object.freeze({
+              ...support.trampolineRef,
+              binding: { ...support.trampolineRef.binding },
+            }),
+          }),
+      ],
+      [
+        "unfrozen cache reference",
+        (_fixture, support) => Object.freeze({ ...support, cacheGlobalRef: { ...support.cacheGlobalRef } }),
+      ],
+      [
+        "unfrozen cache binding",
+        (_fixture, support) =>
+          Object.freeze({
+            ...support,
+            cacheGlobalRef: Object.freeze({
+              ...support.cacheGlobalRef,
+              binding: { ...support.cacheGlobalRef.binding },
+            }),
+          }),
+      ],
+      [
         "target allocator object",
         (_fixture, support) => Object.freeze({ ...support, targetFunction: support.trampolineFunction }),
       ],
@@ -835,6 +1138,36 @@ describe("#3518 dormant multi-source string-leaf planner", () => {
             ...signature,
             results: [{ kind: "i32" }],
           };
+          return support;
+        },
+      ],
+      [
+        "target Program ABI plan",
+        (fixture, support) => {
+          hiddenMap(fixture.input.ctx.programAbiSession, "drafts").set(
+            irUnitCallableBindingId(fixture.candidate.unitId),
+            {},
+          );
+          return support;
+        },
+      ],
+      [
+        "target Program ABI locator",
+        (fixture, support) => {
+          hiddenMap(fixture.input.ctx.programAbiSession, "locators").set(
+            irUnitCallableBindingId(fixture.candidate.unitId),
+            {},
+          );
+          return support;
+        },
+      ],
+      [
+        "target Program ABI locator owner",
+        (fixture, support) => {
+          hiddenMap(fixture.input.ctx.programAbiSession, "locatorOwners").set(
+            support.targetFunction,
+            irUnitCallableBindingId(fixture.candidate.unitId),
+          );
           return support;
         },
       ],
@@ -871,9 +1204,23 @@ describe("#3518 dormant multi-source string-leaf planner", () => {
           }),
       ],
       [
-        "trampoline locator",
+        "missing trampoline plan",
+        (fixture, support) => {
+          hiddenMap(fixture.input.ctx.programAbiSession, "drafts").delete(support.trampolineBindingId);
+          return support;
+        },
+      ],
+      [
+        "missing trampoline locator",
         (fixture, support) => {
           hiddenMap(fixture.input.ctx.programAbiSession, "locators").delete(support.trampolineBindingId);
+          return support;
+        },
+      ],
+      [
+        "missing trampoline locator owner",
+        (fixture, support) => {
+          hiddenMap(fixture.input.ctx.programAbiSession, "locatorOwners").delete(support.trampolineFunction);
           return support;
         },
       ],
@@ -924,6 +1271,41 @@ describe("#3518 dormant multi-source string-leaf planner", () => {
           }),
       ],
       [
+        "missing cache plan",
+        (fixture, support) => {
+          hiddenMap(fixture.input.ctx.programAbiSession, "drafts").delete(support.cacheGlobalBindingId);
+          return support;
+        },
+      ],
+      [
+        "missing cache locator",
+        (fixture, support) => {
+          hiddenMap(fixture.input.ctx.programAbiSession, "locators").delete(support.cacheGlobalBindingId);
+          return support;
+        },
+      ],
+      [
+        "missing cache locator owner",
+        (fixture, support) => {
+          hiddenMap(fixture.input.ctx.programAbiSession, "locatorOwners").delete(support.cacheGlobal);
+          return support;
+        },
+      ],
+      [
+        "cache current index",
+        (fixture, support) => {
+          const session = fixture.input.ctx.programAbiSession;
+          if (!session) throw new Error("fixture lost Program ABI session");
+          const resolveCurrentIndex = session.resolveCurrentIndex.bind(session);
+          const drifted: typeof session.resolveCurrentIndex = (id, space, key, module) => {
+            const current = resolveCurrentIndex(id, space, key, module);
+            return id === support.cacheGlobalBindingId ? current + 1 : current;
+          };
+          Object.assign(session, { resolveCurrentIndex: drifted });
+          return support;
+        },
+      ],
+      [
         "trampoline body",
         (_fixture, support) => {
           support.trampolineFunction.body = [{ op: "call", funcIdx: support.targetHandle + 1 }];
@@ -934,6 +1316,13 @@ describe("#3518 dormant multi-source string-leaf planner", () => {
         "cache initializer",
         (_fixture, support) => {
           support.cacheGlobal.init = [];
+          return support;
+        },
+      ],
+      [
+        "cache type",
+        (_fixture, support) => {
+          support.cacheGlobal.type = { kind: "i32" };
           return support;
         },
       ],
@@ -997,10 +1386,12 @@ describe("#3518 dormant multi-source string-leaf planner", () => {
     for (const [label, mutate] of mutations) {
       const fixture = buildFixture();
       const support = mutate(fixture, prepareSupport(fixture));
+      const before = plannerCardinalities(fixture.input);
       expect(
         () => requireCurrentMultiPreparedStringLeafSupport(fixture.input, fixture.candidate, support, "before-prepare"),
         label,
       ).toThrow(/multi-source string leaf .* drifted after certification/);
+      expect(plannerCardinalities(fixture.input)).toEqual(before);
     }
   });
 });
