@@ -1701,8 +1701,14 @@ export function tryCompileNativeMapSizeGet(
   return { kind: "i32" } as ValType;
 }
 
-/** Resolve a function-typed local stored in an externref slot to the canonical
- * Wasm closure wrapper, mirroring the standalone array-HOF callback path. */
+/** Resolve a function-valued local to the canonical Wasm closure wrapper.
+ *
+ * Function expressions assigned to a variable are represented as externref by
+ * the general expression path. Native forEach still knows their TypeScript
+ * call signature, so it can recover the wrapper type used by call_ref instead
+ * of falling back to a host Map_forEach import. Inline callbacks and statically
+ * known function identifiers continue through the existing ref path.
+ */
 function resolveDynamicCallbackClosure(
   ctx: CodegenContext,
   cbArg: ts.Expression,
@@ -1772,7 +1778,7 @@ export function tryCompileNativeCollectionForEach(
     (ts.isIdentifier(cbArg) &&
       (ctx.funcMap.has(cbArg.text) ||
         ctx.closureMap.has(cbArg.text) ||
-        ((ctx.standalone || ctx.wasi) && ctx.checker.getTypeAtLocation(cbArg).getCallSignatures().length === 1)));
+        (ctx.nativeStrings && ctx.checker.getTypeAtLocation(cbArg).getCallSignatures().length === 1)));
   if (!willBeClosure) {
     // (#3573) Spec 24.1.3.5 / 24.2.3.6: "If IsCallable(callbackfn) is false,
     // throw a TypeError". A statically non-callable LITERAL argument (`null` /
@@ -1842,7 +1848,7 @@ export function tryCompileNativeCollectionForEach(
   if (cbResult && (cbResult.kind === "ref" || cbResult.kind === "ref_null")) {
     closureTypeIdx = (cbResult as { typeIdx: number }).typeIdx;
     closureInfo = ctx.closureInfoByTypeIdx.get(closureTypeIdx);
-  } else if ((ctx.standalone || ctx.wasi) && cbResult?.kind === "externref") {
+  } else if (ctx.nativeStrings && cbResult?.kind === "externref") {
     const dynamic = resolveDynamicCallbackClosure(ctx, cbArg);
     if (dynamic) {
       closureInfo = dynamic.closureInfo;
@@ -1853,8 +1859,8 @@ export function tryCompileNativeCollectionForEach(
       closureValue = { kind: "ref", typeIdx: dynamic.selfStructTypeIdx };
     }
   }
-  if (!closureInfo || closureTypeIdx === undefined) return undefined;
-  const closureTmp = allocLocal(fctx, `__mfe_cb_${fctx.locals.length}`, closureValue!);
+  if (!closureInfo || closureTypeIdx === undefined || !closureValue) return undefined;
+  const closureTmp = allocLocal(fctx, `__mfe_cb_${fctx.locals.length}`, closureValue);
   fctx.body.push({ op: "local.set", index: closureTmp });
 
   // Evaluate the optional thisArg after the callback, as required by call
