@@ -136,7 +136,11 @@ interface PrototypeEdge {
 function collectPrototypeEdges(ctx: CodegenContext): PrototypeEdge[] {
   const edges: PrototypeEdge[] = [];
   for (const [name, protoGlobalIdx] of ctx.fnctorPrototypeObject) {
-    const valueGlobalIdx = ctx.funcClosureGlobals.get(name);
+    // Function declarations use the cached `__fn_closure_<name>` singleton,
+    // while `var F = function(){}` publishes the same callable through its
+    // module binding global. Both are canonical values for the fnctor edge;
+    // the latter is the only value available for expression-backed fnctors.
+    const valueGlobalIdx = ctx.funcClosureGlobals.get(name) ?? ctx.moduleGlobals.get(name);
     if (valueGlobalIdx === undefined) continue;
     edges.push({ valueGlobalIdx, protoGlobalIdx, vivify: true, name });
   }
