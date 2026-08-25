@@ -535,7 +535,7 @@ export function compileObjectLiteralAsExternref(
       addStringConstantGlobal(ctx, methodName);
       fctx.body.push({ op: "local.get", index: objLocal });
       fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
-      const ok = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression);
+      const ok = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression, objLocal);
       // On decline (e.g. generator/async shorthand `compileArrowAsClosure`
       // rejects — see issue note 2), store `undefined` to keep the stack balanced,
       // matching the sibling arm's `ref.null.extern` fallback.
@@ -1004,7 +1004,7 @@ function compileObjectLiteralWithAccessors(
         fctx.body.push({ op: "local.get", index: objLocal });
         fctx.body.push({ op: "i32.const", value: wellKnownSymId });
         fctx.body.push({ op: "call", funcIdx: boxSymIdx });
-        const ok = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression);
+        const ok = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression, objLocal);
         if (!ok) {
           fctx.body.push({ op: "ref.null.extern" });
         }
@@ -1031,7 +1031,7 @@ function compileObjectLiteralWithAccessors(
         } else if (keyType.kind !== "externref") {
           coerceType(ctx, fctx, keyType, { kind: "externref" });
         }
-        const okRt = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression);
+        const okRt = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression, objLocal);
         if (okRt) {
           fctx.body.push({ op: "call", funcIdx: setIdx });
         } else {
@@ -1053,7 +1053,7 @@ function compileObjectLiteralWithAccessors(
       for (const instr of stringConstantExternrefInstrs(ctx, methodName)) {
         fctx.body.push(instr);
       }
-      const ok = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression);
+      const ok = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression, objLocal);
       if (!ok) {
         fctx.body.push({ op: "ref.null.extern" });
       }
@@ -1172,9 +1172,18 @@ function emitObjectLiteralAccessorFn(
  * closure is invoked through the same `__current_this`-bound closure-call path the
  * getter closures use, so `this` is bound correctly.
  */
-function emitObjectLiteralMethodFn(ctx: CodegenContext, fctx: FunctionContext, fn: ts.FunctionExpression): boolean {
+function emitObjectLiteralMethodFn(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  fn: ts.FunctionExpression,
+  homeObjectLocal?: number,
+): boolean {
   if (ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") {
-    const closureType = compileArrowAsClosure(ctx, fctx, fn);
+    // Keep ordinary object-literal methods byte-stable. Only a method whose
+    // own body contains `super` needs the synthetic [[HomeObject]] capture.
+    const superHomeLocal =
+      homeObjectLocal !== undefined && genBodyReferencesSuper(fn.body) ? homeObjectLocal : undefined;
+    const closureType = compileArrowAsClosure(ctx, fctx, fn, superHomeLocal);
     if (!closureType) return false;
     if (closureType.kind !== "externref") {
       fctx.body.push({ op: "extern.convert_any" });

@@ -108,6 +108,8 @@ import {
 } from "./helpers.js";
 import { localGlobalIdx } from "../registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { ensureCurrentThisGlobal } from "../statements/nested-declarations.js";
+import { SUPER_HOME_OBJECT_CAPTURE_NAME } from "../closures.js";
 import { NEW_GLOBAL_FALLTHROUGH, tryCompileBuiltinGlobalNew } from "./new-builtin-globals.js"; // (#3281 slice 1) built-in global ctor dispatch
 import { NEW_INDEXED_FALLTHROUGH, tryCompileIndexedBuiltinNew } from "./new-indexed.js"; // (#3281 slice 2) indexed builtin ctor dispatch
 import { emitFnctorProtoGet, resolveUserFnctorName } from "./fnctor-prototype.js"; // (#2660 S3a) reconstruct `new F()` as $Object; (#3981) proto for a value-bound ctor
@@ -921,6 +923,63 @@ function compileSuperMethodCall(ctx: CodegenContext, fctx: FunctionContext, expr
 }
 
 /**
+ * (#4688) Read a statically named `super` property from an object-literal
+ * method in standalone mode.
+ *
+ * Object-literal methods are lifted closures. Their [[HomeObject]] is carried
+ * as a synthetic capture, so a detached/borrowed call can supply a different
+ * `this` without changing the prototype used by `super`. Get that home
+ * object's prototype first, then perform the receiver-aware property read so
+ * an inherited accessor observes the call-time receiver. The native object
+ * runtime already implements both operations for `$Object`.
+ *
+ * Returns the checker-derived result type when the native helpers are
+ * available, or `undefined` without emitting when the narrow gate cannot be
+ * satisfied (the caller retains its historical default fallback).
+ */
+function compileStandaloneObjectLiteralSuperPropertyRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  propName: string,
+  accessType: ts.Type,
+): ValType | undefined {
+  if (!ctx.standalone) return undefined;
+
+  ensureObjectRuntime(ctx);
+  addStringConstantGlobal(ctx, propName);
+  flushLateImportShifts(ctx, fctx);
+
+  const getPrototypeOfIdx = ctx.funcMap.get("__getPrototypeOf");
+  const reflectGetReceiverIdx = ctx.funcMap.get("__reflect_get_receiver");
+  if (getPrototypeOfIdx === undefined || reflectGetReceiverIdx === undefined) return undefined;
+
+  const currentThisIdx = ensureCurrentThisGlobal(ctx);
+  const homeObjectLocal = fctx.localMap.get(SUPER_HOME_OBJECT_CAPTURE_NAME);
+  // A standalone object-literal method must carry its actual [[HomeObject]].
+  // Falling back to __current_this would make a borrowed method resolve
+  // `super` against the call-time receiver.
+  if (homeObjectLocal === undefined) return undefined;
+  fctx.body.push({ op: "local.get", index: homeObjectLocal });
+  fctx.body.push({ op: "call", funcIdx: getPrototypeOfIdx });
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+  // The property receiver is the call-time `this`, not [[HomeObject]]. This
+  // distinction is observable through inherited accessors on a borrowed
+  // method; `__current_this` is the established standalone call carrier.
+  fctx.body.push({ op: "global.get", index: currentThisIdx });
+  fctx.body.push({ op: "call", funcIdx: reflectGetReceiverIdx });
+
+  const resultType = resolveWasmType(ctx, accessType);
+  if (resultType.kind !== "externref" && resultType.kind !== "ref_extern") {
+    coerceType(ctx, fctx, { kind: "externref" }, resultType);
+  }
+  // Coercion may register a late import (for example a numeric unbox). Repair
+  // the helper calls emitted above before the enclosing body continues.
+  flushLateImportShifts(ctx, fctx);
+  return resultType;
+}
+
+/**
  * Compile `super['method'](args)` — resolve to ParentClass_method and call with
  * this. Same logic as {@link compileSuperMethodCall}; the method name comes from
  * a computed key resolved by the caller (see compileSuperMethodCallCore).
@@ -948,9 +1007,15 @@ export function compileSuperPropertyAccess(
   // Determine which class we're in
   const currentClassName = resolveEnclosingClassName(fctx);
   if (!currentClassName) {
+    const accessType = ctx.checker.getTypeAtLocation(expr);
+    // (#4688) Object-literal methods have a runtime home-object prototype in
+    // standalone mode. Resolve the named read through the native object
+    // runtime before retaining the old type-shaped fallback for other lanes.
+    const runtimeReadType = compileStandaloneObjectLiteralSuperPropertyRead(ctx, fctx, expr, propName, accessType);
+    if (runtimeReadType !== undefined) return runtimeReadType;
+
     // super in object literal method — cannot resolve prototype chain at compile time.
     // Emit a default value based on the access type.
-    const accessType = ctx.checker.getTypeAtLocation(expr);
     const wasmType = resolveWasmType(ctx, accessType);
     if (wasmType.kind === "f64") {
       fctx.body.push({ op: "f64.const", value: 0 });
@@ -1109,9 +1174,14 @@ export function compileSuperElementAccess(
   // Determine which class we're in
   const currentClassName = resolveEnclosingClassName(fctx);
   if (!currentClassName) {
+    const accessType = ctx.checker.getTypeAtLocation(expr);
+    // (#4688) Mirror the dot-property lowering for a statically resolved
+    // element key. Dynamic keys stay on the historical fallback path.
+    const runtimeReadType = compileStandaloneObjectLiteralSuperPropertyRead(ctx, fctx, expr, propName, accessType);
+    if (runtimeReadType !== undefined) return runtimeReadType;
+
     // super in object literal method — emit default value
-    const accessType2 = ctx.checker.getTypeAtLocation(expr);
-    const wasmType2 = resolveWasmType(ctx, accessType2);
+    const wasmType2 = resolveWasmType(ctx, accessType);
     if (wasmType2.kind === "f64") {
       fctx.body.push({ op: "f64.const", value: 0 });
     } else if (wasmType2.kind === "i32") {

@@ -126,14 +126,18 @@ export function scanForDynamicProto(ctx: CodegenContext, root: ts.Node): void {
       markedRaw.add(recv.expression.text);
       return;
     }
-    // Slice A hooks: a direct object-literal receiver, or a `const` binding
-    // whose initializer is an object literal.
+    // Slice A hooks: a direct object-literal receiver, or an identifier binding
+    // whose initializer is an object literal. The receiver can be `var`/`let`
+    // in valid source (the ES2015 `super` value fixtures use `var`), so this
+    // must use the general variable-initializer oracle rather than the
+    // const-only query. The mark is still attached to this initializer only;
+    // ordinary literals remain on their existing closed-shape path.
     if (ts.isObjectLiteralExpression(recv)) {
       ctx.dynamicProtoLiteralNodes.add(recv);
       return;
     }
     if (ts.isIdentifier(recv)) {
-      const init = ctx.oracle.constInitializerOf(recv);
+      const init = ctx.oracle.variableInitializerOf(recv);
       if (init) {
         if (ts.isObjectLiteralExpression(init)) {
           ctx.dynamicProtoLiteralNodes.add(init);
