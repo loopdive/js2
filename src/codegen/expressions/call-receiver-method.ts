@@ -142,6 +142,7 @@ import { sourceOverridesBuiltinPrototypeMember, sourceOverridesMethodOnReceiver 
 import {
   tryCompileWrapperDynamicMethodCall,
   tryCompileStandaloneBooleanToString,
+  tryCompileStandaloneDeletedStringToString,
   tryCompileStandaloneNumberPrototypeTail,
 } from "./standalone-primitive-tail.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
@@ -1188,6 +1189,17 @@ export function compileReceiverMethodCall(
     emitWrapperDynamicMethodCall,
   });
   if (dynamicWrapper !== undefined) return dynamicWrapper;
+
+  const deletedStringToString = tryCompileStandaloneDeletedStringToString(
+    ctx,
+    fctx,
+    propAccess,
+    expr,
+    receiverType,
+    expectedType,
+    compileCallExpression,
+  );
+  if (deletedStringToString !== undefined) return deletedStringToString;
 
   const booleanToString = tryCompileStandaloneBooleanToString(ctx, fctx, propAccess, expr, receiverType);
   if (booleanToString !== undefined) return booleanToString;
