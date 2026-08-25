@@ -24,7 +24,7 @@ import {
   prepareHoistedFunctionBindings,
   skipUnobservedHoistedCapture,
 } from "../function-declaration-observation.js";
-import { emitArgumentsLengthBrandMark } from "../arguments-length-brand.js"; // (#4658) §10.4.4 `length` brand
+import { getOrRegisterArgumentsVecType, reserveArgumentsLengthBrand } from "../arguments-length-brand.js";
 import { recordLiftedCaptureSlots } from "../closures/capture-source-slot.js";
 import { collectOwnerBindingsWrittenAfterDeclaration } from "../closures/declaration-write-analysis.js";
 import { popBody, pushBody } from "../context/bodies.js";
@@ -3162,6 +3162,8 @@ export function emitArgumentsVecBody(
 ): void {
   const numArgs = paramTypes.length;
   const { vecTypeIdx: vti, arrTypeIdx: ati, argsLocalIdx: argsLocal, arrTmpIdx: arrTmp } = locals;
+  const argumentsVecTypeIdx = registerWithHost && ctx.standalone ? getOrRegisterArgumentsVecType(ctx, vti, ati) : vti;
+  if (argumentsVecTypeIdx !== vti) reserveArgumentsLengthBrand(ctx);
   // (#2743 a) Register this arguments vec with the host so its `[[Prototype]]`
   // resolves to %Object.prototype% and `.constructor`/`hasOwnProperty` behave
   // like an ordinary Object (§10.4.4). This is a NEW host import; adding it
@@ -3241,6 +3243,7 @@ export function emitArgumentsVecBody(
     paramOffset,
     numArgs,
     vecTypeIdx: vti,
+    argumentsVecTypeIdx,
     arrTypeIdx: ati,
     argsLocalIdx: argsLocal,
     arrTmpIdx: arrTmp,
@@ -3260,15 +3263,8 @@ export function emitArgumentsVecBody(
     fctx.body.push({ op: "call", funcIdx: registerArgsIdx });
   }
 
-  // (#4658) The standalone twin of that registration: brand the vec so
-  // `__vec_gopd` answers §10.4.4's `length` descriptor (`configurable: true`)
-  // instead of §10.4.2's Array one. Gated on the SAME `registerWithHost`
-  // observability proof (#4578) — an arguments object that provably never
-  // escapes its function cannot have its descriptor queried, and marking it
-  // would append a pair to the overlay's linearly scanned table on every call.
-  if (registerWithHost && ctx.standalone) {
-    emitArgumentsLengthBrandMark(ctx, fctx, argsLocal);
-  }
+  // Standalone arguments identity is carried by the concrete WasmGC subtype
+  // constructed above; no global overlay-table registration is required.
 }
 
 /**
