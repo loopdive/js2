@@ -116,6 +116,13 @@ export function analyzeEscape(
       case "class.set":
         raise(instr.newValue, "stored");
         break;
+      case "fnctor.new":
+        // Constructor captures/arguments cross an opaque synthesized-body
+        // boundary and may be retained in the returned heap object.
+        for (const value of instr.captureArgs) raise(value, "opaque");
+        for (const value of instr.args) raise(value, "opaque");
+        if (instr.constructorIdentity !== null) raise(instr.constructorIdentity, "opaque");
+        break;
       case "refcell.set":
         raise(instr.value, "stored");
         break;

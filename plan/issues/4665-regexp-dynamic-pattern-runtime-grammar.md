@@ -16,6 +16,15 @@ language_feature: regexp
 goal: standalone-gap
 related: [4654, 682, 4492]
 origin: "split out of #4654 part C. The #4654 issue ASKED whether the refusal was narrow for these specific patterns; the lane MEASURED that it is not, and the table below is that measurement."
+# The dynamic compiler owns the runtime RegExp representation and all four
+# token walks. This bounded group-envelope step must update those walks and the
+# SAVE-slot constructor in place; moving it would duplicate the grammar/plumbing
+# boundary and risk the same count/emission drift this issue is fixing.
+loc-budget-allow:
+  - src/codegen/regexp-standalone.ts
+func-budget-allow:
+  - src/codegen/regexp-standalone.ts::ensureDynamicStandaloneRegExpCompiler
+  - src/codegen/regexp-dynamic-pattern.ts::ensureDynamicPatternTokenDecoder
 ---
 
 ## Problem

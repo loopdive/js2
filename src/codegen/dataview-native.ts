@@ -3504,6 +3504,68 @@ export function emitTaCtorValue(ctx: CodegenContext, fctx: FunctionContext, name
 }
 
 /**
+ * (#4490 wave 2) Match the first migrated concrete constructor carrier.
+ *
+ * Int8Array's bare value is now a mutable `$Object` singleton, while the
+ * remaining TypedArray constructors still use `$__ta_ctor`.  Dynamic native
+ * paths receive an `anyref` and historically only tested the latter type. Keep
+ * the identity check centralized so construction and metadata readers cannot
+ * accidentally disagree about which object represents Int8Array.
+ */
+export function buildInt8ArrayCarrierMatch(ctx: CodegenContext, anyLocal: number, onMatch: Instr[]): Instr[] {
+  // Dynamic construct helpers can be registered before the source-level
+  // Int8Array identifier is compiled. Reserve the same global slot eagerly so
+  // the later identity emitter can reuse it and seed the carrier in place.
+  let globalIdx = ctx.builtinObjectGlobals.get("ctor:Int8Array");
+  if (globalIdx === undefined) {
+    globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+    ctx.mod.globals.push({
+      name: "__builtin_ctor_Int8Array",
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    ctx.builtinObjectGlobals.set("ctor:Int8Array", globalIdx);
+  }
+  ensureObjectRuntime(ctx);
+  const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
+  if (objectTypeIdx === undefined || globalIdx === undefined) return [];
+  return [
+    { op: "local.get", index: anyLocal },
+    { op: "ref.test", typeIdx: objectTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: anyLocal },
+        { op: "ref.cast", typeIdx: objectTypeIdx },
+        { op: "global.get", index: globalIdx },
+        { op: "any.convert_extern" },
+        { op: "ref.cast_null", typeIdx: objectTypeIdx },
+        { op: "ref.eq" },
+        { op: "if", blockType: { kind: "empty" }, then: onMatch, else: [] },
+      ],
+      else: [],
+    },
+  ];
+}
+
+/** Set `kindLocal` to 0 when `anyLocal` is the Int8Array object carrier. */
+function pushInt8ArrayCarrierKind(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  anyLocal: number,
+  kindLocal: number,
+): void {
+  fctx.body.push(
+    ...buildInt8ArrayCarrierMatch(ctx, anyLocal, [
+      { op: "i32.const", value: 0 },
+      { op: "local.set", index: kindLocal },
+    ]),
+  );
+}
+
+/**
  * (#3177) Get-or-register the per-kind `$__ta_ctor` singleton module-global:
  * `(global $__ta_ctor_<kind> (ref $__ta_ctor) (i32.const <kind>) (struct.new
  * $__ta_ctor))`. Returns the ABSOLUTE global index (imports included). Also
@@ -3575,6 +3637,10 @@ export function emitTaCtorBytesPerElement(
     ],
     else: [],
   });
+  // (#4490 wave 2) The migrated Int8Array value is an object carrier rather
+  // than a `$__ta_ctor`; recover its fixed kind through the identity singleton
+  // when the typed-constructor arm above misses.
+  pushInt8ArrayCarrierKind(ctx, fctx, anyLocal, kindLocal);
   if (ctx.taDynViewTypeIdx >= 0) {
     const dynIdx = ctx.taDynViewTypeIdx;
     fctx.body.push({ op: "local.get", index: anyLocal });
@@ -4058,6 +4124,9 @@ export function emitDynamicTaViewConstruct(
     ],
     else: [],
   });
+  // (#4490 wave 2) Recover kind 0 from the real Int8Array constructor
+  // carrier. Other constructors remain `$__ta_ctor`-backed here.
+  pushInt8ArrayCarrierKind(ctx, fctx, ctorAnyLocal, kindLocal);
 
   // Build ONE `$__ta_dyn_view` carrying the runtime kind (B1's per-kind
   // `$__ta_view_<K>` canonicalize together, so a boxed view can't recover its kind
@@ -4238,16 +4307,29 @@ export function emitTaDynCtorConstructFromLocals(
     typeIdx: byteArrIdx,
   });
 
-  // Build the whole `$__ta_ctor`-matched arm detached, then gate it on the
-  // runtime test so a non-TA callee costs one ref.test.
+  // Build the whole constructor-matched arm detached, then gate it on the
+  // runtime type test so a non-TA callee costs one ref.test.  Int8Array is
+  // additionally admitted through its identity-stable `$Object` carrier.
   const taArm: Instr[] = [];
   const savedTa = fctx.body;
   fctx.body = taArm;
 
-  fctx.body.push({ op: "local.get", index: descAnyLocal });
-  fctx.body.push({ op: "ref.cast", typeIdx: taCtorTypeIdx });
-  fctx.body.push({ op: "struct.get", typeIdx: taCtorTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "i32.const", value: -1 });
   fctx.body.push({ op: "local.set", index: kindLocal });
+  fctx.body.push({ op: "local.get", index: descAnyLocal });
+  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      { op: "local.get", index: descAnyLocal },
+      { op: "ref.cast", typeIdx: taCtorTypeIdx },
+      { op: "struct.get", typeIdx: taCtorTypeIdx, fieldIdx: 0 },
+      { op: "local.set", index: kindLocal },
+    ],
+    else: [],
+  });
+  pushInt8ArrayCarrierKind(ctx, fctx, descAnyLocal, kindLocal);
   pushElemSizeForKind(fctx, kindLocal);
   fctx.body.push({ op: "local.set", index: esLocal });
   fctx.body.push({ op: "i32.const", value: 1 }); // little-endian
@@ -4588,7 +4670,13 @@ export function emitTaDynCtorConstructFromLocals(
 
   fctx.body.push({ op: "local.get", index: descAnyLocal });
   fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: taArm, else: [] });
+  const int8Arm = buildInt8ArrayCarrierMatch(ctx, descAnyLocal, taArm);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: taArm,
+    else: int8Arm,
+  });
   fctx.body.push({ op: "local.get", index: resultLocal });
 }
 
@@ -4661,13 +4749,30 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undef
   const offLocal = allocLocal(fctx, "off", { kind: "i32" });
   const vLocal = allocLocal(fctx, "v", { kind: "f64" });
   const lenF64Local = allocLocal(fctx, "lenf", { kind: "f64" });
+  const ctorAnyLocal = allocLocal(fctx, "ctorAny", { kind: "anyref" });
 
-  // kind = ctor.kind; es = elemSize(kind); le = 1 (little-endian).
+  // kind = ctor.kind; es = elemSize(kind); le = 1 (little-endian).  The first
+  // migrated ctor is an identity-stable `$Object` carrier, so recover kind 0
+  // through the same carrier match used by the dynamic construct paths.
   fctx.body.push({ op: "local.get", index: 0 });
   fctx.body.push({ op: "any.convert_extern" });
-  fctx.body.push({ op: "ref.cast", typeIdx: taCtorTypeIdx });
-  fctx.body.push({ op: "struct.get", typeIdx: taCtorTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: ctorAnyLocal });
+  fctx.body.push({ op: "i32.const", value: -1 });
   fctx.body.push({ op: "local.set", index: kindLocal });
+  fctx.body.push({ op: "local.get", index: ctorAnyLocal });
+  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      { op: "local.get", index: ctorAnyLocal },
+      { op: "ref.cast", typeIdx: taCtorTypeIdx },
+      { op: "struct.get", typeIdx: taCtorTypeIdx, fieldIdx: 0 },
+      { op: "local.set", index: kindLocal },
+    ],
+    else: [],
+  });
+  pushInt8ArrayCarrierKind(ctx, fctx, ctorAnyLocal, kindLocal);
   pushElemSizeForKind(fctx, kindLocal);
   fctx.body.push({ op: "local.set", index: esLocal });
   fctx.body.push({ op: "i32.const", value: 1 });
@@ -5829,6 +5934,105 @@ export function emitTaViewWriteBack(
     blockType: { kind: "empty" },
     body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
   });
+}
+
+/**
+ * Validate a statically typed `$__ta_view` before a prototype method runs.
+ *
+ * Integer-indexed element access intentionally treats a detached or
+ * out-of-bounds view as empty, but every TypedArray prototype method begins
+ * with ValidateTypedArray and must throw a real TypeError instead.  The
+ * method dispatcher materializes views into ordinary native vectors, so this
+ * check must run before that copy (and, consequently, before any argument
+ * coercion performed by the method body).
+ *
+ * A detached backing buffer is represented by the shared byte-vector's
+ * negative length marker.  Fixed-length views use field 0 as their element
+ * count; auto-length views over a resizable buffer use -1 and are out of
+ * bounds only when their byte offset is past the current buffer length.
+ */
+export function emitTaViewValidate(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  taViewTypeIdx: number,
+  viewLocal: number,
+): void {
+  const desc = taViewDecode(ctx, taViewTypeIdx);
+  if (!desc) return;
+  const { vecTypeIdx } = i32ByteVec(ctx);
+  const bufLocal = allocLocal(fctx, `__tav_valbuf_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: vecTypeIdx,
+  });
+  const storedLocal = allocLocal(fctx, `__tav_valslen_${fctx.locals.length}`, { kind: "i32" });
+  const offsetLocal = allocLocal(fctx, `__tav_valoff_${fctx.locals.length}`, { kind: "i32" });
+  const bufLenLocal = allocLocal(fctx, `__tav_valblen_${fctx.locals.length}`, { kind: "i32" });
+
+  // Keep the backing reference so the null check and the byte-length read
+  // share exactly the same [[ViewedArrayBuffer]] value.
+  fctx.body.push({ op: "local.get", index: viewLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: bufLocal });
+
+  // A null backing ref is defensive-only (constructors normally reject it),
+  // but it is indistinguishable from a detached view for ValidateTypedArray.
+  // Store -1 for null so the same negative-length test covers both cases.
+  fctx.body.push({ op: "local.get", index: bufLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: [{ op: "i32.const", value: -1 }],
+    else: [
+      { op: "local.get", index: bufLocal },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+    ],
+  });
+  fctx.body.push({ op: "local.set", index: bufLenLocal });
+
+  const throwArm: Instr[] = [];
+  const saved = fctx.body;
+  fctx.savedBodies.push(saved);
+  fctx.body = throwArm;
+  emitThrowTypeError(ctx, fctx, "TypeError: Cannot perform operation on a detached or out-of-bounds TypedArray");
+  fctx.body = saved;
+  fctx.savedBodies.pop();
+
+  // Save the fields used by the fixed/auto-length OOB test.  The detached
+  // test is emitted first, preserving ValidateTypedArray's step ordering.
+  fctx.body.push({ op: "local.get", index: bufLenLocal });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "i32.lt_s" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwArm, else: [] });
+
+  fctx.body.push({ op: "local.get", index: viewLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: storedLocal });
+  fctx.body.push({ op: "local.get", index: viewLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: taViewTypeIdx, fieldIdx: 2 });
+  fctx.body.push({ op: "local.set", index: offsetLocal });
+
+  // OOB = fixed ? offset + length*elementSize > byteLength
+  //             : offset > byteLength
+  fctx.body.push({ op: "local.get", index: storedLocal });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "i32.ge_s" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: [
+      { op: "local.get", index: offsetLocal },
+      { op: "local.get", index: storedLocal },
+      { op: "i32.const", value: desc.bytes },
+      { op: "i32.mul" },
+      { op: "i32.add" },
+      { op: "local.get", index: bufLenLocal },
+      { op: "i32.gt_s" },
+    ],
+    else: [{ op: "local.get", index: offsetLocal }, { op: "local.get", index: bufLenLocal }, { op: "i32.gt_s" }],
+  });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwArm, else: [] });
 }
 
 /**

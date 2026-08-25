@@ -1,7 +1,8 @@
 ---
 id: 2552
 title: "Annex B B.3.3 Phase 2 rework — TDZ-var outer-binding allocation perturbs hot-path codegen (-1180 test262 regression)"
-status: ready
+status: done
+completed: 2026-08-25
 sprint: current
 created: 2026-06-19
 priority: high
@@ -14,10 +15,24 @@ goal: es5
 parent: 2200
 related: [2200, 1764]
 loc-budget-allow:
+  - src/codegen/closure-exports.ts
   - src/codegen/context/types.ts
+  - src/codegen/expressions/assignment.ts
   - src/codegen/expressions/call-identifier.ts
   - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/expressions/calls-closures.ts
   - src/codegen/expressions/eval-inline.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/statements.ts
+  - src/codegen/statements/nested-declarations.ts
+  - src/codegen/typeof-delete.ts
+func-budget-allow:
+  - src/codegen/closure-exports.ts::emitClosureCallExportN
+  - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
 origin: "2026-06-19 — #2200 Phase 2 (PR #1769) failed the full test262-regression gate -1180; parked Phase-1-only. This is the rework follow-up."
 ---
 

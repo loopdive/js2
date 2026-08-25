@@ -76,6 +76,7 @@ import {
   KNOWN_CONSTRUCTORS,
   MATH_HOST_METHODS_1ARG,
   MATH_HOST_METHODS_2ARG,
+  nativeGeneratorBindingType,
   parseRegExpLiteral,
   resolveIdentifierType,
   resolveWasmType,
@@ -2497,6 +2498,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
    * let/const pass so both scopes register the same type.
    */
   function moduleGlobalWasmType(decl: ts.VariableDeclaration, varType: ts.Type): ValType {
+    const nativeGeneratorType = nativeGeneratorBindingType(ctx, decl.initializer);
+    if (nativeGeneratorType) return nativeGeneratorType;
     // (#4222 ES5 residual) The bounded sized-Array carrier is a nominal
     // subtype of the ordinary externref vec.  Module globals need the same
     // concrete slot as function-local bindings; otherwise the initializer can
@@ -2706,6 +2709,78 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     }
   }
 
+  // A bare identifier expression is normally inert at module-init collection
+  // time, but a reference to a direct CaseBlock lexical name is observable:
+  // outside the switch it must perform the ordinary unresolved-binding lookup
+  // and throw ReferenceError. Keep this narrow to top-level switches with no
+  // same-named top-level binding; an outer `let x` legitimately shadows a
+  // switch-local `let x` after the switch.
+  const topLevelBoundNames = new Set<string>();
+  const topLevelSwitchLexicalNames = new Set<string>();
+  const addBindingNames = (name: ts.BindingName): void => {
+    if (ts.isIdentifier(name)) {
+      topLevelBoundNames.add(name.text);
+      return;
+    }
+    for (const element of name.elements) {
+      if (ts.isBindingElement(element)) addBindingNames(element.name);
+    }
+  };
+  for (const stmt of sourceFile.statements) {
+    if (ts.isVariableStatement(stmt)) {
+      for (const decl of stmt.declarationList.declarations) addBindingNames(decl.name);
+    } else if (ts.isFunctionDeclaration(stmt) && stmt.name) {
+      topLevelBoundNames.add(stmt.name.text);
+    } else if (ts.isClassDeclaration(stmt) && stmt.name) {
+      topLevelBoundNames.add(stmt.name.text);
+    }
+    if (!ts.isSwitchStatement(stmt)) continue;
+    for (const clause of stmt.caseBlock.clauses) {
+      for (const clauseStmt of clause.statements) {
+        if (ts.isVariableStatement(clauseStmt)) {
+          const flags = clauseStmt.declarationList.flags;
+          if (
+            !(flags & ts.NodeFlags.Let) &&
+            !(flags & ts.NodeFlags.Const) &&
+            !(flags & ts.NodeFlags.Using) &&
+            !(flags & ts.NodeFlags.AwaitUsing)
+          ) {
+            continue;
+          }
+          for (const decl of clauseStmt.declarationList.declarations) {
+            const names = new Set<string>();
+            if (ts.isIdentifier(decl.name)) names.add(decl.name.text);
+            else if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
+              collectBindingPatternNames(decl.name, names);
+            }
+            for (const name of names) topLevelSwitchLexicalNames.add(name);
+          }
+          continue;
+        }
+        if (ts.isClassDeclaration(clauseStmt) && clauseStmt.name) {
+          topLevelSwitchLexicalNames.add(clauseStmt.name.text);
+          continue;
+        }
+        if (
+          ts.isFunctionDeclaration(clauseStmt) &&
+          clauseStmt.name &&
+          (clauseStmt.asteriskToken !== undefined ||
+            clauseStmt.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true)
+        ) {
+          topLevelSwitchLexicalNames.add(clauseStmt.name.text);
+        }
+      }
+    }
+  }
+
+  // Var declarations are function-scoped, so a declaration nested in a later
+  // top-level `try`/loop/branch is already in scope for earlier statements.
+  // Register the complete hoisted set before the source-order collection below
+  // classifies assignments; otherwise `foo = value` before
+  // `try { ... } catch (foo) { var foo = ... }` is mistaken for an unbound write
+  // and the legacy Annex B outer binding is never initialized.
+  for (const stmt of sourceFile.statements) walkModuleStmtForVars(stmt);
+
   // Single pass preserves source order, which matters for statements that depend on
   // side effects from earlier statements (e.g. `(Ctor as any).prototype = proto` must
   // run before `new Ctor()` captures the prototype, and `obj.prop = v` must run between
@@ -2823,6 +2898,10 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       // unwrap it like parentheses (`void (delete o.k)` must still delete).
       while (ts.isParenthesizedExpression(expr) || ts.isVoidExpression(expr)) {
         expr = expr.expression;
+      }
+      if (ts.isIdentifier(expr) && topLevelSwitchLexicalNames.has(expr.text) && !topLevelBoundNames.has(expr.text)) {
+        ctx.moduleInitStatements.push(stmt);
+        continue;
       }
       if (ts.isNewExpression(expr) || ts.isCallExpression(expr)) {
         ctx.moduleInitStatements.push(stmt);

@@ -43,6 +43,7 @@ import {
 } from "../index.js";
 import { coercionPlan } from "../coercion-plan.js"; // (#2934 1c) single coercion table for the copy-ctor element bridge
 import {
+  buildInt8ArrayCarrierMatch,
   emitDynamicTaViewConstruct,
   emitTaDynCtorConstructFromLocals,
   emitTaViewConstruct,
@@ -74,11 +75,7 @@ import { MAX_NATIVE_CONSTRUCT_ARITY, reserveNativeConstructDriver } from "../nat
 import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2
 import { emitNativeNumberFormat } from "../number-format-native.js";
-import {
-  compileStandaloneRegExpConstructor,
-  isGlobalRegExpIdentifier,
-  isGlobalRegExpType,
-} from "../regexp-standalone.js";
+import { compileStandaloneRegExpConstructor, isGlobalRegExpConstructorExpression } from "../regexp-standalone.js";
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import type { InnerResult } from "../shared.js";
 import {
@@ -137,6 +134,7 @@ import {
   registerFnctorCaptureParams,
 } from "../fnctor-constructor-identity.js";
 import { funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
+import { observeApprovedIrFnctor } from "../program-abi-fnctor-producer.js";
 
 // #2146: resolveEnclosingClassName now lives in shared.ts (imported above).
 
@@ -1924,6 +1922,25 @@ function compileNewFunctionDeclaration(
     ctorFctx.body.push({ op: "local.get", index: selfLocal });
   }
 
+  // (#3521) Record only the exact source-qualified, admission-approved
+  // constructor in the dormant Program-ABI sidecar.  This observes the
+  // already-built legacy constructor and leaves the emitted call site and
+  // constructor body unchanged; unsupported physical layouts remain legacy.
+  observeApprovedIrFnctor({
+    ctx,
+    site: expr,
+    declaration: funcDecl,
+    functionName: funcName,
+    structName,
+    structTypeIdx,
+    fields,
+    captureLayout,
+    userParamTypes: userCtorParams,
+    resultIsExternref: resultIsExtern,
+    constructorFuncIdx: ctorFuncIdx,
+    constructorFunction: ctorFunc,
+  });
+
   // 5. Emit the call to the constructor at the call site
   const args = expr.arguments ?? [];
   // Use the in-scope ctorParams, NOT getFuncParamTypes(ctx, ctorFuncIdx): the
@@ -2794,8 +2811,26 @@ function tryCompileNativeConstructFromValue(
     fctx.body = taArm;
     emitTaDynCtorConstructFromLocals(ctx, fctx, descLocal, argLocals);
     fctx.body = savedTaBody;
-    fctx.body.push({ op: "local.get", index: descLocal });
-    fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+    const int8CarrierMatch = buildInt8ArrayCarrierMatch(ctx, descLocal, []);
+    if (int8CarrierMatch.length > 0) {
+      // Combine the legacy `$__ta_ctor` test with the Int8Array carrier
+      // identity into one i32 condition.  The native construct driver remains
+      // the fallback for all other values.
+      const taMatch = allocLocal(fctx, `__nc_tamatch_${fctx.locals.length}`, { kind: "i32" });
+      fctx.body.push({ op: "local.get", index: descLocal });
+      fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+      fctx.body.push({ op: "local.set", index: taMatch });
+      fctx.body.push(
+        ...buildInt8ArrayCarrierMatch(ctx, descLocal, [
+          { op: "i32.const", value: 1 },
+          { op: "local.set", index: taMatch },
+        ]),
+      );
+      fctx.body.push({ op: "local.get", index: taMatch });
+    } else {
+      fctx.body.push({ op: "local.get", index: descLocal });
+      fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+    }
     fctx.body.push({
       op: "if",
       blockType: { kind: "val", type: { kind: "externref" } },
@@ -3709,6 +3744,16 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // constructor path. The paren-only form previously fell through to a null
   // placeholder without evaluating the constructor body at all.
   const unwrappedLiteralCtor = unwrapNewTarget(expr.expression);
+  // #682 — standalone mode supports a reduced native RegExp subset for static
+  // literal patterns. Keep this before the non-constructable guards so the
+  // ambient `Function` type of `RegExp.prototype.constructor` cannot reject
+  // the direct prototype spelling before identity-aware lowering sees it.
+  if (
+    ctx.targetProfile.semanticProviders === "native-first" &&
+    isGlobalRegExpConstructorExpression(ctx, unwrappedLiteralCtor)
+  ) {
+    return compileStandaloneRegExpConstructor(ctx, fctx, expr.arguments ?? [], expr);
+  }
   if (ts.isFunctionExpression(unwrappedLiteralCtor)) {
     return compileNewFunctionExpression(ctx, fctx, expr, unwrappedLiteralCtor);
   }
@@ -4247,16 +4292,6 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       className = owner.name;
       thisFnctorSym = owner.sym;
     }
-  }
-
-  // #682 — standalone mode supports a reduced native RegExp subset for static
-  // literal patterns. Unsupported constructor forms still produce explicit
-  // #1474-compatible compile errors instead of JS-host imports.
-  if (
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    (isGlobalRegExpType(type) || (ts.isIdentifier(expr.expression) && isGlobalRegExpIdentifier(ctx, expr.expression)))
-  ) {
-    return compileStandaloneRegExpConstructor(ctx, fctx, expr.arguments ?? [], expr);
   }
 
   // #1679 — `new this(...)` inside a static method: the callee is `this`, which

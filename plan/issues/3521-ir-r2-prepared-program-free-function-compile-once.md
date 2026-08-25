@@ -26,12 +26,20 @@ related: [2138, 2855, 3143, 3203, 3518, 3519, 3678, 4260, 4382]
 loc-budget-allow:
   - src/ir/propagate.ts
   - src/ir/select.ts
+  - src/codegen/expressions/new-super.ts
+oracle-ratchet-allow:
+  - src/codegen/ir-fnctor-admission.ts
+  - src/codegen/program-abi-fnctor-producer.ts
+func-budget-allow:
+  - src/codegen/expressions/new-super.ts::compileNewFunctionDeclaration
 origin: "#3518 R2 — invert single-source free functions from compile/patch to prepare/emit"
 files:
   - src/ir/program.ts
   - src/ir/prepare.ts
   - src/ir/integration.ts
   - src/ir/abi-bindings.ts
+  - src/ir/callable-bindings.ts
+  - src/ir/fnctor-abi.ts
   - src/ir/nodes.ts
   - src/ir/prepared-component-dependencies.ts
   - src/ir/string-carrier.ts
@@ -54,6 +62,8 @@ files:
   - src/codegen/ir-overlay-safety.ts
   - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/program-abi-export-planning.ts
+  - src/codegen/program-abi-fnctor-planning.ts
+  - src/codegen/ir-fnctor-admission.ts
   - src/codegen/module-global-registration.ts
   - src/codegen/context/types.ts
   - src/codegen/context/create-context.ts
@@ -70,6 +80,10 @@ files:
   - tests/issue-3520-program-abi-import-callable-planning.test.ts
   - tests/issue-3520-callable-provider-abi.test.ts
   - tests/issue-3765-numeric-locals.test.ts
+  - tests/ir/fnctor-abi.test.ts
+  - tests/ir/fnctor-admission.test.ts
+  - scripts/check-ir-kind-neutrality.mjs
+  - scripts/ir-kind-neutrality-baseline.json
 loc-budget-allow:
   - src/codegen/context/types.ts
   - src/codegen/program-abi-session.ts
@@ -80,6 +94,8 @@ loc-budget-allow:
   - src/ir/lower.ts
   - src/ir/nodes.ts
   - src/ir/verify.ts
+  - src/ir/builder.ts
+  - src/ir/prepared-component-dependencies.ts
 func-budget-allow:
   - src/codegen/index.ts::planIrOverlay
   - src/codegen/index.ts::generateModule
@@ -88,6 +104,10 @@ func-budget-allow:
   - src/ir/integration.ts::makeFromAstResolver
   - src/ir/integration.ts::makeResolver
   - src/ir/lower.ts::lowerIrFunctionBody
+  - src/ir/lower.ts::emitInstrTree
+  - src/ir/verify.ts::verifyInstrStructure
+  - src/ir/passes/inline-small.ts::renameInstrOperands
+  - src/codegen/context/create-context.ts::createCodegenContext
 ---
 # #3521 — IR-only R2: prepare-before-emit free-function ownership
 
@@ -2074,3 +2094,151 @@ constructor rejection. This checkpoint deliberately does not widen `IrType`,
 add instructions, or emit Wasm; the next slice must consume this contract from
 the IR builder/verifier and standalone resolver rather than duplicating the
 legacy `CodegenContext` lookup.
+
+## 2026-08-24 nominal IrType utility checkpoint
+
+The next static slice widens the backend-neutral `IrType` union with a nominal
+`fnctor` arm carrying the validated source/unit/layout-qualified
+`IrFnctorShape`. Type equality, canonical keys, debug descriptions, context
+index scans, and preparation walks now recurse through fields, captures, and
+user parameters without assigning a physical carrier. Linear-memory, string,
+vector, and physical-reference preparation preserve the opaque arm unchanged;
+lowering fails closed with an explicit missing-resolver diagnostic. No
+`fnctor.new`/`fnctor.get` instruction, ABI emission, or runtime behavior is
+claimed by this checkpoint. The next signed slice must add those instructions,
+builder/verifier effects, and an exact standalone resolver before this arm can
+reach lowering.
+
+## 2026-08-24 fnctor instruction contract checkpoint
+
+The next static slice defines `fnctor.new` and `fnctor.get` as explicit IR
+instructions. `fnctor.new` carries the nominal shape, flattened capture/TDZ
+operands, user constructor operands, and an explicit optional hidden identity;
+`fnctor.get` carries the exact receiver shape and field name. The builder
+checks shape validity, ABI arity, receiver identity, and field existence;
+verification checks nominal result/field types and all SSA uses. Effects classify
+construction as call-like heap mutation and field reads as heap reads. Every
+use walker and transform has an exhaustive operand case, while the lowerer and
+all backends fail closed until an exact resolver is supplied. Preparation also
+rejects fnctor instructions without prepared resolver/layout evidence.
+
+This checkpoint additionally hardens the nominal utility contract: diagnostic
+constructor/ref names are excluded from equality and cache keys, binding keys
+are canonicalized independent of object insertion order, recursive anonymous
+fnctor graphs are rejected by validation/keying, and fnctor returns require an
+exact nominal match. No standalone lowering, ABI emission, compiler/runtime
+execution, or R2 replay is claimed here.
+
+## 2026-08-24 fnctor instruction contract hardening checkpoint
+
+The follow-up review closed the remaining instruction-contract gaps before the
+physical resolver slice. `fnctor.new` now has an explicit `hiddenIdentity`
+mode; the builder, verifier, symbolic resolution validator, and operand checks
+require the mode and flattened capture/TDZ/user ABI to agree. Ownership and
+escape analyses treat constructor operands as an opaque heap boundary and
+`fnctor.get` as a heap read. Prepared-closure support rejects the opaque arm
+explicitly, and every backend legality profile rejects fnctor instructions
+before raw lowering rather than allowing a late emitter throw.
+
+The monomorphization and linear-memory planners now consume the shared full
+semantic fnctor key, including fields, captures, user parameters, hidden
+identity, and nominal bindings. The lowering seam is present as an optional
+`IrLowerResolver.resolveFnctor(shape)` returning a physical handle; lowering
+still fails closed when no source/unit-qualified prepared handle is installed.
+The next checkpoint must add the Program-ABI fnctor sidecar and synthesized
+constructor support binding before any AST producer or runtime replay is
+enabled. No compiler/runtime execution or R2 replay is claimed here.
+
+## 2026-08-24 source/unit fnctor resolver seam checkpoint
+
+The next static slice adds `ProgramAbiFnctorRegistry` as the only permitted
+source/unit-qualified observation sidecar. Its observations require exact
+`fnctor-constructor` and `fnctor-layout` support binding IDs, authoritative
+planning identity membership, a live constructor function handle/object pair,
+physical capture/TDZ/user arities, field order, hidden-identity mode, and
+immutable one-observation-per-source/unit equality. The IR resolver delegates
+to this sidecar and the WasmGC legality check accepts a fnctor instruction only
+when that resolver returns a non-null handle; resolver-free callers and all
+other backends remain fail-closed. Constructor operands use the legacy ABI
+order (all capture values, then all TDZ flags, then user args, then optional
+identity), and hidden identity participates in equality and canonical keys.
+
+This is still a dormant resolver seam: no AST producer currently records an
+observation or plans the synthesized support callable/layout, so no fnctor
+instruction can pass the final resolver gate in this checkpoint. The next
+implementation slice must attach the producer to ProgramAbiSession planning,
+verify the physical struct/function signatures and support locators, and add
+the source-local linked-parser lowering before any compiler/runtime replay.
+Static typecheck, focused ABI tests, formatting, IR layering/function/LOC and
+pushRaw gates pass; the linear-IR script is environment-blocked by tsx IPC
+socket permission in this worktree. No compiler/runtime execution or R2
+replay is claimed.
+
+## 2026-08-24 source-qualified admission producer checkpoint
+
+The selector/propagation seam now receives one checker- and planning-identity-
+owned resolver. It admits only an exact escape-gate-approved `new F()` whose
+constructor declaration is in the same source, has a unique inventory unit,
+has a reserved `__fnctor_F` layout, and consists of one unconditional
+`this.input = input` assignment from a string parameter. Aliases, conditional
+or repeated writes, additional own fields, cross-source collisions, and
+unreserved constructors return Unsupported. The same resolver is passed to
+the structural TypeMap and identity selector, so no name-only projection can
+claim the site. This remains admission/planning evidence only: it does not
+plan a support callable, emit `fnctor.new/get`, or change runtime output. The
+next checkpoint must bind the admitted shape to ProgramAbiSession support
+plans and physical constructor/layout validation before AST lowering or R2
+replay.
+
+## 2026-08-24 Program-ABI fnctor observation planning checkpoint
+
+The next bounded producer seam is now explicit but remains dormant until an
+admitted AST site supplies a complete physical observation. `ProgramAbiFnctorRegistry.observe`
+now fail-closes on the live reserved struct layout and synthesized constructor
+function signature, including capture values, TDZ flags, user parameters, the
+optional hidden identity externref, and the exact struct-reference result. A
+valid observation registers the source/unit-qualified `fnctor-constructor`
+support callable and remappable `fnctor-layout` type plan through the existing
+Program ABI session/type registry. Structural role ordinals are centralized
+(`fnctorConstructor=15`, `fnctorLayout=13`), and allocator-owned function/type
+locators are retained for late compaction.
+
+This checkpoint does not synthesize observations, lower `fnctor.new/get`, alter
+legacy constructor output, or claim linked-parser runtime coverage. The next
+slice must connect the admitted AST producer to this observation only after
+the exact capture/TDZ/user ABI and struct fields are available, then add a
+source-local lowering proof and focused A/B replay.
+
+## 2026-08-24 admission escape/arity hardening checkpoint
+
+The source-qualified admission proof now scopes local-use analysis to the
+owning function (or module body), ignores unrelated sibling functions, and
+records invalid uses monotonically instead of allowing a later member read to
+erase an earlier call/alias escape. Constructor parameters must be a required,
+non-rest, non-default single string parameter, and an admitted `new F(...)` must
+carry exactly one non-spread argument. These are static fail-closed controls;
+they do not widen the admitted shape or enable lowering/runtime execution.
+
+## 2026-08-24 bounded host fnctor observation producer checkpoint
+
+The dormant Program-ABI sidecar now has one narrow AST producer hook. After
+`compileNewFunctionDeclaration` has filled the exact reserved
+`__fnctor_F` struct, synthesized `__fnctor_F_new` function, and constructor
+body, `program-abi-fnctor-producer.ts` re-runs the source/unit-qualified
+admission resolver for that exact `new F()` node and declaration. Only the
+fixed one-parameter string constructor with one unconditional `input` field,
+no captures or TDZ cells, no layout/cold-tail split, no widened foreign result,
+and the host ABI lane can produce a complete `IrFnctorShape` plus physical
+`ProgramAbiFnctorObservation`; the registry then performs the existing exact
+binding, signature, layout, and remapping checks. Missing planning context,
+non-approved sites, and unsupported physical layouts are no-ops and retain
+legacy output. Single- and multi-source codegen share the same hook through
+`compileNewFunctionDeclaration`.
+
+This checkpoint records planning evidence only: it does not emit
+`fnctor.new/get`, alter constructor/call-site instructions, lower an AST site,
+or claim standalone/WASI or linked-parser runtime coverage. Captures, TDZ
+ref-cell ABI, standalone internal fields, cold tails, layout families, and
+foreign-return constructors remain explicit follow-up work requiring a
+logical-to-physical layout map. Focused producer/admission/ABI tests, static
+TypeScript 7 typecheck, and formatting pass.

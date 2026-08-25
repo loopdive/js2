@@ -116,7 +116,7 @@ export function emitFnctorCtorArgumentsObject(
     flushLateImportShifts(ctx, ctorFctx);
   }
 
-  const vecTypeIdx = getOrRegisterVecType(ctx, "externref", EXTERNREF);
+  const vecTypeIdx = getOrRegisterVecType(ctx, "arguments");
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
 
   const argsLocal = allocLocal(ctorFctx, "arguments", { kind: "ref", typeIdx: vecTypeIdx });

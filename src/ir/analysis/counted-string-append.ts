@@ -2,10 +2,10 @@
 /**
  * (#3518 Transaction A / #1004) Shared proof for counted string appends.
  *
- * The syntax reader is shared by the legacy selector gate and the direct
- * lowering. The selector deliberately keeps its old, checker-free and eager
- * deferral contract; only the direct lowering asks for the stronger
- * declaration/symbol/lifetime proof below.
+ * The syntax reader is shared by the compatibility selector gate and both
+ * lowering routes. Bare selector callers keep the old checker-free deferral;
+ * production selection may consume the exact checker proof below and carry
+ * that same immutable plan into Prepared IR.
  */
 import type { TypeOracle } from "../../checker/oracle.js";
 import { forEachChild, ts } from "../../ts-api.js";
@@ -633,6 +633,7 @@ export function countedStringAppendPlanIsCurrent(context: ProofContext, plan: Ir
     current.accumulatorSymbol === plan.accumulatorSymbol &&
     current.accumulatorWrite === plan.accumulatorWrite &&
     current.accumulatorRead === plan.accumulatorRead &&
+    current.accumulatorType === plan.accumulatorType &&
     current.counterDeclaration === plan.counterDeclaration &&
     current.counterSymbol === plan.counterSymbol &&
     current.counterConditionRead === plan.counterConditionRead &&
@@ -649,6 +650,7 @@ export function countedStringAppendPlanIsCurrent(context: ProofContext, plan: Ir
     current.fragmentDeclaration === plan.fragmentDeclaration &&
     current.fragmentSymbol === plan.fragmentSymbol &&
     sameDeclarations(current.fragmentConstDeclarations, plan.fragmentConstDeclarations) &&
+    current.fragmentType === plan.fragmentType &&
     current.tripCount === plan.tripCount
   );
 }
@@ -659,7 +661,12 @@ export function countedStringAppendPlanIsCurrent(context: ProofContext, plan: Ir
  * does not claim that the direct transform's checker proof succeeds.
  */
 export function containsCountedStringAppendCandidate(root: ts.Node): boolean {
-  let found = false;
+  return countedStringAppendCandidateLoops(root).length > 0;
+}
+
+/** Exact loop nodes covered by the pre-#3518 checker-free routing shape. */
+export function countedStringAppendCandidateLoops(root: ts.Node): readonly ts.ForStatement[] {
+  const loops: ts.ForStatement[] = [];
   const matches = (seedStatement: ts.Statement, loopStatement: ts.Statement): boolean => {
     if (!ts.isVariableStatement(seedStatement) || seedStatement.declarationList.declarations.length !== 1) {
       return false;
@@ -713,20 +720,18 @@ export function containsCountedStringAppendCandidate(root: ts.Node): boolean {
   };
 
   const walk = (node: ts.Node): void => {
-    if (found) return;
     if (ts.isBlock(node) || ts.isSourceFile(node) || ts.isModuleBlock(node)) {
       for (let index = 0; index + 1 < node.statements.length; index++) {
         if (matches(node.statements[index]!, node.statements[index + 1]!)) {
-          found = true;
-          return;
+          loops.push(node.statements[index + 1]! as ts.ForStatement);
         }
       }
     }
     forEachChild(node, (child) => {
-      if (found || ts.isFunctionLike(child)) return;
+      if (ts.isFunctionLike(child)) return;
       walk(child);
     });
   };
   walk(root);
-  return found;
+  return Object.freeze(loops);
 }

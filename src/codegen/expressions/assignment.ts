@@ -238,8 +238,17 @@ function emitAnnexBOuterBindingWriteFlag(fctx: FunctionContext, name: string): v
   if (!fctx.annexBOuterBindings?.has(name)) return;
   const flagLocal = fctx.tdzFlagLocals?.get(name);
   if (flagLocal === undefined) return;
-  fctx.body.push({ op: "i32.const", value: 1 });
-  fctx.body.push({ op: "local.set", index: flagLocal });
+  const boxed = fctx.boxedTdzFlags?.get(name);
+  if (boxed) {
+    // Captured Annex-B outer bindings share their flag through an i32 ref
+    // cell; the `tdzFlagLocals` entry is the box local in this case.
+    fctx.body.push({ op: "local.get", index: boxed.localIdx });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "struct.set", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 });
+  } else {
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "local.set", index: flagLocal });
+  }
 }
 
 export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, expr: ts.BinaryExpression): InnerResult {
@@ -1101,6 +1110,21 @@ function emitStrictPutValueThrow(ctx: CodegenContext, fctx: FunctionContext): vo
   fctx.body.push({ op: "throw", tagIdx });
 }
 
+function collectObjectRestExcludedKeys(ctx: CodegenContext, target: ts.ObjectLiteralExpression): string[] {
+  const excludedKeys: string[] = [];
+  for (const prop of target.properties) {
+    if (ts.isSpreadAssignment(prop)) continue;
+    const name = ts.isPropertyAssignment(prop) ? prop.name : prop.name;
+    if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
+      excludedKeys.push(name.text);
+    } else if (ts.isComputedPropertyName(name)) {
+      const key = resolveComputedKeyExpression(ctx, name.expression);
+      if (key !== undefined) excludedKeys.push(key);
+    }
+  }
+  return excludedKeys;
+}
+
 function compileDestructuringAssignment(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1711,17 +1735,9 @@ function compileDestructuringAssignment(
         if (restIdx === undefined) {
           restIdx = allocLocal(fctx, restName, { kind: "externref" });
         }
-        // Collect excluded property names
-        const excludedKeys: string[] = [];
-        for (const p of target.properties) {
-          if (ts.isSpreadAssignment(p)) continue;
-          if (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) {
-            const pn = ts.isPropertyAssignment(p) ? p.name : p.name;
-            if (ts.isIdentifier(pn)) excludedKeys.push(pn.text);
-            else if (ts.isStringLiteral(pn)) excludedKeys.push(pn.text);
-            else if (ts.isNumericLiteral(pn)) excludedKeys.push(pn.text);
-          }
-        }
+        // Collect excluded property names, including statically-resolvable
+        // computed names (e.g. `{ [a]: b, ...rest }`).
+        const excludedKeys = collectObjectRestExcludedKeys(ctx, target);
         if (ctx.targetProfile.semanticProviders === "native-first") {
           const emitted = emitNativeObjectRest(
             ctx,

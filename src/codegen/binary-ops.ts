@@ -5,6 +5,7 @@
  * bitwise, modulo, boolean, and any-typed binary operations.
  */
 import { ts } from "../ts-api.js";
+import type { TypeFact } from "../checker/oracle.js";
 import {
   getNullablePrimitiveInfo,
   isBigIntType,
@@ -68,6 +69,32 @@ import { foldTypeDisjointThenPromote } from "./strict-eq-type-disjoint.js";
 import { compileInOperator } from "./binary-ops-in.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { emitIsUndefF64 } from "./value-tags.js";
+
+/**
+ * (#1930) Keep the nullish AnyValue gate on the oracle side of the checker
+ * boundary.  This mirrors `isHeterogeneousPrimitiveUnion` without exposing a
+ * `ts.Type`: nullable heterogeneous bindings are the only unions whose
+ * non-null parts must retain distinct primitive tags.
+ */
+function isOracleHeterogeneousPrimitiveUnion(fact: TypeFact): boolean {
+  if (fact.kind !== "union" || fact.parts.length < 2) return false;
+  const primitiveKinds = new Set<TypeFact["kind"]>();
+  for (const part of fact.parts) {
+    if (part.kind !== "number" && part.kind !== "string" && part.kind !== "boolean") return false;
+    primitiveKinds.add(part.kind);
+  }
+  return primitiveKinds.size >= 2;
+}
+
+function isDeclaredOracleHeterogeneousPrimitiveUnion(ctx: CodegenContext, expr: ts.Expression): boolean {
+  let current = expr;
+  while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current) || ts.isNonNullExpression(current)) {
+    current = current.expression;
+  }
+  if (!ts.isIdentifier(current)) return false;
+  const declaration = ctx.oracle.valueDeclarationOf(current);
+  return declaration !== undefined && isOracleHeterogeneousPrimitiveUnion(ctx.oracle.typeFactOf(declaration));
+}
 import { compileModulo } from "./remainder.js";
 export { emitModulo } from "./remainder.js";
 
@@ -115,6 +142,52 @@ export function brandBooleanBinaryResult(op: ts.SyntaxKind, result: InnerResult)
     return { ...result, boolean: true };
   }
   return result;
+}
+
+/**
+ * Walk an operand before selecting the deferred exponentiation path. BigInt
+ * literals in an object method are deliberately excluded: that path has
+ * distinct BigInt/mixed-type semantics which must stay on the existing
+ * dispatch. The walk is syntax-only and therefore does not affect ordinary
+ * numeric exponentiation.
+ */
+function containsBigIntLiteral(node: ts.Node): boolean {
+  let found = false;
+  const visit = (current: ts.Node): void => {
+    if (found) return;
+    if (ts.isBigIntLiteral(current)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(current, visit);
+  };
+  visit(node);
+  return found;
+}
+
+/**
+ * Object operands need the two-phase evaluation required by §13.15.2:
+ * evaluate both operand expressions first, then apply ToNumeric. The normal
+ * f64 hint performs that coercion while compiling the left operand, which can
+ * call its valueOf before the right expression has run. Restrict this repair
+ * to anonymous object types (object literals and their inferred bindings),
+ * leaving class instances, wrappers, and BigInt-specific paths untouched.
+ */
+function isDeferredExponentiationObject(expr: ts.Expression, type: ts.Type): boolean {
+  if ((type.flags & ts.TypeFlags.Object) === 0) return false;
+  const objectFlags = (type as ts.ObjectType).objectFlags;
+  if ((objectFlags & ts.ObjectFlags.Anonymous) === 0) return false;
+  return !containsBigIntLiteral(expr);
+}
+
+/** Whether an anonymous object's statically-known own valueOf returns Symbol. */
+function objectValueOfReturnsSymbol(ctx: CodegenContext, expr: ts.Expression, type: ts.Type): boolean {
+  const valueOfSymbol = ctx.checker.getPropertyOfType(type, "valueOf");
+  if (!valueOfSymbol) return false;
+  const valueOfType = ctx.checker.getTypeOfSymbolAtLocation(valueOfSymbol, expr);
+  return ctx.checker
+    .getSignaturesOfType(valueOfType, ts.SignatureKind.Call)
+    .some((signature) => (ctx.checker.getReturnTypeOfSignature(signature).flags & ts.TypeFlags.ESSymbolLike) !== 0);
 }
 
 /**
@@ -646,7 +719,18 @@ export function compileBinaryExpression(
     const leftIsNullKeyword = expr.left.kind === ts.SyntaxKind.NullKeyword;
     const leftIsUndefinedId = ts.isIdentifier(expr.left) && expr.left.text === "undefined";
     const leftIsNullish = leftIsNullKeyword || leftIsUndefinedId;
-    if (rightIsNullish || leftIsNullish) {
+    // A declaration binding whose element type is a heterogeneous primitive
+    // union is physically a nullable `$AnyValue`.  Do not consume its
+    // null/undefined comparison in the generic ref-null shortcut: tag 0 is
+    // boxed null and `ref.is_null` would report false.  Let the AnyValue
+    // equality dispatch below compare the carrier tag instead (#4447).
+    const nullishComparedExpr = rightIsNullish ? expr.left : expr.right;
+    const nullishComparedFact = ctx.oracle.typeFactOf(nullishComparedExpr);
+    const nullishUnionCarrier =
+      ctx.unionAnyRep &&
+      (isOracleHeterogeneousPrimitiveUnion(nullishComparedFact) ||
+        isDeclaredOracleHeterogeneousPrimitiveUnion(ctx, nullishComparedExpr));
+    if ((rightIsNullish || leftIsNullish) && !nullishUnionCarrier) {
       // Determine which side is the literal null/undefined and which is the expression
       const nonNullExpr = rightIsNullish ? expr.left : expr.right;
 
@@ -834,6 +918,64 @@ export function compileBinaryExpression(
       return { kind: "f64" };
     }
   }
+
+  // §13.15.2 evaluates both ExponentiationExpression operands before either
+  // operand is reduced by ToNumeric. The ordinary numeric hint below asks an
+  // object operand to coerce while that operand is compiled, which observes
+  // `left.valueOf()` before the right expression has run. Save both natural
+  // values first, then perform the existing f64 conversion and Math_pow call.
+  // Anonymous object types cover object literals and inferred object bindings;
+  // named/class/wrapper and BigInt-containing objects remain on their existing
+  // dispatches so this narrow ordering repair cannot change those semantics.
+  if (
+    op === ts.SyntaxKind.AsteriskAsteriskToken &&
+    (isDeferredExponentiationObject(expr.left, leftTsType) || isDeferredExponentiationObject(expr.right, rightTsType))
+  ) {
+    const leftReturnsSymbol = objectValueOfReturnsSymbol(ctx, expr.left, leftTsType);
+    const rightReturnsSymbol = objectValueOfReturnsSymbol(ctx, expr.right, rightTsType);
+    const leftType = compileExpression(ctx, fctx, expr.left);
+    if (!leftType) return { kind: "f64" };
+    const leftTemp = allocTempLocal(fctx, leftType);
+    fctx.body.push({ op: "local.set", index: leftTemp });
+
+    const rightType = compileExpression(ctx, fctx, expr.right);
+    if (!rightType) return { kind: "f64" };
+    const rightTemp = allocTempLocal(fctx, rightType);
+    fctx.body.push({ op: "local.set", index: rightTemp });
+
+    fctx.body.push({ op: "local.get", index: leftTemp });
+    if (leftType.kind !== "f64") {
+      coerceType(ctx, fctx, leftType, { kind: "f64" }, "number");
+    }
+    if (leftReturnsSymbol) {
+      // `valueOf()` has already run (and its side effects are preserved), but
+      // a Symbol result is not numeric. Throw before touching the right
+      // operand's valueOf, as required by ToNumeric's left-first order.
+      fctx.body.push({ op: "drop" });
+      releaseTempLocal(fctx, rightTemp);
+      releaseTempLocal(fctx, leftTemp);
+      emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a number");
+      return { kind: "f64" };
+    }
+    fctx.body.push({ op: "local.get", index: rightTemp });
+    if (rightType.kind !== "f64") {
+      coerceType(ctx, fctx, rightType, { kind: "f64" }, "number");
+    }
+    if (rightReturnsSymbol) {
+      // Both values are on the stack here; discard them before emitting the
+      // catchable TypeError template.
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "drop" });
+      releaseTempLocal(fctx, rightTemp);
+      releaseTempLocal(fctx, leftTemp);
+      emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a number");
+      return { kind: "f64" };
+    }
+    releaseTempLocal(fctx, rightTemp);
+    releaseTempLocal(fctx, leftTemp);
+    return compileNumericBinaryOp(ctx, fctx, op, expr);
+  }
+
   const isEqualityOp =
     op === ts.SyntaxKind.EqualsEqualsToken ||
     op === ts.SyntaxKind.ExclamationEqualsToken ||
@@ -1038,7 +1180,13 @@ export function compileBinaryExpression(
     const declaredHetUnion = (node: ts.Expression): boolean =>
       ctx.unionAnyRep && isDeclaredHeterogeneousPrimitiveUnion(ctx.checker, node);
     const nullishFlags = ts.TypeFlags.Undefined | ts.TypeFlags.Null | ts.TypeFlags.Void;
-    const eqSideOk = (t: ts.Type): boolean => (t.flags & nullishFlags) === 0;
+    const eqSideOk = (t: ts.Type): boolean =>
+      (t.flags & nullishFlags) === 0 ||
+      // A nullable heterogeneous union is still represented by `$AnyValue`;
+      // its tag-0/null case must stay in the same equality dispatch as the
+      // numeric/boolean/string cases.  The null shortcut above deliberately
+      // skipped this shape (#4447).
+      (ctx.unionAnyRep && isHeterogeneousPrimitiveUnion(t));
     const unionRepEqInvolved =
       (isUnionAnyRepUse(leftTsType) ||
         isUnionAnyRepUse(rightTsType) ||

@@ -10,6 +10,7 @@ import {
 } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
+import { makeIrFnctorAdmissionResolver, makeIrFnctorPropagationAdmissionResolver } from "./ir-fnctor-admission.js";
 import { makeIrDynamicCarrierDivergenceProbe, resolveFnctorInstanceType } from "./fnctor-typed-instances.js";
 import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
@@ -39,6 +40,7 @@ import {
 } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
+import { planCountedStringAppend } from "../ir/analysis/counted-string-append.js";
 import { irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
 import { irSupportGlobalRef } from "../ir/abi-bindings.js";
 import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
@@ -2552,10 +2554,14 @@ function planIrOverlay(
   options: {
     readonly resolveModuleBindings?: boolean;
     readonly importedFunctions?: irOverlayIdentity.IrIdentityImportedFunctionResolver;
+    /** Transaction B2 is single-source only; Transaction C owns graph composition. */
+    readonly enableCountedStringAppendProof?: boolean;
   } = {},
 ): IrOverlayPlan {
   const identityImportedFunctions = options.importedFunctions;
   const legacyImportedFunctions = irOverlayIdentity.projectIrOverlayImportedResolver(identityImportedFunctions);
+  const resolveFnctorAdmission = makeIrFnctorAdmissionResolver(ctx, ast.checker, identityContext);
+  const resolveFnctorPropagationAdmission = makeIrFnctorPropagationAdmissionResolver(ctx, ast.checker, identityContext);
   let identityMaps: irOverlayIdentity.IrOverlayIdentityMaps;
   try {
     if (process.env.JS2WASM_TEST_INJECT_IR_TYPEMAP_THROW === "1") {
@@ -2566,6 +2572,7 @@ function planIrOverlay(
       ast.checker,
       identityContext,
       ctx.dtsEntrypointSeeds,
+      { resolveFnctorAdmission: resolveFnctorPropagationAdmission },
     );
   } catch (error) {
     throw new IrInvariantError(
@@ -2760,6 +2767,12 @@ function planIrOverlay(
     {
       experimentalIR: true,
       trackFallbacks: collectFallbacks,
+      ...(options.enableCountedStringAppendProof
+        ? {
+            planCountedStringAppend: (loop: ts.ForStatement) =>
+              planCountedStringAppend({ checker: ast.checker, oracle: ctx.oracle }, loop),
+          }
+        : {}),
       jsHostExterns,
       ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
       dynMemberReadBuildable,
@@ -2793,6 +2806,7 @@ function planIrOverlay(
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
       implicitParamUsesNumericVecAbi,
       dynamicCarrierDivergesFromLegacy: makeIrDynamicCarrierDivergenceProbe(ctx),
+      resolveFnctorAdmission,
       legacyCallerAbiIsProjected,
       projectedClassShapes: selectionClassShapes,
       projectedClassShapesById: selectionClassShapesById,
@@ -5013,7 +5027,7 @@ export function generateModule(
     let irSkipBodies: ReadonlySet<string> | undefined;
     let irPreserveBodies: ReadonlySet<string> | undefined;
     if (irFirst) {
-      irPlan = planIrOverlay(ctx, ast, irPlanningIdentityContext!);
+      irPlan = planIrOverlay(ctx, ast, irPlanningIdentityContext!, { enableCountedStringAppendProof: true });
       const routing = planIrFirstBodyRouting(ctx, ast.sourceFile, irPlan, moduleInitPlanning);
       requestedSkipProjection = routing.requestedSkipProjection;
       preparedFreeFunctions = routing.preparedFreeFunctions;
@@ -5102,7 +5116,8 @@ export function generateModule(
       // flag-off pipeline is order-identical. `planIrOverlay` holds the
       // planning code verbatim (typeMap → selection → STRICT_IR_REASONS →
       // classShapes → overrideMap → safeSelection → new.target gate).
-      const plan = irPlan ?? planIrOverlay(ctx, ast, irPlanningIdentityContext!);
+      const plan =
+        irPlan ?? planIrOverlay(ctx, ast, irPlanningIdentityContext!, { enableCountedStringAppendProof: true });
       const { classShapes, overrideMap } = plan;
       const safeSelection = preparedSelection ?? finalizePreparedIrSelection(ctx, ast.sourceFile, plan);
       const report = completePreparedIrIntegration({
@@ -9563,6 +9578,8 @@ export const STRING_METHODS: Record<string, { params: ValType[]; result: ValType
   trim: { params: [], result: { kind: "externref" } },
   trimStart: { params: [], result: { kind: "externref" } },
   trimEnd: { params: [], result: { kind: "externref" } },
+  trimLeft: { params: [], result: { kind: "externref" } },
+  trimRight: { params: [], result: { kind: "externref" } },
   charAt: { params: [{ kind: "f64" }], result: { kind: "externref" } },
   slice: {
     params: [{ kind: "f64" }, { kind: "f64" }],
@@ -11023,6 +11040,29 @@ export function undefinedTypedMemberReadProducesExternref(ctx: CodegenContext, e
   const recvType = ctx.checker.getTypeAtLocation(e.expression);
   if (resolveWasmType(ctx, recvType).kind === "externref") return true;
   return undefinedTypedMemberReadProducesExternref(ctx, e.expression);
+}
+
+export function nativeGeneratorBindingType(
+  ctx: CodegenContext,
+  initializer: ts.Expression | undefined,
+): ValType | null {
+  let expr = initializer;
+  while (
+    expr &&
+    (ts.isParenthesizedExpression(expr) ||
+      ts.isAsExpression(expr) ||
+      ts.isTypeAssertionExpression(expr) ||
+      ts.isNonNullExpression(expr) ||
+      ts.isSatisfiesExpression(expr))
+  )
+    expr = expr.expression;
+  if (!expr || !ts.isCallExpression(expr) || !ts.isIdentifier(expr.expression)) return null;
+  const decl = ctx.oracle.declarationsOf(expr.expression).find((d) => ts.isFunctionDeclaration(d) && !!d.asteriskToken);
+  if (!decl) return null;
+  for (const info of ctx.nativeGenerators.values()) {
+    if (info.decl === decl) return { kind: "ref_null", typeIdx: info.stateTypeIdx };
+  }
+  return null;
 }
 
 export function hoistVarDeclarations(

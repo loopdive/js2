@@ -1997,15 +1997,14 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               // (#4658) `configurable` is `false` for an Array (§10.4.2.1) and
               // `true` for an `arguments` exotic object (§10.4.4 steps 4/7),
               // which shares this representation. The #4658 brand on the
-              // companion's `$Object.flags` is the only runtime fact that
-              // separates them; local 3 already holds that companion (loaded
-              // above for the `writable` bit), so this costs one `struct.get`
-              // and no second lookup. Null companion ⇒ 0 ⇒ the Array answer.
+              // `$__arguments_vec` type identity is the runtime fact that
+              // separates them; unlike the old companion brand, this is an
+              // O(1) ref.test and does not retain each arguments object.
               // (#4658) `false` for an Array (§10.4.2.1), `true` for an
               // `arguments` object (§10.4.4) — ANDed with §7.3.14 integrity, so
               // a sealed/frozen arguments object stays non-configurable.
               ...setKey("configurable", [
-                ...buildArgumentsBrandBit(3, objectTypeIdx),
+                ...buildArgumentsBrandBit(0, ctx.structMap.get("__arguments_vec")),
                 ...integrityBit(OBJ_FLAG_SEALED | OBJ_FLAG_FROZEN),
                 { op: "i32.eqz" },
                 { op: "i32.and" },

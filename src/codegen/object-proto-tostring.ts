@@ -313,8 +313,8 @@ export function emitObjectProtoToStringClassifier(
         // (#4491 wave-7) …but a `$Vec` is not necessarily an Array: an
         // `arguments` exotic shares the carrier (#4667), and §20.1.3.6 step 12
         // gives it `[object Arguments]`. #4658 already mints a runtime brand for
-        // exactly this object (`OBJ_FLAG_ARGUMENTS` on the overlay companion),
-        // so the split is one query, not a new representation.
+        // exactly this object (`$__arguments_vec` type identity), so the split
+        // is one O(1) query.
         //
         // Order is the whole point: the Arguments test runs FIRST and the Array
         // answer is the else. An UNBRANDED arguments object (one #4658's

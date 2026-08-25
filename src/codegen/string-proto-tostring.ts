@@ -33,6 +33,8 @@ export const NO_ARG_STRING_MEMBER_HELPER: Readonly<Record<string, string>> = {
   trim: "__str_trim",
   trimStart: "__str_trimStart",
   trimEnd: "__str_trimEnd",
+  trimLeft: "__str_trimStart",
+  trimRight: "__str_trimEnd",
   toLowerCase: "__str_toLowerCase",
   toUpperCase: "__str_toUpperCase",
   toLocaleLowerCase: "__str_toLowerCase",

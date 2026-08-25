@@ -480,6 +480,10 @@ export function registerBuiltinExternClasses(ctx: CodegenContext): void {
     methods.set("toUpperCase", methodEntry([], { kind: "externref" }));
     methods.set("toLowerCase", methodEntry([], { kind: "externref" }));
     methods.set("trim", methodEntry([], { kind: "externref" }));
+    methods.set("trimStart", methodEntry([], { kind: "externref" }));
+    methods.set("trimEnd", methodEntry([], { kind: "externref" }));
+    methods.set("trimLeft", methodEntry([], { kind: "externref" }));
+    methods.set("trimRight", methodEntry([], { kind: "externref" }));
 
     // String.length is f64-typed in JS engine semantics (Number, not
     // i32). Read-only — `(str).length = N` is a no-op in JS, but we

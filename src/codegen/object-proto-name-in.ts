@@ -1,4 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { ts } from "../ts-api.js";
+import type { CodegenContext } from "./context/types.js";
 /**
  * (#4491 wave-5 T4) `"valueOf" in {}` answered **false**.
  *
@@ -96,4 +98,50 @@ export function objectPrototypeInheritsInName(staticKey: string | null, receiver
  */
 export function inReceiverIsObjectShaped(kind: string): boolean {
   return kind === "externref" || kind === "anyref" || kind === "ref" || kind === "ref_null";
+}
+
+/** Prove the source expression explicitly creates a null-prototype object. */
+export function hasExplicitNullObjectPrototype(
+  ctx: CodegenContext,
+  expr: ts.Expression,
+  seen = new Set<ts.Node>(),
+): boolean {
+  let current = expr;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isTypeAssertionExpression(current)
+  ) {
+    current = current.expression;
+  }
+  if (seen.has(current)) return false;
+  seen.add(current);
+
+  if (ts.isObjectLiteralExpression(current)) {
+    return current.properties.some(
+      (member) =>
+        ts.isPropertyAssignment(member) &&
+        (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name)) &&
+        member.name.text === "__proto__" &&
+        member.initializer.kind === ts.SyntaxKind.NullKeyword,
+    );
+  }
+
+  if (
+    ts.isCallExpression(current) &&
+    ts.isPropertyAccessExpression(current.expression) &&
+    ts.isIdentifier(current.expression.expression) &&
+    current.expression.expression.text === "Object" &&
+    current.expression.name.text === "create"
+  ) {
+    return current.arguments[0]?.kind === ts.SyntaxKind.NullKeyword;
+  }
+
+  if (ts.isIdentifier(current)) {
+    const initializer = ctx.oracle.variableInitializerOf(current);
+    if (initializer && initializer !== current) return hasExplicitNullObjectPrototype(ctx, initializer, seen);
+  }
+  return false;
 }

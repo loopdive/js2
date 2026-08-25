@@ -16,6 +16,7 @@
  */
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { getArgumentsVecTypeIdx } from "./arguments-carrier-brand.js";
 import { NON_ARRAY_BYTE_VEC_ELEM_KINDS } from "./object-runtime.js";
 
 /** True when `t` is a reference to a struct that is a real Array carrier. */
@@ -23,6 +24,9 @@ export function isArrayCarrierValType(ctx: CodegenContext, t: ValType): boolean 
   if (t.kind !== "ref" && t.kind !== "ref_null") return false;
   const typeIdx = (t as { typeIdx: number }).typeIdx;
   if (typeIdx < 0) return false;
+  // `arguments` uses a vec-compatible nominal subtype so indexed/length
+  // lowering remains shared, but §7.2.2 IsArray must reject that brand.
+  if (typeIdx === getArgumentsVecTypeIdx(ctx)) return false;
   if (ctx.objectRuntimeTypes && typeIdx === ctx.objectRuntimeTypes.objVecTypeIdx) return true;
   const typeDef = ctx.mod.types[typeIdx];
   if (!typeDef || typeDef.kind !== "struct") return false;

@@ -158,6 +158,7 @@ export { isVecOrArrayRefType, isHostCallbackArgument, isDeferredCallbackArgument
 import { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding } from "./closures/funcref-as-closure.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
+import { bodyReferencesOwnThis, findOwnThisReference } from "./helpers/body-references-own-this.js";
 // (#4491) §10.2.11 step 22.a — the mapped-vs-unmapped `arguments` split.
 import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
 export { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding };
@@ -2450,8 +2451,7 @@ export function compileLiftedClosureBody(
       flushLateImportShiftsShared(ctx, liftedFctx);
     }
 
-    const elemType: ValType = { kind: "externref" };
-    const vti = getOrRegisterVecType(ctx, "externref", elemType);
+    const vti = getOrRegisterVecType(ctx, "arguments");
     const ati = getArrTypeIdxFromVec(ctx, vti);
     const vecRef: ValType = { kind: "ref", typeIdx: vti };
     const argsLocal = allocLocal(liftedFctx, "arguments", vecRef);
@@ -3042,6 +3042,22 @@ export function compileArrowAsClosure(
   //    TDZ-flag boxing) and the self-recursive binding — see planClosureCaptures.
   const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
   const additionalCaptureNames = planAdditionalWithEnvironmentCaptureNames(fctx, reachesDirectEval);
+  // Ordinary function frames do not bind `this` in localMap: their receiver
+  // is resolved through __current_this at each source read.  An arrow must
+  // snapshot that value at creation, however. Keep the snapshot in a private
+  // local instead of installing it as the frame's ordinary `this` binding;
+  // direct reads before this arrow is created must retain their old lowering.
+  if (
+    ts.isArrowFunction(arrow) &&
+    !fctx.localMap.has("this") &&
+    (bodyReferencesOwnThis(body) || genBodyReferencesSuper(body))
+  ) {
+    const thisLocal = fctx.lexicalThisCaptureLocal ?? allocLocal(fctx, "__arrow_lexical_this", { kind: "externref" });
+    fctx.lexicalThisCaptureLocal = thisLocal;
+    const thisNode = findOwnThisReference(body) ?? ts.factory.createThis();
+    compileExpression(ctx, fctx, thisNode, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: thisLocal });
+  }
   const { captures, selfBindingName } = planClosureCaptures(ctx, fctx, arrow, body, additionalCaptureNames);
   captureOwningDirectEvalState(ctx, fctx, arrow, reachesDirectEval, captures);
 

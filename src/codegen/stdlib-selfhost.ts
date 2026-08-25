@@ -289,6 +289,12 @@ function irTypeContainsContextIndex(type: IrType, seen = new Set<object>()): boo
       return type.members.some((member) => irTypeContainsContextIndex(member, seen));
     case "boxed":
       return irTypeContainsContextIndex(type.inner, seen);
+    case "fnctor":
+      // Fnctor shapes are nominal, backend-neutral leaves here. Their
+      // reserved layout and constructor target are symbolic bindings rather
+      // than module-relative type indices; descending into user payloads
+      // would make recursive shapes overflow this self-host memo gate.
+      return false;
     case "string":
     case "extern":
     case "dynamic":

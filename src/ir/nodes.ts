@@ -53,6 +53,7 @@ import type { IntrinsicId, IntrinsicSignatureVersion } from "./intrinsics.js";
 // neutral `TagId` below, so the IR's core node module names no ECMAScript
 // partition, in a type position or otherwise.
 import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
+import type { IrFnctorShape } from "./fnctor-abi.js";
 // #3954 phase 1 — the tag-domain seam. `IrType`'s dynamic leaf carries an
 // OPAQUE `TagId` resolved against a `TagDomain` (`producer.ts` picks the
 // producer's domain), not a bare ECMAScript `JsTag`. `tag-domain.ts` is itself
@@ -403,6 +404,11 @@ export type IrType =
   // without a TS-checker round trip. See `src/ir/from-ast.ts`'s
   // `lowerExternMethodCall` and the `extern.*` IR instr kinds.
   | { readonly kind: "extern"; readonly className: string }
+  // #3521 — nominal function-style constructor instance. The shape is
+  // source/unit/layout-qualified and remains opaque until the fnctor lowering
+  // resolver proves the reserved ABI. It is deliberately not an object/class
+  // alias: unsupported backends must decline it rather than guess a carrier.
+  | { readonly kind: "fnctor"; readonly shape: IrFnctorShape }
   // #1926 — union members are IrTypes, not raw ValTypes. V1 still only
   // admits scalar (`f64`/`i32`) members upstream (see
   // `passes/tagged-unions.ts`), but typing them as IrType keeps the IR
@@ -464,6 +470,11 @@ export function irVal(v: ValType): IrType {
 /** Construct a backend-neutral dense-vector type. */
 export function irVec(elementType: IrType, nullable = true): IrType {
   return { kind: "vec", elementType, nullable };
+}
+
+/** Construct a nominal, backend-neutral fnctor instance type. */
+export function irFnctor(shape: IrFnctorShape): IrType {
+  return { kind: "fnctor", shape };
 }
 
 /**
@@ -562,6 +573,19 @@ export function irTypeEquals(a: IrType, b: IrType): boolean {
   if (a.kind === "extern" && b.kind === "extern") {
     return a.className === b.className;
   }
+  if (a.kind === "fnctor" && b.kind === "fnctor") {
+    const seen = activeFnctorPairs.get(a.shape);
+    if (seen?.has(b.shape)) return true;
+    const peers = seen ?? new WeakSet<object>();
+    activeFnctorPairs.set(a.shape, peers);
+    peers.add(b.shape);
+    try {
+      return fnctorShapeEquals(a.shape, b.shape, new Set());
+    } finally {
+      peers.delete(b.shape);
+      if (peers) activeFnctorPairs.delete(a.shape);
+    }
+  }
   // #2949 slice 1 — dynamic equality is EXACT on the `tag` refinement (both
   // absent, or both present and equal). Deliberately strict: silently
   // merging two different refinements at a join would keep whichever tag the
@@ -574,6 +598,59 @@ export function irTypeEquals(a: IrType, b: IrType): boolean {
     return tagRefinementEquals(a.tag, b.tag);
   }
   return false;
+}
+
+const activeFnctorPairs = new WeakMap<object, WeakSet<object>>();
+
+function canonicalRefBinding(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalRefBinding).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right));
+  return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalRefBinding(entry)}`).join(",")}}`;
+}
+
+function fnctorShapeEquals(
+  left: IrFnctorShape,
+  right: IrFnctorShape,
+  active: Set<readonly [IrFnctorShape, IrFnctorShape]>,
+): boolean {
+  const pair = [left, right] as const;
+  for (const seen of active) if (seen[0] === left && seen[1] === right) return true;
+  active.add(pair);
+  if (
+    left.sourceId !== right.sourceId ||
+    left.constructorUnitId !== right.constructorUnitId ||
+    left.hiddenIdentity !== right.hiddenIdentity ||
+    left.constructorIdentity.unitId !== right.constructorIdentity.unitId ||
+    left.constructorIdentity.paramIndex !== right.constructorIdentity.paramIndex ||
+    left.constructorTarget.kind !== right.constructorTarget.kind ||
+    canonicalRefBinding(left.constructorTarget.binding) !== canonicalRefBinding(right.constructorTarget.binding) ||
+    left.reservedLayout.kind !== right.reservedLayout.kind ||
+    canonicalRefBinding(left.reservedLayout.binding) !== canonicalRefBinding(right.reservedLayout.binding) ||
+    left.fields.length !== right.fields.length ||
+    left.captures.length !== right.captures.length ||
+    left.userParamTypes.length !== right.userParamTypes.length
+  ) {
+    return false;
+  }
+  for (let i = 0; i < left.fields.length; i++) {
+    const aField = left.fields[i]!;
+    const bField = right.fields[i]!;
+    if (aField.name !== bField.name || aField.ordinal !== bField.ordinal || !irTypeEquals(aField.type, bField.type))
+      return false;
+  }
+  for (let i = 0; i < left.captures.length; i++) {
+    const aCapture = left.captures[i]!;
+    const bCapture = right.captures[i]!;
+    if (
+      aCapture.name !== bCapture.name ||
+      aCapture.ordinal !== bCapture.ordinal ||
+      aCapture.hasTdzFlag !== bCapture.hasTdzFlag ||
+      !irTypeEquals(aCapture.type, bCapture.type)
+    )
+      return false;
+  }
+  return left.userParamTypes.every((type, index) => irTypeEquals(type, right.userParamTypes[index]!));
 }
 
 /**
@@ -1184,6 +1261,37 @@ export type IrStringLengthProvider =
       readonly ownerType: IrTypeRef;
       readonly fieldIndex: number;
     };
+
+// ---------------------------------------------------------------------------
+// Function-style constructor operations (#3521)
+// ---------------------------------------------------------------------------
+
+/**
+ * Materialize one source-qualified function-style constructor instance.
+ * `captureArgs` is the flattened legacy capture ABI: all capture values in
+ * capture order, followed by all paired TDZ flags in capture order;
+ * `args` is the user-visible constructor ABI. The hidden
+ * constructor identity is explicit so standalone lowering can preserve the
+ * exact trailing parameter without recovering it from a display name.
+ *
+ * This checkpoint only defines and verifies the contract. Lowering remains
+ * fail-closed until a backend resolves the nominal shape.
+ */
+export interface IrInstrFnctorNew extends IrInstrBase {
+  readonly kind: "fnctor.new";
+  readonly shape: IrFnctorShape;
+  readonly captureArgs: readonly IrValueId[];
+  readonly args: readonly IrValueId[];
+  readonly constructorIdentity: IrValueId | null;
+}
+
+/** Read one field from a nominal function-style constructor instance. */
+export interface IrInstrFnctorGet extends IrInstrBase {
+  readonly kind: "fnctor.get";
+  readonly shape: IrFnctorShape;
+  readonly value: IrValueId;
+  readonly fieldName: string;
+}
 
 // ---------------------------------------------------------------------------
 // Object operations (#1169b — IR Phase 4 Slice 2)
@@ -2174,6 +2282,8 @@ export type IrInstr =
   | IrInstrStringLen
   | IrInstrStringCharAt
   | IrInstrStringCharCodeAt
+  | IrInstrFnctorNew
+  | IrInstrFnctorGet
   | IrInstrObjectNew
   | IrInstrObjectGet
   | IrInstrObjectSet
@@ -2530,6 +2640,8 @@ export function forEachNestedBuffer(instr: IrInstr, fn: (buffer: readonly IrInst
     case "string.len":
     case "string.char_at":
     case "string.char_code_at":
+    case "fnctor.new":
+    case "fnctor.get":
     case "object.new":
     case "object.get":
     case "object.set":
@@ -2697,6 +2809,8 @@ export function mapNestedBuffers(
     case "string.len":
     case "string.char_at":
     case "string.char_code_at":
+    case "fnctor.new":
+    case "fnctor.get":
     case "object.new":
     case "object.get":
     case "object.set":
@@ -2808,6 +2922,14 @@ export function directUses(instr: IrInstr): readonly IrValueId[] {
     case "string.char_at":
     case "string.char_code_at":
       return [instr.value, instr.index];
+    case "fnctor.new":
+      return [
+        ...instr.captureArgs,
+        ...instr.args,
+        ...(instr.constructorIdentity === null ? [] : [instr.constructorIdentity]),
+      ];
+    case "fnctor.get":
+      return [instr.value];
     case "object.new":
       return instr.values;
     case "object.get":

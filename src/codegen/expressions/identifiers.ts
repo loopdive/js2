@@ -94,6 +94,8 @@ import { evaluateInstanceOfRhsForEffects } from "../instanceof-rhs-evaluation.js
 import { resolveBuiltinCtorAssignedAliasName } from "../builtin-ctor-assigned-alias.js"; // (#4491 T3)
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
 
+const switchCaseLexicalDeclarationCache = new WeakMap<ts.SourceFile, Map<string, ts.Node[]>>();
+
 /**
  * #1473 — Build the set of `$Error_struct` `$tag` values compatible with an
  * `instanceof <ctorName>` test in no-JS-host mode. For `instanceof Error` this
@@ -225,7 +227,7 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
 
 /** Resolve the lexical value read by an identifier, including `{ value }`. */
 function identifierValueSymbol(ctx: CodegenContext, id: ts.Identifier): ts.Symbol | undefined {
-  if (ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id) {
+  if (id.parent && ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id) {
     const shorthand = (
       ctx.checker as typeof ctx.checker & {
         getShorthandAssignmentValueSymbol?: (node: ts.ShorthandPropertyAssignment) => ts.Symbol | undefined;
@@ -234,6 +236,117 @@ function identifierValueSymbol(ctx: CodegenContext, id: ts.Identifier): ts.Symbo
     if (shorthand !== undefined) return shorthand;
   }
   return ctx.checker.getSymbolAtLocation(id);
+}
+
+/**
+ * Return the direct CaseBlock declaration denoted by an identifier outside its
+ * switch.  CaseBlock names are not module/function bindings, but the flat
+ * codegen registries still know about class/function names and the module-init
+ * collector deliberately drops inert bare identifiers.  Keep the runtime
+ * ReferenceError observable for this small, well-defined lexical shape.
+ */
+function switchCaseLexicalDeclarationOutside(ctx: CodegenContext, id: ts.Identifier): ts.Node | undefined {
+  const symbol = identifierValueSymbol(ctx, id);
+  const symbolDecl = symbol?.valueDeclaration;
+  const direct = symbolDecl && directSwitchCaseLexicalDeclaration(symbolDecl);
+  if (direct && !identifierInsideSwitchCaseBlock(id, direct)) return direct;
+
+  // TypeScript leaves an out-of-scope CaseBlock reference unresolved in some
+  // script/module combinations. Recover the declaration syntactically so the
+  // runtime path does not fall through to a class/function registry entry.
+  if (symbol !== undefined) return undefined;
+  const sourceFile = id.getSourceFile();
+  if (!sourceFile) return undefined;
+  const declarations = switchCaseLexicalDeclarations(sourceFile).get(id.text);
+  if (!declarations) return undefined;
+  return declarations.find((declaration) => !identifierInsideSwitchCaseBlock(id, declaration));
+}
+
+function switchCaseLexicalDeclarations(sourceFile: ts.SourceFile): Map<string, ts.Node[]> {
+  const cached = switchCaseLexicalDeclarationCache.get(sourceFile);
+  if (cached) return cached;
+  const declarations = new Map<string, ts.Node[]>();
+  const add = (declaration: ts.Node): void => {
+    const name = declarationName(declaration);
+    if (!name) return;
+    const entries = declarations.get(name);
+    if (entries) entries.push(declaration);
+    else declarations.set(name, [declaration]);
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isSwitchStatement(node)) {
+      for (const clause of node.caseBlock.clauses) {
+        for (const stmt of clause.statements) {
+          if (ts.isVariableStatement(stmt)) {
+            for (const variable of stmt.declarationList.declarations) {
+              const declaration = directSwitchCaseLexicalDeclaration(variable);
+              if (declaration) add(declaration);
+            }
+          } else {
+            const declaration = directSwitchCaseLexicalDeclaration(stmt);
+            if (declaration) add(declaration);
+          }
+        }
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  switchCaseLexicalDeclarationCache.set(sourceFile, declarations);
+  return declarations;
+}
+
+function directSwitchCaseLexicalDeclaration(node: ts.Node | undefined): ts.Node | undefined {
+  if (!node) return undefined;
+  let clause: ts.CaseClause | ts.DefaultClause | undefined;
+  if (ts.isVariableDeclaration(node)) {
+    const stmt = node.parent?.parent;
+    if (ts.isVariableStatement(stmt)) {
+      const flags = stmt.declarationList.flags;
+      if (
+        (flags & ts.NodeFlags.Let) !== 0 ||
+        (flags & ts.NodeFlags.Const) !== 0 ||
+        (flags & ts.NodeFlags.Using) !== 0 ||
+        (flags & ts.NodeFlags.AwaitUsing) !== 0
+      ) {
+        clause = ts.isCaseClause(stmt.parent) || ts.isDefaultClause(stmt.parent) ? stmt.parent : undefined;
+      }
+    }
+  } else if (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) {
+    clause = ts.isCaseClause(node.parent) || ts.isDefaultClause(node.parent) ? node.parent : undefined;
+  }
+  if (!clause) return undefined;
+  // Annex B's ordinary sloppy function extension is intentionally left to its
+  // existing var-binding machinery; the ES2015 residuals here are lexical
+  // variables, classes, generators, and async functions.
+  if (ts.isFunctionDeclaration(node) && node.asteriskToken === undefined) {
+    const isAsync = node.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+    if (!isAsync) return undefined;
+  }
+  return node;
+}
+
+function declarationName(node: ts.Node | undefined): string | undefined {
+  if (node && (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) return node.name.text;
+  if (node && ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) return node.name.text;
+  return undefined;
+}
+
+function identifierInsideSwitchCaseBlock(id: ts.Identifier, declaration: ts.Node | undefined): boolean {
+  if (!declaration) return false;
+  let clause: ts.Node | undefined = declaration.parent;
+  while (clause && !ts.isCaseClause(clause) && !ts.isDefaultClause(clause)) clause = clause.parent;
+  const caseBlock = clause?.parent;
+  const switchStmt = caseBlock?.parent;
+  return (
+    caseBlock !== undefined &&
+    switchStmt !== undefined &&
+    ts.isCaseBlock(caseBlock) &&
+    ts.isSwitchStatement(switchStmt) &&
+    id.getSourceFile() === switchStmt.getSourceFile() &&
+    id.getStart() >= caseBlock.getStart() &&
+    id.getEnd() <= caseBlock.getEnd()
+  );
 }
 
 /**
@@ -648,6 +761,16 @@ function compileIdentifierCore(
 ): ValType | null {
   const name = id.text;
 
+  // A direct CaseBlock lexical declaration is visible only while evaluating
+  // that switch's clauses.  Keep an outside reference from falling through to
+  // the flat class/function registries, which otherwise make the name appear
+  // callable even though the binding is out of scope.
+  const switchDeclaration = switchCaseLexicalDeclarationOutside(ctx, id);
+  if (switchDeclaration !== undefined) {
+    emitStaticTdzThrow(ctx, fctx, name);
+    return { kind: "externref" };
+  }
+
   // (#4630) A top-level function reassigned via `globalThis.<name> = …` must
   // resolve bare reads through the override slot (§16.1.7 — the declaration
   // IS a global-object property, so the write rebinds it). Locals/captures
@@ -745,7 +868,14 @@ function compileIdentifierCore(
   if (cancelRanges && cancelRanges.length > 0) {
     const pos = id.getStart();
     const insideDeclaringBlock = cancelRanges.some((r) => pos >= r.start && pos < r.end);
-    if (!insideDeclaringBlock) return emitAnnexBUnboundReferenceError(ctx, fctx, name);
+    // A cancelled block declaration named `arguments` does not erase the
+    // enclosing function's implicit arguments binding.  Keep that binding
+    // available outside the declaring block; calls inside the block are
+    // resolved separately by the Annex-B call-site path.
+    const preservesImplicitArguments = name === "arguments" && fctx.localMap.has(name);
+    if (!insideDeclaringBlock && !preservesImplicitArguments) {
+      return emitAnnexBUnboundReferenceError(ctx, fctx, name);
+    }
   }
 
   // (#3980, Annex B B.3.3) The `fctx.annexBCancelled` map above is per-
@@ -760,10 +890,11 @@ function compileIdentifierCore(
   // short-circuiting on the (near-universally) empty site list, so non-Annex-B
   // modules are byte-identical.
   const annexBSites = collectAnnexBCancelSites(id.getSourceFile());
-  if (annexBSites.length > 0 && annexBReadIsUnbound(annexBSites, id)) {
+  const preservesImplicitArguments = name === "arguments" && fctx.localMap.has(name);
+  if (annexBSites.length > 0 && !preservesImplicitArguments && annexBReadIsUnbound(annexBSites, id)) {
     return emitAnnexBUnboundReferenceError(ctx, fctx, name);
   }
-  if (annexBReadEscapesFunctionScope(id)) {
+  if (!preservesImplicitArguments && annexBReadEscapesFunctionScope(id)) {
     return emitAnnexBUnboundReferenceError(ctx, fctx, name);
   }
 
@@ -787,11 +918,28 @@ function compileIdentifierCore(
       emitUndefined(ctx, fctx);
       const undefLocal = allocLocal(fctx, `__annexb_undef_${fctx.locals.length}`, { kind: "externref" });
       fctx.body.push({ op: "local.set", index: undefLocal });
-      fctx.body.push({ op: "local.get", index: flagLocal });
+      const boxed = fctx.boxedTdzFlags?.get(name);
+      if (boxed) {
+        // Captured Annex-B outer bindings share their TDZ state through an
+        // i32 ref cell.  The `tdzFlagLocals` entry then names the box local,
+        // not an i32 local, so dereference it before using it as a condition.
+        fctx.body.push({ op: "local.get", index: boxed.localIdx });
+        fctx.body.push({ op: "struct.get", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 });
+      } else {
+        fctx.body.push({ op: "local.get", index: flagLocal });
+      }
       fctx.body.push({
         op: "if",
         blockType: { kind: "val", type: { kind: "externref" } },
-        then: [{ op: "local.get", index: outerLocal }],
+        then: (() => {
+          const valueBox = fctx.boxedCaptures?.get(name);
+          return valueBox
+            ? [
+                { op: "local.get", index: outerLocal },
+                { op: "struct.get", typeIdx: valueBox.refCellTypeIdx, fieldIdx: 0 },
+              ]
+            : [{ op: "local.get", index: outerLocal }];
+        })(),
         else: [{ op: "local.get", index: undefLocal }],
       });
       return { kind: "externref" };

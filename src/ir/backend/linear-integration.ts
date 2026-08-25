@@ -38,6 +38,7 @@
 // demote through the same legality/build channel.
 
 import { ts } from "../../ts-api.js";
+import type { TypeOracle } from "../../checker/oracle.js";
 import type { LinearContext } from "../../codegen-linear/context.js";
 import { LINEAR_GENERIC_OBJECT_TAG } from "../../codegen-linear/layout.js";
 import { FMOD_EARLY_MAGNITUDE_FN, FMOD_FN } from "../../codegen/fmod.js";
@@ -49,18 +50,29 @@ import {
 } from "../../codegen-linear/runtime.js";
 import { linearStringLiteralInstrs } from "../../codegen-linear/string-literals.js";
 import {
+  authenticateLinearStringRepeatReservationReceipt,
   authenticateLinearStringRepeatProvider,
+  issueLinearStringRepeatReservationReceipt,
+  reserveLinearStringRepeatProvider,
+  type LinearStringRepeatReservation,
+  type LinearStringRepeatReservationReceipt,
   linearStringRepeatReservation,
 } from "../../codegen-linear/string-repeat.js";
 import { IR_STRING_COMPARE_FN, lowerFunctionAstToIr, type IrFromAstResolver, typeNodeToIr } from "../from-ast.js";
-import { collectIrDirectCallLoweringPlans, type IrDirectCallTarget } from "../ast-lowering-plans.js";
-import { irUnitFuncRef } from "../callable-bindings.js";
+import {
+  collectIrDirectCallLoweringPlans,
+  type IrCountedStringAppendLoweringPlan,
+  type IrDirectCallTarget,
+  type PreparedCountedStringAppendReceipt,
+} from "../ast-lowering-plans.js";
+import { irIntrinsicFuncRef, irUnitFuncRef, sameIrCallableBinding } from "../callable-bindings.js";
 import { attachIrStringSupport } from "../string-support.js";
+import { planCountedStringAppend } from "../analysis/counted-string-append.js";
+import { digestIrInstructions } from "../instruction-digest.js";
 import { lowerIrFunctionBody, type IrLowerResolver } from "../lower.js";
 import { AllocSiteRegistry } from "../alloc-registry.js";
 import {
   defaultOperationsForLayout,
-  DEFAULT_ARENA_POLICY,
   linearRuntimeOperationKey,
   planLinearMemory,
   planLinearStringLayout,
@@ -83,6 +95,7 @@ import {
   type IrFuncRef,
   type IrFunction,
   type IrGlobalRef,
+  type IrInstr,
   type IrModule,
   type IrObjectShape,
   type IrType,
@@ -90,7 +103,6 @@ import {
 } from "../nodes.js";
 import {
   buildIrUnitInventory,
-  indexIrTerminalDeclarations,
   type BuildIrUnitInventoryOptions,
   type IrTerminalUnitRecord,
   type IrUnitId,
@@ -117,6 +129,7 @@ import {
 } from "../select.js";
 import { planIrCompilationByIdentity, projectIrSelectionToLegacy } from "../select-identity.js";
 import { buildIrRecursiveTypeEvidence } from "../type-evidence.js";
+import { IrInvariantError } from "../outcomes.js";
 import type { FuncTypeDef, Instr, ValType, WasmFunction } from "../types.js";
 import { verifyIrFunction } from "../verify.js";
 import { prepareIrRuntimeManifest } from "../intrinsic-support.js";
@@ -182,6 +195,8 @@ export interface LinearIrResult {
   readonly irModule: IrModule;
   /** Canonical middle-end allocation/layout decisions for this IR module. */
   readonly memoryPlan: LinearMemoryPlan;
+  /** Exact counted-string plans authenticated against final provider-bound IR. */
+  readonly preparedCountedStringAppendReceipts: readonly PreparedCountedStringAppendReceipt[];
 }
 
 export interface LinearIrSourceOwner {
@@ -399,29 +414,11 @@ export function linearIrEnabled(): boolean {
   return typeof process === "undefined" || process.env?.JS2WASM_LINEAR_IR !== "0";
 }
 
-export function terminalPredicate(
-  sourceFile: ts.SourceFile,
-  checker: ts.TypeChecker,
-  inventoryOptions: BuildIrUnitInventoryOptions = {},
-): (node: ts.Node) => boolean {
-  if (!linearIrEnabled()) return () => false;
-  const inventory = buildIrUnitInventory([sourceFile], {
-    ...inventoryOptions,
-    entrySource: sourceFile,
-    checker,
-  });
-  const terminals = indexIrTerminalDeclarations(sourceFile, inventory);
-  const attemptRootIds = new Set(inventory.terminalUnits.filter(isLinearIrAttemptRoot).map((terminal) => terminal.id));
-  return (node) => {
-    const unitId = terminals.get(node);
-    return unitId !== undefined && attemptRootIds.has(unitId);
-  };
-}
-
 function planLinearIrOverlay(
   ctx: LinearContext,
   sourceFile: ts.SourceFile,
   inventoryOptions: BuildIrUnitInventoryOptions,
+  oracle: TypeOracle,
 ) {
   const sourceFiles = [sourceFile];
   const inventory = buildIrUnitInventory(sourceFiles, {
@@ -433,26 +430,27 @@ function planLinearIrOverlay(
   const propagated = buildIrUnitTypeMap(sourceFiles, ctx.checker, identityContext);
   const recursiveTypeEvidence = buildIrRecursiveTypeEvidence(sourceFiles, ctx.checker, propagated, identityContext);
   const evidenceChecker = overlayCertifiedCheckerTypes(ctx.checker, recursiveTypeEvidence.checkerTypeOverrides);
-  const projectedSelection = projectIrSelectionToLegacy(
-    planIrCompilationByIdentity(
-      sourceFile,
-      identityContext,
-      {
-        experimentalIR: true,
-        trackFallbacks: true,
-        recursiveTypeEvidence,
-        classifyPrimitiveExpression: makeIrPrimitiveExpressionClassifier(ctx.checker),
-        classifyDeclaredPrimitiveExpression: makeIrDeclaredPrimitiveExpressionClassifier(ctx.checker),
-        isArrayExpression: makeIrArrayExpressionPredicate(ctx.checker),
-        isRegExpExpression: makeIrRegExpExpressionPredicate(ctx.checker),
-        isAmbientBinding: makeIrAmbientBindingPredicate(ctx.checker),
-        supportsSymbolicMathHelpers: false,
-        supportsNumberToString: ctx.mod.functions.some((func) => func.name === "number_toString"),
-        supportsLiteralStringReplace: false,
-      },
-      propagated,
-    ),
-  ).selection;
+  const identitySelection = planIrCompilationByIdentity(
+    sourceFile,
+    identityContext,
+    {
+      experimentalIR: true,
+      trackFallbacks: true,
+      recursiveTypeEvidence,
+      classifyPrimitiveExpression: makeIrPrimitiveExpressionClassifier(ctx.checker),
+      classifyDeclaredPrimitiveExpression: makeIrDeclaredPrimitiveExpressionClassifier(ctx.checker),
+      isArrayExpression: makeIrArrayExpressionPredicate(ctx.checker),
+      isRegExpExpression: makeIrRegExpExpressionPredicate(ctx.checker),
+      isAmbientBinding: makeIrAmbientBindingPredicate(ctx.checker),
+      supportsSymbolicMathHelpers: false,
+      supportsNumberToString: ctx.mod.functions.some((func) => func.name === "number_toString"),
+      supportsLiteralStringReplace: false,
+      planCountedStringAppend: (loop) => planCountedStringAppend({ checker: ctx.checker, oracle }, loop),
+    },
+    propagated,
+  );
+  const legacyProjection = projectIrSelectionToLegacy(identitySelection);
+  const projectedSelection = legacyProjection.selection;
   const excludedCompilerSupportNames = new Set(
     inventory.terminalUnits
       .filter((terminal) => !isLinearIrAttemptRoot(terminal))
@@ -463,13 +461,201 @@ function planLinearIrOverlay(
     funcs: new Set([...projectedSelection.funcs].filter((name) => !excludedCompilerSupportNames.has(name))),
     fallbacks: projectedSelection.fallbacks?.filter((fallback) => !excludedCompilerSupportNames.has(fallback.name)),
   };
+  const activeOwnerUnitIds = new Set<IrUnitId>();
+  for (const [ownerUnitId, claim] of identitySelection.funcs) {
+    if (
+      !legacyProjection.omittedUnitIds.has(ownerUnitId) &&
+      selection.funcs.has(claim.legacyMatchName) &&
+      !excludedCompilerSupportNames.has(claim.legacyMatchName)
+    ) {
+      activeOwnerUnitIds.add(ownerUnitId);
+    }
+  }
+  const countedStringAppends = new Map<ts.ForStatement, IrCountedStringAppendLoweringPlan>();
+  for (const [ownerUnitId, syntaxPlans] of identitySelection.countedStringAppendPlans ?? []) {
+    if (!activeOwnerUnitIds.has(ownerUnitId)) continue;
+    const declaration = identityContext.declarationByUnitId.get(ownerUnitId);
+    if (!declaration || !ts.isFunctionDeclaration(declaration) || !declaration.body) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `linear-ir: counted-string owner ${ownerUnitId} is not an exact bodyful function declaration`,
+      );
+    }
+    for (const syntaxPlan of syntaxPlans) {
+      let cursor: ts.Node | undefined = syntaxPlan.loop;
+      while (cursor && cursor !== declaration) cursor = cursor.parent;
+      if (cursor !== declaration || syntaxPlan.sourceFile !== sourceFile || countedStringAppends.has(syntaxPlan.loop)) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `linear-ir: counted-string plan for ${ownerUnitId} lost exact loop/source identity`,
+        );
+      }
+      countedStringAppends.set(
+        syntaxPlan.loop,
+        Object.freeze({
+          ownerUnitId,
+          sourceId: requireIrPlanningSourceId(identityContext, sourceFile),
+          sourceFile,
+          syntaxPlan,
+          provider: irIntrinsicFuncRef(IR_STRING_REPEAT_FN),
+        }),
+      );
+    }
+  }
   return {
+    identitySelection,
     identityContext,
     recursiveTypeEvidence,
     evidenceChecker,
     selection,
     recursiveTypeMap: projectIrUnitTypeMapToLegacy(sourceFiles, recursiveTypeEvidence.typeMap, identityContext),
     ownerIndex: indexLinearIrSourceOwners(sourceFile, identityContext),
+    activeOwnerUnitIds,
+    countedStringAppends,
+    requiresStringRepeat: [...countedStringAppends.values()].some((plan) => plan.syntaxPlan.tripCount >= 2),
+  };
+}
+
+export type PreparedLinearIrOverlay = Readonly<
+  ReturnType<typeof planLinearIrOverlay> & {
+    readonly context: LinearContext;
+    readonly sourceFile: ts.SourceFile;
+    readonly oracle: TypeOracle;
+    readonly reservationReceipt?: LinearStringRepeatReservationReceipt;
+  }
+>;
+
+const preparedLinearIrOverlays = new WeakSet<PreparedLinearIrOverlay>();
+const consumedLinearIrOverlays = new WeakSet<PreparedLinearIrOverlay>();
+
+/** Run the complete single-source identity/selection pass once, before user slots exist. */
+export function prepareLinearIrOverlay(
+  ctx: LinearContext,
+  sourceFile: ts.SourceFile,
+  inventoryOptions: BuildIrUnitInventoryOptions = {},
+  directReservation?: LinearStringRepeatReservation,
+): PreparedLinearIrOverlay {
+  const oracle = ctx.oracle;
+  if (!oracle) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "linear-ir: cannot prepare a single-source overlay without the compile's exact oracle",
+    );
+  }
+  const prepared: ReturnType<typeof planLinearIrOverlay> & {
+    context: LinearContext;
+    sourceFile: ts.SourceFile;
+    oracle: TypeOracle;
+    reservationReceipt?: LinearStringRepeatReservationReceipt;
+  } = {
+    ...planLinearIrOverlay(ctx, sourceFile, inventoryOptions, oracle),
+    context: ctx,
+    sourceFile,
+    oracle,
+  };
+  if (prepared.requiresStringRepeat) {
+    prepared.reservationReceipt = issueLinearStringRepeatReservationReceipt(
+      ctx.mod,
+      directReservation ?? reserveLinearStringRepeatProvider(ctx.mod),
+      sourceFile,
+      prepared,
+    );
+  }
+  const frozen = Object.freeze(prepared) as PreparedLinearIrOverlay;
+  preparedLinearIrOverlays.add(frozen);
+  return frozen;
+}
+
+function authenticatePreparedLinearIrOverlay(
+  ctx: LinearContext,
+  sourceFile: ts.SourceFile,
+  prepared: PreparedLinearIrOverlay,
+): void {
+  if (
+    !preparedLinearIrOverlays.has(prepared) ||
+    prepared.context !== ctx ||
+    prepared.sourceFile !== sourceFile ||
+    prepared.oracle !== ctx.oracle ||
+    prepared.identityContext.sourceFileBySourceId.get(
+      requireIrPlanningSourceId(prepared.identityContext, sourceFile),
+    ) !== sourceFile
+  ) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "linear-ir: early overlay preparation lost its exact context/source/oracle identity",
+    );
+  }
+
+  let expectedPlanCount = 0;
+  let expectedRepeatCount = 0;
+  for (const [ownerUnitId, syntaxPlans] of prepared.identitySelection.countedStringAppendPlans ?? []) {
+    if (!prepared.activeOwnerUnitIds.has(ownerUnitId)) continue;
+    for (const syntaxPlan of syntaxPlans) {
+      expectedPlanCount++;
+      if (syntaxPlan.tripCount >= 2) expectedRepeatCount++;
+      const loweringPlan = prepared.countedStringAppends.get(syntaxPlan.loop);
+      if (
+        !loweringPlan ||
+        loweringPlan.ownerUnitId !== ownerUnitId ||
+        loweringPlan.sourceFile !== sourceFile ||
+        loweringPlan.syntaxPlan !== syntaxPlan ||
+        loweringPlan.sourceId !== requireIrPlanningSourceId(prepared.identityContext, sourceFile) ||
+        loweringPlan.provider.binding.kind !== "intrinsic" ||
+        loweringPlan.provider.binding.symbol !== IR_STRING_REPEAT_FN
+      ) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `linear-ir: early counted-string plan ${ownerUnitId} is stale or mismatched`,
+        );
+      }
+    }
+  }
+  if (
+    prepared.countedStringAppends.size !== expectedPlanCount ||
+    prepared.requiresStringRepeat !== expectedRepeatCount > 0
+  ) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "linear-ir: early counted-string plan census or repeat requirement drifted",
+    );
+  }
+  if (prepared.requiresStringRepeat) {
+    if (!prepared.reservationReceipt) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "linear-ir: early counted-string plan has no exact repeat reservation receipt",
+      );
+    }
+    authenticateLinearStringRepeatReservationReceipt(ctx.mod, prepared.reservationReceipt, sourceFile, prepared);
+  } else if (prepared.reservationReceipt) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "linear-ir: early repeat reservation receipt has no requiring counted-string plan",
+    );
+  }
+}
+
+/** Exact terminal predicate backed by the already-retained inventory. */
+export function terminalPredicateForPreparedOverlay(
+  ctx: LinearContext,
+  sourceFile: ts.SourceFile,
+  prepared: PreparedLinearIrOverlay,
+): (node: ts.Node) => boolean {
+  authenticatePreparedLinearIrOverlay(ctx, sourceFile, prepared);
+  const terminalIds = new Set(
+    prepared.identityContext.inventory.terminalUnits.filter(isLinearIrAttemptRoot).map((terminal) => terminal.id),
+  );
+  return (node) => {
+    const unitId = prepared.identityContext.unitIdByDeclaration.get(node);
+    return unitId !== undefined && terminalIds.has(unitId);
   };
 }
 
@@ -495,7 +681,12 @@ function prepareLinearIntrinsicFunctions(functions: readonly IrFunction[], sourc
 function prepareLinearStringRepeatFunctions(
   ctx: LinearContext,
   functions: readonly IrFunction[],
-): readonly IrFunction[] {
+  prepared: PreparedLinearIrOverlay,
+  countedPlansByUnitId: ReadonlyMap<IrUnitId, readonly IrCountedStringAppendLoweringPlan[]>,
+): {
+  readonly functions: readonly IrFunction[];
+  readonly receipts: readonly PreparedCountedStringAppendReceipt[];
+} {
   let usesRepeat = false;
   for (const fn of functions) {
     const instructionBuffers = [
@@ -510,16 +701,122 @@ function prepareLinearStringRepeatFunctions(
       }
     }
   }
-  if (!usesRepeat) return functions;
-  const reservation = linearStringRepeatReservation(ctx.mod);
-  if (!reservation) throw new Error("linear-ir: string.repeat provider was not reserved before user slots");
-  authenticateLinearStringRepeatProvider(ctx.mod, reservation);
-  return functions.map((fn) =>
-    attachIrStringSupport(fn, {
-      storageForConst: () => undefined,
-      providerForLength: () => undefined,
-    }),
-  );
+  if (prepared.requiresStringRepeat) {
+    if (!prepared.reservationReceipt) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "linear-ir: counted-string preparation has no exact early repeat reservation receipt",
+      );
+    }
+    authenticateLinearStringRepeatReservationReceipt(
+      ctx.mod,
+      prepared.reservationReceipt,
+      prepared.sourceFile,
+      prepared,
+    );
+  } else if (prepared.reservationReceipt) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "linear-ir: repeat reservation receipt exists without a requiring counted-string plan",
+    );
+  }
+  if (!usesRepeat) {
+    if (prepared.requiresStringRepeat) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "linear-ir: counted-string preparation lost its final string.repeat instruction",
+      );
+    }
+  }
+  if (usesRepeat && !prepared.reservationReceipt) {
+    const reservation = linearStringRepeatReservation(ctx.mod);
+    if (!reservation) throw new Error("linear-ir: string.repeat provider was not reserved before user slots");
+    authenticateLinearStringRepeatProvider(ctx.mod, reservation);
+  }
+  const providerBoundFunctions = usesRepeat
+    ? functions.map((fn) =>
+        attachIrStringSupport(fn, {
+          storageForConst: () => undefined,
+          providerForLength: () => undefined,
+        }),
+      )
+    : functions;
+  const expectedPlansByUnitId = new Map<IrUnitId, IrCountedStringAppendLoweringPlan[]>();
+  for (const plan of prepared.countedStringAppends.values()) {
+    const plans = expectedPlansByUnitId.get(plan.ownerUnitId);
+    if (plans) plans.push(plan);
+    else expectedPlansByUnitId.set(plan.ownerUnitId, [plan]);
+  }
+  for (const [ownerUnitId, expectedPlans] of expectedPlansByUnitId) {
+    const observedPlans = countedPlansByUnitId.get(ownerUnitId);
+    if (
+      !observedPlans ||
+      observedPlans.length !== expectedPlans.length ||
+      observedPlans.some((plan, index) => plan !== expectedPlans[index])
+    ) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `linear-ir: counted-string prepared receipt census drift for ${ownerUnitId}`,
+      );
+    }
+  }
+  for (const ownerUnitId of countedPlansByUnitId.keys()) {
+    if (!expectedPlansByUnitId.has(ownerUnitId)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `linear-ir: unexpected counted-string prepared receipt owner ${ownerUnitId}`,
+      );
+    }
+  }
+  const receipts: PreparedCountedStringAppendReceipt[] = [];
+  const observedPlanOwners = new Set<IrUnitId>();
+  for (const fn of providerBoundFunctions) {
+    const expectedPlans = expectedPlansByUnitId.get(fn.unitId) ?? [];
+    if (expectedPlans.length === 0) continue;
+    observedPlanOwners.add(fn.unitId);
+    const finalInstructions = [
+      ...fn.blocks.flatMap((block) => block.instrs),
+      ...(fn.asyncPlan?.states.flatMap((state) => state.body) ?? []),
+    ];
+    const repeats: Extract<IrInstr, { kind: "string.repeat" }>[] = [];
+    for (const instr of finalInstructions) {
+      forEachInstrDeep(instr, (nested) => {
+        if (nested.kind === "string.repeat") repeats.push(nested);
+      });
+    }
+    const expectedRepeatPlans = expectedPlans.filter((plan) => plan.syntaxPlan.tripCount >= 2);
+    if (
+      repeats.length !== expectedRepeatPlans.length ||
+      repeats.some(
+        (repeat, index) =>
+          !repeat.provider ||
+          !sameIrCallableBinding(repeat.provider.binding, expectedRepeatPlans[index]!.provider.binding),
+      )
+    ) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `linear-ir: counted-string provider/final-instruction census drift for ${fn.unitId}`,
+      );
+    }
+    const finalInstructionDigest = digestIrInstructions(finalInstructions);
+    for (const plan of expectedPlans) receipts.push(Object.freeze({ plan, finalInstructionDigest }));
+  }
+  for (const ownerUnitId of expectedPlansByUnitId.keys()) {
+    if (!observedPlanOwners.has(ownerUnitId)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `linear-ir: counted-string owner ${ownerUnitId} did not reach final preparation`,
+      );
+    }
+  }
+  return { functions: providerBoundFunctions, receipts: Object.freeze(receipts) };
 }
 
 /**
@@ -530,11 +827,20 @@ function prepareLinearStringRepeatFunctions(
  */
 export function compileLinearIrFunctions(
   ctx: LinearContext,
-  sourceFile: ts.SourceFile,
-  allocationPolicy: LinearAllocatorPolicy = DEFAULT_ARENA_POLICY,
-  legacySlotInputs: readonly LinearIrLegacySlotInput[] = [],
-  inventoryOptions: BuildIrUnitInventoryOptions = {},
+  allocationPolicy: LinearAllocatorPolicy,
+  legacySlotInputs: readonly LinearIrLegacySlotInput[],
+  prepared: PreparedLinearIrOverlay,
 ): LinearIrResult {
+  const sourceFile = prepared.sourceFile;
+  authenticatePreparedLinearIrOverlay(ctx, sourceFile, prepared);
+  if (consumedLinearIrOverlays.has(prepared)) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "linear-ir: an early overlay preparation may be compiled exactly once",
+    );
+  }
+  consumedLinearIrOverlays.add(prepared);
   const funcs = new Map<IrUnitId, WasmFunction>();
   const compiled: string[] = [];
   const rejected: LinearIrRejection[] = [];
@@ -545,10 +851,11 @@ export function compileLinearIrFunctions(
   const allocRegistry = new AllocSiteRegistry();
   let irModule: IrModule = { functions: [] };
   let memoryPlan = planLinearMemory(irModule, allocRegistry, allocationPolicy);
+  let preparedCountedStringAppendReceipts: readonly PreparedCountedStringAppendReceipt[] = [];
   let helperStartFuncIdx = 0;
   for (const funcIdx of ctx.funcMap.values()) helperStartFuncIdx = Math.max(helperStartFuncIdx, funcIdx + 1);
   for (const slot of legacySlotInputs) helperStartFuncIdx = Math.max(helperStartFuncIdx, slot.funcIdx + 1);
-  const { resolver, helpers, bindMemoryPlan, bindUnitFunc } = makeLinearIrResolver(ctx, helperStartFuncIdx);
+  const { resolver, helpers, bindMemoryPlan, bindUnitFunc } = makeLinearIrResolver(ctx, helperStartFuncIdx, prepared);
   const result: LinearIrResult = {
     funcs,
     compiled,
@@ -576,6 +883,9 @@ export function compileLinearIrFunctions(
     get memoryPlan() {
       return memoryPlan;
     },
+    get preparedCountedStringAppendReceipts() {
+      return preparedCountedStringAppendReceipts;
+    },
   };
   lastReport = result;
 
@@ -587,8 +897,15 @@ export function compileLinearIrFunctions(
   // SCC entries that the checker-backed certifier has independently proved;
   // this avoids widening unrelated unannotated selection while giving the
   // selector and from-ast one shared, concrete recursive ABI.
-  const { identityContext, recursiveTypeEvidence, evidenceChecker, selection, recursiveTypeMap, ownerIndex } =
-    planLinearIrOverlay(ctx, sourceFile, inventoryOptions);
+  const {
+    identityContext,
+    recursiveTypeEvidence,
+    evidenceChecker,
+    selection,
+    recursiveTypeMap,
+    ownerIndex,
+    countedStringAppends,
+  } = prepared;
   for (const owner of ownerIndex.owners) unitIdByDeclaration.set(owner.declaration, owner.ownerUnitId);
   for (const slot of buildLinearIrLegacySlotAdapters(ownerIndex, legacySlotInputs)) {
     const owner = identityContext.declarationByUnitId.get(slot.ownerUnitId);
@@ -669,6 +986,10 @@ export function compileLinearIrFunctions(
   const declaredSignaturesByUnitId = new Map<IrUnitId, LinearIrSignature>();
   const signaturesByUnitId = new Map<IrUnitId, LinearIrSignature>();
   const built = new Map<IrUnitId, IrFunction>();
+  const countedPlansByUnitId = new Map<IrUnitId, readonly IrCountedStringAppendLoweringPlan[]>();
+  const preparedCountedOwnerUnitIds = new Set(
+    [...prepared.countedStringAppends.values()].map((plan) => plan.ownerUnitId),
+  );
   const lastFailure = new Map<IrUnitId, LinearIrRejection>();
   let pending = claimedDecls;
   // Pre-seed `calleeTypes` from effective TS/JSDoc annotations and, only for
@@ -721,11 +1042,14 @@ export function compileLinearIrFunctions(
         // linear resolver exposes the landed L2 vec/aggregate and L3 string
         // shapes; every other representation-dependent family still throws
         // and demotes.
-        const { main, lifted } = lowerFunctionAstToIr(decl, {
+        const { main, lifted, countedStringAppendPlans } = lowerFunctionAstToIr(decl, {
           checker: evidenceChecker,
+          oracle: prepared.oracle,
           exported,
           funcName: name,
           ownerUnitId,
+          identityContext,
+          countedStringAppends,
           calleeTypes,
           directCalls: collectIrDirectCallLoweringPlans(decl, ownerUnitId, directCallTargets),
           paramTypeOverrides: declaredSignaturesByUnitId.get(ownerUnitId)?.params,
@@ -767,6 +1091,9 @@ export function compileLinearIrFunctions(
         }
 
         built.set(ownerUnitId, main);
+        if (countedStringAppendPlans?.length) {
+          countedPlansByUnitId.set(ownerUnitId, countedStringAppendPlans);
+        }
         signaturesByUnitId.set(ownerUnitId, {
           params: main.params.map((p) => p.type),
           returnType: main.resultTypes.length > 0 ? main.resultTypes[0]! : null,
@@ -792,14 +1119,35 @@ export function compileLinearIrFunctions(
     if (!progressed) break; // fixpoint: nothing new compiled or terminally rejected
   }
 
+  for (const ownerUnitId of preparedCountedOwnerUnitIds) {
+    if (!built.has(ownerUnitId)) {
+      const failure = lastFailure.get(ownerUnitId);
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `linear-ir: prepared counted-string owner ${ownerUnitId} did not build${
+          failure?.detail ? `: ${failure.detail}` : failure?.reason ? `: ${failure.reason}` : ""
+        }`,
+      );
+    }
+  }
+
   const plannedFunctions = claimedDecls.flatMap(({ ownerUnitId }) => {
     const fn = built.get(ownerUnitId);
     return fn ? [fn] : [];
   });
-  const preparedFunctions = prepareLinearStringRepeatFunctions(
+  const preparedStringRepeat = prepareLinearStringRepeatFunctions(
     ctx,
     prepareLinearIntrinsicFunctions(plannedFunctions, sourceFile.fileName),
+    prepared,
+    countedPlansByUnitId,
   );
+  const preparedFunctions = preparedStringRepeat.functions;
+  // Candidates are not public evidence yet. A provider/authentication or Wasm
+  // lowering failure below means the exact terminal owner did not compile, so
+  // publishing its pre-lowering receipt would turn preparation into a false
+  // acceptance signal.
+  const preparedCountedStringAppendReceiptCandidates = preparedStringRepeat.receipts;
   for (const fn of preparedFunctions) built.set(fn.unitId, fn);
   irModule = { functions: preparedFunctions };
   memoryPlan = planLinearMemory(irModule, allocRegistry, allocationPolicy);
@@ -859,6 +1207,15 @@ export function compileLinearIrFunctions(
       compiled.push(name);
       ownerEvidence.push({ outcome: "compiled", ownerUnitId, legacyName: name });
     } catch (e) {
+      if (preparedCountedOwnerUnitIds.has(ownerUnitId)) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "lower",
+          `linear-ir: prepared counted-string owner ${ownerUnitId} failed after reservation: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
       rethrowLinearOwnerInvariant(e);
       recordRejection(owner, {
         func: name,
@@ -867,6 +1224,18 @@ export function compileLinearIrFunctions(
       });
     }
   }
+
+  const compiledOwnerUnitIds = new Set(funcs.keys());
+  for (const receipt of preparedCountedStringAppendReceiptCandidates) {
+    if (!compiledOwnerUnitIds.has(receipt.plan.ownerUnitId)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "lower",
+        `linear-ir: prepared counted-string receipt has no compiled owner ${receipt.plan.ownerUnitId}`,
+      );
+    }
+  }
+  preparedCountedStringAppendReceipts = preparedCountedStringAppendReceiptCandidates;
 
   if (typeof process !== "undefined" && process.env?.JS2WASM_LINEAR_IR_DEBUG === "1") {
     console.error("[linear-ir] compiled:", JSON.stringify(compiled));
@@ -977,17 +1346,47 @@ function resolveLinearImportFunc(
   throw new Error(`linear-ir: imported function '${module}.${field}' missing`);
 }
 
-function authenticatePreparedLinearStringRepeatProvider(ctx: LinearContext): number {
+function authenticatePreparedLinearStringRepeatProvider(ctx: LinearContext, prepared: PreparedLinearIrOverlay): number {
+  if (prepared.requiresStringRepeat) {
+    if (!prepared.reservationReceipt) {
+      throw new Error("linear-ir: counted string.repeat has no exact early reservation receipt");
+    }
+    if (typeof process !== "undefined" && process.env?.JS2WASM_TEST_TAMPER_LINEAR_COUNTED_REPEAT_RESERVATION === "1") {
+      const provider = prepared.reservationReceipt.reservation.provider;
+      const originalName = provider.name;
+      provider.name = `${originalName}$tampered`;
+      try {
+        return authenticateLinearStringRepeatReservationReceipt(
+          ctx.mod,
+          prepared.reservationReceipt,
+          prepared.sourceFile,
+          prepared,
+        );
+      } finally {
+        provider.name = originalName;
+      }
+    }
+    return authenticateLinearStringRepeatReservationReceipt(
+      ctx.mod,
+      prepared.reservationReceipt,
+      prepared.sourceFile,
+      prepared,
+    );
+  }
   const reservation = linearStringRepeatReservation(ctx.mod);
   if (!reservation) throw new Error("linear-ir: string.repeat provider was not reserved before user slots");
   return authenticateLinearStringRepeatProvider(ctx.mod, reservation);
 }
 
-function resolvePreparedLinearStringRepeatProvider(ctx: LinearContext, provider?: IrFuncRef): number {
+function resolvePreparedLinearStringRepeatProvider(
+  ctx: LinearContext,
+  prepared: PreparedLinearIrOverlay,
+  provider?: IrFuncRef,
+): number {
   if (!provider || provider.binding.kind !== "intrinsic" || provider.binding.symbol !== IR_STRING_REPEAT_FN) {
     throw new Error("linear-ir: string.repeat has no exact prepared provider");
   }
-  return authenticatePreparedLinearStringRepeatProvider(ctx);
+  return authenticatePreparedLinearStringRepeatProvider(ctx, prepared);
 }
 
 /**
@@ -998,6 +1397,7 @@ function resolvePreparedLinearStringRepeatProvider(ctx: LinearContext, provider?
 function makeLinearIrResolver(
   ctx: LinearContext,
   helperStartFuncIdx: number,
+  prepared: PreparedLinearIrOverlay,
 ): {
   resolver: IrLowerResolver & IrFromAstResolver;
   helpers: LinearIrHelper[];
@@ -1136,7 +1536,7 @@ function makeLinearIrResolver(
         case "intrinsic": {
           const symbol = ref.binding.symbol;
           if (symbol === IR_STRING_REPEAT_FN) {
-            return authenticatePreparedLinearStringRepeatProvider(ctx);
+            return authenticatePreparedLinearStringRepeatProvider(ctx, prepared);
           }
           // #2956 L3: resolve from-ast's abstract choices onto canonical linear runtimes.
           if (symbol === IR_STRING_COMPARE_FN) return resolveRuntimeFunc("__str_cmp");
@@ -1249,7 +1649,12 @@ function makeLinearIrResolver(
       return [{ op: "call", funcIdx: resolveLinearRuntimeOperation(ctx, operation) }];
     },
     emitStringRepeat(_alloc?: AllocSiteId, _inputEncoding?: IrStringEncoding, provider?: IrFuncRef): readonly Instr[] {
-      return [{ op: "call", funcIdx: resolvePreparedLinearStringRepeatProvider(ctx, provider) }];
+      return [
+        {
+          op: "call",
+          funcIdx: resolvePreparedLinearStringRepeatProvider(ctx, prepared, provider),
+        },
+      ];
     },
     emitStringEquals(): readonly Instr[] {
       return [{ op: "call", funcIdx: resolveRuntimeFunc("__str_eq") }];
