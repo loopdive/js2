@@ -3440,6 +3440,15 @@ export function compilePropertyAccess(
   const objType = ctx.checker.getTypeAtLocation(expr.expression);
   const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
 
+  // A JavaScript binding initialized from `new RegExp(...)` is commonly
+  // widened to `any`, so its `.constructor` read cannot reach the later
+  // statically-typed builtin dispatch. Let the native RegExp identity arm run
+  // before generic any/object routing; it declines for every other receiver.
+  if (ctx.standalone && propName === "constructor") {
+    const regexpCtor = tryCompileStandaloneRegExpPropertyRead(ctx, fctx, expr);
+    if (regexpCtor !== undefined) return regexpCtor;
+  }
+
   // ES5 §15.3.5.4 poison properties.
   //
   // Strict function objects have throwing `caller` and `arguments` accessors.
