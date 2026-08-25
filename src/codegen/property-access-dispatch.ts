@@ -49,7 +49,7 @@ import {
   reserveMemberGetDispatch,
 } from "./member-get-dispatch.js";
 import { coercionInstrs, defaultValueInstrs } from "./type-coercion.js";
-import { patchStructNewForAddedField } from "./expressions/late-imports.js";
+import { ensureExternIsUndefinedImport, patchStructNewForAddedField } from "./expressions/late-imports.js";
 import { reserveAccessorGetDriver } from "./accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "./struct-accessor-closure.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -3551,6 +3551,7 @@ function emitExternGetReceiverGuard(
   expr: ts.PropertyAccessExpression,
   objExprType: ValType | null,
   objTmp: number,
+  isUndefinedIdx?: number,
 ): void {
   const numeric = objExprType?.kind === "f64" || objExprType?.kind === "i32";
   emitReceiverNullGuard(
@@ -3570,6 +3571,14 @@ function emitExternGetReceiverGuard(
     // local (allocated by the caller), which is the shape this builder wants.
     () => (receiverIsUndefinedIdentifier(expr.expression) ? undefined : nullishExternTestInstrs(ctx, objTmp)),
   );
+  // `__extern_get` can return a non-null undefined singleton in standalone.
+  // A subsequent member read must reject that value just like a null
+  // externref; the legacy `ref.is_null` check alone is insufficient.
+  if (isUndefinedIdx !== undefined && objExprType?.kind === "externref") {
+    fctx.body.push({ op: "local.get", index: objTmp });
+    fctx.body.push({ op: "call", funcIdx: isUndefinedIdx });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: typeErrorThrowInstrs(ctx, expr), else: [] });
+  }
 }
 
 export function finalizeStructAndDynamicMemberGet(
@@ -4095,6 +4104,7 @@ export function finalizeStructAndDynamicMemberGet(
       );
       let unboxIdx = ensureScalarUnbox(ctx, fctx, accessWasm);
       if (getIdx !== undefined) {
+        flushLateImportShifts(ctx, fctx);
         const objExprType = compileExpression(ctx, fctx, expr.expression);
         // (#4155 Phase 2) The receiver's compiled ValType is already a
         // `$__fnctor_<Name>` struct ref and `propName` is one of its plain data
@@ -4128,10 +4138,13 @@ export function finalizeStructAndDynamicMemberGet(
             fctx.body.push({ op: "call", funcIdx: boxIdx });
           }
         }
+        const receiverExpr = skipTransparentExpressions(expr.expression);
+        const isUndefinedIdx = ts.isIdentifier(receiverExpr) ? undefined : ensureExternIsUndefinedImport(ctx);
+        flushLateImportShifts(ctx, fctx);
         // Null check: throw TypeError for property access on null/undefined.
         // (#4157) Skipped when the receiver is PROVABLY non-null.
         const objTmp = allocLocal(fctx, `__nullchk_${fctx.locals.length}`, { kind: "externref" });
-        emitExternGetReceiverGuard(ctx, fctx, expr, objExprType, objTmp);
+        emitExternGetReceiverGuard(ctx, fctx, expr, objExprType, objTmp, isUndefinedIdx);
         // An interface / object-type receiver is only a structural contract.
         // When its runtime value is externref, let the canonical dynamic
         // provider discriminate exact closed shapes by their `$shape` stamps.
