@@ -1,11 +1,10 @@
 ---
 id: 4449
 title: "standalone: TypedArray.prototype ES6 semantics residual (~556 non-reflection tests) — species protocol, detached-buffer checks, custom-ctor paths"
-status: done
+status: in-progress
 sprint: current
 created: 2026-08-15
 updated: 2026-08-25
-completed: 2026-08-25
 priority: high
 horizon: l
 feasibility: hard
@@ -94,6 +93,10 @@ were the reason a validation helper in `array-methods.ts` alone missed the
 highest-yield map/reduce cases. Species/custom-constructor result allocation
 remains open and is not claimed by this slice; reflection-only filename
 families remain attributed to #2159/#2175.
+
+This closes only the detached/shared-view validation slice. The parent issue
+remains in progress until species/custom-constructor and remaining per-method
+clusters satisfy the acceptance criteria below.
 
 ## Test Results (2026-08-25)
 
