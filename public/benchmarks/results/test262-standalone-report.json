@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-25T17:56:03.271Z",
-  "baseline_generated_at": "2026-08-25T17:56:03.271Z",
-  "baseline_sha": "b982574b6d5a6393b4505331e630d963e4c6fce0",
+  "timestamp": "2026-08-25T19:15:24.637Z",
+  "baseline_generated_at": "2026-08-25T19:15:24.637Z",
+  "baseline_sha": "627013f0fcdf4cf9c65940e599076ad53f9ec9ed",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -10,24 +10,24 @@
   },
   "summary": {
     "total": 43621,
-    "pass": 32062,
-    "fail": 8288,
+    "pass": 32063,
+    "fail": 8287,
     "compile_error": 3246,
     "compile_timeout": 6,
     "skip": 19,
     "compilable": 40350,
-    "host_free_pass": 32062,
+    "host_free_pass": 32063,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 42535,
-        "pass": 31064,
-        "fail": 8221,
+        "pass": 31065,
+        "fail": 8220,
         "compile_error": 3225,
         "compile_timeout": 6,
         "skip": 19,
         "compilable": 39285,
-        "host_free_pass": 31064,
+        "host_free_pass": 31065,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
@@ -57,25 +57,25 @@
       },
       "official": {
         "total": 43621,
-        "pass": 32062,
-        "fail": 8288,
+        "pass": 32063,
+        "fail": 8287,
         "compile_error": 3246,
         "compile_timeout": 6,
         "skip": 19,
         "compilable": 40350,
-        "host_free_pass": 32062,
+        "host_free_pass": 32063,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48735,
-        "pass": 32450,
-        "fail": 10791,
+        "pass": 32451,
+        "fail": 10790,
         "compile_error": 5373,
         "compile_timeout": 6,
         "skip": 115,
         "compilable": 43241,
-        "host_free_pass": 32450,
+        "host_free_pass": 32451,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -83,24 +83,24 @@
   },
   "official_summary": {
     "total": 43621,
-    "pass": 32062,
-    "fail": 8288,
+    "pass": 32063,
+    "fail": 8287,
     "compile_error": 3246,
     "compile_timeout": 6,
     "skip": 19,
     "compilable": 40350,
-    "host_free_pass": 32062,
+    "host_free_pass": 32063,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
-    "pass": 32450,
-    "fail": 10791,
+    "pass": 32451,
+    "fail": 10790,
     "compile_error": 5373,
     "compile_timeout": 6,
     "skip": 115,
     "compilable": 43241,
-    "host_free_pass": 32450,
+    "host_free_pass": 32451,
     "stale": 0
   },
   "strict_summary": {
@@ -139,13 +139,13 @@
     },
     "standard": {
       "total": 42535,
-      "pass": 31064,
-      "fail": 8221,
+      "pass": 31065,
+      "fail": 8220,
       "compile_error": 3225,
       "compile_timeout": 6,
       "skip": 19,
       "compilable": 39285,
-      "host_free_pass": 31064,
+      "host_free_pass": 31065,
       "stale": 0
     }
   },
@@ -890,13 +890,13 @@
     {
       "name": "language/arguments-object",
       "path": "language/arguments-object",
-      "pass": 134,
-      "fail": 29,
+      "pass": 135,
+      "fail": 28,
       "compile_error": 100,
       "compile_timeout": 0,
       "skip": 0,
       "total": 263,
-      "host_free_pass": 134
+      "host_free_pass": 135
     },
     {
       "name": "language/asi",
@@ -1197,7 +1197,7 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 6474,
+    "assertion_fail": 6473,
     "host_import_leak": 3901,
     "illegal_cast": 252,
     "negative_test_fail": 7,
@@ -1219,8 +1219,8 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 16170,
-    "classified": 16170,
+    "total_non_pass_non_skip": 16169,
+    "classified": 16169,
     "unclassified_threshold": null,
     "has_edition_breakdown": true,
     "buckets": [
@@ -1291,10 +1291,10 @@
           "Proposals": 4450
         },
         "sample_files": [
-          "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
-          "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
+          "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
         ],
         "sample_signatures": [
@@ -2563,18 +2563,18 @@
           "#990"
         ],
         "label": "Eval and `new Function` semantics",
-        "count": 601,
+        "count": 600,
         "statuses": {
           "pass": 0,
-          "fail": 591,
+          "fail": 590,
           "compile_error": 9,
           "compile_timeout": 1,
           "skip": 0,
-          "total": 601,
+          "total": 600,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 407,
+          "assertion_fail": 406,
           "other": 167,
           "host_import_leak": 9,
           "type_error": 2,
@@ -2587,7 +2587,7 @@
           "ES2020": 105,
           "ES2021": 39,
           "ES2027": 38,
-          "Unclassified (untagged)": 86,
+          "Unclassified (untagged)": 85,
           "ES2022": 9,
           "ES2023": 37,
           "ES2017": 14,
@@ -2685,15 +2685,15 @@
           "test/language/expressions/bitwise-xor/bigint-non-primitive.js",
           "test/language/expressions/unsigned-right-shift/bigint-non-primitive.js",
           "test/built-ins/Atomics/store/bigint/non-shared-bufferdata.js",
-          "test/built-ins/Atomics/notify/bigint/non-shared-bufferdata-returns-0.js",
-          "test/built-ins/Atomics/or/bigint/bad-range.js"
+          "test/built-ins/Atomics/or/bigint/bad-range.js",
+          "test/built-ins/Atomics/notify/bigint/non-shared-bufferdata-returns-0.js"
         ],
         "sample_signatures": [
           "type_error:TypeError: Cannot mix BigInt and other types, use explicit conversions",
           "assertion_fail:Test262Error: Object(0b101n) >>> Object(1n) throws TypeError Expected a TypeError to be thrown but no exception was thrown at all",
           "type_error:TypeError: Atomics.store requires a shared integer TypedArray, which is unsupported in --target standalone",
-          "type_error:TypeError: Atomics.notify requires a shared integer TypedArray, which is unsupported in --target standalone",
-          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)"
+          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
+          "type_error:TypeError: Atomics.notify requires a shared integer TypedArray, which is unsupported in --target standalone"
         ]
       },
       {
@@ -3012,7 +3012,7 @@
           "test/built-ins/WeakRef/throws-when-target-cannot-be-held-weakly.js",
           "test/built-ins/Atomics/wait/cannot-suspend-throws.js",
           "test/built-ins/FinalizationRegistry/prototype/register/return-undefined-register-symbol.js",
-          "test/built-ins/FinalizationRegistry/prototype/unregister/custom-this.js"
+          "test/built-ins/FinalizationRegistry/target-not-callable-throws.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
