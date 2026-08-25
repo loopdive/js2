@@ -101,6 +101,7 @@ import { undefinedExternInstrs } from "./any-helpers.js";
 import { nonExtensibleFreshIndexGuard, nonWritableLengthIndexGuard } from "./vec-define-rejections.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { canonicalNumericKeyGuard } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
+import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
 import { holeTestInstrs } from "./array-holes.js";
 import {
   buildArgumentsBrandBit,
@@ -1489,10 +1490,24 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             },
           ];
         }
+        // The descriptor companion is authoritative for an unbacked sparse
+        // tail. Keep the physical write-back helper on its dense domain: its
+        // normal growth sequence intentionally traps on a four-billion-slot
+        // request, while a dynamic ordinary assignment must remain a
+        // companion-only write.
         writeBackArms.push(
-          { op: "local.get", index: 4 },
-          { op: "ref.test", typeIdx: c.vecTypeIdx },
-          { op: "if", blockType: { kind: "empty" }, then: inner },
+          { op: "local.get", index: 7 },
+          { op: "i32.const", value: SPARSE_INDEX_CEILING },
+          { op: "i32.lt_u" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 4 },
+              { op: "ref.test", typeIdx: c.vecTypeIdx },
+              { op: "if", blockType: { kind: "empty" }, then: inner },
+            ],
+          },
         );
       }
 
@@ -1618,6 +1633,10 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             { op: "local.get", index: 7 },
             { op: "local.get", index: 8 },
             { op: "i32.ge_s" },
+            { op: "local.get", index: 7 },
+            { op: "i32.const", value: SPARSE_INDEX_CEILING },
+            { op: "i32.lt_u" },
+            { op: "i32.and" },
             { op: "i32.and" },
             {
               op: "if",
@@ -1685,6 +1704,10 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { op: "local.get", index: 7 },
         { op: "local.get", index: 8 },
         { op: "i32.ge_s" },
+        { op: "local.get", index: 7 },
+        { op: "i32.const", value: SPARSE_INDEX_CEILING },
+        { op: "i32.lt_u" },
+        { op: "i32.and" },
         { op: "i32.and" },
         {
           op: "if",

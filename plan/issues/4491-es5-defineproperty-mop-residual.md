@@ -14,6 +14,11 @@ area: codegen
 es_edition: es5
 goal: standalone-mode
 related: [4444, 3031, 4490, 4504]
+# 2026-08-25 standalone Array constructor pair: the dynamic computed-key
+# dispatch for S15.4_A1.1_T9 and the sparse companion write/read for
+# S15.4_A1.1_T10 are the remaining value-representation slice described in
+# this issue's sparse-tail residual. The dispatch must stay beside the native
+# locals it splices, so the existing allowances below apply to this pair.
 loc-budget-allow:
   # 2026-08-24 wave-7 (Object.prototype.toString): the syntactic `.call(v)` form
   # is owned by the #2501 compile-time fold, whose standalone ladder ended in a

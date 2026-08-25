@@ -766,6 +766,13 @@ function isOrdinaryToPrimitiveLiteralCandidate(literal: ts.ObjectLiteralExpressi
 function isNumericOrdinaryToPrimitiveUse(identifier: ts.Identifier): boolean {
   const parent = identifier.parent;
   if (!parent) return false;
+  // A computed property key applies ToPropertyKey (and therefore the
+  // OrdinaryToPrimitive valueOf/toString sequence) to the identifier. Treat
+  // this as a coercive use too: ES5 Array tests commonly redeclare the same
+  // `var object` with different valueOf/toString shapes before using it as
+  // `array[object]`. Keeping those sibling literals as closed structs loses
+  // the later shape behind the checker-identity-selected first declaration.
+  if (ts.isElementAccessExpression(parent) && parent.argumentExpression === identifier) return true;
   if (ts.isPrefixUnaryExpression(parent) && parent.operand === identifier) {
     return (
       parent.operator === ts.SyntaxKind.PlusToken ||

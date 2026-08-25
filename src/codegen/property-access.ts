@@ -214,9 +214,11 @@ import {
 } from "./builtin-value-read.js"; // (#3267) built-in static/prototype VALUE-read subsystem — extracted
 import {
   elementAccessTypedArrayName,
+  emitDynamicVecElementGet,
   emitNonIndexVecElementGet,
   nonArrayIndexNumericKey,
   compileElementIndexI32,
+  isDynamicPropertyKeyExpression,
 } from "./array-nonindex-key.js"; // (#4247)
 // (#3267) Re-export the moved symbols other modules import from property-access.js
 // so their `from "./property-access.js"` imports keep resolving unchanged.
@@ -5686,6 +5688,25 @@ export function compileElementAccessBody(
       }
     }
 
+    const isRegexMatchVec = typeDef.fields.length >= 4 && typeDef.fields[2]?.name === "index";
+    // Dynamic object-like keys must be canonicalized with ToPropertyKey before
+    // the receiver-specific runtime dispatch. This is the read twin of the
+    // assignment fallback above: numeric results (for example an object's
+    // `toString() { return 0; }`) still reach the vec element, while ordinary
+    // names use the expando/prototype lookup (`S15.4_A1.1_T9`). Constant
+    // numeric-looking names have already taken the dedicated bag route above.
+    if (
+      elementAccessTypedArrayName(ctx, expr.expression) === undefined &&
+      !(ts.isIdentifier(expr.expression) && expr.expression.text === "arguments") &&
+      !isRegexMatchVec &&
+      isDynamicPropertyKeyExpression(ctx, expr.argumentExpression)
+    ) {
+      const dynamic = emitDynamicVecElementGet(ctx, fctx, objType, expr.argumentExpression, (e, h) =>
+        compileExpression(ctx, fctx, e, h),
+      );
+      if (dynamic) return dynamic;
+    }
+
     // (#2743 b) `vec[Symbol.iterator]` is %Array.prototype.values%
     // (§10.4.4.6/§10.4.4.7 + the Array iterator), NOT a numeric index. This
     // covers BOTH `[][Symbol.iterator]` and `arguments[Symbol.iterator]` — both
@@ -5725,7 +5746,6 @@ export function compileElementAccessBody(
     // below. Other `i32` elements (packed-number / other handle reps) and
     // externref elements keep the shared-helper path; WasmGC `ref` / `ref_null`
     // elements use the dedicated reference-array widen below.
-    const isRegexMatchVec = typeDef.fields.length >= 4 && typeDef.fields[2]?.name === "index";
     const numericHint = expectedType?.kind === "f64" || expectedType?.kind === "i32";
     const taClass = classifyTypedArrayType(ctx.checker.getTypeAtLocation(expr.expression), ctx.checker);
     const oobUndefined = !numericHint && taClass === "other" && !isRegexMatchVec;

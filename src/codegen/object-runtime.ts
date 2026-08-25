@@ -128,6 +128,8 @@ import {
   reserveVecPropHelpers,
 } from "./vec-props.js";
 import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
+import { ensureVecElemSet } from "./vec-elem-set.js";
+import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
 // (#4160) prototype-index store — reserve + registration-time consult builders
 // (all resolve to `undefined` unless `ctx.standalone && ctx.protoIndexDirty`).
 import {
@@ -9873,6 +9875,11 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
   const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
   const descriptorDecisionAvailable =
     ctx.standalone && inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined && setDecideIdx !== undefined;
+  // Descriptor overlay writes are the lossless storage for canonical numeric
+  // keys that cannot be represented by the signed i32 backing lane. The
+  // overlay helper is reserved before this finalize-time fill and receives its
+  // real body later in the same finalize pass.
+  const vecDpValueIdx = ctx.funcMap.get("__vec_dp_value");
   const RESULT_SUCCESS = 1;
   const RESULT_REFUSED = 2;
   const publishSuccess = (): Instr[] =>
@@ -9940,6 +9947,60 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
               { op: "return" },
             ],
           },
+        ];
+
+  // The ordinary dynamic setter historically handled only in-bounds vec
+  // overwrites. Object-valued keys can canonicalize to a new numeric index,
+  // however (`x[object] = v` in ES5 T9), so use the same grow-and-set helper as
+  // the typed element-assignment lane for a canonical, non-negative index.
+  // Keep the 16M ceiling here as a trap guard for physical growth. Larger
+  // canonical indices use the descriptor overlay's companion map below, so a
+  // sparse write/read round-trips without allocating a four-billion-slot
+  // backing array.
+  const growCarrierArms: Instr[] = [];
+  for (const { typeIdx, elemType } of carriers) {
+    const unbox = unboxExternrefToVecElement(ctx, elemType);
+    const elemSetIdx = unbox === null ? null : ensureVecElemSet(ctx, typeIdx);
+    if (elemSetIdx === null) continue;
+    growCarrierArms.push(
+      { op: "local.get", index: setAny },
+      { op: "ref.test", typeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: setAny },
+          { op: "ref.cast", typeIdx },
+          { op: "local.get", index: setI },
+          { op: "local.get", index: 2 },
+          ...unboxExternrefToVecElement(ctx, elemType)!,
+          { op: "call", funcIdx: elemSetIdx },
+          ...publishSuccess(),
+          { op: "return" },
+        ],
+      },
+    );
+  }
+
+  // A canonical array-index string at or above the physical-growth ceiling is
+  // still a real property. Store it in the existing vec overlay rather than
+  // converting it through `i32.trunc_sat_f64_s` (which would saturate
+  // 4294967294 to i32.max and lose the original key). `__vec_dp_value` accepts
+  // the already-ToPropertyKey'd key and marks the companion value authoritative
+  // for the dynamic read prologue. Without an overlay helper, retain the
+  // historical lenient no-op.
+  const sparseOverlayStore: Instr[] =
+    vecDpValueIdx === undefined
+      ? buildNumericMissDecision()
+      : [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "f64.const", value: 0xbf },
+          { op: "call", funcIdx: vecDpValueIdx },
+          { op: "drop" },
+          ...publishSuccess(),
+          { op: "return" },
         ];
 
   for (const { typeIdx, arrTypeIdx, elemType } of carriers) {
@@ -10033,7 +10094,56 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
               op: "if",
               blockType: { kind: "empty" },
               then: carrierArms,
-              else: buildNumericMissDecision(),
+              else:
+                growCarrierArms.length === 0
+                  ? buildNumericMissDecision()
+                  : [
+                      // A grow is safe only for a canonical non-negative
+                      // integer. The signed conversion above is exact for
+                      // the small indices this path grows; the ceiling keeps
+                      // it away from the signed saturation boundary.
+                      { op: "local.get", index: setI },
+                      { op: "f64.convert_i32_s" },
+                      { op: "local.get", index: setN },
+                      { op: "f64.eq" },
+                      { op: "local.get", index: setI },
+                      { op: "i32.const", value: 0 },
+                      { op: "i32.ge_s" },
+                      { op: "i32.and" },
+                      { op: "local.get", index: setI },
+                      { op: "i32.const", value: SPARSE_INDEX_CEILING },
+                      { op: "i32.lt_u" },
+                      { op: "i32.and" },
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: growCarrierArms,
+                        else: [
+                          // The signed i32 conversion above cannot represent
+                          // the high half of the canonical array-index domain.
+                          // Test the original f64 first, then hand the exact
+                          // property key to the sparse companion store.
+                          { op: "local.get", index: setN },
+                          { op: "f64.floor" },
+                          { op: "local.get", index: setN },
+                          { op: "f64.eq" },
+                          { op: "local.get", index: setN },
+                          { op: "f64.const", value: 0 },
+                          { op: "f64.ge" },
+                          { op: "i32.and" },
+                          { op: "local.get", index: setN },
+                          { op: "f64.const", value: 4294967295 },
+                          { op: "f64.lt" },
+                          { op: "i32.and" },
+                          {
+                            op: "if",
+                            blockType: { kind: "empty" },
+                            then: sparseOverlayStore,
+                            else: buildNumericMissDecision(),
+                          },
+                        ],
+                      },
+                    ],
             },
             // NUMERIC key on a vec: handled here terminally — in-bounds stored
             // above (each carrier arm returns), OOB/grow/unsupported kind stays

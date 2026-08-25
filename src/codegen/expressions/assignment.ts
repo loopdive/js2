@@ -132,6 +132,7 @@ import {
   emitNonIndexVecElementSet,
   nonArrayIndexNumericKey,
   compileElementIndexI32,
+  isDynamicPropertyKeyExpression,
 } from "../array-nonindex-key.js"; // (#4247) §10.4.2.2 named-key routing + the relocated TA-view-name helper
 import {
   compileStringBuilderAppend,
@@ -5291,6 +5292,19 @@ function compileElementAssignment(
         then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
         else: [],
       });
+    }
+    // Dynamic object-like keys use ToPropertyKey, not the numeric element
+    // lane. Reuse the ordinary extern setter after the vec null guard so
+    // `x[object] = value` preserves coercion order and reaches either the
+    // numeric element or the vec expando/prototype path selected by the
+    // runtime (`S15.4_A1.1_T9`).
+    if (
+      elementAccessTypedArrayName(ctx, target.expression) === undefined &&
+      !(ts.isIdentifier(target.expression) && target.expression.text === "arguments") &&
+      isDynamicPropertyKeyExpression(ctx, target.argumentExpression)
+    ) {
+      fctx.body.push({ op: "local.get", index: vecLocal });
+      return compileExternSetFallback(ctx, fctx, target, value, arrType);
     }
     // Preserve range-proven counted-loop index arithmetic as i32. Fall back to
     // the existing conversion path when constants, bounds, or overflow safety
