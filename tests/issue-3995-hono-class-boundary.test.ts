@@ -284,9 +284,24 @@ describe("#3995 Hono erased class boundary regressions", () => {
     ).toBe(1);
   });
 
-  // The carrier/setter path is fixed; this residual still requires the
-  // branch-aware async resume machine documented in plan/issues/3995-*.md.
-  it.fails("resumes a recursive await nested in a conditional branch", async () => {
+  it("does not reclassify a linear await because of an unrelated synchronous guard", async () => {
+    expect(
+      await run(`
+        export function test(): number {
+          async function leaf(): Promise<number> {
+            return 7;
+          }
+          async function inner(depth: number): Promise<number> {
+            if (depth < 0) return -1;
+            return await leaf();
+          }
+          return inner(1) as any as number;
+        }
+      `),
+    ).toBe(7);
+  });
+
+  it("resumes a recursive await nested in a conditional branch", async () => {
     expect(
       await run(`
         export async function test(): Promise<number> {
@@ -295,6 +310,55 @@ describe("#3995 Hono erased class boundary regressions", () => {
             return 7;
           }
           return await inner(1);
+        }
+      `),
+    ).toBe(7);
+  });
+
+  it("keeps a conditionally recursive async sibling on its reserved Promise ABI", async () => {
+    expect(
+      await run(`
+        export async function test(): Promise<number> {
+          function sibling(): number {
+            return 1;
+          }
+          async function inner(depth: number): Promise<number> {
+            if (depth > 0) return await inner(depth - 1);
+            return 6 + sibling();
+          }
+          return await inner(1);
+        }
+      `),
+    ).toBe(7);
+  });
+
+  it("keeps a forward sibling caller on the conditionally async callee's Promise ABI", async () => {
+    expect(
+      await run(`
+        export async function test(): Promise<number> {
+          function caller(depth: number): Promise<number> {
+            return inner(depth);
+          }
+          async function inner(depth: number): Promise<number> {
+            if (depth > 0) return await inner(depth - 1);
+            return 7;
+          }
+          return await caller(1);
+        }
+      `),
+    ).toBe(7);
+  });
+
+  it("admits a conditional await owned by a top-level host-visible async function", async () => {
+    expect(
+      await run(`
+        export async function test(): Promise<number> {
+          async function leaf(): Promise<number> {
+            return 7;
+          }
+          let takeBranch = true;
+          if (takeBranch) return await (() => leaf())();
+          return -1;
         }
       `),
     ).toBe(7);

@@ -3,7 +3,7 @@ id: 3995
 title: "npm-compat: pin and adapt original upstream test suites for catalog packages"
 status: ready
 created: 2026-07-30
-updated: 2026-08-24
+updated: 2026-08-25
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -44,6 +44,11 @@ loc-budget-allow:
   - src/codegen/expressions/new-builtin-globals.ts
   - src/compiler.ts
   - src/codegen/extern-declarations.ts
+  # Hono's recursive middleware dispatcher needs the already-structured async
+  # CFG to admit conditional-owned awaits, with one shared nested-declaration
+  # activation decision for reservation and final body compilation.
+  - src/codegen/async-cps.ts
+  - src/codegen/statements/nested-declarations.ts
 func-budget-allow:
   # The dispatcher adds one narrow selector for `vec.push(...runtimeSource)`;
   # the runtime-sized copy lives in extracted helpers below the switch.
@@ -75,6 +80,8 @@ func-budget-allow:
   - src/codegen/index.ts::emitIteratorMethodExport
   - src/runtime.ts::<anonymous>#89
   - src/codegen/extern-declarations.ts::registerBuiltinExternClasses
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
+  - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations
 ---
 # npm-compat: pin and adapt original upstream test suites for catalog packages
 
@@ -1330,3 +1337,54 @@ typed-array [#3097](./3097-compiled-arraybuffer-host-ta-ctor-boundary.md)
 suite, and **1/1** for the upstream runner's async callback
 transport. No full Hono rerun has been performed, so the artifact's overall
 105/324 numerator must not be adjusted from these file-local results.
+
+## 2026-08-25 Hono conditional-await resume checkpoint
+
+The recursive reduction above now returns **7**, not `NaN`, and its expected
+failure is a normal passing regression. The generic CFG builder already had
+condition and branch states for try/catch bodies; admission incorrectly
+required at least one try/catch group, so an otherwise identical `if`-owned
+await could never reach those states. Branch-aware analysis now accepts a body
+when either a try/catch group or a conditional owns every suspension point.
+
+Nested `async function` declarations also used a separate lifted-body path that
+never invoked async activation. The bounded fix routes a nested declaration
+through the existing frame engine only when an `if` arm lexically owns one of
+that declaration's awaits. Its reserved function signature is changed to the
+real Promise carrier (`externref`) before recursive and forward calls are
+compiled. Phase-0 sibling reservation and the real lifted-body compile use the
+same activation decision; otherwise a bodyless forward slot can retain the
+legacy unwrapped numeric result while the final body switches to `externref`.
+The focused sibling-recursion and forward-sibling-caller regressions both
+instantiate and return 7 with the shared ABI. An unrelated synchronous guard
+plus a linear top-level await remains on its previous lane; the focused guard
+proves that merely co-occurring in one body is not enough to change routing.
+The same conditional admission is also covered at the exported host-visible
+async boundary, rather than only through nested declarations.
+
+Measured focused evidence on the replacement PR worktree:
+
+- `tests/issue-3995-hono-class-boundary.test.ts`: **18/18**;
+- `tests/async-await.test.ts`: **8/8**;
+- `tests/equivalence/async-function.test.ts`: **7/7**;
+- `tests/equivalence/promise-chains.test.ts`: **8/8**;
+- `tests/issue-3587-async-rejection-delivery.test.ts`: **21/21**;
+- `tests/issue-4618-async-nested-fn-decl.test.ts`: **1/1**.
+
+The local Node engine cannot execute the WASI try/catch control suite: all 38
+cases stop at instantiation on opcode `0x1f` with its exnref feature disabled,
+before any test value runs. That is an engine-infrastructure limitation, not a
+pass claim.
+
+The exact selected Hono rerun on this branch scores **138/322** native-admitted
+callbacks in Wasm (19/20 selected modules compile and 17 validate). That is a
+branch-wide measurement, not an attribution of all 33 additional passes to
+this async slice. In particular, the unchanged original trailing-slash file
+does **not** advance past its earlier boundary: callbacks 1 and 2 pass, while
+callback 3 still reports `Context is not finalized` and a late
+`new URL(undefined)` rejection leaves its test promise unresolved. The normal
+worker exits on that rejection; running Node in warning mode confirms the
+unresolved continuation rather than producing a later callback result. The
+exact conservative outcome therefore remains **2/36 before the fatal/pending
+third callback**. Neither the generated callback source nor its expectations
+were edited for this measurement.

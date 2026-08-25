@@ -53,6 +53,8 @@ import {
   resolveWasmType,
 } from "../index.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "../async-frame.js"; // (#2865) nested async-gen producer
+import { emitAsyncClosureBody, planAsyncClosureActivation } from "../async-activation.js";
+import { asyncBodyHasConditionalSuspension } from "../async-cps.js";
 import { ensureExnTag, localGlobalIdx, nextModuleGlobalIdx } from "../registry/imports.js";
 import { buildTargetTaggedTry } from "../../ir/try-table.js";
 import { canonicalUndefinedExternInstrs } from "../any-helpers.js"; // (#4642) fall-off completion value
@@ -623,6 +625,22 @@ export function compileNestedFunctionDeclaration(
   }
 }
 
+/**
+ * Narrow activation decision shared by Phase-0 sibling reservation and the
+ * real lifted-body compile. Keeping this in one helper is ABI-critical: if the
+ * reservation unwraps `Promise<T>` while the body later emits the frame engine,
+ * recursive/forward calls retain a stale `T` result type.
+ */
+function planNestedConditionalAsyncActivation(
+  ctx: CodegenContext,
+  stmt: ts.FunctionDeclaration,
+): ReturnType<typeof planAsyncClosureActivation> {
+  const isAsync = stmt.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+  if (!isAsync || stmt.asteriskToken !== undefined) return null;
+  const candidate = planAsyncClosureActivation(ctx, stmt, /* isAsync */ true);
+  return candidate !== null && asyncBodyHasConditionalSuspension(stmt, candidate.plan) ? candidate : null;
+}
+
 function compileNestedFunctionDeclarationInScope(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -712,6 +730,16 @@ function compileNestedFunctionDeclarationInScope(
   if (isAsync && !isGenerator) {
     ctx.asyncFunctions.add(funcName);
   }
+  // Nested FunctionDeclarations have their own lifted-body lowering path and
+  // therefore do not pass through function-body.ts::maybeActivateAsync. Plan
+  // their activation here, before the lifted function type is registered, so
+  // a driven declaration exposes the real Promise carrier (`externref`) to
+  // recursive and forward calls instead of the legacy unwrapped result type.
+  // Keep the historical nested-declaration population unchanged except for
+  // the branch-aware shape this slice makes drivable. In particular, merely
+  // having a synchronous guard elsewhere in a linear async body is not enough:
+  // the `if` arm itself must own one of this declaration's await points.
+  const asyncDecision = planNestedConditionalAsyncActivation(ctx, stmt);
 
   // (#2923) Foreign eval declarations have no checker signature; use dynamic
   // externref params and returns without attempting either lazy checker query.
@@ -745,6 +773,9 @@ function compileNestedFunctionDeclarationInScope(
     if (!isVoidType(retType)) {
       returnType = resolveWasmType(ctx, retType);
     }
+  }
+  if (asyncDecision !== null) {
+    returnType = { kind: "externref" };
   }
   // Analyze captured variables from the enclosing scope. Use scope-aware
   // collection so nested `var` declarations and parameter bindings inside the
@@ -1200,6 +1231,8 @@ function compileNestedFunctionDeclarationInScope(
       liftedFctx.body.push({ op: "local.get", index: bufferLocal });
       liftedFctx.body.push({ op: "local.get", index: pendingThrowLocal });
       liftedFctx.body.push({ op: "call", funcIdx: createGenIdx });
+    } else if (asyncDecision !== null) {
+      emitAsyncClosureBody(ctx, liftedFctx, stmt, asyncDecision);
     } else {
       for (const s of stmt.body.statements) {
         compileStatement(ctx, liftedFctx, s);
@@ -1674,6 +1707,8 @@ function compileNestedFunctionDeclarationInScope(
       liftedFctx.body.push({ op: "local.get", index: bufferLocal });
       liftedFctx.body.push({ op: "local.get", index: pendingThrowLocal });
       liftedFctx.body.push({ op: "call", funcIdx: createGenIdx });
+    } else if (asyncDecision !== null) {
+      emitAsyncClosureBody(ctx, liftedFctx, stmt, asyncDecision);
     } else {
       for (const s of stmt.body.statements) {
         compileStatement(ctx, liftedFctx, s);
@@ -2297,8 +2332,11 @@ export function hoistFunctionDeclarations(
       if (preRegisterCapturingSibling(ctx, fctx, stmt, siblingFuncNames)) continue;
 
       // Compute the real signature (mirror the slice in
-      // compileNestedFunctionDeclaration). Generators return externref; async
-      // unwraps Promise<T>.
+      // compileNestedFunctionDeclaration). Generators and driven async
+      // declarations return externref; parked async declarations preserve the
+      // legacy Promise<T> unwrapping. The activation decision MUST be shared
+      // with the real body compile so sibling/recursive calls never retain a
+      // stale result ABI.
       const foreignEvalDeclaration = isForeignEvalNode(stmt);
       const paramTypes: ValType[] = stmt.parameters.map((p) => {
         if (foreignEvalDeclaration) return { kind: "externref" };
@@ -2310,6 +2348,7 @@ export function hoistFunctionDeclarations(
       });
       const isGen = stmt.asteriskToken !== undefined;
       const isAsync = stmt.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+      const asyncDecision = planNestedConditionalAsyncActivation(ctx, stmt);
       // (#2923/#3633) Match compileNestedFunctionDeclaration's externref fallback.
       let sig: ts.Signature | undefined;
       let foreignNoSig = foreignEvalDeclaration;
@@ -2322,6 +2361,8 @@ export function hoistFunctionDeclarations(
       }
       let resultType: ValType | undefined;
       if (isGen) {
+        resultType = { kind: "externref" };
+      } else if (asyncDecision !== null) {
         resultType = { kind: "externref" };
       } else if (foreignNoSig) {
         resultType = { kind: "externref" };

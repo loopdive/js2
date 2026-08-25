@@ -155,6 +155,34 @@ export function analyzeAsyncBody(_ctx: CodegenContext, fn: ts.FunctionLikeDeclar
   };
 }
 
+/**
+ * Does an `if` arm in this function's own body lexically own a suspension?
+ *
+ * This is intentionally stricter than "the body contains an if and an await":
+ * an unrelated synchronous guard followed by a canonical top-level await is
+ * already a linear body and must not be reclassified as branch-aware. Nested
+ * function scopes are excluded by `countAwaitsInStatement`.
+ */
+export function asyncBodyHasConditionalSuspension(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPlan): boolean {
+  if (fn.body === undefined || plan.awaitPoints.length === 0) return false;
+  const awaitSet = new Set(plan.awaitPoints);
+  let found = false;
+  const walk = (node: ts.Node): void => {
+    if (found || (node !== fn.body && isNestedFunctionScope(node))) return;
+    if (
+      ts.isIfStatement(node) &&
+      (countAwaitsInStatement(node.thenStatement, awaitSet) > 0 ||
+        (node.elseStatement !== undefined && countAwaitsInStatement(node.elseStatement, awaitSet) > 0))
+    ) {
+      found = true;
+      return;
+    }
+    forEachChild(node, walk);
+  };
+  walk(fn.body);
+  return found;
+}
+
 // (#1373b C-1) `awaitIsStaticallyResolved` + `staticPromiseResolveSettledExpr`
 // moved to the leaf module `async-static.ts` so the IR front-end can import
 // them without an import cycle (this file imports codegen/index.ts, which
@@ -1519,6 +1547,16 @@ function bodyHasGroup(body: RegionBody): boolean {
   );
 }
 
+/** Any conditional branch carrying an await anywhere in the body (recursive)? */
+function bodyHasConditional(body: RegionBody): boolean {
+  return body.items.some(
+    (item) =>
+      item.kind === "conditional" ||
+      (item.kind === "group" && bodyHasConditional(item.group.tryBody)) ||
+      (item.kind === "forOf" && bodyHasConditional(item.body)),
+  );
+}
+
 function asyncForOfIteratorSpill(stmt: ts.ForOfStatement): string {
   return `__async_forof_iter_${stmt.pos >= 0 ? stmt.pos : stmt.getStart()}`;
 }
@@ -1764,12 +1802,12 @@ function lowerRegionBody(
 }
 
 /**
- * (#2906 3c / 3c-ii / 3c-iii) Structural analysis of the bounded
- * try/catch-around-await body: a flat statement block whose awaited
- * `try { … } catch (e?) { … }` statements — top-level AND nested inside try
- * blocks — become a recursive region-body of groups; the runs between them
- * and the catch blocks are linear-canonical chunks (awaits allowed). Returns
- * `null` (→ Gap-3 linear / legacy fallback) for anything outside the slice.
+ * (#2906 3c / 3c-ii / 3c-iii, #3995) Structural analysis of a bounded
+ * branch-aware async body. Awaited `try { … } catch (e?) { … }` statements
+ * become recursive groups, while `if` statements whose arms contain awaits
+ * become CFG conditionals. Runs between them and catch blocks are
+ * linear-canonical chunks (awaits allowed). Returns `null` (→ Gap-3 linear /
+ * legacy fallback) for anything outside the slice.
  */
 export function analyzeTryCatchAsync(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPlan): { body: RegionBody } | null {
   if (plan.awaitPoints.length === 0) return null;
@@ -1779,16 +1817,18 @@ export function analyzeTryCatchAsync(fn: ts.FunctionLikeDeclaration, plan: Async
 
   const region = lowerRegionBody(body.statements, awaitSet, 0);
   if (region === null) return null;
-  // At least one group (else the linear path owns the body), and every await
-  // accounted for by the region's chunks (no stray positions).
-  if (!bodyHasGroup(region)) return null;
+  // At least one non-linear construct (else the linear path owns the body), and
+  // every await accounted for by the region's chunks (no stray positions).
+  // Conditionals reuse the same branch-capable CFG builder as try/catch; no
+  // handler region is created when the body contains only `if` branches.
+  if (!bodyHasGroup(region) && !bodyHasConditional(region)) return null;
   if (bodySegCount(region) !== plan.awaitPoints.length) return null;
   return { body: region };
 }
 
 /**
- * (#2906 3c / 3c-ii) Build the CFG for the bounded (multi-region sibling)
- * try/catch shape. Per group g (region id r, in source order): the pre chunk's
+ * (#2906 3c / 3c-ii, #3995) Build the CFG for bounded branch-aware async
+ * bodies. Per try/catch group g (region id r, in source order): the pre chunk's
  * suspend chain (handler 0, its tail fused into the first try state's leads),
  * the try chunk's suspend chain (handler r), a try-exit state
  * (deliver the last try await → try tail → `goto(join)`, or `settleSent` for a
