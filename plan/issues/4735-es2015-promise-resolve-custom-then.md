@@ -16,7 +16,9 @@ es_edition: es2015
 language_feature: promise-resolve
 goal: test262-conformance
 source_cap: 180
-depends_on: [4951]
+# Depends on #4951 (the implementation head is 09e5201a5; no canonical
+# plan/issues/4951 record exists in the merged upstream tree).
+depends_on: []
 related: [4727, 4734, 4951]
 loc-budget-allow:
   - src/codegen/async-scheduler.ts
