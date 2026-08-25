@@ -239,8 +239,17 @@ function emitAnnexBOuterBindingWriteFlag(fctx: FunctionContext, name: string): v
   if (!fctx.annexBOuterBindings?.has(name)) return;
   const flagLocal = fctx.tdzFlagLocals?.get(name);
   if (flagLocal === undefined) return;
-  fctx.body.push({ op: "i32.const", value: 1 });
-  fctx.body.push({ op: "local.set", index: flagLocal });
+  const boxed = fctx.boxedTdzFlags?.get(name);
+  if (boxed) {
+    // Captured Annex-B outer bindings share their flag through an i32 ref
+    // cell; the `tdzFlagLocals` entry is the box local in this case.
+    fctx.body.push({ op: "local.get", index: boxed.localIdx });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "struct.set", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 });
+  } else {
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "local.set", index: flagLocal });
+  }
 }
 
 export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, expr: ts.BinaryExpression): InnerResult {

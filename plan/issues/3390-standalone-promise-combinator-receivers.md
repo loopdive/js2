@@ -211,11 +211,11 @@ Poisoned-iterable order tests belong to slice 3.
       calls.ts, wired as an early pre-check in the `.call` block. Emits the
       synchronous `__exn`-tag TypeError (class-to-primitive.ts pattern);
       does NOT compile the iterable.
-- [x] `tests/issue-3390.test.ts` — 21 cases: synchronous TypeError for
+- [x] `tests/issue-3390.test.ts` — 22 cases: synchronous TypeError for
       undefined/null/primitive/Symbol()/eval/arrow/empty-object/no-arg
       receivers on all 4 combinators; iterable NOT touched (poison-getter
-      probe); host (gc) lane unchanged; direct form + real subclass ctor +
-      global `Promise` receiver all fall through (correct-or-legacy). PASS.
+      probe); host (gc) lane unchanged; direct form + real subclass ctor
+      controls remain unchanged. PASS.
 - [x] Corpus re-probe (built-ins/Promise/{all,allSettled,race,any,prototype},
       396 files): **pass 130 → 138 (+8), leak 121 → 113 (−8), fail 145
       unchanged.** The 8 flips are exactly ctx-non-ctor (4) + ctx-non-object
@@ -225,8 +225,10 @@ Poisoned-iterable order tests belong to slice 3.
 - [x] Gates: tsc 0 err, prettier clean, oracle-ratchet +0 checker usage
       (pure-AST classifier — no `getTypeAtLocation`), loc-budget allow-listed
       (+119).
-- [ ] RESIDUAL (follow-up issue, recorded below): slice 2 (`Promise`
-      receiver `.call` → native combinator) + slice 3 (custom-ctor/species
+- [x] Slice 2 (`Promise` receiver `.call` → native combinator) — the #2867
+      wave-2 follow-up re-enters the direct native dispatcher for all four
+      combinators; focused 22/22 suite and gc/custom-constructor controls pass.
+- [ ] RESIDUAL (follow-up issue, recorded below): slice 3 (custom-ctor/species
       machinery, ~54 files: element-function 25, invoke-resolve 18,
       capability 15, ctx-ctor(+throws) 8, …) + the iter-arg-is-string
       direct-form string-iterable gap (5). To be filed under umbrella #3178.
@@ -241,3 +243,17 @@ passes, zero regressions. The remaining 113 `built-ins/Promise` leaks are the
 custom-constructor / species / NewPromiseCapability families (slice 3, an XL
 lift the spec defers) plus the direct-form string-iterable gap (5) — left as
 honest `host_import_leak` residuals for a follow-up under #3178.
+
+## Slice-2 completion note (Codex, 2026-08-25)
+
+The bounded global-constructor arm is now implemented in the #2867 wave-2 PR:
+`Promise.{all,allSettled,race,any}.call(Promise, iterable)` re-enters the
+existing native carrier dispatcher on standalone/WASI, so it shares the direct
+form's array, collection, generic-iterable, and string handling. The default
+gc/host lane remains on the host import path. The implementation intentionally
+accepts exactly one target argument after `Promise`; extra reflective-call
+arguments remain on the legacy path until their evaluation ordering is modeled.
+
+Focused coverage is 22/22 in `tests/issue-3390.test.ts`, including all four
+methods settling host-free and the gc/host and custom-constructor controls.
+Slice 3 (custom constructor/species/NewPromiseCapability) remains open.
