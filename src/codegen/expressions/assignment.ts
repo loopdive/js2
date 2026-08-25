@@ -3803,6 +3803,30 @@ function compilePropertyAssignment(
   // value is tee'd and re-pushed after the (obj-returning) helper call.
   if (!ts.isPrivateIdentifier(target.name) && target.name.text === "__proto__") {
     const externRef: ValType = { kind: "externref" };
+
+    // (#4648) A closed-shape object returned from
+    // `Object.preventExtensions({})` does not carry the native `$Object`
+    // integrity/prototype fields.  Letting this assignment reach the generic
+    // boundary setter consequently records a sidecar prototype link even
+    // though the ECMAScript [[SetPrototypeOf]] operation must be refused.
+    // The integrity pass has already marked identifier receivers in
+    // `nonExtensibleVars`; preserve evaluation order, consume the receiver,
+    // evaluate the RHS, and leave the assignment value on the stack without
+    // invoking the setter.  This is the same silent-refusal posture used by
+    // `__object_setPrototypeOf` for standalone non-extensible objects.
+    if (
+      ctx.standalone &&
+      ts.isIdentifier(target.expression) &&
+      ctx.nonExtensibleVars.has(integrityVarKey(ctx, target.expression))
+    ) {
+      const objResult = compileExpression(ctx, fctx, target.expression, externRef);
+      if (!objResult) return null;
+      if (objResult.kind !== "externref") coerceType(ctx, fctx, objResult, externRef);
+      fctx.body.push({ op: "drop" });
+      compileProtoArg(ctx, fctx, value);
+      return externRef;
+    }
+
     // obj (externref)
     const objResult = compileExpression(ctx, fctx, target.expression, externRef);
     if (!objResult) return null;
@@ -5247,8 +5271,13 @@ function compileElementAssignment(
       elementAccessTypedArrayName(ctx, target.expression) === undefined &&
       !(ts.isIdentifier(target.expression) && target.expression.text === "arguments")
     ) {
-      const routed = emitOverlayRoutedElementSet(ctx, fctx, target.argumentExpression, value, (e, h) =>
-        compileExpression(ctx, fctx, e, h),
+      const routed = emitOverlayRoutedElementSet(
+        ctx,
+        fctx,
+        target.argumentExpression,
+        value,
+        isStrictContext(target, ctx.inferModuleStrictArguments),
+        (e, h) => compileExpression(ctx, fctx, e, h),
       );
       if (routed) return routed;
     }

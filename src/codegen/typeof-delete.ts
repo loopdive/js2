@@ -4,7 +4,7 @@
  * Extracted from expressions.ts (issue #688 step 5).
  */
 import { ts } from "../ts-api.js";
-import { chainRootIsGrowable, runtimeAccessorDescriptorKey } from "./property-access.js";
+import { chainRootIsGrowable, isNumericIndexExpression, runtimeAccessorDescriptorKey } from "./property-access.js";
 import { emitHostEqualityFromStack } from "./coercion-engine.js";
 import { resolveWidenedVarKey } from "./widened-var-key.js";
 import { isBooleanType, isStringType, isSymbolType } from "../checker/type-mapper.js";
@@ -1589,6 +1589,19 @@ function hoistedFnTypeof(ctx: CodegenContext, fctx: FunctionContext, ident: ts.I
     : null;
 }
 
+function stringWrapperIndexNeedsRuntimeTypeof(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  operand: ts.Expression,
+): boolean {
+  if (!ctx.standalone || !ts.isElementAccessExpression(operand)) return false;
+  if (!isNumericIndexExpression(ctx, operand.argumentExpression, fctx)) return false;
+  return (
+    ctx.oracle.builtinReceiverOf(operand.expression) === "String" ||
+    ctx.oracle.staticJsTypeOf(operand.expression) === "string"
+  );
+}
+
 export function compileTypeofExpression(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1802,7 +1815,7 @@ export function compileTypeofExpression(
     }
     // (#4428) Same disagreement one level down: `typeof x[0]` on an array whose
     // element representation was widened must read the value, not the type.
-    if (elementReadOfRebindWidenedArray(ctx, bareTdz)) {
+    if (elementReadOfRebindWidenedArray(ctx, bareTdz) || stringWrapperIndexNeedsRuntimeTypeof(ctx, fctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
     // (#2668) Indexed reads can become `undefined` after a descriptor-overlay

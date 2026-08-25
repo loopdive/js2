@@ -10,6 +10,7 @@ import { coerceType, compileExpression } from "../shared.js";
 import { isGlobalBuiltinIdentifier } from "./calls.js";
 import { emitThrowTypeError } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { integrityVarKey } from "../widened-var-key.js";
 
 const ES5_FUNCTION_PROTOTYPE_CTORS = new Set([
   "Object",
@@ -140,6 +141,15 @@ export function tryCompileEs5GetPrototypeOfEarly(
   ) {
     emitThrowTypeError(ctx, fctx, "Cannot convert undefined or null to object");
     return { kind: "externref" };
+  }
+
+  // Closed standalone plain objects keep their ordinary prototype implicit.
+  // An integrity call marks the identifier, so preserve the argument read and
+  // answer this exact query with the compiler-owned singleton.
+  if (ctx.standalone && ts.isIdentifier(arg0) && ctx.nonExtensibleVars.has(integrityVarKey(ctx, arg0))) {
+    const argType = compileExpression(ctx, fctx, arg0);
+    if (argType) fctx.body.push({ op: "drop" });
+    return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
   }
 
   if (ts.isIdentifier(arg0) && isGlobalBuiltinIdentifier(ctx, fctx, arg0)) {

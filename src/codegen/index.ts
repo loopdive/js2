@@ -311,6 +311,7 @@ import {
   fillExternIsArray,
   fillProxyDispatch,
   unshiftExternGetProtoCacheArm,
+  unshiftExternGetStringExoticArm,
   unshiftExternGetWrapperCtorArm,
 } from "./object-runtime.js";
 import { fillVecLengthDynamicArms } from "./vec-length-set.js";
@@ -5659,6 +5660,10 @@ export function generateModule(
     // reads (`arr[k]`, `arr["length"]`) instead of empty / undefined. Standalone
     // only (no-op otherwise).
     fillDynamicForinVecArms(ctx);
+    // Dynamic descriptor helpers read String-wrapper index properties through
+    // __extern_get; answer the String-exotic virtual character before the
+    // ordinary $Object numeric adapter can box its miss as 0.
+    unshiftExternGetStringExoticArm(ctx);
 
     // Dynamic-path ArraySetLength-lite + vec-"length" own-ness: splice the
     // `$__vec_base` `"length"` WRITE arm into `__extern_set` and the
@@ -9044,6 +9049,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // fill, the backing vec contains the right values but every indexed read
     // silently returns the undefined sentinel.
     fillExternGetIdxVecArms(ctx);
+    unshiftExternGetStringExoticArm(ctx);
     // (#3666/#3251) Multi-source parity after every carrier/dynamic reader is complete.
     fillObjVecReflectionHelpers(ctx);
     // (#4098) Multi-source parity: the helper bodies were filled above; now

@@ -9688,6 +9688,149 @@ export function unshiftExternGetWrapperCtorArm(ctx: CodegenContext): void {
 }
 
 /**
+ * String-wrapper own indexed reads have String-exotic semantics even when the
+ * receiver and property key arrive through the fully dynamic __extern_get
+ * boundary (for example verifyProperty(new String("abc"), "0", desc)).
+ *
+ * The ordinary $Object path sees only the wrapper's property map, so it misses
+ * the virtual indexed properties and the indexed read falls through to the
+ * numeric $Object adapter, which historically boxed the missing value as 0.
+ * Recover the wrapper's [[StringData]] slot and answer an in-range canonical
+ * integer key from the native string. Out-of-range and non-canonical keys
+ * deliberately fall through to the ordinary reader so user expandos remain
+ * visible.
+ */
+export function unshiftExternGetStringExoticArm(ctx: CodegenContext): void {
+  if (!ctx.standalone || !ctx.nativeStrings || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
+  const objectTypes = ctx.objectRuntimeTypes;
+  if (!objectTypes) return;
+  const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
+  if (!fn) return;
+
+  const slotIdx = ensureWrapperStringValueHelper(ctx);
+  const strToNumIdx = ctx.funcMap.get("__str_to_number");
+  const numToStringIdx = ctx.funcMap.get("number_toString");
+  const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
+  const charAtIdx = ctx.nativeStrHelpers.get("__str_charAt");
+  if (
+    slotIdx < 0 ||
+    strToNumIdx === undefined ||
+    numToStringIdx === undefined ||
+    flattenIdx === undefined ||
+    equalsIdx === undefined ||
+    charAtIdx === undefined
+  )
+    return;
+
+  const base = 2 + fn.locals.length;
+  const stringData = base;
+  const index = base + 1;
+  const keyFlat = base + 2;
+  const numberFlat = base + 3;
+  const indexI32 = base + 4;
+  fn.locals.push(
+    { name: "__string_exotic_data", type: { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx } },
+    { name: "__string_exotic_index", type: { kind: "f64" } },
+    { name: "__string_exotic_key", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } },
+    { name: "__string_exotic_number", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } },
+    { name: "__string_exotic_i32", type: { kind: "i32" } },
+  );
+
+  const arm: Instr[] = [
+    // data = StringData(receiver); a null result means this is not a String
+    // wrapper and leaves the existing dynamic reader authoritative.
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: slotIdx },
+    { op: "local.set", index: stringData },
+    { op: "local.get", index: stringData },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        // The key must be a String. Numeric keys are already handled by the
+        // existing __extern_get_idx arm; this branch is for dynamic obj[name].
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            // n = ToNumber(key), then require Number::toString(n) to equal the
+            // original key. This rejects 01, 1.0, NaN, and other non-canonical
+            // numeric strings before the String-exotic arm runs.
+            { op: "local.get", index: 1 },
+            { op: "call", funcIdx: strToNumIdx },
+            { op: "local.tee", index: index },
+            { op: "local.get", index: index },
+            { op: "f64.eq" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: 1 },
+                { op: "any.convert_extern" },
+                { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+                { op: "call", funcIdx: flattenIdx },
+                { op: "local.set", index: keyFlat },
+                { op: "local.get", index: index },
+                { op: "call", funcIdx: numToStringIdx },
+                { op: "any.convert_extern" },
+                { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+                { op: "call", funcIdx: flattenIdx },
+                { op: "local.set", index: numberFlat },
+                { op: "local.get", index: keyFlat },
+                { op: "local.get", index: numberFlat },
+                { op: "call", funcIdx: equalsIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    // Canonical integer keys only. The unsigned length check
+                    // below is guarded by >= 0 so negative indices fall
+                    // through without being reinterpreted as huge unsigned
+                    // values.
+                    { op: "local.get", index: index },
+                    { op: "i32.trunc_sat_f64_s" },
+                    { op: "local.set", index: indexI32 },
+                    { op: "local.get", index: indexI32 },
+                    { op: "i32.const", value: 0 },
+                    { op: "i32.ge_s" },
+                    { op: "local.get", index: indexI32 },
+                    { op: "local.get", index: stringData },
+                    { op: "ref.as_non_null" },
+                    { op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 },
+                    { op: "i32.lt_s" },
+                    { op: "i32.and" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        { op: "local.get", index: stringData },
+                        { op: "ref.as_non_null" },
+                        { op: "call", funcIdx: flattenIdx },
+                        { op: "local.get", index: indexI32 },
+                        { op: "call", funcIdx: charAtIdx },
+                        { op: "extern.convert_any" },
+                        { op: "return" },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+  fn.body.unshift(...arm);
+}
+
+/**
  * (#3673 round 9b) Prepend the per-key prototype-lookup cache HIT arm onto the
  * FINAL `__extern_get` body — after every other finalize fill has unshifted
  * its arms, so a cache hit skips the closed-struct field ladder, the
