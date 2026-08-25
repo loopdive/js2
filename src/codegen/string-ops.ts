@@ -19,7 +19,13 @@ import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext, HoistedCharRead } from "./context/types.js";
-import { emitThrowTypeError, getFuncParamTypes, noJsHost, usesNativeJsErrors } from "./expressions/helpers.js";
+import {
+  buildThrowJsErrorInstrs,
+  emitThrowTypeError,
+  getFuncParamTypes,
+  noJsHost,
+  usesNativeJsErrors,
+} from "./expressions/helpers.js";
 import { addStringImports, flatStringType, nativeStringType, resolveIdentifierType, resolveWasmType } from "./index.js";
 import {
   ensureAnyToStringHelper,
@@ -3144,12 +3150,11 @@ export function compileNativeStringMethodCall(
         fctx.body.push({ op: "i32.or" });
         {
           const rangeErrMsg = "RangeError: Invalid count value";
-          addStringConstantGlobal(ctx, rangeErrMsg);
-          const tagIdx = ensureExnTag(ctx);
+          const rangeErrInstrs = buildThrowJsErrorInstrs(ctx, "RangeError", rangeErrMsg, { flush: fctx });
           fctx.body.push({
             op: "if",
             blockType: { kind: "empty" },
-            then: [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx }],
+            then: rangeErrInstrs,
             else: [],
           });
         }
