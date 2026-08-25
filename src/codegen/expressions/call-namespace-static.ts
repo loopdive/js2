@@ -67,6 +67,7 @@ import { ensureObjectRuntime, ensureObjVecBuilders } from "../object-runtime.js"
 import {
   emitStandalonePromiseCombinator,
   emitStandalonePromiseCustomCapabilityCheck,
+  emitStandalonePromiseCustomResolve,
   emitStandalonePromiseCombinatorRuntime,
   isNativeCombinatorMethod,
   resolveExternrefVecArg,
@@ -1964,6 +1965,81 @@ export function compileNamespaceStaticCall(
   // The current call expression looks like `(Promise.METHOD).call(thisArg, iter)`,
   // i.e. propAccess.name.text === "call" and propAccess.expression is a
   // PropertyAccess `Promise.METHOD`.
+  if (
+    propAccess.name.text === "call" &&
+    ts.isPropertyAccessExpression(propAccess.expression) &&
+    ts.isIdentifier(propAccess.expression.expression) &&
+    propAccess.expression.expression.text === "Promise" &&
+    propAccess.expression.name.text === "resolve" &&
+    isStandalonePromiseActive(ctx) &&
+    expr.arguments.length === 2
+  ) {
+    const ctorArg = unwrapReflectConstructExpr(expr.arguments[0]!);
+    const ctorDecl = ts.isIdentifier(ctorArg) ? ctx.oracle.valueDeclarationOf(ctorArg) : ctorArg;
+    const ctorInit = ctorDecl && ts.isVariableDeclaration(ctorDecl) ? ctorDecl.initializer : undefined;
+    const ctorExpr = ctorInit ? unwrapReflectConstructExpr(ctorInit) : ctorDecl;
+    const isOrdinaryCtorDecl =
+      (ctorExpr !== undefined && ts.isFunctionExpression(ctorExpr) && ctorExpr.asteriskToken === undefined) ||
+      (ctorDecl !== undefined &&
+        ts.isFunctionDeclaration(ctorDecl) &&
+        ctorDecl.asteriskToken === undefined &&
+        !(ctorDecl.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false));
+    if (isOrdinaryCtorDecl) {
+      const snap = snapshotSpeculative(ctx, fctx);
+      ensurePromiseSettleFunctions(ctx);
+      ensureObjectRuntime(ctx);
+      const ctorType = compileExpression(ctx, fctx, expr.arguments[0]!);
+      const ctorInfo =
+        ctorType && (ctorType.kind === "ref" || ctorType.kind === "ref_null")
+          ? ctx.closureInfoByTypeIdx.get(ctorType.typeIdx)
+          : ts.isIdentifier(ctorArg)
+            ? ctx.closureMap.get(ctorArg.text)
+            : undefined;
+      const supportsCapabilityCtor =
+        ctorInfo !== undefined &&
+        ctorInfo.paramTypes.length === 1 &&
+        ctorInfo.paramTypes[0]?.kind === "externref" &&
+        (ctorInfo.returnType === null ||
+          ctorInfo.returnType.kind === "externref" ||
+          ctorInfo.returnType.kind === "ref" ||
+          ctorInfo.returnType.kind === "ref_null");
+      const ctorSelfTypeIdx =
+        ctorInfo && (getClosureFuncSelfTypeIdx(ctx, ctorInfo.funcTypeIdx) ?? ctorInfo.structTypeIdx);
+      if (
+        ctorType &&
+        ctorInfo &&
+        supportsCapabilityCtor &&
+        ctorSelfTypeIdx !== undefined &&
+        (ctorType.kind === "ref" || ctorType.kind === "ref_null" || ctorType.kind === "externref")
+      ) {
+        const ctorLocal = allocLocal(fctx, `__promise_custom_ctor_${fctx.locals.length}`, {
+          kind: "ref_null",
+          typeIdx: ctorSelfTypeIdx,
+        });
+        coerceType(ctx, fctx, ctorType, { kind: "ref_null", typeIdx: ctorSelfTypeIdx });
+        fctx.body.push({ op: "local.set", index: ctorLocal });
+        const valueInstrs: Instr[] = [];
+        ctx.liveBodies.add(valueInstrs);
+        const savedBody = fctx.body;
+        fctx.body = valueInstrs;
+        try {
+          const valueType = compileExpression(ctx, fctx, expr.arguments[1]!, { kind: "externref" });
+          if (valueType === null) fctx.body.push({ op: "ref.null.extern" });
+          else if (valueType.kind !== "externref") coerceType(ctx, fctx, valueType, { kind: "externref" });
+        } finally {
+          fctx.body = savedBody;
+        }
+        try {
+          if (emitStandalonePromiseCustomResolve(ctx, fctx, ctorLocal, ctorInfo, ctorSelfTypeIdx, valueInstrs)) {
+            return { kind: "externref" };
+          }
+        } finally {
+          ctx.liveBodies.delete(valueInstrs);
+        }
+      }
+      rollbackSpeculative(ctx, fctx, snap);
+    }
+  }
   if (
     propAccess.name.text === "call" &&
     ts.isPropertyAccessExpression(propAccess.expression) &&
