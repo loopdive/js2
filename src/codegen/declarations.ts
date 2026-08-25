@@ -2265,10 +2265,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
    */
   function moduleProxyResultEscapesToCall(decl: ts.VariableDeclaration): boolean {
     if (!ts.isIdentifier(decl.name)) return false;
+    const name = decl.name.text;
     let escapes = false;
     const visit = (node: ts.Node): void => {
       if (escapes) return;
-      if (ts.isIdentifier(node) && node.text === decl.name.text && ctx.oracle.valueDeclarationOf(node) === decl) {
+      if (ts.isIdentifier(node) && node.text === name && ctx.oracle.valueDeclarationOf(node) === decl) {
         const parent = node.parent;
         if (
           (ts.isCallExpression(parent) || ts.isNewExpression(parent)) &&
