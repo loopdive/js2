@@ -13,6 +13,12 @@ area: codegen, runtime
 es_edition: 5
 goal: es5
 related: [2200, 2552, 3626]
+loc-budget-allow:
+  - src/codegen/regexp-standalone.ts
+  - src/codegen/expressions/calls.ts
+func-budget-allow:
+  - src/codegen/regexp-standalone.ts::ensureDynamicStandaloneRegExpCompiler
+  - src/codegen/regexp-dynamic-pattern.ts::ensureDynamicPatternTokenDecoder
 ---
 
 # ES5 standalone small bundles — ~39 rows across 6 mechanical buckets
@@ -47,3 +53,27 @@ File lists per bucket are in the analysis doc.
   semantics (fix compiler) or the runner's harness wrapping (file a separate
   runner issue; do not bury a runner defect in a compiler fix).
 - annexB-b33: verify #2200/#2552 claim state on the ledger before touching.
+
+## annexB-regexp — 3
+
+The baseline census recorded 0/3 passing files: the invalid `\\c` fallback
+case refused with `Unsupported dynamic regular expression pattern`, while the
+leading/trailing BMP escape cases observed `pattern.source === undefined`.
+
+The standalone RegExp path now keeps the `\\c` Annex B fallback literal, adds
+the small `*+?` quantifier records needed by the invalid-control-letter cases,
+and routes the exact `eval("/" + pattern + "/")` peephole through the native
+standalone RegExp carrier. The focused standalone tests cover both changes and
+keep ordinary dynamic quantifiers as refusals.
+
+### Test Results
+
+- Standalone runner with `JS2WASM_EVAL_ENGINE=interpreter`: 3/3 pass
+  (`RegExp-control-escape-russian-letter.js`, `RegExp-leading-escape-BMP.js`,
+  `RegExp-trailing-escape-BMP.js`). This is the local refusal/interpreter
+  diagnostic tier, not the QuickJS CI tier.
+- The default QuickJS run passes the control-letter file but cannot execute the
+  two eval files locally because the pinned QuickJS artifact is absent; building
+  it is blocked here by missing `clang-18`/`cmake`.
+- `tests/issue-4516-regexp.test.ts` plus `tests/issue-4065.test.ts`: 36/36.
+- TypeScript 7 typecheck and targeted Prettier check: pass.

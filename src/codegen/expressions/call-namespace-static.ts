@@ -1980,6 +1980,29 @@ export function compileNamespaceStaticCall(
     // the earlier direct-call site (`Promise.resolve(v)` /
     // `Promise.reject(r)` without `.call`) and does not apply here.
     const methodName = propAccess.expression.name.text;
+
+    // (#2867 wave-2 / #3390 slice 2) `Promise.METHOD.call(Promise, iter)` is
+    // semantically the direct global-Promise form.  Keep it on the native
+    // carrier so the explicit `.call` spelling does not reintroduce the host
+    // `Promise_METHOD` import.  Re-enter the direct static dispatcher rather
+    // than duplicating its array/collection/dynamic-iterable admission logic.
+    // Restrict this reshape to the exact two-argument `.call` form: extra
+    // arguments must still be evaluated before the target method runs, and
+    // preserving that ordering belongs to a separate general reflective-call
+    // slice.
+    if (
+      isStandalonePromiseActive(ctx) &&
+      expr.arguments.length === 2 &&
+      ts.isIdentifier(expr.arguments[0]) &&
+      expr.arguments[0].text === "Promise"
+    ) {
+      const directProp = propAccess.expression;
+      const directCall = ts.factory.createCallExpression(directProp, undefined, [expr.arguments[1]!]);
+      ts.setTextRange(directCall, expr);
+      (directCall as { parent?: ts.Node }).parent = expr.parent;
+      return compileNamespaceStaticCall(ctx, fctx, directCall, directProp);
+    }
+
     const importName = `Promise_${methodName}`;
     // Three-arg signature: (thisArg, iterable, directCall) → result. See (#1116)
     // comment at the direct-call branch above.

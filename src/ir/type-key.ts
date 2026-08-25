@@ -1,6 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import type { IrFnctorShape } from "./fnctor-abi.js";
 import type { IrType } from "./nodes.js";
+
+/** Canonical semantic key for one nominal fnctor shape. */
+export function irFnctorShapeKey(shape: IrFnctorShape): string {
+  return irTypeKey({ kind: "fnctor", shape });
+}
 
 /** Canonical recursive key for an IR type. */
 export function irTypeKey(type: IrType): string {
@@ -31,6 +37,7 @@ export function irTypeKey(type: IrType): string {
         return `fnctor:${JSON.stringify({
           sourceId: current.shape.sourceId,
           constructorUnitId: current.shape.constructorUnitId,
+          hiddenIdentity: current.shape.hiddenIdentity,
           constructorTarget: refKey(current.shape.constructorTarget),
           reservedLayout: refKey(current.shape.reservedLayout),
           fields: current.shape.fields.map((field) => ({
