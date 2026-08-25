@@ -170,7 +170,8 @@ default flags for existing mapped elements. No formal-parameter ABI widening
 was added; the excluded string-valued row remains the known `f64` reverse-sync
 follow-up.
 
-The owned `runtime.ts` surface measures 18,053 lines after this correctness
-repair, so the host-import policy ceiling moves from 17,949 to that exact
-measurement. The native-first import, legacy-semantic, unknown-import,
+The owned `runtime.ts` surface measures 18,063 lines after the merge-queue
+regression repair narrowed descriptor-aware proxying to mapped arguments with
+indexed overrides, so the host-import policy ceiling moves from 17,949 to that
+exact measurement. The native-first import, legacy-semantic, unknown-import,
 resolver, and adapter ceilings remain unchanged.
