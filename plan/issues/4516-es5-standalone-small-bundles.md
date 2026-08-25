@@ -22,6 +22,9 @@ loc-budget-allow:
   - src/codegen/array-object-proto.ts
   - src/codegen/expressions/assignment.ts
   - src/codegen/expressions/builtins.ts
+  # The standalone Boolean constructor delegates object truthiness to the
+  # shared primitive-tail leaf; this driver grows by its import only.
+  - src/codegen/expressions/new-builtin-globals.ts
 func-budget-allow:
   - src/codegen/statements/loops.ts::compileForInStatement
   - src/codegen/statements/loops.ts::compileForOfArray
