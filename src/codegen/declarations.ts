@@ -38,6 +38,7 @@ import { emitScriptGlobalFunctionBindings } from "./global-function-bindings.js"
 import { emitScriptGlobalVarBindings } from "./global-var-bindings.js"; // (#4491 T4) §9.1.1.4.17
 import { isHoistedTopLevelVarName } from "./top-level-hoisted-var-names.js"; // (#4491 T3) pre-declaration writes
 import { isAssignmentOverTopLevelFunctionName } from "./top-level-assigned-function-names.js"; // (#4491 T12)
+import { moduleVarDirectPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
@@ -2371,6 +2372,13 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
    * let/const pass so both scopes register the same type.
    */
   function moduleGlobalWasmType(decl: ts.VariableDeclaration, varType: ts.Type): ValType {
+    // A source-file `var` is initialized to `undefined` before its initializer
+    // runs. When that value is actually observed, a checker-inferred primitive
+    // slot would expose the Wasm zero value instead (`false`, `0`, or an empty
+    // reference). Widen only the binding-identity-proven pre-init cases; the
+    // broader local-slot predicate also covers shapes that are unsafe to widen
+    // at module scope (see the Array.prototype.filter guard below).
+    if (moduleVarDirectPreInitValueIsObserved(ctx, decl)) return { kind: "externref" };
     // (#ES5 filter residual) A typed numeric filter can observe an inherited
     // accessor whose Get result is not numeric.  The filter lowering keeps the
     // callback's f64 ABI but widens its result vec to externref so that value

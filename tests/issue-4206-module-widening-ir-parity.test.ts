@@ -22,6 +22,28 @@ function moduleGlobalLine(result: CompileResult, name: string): string | undefin
 }
 
 describe("#4206 — module-slot widening agrees with IR selection", () => {
+  it("preserves undefined when a module var is read before its initializer", async () => {
+    const result = await compile(
+      `
+        var observedUndefined = value === undefined;
+        var value = true;
+        export function result(): boolean { return observedUndefined; }
+      `,
+      {
+        fileName: "issue-4206-module-var-preinit-read.ts",
+        target: "wasi",
+        experimentalIR: true,
+        emitWat: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(moduleGlobalLine(result, "value")).toContain("(mut externref)");
+
+    const { instance } = await WebAssembly.instantiate(result.binary, result.importObject ?? {});
+    expect((instance.exports as { result: () => number }).result()).toBe(1);
+  });
+
   it("keeps an explicitly annotated number slot on f64 and its reader on IR", async () => {
     const result = await compile(
       `
