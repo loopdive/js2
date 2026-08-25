@@ -60,6 +60,42 @@ import { runtimeEvalStateMayShadowBinding } from "./direct-eval-environment.js";
 // (`JSON`/`Object`/`Math`/`parseInt`/…) is configurable ⇒ `delete` returns `true`.
 const NON_CONFIGURABLE_GLOBALS = new Set(["NaN", "Infinity", "undefined"]);
 
+// Ambient names supplied by lib.dom but absent from host-free Wasm targets.
+// Their declaration-file symbols must not make `typeof name` claim that the
+// value exists. A certified standalone DOM module is the one exception for
+// `document`: its capability provider owns that global explicitly (#4576).
+const HOST_ONLY_AMBIENT_GLOBALS = new Set([
+  "document",
+  "window",
+  "navigator",
+  "location",
+  "history",
+  "HTMLElement",
+  "Element",
+  "Node",
+  "Event",
+  "EventTarget",
+  "DocumentFragment",
+  "Text",
+  "Comment",
+  "requestAnimationFrame",
+  "cancelAnimationFrame",
+]);
+
+function ambientIdentifierIsUnavailable(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  ident: ts.Identifier,
+  sym: ts.Symbol | undefined,
+): boolean {
+  if (!(ctx.standalone || ctx.wasi)) return false;
+  if (runtimeEvalStateMayShadowBinding(ctx, fctx, ident.text)) return false;
+  if (!sym?.declarations?.length || !sym.declarations.every((d) => d.getSourceFile().isDeclarationFile)) return false;
+  if (ident.text === "structuredClone") return true;
+  if (!HOST_ONLY_AMBIENT_GLOBALS.has(ident.text)) return false;
+  return !(ctx.standalone && ident.text === "document" && ctx.requiresStandaloneDomCapability === true);
+}
+
 /**
  * (#2703, #3422) Terminal `throw` for `delete`'s spec error cases (§13.5.1.2):
  * super reference → ReferenceError; null/undefined base or strict-mode
@@ -1725,13 +1761,7 @@ export function compileTypeofExpression(
       // error). Restricted to standalone/WASI + the exact unprovided name +
       // an ambient-lib-only symbol (a user-declared `structuredClone` lives in a
       // non-declaration file and keeps "function"), so host mode is byte-inert.
-      if (
-        (ctx.standalone || ctx.wasi) &&
-        ident.text === "structuredClone" &&
-        !runtimeEvalStateMayShadowBinding(ctx, fctx, ident.text) &&
-        !!sym?.declarations?.length &&
-        sym.declarations.every((d) => d.getSourceFile().isDeclarationFile)
-      ) {
+      if (ambientIdentifierIsUnavailable(ctx, fctx, ident, sym)) {
         return compileStringLiteral(ctx, fctx, "undefined");
       }
       if (!hasValueDecl) {
@@ -2077,13 +2107,7 @@ export function compileTypeofComparison(
       // `$262.detachArrayBuffer` guard (which must throw the honest "unsupported
       // by this host"). Ambient-lib-only symbol + exact name + standalone/WASI,
       // so a user-declared `structuredClone` and host mode are byte-inert.
-      if (
-        (ctx.standalone || ctx.wasi) &&
-        ident.text === "structuredClone" &&
-        !runtimeEvalStateMayShadowBinding(ctx, fctx, ident.text) &&
-        !!sym.declarations?.length &&
-        sym.declarations.every((d) => d.getSourceFile().isDeclarationFile)
-      ) {
+      if (ambientIdentifierIsUnavailable(ctx, fctx, ident, sym)) {
         const matches = "undefined" === stringLiteral;
         const result = isEq ? (matches ? 1 : 0) : matches ? 0 : 1;
         fctx.body.push({ op: "i32.const", value: result });

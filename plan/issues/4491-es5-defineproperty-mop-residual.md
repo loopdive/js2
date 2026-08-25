@@ -49,6 +49,11 @@ loc-budget-allow:
   # accessor keys (typeof-delete.ts), void-typed binding slot widening
   # (declarations.ts moduleGlobalWasmType arm).
   - src/codegen/typeof-delete.ts
+  # 2026-08-25 optional-host guard slice: a DOM use dominated by
+  # `typeof document !== "undefined"` must not request the standalone DOM
+  # capability, because the guard is false in a host-free realm.
+  - src/ir/dom-capability.ts
+  - src/codegen/statements/control-flow.ts
   - src/codegen/declarations.ts
   # 2026-08-21 defineProperties/create edge slice (buckets Q + R): the
   # `Object.prototype.isPrototypeOf` reflective body is dispatched from

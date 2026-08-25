@@ -421,11 +421,16 @@ describe("#4491 wave-4 — measured residuals", () => {
   // it needs the standalone PROVIDED-globals set, which no single table holds
   // today (`structuredClone` has a hand-written arm for exactly this).
   // (`defineProperty/S15.2.3.6_A1`.)
-  it.fails('typeof a host-only global is "undefined" in standalone', async () => {
+  it('typeof a host-only global is "undefined" in standalone', async () => {
     expect(
       await runStandalone(`
         export function main() {
-          return (typeof document === "undefined") ? 1 : 0;
+          if (typeof document !== "undefined" &&
+              typeof document.createElement === "function") {
+            document.createElement("form");
+            return 0;
+          }
+          return 1;
         }
       `),
     ).toBe(1);
