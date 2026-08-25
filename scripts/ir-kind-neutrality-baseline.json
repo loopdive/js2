@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-24",
+  "generated": "2026-08-25",
   "populationRule": "A kind is in scope iff it is the `readonly kind` discriminant of a top-level `export interface` that is an arm of the `IrInstr` or `IrTerminator` union in src/ir/nodes.ts. Excluded: the symbolic-reference types IrFuncRef/IrGlobalRef/IrTypeRef (kinds func/global/type) and every inline union member of a payload type. See scripts/check-ir-kind-neutrality.mjs.",
   "ratchet": {
     "unresolved": 3,
