@@ -1932,6 +1932,26 @@ export function resolveConstantExpression(ctx: CodegenContext, expr: ts.Expressi
     return resolveConstantExpression(ctx, expr.right);
   }
 
+  // A logical-AND assignment whose left hand side is statically falsy has no
+  // observable write and evaluates to the existing value.  Class computed
+  // names are collected before their initializer bodies are emitted, so this
+  // narrow fold lets e.g. `let x = 0; class C { [x &&= 1] = 2 }` use the
+  // canonical property name "0" while preserving the specified `x === 0`.
+  // Do not fold the truthy arm (or ||= / ??=): those forms perform a write and
+  // must remain runtime expressions until a side-effect-aware evaluator exists.
+  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandEqualsToken) {
+    const leftValue = resolveConstantExpression(ctx, expr.left);
+    if (leftValue === undefined) return undefined;
+    const leftType = ctx.checker.getTypeAtLocation(expr.left);
+    const leftIsFalsy =
+      (leftType.flags & ts.TypeFlags.Null) !== 0 ||
+      (leftType.flags & ts.TypeFlags.Undefined) !== 0 ||
+      (leftType.flags & ts.TypeFlags.NumberLike) !== 0
+        ? Number(leftValue) === 0 || Number.isNaN(Number(leftValue))
+        : typeof leftValue === "string" && leftValue.length === 0;
+    return leftIsFalsy ? leftValue : undefined;
+  }
+
   // Binary expression: a + b, a - b, a * b, a / b
   if (ts.isBinaryExpression(expr)) {
     const left = resolveConstantExpression(ctx, expr.left);
