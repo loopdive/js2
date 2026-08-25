@@ -456,9 +456,9 @@ describe("#4492 wave-5 — residual R3: no §20.1.3.6 brand classifier on the RU
     ).toBe(1);
   });
 
-  it.fails("`String(<arguments>)` answers the array join instead (test262 trim/15.5.4.20-2-51)", async () => {
-    // The census row is `String.prototype.trim.call(argObj)`, whose internal
-    // ToString lands on the same terminal and answers "1,2,true".
+  it("`String(<arguments>)` observes the Arguments tag (test262 trim/15.5.4.20-2-51)", async () => {
+    // The census row is `String.prototype.trim.call(argObj)`; both spellings
+    // must apply ordinary ToString to the Arguments carrier, not Array.join.
     expect(
       await runStandalone(
         `${loopBuilt("want", "[object Arguments]")}` +

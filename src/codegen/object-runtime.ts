@@ -58,7 +58,12 @@
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
-import { buildArgumentsLengthAbsentMiss, buildArgumentsLengthAbsentTail } from "./arguments-length-brand.js"; // (#4658)
+import {
+  buildArgumentsToPrimitiveArm,
+  buildArgumentsLengthAbsentMiss,
+  buildArgumentsLengthAbsentTail,
+  reserveArgumentsLengthBrand,
+} from "./arguments-length-brand.js"; // (#4658/#4491)
 import { BFN_ID_FIELD_IDX, BFN_STATE_FIELD_IDX } from "./builtin-fn-meta.js"; // (#4241) header-derived
 import { ensureNativeCharCodeAtHelper } from "./char-code-at-helpers.js";
 import { getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js"; // (#3673 round 19b)
@@ -4538,7 +4543,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // `__to_primitive`, so we reserve the placeholder here (stable call target)
     // and fill it in post-processing. `$__vec_base` is the shared supertype with
     // `length` at field 0 (#2186) — one `ref.test` detects every element kind.
-    const arrayLikeReduce = ctx.standalone;
+    const arrayLikeReduce = reserveArgumentsLengthBrand(ctx) !== undefined;
     const vecBaseTypeIdx = arrayLikeReduce ? getOrRegisterVecBaseType(ctx) : -1;
     const arrayToPrimIdx = arrayLikeReduce ? reserveArrayToPrimitiveString(ctx) : -1;
     // (#2638) Standalone CLASS-instance → primitive. A nominal class struct is
@@ -4557,7 +4562,6 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     const typeofUndefinedIdx = ctx.funcMap.get("__typeof_undefined")!;
     const typeofBigintIdx = ctx.funcMap.get("__typeof_bigint")!;
     const typeofFunctionIdx = ctx.funcMap.get("__typeof_function")!;
-
     const typeErrorMessage = "Cannot convert object to primitive value";
     addStringConstantGlobal(ctx, typeErrorMessage);
     emitWasiErrorConstructor(ctx, "TypeError", 1);
@@ -4822,6 +4826,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         then:
           arrayLikeReduce && vecBaseTypeIdx >= 0 && arrayToPrimIdx >= 0
             ? [
+                ...buildArgumentsToPrimitiveArm(ctx, isStringHint, tryOrdinaryMethod, stringExtern),
                 // (#2358 #10) A real array (`$__vec_base`) reduces to its
                 // Array.prototype.toString (`join(",")`) — a primitive string the
                 // caller's hint then coerces (`__str_to_number` / string concat).
