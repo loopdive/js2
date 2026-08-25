@@ -106,6 +106,12 @@ export function isDynamicPropertyKeyExpression(
   key: ts.Expression,
   receiver?: ts.Expression,
 ): boolean {
+  // Bundlers routinely erase TypedArray annotations from helper parameters,
+  // leaving both the receiver and arithmetic key as `any`. The generic vec
+  // property route is for Array exotics only; an unknown receiver must retain
+  // the established dense element lane so Uint8Array copy loops do not get
+  // captured merely because checker precision was lost.
+  if (receiver !== undefined && !isOrdinaryArrayReceiver(ctx, receiver)) return false;
   const keyFact = ctx.oracle.typeFactOf(key);
   if (factNeedsPropertyKeyRuntime(keyFact)) return true;
   const inner = skipTransparentExpressions(key);
@@ -116,12 +122,7 @@ export function isDynamicPropertyKeyExpression(
   // Constant numeric expressions and simple variable indices stay on their
   // existing dense path.
   if (keyFact.kind === "number") {
-    return (
-      receiver !== undefined &&
-      isOrdinaryArrayReceiver(ctx, receiver) &&
-      ts.isBinaryExpression(inner) &&
-      typeof resolveConstantExpression(ctx, inner) !== "number"
-    );
+    return ts.isBinaryExpression(inner) && typeof resolveConstantExpression(ctx, inner) !== "number";
   }
   // A literal ordinary name (for example `"[object Object]"`) is also a
   // property key, not a numeric index. Numeric spellings and the historical
