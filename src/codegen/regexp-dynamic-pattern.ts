@@ -44,9 +44,9 @@ import {
   RE_FLAG_Y,
 } from "./regex/bytecode.js";
 
-/** Token kinds, packed into bits 0..2 of the decoder's result. */
+/** Token kinds, packed into bits 0..3 of the decoder's result. */
 export const TOKEN_UNSUPPORTED = 0;
-/** A single literal code unit; the unit is in bits 8..23. */
+/** A single literal code unit; the unit is in bits 9..24. */
 export const TOKEN_LITERAL = 1;
 /** `.` — compiles to `ReOp.ANY`. */
 export const TOKEN_ANY = 2;
@@ -58,28 +58,32 @@ export const TOKEN_STAR = 4;
 export const TOKEN_PLUS = 5;
 /** `?` — greedy zero-or-one quantifier (Annex B `\\c` fallback only). */
 export const TOKEN_OPT = 6;
+/** `(` or `(?:` — a group opener; value 1 denotes non-capturing `(?:`. */
+export const TOKEN_GROUP_OPEN = 7;
+/** `)` — a group closer. */
+export const TOKEN_GROUP_CLOSE = 8;
 
 /**
  * The decoder packs its answer into one i32 so the callers need no
  * multi-value plumbing:
  *
- *   bits 0..2   kind      (TOKEN_*)
- *   bits 3..7   len       source code units consumed (always >= 1)
- *   bits 8..23  value     literal code unit, for TOKEN_LITERAL
+ *   bits 0..3   kind      (TOKEN_*)
+ *   bits 4..8   len       source code units consumed (always >= 1)
+ *   bits 9..24  value     literal code unit, for TOKEN_LITERAL
  */
-export const TOKEN_KIND_MASK = 0x7;
-export const TOKEN_LEN_SHIFT = 3;
+export const TOKEN_KIND_MASK = 0xf;
+export const TOKEN_LEN_SHIFT = 4;
 export const TOKEN_LEN_MASK = 0x1f;
-export const TOKEN_VALUE_SHIFT = 8;
+export const TOKEN_VALUE_SHIFT = 9;
 
 const DYN_TOKEN_HELPER = "__regex_dyn_token";
 
-/** `kind | len << 3 | value << 8`, as a constant-folded i32 where possible. */
+/** `kind | len << 4 | value << 9`, as a constant-folded i32 where possible. */
 function packConst(kind: number, len: number, value: number): Instr[] {
   return [{ op: "i32.const", value: kind | (len << TOKEN_LEN_SHIFT) | (value << TOKEN_VALUE_SHIFT) }];
 }
 
-/** `kind | len << 3 | (<value instrs>) << 8` for a runtime-computed unit. */
+/** `kind | len << 4 | (<value instrs>) << 9` for a runtime-computed unit. */
 function packDynamic(kind: number, len: number, value: Instr[]): Instr[] {
   return [
     ...value,
@@ -129,13 +133,18 @@ const inRange = (local: number, lo: number, hi: number): Instr[] => [
  * | `\` + non-alnum   | LITERAL(that unit)           | 2   |
  * | `\\c` + `*+?`       | STAR/PLUS/OPT quantifier      | 1   |
  * | `\\c` + `{}`        | LITERAL(that unit)            | 1   |
+ * | `(`                 | GROUP_OPEN (capturing)        | 1   |
+ * | `(?:`               | GROUP_OPEN (non-capturing)    | 3   |
+ * | `)`                 | GROUP_CLOSE                   | 1   |
  * | ordinary unit     | LITERAL(unit)                | 1   |
  * | anything else     | UNSUPPORTED                  | 1   |
  *
  * Deliberately UNSUPPORTED (each would need engine features this runtime
  * grammar does not have, and guessing would risk a wrong match):
  * `\d \D \s \S \w \W \b \B \k \p \P`, octal / back-references (`\1`),
- * every other `\`+alphanumeric, and the metacharacters `^ $ * + ? ( ) [ ] { }`.
+ * every other `\`+alphanumeric, and the metacharacters `^ $ * + ? [ ] { }`.
+ * Plain and non-capturing group envelopes are tokenised explicitly; the
+ * runtime compiler validates their nesting before emitting SAVE records.
  *
  * `\c` not followed by an ASCII letter decodes as a **literal backslash of
  * width 1**, so the trailing `c` is re-scanned as its own literal token. That
@@ -410,15 +419,27 @@ export function ensureDynamicPatternTokenDecoder(ctx: CodegenContext, strDataRef
         eqConst(C, 0x2e),
         packConst(TOKEN_ANY, 1, 0),
         cond(
-          eqConst(C, 0x2a),
-          annexBControlFallbackQuantifier(TOKEN_STAR),
+          eqConst(C, 0x28),
           cond(
-            eqConst(C, 0x2b),
-            annexBControlFallbackQuantifier(TOKEN_PLUS),
+            eqConst(D, 0x3f),
+            cond(eqConst(E, 0x3a), packConst(TOKEN_GROUP_OPEN, 3, 1), UNSUPPORTED),
+            packConst(TOKEN_GROUP_OPEN, 1, 0),
+          ),
+          cond(
+            eqConst(C, 0x29),
+            packConst(TOKEN_GROUP_CLOSE, 1, 0),
             cond(
-              eqConst(C, 0x3f),
-              annexBControlFallbackQuantifier(TOKEN_OPT),
-              cond(eqConst(C, 0x5c), backslash, annexBControlFallbackLiteral),
+              eqConst(C, 0x2a),
+              annexBControlFallbackQuantifier(TOKEN_STAR),
+              cond(
+                eqConst(C, 0x2b),
+                annexBControlFallbackQuantifier(TOKEN_PLUS),
+                cond(
+                  eqConst(C, 0x3f),
+                  annexBControlFallbackQuantifier(TOKEN_OPT),
+                  cond(eqConst(C, 0x5c), backslash, annexBControlFallbackLiteral),
+                ),
+              ),
             ),
           ),
         ),

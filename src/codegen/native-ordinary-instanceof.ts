@@ -295,7 +295,7 @@ function isProvablyNonCallableObjectType(ctx: CodegenContext, expr: ts.Expressio
  * Either one unproven ⇒ decline, because the consequence of a false positive is
  * a spurious TypeError (a wrong answer), not a missed conversion.
  */
-function isFreshOrdinaryObjectExpression(ctx: CodegenContext, expr: ts.Expression): boolean {
+export function isFreshOrdinaryObjectExpression(ctx: CodegenContext, expr: ts.Expression): boolean {
   if (ts.isObjectLiteralExpression(expr)) return true;
   let source: ts.Expression = expr;
   if (ts.isIdentifier(expr)) {

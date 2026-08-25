@@ -763,7 +763,10 @@ function tryCompileStandaloneBuiltinProtoMemberMeta(
   }
   // `.name` — the member's own name (getters are spelled "get <member>" per
   // §10.2.9, but the test gate reads method names; emit the bare member name).
-  return compileStringLiteral(ctx, fctx, member) ?? undefined;
+  // Annex B's trimLeft/trimRight entries are identity aliases, so their
+  // function object's name is the canonical trimStart/trimEnd spelling.
+  const canonicalMember = glue.memberAliasOf?.(member) ?? member;
+  return compileStringLiteral(ctx, fctx, canonicalMember) ?? undefined;
 }
 
 function tryCompileStandaloneBuiltinProtoMemberRead(

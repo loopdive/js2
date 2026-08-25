@@ -174,7 +174,7 @@ describe("#4065 constructs outside the runtime grammar stay LOUD refusals", () =
     ["class escape \\w", "\\w", "q"],
     ["assertion \\b", "\\b", "q"],
     ["back-reference", "(a)\\1", "aa"],
-    ["capture group", "(a)b", "ab"],
+    ["group alternation", "(a|b)", "a"],
     ["character class", "[abc]", "b"],
     ["quantifier", "a*b", "aab"],
     ["\\x with bad hex digits", "\\xZZ", "xZZ"],

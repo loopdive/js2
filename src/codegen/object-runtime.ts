@@ -4568,8 +4568,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     const L_SLOT = 5;
 
     // (#4564) `undefined` is a non-null `$AnyValue` singleton; rejecting it
-    // would incorrectly advance from `valueOf` to `toString`. BigInt is also a
-    // primitive result. Keep every runtime-tag predicate in one cascade.
+    // would incorrectly advance from `valueOf` to `toString`. BigInt and the
+    // native `$Symbol` carrier are also primitive results. Keep every
+    // runtime-tag predicate in one cascade so object-key ToPrimitive preserves
+    // a Symbol instead of attempting ToString on it (#4675).
     const primitiveTypePredicates = [
       typeofNumberIdx,
       typeofBooleanIdx,
@@ -4594,6 +4596,18 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           then: [{ op: "local.get", index: localIdx }, { op: "return" }],
         },
       ]),
+      ...(symbolKeysEnabled
+        ? ([
+            { op: "local.get", index: localIdx },
+            { op: "any.convert_extern" },
+            { op: "ref.test", typeIdx: symbolTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "local.get", index: localIdx }, { op: "return" }],
+            },
+          ] satisfies Instr[])
+        : []),
     ];
 
     const throwTypeError = (): Instr[] => [
@@ -4895,38 +4909,46 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     registerNative("__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }], [], toStringBody);
 
     // #2042 R2 / #2985 — now that `__extern_toString` exists, splice the
-    // non-Symbol ToString arm into `__to_property_key`'s body (built earlier,
-    // before this funcIdx was known). By this point the key is neither an
-    // `$AnyString` nor a boxed number (both returned already). For EVERY
-    // remaining non-Symbol key — `$Object`, boolean, bigint, null/undefined,
-    // any other opaque primitive — ToPropertyKey = ToString(ToPrimitive(key,
-    // "string")), exactly `__extern_toString` (§7.1.1.1 → §7.1.17). Originally
-    // this arm only tested `$Object`, so a boolean/bigint/etc. computed key
-    // (`o[true]`, `Object.defineProperty(o, true, …)`) fell through UNCHANGED
-    // and then hit the downstream `ref.cast $AnyString` in
-    // `emitClassifyKey`/`__obj_hash`, trapping "illegal cast [in __obj_find()]"
-    // (#2985 residual). Broadening the test from "is `$Object`" to "is NOT a
-    // Symbol" canonicalises those keys instead. A genuine Symbol still falls
-    // through to the trailing `local.get 0` unchanged (Symbols are looked up by
-    // identity via `__key_equals`, not by string cast). When symbol keys are
-    // disabled there are no Symbol keys, so the ToString applies unconditionally.
+    // non-Symbol ToPropertyKey arm into `__to_property_key`'s body (built
+    // earlier, before these func indices were known). By this point the key is
+    // neither an `$AnyString` nor a boxed number (both returned already). For
+    // every remaining non-Symbol key — `$Object`, boolean, bigint,
+    // null/undefined, or another opaque primitive — §7.1.14 is
+    // `ToString(ToPrimitive(key, "string"))`. The old arm called
+    // `__extern_toString` directly, which attempted ToString on a custom
+    // `toString`/`valueOf` result even when that result was a Symbol. That lost
+    // the identity of keys such as `{ toString() { return sym; } }` (#4675).
+    // Run ToPrimitive once, preserve a resulting Symbol unchanged, and only
+    // then call the existing ToString helper. A genuine Symbol input still
+    // falls through to the trailing `local.get 0` unchanged (Symbols are
+    // looked up by identity via `__key_equals`, not by string cast).
     if (tpkBodyRef !== undefined) {
       const externToStringIdx = ctx.funcMap.get("__extern_toString")!;
+      const toPrimitiveIdx = ctx.funcMap.get("__to_primitive")!;
       const toStringArm: Instr[] = [
         { op: "local.get", index: 0 },
         { op: "call", funcIdx: externToStringIdx },
         { op: "return" },
       ];
-      const nonSymbolToStringArm: Instr[] = symbolKeysEnabled
-        ? [
-            // if (!ref.test $Symbol any) return __extern_toString(key)
-            { op: "local.get", index: 1 },
-            { op: "ref.test", typeIdx: symbolTypeIdx },
-            { op: "i32.eqz" },
-            { op: "if", blockType: { kind: "empty" }, then: toStringArm },
-          ]
-        : // no Symbol keys in play → ToString every remaining key unconditionally
-          toStringArm;
+      const nonSymbolToStringArm: Instr[] = [
+        // primitive = ToPrimitive(key, "string"); reuse parameter 0 so this
+        // splice needs no additional local in the already-expanded helper.
+        { op: "local.get", index: 0 },
+        ...stringExtern("string"),
+        { op: "call", funcIdx: toPrimitiveIdx },
+        { op: "local.set", index: 0 },
+        ...(symbolKeysEnabled
+          ? ([
+              // ToPropertyKey preserves a Symbol primitive instead of
+              // applying ToString to it.
+              { op: "local.get", index: 0 },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: symbolTypeIdx },
+              { op: "if", blockType: { kind: "empty" }, then: [{ op: "local.get", index: 0 }, { op: "return" }] },
+            ] satisfies Instr[])
+          : []),
+        ...toStringArm,
+      ];
       // Splice before the last instruction (the unchanged-key fallthrough, which
       // now only serves genuine Symbol keys under symbolKeysEnabled).
       tpkBodyRef.splice(tpkBodyRef.length - 1, 0, ...nonSymbolToStringArm);
