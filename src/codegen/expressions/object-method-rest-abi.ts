@@ -5,6 +5,7 @@ import type { ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext, RestParamInfo } from "../context/types.js";
 import { getArrTypeIdxFromVec } from "../registry/types.js";
 import { skipTransparentExpressions } from "../shared.js";
+import { bindingIsSingleAssignment } from "../single-assignment-binding.js";
 import { pushDefaultValue } from "../type-coercion.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 
@@ -16,7 +17,12 @@ function objectLiteralMethodDeclaration(
   if (!ts.isPropertyAccessExpression(callee)) return undefined;
   let receiver = skipTransparentExpressions(callee.expression);
   if (ts.isIdentifier(receiver)) {
-    const initializer = ctx.oracle.constInitializerOf(receiver);
+    // `var` object bindings are the dominant test262 form. The declaration
+    // body is still a closed struct, so use its initializer when available;
+    // callers already fall back to the generic path when this proof fails.
+    const initializer =
+      ctx.oracle.constInitializerOf(receiver) ??
+      (bindingIsSingleAssignment(ctx, receiver) ? ctx.oracle.variableInitializerOf(receiver) : undefined);
     if (initializer) receiver = skipTransparentExpressions(initializer);
   }
   if (!ts.isObjectLiteralExpression(receiver)) return undefined;
@@ -41,6 +47,8 @@ export function directObjectMethodFuncIdx(
 ): number | undefined {
   if (funcIdx === undefined) return undefined;
   const declaration = objectLiteralMethodDeclaration(ctx, expr);
+  const literalFuncIdx = declaration ? ctx.objectLiteralMethodFuncIdx.get(declaration) : undefined;
+  if (literalFuncIdx !== undefined) funcIdx = literalFuncIdx;
   const hasRestBinding = declaration?.parameters.some(
     (parameter) =>
       parameter.dotDotDotToken !== undefined &&

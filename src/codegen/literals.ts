@@ -3750,6 +3750,12 @@ export function compileObjectLiteralForStruct(
         };
         pushDefinedFunc(ctx, methodFuncIdx, methodFunc);
       }
+      // Struct-shape deduplication may have forked this method into a
+      // per-literal function. Keep the declaration identity alongside the
+      // body handle so a direct call through a variable initialized by this
+      // literal does not fall back to the shared (possibly empty) placeholder.
+      const actualMethodFuncIdx = existingFunc !== undefined ? existingFuncIdx! : ctx.funcMap.get(fullName)!;
+      ctx.objectLiteralMethodFuncIdx.set(prop, actualMethodFuncIdx);
 
       // Promote captured locals to globals so the method body can access them.
       // (#3040) ALSO scan the parameter-default initializers — an object-literal
