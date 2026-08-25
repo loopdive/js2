@@ -91,12 +91,11 @@ All probes used the pinned project toolchain and this isolated worktree.
   compile error. Compared with the pre-fix local arm, standalone had exactly
   **2 fail → pass** flips (Symbol target and ordinary primitive target), zero
   losses, and one unchanged excluded control. Host had zero flips.
-- Focused source probes for host and standalone: Symbol target, number/null/
-  undefined/string primitive targets, and object target with primitive string
-  key/number value all returned the expected `1` verdict. The focused Vitest
-  command cannot complete in this macOS sandbox: Vitest prints its `RUN` header
-  and its worker is terminated before a summary; the same test sources were
-  exercised directly by the compiler/instantiate probe.
+- Focused Vitest regression passed after the final upstream merge: **1 test
+  file, 6 tests**. Direct host/standalone source probes also covered Symbol,
+  number/null/undefined/string primitive targets and an object target with a
+  primitive string key/number value; every case returned the expected `1`
+  verdict.
 - TypeScript 5 and TypeScript 7 `--noEmit` checks passed after the final
   `upstream/main` merge. Focused Biome lint and Prettier checks passed; the
   repository-wide lint and `format:check` also passed. The lint command still
