@@ -2272,6 +2272,21 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   function moduleInitForcesExternref(decl: ts.VariableDeclaration): boolean {
     if (!decl.initializer) return false;
     if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) return true;
+    // (#4707) `new Proxy` returns an externref carrier even though TypeScript
+    // gives it the target's structural type. Keep the module global dynamic so
+    // a proxy is not cast back to that target struct and nulled on assignment.
+    if (
+      (ts.isNewExpression(decl.initializer) &&
+        ts.isIdentifier(decl.initializer.expression) &&
+        decl.initializer.expression.text === "Proxy") ||
+      (ts.isCallExpression(decl.initializer) &&
+        ts.isPropertyAccessExpression(decl.initializer.expression) &&
+        decl.initializer.expression.name.text === "revocable" &&
+        ts.isIdentifier(decl.initializer.expression.expression) &&
+        decl.initializer.expression.expression.text === "Proxy")
+    ) {
+      return true;
+    }
     // (#3365) Script top-level `this` is the host global object. The checker
     // describes it as the enormous structural `typeof globalThis` type, but
     // module init receives a genuine host externref. Keep the storage and all
