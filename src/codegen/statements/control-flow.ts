@@ -17,6 +17,7 @@ import {
   addUnionImports,
   ensureI32Condition,
   ensureNativeStringHelpers,
+  hoistLetConstWithTdz,
   resolveWasmType,
 } from "../index.js";
 import {
@@ -30,7 +31,12 @@ import {
   valTypesMatch,
 } from "../shared.js";
 import { emitLinearU8ArenaReset } from "../linear-uint8-arena.js";
-import { adjustRethrowDepth } from "./shared.js";
+import {
+  adjustRethrowDepth,
+  collectSwitchCaseBlockScopedNames,
+  discardBlockScopedShadows,
+  saveBlockScopedShadowsForNames,
+} from "./shared.js";
 import { definedFuncAt } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 import { emitUndefined } from "../expressions/late-imports.js";
 import { emitConstructReturnSelect } from "../construct-return-value.js"; // (#4464)
@@ -1509,6 +1515,56 @@ export function compileSwitchStatement(ctx: CodegenContext, fctx: FunctionContex
     fctx.body.push({ op: "local.set", index: tmpLocalIdx });
   }
 
+  // §14.12.2 creates the CaseBlock declarative environment only AFTER the
+  // discriminant has been evaluated.  Keep that ordering observable while
+  // making every direct clause `let`/`const` binding available to selector
+  // expressions and all fall-through bodies.  The ordinary function-body
+  // hoister may already have allocated an outer same-named local; hiding it
+  // here forces a fresh CaseBlock slot and lets closures created by selectors
+  // capture the correct binding.
+  const caseScopeNames = collectSwitchCaseBlockScopedNames(stmt.caseBlock);
+
+  // Function-body hoisting walks through switches ahead of statement codegen.
+  // A direct CaseBlock declaration can therefore already occupy `localMap`.
+  // Keep that pre-hoisted slot active (nested function declarations may have
+  // captured it); only hide names that are genuinely outer bindings.
+  const caseScopeOuterNames: string[] = [];
+  const directIdentifierNames = new Set<string>();
+  if (fctx.preHoistedLetConstSlots) {
+    for (const clause of stmt.caseBlock.clauses) {
+      for (const clauseStmt of clause.statements) {
+        if (!ts.isVariableStatement(clauseStmt)) continue;
+        const flags = clauseStmt.declarationList.flags;
+        if (
+          !(flags & ts.NodeFlags.Let) &&
+          !(flags & ts.NodeFlags.Const) &&
+          !(flags & ts.NodeFlags.Using) &&
+          !(flags & ts.NodeFlags.AwaitUsing)
+        ) {
+          continue;
+        }
+        for (const decl of clauseStmt.declarationList.declarations) {
+          if (!ts.isIdentifier(decl.name)) continue;
+          const name = decl.name.text;
+          directIdentifierNames.add(name);
+          const record = fctx.preHoistedLetConstSlots.get(decl);
+          if (!record || fctx.localMap.get(name) !== record.valueSlot) caseScopeOuterNames.push(name);
+        }
+      }
+    }
+  }
+  for (const name of caseScopeNames) {
+    if (!directIdentifierNames.has(name)) caseScopeOuterNames.push(name);
+  }
+  const caseScopeSaved = saveBlockScopedShadowsForNames(fctx, caseScopeOuterNames);
+  if (caseScopeNames.length > 0) {
+    hoistLetConstWithTdz(
+      ctx,
+      fctx,
+      stmt.caseBlock.clauses.flatMap((clause) => Array.from(clause.statements)),
+    );
+  }
+
   // Use a "target" local to track which clause index to start executing from.
   // Sentinel value = number of clauses means "no match yet".
   const clauses = stmt.caseBlock.clauses;
@@ -1710,6 +1766,7 @@ export function compileSwitchStatement(ctx: CodegenContext, fctx: FunctionContex
     blockType: { kind: "empty" },
     body: switchBody,
   });
+  discardBlockScopedShadows(fctx, caseScopeNames, caseScopeSaved);
 }
 
 /**
