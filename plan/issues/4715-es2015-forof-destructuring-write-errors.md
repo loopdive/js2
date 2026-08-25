@@ -111,3 +111,7 @@ package-manager `pnpm run` wrapper could not run its default dependency-status
 check in this environment because the available fallback is pnpm 11.19.0
 while the repository pins pnpm 10.30.2; the direct pinned-path binaries were
 used for the checks above.
+
+The repository pre-push hook was exercised against the merged commit with the
+same pinned-path runtime and passed typecheck, lint, format, oracle/coercion
+ratchets, numeric-local parity, and issue-integrity gates.
