@@ -1111,6 +1111,21 @@ function emitStrictPutValueThrow(ctx: CodegenContext, fctx: FunctionContext): vo
   fctx.body.push({ op: "throw", tagIdx });
 }
 
+function collectObjectRestExcludedKeys(ctx: CodegenContext, target: ts.ObjectLiteralExpression): string[] {
+  const excludedKeys: string[] = [];
+  for (const prop of target.properties) {
+    if (ts.isSpreadAssignment(prop)) continue;
+    const name = ts.isPropertyAssignment(prop) ? prop.name : prop.name;
+    if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
+      excludedKeys.push(name.text);
+    } else if (ts.isComputedPropertyName(name)) {
+      const key = resolveComputedKeyExpression(ctx, name.expression);
+      if (key !== undefined) excludedKeys.push(key);
+    }
+  }
+  return excludedKeys;
+}
+
 function compileDestructuringAssignment(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1728,17 +1743,9 @@ function compileDestructuringAssignment(
         if (restIdx === undefined) {
           restIdx = allocLocal(fctx, restName, { kind: "externref" });
         }
-        // Collect excluded property names
-        const excludedKeys: string[] = [];
-        for (const p of target.properties) {
-          if (ts.isSpreadAssignment(p)) continue;
-          if (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) {
-            const pn = ts.isPropertyAssignment(p) ? p.name : p.name;
-            if (ts.isIdentifier(pn)) excludedKeys.push(pn.text);
-            else if (ts.isStringLiteral(pn)) excludedKeys.push(pn.text);
-            else if (ts.isNumericLiteral(pn)) excludedKeys.push(pn.text);
-          }
-        }
+        // Collect excluded property names, including statically-resolvable
+        // computed names (e.g. `{ [a]: b, ...rest }`).
+        const excludedKeys = collectObjectRestExcludedKeys(ctx, target);
         if (ctx.targetProfile.semanticProviders === "native-first") {
           const emitted = emitNativeObjectRest(
             ctx,

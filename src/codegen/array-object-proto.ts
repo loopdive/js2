@@ -88,6 +88,7 @@ import {
 } from "./string-proto-tostring.js"; // (#3992)
 import { standaloneGlobalFunctionSeedInstrs } from "./standalone-global-functions.js";
 import { emitBuiltinNamespaceObject } from "./builtin-static-globals.js";
+import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -322,7 +323,7 @@ const ITERATOR_PROTO_METHODS = [
 ] as const;
 
 /** `Function.prototype`'s own method names (ES2024 §20.2.3). */
-const FUNCTION_PROTO_METHODS = ["apply", "bind", "call", "toString"] as const;
+const FUNCTION_PROTO_METHODS = ["apply", "bind", "call", "toString", FUNCTION_PROTO_HAS_INSTANCE_MEMBER] as const;
 
 /** `Symbol.prototype`'s own method names (ES2024 §20.4.3). `description` is an
  * accessor getter, resolved by the computed-access path. */
@@ -1791,6 +1792,13 @@ function makeGlue(
       // VALUE. Same "ask first, emit second" contract as the two arms above, so a
       // decline leaves the ladder byte-identical.
       (name === "Function" && member === "toString" ? emitFunctionProtoToStringBody(c, fctx) : null) ??
+      // ES2015 §19.2.3.6 — the inherited `@@hasInstance` method. Its body is
+      // shared with the standalone dynamic-instanceof substrate so ordinary
+      // function receivers and direct `Function.prototype` reads use the same
+      // prototype walk and TypeError sentinel.
+      (name === "Function" && member === FUNCTION_PROTO_HAS_INSTANCE_MEMBER
+        ? emitFunctionProtoHasInstanceBody(c, fctx)
+        : null) ??
       (name === "Array"
         ? emitArrayProtoMemberBody(c, fctx, member)
         : name === "String"
