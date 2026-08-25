@@ -7,6 +7,7 @@
  */
 import type { ArrayTypeDef, FieldDef, FuncTypeDef, StructTypeDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
+import { getArgumentsVecTypeIdx } from "../arguments-carrier-brand.js";
 import { closureBagField } from "../closures/funcref-wrapper-types.js"; // (#4241)
 
 /**
@@ -194,6 +195,7 @@ export function withSuppressedVecUsage<T>(ctx: CodegenContext, fn: () => T): T {
  * The vec struct has {length: i32, data: (ref $__arr_<elemKind>)}.
  */
 export function getOrRegisterVecType(ctx: CodegenContext, elemKind: string, elemTypeOverride?: ValType): number {
+  if (elemKind === "arguments") return getOrRegisterArgumentsVecType(ctx);
   // (#2083) Any request for a vec type — whether it allocates a new struct or
   // reuses a pre-registered one (`externref`/`f64`, baked into every context for
   // type-index stability) — means the module genuinely materialises an array
@@ -281,6 +283,49 @@ export function getOrRegisterHoleyArrayType(ctx: CodegenContext): number {
     ],
   });
   ctx.holeyArrayTypeIdx = idx;
+  ctx.structMap.set(name, idx);
+  ctx.typeIdxToStructName.set(idx, name);
+  ctx.structFields.set(name, [
+    { name: "length", type: { kind: "i32" as const }, mutable: true },
+    { name: "data", type: { kind: "ref" as const, typeIdx: arrTypeIdx }, mutable: true },
+  ]);
+  return idx;
+}
+
+/**
+ * Register the nominal standalone `arguments` carrier.
+ *
+ * `arguments` is array-like but §15.4.3.2 must reject it from IsArray. A
+ * dedicated subtype preserves the canonical externref-vec prefix, so all
+ * existing vec length/index/property machinery continues to accept it, while
+ * the standalone IsArray finalizer can exclude this exact type. The subtype
+ * repeats the two vec fields for the same field layout convention used by the
+ * sparse-array carrier above.
+ */
+export function getOrRegisterArgumentsVecType(ctx: CodegenContext): number {
+  // Host-backed arguments objects already have a real JS Object identity and
+  // prototype registration. Keep their established canonical vec ABI; the
+  // nominal brand is only needed in the host-free lanes where IsArray is
+  // answered by the module-local carrier predicate.
+  if (!ctx.standalone && !ctx.wasi) return getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+  if (getArgumentsVecTypeIdx(ctx) >= 0) return getArgumentsVecTypeIdx(ctx);
+
+  const parentVecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, parentVecTypeIdx);
+  if (arrTypeIdx < 0) throw new Error("arguments carrier requires the canonical externref vec layout");
+
+  const idx = ctx.mod.types.length;
+  const name = "__arguments_vec_externref";
+  ctx.mod.types.push({
+    kind: "struct",
+    name,
+    superTypeIdx: parentVecTypeIdx,
+    fields: [
+      { name: "length", type: { kind: "i32" }, mutable: true },
+      { name: "data", type: { kind: "ref", typeIdx: arrTypeIdx }, mutable: true },
+    ],
+  });
+  (ctx as CodegenContext & { argumentsVecTypeIdx?: number }).argumentsVecTypeIdx = idx;
   ctx.structMap.set(name, idx);
   ctx.typeIdxToStructName.set(idx, name);
   ctx.structFields.set(name, [

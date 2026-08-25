@@ -145,7 +145,7 @@ import {
   reserveProtoIndexStore,
 } from "./proto-index-store.js";
 import { reserveArrayToPrimitiveString } from "./array-to-primitive.js";
-import { holeTestInstrs } from "./array-holes.js";
+import { excludeArgumentsArrayCarrier, holeTestInstrs } from "./array-holes.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
 import { f64HolesActive, f64HoleTestInstrs } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 // (#2106 S1) function-level-only cycle with any-helpers.ts (which imports
@@ -7523,7 +7523,7 @@ export function fillExternIsArray(ctx: CodegenContext): void {
       },
     ];
   }
-  body.push(...chain);
+  body.push(...excludeArgumentsArrayCarrier(ctx, anyLocal, chain));
 
   fn.locals = [{ name: "any", type: { kind: "anyref" } }];
   fn.body = body;
