@@ -13,7 +13,6 @@ import { captureSourceSlot, pushBoxedTdzFlagRef } from "../closures/capture-sour
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
 import { isBooleanType, isPromiseType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
-import { coercionPlan } from "../coercion-plan.js";
 import { resolveArrayInfo } from "../array-methods.js";
 import { ensureAnyHelpers, ensureAnyToExternHelper } from "../any-helpers.js";
 import { compileArrowAsClosure, getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "../closures.js";
@@ -1784,20 +1783,56 @@ export function compileIdentifierCall(
           // even though both sides have a lossless box/unbox bridge (UUID's
           // default-exported v1/v6/v7 helpers are the package witness).
           //
-          // Register numeric bridges before any detached dispatch arm is built
-          // so helper insertion cannot shift already-baked function indices.
-          // The pure planner is then shared by candidate admission, argument
-          // conversion, and result conversion; lossy placeholder plans are
-          // never eligible runtime ABI bridges.
+          // Register the one proven host-number bridge before any detached
+          // dispatch arm is built so helper insertion cannot shift already-
+          // baked function indices. Do NOT delegate candidate admission to the
+          // generic coercion table: that table also owns ordinary JS numeric
+          // conversions such as f64 -> i32 and i64 -> f64. Those are useful at
+          // explicit coercion sites but are lossy ABI substitutions, and its
+          // physical ValType rows cannot recover the Boolean/Symbol/BigInt
+          // brands carried on i32/i64.
+          const scalarAbiTypesMatch = (from: ValType, to: ValType): boolean => {
+            if (!valTypesMatch(from, to)) return false;
+            if (from.kind === "i32" && to.kind === "i32") {
+              return from.boolean === to.boolean && from.symbol === to.symbol;
+            }
+            if (from.kind === "i64" && to.kind === "i64") {
+              return from.bigint === to.bigint;
+            }
+            if (from.kind === "f64" && to.kind === "f64") {
+              return from.undefSentinel === to.undefSentinel;
+            }
+            return true;
+          };
+          const isHostExtern = (type: ValType): boolean => type.kind === "externref" || type.kind === "ref_extern";
           const scalarBridgePlan = (
             from: ValType,
             to: ValType,
             helpers: { boxNumberIdx: number | null; unboxNumberIdx: number | null },
+            allowProvenNumberUnbox: boolean,
           ): Instr[] | null => {
-            if (valTypesMatch(from, to)) return [];
-            const plan = coercionPlan(from, to, helpers);
-            return plan !== null && plan.lossy !== true ? plan.instrs : null;
+            if (scalarAbiTypesMatch(from, to)) return [];
+            if (ctx.standalone || ctx.wasi) return null;
+
+            // A plain f64 is a proven JavaScript Number. Boxing it preserves
+            // both value and brand. A sentinel-branded f64 may mean undefined,
+            // so the ordinary number boxer is not valid for that carrier.
+            if (from.kind === "f64" && from.undefSentinel !== true && isHostExtern(to)) {
+              return helpers.boxNumberIdx === null ? null : [{ op: "call", funcIdx: helpers.boxNumberIdx }];
+            }
+
+            // The reverse bridge is allowed only when this CALL SITE proves
+            // that the actual expression is a Number (or the argument is
+            // omitted and the dedicated default sentinel path below owns it).
+            // A declared `any` alone is not proof: Boolean/Symbol/BigInt must
+            // not be silently converted to a numeric ABI.
+            if (allowProvenNumberUnbox && isHostExtern(from) && to.kind === "f64" && to.undefSentinel !== true) {
+              return helpers.unboxNumberIdx === null ? null : [{ op: "call", funcIdx: helpers.unboxNumberIdx }];
+            }
+            return null;
           };
+          const argumentHasNumberBridgeProof = (index: number): boolean =>
+            index >= expr.arguments.length || ctx.oracle.staticJsTypeOf(expr.arguments[index]!) === "number";
           const theoreticalHelpers = { boxNumberIdx: 0, unboxNumberIdx: 0 };
           let needsScalarBridge = false;
           for (const [, info] of ctx.closureInfoByTypeIdx) {
@@ -1811,9 +1846,9 @@ export function compileIdentifierCall(
             for (let pi = 0; pi < fixedCount; pi++) {
               const from = sigParamWasmTypes[pi]!;
               const to = info.paramTypes[pi]!;
-              if (valTypesMatch(from, to)) continue;
+              if (scalarAbiTypesMatch(from, to)) continue;
               differs = true;
-              if (scalarBridgePlan(from, to, theoreticalHelpers) === null) {
+              if (scalarBridgePlan(from, to, theoreticalHelpers, argumentHasNumberBridgeProof(pi)) === null) {
                 compatible = false;
                 break;
               }
@@ -1822,8 +1857,8 @@ export function compileIdentifierCall(
             const returnDiffers =
               expectedReturn !== null &&
               info.returnType !== null &&
-              !valTypesMatch(info.returnType, expectedReturn) &&
-              scalarBridgePlan(info.returnType, expectedReturn, theoreticalHelpers) !== null;
+              !scalarAbiTypesMatch(info.returnType, expectedReturn) &&
+              scalarBridgePlan(info.returnType, expectedReturn, theoreticalHelpers, false) !== null;
             if (differs || returnDiffers) {
               needsScalarBridge = true;
               break;
@@ -1833,11 +1868,16 @@ export function compileIdentifierCall(
             addUnionImports(ctx);
             flushLateImportShifts(ctx, fctx);
           }
-          const dispatchBridgePlan = (from: ValType, to: ValType): Instr[] | null =>
-            scalarBridgePlan(from, to, {
-              boxNumberIdx: ctx.funcMap.get("__box_number") ?? null,
-              unboxNumberIdx: ctx.funcMap.get("__unbox_number") ?? null,
-            });
+          const dispatchBridgePlan = (from: ValType, to: ValType, allowProvenNumberUnbox: boolean): Instr[] | null =>
+            scalarBridgePlan(
+              from,
+              to,
+              {
+                boxNumberIdx: ctx.funcMap.get("__box_number") ?? null,
+                unboxNumberIdx: ctx.funcMap.get("__unbox_number") ?? null,
+              },
+              allowProvenNumberUnbox,
+            );
 
           const funcCandidates: FuncCandidate[] = [
             {
@@ -1887,13 +1927,31 @@ export function compileIdentifierCall(
             if (seenFuncTypeIdx.has(info.funcTypeIdx)) continue;
             let paramsMatch = true;
             for (let pi = 0; pi < candidateParamTypes.length; pi++) {
-              if (
-                !valTypesMatch(candidateParamTypes[pi]!, sigParamWasmTypes[pi]!) &&
-                dispatchBridgePlan(sigParamWasmTypes[pi]!, candidateParamTypes[pi]!) === null
-              ) {
-                paramsMatch = false;
-                break;
+              if (!scalarAbiTypesMatch(candidateParamTypes[pi]!, sigParamWasmTypes[pi]!)) {
+                const bridge = dispatchBridgePlan(
+                  sigParamWasmTypes[pi]!,
+                  candidateParamTypes[pi]!,
+                  argumentHasNumberBridgeProof(pi),
+                );
+                if (bridge === null) {
+                  paramsMatch = false;
+                  break;
+                }
               }
+            }
+            // Every scanned candidate can be LIVE. Its result therefore needs
+            // an exact, brand-preserving bridge; the historical dead-arm
+            // placeholder is not a valid result for a signature-divergent
+            // runtime function. Void covariance remains safe and is handled
+            // by the drop/default arms below.
+            if (
+              paramsMatch &&
+              expectedReturn !== null &&
+              info.returnType !== null &&
+              !scalarAbiTypesMatch(info.returnType, expectedReturn) &&
+              dispatchBridgePlan(info.returnType, expectedReturn, false) === null
+            ) {
+              paramsMatch = false;
             }
             if (paramsMatch) {
               seenFuncTypeIdx.add(info.funcTypeIdx);
@@ -2435,8 +2493,8 @@ export function compileIdentifierCall(
                   continue;
                 }
                 fcCallBody.push({ op: "local.get", index: argLocals[ai]! });
-                if (!valTypesMatch(fromType, toType)) {
-                  const bridge = dispatchBridgePlan(fromType, toType);
+                if (!scalarAbiTypesMatch(fromType, toType)) {
+                  const bridge = dispatchBridgePlan(fromType, toType, argumentHasNumberBridgeProof(ai));
                   if (bridge === null) {
                     candidateArgsCoercible = false;
                     break;
@@ -2489,13 +2547,13 @@ export function compileIdentifierCall(
                 fcCallBody.push({ op: "drop" });
               } else if (expectedReturn !== null && fc.returnType === null) {
                 fcCallBody.push(...defaultValueInstrs(expectedReturn));
-              } else if (matchedDispatch && !valTypesMatch(fc.returnType!, expectedReturn!)) {
+              } else if (matchedDispatch && !scalarAbiTypesMatch(fc.returnType!, expectedReturn!)) {
                 // Numeric/ref-external scalar bridges were reserved before the
                 // dispatch was detached, so a LIVE signature-divergent arm can
                 // preserve its value (for example f64 -> boxed externref) with
                 // no late index mutation. Non-bridgeable candidates retain the
                 // historical dead-arm placeholder.
-                const bridge = dispatchBridgePlan(fc.returnType!, expectedReturn!);
+                const bridge = dispatchBridgePlan(fc.returnType!, expectedReturn!, false);
                 if (bridge !== null) {
                   fcCallBody.push(...bridge);
                 } else {

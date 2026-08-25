@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { compile } from "../src/index.js";
+import { compile, type ImportDescriptor } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import {
+  reconcileVecMirrors,
+  recordVecMirrorElements,
+  registerVecMirror,
+  snapshotVecMirrors,
+  vecMirrorElementsChanged,
+} from "../src/runtime/vec-mirror-writeback.js";
 
 async function run(source: string, ...args: unknown[]): Promise<unknown> {
   const result = await compile(source, { fileName: "issue-4383.ts" });
@@ -186,6 +193,88 @@ describe("#4383 — typed-array identity across internal calls", () => {
         }
       `),
     ).toBe(7);
+  });
+
+  it("replays a same-length host mutation before the original typed alias is read", async () => {
+    expect(
+      await run(`
+        export function test() {
+          const buffer = Uint8Array.of(1, 2);
+          const dynamic: any = buffer;
+          Array.prototype.reverse.call(dynamic);
+          return buffer[0] * 10 + buffer[1];
+        }
+      `),
+    ).toBe(21);
+  });
+
+  it("rolls back a partial element replay and leaves the mirror dirty", () => {
+    const mirror = [1, 2];
+    const vec = { values: [1, 2] };
+    registerVecMirror(mirror, vec);
+    recordVecMirrorElements(mirror);
+
+    let rejectedIndex = 1;
+    const exports: Record<string, Function> = {
+      __vec_len: (value: typeof vec) => value.values.length,
+      __vec_get: (value: typeof vec, index: number) => value.values[index],
+      __vec_set_elem: (value: typeof vec, index: number, element: number) => {
+        if (index === rejectedIndex) return -1;
+        value.values[index] = element;
+        return 1;
+      },
+    };
+    const snapshots = snapshotVecMirrors(undefined, [mirror], exports);
+    mirror[0] = 3;
+    mirror[1] = 4;
+
+    reconcileVecMirrors(snapshots, exports, (value) => value);
+    expect(vec.values).toEqual([1, 2]);
+    expect(vecMirrorElementsChanged(mirror)).toBe(true);
+
+    rejectedIndex = -1;
+    reconcileVecMirrors(snapshots, exports, (value) => value);
+    expect(vec.values).toEqual([3, 4]);
+    expect(vecMirrorElementsChanged(mirror)).toBe(false);
+  });
+
+  it("keeps a partially rejected unwrap replay dirty and retries it", () => {
+    const imports = buildImports([
+      {
+        module: "env",
+        name: "__unwrap_for_wasm",
+        kind: "func",
+        intent: { type: "builtin", name: "__unwrap_for_wasm" },
+        paramCount: 1,
+      } satisfies ImportDescriptor,
+    ]);
+    const mirror = [1, 2];
+    const vec = { values: [1, 2] };
+    registerVecMirror(mirror, vec);
+    recordVecMirrorElements(mirror);
+
+    let rejectedIndex = 1;
+    const exports: Record<string, Function> = {
+      __vec_len: (value: typeof vec) => value.values.length,
+      __vec_get: (value: typeof vec, index: number) => value.values[index],
+      __vec_set_elem: (value: typeof vec, index: number, element: number) => {
+        if (index === rejectedIndex) return -1;
+        value.values[index] = element;
+        return 1;
+      },
+    };
+    imports.setExports?.(exports);
+    mirror[0] = 3;
+    mirror[1] = 4;
+
+    expect(imports.env.__unwrap_for_wasm!(mirror)).toBe(vec);
+    expect(vec.values).toEqual([1, 2]);
+    expect(vecMirrorElementsChanged(mirror)).toBe(true);
+
+    rejectedIndex = -1;
+    expect(imports.env.__unwrap_for_wasm!(mirror)).toBe(vec);
+    expect(vec.values).toEqual([3, 4]);
+    expect(vecMirrorElementsChanged(mirror)).toBe(false);
   });
 
   it("passes a module-global Uint8Array to crypto.getRandomValues", async () => {

@@ -11154,25 +11154,42 @@ assert._isSameValue = isSameValue;
           if (mirroredVec === undefined) return _unwrapForHost(value);
           const exports = callbackState?.getExports();
           const vecLen = exports?.__vec_len as ((vec: any) => number) | undefined;
+          const vecGet = exports?.__vec_get as ((vec: any, index: number) => any) | undefined;
           const vecSet = exports?.__vec_set_elem as ((vec: any, index: number, element: any) => number) | undefined;
           if (
             exports !== undefined &&
             vecMirrorElementsChanged(value) &&
             typeof vecLen === "function" &&
+            typeof vecGet === "function" &&
             typeof vecSet === "function"
           ) {
+            const previous: Array<{ index: number; value: any }> = [];
+            let allWritesSucceeded = false;
             try {
               const length = vecLen(mirroredVec);
               if (typeof length === "number" && length === Number(value.length)) {
                 for (let i = 0; i < length; i++) {
                   const element = _nativeDynamicFromHost(value[i], exports);
-                  if (vecSet(mirroredVec, i, element) !== 1) break;
+                  previous[previous.length] = { index: i, value: vecGet(mirroredVec, i) };
+                  if (vecSet(mirroredVec, i, element) !== 1) throw new Error("vec element set rejected");
                 }
+                allWritesSucceeded = true;
+              }
+              if (allWritesSucceeded) {
                 recordVecMirrorElements(value);
               }
             } catch {
-              // The identity round-trip is still preferable to an illegal
-              // cast; unsupported element carriers keep their existing data.
+              // Restore the pre-replay values after a partial failure. The
+              // mirror deliberately remains dirty so a later boundary may
+              // retry instead of silently forgetting the host edits.
+              for (let i = previous.length - 1; i >= 0; i--) {
+                const prior = previous[i]!;
+                try {
+                  vecSet(mirroredVec, prior.index, prior.value);
+                } catch {
+                  /* leave dirty; no safer recovery is available */
+                }
+              }
             }
           }
           return mirroredVec;
@@ -13788,7 +13805,18 @@ assert._isSameValue = isSameValue;
               }
             }
           }
-          const ret = method.call(wrappedReceiver, ...wrappedArgs);
+          const mirrorSnaps = snapshotVecMirrors(wrappedReceiver, wrappedArgs, exports);
+          let ret: any;
+          try {
+            ret = method.call(wrappedReceiver, ...wrappedArgs);
+          } finally {
+            // Array/TypedArray prototype methods can mutate elements without
+            // changing length. Reconcile before control returns to Wasm so a
+            // compiled alias observes the same final object state. Run this on
+            // abrupt completion too: native methods may have committed writes
+            // before a callback/getter throws.
+            reconcileVecMirrors(mirrorSnaps, exports, _unwrapForHost);
+          }
           return ret === wrappedReceiver ? receiver : _unwrapForHost(ret);
         };
       // Get actual JS built-in object by name (#965) — fixes WI3 null receiver for built-in classes
