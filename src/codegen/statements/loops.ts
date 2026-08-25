@@ -1599,6 +1599,48 @@ function compileForOfArrayFromLocal(
   compileForOfArray(ctx, fctx, stmt, undefined, { vecLocal, vecType });
 }
 
+/** Temporary receiver environment for a destructuring lexical for-of head. */
+interface ForOfDstrHeadSaved {
+  name: string;
+  localMap: number | undefined;
+  tdz: number | undefined;
+  boxed: { refCellTypeIdx: number; valType: ValType } | undefined;
+  boxedTdz: { localIdx: number; refCellTypeIdx: number; srcFlagIdx?: number } | undefined;
+  isConst: boolean;
+}
+
+function restoreForOfDstrHead(fctx: FunctionContext, saved: ForOfDstrHeadSaved): void {
+  fctx.localMap.delete(saved.name);
+  fctx.tdzFlagLocals?.delete(saved.name);
+  fctx.boxedCaptures?.delete(saved.name);
+  fctx.boxedTdzFlags?.delete(saved.name);
+  fctx.constBindings?.delete(saved.name);
+  if (saved.localMap !== undefined) fctx.localMap.set(saved.name, saved.localMap);
+  if (saved.tdz !== undefined) (fctx.tdzFlagLocals ??= new Map()).set(saved.name, saved.tdz);
+  if (saved.boxed !== undefined) (fctx.boxedCaptures ??= new Map()).set(saved.name, saved.boxed);
+  if (saved.boxedTdz !== undefined) (fctx.boxedTdzFlags ??= new Map()).set(saved.name, saved.boxedTdz);
+  if (saved.isConst) (fctx.constBindings ??= new Set()).add(saved.name);
+}
+
+function saveForOfDstrHead(fctx: FunctionContext, stmt: ts.ForOfStatement): ForOfDstrHeadSaved[] {
+  if (!ts.isVariableDeclarationList(stmt.initializer)) return [];
+  if (!(stmt.initializer.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const))) return [];
+  const names = new Set<string>();
+  for (const decl of stmt.initializer.declarations) {
+    if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
+      for (const name of collectPatternBindingNames(decl.name)) names.add(name);
+    }
+  }
+  return [...names].map((name) => ({
+    name,
+    localMap: fctx.localMap.get(name),
+    tdz: fctx.tdzFlagLocals?.get(name),
+    boxed: fctx.boxedCaptures?.get(name),
+    boxedTdz: fctx.boxedTdzFlags?.get(name),
+    isConst: fctx.constBindings?.has(name) ?? false,
+  }));
+}
+
 // (#2769) Does this for-of need the in-bounds undefined/hole sentinel preserved
 // through the OUTER array-literal construction? True ONLY when the subject is a
 // *direct array literal* AND the for-of binding pattern has an element default
@@ -1624,6 +1666,22 @@ function compileForOfArray(
   // #1919 — snapshot so a non-array receiver rolls back body + locals + imports
   // before reporting. With `preVec` no compile happens, so rollback is a no-op.
   const snap = snapshotSpeculative(ctx, fctx);
+  // #4710 — §14.7.5.6 evaluates the receiver with every name in a lexical
+  // destructuring head uninitialized. Keep this limited to the direct,
+  // synchronous vec path; the iterator, collection, and already-materialized
+  // paths have separate environment machinery and are outside this slice.
+  const dstrHeadSaved = !preVec && !iterableOverride ? saveForOfDstrHead(fctx, stmt) : [];
+  for (const saved of dstrHeadSaved) {
+    const valueLocal = allocLocal(fctx, `__forof_dstr_hbind_${saved.name}_${fctx.locals.length}`, {
+      kind: "externref",
+    });
+    const flagLocal = allocLocal(fctx, `__forof_dstr_hflag_${saved.name}_${fctx.locals.length}`, { kind: "i32" });
+    fctx.localMap.set(saved.name, valueLocal);
+    (fctx.tdzFlagLocals ??= new Map()).set(saved.name, flagLocal);
+    fctx.boxedCaptures?.delete(saved.name);
+    fctx.boxedTdzFlags?.delete(saved.name);
+    fctx.constBindings?.delete(saved.name);
+  }
   // (#2769) Preserve in-bounds undefined/hole identity through the OUTER
   // array-literal construction for the spec'd for-of-dstr template family. The
   // flag is scoped tightly to the subject compile (set→compile→restore) so it
@@ -1636,6 +1694,7 @@ function compileForOfArray(
   const vecType = preVec ? preVec.vecType : compileExpression(ctx, fctx, iterableOverride ?? stmt.expression);
   if (preserveUndefElem) (ctx as any)._forOfPreserveUndefElem = prevPreserveUndefElem;
   if (!vecType || (vecType.kind !== "ref" && vecType.kind !== "ref_null")) {
+    for (const saved of dstrHeadSaved) restoreForOfDstrHead(fctx, saved);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array expression");
     return;
@@ -1645,6 +1704,7 @@ function compileForOfArray(
   const vecTypeIdx = vecType.typeIdx;
   const vecDef = ctx.mod.types[vecTypeIdx];
   if (!vecDef || vecDef.kind !== "struct") {
+    for (const saved of dstrHeadSaved) restoreForOfDstrHead(fctx, saved);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
@@ -1653,10 +1713,14 @@ function compileForOfArray(
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   const arrDef = ctx.mod.types[arrTypeIdx];
   if (!arrDef || arrDef.kind !== "array") {
+    for (const saved of dstrHeadSaved) restoreForOfDstrHead(fctx, saved);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
   }
+  // HeadEvaluation step 4: the temporary receiver TDZ ends before the
+  // existing per-iteration destructuring lowering is compiled.
+  for (const saved of dstrHeadSaved) restoreForOfDstrHead(fctx, saved);
   const elemType = arrDef.element;
   // (#2934 1b) Packed i8/i16 typed-array elements (Uint8Array/Int8Array/
   // Int16Array/… standalone, #2593) are STORAGE-only types: a local declared
