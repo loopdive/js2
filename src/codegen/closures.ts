@@ -161,6 +161,7 @@ import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { bodyReferencesOwnThis, findOwnThisReference } from "./helpers/body-references-own-this.js";
 // (#4491) §10.2.11 step 22.a — the mapped-vs-unmapped `arguments` split.
 import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
+import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 export { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding };
 
 function emitClosureDefaultReturnValue(
@@ -1611,10 +1612,12 @@ export function computeClosureWrapperSig(
 
   // 1. Parameter types. (#3359) A TS `this` param is type-level only — exclude it.
   const arrowParams: ValType[] = [];
-  for (const [paramIndex, p] of runtimeParameters(arrow).entries()) {
+  const runtimeParams = runtimeParameters(arrow);
+  for (let runtimeIndex = 0; runtimeIndex < runtimeParams.length; runtimeIndex++) {
+    const p = runtimeParams[runtimeIndex]!;
     const paramType = ctx.checker.getTypeAtLocation(p);
     let wasmType =
-      paramIndex === 0 && ctx.arrayMapCallbackFirstParamOverride
+      runtimeIndex === 0 && ctx.arrayMapCallbackFirstParamOverride
         ? ctx.arrayMapCallbackFirstParamOverride
         : !ts.isFunctionDeclaration(arrow) && setAccessorParamIsDynamic(arrow)
           ? EXTERNREF_PARAM
@@ -1674,6 +1677,16 @@ export function computeClosureWrapperSig(
       ctx.widenTupleCallbackParams === true &&
       (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
       isTupleType(paramType)
+    ) {
+      wasmType = { kind: "externref" };
+    }
+    // #4701: preserve a nonnumeric value written back through a mapped
+    // arguments slot, but leave ordinary numeric closure ABIs untouched.
+    if (
+      p.type === undefined &&
+      ts.getJSDocType(p) === undefined &&
+      (wasmType.kind === "f64" || wasmType.kind === "i32") &&
+      mappedFormalNeedsExternref(ctx, arrow, runtimeIndex)
     ) {
       wasmType = { kind: "externref" };
     }

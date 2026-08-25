@@ -57,6 +57,7 @@ import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./conte
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
+import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 import {
   addArrayIteratorImports,
   addForInImports,
@@ -1057,6 +1058,18 @@ function lowerParamType(
     runtimeEvalParamStructName !== undefined &&
     ctx.structFields.has(runtimeEvalParamStructName) &&
     !ctx.classTagMap.has(runtimeEvalParamStructName)
+  ) {
+    wasmType = { kind: "externref" };
+  }
+  // #4701: an inferred numeric formal in a mapped-arguments function can be
+  // written through Object.defineProperty/arguments[i] with a nonnumeric JS
+  // value. Keep ordinary numeric ABIs unchanged; widen only this measured
+  // direct-write shape so reverse sync can preserve the exact externref value.
+  if (
+    !param.type &&
+    ts.getJSDocType(param) === undefined &&
+    (wasmType.kind === "f64" || wasmType.kind === "i32") &&
+    mappedFormalNeedsExternref(ctx, stmt, index)
   ) {
     wasmType = { kind: "externref" };
   }
