@@ -68,11 +68,7 @@ import { MAX_NATIVE_CONSTRUCT_ARITY, reserveNativeConstructDriver } from "../nat
 import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2
 import { emitNativeNumberFormat } from "../number-format-native.js";
-import {
-  compileStandaloneRegExpConstructor,
-  isGlobalRegExpIdentifier,
-  isGlobalRegExpType,
-} from "../regexp-standalone.js";
+import { compileStandaloneRegExpConstructor, isGlobalRegExpConstructorExpression } from "../regexp-standalone.js";
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import type { InnerResult } from "../shared.js";
 import {
@@ -3521,6 +3517,16 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // constructor path. The paren-only form previously fell through to a null
   // placeholder without evaluating the constructor body at all.
   const unwrappedLiteralCtor = unwrapNewTarget(expr.expression);
+  // #682 — standalone mode supports a reduced native RegExp subset for static
+  // literal patterns. Keep this before the non-constructable guards so the
+  // ambient `Function` type of `RegExp.prototype.constructor` cannot reject
+  // the direct prototype spelling before identity-aware lowering sees it.
+  if (
+    ctx.targetProfile.semanticProviders === "native-first" &&
+    isGlobalRegExpConstructorExpression(ctx, unwrappedLiteralCtor)
+  ) {
+    return compileStandaloneRegExpConstructor(ctx, fctx, expr.arguments ?? [], expr);
+  }
   if (ts.isFunctionExpression(unwrappedLiteralCtor)) {
     return compileNewFunctionExpression(ctx, fctx, expr, unwrappedLiteralCtor);
   }
@@ -3998,16 +4004,6 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       className = owner.name;
       thisFnctorSym = owner.sym;
     }
-  }
-
-  // #682 — standalone mode supports a reduced native RegExp subset for static
-  // literal patterns. Unsupported constructor forms still produce explicit
-  // #1474-compatible compile errors instead of JS-host imports.
-  if (
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    (isGlobalRegExpType(type) || (ts.isIdentifier(expr.expression) && isGlobalRegExpIdentifier(ctx, expr.expression)))
-  ) {
-    return compileStandaloneRegExpConstructor(ctx, fctx, expr.arguments ?? [], expr);
   }
 
   // #1679 — `new this(...)` inside a static method: the callee is `this`, which
