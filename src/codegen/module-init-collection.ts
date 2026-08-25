@@ -128,6 +128,17 @@ export function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
   return ASSIGNMENT_OPERATORS.has(kind);
 }
 
+/**
+ * Test262 top-level-await bodies are currently compiled synchronously (#1612).
+ * In that parse mode, a source-level `await` followed by a template literal is
+ * represented as a tagged-template call whose tag is the identifier `await`.
+ * It is parser recovery, not a call to a user binding, and compiling it traps
+ * while building the QuickJS eval provider.
+ */
+export function isSynchronousTopLevelAwaitRecovery(expr: ts.Expression): boolean {
+  return ts.isTaggedTemplateExpression(expr) && ts.isIdentifier(expr.tag) && expr.tag.text === "await";
+}
+
 /** Strip parens / casts / non-null assertions from an assignment target. */
 function unwrapTarget(expr: ts.Expression): ts.Expression {
   let cur = expr;
@@ -212,21 +223,15 @@ export function createsGlobalObjectBinding(
  * without invoking a closure is descended — including computed keys, spreads,
  * template substitutions, `extends` clauses and class `static { … }` blocks.
  *
- * Two node kinds are deliberately NOT effectful here, both on measurement
- * rather than principle — each is a residual recorded in the issue file:
+ * One node kind is deliberately NOT effectful here, on measurement rather than
+ * principle — it remains a residual recorded in the issue file:
  *
  *   • `AwaitExpression` / `YieldExpression`. A CALL inside one still counts, via
  *     the CallExpression node; the bare `await x;` form does not.
- *   • `TaggedTemplateExpression`, which really does invoke its tag. Over the
- *     whole `test/language` + `test/built-ins` corpus, collecting it changed
- *     the status of ZERO of the 77 top-level tagged-template statements — and
- *     cost three files. The test262 runner compiles a `top-level-await` body
- *     SYNCHRONOUSLY (#1612), so `await` parses as an ordinary identifier and
- *     ``await `` ;`` becomes a TaggedTemplateExpression tagged `await`.
- *     Collecting that compiles a call to a binding that does not exist.
- *
- * Both should be revisited — the second once TLA is compiled asynchronously, at
- * which point the misparse disappears and the tag call becomes a real one.
+ * Tagged templates invoke user code and are retained by the collector,
+ * including when the tag is an inline function expression and the result is
+ * discarded. The sole exception is the synchronous top-level-await recovery
+ * shape described by `isSynchronousTopLevelAwaitRecovery`.
  */
 export function expressionRunsUserCode(rawExpr: ts.Expression): boolean {
   let found = false;
@@ -235,6 +240,10 @@ export function expressionRunsUserCode(rawExpr: ts.Expression): boolean {
     // Creating a closure runs no body — do not descend. (A CALL to the closure
     // is a CallExpression node OUTSIDE the body and is still seen.)
     if (ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isFunctionDeclaration(node)) return;
+    if (ts.isTaggedTemplateExpression(node)) {
+      if (!isSynchronousTopLevelAwaitRecovery(node)) found = true;
+      return;
+    }
     if (
       ts.isCallExpression(node) ||
       ts.isNewExpression(node) ||
@@ -275,6 +284,16 @@ export function classifyTopLevelExpressionStatement(rawExpr: ts.Expression): Mod
   // ── Observable shapes the collector already handles ─────────────────────
   if (ts.isCallExpression(expr) || ts.isNewExpression(expr)) {
     return { disposition: "keep", shape, reason: "invokes a function" };
+  }
+  if (ts.isTaggedTemplateExpression(expr)) {
+    if (isSynchronousTopLevelAwaitRecovery(expr)) {
+      return {
+        disposition: "unhandled",
+        shape,
+        reason: "not provably inert: synchronous top-level-await parse recovery is not a tag call",
+      };
+    }
+    return { disposition: "keep", shape, reason: "invokes the tagged function" };
   }
   if (ts.isPrefixUnaryExpression(expr) || ts.isPostfixUnaryExpression(expr)) {
     return { disposition: "keep", shape, reason: "++/-- performs a PutValue" };

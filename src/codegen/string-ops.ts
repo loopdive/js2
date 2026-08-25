@@ -65,7 +65,13 @@ import {
   getOrRegisterTemplateVecType,
   getOrRegisterVecType,
 } from "./registry/types.js";
-import { compileExpression, ensureLateImport, flushLateImportShifts, registerCompileStringLiteral } from "./shared.js";
+import {
+  compileExpression,
+  ensureLateImport,
+  flushLateImportShifts,
+  registerCompileStringLiteral,
+  VOID_RESULT,
+} from "./shared.js";
 import {
   coerceType,
   emitGuardedRefCast,
@@ -948,6 +954,15 @@ function isStringRawTag(tag: ts.Expression): boolean {
 }
 
 /**
+ * Template TRV normalizes CR and CRLF line terminators to LF, including in
+ * the raw strings array. TypeScript's `rawText` keeps the source spelling so
+ * preserve escape spelling but apply that line-terminator normalization here.
+ */
+function normalizeTemplateRawText(rawText: string): string {
+  return rawText.replace(/\r\n?/g, "\n");
+}
+
+/**
  * Lower `String.raw`tmpl`` to the RAW parts interleaved with the stringified
  * substitutions, as a plain in-module string concat (#2008). The raw parts are
  * compile-time string literals, so no template struct read or host bridge is
@@ -1069,7 +1084,7 @@ export function compileTaggedTemplateExpression(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.TaggedTemplateExpression,
-): ValType | null {
+): ValType | null | typeof VOID_RESULT {
   // Extract string parts (cooked + raw) and substitution expressions from the template
   const stringParts: string[] = [];
   const rawParts: string[] = [];
@@ -1078,16 +1093,16 @@ export function compileTaggedTemplateExpression(
   if (ts.isNoSubstitutionTemplateLiteral(expr.template)) {
     // tag`just a string` — one string part, no substitutions
     stringParts.push(expr.template.text);
-    rawParts.push((expr.template as any).rawText ?? expr.template.text);
+    rawParts.push(normalizeTemplateRawText((expr.template as any).rawText ?? expr.template.text));
   } else {
     // TemplateExpression: head + spans
     const tmpl = expr.template as ts.TemplateExpression;
     stringParts.push(tmpl.head.text);
-    rawParts.push((tmpl.head as any).rawText ?? tmpl.head.text);
+    rawParts.push(normalizeTemplateRawText((tmpl.head as any).rawText ?? tmpl.head.text));
     for (const span of tmpl.templateSpans) {
       substitutions.push(span.expression);
       stringParts.push(span.literal.text);
-      rawParts.push((span.literal as any).rawText ?? span.literal.text);
+      rawParts.push(normalizeTemplateRawText((span.literal as any).rawText ?? span.literal.text));
     }
   }
 
@@ -1263,7 +1278,7 @@ export function compileTaggedTemplateExpression(
       fctx.body.push({ op: "ref.as_non_null" });
       fctx.body.push({ op: "call_ref", typeIdx: closureInfo.funcTypeIdx });
 
-      return closureInfo.returnType ?? null;
+      return closureInfo.returnType ?? VOID_RESULT;
     }
 
     // Case 2: tag is a known function
@@ -1388,7 +1403,7 @@ export function compileTaggedTemplateExpression(
       const sig = ctx.checker.getResolvedSignature(expr);
       if (sig) {
         const retType = ctx.checker.getReturnTypeOfSignature(sig);
-        if (isVoidType(retType)) return null;
+        if (isVoidType(retType)) return VOID_RESULT;
         return resolveWasmType(ctx, retType);
       }
       return { kind: "externref" };
@@ -1497,7 +1512,7 @@ export function compileTaggedTemplateExpression(
         typeIdx: matchedClosureInfo.funcTypeIdx,
       });
 
-      return matchedClosureInfo.returnType ?? null;
+      return matchedClosureInfo.returnType ?? VOID_RESULT;
     }
 
     // No matching closure found — try compiling the tag as a general expression
@@ -1538,7 +1553,7 @@ export function compileTaggedTemplateExpression(
           fctx.body.push({ op: "ref.as_non_null" });
           fctx.body.push({ op: "call_ref", typeIdx: closureInfo.funcTypeIdx });
 
-          return closureInfo.returnType ?? null;
+          return closureInfo.returnType ?? VOID_RESULT;
         }
       }
 
