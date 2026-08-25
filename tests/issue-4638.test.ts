@@ -20,6 +20,7 @@
 // message, so a combined script would report "something threw" and nothing more.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { instantiateTest262Module, resetTest262RuntimeEvalProviderForTest } from "../scripts/test262-import-object.mjs";
 
 const OPTS = {
   fileName: "test.js",
@@ -35,6 +36,28 @@ async function runScript(src: string): Promise<void> {
   expect(WebAssembly.validate(r.binary), "module failed WebAssembly.validate").toBe(true);
   const { instance } = await WebAssembly.instantiate(r.binary, {});
   (instance.exports as { __module_init?: () => void }).__module_init?.();
+}
+
+/** Same script probe, with the refusal provider attached for eval-value rows. */
+async function runRuntimeEvalScript(src: string): Promise<void> {
+  const previousEvalEngine = process.env.JS2WASM_EVAL_ENGINE;
+  process.env.JS2WASM_EVAL_ENGINE = "interpreter";
+  resetTest262RuntimeEvalProviderForTest();
+  try {
+    const r = await compile(src, OPTS);
+    expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(r.binary), "module failed WebAssembly.validate").toBe(true);
+    const instance = await instantiateTest262Module(
+      r.binary,
+      {},
+      { target: "standalone", providerLabel: "issue-4638" },
+    );
+    (instance.exports as { __module_init?: () => void }).__module_init?.();
+  } finally {
+    if (previousEvalEngine === undefined) Reflect.deleteProperty(process.env, "JS2WASM_EVAL_ENGINE");
+    else process.env.JS2WASM_EVAL_ENGINE = previousEvalEngine;
+    resetTest262RuntimeEvalProviderForTest();
+  }
 }
 
 /** Compile a module and return its exported `test()` result. */
@@ -238,7 +261,7 @@ describe("#4638 measured residuals", () => {
   // `$__vec_externref` an ordinary array uses. See the issue's Residuals section
   // for the `$__holey_array` subtype sketch and why it is not taken here.
   // test262: built-ins/Array/isArray/15.4.3.2-1-13.js
-  it.fails("answers false for Array.isArray(arguments)", async () => {
+  it("answers false for Array.isArray(arguments)", async () => {
     await runScript(`
       var arg;
       (function fun() { arg = arguments; }(1, 2, 3));
@@ -247,7 +270,7 @@ describe("#4638 measured residuals", () => {
   });
 
   // test262: language/arguments-object/10.6-6-2.js
-  it.fails("reports arguments.length as configurable", async () => {
+  it("reports arguments.length as configurable", async () => {
     await runScript(`
       (function () {
         var d = Object.getOwnPropertyDescriptor(arguments, "length");
@@ -256,12 +279,12 @@ describe("#4638 measured residuals", () => {
     `);
   });
 
-  // `eval` reachable as a VALUE in the module turns on the runtime-eval boundary
-  // and the filter callback dispatch null-derefs. `parseInt` in the same position
-  // is fine. Owner: the runtime-eval boundary lane (#4442 / eval-inline.ts).
+  // `eval` reachable as a VALUE in the module turns on the runtime-eval boundary.
+  // The filter callback now unwraps that boundary's AOT carrier before its
+  // in-module call_ref dispatch (runtime-eval boundary lane #4442).
   // test262: built-ins/Array/prototype/filter/15.4.4.20-5-7.js
-  it.fails("passes eval as a filter thisArg", async () => {
-    await runScript(`
+  it("passes eval as a filter thisArg", async () => {
+    await runRuntimeEvalScript(`
       function cb(val, idx, obj) { return true; }
       var out = [11].filter(cb, eval);
       if (out[0] !== 11) { throw new Error("out[0]"); }

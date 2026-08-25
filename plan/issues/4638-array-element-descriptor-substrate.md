@@ -46,6 +46,10 @@ loc-budget-allow:
   #   below the new arm), so the arm is inlined there exactly as the spread arm is.
   - src/codegen/index.ts
   - src/codegen/declarations.ts
+  # The filter result-carrier and open-object guards are the corresponding
+  # residual substrate decisions in the standalone ES5 filter lane.
+  - src/codegen/statements/variables.ts
+  - src/codegen/declarations/object-shape-widening.ts
 func-budget-allow:
   # `compileObjectDefineProperty` +29: the mapped-arguments §10.4.4.2 block gains
   #   the `applyAttributeState` closure and the flag-word computation. Both are
@@ -60,6 +64,7 @@ func-budget-allow:
   #   `moduleInitForcesExternref`, a nested function whose entire job is to list
   #   the reasons a module global must be externref. The list is the function.
   - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/statements/variables.ts::compileVariableStatement
 ---
 
 # #4638 — array element/descriptor substrate

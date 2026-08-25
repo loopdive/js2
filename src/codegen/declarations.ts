@@ -51,6 +51,7 @@ import {
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { widenMixedUndefinedReturn } from "./mixed-return-widening.js"; // (#4641) `T | undefined` return slots
 import { concatCallYieldsDynamicCarrier } from "./array-concat-carrier.js"; // (#4655) concat result-slot carrier
+import { filterResultNeedsDynamicCarrier } from "./array-filter-spec-access.js";
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
@@ -2359,6 +2360,14 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
    * let/const pass so both scopes register the same type.
    */
   function moduleGlobalWasmType(decl: ts.VariableDeclaration, varType: ts.Type): ValType {
+    // (#ES5 filter residual) A typed numeric filter can observe an inherited
+    // accessor whose Get result is not numeric.  The filter lowering keeps the
+    // callback's f64 ABI but widens its result vec to externref so that value
+    // survives the module-global store.  Keep the receiving binding on the
+    // same dynamic carrier; otherwise the checker-inferred number[] slot
+    // immediately coerces the heterogeneous result back to f64 ("prototype"
+    // becomes NaN) before the next read.
+    if (filterResultNeedsDynamicCarrier(ctx, decl.initializer)) return { kind: "externref" };
     // (#4222 ES5 residual) The bounded sized-Array carrier is a nominal
     // subtype of the ordinary externref vec.  Module globals need the same
     // concrete slot as function-local bindings; otherwise the initializer can

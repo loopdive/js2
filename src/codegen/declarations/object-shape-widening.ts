@@ -2233,6 +2233,15 @@ export function applyShapeInference(ctx: CodegenContext, checker: ts.TypeChecker
     const globalIdx = ctx.moduleGlobals.get(varName);
     if (globalIdx === undefined) continue;
 
+    // Standalone accessor/MOP analysis deliberately keeps these receivers on
+    // the identity-bearing open-object carrier.  Shape inference runs after
+    // that analysis and used to overwrite the decision for a plain `{}` whose
+    // accessor body happened to write a numeric key (for example the
+    // self-writing `length` getter in Array.prototype.filter's generic
+    // receiver tests).  A vec has Array-exotic `length` semantics, so applying
+    // the shape here makes the accessor define throw before filter runs.
+    if (ctx.objectHashConsumerVars.has(varName) || ctx.growableObjectLiteralVars.has(varName)) continue;
+
     // Determine element type for the vec struct from the shape's numeric value type
     let elemType: ValType;
     let elemKey: string;
