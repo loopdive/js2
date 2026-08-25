@@ -78,6 +78,7 @@ import {
   KNOWN_CONSTRUCTORS,
   MATH_HOST_METHODS_1ARG,
   MATH_HOST_METHODS_2ARG,
+  nativeGeneratorBindingType,
   parseRegExpLiteral,
   resolveIdentifierType,
   resolveWasmType,
@@ -2380,6 +2381,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // broader local-slot predicate also covers shapes that are unsafe to widen
     // at module scope (see the Array.prototype.filter guard below).
     if (moduleVarDirectPreInitValueIsObserved(ctx, decl)) return { kind: "externref" };
+    const nativeGeneratorType = nativeGeneratorBindingType(ctx, decl.initializer);
+    if (nativeGeneratorType) return nativeGeneratorType;
     // (#ES5 filter residual) A typed numeric filter can observe an inherited
     // accessor whose Get result is not numeric.  The filter lowering keeps the
     // callback's f64 ABI but widens its result vec to externref so that value
