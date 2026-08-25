@@ -514,6 +514,32 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
           : (fctx.locals[oldLocalIdx - fctx.params.length]?.type ?? {
               kind: "f64",
             });
+
+      // A closure in a later for-head declarator can capture an earlier head
+      // binding while the initializer is compiled (for example
+      // `for (let i = 0, f = () => i; ... )`). The closure capture path has
+      // already promoted that binding to its first ref cell. Reuse that cell
+      // as C₀ instead of wrapping the cell in a second ref cell; the latter
+      // would make the incrementor update the inner value while closures keep
+      // reading the outer cell.
+      const existingCapture = fctx.boxedCaptures?.get(name);
+      if (
+        existingCapture &&
+        oldType.kind === "ref_null" &&
+        oldType.typeIdx === existingCapture.refCellTypeIdx
+      ) {
+        if (!savedForBoxedCaptures) savedForBoxedCaptures = new Map();
+        if (!savedForBoxedCaptures.has(name)) {
+          savedForBoxedCaptures.set(name, existingCapture);
+        }
+        perIterCells.push({
+          name,
+          refCellTypeIdx: existingCapture.refCellTypeIdx,
+          boxedLocal: oldLocalIdx,
+        });
+        continue;
+      }
+
       const refCellTypeIdx = getOrRegisterRefCellType(ctx, oldType);
       const boxedLocal = allocLocal(fctx, `__pi_box_${name}`, {
         kind: "ref_null",
