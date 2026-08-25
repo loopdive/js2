@@ -521,6 +521,13 @@ export function tryConstructorPrototypeIdentity(
       if (objResult) {
         fctx.body.push({ op: "drop" });
       }
+      // (#4490 wave 2) Int8Array's constructor value is the real mutable
+      // `$Object` carrier. Keep typed-view `.constructor` reads on that same
+      // identity so instance→constructor reflection cannot resurrect the old
+      // synthetic `$__ta_ctor` metadata arm for this first migrated ctor.
+      if (taName === "Int8Array") {
+        return emitBuiltinConstructorIdentity(ctx, fctx, taName);
+      }
       const t = emitTaCtorValue(ctx, fctx, taName);
       if (t) return t;
     }

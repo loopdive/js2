@@ -3504,6 +3504,68 @@ export function emitTaCtorValue(ctx: CodegenContext, fctx: FunctionContext, name
 }
 
 /**
+ * (#4490 wave 2) Match the first migrated concrete constructor carrier.
+ *
+ * Int8Array's bare value is now a mutable `$Object` singleton, while the
+ * remaining TypedArray constructors still use `$__ta_ctor`.  Dynamic native
+ * paths receive an `anyref` and historically only tested the latter type. Keep
+ * the identity check centralized so construction and metadata readers cannot
+ * accidentally disagree about which object represents Int8Array.
+ */
+export function buildInt8ArrayCarrierMatch(ctx: CodegenContext, anyLocal: number, onMatch: Instr[]): Instr[] {
+  // Dynamic construct helpers can be registered before the source-level
+  // Int8Array identifier is compiled. Reserve the same global slot eagerly so
+  // the later identity emitter can reuse it and seed the carrier in place.
+  let globalIdx = ctx.builtinObjectGlobals.get("ctor:Int8Array");
+  if (globalIdx === undefined) {
+    globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+    ctx.mod.globals.push({
+      name: "__builtin_ctor_Int8Array",
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    ctx.builtinObjectGlobals.set("ctor:Int8Array", globalIdx);
+  }
+  ensureObjectRuntime(ctx);
+  const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
+  if (objectTypeIdx === undefined || globalIdx === undefined) return [];
+  return [
+    { op: "local.get", index: anyLocal },
+    { op: "ref.test", typeIdx: objectTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: anyLocal },
+        { op: "ref.cast", typeIdx: objectTypeIdx },
+        { op: "global.get", index: globalIdx },
+        { op: "any.convert_extern" },
+        { op: "ref.cast_null", typeIdx: objectTypeIdx },
+        { op: "ref.eq" },
+        { op: "if", blockType: { kind: "empty" }, then: onMatch, else: [] },
+      ],
+      else: [],
+    },
+  ];
+}
+
+/** Set `kindLocal` to 0 when `anyLocal` is the Int8Array object carrier. */
+function pushInt8ArrayCarrierKind(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  anyLocal: number,
+  kindLocal: number,
+): void {
+  fctx.body.push(
+    ...buildInt8ArrayCarrierMatch(ctx, anyLocal, [
+      { op: "i32.const", value: 0 },
+      { op: "local.set", index: kindLocal },
+    ]),
+  );
+}
+
+/**
  * (#3177) Get-or-register the per-kind `$__ta_ctor` singleton module-global:
  * `(global $__ta_ctor_<kind> (ref $__ta_ctor) (i32.const <kind>) (struct.new
  * $__ta_ctor))`. Returns the ABSOLUTE global index (imports included). Also
@@ -3575,6 +3637,10 @@ export function emitTaCtorBytesPerElement(
     ],
     else: [],
   });
+  // (#4490 wave 2) The migrated Int8Array value is an object carrier rather
+  // than a `$__ta_ctor`; recover its fixed kind through the identity singleton
+  // when the typed-constructor arm above misses.
+  pushInt8ArrayCarrierKind(ctx, fctx, anyLocal, kindLocal);
   if (ctx.taDynViewTypeIdx >= 0) {
     const dynIdx = ctx.taDynViewTypeIdx;
     fctx.body.push({ op: "local.get", index: anyLocal });
@@ -4058,6 +4124,9 @@ export function emitDynamicTaViewConstruct(
     ],
     else: [],
   });
+  // (#4490 wave 2) Recover kind 0 from the real Int8Array constructor
+  // carrier. Other constructors remain `$__ta_ctor`-backed here.
+  pushInt8ArrayCarrierKind(ctx, fctx, ctorAnyLocal, kindLocal);
 
   // Build ONE `$__ta_dyn_view` carrying the runtime kind (B1's per-kind
   // `$__ta_view_<K>` canonicalize together, so a boxed view can't recover its kind
@@ -4238,16 +4307,29 @@ export function emitTaDynCtorConstructFromLocals(
     typeIdx: byteArrIdx,
   });
 
-  // Build the whole `$__ta_ctor`-matched arm detached, then gate it on the
-  // runtime test so a non-TA callee costs one ref.test.
+  // Build the whole constructor-matched arm detached, then gate it on the
+  // runtime type test so a non-TA callee costs one ref.test.  Int8Array is
+  // additionally admitted through its identity-stable `$Object` carrier.
   const taArm: Instr[] = [];
   const savedTa = fctx.body;
   fctx.body = taArm;
 
-  fctx.body.push({ op: "local.get", index: descAnyLocal });
-  fctx.body.push({ op: "ref.cast", typeIdx: taCtorTypeIdx });
-  fctx.body.push({ op: "struct.get", typeIdx: taCtorTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "i32.const", value: -1 });
   fctx.body.push({ op: "local.set", index: kindLocal });
+  fctx.body.push({ op: "local.get", index: descAnyLocal });
+  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      { op: "local.get", index: descAnyLocal },
+      { op: "ref.cast", typeIdx: taCtorTypeIdx },
+      { op: "struct.get", typeIdx: taCtorTypeIdx, fieldIdx: 0 },
+      { op: "local.set", index: kindLocal },
+    ],
+    else: [],
+  });
+  pushInt8ArrayCarrierKind(ctx, fctx, descAnyLocal, kindLocal);
   pushElemSizeForKind(fctx, kindLocal);
   fctx.body.push({ op: "local.set", index: esLocal });
   fctx.body.push({ op: "i32.const", value: 1 }); // little-endian
@@ -4588,7 +4670,13 @@ export function emitTaDynCtorConstructFromLocals(
 
   fctx.body.push({ op: "local.get", index: descAnyLocal });
   fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: taArm, else: [] });
+  const int8Arm = buildInt8ArrayCarrierMatch(ctx, descAnyLocal, taArm);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: taArm,
+    else: int8Arm,
+  });
   fctx.body.push({ op: "local.get", index: resultLocal });
 }
 
@@ -4661,13 +4749,30 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undef
   const offLocal = allocLocal(fctx, "off", { kind: "i32" });
   const vLocal = allocLocal(fctx, "v", { kind: "f64" });
   const lenF64Local = allocLocal(fctx, "lenf", { kind: "f64" });
+  const ctorAnyLocal = allocLocal(fctx, "ctorAny", { kind: "anyref" });
 
-  // kind = ctor.kind; es = elemSize(kind); le = 1 (little-endian).
+  // kind = ctor.kind; es = elemSize(kind); le = 1 (little-endian).  The first
+  // migrated ctor is an identity-stable `$Object` carrier, so recover kind 0
+  // through the same carrier match used by the dynamic construct paths.
   fctx.body.push({ op: "local.get", index: 0 });
   fctx.body.push({ op: "any.convert_extern" });
-  fctx.body.push({ op: "ref.cast", typeIdx: taCtorTypeIdx });
-  fctx.body.push({ op: "struct.get", typeIdx: taCtorTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: ctorAnyLocal });
+  fctx.body.push({ op: "i32.const", value: -1 });
   fctx.body.push({ op: "local.set", index: kindLocal });
+  fctx.body.push({ op: "local.get", index: ctorAnyLocal });
+  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      { op: "local.get", index: ctorAnyLocal },
+      { op: "ref.cast", typeIdx: taCtorTypeIdx },
+      { op: "struct.get", typeIdx: taCtorTypeIdx, fieldIdx: 0 },
+      { op: "local.set", index: kindLocal },
+    ],
+    else: [],
+  });
+  pushInt8ArrayCarrierKind(ctx, fctx, ctorAnyLocal, kindLocal);
   pushElemSizeForKind(fctx, kindLocal);
   fctx.body.push({ op: "local.set", index: esLocal });
   fctx.body.push({ op: "i32.const", value: 1 });
