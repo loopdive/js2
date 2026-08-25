@@ -4,9 +4,9 @@
  * property the program created on the realm global object (`this.p = 0` at
  * script top level, or a bare `p = 0` on an otherwise-undeclared name).
  *
- * Two consumers, one predicate:
+ * Two consumers share the same binding predicate:
  *
- *  - (#3966) `x++` / `++x` / `x--` / `--x` — {@link tryEmitImplicitGlobalIncDec}.
+ *  - (#4640) `x += rhs` and the other compound assignments.
  *  - (#3966/#4491) `f()` where `f` is such a name — the CALL path in
  *    `call-identifier.ts` treats the name as a known variable so the generic
  *    dynamic dispatch reads the callee off the global object instead of
@@ -84,52 +84,6 @@ export function isSloppyImplicitGlobalBinding(ctx: CodegenContext, fctx: Functio
   if (ctx.moduleGlobals.get(name) !== undefined) return false;
   if (ctx.capturedGlobals.get(name) !== undefined) return false;
   return true;
-}
-
-/**
- * Emit the full read-modify-write for `name++` / `++name` on an implicit global.
- *
- * Returns the `f64` result type (old value for `postfix`, new value for
- * `prefix`), or `undefined` when the global-environment carrier is unavailable
- * — in which case NOTHING has been emitted yet and the caller keeps its
- * pre-existing fallback. (`emitImplicitGlobalRead` is the only step that can
- * emit before failing, and it fails only when the environment object itself is
- * unavailable, which is also the condition under which the write half would
- * decline.)
- */
-export function tryEmitImplicitGlobalIncDec(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  name: string,
-  arithOp: "f64.add" | "f64.sub",
-  mode: "prefix" | "postfix",
-): ValType | undefined {
-  // GetValue + ToNumeric. `emitImplicitGlobalRead` throws ReferenceError when
-  // the property is absent, which is the spec answer for an unresolvable
-  // Reference and matches what a bare read of the same name already does.
-  if (!emitImplicitGlobalRead(ctx, fctx, name)) return undefined;
-  emitToNumber(ctx, fctx, { kind: "externref" });
-
-  const oldLocal = allocLocal(fctx, `__implicit_global_old_${fctx.locals.length}`, { kind: "f64" });
-  const newLocal = allocLocal(fctx, `__implicit_global_new_${fctx.locals.length}`, { kind: "f64" });
-  fctx.body.push({ op: "local.tee", index: oldLocal });
-  fctx.body.push({ op: "f64.const", value: 1 });
-  fctx.body.push({ op: arithOp });
-  fctx.body.push({ op: "local.set", index: newLocal });
-
-  if (!emitGlobalEnvironmentObject(ctx, fctx)) return undefined;
-  const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
-  if (setIdx === undefined) {
-    // Drop the receiver already on the stack so the body stays well-typed.
-    fctx.body.push({ op: "drop" });
-    return undefined;
-  }
-  emitGlobalEnvironmentKey(ctx, fctx, name);
-  fctx.body.push({ op: "local.get", index: newLocal });
-  coerceType(ctx, fctx, { kind: "f64" }, { kind: "externref" });
-  fctx.body.push({ op: "call", funcIdx: setIdx });
-  fctx.body.push({ op: "local.get", index: mode === "postfix" ? oldLocal : newLocal });
-  return { kind: "f64" };
 }
 
 /**
