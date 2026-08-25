@@ -103,3 +103,14 @@ The fix keeps Proxy iterator carriers dynamic at each representation boundary:
 module-level `new Proxy` bindings remain externref, closures returning those
 bindings preserve externref, and native iterator kind/result dispatch accepts
 the `$Proxy` carrier alongside `$Object`. No runtime protocol code changed.
+
+After merging `upstream/main` at `2ac130ac4e` (merge commit
+`26210087e`), the same six scoped runs remained green:
+
+| file | host | standalone |
+| --- | --- | --- |
+| `iterator-as-proxy.js` (exact) | pass (`be27fa697eac`) | pass (`75a688c4a418`) |
+| `generic-iterable.js` | pass (`3b9b9f0b74bd`) | pass (`c3676b2ca790`) |
+| `head-expr-obj-iterator-method.js` | pass (`8d5ae71ef7a6`) | pass (`04df90f9ac4d`) |
+
+The TypeScript 5 typecheck and scoped Prettier/Biome checks also pass.
