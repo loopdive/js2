@@ -11354,6 +11354,13 @@ function varBindingIsForInIdentifierTarget(ctx: CodegenContext, decl: ts.Variabl
 function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.VariableDeclaration): void {
   if (ts.isIdentifier(decl.name)) {
     const name = decl.name.text;
+    // A folded Script-level eval executes in the module initializer's
+    // VariableEnvironment. If its var name already has a registered module
+    // global, leave the name out of the private eval-local hoist so the normal
+    // declaration lowering emits the live global store. This matters when the
+    // eval is in a loop head: ForIn/OfHeadEvaluation creates no environment
+    // when the head names are not referenced by the receiver expression.
+    if (fctx.name === "__module_init" && ctx.moduleGlobals.has(name)) return;
     if (fctx.localMap.has(name)) return;
     // #1690b: do NOT skip allocation when the name collides with a module
     // global. This hoister only runs for nested function bodies; per JS var
