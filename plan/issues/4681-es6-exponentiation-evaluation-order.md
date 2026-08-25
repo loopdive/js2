@@ -20,6 +20,8 @@ loc-budget-allow:
   - src/codegen/binary-ops.ts
 func-budget-allow:
   - src/codegen/binary-ops.ts::compileBinaryExpression
+oracle-ratchet-allow:
+  - src/codegen/binary-ops.ts
 ---
 
 # Exponentiation evaluates the right operand before coercing the left
