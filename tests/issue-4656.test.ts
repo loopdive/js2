@@ -292,15 +292,17 @@ describe("#4656 R1 — %Function.prototype% members are not reachable as a dynam
  * reason — brief methodology 8). It does not: an ARGUMENT-LESS `Function()` is
  * AOT-synthesized by #2924 and never reaches the provider at all. Pinned by
  * running the block on `JS2WASM_EVAL_ENGINE=interpreter` and watching it
- * answer `0`, identically to the quickjs tier, instead of rejecting.
+ * answer `0`, identically to the quickjs tier, instead of rejecting. The
+ * aggregate ES5 branch now supplies the missing builtin prototype values, so
+ * the same probe correctly answers `1` on both tiers.
  *
  * So this file has NO tier-sensitive pin and needs no tier arm — every one of
  * its 27 tests executes on both tiers. Recorded rather than deleted because
  * "does this snippet mint?" is not answerable by looking at it; the compiler
  * decides, and here it declines.
  */
-describe("#4656 R2 — a function-valued prototype does not carry %Function.prototype%", () => {
-  it.fails("RESIDUAL `FACTORY.prototype = Function(); typeof (new FACTORY()).apply` is undefined", async () => {
+describe("#4656 R2 — a function-valued prototype carries its builtin prototype chain", () => {
+  it("`FACTORY.prototype = Function()` exposes %Function.prototype%.apply", async () => {
     expect(
       await run(`
         var P: any = Function();
@@ -329,14 +331,9 @@ describe("#4656 R2 — a function-valued prototype does not carry %Function.prot
     ).toBe(5);
   });
 
-  // MEASURED CORRECTION — also written as a CONTROL, also not one. It fails on
-  // BOTH arms, and that changes R2's conclusion for the better: the miss is NOT
-  // specific to `%Function.prototype%`. `%Object.prototype%.toString` is
-  // equally unreachable through the same link, while an OWN property of the
-  // same prototype object (the control immediately above, which DOES pass on
-  // both arms) reads through fine. So the link carries whatever VALUES exist;
-  // builtin-prototype members are simply not values.
-  it.fails("RESIDUAL %Object.prototype%.toString is NOT reachable through the same link either", async () => {
+  // The aggregate implementation also carries the next builtin link through
+  // to %Object.prototype%, matching ordinary JavaScript prototype lookup.
+  it("%Object.prototype%.toString is reachable through the same link", async () => {
     expect(
       await run(`
         var P: any = Function();
@@ -362,7 +359,7 @@ describe("#4656 tier — an argument-less `Function()` does NOT reach the eval p
         var inst: any = new (FACTORY as any)();
         return (typeof inst.apply === "function") ? 1 : 0;
       `),
-    ).toBe(0);
+    ).toBe(1);
   });
 });
 
