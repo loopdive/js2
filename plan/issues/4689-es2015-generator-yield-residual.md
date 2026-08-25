@@ -1,7 +1,8 @@
 ---
 id: 4689
 title: "ES2015 standalone generator-yield residual"
-status: in-progress
+status: done
+completed: 2026-08-25
 created: 2026-08-25
 updated: 2026-08-25
 priority: high
