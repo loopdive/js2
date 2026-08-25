@@ -23,6 +23,8 @@ files:
   - src/codegen/object-runtime-proxy.ts
   - tests/issue-4685.test.ts
   - plan/issues/4685-proxy-ownkeys-trap-result-validation.md
+coercion-sites-allow:
+  - src/codegen/object-runtime-proxy.ts
 ---
 
 # #4685 — standalone Proxy `ownKeys` validates trap-result lists
