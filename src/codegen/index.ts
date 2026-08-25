@@ -10938,6 +10938,30 @@ export function undefinedTypedMemberReadProducesExternref(ctx: CodegenContext, e
   return undefinedTypedMemberReadProducesExternref(ctx, e.expression);
 }
 
+export function nativeGeneratorBindingType(
+  ctx: CodegenContext,
+  initializer: ts.Expression | undefined,
+): ValType | null {
+  let expr = initializer;
+  while (
+    expr &&
+    (ts.isParenthesizedExpression(expr) ||
+      ts.isAsExpression(expr) ||
+      ts.isTypeAssertionExpression(expr) ||
+      ts.isNonNullExpression(expr) ||
+      ts.isSatisfiesExpression(expr))
+  )
+    expr = expr.expression;
+  if (!expr || !ts.isCallExpression(expr) || !ts.isIdentifier(expr.expression)) return null;
+  const sym = ctx.checker.getSymbolAtLocation(expr.expression);
+  const decl = sym?.declarations?.find((d) => ts.isFunctionDeclaration(d) && !!d.asteriskToken);
+  if (!decl) return null;
+  for (const info of ctx.nativeGenerators.values()) {
+    if (info.decl === decl) return { kind: "ref_null", typeIdx: info.stateTypeIdx };
+  }
+  return null;
+}
+
 export function hoistVarDeclarations(
   ctx: CodegenContext,
   fctx: FunctionContext,

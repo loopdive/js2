@@ -11,7 +11,12 @@ import { redeclarationWidenedLocalSlotType } from "../declarations/redeclared-va
 import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion } from "../context/types.js";
 import { emitCoercedLocalSet, noJsHost } from "../expressions/helpers.js";
 import { emitUndefined } from "../expressions/late-imports.js";
-import { needsTdzFlag, resolveWasmType, varBindingNeedsExternrefForUndefined } from "../index.js";
+import {
+  nativeGeneratorBindingType,
+  needsTdzFlag,
+  resolveWasmType,
+  varBindingNeedsExternrefForUndefined,
+} from "../index.js";
 import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
 import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import { concatCallYieldsDynamicCarrier } from "../array-concat-carrier.js"; // (#4655) concat result-slot carrier
@@ -1854,13 +1859,15 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       arrayLiteralEscapeWidensToExternref(ctx, decl.initializer)
         ? { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, "externref", { kind: "externref" }) }
         : undefined;
+    const nativeGenBindingType = nativeGeneratorBindingType(ctx, decl.initializer);
     const wasmTypeBase: ValType =
+      nativeGenBindingType ??
       // (#3123) A widened fnctor-subclass binding (pre-hoist recorded it in
       // `fnctorWidenedLocals` — reassigned with a foreign/host value) must
       // keep its externref slot even when the block-scoped shadow machinery
       // re-allocates here (the pre-hoisted slot reuse below is gated on
       // plain-fn capture and does not fire for uncaptured bindings).
-      mixedAssignmentCarrier
+      (mixedAssignmentCarrier
         ? (mixedCarrierProvenF64 ?? { kind: "externref" as const })
         : realmStructuralCarrier
           ? { kind: "externref" as const }
@@ -1918,7 +1925,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
                                           !noJsHost(ctx) &&
                                           isBindCarrierCall(decl.initializer)
                                         ? { kind: "externref" as const }
-                                        : localTypeForDeclaration(ctx, varType, decl)));
+                                        : localTypeForDeclaration(ctx, varType, decl))));
     // (#2660 S3b) A provably-monomorphic `new F(...)` binding of an approved
     // fnctor gets the reserved struct slot instead of externref. Same (cached)
     // verdict as the var hoister / let-const pre-hoister, so a reused
@@ -2015,8 +2022,16 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     );
     const isHoistedLetConst = !isVar && existingIdx !== undefined && existingIdx >= fctx.params.length;
     const freshLocalForLetConst = !isVar && !isHoistedLetConst;
-    const localIdx =
+    let localIdx =
       reusedVarSlotIndex(fctx, decl, isVar, isHoistedLetConst, existingIdx) ?? allocLocal(fctx, name, wasmType);
+    if (
+      nativeGenBindingType &&
+      isVar &&
+      existingIdx !== undefined &&
+      getLocalType(fctx, existingIdx)?.kind === "externref" &&
+      !fctx.boxedCaptures?.has(name)
+    )
+      fctx.localMap.set(name, (localIdx = allocLocal(fctx, `__native_gen_${name}`, nativeGenBindingType)));
 
     // (#3037 CS1a) A let/const any-object-carrier reuses a slot the hoist pre-pass
     // pre-allocated as externref (from `resolveWasmType(any)`), so the `wasmType`
