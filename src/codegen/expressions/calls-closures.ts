@@ -18,7 +18,10 @@ import {
 import { compileArrayJoinExtern, emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { tryCompileNativeDisposableStackAnyMethodCall } from "../disposable-runtime.js";
 import { noJsHost } from "../js-errors.js";
+import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { emitRuntimeEvalCarrierUnwrapAny } from "../runtime-eval-callable.js";
+import { expressionDescendsFromRealmStructuralBinding } from "../analysis/realm-global-structural-carrier.js";
 import { allocLocal } from "../context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import { addFuncType, addImport, localGlobalIdx, resolveWasmType } from "../index.js";
@@ -29,7 +32,7 @@ import {
   typeErrorThrowInstrs,
 } from "../property-access.js";
 import type { InnerResult } from "../shared.js";
-import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
+import { coerceType, compileExpression, resolveComputedKeyExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
 import {
   defaultValueInstrs,
   emitGuardedFuncRefCast,
@@ -53,6 +56,11 @@ import { tryEmitTransferredNativeProtoMethodCall } from "./transferred-native-pr
 import { buildArgcExtrasSetupFromLocals } from "./argc-extras.js";
 import { tryCompileGetPrototypeOfIsPrototypeOf } from "./object-get-prototype-of.js";
 import { tryEmitStaticOrNativeIsPrototypeOf } from "../native-is-prototype-of.js";
+import { ensureFunctionNativeProtoGlue } from "../array-object-proto.js";
+import { ensureFunctionProtoEdge, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "../function-proto-has-instance.js";
+import { ensureStandaloneNativeMethodClosure } from "../native-proto.js";
+import { pushBuiltinFnSingletonValueInstrs } from "../builtin-fn-meta.js";
+import { addStringConstantGlobal } from "../registry/imports.js";
 import type { ObjectLiteralMethodReceiverBind } from "../object-literal-method-receiver.js";
 import { sourceAssignsAliasedFunctionMember, sourceDefinesFunctionMember } from "../source-function-members.js";
 import {
@@ -70,6 +78,9 @@ import {
  * the wasm return type that funcref yields.
  */
 type FuncCandidate = { funcTypeIdx: number; structTypeIdx: number; returnType: ValType | null };
+
+/** `fillApplyClosure` only emits dynamic method dispatchers for arities 0..8. */
+const REALM_DYNAMIC_CALL_MAX_ARITY = 8;
 
 /**
  * TypeScript gives an unannotated JavaScript function that reads `arguments`
@@ -432,6 +443,17 @@ function compileRestClosureArguments(
   }
   if (restType.kind !== "ref" && restType.kind !== "ref_null") {
     pushDefaultValue(fctx, restType, ctx);
+    return { fixedParamCount, restExternLocals: [] };
+  }
+  // TypeScript represents an unused `...rest` parameter as an empty tuple
+  // struct rather than the ordinary `(length, data)` vec.  It is still a
+  // non-null lifted formal, so padding it with `pushDefaultValue(ref)` emits
+  // `ref.null; ref.as_non_null` and traps before the callee can materialize its
+  // `arguments` object.  Construct the canonical empty tuple instead; the
+  // arguments-object builder treats the parameter as a normal boxed formal.
+  const restDef = ctx.mod.types[restType.typeIdx];
+  if (restDef?.kind === "struct" && restDef.fields.length === 0) {
+    fctx.body.push({ op: "struct.new", typeIdx: restType.typeIdx });
     return { fixedParamCount, restExternLocals: [] };
   }
   const vecInfo = getVecInfo(ctx, restType.typeIdx);
@@ -986,6 +1008,7 @@ export function compileCallablePropertyCall(
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
   className: string,
+  precompiledReceiver?: { localIdx: number; type: ValType },
 ): InnerResult | undefined {
   const methodName = ts.isPrivateIdentifier(propAccess.name)
     ? "__priv_" + propAccess.name.text.slice(1)
@@ -1074,8 +1097,20 @@ export function compileCallablePropertyCall(
   // compiling the receiver, so the capture below rides the ONE evaluation.
   let bind: ObjectLiteralMethodReceiverBind | undefined;
 
+  const compileReceiver = (expectedType?: ValType): ValType | null => {
+    if (precompiledReceiver === undefined) {
+      return compileExpression(ctx, fctx, propAccess.expression, expectedType);
+    }
+    fctx.body.push({ op: "local.get", index: precompiledReceiver.localIdx });
+    if (expectedType !== undefined && !valTypesMatch(precompiledReceiver.type, expectedType)) {
+      coerceType(ctx, fctx, precompiledReceiver.type, expectedType);
+      return expectedType;
+    }
+    return precompiledReceiver.type;
+  };
+
   const compileCallableFieldValue = (): void => {
-    const recvResult = compileExpression(ctx, fctx, propAccess.expression);
+    const recvResult = compileReceiver();
     if (bind) {
       const recvType = recvResult === null || typeof recvResult === "symbol" ? undefined : recvResult;
       if (!recvType || !captureObjectLiteralMethodReceiver(fctx, recvType, bind)) bind = undefined;
@@ -1153,6 +1188,78 @@ export function compileCallablePropertyCall(
   for (let i = 0; i < sigParamCount; i++) {
     const paramType = ctx.checker.getTypeOfSymbol(sigParameters[i]!);
     sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+  }
+
+  // A structural contract asserted over a live realm-global capability keeps
+  // an open externref carrier (#4376). Its callable properties are likewise
+  // live JavaScript properties: the function installed at runtime need not use
+  // the wrapper ABI inferred from the erased TypeScript signature. Fetch the
+  // exact property value before evaluating arguments, retain the original
+  // receiver for `this`, and invoke through the native dynamic-closure bridge.
+  //
+  // This is intentionally restricted to the declaration-proven carrier above
+  // and fixed argument lists. Ordinary closed structs retain the typed
+  // call_ref path, while a dynamic spread stays on the existing fallback until
+  // it has a value-preserving ObjVec concat.
+  if (
+    (ctx.standalone || ctx.wasi) &&
+    !expr.arguments.some((argument) => ts.isSpreadElement(argument)) &&
+    expr.arguments.length <= REALM_DYNAMIC_CALL_MAX_ARITY &&
+    expressionDescendsFromRealmStructuralBinding(ctx, fctx, propAccess.expression)
+  ) {
+    const { newIdx: objVecNewIdx, pushIdx: objVecPushIdx } = ensureObjVecBuilders(ctx);
+    const applyClosureIdx = reserveApplyClosure(ctx);
+    addStringConstantGlobal(ctx, methodName);
+    flushLateImportShifts(ctx, fctx);
+    const externGetIdx = ctx.funcMap.get("__extern_get");
+    if (externGetIdx !== undefined) {
+      const receiverType = compileReceiver({ kind: "externref" });
+      if (receiverType === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+      } else if (receiverType.kind !== "externref") {
+        coerceType(ctx, fctx, receiverType, { kind: "externref" });
+      }
+      const receiverLocal = allocLocal(fctx, `__realm_call_recv_${fctx.locals.length}`, {
+        kind: "externref",
+      });
+      fctx.body.push({ op: "local.set", index: receiverLocal });
+
+      fctx.body.push({ op: "local.get", index: receiverLocal });
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? externGetIdx });
+      const calleeLocal = allocLocal(fctx, `__realm_call_fn_${fctx.locals.length}`, {
+        kind: "externref",
+      });
+      fctx.body.push({ op: "local.set", index: calleeLocal });
+
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_new") ?? objVecNewIdx });
+      const argsLocal = allocLocal(fctx, `__realm_call_args_${fctx.locals.length}`, {
+        kind: "externref",
+      });
+      fctx.body.push({ op: "local.set", index: argsLocal });
+      for (const argument of expr.arguments) {
+        fctx.body.push({ op: "local.get", index: argsLocal });
+        const argumentType = compileExpression(ctx, fctx, argument, { kind: "externref" });
+        if (argumentType === null) {
+          fctx.body.push({ op: "ref.null.extern" });
+        } else if (argumentType.kind !== "externref") {
+          coerceType(ctx, fctx, argumentType, { kind: "externref" });
+        }
+        fctx.body.push({
+          op: "call",
+          funcIdx: ctx.funcMap.get("__objvec_push") ?? objVecPushIdx,
+        });
+      }
+
+      fctx.body.push({ op: "local.get", index: calleeLocal });
+      fctx.body.push({ op: "local.get", index: receiverLocal });
+      fctx.body.push({ op: "local.get", index: argsLocal });
+      fctx.body.push({
+        op: "call",
+        funcIdx: ctx.funcMap.get("__apply_closure") ?? applyClosureIdx,
+      });
+      return { kind: "externref" };
+    }
   }
 
   // A synthetic wrapper derived from a field's call signature cannot encode
@@ -1524,6 +1631,87 @@ export function compileCallableElementAccessCall(
   expr: ts.CallExpression,
   elemAccess: ts.ElementAccessExpression,
 ): InnerResult | undefined {
+  // `%Function.prototype%[@@hasInstance]` is a native method closure whose
+  // first user parameter is the dynamic `this` receiver. The generic element
+  // call path treats the value as an ordinary one-argument closure and thus
+  // drops that receiver, selecting the wrong lifted signature (and eventually
+  // calling a null funcref). Bind the receiver explicitly and call the native
+  // closure ABI directly; this is deliberately limited to the statically
+  // resolvable Function-prototype symbol and standalone mode.
+  if (
+    ctx.standalone &&
+    resolveComputedKeyExpression(ctx, elemAccess.argumentExpression) === FUNCTION_PROTO_HAS_INSTANCE_MEMBER
+  ) {
+    const receiver = elemAccess.expression;
+    const fact = ctx.oracle.typeFactOf(receiver);
+    const directFunctionProto =
+      ts.isPropertyAccessExpression(receiver) &&
+      receiver.name.text === "prototype" &&
+      ts.isIdentifier(receiver.expression) &&
+      receiver.expression.text === "Function" &&
+      !fctx.localMap.has("Function") &&
+      !(fctx.boxedCaptures?.has("Function") ?? false);
+    const sourceText = elemAccess.getSourceFile().text;
+    const hasCustomPrototype =
+      sourceText.includes("prototype") && (sourceText.includes("defineProperty") || /\.prototype\s*=/.test(sourceText));
+    if (
+      (fact.kind === "function" || (fact.kind === "builtin" && fact.name === "Function") || directFunctionProto) &&
+      !hasCustomPrototype
+    ) {
+      ensureFunctionProtoEdge(ctx, fctx, receiver);
+      const receiverType = compileExpression(ctx, fctx, receiver, { kind: "externref" });
+      if (receiverType !== null) {
+        if (receiverType.kind !== "externref") coerceType(ctx, fctx, receiverType, { kind: "externref" });
+        const receiverLocal = allocLocal(fctx, `__has_instance_recv_${fctx.locals.length}`, {
+          kind: "externref",
+        });
+        fctx.body.push({ op: "local.set", index: receiverLocal });
+
+        const brand = ensureFunctionNativeProtoGlue(ctx);
+        const closure =
+          brand === undefined
+            ? null
+            : ensureStandaloneNativeMethodClosure(ctx, brand, FUNCTION_PROTO_HAS_INSTANCE_MEMBER, "method", {
+                refusalBodyFallback: true,
+              });
+        const closureInfo = closure ? ctx.closureInfoByTypeIdx.get(closure.type.typeIdx) : undefined;
+        if (closure && closureInfo) {
+          const selfTypeIdx = getClosureFuncSelfTypeIdx(ctx, closureInfo.funcTypeIdx) ?? closure.type.typeIdx;
+          const closureLocal = allocLocal(fctx, `__has_instance_fn_${fctx.locals.length}`, {
+            kind: "ref_null",
+            typeIdx: selfTypeIdx,
+          });
+          fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure));
+          fctx.body.push({ op: "extern.convert_any" });
+          emitGuardedRefCast(fctx, selfTypeIdx);
+          fctx.body.push({ op: "local.set", index: closureLocal });
+
+          // Native-method ABI: (closure self, this, value). Extra source
+          // arguments are evaluated for side effects and ignored by the
+          // one-parameter @@hasInstance operation.
+          fctx.body.push({ op: "local.get", index: closureLocal });
+          fctx.body.push({ op: "local.get", index: receiverLocal });
+          if (expr.arguments.length > 0) {
+            const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+            if (argType !== null && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+          } else {
+            pushDefaultValue(fctx, { kind: "externref" }, ctx);
+          }
+          for (let i = 1; i < expr.arguments.length; i++) {
+            const extraType = compileExpression(ctx, fctx, expr.arguments[i]!);
+            if (extraType !== null) fctx.body.push({ op: "drop" });
+          }
+          fctx.body.push({ op: "local.get", index: closureLocal });
+          fctx.body.push({ op: "struct.get", typeIdx: selfTypeIdx, fieldIdx: 0 });
+          emitGuardedFuncRefCast(fctx, closureInfo.funcTypeIdx);
+          emitNullCheckThrow(ctx, fctx, { kind: "ref_null", typeIdx: closureInfo.funcTypeIdx });
+          fctx.body.push({ op: "call_ref", typeIdx: closureInfo.funcTypeIdx });
+          return closureInfo.returnType ?? VOID_RESULT;
+        }
+      }
+    }
+  }
+
   // 1. Resolve element type's call signatures (with NonNullable fallback)
   const elemTsType = ctx.checker.getTypeAtLocation(elemAccess);
   let callSigs = elemTsType.getCallSignatures?.();
@@ -1710,6 +1898,15 @@ export function tryExternClassMethodOnAny(
   // code path handle it — other ambiguous methods (forEach, indexOf, etc.)
   // keep the historical first-match behavior.
   if (methodName === "slice" || methodName === "valueOf") return null;
+
+  // `createElement` is shared by React's CommonJS namespace and the DOM
+  // `Document` extern class.  An `any` receiver carries no evidence that it is
+  // a Document, so binding the first ambient match would turn
+  // `React.createElement(...)` into `Document_createElement` and discard the
+  // real receiver at the host boundary.  Typed Document receivers have
+  // already taken the exact extern-class path above; leave unknown receivers
+  // on the generic dynamic dispatcher so their runtime identity is preserved.
+  if (methodName === "createElement") return null;
 
   // (#1712) `replace` / `replaceAll` are core String.prototype methods, but
   // SEVERAL DOM extern classes also declare a `replace` (CSSStyleSheet.replace

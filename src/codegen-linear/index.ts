@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
+import { createTypeOracle } from "../checker/oracle-backend.js";
 import type { BuildIrUnitInventoryOptions } from "../ir/identity.js";
 import type { FuncTypeDef, Instr, ValType, WasmModule } from "../ir/types.js";
 import {
@@ -25,7 +26,7 @@ import { finalizeLinearArena } from "./export-arena.js";
 import * as numberFormat from "./number-format.js";
 import { addLinearStackArenaRuntime } from "./runtime-stack-arena.js";
 import { compileLinearStringMethodCall } from "./string-methods.js";
-import { addLinearStringRepeatRuntime, sourceMayUseLinearStringRepeat } from "./string-repeat.js";
+import { reserveLinearStringRepeatProvider, sourceMayUseLinearStringRepeat } from "./string-repeat.js";
 import {
   addArrayRuntime,
   addFmodRuntime,
@@ -75,15 +76,10 @@ function sourceMayUseLinearIrStringRuntime(sourceFile: ts.SourceFile): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
-    if (ts.isPropertyAccessExpression(node) && (node.name.text === "charAt" || node.name.text === "charCodeAt")) {
-      found = true;
-      return;
-    }
-    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) {
-      found = true;
-      return;
-    }
-    forEachChild(node, visit);
+    found =
+      (ts.isPropertyAccessExpression(node) && (node.name.text === "charAt" || node.name.text === "charCodeAt")) ||
+      (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken);
+    if (!found) forEachChild(node, visit);
   };
   visit(sourceFile);
   return found;
@@ -122,6 +118,7 @@ export interface LinearOptions {
   /** Shared IR allocation policy. Direct-backend fallbacks remain arena-backed. */
   allocationPolicy?: LinearAllocatorPolicyId;
   irInventoryOptions?: BuildIrUnitInventoryOptions;
+  oracleBackend?: import("../checker/oracle-backend.js").OracleBackend;
   /**
    * External C functions this module calls (#4539). Declared before any
    * defined function so indices are stable; see `declareExternCImports`.
@@ -264,19 +261,17 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
   addUint8ArrayRuntime(mod);
   addArrayRuntime(mod);
   addStringRuntime(mod);
-  if (sourceMayUseLinearStringRepeat(ast.sourceFile)) addLinearStringRepeatRuntime(mod);
+  const repeatReservation = sourceMayUseLinearStringRepeat(ast.sourceFile)
+    ? reserveLinearStringRepeatProvider(mod)
+    : undefined;
   addMapRuntime(mod);
   addSetRuntime(mod);
   addNumericMapRuntime(mod);
   addNumericSetRuntime(mod);
   addFmodRuntime(mod); // #2144 — exact f64 remainder for the `%` arm
-  // #2956 L2: construction needs one value-first indexed store helper.
-  // Register it only for the overlay so the explicit `=0` escape hatch stays
-  // byte-identical to the pre-IR direct backend.
+  // Overlay runtimes precede user slots; source gates preserve direct bytes.
   if (linearIr.linearIrEnabled()) {
     addLinearIrVecRuntime(mod);
-    // The UTF-16 decoder is sizeable and only the charCodeAt plan needs it.
-    // Register before user-slot assignment when the source can request it.
     if (sourceMayUseLinearIrStringRuntime(ast.sourceFile)) addLinearIrStringRuntime(mod);
   }
 
@@ -307,6 +302,7 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
   const ctx: LinearContext = {
     mod,
     checker: ast.checker,
+    oracle: createTypeOracle(ast.checker, opts.oracleBackend),
     funcMap: new Map(),
     // #4539 — derived, not hard-coded. Zero when nothing is imported, so
     // output is unchanged for every existing caller.
@@ -324,6 +320,9 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     externImportSigs: externImportSigs.size > 0 ? externImportSigs : undefined,
     ...(roDataBiasGlobalIdx !== undefined ? { roDataBiasGlobalIdx } : {}),
   };
+  const preparedLinearIr = linearIr.linearIrEnabled()
+    ? linearIr.prepareLinearIrOverlay(ctx, ast.sourceFile, opts.irInventoryOptions, repeatReservation)
+    : undefined;
 
   // #4539 — extern imports are callable by name. They occupy indices [0, n),
   // so registering them here lets the ordinary call path resolve them; the
@@ -386,7 +385,9 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
 
   const runtimeFuncCount = ctx.mod.functions.length;
   const linearIrLegacySlots = [];
-  const isIrTerminal = linearIr.terminalPredicate(ast.sourceFile, ast.checker, opts.irInventoryOptions);
+  const isIrTerminal = preparedLinearIr
+    ? linearIr.terminalPredicateForPreparedOverlay(ctx, ast.sourceFile, preparedLinearIr)
+    : () => false;
   for (let i = 0; i < allFuncEntries.length; i++) {
     const entry = allFuncEntries[i];
     const funcIdx = ctx.numImportFuncs + runtimeFuncCount + i;
@@ -404,11 +405,10 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
   }
 
   // ── #2956: IR overlay for selector-claimed top-level functions ──
-  // Default-on since L4. Run after exact slot registration and module-global
   // collection, but before top-level body insertion. Demotions retain the
   // direct path and JS2WASM_LINEAR_IR=0 remains the escape hatch.
-  const linearIrResult = linearIr.linearIrEnabled()
-    ? linearIr.compileLinearIr(ctx, ast.sourceFile, allocationPolicy, linearIrLegacySlots, opts.irInventoryOptions)
+  const linearIrResult = preparedLinearIr
+    ? linearIr.compileLinearIr(ctx, allocationPolicy, linearIrLegacySlots, preparedLinearIr)
     : undefined;
 
   // ── Compile top-level function declarations ──
@@ -474,7 +474,7 @@ export function generateLinearMultiModule(multiAst: MultiTypedAST, opts: LinearO
   addUint8ArrayRuntime(mod);
   addArrayRuntime(mod);
   addStringRuntime(mod);
-  if (multiAst.sourceFiles.some(sourceMayUseLinearStringRepeat)) addLinearStringRepeatRuntime(mod);
+  if (multiAst.sourceFiles.some(sourceMayUseLinearStringRepeat)) reserveLinearStringRepeatProvider(mod);
   addMapRuntime(mod);
   addSetRuntime(mod);
   addNumericMapRuntime(mod);

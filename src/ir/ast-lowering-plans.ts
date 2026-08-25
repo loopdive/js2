@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { IrBindingId, IrClassId, IrUnitId } from "./identity.js";
+import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "./identity.js";
 import type { IrClassShape, IrClosureSignature, IrFuncRef, IrGlobalRef, IrType } from "./nodes.js";
+import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import type { IrLegacyUnitProjection, IrPlanningIdentityContext } from "./planning-identity.js";
 import type { IrPromiseDelayLoweringPlans } from "./promise-delay-lowering.js";
 import { ts } from "../ts-api.js";
@@ -127,6 +128,21 @@ export interface IrHostDateGetterLoweringPlan extends IrHostDateSnapshotLowering
   readonly getter: IrHostDateSnapshotGetter;
 }
 
+/** Source/unit/provider authority for one exact counted-string loop. */
+export interface IrCountedStringAppendLoweringPlan {
+  readonly ownerUnitId: IrUnitId;
+  readonly sourceId: IrSourceId;
+  readonly sourceFile: ts.SourceFile;
+  readonly syntaxPlan: IrCountedStringAppendPlan;
+  readonly provider: IrFuncRef;
+}
+
+/** Final preparation receipt; its digest includes provider-bound IR. */
+export interface PreparedCountedStringAppendReceipt {
+  readonly plan: IrCountedStringAppendLoweringPlan;
+  readonly finalInstructionDigest: string;
+}
+
 /** One module binding's legacy storage, optionally tied to an exact terminal owner. */
 export interface ModuleBindingGlobal {
   readonly ownerUnitId?: IrUnitId;
@@ -158,6 +174,7 @@ export interface IrIntegrationLoweringPlans {
   readonly hostVoidCallbacks: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
   readonly hostDateSnapshots: ReadonlyMap<ts.NewExpression, IrHostDateSnapshotLoweringPlan>;
   readonly hostDateGetters: ReadonlyMap<ts.CallExpression, IrHostDateGetterLoweringPlan>;
+  readonly countedStringAppends?: ReadonlyMap<ts.ForStatement, IrCountedStringAppendLoweringPlan>;
   readonly promiseDelays: IrPromiseDelayLoweringPlans;
   /** Exact engine-activated source owners admitted by the async-plan producer. */
   readonly suspendingAsyncUnitIds: ReadonlySet<IrUnitId>;
@@ -176,6 +193,7 @@ export function requireMatchingLoweringPlanOwner(
     | "host void callback"
     | "host Date snapshot"
     | "host Date getter"
+    | "counted string append"
     | "module binding",
   planOwnerUnitId: IrUnitId,
   activeOwnerUnitId: IrUnitId | undefined,

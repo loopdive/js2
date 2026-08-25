@@ -303,6 +303,23 @@ const VERDICTS = {
     why: "Concatenation of two values already statically known to be strings — no ToString, no `+` overload.",
     evidence: [{ file: NODES, quote: "Concatenate two strings" }],
   },
+  "string.repeat": {
+    verdict: "js",
+    why:
+      "ECMAScript String.prototype.repeat owns both the f64 count normalization through " +
+      "ToIntegerOrInfinity and the negative/+Infinity RangeError. A non-JS producer would " +
+      "have to work around that language contract rather than merely select a backend provider.",
+    evidence: [
+      {
+        file: path.join(DIALECT_DIR, "js.ts"),
+        quote: "Repeat a string using ECMAScript `String.prototype.repeat` count semantics.",
+      },
+      {
+        file: "src/ir/string-runtime.ts",
+        quote: 'readonly negative: "range-error-or-backend-trap";',
+      },
+    ],
+  },
   "string.eq": {
     verdict: "neutral",
     why: "Value equality of two strings. No abstract equality, no coercion — `dyn.eq` covers that and is already in the dialect.",
@@ -427,6 +444,18 @@ const VERDICTS = {
     verdict: "neutral",
     why: "Writes the cell's single field.",
     evidence: [{ file: NODES, quote: "Write a new value through a ref cell." }],
+  },
+
+  // ── core: nominal function-style constructors ---------------------------
+  "fnctor.new": {
+    verdict: "neutral",
+    why: "Materializes a nominal function-style constructor through an exact ABI handle; the operation is not an ECMAScript protocol by itself.",
+    evidence: [{ file: NODES, quote: "Materialize one source-qualified function-style constructor instance." }],
+  },
+  "fnctor.get": {
+    verdict: "neutral",
+    why: "Reads a declared field from a nominal constructor carrier; field identity and representation come from the resolved layout.",
+    evidence: [{ file: NODES, quote: "Read one field from a nominal function-style constructor instance." }],
   },
 
   // ── core: classes ────────────────────────────────────────────────────────

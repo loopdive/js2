@@ -469,8 +469,11 @@ export function findHeadBindingsCapturedByClosures(stmt: ts.ForStatement, headNa
     }
     forEachChild(node, visit);
   }
-  // Walk condition + incrementor + body. Closures may appear in any of them
-  // (e.g. `for (let i=0; (f = () => i, true); i++) {}`).
+  // Walk the initializer, condition, incrementor, and body. A closure in a
+  // later declarator of the head is created before the first iteration and
+  // must keep the initial per-iteration environment (for example
+  // `for (let i = 0, f = () => i; i < 5; ++i)`).
+  visit(stmt.initializer);
   visit(stmt.condition);
   visit(stmt.incrementor);
   visit(stmt.statement);

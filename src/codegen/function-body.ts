@@ -63,7 +63,7 @@ import { collectI32SpecializedArrays } from "./array-element-typing.js";
 export { collectI32CoercedLocals } from "../ir/analysis/i32-coerced-locals.js";
 import { collectI32CoercedLocals } from "../ir/analysis/i32-coerced-locals.js";
 import { detectArrayReduceFusion, applyArrayReduceFusion } from "./array-reduce-fusion.js";
-import { compileNativeGeneratorFunction } from "./generators-native.js";
+import { compileNativeGeneratorFunction, nativeGeneratorInfoForDecl } from "./generators-native.js";
 import { maybeActivateAsync } from "./async-activation.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
 import {
@@ -291,6 +291,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   ctx.capturedGlobals.clear();
   ctx.capturedGlobalsWidened.clear();
   ctx.capturedBoxGlobals?.clear();
+  ctx.capturedGlobalsOwner?.clear();
   const sig = ctx.checker.getSignatureFromDeclaration(decl);
   if (!sig) {
     reportError(ctx, decl, `Cannot resolve signature for function '${func.name}'`);
@@ -660,8 +661,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
       flushLateImportShifts(ctx, fctx);
     }
 
-    const elemType: ValType = { kind: "externref" };
-    const vecTypeIdx = getOrRegisterVecType(ctx, "externref", elemType);
+    const vecTypeIdx = getOrRegisterVecType(ctx, "arguments");
     const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
     const vecRef: ValType = { kind: "ref", typeIdx: vecTypeIdx };
 
@@ -720,7 +720,9 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
     // The generator returnType is already externref (the frame carrier).
     emitAsyncGenerator(ctx, fctx, decl);
   } else if (isGenerator) {
-    const nativeGenerator = ctx.nativeGenerators.get(func.name);
+    // (#3505) Decl-aware lookup: a declaration whose own registration bailed
+    // must not borrow a same-named other declaration's state machine.
+    const nativeGenerator = nativeGeneratorInfoForDecl(ctx, func.name, decl);
     if (nativeGenerator) {
       compileNativeGeneratorFunction(ctx, fctx, decl, nativeGenerator);
     } else if (ctx.standalone || ctx.wasi) {

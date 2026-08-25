@@ -80,7 +80,11 @@ describe("#3489 Test262 module-goal classification", () => {
 
       expect(/\b(?:import|export)\b/.test(rawSource), record.file).toBe(true);
       expect(/\b(?:import|export)\b/.test(record.contents), record.file).toBe(true);
-      expect(record.contents.split("function isPrimitive(")).toHaveLength(3);
+      // The 2026-07 data pin assembled TWO `isPrimitive` definitions (assert.js
+      // + testTypedArray.js) — the duplicate this issue was filed about. The
+      // current pin carries one; the classification contract (Script, never
+      // Module) is what must hold across pins, so assert presence, not count.
+      expect(record.contents.split("function isPrimitive(").length, record.file).toBeGreaterThanOrEqual(2);
       expect(isModuleGoal(record.file, meta, rawSource), record.file).toBe(false);
       expect(isModuleGoal(record.file, record.flags, record.contents), record.file).toBe(false);
       expect(isModuleGoal(record.file, record.flags, `"use strict";\n${record.contents}`), record.file).toBe(false);
@@ -96,8 +100,18 @@ describe("#3489 Test262 module-goal classification", () => {
       inferModuleStrictArguments: true,
     });
 
-    expect(result.success).toBe(false);
-    expect(result.errors.map((error) => error.message).join("; ")).toContain("Duplicate identifier 'isPrimitive'");
+    // Only the 2026-07 data pin duplicated `isPrimitive` (assert.js +
+    // testTypedArray.js); with a single definition the forced-Module compile
+    // legitimately succeeds. Keep the demonstration wired to the data: when
+    // the duplicate exists it must surface as the Module-goal error this
+    // issue documented.
+    const duplicated = record.contents.split("function isPrimitive(").length > 2;
+    if (duplicated) {
+      expect(result.success).toBe(false);
+      expect(result.errors.map((error) => error.message).join("; ")).toContain("Duplicate identifier 'isPrimitive'");
+    } else {
+      expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
+    }
   });
 
   it("compiles both literal assemblies as Script in gc and standalone", async () => {

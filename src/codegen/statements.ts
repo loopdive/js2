@@ -22,16 +22,17 @@ import {
   hasInterveningLexicalBinder,
 } from "./annexb-cancel.js";
 import { tryCompileAnnexBModuleBlockFnEvaluation } from "./annexb-global-live-binding.js";
-import { emitCachedFuncClosureAccess } from "./closures.js";
+import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "./closures.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
-import { getLocalType } from "./context/locals.js";
+import { allocLocal, getLocalType } from "./context/locals.js";
 import { attachSourcePos, getSourcePos } from "./context/source-pos.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { compileExpression, registerCompileStatement } from "./shared.js";
 import { restoreBlockScopedShadows, saveBlockScopedShadows } from "./statements/shared.js";
-import { sinkExpressionStatementValue } from "./statements/eval-completion-value.js";
+import { resetCompletionValueForStatement, sinkExpressionStatementValue } from "./statements/eval-completion-value.js";
 import { compileWithStatement } from "./with-scope.js";
 import { expressionRunsUserCode } from "./module-init-collection.js"; // (#4433) bare `typeof f();`
+import { noJsHost } from "./js-errors.js";
 
 // Sub-module imports — statement-family functions
 import {
@@ -56,8 +57,11 @@ import {
   compileNestedFunctionDeclaration,
 } from "./statements/nested-declarations.js";
 import { compileVariableStatement } from "./statements/variables.js";
+import { emitLocalTdzInit } from "./statements/tdz.js";
 import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { coerceType } from "./type-coercion.js";
+import { compileClassExpression } from "./expressions/new-super.js";
+import { emitLazyClassObjectGet } from "./expressions/extern.js";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the existing public API surface
@@ -227,13 +231,68 @@ function tryCompileAnnexBExistingDirectFunctionUpdate(
     }
   }
   if (innerIdx !== undefined) {
-    const closureType = emitCachedFuncClosureAccess(ctx, fctx, funcName, innerIdx);
+    const closureType = emitAnnexBFunctionClosure(ctx, fctx, stmt, funcName, innerIdx);
     if (closureType) {
       if (closureType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
       fctx.body.push({ op: "local.set", index: bindingLocal });
     }
   }
   return true;
+}
+
+/**
+ * Ordinary function declarations carry the nominal constructible marker in
+ * standalone/WASI closure values. Annex-B evaluation sites used to omit this
+ * flag while identifier reads supplied it, so both sites shared one cache
+ * global but disagreed about its struct type; the first site to initialize the
+ * cache then made the other site's ref.cast trap. Keep all declaration-value
+ * paths on the same wrapper family.
+ */
+function isOrdinaryFunctionDeclaration(ctx: CodegenContext, stmt: ts.FunctionDeclaration): boolean {
+  return (
+    (noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first") &&
+    stmt.asteriskToken === undefined &&
+    !(stmt.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false)
+  );
+}
+
+/**
+ * Annex-B function values may carry TDZ/capture cells when the declaration's
+ * body mutates its own binding. The cached singleton helper models the full
+ * function signature as user parameters and therefore cannot represent those
+ * hidden capture parameters; use the per-activation closure path for such
+ * declarations and retain the singleton for capture-free functions.
+ */
+function emitAnnexBFunctionClosure(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.FunctionDeclaration,
+  funcName: string,
+  funcIdx: number,
+): ReturnType<typeof emitCachedFuncClosureAccess> {
+  const constructible = isOrdinaryFunctionDeclaration(ctx, stmt);
+  const captures = ctx.nestedFuncCaptures.get(funcName);
+  const closureType =
+    captures && captures.length > 0
+      ? emitFuncRefAsClosure(ctx, fctx, funcName, funcIdx, constructible)
+      : emitCachedFuncClosureAccess(ctx, fctx, funcName, funcIdx, constructible);
+  const boxed = fctx.boxedCaptures?.get(funcName);
+  if (!closureType || !boxed || boxed.valType.kind !== "externref") return closureType;
+
+  // A function body that assigns to its own Annex-B name captures the mutable
+  // outer binding through a ref cell.  The closure must publish itself into
+  // that cell after construction; otherwise its first `f` read observes the
+  // null value captured while the box was being allocated.
+  if (closureType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+  const closureLocal = allocLocal(fctx, `__annexb_closure_${funcName}_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  fctx.body.push({ op: "local.tee", index: closureLocal });
+  fctx.body.push({ op: "local.get", index: fctx.localMap.get(funcName)! });
+  fctx.body.push({ op: "local.get", index: closureLocal });
+  fctx.body.push({ op: "struct.set", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.get", index: closureLocal });
+  return { kind: "externref" };
 }
 
 /**
@@ -318,6 +377,10 @@ export function compileStatement(ctx: CodegenContext, fctx: FunctionContext, stm
 
   try {
     ctx.irBodyRouteAuditSession?.recordFrame("compileStatement", fctx, stmt);
+    // (#4515) §13 `UpdateEmpty(…, undefined)`: `if` / `try` / `switch` / `with`
+    // and every loop start their completion value at `undefined` rather than
+    // inheriting the previous statement's. No-op outside an inline eval.
+    resetCompletionValueForStatement(ctx, fctx, stmt);
     compileStatementInner(ctx, fctx, stmt);
   } catch (e) {
     // Defensive: catch any unhandled crash in statement compilation
@@ -481,15 +544,14 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
       }
       const fnIdx = ctx.funcMap.get(funcName);
       if (outerLocal !== undefined && flagLocal !== undefined && fnIdx !== undefined) {
-        const closureType = emitCachedFuncClosureAccess(ctx, fctx, funcName, fnIdx);
+        const closureType = emitAnnexBFunctionClosure(ctx, fctx, stmt, funcName, fnIdx);
         if (closureType) {
           // Closure value is on the stack; widen to externref for the outer local.
           if (closureType.kind !== "externref") {
             fctx.body.push({ op: "extern.convert_any" });
           }
           fctx.body.push({ op: "local.set", index: outerLocal });
-          fctx.body.push({ op: "i32.const", value: 1 });
-          fctx.body.push({ op: "local.set", index: flagLocal });
+          emitLocalTdzInit(fctx, funcName);
         }
       }
       // The function body itself was already compiled during the hoist pre-pass;
@@ -537,7 +599,7 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
       // through to today's wrong-but-valid behaviour instead.
       if (varLocal === undefined || fnIdx === undefined) return;
       if (getLocalType(fctx, varLocal)?.kind !== "externref") return;
-      const closureType = emitCachedFuncClosureAccess(ctx, fctx, funcName, fnIdx);
+      const closureType = emitAnnexBFunctionClosure(ctx, fctx, stmt, funcName, fnIdx);
       if (!closureType) return;
       if (closureType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
       fctx.body.push({ op: "local.set", index: varLocal });
@@ -565,7 +627,41 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
   // ClassDeclaration in statement position (e.g., inside for loops, if blocks,
   // switch cases, labeled statements, try/catch/finally, etc.)
   if (ts.isClassDeclaration(stmt)) {
-    compileNestedClassDeclaration(ctx, fctx, stmt);
+    // (#4618) A nested class whose name collided with a class in another
+    // scope was collected under a per-site synthetic identity (see
+    // collectClassesFromStatements). Compile it under that identity and bind
+    // the scoped class VALUE to a same-named LOCAL, exactly like
+    // `const Foo = class {…}` — locals outrank the name-keyed
+    // classObjectGlobals read, so `new Foo()` / `createElement(Foo)` in this
+    // scope resolve to THIS declaration, not the first same-named one.
+    const scopedSynthetic = ctx.anonClassExprNames.get(stmt);
+    compileNestedClassDeclaration(ctx, fctx, stmt, scopedSynthetic);
+    // Only synthetic nested duplicates need a local singleton binding.  The
+    // ordinary class-declaration path intentionally keeps its historical
+    // module/class binding: eagerly materialising every class object here
+    // changes module-init ordering and can hand the host a half-initialised
+    // prototype (the Test262 class-elements cluster exposed this as
+    // "Cannot convert undefined or null to object").
+    const scopedName = scopedSynthetic;
+    if (scopedName !== undefined && stmt.name !== undefined) {
+      const bindName = stmt.name.text;
+      // Bind the SINGLETON class object (registered with the #4618 host
+      // [[Construct]] bridge — parent chain, mirror crossing), not the
+      // legacy ctor-value closure, so the scoped class behaves identically
+      // to a non-colliding declaration.
+      let vt: import("../ir/types.js").ValType | null = null;
+      if (emitLazyClassObjectGet(ctx, fctx, scopedName)) {
+        vt = { kind: "externref" };
+      } else {
+        vt = compileClassExpression(ctx, fctx, stmt as unknown as ts.ClassExpression);
+      }
+      if (vt !== null) {
+        if (vt.kind !== "externref") coerceType(ctx, fctx, vt, { kind: "externref" });
+        let localIdx = fctx.localMap.get(bindName);
+        if (localIdx === undefined) localIdx = allocLocal(fctx, bindName, { kind: "externref" });
+        fctx.body.push({ op: "local.set", index: localIdx });
+      }
+    }
     return;
   }
 

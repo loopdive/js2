@@ -20,6 +20,7 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { FUNCTION_FROM_PROTO, PROTO_FROM_FUNCTION } from "./proto-function-value.js"; // (#4637 A1)
 
 /** Everything the prototype-chain block reads from the `ensureObjectRuntime` scope. */
 export interface ObjectPrototypeHelperState {
@@ -41,6 +42,135 @@ export interface ObjectPrototypeHelperState {
   OBJ_FLAG_NONEXTENSIBLE: number;
 }
 
+/**
+ * (#4643) An APPROVED function-constructor instance is a `__fnctor_<F>` STRUCT,
+ * not an `$Object`, so it has no `$proto` FIELD at all — its `[[Prototype]]` is
+ * F's per-fnctor prototype global, reached through the `__fnctor_proto_start`
+ * ladder that `__extern_get` already uses for inherited reads.
+ *
+ * `__getPrototypeOf` and `__isPrototypeOf` both tested `$Object` and stopped, so
+ * `Object.getPrototypeOf(inst)` answered `null` and `proto.isPrototypeOf(inst)`
+ * answered `false` for EVERY such instance — measured 2026-08-23 for an
+ * OBJECT-valued prototype as well as a function-valued one, which is why fixing
+ * the callable-into-`$proto` write alone does not move those two rows.
+ *
+ * Both arms below are emitted only when the ladder was reserved (it is, in
+ * `ensureObjectRuntime`, BEFORE `buildObjectPrototypeHelpers` — so the index is
+ * stable and the body is filled at finalize by
+ * `fillFnctorPrototypeDispatchArms`). A module with no approved fnctor reserves
+ * nothing, the `funcMap` lookup answers `undefined`, and not one instruction
+ * changes.
+ */
+const FNCTOR_PROTO_START = "__fnctor_proto_start";
+
+/**
+ * `__getPrototypeOf`'s non-`$Object` arm: answer F's prototype object when the
+ * receiver is a fnctor instance. Only when the ladder answers NON-NULL — an
+ * unrecognised receiver falls through to the caller's null/boundary answer, so
+ * this widens a MISSING answer and never replaces a present one. `devirtualize`
+ * is the same reverse map the `$Object` arm uses, so a function-valued prototype
+ * reports the FUNCTION and never the internal bag.
+ *
+ * `protoSlot` is a scratch externref local appended to the helper's list.
+ */
+function fnctorGetPrototypeArm(ctx: CodegenContext, protoSlot: number, devirtualize: Instr[]): Instr[] {
+  const startIdx = ctx.funcMap.get(FNCTOR_PROTO_START);
+  if (startIdx === undefined) return [];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: startIdx },
+    { op: "local.tee", index: protoSlot },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "local.get", index: protoSlot }, ...devirtualize, { op: "return" }],
+    },
+  ];
+}
+
+/**
+ * `__isPrototypeOf`'s seed for a fnctor-instance CANDIDATE, emitted after `cur`
+ * has been computed and before the walk.
+ *
+ * `cur` is null here (the candidate is not an `$Object`) and the walk would
+ * answer 0 for every such candidate. Its first `[[Prototype]]` link is the
+ * ladder's answer; seed `cur` with it and compare THAT link explicitly, because
+ * the loop steps to `cur.$proto` before its first comparison — which is right
+ * for an `$Object` candidate, since §20.1.3.3 asks whether O is in V's prototype
+ * CHAIN and V itself must never match. The loop then continues from the seeded
+ * link unchanged.
+ *
+ * Tests before it casts: the ladder answers whatever the S2 store holds. That
+ * store is canonicalized at the WRITE (`expressions/fnctor-prototype.ts`), but a
+ * value the proto-view map cannot canonicalize (`F.prototype = 5`) must make
+ * this DECLINE, never trap.
+ */
+function fnctorIsPrototypeOfSeed(
+  ctx: CodegenContext,
+  objectTypeIdx: number,
+  curSlot: number,
+  targetSlot: number,
+  protoSlot: number,
+): Instr[] {
+  const startIdx = ctx.funcMap.get(FNCTOR_PROTO_START);
+  if (startIdx === undefined) return [];
+  const compareFirstLink: Instr[] = [
+    { op: "local.get", index: protoSlot },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: objectTypeIdx },
+    { op: "local.tee", index: curSlot },
+    { op: "local.get", index: targetSlot },
+    { op: "ref.eq" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
+  ];
+  const seedFromLadder: Instr[] = [
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: startIdx },
+    { op: "local.tee", index: protoSlot },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: protoSlot },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: objectTypeIdx },
+        { op: "if", blockType: { kind: "empty" }, then: compareFirstLink },
+      ],
+    },
+  ];
+  return [
+    { op: "local.get", index: curSlot },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: seedFromLadder },
+  ];
+}
+
+/** The scratch local both arms above use, appended so existing indices are untouched. */
+function fnctorProtoLocal(ctx: CodegenContext): { name: string; type: ValType }[] {
+  return ctx.funcMap.get(FNCTOR_PROTO_START) === undefined
+    ? []
+    : [{ name: "__fnctorProto", type: { kind: "externref" } }];
+}
+
+/**
+ * `__getPrototypeOf`'s LAST resort, unchanged from before #4643 and extracted
+ * verbatim: the dynamic-boundary import when one exists, else the host-free
+ * `null`. A FACTORY, like the three in `native-dynamic-instanceof.ts` — a shared
+ * `Instr` object would be double-remapped by the finalize index walks.
+ */
+function boundaryGetPrototypeArm(boundaryIdx: number | undefined): Instr[] {
+  return boundaryIdx === undefined
+    ? [{ op: "ref.null.extern" }]
+    : [
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: boundaryIdx },
+      ];
+}
+
 /** Register the prototype-chain native helpers. Called once, in place, from `ensureObjectRuntime`. */
 export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectPrototypeHelperState): void {
   const {
@@ -55,6 +185,24 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
     INITIAL_CAP,
     OBJ_FLAG_NONEXTENSIBLE,
   } = s;
+
+  // (#4637 A1) The bag↔callable proto-view map, reserved just above in
+  // `ensureObjectRuntime`. `undefined` in gc/host (nothing reserved) — every
+  // consult below then emits its exact pre-#4637 instructions, so those lanes
+  // stay byte-identical by construction.
+  const protoFromFunctionIdx = ctx.funcMap.get(PROTO_FROM_FUNCTION);
+  const functionFromProtoIdx = ctx.funcMap.get(FUNCTION_FROM_PROTO);
+  /** Map a callable in a `[[Prototype]]` POSITION to the `$Object` view of it. */
+  const canonicalizeProtoArg = (paramIdx: number): Instr[] =>
+    protoFromFunctionIdx === undefined
+      ? [{ op: "local.get", index: paramIdx }]
+      : [
+          { op: "local.get", index: paramIdx },
+          { op: "call", funcIdx: protoFromFunctionIdx },
+        ];
+  /** Map a proto-view `$Object` back to the callable it stands for, on the way OUT. */
+  const devirtualizeProtoResult = (): Instr[] =>
+    functionFromProtoIdx === undefined ? [] : [{ op: "call", funcIdx: functionFromProtoIdx }];
 
   // ── Prototype-chain ops (#1472 Phase C) ──────────────────────────────────
   //
@@ -80,21 +228,24 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
           { op: "ref.cast", typeIdx: objectTypeIdx },
           { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
           { op: "extern.convert_any" },
+          // (#4637 A1) `$proto` may be the `$Object` PROTO-VIEW of a function
+          // value (see `proto-function-value.ts`). Answering the view itself
+          // would publish an object the program can never name — a WRONG answer
+          // where the base has a merely missing one — so map it back to the
+          // callable. A non-registered `$Object` maps to itself.
+          ...devirtualizeProtoResult(),
         ],
-        else:
-          boundaryObjectGetPrototypeIdx === undefined
-            ? [{ op: "ref.null.extern" }]
-            : [
-                { op: "local.get", index: 0 },
-                { op: "call", funcIdx: boundaryObjectGetPrototypeIdx },
-              ],
+        else: [
+          ...fnctorGetPrototypeArm(ctx, 2, devirtualizeProtoResult()), // (#4643) scratch local 2
+          ...boundaryGetPrototypeArm(boundaryObjectGetPrototypeIdx),
+        ],
       },
     ];
     registerNative(
       "__getPrototypeOf",
       [{ kind: "externref" }],
       [{ kind: "externref" }],
-      [{ name: "any", type: { kind: "anyref" } }],
+      [{ name: "any", type: { kind: "anyref" } }, ...fnctorProtoLocal(ctx)],
       body,
     );
   }
@@ -111,7 +262,10 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
       { op: "array.new", typeIdx: propMapTypeIdx },
       { op: "local.set", index: 2 },
       // proto = (any.convert_extern(arg) is $Object ? cast : null)
-      { op: "local.get", index: 0 },
+      // (#4637 A1) A CALLABLE argument is first mapped to its `$Object`
+      // proto-view, so `Object.create(f)` / `new F()` with `F.prototype = f`
+      // produce a walkable chain instead of storing null.
+      ...canonicalizeProtoArg(0),
       { op: "any.convert_extern" },
       { op: "local.tee", index: 1 },
       { op: "ref.test", typeIdx: objectTypeIdx },
@@ -213,7 +367,12 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         ],
       },
       // v = (proto is $Object ? cast : null) — non-$Object/null proto ⇒ null
-      { op: "local.get", index: 1 },
+      // (#4637 A1) …after mapping a CALLABLE `proto` to its `$Object` view, so
+      // `Object.setPrototypeOf(o, f)` builds the same walkable link
+      // `__object_create` does. The §10.1.2.1 checks below (SameValue, the
+      // extensibility refusal, the cycle walk) all run on the view, which is the
+      // object that will actually be in the chain.
+      ...canonicalizeProtoArg(1),
       { op: "any.convert_extern" },
       { op: "local.tee", index: 5 },
       { op: "ref.test", typeIdx: objectTypeIdx },
@@ -319,7 +478,12 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
   {
     const body: Instr[] = [
       // target = (obj is $Object ? cast : null); if null → 0
-      { op: "local.get", index: 0 },
+      // (#4637 A1) A CALLABLE receiver — `P.isPrototypeOf(m)` — is first mapped
+      // to the `$Object` proto-view that `__object_create` put in `m`'s chain,
+      // so the `ref.eq` below compares the same identity from both ends.
+      // Deliberately only the RECEIVER: `x.isPrototypeOf(f)` walks a function's
+      // OWN chain, which this issue does not model, and keeps today's `0`.
+      ...canonicalizeProtoArg(0),
       { op: "any.convert_extern" },
       { op: "local.tee", index: 4 },
       { op: "ref.test", typeIdx: objectTypeIdx },
@@ -347,6 +511,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         else: [{ op: "ref.null", typeIdx: objectTypeIdx }],
       },
       { op: "local.set", index: 3 },
+      ...fnctorIsPrototypeOfSeed(ctx, objectTypeIdx, 3, 2, 5), // (#4643) cur=3, target=2, scratch=5
       // walk: cur = cur.$proto ; if cur == null → 0 ; if cur === target → 1
       {
         op: "block",
@@ -393,6 +558,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         { name: "target", type: objRefNull },
         { name: "cur", type: objRefNull },
         { name: "any", type: { kind: "anyref" } },
+        ...fnctorProtoLocal(ctx), // (#4643) local 5, appended: locals 2..4 keep their indices
       ],
       body,
     );

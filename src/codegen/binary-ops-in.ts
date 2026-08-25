@@ -10,6 +10,8 @@
  * change (prove-emit-identity IDENTICAL across gc/standalone/wasi).
  */
 import { ts } from "../ts-api.js";
+import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
+import { getArrTypeIdxFromVec } from "./registry/types.js"; // (#4491 T11)
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -29,7 +31,15 @@ import { coerceType, compileExpression, flushLateImportShifts } from "./shared.j
 import { inRhsIsExclusivelyPrimitive } from "./binary-ops.js";
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js"; // (#4484) reassigned-binding guard
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
-import { vecNamedKeyNeedsRuntime } from "./vec-named-key-presence.js"; // (#4062) array expando presence
+// (#4062 array bag / #4491 T9 Date+RegExp bag) a statically-known key may live in
+// a carrier bag the receiver's field list cannot see — route the folded `false`.
+import { carrierBagKeyNeedsRuntime } from "./builtin-instance-key-presence.js";
+// (#4491 T4) %Object.prototype%'s own names are `in` every ordinary object.
+import {
+  hasExplicitNullObjectPrototype,
+  inReceiverIsObjectShaped,
+  objectPrototypeInheritsInName,
+} from "./object-proto-name-in.js";
 
 /**
  * (#3714) `emitThrowTypeError` pushes directly onto `fctx.body`; to nest its
@@ -56,6 +66,12 @@ function publicPhysicalFieldNames(rightType: ts.Type, fields: FieldDef[]): strin
   return fields
     .map((field) => field.name)
     .filter((name): name is string => name !== undefined && publicPropertyNames.has(name));
+}
+
+/** Return true for an approved standalone fnctor instance struct. */
+function isFnctorInstanceWasm(ctx: CodegenContext, wasmType: ValType): boolean {
+  if (wasmType.kind !== "ref" && wasmType.kind !== "ref_null") return false;
+  return ctx.typeIdxToStructName.get(wasmType.typeIdx)?.startsWith("__fnctor_") ?? false;
 }
 
 /**
@@ -322,7 +338,12 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       // knows about both — the same typed→dynamic hand-off #4159 made for
       // element reads/writes. Route-inactive modules keep the inline compare
       // byte-for-byte.
-      if (overlayRouteActive(ctx)) {
+      // (#4491 T11) An f64 carrier can hold the ABSENCE marker at an in-bounds
+      // index, so `numIdx < length` is not the HasProperty answer there either.
+      // Same hand-off, restricted to the carrier that can actually hold one, so
+      // every other vec keeps the inline compare byte-for-byte.
+      const f64HoleRoute = f64HolesActive(ctx) && vecCarrierElementIsF64(ctx, vecTypeIdx);
+      if (overlayRouteActive(ctx) || f64HoleRoute) {
         const hasIdxFn = ensureLateImport(
           ctx,
           "__extern_has_idx",
@@ -387,7 +408,19 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // deleted keys).
     const growableReceiver =
       ctx.standalone && ts.isIdentifier(expr.right) && ctx.growableObjectLiteralVars.has(expr.right.text);
-    const has = !growableReceiver && (hasInStruct || tsTypeHasProperty);
+    // (#4491 wave-5 T4) §7.3.12 is prototype-inclusive and every ordinary
+    // object's chain ends at %Object.prototype%, but standalone's `$Object`
+    // chain ends at `null` (the priced `$Object.$proto` vs `$NativeProto`
+    // wall), so `"valueOf" in {}` folded FALSE while `typeof o.valueOf` was
+    // already `"function"`. Answer from the spec's fixed name set instead of
+    // the prototype object. Standalone-only so the js-host lane — where
+    // `__extern_has` already answers correctly — stays byte-identical.
+    // See `object-proto-name-in.ts`.
+    const inheritsFromObjectPrototype =
+      ctx.standalone &&
+      !hasExplicitNullObjectPrototype(ctx, expr.right) &&
+      objectPrototypeInheritsInName(staticKey, inReceiverIsObjectShaped(rightWasm.kind));
+    const has = inheritsFromObjectPrototype || (!growableReceiver && (hasInStruct || tsTypeHasProperty));
     // (#1444) When RHS is externref/anyref AND static analysis came up empty
     // (no struct field, no TS-typed prop), the answer is NOT reliably false
     // — the host object may carry dynamic keys (e.g. regex `result.groups`).
@@ -400,8 +433,37 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // the bag is invisible to both. `__extern_has`'s vec arm consults the #3251
     // overlay and the #3537 bag, so routing makes `in` agree with the read — and
     // only a folded `false` is routed, so no affirmative answer moves.
-    const vecNamedKeyRoute = !has && vecNamedKeyNeedsRuntime(ctx, rightWasm, staticKey, 0);
-    if (!has && (rightWasm.kind === "externref" || rightWasm.kind === "anyref" || vecNamedKeyRoute)) {
+    const vecNamedKeyRoute = !has && carrierBagKeyNeedsRuntime(ctx, rightWasm, staticKey, 0);
+    const fnctorProtoRoute = !has && ctx.standalone && isFnctorInstanceWasm(ctx, rightWasm);
+    // (#4515 wave-5) The SECOND half of the #4484 D guard above. That one
+    // stopped a reassigned binding's stale static type from producing a wrong
+    // THROW; the same staleness also produces a wrong ANSWER here, because
+    // `tsTypeHasProperty` is read off that same type:
+    //
+    //   var NUMBER = 0;
+    //   (NUMBER = Number, "MAX_VALUE") in NUMBER   // folded false, spec true
+    //
+    // TS widens `NUMBER` to `number | NumberConstructor` and a union property
+    // must exist on EVERY constituent, so `MAX_VALUE` is invisible and the fold
+    // answers `false` for an RHS that holds the real `Number` constructor.
+    // `__extern_has` decides from the VALUE and already answers this correctly
+    // — measured on this branch, `(function (x, k) { return k in x; })(Number,
+    // "MAX_VALUE")` is `true` and `…"nope"` is `false`, both through this same
+    // helper. Routing the site there replaces evidence that is stale by
+    // construction with evidence that is not (`S11.8.7_A2.4_T1`).
+    //
+    // Deliberately narrow: ONLY a bare-identifier RHS the file writes to
+    // somewhere, which is exactly the population whose declared type is not a
+    // fact about this site. Every other receiver keeps its fold byte-for-byte.
+    const reassignedReceiverRoute = rhsIsReassignedBinding && rightWasm.kind !== "ref" && rightWasm.kind !== "ref_null";
+    if (
+      !has &&
+      (rightWasm.kind === "externref" ||
+        rightWasm.kind === "anyref" ||
+        vecNamedKeyRoute ||
+        reassignedReceiverRoute ||
+        fnctorProtoRoute)
+    ) {
       const hasIdx = ensureLateImport(
         ctx,
         "__extern_has",
@@ -560,4 +622,13 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     fctx.body.push({ op: "i32.const", value: 0 });
     return { kind: "i32" };
   }
+}
+
+/** (#4491 T11) True iff the `__vec_*` struct at `vecTypeIdx` stores f64 elements. */
+function vecCarrierElementIsF64(ctx: CodegenContext, vecTypeIdx: number): boolean {
+  if (vecTypeIdx < 0) return false;
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+  if (arrTypeIdx < 0) return false;
+  const arrDef = ctx.mod.types[arrTypeIdx];
+  return arrDef?.kind === "array" && (arrDef.element as ValType).kind === "f64";
 }

@@ -24,12 +24,13 @@ import {
   prepareHoistedFunctionBindings,
   skipUnobservedHoistedCapture,
 } from "../function-declaration-observation.js";
+import { getOrRegisterArgumentsVecType, reserveArgumentsLengthBrand } from "../arguments-length-brand.js";
 import { recordLiftedCaptureSlots } from "../closures/capture-source-slot.js";
 import { collectOwnerBindingsWrittenAfterDeclaration } from "../closures/declaration-write-analysis.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { recordNestedFunctionBody } from "../context/body-route-audit.js";
 import { reportError } from "../context/errors.js";
-import { allocLocal } from "../context/locals.js";
+import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "../context/types.js";
 import { installFrameTrap } from "../frame-trap.js";
 import {
@@ -39,6 +40,7 @@ import {
   type NativeGeneratorCaptureParam,
 } from "../generators-native.js";
 import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "../expressions/helpers.js";
+import { emitRegisterDynamicClassParent } from "../expressions/extern.js";
 import { isForeignEvalNode } from "../expressions/eval-source.js";
 import {
   collectClassDeclaration,
@@ -51,8 +53,9 @@ import {
   resolveWasmType,
 } from "../index.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "../async-frame.js"; // (#2865) nested async-gen producer
-import { ensureExnTag, nextModuleGlobalIdx } from "../registry/imports.js";
+import { ensureExnTag, localGlobalIdx, nextModuleGlobalIdx } from "../registry/imports.js";
 import { buildTargetTaggedTry } from "../../ir/try-table.js";
+import { canonicalUndefinedExternInstrs } from "../any-helpers.js"; // (#4642) fall-off completion value
 import {
   addFuncType,
   getArrTypeIdxFromVec,
@@ -67,6 +70,7 @@ import {
   flushLateImportShifts,
   registerEmitArgumentsObject,
   registerHoistFunctionDeclarations,
+  valTypesMatch,
   VOID_RESULT,
 } from "../shared.js";
 import { definedFuncAt, mintDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
@@ -199,6 +203,13 @@ export function compileNestedClassDeclaration(
     return;
   }
 
+  // (#4618) Dynamic `extends <value>` parent (react's
+  // `class Foo extends React.Component`): evaluate the heritage expression
+  // here — the spec's ClassDefinitionEvaluation point, where its bindings are
+  // in scope — and register the live parent with the runtime so the host-side
+  // constructible class mirror can chain prototype misses through it.
+  emitRegisterDynamicClassParent(ctx, fctx, decl, className);
+
   const isDeferred = ctx.deferredClassBodies.has(className);
   // Skip if already collected AND not deferred (already fully compiled)
   if (ctx.structMap.has(className) && !isDeferred) {
@@ -206,6 +217,48 @@ export function compileNestedClassDeclaration(
     if (ctx.classThrowsOnEval.has(className)) {
       emitThrowTypeError(ctx, fctx, "Classes may not have a static property named 'prototype'");
       return;
+    }
+    // (#4618) A RE-compile of the enclosing body reaches this early return
+    // with the method bodies already compiled — permanently bound to the
+    // FIRST pass's promoted capture globals. Module-init compiles twice
+    // (discovery + final emission) and `capturedGlobals` is CLEARED between
+    // passes, so re-running the promotion here would mint FRESH globals the
+    // methods never see (frame reads and method writes split stores —
+    // react's `componentDidMount(){ test = this }` stayed null). Re-bind the
+    // recorded pass-1 globals instead, sync each from this frame's fresh
+    // local, and route the frame through them.
+    // Keyed by the class DECLARATION NODE, not className: `structMap` is
+    // name-keyed, so a SECOND same-named class in a different function (the
+    // test262 TemporalHelpers `class MySubclass extends construct` in a dozen
+    // helper methods) also lands on this early return — and a name-keyed
+    // record then re-bound ANOTHER frame's globals and synced this frame's
+    // local into them, mismatching types (`global.set expected f64` wasm
+    // validation failures across 216 Temporal files, PR #4728 merge_group).
+    // The node key makes the rebind fire only for the true pass-2 re-compile
+    // of the SAME declaration.
+    const recorded = ctx.classMemberCaptureGlobals?.get(decl);
+    if (recorded !== undefined) {
+      for (const [name, entry] of recorded) {
+        ctx.capturedGlobals.set(name, entry.globalIdx);
+        if (entry.widened) ctx.capturedGlobalsWidened.add(name);
+        else ctx.capturedGlobalsWidened.delete(name);
+        (ctx.capturedGlobalsOwner ??= new Map()).set(name, fctx);
+        const localIdx = fctx.localMap.get(name);
+        if (localIdx !== undefined) {
+          // Sync only when the fresh local's type matches the recorded
+          // global's — a mismatch means this frame's binding is not the one
+          // the record promoted, and an unchecked global.set fails wasm
+          // validation for the WHOLE module.
+          const globalDef = ctx.mod.globals[localGlobalIdx(ctx, entry.globalIdx)];
+          const localType = getLocalType(fctx, localIdx);
+          if (globalDef !== undefined && localType !== undefined && valTypesMatch(globalDef.type, localType)) {
+            fctx.body.push({ op: "local.get", index: localIdx });
+            fctx.body.push({ op: "global.set", index: entry.globalIdx });
+            fctx.localMap.delete(name);
+            (fctx.promotedCaptureNames ??= new Set()).add(name);
+          }
+        }
+      }
     }
     emitPreparedAccessorComputedNameEffects(ctx, fctx, decl);
     return;
@@ -231,19 +284,26 @@ export function compileNestedClassDeclaration(
     // variables from the enclosing function scope. Also scan parameter-default
     // initializers so e.g. `method([x] = iter)` can resolve `iter` against the
     // enclosing function scope (#1161).
+    const promotedRecord = new Map<string, { globalIdx: number; widened: boolean }>();
     for (const member of decl.members) {
       if (ts.isMethodDeclaration(member) && member.body) {
         const paramInits = member.parameters.map((p) => p.initializer).filter((e): e is ts.Expression => !!e);
-        promoteAccessorCapturesToGlobals(ctx, fctx, member.body, paramInits);
+        promoteAccessorCapturesToGlobals(ctx, fctx, member.body, paramInits, promotedRecord);
       }
       if (ts.isConstructorDeclaration(member) && member.body) {
         const paramInits = member.parameters.map((p) => p.initializer).filter((e): e is ts.Expression => !!e);
-        promoteAccessorCapturesToGlobals(ctx, fctx, member.body, paramInits);
+        promoteAccessorCapturesToGlobals(ctx, fctx, member.body, paramInits, promotedRecord);
       }
       if ((ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) && member.body) {
         const paramInits = member.parameters.map((p) => p.initializer).filter((e): e is ts.Expression => !!e);
-        promoteAccessorCapturesToGlobals(ctx, fctx, member.body, paramInits);
+        promoteAccessorCapturesToGlobals(ctx, fctx, member.body, paramInits, promotedRecord);
       }
+    }
+    // (#4618) Names value-promoted from THIS frame for the member bodies:
+    // record them so a later re-compile pass (module-init pass 2 clears
+    // capturedGlobals) re-binds the SAME globals the compiled methods use.
+    if (promotedRecord.size > 0) {
+      (ctx.classMemberCaptureGlobals ??= new Map()).set(decl, promotedRecord);
     }
 
     // Build funcByName map for compileClassBodies
@@ -791,6 +851,14 @@ function compileNestedFunctionDeclarationInScope(
     // which keeps lexical `this` capture — this branch only handles
     // `FunctionDeclaration`s.)
     if (name === "this" || name === "super") continue;
+    // (#4618) A sibling CLASS declaration resolves through the global class
+    // machinery (structMap/classSet + the lazy class-object singleton) inside
+    // the lifted body, exactly like a sibling function declaration. Capturing
+    // it as a VALUE reads the enclosing body's lazily-materialized
+    // class-object local — null unless something else already forced the
+    // singleton — so `new Child()` inside the nested fn constructed from
+    // null (react's ChildComponent family). Skip the value capture.
+    if (ctx.classSet.has(name) && isSiblingClassDeclarationName(stmt, name)) continue;
     const localIdx = fctx.localMap.get(name);
     if (localIdx === undefined) continue;
     // A real declaring-frame local wins over a same-named module funcMap entry.
@@ -1124,7 +1192,7 @@ function compileNestedFunctionDeclarationInScope(
       for (const s of stmt.body.statements) {
         compileStatement(ctx, liftedFctx, s);
       }
-      appendDefaultReturn(liftedFctx, returnType);
+      appendDefaultReturn(ctx, liftedFctx, returnType);
     }
     if (savedFunc) ctx.funcStack.pop();
     if (savedFunc) ctx.parentBodiesStack.pop();
@@ -1598,7 +1666,7 @@ function compileNestedFunctionDeclarationInScope(
       for (const s of stmt.body.statements) {
         compileStatement(ctx, liftedFctx, s);
       }
-      appendDefaultReturn(liftedFctx, returnType);
+      appendDefaultReturn(ctx, liftedFctx, returnType);
     }
     if (savedFunc) ctx.funcStack.pop();
     if (savedFunc) ctx.parentBodiesStack.pop();
@@ -1724,45 +1792,6 @@ function isAnnexBValueReference(id: ts.Identifier): boolean {
 }
 
 /**
- * (#2552) Is the block-fn `name` REASSIGNED (an assignment write target) anywhere
- * inside its declaring `block`? — e.g. `{ function f() { f = 123; } }`. When it
- * is, the block-local function binding and the outer var binding hold *distinct*
- * values (per §B.3.3: the outer binding captures the function value at block
- * entry and is independent of a later in-block reassignment of the block-local
- * `f`). The flag-gated single-slot outer-binding machinery cannot model that
- * split (it shares one `localMap` slot for both), so such a shape is excluded
- * from the outer-binding allocation and reverts to the pre-Phase-2 path — which
- * already passes the `*-block-scoping` test262 files. Only assignment WRITES
- * count (not reads); the scan stays within the declaring block (nested function
- * scopes are skipped — they have their own bindings).
- */
-function annexBNameReassignedInRange(name: string, declaringRange: ts.Node): boolean {
-  let reassigned = false;
-  const visit = (node: ts.Node): void => {
-    if (reassigned) return;
-    // Descend through the WHOLE block subtree, INCLUDING the block-fn's own body:
-    // the canonical mutable-binding shape is `{ function f() { f = 123; } }`, where
-    // the reassignment lives inside `f`'s body and still mutates the binding (the
-    // block-local `f` and the outer var binding then diverge). A same-named decl in
-    // a *deeper* nested scope would shadow, but conflating it here only makes the
-    // gate MORE conservative (skip the outer binding → pre-Phase-2 path), never
-    // less correct, so we accept the slight over-approximation for soundness.
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(node.left) &&
-      node.left.text === name
-    ) {
-      reassigned = true;
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(declaringRange, visit);
-  return reassigned;
-}
-
-/**
  * (#2552) Does the enclosing Annex-B scope (the nearest function body / global
  * holding `block`) already declare a function-scoped `var name` or direct
  * `function name`? Per Annex B B.3.3 step 2 ("If instantiatedVarNames does not
@@ -1851,7 +1880,10 @@ function annexBBlockNestedEligible(fnDecl: ts.FunctionDeclaration): ts.Node | nu
   const scope = enclosingVarScope(fnDecl);
   if (scope && hasInterveningLexicalBinder(fnDecl.parent, name, scope)) return null;
   if (!annexBNameObservedOutsideRange(name, declaringRange)) return null; // (#2552) not observed → no binding
-  if (annexBNameReassignedInRange(name, declaringRange)) return null; // (#2552) mutable split → pre-Phase-2 path
+  // The block function's own lexical binding may be reassigned by its body;
+  // that does not mutate the Annex-B outer var binding. Keep the declaration
+  // on the TDZ/closure path so the outer value remains callable after the
+  // block's function activation changes its self binding.
   if (annexBSameNameVarOrFunctionInScope(name, declaringRange)) return null; // (#2552) existing F → use it
   return declaringRange;
 }
@@ -2115,6 +2147,31 @@ export function hoistFunctionDeclarations(
 ): void {
   const isTopLevelHoist = _eagerBoxFuncNames === undefined;
   const eagerBoxFuncNames = _eagerBoxFuncNames ?? new Set<string>();
+  // (#4618) Pre-collect sibling CLASS declarations before compiling any
+  // hoisted function body. A hoisted fn routinely references a sibling class
+  // declared LATER in the same statement list (react's ParentComponent →
+  // ChildComponent); in the plain function-body lane the collection phase has
+  // already registered such classes, but a CLOSURE/callback/method body's
+  // classes were only collected when their statement executed — AFTER the
+  // hoist — so the fn body compiled `new Child()` through the graceful-null
+  // identifier fallback and constructed from null. collectClassDeclaration is
+  // guarded by structMap membership, so plain-lane double collection is a
+  // no-op.
+  if (isTopLevelHoist) {
+    for (const stmt of stmts) {
+      if (ts.isClassDeclaration(stmt) && stmt.name && !ctx.structMap.has(stmt.name.text)) {
+        try {
+          collectClassDeclaration(ctx, stmt);
+          // Bodies are NOT compiled here — mark deferred so the statement-
+          // position compileNestedClassDeclaration still fills ctor/method
+          // bodies (its structMap-membership early-return honors this flag).
+          ctx.deferredClassBodies.add(stmt.name.text);
+        } catch {
+          /* leave the statement-position compile to surface any real error */
+        }
+      }
+    }
+  }
   const existingDirectFuncNames = prepareHoistedFunctionBindings(ctx, fctx, stmts, _existingDirectFuncNames);
   // (#2068/#4013) Phase 0: reserve a correctly-typed bodyless funcMap slot for
   // every direct-sibling function BEFORE compiling any body. Without this a
@@ -2562,14 +2619,28 @@ export function emitDefaultParamInit(
   }
 }
 
-/** Append a default return value if the function body doesn't end with a return */
-function appendDefaultReturn(fctx: FunctionContext, returnType: ValType | null): void {
+/**
+ * Append a default return value if the function body doesn't end with a return.
+ *
+ * (#4642) The `externref` arm emits the CANONICAL `undefined`: falling off the
+ * end completes with `undefined`, and a bare `ref.null.extern` IS JS `null`
+ * under the standalone value model (#2864), so every lifted function that fell
+ * off its end handed the caller `null` — measured via `Function("")()`, whose
+ * constant body #2924 synthesizes into a lifted declaration that lands here.
+ * The top-level tail in `function-body.ts` already routed through
+ * `emitUndefined`; this one was the straggler.
+ *
+ * `canonicalUndefinedExternInstrs` and NOT `emitUndefined`: it is a READ-ONLY
+ * funcMap lookup, so it cannot register a late import mid-body and shift
+ * funcidxs under the lifted body's caller.
+ */
+function appendDefaultReturn(ctx: CodegenContext, fctx: FunctionContext, returnType: ValType | null): void {
   if (!returnType) return;
   const lastInstr = fctx.body[fctx.body.length - 1];
   if (lastInstr && lastInstr.op === "return") return;
   if (returnType.kind === "f64") fctx.body.push({ op: "f64.const", value: 0 });
   else if (returnType.kind === "i32") fctx.body.push({ op: "i32.const", value: 0 });
-  else if (returnType.kind === "externref") fctx.body.push({ op: "ref.null.extern" });
+  else if (returnType.kind === "externref") fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
 }
 
 /**
@@ -3055,6 +3126,8 @@ export function emitArgumentsVecBody(
 ): void {
   const numArgs = paramTypes.length;
   const { vecTypeIdx: vti, arrTypeIdx: ati, argsLocalIdx: argsLocal, arrTmpIdx: arrTmp } = locals;
+  const argumentsVecTypeIdx = registerWithHost && ctx.standalone ? getOrRegisterArgumentsVecType(ctx, vti, ati) : vti;
+  if (argumentsVecTypeIdx !== vti) reserveArgumentsLengthBrand(ctx);
   // (#2743 a) Register this arguments vec with the host so its `[[Prototype]]`
   // resolves to %Object.prototype% and `.constructor`/`hasOwnProperty` behave
   // like an ordinary Object (§10.4.4). This is a NEW host import; adding it
@@ -3067,9 +3140,10 @@ export function emitArgumentsVecBody(
     flushLateImportShifts(ctx, fctx);
   }
 
-  const { globalIdx: extrasGlobalIdx } = ensureExtrasArgvGlobal(ctx);
+  const { globalIdx: extrasGlobalIdx, vecTypeIdx: extrasVecTypeIdx } = ensureExtrasArgvGlobal(ctx);
   const argcGlobalIdx = ensureArgcGlobal(ctx);
-  const extrasVecType: ValType = { kind: "ref_null", typeIdx: vti };
+  // Keep extras at the canonical parent type; materialize the branded child below.
+  const extrasVecType: ValType = { kind: "ref_null", typeIdx: extrasVecTypeIdx };
   const extrasLocal = allocLocal(fctx, "__extras_argv_local", extrasVecType);
   const extrasLenLocal = allocLocal(fctx, "__extras_len", { kind: "i32" });
   const totalLenLocal = allocLocal(fctx, "__args_total_len", { kind: "i32" });
@@ -3105,7 +3179,7 @@ export function emitArgumentsVecBody(
   // don't see stale data.
   fctx.body.push({ op: "global.get", index: extrasGlobalIdx });
   fctx.body.push({ op: "local.set", index: extrasLocal });
-  fctx.body.push({ op: "ref.null", typeIdx: vti });
+  fctx.body.push({ op: "ref.null", typeIdx: extrasVecTypeIdx });
   fctx.body.push({ op: "global.set", index: extrasGlobalIdx });
 
   // extrasLen = extrasLocal != null ? extrasLocal.length : 0
@@ -3118,7 +3192,7 @@ export function emitArgumentsVecBody(
     else: [
       { op: "local.get", index: extrasLocal },
       { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: vti, fieldIdx: 0 },
+      { op: "struct.get", typeIdx: extrasVecTypeIdx, fieldIdx: 0 },
     ],
   });
   fctx.body.push({ op: "local.set", index: extrasLenLocal });
@@ -3134,6 +3208,7 @@ export function emitArgumentsVecBody(
     paramOffset,
     numArgs,
     vecTypeIdx: vti,
+    argumentsVecTypeIdx,
     arrTypeIdx: ati,
     argsLocalIdx: argsLocal,
     arrTmpIdx: arrTmp,
@@ -3152,6 +3227,9 @@ export function emitArgumentsVecBody(
     fctx.body.push({ op: "extern.convert_any" });
     fctx.body.push({ op: "call", funcIdx: registerArgsIdx });
   }
+
+  // Standalone arguments identity is carried by the concrete WasmGC subtype
+  // constructed above; no global overlay-table registration is required.
 }
 
 /**
@@ -3170,8 +3248,7 @@ export function emitArgumentsObject(
   unmapped = false,
 ): void {
   const numArgs = paramTypes.length;
-  const elemType: ValType = { kind: "externref" };
-  const vti = getOrRegisterVecType(ctx, "externref", elemType);
+  const vti = getOrRegisterVecType(ctx, "arguments");
   const ati = getArrTypeIdxFromVec(ctx, vti);
   const vecRef: ValType = { kind: "ref", typeIdx: vti };
   const argsLocal = allocLocal(fctx, "arguments", vecRef);
@@ -3213,3 +3290,15 @@ export function emitArgumentsObject(
 // importing statements/nested-declarations.ts directly (cycle prevention).
 registerHoistFunctionDeclarations(hoistFunctionDeclarations);
 registerEmitArgumentsObject(emitArgumentsObject);
+
+/** (#4618) Is `name` declared as a sibling class DECLARATION in the nested
+ * fn-decl's own hoist scope (the statement list containing the fn)? */
+function isSiblingClassDeclarationName(stmt: ts.FunctionDeclaration, name: string): boolean {
+  const parent = stmt.parent;
+  const stmts = ts.isBlock(parent) || ts.isSourceFile(parent) ? parent.statements : undefined;
+  if (stmts === undefined) return false;
+  for (const sibling of stmts) {
+    if (ts.isClassDeclaration(sibling) && sibling.name?.text === name) return true;
+  }
+  return false;
+}

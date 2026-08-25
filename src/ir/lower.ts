@@ -51,6 +51,7 @@ import type {
   IrClassLowering,
   IrClosureLowering,
   IrDynamicLowering,
+  IrFnctorLowering,
   IrObjectStructLowering,
   IrRefCellLowering,
   IrUnionLowering,
@@ -102,6 +103,7 @@ export type {
   IrClassLowering,
   IrClosureLowering,
   IrDynamicLowering,
+  IrFnctorLowering,
   IrObjectStructLowering,
   IrRefCellLowering,
   IrUnionLowering,
@@ -188,6 +190,8 @@ export interface IrLowerResolver {
    * collection pass — that's a selector bug.
    */
   resolveClass?(shape: IrClassShape): IrClassLowering | null;
+  /** Resolve one source/unit-qualified fnctor against finalized ABI state. */
+  resolveFnctor?(shape: import("./fnctor-abi.js").IrFnctorShape): IrFnctorLowering | null;
   /**
    * Slice 6 (#1169e): resolve a vec struct given its top-level Wasm
    * ValType. The IR carries the vec's value as a `ref`/`ref_null` to a
@@ -275,6 +279,8 @@ export interface IrLowerResolver {
   ): readonly Instr[];
   /** `[call concat]` (host) or `[call __str_concat]` (native). */
   emitStringConcat?(alloc?: AllocSiteId, mode?: IrStringConcatMode, provider?: IrFuncRef): readonly Instr[];
+  /** Full-semantics `(string, f64) -> string` repeat provider call. */
+  emitStringRepeat?(alloc?: AllocSiteId, inputEncoding?: IrStringEncoding, provider?: IrFuncRef): readonly Instr[];
   /** `[call equals]` (host) or `[call __str_equals]` (native). */
   emitStringEquals?(provider?: IrFuncRef): readonly Instr[];
   /**
@@ -477,7 +483,7 @@ export function lowerIrFunctionBody<S, Slot>(
       `ir/lower: backend contract mismatch for ${func.name}: emitter=${emitter.backend}, type-converter=${typeConverter.backend}`,
     );
   }
-  const legalityErrors = verifyIrBackendLegality(func, emitter.backend);
+  const legalityErrors = verifyIrBackendLegality(func, emitter.backend, resolver);
   if (legalityErrors.length > 0) {
     const shown = legalityErrors.slice(0, 3).map((err) => err.message);
     throw new IrInvariantError(
@@ -1371,6 +1377,52 @@ export function lowerIrFunctionBody<S, Slot>(
       case "const":
         emitter.emitConst(instr, func.name, out);
         return;
+      case "fnctor.new": {
+        const lowering = resolver.resolveFnctor?.(instr.shape);
+        if (!lowering || lowering.resultIsExternref || lowering.carrierType.kind === "externref") {
+          throw new Error(
+            `ir/lower: fnctor.new ${instr.shape.constructorName} has no exact struct ABI resolver (${func.name})`,
+          );
+        }
+        if (lowering.hiddenIdentity !== (instr.constructorIdentity !== null)) {
+          throw new Error(`ir/lower: fnctor.new hidden identity disagrees with resolved ABI (${func.name})`);
+        }
+        for (const value of instr.captureArgs) emitValue(value, out);
+        for (const value of instr.args) emitValue(value, out);
+        if (instr.constructorIdentity !== null) emitValue(instr.constructorIdentity, out);
+        if (emitter.backend !== "wasmgc") {
+          throw new Error(
+            `ir/lower: fnctor.new backend ${emitter.backend} has no representation contract (${func.name})`,
+          );
+        }
+        // The validated WasmGC fnctor constructor handle is lowered as a plain call;
+        // non-Wasm backends are rejected above.
+        emitter.pushRaw(out, { op: "call", funcIdx: resolver.resolveFunc(lowering.constructorFunc) }); // pushraw-ok(#3521): validated fnctor constructor call
+        return;
+      }
+      case "fnctor.get": {
+        const lowering = resolver.resolveFnctor?.(instr.shape);
+        if (!lowering || lowering.structTypeIdx === undefined || lowering.carrierType.kind === "externref") {
+          throw new Error(
+            `ir/lower: fnctor.get ${instr.shape.constructorName} has no exact struct ABI resolver (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        if (emitter.backend !== "wasmgc") {
+          throw new Error(
+            `ir/lower: fnctor.get backend ${emitter.backend} has no representation contract (${func.name})`,
+          );
+        }
+        // struct.get follows the validated nominal layout/field handle and
+        // WasmGC backend checks above.
+        // pushraw-ok(#3521): validated fnctor struct field read
+        emitter.pushRaw(out, {
+          op: "struct.get",
+          typeIdx: lowering.structTypeIdx,
+          fieldIdx: lowering.fieldIdx(instr.fieldName),
+        });
+        return;
+      }
       case "call": {
         const dateGetter =
           instr.target.binding.kind === "intrinsic"
@@ -1992,6 +2044,12 @@ export function lowerIrFunctionBody<S, Slot>(
         emitValue(instr.lhs, out);
         emitValue(instr.rhs, out);
         emitter.emitStringConcat(instr.alloc, instr.concatMode ?? "immutable", out, instr.provider);
+        return;
+      }
+      case "string.repeat": {
+        emitValue(instr.value, out);
+        emitValue(instr.count, out);
+        emitter.emitStringRepeat(instr.alloc, instr.encodingEvidence, out, instr.provider);
         return;
       }
       case "string.eq": {
@@ -3702,11 +3760,21 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
     case "string.concat":
     case "string.eq":
       return [instr.lhs, instr.rhs];
+    case "string.repeat":
+      return [instr.value, instr.count];
     case "string.len":
       return [instr.value];
     case "string.char_at":
     case "string.char_code_at":
       return [instr.value, instr.index];
+    case "fnctor.new":
+      return [
+        ...instr.captureArgs,
+        ...instr.args,
+        ...(instr.constructorIdentity === null ? [] : [instr.constructorIdentity]),
+      ];
+    case "fnctor.get":
+      return [instr.value];
     case "object.new":
       return instr.values;
     case "object.get":
@@ -4054,6 +4122,13 @@ export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcN
     }
     return dyn;
   }
+  if (t.kind === "fnctor") {
+    const lowering = resolver.resolveFnctor?.(t.shape);
+    if (!lowering || lowering.resultIsExternref || lowering.carrierType.kind === "externref") {
+      throw new Error(`ir/lower: fnctor ${t.shape.constructorName} has no exact struct ABI resolver (${funcName})`);
+    }
+    return lowering.carrierType;
+  }
   // boxed (refcell)
   // Slice 3 (#1169c): the resolver delegates to the legacy ref-cell
   // registry so legacy and IR ref cells share one WasmGC struct.
@@ -4097,6 +4172,7 @@ function describeIrTypeShallow(t: IrType): string {
   }
   if (t.kind === "class") return `class<${t.shape.className}>`;
   if (t.kind === "extern") return `extern<${t.className}>`;
+  if (t.kind === "fnctor") return `fnctor<${t.shape.constructorName}>`;
   // #1926 — union members / boxed inner are IrTypes; recurse.
   if (t.kind === "union") return `union<${t.members.map(describeIrTypeShallow).join(",")}>`;
   // #2949 — dynamic leaf; render the optional JsTag refinement when present.

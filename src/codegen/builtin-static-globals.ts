@@ -109,6 +109,27 @@ export const BUILTIN_CONSTRUCTOR_IDENTITY_NAMES: ReadonlySet<string> = new Set([
   "Number",
   "String",
   "Boolean",
+  // (#4621 family C) `Date`. #4485's residual named this exactly: the bare
+  // identifier read `null`, so `S10.2.3_A1.{1,2}_T3` failed on `Date === null`
+  // while every other constructor in those files already had a carrier
+  // (`Object`/`Array` namespace objects, the Error family, the #4223 wrappers,
+  // `RegExp` above, `Function` via #4442).
+  //
+  // Safe by the same argument the wrapper block above makes, re-verified for
+  // `Date` specifically: every SYNTACTIC use is intercepted BEFORE identifier
+  // resolution reaches this arm — `new Date(…)` / `Date(…)` at the
+  // construct/call site, `Date.now` / `Date.UTC` / `Date.parse` /
+  // `Date.prototype` at the property-access site, `x instanceof Date` at the
+  // instanceof lowering, `typeof Date` at the typeof fold. Only the BARE-VALUE
+  // read changes, and it changes from `ref.null.extern` — a value no conforming
+  // program can observe as the constructor — to the identity-stable carrier.
+  "Date",
+  // (#4490 wave 2) Int8Array is the first TypedArray constructor migrated to
+  // the real mutable `$Object` carrier.  Its own `length`/`name`/`prototype`
+  // properties therefore share the same state consulted by reads, `in`,
+  // delete, and gOPD; the remaining TypedArray constructors stay on the
+  // `$__ta_ctor` path until their own slices land.
+  "Int8Array",
 ]);
 
 export function isBuiltinConstructorIdentityName(name: string): boolean {

@@ -124,16 +124,62 @@ describe("#2949 slice 2 — selector claims move-only dynamic shapes", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Selector — what must NOT claim (precision: no claim-then-demote)
+// Selector precision — every dynamic-use shape reaches a CLEAN terminal state
 // ---------------------------------------------------------------------------
+//
+// (#4613) This section used to pin a literal rejection bucket per shape
+// (`param-type-not-resolvable` for all five). Three of those five pins rotted
+// on main as the dynamic producers landed — the shapes now CLAIM, and one
+// still-rejected shape moved to a more precise bucket:
+//
+//   truthiness of a dyn param   → claims  (#2949 S5.1 `dyn.truthy`)
+//   `a === b` on dyn params     → claims  (#2949 S5.2 `dyn.eq`)
+//   dyn arg → concrete param    → claims  (the param is call-site narrowed to
+//                                          the callee's concrete ABI, so it is
+//                                          not dynamic at all any more)
+//   `x()` on a dyn param        → rejects, now `call-resolution-unsupported`
+//                                 (the phase-1 call-target scan declines
+//                                  before the move-only scan is consulted)
+//
+// A literal-string pin cannot survive that, and blanket-updating it to
+// whatever main reports would launder a future regression. So the assertions
+// are re-grounded on the invariant they actually defend — the TERMINAL OUTCOME
+// CLASS, which is what #2138 (IR-first skipped-slot contract) and #1923
+// (post-claim metering) care about:
+//
+//   "claim"  → claimed pre-build AND builds with ZERO post-claim demotions
+//   "reject" → NOT claimed, recorded as a PRE-CLAIM fallback, in a bucket that
+//              is still an open capability gap (never laundered into a
+//              deferred/wont-fix one)
+//
+// The forbidden middle is claim-then-demote. Bucket names may keep moving;
+// this shape may not.
 
-describe("#2949 slice 2 — non-move dynamic uses keep their rejection buckets", () => {
-  const rejected: Array<[string, string, string]> = [
-    ["arithmetic on dyn param", `export function f(x) { return x + 1; }`, "param-type-not-resolvable"],
+/**
+ * Buckets that mean "the project has decided not to pursue this shape".
+ * A dynamic-use rejection landing in one of these would hide a live producer
+ * gap behind a wont-fix label, so they are the one thing a `reject` verdict
+ * must NOT be. Mirrors the `deferred` rows of the IR-fallback budget table
+ * (CLAUDE.md) / `scripts/gen-ir-adoption.mjs`.
+ */
+const DEFERRED_BUCKETS = new Set([
+  "deferred-feature",
+  "async-generator",
+  "async-function",
+  "type-parameters",
+  "non-export-modifier",
+  "unnamed",
+]);
+
+describe("#2949 slice 2 — every dynamic-use shape reaches a clean terminal state", () => {
+  // [label, source, expected outcome class, bucket observed on main 2026-08-22]
+  const shapes: Array<[string, string, "claim" | "reject", string]> = [
+    ["arithmetic on dyn param", `export function f(x) { return x + 1; }`, "reject", "param-type-not-resolvable"],
     [
       "truthiness test of dyn param",
       `export function f(x) { if (x) { return x; } else { return x; } }`,
-      "param-type-not-resolvable",
+      "claim",
+      "— flipped by #2949 S5.1 (dyn.truthy); lowering + runtime pinned in tests/issue-2949-s5-1-truthiness.test.ts, claim pinned in tests/issue-2949-s5-p-claim-flip.test.ts (`truth`)",
     ],
     // NOTE: `return x.foo` (property access on a dyn param) was rejected in
     // slice 2, but #3053 U2 opens the selector scan for dynamic member/element
@@ -142,28 +188,43 @@ describe("#2949 slice 2 — non-move dynamic uses keep their rejection buckets",
     [
       "mixed dynamic/concrete returns",
       `export function f(x) { if (x === 1) { return x; } else { return 0; } }`,
+      "reject",
       "param-type-not-resolvable",
     ],
     [
       "dyn arg into a concrete (annotated) param",
       `function g(n: number): number { return n; }
        export function f(x) { return g(x); }`,
-      "param-type-not-resolvable",
+      "claim",
+      "— `x` is call-site narrowed to g's f64 ABI (`func $f (type 1)` == g's type), so this is no longer a dynamic use; the mechanism is pinned in tests/issue-2949-s5-p-claim-flip.test.ts (`hexToInt`)",
     ],
-    ["calling the dyn value itself", `export function f(x) { return x(); }`, "param-type-not-resolvable"],
+    ["calling the dyn value itself", `export function f(x) { return x(); }`, "reject", "call-resolution-unsupported"],
+    ["destructured dynamic param", `export function f({ a }) { return a; }`, "reject", "param-type-not-resolvable"],
   ];
-  for (const [label, src, reason] of rejected) {
-    it(`${label} → ${reason}`, () => {
+
+  for (const [label, src, outcome, note] of shapes) {
+    it(`${label} → ${outcome} (${note})`, async () => {
       const { claimed, fallbacks } = selectionFor(src);
+      if (outcome === "claim") {
+        expect(claimed.has("f")).toBe(true);
+        expect(fallbacks.has("f")).toBe(false);
+        // The half that makes a claim legitimate: it must BUILD without the
+        // post-claim demotion channel firing.
+        const r = await compileStrict(src);
+        expect(r.irCompiledFuncs ?? []).toContain("f");
+        return;
+      }
       expect(claimed.has("f")).toBe(false);
-      expect(fallbacks.get("f")).toBe(reason);
+      // A pre-claim decline, recorded — not a post-claim demote, and not a
+      // silent disappearance.
+      const reason = fallbacks.get("f");
+      expect(reason, `${label} must record a pre-claim fallback reason`).toBeDefined();
+      expect(DEFERRED_BUCKETS.has(reason!), `${label} bucketed as deferred: ${reason}`).toBe(false);
+      // Declining costs nothing post-claim: the legacy body compiles clean.
+      const r = await compileStrict(src);
+      expect(r.irCompiledFuncs ?? []).not.toContain("f");
     });
   }
-
-  it("destructured dynamic param stays rejected (needs dynamic property access)", () => {
-    const { claimed } = selectionFor(`export function f({ a }) { return a; }`);
-    expect(claimed.has("f")).toBe(false);
-  });
 });
 
 // ---------------------------------------------------------------------------

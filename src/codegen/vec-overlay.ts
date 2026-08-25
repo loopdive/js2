@@ -102,6 +102,11 @@ import { nonExtensibleFreshIndexGuard, nonWritableLengthIndexGuard } from "./vec
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { canonicalNumericKeyGuard } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
 import { holeTestInstrs } from "./array-holes.js";
+import {
+  buildArgumentsBrandBit,
+  buildArgumentsLengthDeletedBail,
+  fillArgumentsLengthBrand,
+} from "./arguments-length-brand.js"; // (#4658)
 
 /**
  * `$PropEntry.$flags` bit claimed by the overlay (see the flag table in
@@ -119,6 +124,19 @@ const FLAG_WRITABLE = 0x01;
 const FLAG_ENUMERABLE = 0x02;
 const FLAG_CONFIGURABLE = 0x04;
 const FLAG_ACCESSOR = 0x08;
+
+/**
+ * (#4491 wave-4) Mirrors of the (unexported) `$Object.flags` INTEGRITY bits in
+ * object-runtime.ts — `OBJ_FLAG_SEALED` / `OBJ_FLAG_FROZEN`, set by
+ * `__object_seal` / `__object_freeze` on the carrier's integrity bag
+ * (`object-runtime-integrity.ts` `emitSetFlags`). Read here so a vec's IMPLICIT
+ * element descriptor can report the level: `__object_freeze` clears W/C on the
+ * BAG's own entries, but a vec's elements have no bag entries at all, so
+ * without this consult `Object.freeze([0,1,2])` left
+ * `gOPD(arr,"0").writable === true`.
+ */
+const OBJ_FLAG_SEALED = 0x02;
+const OBJ_FLAG_FROZEN = 0x04;
 
 /** Host f64 flag-word bits (computeRuntimeFlags, object-ops.ts). */
 const HOST_HAS_VALUE = 1 << 7;
@@ -669,6 +687,10 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
   const callAccessorSetIdx = ctx.funcMap.get("__call_accessor_set");
   const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals");
+  // (#4491 wave-4) OPTIONAL: the read-only carrier-bag lookup (never allocates).
+  // Absent ⇒ the implicit element descriptor keeps its pre-#4491 all-true
+  // answer, byte-identical.
+  const vecBagLookupIdx = ctx.funcMap.get("__vec_bag_lookup");
   if (
     objFindIdx === undefined ||
     dpValueIdx === undefined ||
@@ -697,6 +719,8 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
   if (carriers.length === 0) return;
   const vecBaseIdx = getOrRegisterVecBaseType(ctx);
   const core = ensureOverlayCore(ctx, objectTypeIdx, newPlainObjectIdx);
+  // (#4658) Fill the reserved brand stubs — needs the overlay core.
+  fillArgumentsLengthBrand(ctx, objectTypeIdx, core.ensureIdx, core.lookupIdx);
   // #4504 only needs this extra logical-own screen in modules that can observe
   // an inherited descriptor. Keep the historical gOPD/hasOwn tree untouched
   // otherwise; the existing `$Hole` carrier is still used by the write path
@@ -1818,7 +1842,56 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { name: "len", type: { kind: "i32" } },
         { name: "d", type: { kind: "externref" } },
         { name: "e", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
+        // (#4491 wave-4) integrity-bag scratch for the implicit element
+        // descriptor's writable/configurable answer.
+        { name: "bag", type: { kind: "externref" } },
       ];
+      const L_BAG = 8;
+      /**
+       * (#4491 wave-4) `i32` — is `bit` set on this vec's integrity bag?
+       * A FACTORY (never a shared `Instr[]`): the result is spliced into two
+       * arms of the same body, and aliasing one array into both makes the
+       * finalize walks remap it twice (`reference_shared_instr_object_dce_
+       * double_remap`, the same rule `decodeIntegrityFlag` documents).
+       *
+       * `__vec_bag_lookup` READS — it must never be `__vec_bag_ensure` here: a
+       * gOPD on an element is a pure query and must not allocate a bag for
+       * every array that is merely inspected.
+       */
+      const integrityBit = (bit: number): Instr[] =>
+        vecBagLookupIdx === undefined
+          ? [{ op: "i32.const", value: 0 }]
+          : [
+              { op: "local.get", index: 0 },
+              { op: "call", funcIdx: vecBagLookupIdx },
+              { op: "local.tee", index: L_BAG },
+              { op: "ref.is_null" },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "i32" } },
+                then: [{ op: "i32.const", value: 0 }],
+                else: [
+                  { op: "local.get", index: L_BAG },
+                  { op: "any.convert_extern" },
+                  { op: "ref.test", typeIdx: objectTypeIdx },
+                  {
+                    op: "if",
+                    blockType: { kind: "val", type: { kind: "i32" } },
+                    then: [
+                      { op: "local.get", index: L_BAG },
+                      { op: "any.convert_extern" },
+                      { op: "ref.cast", typeIdx: objectTypeIdx },
+                      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+                      { op: "i32.const", value: bit },
+                      { op: "i32.and" },
+                      { op: "i32.const", value: 0 },
+                      { op: "i32.ne" },
+                    ],
+                    else: [{ op: "i32.const", value: 0 }],
+                  },
+                ],
+              },
+            ];
       const bailMiss = (): Instr[] => [...missExtern(), { op: "return" }];
       // A backed externref `$Hole` is storage, not an implicit array-element
       // descriptor. `__vec_gopd` feeds both getOwnPropertyDescriptor and the
@@ -1866,6 +1939,9 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         s3 === null
           ? bailMiss()
           : [
+              // (#4658) `length` deleted from a branded arguments object ⇒ no
+              // own property; must agree with the `__hasOwnProperty` arm.
+              ...buildArgumentsLengthDeletedBail(ctx, bailMiss),
               // wbit (reuse local 4): default 1, else the companion entry's bit
               { op: "i32.const", value: 1 },
               { op: "local.set", index: 4 },
@@ -1918,8 +1994,20 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                 { op: "i32.const", value: 0 },
                 { op: "call", funcIdx: boxBoolIdx },
               ]),
+              // (#4658) `configurable` is `false` for an Array (§10.4.2.1) and
+              // `true` for an `arguments` exotic object (§10.4.4 steps 4/7),
+              // which shares this representation. The #4658 brand on the
+              // `$__arguments_vec` type identity is the runtime fact that
+              // separates them; unlike the old companion brand, this is an
+              // O(1) ref.test and does not retain each arguments object.
+              // (#4658) `false` for an Array (§10.4.2.1), `true` for an
+              // `arguments` object (§10.4.4) — ANDed with §7.3.14 integrity, so
+              // a sealed/frozen arguments object stays non-configurable.
               ...setKey("configurable", [
-                { op: "i32.const", value: 0 },
+                ...buildArgumentsBrandBit(0, ctx.structMap.get("__arguments_vec")),
+                ...integrityBit(OBJ_FLAG_SEALED | OBJ_FLAG_FROZEN),
+                { op: "i32.eqz" },
+                { op: "i32.and" },
                 { op: "call", funcIdx: boxBoolIdx },
               ]),
               { op: "local.get", index: 6 },
@@ -2003,8 +2091,16 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               { op: "f64.convert_i32_s" },
               { op: "call", funcIdx: externGetIdxIdx },
             ]),
+            // (#4491 wave-4) §7.3.14 SetIntegrityLevel applied to an ARRAY
+            // element. `Object.freeze(arr)` / `Object.seal(arr)` record the
+            // level on the carrier's integrity bag; the elements themselves
+            // have no bag entry, so the implicit descriptor must read the
+            // level here or `Object.freeze([0,1,2])` keeps answering
+            // `{writable: true, configurable: true}` for index 0.
+            // `enumerable` is untouched by either operation.
             ...setKey("writable", [
-              { op: "i32.const", value: 1 },
+              ...integrityBit(OBJ_FLAG_FROZEN),
+              { op: "i32.eqz" },
               { op: "call", funcIdx: boxBoolIdx },
             ]),
             ...setKey("enumerable", [
@@ -2012,7 +2108,8 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               { op: "call", funcIdx: boxBoolIdx },
             ]),
             ...setKey("configurable", [
-              { op: "i32.const", value: 1 },
+              ...integrityBit(OBJ_FLAG_SEALED),
+              { op: "i32.eqz" },
               { op: "call", funcIdx: boxBoolIdx },
             ]),
             { op: "local.get", index: 6 },
@@ -2064,6 +2161,99 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             ] as const)
           : []),
       );
+      // (#4491 wave-4) Two extra scratch slots for the frozen-element guard,
+      // allocated AFTER the conditional block above so their indices are read
+      // off the final local list rather than assumed.
+      const setBagLocal = 3 + fn.locals.length;
+      const setFrozenLenLocal = setBagLocal + 1;
+      fn.locals.push(
+        { name: "__ov_set_bag", type: { kind: "externref" } },
+        { name: "__ov_set_frozen_len", type: { kind: "i32" } },
+      );
+      /**
+       * (#4491 wave-4) §10.1.9.2 OrdinarySetWithOwnDescriptor step 2.b —
+       * a write to an own, BACKED element of a FROZEN array is rejected.
+       *
+       * `Object.freeze` records the level on the carrier's integrity bag
+       * (#4032) and clears W/C on the BAG's entries; a vec's elements have no
+       * bag entry, so nothing refused `arr[0] = x` on a frozen array. Measured
+       * on this base: `Object.freeze([0,1,2])` then propertyHelper's
+       * `isWritable(arr, "0")` answered **true** (the store landed and was
+       * reverted), which is what `freeze/15.2.3.9-2-a-{11,14}` report as
+       * "0 descriptor should not be writable".
+       *
+       * Scoped to an index INSIDE the backed length — i.e. an own element.
+       * A key the frozen array does NOT own must still walk the prototype
+       * chain (an inherited setter is legitimately reachable), so the guard
+       * deliberately does not blanket-refuse every write to a frozen vec.
+       * `vecBagLookupIdx` absent ⇒ `[]`, byte-identical.
+       */
+      const frozenOwnIndexGuard = (): Instr[] => {
+        if (vecBagLookupIdx === undefined) return [];
+        const frozenBit: Instr[] = [
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: vecBagLookupIdx },
+          { op: "local.tee", index: setBagLocal },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [{ op: "i32.const", value: 0 }],
+            else: [
+              { op: "local.get", index: setBagLocal },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: objectTypeIdx },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "i32" } },
+                then: [
+                  { op: "local.get", index: setBagLocal },
+                  { op: "any.convert_extern" },
+                  { op: "ref.cast", typeIdx: objectTypeIdx },
+                  { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+                  { op: "i32.const", value: OBJ_FLAG_FROZEN },
+                  { op: "i32.and" },
+                  { op: "i32.const", value: 0 },
+                  { op: "i32.ne" },
+                ],
+                else: [{ op: "i32.const", value: 0 }],
+              },
+            ],
+          },
+        ];
+        return [
+          ...frozenBit,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...vecBackedLen(anyLocal, setFrozenLenLocal),
+              { op: "local.get", index: indexLocal },
+              { op: "i32.const", value: 0 },
+              { op: "i32.ge_s" },
+              { op: "local.get", index: indexLocal },
+              { op: "local.get", index: setFrozenLenLocal },
+              { op: "i32.lt_s" },
+              { op: "i32.and" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                // Refusal, not silence: the shared result global is how a
+                // STRICT-mode assignment learns to throw (#4504). Absent ⇒
+                // plain sloppy no-op, today's behaviour for the strict case.
+                then:
+                  setResultGlobalIdx === undefined
+                    ? [{ op: "return" }]
+                    : [
+                        { op: "i32.const", value: 2 },
+                        { op: "global.set", index: setResultGlobalIdx },
+                        { op: "return" },
+                      ],
+              },
+            ],
+          },
+        ];
+      };
       const publishSuccess = (): Instr[] =>
         !descriptorDecisionAvailable
           ? []
@@ -2266,6 +2456,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               blockType: { kind: "empty" },
               then: [
                 ...parseIndex(keyLocal, indexLocal),
+                ...frozenOwnIndexGuard(),
                 { op: "local.get", index: indexLocal },
                 { op: "i32.const", value: 0 },
                 { op: "i32.ge_s" },

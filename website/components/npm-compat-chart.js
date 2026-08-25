@@ -91,6 +91,30 @@ class NpmCompatChart extends HTMLElement {
     return `${d.toISOString().slice(0, 16).replace("T", " ")} UTC`;
   }
 
+  // The headline. NOT `generatedAt` — that is when the artifact was assembled,
+  // which since the per-package split (2026-08-23) is a moment that describes
+  // no package in particular. Packages are measured in independent CI rows, so
+  // the fast 22 can be minutes old while react-dom and lit, whose rows take
+  // 3-4 h and ~40 min, are hours or days behind. Rendering one timestamp over
+  // that spread presented the oldest numbers as current: on the day of the
+  // split the page said "measured 15:27 UTC" above react-dom figures from
+  // three days earlier. So say the range, and name who is behind.
+  _measuredSummary(data) {
+    const range = data?.measuredRange;
+    const newest = range?.newest ?? data?.generatedAt;
+    if (!newest) return "—";
+    const head = this._fmtDate(newest) || "—";
+    const stale = data?.refresh?.stalePackages ?? [];
+    const fresh = data?.refresh?.freshCount;
+    const total = data?.refresh?.totalCount ?? data?.packages?.length;
+    if (stale.length === 0) return head;
+
+    const counted = fresh != null && total != null ? ` · ${fresh} of ${total} packages` : "";
+    const oldest = range?.oldest && range.oldest !== newest ? this._fmtDate(range.oldest) : "";
+    const behind = `${stale.join(", ")} last measured ${oldest || "earlier"}`;
+    return `${head}${counted} · ${behind}`;
+  }
+
   // ratio = nodeUs / wasmUs. >1 => wasm faster. <1 => node faster.
   _perfLabel(ratio) {
     if (ratio == null) return { text: "—", cls: "" };
@@ -135,6 +159,10 @@ class NpmCompatChart extends HTMLElement {
   }
 
   _currentSpeedSnapshot(pkg) {
+    // A failed matrix worker carries the last committed package row forward
+    // so other packages can still publish. Do not append that old measurement
+    // as if it were a point from the current refresh.
+    if (pkg?.refresh?.status === "stale") return null;
     const perf = pkg.perf;
     if (!perf) return null;
     const lanes = perf.lanes ?? { jsHost: perf };
@@ -391,6 +419,24 @@ class NpmCompatChart extends HTMLElement {
         )
       : "";
 
+    // EVERY card carries its own measurement time, not only the stale ones.
+    // Showing a date exclusively on stale cards frames freshness as an
+    // exception; with packages measured in independent rows it is a per-package
+    // property, and "when was THIS number taken" is a question the reader has
+    // for react-dom and acorn alike.
+    const measuredAt = pkg.measuredAt ?? pkg.refresh?.lastMeasuredAt ?? null;
+    const isStale = pkg.refresh?.status === "stale";
+    const refreshNotice = measuredAt
+      ? this._row(
+          "measured",
+          isStale
+            ? `<span class="muted">${this._esc(this._fmtDate(measuredAt))} — not re-measured in this run</span>`
+            : `<span class="muted">${this._esc(this._fmtDate(measuredAt))}</span>`,
+        )
+      : isStale
+        ? this._row("measured", `<span class="muted">not re-measured in this run</span>`)
+        : "";
+
     // Tests — the "own test suite" vs "differential ops" distinction is
     // load-bearing, so it is the row's own label, never blurred into one number.
     let tests;
@@ -576,7 +622,7 @@ class NpmCompatChart extends HTMLElement {
             ? `<span class="badge" title="The published entry module only re-exports other packages, so these badges describe the barrel — see the tests row for the real implementation.">entry is a barrel</span>`
             : ""
         }</div>
-        <div class="rows">${correctness}${tests}${serverTests}${fizzTests}${nodeFizzTests}${edgeFizzTests}${perf}${bugs}</div>
+        <div class="rows">${refreshNotice}${correctness}${tests}${serverTests}${fizzTests}${nodeFizzTests}${edgeFizzTests}${perf}${bugs}</div>
         <div class="card-links">
           <a class="playground-link" href="${playgroundUrl}"
             title="Open ${this._esc(pkg.name)} test files in the playground">Open tests in playground&nbsp;↗</a>
@@ -589,7 +635,7 @@ class NpmCompatChart extends HTMLElement {
   _render(data, history) {
     this._data = data;
     const measuredDate = document.getElementById("npm-compat-measured");
-    if (measuredDate) measuredDate.textContent = this._fmtDate(data.generatedAt) || "—";
+    if (measuredDate) measuredDate.textContent = this._measuredSummary(data);
     const pkgs = [...(data.packages ?? [])].sort(
       (left, right) =>
         (right.weeklyDownloads ?? Number.NEGATIVE_INFINITY) - (left.weeklyDownloads ?? Number.NEGATIVE_INFINITY) ||

@@ -144,6 +144,7 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "vec.len":
     case "refcell.get":
     case "closure.cap":
+    case "fnctor.get":
       fx.readsHeap = true;
       break;
     // Writes of heap state (void-result, so only ever hazards).
@@ -165,6 +166,7 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "closure.call":
     case "extern.call":
     case "class.new":
+    case "fnctor.new":
     case "extern.new":
     case "extern.prop":
     case "extern.propSet":
@@ -190,6 +192,7 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     // `effectsConflict` only consults the heap/slot facets, so it carries
     // the same full-barrier classification.
     case "throw":
+    case "string.repeat":
     case "br.label":
     case "await":
     case "async.return":
@@ -467,6 +470,7 @@ export function isSideEffecting(i: IrInstr): boolean {
     i.kind === "class.call" ||
     i.kind === "class.set" ||
     i.kind === "class.new" ||
+    i.kind === "fnctor.new" ||
     // #3000-E: super(...) runs the parent `_init` (writes parent fields on self);
     // super.method() invokes the parent method body — both arbitrary effects, and
     // super_init is void-result so DCE MUST keep it (and its operands) live via
@@ -560,6 +564,11 @@ export function isSideEffecting(i: IrInstr): boolean {
     // a fresh value), but it may throw on bad pattern syntax — keep
     // the side-effect of the throw observable to user code.
     i.kind === "extern.regex" ||
+    // `String.prototype.repeat` validates ToIntegerOrInfinity and may throw
+    // for negative/+Infinity counts. Keep an unused result and anchor it as a
+    // full control barrier until separately verified non-throwing evidence
+    // exists on the instruction.
+    i.kind === "string.repeat" ||
     // (#1373 Phase B) Async / await IR nodes are control-flow with
     // observable suspension / Promise side effects. DCE must always
     // preserve them. Phase C lowering (CPS transform) does not change

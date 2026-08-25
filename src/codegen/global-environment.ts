@@ -336,9 +336,26 @@ export function emitImplicitGlobalRead(ctx: CodegenContext, fctx: FunctionContex
   if (!emitGlobalEnvironmentObject(ctx, fctx)) return null;
   const objectLocal = allocLocal(fctx, `__implicit_global_obj_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: objectLocal });
-  const hasOwnIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__hasOwnProperty");
+  const hasOwnIdx0 = ensureGlobalEnvironmentOperation(ctx, fctx, "__hasOwnProperty");
   const getIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_get");
-  if (hasOwnIdx === undefined || getIdx === undefined) return null;
+  if (hasOwnIdx0 === undefined || getIdx === undefined) return null;
+  // (#4640) HARDENING, not a measured fix — say so plainly. Registering
+  // `__extern_get` on the line above can add a late import, and a late import
+  // SHIFTS every function index at or above its insertion point
+  // (#1839/#117/#1886). `flushLateImportShifts` repairs indices already EMITTED
+  // into a body; it cannot repair one still sitting in a local variable, and
+  // `hasOwnIdx0` is captured before the shift and pushed after it. Same for
+  // `getIdx`, which is pushed after `emitThrowReferenceError` may have
+  // registered `__new_ReferenceError`.
+  //
+  // `emitRuntimeEvalGlobalRead` immediately below already re-reads both of its
+  // own indices for exactly this reason; this arm was the one that did not, and
+  // the asymmetry is the kind that gets discovered by a miscompile. It was
+  // investigated as a candidate cause of the #4640 D3 failure and RULED OUT
+  // (the real cause was `tryEmitUnresolvableUpdateThrow` / the missing compound
+  // arm); no shift was observed here. The re-read is a no-op when nothing
+  // shifted, so it costs nothing to keep the two readers symmetric.
+  const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty") ?? hasOwnIdx0;
 
   fctx.body.push({ op: "local.get", index: objectLocal });
   emitGlobalEnvironmentKey(ctx, fctx, name);
@@ -351,7 +368,7 @@ export function emitImplicitGlobalRead(ctx: CodegenContext, fctx: FunctionContex
 
   fctx.body.push({ op: "local.get", index: objectLocal });
   emitGlobalEnvironmentKey(ctx, fctx, name);
-  fctx.body.push({ op: "call", funcIdx: getIdx });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
   return { kind: "externref" };
 }
 

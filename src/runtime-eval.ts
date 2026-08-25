@@ -116,6 +116,28 @@ export interface EvalShimOptions {
    * invocation — useful for telemetry or caching.
    */
   onCompiled?: (info: { src: string; binarySize: number; isDirect: boolean }) => void;
+
+  /**
+   * (#4657) The PARENT module's realm — the same object the parent resolves
+   * `__get_globalThis` and every `global_<Name>` declared-global import
+   * against (`globalSandbox`, e.g. the test262 runner's per-test realm).
+   *
+   * `new Function` is realm-transparent: §20.2.1.1 constructs the function in
+   * the *running* realm, so `new Function("return Array")()` must hand back
+   * the very object the caller's own `Array` binding denotes. The child module
+   * this shim compiles is a separate Wasm instance with its OWN import object,
+   * so leaving this unset resolved the child's `global_Array` against the host
+   * `globalThis` while the parent resolved its `Array` against the sandbox —
+   * two different function objects with the same `.name`, the same
+   * `.prototype` and the same statics, so the split was invisible to
+   * everything EXCEPT an identity test.
+   *
+   * That is precisely what test262 `harness/wellKnownIntrinsicObjects.js`
+   * tests: it obtains all ~380 intrinsics via `new Function("return " + src)()`
+   * and asserts `Object.is(Array, intrinsicArray)`. Threading the parent realm
+   * through fixes the whole family at once rather than per name.
+   */
+  globalSandbox?: Record<string, any>;
 }
 
 const TEST262_ASSERT_METHODS = new Set([
@@ -602,7 +624,14 @@ export function createNewFunctionShim(options: EvalShimOptions = {}): (params: a
 
     // Non-sandbox auto-fill — the child gets the standard js2wasm helpers it
     // declared, plus a recursive `__extern_new_function` for nested cases.
-    const auto = buildImports(result.imports, undefined, result.stringPool);
+    // (#4657) …and the PARENT's realm, so the child's `global_<Name>` /
+    // `__get_globalThis` imports resolve to the same objects the caller sees.
+    const auto = buildImports(
+      result.imports,
+      undefined,
+      result.stringPool,
+      options.globalSandbox === undefined ? undefined : { globalSandbox: options.globalSandbox },
+    );
     const autoSetExports = (auto as { setExports?: (exports: Record<string, Function>) => void }).setExports;
     const importObj: Record<string, Record<string, unknown>> = {
       env: { ...auto.env },

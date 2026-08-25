@@ -235,7 +235,8 @@ describe("#4465 residuals — measured, NOT fixed (each pin fails when its cause
   // fallback in expressions/call-receiver-method.ts never consults the struct
   // field), and `__to_primitive` misses it too. Blocks test262 charAt A1.1,
   // charCodeAt A1.1, substring A3_T10, slice A3_T4.
-  it.fails("R2: a ctor instance's own toString field is used by ToString(this)", async () => {
+  // R2 FIXED by the #4620 wave (opaque-callable __apply_closure bridge) — flipped per the pin's design.
+  it("R2: a ctor instance's own toString field is used by ToString(this)", async () => {
     const src = prog(`function F(v) { this.v = v; this.toString = function () { return this.v + ""; }; }
       var i = new F("hello");
       i.substring = String.prototype.substring;

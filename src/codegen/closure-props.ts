@@ -72,6 +72,9 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { protoIndexRecvGetMissInstrs } from "./proto-index-store.js"; // (#4176) inherited proto-named consult
 import { INSTANCE_BAG_FIELD } from "./closures/closure-header-layout.js"; // (#4241) one spelling of the slot name
+// (#4491 T9) one spelling of the #4008 builtin-instance carrier set, shared with
+// the fold-routing predicates so the two cannot drift apart.
+import { BUILTIN_INSTANCE_CARRIER_STRUCT_NAMES } from "./builtin-instance-key-presence.js";
 import { addFuncType } from "./registry/types.js";
 
 /** WasmGC `eq` abstract heap type (used for `ref.cast`/`ref.null` to eqref). */
@@ -420,7 +423,7 @@ export function reserveClosurePropHelpers(ctx: CodegenContext): void {
  */
 function builtinInstanceCarrierTypeIdxs(ctx: CodegenContext): number[] {
   const out: number[] = [];
-  for (const name of ["__StandaloneRegExp", "__Date"]) {
+  for (const name of BUILTIN_INSTANCE_CARRIER_STRUCT_NAMES) {
     const idx = ctx.structMap.get(name);
     if (idx !== undefined) out.push(idx);
   }

@@ -29,6 +29,8 @@ import {
   nativeStringLiteralInstrs,
 } from "./native-strings.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { getArrTypeIdxFromVec } from "./index.js"; // (#4531) raw vec box on externref field stores
+import { coerceType } from "./type-coercion.js";
 
 /**
  * Unbox an externref native-prototype argument to i32. Keeping this beside the
@@ -75,6 +77,30 @@ export function compileCoercionRhs(
   typeName: string,
   fieldName: string,
 ): [ValType, number] | null {
+  // (#4531, twin of the #4611 member-set arm) An ARRAY-LITERAL RHS stored into
+  // an externref struct FIELD keeps its raw vec identity: compiling with the
+  // externref hint routes the vec through the generic coercion, which appends
+  // `__make_iterable` — the field then holds a JS MIRROR while every native
+  // method/read path `ref.cast`s to the vec (prettier AstPath's
+  // `this.stack = [value]`: every stack op trapped `illegal cast`). Compile
+  // unhinted and raw-box; host-boundary reads still materialize on demand.
+  if (expectedType.kind === "externref") {
+    let inner: ts.Expression = value;
+    while (ts.isParenthesizedExpression(inner)) inner = inner.expression;
+    if (ts.isArrayLiteralExpression(inner)) {
+      const rawType = compileExpression(ctx, fctx, value);
+      if (!rawType) return null;
+      if (
+        (rawType.kind === "ref" || rawType.kind === "ref_null") &&
+        getArrTypeIdxFromVec(ctx, (rawType as { typeIdx: number }).typeIdx) >= 0
+      ) {
+        fctx.body.push({ op: "extern.convert_any" });
+      } else if (rawType.kind !== "externref") {
+        coerceType(ctx, fctx, rawType, expectedType);
+      }
+      return [{ kind: "externref" }, allocLocal(fctx, `__prop_assign_${fctx.locals.length}`, { kind: "externref" })];
+    }
+  }
   const before =
     fieldName === "toString" || fieldName === "valueOf" ? new Set(ctx.closureInfoByTypeIdx.keys()) : undefined;
   const valueType = compileExpression(ctx, fctx, value, expectedType);
@@ -221,6 +247,8 @@ const TRANSFERRED_STRING_PROTO_MEMBERS = [
   "trim",
   "trimStart",
   "trimEnd",
+  "trimLeft",
+  "trimRight",
   "indexOf",
   "lastIndexOf",
   "charCodeAt",

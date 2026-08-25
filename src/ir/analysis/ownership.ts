@@ -244,6 +244,7 @@ function applyInstrEffect(
   switch (instr.kind) {
     // --- field reads -> `read` on the receiver -------------------------------
     case "object.get":
+    case "fnctor.get":
     case "class.get":
     case "class.instanceof": // (#3144) tag read on the receiver
       touch(state, instr.value, allocOf, null, "read");
@@ -258,6 +259,11 @@ function applyInstrEffect(
       touch(state, instr.vec, allocOf, null, "read");
       break;
     case "string.len":
+      touch(state, instr.value, allocOf, null, "read");
+      break;
+    case "string.repeat":
+      // Strings are immutable, but the semantic provider consumes the exact
+      // source value while producing a distinct allocation.
       touch(state, instr.value, allocOf, null, "read");
       break;
 
@@ -301,6 +307,14 @@ function applyInstrEffect(
     // --- opaque calls -> every ref arg escapes with full access --------------
     case "call":
       for (const a of instr.args) markEscaped(state, a, allocOf);
+      break;
+    case "fnctor.new":
+      // The synthesized constructor is an opaque legacy boundary: captures,
+      // user arguments, and the optional hidden identity may all be retained
+      // by the new heap object or by host registration.
+      for (const a of instr.captureArgs) markEscaped(state, a, allocOf);
+      for (const a of instr.args) markEscaped(state, a, allocOf);
+      if (instr.constructorIdentity !== null) markEscaped(state, instr.constructorIdentity, allocOf);
       break;
     case "class.call":
       markEscaped(state, instr.receiver, allocOf);

@@ -292,6 +292,77 @@ export function emitIsNullishAnyAt(ctx: CodegenContext, fctx: FunctionContext, a
 }
 
 /**
+ * (#4519) A/B switch for the corpus sweep, the #4489 instrument's shape: with
+ * `JS2WASM_4519_AB=base` every #4519 widening emits its PRE-fix bytes, so both
+ * arms of a paired run compile in ONE process against the same machine, load and
+ * provider cache. Reads `process.env` per call deliberately — a module-level
+ * constant would freeze the arm at import time and defeat the pairing.
+ */
+export function ab4519RevertsToBase(): boolean {
+  return process.env.JS2WASM_4519_AB === "base";
+}
+
+/**
+ * (#4519) `emitIsNullishAnyAt`'s EXTERNREF twin, as a DETACHED instruction array:
+ * `1` when the externref in `externLocalIdx` is null or the tag-1 `$undefined`
+ * singleton. Returns `undefined` — meaning "emit your existing `ref.is_null`" —
+ * when the singleton regime is inactive, so host/gc-lane modules stay
+ * byte-identical.
+ *
+ * Three shape decisions, each forced by the consumer this was built for
+ * (`emitReceiverNullGuard`, the §7.3.2 member-access receiver check):
+ *
+ * - **Detached array, not a `fctx.body` push.** The consumer lives in
+ *   `nonnull-proof.ts`, a deliberate LEAF module that imports nothing from the
+ *   property-access layer (its `throwInstrs` parameter is a thunk for exactly
+ *   that reason). Handing it instructions keeps that property.
+ * - **Scratch-free**, at the cost of converting the receiver twice. The consumer
+ *   emits ~2,600 guards per test262 module (measured, 120 modules), and that
+ *   module's entire purpose is code SIZE — one extra anyref local per guard site
+ *   would work against it. `any.convert_extern` is a no-op reinterpretation.
+ * - **Tag-1 `$AnyValue` only**, deliberately NOT the #2979 UNDEF_F64
+ *   `$BoxedNumber` arm that `buildIsUndefinedExternBody` carries. A receiver
+ *   check must be ABSENT rather than WRONG: a wrong throw here is catchable and
+ *   therefore observable (the reasoning `nullish-receiver-coercible.ts` states
+ *   for declining the checker), and the boxed sentinel is ambiguous in
+ *   container position (#3010's 55-test regression).
+ */
+export function nullishExternTestInstrs(ctx: CodegenContext, externLocalIdx: number): Instr[] | undefined {
+  if (ab4519RevertsToBase()) return undefined;
+  if (!undefinedSingletonActive(ctx)) return undefined;
+  if (ctx.anyValueTypeIdx < 0) ensureAnyValueType(ctx);
+  if (ctx.anyValueTypeIdx < 0) return undefined;
+  const t = ctx.anyValueTypeIdx;
+  return [
+    { op: "local.get", index: externLocalIdx },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 1 }],
+      else: [
+        { op: "local.get", index: externLocalIdx },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: t },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [
+            { op: "local.get", index: externLocalIdx },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: t },
+            { op: "struct.get", typeIdx: t, fieldIdx: 0 },
+            { op: "i32.const", value: 1 },
+            { op: "i32.eq" },
+          ],
+          else: [{ op: "i32.const", value: 0 }],
+        },
+      ],
+    },
+  ];
+}
+
+/**
  * (#2106 S1) Emit a test that the externref in local `externLocalIdx` is a
  * tag-1 `$AnyValue` box (the `$undefined` singleton shape) — leaving an i32.
  * Deliberately does NOT include the #2979 UNDEF_F64 `$BoxedNumber` arm: this

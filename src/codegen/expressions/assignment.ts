@@ -12,12 +12,16 @@ import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
 import { emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3
 import { emitHoleToUndefined, holeSentinelInstrs } from "../array-holes.js";
+import { emitF64GapFillInstrs } from "../vec-f64-hole-gap.js"; // (#4491 T8)
+import { emitF64HoleToUndef, f64HolesActive } from "../vec-f64-hole-presence.js"; // (#4491 T11)
+import { HOLE_F64_BITS } from "../value-tags.js"; // (#4491 T11)
 // prettier-ignore
 import { emitUnbackableIndexFlag, guardedElementSetInstrs, needsGapFillCondInstrs, needsGrowCondInstrs } from "../vec-sparse-index.js";
 import { tryEmitLinearU8ElementCompound, tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
 import { emitAnyAdd, emitModulo, emitToInt32, emitToUint8Clamp } from "../binary-ops.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
+import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "../fn-global-shadow.js"; // (#4630)
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -120,6 +124,7 @@ import { tryEmitErrorInstanceFieldWrite } from "../error-instance-field-write.js
 import { ensureObjectRuntime } from "../object-runtime.js";
 import { compileCoercionRhs } from "../char-at-transfer.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { emitNativeGlobalThisObject } from "../array-object-proto.js"; // (#4630)
 import { resolveEffectiveStructName } from "../property-access.js";
 import { emitOverlayRoutedElementSet, overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4159 S5)
 import {
@@ -150,7 +155,11 @@ import {
 } from "../global-environment.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
 import { BUILTIN_CTOR_ARITY } from "../builtin-value-read.js"; // (#4484 C) which names are builtin constructors
-import { isSpecNonWritableBuiltinProp, resolveUnshadowedGlobalIdentifier } from "../builtin-nonwritable-write.js"; // (#4484 C)
+import {
+  isSpecNonWritableBuiltinProp,
+  isSpecNonWritableGlobalValueName, // (#4621 B)
+  resolveUnshadowedGlobalIdentifier,
+} from "../builtin-nonwritable-write.js"; // (#4484 C)
 import { tryCompileStrictFunctionPoisonAssignment } from "../function-poison-pill-access.js";
 import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
@@ -230,8 +239,17 @@ function emitAnnexBOuterBindingWriteFlag(fctx: FunctionContext, name: string): v
   if (!fctx.annexBOuterBindings?.has(name)) return;
   const flagLocal = fctx.tdzFlagLocals?.get(name);
   if (flagLocal === undefined) return;
-  fctx.body.push({ op: "i32.const", value: 1 });
-  fctx.body.push({ op: "local.set", index: flagLocal });
+  const boxed = fctx.boxedTdzFlags?.get(name);
+  if (boxed) {
+    // Captured Annex-B outer bindings share their flag through an i32 ref
+    // cell; the `tdzFlagLocals` entry is the box local in this case.
+    fctx.body.push({ op: "local.get", index: boxed.localIdx });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "struct.set", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 });
+  } else {
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "local.set", index: flagLocal });
+  }
 }
 
 export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, expr: ts.BinaryExpression): InnerResult {
@@ -359,6 +377,32 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
       emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
       fctx.body.push({ op: "unreachable" });
       return { kind: "f64" }; // unreachable, but satisfy type
+    }
+    // (#4621 B) §19.1.1-19.1.3 — `NaN = 12` / `Infinity = 12` / `undefined = 12`
+    // in STRICT code. These are non-writable value properties of the global
+    // object, so PutValue's [[Set]] fails and §6.2.5.6 step 6.a throws
+    // TypeError. Sloppy code declines here and keeps the existing silent-no-op
+    // lowering, which is what the same step prescribes for non-strict code.
+    //
+    // Order: BEFORE the `localMap` lookup and every ordinary write arm, but the
+    // arm is itself gated on `resolveUnshadowedGlobalIdentifier`, which declines
+    // for any local / captured / module-level binding of the name. So
+    // `function f(NaN) { "use strict"; NaN = 1; }` — a legal write to a
+    // parameter — still falls through untouched. A wrong throw here would be
+    // catchable and therefore observable, which is why the shadowing proof is
+    // load-bearing rather than defensive.
+    if (
+      isSpecNonWritableGlobalValueName(name) &&
+      isStrictContext(expr.left, ctx.inferModuleStrictArguments) &&
+      resolveUnshadowedGlobalIdentifier(ctx, fctx, expr.left) !== undefined
+    ) {
+      // §13.15.2: the RHS is evaluated before PutValue is attempted, so its side
+      // effects must still happen even though the store never lands.
+      const rhsType = compileExpression(ctx, fctx, expr.right);
+      if (rhsType) fctx.body.push({ op: "drop" });
+      emitThrowTypeError(ctx, fctx, `Cannot assign to read only property '${name}' of object '#<Object>'`);
+      fctx.body.push({ op: "unreachable" });
+      return { kind: "f64" }; // unreachable, but the expression stack needs a type
     }
     // Named function expression name binding is read-only — assignments are
     // silently ignored in sloppy mode (the RHS is still evaluated for side effects)
@@ -1067,6 +1111,21 @@ function emitStrictPutValueThrow(ctx: CodegenContext, fctx: FunctionContext): vo
   fctx.body.push({ op: "throw", tagIdx });
 }
 
+function collectObjectRestExcludedKeys(ctx: CodegenContext, target: ts.ObjectLiteralExpression): string[] {
+  const excludedKeys: string[] = [];
+  for (const prop of target.properties) {
+    if (ts.isSpreadAssignment(prop)) continue;
+    const name = ts.isPropertyAssignment(prop) ? prop.name : prop.name;
+    if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
+      excludedKeys.push(name.text);
+    } else if (ts.isComputedPropertyName(name)) {
+      const key = resolveComputedKeyExpression(ctx, name.expression);
+      if (key !== undefined) excludedKeys.push(key);
+    }
+  }
+  return excludedKeys;
+}
+
 function compileDestructuringAssignment(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1677,17 +1736,9 @@ function compileDestructuringAssignment(
         if (restIdx === undefined) {
           restIdx = allocLocal(fctx, restName, { kind: "externref" });
         }
-        // Collect excluded property names
-        const excludedKeys: string[] = [];
-        for (const p of target.properties) {
-          if (ts.isSpreadAssignment(p)) continue;
-          if (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) {
-            const pn = ts.isPropertyAssignment(p) ? p.name : p.name;
-            if (ts.isIdentifier(pn)) excludedKeys.push(pn.text);
-            else if (ts.isStringLiteral(pn)) excludedKeys.push(pn.text);
-            else if (ts.isNumericLiteral(pn)) excludedKeys.push(pn.text);
-          }
-        }
+        // Collect excluded property names, including statically-resolvable
+        // computed names (e.g. `{ [a]: b, ...rest }`).
+        const excludedKeys = collectObjectRestExcludedKeys(ctx, target);
         if (ctx.targetProfile.semanticProviders === "native-first") {
           const emitted = emitNativeObjectRest(
             ctx,
@@ -2240,6 +2291,7 @@ function compileArrayDestructuringAssignment(
           // An in-bounds `any[]` slot may hold the `$Hole` sentinel for a literal
           // elision (`[1, , 3]`); per Get it reads as `undefined`, so map it.
           if (elemType.kind === "externref" && ctx.usesArrayHoles) emitHoleToUndefined(ctx, fctx);
+          emitF64HoleToUndef(ctx, fctx, elemType); // (#4491 T11) f64 twin
           fctx.body.push({ op: "local.set", index: tmpElem });
           if (elemType.kind === "externref") {
             const undefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
@@ -2339,6 +2391,7 @@ function compileArrayDestructuringAssignment(
           fctx.body = [];
           emitElementGet(i);
           if (elemType.kind === "externref" && ctx.usesArrayHoles) emitHoleToUndefined(ctx, fctx);
+          emitF64HoleToUndef(ctx, fctx, elemType); // (#4491 T11) f64 twin
           fctx.body.push({ op: "local.set", index: tmpElem });
           if (elemType.kind === "externref") {
             const undefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
@@ -2778,7 +2831,23 @@ export function emitAssignToTarget(
       compileExpression(ctx, fctx, target.expression);
       fctx.body.push({ op: "local.get", index: valueLocal });
       if (!valTypesMatch(valueType, fieldType)) {
-        coerceType(ctx, fctx, valueType, fieldType);
+        // (#4531, twin of the #4611 member-set arm) A wasm-vec value stored
+        // into an externref FIELD keeps its raw identity: the generic
+        // vec→externref coercion appends `__make_iterable`, which materializes
+        // a JS MIRROR — the field then holds the mirror while every native
+        // method/read path `ref.cast`s to the vec (prettier AstPath's
+        // `this.stack = [value]`: every stack op trapped `illegal cast`).
+        // Host-boundary reads of the raw boxed vec still materialize on
+        // demand in the runtime bridges.
+        if (
+          fieldType.kind === "externref" &&
+          (valueType.kind === "ref" || valueType.kind === "ref_null") &&
+          getArrTypeIdxFromVec(ctx, (valueType as { typeIdx: number }).typeIdx) >= 0
+        ) {
+          fctx.body.push({ op: "extern.convert_any" });
+        } else {
+          coerceType(ctx, fctx, valueType, fieldType);
+        }
       }
       fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
       return;
@@ -3472,6 +3541,20 @@ function tryEmitPinnedStructMemberSet(
     // member-set dispatcher/sidecar.
     ensureI32Condition(fctx, valResult, ctx);
     coerceType(ctx, fctx, { kind: "i32", boolean: true }, { kind: "externref" });
+  } else if (
+    // (#4611) A wasm-vec value keeps its raw identity through the member-set
+    // dispatcher: the generic vec→externref coercion appends `__make_iterable`,
+    // whose JS-array COPY fails the dispatcher arm's element ref.test and
+    // silently demotes a struct-slot write to the sidecar — splitting the field
+    // across storages (acorn `this.range = [pos, 0]` under `if (options.ranges)`).
+    // The arm's `__vec_from_extern` short-circuits on the exact vec rep, so the
+    // raw box lands the SAME vec on the slot; the sidecar terminal stores the
+    // raw vec extern, which `_safeSet`/`_safeGet` already handle (#1712 view).
+    valResult &&
+    (valResult.kind === "ref" || valResult.kind === "ref_null") &&
+    getArrTypeIdxFromVec(ctx, (valResult as { typeIdx: number }).typeIdx) >= 0
+  ) {
+    fctx.body.push({ op: "extern.convert_any" });
   } else if (valResult && valResult.kind !== "externref") {
     coerceType(ctx, fctx, valResult, { kind: "externref" });
   } else if (!valResult) {
@@ -3578,6 +3661,60 @@ function compilePrivateSetterWithBrandCheck(
   fctx.body.push({ op: "local.get", index: tmpVal });
   releaseTempLocal(fctx, recvTmp);
   return valResult;
+}
+
+/**
+ * (#4638) Park the `arr.length = N` receiver into `vecTmp`, guarded when the
+ * value is not statically a vec.
+ *
+ * An EXTERNREF receiver is not evidence that the value IS a vec.
+ * `resolveArrayInfo` answers from the checker's TYPE, and the checker types
+ * `Array.prototype` as `any[]` — but the runtime value is the Array prototype
+ * OBJECT, not a `$Vec`. A plain `local.set` into the `(ref null $__vec_base)`
+ * slot coerces via `any.convert_extern ; ref.cast null`, which TRAPS
+ * `illegal cast` — uncatchably, aborting the module. `Array.prototype.length =
+ * 0` is a real ES5 idiom (`15.2.3.6-4-117` and `15.2.3.7-6-a-113` both open with
+ * it) and the trap fired before the assertion those tests are about.
+ *
+ * Same invariant as #3610 / #3620 / #3621: a `ref.cast` is a claim about the
+ * RUNTIME representation, and a static type is not that evidence.
+ *
+ * Returns `true` when the receiver was statically PROVEN to be a vec, in which
+ * case the emitted bytes are identical to pre-#4638 and the caller may store the
+ * length unguarded. On `false` the parked value is `null` for a non-vec, so the
+ * caller must null-guard the store — a no-op, which is the correct observable
+ * for the prototype object (its `length` is 0 and stays 0).
+ */
+function emitArrayLengthSetReceiverPark(
+  fctx: FunctionContext,
+  receiverType: ValType,
+  vecBaseIdx: number,
+  vecTmp: number,
+): boolean {
+  if (receiverType.kind === "ref" || receiverType.kind === "ref_null") {
+    fctx.body.push({ op: "local.set", index: vecTmp });
+    return true;
+  }
+  const anyTmp = allocLocal(fctx, `__arr_len_set_any_${fctx.locals.length}`, { kind: "anyref" });
+  if (receiverType.kind === "externref") fctx.body.push({ op: "any.convert_extern" });
+  fctx.body.push({ op: "local.set", index: anyTmp });
+  fctx.body.push({ op: "local.get", index: anyTmp });
+  fctx.body.push({ op: "ref.test", typeIdx: vecBaseIdx });
+  // Empty block type + a parked local, never a concrete-ref block type (#4620).
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      { op: "local.get", index: anyTmp },
+      { op: "ref.cast_null", typeIdx: vecBaseIdx },
+      { op: "local.set", index: vecTmp },
+    ],
+    else: [
+      { op: "ref.null", typeIdx: vecBaseIdx },
+      { op: "local.set", index: vecTmp },
+    ],
+  });
+  return false;
 }
 
 function compilePropertyAssignment(
@@ -3976,7 +4113,47 @@ function compilePropertyAssignment(
     const propName = ts.isPrivateIdentifier(target.name) ? `__priv_${target.name.text.slice(1)}` : target.name.text;
     const wrapRuntimeEvalCallable =
       ctx.runtimeEvalCallableBoundaryEnabled === true && isStaticallyCallableExpression(ctx, value);
-    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, propName, false, wrapRuntimeEvalCallable);
+    const externSetTy = compilePropertyAssignmentExternSet(
+      ctx,
+      fctx,
+      target,
+      value,
+      propName,
+      false,
+      wrapRuntimeEvalCallable,
+    );
+    // (#4630) `globalThis.<topLevelFn> = …` also updates the override slot so
+    // bare reads/calls of the declaration resolve the reassignment (§16.1.7).
+    // The value is read BACK from the singleton (side-effect-free) rather than
+    // re-evaluated.
+    if (isShadowedTopLevelFn(ctx, propName)) {
+      const slot = fnShadowSlot(ctx, propName);
+      if (ctx.standalone || ctx.wasi) {
+        const gtTy = withShadowReadSuppressed(() => emitNativeGlobalThisObject(ctx, fctx));
+        if (gtTy) {
+          const getIdx = ctx.funcMap.get("__extern_get");
+          if (getIdx !== undefined) {
+            addStringConstantGlobal(ctx, propName);
+            for (const instr of stringConstantExternrefInstrs(ctx, propName)) fctx.body.push(instr);
+            fctx.body.push({ op: "call", funcIdx: getIdx });
+            fctx.body.push({ op: "global.set", index: slot });
+          } else {
+            fctx.body.push({ op: "drop" });
+          }
+        }
+      } else if (externSetTy !== null && externSetTy !== VOID_RESULT && externSetTy.kind === "externref") {
+        // (#4648) JS-host lane: `globalThis` is the host global object, so the
+        // read-back hop the standalone arm uses (native singleton +
+        // `__extern_get`) has no counterpart here. The assignment expression's
+        // own result is already the stored value on top of the stack, so tee
+        // it into the slot — same observable aliasing, no extra host call.
+        const tmp = allocLocal(fctx, `__fnshadow_set_${fctx.locals.length}`, { kind: "externref" });
+        fctx.body.push({ op: "local.tee", index: tmp });
+        fctx.body.push({ op: "global.set", index: slot });
+        fctx.body.push({ op: "local.get", index: tmp });
+      }
+    }
+    return externSetTy;
   }
 
   // Handle externref property set
@@ -4038,7 +4215,8 @@ function compilePropertyAssignment(
         kind: "ref_null",
         typeIdx: vecBaseIdx,
       });
-      fctx.body.push({ op: "local.set", index: vecTmp });
+      // (#4638) See `emitArrayLengthSetReceiverPark`.
+      const receiverProvenVec = emitArrayLengthSetReceiverPark(fctx, structObjResult, vecBaseIdx, vecTmp);
       // Compile value (the new length)
       const valType = compileExpression(ctx, fctx, value);
       if (!valType) return null;
@@ -4062,9 +4240,21 @@ function compilePropertyAssignment(
       }
       fctx.body.push({ op: "local.set", index: newLenTmp });
       // Set vec.length = newLen
-      fctx.body.push({ op: "local.get", index: vecTmp });
-      fctx.body.push({ op: "local.get", index: newLenTmp });
-      fctx.body.push({ op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 });
+      const lengthStore: Instr[] = [
+        { op: "local.get", index: vecTmp },
+        { op: "local.get", index: newLenTmp },
+        { op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 },
+      ];
+      if (receiverProvenVec) {
+        // Byte-identical to pre-#4638 for a statically proven vec receiver.
+        for (const instr of lengthStore) fctx.body.push(instr);
+      } else {
+        // The guarded cast above parks `null` when the receiver was not a vec;
+        // `struct.set` on null is the same uncatchable trap, so skip the store.
+        fctx.body.push({ op: "local.get", index: vecTmp });
+        fctx.body.push({ op: "ref.is_null" });
+        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: [], else: lengthStore });
+      }
       // Assignment result — UNSIGNED widening (#4491, see array-length-define.ts).
       fctx.body.push({ op: "local.get", index: newLenTmp });
       if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
@@ -5347,6 +5537,26 @@ function compileElementAssignment(
           { op: "array.fill", typeIdx: arrTypeIdx },
         ],
       });
+    } else if (arrDef.element.kind === "f64") {
+      // (#4491 T8) The f64 twin of the gap-fill above: an f64 slot CAN hold an
+      // absence marker (the `UNDEF_F64_BITS` sNaN), so the gap no longer reads
+      // back as a real `0`. Body in `vec-f64-hole-gap.ts`.
+      const f64HoleGap = f64HolesActive(ctx);
+      if (f64HoleGap) ctx.f64HoleMarkerEmitted = true;
+      fctx.body.push(
+        ...emitF64GapFillInstrs(fctx, {
+          vecLocal,
+          dataLocal,
+          idxLocal,
+          vecTypeIdx: typeIdx,
+          arrTypeIdx,
+          gapCond: (oldLen) => needsGapFillCondInstrs(unbackedLocal, idxLocal, oldLen),
+          // (#4491 T11) A module that can ask presence questions marks the gap
+          // ABSENT; one that cannot keeps T8-A's `undefined` marker, so its
+          // bytes and behaviour are unchanged.
+          markerBits: f64HoleGap ? HOLE_F64_BITS : undefined,
+        }),
+      );
     }
 
     // array.set: data[idx] = val (skipped for an unbackable index).

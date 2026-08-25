@@ -71,7 +71,12 @@
  */
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { withSpeculativeCompile } from "./context/speculative.js";
-import { BUILTIN_CTOR_ARITY, NUMBER_CONSTANT_VALUES, tryEnsureNativeProtoBrand } from "./builtin-value-read.js";
+import {
+  BUILTIN_CTOR_ARITY,
+  NUMBER_CONSTANT_VALUES,
+  TYPED_ARRAY_BYTES_PER_ELEMENT,
+  tryEnsureNativeProtoBrand,
+} from "./builtin-value-read.js";
 import { ensureStandaloneBuiltinStaticMethodClosure } from "./property-access.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js";
@@ -150,6 +155,17 @@ const CTOR_NUMERIC_CONSTANTS: Record<string, Record<string, number>> = {
  */
 const CTOR_STATIC_METHODS: Record<string, readonly string[]> = {
   String: ["fromCharCode", "fromCodePoint", "raw"],
+  // (#4491 wave-4) `Date` joins on the SAME cost argument the String-only note
+  // above makes, not against it: `Date` has exactly THREE statics
+  // (`BUILTIN_STATIC_METHOD_ARITY.Date = {now, parse, UTC}`), the same order of
+  // magnitude as String's three — not `Math`'s ~30 or `Object`'s ~24. The
+  // measured row is `defineProperty/15.2.3.6-4-622`
+  // (`verifyProperty(Date, "now", {writable, enumerable, configurable})`),
+  // which failed at `__hasOwnProperty(Date, "now")` → "now should be an own
+  // property" while `gOPN(Date)` reported only `length, name, prototype`.
+  // Widening to a receiver with tens of statics still needs its own cost
+  // measurement.
+  Date: ["now", "parse", "UTC"],
 };
 
 /**
@@ -244,6 +260,21 @@ export function pushBuiltinCtorOwnPropSeed(
       fctx.body.push({ op: "drop" });
       return { commit: true, value: undefined };
     });
+  }
+
+  // (#4490 wave 2) Int8Array's `BYTES_PER_ELEMENT` is an own data property of
+  // the constructor.  Seed it on the same carrier as `length`/`name` so the
+  // dynamic read, `in`, delete, and gOPD paths observe one mutable entry.  The
+  // descriptor is non-writable, non-enumerable, and non-configurable (§23.2.4).
+  if (builtinName === "Int8Array") {
+    fctx.body.push({ op: "local.get", index: objLocal });
+    addStringConstantGlobal(ctx, "BYTES_PER_ELEMENT");
+    for (const instr of stringConstantExternrefInstrs(ctx, "BYTES_PER_ELEMENT")) fctx.body.push(instr);
+    fctx.body.push({ op: "f64.const", value: TYPED_ARRAY_BYTES_PER_ELEMENT[builtinName] ?? 1 });
+    fctx.body.push({ op: "call", funcIdx: boxIdx });
+    fctx.body.push({ op: "f64.const", value: 0 });
+    fctx.body.push({ op: "call", funcIdx: defineIdx });
+    fctx.body.push({ op: "drop" });
   }
 
   // (#2875 w4-F) Static METHODS — { w:true, e:false, c:true }, value = the

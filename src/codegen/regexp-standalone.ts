@@ -85,6 +85,7 @@ import { tryCompileCoercedStringMatch, tryCompileCoercedStringSearch } from "./s
 import { isPlainToStringReplacement } from "./string-proto-replace.js";
 import { tryCompileStandaloneRegExpFunctionReplace } from "./regex-replace-fn.js";
 import { nativeStringRepr } from "./builtin-scaffold.js";
+import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../ir/regexp-runtime-contract.js";
@@ -93,7 +94,12 @@ import {
   ensureDynamicPatternTokenDecoder,
   makeDynamicPatternAccessors,
   TOKEN_ANY,
+  TOKEN_GROUP_CLOSE,
+  TOKEN_GROUP_OPEN,
+  TOKEN_OPT,
   TOKEN_PIPE,
+  TOKEN_PLUS,
+  TOKEN_STAR,
   TOKEN_UNSUPPORTED,
 } from "./regexp-dynamic-pattern.js";
 
@@ -239,11 +245,11 @@ function isStaticStandaloneRegExpCreation(ctx: CodegenContext, expr: ts.Expressi
   if (unwrapped.kind === ts.SyntaxKind.RegularExpressionLiteral) return true;
   if (ts.isNewExpression(unwrapped)) {
     const callee = stripStaticWrapper(unwrapped.expression);
-    return ts.isIdentifier(callee) && isGlobalRegExpIdentifier(ctx, callee);
+    return isGlobalRegExpConstructorExpression(ctx, callee);
   }
   if (ts.isCallExpression(unwrapped) && !unwrapped.questionDotToken) {
     const callee = stripStaticWrapper(unwrapped.expression);
-    return ts.isIdentifier(callee) && isGlobalRegExpIdentifier(ctx, callee);
+    return isGlobalRegExpConstructorExpression(ctx, callee);
   }
   return false;
 }
@@ -459,6 +465,64 @@ export function isGlobalRegExpIdentifier(ctx: CodegenContext, ident: ts.Identifi
   return isDeclarationFileOnlySymbol(sym);
 }
 
+/**
+ * Whether an expression is the ambient RegExp constructor value.
+ *
+ * TypeScript gives `RegExp.prototype.constructor` the broad `Function` type
+ * (and therefore gives a variable initialized from it no construct signature)
+ * even though the ES5 value is the callable/constructable RegExp intrinsic.
+ * The standalone `new` dispatcher must retain that identity when the
+ * constructor is read through the prototype or a const/var alias; otherwise
+ * the generic externref constructor path sees a plain carrier object and
+ * reports "RegExp is not a constructor" at runtime.
+ *
+ * This is intentionally a syntax-and-binding proof, not a broad name check:
+ * shadowed `RegExp` bindings do not satisfy `isGlobalRegExpIdentifier`, and an
+ * alias is only followed through a variable declaration initializer. Writes or
+ * cycles decline and keep the ordinary dynamic path.
+ */
+export function isGlobalRegExpConstructorExpression(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const seen = new Set<ts.Symbol>();
+
+  const isPrototypeExpression = (candidate: ts.Expression): boolean => {
+    const unwrapped = stripStaticWrapper(candidate);
+    if (!ts.isPropertyAccessExpression(unwrapped) || unwrapped.name.text !== "prototype") return false;
+    const base = stripStaticWrapper(unwrapped.expression);
+    return ts.isIdentifier(base) && isGlobalRegExpIdentifier(ctx, base);
+  };
+
+  const visit = (candidate: ts.Expression): boolean => {
+    const unwrapped = stripStaticWrapper(candidate);
+    if (ts.isIdentifier(unwrapped)) {
+      if (isGlobalRegExpIdentifier(ctx, unwrapped)) return true;
+      const symbol = ctx.checker.getSymbolAtLocation(unwrapped);
+      if (!symbol || seen.has(symbol)) return false;
+      seen.add(symbol);
+      const declarations = symbol.getDeclarations() ?? [];
+      if (declarations.length === 0) return false;
+      let foundVariable = false;
+      for (const declaration of declarations) {
+        if (!ts.isVariableDeclaration(declaration) || declaration.initializer === undefined) return false;
+        // A mutable alias remains claimable only when the whole binding is
+        // never assigned after its declaration. `const` naturally passes;
+        // `var`/`let` are checked because JavaScript's checker still reports
+        // their initializer as the useful identity even after a rebind.
+        if (bindingHasWrites(ctx, declaration, symbol)) return false;
+        foundVariable = true;
+        if (!visit(declaration.initializer)) return false;
+      }
+      return foundVariable;
+    }
+
+    if (ts.isPropertyAccessExpression(unwrapped) && unwrapped.name.text === "constructor") {
+      return isPrototypeExpression(unwrapped.expression);
+    }
+    return false;
+  };
+
+  return visit(expr);
+}
+
 function isDeclarationFileOnlySymbol(sym: ts.Symbol | undefined): boolean {
   if (!sym) return true;
   const decls = sym.getDeclarations();
@@ -588,7 +652,8 @@ function staticConstStringValue(
     }
     // A never-written binding with NO initialiser is always `undefined`
     // (`var x; new RegExp(/re/m, x)` — sputnik's hoisted-undefined flags form).
-    if (!decl.initializer) return isConst ? null : undefined;
+    if (!decl.initializer)
+      return ts.isForOfStatement(list.parent) || ts.isForInStatement(list.parent) ? null : isConst ? null : undefined;
     if (seen.has(decl.initializer)) return null;
     // `seen` guards the ACTIVE resolution path (a self-referential cycle), so
     // unwind it after the recursive fold — a diamond (`a + "x" + a`, the same
@@ -685,6 +750,7 @@ function staticRegExpPatternFlags(
   ctx: CodegenContext,
   expr: ts.Expression,
   depth = 0,
+  patternOnly = false,
 ): StaticRegExpPatternFlags | null {
   if (depth > 16) return null; // see staticRegExpLiteralCopy's depth guard
   const unwrapped = stripStaticWrapper(expr);
@@ -702,7 +768,7 @@ function staticRegExpPatternFlags(
     const patternArg = unwrapped.arguments?.[0];
     const flagsArg = unwrapped.arguments?.[1];
     // #2161 — a regex-literal first arg is the §22.2.3.1 copy form.
-    if (patternArg !== undefined) {
+    if (patternArg !== undefined && !patternOnly) {
       const copy = staticRegExpLiteralCopy(ctx, patternArg, flagsArg, depth + 1);
       if (copy !== null) return copy;
     }
@@ -710,7 +776,11 @@ function staticRegExpPatternFlags(
     // so a `const re = new RegExp("a"+"b","g")` binding is recognised as a
     // backend-created receiver for downstream `re.test`/`re.exec`/etc.
     const pattern = patternArg === undefined ? "" : staticConstStringValue(ctx, patternArg, new Set(), depth + 1);
-    const flags = flagsArg === undefined ? "" : staticConstStringValue(ctx, flagsArg, new Set(), depth + 1);
+    const flags = patternOnly
+      ? ""
+      : flagsArg === undefined
+        ? ""
+        : staticConstStringValue(ctx, flagsArg, new Set(), depth + 1);
     if (pattern === null || flags === null) return null;
     return { pattern: pattern ?? "", flags: flags ?? "" };
   }
@@ -718,8 +788,8 @@ function staticRegExpPatternFlags(
     const sym = ctx.checker.getSymbolAtLocation(unwrapped);
     if (!sym) return null;
     const decl = sym.getDeclarations()?.find((d) => ts.isVariableDeclaration(d)) as ts.VariableDeclaration | undefined;
-    if (!decl?.initializer || !isTrustedBackendCreatedRegExpBinding(ctx, decl, sym)) return null;
-    return staticRegExpPatternFlags(ctx, decl.initializer, depth + 1);
+    if (!decl?.initializer || (!patternOnly && !isTrustedBackendCreatedRegExpBinding(ctx, decl, sym))) return null;
+    return staticRegExpPatternFlags(ctx, decl.initializer, depth + 1, patternOnly);
   }
   return null;
 }
@@ -788,6 +858,18 @@ export function staticRegExpGroupMeta(
     if ((flagBits & ~SUPPORTED_STANDALONE_FLAGS) !== 0) return null;
     const compiled = compilePattern(meta.pattern, flagBits);
     return { groupNames: compiled.groupNames, flags: compiled.flags, nGroups: compiled.nGroups };
+  } catch {
+    return null;
+  }
+}
+
+function staticRegExpGroupNames(ctx: CodegenContext, expr: ts.Expression): ReadonlyMap<string, number> | null {
+  const full = staticRegExpGroupMeta(ctx, expr);
+  if (full !== null) return full.groupNames;
+  const pattern = staticRegExpPatternFlags(ctx, expr, 0, true)?.pattern;
+  if (pattern === undefined) return null;
+  try {
+    return compilePattern(pattern, 0).groupNames;
   } catch {
     return null;
   }
@@ -1096,6 +1178,23 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
   // verbatim as its match payload. `.` (ANY) and any multi-unit escape make
   // source text != matched text, which that path has no way to express.
   const PLAIN = 30;
+  // #4516 — Annex B `\\c` fallback quantifiers are only valid immediately
+  // after an atom. Keep malformed/ordinary dynamic quantifiers loud.
+  const CAN_QUANTIFY = 31;
+  // Emission lookahead for a quantifier following the current atom.
+  const NEXT = 32;
+  // Start pc of the current quantified atom's loop.
+  const QSTART = 33;
+  // Group bookkeeping for the bounded dynamic capture-envelope grammar. A
+  // capture group gets two SAVE records; a non-capturing group only changes
+  // the nesting stack. Groups are deliberately refused when mixed with `|`
+  // so the existing alternative counter cannot be fed a mismatched stack.
+  const GROUP_DEPTH = 34;
+  const GROUP_CAPS = 35;
+  const GROUP_STACK = 36;
+  const GROUP_ID = 37;
+  const GROUP_SEEN = 38;
+  const GROUP_TOTAL = 39;
   const readFlatUnit = (dataLocal: number, offLocal: number, indexLocal: number): Instr[] => [
     { op: "local.get", index: dataLocal },
     { op: "local.get", index: offLocal },
@@ -1110,6 +1209,19 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "i32.const", value: index },
     { op: "i32.add" },
     { op: "array.get_u", typeIdx: ctx.nativeStrDataTypeIdx },
+  ];
+
+  const groupStackGet = (index: number): Instr[] => [
+    { op: "local.get", index: GROUP_STACK },
+    { op: "local.get", index },
+    { op: "array.get", typeIdx: i32ArrIdx },
+  ];
+
+  const groupStackSet = (value: Instr[]): Instr[] => [
+    { op: "local.get", index: GROUP_STACK },
+    { op: "local.get", index: GROUP_DEPTH },
+    ...value,
+    { op: "array.set", typeIdx: i32ArrIdx },
   ];
 
   // #4065 — the single shared tokeniser. All FOUR walks over the pattern (count
@@ -1176,6 +1288,9 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "local.get", index: PFLAT },
     { op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 0 },
     { op: "local.set", index: PLEN },
+    { op: "local.get", index: PLEN },
+    { op: "array.new_default", typeIdx: i32ArrIdx },
+    { op: "local.set", index: GROUP_STACK },
     { op: "local.get", index: FLAGS },
     { op: "call", funcIdx: flattenIdx },
     { op: "local.tee", index: FFLAT },
@@ -1324,6 +1439,14 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "local.set", index: CHARS },
     { op: "i32.const", value: 1 },
     { op: "local.set", index: PLAIN },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: CAN_QUANTIFY },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: GROUP_DEPTH },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: GROUP_CAPS },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: GROUP_SEEN },
     { op: "local.get", index: START },
     { op: "local.set", index: I },
     {
@@ -1358,41 +1481,208 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                 { op: "local.set", index: PLAIN },
               ],
             },
-            ...tk.kindIs(TOKEN_PIPE),
+            ...tk.kindIs(TOKEN_GROUP_OPEN),
             {
               op: "if",
               blockType: { kind: "empty" },
               then: [
-                { op: "local.get", index: ANCHORED },
+                { op: "i32.const", value: 1 },
+                { op: "local.set", index: GROUP_SEEN },
+                { op: "local.get", index: GROUP_DEPTH },
+                { op: "i32.eqz" },
                 {
                   op: "if",
                   blockType: { kind: "empty" },
-                  then: [
-                    { op: "local.get", index: PIPES },
-                    { op: "i32.const", value: 1 },
-                    { op: "i32.add" },
-                    { op: "local.set", index: PIPES },
-                  ],
+                  then: [],
                   else: [
                     { op: "i32.const", value: 0 },
                     { op: "local.set", index: SIMPLE },
                   ],
                 },
+                { op: "i32.const", value: 0 },
+                { op: "local.set", index: PLAIN },
+                ...tk.value(),
+                { op: "i32.eqz" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    ...groupStackSet([{ op: "local.get", index: GROUP_CAPS }]),
+                    { op: "local.get", index: GROUP_CAPS },
+                    { op: "i32.const", value: 1 },
+                    { op: "i32.add" },
+                    { op: "local.set", index: GROUP_CAPS },
+                    { op: "local.get", index: CHARS },
+                    { op: "i32.const", value: 2 },
+                    { op: "i32.add" },
+                    { op: "local.set", index: CHARS },
+                  ],
+                  else: [...groupStackSet([{ op: "i32.const", value: -1 }])],
+                },
+                { op: "local.get", index: GROUP_DEPTH },
+                { op: "i32.const", value: 1 },
+                { op: "i32.add" },
+                { op: "local.set", index: GROUP_DEPTH },
               ],
               else: [
-                ...tk.kindIs(TOKEN_UNSUPPORTED),
+                ...tk.kindIs(TOKEN_GROUP_CLOSE),
                 {
                   op: "if",
                   blockType: { kind: "empty" },
                   then: [
                     { op: "i32.const", value: 0 },
-                    { op: "local.set", index: SIMPLE },
+                    { op: "local.set", index: PLAIN },
+                    { op: "local.get", index: GROUP_DEPTH },
+                    { op: "i32.eqz" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        { op: "i32.const", value: 0 },
+                        { op: "local.set", index: SIMPLE },
+                      ],
+                      else: [
+                        { op: "local.get", index: GROUP_DEPTH },
+                        { op: "i32.const", value: 1 },
+                        { op: "i32.sub" },
+                        { op: "local.set", index: GROUP_DEPTH },
+                      ],
+                    },
                   ],
                   else: [
-                    { op: "local.get", index: CHARS },
-                    { op: "i32.const", value: 1 },
-                    { op: "i32.add" },
-                    { op: "local.set", index: CHARS },
+                    ...tk.kindIs(TOKEN_PIPE),
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        { op: "local.get", index: GROUP_DEPTH },
+                        {
+                          op: "if",
+                          blockType: { kind: "empty" },
+                          then: [
+                            { op: "i32.const", value: 0 },
+                            { op: "local.set", index: SIMPLE },
+                          ],
+                          else: [
+                            { op: "local.get", index: PIPES },
+                            { op: "i32.const", value: 1 },
+                            { op: "i32.add" },
+                            { op: "local.set", index: PIPES },
+                          ],
+                        },
+                      ],
+                      else: [
+                        ...tk.kindIs(TOKEN_UNSUPPORTED),
+                        {
+                          op: "if",
+                          blockType: { kind: "empty" },
+                          then: [
+                            { op: "i32.const", value: 0 },
+                            { op: "local.set", index: SIMPLE },
+                            { op: "i32.const", value: 0 },
+                            { op: "local.set", index: CAN_QUANTIFY },
+                          ],
+                          else: [
+                            // `*`, `+`, and `?` are operators rather than program
+                            // records. They add the records needed to wrap the
+                            // immediately preceding atom; a leading/repeated
+                            // quantifier remains a loud unsupported pattern.
+                            ...tk.kindIs(TOKEN_STAR),
+                            {
+                              op: "if",
+                              blockType: { kind: "empty" },
+                              then: [
+                                { op: "local.get", index: CAN_QUANTIFY },
+                                {
+                                  op: "if",
+                                  blockType: { kind: "empty" },
+                                  then: [
+                                    { op: "local.get", index: CHARS },
+                                    { op: "i32.const", value: 2 },
+                                    { op: "i32.add" },
+                                    { op: "local.set", index: CHARS },
+                                  ],
+                                  else: [
+                                    { op: "i32.const", value: 0 },
+                                    { op: "local.set", index: SIMPLE },
+                                  ],
+                                },
+                                { op: "i32.const", value: 0 },
+                                { op: "local.set", index: PLAIN },
+                                { op: "i32.const", value: 0 },
+                                { op: "local.set", index: CAN_QUANTIFY },
+                              ],
+                              else: [
+                                ...tk.kindIs(TOKEN_PLUS),
+                                {
+                                  op: "if",
+                                  blockType: { kind: "empty" },
+                                  then: [
+                                    { op: "local.get", index: CAN_QUANTIFY },
+                                    {
+                                      op: "if",
+                                      blockType: { kind: "empty" },
+                                      then: [
+                                        { op: "local.get", index: CHARS },
+                                        { op: "i32.const", value: 1 },
+                                        { op: "i32.add" },
+                                        { op: "local.set", index: CHARS },
+                                      ],
+                                      else: [
+                                        { op: "i32.const", value: 0 },
+                                        { op: "local.set", index: SIMPLE },
+                                      ],
+                                    },
+                                    { op: "i32.const", value: 0 },
+                                    { op: "local.set", index: PLAIN },
+                                    { op: "i32.const", value: 0 },
+                                    { op: "local.set", index: CAN_QUANTIFY },
+                                  ],
+                                  else: [
+                                    ...tk.kindIs(TOKEN_OPT),
+                                    {
+                                      op: "if",
+                                      blockType: { kind: "empty" },
+                                      then: [
+                                        { op: "local.get", index: CAN_QUANTIFY },
+                                        {
+                                          op: "if",
+                                          blockType: { kind: "empty" },
+                                          then: [
+                                            { op: "local.get", index: CHARS },
+                                            { op: "i32.const", value: 1 },
+                                            { op: "i32.add" },
+                                            { op: "local.set", index: CHARS },
+                                          ],
+                                          else: [
+                                            { op: "i32.const", value: 0 },
+                                            { op: "local.set", index: SIMPLE },
+                                          ],
+                                        },
+                                        { op: "i32.const", value: 0 },
+                                        { op: "local.set", index: PLAIN },
+                                        { op: "i32.const", value: 0 },
+                                        { op: "local.set", index: CAN_QUANTIFY },
+                                      ],
+                                      else: [
+                                        // A literal or `.` is an atom that a later
+                                        // quantifier may decorate.
+                                        { op: "local.get", index: CHARS },
+                                        { op: "i32.const", value: 1 },
+                                        { op: "i32.add" },
+                                        { op: "local.set", index: CHARS },
+                                        { op: "i32.const", value: 1 },
+                                        { op: "local.set", index: CAN_QUANTIFY },
+                                      ],
+                                    },
+                                  ],
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                      ],
+                    },
                   ],
                 },
               ],
@@ -1403,6 +1693,19 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
         },
       ],
     },
+    { op: "local.get", index: GROUP_DEPTH },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [],
+      else: [
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: SIMPLE },
+      ],
+    },
+    { op: "local.get", index: GROUP_CAPS },
+    { op: "local.set", index: GROUP_TOTAL },
     // SAVE0 + chars + (SPLIT,JMP per pipe) + optional BOL/EOL + SAVE1 + MATCH.
     { op: "local.get", index: CHARS },
     { op: "local.get", index: PIPES },
@@ -1520,6 +1823,10 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
         { op: "local.set", index: PROG },
         { op: "i32.const", value: 0 },
         { op: "local.set", index: PC },
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: GROUP_DEPTH },
+        { op: "i32.const", value: 1 },
+        { op: "local.set", index: GROUP_CAPS },
         ...emitRecord([{ op: "i32.const", value: ReOp.SAVE }], [{ op: "i32.const", value: 0 }]),
         { op: "local.get", index: ANCHORED },
         {
@@ -1571,10 +1878,52 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                         ...readToken(J),
                         ...tk.kindIs(TOKEN_PIPE),
                         { op: "br_if", depth: 1 },
-                        { op: "local.get", index: ALTN },
-                        { op: "i32.const", value: 1 },
-                        { op: "i32.add" },
-                        { op: "local.set", index: ALTN },
+                        // Quantifiers contribute only their loop scaffolding:
+                        // `*` is SPLIT+atom+JMP (+2 records), while `+`/`?`
+                        // each add one. Other tokens contribute one record.
+                        ...tk.kindIs(TOKEN_STAR),
+                        {
+                          op: "if",
+                          blockType: { kind: "empty" },
+                          then: [
+                            { op: "local.get", index: ALTN },
+                            { op: "i32.const", value: 2 },
+                            { op: "i32.add" },
+                            { op: "local.set", index: ALTN },
+                          ],
+                          else: [
+                            ...tk.kindIs(TOKEN_PLUS),
+                            {
+                              op: "if",
+                              blockType: { kind: "empty" },
+                              then: [
+                                { op: "local.get", index: ALTN },
+                                { op: "i32.const", value: 1 },
+                                { op: "i32.add" },
+                                { op: "local.set", index: ALTN },
+                              ],
+                              else: [
+                                ...tk.kindIs(TOKEN_OPT),
+                                {
+                                  op: "if",
+                                  blockType: { kind: "empty" },
+                                  then: [
+                                    { op: "local.get", index: ALTN },
+                                    { op: "i32.const", value: 1 },
+                                    { op: "i32.add" },
+                                    { op: "local.set", index: ALTN },
+                                  ],
+                                  else: [
+                                    { op: "local.get", index: ALTN },
+                                    { op: "i32.const", value: 1 },
+                                    { op: "i32.add" },
+                                    { op: "local.set", index: ALTN },
+                                  ],
+                                },
+                              ],
+                            },
+                          ],
+                        },
                         ...advanceByToken(J),
                         { op: "br", depth: 0 },
                       ],
@@ -1626,10 +1975,189 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                         // exactly `CHARS` records and stays inside the
                         // `NINSTR * 3` program array.
                         ...readToken(K),
-                        ...tk.value(),
-                        { op: "local.set", index: CH },
-                        ...emitRecord(tk.recordOp(), dynamicCharOperand),
-                        ...advanceByToken(K),
+                        ...tk.kindIs(TOKEN_GROUP_OPEN),
+                        {
+                          op: "if",
+                          blockType: { kind: "empty" },
+                          then: [
+                            ...tk.value(),
+                            { op: "i32.eqz" },
+                            {
+                              op: "if",
+                              blockType: { kind: "empty" },
+                              then: [
+                                ...groupStackSet([{ op: "local.get", index: GROUP_CAPS }]),
+                                ...emitRecord(
+                                  [{ op: "i32.const", value: ReOp.SAVE }],
+                                  [
+                                    { op: "i32.const", value: 2 },
+                                    { op: "local.get", index: GROUP_CAPS },
+                                    { op: "i32.mul" },
+                                  ],
+                                ),
+                                { op: "local.get", index: GROUP_CAPS },
+                                { op: "i32.const", value: 1 },
+                                { op: "i32.add" },
+                                { op: "local.set", index: GROUP_CAPS },
+                              ],
+                              else: [...groupStackSet([{ op: "i32.const", value: -1 }])],
+                            },
+                            { op: "local.get", index: GROUP_DEPTH },
+                            { op: "i32.const", value: 1 },
+                            { op: "i32.add" },
+                            { op: "local.set", index: GROUP_DEPTH },
+                            ...advanceByToken(K),
+                          ],
+                          else: [
+                            ...tk.kindIs(TOKEN_GROUP_CLOSE),
+                            {
+                              op: "if",
+                              blockType: { kind: "empty" },
+                              then: [
+                                { op: "local.get", index: GROUP_DEPTH },
+                                { op: "i32.const", value: 1 },
+                                { op: "i32.sub" },
+                                { op: "local.set", index: GROUP_DEPTH },
+                                ...groupStackGet(GROUP_DEPTH),
+                                { op: "local.set", index: GROUP_ID },
+                                { op: "local.get", index: GROUP_ID },
+                                { op: "i32.const", value: 0 },
+                                { op: "i32.ge_s" },
+                                {
+                                  op: "if",
+                                  blockType: { kind: "empty" },
+                                  then: [
+                                    ...emitRecord(
+                                      [{ op: "i32.const", value: ReOp.SAVE }],
+                                      [
+                                        { op: "i32.const", value: 2 },
+                                        { op: "local.get", index: GROUP_ID },
+                                        { op: "i32.mul" },
+                                        { op: "i32.const", value: 1 },
+                                        { op: "i32.add" },
+                                      ],
+                                    ),
+                                  ],
+                                  else: [],
+                                },
+                                ...advanceByToken(K),
+                              ],
+                              else: [
+                                // Quantifiers are operators: wrap the immediately
+                                // preceding atom instead of emitting a standalone
+                                // record. The decoder scopes these tokens to the
+                                // Annex B `\\c` fallback, so ordinary unsupported
+                                // quantifier patterns still take the refusal path.
+                                { op: "local.get", index: K },
+                                ...tk.len(),
+                                { op: "i32.add" },
+                                { op: "local.set", index: NEXT },
+                                ...readToken(NEXT),
+                                ...tk.kindIs(TOKEN_STAR),
+                                {
+                                  op: "if",
+                                  blockType: { kind: "empty" },
+                                  then: [
+                                    { op: "local.get", index: PC },
+                                    { op: "local.set", index: QSTART },
+                                    ...emitRecord(
+                                      [{ op: "i32.const", value: ReOp.SPLIT }],
+                                      [
+                                        { op: "local.get", index: PC },
+                                        { op: "i32.const", value: 1 },
+                                        { op: "i32.add" },
+                                      ],
+                                      [
+                                        { op: "local.get", index: PC },
+                                        { op: "i32.const", value: 3 },
+                                        { op: "i32.add" },
+                                      ],
+                                    ),
+                                    ...readToken(K),
+                                    ...tk.value(),
+                                    { op: "local.set", index: CH },
+                                    ...emitRecord(tk.recordOp(), dynamicCharOperand),
+                                    ...emitRecord(
+                                      [{ op: "i32.const", value: ReOp.JMP }],
+                                      [{ op: "local.get", index: QSTART }],
+                                    ),
+                                    ...readToken(NEXT),
+                                    ...advanceByToken(NEXT),
+                                    { op: "local.get", index: NEXT },
+                                    { op: "local.set", index: K },
+                                  ],
+                                  else: [
+                                    ...tk.kindIs(TOKEN_PLUS),
+                                    {
+                                      op: "if",
+                                      blockType: { kind: "empty" },
+                                      then: [
+                                        { op: "local.get", index: PC },
+                                        { op: "local.set", index: QSTART },
+                                        ...readToken(K),
+                                        ...tk.value(),
+                                        { op: "local.set", index: CH },
+                                        ...emitRecord(tk.recordOp(), dynamicCharOperand),
+                                        ...emitRecord(
+                                          [{ op: "i32.const", value: ReOp.SPLIT }],
+                                          [{ op: "local.get", index: QSTART }],
+                                          [
+                                            { op: "local.get", index: PC },
+                                            { op: "i32.const", value: 1 },
+                                            { op: "i32.add" },
+                                          ],
+                                        ),
+                                        ...readToken(NEXT),
+                                        ...advanceByToken(NEXT),
+                                        { op: "local.get", index: NEXT },
+                                        { op: "local.set", index: K },
+                                      ],
+                                      else: [
+                                        ...tk.kindIs(TOKEN_OPT),
+                                        {
+                                          op: "if",
+                                          blockType: { kind: "empty" },
+                                          then: [
+                                            { op: "local.get", index: PC },
+                                            { op: "local.set", index: QSTART },
+                                            ...emitRecord(
+                                              [{ op: "i32.const", value: ReOp.SPLIT }],
+                                              [
+                                                { op: "local.get", index: PC },
+                                                { op: "i32.const", value: 1 },
+                                                { op: "i32.add" },
+                                              ],
+                                              [
+                                                { op: "local.get", index: PC },
+                                                { op: "i32.const", value: 2 },
+                                                { op: "i32.add" },
+                                              ],
+                                            ),
+                                            ...readToken(K),
+                                            ...tk.value(),
+                                            { op: "local.set", index: CH },
+                                            ...emitRecord(tk.recordOp(), dynamicCharOperand),
+                                            ...readToken(NEXT),
+                                            ...advanceByToken(NEXT),
+                                            { op: "local.get", index: NEXT },
+                                            { op: "local.set", index: K },
+                                          ],
+                                          else: [
+                                            ...readToken(K),
+                                            ...tk.value(),
+                                            { op: "local.set", index: CH },
+                                            ...emitRecord(tk.recordOp(), dynamicCharOperand),
+                                            ...advanceByToken(K),
+                                          ],
+                                        },
+                                      ],
+                                    },
+                                  ],
+                                },
+                              ],
+                            },
+                          ],
+                        },
                         { op: "br", depth: 0 },
                       ],
                     },
@@ -1753,7 +2281,9 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     },
     ...buildIndexedAnchoredLiteralAltProgram(i32ArrIdx, ctx.nativeStrDataTypeIdx),
     { op: "local.get", index: FBITS },
+    { op: "local.get", index: GROUP_TOTAL },
     { op: "i32.const", value: 1 },
+    { op: "i32.add" },
     { op: "local.get", index: PROG },
     { op: "i32.const", value: 0 },
     { op: "array.new_default", typeIdx: i32ArrIdx },
@@ -1803,6 +2333,15 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
       { name: "tok", type: { kind: "i32" } },
       { name: "altn", type: { kind: "i32" } },
       { name: "plain", type: { kind: "i32" } },
+      { name: "canQuantify", type: { kind: "i32" } },
+      { name: "next", type: { kind: "i32" } },
+      { name: "qstart", type: { kind: "i32" } },
+      { name: "groupDepth", type: { kind: "i32" } },
+      { name: "groupCaps", type: { kind: "i32" } },
+      { name: "groupStack", type: i32ArrRef },
+      { name: "groupId", type: { kind: "i32" } },
+      { name: "groupSeen", type: { kind: "i32" } },
+      { name: "groupTotal", type: { kind: "i32" } },
     ],
     body,
     exported: false,
@@ -3539,14 +4078,14 @@ export function tryCompileStandaloneStringReplace(
   if (!usesNativeRegExpProvider(ctx)) return undefined;
 
   const flags = staticRegExpFlags(ctx, reExpr);
-  if (flags === null) return undefined;
-  const reHasGlobal = flags.includes("g");
+  const reHasGlobal = flags?.includes("g") ?? false;
+  if (flags === null && method === "replaceAll") return undefined;
   // `replaceAll` requires a global regex (spec §22.1.3.20 step 4 throws
   // TypeError otherwise). Leave that error to the host path; only handle the
   // well-formed `replaceAll(/…/g, …)` here.
   if (method === "replaceAll" && !reHasGlobal) return undefined;
   // For `replace`, global is honored (replace-all when `g`, first-only else).
-  const globalReplace = method === "replaceAll" || reHasGlobal;
+  const globalReplace = flags === null ? null : method === "replaceAll" || reHasGlobal;
 
   // String-method operand order: subject = receiver, regex = arg[0].
   return emitStandaloneRegExpReplaceCore(
@@ -3613,7 +4152,7 @@ function emitStandaloneRegExpReplaceCore(
   subjExpr: ts.Expression,
   reExpr: ts.Expression,
   replExpr: ts.Expression,
-  globalReplace: boolean,
+  globalReplace: boolean | null,
   diag: string,
   subjectOverride?: () => ValType | null,
 ): ValType | null {
@@ -3674,7 +4213,14 @@ function emitStandaloneRegExpReplaceCore(
   fctx.body.push({ op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 }); // len
   fctx.body.push({ op: "local.get", index: subjLocal });
   fctx.body.push({ op: "local.get", index: replLocal });
-  fctx.body.push({ op: "i32.const", value: globalReplace ? 1 : 0 });
+  if (globalReplace === null) {
+    fctx.body.push(
+      { op: "local.get", index: regexpLocal },
+      { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_FLAGS },
+      { op: "i32.const", value: RE_FLAG_G },
+      { op: "i32.and" },
+    );
+  } else fctx.body.push({ op: "i32.const", value: globalReplace ? 1 : 0 });
   // nScratch (#1959) — PROGRESS empty-loop guard slots.
   fctx.body.push({ op: "local.get", index: regexpLocal });
   fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_NSCRATCH });
@@ -3692,8 +4238,8 @@ function emitStandaloneRegExpReplaceCore(
  */
 function buildRegexNamesTableInstrs(ctx: CodegenContext, reExpr: ts.Expression): Instr[] {
   const values: number[] = [];
-  const meta = staticRegExpGroupMeta(ctx, reExpr);
-  const entries: Array<[string, number]> = meta !== null ? [...meta.groupNames.entries()] : [];
+  const groupNames = staticRegExpGroupNames(ctx, reExpr);
+  const entries: Array<[string, number]> = groupNames !== null ? [...groupNames.entries()] : [];
   values.push(entries.length); // count
   for (const [name, idx] of entries) {
     values.push(idx); // 1-based capture index
@@ -3997,6 +4543,22 @@ export function tryCompileStandaloneRegExpPropertyRead(
 ): ValType | null | undefined {
   if (!usesNativeRegExpProvider(ctx) || ts.isPrivateIdentifier(expr.name)) return undefined;
   const propName = expr.name.text;
+  // `var re = new RegExp(); re.constructor` is still a RegExp constructor
+  // read when JavaScript checking widens `re` to `any`. The ordinary
+  // reflection set below deliberately only covers fields physically stored on
+  // the native carrier, so keep this identity arm separate. It is guarded by
+  // the same whole-file proof used by RegExp(R)'s identity lowering: an
+  // explicit `.constructor`/descriptor/prototype override must stay on the
+  // dynamic object path rather than being silently replaced with the builtin.
+  if (
+    propName === "constructor" &&
+    regExpIdentityBrandIsProvable(expr.expression) &&
+    isKnownBackendCreatedRegExpReceiver(ctx, expr.expression)
+  ) {
+    const loaded = loadStandaloneRegExpStruct(ctx, fctx, expr.expression);
+    if (loaded === null) return null;
+    return emitBuiltinConstructorIdentity(ctx, fctx, "RegExp");
+  }
   if (!STANDALONE_REGEXP_REFLECTION_PROPS.has(propName)) return undefined;
   const objType = ctx.checker.getTypeAtLocation(expr.expression);
   const nonNull = objType.getNonNullableType?.() ?? objType;
@@ -4536,6 +5098,33 @@ function emitRegExpProtoMemberBody(
     const subjLocal = flattenExternrefArgToString(ctx, fctx, 2);
     emitRegExpTestFromLocals(ctx, fctx, regexpLocal, structTypeIdx, subjLocal);
     return { kind: "i32" };
+  }
+
+  if (member === "exec") {
+    // `RegExp.prototype.exec` is a first-class method value just like `test`,
+    // but its result is the capture-array object rather than the i32 match
+    // flag.  The ordinary expression path already owns the capture-array
+    // result shape (`index`, `input`, and the optional `groups`/`indices`
+    // overlays), so feed that engine the receiver recovered above instead of
+    // maintaining a second matcher here.
+    // `gyLastIndex: "runtime"` is intentional: a value-erased receiver has no
+    // compile-time flag spelling, and the engine must select g/y semantics from
+    // the recovered `$NativeRegExp` at runtime.
+    const subjLocal = flattenExternrefArgToString(ctx, fctx, 2);
+    const emitted = emitRegexExecArrayCall(ctx, fctx, null, null, {
+      gyLastIndex: "runtime",
+      inputOverride: () => {
+        fctx.body.push({ op: "local.get", index: subjLocal });
+        return nativeStringType(ctx);
+      },
+      regexpOverride: { regexpLocal, structTypeIdx },
+    });
+    if (emitted === null) return null;
+    // Native match vectors are GC refs; the reflective closure ABI returns an
+    // externref so direct calls, `.call`/`.apply`, and runtime descriptor reads
+    // all share the same result carrier.
+    fctx.body.push({ op: "extern.convert_any" });
+    return { kind: "externref" };
   }
 
   if (member === "source" || member === "flags") {
