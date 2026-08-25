@@ -11,7 +11,12 @@ import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext, HoistedCharRead } from "../context/types.js";
-import { emitCoercedLocalSet, emitWebCompatCallAssignmentTarget, updateLocalType } from "../expressions/helpers.js";
+import {
+  buildThrowJsErrorInstrs,
+  emitCoercedLocalSet,
+  emitWebCompatCallAssignmentTarget,
+  updateLocalType,
+} from "../expressions/helpers.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
 import { nativeGeneratorInfoForForOfSubject, tryCompileNativeGeneratorForOf } from "../generators-native.js";
 import {
@@ -85,6 +90,11 @@ import { tryCompileCountedStringAppend } from "./counted-string-append.js";
 import { emitHoleToUndefined } from "../array-holes.js"; // (#2001 S1)
 import { emitF64HoleToUndef, f64HolesActive } from "../vec-f64-hole-presence.js"; // (#4491 T11)
 import { definedFuncAt, nativeStrHelperHandle } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
+
+/** Build the canonical TypeError for synchronous for-of's ToObject(nullish) guard. */
+function forOfToObjectTypeError(ctx: CodegenContext, fctx: FunctionContext): Instr[] {
+  return buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", { flush: fctx });
+}
 
 /**
  * Compile a loop body, saving/restoring block-scoped shadows (#817) so that
@@ -1533,13 +1543,12 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
   // In JS, `for (const c of null)` throws TypeError
   if (strType.kind === "ref_null") {
     const guardedInstrs = fctx.body.splice(strNullGuardStart);
-    const tagIdx = ensureExnTag(ctx);
     fctx.body.push({ op: "local.get", index: strLocal });
     fctx.body.push({ op: "ref.is_null" });
     fctx.body.push({
       op: "if",
       blockType: { kind: "empty" },
-      then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
+      then: forOfToObjectTypeError(ctx, fctx),
       else: guardedInstrs,
     });
   }
@@ -1906,7 +1915,6 @@ function compileForOfArray(
     fctx.body.push({ op: "ref.is_null" });
     if (backupLocal !== undefined) {
       // A guarded cast backup exists: distinguish "wrong type" from "genuinely null"
-      const tagIdx = ensureExnTag(ctx);
       fctx.body.push({
         op: "if",
         blockType: { kind: "empty" },
@@ -1916,18 +1924,17 @@ function compileForOfArray(
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
+            then: forOfToObjectTypeError(ctx, fctx),
             else: [], // wrong struct type → skip loop
           },
         ],
         else: guardedInstrs,
       });
     } else {
-      const tagIdx = ensureExnTag(ctx);
       fctx.body.push({
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
+        then: forOfToObjectTypeError(ctx, fctx),
         else: guardedInstrs,
       });
     }
@@ -2235,13 +2242,12 @@ function emitArrayKeysEntriesLoop(
   // Null guard: throw TypeError for genuinely null receiver (`arr` is null).
   if (vecType.kind === "ref_null") {
     const guardedInstrs = fctx.body.splice(nullGuardStart);
-    const tagIdx = ensureExnTag(ctx);
     fctx.body.push({ op: "local.get", index: vecLocal });
     fctx.body.push({ op: "ref.is_null" });
     fctx.body.push({
       op: "if",
       blockType: { kind: "empty" },
-      then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
+      then: forOfToObjectTypeError(ctx, fctx),
       else: guardedInstrs,
     });
   }
@@ -2334,11 +2340,10 @@ function compileForOfDirectIterator(
   const nullTmp = allocLocal(fctx, `__forit_stmp_${fctx.locals.length}`, iterableType);
   fctx.body.push({ op: "local.tee", index: nullTmp });
   fctx.body.push({ op: "ref.is_null" });
-  const tagIdx = ensureExnTag(ctx);
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
-    then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
+    then: forOfToObjectTypeError(ctx, fctx),
     else: [],
   });
 
@@ -2739,7 +2744,6 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
   // If null from a failed guarded cast, skip instead of throw.
   {
     const backupLocal: number | undefined = (fctx as any).__lastGuardedCastBackup;
-    const tagIdx = ensureExnTag(ctx);
     const iterTmp = allocLocal(fctx, `__forit_null_${fctx.locals.length}`, {
       kind: "externref",
     });
@@ -2755,7 +2759,7 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
+            then: forOfToObjectTypeError(ctx, fctx),
             else: [],
           },
         ],
@@ -2765,7 +2769,7 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
       fctx.body.push({
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
+        then: forOfToObjectTypeError(ctx, fctx),
         else: [],
       });
     }
