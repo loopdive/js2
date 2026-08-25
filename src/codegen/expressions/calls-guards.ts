@@ -64,6 +64,20 @@ export const NEVER_CALLABLE_FACT_KINDS = new Set([
 ]);
 
 /**
+ * A JS array whose Wasm storage is externref can receive a callable after
+ * TypeScript has fixed its element fact to `undefined` (the #4702 shape:
+ * `let f = [undefined]; f[0] = () => 1; f[0]()`).  The element-call tail has a
+ * dynamic closure dispatcher for this representation; do not turn its stale
+ * primitive fact into an unconditional TypeError before that dispatcher runs.
+ * Numeric/typed arrays and non-array structs stay on the static guard.
+ */
+function isDynamicallyCallableExternrefArrayElement(ctx: CodegenContext, callee: ts.Expression): boolean {
+  if (!ts.isElementAccessExpression(callee)) return false;
+  const receiverFact = ctx.oracle.typeFactOf(callee.expression);
+  return receiverFact.kind === "array" && receiverFact.element.kind === "undefined";
+}
+
+/**
  * Standalone runtime-eval global pull-sync can replace an AOT binding after
  * the checker has classified its initializer. In particular, Annex B B.3.3.3
  * turns `var f = 123` into a callable when global eval executes a block-level
@@ -144,6 +158,12 @@ export function tryNonCallableValueCall(
   // of baking the initializer's primitive fact into an unconditional throw.
   if (runtimeEvalMayReplaceCallee(ctx, fctx, callee)) return undefined;
   if (annexBBlockFunctionBinding(ctx, fctx, callee)) return undefined;
+
+  // #4702 — an externref array element may have been populated with a closure
+  // after the checker recorded the initial `undefined` element fact. Let the
+  // element-call dispatcher inspect the runtime value before applying the
+  // primitive non-callable guard.
+  if (isDynamicallyCallableExternrefArrayElement(ctx, callee)) return undefined;
 
   const fact = ctx.oracle.typeFactOf(callee);
   if (!NEVER_CALLABLE_FACT_KINDS.has(fact.kind) && !isFreshlyConstructedNonCallable(ctx, callee, fact.kind)) {
