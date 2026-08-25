@@ -979,26 +979,25 @@ function linearIrTypeKey(type: IrType): string {
       return `fnctor:${JSON.stringify({
         sourceId: type.shape.sourceId,
         constructorUnitId: type.shape.constructorUnitId,
-        constructorName: type.shape.constructorName,
-        constructorTarget: type.shape.constructorTarget,
-        reservedLayout: type.shape.reservedLayout,
-        constructorIdentity: type.shape.constructorIdentity,
-        fields: type.shape.fields.map((field) => ({
-          name: field.name,
-          ordinal: field.ordinal,
-          type: linearIrTypeKey(field.type),
-        })),
-        captures: type.shape.captures.map((capture) => ({
-          name: capture.name,
-          ordinal: capture.ordinal,
-          hasTdzFlag: capture.hasTdzFlag,
-          type: linearIrTypeKey(capture.type),
-        })),
-        userParamTypes: type.shape.userParamTypes.map(linearIrTypeKey),
+        constructorTarget: canonicalFnctorRef(type.shape.constructorTarget),
+        reservedLayout: canonicalFnctorRef(type.shape.reservedLayout),
       })}`;
     case "dynamic":
       return "dynamic";
   }
+}
+
+function canonicalFnctorRef(ref: { readonly kind: string; readonly binding: unknown }): string {
+  return `${ref.kind}:${canonicalFnctorJson(ref.binding)}`;
+}
+
+function canonicalFnctorJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalFnctorJson).join(",")}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalFnctorJson(entry)}`)
+    .join(",")}}`;
 }
 
 function shapeKey(shape: IrObjectShape): string {
