@@ -20,6 +20,7 @@ import { numberIsPredicateOps } from "../number-is-predicate-ops.js";
 import { sameValueNumberOps } from "../same-value-number-ops.js";
 import {
   emitArrayIteratorPrototypeSingleton,
+  emitIteratorPrototypeSingleton,
   emitFunctionPrototypeObjectSingleton,
   emitGeneratorFunctionPrototypeSingleton,
   emitGeneratorPrototypeSingleton,
@@ -2055,6 +2056,21 @@ export function compileBuiltinStaticCall(
       const argType = compileExpression(ctx, fctx, arg0);
       if (argType) fctx.body.push({ op: "drop" });
       const protoType = emitArrayIteratorPrototypeSingleton(ctx, fctx);
+      if (protoType) return protoType;
+      // Runtime unavailable: preserve the historical null return.
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
+    }
+
+    // (#4747) `Object.getPrototypeOf(<string iterator>)` → the shared native
+    // `%StringIteratorPrototype%` singleton (standalone/WASI). String iterator
+    // carriers do not model [[Prototype]], so the generic fallback returns
+    // null; route only checker-proven `StringIterator` values and preserve the
+    // argument's evaluation side effects before returning the singleton.
+    if ((ctx.standalone || ctx.wasi) && argTsType.getSymbol()?.name === "StringIterator") {
+      const argType = compileExpression(ctx, fctx, arg0);
+      if (argType) fctx.body.push({ op: "drop" });
+      const protoType = emitIteratorPrototypeSingleton(ctx, fctx, "String");
       if (protoType) return protoType;
       // Runtime unavailable: preserve the historical null return.
       fctx.body.push({ op: "ref.null.extern" });
