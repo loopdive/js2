@@ -561,8 +561,8 @@ function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expre
  * `isFinite`). Each is an ordinary built-in function object that does **not**
  * implement `[[Construct]]`, so `new <fn>()` must throw a `TypeError`
  * (§13.3.5.1 EvaluateNew step 5: `IsConstructor(constructor) === false`).
- * `eval` is intentionally omitted — it is filtered out of test262 and handled
- * elsewhere.
+ * `eval` is included because it is an ordinary built-in function without
+ * [[Construct]], just like the other global callables in this set.
  */
 const GLOBAL_NON_CONSTRUCTOR_FUNCTIONS = new Set([
   "decodeURI",
@@ -573,6 +573,7 @@ const GLOBAL_NON_CONSTRUCTOR_FUNCTIONS = new Set([
   "parseFloat",
   "isNaN",
   "isFinite",
+  "eval",
 ]);
 
 /**

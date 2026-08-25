@@ -1231,6 +1231,33 @@ function compileIdentifierCore(
       if (valueType !== undefined) return valueType;
     }
   }
+  // Host/gc: a first-class read of the unshadowed global `%eval%` must expose
+  // the realm's actual function object. Direct calls are lowered separately;
+  // this is the value path used by Reflect.construct and aliases.
+  if (!ctx.standalone && !ctx.wasi && name === "eval") {
+    const declaration = ctx.oracle.valueDeclarationOf(id);
+    const isGlobalIntrinsic = declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+    if (isGlobalIntrinsic) {
+      const gtFuncIdx = ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
+      const getIdx = ensureLateImport(
+        ctx,
+        "__extern_get",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (gtFuncIdx !== undefined && getIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
+        addStringConstantGlobal(ctx, name);
+        const strGlobalIdx = ctx.stringGlobalMap.get(name);
+        fctx.body.push(
+          strGlobalIdx !== undefined ? { op: "global.get", index: strGlobalIdx } : { op: "ref.null.extern" },
+        );
+        fctx.body.push({ op: "call", funcIdx: getIdx });
+        return { kind: "externref" };
+      }
+    }
+  }
   // `%Function%` is a genuine realm-owned callable in runtime-eval builds.
   // Direct `Function(...)` / `new Function(...)` syntax is intercepted before
   // identifier lowering; this branch preserves first-class aliases and the
