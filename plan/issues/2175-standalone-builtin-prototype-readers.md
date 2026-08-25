@@ -1,12 +1,12 @@
 ---
 id: 2175
 title: "architect spec: standalone builtin-prototype object representation + native-method-closure dispatch"
-status: suspended
+status: in-progress
 model: fable
 fable_role: spec
 sprint: current
 created: 2026-06-16
-updated: 2026-08-22
+updated: 2026-08-25
 priority: high
 feasibility: hard
 model: fable
@@ -27,6 +27,9 @@ loc-budget-allow:
   # (src/codegen/function-prototype-callable.ts); what remains here is the
   # dispatch arm itself, which has to sit in the ordered chain.
   - src/codegen/expressions/call-builtin-static.ts
+  # +27 lines: bounded RegExp.prototype.exec closure body delegates to the
+  # existing capture-array engine from the per-builtin glue site.
+  - src/codegen/regexp-standalone.ts
 func-budget-allow:
   - src/codegen/object-runtime.ts::ensureObjectRuntime
   - src/codegen/object-runtime-descriptors.ts::buildObjectDescriptorHelpers
@@ -2322,3 +2325,47 @@ accessor pair. Four `tests/issue-4200.test.ts` guards are now stale against the
 seed and need #4200's owner to adjudicate.
 
 Resume from #4491's "Suspended Work" section.
+
+## Progress — 2026-08-25: RegExp.prototype.exec first-class method body
+
+This bounded follow-up resumes the RegExp portion of S1 without reopening the
+shared `$NativeProto` representation. Upstream `main` at `8a75a22ca4` already
+materialized `RegExp.prototype` and routed its `exec` member to an
+identity-stable native-method closure, but the closure body returned the
+placeholder `null`. The existing expression-driven `emitRegexExecArrayCall`
+engine already builds the spec capture-array shape, so the fix feeds it the
+closure's recovered `$NativeRegExp` and runtime string argument.
+
+### Scope
+
+- `src/codegen/regexp-standalone.ts`: implement the `exec` method arm in
+  `emitRegExpProtoMemberBody` using `emitRegexExecArrayCall` with
+  `regexpOverride`, an externref subject flattened to a native string, and
+  `gyLastIndex: "runtime"`; box the match vector back to the closure's
+  externref ABI.
+- `tests/issue-2175-regexp-exec-reflection.test.ts`: three host-free allowJs
+  regressions covering capture-array fields through `.call`, runtime `g`
+  `lastIndex` success/failure transitions, and catchable wrong-`this` branding.
+
+### Measured result
+
+The focused branch-point test was 1/3 on upstream: the capture-array case was
+a compile error (`match-result property reads on values not produced by this
+standalone backend`), the `g/y` case returned the placeholder, and the wrong-
+brand control passed. The branch is **3/3**, with no `env` imports in each
+binary. This slice leaves the parent issue open: direct dynamic closure calls
+through the generic JS/allowJs dispatcher, RegExp symbol-protocol methods,
+and the existing accessor proto-identity behavior remain separate follow-ups.
+
+### Test Results
+
+- `tests/issue-2175-regexp-exec-reflection.test.ts` — **3/3 passed**.
+- `tests/issue-1539-standalone-regex.test.ts`, `tests/issue-1914.test.ts`,
+  `tests/issue-2161-matchall.test.ts` — **199/199 passed**.
+- `tests/issue-2161-regex-symbol-protocol.test.ts`,
+  `tests/issue-2161-regex-tostring.test.ts` — **21/21 passed**.
+- `tsc --noEmit --pretty false` — passed.
+- `tests/issue-682-regexp-standalone-abi.test.ts` remains a pre-existing
+  collection failure at `collections-brand.ts:100` (`COLLECTION_KIND` is
+  undefined); `tests/issue-682.test.ts` also retains its unrelated upstream
+  1/17 failure. No code in this slice touches those paths.
