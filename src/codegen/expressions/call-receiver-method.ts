@@ -43,7 +43,7 @@ import { compileArrowAsClosure, computeClosureWrapperSig } from "../closures.js"
 import { tryEmitDirectTwinCall } from "../typed-this.js"; // (#3683 S3) direct-call devirtualization
 import { undefinedExternInstrs } from "../any-helpers.js"; // (#3683 S3b) arity-padding sentinel
 import { pushBody } from "../context/bodies.js";
-import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
+import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
 import { tryEmitFixedHostMethodCall } from "../fixed-host-method-call.js";
@@ -57,6 +57,7 @@ import {
   emitArrayBufferSlice,
   emitArrayBufferTransfer,
   emitDataViewAccessor,
+  emitTaViewValidate,
   ensureDvAccessorHelper,
   ensureTaDynCopyWithinHelper,
   ensureTaDynFillHelper,
@@ -80,6 +81,7 @@ import {
   STRING_METHODS,
   typedArrayVecStorage,
 } from "../index.js";
+import { isTaViewTypeIdx } from "../registry/types.js";
 import { LAZY_ITER_METHODS } from "../iter-lazy-native.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { usesNativeNumberFormat } from "../number-format-native.js";
@@ -201,6 +203,34 @@ import {
  * dispatch (identifier / IIFE / super / element-access / conditional). Moved
  * unchanged so the emitted Wasm is byte-identical.
  */
+
+/**
+ * Validate a local shared-backing TypedArray before one of the standalone
+ * packed-carrier HOF fast paths.  Those paths intentionally run before
+ * `compileArrayMethodCall`, so the latter's static-view guard cannot protect
+ * `map`/`filter` and the scalar callback methods.  Keep the check limited to
+ * identifier locals: non-local expressions still use their established path,
+ * while the common `const view = new Uint8Array(buffer)` shape gets the same
+ * ValidateTypedArray ordering as the ordinary array-method dispatcher.
+ */
+function validateStandaloneTaViewReceiver(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiverExpr: ts.Expression,
+): void {
+  if (!ts.isIdentifier(receiverExpr)) return;
+  const localIdx = fctx.localMap.get(receiverExpr.text);
+  if (localIdx === undefined) return;
+  const localType = getLocalType(fctx, localIdx);
+  if (
+    localType &&
+    (localType.kind === "ref" || localType.kind === "ref_null") &&
+    isTaViewTypeIdx(ctx, (localType as { typeIdx: number }).typeIdx)
+  ) {
+    emitTaViewValidate(ctx, fctx, (localType as { typeIdx: number }).typeIdx, localIdx);
+  }
+}
+
 /**
  * (#3177 slice 5) `%TypedArray%.of` / `%TypedArray%.from` STATIC methods on a
  * `$__ta_ctor` receiver VALUE (the testWithTypedArrayConstructors harness
@@ -2154,6 +2184,7 @@ export function compileReceiverMethodCall(
     const isClamped = viewName === "Uint8ClampedArray";
     if (viewName !== undefined && (STANDALONE_TA_MAPFILTER_PACKED_VIEWS.has(viewName) || isClamped)) {
       const methodName = propAccess.name.text as "map" | "filter";
+      validateStandaloneTaViewReceiver(ctx, fctx, propAccess.expression);
       const storage = typedArrayVecStorage(ctx, viewName);
       const vecTypeIdx = getOrRegisterVecType(ctx, storage.key, storage.type);
       const helperIdx = ensureTaMapFilterHelper(ctx, methodName, vecTypeIdx, isClamped);
@@ -2215,6 +2246,7 @@ export function compileReceiverMethodCall(
       dispatchArgs.length >= 1
     ) {
       const methodName = propAccess.name.text;
+      validateStandaloneTaViewReceiver(ctx, fctx, propAccess.expression);
       const arity = dispatchArgs.length;
       const dispatchIdx = reserveClosedMethodDispatch(ctx, methodName, arity);
       flushLateImportShifts(ctx, fctx);

@@ -1373,6 +1373,9 @@ export function lowerIrFunctionBody<S, Slot>(
       case "const":
         emitter.emitConst(instr, func.name, out);
         return;
+      case "fnctor.new":
+      case "fnctor.get":
+        throw new Error(`ir/lower: ${instr.kind} has no backend resolver yet (${func.name})`);
       case "call": {
         const dateGetter =
           instr.target.binding.kind === "intrinsic"
@@ -3717,6 +3720,14 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
     case "string.char_at":
     case "string.char_code_at":
       return [instr.value, instr.index];
+    case "fnctor.new":
+      return [
+        ...instr.captureArgs,
+        ...instr.args,
+        ...(instr.constructorIdentity === null ? [] : [instr.constructorIdentity]),
+      ];
+    case "fnctor.get":
+      return [instr.value];
     case "object.new":
       return instr.values;
     case "object.get":
