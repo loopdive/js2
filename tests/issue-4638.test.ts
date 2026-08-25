@@ -268,7 +268,7 @@ describe("#4638 measured residuals", () => {
   // `$__vec_externref` an ordinary array uses. See the issue's Residuals section
   // for the `$__holey_array` subtype sketch and why it is not taken here.
   // test262: built-ins/Array/isArray/15.4.3.2-1-13.js
-  it.fails("answers false for Array.isArray(arguments)", async () => {
+  it("answers false for Array.isArray(arguments)", async () => {
     await runScript(`
       var arg;
       (function fun() { arg = arguments; }(1, 2, 3));
@@ -277,7 +277,7 @@ describe("#4638 measured residuals", () => {
   });
 
   // test262: language/arguments-object/10.6-6-2.js
-  it.fails("reports arguments.length as configurable", async () => {
+  it("reports arguments.length as configurable", async () => {
     await runScript(`
       (function () {
         var d = Object.getOwnPropertyDescriptor(arguments, "length");
