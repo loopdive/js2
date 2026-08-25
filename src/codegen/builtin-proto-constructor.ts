@@ -66,6 +66,7 @@ import {
   isSupportedBuiltinNamespace,
 } from "./builtin-static-globals.js";
 import { emitStandaloneFunctionIntrinsicValue } from "./function-intrinsic-carrier.js";
+import { withSpeculativeCompile } from "./context/speculative.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { coerceType, ensureLateImport, flushLateImportShifts } from "./shared.js";
 
@@ -136,29 +137,26 @@ export function tryEmitBuiltinProtoConstructorDescriptor(
 ): boolean {
   if (builtinName === undefined || member !== "constructor") return false;
   if (!hasBuiltinProtoConstructorCarrier(builtinName)) return false;
-  const bodyMark = fctx.body.length;
+  return withSpeculativeCompile(ctx, fctx, () => {
+    // The provider-backed `%Function%` emitter can register the runtime-eval
+    // import while producing the descriptor value. Emit the value first, then
+    // resolve the descriptor helper and flush shifts so its call index is live.
+    // The other carriers are self-contained, but keeping the ordering uniform
+    // avoids a future carrier reintroducing the same stale-index hazard.
+    const valueType = emitBuiltinProtoConstructorValue(ctx, fctx, builtinName);
+    if (valueType === null) return { commit: false, value: false };
+    if (valueType.kind !== "externref") coerceType(ctx, fctx, valueType, { kind: "externref" });
 
-  // The provider-backed `%Function%` emitter can register the runtime-eval
-  // import while producing the descriptor value. Emit the value first, then
-  // resolve the descriptor helper and flush shifts so its call index is live.
-  // The other carriers are self-contained, but keeping the ordering uniform
-  // avoids a future carrier reintroducing the same stale-index hazard.
-  const valueType = emitBuiltinProtoConstructorValue(ctx, fctx, builtinName);
-  if (valueType === null) return false;
-  if (valueType.kind !== "externref") coerceType(ctx, fctx, valueType, { kind: "externref" });
-
-  const createIdx = ensureLateImport(
-    ctx,
-    "__create_descriptor",
-    [{ kind: "externref" }, { kind: "i32" }],
-    [{ kind: "externref" }],
-  );
-  flushLateImportShifts(ctx, fctx);
-  if (createIdx === undefined) {
-    fctx.body.length = bodyMark;
-    return false;
-  }
-  fctx.body.push({ op: "i32.const", value: CONSTRUCTOR_FLAGS });
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__create_descriptor") ?? createIdx });
-  return true;
+    const createIdx = ensureLateImport(
+      ctx,
+      "__create_descriptor",
+      [{ kind: "externref" }, { kind: "i32" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    if (createIdx === undefined) return { commit: false, value: false };
+    fctx.body.push({ op: "i32.const", value: CONSTRUCTOR_FLAGS });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__create_descriptor") ?? createIdx });
+    return { commit: true, value: true };
+  });
 }
