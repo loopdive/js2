@@ -41,7 +41,7 @@ async function envImports(src: string, target: "standalone" | "wasi" | undefined
   return (r.imports ?? []).map((i) => `${i.module}.${i.name}`).filter((n) => n.startsWith("env."));
 }
 
-describe("#3390 slice 1 — non-constructor combinator .call receiver → native TypeError", () => {
+describe("#3390 slices 1–2 — combinator .call receiver admission", () => {
   for (const m of COMBINATORS) {
     it(`${m}: non-object receivers (undefined/null/primitive/Symbol) throw TypeError host-free`, async () => {
       expect(await throwsTypeError(`Promise.${m}.call(undefined, []);`)).toBe(2);
@@ -91,9 +91,30 @@ describe("#3390 slice 1 — non-constructor combinator .call receiver → native
     expect(imports.length).toBeGreaterThan(0);
   });
 
-  it("fall-through: global `Promise` receiver is slice 2, not slice 1 — stays host", async () => {
+  it("global `Promise` receiver uses the native carrier (slice 2)", async () => {
     const imports = await envImports(`export function f() { return Promise.all.call(Promise, []); }`, "standalone");
-    expect(imports.length).toBeGreaterThan(0);
+    expect(imports).toEqual([]);
+  });
+
+  it("all four explicit global-Promise calls settle host-free", async () => {
+    const src = `
+      declare function __drain_microtasks(): void;
+      let total = 0;
+      export function test(): number {
+        const values: Promise<number>[] = [Promise.resolve(2)];
+        Promise.all.call(Promise, values).then((xs: any) => { total += xs[0]; });
+        Promise.race.call(Promise, [Promise.resolve(3)]).then((x: any) => { total += x; });
+        Promise.allSettled.call(Promise, [Promise.resolve(4)]).then((xs: any) => { total += xs[0].value; });
+        Promise.any.call(Promise, [Promise.resolve(5)]).then((x: any) => { total += x; });
+        __drain_microtasks();
+        return total;
+      }`;
+    const r = await compile(src, { fileName: "test.ts", target: "standalone", skipSemanticDiagnostics: true });
+    expect(r.success, r.success ? "" : JSON.stringify(r.errors?.slice(0, 3))).toBe(true);
+    expect((r.imports ?? []).map((i) => `${i.module}.${i.name}`)).toEqual([]);
+    expect(WebAssembly.validate(r.binary)).toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary!, {});
+    expect((instance.exports as unknown as Ex).test()).toBe(14);
   });
 
   it("host (gc) lane is unchanged: a slice-1 shape still uses the host path", async () => {
@@ -102,5 +123,10 @@ describe("#3390 slice 1 — non-constructor combinator .call receiver → native
       undefined,
     );
     expect(imports.length).toBeGreaterThan(0);
+    const globalPromiseImports = await envImports(
+      `export function f() { return Promise.all.call(Promise, []); }`,
+      undefined,
+    );
+    expect(globalPromiseImports).toContain("env.Promise_all");
   });
 });
