@@ -2244,6 +2244,33 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   }
 
   /**
+   * Keep the existing Proxy escape gate for module globals. Proxy values that
+   * cross a call/new boundary need the target-shaped representation used by
+   * native generic operations; only non-escaping proxies may use externref
+   * storage for dynamic member/iterator dispatch.
+   */
+  function moduleProxyResultEscapesToCall(decl: ts.VariableDeclaration): boolean {
+    if (!ts.isIdentifier(decl.name)) return false;
+    let escapes = false;
+    const visit = (node: ts.Node): void => {
+      if (escapes) return;
+      if (ts.isIdentifier(node) && node.text === decl.name.text && ctx.oracle.valueDeclarationOf(node) === decl) {
+        const parent = node.parent;
+        if (
+          (ts.isCallExpression(parent) || ts.isNewExpression(parent)) &&
+          parent.arguments?.some((arg) => arg === node)
+        ) {
+          escapes = true;
+          return;
+        }
+      }
+      node.forEachChild(visit);
+    };
+    sourceFile.forEachChild(visit);
+    return escapes;
+  }
+
+  /**
    * (#2011) True when a module-level variable's initializer is an object
    * literal carrying get/set accessor declarations (or a `[Symbol.dispose]`
    * / `[Symbol.asyncDispose]` computed method). Such literals compile through
@@ -2271,6 +2298,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         ts.isIdentifier(decl.initializer.expression.expression) &&
         decl.initializer.expression.expression.text === "Proxy")
     ) {
+      if (moduleProxyResultEscapesToCall(decl)) return false;
       return true;
     }
     // (#3365) Script top-level `this` is the host global object. The checker
