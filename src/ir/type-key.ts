@@ -4,50 +4,65 @@ import type { IrType } from "./nodes.js";
 
 /** Canonical recursive key for an IR type. */
 export function irTypeKey(type: IrType): string {
-  if (type.kind === "val") {
-    if (type.val.kind === "ref" || type.val.kind === "ref_null") {
-      return `${type.val.kind}:${type.val.typeIdx}`;
+  const active = new Set<object>();
+  const key = (current: IrType): string => {
+    if (current.kind === "val") {
+      if (current.val.kind === "ref" || current.val.kind === "ref_null")
+        return `${current.val.kind}:${current.val.typeIdx}`;
+      return current.val.kind;
     }
-    return type.val.kind;
-  }
-  if (type.kind === "string") return "string";
-  if (type.kind === "vec") return `vec<${irTypeKey(type.elementType)}>${type.nullable ? "?" : ""}`;
-  if (type.kind === "object") {
-    return `object{${type.shape.fields.map((field) => `${field.name}:${irTypeKey(field.type)}`).join(",")}}`;
-  }
-  if (type.kind === "closure") {
-    const params = type.signature.params.map(irTypeKey).join(",");
-    return `closure(${params})->${type.signature.returnType === null ? "void" : irTypeKey(type.signature.returnType)}`;
-  }
-  if (type.kind === "callable") {
-    const params = type.signature.params.map(irTypeKey).join(",");
-    return `callable(${params})->${type.signature.returnType === null ? "void" : irTypeKey(type.signature.returnType)}`;
-  }
-  if (type.kind === "class") return `class:${type.shape.classId}`;
-  if (type.kind === "extern") return `extern:${type.className}`;
-  if (type.kind === "fnctor") {
-    return `fnctor:${JSON.stringify({
-      sourceId: type.shape.sourceId,
-      constructorUnitId: type.shape.constructorUnitId,
-      constructorName: type.shape.constructorName,
-      constructorTarget: type.shape.constructorTarget,
-      reservedLayout: type.shape.reservedLayout,
-      fields: type.shape.fields.map((field) => ({
-        name: field.name,
-        ordinal: field.ordinal,
-        type: irTypeKey(field.type),
-      })),
-      captures: type.shape.captures.map((capture) => ({
-        name: capture.name,
-        ordinal: capture.ordinal,
-        hasTdzFlag: capture.hasTdzFlag,
-        type: irTypeKey(capture.type),
-      })),
-      userParamTypes: type.shape.userParamTypes.map(irTypeKey),
-      constructorIdentity: type.shape.constructorIdentity,
-    })}`;
-  }
-  if (type.kind === "union") return `union<${type.members.map(irTypeKey).join(",")}>`;
-  if (type.kind === "dynamic") return type.tag === undefined ? "dynamic" : `dynamic:${type.tag}`;
-  return `boxed<${irTypeKey(type.inner)}>`;
+    if (current.kind === "string") return "string";
+    if (active.has(current)) throw new Error("IR type key cannot encode a recursive anonymous layout");
+    active.add(current);
+    try {
+      if (current.kind === "vec") return `vec<${key(current.elementType)}>${current.nullable ? "?" : ""}`;
+      if (current.kind === "object") {
+        return `object{${current.shape.fields.map((field) => `${field.name}:${key(field.type)}`).join(",")}}`;
+      }
+      if (current.kind === "closure" || current.kind === "callable") {
+        const params = current.signature.params.map(key).join(",");
+        return `${current.kind}(${params})->${current.signature.returnType === null ? "void" : key(current.signature.returnType)}`;
+      }
+      if (current.kind === "class") return `class:${current.shape.classId}`;
+      if (current.kind === "extern") return `extern:${current.className}`;
+      if (current.kind === "fnctor") {
+        const refKey = (ref: { readonly kind: string; readonly binding: unknown }): string =>
+          `${ref.kind}:${canonicalJson(ref.binding)}`;
+        return `fnctor:${JSON.stringify({
+          sourceId: current.shape.sourceId,
+          constructorUnitId: current.shape.constructorUnitId,
+          constructorTarget: refKey(current.shape.constructorTarget),
+          reservedLayout: refKey(current.shape.reservedLayout),
+          fields: current.shape.fields.map((field) => ({
+            name: field.name,
+            ordinal: field.ordinal,
+            type: key(field.type),
+          })),
+          captures: current.shape.captures.map((capture) => ({
+            name: capture.name,
+            ordinal: capture.ordinal,
+            hasTdzFlag: capture.hasTdzFlag,
+            type: key(capture.type),
+          })),
+          userParamTypes: current.shape.userParamTypes.map(key),
+          constructorIdentity: current.shape.constructorIdentity,
+        })}`;
+      }
+      if (current.kind === "union") return `union<${current.members.map(key).join(",")}>`;
+      if (current.kind === "dynamic") return current.tag === undefined ? "dynamic" : `dynamic:${current.tag}`;
+      return `boxed<${key(current.inner)}>`;
+    } finally {
+      active.delete(current);
+    }
+  };
+  return key(type);
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, entry]) => `${JSON.stringify(name)}:${canonicalJson(entry)}`)
+    .join(",")}}`;
 }

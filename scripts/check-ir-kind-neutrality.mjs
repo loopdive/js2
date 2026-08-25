@@ -446,6 +446,18 @@ const VERDICTS = {
     evidence: [{ file: NODES, quote: "Write a new value through a ref cell." }],
   },
 
+  // ── core: nominal function-style constructors ---------------------------
+  "fnctor.new": {
+    verdict: "neutral",
+    why: "Materializes a nominal function-style constructor through an exact ABI handle; the operation is not an ECMAScript protocol by itself.",
+    evidence: [{ file: NODES, quote: "Materialize one source-qualified function-style constructor instance." }],
+  },
+  "fnctor.get": {
+    verdict: "neutral",
+    why: "Reads a declared field from a nominal constructor carrier; field identity and representation come from the resolved layout.",
+    evidence: [{ file: NODES, quote: "Read one field from a nominal function-style constructor instance." }],
+  },
+
   // ── core: classes ────────────────────────────────────────────────────────
   //
   // #4551 calls this family "genuinely open — single-inheritance prototype

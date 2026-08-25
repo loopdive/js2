@@ -439,6 +439,9 @@ function porfforBinopLegal(op: IrBinop): boolean {
 }
 
 function backendTypeError(backend: IrBackendKind, type: IrType): string | null {
+  if (type.kind === "fnctor") {
+    return `${backend} backend does not support nominal fnctor types until an explicit ABI resolver is installed`;
+  }
   if (backend === "wasmgc") return null;
   if (backend === "linear") {
     if (type.kind === "string") return null;

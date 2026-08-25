@@ -9,6 +9,11 @@ import {
   type IrFnctorShape,
 } from "../../src/ir/fnctor-abi.js";
 import { irFnctor, irTypeEquals, irVal } from "../../src/ir/nodes.js";
+import { IrFunctionBuilder } from "../../src/ir/builder.js";
+import { effectsOf, isSideEffecting } from "../../src/ir/effects.js";
+import { verifyIrFunction } from "../../src/ir/verify.js";
+import { verifyIrBackendLegality } from "../../src/ir/backend/legality.js";
+import { irTypeKey } from "../../src/ir/type-key.js";
 
 const sourceId = "ir-source:test:entry:parser.ts" as IrSourceId;
 const unitId = "ir-unit:test:parser" as IrUnitId;
@@ -59,11 +64,19 @@ describe("fnctor ABI contract", () => {
 
   it("rejects a resolver that retargets the constructor", () => {
     const shape = parserShape();
-    const wrongTarget = { kind: "func" as const, name: "Other", binding: { kind: "unit" as const, unitId } };
+    const wrongTarget = {
+      kind: "func" as const,
+      name: "Other",
+      binding: { kind: "unit" as const, unitId: "ir-unit:test:other" as IrUnitId },
+    };
     expect(validateIrFnctorResolution({ ...parserResolution(shape), constructor: wrongTarget })).toMatch(
       /nominal target/,
     );
-    const wrongLayout = { ...shape.reservedLayout, name: "__fnctor_Other" };
+    const wrongLayout = {
+      ...shape.reservedLayout,
+      name: "__fnctor_Other",
+      binding: { kind: "source" as const, bindingId: "ir-binding:test:other" as IrBindingId },
+    };
     expect(validateIrFnctorResolution({ ...parserResolution(shape), structType: wrongLayout })).toMatch(
       /reserved layout identity/,
     );
@@ -83,5 +96,61 @@ describe("fnctor ABI contract", () => {
       ),
     ).toBe(false);
     expect(irTypeEquals(type, { kind: "dynamic" })).toBe(false);
+  });
+
+  it("builds and verifies fnctor.new/get without lowering it", () => {
+    const shape: IrFnctorShape = {
+      ...parserShape(),
+      userParamTypes: [],
+      constructorIdentity: { unitId, paramIndex: 0 },
+    };
+    const builder = new IrFunctionBuilder({ unitId: "ir-unit:test:fnctor" as IrUnitId, name: "fnctorTest" }, [
+      { kind: "string" },
+    ]);
+    builder.openBlock();
+    const instance = builder.emitFnctorNew(shape, [], [], null);
+    const field = builder.emitFnctorGet(instance, shape, "input");
+    builder.terminate({ kind: "return", values: [field] });
+    const fn = builder.finish();
+    expect(verifyIrFunction(fn)).toEqual([]);
+    const instructions = fn.blocks[0]!.instrs;
+    const made = instructions.find((instr) => instr.kind === "fnctor.new")!;
+    const read = instructions.find((instr) => instr.kind === "fnctor.get")!;
+    expect(effectsOf(made).writesHeap).toBe(true);
+    expect(isSideEffecting(made)).toBe(true);
+    expect(effectsOf(read).readsHeap).toBe(true);
+    expect(isSideEffecting(read)).toBe(false);
+    expect(verifyIrBackendLegality(fn, "wasmgc").some((error) => error.message.includes("fnctor"))).toBe(true);
+  });
+
+  it("rejects malformed fnctor instruction arity and nominal mismatches", () => {
+    const shape: IrFnctorShape = {
+      ...parserShape(),
+      userParamTypes: [],
+      constructorIdentity: { unitId, paramIndex: 0 },
+    };
+    const builder = new IrFunctionBuilder(
+      { unitId: "ir-unit:test:fnctor-errors" as IrUnitId, name: "fnctorErrors" },
+      [],
+    );
+    builder.openBlock();
+    expect(() => builder.emitFnctorNew(shape, [0 as never], [], null)).toThrow(/capture count/);
+    const instance = builder.emitFnctorNew(shape, [], [], null);
+    expect(() => builder.emitFnctorGet(instance, shape, "missing")).toThrow(/unknown fnctor field/);
+    builder.terminate({ kind: "return", values: [] });
+    const fn = builder.finish();
+    const wrongName = { ...shape, constructorName: "Other" };
+    expect(irTypeEquals(irFnctor(shape), irFnctor(wrongName))).toBe(true);
+    expect(irTypeKey(irFnctor(shape))).toBe(irTypeKey(irFnctor(wrongName)));
+    const recursive = { ...shape, fields: [] as IrFnctorShape["fields"] };
+    const recursiveType = { kind: "fnctor" as const, shape: recursive };
+    (recursive.fields as { name: string; type: typeof recursiveType; ordinal: number }[]).push({
+      name: "self",
+      type: recursiveType,
+      ordinal: 0,
+    });
+    expect(validateIrFnctorShape(recursive)).toMatch(/recursive/);
+    expect(() => irTypeKey(irFnctor(recursive))).toThrow(/recursive/);
+    expect(verifyIrFunction({ ...fn, resultTypes: [irFnctor(shape)] })).not.toEqual([]);
   });
 });

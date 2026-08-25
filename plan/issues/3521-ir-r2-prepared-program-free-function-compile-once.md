@@ -80,6 +80,8 @@ loc-budget-allow:
   - src/ir/lower.ts
   - src/ir/nodes.ts
   - src/ir/verify.ts
+  - src/ir/builder.ts
+  - src/ir/prepared-component-dependencies.ts
 func-budget-allow:
   - src/codegen/index.ts::planIrOverlay
   - src/codegen/index.ts::generateModule
@@ -88,6 +90,9 @@ func-budget-allow:
   - src/ir/integration.ts::makeFromAstResolver
   - src/ir/integration.ts::makeResolver
   - src/ir/lower.ts::lowerIrFunctionBody
+  - src/ir/lower.ts::emitInstrTree
+  - src/ir/verify.ts::verifyInstrStructure
+  - src/ir/passes/inline-small.ts::renameInstrOperands
 ---
 # #3521 — IR-only R2: prepare-before-emit free-function ownership
 
@@ -2088,3 +2093,23 @@ lowering fails closed with an explicit missing-resolver diagnostic. No
 claimed by this checkpoint. The next signed slice must add those instructions,
 builder/verifier effects, and an exact standalone resolver before this arm can
 reach lowering.
+
+## 2026-08-24 fnctor instruction contract checkpoint
+
+The next static slice defines `fnctor.new` and `fnctor.get` as explicit IR
+instructions. `fnctor.new` carries the nominal shape, flattened capture/TDZ
+operands, user constructor operands, and an explicit optional hidden identity;
+`fnctor.get` carries the exact receiver shape and field name. The builder
+checks shape validity, ABI arity, receiver identity, and field existence;
+verification checks nominal result/field types and all SSA uses. Effects classify
+construction as call-like heap mutation and field reads as heap reads. Every
+use walker and transform has an exhaustive operand case, while the lowerer and
+all backends fail closed until an exact resolver is supplied. Preparation also
+rejects fnctor instructions without prepared resolver/layout evidence.
+
+This checkpoint additionally hardens the nominal utility contract: diagnostic
+constructor/ref names are excluded from equality and cache keys, binding keys
+are canonicalized independent of object insertion order, recursive anonymous
+fnctor graphs are rejected by validation/keying, and fnctor returns require an
+exact nominal match. No standalone lowering, ABI emission, compiler/runtime
+execution, or R2 replay is claimed here.
