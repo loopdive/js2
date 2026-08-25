@@ -120,6 +120,7 @@ export function attachIrStringCarrier(fn: IrFunction, carrierRef: IrTypeRef): Ir
       }
       case "val":
       case "extern":
+      case "fnctor":
       case "dynamic":
         mapped = type;
         break;

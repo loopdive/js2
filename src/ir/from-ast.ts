@@ -3843,6 +3843,7 @@ function describeIrType(t: IrType): string {
   }
   if (t.kind === "class") return `class<${t.shape.className}>`;
   if (t.kind === "extern") return `extern<${t.className}>`;
+  if (t.kind === "fnctor") return `fnctor<${t.shape.constructorName}>`;
   // #1926 — union members / boxed inner are IrTypes; recurse.
   if (t.kind === "union") return `union<${t.members.map(describeIrType).join(",")}>`;
   // #2949 — dynamic leaf; render the optional tag refinement when present.

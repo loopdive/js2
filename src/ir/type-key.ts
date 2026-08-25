@@ -25,6 +25,28 @@ export function irTypeKey(type: IrType): string {
   }
   if (type.kind === "class") return `class:${type.shape.classId}`;
   if (type.kind === "extern") return `extern:${type.className}`;
+  if (type.kind === "fnctor") {
+    return `fnctor:${JSON.stringify({
+      sourceId: type.shape.sourceId,
+      constructorUnitId: type.shape.constructorUnitId,
+      constructorName: type.shape.constructorName,
+      constructorTarget: type.shape.constructorTarget,
+      reservedLayout: type.shape.reservedLayout,
+      fields: type.shape.fields.map((field) => ({
+        name: field.name,
+        ordinal: field.ordinal,
+        type: irTypeKey(field.type),
+      })),
+      captures: type.shape.captures.map((capture) => ({
+        name: capture.name,
+        ordinal: capture.ordinal,
+        hasTdzFlag: capture.hasTdzFlag,
+        type: irTypeKey(capture.type),
+      })),
+      userParamTypes: type.shape.userParamTypes.map(irTypeKey),
+      constructorIdentity: type.shape.constructorIdentity,
+    })}`;
+  }
   if (type.kind === "union") return `union<${type.members.map(irTypeKey).join(",")}>`;
   if (type.kind === "dynamic") return type.tag === undefined ? "dynamic" : `dynamic:${type.tag}`;
   return `boxed<${irTypeKey(type.inner)}>`;

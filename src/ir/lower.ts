@@ -4064,6 +4064,9 @@ export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcN
     }
     return dyn;
   }
+  if (t.kind === "fnctor") {
+    throw new Error(`ir/lower: fnctor ${t.shape.constructorName} has no backend resolver/lowering yet (${funcName})`);
+  }
   // boxed (refcell)
   // Slice 3 (#1169c): the resolver delegates to the legacy ref-cell
   // registry so legacy and IR ref cells share one WasmGC struct.
@@ -4107,6 +4110,7 @@ function describeIrTypeShallow(t: IrType): string {
   }
   if (t.kind === "class") return `class<${t.shape.className}>`;
   if (t.kind === "extern") return `extern<${t.className}>`;
+  if (t.kind === "fnctor") return `fnctor<${t.shape.constructorName}>`;
   // #1926 — union members / boxed inner are IrTypes; recurse.
   if (t.kind === "union") return `union<${t.members.map(describeIrTypeShallow).join(",")}>`;
   // #2949 — dynamic leaf; render the optional JsTag refinement when present.
