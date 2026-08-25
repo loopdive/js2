@@ -4538,6 +4538,33 @@ function emitRegExpProtoMemberBody(
     return { kind: "i32" };
   }
 
+  if (member === "exec") {
+    // `RegExp.prototype.exec` is a first-class method value just like `test`,
+    // but its result is the capture-array object rather than the i32 match
+    // flag.  The ordinary expression path already owns the capture-array
+    // result shape (`index`, `input`, and the optional `groups`/`indices`
+    // overlays), so feed that engine the receiver recovered above instead of
+    // maintaining a second matcher here.
+    // `gyLastIndex: "runtime"` is intentional: a value-erased receiver has no
+    // compile-time flag spelling, and the engine must select g/y semantics from
+    // the recovered `$NativeRegExp` at runtime.
+    const subjLocal = flattenExternrefArgToString(ctx, fctx, 2);
+    const emitted = emitRegexExecArrayCall(ctx, fctx, null, null, {
+      gyLastIndex: "runtime",
+      inputOverride: () => {
+        fctx.body.push({ op: "local.get", index: subjLocal });
+        return nativeStringType(ctx);
+      },
+      regexpOverride: { regexpLocal, structTypeIdx },
+    });
+    if (emitted === null) return null;
+    // Native match vectors are GC refs; the reflective closure ABI returns an
+    // externref so direct calls, `.call`/`.apply`, and runtime descriptor reads
+    // all share the same result carrier.
+    fctx.body.push({ op: "extern.convert_any" });
+    return { kind: "externref" };
+  }
+
   if (member === "source" || member === "flags") {
     // Defensive: these are getters, but if reached as a "method" form, fall to
     // the field read.
