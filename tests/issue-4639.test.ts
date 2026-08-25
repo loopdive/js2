@@ -283,8 +283,8 @@ describe.skipIf(!TEST262)("#4639 — measured residuals (see the issue's Residua
   // note records as unidentified. Do not re-attempt without starting from that
   // inline/bound split.
   pinResidualRow("built-ins/RegExp/prototype/global/S15.10.7.2_A9.js", "C4 — proto accessor delete not observable");
-  // C5: the dynamic-pattern grammar cannot take 200 nested capture groups.
-  pinResidualRow("built-ins/RegExp/S15.10.2.8_A3_T15.js", "C5 — dynamic pattern out of subset");
+  // C5/T15 landed upstream in PR #4882; retain it as a positive control.
+  pinRow("built-ins/RegExp/S15.10.2.8_A3_T15.js", "C5 — dynamic pattern fixed upstream in PR #4882");
 });
 
 describe.skipIf(!TEST262)("#4639 C3 — prototype constructor identity controls", () => {
