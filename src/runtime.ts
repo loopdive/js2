@@ -14891,23 +14891,17 @@ assert._isSameValue = isSameValue;
       //     to a real JS array so native can iterate it.
       //   - Other primitives (number, boolean, symbol) → pass through; native
       //     rejects with TypeError per spec.
-      // (#2671) A USER THENABLE element — a wasm object-literal `{ then:
-      // function (onFulfilled, onRejected) {…} }` — must cross into the native
-      // combinator with a host-visible callable `then`: V8's PerformPromiseAll
-      // does `Invoke(C.resolve(elem), "then", «resolveElement, reject»)`, and a
-      // RAW WasmGC struct exposes no properties, so the Invoke threw TypeError
-      // and the aggregate rejected (the `call-resolve-element` / `new-resolve-
-      // function` / `resolve-before-loop-exit` test262 family — the combinator
-      // resolve-element protocol was unreachable). Wrap ONLY structs whose own
-      // `then` resolves to a callable (host fn or wasm closure) in the
-      // `_wrapForHost` live-mirror proxy — its `get` bridges the closure field
-      // to a host-callable, and the #2015 receiver-unwrap in the method bridge
-      // restores the raw struct as wasm-side `this`. Everything else passes
-      // through RAW, exactly as before, preserving fulfilled-value identity
-      // for non-thenable elements (`Promise.all([obj]) → values[0] === obj`).
-      // A thenable's pre-fix behavior was an unconditional reject, so there is
-      // no working identity to preserve for the wrapped class.
-      const _wrapThenableElement = (v: any): any => {
+      // (#2671/#4736) A USER THENABLE value — a wasm object-literal `{ then:
+      // function (onFulfilled, onRejected) {…} }` — must cross into native
+      // Promise consumers with a host-visible callable `then`. A RAW WasmGC
+      // struct exposes no `.then`, so native PromiseResolve/PerformPromiseAll
+      // cannot invoke it. Wrap ONLY structs whose own `then` resolves to a
+      // callable (host fn or wasm closure) in the `_wrapForHost` live-mirror
+      // proxy — its `get` bridges the closure field to a host-callable, and the
+      // #2015 receiver-unwrap in the method bridge restores the raw struct as
+      // wasm-side `this`. Everything else passes through RAW, preserving
+      // fulfilled-value identity for non-thenable objects.
+      const _wrapThenable = (v: any): any => {
         if (v == null || typeof v !== "object" || !_isWasmStruct(v)) return v;
         const exports = callbackState?.getExports();
         if (!exports) return v;
@@ -14947,12 +14941,12 @@ assert._isSameValue = isSameValue;
           if (_nativeIsArray(iter)) {
             let needsWrap = false;
             for (const v of iter) {
-              if (v !== _wrapThenableElement(v)) {
+              if (v !== _wrapThenable(v)) {
                 needsWrap = true;
                 break;
               }
             }
-            return needsWrap ? iter.map(_wrapThenableElement) : iter;
+            return needsWrap ? iter.map(_wrapThenable) : iter;
           }
           // Detect WasmGC vec first via accessors (they return 0/null for
           // non-vec externrefs, so we materialize only when the round-trip
@@ -14982,7 +14976,7 @@ assert._isSameValue = isSameValue;
                   for (let i = 0; i < len; i++) {
                     // (#2671) Thenable struct elements get the live-mirror
                     // proxy so V8's resolve-element Invoke sees `.then`.
-                    result[i] = _wrapThenableElement(vecGet(iter, i));
+                    result[i] = _wrapThenable(vecGet(iter, i));
                   }
                   return result;
                 }
@@ -15167,7 +15161,10 @@ assert._isSameValue = isSameValue;
       // historical `any/invoke-then` regression). Both stay HOST; the
       // prototyped sandbox-first unification leaked cross-builtin and was
       // reverted (see the __get_builtin design note).
-      if (name === "Promise_resolve") return (val: any) => Promise.resolve(val);
+      // (#4736) Promise.resolve has the same host boundary as the combinators:
+      // a Wasm object-literal thenable must be mirrored before V8 performs
+      // PromiseResolve, while ordinary objects remain raw for === identity.
+      if (name === "Promise_resolve") return (val: any) => Promise.resolve(_wrapThenable(val));
       if (name === "Promise_reject")
         return (val: any) => {
           // (#2978) Pre-mark the rejection as handled. Compiled code holds the
