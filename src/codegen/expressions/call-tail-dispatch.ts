@@ -74,6 +74,7 @@ import { matchClosureInfoBySignature } from "./closure-sig-match.js"; // (#4394)
 import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
 import { tryEmitDynamicElementHostMethodCall } from "./dynamic-element-host-call.js";
 import { tryNormalizeStaticStringElementCallee } from "./element-access-callee-normalization.js"; // (#4625)
+import { tryDetachedBuiltinPrototypeNullishThisThrow } from "../builtin-prototype-brand.js";
 import {
   classInstanceHasField,
   coerceNumberMethodArgToF64,
@@ -611,6 +612,21 @@ export function compileTailDispatch(
       const leftType = compileExpression(ctx, fctx, callee.left);
       if (leftType) {
         fctx.body.push({ op: "drop" });
+      }
+      // Preserve the absent receiver when the right side is a builtin
+      // prototype method. Rebuilding `Object.prototype.valueOf()` here would
+      // turn the detached call into a receiver call and hide its required
+      // nullish-`this` TypeError.
+      if (ts.isPropertyAccessExpression(callee.right)) {
+        const detached = tryDetachedBuiltinPrototypeNullishThisThrow(
+          ctx,
+          fctx,
+          expr,
+          callee.right,
+          (arg) => compileExpression(ctx, fctx, arg),
+          expectedType,
+        );
+        if (detached !== undefined) return detached;
       }
       // Create a synthetic call with the right side as callee
       const syntheticCall = ts.factory.createCallExpression(
