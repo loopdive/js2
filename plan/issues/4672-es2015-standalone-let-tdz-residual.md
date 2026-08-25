@@ -17,6 +17,12 @@ goal: standalone-mode
 assignee: codex/es6-tdz-wave3
 related: [4444, 4447, 723, 906]
 origin: "ES2015 standalone close-out umbrella #4444 long-tail measurement: 26 let/TDZ rows remain after the for-of/destructuring slice."
+loc-budget-allow:
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/statements/loops.ts
+func-budget-allow:
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+  - src/codegen/statements/loops.ts::compileForStatement
 ---
 
 # #4672 — ES2015 standalone `let`/TDZ residual cluster

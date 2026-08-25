@@ -523,11 +523,7 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
       // would make the incrementor update the inner value while closures keep
       // reading the outer cell.
       const existingCapture = fctx.boxedCaptures?.get(name);
-      if (
-        existingCapture &&
-        oldType.kind === "ref_null" &&
-        oldType.typeIdx === existingCapture.refCellTypeIdx
-      ) {
+      if (existingCapture && oldType.kind === "ref_null" && oldType.typeIdx === existingCapture.refCellTypeIdx) {
         if (!savedForBoxedCaptures) savedForBoxedCaptures = new Map();
         if (!savedForBoxedCaptures.has(name)) {
           savedForBoxedCaptures.set(name, existingCapture);
