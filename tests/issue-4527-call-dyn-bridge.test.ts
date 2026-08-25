@@ -72,6 +72,38 @@ describe("issue #4527: cross-module dynamic callback invocation", () => {
     expect(w.t()).toBe(15);
   });
 
+  it("constructs a class forwarded through a default identifier export", async () => {
+    const w = await run(
+      {
+        "./error.mjs": `
+          class PackageError extends Error {
+            static from(message) { return new PackageError(message); }
+            constructor(message) {
+              super(message);
+              this.code = 'PACKAGE_ERROR';
+            }
+          }
+          PackageError.STATIC_CODE = 'STATIC';
+          export default PackageError;
+        `,
+        "./main.mjs": `
+          import RenamedError from './error.mjs';
+          export function t() {
+            const direct = new RenamedError('direct');
+            const derived = RenamedError.from('derived');
+            return direct.code === 'PACKAGE_ERROR' &&
+              direct.message === 'direct' &&
+              RenamedError.STATIC_CODE === 'STATIC' &&
+              derived.message === 'derived' &&
+              derived instanceof RenamedError ? 1 : 0;
+          }
+        `,
+      },
+      "./main.mjs",
+    );
+    expect(w.t()).toBe(1);
+  });
+
   it("links a default-exported object expression through a live module cell", async () => {
     const w = await run(
       {

@@ -4963,6 +4963,11 @@ export function generateModule(
     // has a top-level block/`if`/`switch`-nested `function` declaration.
     registerAnnexBGlobalLiveBindings(ctx, [ast.sourceFile]);
 
+    // Keep the single-source pipeline in parity with generateMultiModule: a
+    // module-scope class static assignment needs its value cell registered
+    // before the module initializer and exported bodies are emitted.
+    registerModuleClassStaticAssignments(ctx, [ast.sourceFile]);
+
     // (#3523 R4) Build the semantic top-level plan independently from the
     // direct front-end's three mutable queues. The plan remains an observer for
     // generic module shapes, while the exact prepared lexical initializer below
@@ -8173,6 +8178,115 @@ function registerReassignedFunctionGlobals(
   }
 }
 
+/** Conservatively find class declaration bindings changed by direct syntax. */
+function directlyReassignedClassDeclarations(
+  ctx: CodegenContext,
+  sourceFiles: readonly ts.SourceFile[],
+): WeakSet<ts.ClassDeclaration> {
+  const reassigned = new WeakSet<ts.ClassDeclaration>();
+  const recordTarget = (target: ts.Node): void => {
+    if (ts.isIdentifier(target)) {
+      const declaration = ctx.oracle.valueDeclarationOf(target);
+      if (declaration !== undefined && ts.isClassDeclaration(declaration)) reassigned.add(declaration);
+      return;
+    }
+    // Recurse only through assignment PATTERNS. A member target such as
+    // `C.code = value` assigns the property, not the `C` class binding.
+    if (ts.isArrayLiteralExpression(target)) {
+      for (const element of target.elements) recordTarget(element);
+    } else if (ts.isObjectLiteralExpression(target)) {
+      for (const property of target.properties) {
+        if (ts.isPropertyAssignment(property)) recordTarget(property.initializer);
+        else if (ts.isShorthandPropertyAssignment(property)) recordTarget(property.name);
+        else if (ts.isSpreadAssignment(property)) recordTarget(property.expression);
+      }
+    } else if (ts.isSpreadElement(target) || ts.isParenthesizedExpression(target)) {
+      recordTarget(target.expression);
+    }
+  };
+  const scan = (node: ts.Node): void => {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    ) {
+      recordTarget(node.left);
+    } else if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
+      if (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) {
+        recordTarget(node.operand);
+      }
+    } else if (ts.isForInStatement(node) || ts.isForOfStatement(node)) {
+      if (!ts.isVariableDeclarationList(node.initializer)) recordTarget(node.initializer);
+    }
+    ts.forEachChild(node, scan);
+  };
+  for (const sourceFile of sourceFiles) scan(sourceFile);
+  return reassigned;
+}
+
+/**
+ * Register module-scope `ClassName.prop = value` definitions before bodies are
+ * emitted.
+ *
+ * A class static field already owns a mutable Wasm global. A data property
+ * added with an assignment has the same observable value role, but historically
+ * fell through to the host class-object setter. Externref-backed builtin
+ * subclasses (for example `class E extends Error`) deliberately have no host
+ * class-object singleton, so that fallback writes through `null` and a later
+ * imported `E.prop` read cannot recover the value.
+ *
+ * Only direct source-file assignment statements on unreassigned class
+ * declarations are admitted here. They are the declaration-like CommonJS/ESM
+ * pattern this prepass can represent without changing control-flow or
+ * delete/redefinition semantics. The value cell is representation-neutral
+ * because an assignment-created property may later hold another JS type.
+ */
+function registerModuleClassStaticAssignments(ctx: CodegenContext, sourceFiles: readonly ts.SourceFile[]): void {
+  const reassignedClasses = directlyReassignedClassDeclarations(ctx, sourceFiles);
+  for (const sourceFile of sourceFiles) {
+    for (const statement of sourceFile.statements) {
+      if (!ts.isExpressionStatement(statement)) continue;
+      const expression = statement.expression;
+      if (!ts.isBinaryExpression(expression) || expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
+        continue;
+      }
+      const target = expression.left;
+      if (!ts.isPropertyAccessExpression(target) || !ts.isIdentifier(target.expression)) continue;
+
+      const sourceName = target.expression.text;
+      const resolvedClass = ctx.classExprNameMap.get(sourceName) ?? sourceName;
+      if (!ctx.classSet.has(resolvedClass)) continue;
+
+      // A same-spelled non-class binding in another source must not acquire the
+      // graph-wide class's static storage merely because class registries are
+      // currently keyed by display name.
+      const declaration = ctx.oracle.valueDeclarationOf(target.expression);
+      if (declaration === undefined || !ts.isClassDeclaration(declaration)) continue;
+      if (ctx.classDeclarationMap.get(resolvedClass) !== declaration) continue;
+      if (reassignedClasses.has(declaration)) continue;
+
+      const propName = target.name.text;
+      // These are intrinsic Function/Class properties, not assignment-created
+      // ordinary data slots.  Existing declared fields/methods/accessors retain
+      // their established lowering and descriptor semantics below as well.
+      if (propName === "prototype" || propName === "name" || propName === "length") continue;
+      const fullName = `${resolvedClass}_${propName}`;
+      if (ctx.staticProps.has(fullName) || ctx.staticMethodSet.has(fullName) || ctx.staticAccessorSet.has(fullName)) {
+        continue;
+      }
+
+      const globalIdx = nextModuleGlobalIdx(ctx);
+      ctx.mod.globals.push({
+        name: `__static_${fullName}`,
+        type: { kind: "externref" },
+        mutable: true,
+        init: [{ op: "ref.null.extern" }],
+      });
+      ctx.staticProps.set(fullName, globalIdx);
+    }
+  }
+}
+
 /**
  * (#2930) Register import-binding local-name aliases.
  *
@@ -8193,6 +8307,7 @@ function registerReassignedFunctionGlobals(
  * name stays byte-identical.
  */
 function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly ts.SourceFile[]): void {
+  const reassignedClasses = directlyReassignedClassDeclarations(ctx, sourceFiles);
   const aliasOneBinding = (localId: ts.Identifier): void => {
     const localName = localId.text;
     let sym: ts.Symbol | undefined;
@@ -8233,7 +8348,27 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
         (statement): statement is ts.ExportAssignment =>
           ts.isExportAssignment(statement) && statement.isExportEquals !== true,
       );
-      if (expressionDefault) decl = expressionDefault;
+      if (expressionDefault) {
+        // An UNREASSIGNED, uniquely registered class declaration evaluates to
+        // the exact constructor that `export default C` snapshots. Preserve
+        // that declaration identity so the existing import-alias machinery can
+        // route `new Alias()` and static reads to the compiled class. This is
+        // especially important for
+        // externref-backed builtin subclasses (`class E extends Error`): they do
+        // not have a class-object singleton that an expression cell could copy,
+        // so compiling the export identifier as an ordinary value yields null.
+        const expressionDeclaration = ts.isIdentifier(expressionDefault.expression)
+          ? ctx.oracle.valueDeclarationOf(expressionDefault.expression)
+          : undefined;
+        decl =
+          expressionDeclaration &&
+          ts.isClassDeclaration(expressionDeclaration) &&
+          expressionDeclaration.name !== undefined &&
+          ctx.classDeclarationMap.get(expressionDeclaration.name.text) === expressionDeclaration &&
+          !reassignedClasses.has(expressionDeclaration)
+            ? expressionDeclaration
+            : expressionDefault;
+      }
     }
     if (!decl) return;
     if (binding && (ts.isImportClause(binding) || ts.isImportSpecifier(binding))) {
@@ -8809,6 +8944,11 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#4182) Module-scope Annex B B.3.3.2 live bindings (see the single-source
     // site above). Runs before aliasing/bodies for the same reason as #2931.
     registerAnnexBGlobalLiveBindings(ctx, multiAst.sourceFiles);
+
+    // Module-scope `ClassName.prop = value` is declaration-like static storage.
+    // Register it before import aliases and body emission so both the exporting
+    // spelling and an imported class alias resolve to the same value cell.
+    registerModuleClassStaticAssignments(ctx, multiAst.sourceFiles);
 
     // (#2930) Register import-binding aliases (default / renamed / anonymous-default
     // imports whose LOCAL name differs from the imported target's declaration name)

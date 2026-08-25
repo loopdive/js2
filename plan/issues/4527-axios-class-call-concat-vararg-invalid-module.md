@@ -341,3 +341,145 @@ callbacks again: **27/57 Wasm**, **57/57 native**, compile/validate **1/1**, and
 zero suite-level runtime failures. The remaining 30 scored failures are 23
 `null is not a function` results and seven object-identity assertion
 mismatches; they are a separate frontier and were not chased in this slice.
+## 2026-08-25 checkpoint (host-callback fallback materialization)
+
+The 23 `mergeConfig` null-call failures had one generic cause. The callback
+passed to `utils.forEach` captures `mergeDeepProperties`, a hoisted nested
+`FunctionDeclaration` used only as the fallback of a dynamic strategy lookup.
+The compiler allocated its stable function-value slot at function entry, but
+host-callback construction eagerly materialized that slot only when the nested
+declaration itself captured another local. A capture-free declaration was
+therefore copied into the callback as the slot's initial null sentinel, and
+`merge(a, b, prop)` failed before reaching any Axios assertion.
+
+Host-callback construction now runs the existing hoisted-function materializer
+for every captured binding before copying it. The materializer checks whether
+the binding is an observed hoisted declaration and is a no-op for ordinary
+locals, so this preserves lazy identity semantics without package-specific
+dispatch. A focused regression covers a capture-free nested fallback that is
+referenced only from inside an imported host callback; it fails with the same
+`null is not a function` before the fix and returns the expected value after it.
+
+Fresh results on the unchanged pinned Axios `v1.16.1` commit
+`1337d6b537af`, after synchronizing with the current package branch and main:
+
+- `tests/unit/core/mergeConfig.test.js`: **50/57 Wasm**, up from **27/57**;
+  native remains **57/57**, compile/validate **1/1**, and the seven remaining
+  failures are the pre-existing object-identity mismatches.
+- Full admitted original suite: **150/231 Wasm**, up from a freshly reproduced
+  **127/231** baseline on the same branch; native remains **231/231** and there
+  are zero suite-level runtime failures.
+- Compile/validate remains **32/33**. Sixteen upstream files / 414 registrations
+  remain honestly reported as unavailable infrastructure.
+
+Handoff: the next largest exact `mergeConfig` frontier is the seven
+object-identity mismatches. Across the full 231-test denominator, 81 scored
+failures and the separate asynchronous `composeSignals.test.js` compile-worker
+failure remain. Do not attribute the older combined-tree 135/231 checkpoint to
+this slice; the paired fresh comparison for this mechanism is 127 to 150.
+
+## 2026-08-25 checkpoint (ordinary data-struct prototype identity)
+
+All seven remaining `mergeConfig` failures came from the same generic
+prototype-bridge mismatch. Axios deliberately passes `Object.create({})` as a
+non-mergeable value. The first host `Object.getPrototypeOf` correctly returned
+the original Wasm data struct by identity, but a second
+`Object.getPrototypeOf` inspected that struct's physical host representation.
+Opaque WasmGC structs have a null host prototype, so Axios's `isPlainObject`
+mistook the ordinary `{}` prototype for a null-prototype dictionary and cloned
+the value. The clone then failed Axios's original identity assertion.
+
+The host `__getPrototypeOf` bridge now distinguishes physical representation
+from ECMAScript `[[Prototype]]`. Explicit prototype records and fnctor-instance
+prototype links still win first. For an otherwise-unlinked value, the bridge
+uses the program-associated, positive `__is_data_struct` export to recognize a
+named ordinary-object carrier and returns the host realm's
+`Object.prototype`, as required by ECMA-262 §§20.1.2.2 and 20.1.2.12. It does
+not infer from a negative classifier result: vecs, closures, foreign values,
+and missing or stale bridge metadata retain their existing native fallback.
+The standalone lowering is unchanged.
+
+A focused reduction recreates Axios's callback-driven strategy lookup and
+plain-object predicate without package-specific names or patched expectations.
+The complete issue 4527 regression file passes **29/29**. The host-side ES5
+prototype relations pass **4/4**, the data-classifier/fnctor prototype suites
+pass **5/5**, and the authenticated classifier checks pass **2/2**.
+
+Fresh results on the unchanged pinned Axios `v1.16.1` commit
+`1337d6b537af`:
+
+- `tests/unit/core/mergeConfig.test.js`: **57/57 Wasm**, up from **50/57**;
+  native remains **57/57**, compile/validate remains **1/1**, and there are no
+  runtime failures.
+- Full admitted original suite: **158/231 Wasm**, up from **150/231** with no
+  withdrawals. Besides the seven identity assertions, the same generic fix
+  closes Axios's original `isPlainObject` validation. Native remains
+  **231/231**, with zero suite-level runtime failures.
+- Compile/validate remains **32/33**. Sixteen upstream files / 414
+  registrations remain explicitly reported as unavailable infrastructure.
+  Seventy-three scored failures and the asynchronous
+  `composeSignals.test.js` compile-worker failure remain.
+
+Open-PR audit: [PR 4849](https://github.com/loopdive/js2/pull/4849) contains
+the shared Axios baseline and the previous checkpoints above. No other open PR
+mentions Axios or issue 4527, and no open work overlaps this prototype bridge;
+the generic fix remains necessary on top of that baseline.
+
+## 2026-08-26 checkpoint (default-exported builtin-subclass constructors)
+
+The largest remaining full-suite cluster was 25 instances of `null is not a
+constructor`: Axios defines `class AxiosError extends Error`, assigns its
+error-code constants as module-scope static properties, then exports the class
+with `export default AxiosError`. TypeScript resolves a default import through
+the inferred class symbol, but the linker deliberately replaced that target
+with the exact default-expression snapshot cell. Compiling the bare identifier
+into that cell produced `null` because an externref-backed builtin subclass has
+no ordinary Wasm class-object singleton. Imported `new AxiosError(...)` then
+fell into dynamic host construction with `null` as the constructor.
+
+For an unreassigned class declaration, the default expression snapshots the
+same compiled constructor identity for the module's lifetime. Import alias
+registration now preserves that exact class declaration target, allowing the
+existing compiled constructor, static-method, and `instanceof` paths to serve a
+renamed default import. Directly reassigned class bindings conservatively keep
+the expression-cell path instead, so `export default C` is not treated as a
+live class declaration when source syntax can change `C`.
+
+Axios also creates constants with `AxiosError.ERR_NETWORK = "ERR_NETWORK"`
+rather than class-field syntax. Those statements were dropped from
+`__module_init` because class declarations are neither function declarations
+nor module globals, and builtin subclasses cannot fall back to a host class
+object. A graph prepass now registers representation-neutral static cells for
+direct module-scope assignments on unreassigned class declarations, while the
+top-level statement collector retains the source-ordered writes. Declared
+fields, methods, accessors, intrinsic `name`/`length`/`prototype`, class
+expressions, and reassigned class bindings keep their existing paths.
+
+The focused regression covers direct construction, a static factory, an
+assignment-created static constant, Error-instance fields, and `instanceof`
+through a renamed default import. The relevant import/class/module-init suites
+pass **93/93**.
+
+Fresh paired results on the unchanged pinned Axios `v1.16.1` commit
+`1337d6b537af`:
+
+- all **25/25** `null is not a constructor` results disappear;
+- the full admitted suite improves **158/231 → 176/231 Wasm**, with **18
+  improvements and zero withdrawals**; native remains **231/231**;
+- all **33/33** admitted modules compile and validate, with zero suite-level
+  runtime failures;
+- sixteen upstream files / **414 registrations** remain separately and
+  explicitly reported as unavailable infrastructure.
+
+The 55 remaining scored failures are separate mechanisms. The largest exact
+clusters are 11 iterable/destructuring failures in AxiosError redaction, seven
+null property reads in `buildURL`, six mixed assertion-value mismatches, and
+the Error-instance/prototype gaps exercised by `settle` and the Node
+`util/types` checks. No Axios source, upstream expectation, cached answer, or
+performance gate was changed.
+
+Open-PR audit: [PR 4849](https://github.com/loopdive/js2/pull/4849) remains the
+only open Axios-related PR and supplies this branch's shared baseline. It
+touches the same broad compiler and regression files but does not implement
+class-declaration default routing or assignment-created static cells; this
+checkpoint remains a necessary continuation rather than duplicate work.

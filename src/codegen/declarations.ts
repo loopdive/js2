@@ -3090,6 +3090,26 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           ctx.moduleInitStatements.push(stmt);
           continue;
         }
+        // A direct static data-property definition on a compiled class is an
+        // observable module-initialization effect.  Class declarations are not
+        // moduleGlobals, so the generic root-identifier keep below cannot see
+        // `class E {}; E.CODE = "CODE"`.  Dropping that statement is especially
+        // destructive for builtin subclasses: their constructor is represented
+        // by compiled metadata rather than a host class-object singleton, so no
+        // later dynamic fallback can reconstruct the missing write.  The
+        // graph-level prepass registers the corresponding static value cell;
+        // retaining the statement here performs the source-ordered write.
+        if (
+          ts.isPropertyAccessExpression(expr.left) &&
+          ts.isIdentifier(expr.left.expression) &&
+          ctx.classSet.has(ctx.classExprNameMap.get(expr.left.expression.text) ?? expr.left.expression.text)
+        ) {
+          const declaration = ctx.oracle.valueDeclarationOf(expr.left.expression);
+          if (declaration !== undefined && ts.isClassDeclaration(declaration)) {
+            ctx.moduleInitStatements.push(stmt);
+            continue;
+          }
+        }
         // (#3468 F1) STANDALONE counterpart of the #2671 keep below (which is
         // gated `!ctx.standalone`): a top-level `F.<name> = …` static property
         // write on a top-level FUNCTION DECLARATION — the test262 assert-harness
