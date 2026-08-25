@@ -52,7 +52,12 @@ import { compileComputedMemberKeyAfterBaseGuard } from "./computed-member-refere
 import { emitMappedArgParamSync } from "./logical-ops.js";
 import { resolveStructName } from "./misc.js";
 import { isSloppyImplicitGlobalBinding, tryEmitImplicitGlobalIncDec } from "./implicit-global-binding.js"; // (#3966) `p++` on a realm-global property
-import { compileHostBigIntIdentifierUpdate, isHostBigIntUpdate } from "./host-bigint-updates.js";
+import {
+  compileHostBigIntIdentifierUpdate,
+  emitHostBigIntBinaryOpFromStack,
+  emitStructMemberIncDec,
+  isHostBigIntUpdate,
+} from "./host-bigint-updates.js";
 
 /**
  * §13.4 UpdateExpression evaluation applies ToNumeric to the operand's current
@@ -477,6 +482,29 @@ function emitMemberIncDecExternrefFallback(
   return { kind: "f64" };
 }
 
+function emitHostBigIntArrayIncDec(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  elemType: ValType,
+  objTmp: number,
+  vecTypeIdx: number,
+  idxTmp: number,
+  arrayTypeIdx: number,
+  arithOp: "add" | "sub",
+  mode: "prefix" | "postfix",
+): ValType | null {
+  const one = ts.factory.createBigIntLiteral("1");
+  return emitHostBigIntBinaryOpFromStack(
+    ctx,
+    fctx,
+    elemType,
+    one,
+    arithOp === "add" ? 0 : 1,
+    mode === "postfix",
+    (newValue) => emitBoundsGuardedArraySet(fctx, objTmp, vecTypeIdx, idxTmp, newValue, arrayTypeIdx),
+  );
+}
+
 /**
  * Compile prefix/postfix increment/decrement on member expressions:
  *   ++obj.x, obj.x++, --obj[i], obj[i]--, etc.
@@ -688,87 +716,7 @@ function compileMemberIncDec(
     const objTmp = allocLocal(fctx, `__incdec_obj_${fctx.locals.length}`, objResult);
     fctx.body.push({ op: "local.set", index: objTmp });
 
-    // Read current value: obj.prop
-    fctx.body.push({ op: "local.get", index: objTmp });
-    fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
-
-    if (ctx.fast && fieldType.kind === "i32") {
-      if (mode === "postfix") {
-        // Save old value, compute new, store new, return old
-        const oldTmp = allocLocal(fctx, `__incdec_old_${fctx.locals.length}`, {
-          kind: "i32",
-        });
-        fctx.body.push({ op: "local.tee", index: oldTmp });
-        fctx.body.push({ op: "i32.const", value: 1 });
-        fctx.body.push({ op: i32Op });
-        const newTmp = allocLocal(fctx, `__incdec_new_${fctx.locals.length}`, {
-          kind: "i32",
-        });
-        fctx.body.push({ op: "local.set", index: newTmp });
-        fctx.body.push({ op: "local.get", index: objTmp });
-        fctx.body.push({ op: "local.get", index: newTmp });
-        fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
-        fctx.body.push({ op: "local.get", index: oldTmp });
-        return { kind: "i32" };
-      } else {
-        // Compute new, store, return new
-        fctx.body.push({ op: "i32.const", value: 1 });
-        fctx.body.push({ op: i32Op });
-        const newTmp = allocLocal(fctx, `__incdec_new_${fctx.locals.length}`, {
-          kind: "i32",
-        });
-        fctx.body.push({ op: "local.set", index: newTmp });
-        fctx.body.push({ op: "local.get", index: objTmp });
-        fctx.body.push({ op: "local.get", index: newTmp });
-        fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
-        fctx.body.push({ op: "local.get", index: newTmp });
-        return { kind: "i32" };
-      }
-    }
-
-    // Default: f64 arithmetic
-    // Coerce field value to f64 if needed
-    if (fieldType.kind !== "f64") {
-      coerceType(ctx, fctx, fieldType, { kind: "f64" });
-    }
-
-    if (mode === "postfix") {
-      // Save old value, compute new, store, return old
-      const oldTmp = allocLocal(fctx, `__incdec_old_${fctx.locals.length}`, {
-        kind: "f64",
-      });
-      fctx.body.push({ op: "local.tee", index: oldTmp });
-      fctx.body.push({ op: "f64.const", value: 1 });
-      fctx.body.push({ op: f64Op });
-      // Coerce back to field type if needed
-      if (fieldType.kind !== "f64") {
-        coerceType(ctx, fctx, { kind: "f64" }, fieldType);
-      }
-      const newTmp = allocLocal(fctx, `__incdec_new_${fctx.locals.length}`, fieldType);
-      fctx.body.push({ op: "local.set", index: newTmp });
-      fctx.body.push({ op: "local.get", index: objTmp });
-      fctx.body.push({ op: "local.get", index: newTmp });
-      fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
-      fctx.body.push({ op: "local.get", index: oldTmp });
-      return { kind: "f64" };
-    } else {
-      // Compute new, store, return new
-      fctx.body.push({ op: "f64.const", value: 1 });
-      fctx.body.push({ op: f64Op });
-      const newF64Tmp = allocLocal(fctx, `__incdec_new_${fctx.locals.length}`, {
-        kind: "f64",
-      });
-      fctx.body.push({ op: "local.set", index: newF64Tmp });
-      // Store: obj.prop = new (coerced back to field type)
-      fctx.body.push({ op: "local.get", index: objTmp });
-      fctx.body.push({ op: "local.get", index: newF64Tmp });
-      if (fieldType.kind !== "f64") {
-        coerceType(ctx, fctx, { kind: "f64" }, fieldType);
-      }
-      fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
-      fctx.body.push({ op: "local.get", index: newF64Tmp });
-      return { kind: "f64" };
-    }
+    return emitStructMemberIncDec(ctx, fctx, operand, fieldType, objTmp, structTypeIdx, fieldIdx, arithOp, mode);
   }
 
   // Handle obj[idx] — element access increment/decrement on arrays
@@ -919,6 +867,14 @@ function compileMemberIncDec(
         fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 });
         fctx.body.push({ op: "local.get", index: idxTmp });
         emitBoundsCheckedArrayGet(fctx, arrayTypeIdx, elemType);
+
+        // A typed `bigint[]` uses externref elements in the JS-host lanes.
+        // Preserve the old/new values as host BigInts instead of sending them
+        // through the numeric f64 update path. Standalone/WASI remain on the
+        // existing i64 path because this predicate is host-only.
+        if (isHostBigIntUpdate(ctx, operand)) {
+          return emitHostBigIntArrayIncDec(ctx, fctx, elemType, objTmp, typeIdx, idxTmp, arrayTypeIdx, arithOp, mode);
+        }
 
         // Coerce to f64 for arithmetic if needed
         if (elemType.kind !== "f64" && elemType.kind !== "i32") {

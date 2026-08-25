@@ -418,7 +418,7 @@ function tryFlattenBinaryChain(
  * existing path. The numbering is a private ABI shared only with the
  * `host_bigint_binop` runtime intent — keep the two in lockstep.
  */
-function bigIntHostBinopOpcode(op: ts.SyntaxKind): number | undefined {
+export function bigIntHostBinopOpcode(op: ts.SyntaxKind): number | undefined {
   switch (op) {
     case ts.SyntaxKind.PlusToken:
       return 0;

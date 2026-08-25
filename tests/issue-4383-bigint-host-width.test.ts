@@ -44,7 +44,19 @@ describe("#4383 JS-host BigInt arbitrary-width carrier", () => {
     const exports = await compileToWasm(`
       interface Box { value: bigint; }
       const box: Box = { value: ${WIDE}n };
+      const postfixBox: Box = { value: ${WIDE}n };
+      const prefixBox: Box = { value: ${WIDE}n };
+      const postfixMinusBox: Box = { value: ${WIDE}n };
+      const prefixMinusBox: Box = { value: ${WIDE}n };
+      const plusEqualsBox: Box = { value: ${WIDE}n };
+      const minusEqualsBox: Box = { value: ${WIDE}n };
       export function get(): bigint { return box.value; }
+      export function postfix(): bigint { return postfixBox.value++; }
+      export function prefix(): bigint { return ++prefixBox.value; }
+      export function postfixMinus(): bigint { return postfixMinusBox.value--; }
+      export function prefixMinus(): bigint { return --prefixMinusBox.value; }
+      export function plusEquals(): bigint { return plusEqualsBox.value += 1n; }
+      export function minusEquals(): bigint { return minusEqualsBox.value -= 1n; }
       export function set(): bigint {
         box.value = ${WIDE}n + 1n;
         return box.value;
@@ -52,7 +64,57 @@ describe("#4383 JS-host BigInt arbitrary-width carrier", () => {
     `);
 
     expect(exports.get!()).toBe(WIDE);
+    expect(exports.postfix!()).toBe(WIDE);
+    expect(exports.prefix!()).toBe(WIDE + 1n);
+    expect(exports.postfixMinus!()).toBe(WIDE);
+    expect(exports.prefixMinus!()).toBe(WIDE - 1n);
+    expect(exports.plusEquals!()).toBe(WIDE + 1n);
+    expect(exports.minusEquals!()).toBe(WIDE - 1n);
     expect(exports.set!()).toBe(WIDE + 1n);
+  });
+
+  it("keeps wide BigInts in array element updates and compound assignment", async () => {
+    const exports = await compileToWasm(`
+      const postfixValues: bigint[] = [${WIDE}n];
+      const prefixValues: bigint[] = [${WIDE}n];
+      const postfixMinusValues: bigint[] = [${WIDE}n];
+      const prefixMinusValues: bigint[] = [${WIDE}n];
+      const plusEqualsValues: bigint[] = [${WIDE}n];
+      const minusEqualsValues: bigint[] = [${WIDE}n];
+      const compoundValues: bigint[] = [${WIDE}n];
+      export function postfix(): bigint { return postfixValues[0]++; }
+      export function prefix(): bigint { return ++prefixValues[0]; }
+      export function postfixMinus(): bigint { return postfixMinusValues[0]--; }
+      export function prefixMinus(): bigint { return --prefixMinusValues[0]; }
+      export function plusEquals(): bigint { return plusEqualsValues[0] += 1n; }
+      export function minusEquals(): bigint { return minusEqualsValues[0] -= 1n; }
+      export function compound(): bigint { return compoundValues[0] += 1n; }
+    `);
+
+    expect(exports.postfix!()).toBe(WIDE);
+    expect(exports.prefix!()).toBe(WIDE + 1n);
+    expect(exports.postfixMinus!()).toBe(WIDE);
+    expect(exports.prefixMinus!()).toBe(WIDE - 1n);
+    expect(exports.plusEquals!()).toBe(WIDE + 1n);
+    expect(exports.minusEquals!()).toBe(WIDE - 1n);
+    expect(exports.compound!()).toBe(WIDE + 1n);
+  });
+
+  it("evaluates BigInt array bases and keys exactly once per update", async () => {
+    const exports = await compileToWasm(`
+      const values: bigint[] = [${WIDE}n];
+      let baseCalls = 0;
+      let keyCalls = 0;
+      function getValues(): bigint[] { baseCalls++; return values; }
+      function getIndex(): number { keyCalls++; return 0; }
+      export function update(): bigint { return getValues()[getIndex()]++; }
+      export function counts(): number { return baseCalls * 10 + keyCalls; }
+    `);
+
+    expect(exports.update!()).toBe(WIDE);
+    expect(exports.counts!()).toBe(11);
+    expect(exports.update!()).toBe(WIDE + 1n);
+    expect(exports.counts!()).toBe(22);
   });
 
   it("preserves a wide BigInt through any-return and module initialization", async () => {
