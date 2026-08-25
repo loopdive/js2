@@ -652,7 +652,8 @@ function staticConstStringValue(
     }
     // A never-written binding with NO initialiser is always `undefined`
     // (`var x; new RegExp(/re/m, x)` — sputnik's hoisted-undefined flags form).
-    if (!decl.initializer) return isConst ? null : undefined;
+    if (!decl.initializer)
+      return ts.isForOfStatement(list.parent) || ts.isForInStatement(list.parent) ? null : isConst ? null : undefined;
     if (seen.has(decl.initializer)) return null;
     // `seen` guards the ACTIVE resolution path (a self-referential cycle), so
     // unwind it after the recursive fold — a diamond (`a + "x" + a`, the same
@@ -749,6 +750,7 @@ function staticRegExpPatternFlags(
   ctx: CodegenContext,
   expr: ts.Expression,
   depth = 0,
+  patternOnly = false,
 ): StaticRegExpPatternFlags | null {
   if (depth > 16) return null; // see staticRegExpLiteralCopy's depth guard
   const unwrapped = stripStaticWrapper(expr);
@@ -766,7 +768,7 @@ function staticRegExpPatternFlags(
     const patternArg = unwrapped.arguments?.[0];
     const flagsArg = unwrapped.arguments?.[1];
     // #2161 — a regex-literal first arg is the §22.2.3.1 copy form.
-    if (patternArg !== undefined) {
+    if (patternArg !== undefined && !patternOnly) {
       const copy = staticRegExpLiteralCopy(ctx, patternArg, flagsArg, depth + 1);
       if (copy !== null) return copy;
     }
@@ -774,7 +776,11 @@ function staticRegExpPatternFlags(
     // so a `const re = new RegExp("a"+"b","g")` binding is recognised as a
     // backend-created receiver for downstream `re.test`/`re.exec`/etc.
     const pattern = patternArg === undefined ? "" : staticConstStringValue(ctx, patternArg, new Set(), depth + 1);
-    const flags = flagsArg === undefined ? "" : staticConstStringValue(ctx, flagsArg, new Set(), depth + 1);
+    const flags = patternOnly
+      ? ""
+      : flagsArg === undefined
+        ? ""
+        : staticConstStringValue(ctx, flagsArg, new Set(), depth + 1);
     if (pattern === null || flags === null) return null;
     return { pattern: pattern ?? "", flags: flags ?? "" };
   }
@@ -782,8 +788,8 @@ function staticRegExpPatternFlags(
     const sym = ctx.checker.getSymbolAtLocation(unwrapped);
     if (!sym) return null;
     const decl = sym.getDeclarations()?.find((d) => ts.isVariableDeclaration(d)) as ts.VariableDeclaration | undefined;
-    if (!decl?.initializer || !isTrustedBackendCreatedRegExpBinding(ctx, decl, sym)) return null;
-    return staticRegExpPatternFlags(ctx, decl.initializer, depth + 1);
+    if (!decl?.initializer || (!patternOnly && !isTrustedBackendCreatedRegExpBinding(ctx, decl, sym))) return null;
+    return staticRegExpPatternFlags(ctx, decl.initializer, depth + 1, patternOnly);
   }
   return null;
 }
@@ -852,6 +858,18 @@ export function staticRegExpGroupMeta(
     if ((flagBits & ~SUPPORTED_STANDALONE_FLAGS) !== 0) return null;
     const compiled = compilePattern(meta.pattern, flagBits);
     return { groupNames: compiled.groupNames, flags: compiled.flags, nGroups: compiled.nGroups };
+  } catch {
+    return null;
+  }
+}
+
+function staticRegExpGroupNames(ctx: CodegenContext, expr: ts.Expression): ReadonlyMap<string, number> | null {
+  const full = staticRegExpGroupMeta(ctx, expr);
+  if (full !== null) return full.groupNames;
+  const pattern = staticRegExpPatternFlags(ctx, expr, 0, true)?.pattern;
+  if (pattern === undefined) return null;
+  try {
+    return compilePattern(pattern, 0).groupNames;
   } catch {
     return null;
   }
@@ -1470,7 +1488,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
               then: [
                 { op: "i32.const", value: 1 },
                 { op: "local.set", index: GROUP_SEEN },
-                { op: "local.get", index: PIPES },
+                { op: "local.get", index: GROUP_DEPTH },
                 { op: "i32.eqz" },
                 {
                   op: "if",
@@ -1537,7 +1555,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                       op: "if",
                       blockType: { kind: "empty" },
                       then: [
-                        { op: "local.get", index: GROUP_SEEN },
+                        { op: "local.get", index: GROUP_DEPTH },
                         {
                           op: "if",
                           blockType: { kind: "empty" },
@@ -1546,21 +1564,10 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                             { op: "local.set", index: SIMPLE },
                           ],
                           else: [
-                            { op: "local.get", index: ANCHORED },
-                            {
-                              op: "if",
-                              blockType: { kind: "empty" },
-                              then: [
-                                { op: "local.get", index: PIPES },
-                                { op: "i32.const", value: 1 },
-                                { op: "i32.add" },
-                                { op: "local.set", index: PIPES },
-                              ],
-                              else: [
-                                { op: "i32.const", value: 0 },
-                                { op: "local.set", index: SIMPLE },
-                              ],
-                            },
+                            { op: "local.get", index: PIPES },
+                            { op: "i32.const", value: 1 },
+                            { op: "i32.add" },
+                            { op: "local.set", index: PIPES },
                           ],
                         },
                       ],
@@ -4071,14 +4078,14 @@ export function tryCompileStandaloneStringReplace(
   if (!usesNativeRegExpProvider(ctx)) return undefined;
 
   const flags = staticRegExpFlags(ctx, reExpr);
-  if (flags === null) return undefined;
-  const reHasGlobal = flags.includes("g");
+  const reHasGlobal = flags?.includes("g") ?? false;
+  if (flags === null && method === "replaceAll") return undefined;
   // `replaceAll` requires a global regex (spec §22.1.3.20 step 4 throws
   // TypeError otherwise). Leave that error to the host path; only handle the
   // well-formed `replaceAll(/…/g, …)` here.
   if (method === "replaceAll" && !reHasGlobal) return undefined;
   // For `replace`, global is honored (replace-all when `g`, first-only else).
-  const globalReplace = method === "replaceAll" || reHasGlobal;
+  const globalReplace = flags === null ? null : method === "replaceAll" || reHasGlobal;
 
   // String-method operand order: subject = receiver, regex = arg[0].
   return emitStandaloneRegExpReplaceCore(
@@ -4145,7 +4152,7 @@ function emitStandaloneRegExpReplaceCore(
   subjExpr: ts.Expression,
   reExpr: ts.Expression,
   replExpr: ts.Expression,
-  globalReplace: boolean,
+  globalReplace: boolean | null,
   diag: string,
   subjectOverride?: () => ValType | null,
 ): ValType | null {
@@ -4206,7 +4213,14 @@ function emitStandaloneRegExpReplaceCore(
   fctx.body.push({ op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 }); // len
   fctx.body.push({ op: "local.get", index: subjLocal });
   fctx.body.push({ op: "local.get", index: replLocal });
-  fctx.body.push({ op: "i32.const", value: globalReplace ? 1 : 0 });
+  if (globalReplace === null) {
+    fctx.body.push(
+      { op: "local.get", index: regexpLocal },
+      { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_FLAGS },
+      { op: "i32.const", value: RE_FLAG_G },
+      { op: "i32.and" },
+    );
+  } else fctx.body.push({ op: "i32.const", value: globalReplace ? 1 : 0 });
   // nScratch (#1959) — PROGRESS empty-loop guard slots.
   fctx.body.push({ op: "local.get", index: regexpLocal });
   fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_NSCRATCH });
@@ -4224,8 +4238,8 @@ function emitStandaloneRegExpReplaceCore(
  */
 function buildRegexNamesTableInstrs(ctx: CodegenContext, reExpr: ts.Expression): Instr[] {
   const values: number[] = [];
-  const meta = staticRegExpGroupMeta(ctx, reExpr);
-  const entries: Array<[string, number]> = meta !== null ? [...meta.groupNames.entries()] : [];
+  const groupNames = staticRegExpGroupNames(ctx, reExpr);
+  const entries: Array<[string, number]> = groupNames !== null ? [...groupNames.entries()] : [];
   values.push(entries.length); // count
   for (const [name, idx] of entries) {
     values.push(idx); // 1-based capture index

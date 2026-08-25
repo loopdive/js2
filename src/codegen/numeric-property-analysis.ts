@@ -256,6 +256,8 @@ const STRING_STRING_METHODS: ReadonlySet<string> = new Set([
   "trim",
   "trimStart",
   "trimEnd",
+  "trimLeft",
+  "trimRight",
   "charAt",
   "concat",
   "repeat",

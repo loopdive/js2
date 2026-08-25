@@ -145,6 +145,52 @@ export function brandBooleanBinaryResult(op: ts.SyntaxKind, result: InnerResult)
 }
 
 /**
+ * Walk an operand before selecting the deferred exponentiation path. BigInt
+ * literals in an object method are deliberately excluded: that path has
+ * distinct BigInt/mixed-type semantics which must stay on the existing
+ * dispatch. The walk is syntax-only and therefore does not affect ordinary
+ * numeric exponentiation.
+ */
+function containsBigIntLiteral(node: ts.Node): boolean {
+  let found = false;
+  const visit = (current: ts.Node): void => {
+    if (found) return;
+    if (ts.isBigIntLiteral(current)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(current, visit);
+  };
+  visit(node);
+  return found;
+}
+
+/**
+ * Object operands need the two-phase evaluation required by §13.15.2:
+ * evaluate both operand expressions first, then apply ToNumeric. The normal
+ * f64 hint performs that coercion while compiling the left operand, which can
+ * call its valueOf before the right expression has run. Restrict this repair
+ * to anonymous object types (object literals and their inferred bindings),
+ * leaving class instances, wrappers, and BigInt-specific paths untouched.
+ */
+function isDeferredExponentiationObject(expr: ts.Expression, type: ts.Type): boolean {
+  if ((type.flags & ts.TypeFlags.Object) === 0) return false;
+  const objectFlags = (type as ts.ObjectType).objectFlags;
+  if ((objectFlags & ts.ObjectFlags.Anonymous) === 0) return false;
+  return !containsBigIntLiteral(expr);
+}
+
+/** Whether an anonymous object's statically-known own valueOf returns Symbol. */
+function objectValueOfReturnsSymbol(ctx: CodegenContext, expr: ts.Expression, type: ts.Type): boolean {
+  const valueOfSymbol = ctx.checker.getPropertyOfType(type, "valueOf");
+  if (!valueOfSymbol) return false;
+  const valueOfType = ctx.checker.getTypeOfSymbolAtLocation(valueOfSymbol, expr);
+  return ctx.checker
+    .getSignaturesOfType(valueOfType, ts.SignatureKind.Call)
+    .some((signature) => (ctx.checker.getReturnTypeOfSignature(signature).flags & ts.TypeFlags.ESSymbolLike) !== 0);
+}
+
+/**
  * (#2741) `key in rval` throws a TypeError when `Type(rval)` is not Object
  * (§13.10.1 step 5). Returns true when the RHS static type is EXCLUSIVELY a
  * non-object primitive — every constituent is number / string / boolean /
@@ -872,6 +918,64 @@ export function compileBinaryExpression(
       return { kind: "f64" };
     }
   }
+
+  // §13.15.2 evaluates both ExponentiationExpression operands before either
+  // operand is reduced by ToNumeric. The ordinary numeric hint below asks an
+  // object operand to coerce while that operand is compiled, which observes
+  // `left.valueOf()` before the right expression has run. Save both natural
+  // values first, then perform the existing f64 conversion and Math_pow call.
+  // Anonymous object types cover object literals and inferred object bindings;
+  // named/class/wrapper and BigInt-containing objects remain on their existing
+  // dispatches so this narrow ordering repair cannot change those semantics.
+  if (
+    op === ts.SyntaxKind.AsteriskAsteriskToken &&
+    (isDeferredExponentiationObject(expr.left, leftTsType) || isDeferredExponentiationObject(expr.right, rightTsType))
+  ) {
+    const leftReturnsSymbol = objectValueOfReturnsSymbol(ctx, expr.left, leftTsType);
+    const rightReturnsSymbol = objectValueOfReturnsSymbol(ctx, expr.right, rightTsType);
+    const leftType = compileExpression(ctx, fctx, expr.left);
+    if (!leftType) return { kind: "f64" };
+    const leftTemp = allocTempLocal(fctx, leftType);
+    fctx.body.push({ op: "local.set", index: leftTemp });
+
+    const rightType = compileExpression(ctx, fctx, expr.right);
+    if (!rightType) return { kind: "f64" };
+    const rightTemp = allocTempLocal(fctx, rightType);
+    fctx.body.push({ op: "local.set", index: rightTemp });
+
+    fctx.body.push({ op: "local.get", index: leftTemp });
+    if (leftType.kind !== "f64") {
+      coerceType(ctx, fctx, leftType, { kind: "f64" }, "number");
+    }
+    if (leftReturnsSymbol) {
+      // `valueOf()` has already run (and its side effects are preserved), but
+      // a Symbol result is not numeric. Throw before touching the right
+      // operand's valueOf, as required by ToNumeric's left-first order.
+      fctx.body.push({ op: "drop" });
+      releaseTempLocal(fctx, rightTemp);
+      releaseTempLocal(fctx, leftTemp);
+      emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a number");
+      return { kind: "f64" };
+    }
+    fctx.body.push({ op: "local.get", index: rightTemp });
+    if (rightType.kind !== "f64") {
+      coerceType(ctx, fctx, rightType, { kind: "f64" }, "number");
+    }
+    if (rightReturnsSymbol) {
+      // Both values are on the stack here; discard them before emitting the
+      // catchable TypeError template.
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "drop" });
+      releaseTempLocal(fctx, rightTemp);
+      releaseTempLocal(fctx, leftTemp);
+      emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a number");
+      return { kind: "f64" };
+    }
+    releaseTempLocal(fctx, rightTemp);
+    releaseTempLocal(fctx, leftTemp);
+    return compileNumericBinaryOp(ctx, fctx, op, expr);
+  }
+
   const isEqualityOp =
     op === ts.SyntaxKind.EqualsEqualsToken ||
     op === ts.SyntaxKind.ExclamationEqualsToken ||

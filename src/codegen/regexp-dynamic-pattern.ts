@@ -77,6 +77,7 @@ export const TOKEN_LEN_MASK = 0x1f;
 export const TOKEN_VALUE_SHIFT = 9;
 
 const DYN_TOKEN_HELPER = "__regex_dyn_token";
+const DYN_NAMED_GROUP_HELPER = "__regex_dyn_named_group";
 
 /** `kind | len << 4 | value << 9`, as a constant-folded i32 where possible. */
 function packConst(kind: number, len: number, value: number): Instr[] {
@@ -114,6 +115,46 @@ const inRange = (local: number, lo: number, hi: number): Instr[] => [
   { op: "i32.le_s" },
   { op: "i32.and" },
 ];
+
+/** Decode a conservative ASCII IdentifierName in `(?<name>` to a group token. */
+// prettier-ignore
+function ensureDynamicNamedGroupTokenDecoder(ctx: CodegenContext, strDataRef: ValType): number {
+  const existing = ctx.nativeRegexHelpers.get(DYN_NAMED_GROUP_HELPER);
+  if (existing !== undefined) return existing;
+  const typeIdx = addFuncType(ctx, [strDataRef, { kind: "i32" }, { kind: "i32" }, { kind: "i32" }], [{ kind: "i32" }]);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.nativeRegexHelpers.set(DYN_NAMED_GROUP_HELPER, funcIdx); ctx.funcMap.set(DYN_NAMED_GROUP_HELPER, funcIdx);
+  const [PDATA, POFF, I, END, START, NAME, CH, VALID, LEN] = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+  const dataTypeIdx = (strDataRef as { typeIdx: number }).typeIdx;
+  const load = (local: number): Instr[] => [{ op: "local.get", index: local }];
+  const read = (local: number): Instr[] => [{ op: "local.get", index: PDATA }, { op: "local.get", index: POFF }, { op: "local.get", index: local }, { op: "i32.add" }, { op: "array.get_u", typeIdx: dataTypeIdx }];
+  const set = (local: number): Instr[] => [{ op: "local.set", index: local }];
+  const c = (value: number): Instr[] => [{ op: "i32.const", value }];
+  const anyOf = (local: number, units: number[]): Instr[] => units.flatMap((unit, n) => [...eqConst(local, unit), ...(n ? ([{ op: "i32.or" }] as Instr[]) : [])]);
+  const letters = [...Array.from({ length: 26 }, (_, n) => 0x41 + n), ...Array.from({ length: 26 }, (_, n) => 0x61 + n)];
+  const start = anyOf(CH, [...letters, 0x24, 0x5f]);
+  const cont = anyOf(CH, [...letters, 0x24, 0x5f, ...Array.from({ length: 10 }, (_, n) => 0x30 + n)]);
+  const loopBody: Instr[] = [
+    ...load(NAME), ...load(END), { op: "i32.ge_s" }, { op: "br_if", depth: 1 }, ...read(NAME), ...set(CH), ...eqConst(CH, 0x3e),
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "br", depth: 2 }], else: [
+      ...eqConst(NAME, START), { op: "if", blockType: { kind: "val", type: { kind: "i32" } }, then: start, else: cont },
+      { op: "local.get", index: VALID }, { op: "i32.and" }, ...set(VALID), ...load(NAME), ...c(1), { op: "i32.add" }, ...set(NAME),
+    ] },
+    { op: "br", depth: 0 },
+  ];
+  const scan: Instr[] = [
+    ...load(I), ...c(3), { op: "i32.add" }, ...set(START), ...load(START), ...set(NAME), ...c(1), ...set(VALID),
+    { op: "block", blockType: { kind: "empty" }, body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }] },
+    ...load(NAME), ...load(I), { op: "i32.sub" }, ...c(1), { op: "i32.add" }, ...set(LEN),
+    { op: "local.get", index: VALID },
+    { op: "local.get", index: NAME }, { op: "local.get", index: END }, { op: "i32.lt_s" }, { op: "i32.and" },
+    { op: "local.get", index: NAME }, { op: "local.get", index: START }, { op: "i32.gt_s" }, { op: "i32.and" },
+    { op: "local.get", index: LEN }, ...c(TOKEN_LEN_MASK), { op: "i32.le_s" }, { op: "i32.and" },
+    { op: "if", blockType: { kind: "val", type: { kind: "i32" } }, then: [...load(LEN), ...c(TOKEN_LEN_SHIFT), { op: "i32.shl" }, ...c(TOKEN_GROUP_OPEN), { op: "i32.or" }], else: packConst(TOKEN_UNSUPPORTED, 1, 0) },
+  ];
+  pushDefinedFunc(ctx, funcIdx, { name: DYN_NAMED_GROUP_HELPER, typeIdx, locals: [{ name: "start", type: { kind: "i32" } }, { name: "name", type: { kind: "i32" } }, { name: "ch", type: { kind: "i32" } }, { name: "valid", type: { kind: "i32" } }, { name: "len", type: { kind: "i32" } }], body: scan, exported: false });
+  return funcIdx;
+}
 
 /**
  * Emit (once) `__regex_dyn_token(pdata, poff, i, end) -> i32`.
@@ -160,6 +201,7 @@ export function ensureDynamicPatternTokenDecoder(ctx: CodegenContext, strDataRef
   const funcIdx = mintDefinedFunc(ctx);
   ctx.nativeRegexHelpers.set(DYN_TOKEN_HELPER, funcIdx);
   ctx.funcMap.set(DYN_TOKEN_HELPER, funcIdx);
+  const namedGroupDecoderIdx = ensureDynamicNamedGroupTokenDecoder(ctx, strDataRef);
 
   const PDATA = 0;
   const POFF = 1;
@@ -422,7 +464,21 @@ export function ensureDynamicPatternTokenDecoder(ctx: CodegenContext, strDataRef
           eqConst(C, 0x28),
           cond(
             eqConst(D, 0x3f),
-            cond(eqConst(E, 0x3a), packConst(TOKEN_GROUP_OPEN, 3, 1), UNSUPPORTED),
+            cond(
+              eqConst(E, 0x3a),
+              packConst(TOKEN_GROUP_OPEN, 3, 1),
+              cond(
+                eqConst(E, 0x3c),
+                [
+                  { op: "local.get", index: PDATA },
+                  { op: "local.get", index: POFF },
+                  { op: "local.get", index: I },
+                  { op: "local.get", index: END },
+                  { op: "call", funcIdx: namedGroupDecoderIdx },
+                ],
+                UNSUPPORTED,
+              ),
+            ),
             packConst(TOKEN_GROUP_OPEN, 1, 0),
           ),
           cond(

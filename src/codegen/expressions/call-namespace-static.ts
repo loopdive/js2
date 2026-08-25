@@ -30,7 +30,7 @@ import {
   isStandalonePromiseActive,
 } from "../async-scheduler.js";
 import { classMemberFuncKey } from "../class-member-keys.js";
-import { compileArrowAsClosure } from "../closures.js";
+import { compileArrowAsClosure, getClosureFuncSelfTypeIdx } from "../closures.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
@@ -66,6 +66,7 @@ import { emitDefinePropertyDescRuntime, emitNonObjectArgGuard } from "../object-
 import { ensureObjectRuntime, ensureObjVecBuilders } from "../object-runtime.js";
 import {
   emitStandalonePromiseCombinator,
+  emitStandalonePromiseCustomCapabilityCheck,
   emitStandalonePromiseCombinatorRuntime,
   isNativeCombinatorMethod,
   resolveExternrefVecArg,
@@ -1980,6 +1981,63 @@ export function compileNamespaceStaticCall(
     // the earlier direct-call site (`Promise.resolve(v)` /
     // `Promise.reject(r)` without `.call`) and does not apply here.
     const methodName = propAccess.expression.name.text;
+
+    // (#4682) Bounded NewPromiseCapability arm: an ordinary compiled
+    // constructor plus an empty array.  The existing native aggregate path
+    // intentionally models the intrinsic Promise only; custom receivers
+    // otherwise fall through to `Promise_METHOD`, which is unsatisfiable in a
+    // standalone module.  Keep this admission narrow while the full
+    // per-element `C.resolve`/species protocol remains in its own follow-up:
+    // the selected capability-executor cohort observes only construction,
+    // executor capture, and post-construction callable validation.
+    if (
+      isStandalonePromiseActive(ctx) &&
+      expr.arguments.length === 2 &&
+      ts.isIdentifier(expr.arguments[0]) &&
+      expr.arguments[0].text !== "Promise" &&
+      ts.isArrayLiteralExpression(expr.arguments[1]) &&
+      expr.arguments[1].elements.length === 0
+    ) {
+      const ctorDecl = ctx.oracle.valueDeclarationOf(expr.arguments[0]);
+      const isOrdinaryCtorDecl =
+        ctorDecl !== undefined &&
+        ts.isFunctionDeclaration(ctorDecl) &&
+        ctorDecl.asteriskToken === undefined &&
+        !(ctorDecl.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false);
+      if (isOrdinaryCtorDecl) {
+        const snap = snapshotSpeculative(ctx, fctx);
+        // Preserve the nominal closure ref here.  Asking for externref would
+        // erase the wrapper type before the capability probe can recover the
+        // constructor's lifted signature from closureInfoByTypeIdx.
+        const ctorType = compileExpression(ctx, fctx, expr.arguments[0]!);
+        const ctorInfo =
+          ctorType && (ctorType.kind === "ref" || ctorType.kind === "ref_null")
+            ? ctx.closureInfoByTypeIdx.get(ctorType.typeIdx)
+            : ctx.closureMap.get(expr.arguments[0].text);
+        const supportsCapabilityCtor =
+          ctorInfo !== undefined && ctorInfo.paramTypes.length === 1 && ctorInfo.paramTypes[0]?.kind === "externref";
+        const ctorSelfTypeIdx =
+          ctorInfo && (getClosureFuncSelfTypeIdx(ctx, ctorInfo.funcTypeIdx) ?? ctorInfo.structTypeIdx);
+        if (
+          ctorType &&
+          ctorInfo &&
+          supportsCapabilityCtor &&
+          ctorSelfTypeIdx !== undefined &&
+          (ctorType.kind === "ref" || ctorType.kind === "ref_null" || ctorType.kind === "externref")
+        ) {
+          const ctorLocal = allocLocal(fctx, `__promise_custom_ctor_${fctx.locals.length}`, {
+            kind: "ref_null",
+            typeIdx: ctorSelfTypeIdx,
+          });
+          coerceType(ctx, fctx, ctorType, { kind: "ref_null", typeIdx: ctorSelfTypeIdx });
+          fctx.body.push({ op: "local.set", index: ctorLocal });
+          if (emitStandalonePromiseCustomCapabilityCheck(ctx, fctx, ctorLocal, ctorInfo, ctorSelfTypeIdx)) {
+            return emitStandalonePromiseCombinator(ctx, fctx, methodName, []);
+          }
+        }
+        rollbackSpeculative(ctx, fctx, snap);
+      }
+    }
 
     // (#2867 wave-2 / #3390 slice 2) `Promise.METHOD.call(Promise, iter)` is
     // semantically the direct global-Promise form.  Keep it on the native

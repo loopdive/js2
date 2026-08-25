@@ -124,6 +124,12 @@ export const BUILTIN_CONSTRUCTOR_IDENTITY_NAMES: ReadonlySet<string> = new Set([
   // read changes, and it changes from `ref.null.extern` — a value no conforming
   // program can observe as the constructor — to the identity-stable carrier.
   "Date",
+  // (#4490 wave 2) Int8Array is the first TypedArray constructor migrated to
+  // the real mutable `$Object` carrier.  Its own `length`/`name`/`prototype`
+  // properties therefore share the same state consulted by reads, `in`,
+  // delete, and gOPD; the remaining TypedArray constructors stay on the
+  // `$__ta_ctor` path until their own slices land.
+  "Int8Array",
 ]);
 
 export function isBuiltinConstructorIdentityName(name: string): boolean {

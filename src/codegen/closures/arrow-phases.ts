@@ -37,6 +37,7 @@ import { closureObservesBindingValue, collectTransitiveCaptureNames } from "../f
 import { emitBoundsCheckedArrayGet, valTypesMatch } from "../shared.js";
 import { spliceNullGuarded } from "./param-emit-helpers.js";
 import { materializeHoistedFunctionValueBinding } from "./funcref-as-closure.js";
+import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
 import { ensureFnMetaSubtype, fnMetaSlot, registerFnMetaFamily } from "../function-instance-meta.js";
 // (#4440) object-literal accessors / methods — §10.2.9 comes from the property key
@@ -50,6 +51,7 @@ import {
   collectParamDefaultReferences,
   collectReferencedIdentifiers,
   collectWrittenIdentifiers,
+  genBodyReferencesSuper,
   isOwnParamName,
   runtimeParameters,
 } from "../closures.js";
@@ -408,6 +410,21 @@ export function planClosureCaptures(
   // shadow set, so the param's own binding names stay excluded.
   collectClosureParameterReferences(arrow, referencedNames, ownLocals);
 
+  // Arrow functions do not introduce a `this` binding.  `this` is not an
+  // identifier, so the free-variable scan above intentionally cannot see it;
+  // without an explicit capture, the lifted body falls through to
+  // `__current_this` (or the unbound value) instead of retaining the receiver
+  // from its enclosing constructor/method.  Keep ordinary function
+  // expressions on their existing own-`this` path, and only add the synthetic
+  // capture when the enclosing frame actually has a receiver local.
+  if (
+    ts.isArrowFunction(arrow) &&
+    fctx.localMap.has("this") &&
+    (bodyReferencesOwnThis(body) || genBodyReferencesSuper(body))
+  ) {
+    referencedNames.add("this");
+  }
+
   // (#3040) Parameter DEFAULT initializers can reference enclosing-scope names
   // that appear NOWHERE in the body — e.g. `f = async function*([x] = iter)`
   // where `iter` is an outer local used ONLY in the default. The body-only scan
@@ -575,6 +592,9 @@ export function planClosureCaptures(
   }[] = [];
   for (const name of referencedNames) {
     let localIdx = fctx.localMap.get(name);
+    // The ordinary-function lexical-this path materializes a private local
+    // without changing the frame's normal `this` binding (see closures.ts).
+    if (localIdx === undefined && name === "this") localIdx = fctx.lexicalThisCaptureLocal;
     let tdzFlagIdxFromScan: number | undefined;
     if (localIdx === undefined) {
       // (#3121) A localMap miss can ALSO mean the name was PROMOTED to a
