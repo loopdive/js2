@@ -66,6 +66,10 @@ After the fix: 2/2 passing in standalone Test262.
 - `object.js`: PASS, wasm SHA `a7a7e533fb54`
 - `numbers-object.js`: PASS, wasm SHA `754b044cb2b3`
 
+Post-sync revalidation after merging current `upstream/main`: 2/2 still pass
+(`object.js` SHA `7f162a35abf1`; `numbers-object.js` SHA
+`34b543d141c5`), and the focused Vitest remains 2/2.
+
 Focused Vitest: `tests/issue-4683.test.ts` — 2/2 tests passed.
 
 Zero-loss controls (all were baseline PASS rows): 3/3 passed after the
