@@ -1890,11 +1890,12 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
       }
       return true;
     }
-    // Iteration / drain consumers are native-safe ONLY over the direct call
-    // expression (state-struct ValType visible), NOT over an externref binding
-    // reference (#3468).
+    // A for-of consumer over a binding is native-safe once the binding slot
+    // preserves the generator state-struct type (the slot typer below mirrors
+    // the direct-call result). Keep spread/Array.from/destructure over a
+    // binding conservative: those drains still use the generic vec carrier.
+    if (ts.isForOfStatement(p) && p.expression === node && !p.awaitModifier) return true;
     if (!viaBinding) {
-      if (ts.isForOfStatement(p) && p.expression === node && !p.awaitModifier) return true;
       if (ts.isSpreadElement(p)) return true;
       if (isArrayFromArg(node)) return true;
     }

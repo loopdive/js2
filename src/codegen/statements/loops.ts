@@ -1061,6 +1061,14 @@ function compileForOfNativeCollection(
   // `.keys()/.values()/.entries()` call overrides.
   const kind: "keys" | "values" | "entries" = explicitKind ?? (isMap ? "entries" : "values");
 
+  // A bare native Set iterator is live: deleting a pending entry must skip it
+  // and additions must extend the cursor's high-water mark. Keep the eager
+  // vec producer for `.values()` and every other collection consumer; this
+  // narrow path owns only the simple binding used by the standalone Set rows.
+  if (isSet && kind === "values" && explicitKind === undefined) {
+    if (compileForOfNativeSetValues(ctx, fctx, stmt, receiver)) return true;
+  }
+
   // `entries` with a `[k, v]` destructuring binding is driven by a dedicated
   // native walk that binds the stored key/value directly per live entry — no
   // intermediate `$ObjVec` pair (whose generic destructuring would route through
@@ -1096,6 +1104,99 @@ function compileForOfNativeCollection(
   const vecLocal = allocLocal(fctx, `__cof_vec_${fctx.locals.length}`, vecType);
   fctx.body.push({ op: "local.set", index: vecLocal });
   compileForOfArrayFromLocal(ctx, fctx, stmt, vecLocal, vecType);
+  return true;
+}
+
+/** Drive a bare native Set's simple `for-of` binding over its live entry list. */
+function compileForOfNativeSetValues(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.ForOfStatement,
+  receiver: ts.Expression,
+): boolean {
+  if (!ts.isVariableDeclarationList(stmt.initializer) || stmt.initializer.declarations.length !== 1) return false;
+  const decl = stmt.initializer.declarations[0]!;
+  if (!ts.isIdentifier(decl.name)) return false;
+  ensureMapHelpers(ctx);
+  if (ctx.mapTypeIdx < 0) return false;
+
+  // The native path is tentative because a statically-typed Set can still be
+  // supplied by a host value. Do not leave its probe's locals or instructions.
+  const probe = snapshotSpeculative(ctx, fctx);
+  const recvProbe = compileExpression(ctx, fctx, receiver);
+  rollbackSpeculative(ctx, fctx, probe);
+  if (!recvProbe || (recvProbe.kind !== "ref" && recvProbe.kind !== "ref_null")) return false;
+  if (recvProbe.typeIdx !== ctx.mapTypeIdx) return false;
+
+  const { M_ENTRIES, M_ENTRYCOUNT, F_VALUE, F_HASH, TOMBSTONE_BIT } = MAP_LAYOUT;
+  const recvType = compileExpression(ctx, fctx, receiver);
+  if (!recvType) return false;
+  const mapLocal = allocLocal(fctx, `__setof_map_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: ctx.mapTypeIdx,
+  });
+  fctx.body.push({ op: "local.set", index: mapLocal });
+
+  const valueType = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(decl.name));
+  const valueLocal = allocLocal(fctx, decl.name.text, valueType);
+  if (stmt.initializer.flags & ts.NodeFlags.Const) {
+    if (!fctx.constBindings) fctx.constBindings = new Set();
+    fctx.constBindings.add(decl.name.text);
+  }
+  const indexLocal = allocLocal(fctx, `__setof_i_${fctx.locals.length}`, { kind: "i32" });
+  const entryLocal = allocLocal(fctx, `__setof_entry_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: ctx.mapEntryTypeIdx,
+  });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: indexLocal });
+
+  const savedBody = pushBody(fctx);
+  shiftLoopDepths(fctx, 3);
+  fctx.breakStack.push(2);
+  fctx.continueStack.push(0);
+
+  // Re-read both entryCount and entries on every step so growth reallocations
+  // and appends performed by the loop body remain observable.
+  fctx.body.push({ op: "local.get", index: indexLocal });
+  fctx.body.push({ op: "local.get", index: mapLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.mapTypeIdx, fieldIdx: M_ENTRYCOUNT });
+  fctx.body.push({ op: "i32.ge_s" });
+  fctx.body.push({ op: "br_if", depth: 1 });
+  fctx.body.push({ op: "local.get", index: mapLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.mapTypeIdx, fieldIdx: M_ENTRIES });
+  fctx.body.push({ op: "local.get", index: indexLocal });
+  fctx.body.push({ op: "array.get", typeIdx: ctx.mapEntriesTypeIdx });
+  fctx.body.push({ op: "ref.cast", typeIdx: ctx.mapEntryTypeIdx });
+  fctx.body.push({ op: "local.set", index: entryLocal });
+  fctx.body.push({ op: "local.get", index: indexLocal });
+  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "local.set", index: indexLocal });
+  fctx.body.push({ op: "local.get", index: entryLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.mapEntryTypeIdx, fieldIdx: F_HASH });
+  fctx.body.push({ op: "i32.const", value: TOMBSTONE_BIT });
+  fctx.body.push({ op: "i32.and" });
+  fctx.body.push({ op: "br_if", depth: 0 });
+  fctx.body.push({ op: "local.get", index: entryLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.mapEntryTypeIdx, fieldIdx: F_VALUE });
+  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push(...coercionInstrs(ctx, { kind: "externref" }, valueType, fctx));
+  fctx.body.push({ op: "local.set", index: valueLocal });
+
+  const savedLoopBody = pushBody(fctx);
+  compileLoopBodyWithShadows(ctx, fctx, stmt.statement);
+  const bodyInstrs = fctx.body;
+  popBody(fctx, savedLoopBody);
+  fctx.body.push({ op: "block", blockType: { kind: "empty" }, body: bodyInstrs });
+  fctx.body.push({ op: "br", depth: 0 });
+
+  const loopBody = fctx.body;
+  fctx.breakStack.pop();
+  fctx.continueStack.pop();
+  shiftLoopDepths(fctx, -3);
+  popBody(fctx, savedBody);
+  fctx.body.push(blockLoop(loopBody));
   return true;
 }
 
@@ -1599,8 +1700,8 @@ function compileForOfArrayFromLocal(
   compileForOfArray(ctx, fctx, stmt, undefined, { vecLocal, vecType });
 }
 
-/** Temporary receiver environment for a destructuring lexical for-of head. */
-interface ForOfDstrHeadSaved {
+/** Outer descriptors shadowed by a lexical for-of receiver environment. */
+interface ForOfHeadSaved {
   name: string;
   localMap: number | undefined;
   tdz: number | undefined;
@@ -1609,7 +1710,7 @@ interface ForOfDstrHeadSaved {
   isConst: boolean;
 }
 
-function restoreForOfDstrHead(fctx: FunctionContext, saved: ForOfDstrHeadSaved): void {
+function restoreForOfHead(fctx: FunctionContext, saved: ForOfHeadSaved): void {
   fctx.localMap.delete(saved.name);
   fctx.tdzFlagLocals?.delete(saved.name);
   fctx.boxedCaptures?.delete(saved.name);
@@ -1622,14 +1723,12 @@ function restoreForOfDstrHead(fctx: FunctionContext, saved: ForOfDstrHeadSaved):
   if (saved.isConst) (fctx.constBindings ??= new Set()).add(saved.name);
 }
 
-function saveForOfDstrHead(fctx: FunctionContext, stmt: ts.ForOfStatement): ForOfDstrHeadSaved[] {
+function saveForOfReceiverHead(fctx: FunctionContext, stmt: ts.ForOfStatement): ForOfHeadSaved[] {
   if (!ts.isVariableDeclarationList(stmt.initializer)) return [];
   if (!(stmt.initializer.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const))) return [];
   const names = new Set<string>();
   for (const decl of stmt.initializer.declarations) {
-    if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
-      for (const name of collectPatternBindingNames(decl.name)) names.add(name);
-    }
+    for (const name of collectPatternBindingNames(decl.name)) names.add(name);
   }
   return [...names].map((name) => ({
     name,
@@ -1666,18 +1765,18 @@ function compileForOfArray(
   // #1919 — snapshot so a non-array receiver rolls back body + locals + imports
   // before reporting. With `preVec` no compile happens, so rollback is a no-op.
   const snap = snapshotSpeculative(ctx, fctx);
-  // #4710 — §14.7.5.6 evaluates the receiver with every name in a lexical
-  // destructuring head uninitialized. Keep this limited to the direct,
-  // synchronous vec path; the iterator, collection, and already-materialized
-  // paths have separate environment machinery and are outside this slice.
-  const dstrHeadSaved = !preVec && !iterableOverride ? saveForOfDstrHead(fctx, stmt) : [];
-  for (const saved of dstrHeadSaved) {
-    const valueLocal = allocLocal(fctx, `__forof_dstr_hbind_${saved.name}_${fctx.locals.length}`, {
+  // #4700/#4710 — HeadEvaluation evaluates the receiver with every name in a
+  // lexical identifier or destructuring head uninitialized. Keep this limited
+  // to the direct synchronous vec path; iterator and materialized paths retain
+  // their separate environment machinery.
+  const receiverHeadSaved = !preVec && !iterableOverride ? saveForOfReceiverHead(fctx, stmt) : [];
+  for (const saved of receiverHeadSaved) {
+    const headValueLocal = allocLocal(fctx, `__forof_hbind_${saved.name}_${fctx.locals.length}`, {
       kind: "externref",
     });
-    const flagLocal = allocLocal(fctx, `__forof_dstr_hflag_${saved.name}_${fctx.locals.length}`, { kind: "i32" });
-    fctx.localMap.set(saved.name, valueLocal);
-    (fctx.tdzFlagLocals ??= new Map()).set(saved.name, flagLocal);
+    const headTdzLocal = allocLocal(fctx, `__forof_hflag_${saved.name}_${fctx.locals.length}`, { kind: "i32" });
+    fctx.localMap.set(saved.name, headValueLocal);
+    (fctx.tdzFlagLocals ??= new Map()).set(saved.name, headTdzLocal);
     fctx.boxedCaptures?.delete(saved.name);
     fctx.boxedTdzFlags?.delete(saved.name);
     fctx.constBindings?.delete(saved.name);
@@ -1694,7 +1793,7 @@ function compileForOfArray(
   const vecType = preVec ? preVec.vecType : compileExpression(ctx, fctx, iterableOverride ?? stmt.expression);
   if (preserveUndefElem) (ctx as any)._forOfPreserveUndefElem = prevPreserveUndefElem;
   if (!vecType || (vecType.kind !== "ref" && vecType.kind !== "ref_null")) {
-    for (const saved of dstrHeadSaved) restoreForOfDstrHead(fctx, saved);
+    for (const saved of receiverHeadSaved) restoreForOfHead(fctx, saved);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array expression");
     return;
@@ -1704,7 +1803,7 @@ function compileForOfArray(
   const vecTypeIdx = vecType.typeIdx;
   const vecDef = ctx.mod.types[vecTypeIdx];
   if (!vecDef || vecDef.kind !== "struct") {
-    for (const saved of dstrHeadSaved) restoreForOfDstrHead(fctx, saved);
+    for (const saved of receiverHeadSaved) restoreForOfHead(fctx, saved);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
@@ -1713,14 +1812,16 @@ function compileForOfArray(
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   const arrDef = ctx.mod.types[arrTypeIdx];
   if (!arrDef || arrDef.kind !== "array") {
-    for (const saved of dstrHeadSaved) restoreForOfDstrHead(fctx, saved);
+    for (const saved of receiverHeadSaved) restoreForOfHead(fctx, saved);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
   }
-  // HeadEvaluation step 4: the temporary receiver TDZ ends before the
-  // existing per-iteration destructuring lowering is compiled.
-  for (const saved of dstrHeadSaved) restoreForOfDstrHead(fctx, saved);
+  // HeadEvaluation step 4: the receiver TDZ environment ends before the
+  // loop's per-iteration binding is installed. The emitted receiver reads
+  // retain the temporary locals/flag; only the compiler's active descriptors
+  // are restored here.
+  for (const saved of receiverHeadSaved) restoreForOfHead(fctx, saved);
   const elemType = arrDef.element;
   // (#2934 1b) Packed i8/i16 typed-array elements (Uint8Array/Int8Array/
   // Int16Array/… standalone, #2593) are STORAGE-only types: a local declared
@@ -1996,6 +2097,9 @@ function compileForOfArray(
       });
     }
   }
+  // #4700 — lexical head bindings end with the loop and must not leak into
+  // later code in the surrounding function.
+  for (const saved of receiverHeadSaved) restoreForOfHead(fctx, saved);
 }
 
 /**
