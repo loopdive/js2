@@ -29,11 +29,18 @@ function compileConditionalExpression(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.ConditionalExpression,
+  expectedType?: ValType,
 ): ValType | null {
+  const hostBigIntExpected = (branch: ts.Expression): ValType | undefined => {
+    if (ctx.standalone || ctx.wasi) return undefined;
+    return ctx.oracle.staticJsTypeOf(branch) === "bigint" ? { kind: "externref" } : undefined;
+  };
+
   // Constant-folding: if the condition is a compile-time constant, emit only the taken branch.
   const constResult = evaluateConstantCondition(expr.condition);
   if (constResult !== undefined) {
-    return compileExpression(ctx, fctx, constResult ? expr.whenTrue : expr.whenFalse);
+    const branch = constResult ? expr.whenTrue : expr.whenFalse;
+    return compileExpression(ctx, fctx, branch, hostBigIntExpected(branch));
   }
 
   const condType = compileExpression(ctx, fctx, expr.condition);
@@ -45,7 +52,7 @@ function compileConditionalExpression(
   }
 
   const savedBody = pushBody(fctx);
-  const thenResultType = compileExpression(ctx, fctx, expr.whenTrue);
+  const thenResultType = compileExpression(ctx, fctx, expr.whenTrue, hostBigIntExpected(expr.whenTrue));
   // If the then-branch is void (no value on stack), push a default value
   // so the ternary has a consistent result. JS treats void as undefined → NaN for numbers.
   if (!thenResultType) {
@@ -60,7 +67,7 @@ function compileConditionalExpression(
   // function after the else branch pulled in a helper.
   fctx.savedBodies.push(thenInstrs);
   fctx.body = [];
-  const elseResultType = compileExpression(ctx, fctx, expr.whenFalse);
+  const elseResultType = compileExpression(ctx, fctx, expr.whenFalse, hostBigIntExpected(expr.whenFalse));
   if (!elseResultType) {
     fctx.body.push({ op: "f64.const", value: NaN });
   }

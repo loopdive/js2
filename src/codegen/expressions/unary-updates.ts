@@ -52,6 +52,7 @@ import { compileComputedMemberKeyAfterBaseGuard } from "./computed-member-refere
 import { emitMappedArgParamSync } from "./logical-ops.js";
 import { resolveStructName } from "./misc.js";
 import { isSloppyImplicitGlobalBinding, tryEmitImplicitGlobalIncDec } from "./implicit-global-binding.js"; // (#3966) `p++` on a realm-global property
+import { compileHostBigIntIdentifierUpdate, isHostBigIntUpdate } from "./host-bigint-updates.js";
 
 /**
  * §13.4 UpdateExpression evaluation applies ToNumeric to the operand's current
@@ -1054,18 +1055,23 @@ function compilePrefixUpdate(
   // §13.4.4 GetValue on an unresolvable Reference (update-unresolvable-ref.ts).
   const unresolvablePre = tryEmitUnresolvableUpdateThrow(ctx, fctx, unwrapParens(expr.operand));
   if (unresolvablePre !== undefined) return unresolvablePre;
+  // Share the with/const/host-BigInt prelude for both operators.
+  const updateOperand = unwrapParens(expr.operand);
+  if (ts.isIdentifier(updateOperand)) {
+    const isIncrement = expr.operator === ts.SyntaxKind.PlusPlusToken;
+    const w = compileWithUpdateExpression(ctx, fctx, updateOperand, isIncrement, /*prefix*/ true);
+    if (w !== undefined) return w;
+    if (fctx.constBindings?.has(updateOperand.text)) {
+      emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
+      fctx.body.push({ op: "unreachable" });
+      return { kind: "f64" };
+    }
+    if (isHostBigIntUpdate(ctx, updateOperand))
+      return compileHostBigIntIdentifierUpdate(ctx, fctx, updateOperand, isIncrement, false);
+  }
   switch (expr.operator) {
     case ts.SyntaxKind.PlusPlusToken: {
       const ppOperand = unwrapParens(expr.operand);
-      if (ts.isIdentifier(ppOperand)) {
-        const w = compileWithUpdateExpression(ctx, fctx, ppOperand, /*increment*/ true, /*prefix*/ true);
-        if (w !== undefined) return w;
-      }
-      if (ts.isIdentifier(ppOperand) && fctx.constBindings?.has(ppOperand.text)) {
-        emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
-        fctx.body.push({ op: "unreachable" });
-        return { kind: "f64" };
-      }
       if (ts.isIdentifier(ppOperand)) {
         if (fctx.localMap.get(ppOperand.text) === undefined) {
           // (#3039) ++x on a boxed captured global — update through the cell.
@@ -1240,15 +1246,6 @@ function compilePrefixUpdate(
       const arithOpI32 = isIncrement ? "i32.add" : "i32.sub";
 
       const mmOperand = unwrapParens(expr.operand);
-      if (ts.isIdentifier(mmOperand)) {
-        const w = compileWithUpdateExpression(ctx, fctx, mmOperand, /*increment*/ false, /*prefix*/ true);
-        if (w !== undefined) return w;
-      }
-      if (ts.isIdentifier(mmOperand) && fctx.constBindings?.has(mmOperand.text)) {
-        emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
-        fctx.body.push({ op: "unreachable" });
-        return { kind: "f64" };
-      }
       if (ts.isIdentifier(mmOperand)) {
         if (fctx.localMap.get(mmOperand.text) === undefined) {
           // (#3039) --x on a boxed captured global — update through the cell.
@@ -1463,6 +1460,9 @@ function compilePostfixUnary(
       emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
       fctx.body.push({ op: "unreachable" });
       return { kind: "f64" };
+    }
+    if (isHostBigIntUpdate(ctx, postOperand)) {
+      return compileHostBigIntIdentifierUpdate(ctx, fctx, postOperand, isIncrement, true);
     }
     const idx = fctx.localMap.get(postOperand.text);
     if (idx === undefined) {

@@ -4,12 +4,23 @@
  * FieldDef[] and pushes a struct type. Extracted verbatim from
  * codegen/declarations.ts (#3268).
  */
-import { mapTsTypeToWasm } from "../../checker/type-mapper.js";
+import { getNullablePrimitiveInfo, isBigIntType, mapTsTypeToWasm } from "../../checker/type-mapper.js";
 import { ts } from "../../ts-api.js";
 import { fieldsHashKey, resolveWasmType } from "../index.js";
 import { registerStructType } from "../registry/types.js";
 import type { FieldDef } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
+
+function mapDeclaredFieldType(ctx: CodegenContext, memberType: ts.Type): FieldDef["type"] {
+  // `mapTsTypeToWasm` intentionally models BigInt as the host-free i64
+  // carrier. Interface/object fields are value boundaries too, though: in a
+  // JS-host module a bigint field must remain an externref, otherwise a wide
+  // value is truncated when struct.get/struct.set crosses the field.
+  const nullable = getNullablePrimitiveInfo(memberType);
+  const isBigIntField =
+    !ctx.standalone && !ctx.wasi && (isBigIntType(memberType) || nullable?.primitiveKind === "bigint");
+  return isBigIntField ? resolveWasmType(ctx, memberType) : mapTsTypeToWasm(memberType, ctx.checker);
+}
 
 export function collectInterface(ctx: CodegenContext, decl: ts.InterfaceDeclaration): void {
   const name = decl.name.text;
@@ -19,7 +30,7 @@ export function collectInterface(ctx: CodegenContext, decl: ts.InterfaceDeclarat
     if (ts.isPropertySignature(member) && member.name) {
       const memberName = (member.name as ts.Identifier).text;
       const memberType = ctx.checker.getTypeAtLocation(member);
-      const wasmType = mapTsTypeToWasm(memberType, ctx.checker);
+      const wasmType = mapDeclaredFieldType(ctx, memberType);
       fields.push({
         name: memberName,
         type: wasmType,
@@ -48,7 +59,8 @@ export function resolveStructFieldTypes(ctx: CodegenContext, sourceFile: ts.Sour
     let changed = false;
     for (let i = 0; i < fields.length; i++) {
       const field = fields[i]!;
-      if (field.type.kind !== "externref") continue;
+      const mayBeHostBigInt = !ctx.standalone && !ctx.wasi && field.type.kind === "i64" && field.type.bigint === true;
+      if (field.type.kind !== "externref" && !mayBeHostBigInt) continue;
 
       // Try to re-resolve using resolveWasmType which knows about structs
       let memberTsType: ts.Type | undefined;
@@ -75,7 +87,11 @@ export function resolveStructFieldTypes(ctx: CodegenContext, sourceFile: ts.Sour
 
       if (!memberTsType) continue;
       const resolved = resolveWasmType(ctx, memberTsType);
-      if (resolved.kind === "ref" || resolved.kind === "ref_null") {
+      if (
+        resolved.kind === "ref" ||
+        resolved.kind === "ref_null" ||
+        (mayBeHostBigInt && resolved.kind === "externref")
+      ) {
         field.type = resolved;
         changed = true;
       }
@@ -154,7 +170,7 @@ export function collectObjectType(ctx: CodegenContext, name: string, type: ts.Ty
   const fields: FieldDef[] = [];
   for (const prop of type.getProperties()) {
     const propType = ctx.checker.getTypeOfSymbol(prop);
-    const wasmType = mapTsTypeToWasm(propType, ctx.checker);
+    const wasmType = mapDeclaredFieldType(ctx, propType);
     fields.push({
       name: prop.name,
       type: wasmType,

@@ -46,7 +46,7 @@ import {
   valTypesMatch,
   VOID_RESULT,
 } from "./shared.js";
-import { compileStringLiteral } from "./string-ops.js";
+import { compileStringLiteral, emitNativeStringToHostExternref } from "./string-ops.js";
 import { ensureImportMetaObject } from "./import-meta.js";
 import { coerceType as coerceTypeImpl, pushDefaultValue } from "./type-coercion.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
@@ -985,11 +985,21 @@ function compileBigIntLiteral(
   expectedType: ValType | undefined,
 ): ValType | null {
   const text = expr.text.replace(/_/g, "").replace(/n$/i, "");
-  if (!ctx.standalone && !ctx.wasi && expectedType?.kind === "externref") {
+  const hostBigIntRef =
+    !ctx.standalone &&
+    !ctx.wasi &&
+    (expectedType?.kind === "externref" || (expectedType !== undefined && isAnyValue(expectedType, ctx)));
+  if (hostBigIntRef) {
     const stringType = compileStringLiteral(ctx, fctx, text, expr);
     if (!stringType) return null;
     if (stringType.kind !== "externref") {
-      coerceType(ctx, fctx, stringType, { kind: "externref" });
+      // `fast`/native-strings still targets the JS host. Convert the native
+      // `$AnyString` value to a real host string before calling BigInt; a bare
+      // `extern.convert_any` would expose an opaque WasmGC object and the host
+      // constructor would throw `Cannot convert [object Object] to a BigInt`.
+      if (!emitNativeStringToHostExternref(ctx, fctx)) {
+        coerceType(ctx, fctx, stringType, { kind: "externref" });
+      }
     }
     const ctorIdx = ensureLateImport(ctx, "__bigint_ctor_ref", [{ kind: "externref" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
@@ -1173,7 +1183,7 @@ function compileExpressionInner(
         return brandBooleanBinaryResult(expr.operatorToken.kind, compileHostInstanceOf(ctx, fctx, expr));
       }
     }
-    return brandBooleanBinaryResult(expr.operatorToken.kind, compileBinaryExpression(ctx, fctx, expr));
+    return brandBooleanBinaryResult(expr.operatorToken.kind, compileBinaryExpression(ctx, fctx, expr, expectedType));
   }
 
   if (ts.isTypeOfExpression(expr)) {
@@ -1308,7 +1318,7 @@ function compileExpressionInner(
   }
 
   if (ts.isConditionalExpression(expr)) {
-    return compileConditionalExpression(ctx, fctx, expr);
+    return compileConditionalExpression(ctx, fctx, expr, expectedType);
   }
 
   if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {

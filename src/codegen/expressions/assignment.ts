@@ -880,7 +880,7 @@ export function emitDynamicWithIdentifierWrite(
  * coercing externref → the target's declared type. Boxed ref-cell captures and
  * const/read-only bindings are handled by re-reading them here too.
  */
-function emitIdentifierWriteFromLocal(
+export function emitIdentifierWriteFromLocal(
   ctx: CodegenContext,
   fctx: FunctionContext,
   id: ts.Identifier,

@@ -1,0 +1,130 @@
+import { describe, expect, it } from "vitest";
+import { compile } from "../src/index.js";
+import { buildImports, instantiateWasm } from "../src/runtime.js";
+import { compileToWasm } from "./equivalence/helpers.js";
+
+const WIDE = 170141183460469231731687303715884105851n; // 2^127 + 123
+
+describe("#4383 JS-host BigInt arbitrary-width carrier", () => {
+  it("keeps local, captured, and global ++/-- in the BigInt lane", async () => {
+    const exports = await compileToWasm(`
+      let moduleValue: bigint = ${WIDE}n;
+
+      export function localPrefix(): bigint {
+        let value: bigint = ${WIDE}n;
+        return ++value;
+      }
+      export function localPostfix(): bigint {
+        let value: bigint = ${WIDE}n;
+        return value++;
+      }
+      export function capturedPrefix(): bigint {
+        let value: bigint = ${WIDE}n;
+        function inner(): bigint { return ++value; }
+        return inner();
+      }
+      export function capturedPostfix(): bigint {
+        let value: bigint = ${WIDE}n;
+        function inner(): bigint { return value--; }
+        return inner();
+      }
+      export function globalPrefix(): bigint { return ++moduleValue; }
+      export function globalPostfix(): bigint { return moduleValue--; }
+    `);
+
+    expect(exports.localPrefix!()).toBe(WIDE + 1n);
+    expect(exports.localPostfix!()).toBe(WIDE);
+    expect(exports.capturedPrefix!()).toBe(WIDE + 1n);
+    expect(exports.capturedPostfix!()).toBe(WIDE);
+    expect(exports.globalPrefix!()).toBe(WIDE + 1n);
+    expect(exports.globalPostfix!()).toBe(WIDE + 1n);
+  });
+
+  it("keeps bigint interface fields as externrefs", async () => {
+    const exports = await compileToWasm(`
+      interface Box { value: bigint; }
+      const box: Box = { value: ${WIDE}n };
+      export function get(): bigint { return box.value; }
+      export function set(): bigint {
+        box.value = ${WIDE}n + 1n;
+        return box.value;
+      }
+    `);
+
+    expect(exports.get!()).toBe(WIDE);
+    expect(exports.set!()).toBe(WIDE + 1n);
+  });
+
+  it("preserves a wide BigInt through any-return and module initialization", async () => {
+    const exports = await compileToWasm(`
+      const value: any = ${WIDE}n;
+      export function direct(): any { return ${WIDE}n; }
+      export function throughAny(): bigint { return value; }
+    `);
+
+    expect(exports.direct!()).toBe(WIDE);
+    expect(exports.throughAny!()).toBe(WIDE);
+  });
+
+  it("does not feed native fast-mode strings to the host BigInt constructor", async () => {
+    const result = await compile(
+      `
+        const value: any = ${WIDE}n;
+        export function test(): bigint { return value; }
+      `,
+      { fast: true },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const built = buildImports(result.imports, {}, result.stringPool);
+    const { instance } = await instantiateWasm(result.binary, built.env, built.string_constants);
+    built.setInstance?.(instance);
+    // Fast `any` is a tagged carrier; the assertion here is intentionally the
+    // module-init/instantiation bar. The ordinary host ABI is covered above.
+    expect(instance.exports.test).toBeTypeOf("function");
+  });
+
+  it("passes wide literals through conditional, logical, and nullish branches", async () => {
+    const exports = await compileToWasm(`
+      export function conditionalTrue(): bigint { return true ? ${WIDE}n : 0n; }
+      export function conditionalFalse(): bigint { return false ? 0n : ${WIDE}n; }
+      export function andWide(): bigint { return ${WIDE}n && ${WIDE}n; }
+      export function andZero(): bigint { return 0n && ${WIDE}n; }
+      export function orWide(): bigint { return ${WIDE}n || 0n; }
+      export function orZero(): bigint { return 0n || ${WIDE}n; }
+      export function nullishWide(): bigint { return null ?? ${WIDE}n; }
+    `);
+
+    expect(exports.conditionalTrue!()).toBe(WIDE);
+    expect(exports.conditionalFalse!()).toBe(WIDE);
+    expect(exports.andWide!()).toBe(WIDE);
+    expect(exports.andZero!()).toBe(0n);
+    expect(exports.orWide!()).toBe(WIDE);
+    expect(exports.orZero!()).toBe(WIDE);
+    expect(exports.nullishWide!()).toBe(WIDE);
+  });
+
+  it("keeps wide BigInts in host mixed-operand dispatch", async () => {
+    const exports = await compileToWasm(`
+      const one: any = 1n;
+      export function addAny(): bigint { return ${WIDE}n + one; }
+      export function multiplyAny(): bigint { return ${WIDE}n * one; }
+    `);
+
+    expect(exports.addAny!()).toBe(WIDE + 1n);
+    expect(exports.multiplyAny!()).toBe(WIDE);
+  });
+
+  it("keeps BigInt, String, and Boolean constructors exact for wide literals", async () => {
+    const exports = await compileToWasm(`
+      export function bigintCtor(): bigint { return BigInt(${WIDE}n); }
+      export function stringCtor(): string { return String(${WIDE}n); }
+      export function booleanCtor(): boolean { return Boolean(${WIDE}n); }
+    `);
+
+    expect(exports.bigintCtor!()).toBe(WIDE);
+    expect(exports.stringCtor!()).toBe(String(WIDE));
+    // Boolean-valued Wasm exports use the established i32 ABI (1 = true).
+    expect(exports.booleanCtor!()).toBe(1);
+  });
+});
