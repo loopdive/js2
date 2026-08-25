@@ -15,9 +15,11 @@ area: codegen
 language_feature: tagged-templates
 goal: test262-conformance
 loc-budget-allow:
+  - src/codegen/declarations.ts
   - src/codegen/object-runtime.ts
   - src/codegen/string-ops.ts
 func-budget-allow:
+  - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/object-runtime.ts::ensureObjectRuntime
 ---
 
@@ -165,3 +167,10 @@ source changes retain effectful tagged-template statements, preserve void tag
 calls with `VOID_RESULT`, dispatch dynamic `.raw` reads to template vectors,
 and normalize CR/CRLF in raw segments to LF. The commit, scoped gate results,
 and upstream PR URL are recorded in the handoff message for this change.
+
+The merge-queue QuickJS provider exposed one synchronous-runner interaction:
+top-level-await fixtures are parsed as a tagged template whose identifier tag
+is `await`. The collector now excludes only that recovery shape while retaining
+all genuine tagged calls. The classifier and focused regression suite pass
+49/49; the exact provider build requires the CI image's clang-18 and CMake
+toolchain, which is not installed in the local worktree environment.

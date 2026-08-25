@@ -128,6 +128,17 @@ export function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
   return ASSIGNMENT_OPERATORS.has(kind);
 }
 
+/**
+ * Test262 top-level-await bodies are currently compiled synchronously (#1612).
+ * In that parse mode, a source-level `await` followed by a template literal is
+ * represented as a tagged-template call whose tag is the identifier `await`.
+ * It is parser recovery, not a call to a user binding, and compiling it traps
+ * while building the QuickJS eval provider.
+ */
+export function isSynchronousTopLevelAwaitRecovery(expr: ts.Expression): boolean {
+  return ts.isTaggedTemplateExpression(expr) && ts.isIdentifier(expr.tag) && expr.tag.text === "await";
+}
+
 /** Strip parens / casts / non-null assertions from an assignment target. */
 function unwrapTarget(expr: ts.Expression): ts.Expression {
   let cur = expr;
@@ -217,9 +228,10 @@ export function createsGlobalObjectBinding(
  *
  *   • `AwaitExpression` / `YieldExpression`. A CALL inside one still counts, via
  *     the CallExpression node; the bare `await x;` form does not.
- * Tagged templates are intentionally absent from this residual list: they
- * invoke user code and are retained by the collector, including when the tag
- * is an inline function expression and the result is discarded.
+ * Tagged templates invoke user code and are retained by the collector,
+ * including when the tag is an inline function expression and the result is
+ * discarded. The sole exception is the synchronous top-level-await recovery
+ * shape described by `isSynchronousTopLevelAwaitRecovery`.
  */
 export function expressionRunsUserCode(rawExpr: ts.Expression): boolean {
   let found = false;
@@ -228,9 +240,12 @@ export function expressionRunsUserCode(rawExpr: ts.Expression): boolean {
     // Creating a closure runs no body — do not descend. (A CALL to the closure
     // is a CallExpression node OUTSIDE the body and is still seen.)
     if (ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isFunctionDeclaration(node)) return;
+    if (ts.isTaggedTemplateExpression(node)) {
+      if (!isSynchronousTopLevelAwaitRecovery(node)) found = true;
+      return;
+    }
     if (
       ts.isCallExpression(node) ||
-      ts.isTaggedTemplateExpression(node) ||
       ts.isNewExpression(node) ||
       ts.isDeleteExpression(node) ||
       // A property/element READ invokes an accessor and throws on a nullish
@@ -271,6 +286,13 @@ export function classifyTopLevelExpressionStatement(rawExpr: ts.Expression): Mod
     return { disposition: "keep", shape, reason: "invokes a function" };
   }
   if (ts.isTaggedTemplateExpression(expr)) {
+    if (isSynchronousTopLevelAwaitRecovery(expr)) {
+      return {
+        disposition: "unhandled",
+        shape,
+        reason: "not provably inert: synchronous top-level-await parse recovery is not a tag call",
+      };
+    }
     return { disposition: "keep", shape, reason: "invokes the tagged function" };
   }
   if (ts.isPrefixUnaryExpression(expr) || ts.isPostfixUnaryExpression(expr)) {
