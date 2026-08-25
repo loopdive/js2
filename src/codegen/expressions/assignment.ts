@@ -128,6 +128,7 @@ import { emitNativeGlobalThisObject } from "../array-object-proto.js"; // (#4630
 import { resolveEffectiveStructName } from "../property-access.js";
 import { emitOverlayRoutedElementSet, overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4159 S5)
 import { buildOverlayArrayLengthSet } from "../array-filter-length-set.js";
+import { isForeignEvalNode } from "./eval-source.js";
 import {
   elementAccessTypedArrayName,
   emitNonIndexVecElementSet,
@@ -3693,6 +3694,13 @@ function compilePropertyAssignment(
   target: ts.PropertyAccessExpression,
   value: ts.Expression,
 ): InnerResult {
+  // A synthesized standalone Function body lives in the foreign `<eval>.ts`
+  // source file. The checker has no bound declaration for its `this` value and
+  // crashes if asked for the receiver type, while the dynamic member setter
+  // already has the correct externref semantics for this lane.
+  if (isForeignEvalNode(target)) {
+    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, target.name.text, true);
+  }
   const objType = ctx.checker.getTypeAtLocation(target.expression);
 
   const poisonResult = tryCompileStrictFunctionPoisonAssignment(ctx, fctx, target, value);

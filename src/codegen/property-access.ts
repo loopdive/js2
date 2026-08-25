@@ -238,6 +238,7 @@ import { tryCompileFunctionPoisonRead } from "./function-poison-pill-access.js";
 import { isFnctorLayoutStructName } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
 import { tryEmitPrimitiveAbsentPropertyRead } from "./primitive-absent-property.js"; // (#4483) absent prop of a number/boolean primitive → undefined
 import { tryEmitPrimitiveProtoMemberGet } from "./primitive-proto-member-get.js"; // (#4668) PRESENT prop of a number/boolean primitive → chain walk
+import { isForeignEvalNode } from "./expressions/eval-source.js";
 import {
   finalizeStructAndDynamicMemberGet,
   PA_FALLTHROUGH,
@@ -3460,6 +3461,32 @@ export function compilePropertyAccess(
   // Optional chaining: obj?.prop
   if (expr.questionDotToken) {
     return compileOptionalPropertyAccess(ctx, fctx, expr);
+  }
+
+  // Static standalone Function bodies are parsed in a synthetic foreign
+  // source file. Their identifiers are deliberately compiled as externrefs,
+  // but TypeScript's checker cannot answer a property-access type query for
+  // those unbound declarations (it throws while resolving `this`). Keep this
+  // narrow lane entirely dynamic so expressions such as `a1.length` and
+  // `this.shifted` can still be lowered and evaluated by the object runtime.
+  if (isForeignEvalNode(expr)) {
+    const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
+    const getIdx = ensureLateImport(
+      ctx,
+      "__extern_get",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    if (getIdx === undefined) return null;
+
+    const recvType = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
+    if (!recvType) return null;
+    if (recvType.kind !== "externref") coerceType(ctx, fctx, recvType, { kind: "externref" });
+    addStringConstantGlobal(ctx, propName);
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+    fctx.body.push({ op: "call", funcIdx: getIdx });
+    return { kind: "externref" };
   }
 
   // #1886 Slice B: linear-backed Uint8Array `buf.length` → the len i32 local

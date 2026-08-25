@@ -431,6 +431,28 @@ function builtinInstanceCarrierTypeIdxs(ctx: CodegenContext): number[] {
 }
 
 /**
+ * Standalone reconstructed function instances are WasmGC structs rather than
+ * `$Object`s.  They still have ordinary JavaScript expandos: a dynamic
+ * function called with `this = new F()` must be able to create `this.x`, and a
+ * later read through the erased/member path must observe it.  Keep these
+ * carriers on the slotless identity registry (the fnctor layouts do not carry
+ * the intrinsic `$bag` field) instead of widening the predicate to every user
+ * struct, which would conflate class/collection storage with expandos.
+ */
+function fnctorInstanceCarrierTypeIdxs(ctx: CodegenContext): number[] {
+  const out: number[] = [];
+  // Fnctor layouts are reserved before the final struct map is populated;
+  // consume that pass-invariant registry so the carrier predicate sees the
+  // base type even when fillClosurePropHelpers runs before on-demand filling.
+  for (const typeIdx of ctx.fnctorReservedTypeIdx.values()) out.push(typeIdx);
+  // Keep compatibility with any late/non-reserved fnctor registrations.
+  for (const [name, typeIdx] of ctx.structMap) {
+    if (name.startsWith("__fnctor_") && !out.includes(typeIdx)) out.push(typeIdx);
+  }
+  return out;
+}
+
+/**
  * (#4241) Fill the two carrier-bag natives — `__closure_bag_lookup` and
  * `__closure_bag_ensure`.
  *
@@ -674,7 +696,11 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
 
   // (#4241) Computed once and shared by the carrier predicate and BOTH bag
   // helpers, so the slotted/slotless split cannot drift between them.
-  const carrierTypeIdxs = [...collectClosureBaseWrapperTypeIdxs(ctx), ...builtinInstanceCarrierTypeIdxs(ctx)];
+  const carrierTypeIdxs = [
+    ...collectClosureBaseWrapperTypeIdxs(ctx),
+    ...builtinInstanceCarrierTypeIdxs(ctx),
+    ...fnctorInstanceCarrierTypeIdxs(ctx),
+  ];
   const slotted = [
     ...slottedCarrierRoots(ctx, carrierTypeIdxs),
     // (#4241 step 1b) Instance carriers that were given an intrinsic `$bag` at

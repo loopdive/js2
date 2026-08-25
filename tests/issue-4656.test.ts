@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// (#4656) Three ES5 standalone defects fixed, and five MEASURED residuals whose
-// roots this lane corrected rather than inherited.
+// (#4656) Three ES5 standalone defects plus four Function call/apply rows
+// fixed, and the measured residuals whose roots this lane corrected rather
+// than inherited.
 //
 // TWO of those residuals were written here as CONTROLS and demoted after
 // measurement showed them failing on BOTH arms — recorded rather than quietly
@@ -33,6 +34,10 @@
 //      compiled. Fixed in `closed-method-dispatch.ts`
 //      (`buildCallSiteNullishReceiverGuard`) + `call-receiver-method.ts`. Row:
 //      `language/expressions/call/11.2.3-3_3.js`.
+//   4. Constant standalone Function bodies invoked through `.call`/`.apply`
+//      now retain the explicit receiver and materialized argument vector. The
+//      foreign body uses dynamic property access and reserved fnctor layouts
+//      retain expandos. Rows: Function call/apply A5/A6; A7/A8 remain residuals.
 //
 // RESIDUALS are `it.fails` and each carries POSITIVE CONTROLS chosen so the
 // suite claims the SPECIFIC root, not the general area (brief methodology 8).
@@ -242,6 +247,52 @@ describe("#4656 F2 — calling a resolved callee that BRANDS as a primitive is a
   });
 });
 
+describe("#4656 A — standalone Function call/apply preserves an explicit thisArg", () => {
+  it("call writes an expando on a Function() receiver", async () => {
+    expect(
+      await run(`
+        var obj: any = Function();
+        Function("this.touched = true; return this;").call(obj);
+        return obj.touched ? 1 : 0;
+      `),
+    ).toBe(1);
+  });
+
+  it("apply writes an expando on a Function() receiver", async () => {
+    expect(
+      await run(`
+        var obj: any = Function();
+        Function("this.touched = true; return this;").apply(obj);
+        return obj.touched ? 1 : 0;
+      `),
+    ).toBe(1);
+  });
+
+  it("apply forwards the FACTORY arguments object to a standalone Function", async () => {
+    expect(
+      await run(`
+        function FACTORY() {
+          Function("a1,a2,a3", "this.shifted = a1 + a2 + a3;").apply(this, arguments);
+        }
+        var obj: any = new (FACTORY as any)("", 4, 2);
+        return obj.shifted === "42" ? 1 : 0;
+      `),
+    ).toBe(1);
+  });
+
+  it("call forwards an arguments object and trailing values", async () => {
+    expect(
+      await run(`
+        function FACTORY() {
+          Function("a1,a2,a3", "this.shifted = a1.length + a2 + a3;").call(this, arguments, "", 2);
+        }
+        var obj: any = new (FACTORY as any)("", 4, 2, "A");
+        return obj.shifted === "42" ? 1 : 0;
+      `),
+    ).toBe(1);
+  });
+});
+
 describe("#4656 R1 — %Function.prototype% members are not reachable as a dynamic VALUE", () => {
   // The correction to #4643's residual attribution. `f.apply` answers
   // "function" only through the compile-time fold on a LITERAL key; with an
@@ -297,7 +348,7 @@ describe("#4656 R1 — %Function.prototype% members are not reachable as a dynam
  * the same probe correctly answers `1` on both tiers.
  *
  * So this file has NO tier-sensitive pin and needs no tier arm — every one of
- * its 27 tests executes on both tiers. Recorded rather than deleted because
+ * its 36 tests executes on both tiers. Recorded rather than deleted because
  * "does this snippet mint?" is not answerable by looking at it; the compiler
  * decides, and here it declines.
  */

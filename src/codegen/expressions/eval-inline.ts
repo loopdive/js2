@@ -1556,8 +1556,9 @@ export function tryStaticNewFunction(
   ctx: CodegenContext,
   fctx: FunctionContext,
   args: readonly ts.Expression[],
+  allowExplicitThis = false,
 ): ValType | undefined {
-  const synth = synthesizeStaticNewFunction(ctx, fctx, args);
+  const synth = synthesizeStaticNewFunction(ctx, fctx, args, allowExplicitThis);
   if (!synth) return undefined;
   emitRuntimeEvalFunctionPrototypeSeed(ctx);
   // Materialize the callable value (closure struct over the funcref), then wrap
@@ -1584,6 +1585,7 @@ function synthesizeStaticNewFunction(
   ctx: CodegenContext,
   fctx: FunctionContext,
   args: readonly ts.Expression[],
+  allowExplicitThis = false,
 ): { fnName: string; funcIdx: number; params: readonly ts.ParameterDeclaration[] } | undefined {
   // Every argument must be a compile-time-constant string. A single non-constant
   // arg → dynamic body → fall through (Tier-2 interpreter, #2928).
@@ -1651,7 +1653,7 @@ function synthesizeStaticNewFunction(
   // (nested functions included — they share the same wrong binding) so the
   // legacy path keeps the baseline behavior. Diagnosis by the parallel
   // session's [CI-FIX] handoff on PR #2474.
-  if (containsThisKeyword(fnDecl)) return undefined;
+  if (!allowExplicitThis && containsThisKeyword(fnDecl)) return undefined;
 
   // The body must be safely liftable (no function/arrow expression, class, etc.
   // that would need checker bindings the foreign SourceFile lacks — same guard

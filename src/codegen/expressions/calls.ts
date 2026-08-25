@@ -278,7 +278,9 @@ import {
   emitStandaloneDirectEvalRuntime,
   emitStandaloneIndirectEvalRuntime,
   ensureRuntimeEvalCallableCarrier,
+  isGlobalFunctionIdentifier,
   isFunctionCtorImmediateCall,
+  tryStaticNewFunction,
   tryStandaloneDynamicFunctionCtorValue,
   tryStaticEvalInline,
   tryStaticFunctionCtorCall,
@@ -4601,6 +4603,62 @@ function materializedArgumentsVector(fctx: FunctionContext, expression: ts.Expre
     : undefined;
 }
 
+/**
+ * True for a syntactic value produced by the standalone runtime-eval
+ * Function constructor.  Such a value is a caller-owned callable carrier, so
+ * its `.call`/`.apply` members cannot be recovered by the ordinary property
+ * ladder (the provider's target intentionally does not mirror Function's
+ * prototype).  The reflective call site can nevertheless route it through
+ * the canonical `__apply_closure` bridge, preserving the explicit receiver.
+ */
+function standaloneDynamicFunctionCtorArgs(
+  ctx: CodegenContext,
+  expression: ts.Expression,
+): readonly ts.Expression[] | undefined {
+  if (!ctx.standalone) return undefined;
+  let value = expression;
+  while (
+    ts.isParenthesizedExpression(value) ||
+    ts.isAsExpression(value) ||
+    ts.isSatisfiesExpression(value) ||
+    ts.isNonNullExpression(value) ||
+    ts.isTypeAssertionExpression(value)
+  ) {
+    value = value.expression;
+  }
+  if (ts.isNewExpression(value)) {
+    let target: ts.Expression = value.expression;
+    while (
+      ts.isParenthesizedExpression(target) ||
+      ts.isAsExpression(target) ||
+      ts.isSatisfiesExpression(target) ||
+      ts.isNonNullExpression(target) ||
+      ts.isTypeAssertionExpression(target)
+    ) {
+      target = target.expression;
+    }
+    if (ts.isIdentifier(target) && target.text === "Function" && isGlobalFunctionIdentifier(target, ctx.checker)) {
+      return value.arguments ?? [];
+    }
+  }
+  if (ts.isCallExpression(value) && !value.questionDotToken) {
+    let target: ts.Expression = value.expression;
+    while (
+      ts.isParenthesizedExpression(target) ||
+      ts.isAsExpression(target) ||
+      ts.isSatisfiesExpression(target) ||
+      ts.isNonNullExpression(target) ||
+      ts.isTypeAssertionExpression(target)
+    ) {
+      target = target.expression;
+    }
+    if (ts.isIdentifier(target) && target.text === "Function" && isGlobalFunctionIdentifier(target, ctx.checker)) {
+      return value.arguments;
+    }
+  }
+  return undefined;
+}
+
 function isNullishPromiseThenCallbackArg(expr: ts.Expression | undefined): boolean {
   if (expr === undefined) return true;
   let cur = expr;
@@ -7190,6 +7248,98 @@ function compileCallExpression(
       {
         const badArgArray = tryEmitApplyArgArrayTypeError(ctx, fctx, expr, propAccess);
         if (badArgArray !== undefined) return badArgArray;
+      }
+
+      // (#4656) A dynamic standalone Function value is represented by a
+      // caller-owned runtime-eval carrier.  Its provider target deliberately
+      // does not mirror Function.prototype, so the ordinary `innerExpr.apply`
+      // property lookup misses even though the carrier is callable.  Route the
+      // reflective operation through the same arity bridge used by dynamic
+      // calls, retaining the explicit thisArg and the real argument vector.
+      // Keep this syntactic and standalone-only: constant Function forms are
+      // harmless here (the bridge still invokes their compiled closure), while
+      // arbitrary callable values continue through the established lowerings.
+      const dynamicFunctionCtorArgs = standaloneDynamicFunctionCtorArgs(ctx, innerExpr);
+      if (dynamicFunctionCtorArgs !== undefined) {
+        const applyArgsExpr = !isCall && expr.arguments.length >= 2 ? expr.arguments[1]! : undefined;
+        const applyVector = applyArgsExpr === undefined ? undefined : materializedArgumentsVector(fctx, applyArgsExpr);
+        const applyElements =
+          applyArgsExpr !== undefined && ts.isArrayLiteralExpression(applyArgsExpr)
+            ? flattenStaticArrayElements(applyArgsExpr)
+            : undefined;
+        // A non-materialized, non-literal array-like still needs the generic
+        // runtime property path; do not claim it and silently turn it into an
+        // empty argument list.
+        if (!isCall && applyArgsExpr !== undefined && applyVector === undefined && applyElements === undefined) {
+          // fall through to the established reflective-call machinery
+        } else {
+          const vecBuilders = ensureObjVecBuilders(ctx);
+          reserveApplyClosure(ctx);
+
+          // Constant constructor arguments can use the existing AOT synthesis,
+          // but this reflective site explicitly supplies the receiver.  Allow
+          // `this` in that synthesis so `new Function("this.x = 1").call(o)`
+          // stays in the caller module where the object-property runtime can see
+          // `o`; non-constant bodies retain the provider carrier path below.
+          const staticCalleeType = tryStaticNewFunction(ctx, fctx, dynamicFunctionCtorArgs, true);
+          const calleeType = staticCalleeType ?? compileExpression(ctx, fctx, innerExpr, { kind: "externref" });
+          if (calleeType === null) {
+            fctx.body.push({ op: "ref.null.extern" });
+          } else if (calleeType.kind !== "externref") {
+            coerceType(ctx, fctx, calleeType, { kind: "externref" });
+          }
+
+          if (expr.arguments.length > 0) {
+            const thisType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+            if (thisType === null) fctx.body.push({ op: "ref.null.extern" });
+            else if (thisType.kind !== "externref") coerceType(ctx, fctx, thisType, { kind: "externref" });
+          } else {
+            emitUndefined(ctx, fctx);
+          }
+
+          const argsLocal = allocLocal(fctx, `__runtime_eval_reflective_args_${fctx.locals.length}`, {
+            kind: "externref",
+          });
+          const newIdx = ctx.funcMap.get("__new_objvec") ?? vecBuilders.newIdx;
+          fctx.body.push({ op: "call", funcIdx: newIdx }, { op: "local.set", index: argsLocal });
+
+          if (isCall) {
+            for (const arg of expr.arguments.slice(1)) {
+              fctx.body.push({ op: "local.get", index: argsLocal });
+              const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
+              if (argType === null) fctx.body.push({ op: "ref.null.extern" });
+              else if (argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+              fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_push") ?? vecBuilders.pushIdx });
+            }
+          } else if (expr.arguments.length >= 2) {
+            const vector = applyVector;
+            if (vector !== undefined) {
+              // Replace the local's freshly allocated empty vector with the
+              // already-materialized arguments object.  The callee and receiver
+              // remain on the value stack for the final apply call.
+              emitMaterializedArgumentsVector(ctx, fctx, vector);
+              fctx.body.push({ op: "local.set", index: argsLocal });
+            } else if (applyElements !== undefined) {
+              for (const arg of applyElements) {
+                fctx.body.push({ op: "local.get", index: argsLocal });
+                const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
+                if (argType === null) fctx.body.push({ op: "ref.null.extern" });
+                else if (argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+                fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_push") ?? vecBuilders.pushIdx });
+              }
+            }
+          }
+
+          const applyIdx = ctx.funcMap.get("__apply_closure");
+          if (applyIdx !== undefined) {
+            fctx.body.push({ op: "local.get", index: argsLocal }, { op: "call", funcIdx: applyIdx });
+            return { kind: "externref" };
+          }
+          // Reservation should make this unreachable; keep a balanced fallback
+          // if a future target declines the bridge after operands are emitted.
+          fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "drop" }, { op: "ref.null.extern" });
+          return { kind: "externref" };
+        }
       }
 
       // (#4246) §10.2.1.2 step 5.b — a SLOPPY callee binds `ToObject(thisArg)`
