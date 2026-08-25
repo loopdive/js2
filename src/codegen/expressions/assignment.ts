@@ -5301,7 +5301,7 @@ function compileElementAssignment(
     if (
       elementAccessTypedArrayName(ctx, target.expression) === undefined &&
       !(ts.isIdentifier(target.expression) && target.expression.text === "arguments") &&
-      isDynamicPropertyKeyExpression(ctx, target.argumentExpression)
+      isDynamicPropertyKeyExpression(ctx, target.argumentExpression, target.expression)
     ) {
       fctx.body.push({ op: "local.get", index: vecLocal });
       return compileExternSetFallback(ctx, fctx, target, value, arrType);
