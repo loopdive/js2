@@ -15,9 +15,16 @@ import {
   planCountedStringAppend,
   type IrCountedStringAppendPlan,
 } from "../ir/analysis/counted-string-append.js";
+import { absoluteFuncIndex } from "../emit/resolve-layout.js";
 import { irSupportGlobalRef, sameIrGlobalBinding } from "../ir/abi-bindings.js";
 import type { IrCountedStringAppendLoweringPlan, IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
-import { irSupportFuncRef, irUnitCallableBindingId, sameIrCallableBinding } from "../ir/callable-bindings.js";
+import {
+  irCallableBindingKey,
+  irSupportFuncRef,
+  irUnitCallableBindingId,
+  irUnitFuncRef,
+  sameIrCallableBinding,
+} from "../ir/callable-bindings.js";
 import { requireCurrentIrCountedStringAppendPlanSite } from "../ir/counted-string-append-provenance.js";
 import type { IrSourceId, IrUnitId } from "../ir/identity.js";
 import { asVal } from "../ir/nodes.js";
@@ -42,6 +49,12 @@ import {
   type MultiPreparedFunctionValueSupportReceipt,
   type MultiPreparedScalarLeafGraphSafety,
 } from "./multi-prepared-scalar-leaf.js";
+import { definedFuncAt, definedFuncHandleOf } from "./func-space.js";
+import { PROGRAM_ABI_CALLABLE_ROLE } from "./program-abi-planning.js";
+import {
+  canonicalProgramAbiCallableTypeContract,
+  programAbiCallableSignaturesEqual,
+} from "./program-abi-signatures.js";
 
 export interface MultiPreparedStringLeafProofContext {
   readonly checker: ts.TypeChecker;
@@ -480,15 +493,85 @@ function exactCandidateComponent(
   return true;
 }
 
-function exactTargetProgramAbiAuthority(ctx: CodegenContext, unitId: IrUnitId, targetFunction: object): boolean {
+type ExactAllocatedNumericCallable = NonNullable<ReturnType<typeof exactAllocatedNumericCallable>>;
+
+function exactTargetProgramAbiAuthority(
+  ctx: CodegenContext,
+  unitId: IrUnitId,
+  legacyName: string,
+  allocated: ExactAllocatedNumericCallable,
+  boundary: CandidateBoundary,
+): boolean {
   const session = ctx.programAbiSession;
+  const registry = ctx.programAbiSourceCallables;
   const targetBindingId = irUnitCallableBindingId(unitId);
-  return (
-    session !== undefined &&
-    !session.hasPlan(targetBindingId) &&
-    !session.hasLocator(targetBindingId) &&
-    session.locatorBindingId(targetFunction) === undefined
-  );
+  if (
+    session === undefined ||
+    registry?.functionForUnit(unitId) !== allocated.func ||
+    registry.handleForUnit(unitId) !== allocated.handle ||
+    definedFuncAt(ctx, allocated.handle) !== allocated.func ||
+    definedFuncHandleOf(ctx, allocated.func) !== allocated.handle
+  ) {
+    return false;
+  }
+  if (boundary !== "after-direct") {
+    return (
+      !session.hasPlan(targetBindingId) &&
+      !session.hasLocator(targetBindingId) &&
+      session.locatorBindingId(allocated.func) === undefined
+    );
+  }
+
+  const targetRef = irUnitFuncRef({ unitId, name: legacyName });
+  const structuralReferenceKey = irCallableBindingKey(targetRef.binding);
+  const draft = session.getDraft(targetBindingId);
+  if (
+    !draft ||
+    !Object.isFrozen(draft) ||
+    !Object.isFrozen(draft.structuralOrder) ||
+    !Object.isFrozen(draft.intent) ||
+    draft.id !== targetBindingId ||
+    draft.displayName !== legacyName ||
+    draft.structuralReferenceKey !== structuralReferenceKey ||
+    draft.slotPolicy !== "required" ||
+    draft.slotSpace !== "function" ||
+    draft.intent.kind !== "callable" ||
+    draft.intent.origin !== "source" ||
+    draft.intent.unitId !== unitId ||
+    draft.intent.classId !== undefined ||
+    draft.intent.sourceId !== undefined ||
+    draft.intent.capabilityId !== undefined ||
+    draft.intent.providerId !== undefined ||
+    !programAbiCallableSignaturesEqual(
+      draft.intent.signature,
+      canonicalProgramAbiCallableTypeContract(allocated.signature),
+    ) ||
+    !session.hasLocator(targetBindingId, allocated.func) ||
+    session.locatorBindingId(allocated.func) !== targetBindingId
+  ) {
+    return false;
+  }
+
+  try {
+    const expectedOrder = session.structuralOrder.forUnit(unitId, {
+      domain: "callable",
+      roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.body,
+    });
+    const plannedReferences = session.bindingIdsForStructuralReference(structuralReferenceKey);
+    return (
+      draft.structuralOrder.sourceId === expectedOrder.sourceId &&
+      draft.structuralOrder.declarationOrdinal === expectedOrder.declarationOrdinal &&
+      draft.structuralOrder.domainOrdinal === expectedOrder.domainOrdinal &&
+      draft.structuralOrder.roleOrdinal === expectedOrder.roleOrdinal &&
+      draft.structuralOrder.derivedOrdinal === expectedOrder.derivedOrdinal &&
+      plannedReferences.length === 1 &&
+      plannedReferences[0] === targetBindingId &&
+      session.resolveCurrentIndex(targetBindingId, "function", structuralReferenceKey) ===
+        absoluteFuncIndex(ctx.mod, allocated.handle)
+    );
+  } catch {
+    return false;
+  }
 }
 
 function exactInitialSupportNamespace(ctx: CodegenContext, unitId: IrUnitId, legacyName: string, targetHandle: number) {
@@ -671,7 +754,7 @@ function resolveCandidateFacts<Plan extends MultiPreparedFunctionValuePlan>(
     safety.occupiedFunctionKeys.some((key) => key.startsWith(`${legacyName}$`)) ||
     ctx.mod.functions.some((func) => func.name.startsWith(`${legacyName}$`)) ||
     ctx.liveFuncBindingGlobals?.has(legacyName) === true ||
-    !exactTargetProgramAbiAuthority(ctx, unitId, allocated.func) ||
+    !exactTargetProgramAbiAuthority(ctx, unitId, legacyName, allocated, boundary) ||
     !exactCandidateComponent(input, unitId) ||
     input.hasForeignLateProvider(unitId) ||
     (boundary === "before-support" && !exactInitialSupportNamespace(ctx, unitId, legacyName, allocated.handle))
@@ -910,11 +993,21 @@ function exactSupportReceipt(
   const expectedTrampoline = irSupportFuncRef(candidate.unitId, "function-value-trampoline", trampolineName);
   const expectedCache = irSupportGlobalRef(candidate.unitId, "function-value-cache", cacheName);
   const session = ctx.programAbiSession;
+  const allocated = exactAllocatedNumericCallable(
+    ctx,
+    candidate.unitId,
+    candidate.legacyName,
+    0,
+    boundary !== "after-direct",
+  );
   if (
     expectedTrampoline.binding.kind !== "support" ||
     expectedCache.binding.kind !== "support" ||
     session === undefined ||
-    !exactTargetProgramAbiAuthority(ctx, candidate.unitId, support.targetFunction)
+    !allocated ||
+    allocated.func !== support.targetFunction ||
+    allocated.handle !== support.targetHandle ||
+    !exactTargetProgramAbiAuthority(ctx, candidate.unitId, candidate.legacyName, allocated, boundary)
   ) {
     return false;
   }

@@ -15,6 +15,7 @@ import {
   planIrOverlayByIdentity,
   projectIrIntegrationLoweringPlans,
 } from "../src/codegen/ir-overlay-identity.js";
+import { prepareIrBodies } from "../src/codegen/ir-prepared-free-functions.js";
 import { buildIrExactFunctionClaimIndex } from "../src/codegen/ir-overlay-safety.js";
 import {
   buildMultiIrGraphSafety,
@@ -29,8 +30,8 @@ import {
   type MultiPreparedStringLeafCandidateEvidence,
   type MultiPreparedStringLeafResolverInput,
 } from "../src/codegen/multi-prepared-string-leaf.js";
-import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
-import { planProgramAbiFunctionValue } from "../src/codegen/program-abi-planning.js";
+import { ProgramAbiSession, type ProgramAbiDraft } from "../src/codegen/program-abi-session.js";
+import { planProgramAbiFunctionValue, planProgramAbiUnitCallable } from "../src/codegen/program-abi-planning.js";
 import { createCodegenContext } from "../src/codegen/context/create-context.js";
 import { ensureFuncClosureSingleton } from "../src/codegen/closures/method-trampolines.js";
 import { localGlobalIdx } from "../src/codegen/registry/imports.js";
@@ -206,6 +207,14 @@ function hiddenMap(owner: object | undefined, key: string): Map<unknown, unknown
   return value;
 }
 
+function targetProgramAbiDraft(fixture: Fixture): ProgramAbiDraft {
+  const draft = hiddenMap(fixture.input.ctx.programAbiSession, "drafts").get(
+    irUnitCallableBindingId(fixture.candidate.unitId),
+  );
+  if (!draft || typeof draft !== "object") throw new Error("fixture lost target Program ABI draft");
+  return draft as ProgramAbiDraft;
+}
+
 function plannerCardinalities(input: Fixture["input"]) {
   const { ctx, plan, projectedLoweringPlans } = input;
   const session = ctx.programAbiSession;
@@ -292,6 +301,42 @@ function prepareSupport(fixture: Fixture): MultiPreparedFunctionValueSupportRece
     cacheGlobalRef,
     cacheGlobalBindingId: cacheGlobalRef.binding.bindingId,
   });
+}
+
+function prepareAndSealTarget(fixture: Fixture): ReturnType<typeof prepareIrBodies> {
+  const { candidate, input } = fixture;
+  const prepared = prepareIrBodies({
+    ctx: input.ctx,
+    sourceFile: input.entrySource,
+    selection: {
+      funcs: new Set([candidate.legacyName]),
+      classMembers: new Set(),
+      classMemberUnitIds: new Set(),
+      moduleInit: undefined,
+    },
+    identityPlan: input.plan.identityPlan,
+    functionClaimsByUnitId: input.plan.functionClaimsByUnitId,
+    overrideMap: input.plan.overrideMap,
+    classShapes: input.plan.classShapes,
+    classShapesById: input.plan.classShapesById,
+    projectLoweringPlans: () => input.projectedLoweringPlans,
+  });
+  const evidence = prepared.report.terminalEvidence?.[0];
+  expect(prepared.classMembers).toBeUndefined();
+  expect(prepared.moduleInit).toBeUndefined();
+  expect(prepared.implicitConstructorUnitIds.size).toBe(0);
+  expect(prepared.freeFunctions.skipBodies).toEqual(new Set([candidate.legacyName]));
+  expect(prepared.freeFunctions.preserveBodies).toEqual(new Set([candidate.legacyName]));
+  expect(prepared.freeFunctions.completedBodies).toEqual(new Set([candidate.legacyName]));
+  expect(prepared.report.errors).toHaveLength(0);
+  expect(prepared.report.compiled).toEqual([candidate.legacyName]);
+  expect(evidence?.kind).toBe("patched");
+  if (evidence?.kind !== "patched") throw new Error("fixture target did not seal as Prepared");
+  expect(evidence.unitId).toBe(candidate.unitId);
+  expect(evidence.preparedComponentId).toMatch(/^prepared-component:/);
+  expect(hiddenMap(input.ctx.programAbiSession, "preparedScopes").size).toBe(1);
+  expect(input.ctx.programAbiSourceCallables?.functionForUnit(candidate.unitId)?.body.length).toBeGreaterThan(0);
+  return prepared;
 }
 
 describe("#3518 dormant multi-source string-leaf planner", () => {
@@ -1072,16 +1117,210 @@ describe("#3518 dormant multi-source string-leaf planner", () => {
     expect(plannerCardinalities(fixture.input)).toEqual(afterAllocation);
   });
 
-  it("distinguishes the empty-target and direct-body support boundaries", () => {
+  it("authenticates the exact target authority after real preparation and sealing", () => {
     const fixture = buildFixture();
     const support = prepareSupport(fixture);
-    const afterAllocation = plannerCardinalities(fixture.input);
-    support.targetFunction.body.push({ op: "f64.const", value: 0 });
+    const beforePrepare = plannerCardinalities(fixture.input);
+    prepareAndSealTarget(fixture);
+    const afterPrepare = plannerCardinalities(fixture.input);
+    expect(afterPrepare.programAbiPlans).toBeGreaterThan(beforePrepare.programAbiPlans);
+    expect(afterPrepare.programAbiLocators).toBeGreaterThan(beforePrepare.programAbiLocators);
+    expect(afterPrepare.programAbiLocatorOwners).toBeGreaterThan(beforePrepare.programAbiLocatorOwners);
     expect(() =>
       requireCurrentMultiPreparedStringLeafSupport(fixture.input, fixture.candidate, support, "before-prepare"),
     ).toThrow(/multi-source string leaf .* drifted after certification/);
     requireCurrentMultiPreparedStringLeafSupport(fixture.input, fixture.candidate, support, "after-direct");
-    expect(plannerCardinalities(fixture.input)).toEqual(afterAllocation);
+    expect(plannerCardinalities(fixture.input)).toEqual(afterPrepare);
+  });
+
+  it("rejects exact target Program ABI authority when it appears before preparation", () => {
+    const fixture = buildFixture();
+    const support = prepareSupport(fixture);
+    const signature = fixture.input.ctx.mod.types[support.targetFunction.typeIdx];
+    if (!signature || signature.kind !== "func") throw new Error("fixture lost target signature");
+    expect(
+      planProgramAbiUnitCallable(fixture.input.ctx, {
+        ref: irUnitFuncRef({ unitId: fixture.candidate.unitId, name: fixture.candidate.legacyName }),
+        signature,
+        func: support.targetFunction,
+      }),
+    ).toBe(irUnitCallableBindingId(fixture.candidate.unitId));
+    expect(support.targetFunction.body).toHaveLength(0);
+    expect(() =>
+      requireCurrentMultiPreparedStringLeafSupport(fixture.input, fixture.candidate, support, "before-prepare"),
+    ).toThrow(/multi-source string leaf .* drifted after certification/);
+  });
+
+  it("fails closed on every prepared target Program ABI authority join", () => {
+    type Mutation = (fixture: Fixture, support: MultiPreparedFunctionValueSupportReceipt) => void;
+    const mutations: readonly (readonly [string, Mutation])[] = [
+      [
+        "missing target plan",
+        (fixture) => {
+          hiddenMap(fixture.input.ctx.programAbiSession, "drafts").delete(
+            irUnitCallableBindingId(fixture.candidate.unitId),
+          );
+        },
+      ],
+      [
+        "wrong target plan",
+        (fixture, support) => {
+          const bindingId = irUnitCallableBindingId(fixture.candidate.unitId);
+          const draft = targetProgramAbiDraft(fixture);
+          hiddenMap(fixture.input.ctx.programAbiSession, "drafts").set(
+            bindingId,
+            Object.freeze({ ...draft, id: support.trampolineBindingId }),
+          );
+        },
+      ],
+      [
+        "wrong target source provenance",
+        (fixture) => {
+          const bindingId = irUnitCallableBindingId(fixture.candidate.unitId);
+          const draft = targetProgramAbiDraft(fixture);
+          if (draft.intent.kind !== "callable") throw new Error("fixture target plan is not callable");
+          hiddenMap(fixture.input.ctx.programAbiSession, "drafts").set(
+            bindingId,
+            Object.freeze({ ...draft, intent: Object.freeze({ ...draft.intent, origin: "support" }) }),
+          );
+        },
+      ],
+      [
+        "wrong target unit join",
+        (fixture) => {
+          const bindingId = irUnitCallableBindingId(fixture.candidate.unitId);
+          const draft = targetProgramAbiDraft(fixture);
+          if (draft.intent.kind !== "callable") throw new Error("fixture target plan is not callable");
+          hiddenMap(fixture.input.ctx.programAbiSession, "drafts").set(
+            bindingId,
+            Object.freeze({
+              ...draft,
+              intent: Object.freeze({ ...draft.intent, unitId: fixture.candidate.importedTargetUnitId }),
+            }),
+          );
+        },
+      ],
+      [
+        "wrong target signature join",
+        (fixture) => {
+          const bindingId = irUnitCallableBindingId(fixture.candidate.unitId);
+          const draft = targetProgramAbiDraft(fixture);
+          if (draft.intent.kind !== "callable") throw new Error("fixture target plan is not callable");
+          hiddenMap(fixture.input.ctx.programAbiSession, "drafts").set(
+            bindingId,
+            Object.freeze({
+              ...draft,
+              intent: Object.freeze({
+                ...draft.intent,
+                signature: Object.freeze({
+                  params: draft.intent.signature.params,
+                  results: Object.freeze(["i32"]),
+                }),
+              }),
+            }),
+          );
+        },
+      ],
+      [
+        "wrong target structural order",
+        (fixture) => {
+          const bindingId = irUnitCallableBindingId(fixture.candidate.unitId);
+          const draft = targetProgramAbiDraft(fixture);
+          hiddenMap(fixture.input.ctx.programAbiSession, "drafts").set(
+            bindingId,
+            Object.freeze({
+              ...draft,
+              structuralOrder: Object.freeze({
+                ...draft.structuralOrder,
+                declarationOrdinal: draft.structuralOrder.declarationOrdinal + 1,
+              }),
+            }),
+          );
+        },
+      ],
+      [
+        "missing target locator",
+        (fixture) => {
+          hiddenMap(fixture.input.ctx.programAbiSession, "locators").delete(
+            irUnitCallableBindingId(fixture.candidate.unitId),
+          );
+        },
+      ],
+      [
+        "wrong target locator",
+        (fixture, support) => {
+          const bindingId = irUnitCallableBindingId(fixture.candidate.unitId);
+          const locators = hiddenMap(fixture.input.ctx.programAbiSession, "locators");
+          const locator = locators.get(bindingId);
+          if (!locator || typeof locator !== "object") throw new Error("fixture lost target locator");
+          locators.set(bindingId, Object.freeze({ ...locator, value: support.trampolineFunction }));
+        },
+      ],
+      [
+        "missing target locator owner",
+        (fixture, support) => {
+          hiddenMap(fixture.input.ctx.programAbiSession, "locatorOwners").delete(support.targetFunction);
+        },
+      ],
+      [
+        "wrong target locator owner",
+        (fixture, support) => {
+          hiddenMap(fixture.input.ctx.programAbiSession, "locatorOwners").set(
+            support.targetFunction,
+            support.trampolineBindingId,
+          );
+        },
+      ],
+      [
+        "wrong target current index",
+        (fixture) => {
+          const session = fixture.input.ctx.programAbiSession;
+          if (!session) throw new Error("fixture lost Program ABI session");
+          const targetBindingId = irUnitCallableBindingId(fixture.candidate.unitId);
+          const resolveCurrentIndex = session.resolveCurrentIndex.bind(session);
+          const drifted: typeof session.resolveCurrentIndex = (id, space, key, module) => {
+            const current = resolveCurrentIndex(id, space, key, module);
+            return id === targetBindingId ? current + 1 : current;
+          };
+          Object.assign(session, { resolveCurrentIndex: drifted });
+        },
+      ],
+      [
+        "missing target current handle",
+        (fixture) => {
+          const registry = fixture.input.ctx.programAbiSourceCallables;
+          if (!registry) throw new Error("fixture lost source-callable registry");
+          const handleForUnit = registry.handleForUnit.bind(registry);
+          const drifted: typeof registry.handleForUnit = (unitId) =>
+            unitId === fixture.candidate.unitId ? undefined : handleForUnit(unitId);
+          Object.assign(registry, { handleForUnit: drifted });
+        },
+      ],
+      [
+        "wrong target current handle",
+        (fixture, support) => {
+          const registry = fixture.input.ctx.programAbiSourceCallables;
+          if (!registry) throw new Error("fixture lost source-callable registry");
+          const handleForUnit = registry.handleForUnit.bind(registry);
+          const drifted: typeof registry.handleForUnit = (unitId) =>
+            unitId === fixture.candidate.unitId ? support.trampolineHandle : handleForUnit(unitId);
+          Object.assign(registry, { handleForUnit: drifted });
+        },
+      ],
+    ];
+
+    for (const [label, mutate] of mutations) {
+      const fixture = buildFixture();
+      const support = prepareSupport(fixture);
+      prepareAndSealTarget(fixture);
+      mutate(fixture, support);
+      const before = plannerCardinalities(fixture.input);
+      expect(
+        () => requireCurrentMultiPreparedStringLeafSupport(fixture.input, fixture.candidate, support, "after-direct"),
+        label,
+      ).toThrow(/multi-source string leaf .* drifted after certification/);
+      expect(plannerCardinalities(fixture.input)).toEqual(before);
+    }
   });
 
   it("fails closed on support receipt, locator, body, and namespace drift", () => {
