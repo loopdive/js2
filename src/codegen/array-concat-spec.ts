@@ -21,6 +21,7 @@ import { allocLocal } from "./context/locals.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { emitToBoolean } from "./coercion-engine.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
+import { ensureHoleType, holeSentinelInstrs } from "./array-holes.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
@@ -78,15 +79,13 @@ const MAX_SAFE_LENGTH = 9007199254740991;
  *   constructor call. The `create-species-*` bucket is a separate (already
  *   failing, not regressed) concern that needs the species protocol on the
  *   native constructor channel.
- * - **Holes are not preserved.** `$ObjVec` has no hole representation, so a
- *   skipped index materialises as `undefined` rather than an absent property.
- *   The VALUES are spec-correct (`Get` of an absent index is `undefined`, which
- *   is exactly what `__extern_get_idx` answers), so `compareArray`-style tests
- *   pass; only a `hasOwnProperty` probe on the result could tell the difference.
- *   That is why the loop does NOT gate on `__extern_has_idx`: the gate would buy
- *   nothing here and would actively DROP legitimately-present `null` elements
- *   (`__extern_has_idx` answers 0 for a field holding the externref null —
- *   see the #1382 note in array-prototype-borrow.ts).
+ * - **Holes use the shared absence marker.** `$ObjVec` stores externrefs, so a
+ *   `$Hole` sentinel preserves the distinction between an absent source index
+ *   and an explicit `undefined`/`null` value. The output readers map the marker
+ *   back to `undefined`, while the output presence helpers keep the index
+ *   absent. `__extern_has_idx` is therefore consulted before `Get`: it answers
+ *   HasProperty (including inherited numeric properties), not merely whether a
+ *   value happens to be non-null.
  *
  * Returns `undefined` (nothing emitted) when the substrate is unavailable, so
  * the caller falls back to the host bridge unchanged.
@@ -100,12 +99,14 @@ interface ConcatLocals {
   len: number;
   idx: number;
   total: number;
+  present: number;
 }
 
 interface ConcatDeps {
   builders: ReturnType<typeof ensureObjVecBuilders>;
   externLenIdx: number;
   getIdxIdx: number;
+  hasIdxIdx: number;
   externGetIdx: number;
   isArrayIdx: number;
   isUndefinedIdx: number;
@@ -118,6 +119,11 @@ function prepareConcatSpec(ctx: CodegenContext, fctx: FunctionContext): ConcatDe
   const i32: ValType = { kind: "i32" };
   const f64: ValType = { kind: "f64" };
 
+  // `$ObjVec` is the native concat result carrier. Register the shared hole
+  // marker before the runtime builders are first requested; if the object
+  // runtime was already emitted, its finalize fills below still see the same
+  // context-owned type/global and patch the existing readers in place.
+  ensureHoleType(ctx);
   const builders = ensureObjVecBuilders(ctx);
   // Register every helper BEFORE resolving any index; each of these is a
   // DEFINED native under the native-first provider, so a later registration
@@ -126,6 +132,7 @@ function prepareConcatSpec(ctx: CodegenContext, fctx: FunctionContext): ConcatDe
   // `compileExpression`, which is the only other shift source in this body.
   ensureLateImport(ctx, "__extern_length", [externref], [f64]);
   ensureLateImport(ctx, "__extern_get_idx", [externref, f64], [externref]);
+  ensureLateImport(ctx, "__extern_has_idx", [externref, f64], [i32]);
   ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
   ensureLateImport(ctx, "__extern_is_array", [externref], [i32]);
   ensureLateImport(ctx, "__extern_is_undefined", [externref], [i32]);
@@ -136,6 +143,7 @@ function prepareConcatSpec(ctx: CodegenContext, fctx: FunctionContext): ConcatDe
   const required = [
     "__extern_length",
     "__extern_get_idx",
+    "__extern_has_idx",
     "__extern_get",
     "__extern_is_array",
     "__extern_is_undefined",
@@ -148,6 +156,7 @@ function prepareConcatSpec(ctx: CodegenContext, fctx: FunctionContext): ConcatDe
     builders,
     externLenIdx: ctx.funcMap.get("__extern_length")!,
     getIdxIdx: ctx.funcMap.get("__extern_get_idx")!,
+    hasIdxIdx: ctx.funcMap.get("__extern_has_idx")!,
     externGetIdx: ctx.funcMap.get("__extern_get")!,
     isArrayIdx: ctx.funcMap.get("__extern_is_array")!,
     isUndefinedIdx: ctx.funcMap.get("__extern_is_undefined")!,
@@ -166,6 +175,7 @@ function allocateConcatLocals(fctx: FunctionContext): ConcatLocals {
     len: allocLocal(fctx, `__cat_spec_len_${fctx.locals.length}`, { kind: "i32" }),
     idx: allocLocal(fctx, `__cat_spec_i_${fctx.locals.length}`, { kind: "i32" }),
     total: allocLocal(fctx, `__cat_spec_n_${fctx.locals.length}`, { kind: "f64" }),
+    present: allocLocal(fctx, `__cat_spec_present_${fctx.locals.length}`, { kind: "i32" }),
   };
 }
 
@@ -252,11 +262,27 @@ function emitConcatSource(
             { op: "local.get", index: locals.len },
             { op: "i32.ge_s" },
             { op: "br_if", depth: 1 },
-            { op: "local.get", index: locals.out },
+            // HasProperty decides whether concat creates an own result index.
+            // Inherited entries are copied; genuine holes stay absent through
+            // the shared internal sentinel.
             { op: "local.get", index: locals.src },
             { op: "local.get", index: locals.idx },
             { op: "f64.convert_i32_s" },
-            { op: "call", funcIdx: deps.getIdxIdx },
+            { op: "call", funcIdx: deps.hasIdxIdx },
+            { op: "local.set", index: locals.present },
+            { op: "local.get", index: locals.out },
+            { op: "local.get", index: locals.present },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              then: [
+                { op: "local.get", index: locals.src },
+                { op: "local.get", index: locals.idx },
+                { op: "f64.convert_i32_s" },
+                { op: "call", funcIdx: deps.getIdxIdx },
+              ],
+              else: holeSentinelInstrs(ctx),
+            },
             { op: "call", funcIdx: deps.pushIdx },
             { op: "local.get", index: locals.idx },
             { op: "i32.const", value: 1 },

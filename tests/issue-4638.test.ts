@@ -207,6 +207,22 @@ describe("#4638 concat absent-tail", () => {
     `);
   });
 
+  // A concat hole is copied only after HasProperty sees the inherited numeric
+  // entry.  The result therefore owns the copied value, unlike the untouched
+  // length-extended tail above.
+  // test262: built-ins/Array/prototype/concat/S15.4.4.4_A3_T1.js.
+  it("copies an inherited numeric index as an own result element", async () => {
+    await runScript(`
+      var a = [0];
+      a.length = 2;
+      Array.prototype[1] = 1;
+      var b = a.concat();
+      if (b[0] !== 0) { throw new Error("b[0]"); }
+      if (b[1] !== 1) { throw new Error("b[1]"); }
+      if (b.hasOwnProperty("1") !== true) { throw new Error("hasOwnProperty"); }
+    `);
+  });
+
   it("leaves a dense concat unchanged", async () => {
     expect(
       await runModule(`

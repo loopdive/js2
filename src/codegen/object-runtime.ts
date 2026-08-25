@@ -8008,6 +8008,337 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
 }
 
 /**
+ * (#4446 / ES5 Array.prototype.concat) Keep the native concat result's hole
+ * marker private to the runtime substrate.
+ *
+ * Native concat materialises a fresh `$ObjVec`, but §23.1.3.1 copies an index
+ * only when `HasProperty(source, k)` is true. A `$Hole` in the result backing
+ * array is therefore an absent own property, while every other externref —
+ * including an explicit `undefined`/`null` — is present. The three dynamic
+ * readers below are the only paths needed to keep that distinction intact:
+ * `__extern_get_idx` maps the marker back to `undefined`, `__extern_has_idx`
+ * rejects it, and the own-property predicates report a present non-marker.
+ *
+ * The same finalize pass adds a physical-backing guard to concrete vec arms in
+ * `__extern_has_idx`. `arr.length = N` is allowed to leave the logical length
+ * beyond `data.length`; concat must observe those indices as holes, while a
+ * prototype-index consult still gets one chance to supply an inherited value.
+ * Both additions are gated by `holeGlobalIdx`, which concat creates only in a
+ * module that actually needs this substrate, keeping unrelated standalone
+ * output byte-neutral.
+ */
+export function fillConcatNativeHoleArms(ctx: CodegenContext): void {
+  if (!ctx.standalone || ctx.holeGlobalIdx === undefined) return;
+  const types = ctx.objectRuntimeTypes;
+  if (!types) return;
+
+  const objVecTypeIdx = types.objVecTypeIdx;
+  const objVecArrTypeIdx = types.objVecArrTypeIdx;
+  const holeGet = undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" as const }];
+
+  // The overlay reader is finalized before this pass and can legitimately
+  // claim an ObjVec receiver when the module has already created the numeric
+  // overlay state (for example, a sparse source array was length-grown before
+  // concat ran).  That path returns the raw backing slot, so it can expose the
+  // private concat marker before the ordinary ObjVec arm below gets a chance
+  // to translate it.  Keep the marker private at the *entry* boundary: a
+  // marker is a missing own index, so consult the numeric prototype chain and
+  // otherwise return the ordinary undefined sentinel.
+  const getIdxForEntry = ctx.funcMap.get("__extern_get_idx");
+  if (getIdxForEntry !== undefined) {
+    const fn = definedFuncAt(ctx, getIdxForEntry);
+    if (fn && !fn.locals.some((local) => local.name === "__cat_hole_objvec_any")) {
+      const anyLocal = 2 + fn.locals.length;
+      const indexLocal = anyLocal + 1;
+      const indexFLocal = anyLocal + 2;
+      fn.locals.push(
+        { name: "__cat_hole_objvec_any", type: { kind: "anyref" } },
+        { name: "__cat_hole_objvec_i", type: { kind: "i32" } },
+        { name: "__cat_hole_objvec_f", type: { kind: "f64" } },
+      );
+      const miss = protoIndexGetIdxMissInstrs(ctx, 0, indexFLocal, 1) ?? holeGet;
+      const arm: Instr[] = [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "local.tee", index: anyLocal },
+        { op: "ref.test", typeIdx: objVecTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 1 },
+            { op: "local.set", index: indexFLocal },
+            { op: "local.get", index: indexFLocal },
+            { op: "i32.trunc_sat_f64_s" },
+            { op: "local.set", index: indexLocal },
+            { op: "local.get", index: indexLocal },
+            { op: "i32.const", value: 0 },
+            { op: "i32.ge_s" },
+            { op: "local.get", index: indexLocal },
+            { op: "local.get", index: anyLocal },
+            { op: "ref.cast", typeIdx: objVecTypeIdx },
+            { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 0 },
+            { op: "i32.lt_s" },
+            { op: "i32.and" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: anyLocal },
+                { op: "ref.cast", typeIdx: objVecTypeIdx },
+                { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 },
+                { op: "local.get", index: indexLocal },
+                { op: "array.get", typeIdx: objVecArrTypeIdx },
+                ...holeTestInstrs(ctx),
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [...miss, { op: "return" }],
+                },
+              ],
+            },
+          ],
+        },
+      ];
+      fn.body.splice(0, 0, ...arm);
+    }
+  }
+
+  // `__extern_get_idx`'s `$ObjVec` arm ends in the one `array.get` against its
+  // backing array. Patch that tail in place after the typed-vec finalize fill;
+  // rebuilding the whole helper here would invalidate the late-import shift
+  // bookkeeping of its eager `$Object` arm.
+  const getIdx = ctx.funcMap.get("__extern_get_idx");
+  if (getIdx !== undefined) {
+    const fn = definedFuncAt(ctx, getIdx);
+    if (fn && !fn.locals.some((local) => local.name === "__cat_hole_get_value")) {
+      let tail = -1;
+      for (let i = fn.body.length - 1; i >= 0; i--) {
+        const instr = fn.body[i];
+        if (instr?.op === "array.get" && instr.typeIdx === objVecArrTypeIdx) {
+          tail = i;
+          break;
+        }
+      }
+      if (tail >= 0) {
+        const valueLocal = 2 + fn.locals.length;
+        fn.locals.push({ name: "__cat_hole_get_value", type: { kind: "externref" } });
+        fn.body.splice(
+          tail,
+          1,
+          { op: "array.get", typeIdx: objVecArrTypeIdx },
+          { op: "local.tee", index: valueLocal },
+          ...holeTestInstrs(ctx),
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: holeGet.map((instr) => ({ ...instr })),
+            else: [{ op: "local.get", index: valueLocal }],
+          },
+        );
+      }
+    }
+  }
+
+  // Reject `$Hole` in the `$ObjVec` branch of __extern_has_idx. The ordinary
+  // tail remains responsible for non-marker values and for out-of-bounds
+  // prototype behaviour.
+  const hasIdx = ctx.funcMap.get("__extern_has_idx");
+  if (hasIdx !== undefined) {
+    const fn = definedFuncAt(ctx, hasIdx);
+    if (fn && !fn.locals.some((local) => local.name === "__cat_hole_has_any")) {
+      const anyLocal = 2 + fn.locals.length;
+      const indexLocal = anyLocal + 1;
+      fn.locals.push(
+        { name: "__cat_hole_has_any", type: { kind: "anyref" } },
+        { name: "__cat_hole_has_i", type: { kind: "i32" } },
+      );
+      const arm: Instr[] = [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "local.tee", index: anyLocal },
+        { op: "ref.test", typeIdx: objVecTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 1 },
+            { op: "i32.trunc_sat_f64_s" },
+            { op: "local.set", index: indexLocal },
+            { op: "local.get", index: indexLocal },
+            { op: "i32.const", value: 0 },
+            { op: "i32.ge_s" },
+            { op: "local.get", index: indexLocal },
+            { op: "local.get", index: anyLocal },
+            { op: "ref.cast", typeIdx: objVecTypeIdx },
+            { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 0 },
+            { op: "i32.lt_s" },
+            { op: "i32.and" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: anyLocal },
+                { op: "ref.cast", typeIdx: objVecTypeIdx },
+                { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 },
+                { op: "local.get", index: indexLocal },
+                { op: "array.get", typeIdx: objVecArrTypeIdx },
+                ...holeTestInstrs(ctx),
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+                },
+              ],
+            },
+          ],
+        },
+      ];
+      fn.body.splice(0, 0, ...arm);
+    }
+  }
+
+  // Add a physical-backing guard to every concrete vec carrier. The shared
+  // `$__vec_base` arm knows logical length but not the concrete `data` field,
+  // so this per-type prologue is the safe place to model `arr.length = N`
+  // tails without risking a trap on `array.get` or inventing an own index.
+  if (hasIdx !== undefined) {
+    const fn = definedFuncAt(ctx, hasIdx);
+    if (fn && !fn.locals.some((local) => local.name === "__cat_sparse_has_any")) {
+      const anyLocal = 2 + fn.locals.length;
+      const indexLocal = anyLocal + 1;
+      fn.locals.push(
+        { name: "__cat_sparse_has_any", type: { kind: "anyref" } },
+        { name: "__cat_sparse_has_i", type: { kind: "i32" } },
+      );
+      const protoMiss = () => protoIndexHasIdxInstrs(ctx, 1, 1) ?? [{ op: "i32.const", value: 0 as const }];
+      const carriers: { typeIdx: number; arrTypeIdx: number }[] = [];
+      const seen = new Set<number>();
+      for (const typeIdx of ctx.vecTypeMap.values()) {
+        if (seen.has(typeIdx)) continue;
+        const arrTypeIdx = getArrTypeIdxFromVec(ctx, typeIdx);
+        if (arrTypeIdx < 0) continue;
+        const arrDef = ctx.mod.types[arrTypeIdx];
+        if (!arrDef || arrDef.kind !== "array") continue;
+        seen.add(typeIdx);
+        carriers.push({ typeIdx, arrTypeIdx });
+      }
+      carriers.sort((a, b) => a.typeIdx - b.typeIdx);
+      const arms: Instr[] = [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "local.set", index: anyLocal },
+      ];
+      for (const { typeIdx, arrTypeIdx } of carriers) {
+        arms.push(
+          { op: "local.get", index: anyLocal },
+          { op: "ref.test", typeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 1 },
+              { op: "i32.trunc_sat_f64_s" },
+              { op: "local.set", index: indexLocal },
+              // Only an in-logical-range index can be a sparse tail. Negative
+              // and logical-OOB keys fall through to the existing answer.
+              { op: "local.get", index: indexLocal },
+              { op: "local.get", index: anyLocal },
+              { op: "ref.cast", typeIdx },
+              { op: "struct.get", typeIdx, fieldIdx: 0 },
+              { op: "i32.lt_s" },
+              { op: "local.get", index: indexLocal },
+              { op: "local.get", index: anyLocal },
+              { op: "ref.cast", typeIdx },
+              { op: "struct.get", typeIdx, fieldIdx: 1 },
+              { op: "array.len" },
+              { op: "i32.ge_u" },
+              { op: "i32.and" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [...protoMiss(), { op: "return" }],
+              },
+            ],
+          },
+        );
+      }
+      if (carriers.length > 0) fn.body.splice(0, 0, ...arms);
+    }
+  }
+
+  // `$ObjVec` own-property predicates receive the same canonical numeric key
+  // treatment as real vectors. `__obj_index_of_key` rejects leading zeroes,
+  // decimals, signs, and overflow, so non-index names simply fall through to
+  // the existing `$Object`/carrier-bag ladder.
+  const indexOfKeyIdx = ctx.funcMap.get("__obj_index_of_key");
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  if (indexOfKeyIdx !== undefined && anyStrTypeIdx >= 0) {
+    for (const name of ["__hasOwnProperty", "__object_hasOwn", "__propertyIsEnumerable"]) {
+      const fn = ctx.mod.functions.find((candidate) => candidate.name === name);
+      if (!fn || fn.locals.some((local) => local.name === "__cat_objvec_own_any")) continue;
+      const anyLocal = 2 + fn.locals.length;
+      const keyAnyLocal = anyLocal + 1;
+      const indexLocal = anyLocal + 2;
+      fn.locals.push(
+        { name: "__cat_objvec_own_any", type: { kind: "anyref" } },
+        { name: "__cat_objvec_own_key", type: { kind: "anyref" } },
+        { name: "__cat_objvec_own_i", type: { kind: "i32" } },
+      );
+      const arm: Instr[] = [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "local.tee", index: anyLocal },
+        { op: "ref.test", typeIdx: objVecTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 1 },
+            { op: "any.convert_extern" },
+            { op: "local.tee", index: keyAnyLocal },
+            { op: "ref.test", typeIdx: anyStrTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: keyAnyLocal },
+                { op: "ref.cast", typeIdx: anyStrTypeIdx },
+                { op: "call", funcIdx: indexOfKeyIdx },
+                { op: "local.tee", index: indexLocal },
+                { op: "i32.const", value: 0 },
+                { op: "i32.ge_s" },
+                { op: "local.get", index: indexLocal },
+                { op: "local.get", index: anyLocal },
+                { op: "ref.cast", typeIdx: objVecTypeIdx },
+                { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 0 },
+                { op: "i32.lt_s" },
+                { op: "i32.and" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: anyLocal },
+                    { op: "ref.cast", typeIdx: objVecTypeIdx },
+                    { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 },
+                    { op: "local.get", index: indexLocal },
+                    { op: "array.get", typeIdx: objVecArrTypeIdx },
+                    ...holeTestInstrs(ctx),
+                    { op: "i32.eqz" },
+                    { op: "return" },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ];
+      fn.body.splice(0, 0, ...arm);
+    }
+  }
+}
+
+/**
  * (#3183) Finalize-time `$__vec_base` arms for the standalone DYNAMIC-path
  * for-in / string-key helpers `__object_keys_forin` / `__extern_has` /
  * `__extern_get`.
