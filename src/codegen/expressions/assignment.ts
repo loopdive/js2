@@ -5070,6 +5070,18 @@ function compileElementAssignment(
     reportError(ctx, target, "Assignment to non-array");
     return null;
   }
+  if (
+    fctx.mappedArgsInfo?.accessorIndices &&
+    ts.isIdentifier(target.expression) &&
+    target.expression.text === "arguments"
+  ) {
+    const idxArg = target.argumentExpression;
+    const idxText = ts.isNumericLiteral(idxArg) ? idxArg.text : ts.isStringLiteral(idxArg) ? idxArg.text : undefined;
+    const argIndex = idxText !== undefined ? Number(idxText) : NaN;
+    if (Number.isInteger(argIndex) && fctx.mappedArgsInfo.accessorIndices.has(argIndex)) {
+      return compileExternSetFallback(ctx, fctx, target, value, arrType);
+    }
+  }
 
   // Non-ref types (externref, f64, i32): fallback to __extern_set(obj, key, val)
   if (arrType.kind !== "ref" && arrType.kind !== "ref_null") {

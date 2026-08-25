@@ -1190,6 +1190,7 @@ export interface FunctionContext {
      * index is additionally added to `unmappedIndices`.)
      */
     nonWritableIndices?: Set<number>;
+    accessorIndices?: Set<number>;
     /**
      * Argument indices whose `Object.defineProperty(arguments, "<i>", …)` was
      * routed to the RUNTIME define (#4491) — an accessor, a `writable:false`
