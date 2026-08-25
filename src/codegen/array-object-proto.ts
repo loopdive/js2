@@ -653,11 +653,6 @@ const STRING_PROTO_METHOD_PARAM_SLOTS: Readonly<Record<string, number>> = {
   includes: 2, // (searchString, position) §22.1.3.7
   startsWith: 2, // (searchString, position) §22.1.3.23
   endsWith: 2, // (searchString, endPosition) §22.1.3.6
-  // (#4426 session) `concat(...args)` is variadic (spec `.length` 1). Four real
-  // slots cover every ES5-shaped borrow (test262 uses ≤3); the call path pads
-  // absent slots with null (skipped per §22.1.3.5 step 3) and truncates a
-  // longer tail — the 128-arg S15.5.4.6_A2 is a documented residual.
-  concat: 4,
 };
 
 // ── ArrayBuffer.prototype (ES2024 §25.1.5) ────────────────────────────────────
@@ -1771,7 +1766,7 @@ function makeGlue(
     // families return 0 (= "no override": the slot count falls back to the spec
     // arity), keeping their closure types byte-identical.
     memberParamSlots: (member) => (name === "String" ? (STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0) : 0),
-    memberIsVariadic: (member) => name === "Array" && member === "concat",
+    memberIsVariadic: (member) => (name === "Array" || name === "String") && member === "concat",
     // (#4485) §B.2.4.3 — `Date.prototype.toGMTString` IS `Date.prototype.
     // toUTCString` (one function object, asserted by test262 annexB
     // .../toGMTString/value.js). The Annex B String aliases have the same

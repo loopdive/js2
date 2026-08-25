@@ -88,6 +88,11 @@ import {
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3140) __bind_dyn callable gate
 import * as bc from "./builtin-ctor-callable.js"; // (#4394/#4656) constructor [[Call]] arms
 import { buildApplyClosureArityWidening, buildTransferredCharAtApplyArm } from "./closure-exports.js"; // (#3592) under-application widening
+import {
+  buildTransferredNativeProtoVariadicApplyInstrs,
+  collectTransferredNativeProtoReceivers,
+} from "./closures/transferred-native-proto.js";
+import type { TransferredNativeReceiverEntry } from "./closures/transferred-native-proto.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
 import { registerDescriptorHasOwn } from "./carrier-bag-hasown.js"; // (#4055) descriptor-scoped HasProperty over the #3468 bag
@@ -6680,6 +6685,43 @@ export function reserveApplyClosure(ctx: CodegenContext): number {
   return funcIdx;
 }
 
+interface VariadicNativeApplyState {
+  entries: TransferredNativeReceiverEntry[];
+  anyLocal: number;
+}
+
+function reserveVariadicNativeApplyState(
+  ctx: CodegenContext,
+  locals: { name: string; type: ValType }[],
+): VariadicNativeApplyState | undefined {
+  const entries = collectTransferredNativeProtoReceivers(ctx, 0).filter((entry) => entry.variadic !== undefined);
+  if (entries.length === 0) return undefined;
+  const anyLocal = 3 + locals.length;
+  locals.push({ name: "__variadic_native_any", type: { kind: "anyref" } });
+  return { entries, anyLocal };
+}
+
+function buildVariadicNativeApplyDispatch(
+  ctx: CodegenContext,
+  state: VariadicNativeApplyState | undefined,
+  objVecTypeIdx: number | undefined,
+  objVecArrTypeIdx: number | undefined,
+): Instr[] {
+  if (!state) return [];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.set", index: state.anyLocal },
+    ...buildTransferredNativeProtoVariadicApplyInstrs(ctx, state.entries, {
+      receiverLocal: 1,
+      argsLocal: 2,
+      anyLocal: state.anyLocal,
+      objVecTypeIdx,
+      objVecArrTypeIdx,
+    }),
+  ];
+}
+
 /**
  * (#1888 Slice 1) Fill the reserved `__apply_closure` bridge body at FINALIZE,
  * AFTER `emitClosureMethodCallExportN(0..4)` have registered
@@ -6754,13 +6796,11 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   const resultLocal = 3 + locals.length;
   locals.push({ name: "result", type: { kind: "externref" } });
 
-  // (#3673) $ObjVec fast path: the args carrier built by every in-module call
-  // site (`__extern_method_call`, field-stored-closure arms, accessor/HOF
-  // drivers) is the runtime's own $ObjVec. Read its length + elements with
-  // direct struct.get/array.get instead of paying `__extern_length` + a full
-  // dynamic `__extern_get_idx` (overlay prologue + carrier ladder) PER
-  // ARGUMENT — measured as the top remaining cost of a standalone
-  // compiled-acorn parse. Non-$ObjVec args keep the generic path.
+  const variadicNativeApply = reserveVariadicNativeApplyState(ctx, locals);
+
+  // (#3673) Read the in-module $ObjVec argument carrier directly, avoiding a
+  // dynamic `__extern_get_idx` per argument. Non-$ObjVec args keep the generic
+  // path; this is a measured standalone compiled-acorn hot path.
   const objVecTypeIdx = ctx.objectRuntimeTypes?.objVecTypeIdx;
   const objVecArrTypeIdx = ctx.objectRuntimeTypes?.objVecArrTypeIdx;
   const fastObjArgs = objVecTypeIdx !== undefined && objVecArrTypeIdx !== undefined;
@@ -6919,6 +6959,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     ...computeN,
     { op: "local.tee", index: 3 },
     { op: "global.set", index: argcGlobalIdx },
+    ...buildVariadicNativeApplyDispatch(ctx, variadicNativeApply, objVecTypeIdx, objVecArrTypeIdx),
     ...widen,
     ...dispatch,
     { op: "local.set", index: resultLocal },

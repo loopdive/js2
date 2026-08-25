@@ -246,3 +246,109 @@ export function buildTransferredNativeProtoCallInstrs(
   }
   return body;
 }
+
+/**
+ * Dispatch a receiver-aware variadic native-prototype closure directly from
+ * `__apply_closure`'s original argument carrier. This is the overflow lane for
+ * calls wider than the fixed `__call_fn_method_0..8` family: the complete
+ * vector is already available, so routing through an arity-N trampoline would
+ * only truncate it.
+ */
+export function buildTransferredNativeProtoVariadicApplyInstrs(
+  ctx: CodegenContext,
+  entries: TransferredNativeReceiverEntry[],
+  slots: {
+    receiverLocal: number;
+    argsLocal: number;
+    anyLocal: number;
+    objVecTypeIdx?: number;
+    objVecArrTypeIdx?: number;
+  },
+): Instr[] {
+  const body: Instr[] = [];
+  const boxNumberIdx = ctx.funcMap.get("__box_number");
+  for (const entry of entries) {
+    if (entry.variadic === undefined) continue;
+    const { vecTypeIdx, arrTypeIdx } = entry.variadic;
+    const hasObjVec = slots.objVecTypeIdx !== undefined && slots.objVecArrTypeIdx !== undefined;
+    const carrierCompatible: Instr[] = [
+      { op: "local.get", index: slots.argsLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: vecTypeIdx },
+    ];
+    if (hasObjVec) {
+      carrierCompatible.push(
+        { op: "local.get", index: slots.argsLocal },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: slots.objVecTypeIdx! },
+        { op: "i32.or" },
+      );
+    }
+
+    const directVec: Instr[] = [
+      { op: "local.get", index: slots.argsLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: vecTypeIdx },
+    ];
+    const materializeArgs: Instr[] = hasObjVec
+      ? [
+          { op: "local.get", index: slots.argsLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: vecTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "ref", typeIdx: vecTypeIdx } },
+            then: directVec,
+            else: [
+              { op: "local.get", index: slots.argsLocal },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: slots.objVecTypeIdx! },
+              { op: "struct.get", typeIdx: slots.objVecTypeIdx!, fieldIdx: 0 },
+              { op: "local.get", index: slots.argsLocal },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: slots.objVecTypeIdx! },
+              { op: "struct.get", typeIdx: slots.objVecTypeIdx!, fieldIdx: 1 },
+              { op: "ref.cast", typeIdx: arrTypeIdx },
+              { op: "struct.new", typeIdx: vecTypeIdx },
+            ],
+          },
+        ]
+      : directVec;
+
+    body.push(
+      { op: "local.get", index: slots.anyLocal },
+      { op: "ref.test", typeIdx: entry.typeIdx },
+      ...carrierCompatible,
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: slots.anyLocal },
+          { op: "ref.cast", typeIdx: entry.typeIdx },
+          { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: BFN_ID_FIELD_IDX },
+          { op: "i32.const", value: entry.typeIdx },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: slots.anyLocal },
+              { op: "ref.cast", typeIdx: entry.typeIdx },
+              { op: "local.get", index: slots.receiverLocal },
+              ...materializeArgs,
+              { op: "local.get", index: slots.anyLocal },
+              { op: "ref.cast", typeIdx: entry.typeIdx },
+              { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: 0 },
+              { op: "ref.cast", typeIdx: entry.funcTypeIdx },
+              { op: "call_ref", typeIdx: entry.funcTypeIdx },
+              ...buildClosureResultBoxing(ctx, entry.returnType, boxNumberIdx),
+              { op: "return" },
+            ],
+          },
+        ],
+      },
+    );
+  }
+  return body;
+}
