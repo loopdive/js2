@@ -117,7 +117,10 @@ node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json     # pas
 The direct standalone equivalent of `this-val-not-callable.js` is covered in
 the focused test because the upstream row's runner asks for the unavailable
 QuickJS eval-provider artifact on this workstation; no source failure was
-observed.
+observed. An additional reassignment probe (`var F = function() {}; F = G`)
+returned `old prototype → false` and `new prototype → true`; the edge collector
+now conservatively declines mutable module bindings so this identity guard
+cannot report a stale prototype.
 
 ## Residuals
 
