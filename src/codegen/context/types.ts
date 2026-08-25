@@ -2384,6 +2384,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   funcUsesArguments: Set<string>;
   /**
+   * Object-literal method declaration → the function handle containing that
+   * literal's body. Struct-shape deduplication can fork a method body while
+   * leaving the name-keyed placeholder shared; direct calls must select the
+   * declaration's own handle instead of that empty placeholder.
+   */
+  objectLiteralMethodFuncIdx: Map<ts.MethodDeclaration, number>;
+  /**
    * Module global index for the runtime extras argv vec (#1053).
    * Lazily registered on first use; -1 if not yet created.
    * Type: (mut (ref null $vec_externref))
