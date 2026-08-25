@@ -25,6 +25,7 @@ import { ensureStrToCharVecHelper } from "../native-strings.js";
 import {
   type BindingKind,
   buildDestructureNullThrow,
+  coerceArrayBindingExternrefToAnyValue,
   destructureParamArray,
   destructureParamObject,
   emitExternrefDestructureGuard,
@@ -640,7 +641,9 @@ export function emitDefaultValueCheck(
     if (coerceTo && !valTypesMatch(fieldType, coerceTo)) {
       return collectInstrs(fctx, () => {
         fctx.body.push({ op: "local.get", index: tmpField });
-        coerceType(ctx, fctx, fieldType, coerceTo);
+        if (!coerceArrayBindingExternrefToAnyValue(ctx, fctx, fieldType, coerceTo)) {
+          coerceType(ctx, fctx, fieldType, coerceTo);
+        }
         fctx.body.push({ op: "local.set", index: localIdx });
       });
     }
