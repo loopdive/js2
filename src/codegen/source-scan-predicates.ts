@@ -54,9 +54,10 @@ export function sourceContainsClass(sourceFile: ts.SourceFile): boolean {
 function scanMemberDeletes(
   sourceFile: ts.SourceFile,
   collectReceivers: boolean,
-): { any: boolean; receiverNames: Set<string> } {
+): { any: boolean; receiverNames: Set<string>; builtinPrototypeMembers: Set<string> } {
   let anyDelete = false;
   const receiverNames = new Set<string>();
+  const builtinPrototypeMembers = new Set<string>();
   function walk(node: ts.Node): void {
     // Short-circuit only when the names are not wanted — otherwise the walk
     // must run to completion to see every deleted-from receiver.
@@ -67,13 +68,23 @@ function scanMemberDeletes(
         anyDelete = true;
         const receiver = target.expression;
         if (collectReceivers && ts.isIdentifier(receiver)) receiverNames.add(receiver.text);
+        if (collectReceivers && ts.isPropertyAccessExpression(target) && ts.isPropertyAccessExpression(receiver)) {
+          const prototype = receiver;
+          if (
+            prototype.name.text === "prototype" &&
+            ts.isIdentifier(prototype.expression) &&
+            ts.isIdentifier(target.name)
+          ) {
+            builtinPrototypeMembers.add(`${prototype.expression.text}.prototype.${target.name.text}`);
+          }
+        }
         if (!collectReceivers) return;
       }
     }
     forEachChild(node, walk);
   }
   walk(sourceFile);
-  return { any: anyDelete, receiverNames };
+  return { any: anyDelete, receiverNames, builtinPrototypeMembers };
 }
 
 /**
@@ -125,7 +136,7 @@ function scanMemberDeletes(
 export function scanModuleMemberDeletes(
   sourceFile: ts.SourceFile,
   collectReceivers: boolean,
-): { any: boolean; receiverNames: Set<string> } {
+): { any: boolean; receiverNames: Set<string>; builtinPrototypeMembers: Set<string> } {
   return scanMemberDeletes(sourceFile, collectReceivers);
 }
 

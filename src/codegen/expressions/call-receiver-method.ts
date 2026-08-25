@@ -25,7 +25,6 @@ import {
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, resolveArrayInfo } from "../array-methods.js";
 import { isWiredTypedArrayViewName } from "../array-object-proto.js";
-import { ensureWrapperProtoDynamicMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
 import {
   emitStandalonePromiseFinally,
   emitStandalonePromiseThen,
@@ -139,7 +138,12 @@ import {
 import { sourceDefinesFunctionMember } from "../source-function-members.js";
 import { compileExternMethodCall } from "./extern.js";
 import { tryEmitValueOfFallback } from "./valueof-fallback.js";
-import { sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
+import { sourceOverridesBuiltinPrototypeMember, sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
+import {
+  tryCompileWrapperDynamicMethodCall,
+  tryCompileStandaloneBooleanToString,
+  tryCompileStandaloneNumberPrototypeTail,
+} from "./standalone-primitive-tail.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import {
   directObjectMethodFuncIdx,
@@ -1179,61 +1183,14 @@ export function compileReceiverMethodCall(
     }
   }
 
-  // (#1397) Wrapper-object dynamic dispatch on reassigned methods.
-  //
-  // For wrapper-object receivers (`new String/Number/Boolean(...)`) where
-  // `.toString` or `.valueOf` has been reassigned somewhere in the source,
-  // skip every static fast-path and route through `__extern_method_call`
-  // so the runtime property lookup picks up the override. Required for
-  // spec compliance with transferred prototype methods (S15.7.4.2_A4_*,
-  // S15.7.4.4_A2_*, S15.6.4.2_A2_*, S15.6.4.3_A2_*):
-  //
-  //   var s1 = new String();
-  //   s1.toString = Number.prototype.toString;
-  //   s1.toString();   // spec: TypeError; we used to return s1 itself.
-  //
-  // Primitives keep the static fast-path — primitives can't have own
-  // properties, so `"abc".toString = …` is a no-op and the short-circuit
-  // is correct. Wrappers without any matching reassignment in the source
-  // also keep the static fast-path (no perf regression for the common
-  // case). The reassignment scan is conservative — any
-  // `<expr>.<method> = …` anywhere in the source disables the static
-  // path for wrappers; that's a narrower hit than Option B (always
-  // dynamic) and matches the architect's Option D feasibility study.
-  {
-    const wrapperMethodName = propAccess.name.text;
-    const isWrapperReceiver =
-      isStringWrapperType(receiverType) || isNumberWrapperType(receiverType) || isBooleanWrapperType(receiverType);
-    const wrapperDynamicCandidate =
-      isWrapperReceiver &&
-      (wrapperMethodName === "valueOf" || wrapperMethodName === "toString") &&
-      sourceHasMethodReassignment(ctx, propAccess.expression, wrapperMethodName);
-    if (wrapperDynamicCandidate) {
-      // (#4619 family D) Make the destination of this hand-off EXIST — and do
-      // it regardless of the argument count that gates the dispatch below, for
-      // the reason recorded in wrapper-proto-dynamic-demand.ts.
-      ensureWrapperProtoDynamicMember(
-        ctx,
-        isStringWrapperType(receiverType) ? "String" : isNumberWrapperType(receiverType) ? "Number" : "Boolean",
-        wrapperMethodName,
-      );
-    }
-    // (#4619) …and dispatch dynamically for an ARGUMENT-CARRYING call too, but
-    // only for the members the spec gives no parameters — §20.3.3.3 / §22.1.3.28
-    // `valueOf` and §20.3.3.2 / §22.1.3.27 `toString`, which ignore anything
-    // passed. `Number.prototype.toString` is excluded because its argument is
-    // the §21.1.3.6 RADIX and the standalone `__extern_method_call` path
-    // deliberately carries no args (`emitWrapperDynamicMethodCall`), so routing
-    // it here would silently drop the radix. Measured on base:
-    // `(new Boolean(-1)).valueOf(false)` (test262 `S15.6.4.3_A1_T2`) fell to the
-    // legacy arm that recompiles the WRAPPER as `i32` and answered `false`.
-    const memberIgnoresArguments =
-      wrapperMethodName === "valueOf" || (wrapperMethodName === "toString" && !isNumberWrapperType(receiverType));
-    if (wrapperDynamicCandidate && (expr.arguments.length === 0 || memberIgnoresArguments)) {
-      const dynResult = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, wrapperMethodName);
-      if (dynResult) return dynResult;
-    }
-  }
+  const dynamicWrapper = tryCompileWrapperDynamicMethodCall(ctx, fctx, propAccess, expr, receiverType, {
+    sourceOverridesMethodOnReceiver,
+    emitWrapperDynamicMethodCall,
+  });
+  if (dynamicWrapper !== undefined) return dynamicWrapper;
+
+  const booleanToString = tryCompileStandaloneBooleanToString(ctx, fctx, propAccess, expr, receiverType);
+  if (booleanToString !== undefined) return booleanToString;
 
   // Handle wrapper type method calls: new Number(x).valueOf(), etc.
   // Since wrapper constructors now return primitives, valueOf() is a no-op identity.
@@ -2311,6 +2268,12 @@ export function compileReceiverMethodCall(
 
   // Primitive method calls: number.toString(), number.toFixed()
   if (isNumberMethodReceiver(ctx, receiverType) && propAccess.name.text === "toString") {
+    const primitiveTail = tryCompileStandaloneNumberPrototypeTail(ctx, fctx, propAccess, expr, expectedType, {
+      sourceOverridesBuiltinPrototypeMember,
+      compileCallExpression,
+      emitWrapperDynamicMethodCall,
+    });
+    if (primitiveTail !== undefined) return primitiveTail;
     // RangeError: if radix argument is provided, must be integer 2-36
     // Also captures the validated, floored radix in `radixLocalIdx` so it can
     // be passed to the 2-arg `number_toString_radix` host import below (#1321).

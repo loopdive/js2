@@ -4463,9 +4463,8 @@ export function generateModule(
   // (#4187) ONE walk answers both: the #2179 boolean above and the receiver
   // names the standalone hasOwnProperty const-fold gate needs (it only diverges
   // from runtime state for a receiver that is both defineProperty-widened and
-  // deleted from). Only standalone reads the names, and collecting them forfeits
-  // the boolean's short-circuit — worth +3,847 on the #3437 harness budget — so
-  // host mode asks for the boolean alone and keeps main's exact traversal.
+  // deleted from). Only standalone reads names; collecting forfeits the boolean
+  // short-circuit (+3,847 on #3437), so host mode keeps main's exact traversal.
   // (#4223) Demand gate for the primitive-wrapper `.constructor` carriers. Set
   // BEFORE anything can call `ensureObjectRuntime` (which is where the mint
   // hangs), and only for standalone — the gc/host lane keeps its genuine
@@ -4477,6 +4476,7 @@ export function generateModule(
   const memberDeletes = scanModuleMemberDeletes(ast.sourceFile, ctx.standalone === true);
   ctx.moduleUsesDelete = memberDeletes.any;
   ctx.memberDeleteReceiverNames = memberDeletes.receiverNames;
+  ctx.deletedBuiltinPrototypeMembers = memberDeletes.builtinPrototypeMembers;
   // (#2660 S1) Whole-program escape / dynamic-use classification of `new F()`
   // fnctor instances. INERT: the result is stored for the future S3
   // reconstruction lowering but is NOT yet consumed, so emitted Wasm is

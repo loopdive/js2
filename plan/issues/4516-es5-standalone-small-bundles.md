@@ -16,6 +16,9 @@ related: [2200, 2552, 3626]
 loc-budget-allow:
   - src/codegen/regexp-standalone.ts
   - src/codegen/expressions/calls.ts
+  # The standalone Boolean constructor delegates object truthiness to the
+  # shared primitive-tail leaf; this driver grows by its import only.
+  - src/codegen/expressions/new-builtin-globals.ts
 func-budget-allow:
   - src/codegen/regexp-standalone.ts::ensureDynamicStandaloneRegExpCompiler
   - src/codegen/regexp-dynamic-pattern.ts::ensureDynamicPatternTokenDecoder

@@ -53,6 +53,7 @@ import {
   isStringTypedArg,
   resolvesToAmbientGlobal,
 } from "./new-super.js";
+import { emitStandaloneBooleanConstructorValue } from "./standalone-primitive-tail.js";
 
 /** Sentinel: the `new` target is not one of the built-in global constructors. */
 export const NEW_GLOBAL_FALLTHROUGH = Symbol("new-builtin-global-fallthrough");
@@ -389,12 +390,12 @@ export function tryCompileBuiltinGlobalNew(
       }
 
       if (ctorName === "Boolean") {
-        // new Boolean(x) → create real JS Boolean wrapper object via __new_Boolean host import
-        // (typeof new Boolean(false) === "object", not "boolean")
-        if (args.length >= 1) {
-          // ToBoolean never throws on Symbol (a Symbol is truthy), but this path
-          // coerces the arg to f64 first, which would silently lose the Symbol.
-          // A Symbol arg should produce a truthy wrapper: box 1.0.
+        // new Boolean(x) → JS Boolean wrapper object via __new_Boolean (typeof is "object").
+        // Standalone uses shared ToBoolean so object and Symbol arguments remain truthy.
+        if (ctx.standalone) {
+          emitStandaloneBooleanConstructorValue(ctx, fctx, args);
+        } else if (args.length >= 1) {
+          // Host's f64 ABI preserves the existing Symbol-truthy special case.
           if (ctx.oracle.staticJsTypeOf(args[0]!) === "symbol") {
             const t = compileExpression(ctx, fctx, args[0]!);
             if (t !== null) fctx.body.push({ op: "drop" });
