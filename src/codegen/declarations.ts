@@ -77,6 +77,7 @@ import {
   KNOWN_CONSTRUCTORS,
   MATH_HOST_METHODS_1ARG,
   MATH_HOST_METHODS_2ARG,
+  nativeGeneratorBindingType,
   parseRegExpLiteral,
   resolveIdentifierType,
   resolveWasmType,
@@ -2371,6 +2372,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
    * let/const pass so both scopes register the same type.
    */
   function moduleGlobalWasmType(decl: ts.VariableDeclaration, varType: ts.Type): ValType {
+    const nativeGeneratorType = nativeGeneratorBindingType(ctx, decl.initializer);
+    if (nativeGeneratorType) return nativeGeneratorType;
     // (#ES5 filter residual) A typed numeric filter can observe an inherited
     // accessor whose Get result is not numeric.  The filter lowering keeps the
     // callback's f64 ABI but widens its result vec to externref so that value
