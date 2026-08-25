@@ -13,6 +13,13 @@ area: codegen, runtime
 es_edition: 5
 goal: es5
 related: [2200, 2552, 3626]
+loc-budget-allow:
+  - src/codegen/array-object-proto.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/expressions/builtins.ts
+func-budget-allow:
+  - src/codegen/expressions/assignment.ts::compileAssignment
+  - src/codegen/expressions/builtins.ts::compileDateMethodCall
 ---
 
 # ES5 standalone small bundles — ~39 rows across 6 mechanical buckets
@@ -47,3 +54,14 @@ File lists per bucket are in the analysis doc.
   semantics (fix compiler) or the runner's harness wrapping (file a separate
   runner issue; do not bury a runner defect in a compiler fix).
 - annexB-b33: verify #2200/#2552 claim state on the ledger before touching.
+
+## Test Results
+
+The assigned Annex B Date and strict-global-constant slices are complete; the
+other buckets in this umbrella issue remain independently scoped.
+
+- Exact standalone Test262 Annex B Date bucket: 6/6 passing (+6).
+- Exact standalone Test262 strict ambient-global assignment bucket: 2/2
+  passing (+2).
+- Focused Vitest: `tests/issue-4516-date-annex-b.test.ts` and
+  `tests/issue-4516-strict-global-constants.test.ts` — 8/8 tests passing.

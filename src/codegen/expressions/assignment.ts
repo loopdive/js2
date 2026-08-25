@@ -360,6 +360,24 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
         return { kind: "externref" };
       }
     }
+    // The ambient global value properties are non-writable. They are not
+    // represented in localMap/moduleGlobals, so without this arm assignment
+    // fell through to the auto-local fallback. A source declaration shadows
+    // the intrinsic and must retain ordinary mutable-binding semantics.
+    if (name === "NaN" || name === "Infinity" || name === "undefined") {
+      const declaration = ctx.oracle.valueDeclarationOf(expr.left);
+      const isGlobalIntrinsic = declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+      if (isGlobalIntrinsic) {
+        const rhsType = compileExpression(ctx, fctx, expr.right);
+        if (isStrictContext(expr.left, ctx.inferModuleStrictArguments)) {
+          if (rhsType) fctx.body.push({ op: "drop" });
+          emitThrowTypeError(ctx, fctx, `Assignment to read-only global '${name}'`);
+          fctx.body.push({ op: "unreachable" });
+          return { kind: "f64" };
+        }
+        return rhsType;
+      }
+    }
     // const bindings — assignment throws TypeError at runtime
     if (fctx.constBindings?.has(name)) {
       // Evaluate RHS for side effects, then throw

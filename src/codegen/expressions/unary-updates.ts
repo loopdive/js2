@@ -11,6 +11,12 @@ import { ts } from "../../ts-api.js";
 import { tryEmitUnresolvableUpdateThrow } from "../update-unresolvable-ref.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
+import {
+  emitGlobalEnvironmentKey,
+  emitGlobalEnvironmentObject,
+  emitImplicitGlobalRead,
+  ensureGlobalEnvironmentOperation,
+} from "../global-environment.js";
 import { tryEmitLinearU8ElementUpdate } from "../linear-uint8-codegen.js";
 import { resolveWidenedVarKey } from "../widened-var-key.js";
 import { reportError } from "../context/errors.js";
@@ -51,7 +57,6 @@ import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { compileComputedMemberKeyAfterBaseGuard } from "./computed-member-reference.js";
 import { emitMappedArgParamSync } from "./logical-ops.js";
 import { resolveStructName } from "./misc.js";
-import { isSloppyImplicitGlobalBinding, tryEmitImplicitGlobalIncDec } from "./implicit-global-binding.js"; // (#3966) `p++` on a realm-global property
 
 /**
  * §13.4 UpdateExpression evaluation applies ToNumeric to the operand's current
@@ -218,6 +223,61 @@ function compileGlobalIncDec(
 
   // Result: old for postfix, new for prefix.
   fctx.body.push({ op: "local.get", index: mode === "postfix" ? oldTmp : newTmp });
+  return { kind: "f64" };
+}
+
+/**
+ * (#3966) Update a pre-scanned sloppy implicit global through the realm global
+ * object. Plain reads already use `emitImplicitGlobalRead`, but the update
+ * paths used to fall through to a constant-zero placeholder when the name had
+ * no Wasm local/global slot. That dropped the write, so an implicit-global loop
+ * counter such as `for (i = 0; i < 2; i++)` never advanced.
+ */
+function compileImplicitGlobalIncDec(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  arithOp: "f64.add" | "f64.sub",
+  mode: "prefix" | "postfix",
+): ValType | null | undefined {
+  if (!ctx.sloppyImplicitGlobals?.has(id.text)) return undefined;
+
+  if (!emitImplicitGlobalRead(ctx, fctx, id.text)) {
+    reportError(ctx, id, `Failed to read implicit global ${id.text} for update`);
+    return null;
+  }
+  emitToNumericForUpdate(ctx, fctx);
+
+  const oldTmp = allocLocal(fctx, `__implicit_global_old_${fctx.locals.length}`, { kind: "f64" });
+  const newTmp = allocLocal(fctx, `__implicit_global_new_${fctx.locals.length}`, { kind: "f64" });
+  fctx.body.push(
+    { op: "local.tee", index: oldTmp },
+    { op: "f64.const", value: 1 },
+    { op: arithOp },
+    { op: "local.tee", index: newTmp },
+  );
+
+  addUnionImports(ctx);
+  const boxIdx = ctx.funcMap.get("__box_number");
+  if (boxIdx === undefined) {
+    reportError(ctx, id, "Missing __box_number for implicit-global update");
+    return null;
+  }
+  fctx.body.push({ op: "call", funcIdx: boxIdx });
+  const boxedTmp = allocLocal(fctx, `__implicit_global_boxed_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: boxedTmp });
+
+  const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
+  if (setIdx === undefined || !emitGlobalEnvironmentObject(ctx, fctx)) {
+    reportError(ctx, id, `Failed to write implicit global ${id.text} after update`);
+    return null;
+  }
+  emitGlobalEnvironmentKey(ctx, fctx, id.text);
+  fctx.body.push(
+    { op: "local.get", index: boxedTmp },
+    { op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? setIdx },
+    { op: "local.get", index: mode === "prefix" ? newTmp : oldTmp },
+  );
   return { kind: "f64" };
 }
 
@@ -1051,9 +1111,15 @@ function compilePrefixUpdate(
   if (emitSymbolUpdateThrow(ctx, fctx, expr.operand)) {
     return { kind: "f64" };
   }
-  // §13.4.4 GetValue on an unresolvable Reference (update-unresolvable-ref.ts).
-  const unresolvablePre = tryEmitUnresolvableUpdateThrow(ctx, fctx, unwrapParens(expr.operand));
-  if (unresolvablePre !== undefined) return unresolvablePre;
+  // Preserve §6.2.5.5's ReferenceError for genuinely unresolvable names.
+  // A pre-scanned sloppy implicit global is the one exception: its property
+  // already exists on the realm global object and is handled by the dedicated
+  // read-modify-write arm below.
+  const prefixOperand = unwrapParens(expr.operand);
+  if (!(ts.isIdentifier(prefixOperand) && ctx.sloppyImplicitGlobals?.has(prefixOperand.text))) {
+    const unresolvablePre = tryEmitUnresolvableUpdateThrow(ctx, fctx, prefixOperand);
+    if (unresolvablePre !== undefined) return unresolvablePre;
+  }
   switch (expr.operator) {
     case ts.SyntaxKind.PlusPlusToken: {
       const ppOperand = unwrapParens(expr.operand);
@@ -1226,10 +1292,8 @@ function compilePrefixUpdate(
           return compileGlobalIncDec(ctx, fctx, ppCapIdx, "f64.add", "prefix");
         }
         // (#3966) sloppy implicit global — see the postfix arm below.
-        if (isSloppyImplicitGlobalBinding(ctx, fctx, ppOperand.text)) {
-          const implicit = tryEmitImplicitGlobalIncDec(ctx, fctx, ppOperand.text, "f64.add", "prefix");
-          if (implicit !== undefined) return implicit;
-        }
+        const implicit = compileImplicitGlobalIncDec(ctx, fctx, ppOperand, "f64.add", "prefix");
+        if (implicit !== undefined) return implicit;
       }
       // ++obj.prop or ++obj[idx] — delegate to member increment helper
       return compileMemberIncDec(ctx, fctx, expr.operand, "add", "prefix");
@@ -1409,10 +1473,8 @@ function compilePrefixUpdate(
           return compileGlobalIncDec(ctx, fctx, mmCapIdx, arithOp, "prefix");
         }
         // (#3966) sloppy implicit global — see the postfix arm below.
-        if (isSloppyImplicitGlobalBinding(ctx, fctx, mmOperand.text)) {
-          const implicit = tryEmitImplicitGlobalIncDec(ctx, fctx, mmOperand.text, arithOp, "prefix");
-          if (implicit !== undefined) return implicit;
-        }
+        const implicit = compileImplicitGlobalIncDec(ctx, fctx, mmOperand, arithOp, "prefix");
+        if (implicit !== undefined) return implicit;
       }
       // --obj.prop or --obj[idx] — delegate to member decrement helper
       return compileMemberIncDec(ctx, fctx, expr.operand, "sub", "prefix");
@@ -1447,10 +1509,10 @@ function compilePostfixUnary(
     const w = compileWithUpdateExpression(ctx, fctx, postOperand, isIncrement, /*prefix*/ false);
     if (w !== undefined) return w;
   }
-  // §13.4.5 GetValue on an unresolvable Reference (update-unresolvable-ref.ts).
-  const unresolvablePost = tryEmitUnresolvableUpdateThrow(ctx, fctx, postOperand);
-  if (unresolvablePost !== undefined) return unresolvablePost;
-
+  if (!(ts.isIdentifier(postOperand) && ctx.sloppyImplicitGlobals?.has(postOperand.text))) {
+    const unresolvablePost = tryEmitUnresolvableUpdateThrow(ctx, fctx, postOperand);
+    if (unresolvablePost !== undefined) return unresolvablePost;
+  }
   if (!ts.isIdentifier(postOperand)) {
     // obj.prop++ or obj[idx]++ — delegate to member increment helper
     const memberOp = isIncrement ? "add" : "sub";
@@ -1505,10 +1567,8 @@ function compilePostfixUnary(
       }
       // (#3966) A sloppy implicit global has real storage on the realm global
       // object; the `f64.const 0` fallback below dropped the store entirely.
-      if (isSloppyImplicitGlobalBinding(ctx, fctx, postOperand.text)) {
-        const implicit = tryEmitImplicitGlobalIncDec(ctx, fctx, postOperand.text, arithOp, "postfix");
-        if (implicit !== undefined) return implicit;
-      }
+      const implicit = compileImplicitGlobalIncDec(ctx, fctx, postOperand, arithOp, "postfix");
+      if (implicit !== undefined) return implicit;
       // Graceful fallback: emit 0 for unknown postfix increment/decrement
       fctx.body.push({ op: "f64.const", value: 0 });
       return { kind: "f64" };

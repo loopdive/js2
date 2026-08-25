@@ -279,6 +279,27 @@ export function buildLazyNativeProtoGetInstrs(ctx: CodegenContext, brand: number
   // that is not `protoMemberDirty` gets `undefined` and pays nothing.
   ensureNativeProtoCompanionSeeder(ctx, brand);
 
+  // A flowing builtin prototype is a read-only value in the common reflection
+  // shape (`var p = Date.prototype; Object.getOwnPropertyDescriptor(p, k)`).
+  // The own-property and descriptor helpers deliberately use a consult-only
+  // companion lookup (`create = 0`), so without an initial mint the freshly
+  // registered seeder is never reached: dynamic reads see an empty
+  // `$NativeProto` and static `Date.prototype.k` reads are the only ones that
+  // work. Materialize the companion once, immediately after the prototype
+  // singleton, only for the same demand-gated standalone/member-dirty lane.
+  // This keeps ordinary prototype materialization byte-inert and lets the
+  // seeder install the spec `{ writable: true, enumerable: false,
+  // configurable: true }` entries before any flowing read occurs.
+  const companionIdx = ctx.funcMap.get("__protoidx_companion");
+  if (ctx.standalone && ctx.protoMemberDirty === true && companionIdx !== undefined) {
+    initBody.push(
+      { op: "i32.const", value: brand - BUILTIN_BRAND_BASE },
+      { op: "i32.const", value: 1 },
+      { op: "call", funcIdx: companionIdx },
+      { op: "drop" },
+    );
+  }
+
   return [
     { op: "global.get", index: globalIdx },
     { op: "ref.is_null" },
@@ -559,7 +580,11 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
     // lost by deferring.
     if (kind === "getter") continue;
 
-    const closure = ensureStandaloneNativeMethodClosure(ctx, brand, member, kind, {
+    // Annex B requires Date.prototype.toGMTString and toUTCString to be the
+    // same function object. Seed the alias key with the canonical closure
+    // singleton instead of minting a second per-member wrapper.
+    const closureMember = glue.name === "Date" && member === "toGMTString" ? "toUTCString" : member;
+    const closure = ensureStandaloneNativeMethodClosure(ctx, brand, closureMember, kind, {
       // Reify un-wired members as throwing function VALUES (#2984 Phase 2 /
       // #3250). The companion is a REFLECTION surface: `typeof p.m ===
       // "function"`, `p.m.name`, `p.m.length` and `isConstructor(p.m) ===
