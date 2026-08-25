@@ -34,6 +34,7 @@ import { adjustRethrowDepth } from "./shared.js";
 import { definedFuncAt } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 import { emitUndefined } from "../expressions/late-imports.js";
 import { emitConstructReturnSelect } from "../construct-return-value.js"; // (#4464)
+import { buildThrowJsErrorInstrs } from "../js-errors.js";
 
 /**
  * (#2061) Compute the extra nesting depth between a finally-inline site and the
@@ -239,12 +240,92 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
 
   const hasPendingFinally = fctx.finallyStack && fctx.finallyStack.length > 0;
 
-  // Derived class constructors: per §10.2.1.3 step 13c, returning a non-object
-  // non-undefined value must throw TypeError. Detect this statically via the
-  // TS type of the expression BEFORE compiling, since compileExpression will
-  // otherwise silently coerce a primitive to the struct ref type — producing a
-  // null ref that traps at the caller's `new` site with an uncatchable
-  // "dereferencing a null pointer" Wasm error. (#825)
+  // Externref-backed derived constructors (the standalone native built-in
+  // families, e.g. `class C extends Object`) cannot use the nominal-struct
+  // return path below.  Their return operand is a genuine runtime value, so
+  // §10.2.1.3 must classify it after evaluating the expression: undefined is
+  // discarded in favour of `this`, an object/function replaces `this`, and a
+  // primitive throws TypeError.  The old static-only check missed JavaScript
+  // tests because allowJs gives an unannotated `return 42` the `any` type; it
+  // then returned the boxed number as the constructed instance. (#4450)
+  if (fctx.isDerivedConstructor && fctx.returnType?.kind === "externref") {
+    const selfIdx = fctx.localMap.get("this");
+    if (selfIdx !== undefined && stmt.expression) {
+      // Compile the operand first.  Both the expression and the typeof
+      // predicates may register late imports; the throw template must be
+      // captured only after those shifts have been flushed, otherwise its
+      // detached call index can point at the wrong helper (#1839).
+      const exprType = compileExpression(ctx, fctx, stmt.expression, { kind: "externref" });
+      if (exprType === null || exprType === undefined) {
+        fctx.body.push({ op: "local.get", index: selfIdx });
+      } else {
+        if (exprType.kind !== "externref") coerceType(ctx, fctx, exprType, { kind: "externref" });
+        const typeofUndefinedIdx = ensureLateImport(
+          ctx,
+          "__typeof_undefined",
+          [{ kind: "externref" }],
+          [{ kind: "i32" }],
+        );
+        const typeofObjectIdx = ensureLateImport(ctx, "__typeof_object", [{ kind: "externref" }], [{ kind: "i32" }]);
+        const typeofFunctionIdx = ensureLateImport(
+          ctx,
+          "__typeof_function",
+          [{ kind: "externref" }],
+          [{ kind: "i32" }],
+        );
+        flushLateImportShifts(ctx, fctx);
+        const throwInstrs = buildThrowJsErrorInstrs(
+          ctx,
+          "TypeError",
+          "Derived constructors may only return an object or undefined",
+          { flush: fctx },
+        );
+        const callInstr = (funcIdx: number | undefined): Instr[] =>
+          funcIdx === undefined ? [] : [{ op: "call", funcIdx }];
+        const returned = allocLocal(fctx, `__derived_ret_${fctx.locals.length}`, { kind: "externref" });
+        fctx.body.push({ op: "local.set", index: returned });
+        // `null` is not an Object for [[Construct]], even though its JS
+        // typeof is "object".  Check it before the typeof predicates.
+        fctx.body.push({ op: "local.get", index: returned });
+        fctx.body.push({ op: "ref.is_null" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: throwInstrs,
+          else: [
+            { op: "local.get", index: returned },
+            ...callInstr(typeofUndefinedIdx),
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              then: [{ op: "local.get", index: selfIdx }],
+              else: [
+                { op: "local.get", index: returned },
+                ...callInstr(typeofObjectIdx),
+                { op: "local.get", index: returned },
+                ...callInstr(typeofFunctionIdx),
+                { op: "i32.or" },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "externref" } },
+                  then: [{ op: "local.get", index: returned }],
+                  else: throwInstrs,
+                },
+              ],
+            },
+          ],
+        });
+      }
+    } else if (selfIdx !== undefined) {
+      fctx.body.push({ op: "local.get", index: selfIdx });
+    }
+    emitReturnTail(ctx, fctx, hasPendingFinally);
+    return;
+  }
+
+  // Other derived class constructors have nominal struct results. Detect
+  // statically-provable primitive returns before the struct coercion path;
+  // this preserves the existing bounded behaviour for that representation.
   if (fctx.isDerivedConstructor && stmt.expression) {
     const tsType = ctx.checker.getTypeAtLocation(stmt.expression);
     const primitiveFlags =
