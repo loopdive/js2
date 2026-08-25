@@ -518,6 +518,7 @@ function wrapAsyncReturn(ctx: CodegenContext, fctx: FunctionContext, resultType:
         { op: "i32.const", value: PROMISE_STATE_FULFILLED },
         { op: "local.get", index: valueLocal },
         { op: "ref.null.extern" },
+        { op: "ref.null.extern" },
         { op: "struct.new", typeIdx: promiseTypeIdx },
         { op: "extern.convert_any" },
       ],
@@ -606,11 +607,13 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
       { op: "i32.const", value: PROMISE_STATE_REJECTED },
       { op: "local.get", index: reasonLocal },
       { op: "ref.null.extern" },
+      { op: "ref.null.extern" },
       { op: "struct.new", typeIdx: promiseTypeIdx },
       { op: "extern.convert_any" },
     ];
     const catchAll: Instr[] = [
       { op: "i32.const", value: PROMISE_STATE_REJECTED },
+      { op: "ref.null.extern" },
       { op: "ref.null.extern" },
       { op: "ref.null.extern" },
       { op: "struct.new", typeIdx: promiseTypeIdx },

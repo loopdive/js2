@@ -2715,6 +2715,7 @@ function emitAsyncFrameEntry(
     fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
     fctx.body.push({ op: "ref.null.extern" });
     fctx.body.push({ op: "ref.null.extern" });
+    fctx.body.push({ op: "ref.null.extern" });
     fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   }
   fctx.body.push({ op: "local.set", index: resultPromiseLocal });
@@ -3214,6 +3215,7 @@ export function emitAsyncGenerator(ctx: CodegenContext, fctx: FunctionContext, d
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "struct.new", typeIdx: info.stateTypeIdx });
 
@@ -3253,6 +3255,7 @@ function emitAsyncGenNextHelper(ctx: CodegenContext, info: AsyncFrameInfo, promi
     { op: "local.set", index: fLocal },
     // fresh pending result promise
     { op: "i32.const", value: PROMISE_STATE_PENDING },
+    { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     { op: "struct.new", typeIdx: promiseTypeIdx },
@@ -3321,6 +3324,7 @@ function emitAsyncGenReturnThrowHelpers(ctx: CodegenContext, info: AsyncFrameInf
     { op: "ref.cast", typeIdx: info.stateTypeIdx },
     { op: "local.set", index: fLocal },
     { op: "i32.const", value: PROMISE_STATE_PENDING },
+    { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     { op: "struct.new", typeIdx: promiseTypeIdx },
