@@ -109,6 +109,7 @@ import {
 import { localGlobalIdx } from "../registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { NEW_GLOBAL_FALLTHROUGH, tryCompileBuiltinGlobalNew } from "./new-builtin-globals.js"; // (#3281 slice 1) built-in global ctor dispatch
+import { tryCompileBuiltinPrototypeConstructorNew } from "./builtin-prototype-constructor.js";
 import { NEW_INDEXED_FALLTHROUGH, tryCompileIndexedBuiltinNew } from "./new-indexed.js"; // (#3281 slice 2) indexed builtin ctor dispatch
 import { emitFnctorProtoGet, resolveUserFnctorName } from "./fnctor-prototype.js"; // (#2660 S3a) reconstruct `new F()` as $Object; (#3981) proto for a value-bound ctor
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js"; // (#2959 / #2903 R1) native new Promise(executor)
@@ -3828,6 +3829,9 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // which key on an identifier that could never carry one of these facts, and
   // before the class-expression / unknown-constructor paths that would
   // otherwise swallow the construction and answer `undefined`.
+  const builtinPrototypeConstructorResult = tryCompileBuiltinPrototypeConstructorNew(ctx, fctx, expr);
+  if (builtinPrototypeConstructorResult !== NEW_GLOBAL_FALLTHROUGH) return builtinPrototypeConstructorResult;
+
   {
     const nonCtorValue = tryNonConstructableNewTarget(ctx, fctx, expr);
     if (nonCtorValue !== undefined) return nonCtorValue;

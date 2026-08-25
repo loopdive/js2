@@ -254,14 +254,29 @@ describe.skipIf(!TEST262)("#4639 C2 — CANARY: the key on which C2 and #4637's 
 });
 
 describe.skipIf(!TEST262)("#4639 — measured residuals (see the issue's Residuals table)", () => {
-  // C1 rest: a FUNCTION object with own `valueOf`/`toString` (T11) and a
-  // replaced `Function.prototype.toString` (T8) are a different receiver family
-  // from the fnctor instance T10 fixes — a callable, not a `$Object`.
-  pinResidualRow("built-ins/String/S15.5.2.1_A1_T11.js", "C1 rest — function object with own valueOf/toString");
-  pinResidualRow("built-ins/String/S15.5.2.1_A1_T8.js", "C1 rest — replaced Function.prototype.toString");
-  // C3: the carrier has no [[Construct]] arm.
-  pinResidualRow("built-ins/String/prototype/constructor/S15.5.4.1_A1_T2.js", "C3 — carrier is not constructable");
-  pinResidualRow("built-ins/RegExp/prototype/S15.10.6.1_A1_T2.js", "C3 — carrier is not constructable");
+  // These two callable-receiver rows are green on current upstream; retain
+  // them as positive controls so the C1 partition does not regress.
+  pinRow("built-ins/String/S15.5.2.1_A1_T11.js", "C1 control — function object with own valueOf/toString");
+  pinRow("built-ins/String/S15.5.2.1_A1_T8.js", "C1 control — replaced Function.prototype.toString");
+  // C3: prototype constructor carriers now route through the intrinsic
+  // String/Object/Error constructor paths. The Error row also checks that a
+  // live Error.prototype.toString replacement remains visible on the newly
+  // constructed instance.
+  pinRow(
+    "built-ins/String/prototype/constructor/S15.5.4.1_A1_T2.js",
+    "C3 — String prototype constructor is constructable",
+  );
+  pinRow(
+    "built-ins/Object/prototype/constructor/S15.2.4.1_A1_T2.js",
+    "C3 — Object prototype constructor is constructable",
+  );
+  pinRow(
+    "built-ins/Error/prototype/constructor/S15.11.4.1_A1_T2.js",
+    "C3 — Error prototype constructor is constructable",
+  );
+  // RegExp's counterpart landed in upstream PR #4867 before this branch was
+  // rebased; keep it as a positive upstream control alongside our three rows.
+  pinRow("built-ins/RegExp/prototype/S15.10.6.1_A1_T2.js", "C3 — RegExp counterpart fixed upstream in PR #4867");
   // C4: `delete RegExp.prototype.global` is not observable, because the flag
   // ACCESSORS are deliberately not seeded into the brand companion — seeding
   // them regresses `tests/issue-2885.test.ts` by a mechanism the #2175 V2-S3b-1
@@ -270,6 +285,23 @@ describe.skipIf(!TEST262)("#4639 — measured residuals (see the issue's Residua
   pinResidualRow("built-ins/RegExp/prototype/global/S15.10.7.2_A9.js", "C4 — proto accessor delete not observable");
   // C5: the dynamic-pattern grammar cannot take 200 nested capture groups.
   pinResidualRow("built-ins/RegExp/S15.10.2.8_A3_T15.js", "C5 — dynamic pattern out of subset");
+});
+
+describe.skipIf(!TEST262)("#4639 C3 — prototype constructor identity controls", () => {
+  pinSource(
+    "builtin-prototype-constructors-direct-and-multihop",
+    `var s = new String.prototype.constructor("choosing one");
+assert.sameValue(s == "choosing one", true, "direct String.prototype.constructor");
+var objectCtor = Object.prototype.constructor;
+var objectAlias = objectCtor;
+var o = new objectAlias();
+assert.sameValue(o.constructor, Object, "multi-hop Object constructor");
+var errorCtor = Error.prototype.constructor;
+var errorAlias = errorCtor;
+var e = new errorAlias();
+assert.sameValue(e.constructor, Error, "multi-hop Error constructor");`,
+    "direct and immutable multi-hop aliases use the matching builtin constructor",
+  );
 });
 
 describe.skipIf(!TEST262)("#4639/#4637 — the C1-reachable function-valued-prototype TRAP (cross-lane)", () => {

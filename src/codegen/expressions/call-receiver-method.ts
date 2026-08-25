@@ -145,6 +145,7 @@ import {
   tryCompileStandaloneNumberPrototypeTail,
 } from "./standalone-primitive-tail.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
+import { tryCompileStandaloneErrorPrototypeToString } from "./error-prototype-tostring.js";
 import {
   directObjectMethodFuncIdx,
   emitKnownRestMethodArguments,
@@ -3206,8 +3207,9 @@ export function compileReceiverMethodCall(
     }
   }
 
-  // Fallback .toString() for any type not already handled above
-  // Handles: function.toString(), object.toString(), array.toString(), class instance.toString()
+  const errorPrototypeToString = tryCompileStandaloneErrorPrototypeToString(ctx, fctx, expr, propAccess);
+  if (errorPrototypeToString !== undefined) return errorPrototypeToString;
+
   if (
     propAccess.name.text === "toString" &&
     expr.arguments.length === 0 &&
