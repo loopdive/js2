@@ -3257,6 +3257,15 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   ordinaryToPrimitiveObjectDeclarations: Set<ts.VariableDeclaration>;
   /** Initializer-node twin of `ordinaryToPrimitiveObjectDeclarations`. */
   ordinaryToPrimitiveObjectLiterals: Set<ts.ObjectLiteralExpression>;
+  /**
+   * Exact module `var` declarations whose object-literal field reads a
+   * redeclaration-widened binding.  The field must remain a raw externref so
+   * an object wrapper/function written by a later `var` redeclaration keeps
+   * its identity through the literal carrier.
+   */
+  redeclaredObjectIdentityDeclarations: Set<ts.VariableDeclaration>;
+  /** Initializer-node twin of `redeclaredObjectIdentityDeclarations`. */
+  redeclaredObjectIdentityLiterals: Set<ts.ObjectLiteralExpression>;
   /** Module-global names whose direct non-specific spread initializer is an open object. */
   hostSpreadObjectGlobals: Set<string>;
   /**

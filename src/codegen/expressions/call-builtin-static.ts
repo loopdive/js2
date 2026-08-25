@@ -75,6 +75,7 @@ import {
   compileArrayLiteral,
   compileObjectLiteralAsExternref,
   materializeStructAsDynamicObject,
+  tryCompileOverriddenBuiltinProtoDescriptor,
 } from "../literals.js";
 import { emitCollectionIteratorVec, ensureMapGroupBy } from "../map-runtime.js";
 import {
@@ -2753,10 +2754,12 @@ export function compileBuiltinStaticCall(
     const gopdProtoBuiltin = resolveBuiltinProtoGopdReceiver(ctx, fctx, arg0, propLiteral, BUILTIN_CTOR_NAMES, (e) =>
       tracesToTypedArrayIntrinsicProto(ctx, e),
     );
-    // (#4200) `constructor` is OWN on every builtin prototype but is NOT a
-    // method, so it misses the member-CSV gate below and answered `undefined`.
-    // Synthesized from the same carrier module as the VALUE read, before that
-    // gate — see builtin-proto-constructor.ts.
+    if (tryCompileOverriddenBuiltinProtoDescriptor(ctx, fctx, expr, gopdProtoBuiltin, propLiteral)) {
+      return { kind: "externref" };
+    }
+
+    // (#4200) `constructor` is OWN on every builtin prototype but not in the
+    // member CSV; synthesize it before the static member arm.
     if (tryEmitBuiltinProtoConstructorDescriptor(ctx, fctx, gopdProtoBuiltin, propLiteral)) {
       return { kind: "externref" };
     }
@@ -2767,16 +2770,14 @@ export function compileBuiltinStaticCall(
       const protoGlue = protoBrand !== undefined ? getNativeProtoBuiltinGlue(ctx, protoBrand) : undefined;
       if (protoBrand !== undefined && protoGlue && protoGlue.memberCsv.split(",").includes(protoMember)) {
         const memberKind = protoGlue.memberKind(protoMember);
-        // (#2984 Phase 2) Un-wired members reify as identity-stable throwing
-        // closures (see native-proto-value-read.ts) so the descriptor is
-        // spec-shaped and `desc.value === <Builtin>.prototype.<m>` holds.
+        // (#2984 Phase 2) Un-wired members use identity-stable throwing
+        // closures so descriptors remain spec-shaped.
         const protoClosure = ensureStandaloneNativeMethodClosure(ctx, protoBrand, protoMember, memberKind, {
           refusalBodyFallback: true,
         });
         if (protoClosure) {
           if (memberKind === "getter") {
-            // Accessor descriptor: get=<closure>, set=undefined,
-            // {enumerable:false, configurable:true} (intrinsic accessor attrs).
+            // Accessor descriptor: get=<closure>, set=undefined, configurable, non-enumerable.
             const createAccIdx = ensureLateImport(
               ctx,
               "__create_accessor_descriptor",
@@ -2796,8 +2797,7 @@ export function compileBuiltinStaticCall(
               return { kind: "externref" };
             }
           } else {
-            // Data descriptor: value=<method closure>,
-            // {writable:true, enumerable:false, configurable:true}.
+            // Data descriptor: value=<method closure>, writable/configurable, non-enumerable.
             const createIdx = ensureLateImport(
               ctx,
               "__create_descriptor",

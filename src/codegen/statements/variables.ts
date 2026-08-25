@@ -695,6 +695,7 @@ function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type, decl?: ts.V
   const nativeLocal = nativeTypeOfDeclaration(ctx.checker, decl);
   if (nativeLocal) return nativeLocal;
   if (decl && ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) return { kind: "externref" };
+  if (ctx.standalone && decl && ctx.redeclaredObjectIdentityDeclarations.has(decl)) return { kind: "externref" };
   // (#4121) A mixed-assignment demotion is "could not rule out"; a positive
   // unboxing proof is "ruled in", and outranks it. See
   // `numericProofOverridesMixedCarrier`.
@@ -738,6 +739,7 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
   if (!ts.isIdentifier(decl.name)) return null;
   const name = decl.name.text;
   if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) return { kind: "externref" };
+  if (ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl)) return { kind: "externref" };
   // Names the main-body analysis already routed to a host / externref slot
   // (accessor literal, host-spread literal, growable / out-of-shape object).
   if (ctx.externrefAccessorVars.has(name)) return { kind: "externref" };
@@ -1759,6 +1761,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       ts.isIdentifier(decl.name) &&
       ctx.growableObjectLiteralVars.has(decl.name.text);
     const initIsOrdinaryToPrimitiveObjectLiteral = ctx.ordinaryToPrimitiveObjectDeclarations.has(decl);
+    const initIsRedeclaredObjectIdentityLiteral = ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl);
     // (#802 Slice A) A proto-receiver object literal is built as an open `$Object`
     // (externref) in compileObjectLiteral so `Object.setPrototypeOf(o, p)` &
     // inherited reads work; the local must be externref so reads/writes route
@@ -1775,6 +1778,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       initIsHostSpreadLiteral ||
       initIsGrowableObjectLiteral ||
       initIsOrdinaryToPrimitiveObjectLiteral ||
+      initIsRedeclaredObjectIdentityLiteral ||
       initIsProtoReceiverLiteral
     ) {
       ctx.externrefAccessorVars.add(name);

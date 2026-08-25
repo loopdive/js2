@@ -33,6 +33,13 @@ function selectNativeRegExpEngine(targetProfile: CompileTargetProfile) {
     : null;
 }
 
+function createRedeclaredObjectIdentityState() {
+  return {
+    redeclaredObjectIdentityDeclarations: new Set<ts.VariableDeclaration>(),
+    redeclaredObjectIdentityLiterals: new Set<ts.ObjectLiteralExpression>(),
+  };
+}
+
 export function createCodegenContext(
   mod: WasmModule,
   checker: ts.TypeChecker,
@@ -90,7 +97,6 @@ export function createCodegenContext(
     booleanPropertyNames: new Set(),
     noBrandShapeTypes: new Set(),
     fnctorReservedTypeIdx: new Map(), // #2773 S1 — up-front fnctor struct-type slots
-
     numImportFuncs: 0,
     jsStringImports: new Map(),
     currentFunc: null,
@@ -298,6 +304,7 @@ export function createCodegenContext(
     irWithOpenObjectTargetKeys: new Set(),
     ordinaryToPrimitiveObjectDeclarations: new Set(),
     ordinaryToPrimitiveObjectLiterals: new Set(),
+    ...createRedeclaredObjectIdentityState(),
     hostSpreadObjectGlobals: new Set(),
     externrefAccessorVars: new Set(),
     pendingMathMethods: new Set(),

@@ -47,6 +47,7 @@ import { isForeignEvalNode } from "./expressions/eval-source.js";
 import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-imports.js";
 import { resolveStructName } from "./expressions/misc.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "./expressions/proto-override.js";
+import { sourceOverridesBuiltinPrototypeMember } from "./builtin-proto-member-override.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
 import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { widenedVarKeyFromDecl } from "./widened-var-key.js";
@@ -560,6 +561,43 @@ export function compileObjectLiteralAsExternref(
 
   fctx.body.push({ op: "local.get", index: objLocal });
   return { kind: "externref" };
+}
+
+/** Route an exact builtin-prototype override through the companion-backed gOPD reader. */
+export function tryCompileOverriddenBuiltinProtoDescriptor(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  builtinName: string | undefined,
+  memberName: string | undefined,
+): boolean {
+  if (
+    !ctx.standalone ||
+    builtinName === undefined ||
+    memberName === undefined ||
+    !sourceOverridesBuiltinPrototypeMember(expr, builtinName, memberName)
+  ) {
+    return false;
+  }
+  const receiver = expr.arguments[0];
+  const key = expr.arguments[1];
+  if (receiver === undefined || key === undefined) return false;
+  const receiverType = compileExpression(ctx, fctx, receiver, { kind: "externref" });
+  if (receiverType === null) fctx.body.push({ op: "ref.null.extern" });
+  else if (receiverType.kind !== "externref") coerceType(ctx, fctx, receiverType, { kind: "externref" });
+  const keyType = compileExpression(ctx, fctx, key, { kind: "externref" });
+  if (keyType === null) fctx.body.push({ op: "ref.null.extern" });
+  else if (keyType.kind !== "externref") coerceType(ctx, fctx, keyType, { kind: "externref" });
+  const descriptorIdx = ensureLateImport(
+    ctx,
+    "__getOwnPropertyDescriptor",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (descriptorIdx !== undefined) fctx.body.push({ op: "call", funcIdx: descriptorIdx });
+  else fctx.body.push({ op: "ref.null.extern" });
+  return true;
 }
 
 /**
@@ -1564,6 +1602,7 @@ export function objectLiteralTakesStandaloneAnyObjectPath(
   ctx: CodegenContext,
   expr: ts.ObjectLiteralExpression,
 ): boolean {
+  if (ctx.standalone && ctx.redeclaredObjectIdentityLiterals.has(expr)) return true;
   if (
     // (#2542) `ctx.wasi` admitted so the PURE string-index arm below can fire on
     // the other host-free target; the #1901 any-context arm stays standalone-only,

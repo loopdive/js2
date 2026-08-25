@@ -11119,6 +11119,9 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
       if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) {
         initForcesExternref = true;
       }
+      if (ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl)) {
+        initForcesExternref = true;
+      }
       // (#802 Slice A) A proto-receiver object literal is built as an open
       // `$Object` (externref, standalone-only) in compileObjectLiteral; the
       // hoisted `var` slot must be externref to match (mirrors the let/const path
@@ -11874,11 +11877,14 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           ts.isObjectLiteralExpression(decl.initializer) &&
           ctx.growableObjectLiteralVars.has(name);
         const initIsOrdinaryToPrimitiveObjectLiteral = ctx.ordinaryToPrimitiveObjectDeclarations.has(decl);
+        const initIsRedeclaredObjectIdentityLiteral =
+          ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl);
         const initForcesExternref =
           initIsAccessorLiteral ||
           initIsHostSpreadLiteral ||
           initIsGrowableObjectLiteral ||
           initIsOrdinaryToPrimitiveObjectLiteral ||
+          initIsRedeclaredObjectIdentityLiteral ||
           initIsProtoReceiverLiteral;
         if (initForcesExternref) {
           ctx.externrefAccessorVars.add(name);

@@ -20,6 +20,7 @@ import {
   bindingHasIrPlannedOpenWithTarget,
   bindingUsesOnlyIrPlannedOpenObjectOperations,
 } from "./dynamic-with-shape.js";
+import { collectRedeclarationWidenedModuleVarNames } from "./redeclared-var-widening.js";
 
 function isUnboxedPrimitiveCarrier(type: ValType): boolean {
   return ["f64", "f32", "i64", "i32", "i16", "i8"].includes(type.kind);
@@ -871,6 +872,97 @@ function collectRepeatedOrdinaryToPrimitiveObjects(
 }
 
 /**
+ * Preserve the identity of object-literal fields fed by a redeclaration-
+ * widened module binding (#4491 residual).  A declaration such as
+ * `var x = true; ... var x = new Boolean(true)` is one externref binding after
+ * the redeclaration pass, but `{ prop: x }` still has a closed field whose
+ * carrier was inferred from the first initializer.  Route only those exact
+ * literal/declaration nodes through `$Object`; unrelated literals and locals
+ * keep their existing closed-shape lowering.
+ */
+function collectRedeclaredObjectIdentityLiterals(
+  ctx: CodegenContext,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+): void {
+  if (!ctx.standalone) return;
+  const widenedNames = collectRedeclarationWidenedModuleVarNames(ctx.oracle, sourceFile);
+  if (widenedNames.size === 0) return;
+
+  const widenedSymbols = new Set<ts.Symbol>();
+  const collectBindings = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) ===
+        0 &&
+      widenedNames.has(node.name.text) &&
+      isModuleScopedDeclaration(node)
+    ) {
+      const symbol = checker.getSymbolAtLocation(node.name);
+      if (symbol) widenedSymbols.add(symbol);
+    }
+    forEachChild(node, collectBindings);
+  };
+  collectBindings(sourceFile);
+
+  if (widenedSymbols.size === 0) return;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) ===
+        0 &&
+      isModuleScopedDeclaration(node) &&
+      node.type === undefined &&
+      node.initializer !== undefined &&
+      ts.isObjectLiteralExpression(node.initializer) &&
+      node.initializer.properties.length > 0
+    ) {
+      const readsWidenedBinding = node.initializer.properties.some((property) => {
+        const value = ts.isPropertyAssignment(property)
+          ? property.initializer
+          : ts.isShorthandPropertyAssignment(property)
+            ? property.name
+            : undefined;
+        if (!value || !ts.isIdentifier(value)) return false;
+        const symbol = checker.getSymbolAtLocation(value);
+        return symbol !== undefined && widenedSymbols.has(symbol);
+      });
+      if (readsWidenedBinding) {
+        ctx.redeclaredObjectIdentityDeclarations.add(node);
+        ctx.redeclaredObjectIdentityLiterals.add(node.initializer);
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(sourceFile);
+}
+
+/** True for a declaration hoisted to this source file's module/script scope. */
+function isModuleScopedDeclaration(node: ts.Node): boolean {
+  for (let parent = node.parent; parent !== undefined && !ts.isSourceFile(parent); parent = parent.parent) {
+    if (
+      ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isArrowFunction(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent) ||
+      ts.isConstructorDeclaration(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent) ||
+      ts.isModuleDeclaration(parent)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * (#2837) Detection pre-pass: mark variables initialized by a NON-EMPTY object
  * literal that later receive an OUT-OF-SHAPE property write, so `compileObjectLiteral`
  * (literals.ts) routes them through the recursive externref `$Object` builder
@@ -903,6 +995,7 @@ export function collectGrowableObjectLiterals(
   sourceFile: ts.SourceFile,
 ): void {
   collectRepeatedOrdinaryToPrimitiveObjects(ctx, checker, sourceFile);
+  collectRedeclaredObjectIdentityLiterals(ctx, checker, sourceFile);
   // Emergency rollback for the closed-outer-table refinement below. Keeping
   // this narrow switch makes the performance claim directly A/B measurable:
   // `0` restores the old "every depth-2 write opens the root" policy.

@@ -2271,6 +2271,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   function moduleInitForcesExternref(decl: ts.VariableDeclaration): boolean {
     if (!decl.initializer) return false;
     if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) return true;
+    if (ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl)) return true;
     // (#3365) Script top-level `this` is the host global object. The checker
     // describes it as the enormous structural `typeof globalThis` type, but
     // module init receives a genuine host externref. Keep the storage and all
