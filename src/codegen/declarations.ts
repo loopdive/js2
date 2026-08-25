@@ -2679,7 +2679,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       while (ts.isParenthesizedExpression(expr) || ts.isVoidExpression(expr)) {
         expr = expr.expression;
       }
-      if (ts.isNewExpression(expr) || ts.isCallExpression(expr)) {
+      if (ts.isNewExpression(expr) || ts.isCallExpression(expr) || ts.isTaggedTemplateExpression(expr)) {
         ctx.moduleInitStatements.push(stmt);
         continue;
       }
