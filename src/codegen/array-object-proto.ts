@@ -2505,9 +2505,15 @@ export function emitGeneratorPrototypeSingleton(ctx: CodegenContext, fctx: Funct
   if (brand === undefined) return null;
 
   ensureObjectRuntime(ctx);
+  // `%GeneratorPrototype%[@@toStringTag]` is an own ES2015 data property.
+  // Materialize it on this `$Object` singleton (rather than relying on the
+  // `$NativeProto` member CSV, which only models string-keyed members). The
+  // native iterator prototypes use the same symbol-id path.
+  const boxSymbolIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
   const newObjectIdx = ctx.funcMap.get("__new_plain_object");
   const defineIdx = ctx.funcMap.get("__defineProperty_value");
-  if (newObjectIdx === undefined || defineIdx === undefined) return null;
+  if (boxSymbolIdx === undefined || newObjectIdx === undefined || defineIdx === undefined) return null;
 
   const globalName = "__native_generator_prototype_obj";
   let globalIdx = ctx.builtinObjectGlobals.get(globalName);
@@ -2557,6 +2563,16 @@ export function emitGeneratorPrototypeSingleton(ctx: CodegenContext, fctx: Funct
       fctx.body.push({ op: "drop" }); // helper returns the target; discard
     }
     if (ok) {
+      // Symbol.toStringTag = "Generator", with {writable:false,
+      // enumerable:false, configurable:true} (§27.5.1.5).
+      fctx.body.push({ op: "local.get", index: objLocal });
+      fctx.body.push({ op: "i32.const", value: 4 }); // Symbol.toStringTag
+      fctx.body.push({ op: "call", funcIdx: boxSymbolIdx });
+      addStringConstantGlobal(ctx, "Generator");
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, "Generator"));
+      fctx.body.push({ op: "f64.const", value: 0x04 });
+      fctx.body.push({ op: "call", funcIdx: defineIdx });
+      fctx.body.push({ op: "drop" });
       fctx.body.push({ op: "local.get", index: objLocal });
       fctx.body.push({ op: "global.set", index: globalIdx });
     }

@@ -1912,6 +1912,42 @@ export function compileBuiltinStaticCall(
     if (es5Early) return es5Early;
     const arg0 = expr.arguments[0]!;
 
+    // (#4748) The native standalone generator-instance getPrototypeOf arm
+    // returns the intrinsic `%GeneratorPrototype%` singleton directly. The
+    // exact ES2015 bootstrap expression asks for one more prototype walk:
+    // `Object.getPrototypeOf(Object.getPrototypeOf(function*(){}()))`.
+    // Preserve that intrinsic result instead of sending the `$Object` GP
+    // singleton through its unmodeled `$proto` field (which otherwise yields
+    // null and makes the following `Symbol.toStringTag` read trap). Evaluate
+    // the inner call normally for source-order side effects, then reuse the
+    // same identity-stable GP singleton. Host/gc remains on its existing path.
+    if ((ctx.standalone || ctx.wasi) && ts.isCallExpression(arg0)) {
+      const innerCallee = arg0.expression;
+      if (
+        ts.isPropertyAccessExpression(innerCallee) &&
+        ts.isIdentifier(innerCallee.expression) &&
+        innerCallee.expression.text === "Object" &&
+        innerCallee.name.text === "getPrototypeOf" &&
+        arg0.arguments.length === 1
+      ) {
+        const innerArg = arg0.arguments[0]!;
+        let innerTypeName: string | undefined;
+        try {
+          innerTypeName = ctx.checker.getTypeAtLocation(innerArg).getSymbol()?.name;
+        } catch {
+          innerTypeName = undefined;
+        }
+        if (innerTypeName === "Generator") {
+          const innerType = compileExpression(ctx, fctx, arg0);
+          if (innerType) fctx.body.push({ op: "drop" });
+          const protoType = emitGeneratorPrototypeSingleton(ctx, fctx);
+          if (protoType) return protoType;
+          fctx.body.push({ op: "ref.null.extern" });
+          return { kind: "externref" };
+        }
+      }
+    }
+
     // (#2743 a) `Object.getPrototypeOf(arguments)` is %Object.prototype%
     // (§10.4.4), NOT the array prototype the vec representation would yield.
     // Emit the compiler's own `Object.prototype` value so ordinary objects and
