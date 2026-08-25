@@ -363,7 +363,7 @@ function isStringYieldExpression(ctx: CodegenContext, expr: ts.Expression | unde
  * the body (not descending into nested functions).
  *
  *  - all-numeric (or zero-yield) → `{kind:"f64"}` (the historical fast path);
- *  - all-string → the native `$AnyString` ref (#2171);
+ *  - all-string (including a direct `yield*` string) → the native `$AnyString` ref (#2171);
  *  - anything else (object yields, or a MIX of numeric/string/object) →
  *    `{kind:"externref"}`, the universal boxed-`any` carrier (#2864 F1). Every
  *    JS value coerces to externref host-free in standalone/WASI (numbers via the
@@ -383,8 +383,14 @@ function generatorElemValType(ctx: CodegenContext, decl: GeneratorDecl): ValType
     if (isFunctionLikeScope(node)) {
       return; // a yield here belongs to an inner generator
     }
-    if (ts.isYieldExpression(node) && !node.asteriskToken) {
-      if (isNumericExpression(ctx, node.expression)) sawNumeric = true;
+    if (ts.isYieldExpression(node)) {
+      // A direct `yield* "abc"` is lowered by the generic iterable cursor,
+      // whose values are native strings in the standalone iterator runtime.
+      // Include that operand in the carrier decision; otherwise the generator
+      // defaults to f64 and each delegated character becomes NaN.
+      if (node.asteriskToken) {
+        if (isStringYieldExpression(ctx, node.expression)) sawString = true;
+      } else if (isNumericExpression(ctx, node.expression)) sawNumeric = true;
       else if (isStringYieldExpression(ctx, node.expression)) sawString = true;
       else sawOther = true;
     }
@@ -900,12 +906,12 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         // (#2173 slice-2b) Not a native-gen call nor a numeric vec — try a
         // GENERIC iterable (`yield* arr.values()`, `yield* customIterable`).
         // Driven by the standalone-native `__iterator`/`__iterator_next` runtime
-        // (#2038) → zero host imports. Same STRING-outer bail as the other arms:
-        // the iterator value rides externref and re-yields through the OUTER
+        // (#2038) → zero host imports. The iterator value rides externref and re-yields through the OUTER
         // result struct's `value` field; an f64 outer unboxes it and a boxed-any
-        // outer passes it through, but a concrete-ref (string) outer has no
-        // repair seam — bail to the host path (the clean #680 refusal).
-        if (!elemIsString && isGenericIterableDelegate(ctx, subject)) {
+        // outer passes it through. A direct string operand is the one concrete
+        // ref case supported here: the iterator runtime returns native-string
+        // refs, and the emitter casts the externref back to that ref below.
+        if ((!elemIsString || isStringYieldExpression(ctx, subject)) && isGenericIterableDelegate(ctx, subject)) {
           // (#2864 R1) `const x = yield* it` — the delegation completion value
           // (§27.5.3.7) is the iterator's done-result `value`; for the common
           // array/`.values()` shape that is `undefined`. The done-arm delivers
@@ -1884,11 +1890,12 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
       }
       return true;
     }
-    // Iteration / drain consumers are native-safe ONLY over the direct call
-    // expression (state-struct ValType visible), NOT over an externref binding
-    // reference (#3468).
+    // A for-of consumer over a binding is native-safe once the binding slot
+    // preserves the generator state-struct type (the slot typer below mirrors
+    // the direct-call result). Keep spread/Array.from/destructure over a
+    // binding conservative: those drains still use the generic vec carrier.
+    if (ts.isForOfStatement(p) && p.expression === node && !p.awaitModifier) return true;
     if (!viaBinding) {
-      if (ts.isForOfStatement(p) && p.expression === node && !p.awaitModifier) return true;
       if (ts.isSpreadElement(p)) return true;
       if (isArrayFromArg(node)) return true;
     }
@@ -3620,8 +3627,8 @@ function compileState(
         }
 
         // Re-yielded value: unbox the externref `value` to the OUTER element type
-        // (f64 outer → native `__unbox_number` via coerceType; boxed-any outer →
-        // pass through). String outers bailed in `emitYield`.
+        // (f64 outer → native `__unbox_number`; string outer → guarded native
+        // string ref cast; boxed-any outer → pass through).
         const valueInstrs: Instr[] = [];
         {
           const savedC = fctx.body;
@@ -3629,6 +3636,8 @@ function compileState(
           fctx.body.push({ op: "local.get", index: valueLocal });
           if (info.elemValType.kind === "f64") {
             coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" }, "number");
+          } else if (info.elemValType.kind === "ref" || info.elemValType.kind === "ref_null") {
+            coerceType(ctx, fctx, { kind: "externref" }, info.elemValType);
           }
           fctx.body = savedC;
         }

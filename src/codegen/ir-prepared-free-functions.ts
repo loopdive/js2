@@ -314,6 +314,15 @@ function deferUnsealedPreparedComponents(
     syntheticCompiledArtifacts: compiledArtifactEvidence
       .filter((artifact) => artifact.artifactUnitId !== artifact.terminalOwnerUnitId)
       .map((artifact) => artifact.name),
+    ...(report.preparedCountedStringAppendReceipts
+      ? {
+          preparedCountedStringAppendReceipts: Object.freeze(
+            report.preparedCountedStringAppendReceipts.filter(
+              (receipt) => !deferredUnitIds.has(receipt.plan.ownerUnitId),
+            ),
+          ),
+        }
+      : {}),
   };
 }
 

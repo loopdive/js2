@@ -1611,6 +1611,42 @@ function compileForOfArrayFromLocal(
   compileForOfArray(ctx, fctx, stmt, undefined, { vecLocal, vecType });
 }
 
+/** #4700 — outer descriptors shadowed by a simple lexical for-of head. */
+interface ForOfHeadSaved {
+  name: string;
+  localMap: number | undefined;
+  tdz: number | undefined;
+  boxed: { refCellTypeIdx: number; valType: ValType } | undefined;
+  boxedTdz: { localIdx: number; refCellTypeIdx: number } | undefined;
+  isConst: boolean;
+}
+
+/** Restore the binding descriptors that surround a bounded lexical for-of. */
+function restoreForOfHead(fctx: FunctionContext, saved: ForOfHeadSaved): void {
+  fctx.localMap.delete(saved.name);
+  fctx.tdzFlagLocals?.delete(saved.name);
+  fctx.boxedCaptures?.delete(saved.name);
+  fctx.boxedTdzFlags?.delete(saved.name);
+  fctx.constBindings?.delete(saved.name);
+  if (saved.localMap !== undefined) fctx.localMap.set(saved.name, saved.localMap);
+  if (saved.tdz !== undefined) {
+    if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
+    fctx.tdzFlagLocals.set(saved.name, saved.tdz);
+  }
+  if (saved.boxed !== undefined) {
+    if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
+    fctx.boxedCaptures.set(saved.name, saved.boxed);
+  }
+  if (saved.boxedTdz !== undefined) {
+    if (!fctx.boxedTdzFlags) fctx.boxedTdzFlags = new Map();
+    fctx.boxedTdzFlags.set(saved.name, saved.boxedTdz);
+  }
+  if (saved.isConst) {
+    if (!fctx.constBindings) fctx.constBindings = new Set();
+    fctx.constBindings.add(saved.name);
+  }
+}
+
 // (#2769) Does this for-of need the in-bounds undefined/hole sentinel preserved
 // through the OUTER array-literal construction? True ONLY when the subject is a
 // *direct array literal* AND the for-of binding pattern has an element default
@@ -1636,6 +1672,47 @@ function compileForOfArray(
   // #1919 — snapshot so a non-array receiver rolls back body + locals + imports
   // before reporting. With `preVec` no compile happens, so rollback is a no-op.
   const snap = snapshotSpeculative(ctx, fctx);
+  // #4700 — a simple lexical ForDeclaration shadows the outer binding while
+  // the receiver is evaluated. Keep this reconstruction limited to the direct
+  // array/vec path; destructuring, collection materialization, and iterator
+  // paths remain outside the bounded TDZ slice.
+  const headDecl =
+    !preVec &&
+    !iterableOverride &&
+    ts.isVariableDeclarationList(stmt.initializer) &&
+    stmt.initializer.declarations.length === 1
+      ? stmt.initializer.declarations[0]!
+      : undefined;
+  const isLexicalIdentifierHead =
+    headDecl !== undefined &&
+    ts.isIdentifier(headDecl.name) &&
+    !!(stmt.initializer.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
+  const headName = isLexicalIdentifierHead ? (headDecl!.name as ts.Identifier).text : undefined;
+  const savedHead: ForOfHeadSaved | undefined =
+    headName === undefined
+      ? undefined
+      : {
+          name: headName,
+          localMap: fctx.localMap.get(headName),
+          tdz: fctx.tdzFlagLocals?.get(headName),
+          boxed: fctx.boxedCaptures?.get(headName),
+          boxedTdz: fctx.boxedTdzFlags?.get(headName),
+          isConst: fctx.constBindings?.has(headName) ?? false,
+        };
+  if (headName !== undefined) {
+    // The value slot only keeps identifier lowering well-typed; every receiver
+    // read checks the zero-initialized flag before that value can matter.
+    const headValueLocal = allocLocal(fctx, `__forof_hbind_${headName}_${fctx.locals.length}`, {
+      kind: "externref",
+    });
+    const headTdzLocal = allocLocal(fctx, `__forof_hflag_${headName}_${fctx.locals.length}`, { kind: "i32" });
+    fctx.localMap.set(headName, headValueLocal);
+    if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
+    fctx.tdzFlagLocals.set(headName, headTdzLocal);
+    fctx.boxedCaptures?.delete(headName);
+    fctx.boxedTdzFlags?.delete(headName);
+    fctx.constBindings?.delete(headName);
+  }
   // (#2769) Preserve in-bounds undefined/hole identity through the OUTER
   // array-literal construction for the spec'd for-of-dstr template family. The
   // flag is scoped tightly to the subject compile (set→compile→restore) so it
@@ -1648,6 +1725,7 @@ function compileForOfArray(
   const vecType = preVec ? preVec.vecType : compileExpression(ctx, fctx, iterableOverride ?? stmt.expression);
   if (preserveUndefElem) (ctx as any)._forOfPreserveUndefElem = prevPreserveUndefElem;
   if (!vecType || (vecType.kind !== "ref" && vecType.kind !== "ref_null")) {
+    if (savedHead) restoreForOfHead(fctx, savedHead);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array expression");
     return;
@@ -1657,6 +1735,7 @@ function compileForOfArray(
   const vecTypeIdx = vecType.typeIdx;
   const vecDef = ctx.mod.types[vecTypeIdx];
   if (!vecDef || vecDef.kind !== "struct") {
+    if (savedHead) restoreForOfHead(fctx, savedHead);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
@@ -1665,10 +1744,16 @@ function compileForOfArray(
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   const arrDef = ctx.mod.types[arrTypeIdx];
   if (!arrDef || arrDef.kind !== "array") {
+    if (savedHead) restoreForOfHead(fctx, savedHead);
     rollbackSpeculative(ctx, fctx, snap);
     reportError(ctx, stmt, "for-of requires an array type");
     return;
   }
+  // HeadEvaluation step 4: the receiver TDZ environment ends before the
+  // loop's per-iteration binding is installed. The emitted receiver reads
+  // retain the temporary locals/flag; only the compiler's active descriptors
+  // are restored here.
+  if (savedHead) restoreForOfHead(fctx, savedHead);
   const elemType = arrDef.element;
   // (#2934 1b) Packed i8/i16 typed-array elements (Uint8Array/Int8Array/
   // Int16Array/… standalone, #2593) are STORAGE-only types: a local declared
@@ -1943,6 +2028,9 @@ function compileForOfArray(
       });
     }
   }
+  // #4700 — lexical head bindings end with the loop and must not leak into
+  // later code in the surrounding function.
+  if (savedHead) restoreForOfHead(fctx, savedHead);
 }
 
 /**
