@@ -81,6 +81,7 @@ import {
   resolvesToGlobalFunctionAlias,
   tryStaticNewFunction,
 } from "./eval-inline.js";
+import { isRuntimeEvalCallableResultExpression } from "./runtime-eval-callable-result.js";
 import {
   coerceType,
   compileExpression,
@@ -2645,19 +2646,28 @@ function tryCompileNativeConstructFromValue(
   rawArgs: readonly ts.Expression[],
 ): ValType | undefined {
   if (!noJsHost(ctx) && ctx.targetProfile.semanticProviders !== "native-first") return undefined;
-  if (!ts.isIdentifier(calleeExpr)) return undefined;
+  const runtimeEvalCallableResult = isRuntimeEvalCallableResultExpression(ctx, calleeExpr);
+  if (!ts.isIdentifier(calleeExpr) && !runtimeEvalCallableResult) return undefined;
   // A compiled fnctor for this binding means the typed-struct path owns it.
-  if (ctx.funcConstructorMap.has(calleeExpr.text)) return undefined;
+  if (ts.isIdentifier(calleeExpr) && ctx.funcConstructorMap.has(calleeExpr.text)) return undefined;
   const runtimeFunctionAlias =
-    ctx.runtimeEvalCallableBoundaryEnabled === true && resolvesToGlobalFunctionAlias(calleeExpr, ctx.oracle);
-  const proxyValue = resolvesToNativeProxyValue(ctx, calleeExpr);
-  if (!runtimeFunctionAlias && !proxyValue && !resolvesToConstructableFunctionValue(ctx, calleeExpr)) return undefined;
+    ts.isIdentifier(calleeExpr) &&
+    ctx.runtimeEvalCallableBoundaryEnabled === true &&
+    resolvesToGlobalFunctionAlias(calleeExpr, ctx.oracle);
+  const proxyValue = ts.isIdentifier(calleeExpr) && resolvesToNativeProxyValue(ctx, calleeExpr);
+  if (
+    !runtimeFunctionAlias &&
+    !runtimeEvalCallableResult &&
+    !proxyValue &&
+    !resolvesToConstructableFunctionValue(ctx, calleeExpr)
+  )
+    return undefined;
 
   // A linked `%Function%` alias is a provider marker rather than a local
   // closure struct. Reserve the argv builders + generic apply bridge used by
   // the construct driver's exact marker arm; ordinary function values retain
   // the existing method-dispatch lowering.
-  if (runtimeFunctionAlias || proxyValue) {
+  if (runtimeFunctionAlias || runtimeEvalCallableResult || proxyValue) {
     if (proxyValue) ensureNativeProxyRuntime(ctx);
     ensureObjVecBuilders(ctx);
     reserveApplyClosure(ctx);
@@ -4416,35 +4426,20 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     }
   }
 
-  // (#3981) The class and fnctor arms above have declined: standalone/WASI
-  // `new <function value>(...)` now constructs natively instead of evaluating
-  // to null. Placed here, and not inside the `!className` block further down,
-  // because the checker often DOES give the callee an inferred symbol name — a
-  // JS `function F(){ this.x = 1 }` held in a `const` types `new C()` as `F`,
-  // which is not in `classSet`, so control skipped every arm and the whole
-  // expression fell out as `undefined`.
-  if (calleeIdent && !ctx.classSet.has(calleeIdent.text) && !(className && ctx.classSet.has(className))) {
-    const nativeCtor = tryCompileNativeConstructFromValue(ctx, fctx, calleeIdent, expr.arguments ?? []);
+  // (#3981) Native construct fallback for standalone/WASI function values,
+  // including direct Function(...).call/apply results. Keep this outside the
+  // `!className` block because inferred names can still identify function values.
+  if (
+    (calleeIdent && !ctx.classSet.has(calleeIdent.text) && !(className && ctx.classSet.has(className))) ||
+    isRuntimeEvalCallableResultExpression(ctx, expr.expression)
+  ) {
+    const nativeCtor = tryCompileNativeConstructFromValue(ctx, fctx, expr.expression, expr.arguments ?? []);
     if (nativeCtor) return nativeCtor;
   }
 
-  // (#2608) `new this(...)` inside a function-constructor (fnctor) STATIC method
-  // — e.g. acorn's `Parser.parse = function(...) { ... return new this(opts, src) }`.
-  // The #1679 ThisKeyword arm above only fires when the checker resolves `this`'s
-  // type symbol to a known fnctor className. For a `Fn.method = function(){…}`
-  // static method the checker resolves `this` to NO symbol (className undefined),
-  // so that arm is skipped and control reaches the generic dynamic-`new` path
-  // below, which throws "is not a constructor" — the receiver is a wrapped
-  // closure externref with no compiled `<Class>_new`. At runtime, though, `this`
-  // IS correctly bound to the constructor function-value (verified `this === Fn`),
-  // and that value is a WasmGC closure struct. So route it through the landed #56
-  // `__construct_closure` host bridge (same machinery as the `new <localFnValue>()`
-  // identifier arm above): the bridge detects `__is_closure`, wraps the closure
-  // with `_wrapCallableForHost` (constructible), and `Reflect.construct`s it with
-  // the args — no static fnctor resolution needed. JS-host only; standalone keeps
-  // the existing throwing path (a Wasm-native dynamic Construct of `this` is a
-  // separate effort). ONE terminal `flushLateImportShifts` (after the call) —
-  // never mid-emission (the #608/#794 index-corruption hazard).
+  // (#2608) Host-only `new this(...)` in a static fnctor method can lack a
+  // checker className; route its wrapped callable through the closure bridge.
+  // Standalone retains the existing dynamic Construct path and its semantics.
   if (
     expr.expression.kind === ts.SyntaxKind.ThisKeyword &&
     !noJsHost(ctx) &&
