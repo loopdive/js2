@@ -733,16 +733,18 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
         fctx.localMap.set(varName, savedCatchVarIdx);
         // (#4305) The slot and its cell metadata move together — see the helper.
         restoreCatchBoxedCapture(fctx, varName, savedCatchBoxed.get(varName));
-      } else if (fctx.name === "__module_init" && ctx.annexBModuleBindings?.has(varName)) {
-        // (#4182) With no prior local to restore, the catch parameter used to
-        // LEAK in the flat localMap past the catch scope, shadowing the
-        // module-scope Annex B live-binding global forever after the `try`
-        // (`annexB/language/global-code/*-no-skip-try`: post-try `typeof f`
-        // read the leaked catch local instead of the updated global). Delete
-        // it so resolution falls back to the module global. Scoped to the
-        // normally-empty `annexBModuleBindings` set — the general leak is
-        // pre-existing behavior other resolution paths may lean on.
+      } else {
+        // A catch parameter is block-scoped even when no outer local existed.
+        // Leaving the fresh catch slot in the flat localMap made a post-catch
+        // read resolve to the exception instead of the outer var/global. This
+        // is especially visible in Annex B's `catch (foo) { var foo = ... }`:
+        // the var initializer mutates the catch binding, but the outer `foo`
+        // must retain its pre-throw value. Drop both the binding and any cell
+        // metadata that a closure/direct-eval path may have installed inside
+        // the catch; with an outer slot the branch above restores both.
         fctx.localMap.delete(varName);
+        fctx.boxedCaptures?.delete(varName);
+        fctx.boxedTdzFlags?.delete(varName);
       }
     }
   }

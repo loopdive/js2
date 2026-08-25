@@ -247,6 +247,8 @@ const TRANSFERRED_STRING_PROTO_MEMBERS = [
   "trim",
   "trimStart",
   "trimEnd",
+  "trimLeft",
+  "trimRight",
   "indexOf",
   "lastIndexOf",
   "charCodeAt",

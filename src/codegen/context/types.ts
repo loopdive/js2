@@ -866,6 +866,13 @@ export interface FunctionContext {
    * test262 failures in `function-code/10.4.3-1-*` and `Array/prototype/*`).
    */
   readsCurrentThis?: boolean;
+  /**
+   * Receiver local used only while constructing a lexical arrow capture in a
+   * frame whose own `this` is represented by `__current_this` rather than a
+   * normal `localMap` binding.  It is deliberately separate from the `this`
+   * binding so reads that occur before the first arrow remain unchanged.
+   */
+  lexicalThisCaptureLocal?: number;
   /** While lowering a compile-time direct-eval Script, an otherwise absent
    * receiver in a sloppy caller denotes the realm global object. This is
    * scoped to the foreign eval AST so ordinary strict/direct-call `this`
