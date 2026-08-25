@@ -58,9 +58,22 @@ export function emitLocalTdzInit(fctx: FunctionContext, name: string): void {
  * If the TDZ flag is 0 (uninitialized), throw a ReferenceError.
  * No-op if the variable doesn't have a TDZ flag.
  */
-export function emitTdzCheck(ctx: CodegenContext, fctx: FunctionContext, name: string): void {
+export function emitTdzCheck(ctx: CodegenContext, fctx: FunctionContext, name: string, throwJsError = false): void {
   const flagIdx = ctx.tdzGlobals.get(name);
   if (flagIdx === undefined) return;
+
+  if (!throwJsError) {
+    const tagIdx = ensureExnTag(ctx);
+    fctx.body.push({ op: "global.get", index: flagIdx });
+    fctx.body.push({ op: "i32.eqz" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
+      else: [],
+    });
+    return;
+  }
 
   const msg = `${name} is not defined`;
   // Keep this check's error payload aligned with local TDZ checks. A null

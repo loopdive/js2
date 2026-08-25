@@ -115,3 +115,11 @@ used for the checks above.
 The repository pre-push hook was exercised against the merged commit with the
 same pinned-path runtime and passed typecheck, lint, format, oracle/coercion
 ratchets, numeric-local parity, and issue-integrity gates.
+
+After the initial PR run, the advisory cross-backend gate exposed that using
+the real-JS-error form for every module TDZ check could shift a module-global
+read inside an unrelated try/finally body. Current main passed the same corpus
+case. The repair keeps the legacy generic TDZ path unchanged and opts into the
+real `ReferenceError` payload only from the for-of assignment-target guard.
+The formerly failing `control/try-finally-early-exit` parity case passes, and
+the complete issue matrix above remains green in both lanes.

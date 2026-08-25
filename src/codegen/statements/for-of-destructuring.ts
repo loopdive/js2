@@ -70,7 +70,7 @@ function emitForOfAssignmentTargetGuard(ctx: CodegenContext, fctx: FunctionConte
       emitStaticTdzThrow(ctx, fctx, name);
       return true;
     }
-    if (tdzResult === "check") emitTdzCheck(ctx, fctx, name);
+    if (tdzResult === "check") emitTdzCheck(ctx, fctx, name, true);
   }
   const declaration = ctx.oracle.variableDeclarationOf(target);
   const isConst =
