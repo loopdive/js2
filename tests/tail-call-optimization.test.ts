@@ -8,7 +8,11 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
     );
   }
-  const { instance } = await WebAssembly.instantiate(result.binary, { env: {} });
+  const imports = result.importObject ?? {};
+  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  (imports as WebAssembly.Imports & { __setInstance?: (instance: WebAssembly.Instance) => void }).__setInstance?.(
+    instance,
+  );
   return (instance.exports as any)[fn](...args);
 }
 
