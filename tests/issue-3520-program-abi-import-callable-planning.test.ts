@@ -25,8 +25,71 @@ function fixture(module: WasmModule, entryFile = source()) {
   return { ctx, inventory, session };
 }
 
+type CallableImportRegistry = NonNullable<ReturnType<typeof fixture>["ctx"]["programAbiCallableImports"]>;
+type PreparedImportDescriptor = ReturnType<CallableImportRegistry["describePrepared"]>;
+
+function sessionPublicationCardinalities(session: ProgramAbiSession) {
+  const state = session as unknown as Record<string, ReadonlyMap<unknown, unknown>>;
+  return ["drafts", "draftOrderOwners", "locators", "structuralReferenceKeys", "callableTypeContracts"].map(
+    (key) => state[key]!.size,
+  );
+}
+
+function importPublicationSnapshot(registry: CallableImportRegistry, session: ProgramAbiSession) {
+  const state = registry as unknown as {
+    readonly sealedEntries: readonly { readonly value: Import }[] | undefined;
+    readonly plannedByImport: ReadonlyMap<Import, unknown>;
+    readonly plannedValue: ReadonlyMap<string, unknown> | undefined;
+  };
+  return {
+    sealedEntries: state.sealedEntries?.map((entry) => entry.value) ?? null,
+    plannedImports: [...state.plannedByImport.keys()],
+    plannedValueSize: state.plannedValue?.size ?? null,
+    session: sessionPublicationCardinalities(session),
+  };
+}
+
+function withoutImportPublication<T>(registry: CallableImportRegistry, session: ProgramAbiSession, action: () => T): T {
+  const before = importPublicationSnapshot(registry, session);
+  try {
+    return action();
+  } finally {
+    expect(importPublicationSnapshot(registry, session)).toEqual(before);
+  }
+}
+
+function describePreparedImportsWithoutPublishing(
+  registry: CallableImportRegistry,
+  session: ProgramAbiSession,
+  values: ReadonlySet<Import>,
+): PreparedImportDescriptor {
+  return withoutImportPublication(registry, session, () => registry.describePrepared(values));
+}
+
+function expectPreparedImportFailureWithoutPublishing(
+  registry: CallableImportRegistry,
+  session: ProgramAbiSession,
+  action: () => unknown,
+): void {
+  expect(() => withoutImportPublication(registry, session, action)).toThrowError(ProgramAbiInvariantError);
+}
+
 function functionImport(module: string, name: string, typeIdx: number): Import {
   return { module, name, desc: { kind: "func", typeIdx } };
+}
+
+function preparedImportFixture(
+  imports: readonly Import[],
+  types: readonly TypeDef[] = [{ kind: "func", params: [], results: [] }],
+) {
+  const module = createEmptyModule();
+  module.types.push(...types);
+  module.imports.push(...imports);
+  const result = fixture(module);
+  catalogProgramAbiCallableImports(result.ctx);
+  const registry = result.ctx.programAbiCallableImports;
+  if (!registry) throw new Error("missing callable-import registry");
+  return { ...result, module, registry };
 }
 
 function structuralKey(module: string, field: string, adapterName = field): string {
@@ -234,6 +297,94 @@ describe("#3520 production imported-callable Program ABI planning", () => {
     expect(abi.entries().map((entry) => entry.id)).toEqual([retainedId]);
   });
 
+  it("describes a unique import population without publishing and preserves compatibility output", () => {
+    const makePreparedFixture = () => {
+      const alpha = functionImport("env", "alpha", 0);
+      const zeta = functionImport("env", "zeta", 0);
+      return { ...preparedImportFixture([zeta, alpha]), alpha, zeta };
+    };
+
+    const explicit = makePreparedFixture();
+    const descriptor = describePreparedImportsWithoutPublishing(
+      explicit.registry,
+      explicit.session,
+      new Set([explicit.alpha]),
+    );
+    expect(Object.isFrozen(descriptor)).toBe(true);
+    expect(Object.isFrozen(explicit.alpha)).toBe(false);
+    expect(Object.isFrozen(explicit.module.types[0])).toBe(false);
+
+    // Unique exact objects may move numerically without changing the sorted
+    // structural denominator or any descriptor-owned contract.
+    explicit.module.imports = [explicit.alpha, explicit.zeta];
+    const beforeCurrentness = importPublicationSnapshot(explicit.registry, explicit.session);
+    explicit.registry.assertPreparedDescriptorCurrent(descriptor);
+    expect(importPublicationSnapshot(explicit.registry, explicit.session)).toEqual(beforeCurrentness);
+    explicit.registry.publishPreparedDescriptor(descriptor);
+    const explicitAlphaId = explicit.registry.preparedDescriptorBindingId(descriptor, explicit.alpha);
+    expect(explicitAlphaId).toBeDefined();
+    const explicitCatalog = planProgramAbiCallableImports(explicit.registry.ctx);
+    const explicitEntries = explicit.session.publish(explicit.module).abi.entries();
+
+    const compatibility = makePreparedFixture();
+    compatibility.module.imports = [compatibility.alpha, compatibility.zeta];
+    compatibility.registry.planPrepared(new Set([compatibility.alpha]));
+    const compatibilityCatalog = planProgramAbiCallableImports(compatibility.registry.ctx);
+    const compatibilityEntries = compatibility.session.publish(compatibility.module).abi.entries();
+
+    expect([...explicitCatalog]).toEqual([...compatibilityCatalog]);
+    expect(explicitEntries).toEqual(compatibilityEntries);
+  });
+
+  it("rejects invalid import descriptions and one-fact descriptor drift without publishing", () => {
+    {
+      const present = functionImport("env", "present", 0);
+      const { registry, session } = preparedImportFixture([present]);
+      expectPreparedImportFailureWithoutPublishing(registry, session, () =>
+        registry.describePrepared(new Set([functionImport("env", "present", 0)])),
+      );
+    }
+
+    {
+      const repeated = functionImport("env", "repeated", 0);
+      const { registry, session } = preparedImportFixture([repeated, repeated]);
+      expectPreparedImportFailureWithoutPublishing(registry, session, () =>
+        registry.describePrepared(new Set([repeated])),
+      );
+    }
+
+    const mutations: readonly [string, (module: WasmModule, selected: Import) => void][] = [
+      ["denominator", (module) => module.imports.push(functionImport("late", "added", 0))],
+      ["locator", (module, selected) => (module.imports[0] = { ...selected, desc: { ...selected.desc } })],
+      ["structural key", (_module, selected) => (selected.name = "renamed")],
+      ["signature", (_module, selected) => (selected.desc = { kind: "func", typeIdx: 1 })],
+    ];
+    for (const [, mutate] of mutations) {
+      const selected = functionImport("env", "selected", 0);
+      const { module, registry, session } = preparedImportFixture(
+        [selected],
+        [
+          { kind: "func", params: [], results: [] },
+          { kind: "func", params: [{ kind: "i32" }], results: [] },
+        ],
+      );
+      const descriptor = describePreparedImportsWithoutPublishing(registry, session, new Set([selected]));
+      mutate(module, selected);
+      expectPreparedImportFailureWithoutPublishing(registry, session, () =>
+        registry.publishPreparedDescriptor(descriptor),
+      );
+    }
+
+    const first = functionImport("env", "duplicate", 0);
+    const second = functionImport("env", "duplicate", 0);
+    const { module, registry, session } = preparedImportFixture([first, second]);
+    const descriptor = describePreparedImportsWithoutPublishing(registry, session, new Set([first, second]));
+    module.imports = [second, first];
+    expectPreparedImportFailureWithoutPublishing(registry, session, () =>
+      registry.publishPreparedDescriptor(descriptor),
+    );
+  });
+
   it("prepares one import from a stable pre-DCE denominator and gives later imports trailing identities", () => {
     const module = createEmptyModule();
     module.types.push({ kind: "func", params: [], results: [] });
@@ -258,6 +409,12 @@ describe("#3520 production imported-callable Program ABI planning", () => {
     const late = functionImport("late", "after-seal", 0);
     const lateKey = structuralKey("late", "after-seal");
     module.imports = [late, required];
+    const sealedDescriptor = describePreparedImportsWithoutPublishing(importRegistry, session, new Set([required]));
+    expect(importRegistry.preparedDescriptorBindingId(sealedDescriptor, required)).toBe(requiredId);
+    const beforeCurrentness = importPublicationSnapshot(importRegistry, session);
+    importRegistry.assertPreparedDescriptorCurrent(sealedDescriptor);
+    importRegistry.publishPreparedDescriptor(sealedDescriptor);
+    expect(importPublicationSnapshot(importRegistry, session)).toEqual(beforeCurrentness);
     const finalCatalog = planProgramAbiCallableImports(ctx);
     const lateId = finalCatalog.get(lateKey)!;
     expect(finalCatalog.get(requiredKey)).toBe(requiredId);
@@ -275,6 +432,37 @@ describe("#3520 production imported-callable Program ABI planning", () => {
     const { abi } = session.publish(module);
     expect(abi.resolveFinalIndex(lateId)).toEqual({ space: "function", index: 0 });
     expect(abi.resolveFinalIndex(requiredId)).toEqual({ space: "function", index: 1 });
+  });
+
+  it("leaves an abandoned preview outside the post-DCE denominator and rejects its stale publish", () => {
+    const run = (preview: boolean) => {
+      const dead = functionImport("env", "a-dead", 0);
+      const retained = functionImport("env", "z-retained", 0);
+      const { ctx, module, registry, session } = preparedImportFixture([dead, retained]);
+      const descriptor = preview
+        ? describePreparedImportsWithoutPublishing(registry, session, new Set([retained]))
+        : undefined;
+
+      module.imports = [retained];
+      if (descriptor) {
+        expectPreparedImportFailureWithoutPublishing(registry, session, () =>
+          registry.publishPreparedDescriptor(descriptor),
+        );
+      }
+      const catalog = planProgramAbiCallableImports(ctx);
+      const retainedId = catalog.get(structuralKey("env", "z-retained"))!;
+      return {
+        catalog: [...catalog],
+        draft: session.getDraft(retainedId),
+        entries: session.publish(module).abi.entries(),
+      };
+    };
+
+    const previewed = run(true);
+    const control = run(false);
+    expect(previewed).toEqual(control);
+    expect(previewed.draft?.structuralOrder.derivedOrdinal).toBe(0);
+    expect(previewed.catalog).toHaveLength(1);
   });
 
   it("gives allocator-distinct duplicate imports unique plans while preserving one structural resolver target", () => {
