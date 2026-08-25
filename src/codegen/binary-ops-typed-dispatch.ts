@@ -302,8 +302,15 @@ export function compileTypedBinaryDispatch(
         // byte-identical.
         if (ctx.standalone === true || ctx.wasi === true) {
           const refSideType = leftIsRef ? leftType : rightType;
+          // Destructuring declaration locals use the nullable carrier even
+          // when the value read from the vector is known to be present.  Keep
+          // the tag-aware path for both carrier spellings; limiting this to
+          // `ref` made `for (const [x] of [[null, 0, false]])` compare through
+          // raw reference identity and lose every primitive value (#4447).
           const refSideIsAnyValue =
-            ctx.anyValueTypeIdx >= 0 && refSideType.kind === "ref" && refSideType.typeIdx === ctx.anyValueTypeIdx;
+            ctx.anyValueTypeIdx >= 0 &&
+            (refSideType.kind === "ref" || refSideType.kind === "ref_null") &&
+            refSideType.typeIdx === ctx.anyValueTypeIdx;
           const otherTsTypeAV = leftIsRef ? rightTsType : leftTsType;
           const otherBoxableAV = otherType.kind === "externref" || otherType.kind === "i32" || otherType.kind === "f64";
           if (refSideIsAnyValue && otherBoxableAV) {

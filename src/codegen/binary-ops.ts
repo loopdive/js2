@@ -646,7 +646,18 @@ export function compileBinaryExpression(
     const leftIsNullKeyword = expr.left.kind === ts.SyntaxKind.NullKeyword;
     const leftIsUndefinedId = ts.isIdentifier(expr.left) && expr.left.text === "undefined";
     const leftIsNullish = leftIsNullKeyword || leftIsUndefinedId;
-    if (rightIsNullish || leftIsNullish) {
+    // A declaration binding whose element type is a heterogeneous primitive
+    // union is physically a nullable `$AnyValue`.  Do not consume its
+    // null/undefined comparison in the generic ref-null shortcut: tag 0 is
+    // boxed null and `ref.is_null` would report false.  Let the AnyValue
+    // equality dispatch below compare the carrier tag instead (#4447).
+    const nullishComparedExpr = rightIsNullish ? expr.left : expr.right;
+    const nullishComparedType = ctx.checker.getTypeAtLocation(nullishComparedExpr);
+    const nullishUnionCarrier =
+      ctx.unionAnyRep &&
+      (isHeterogeneousPrimitiveUnion(nullishComparedType) ||
+        isDeclaredHeterogeneousPrimitiveUnion(ctx.checker, nullishComparedExpr));
+    if ((rightIsNullish || leftIsNullish) && !nullishUnionCarrier) {
       // Determine which side is the literal null/undefined and which is the expression
       const nonNullExpr = rightIsNullish ? expr.left : expr.right;
 
@@ -1038,7 +1049,13 @@ export function compileBinaryExpression(
     const declaredHetUnion = (node: ts.Expression): boolean =>
       ctx.unionAnyRep && isDeclaredHeterogeneousPrimitiveUnion(ctx.checker, node);
     const nullishFlags = ts.TypeFlags.Undefined | ts.TypeFlags.Null | ts.TypeFlags.Void;
-    const eqSideOk = (t: ts.Type): boolean => (t.flags & nullishFlags) === 0;
+    const eqSideOk = (t: ts.Type): boolean =>
+      (t.flags & nullishFlags) === 0 ||
+      // A nullable heterogeneous union is still represented by `$AnyValue`;
+      // its tag-0/null case must stay in the same equality dispatch as the
+      // numeric/boolean/string cases.  The null shortcut above deliberately
+      // skipped this shape (#4447).
+      (ctx.unionAnyRep && isHeterogeneousPrimitiveUnion(t));
     const unionRepEqInvolved =
       (isUnionAnyRepUse(leftTsType) ||
         isUnionAnyRepUse(rightTsType) ||

@@ -30,7 +30,14 @@ import { ensureExternRestObject } from "./object-runtime.js";
 import { emitLocalTdzInit } from "./statements/tdz.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { holeToUndefinedInstrs } from "./array-holes.js"; // (#2001 S1)
-import { emitIsUndefinedSingletonExternAt, undefinedExternInstrs, undefinedSingletonActive } from "./any-helpers.js"; // (#2106 S1)
+import {
+  emitIsUndefinedSingletonExternAt,
+  ensureAnyFromExternHelper,
+  ensureAnyHelpers,
+  isAnyValue,
+  undefinedExternInstrs,
+  undefinedSingletonActive,
+} from "./any-helpers.js"; // (#2106 S1)
 import {
   coerceType,
   compileExpression,
@@ -56,6 +63,57 @@ import {
   syncDestructuredLocalsToGlobals,
   tryEmitArrayProtoIteratorReadDrive,
 } from "./statements/destructuring.js";
+
+/**
+ * Preserve the runtime JS tag when a heterogeneous binding local uses the
+ * standalone `$AnyValue` carrier but the source vector stores externrefs.
+ *
+ * `coerceType(externref, $AnyValue)` intentionally keeps the historical
+ * tag-5 wrapper for generic dynamic values.  Array binding is different: its
+ * externref element was already boxed by the literal's static type, so
+ * wrapping a boxed number/boolean again turns it into a string-like tag-5
+ * value.  Null also needs an explicit tag-0 box because `null` is represented
+ * by a null externref at this boundary.  This is the narrow bridge used by
+ * `destructureParamArray`; all other externref→AnyValue coercions retain their
+ * existing policy.
+ */
+export function coerceArrayBindingExternrefToAnyValue(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  from: ValType,
+  to: ValType,
+): boolean {
+  if (
+    !ctx.unionAnyRep ||
+    !(ctx.standalone || ctx.wasi) ||
+    from.kind !== "externref" ||
+    !isAnyValue(to, ctx) ||
+    ctx.anyValueTypeIdx < 0
+  ) {
+    return false;
+  }
+
+  addUnionImports(ctx);
+  ensureAnyHelpers(ctx);
+  const honestIdx = ensureAnyFromExternHelper(ctx, { forceHonest: true });
+  const boxNullIdx = ctx.funcMap.get("__any_box_null");
+  if (honestIdx === undefined || boxNullIdx === undefined) return false;
+
+  const sourceLocal = allocLocal(fctx, `__dparam_any_src_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: sourceLocal });
+  fctx.body.push({ op: "local.get", index: sourceLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "ref_null", typeIdx: ctx.anyValueTypeIdx } },
+    then: [{ op: "call", funcIdx: boxNullIdx }],
+    else: [
+      { op: "local.get", index: sourceLocal },
+      { op: "call", funcIdx: honestIdx },
+    ],
+  });
+  return true;
+}
 
 /**
  * (#3241/#4397) Emit the native-provider object-rest CopyDataProperties
@@ -2401,7 +2459,9 @@ export function destructureParamArray(
     // Coerce array element type to local's declared type if they differ (#658)
     const vecLocalType = getLocalType(fctx, localIdx);
     if (vecLocalType && !valTypesMatch(elemType, vecLocalType)) {
-      coerceType(ctx, fctx, elemType, vecLocalType);
+      if (!coerceArrayBindingExternrefToAnyValue(ctx, fctx, elemType, vecLocalType)) {
+        coerceType(ctx, fctx, elemType, vecLocalType);
+      }
     }
     fctx.body.push({ op: "local.set", index: localIdx });
     if (isDecl) emitLocalTdzInit(fctx, localName);
