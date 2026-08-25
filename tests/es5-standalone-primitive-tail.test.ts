@@ -50,6 +50,12 @@ describe("ES5 standalone primitive-wrapper tail", () => {
     ).resolves.toBe("[object Number]");
   });
 
+  it("inherits Object.prototype.toString after deleting String.prototype.toString", async () => {
+    await expect(runString('delete String.prototype.toString; return (new String("value")).toString();')).resolves.toBe(
+      "[object String]",
+    );
+  });
+
   it("tags an Object.getPrototypeOf(new Number(...)) alias as Number", async () => {
     await expect(
       runString(
