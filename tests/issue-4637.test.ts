@@ -428,7 +428,7 @@ describe("#4637 — measured residuals (see the issue's Residuals table for owne
     ).toBe(1);
   });
 
-  it.fails("an `undefined`-initialized var can hold an object (preventExtensions/15.2.3.10-2)", async () => {
+  it("an `undefined`-initialized var can hold an object (preventExtensions/15.2.3.10-2)", async () => {
     // NOT a `preventExtensions` bug: `Object.preventExtensions(o) === o` holds
     // and `var b; b = Object.preventExtensions(o)` works. `var a = undefined`
     // types the SLOT from the initializer, so the later object write is lost.
