@@ -345,7 +345,11 @@ import {
 import { ensureAnyHelpers, undefinedExternInstrs } from "../any-helpers.js";
 import { emitSymbolToString, ensureSymbolRegistry } from "../symbol-native.js";
 import { resolveStructName } from "./misc.js";
-import { tryCompileDateCallWithoutNew, tryCompileErrorCtorCallWithoutNew } from "./new-builtin-globals.js";
+import {
+  tryCompileDateCallWithoutNew,
+  tryCompileErrorCtorCallWithoutNew,
+  tryCompileWeakSetCallWithoutNew,
+} from "./new-builtin-globals.js";
 import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-super.js";
 import { compileIdentifierCall } from "./call-identifier.js";
 import { compileBuiltinStaticCall, tryCompileFromCharCodeFamilyReflective } from "./call-builtin-static.js";
@@ -6499,6 +6503,12 @@ function compileCallExpression(
   // `Date.parse(...)` illegal-cast TRAPPED.
   {
     const r = tryCompileDateCallWithoutNew(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+
+  // (#4732) `WeakSet(...)` has no [[Call]] — §23.4.1.1 step 1 requires `new`.
+  {
+    const r = tryCompileWeakSetCallWithoutNew(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
 
