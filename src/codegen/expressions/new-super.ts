@@ -74,6 +74,7 @@ import { stringConstantExternrefInstrs, ensureAnyToStringHelper } from "../nativ
 import { MAX_NATIVE_CONSTRUCT_ARITY, reserveNativeConstructDriver } from "../native-construct.js"; // (#3981)
 import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2
+import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import { compileStandaloneRegExpConstructor, isGlobalRegExpConstructorExpression } from "../regexp-standalone.js";
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
@@ -2896,7 +2897,7 @@ function emitDynamicNewFallback(
   // deepCyclicCopy) constructing a dynamic ctor value skips the tag dispatch
   // entirely (the tag stays -1) and lands directly on the bridge. Computed
   // up-front so the zero-candidate refusal below can consult it.
-  const useConstructClosureBase = !noJsHost(ctx) && resolvesToDynamicAnyCtorValue(ctx, calleeExpr);
+  const useConstructClosureBase = usesHostConstructClosureBase(ctx, calleeExpr);
   if (candidates.length === 0 && !useConstructClosureBase) return false;
 
   const rawArgs = expr.arguments ?? [];
@@ -3709,6 +3710,16 @@ function emitCoerceElemToAnyrefInto(ctx: CodegenContext, fctx: FunctionContext, 
   for (const instr of scratch) out.push(instr);
 }
 
+function isDefaultExpressionImport(ctx: CodegenContext, expression: ts.Expression): expression is ts.Identifier {
+  return ts.isIdentifier(expression) && resolveDefaultExpressionImportGlobal(ctx, expression) !== undefined;
+}
+
+function usesHostConstructClosureBase(ctx: CodegenContext, expression: ts.Expression): boolean {
+  return (
+    !noJsHost(ctx) && (isDefaultExpressionImport(ctx, expression) || resolvesToDynamicAnyCtorValue(ctx, expression))
+  );
+}
+
 function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: ts.NewExpression): ValType | null {
   // (#3927 per-type layouts) Publish the allocation-label hint when this `new`
   // is a recorded label site of a split family. BEFORE the arguments compile —
@@ -3756,6 +3767,23 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   }
   if (ts.isFunctionExpression(unwrappedLiteralCtor)) {
     return compileNewFunctionExpression(ctx, fctx, expr, unwrappedLiteralCtor);
+  }
+
+  // A default-import expression cell is a runtime snapshot, not a static alias
+  // to whichever declaration currently shares its spelling. Resolve it before
+  // class/fnctor name dispatch. The JS-host lane performs ordinary dynamic
+  // [[Construct]] through the established bridge; host-free builds refuse
+  // explicitly until their dynamic construct carrier accepts this exact cell.
+  if (isDefaultExpressionImport(ctx, unwrappedLiteralCtor)) {
+    if (noJsHost(ctx)) {
+      reportError(ctx, expr, "Constructing an imported default-expression snapshot is not available without a host");
+      return null;
+    }
+    if (emitDynamicNewFallback(ctx, fctx, expr, unwrappedLiteralCtor, unwrappedLiteralCtor.text)) {
+      return { kind: "externref" };
+    }
+    reportError(ctx, expr, "Could not construct imported default-expression snapshot");
+    return null;
   }
 
   // TextEncoder/TextDecoder are standard Web/Node classes, but standalone and

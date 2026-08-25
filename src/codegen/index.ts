@@ -5179,10 +5179,16 @@ export function generateModule(
       }
       ctx.deferredDefaultGlobalExport = undefined;
     }
-    for (const bindingName of ctx.deferredDefaultExpressionExports ?? []) {
-      const globalName = `__mod_${bindingName}`;
-      const localIdx = ctx.mod.globals.findIndex((g) => g.name === globalName);
-      if (localIdx < 0 || ctx.mod.exports.some((e) => e.name === "default")) continue;
+    for (const value of ctx.deferredDefaultExpressionExports ?? []) {
+      const localIdx = ctx.mod.globals.indexOf(value);
+      if (localIdx < 0) {
+        reportErrorNoNode(ctx, "Default-export snapshot lost its allocator identity");
+        continue;
+      }
+      if (ctx.mod.exports.some((e) => e.name === "default")) {
+        reportErrorNoNode(ctx, "Default-export snapshot conflicts with an existing default export");
+        continue;
+      }
       ctx.mod.exports.push({
         name: "default",
         desc: { kind: "global", index: ctx.numImportGlobals + localIdx },
@@ -8071,6 +8077,7 @@ function registerReassignedFunctionGlobals(
   runtimeEvalPlan: IrRuntimeEvalBoundaryPlan,
 ): void {
   const reassigned = new Set<string>();
+  const reassignedDeclarations = new Set<ts.FunctionDeclaration>();
   const runtimeEvalConsumer = (ctx.standalone || ctx.wasi) && runtimeEvalPlan.sharedRealmMayContainCanonicalValues;
   const dynamicSourceFragments = runtimeEvalPlan.dynamicSourceFragments;
   const hasUnknownDynamicSource = runtimeEvalPlan.unknownDynamicSource;
@@ -8092,6 +8099,7 @@ function registerReassignedFunctionGlobals(
       const decl = sym?.valueDeclaration ?? sym?.declarations?.[0];
       if (decl && ts.isFunctionDeclaration(decl) && decl.name) {
         reassigned.add(decl.name.text);
+        reassignedDeclarations.add(decl);
       }
     }
     ts.forEachChild(node, scan);
@@ -8138,10 +8146,14 @@ function registerReassignedFunctionGlobals(
       const canBeReboundByEval = !ctx.sourceIsModule || !declaration || !hasExportModifier(declaration);
       if (canBeReboundByEval && (hasUnknownDynamicSource || mentionedByDynamicSource(name))) {
         reassigned.add(name);
+        if (declaration) reassignedDeclarations.add(declaration);
       }
     }
   }
   if (reassigned.size === 0) return;
+
+  const exactDeclarations = (ctx.reassignedFunctionDeclarations ??= new WeakSet<ts.FunctionDeclaration>());
+  for (const declaration of reassignedDeclarations) exactDeclarations.add(declaration);
 
   const set = (ctx.liveFuncBindingGlobals ??= new Set<string>());
   for (const name of reassigned) {
@@ -8239,16 +8251,12 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
     ) {
       return;
     }
-    // `export default <expression>` owns a synthetic live cell rather than a
-    // named declaration. Alias the import directly to that cell. This must run
-    // before the declaration-name path below because ExportAssignment has no
-    // `.name` to resolve.
+    // `export default <expression>` owns an exact snapshot cell rather than a
+    // named declaration. Identifier/call lowering resolves it through
+    // importBindingTargets + defaultExpressionGlobals; never publish it under
+    // the graph-wide local spelling, where a same-named binding from another
+    // source could capture or overwrite it.
     if (ts.isExportAssignment(decl)) {
-      const expressionGlobal = ctx.defaultExpressionGlobals?.get(decl);
-      const globalIdx = expressionGlobal ? ctx.moduleGlobals.get(expressionGlobal.bindingName) : undefined;
-      if (globalIdx !== undefined && !ctx.moduleGlobals.has(localName)) {
-        ctx.moduleGlobals.set(localName, globalIdx);
-      }
       return;
     }
     // The name the target was registered under in funcMap/moduleGlobals/closureMap.
@@ -8264,14 +8272,6 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
       // Anonymous `export default function () {}` / `export default class {}`
       // is registered under the synthetic name "default".
       targetName = "default";
-    }
-    if (!targetName && ts.isExportAssignment(decl) && !decl.isExportEquals) {
-      // An ESM default export whose value is an expression has no declaration
-      // name for TypeScript to expose: the aliased symbol's valueDeclaration is
-      // the ExportAssignment itself. `collectDeclarations` materializes that
-      // expression in a synthetic module-global cell; follow the same cell as
-      // a normal import alias instead of falling through to the null sentinel.
-      targetName = ctx.defaultExpressionGlobals?.get(decl)?.bindingName;
     }
     if (!targetName || targetName === localName) return;
     // Imported class bindings need the same canonical class identity as the
@@ -8957,10 +8957,16 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       }
       ctx.deferredDefaultGlobalExport = undefined;
     }
-    for (const bindingName of ctx.deferredDefaultExpressionExports ?? []) {
-      const globalName = `__mod_${bindingName}`;
-      const localIdx = ctx.mod.globals.findIndex((g) => g.name === globalName);
-      if (localIdx < 0 || ctx.mod.exports.some((e) => e.name === "default")) continue;
+    for (const value of ctx.deferredDefaultExpressionExports ?? []) {
+      const localIdx = ctx.mod.globals.indexOf(value);
+      if (localIdx < 0) {
+        reportErrorNoNode(ctx, "Default-export snapshot lost its allocator identity");
+        continue;
+      }
+      if (ctx.mod.exports.some((e) => e.name === "default")) {
+        reportErrorNoNode(ctx, "Default-export snapshot conflicts with an existing default export");
+        continue;
+      }
       ctx.mod.exports.push({
         name: "default",
         desc: { kind: "global", index: ctx.numImportGlobals + localIdx },
@@ -9964,7 +9970,7 @@ export function resolveIdentifierType(ctx: CodegenContext, id: ts.Identifier): t
  * `getTypeAtLocation` gives the real type, or undefined if no user binding
  * shadows the ambient global.
  */
-function findUserBindingDecl(id: ts.Identifier): ts.Node | undefined {
+export function findUserBindingDecl(id: ts.Identifier): ts.Node | undefined {
   const name = id.text;
   const bindsName = (node: ts.Node): ts.Node | undefined => {
     if (

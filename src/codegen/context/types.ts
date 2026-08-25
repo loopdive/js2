@@ -10,7 +10,16 @@ import { ts } from "../../ts-api.js";
 import type { TypeOracle } from "../../checker/oracle.js";
 import type { UsageInference } from "../../checker/usage-inference.js";
 import type { IrUnitId } from "../../ir/identity.js";
-import type { FieldDef, Instr, LocalDef, SourcePos, ValType, WasmFunction, WasmModule } from "../../ir/types.js";
+import type {
+  FieldDef,
+  GlobalDef,
+  Instr,
+  LocalDef,
+  SourcePos,
+  ValType,
+  WasmFunction,
+  WasmModule,
+} from "../../ir/types.js";
 import type { IrObservedOutcome } from "../../ir/outcomes.js";
 import type { StandaloneRegExpEngineConfig } from "../regexp-standalone.js";
 import type { ObjectRuntimeTypes } from "../object-runtime.js";
@@ -2675,6 +2684,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   liveFuncBindingGlobals?: Set<string>;
   /**
+   * Exact declarations represented by {@link liveFuncBindingGlobals}. The
+   * name-keyed set remains the legacy storage/read routing table, while this
+   * identity set lets cross-module source-callable resolution distinguish an
+   * immutable declaration from an unrelated same-named reassigned function.
+   */
+  reassignedFunctionDeclarations?: WeakSet<ts.FunctionDeclaration>;
+  /**
    * (#4182) Names bound live at MODULE scope by Annex B B.3.3.2 (a sloppy
    * block/`if`/`switch`-nested `function f` whose enclosing var scope is the
    * SourceFile). Subset discipline: every member is also in
@@ -2701,13 +2717,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Deferred `export default <variable>` where variable is a module global (#1108).
    *  Resolved after all collectDeclarations calls when global indices are final. */
   deferredDefaultGlobalExport?: string;
-  /** Synthetic globals for entry-file `export default <expression>` exports.
-   *  The module-global indices are resolved after late imports are complete. */
-  deferredDefaultExpressionExports?: Set<string>;
+  /** Synthetic cells for entry-file `export default <expression>` exports.
+   *  Final indices are resolved from allocator identity after late imports. */
+  deferredDefaultExpressionExports?: Set<GlobalDef>;
   /** Runtime storage for `export default <expression>` in linked modules.
-   * Identifier/function defaults use their existing binding; expression
-   * defaults need a stable cell that default imports can alias. */
-  defaultExpressionGlobals?: WeakMap<ts.ExportAssignment, { bindingName: string; type: ValType }>;
+   * Each expression owns a stable snapshot cell plus an exact initialization
+   * flag so import cycles retain normal TDZ behavior. */
+  defaultExpressionGlobals?: WeakMap<ts.ExportAssignment, { value: GlobalDef; initialized: GlobalDef; type: ValType }>;
   /**
    * Exact target declaration for each linked import binding. Populated once by
    * the import-alias registration pass, which is the existing checker-owned

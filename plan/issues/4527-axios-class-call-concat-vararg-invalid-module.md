@@ -4,7 +4,7 @@ title: "axios: class rest dispatch bridge is fixed; finish the remaining dynamic
 status: in-progress
 sprint: current
 created: 2026-08-16
-updated: 2026-08-24
+updated: 2026-08-25
 priority: high
 horizon: m
 feasibility: medium
@@ -29,15 +29,26 @@ loc-budget-allow:
   - src/codegen/expressions/call-tail-dispatch.ts
   - src/codegen/expressions/calls.ts
   - src/codegen/expressions/identifiers.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/statements.ts
+  - src/codegen/statements/control-flow.ts
+  - src/codegen/statements/tdz.ts
   - src/runtime.ts
 func-budget-allow:
   - src/codegen/closures.ts::preferJavaScriptBodyArrayReturn
   - src/codegen/declarations.ts::jsArrayParamNeedsOpenObjectCarrier
+  - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/named-this-call.ts::resolveObjectBindingFunction
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
   - src/codegen/expressions/calls.ts::calleeMayBeHostCallable
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  - src/codegen/expressions/new-super.ts::compileNewExpression
   - src/codegen/index.ts::emitIteratorMethodExport
   - src/codegen/index.ts::emitMethodDispatch
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
   - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+  - src/codegen/statements.ts::compileStatementInner
   - src/runtime.ts::resolveImport
   - src/codegen/index.ts::resolveWasmType
 files:
@@ -55,7 +66,12 @@ files:
   - src/codegen/expressions/call-tail-dispatch.ts
   - src/codegen/expressions/calls.ts
   - src/codegen/expressions/identifiers.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/statements.ts
+  - src/codegen/statements/control-flow.ts
+  - src/codegen/statements/tdz.ts
   - tests/dogfood/axios-upstream-suite.mjs
+  - tests/issue-1279.test.ts
   - tests/issue-4527.test.ts
   - tests/issue-4527-call-dyn-bridge.test.ts
   - tests/dogfood/axios-upstream-suite-pin.json
@@ -273,3 +289,55 @@ where an asynchronous timer callback throws after the isolated compile worker
 has finished its scored test body. Sixteen files / 414 registrations remain
 explicitly reported as unavailable infrastructure. This full count was
 measured from the pinned `v1.16.1` suite after the focused 8/8 and 9/9 runs.
+
+## 2026-08-25 checkpoint (two-hop default forwarding)
+
+The exact `mergeConfig` slice had fallen back to **0/57** after compilation:
+all 57 original callbacks were classified as runtime failures because module
+initialization dereferenced a null `mime-db` value inside the transitive
+`form-data` dependency. The producer is a normal CommonJS forwarding chain:
+`mime-types` imports `mime-db`, whose `module.exports = require('./db.json')`
+rewrite becomes a default import followed by `export default importedValue`.
+
+Identifier-backed defaults previously had no expression-owned cell, so the
+alias pass returned without connecting the consumer to the JSON value. Linked
+non-entry modules now evaluate every `export default identifier` once in source
+order into an exact allocator-owned snapshot cell. The cell and its TDZ flag
+are keyed by `ExportAssignment`/`GlobalDef` identity, never published in the
+graph-wide bare-name registries. Default imports resolve the exact cell through
+the recorded import-declaration target; a cycle therefore throws at the
+uninitialized read instead of acquiring an unrelated same-named export.
+
+Forwarded top-level function values likewise resolve through the source
+callable registry's declaration/unit/handle identity. This fixes two leaf
+modules that both declare `function source()` without collapsing them into the
+last bare-name entry. Reassigned function declarations are tracked by exact
+declaration identity and decline that immutable fast path; an unrelated
+same-named reassignment cannot hide an immutable callable leaf. Their
+pre-existing cross-module live-binding gap is still follow-up work. Ambient
+declarations are also excluded from source
+module name registries, so `export default Infinity` cannot capture another
+module's `Infinity` variable. A script's real same-source binding that
+TypeScript resolves to a colliding ambient (for example `const name`) is
+recovered only when the lexical declaration and Program ABI allocator identity
+agree, preserving #2176 without reopening the cross-module name collision.
+`new importedDefault()` uses the exact snapshot before any static
+constructor-name routing on the JS-host lane; host-free dynamic construction
+of this carrier is an explicit compile-time refusal.
+
+Entry identifier defaults deliberately retain the established raw callable
+Wasm export ABI ([#1074](1074-surface-esm-default-export-as.md)); this
+slice changes only linked-module snapshots. Focused regressions cover the
+physical CommonJS → JSON chain, post-export mutation, same-named callable
+leaves, an unrelated reassigned same-named function, ambient-name collision, a
+circular forwarding graph, and construction after replacement. The related
+suites pass **36/36**, **5/5**, and the #2176 ambient-shadow suite passes
+**13/13**. Filtered
+runs can write to `DOGFOOD_AXIOS_REPORT_PATH`, so reductions no longer
+overwrite the canonical 231-test report.
+
+The exact pinned `tests/unit/core/mergeConfig.test.js` rerun now reaches all
+callbacks again: **27/57 Wasm**, **57/57 native**, compile/validate **1/1**, and
+zero suite-level runtime failures. The remaining 30 scored failures are 23
+`null is not a function` results and seven object-identity assertion
+mismatches; they are a separate frontier and were not chased in this slice.

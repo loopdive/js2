@@ -153,6 +153,26 @@ function emitLinearU8ArenaResetBeforeReturn(ctx: CodegenContext, fctx: FunctionC
   return true;
 }
 
+function normalizeReturnExpression(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expression: ts.Expression,
+  exprType: ValType | null,
+): void {
+  if (exprType && fctx.returnType && !valTypesMatch(exprType, fctx.returnType)) {
+    coerceType(ctx, fctx, exprType, fctx.returnType);
+  }
+  if (!exprType || (fctx.returnType?.kind !== "ref" && fctx.returnType?.kind !== "ref_null")) return;
+
+  // A host TypedArray materialized into a native vec did not pass through the
+  // constructor emission site. Preserve its brand here without branding
+  // ordinary Array returns that happen to share the same vec representation.
+  const returnedName = ctx.oracle.builtinReceiverOf(expression) ?? ctx.oracle.declaredNameOf(expression);
+  if (isHostTypedArrayCarrierName(returnedName)) {
+    emitHostTypedArrayCarrierRegistration(ctx, fctx, returnedName, fctx.returnType);
+  }
+}
+
 export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ReturnStatement): void {
   // Inside a generator function, `return expr` should push the return value
   // into the generator buffer (so .next().value sees it), then break out of
@@ -471,22 +491,7 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
 
   if (stmt.expression) {
     const exprType = compileExpression(ctx, fctx, stmt.expression, fctx.returnType ?? undefined);
-    // Coerce expression result to match function return type if they differ
-    if (exprType && fctx.returnType && !valTypesMatch(exprType, fctx.returnType)) {
-      coerceType(ctx, fctx, exprType, fctx.returnType);
-    }
-    // A JS-host TypedArray constructor can return an externref which is then
-    // materialized into the function's native vec return ABI. That fresh vec
-    // did not pass through a TypedArray constructor emission site, so retain the
-    // source-level TypedArray brand here. This is deliberately type-gated:
-    // ordinary Array returns sharing the same vec type remain unbranded and
-    // therefore do not acquire a `.buffer` property.
-    if (exprType && fctx.returnType && (fctx.returnType.kind === "ref" || fctx.returnType.kind === "ref_null")) {
-      const returnedName = ctx.oracle.builtinReceiverOf(stmt.expression) ?? ctx.oracle.declaredNameOf(stmt.expression);
-      if (isHostTypedArrayCarrierName(returnedName)) {
-        emitHostTypedArrayCarrierRegistration(ctx, fctx, returnedName, fctx.returnType);
-      }
-    }
+    normalizeReturnExpression(ctx, fctx, stmt.expression, exprType);
     // (#585) If the function is void (no return type) but the expression produced
     // a value, drop it — Wasm requires an empty stack before `return` in void funcs.
     if (exprType && !fctx.returnType) {

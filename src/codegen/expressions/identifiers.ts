@@ -27,6 +27,7 @@ import {
   addStringConstantGlobal,
   addUnionImports,
   ensureExnTag,
+  findUserBindingDecl,
   localGlobalIdx,
   resolveWasmType,
 } from "../index.js";
@@ -38,7 +39,7 @@ import {
   isShadowStaticArmFor,
   withShadowReadSuppressed,
 } from "../fn-global-shadow.js"; // (#4630 / #4648)
-import { emitTdzCheck } from "../statements.js";
+import { emitTdzCheck, emitTdzCheckAtGlobal } from "../statements.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import { emitStringBuilderRead, getBuilderInfo } from "../string-builder.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
@@ -750,6 +751,78 @@ function ambientGlobalReadIsUserFunctionShadowed(ctx: CodegenContext, id: ts.Ide
   return ts.isFunctionDeclaration(decl) && decl.name?.text === name;
 }
 
+/** Resolve an imported top-level function by declaration/allocator identity. */
+function exactImportedTopLevelFunction(
+  ctx: CodegenContext,
+  id: ts.Identifier,
+): { declaration: ts.FunctionDeclaration; funcIdx: number; name: string } | undefined {
+  const binding = ctx.oracle.valueDeclarationOf(id);
+  if (!binding || (!ts.isImportClause(binding) && !ts.isImportSpecifier(binding))) return undefined;
+  const declaration = ctx.importBindingTargets?.get(binding);
+  if (
+    !declaration ||
+    !ts.isFunctionDeclaration(declaration) ||
+    declaration.body === undefined ||
+    declaration.parent !== declaration.getSourceFile()
+  ) {
+    return undefined;
+  }
+  // Reassigned function declarations are live module bindings. The immutable
+  // direct body is not their current value; let the existing live-global import
+  // path serve them instead. This check must use declaration identity: the
+  // legacy storage registry is graph-wide and name-keyed, so an unrelated
+  // reassigned `source` must not hide this immutable declaration.
+  if (ctx.reassignedFunctionDeclarations?.has(declaration)) return undefined;
+  const registry = ctx.programAbiSourceCallables;
+  const identity = registry?.identityContext;
+  const unitId = identity?.unitIdByDeclaration.get(declaration);
+  if (
+    unitId === undefined ||
+    identity?.declarationByUnitId.get(unitId) !== declaration ||
+    registry?.functionForUnit(unitId) === undefined
+  ) {
+    return undefined;
+  }
+  const funcIdx = registry.handleForUnit(unitId);
+  if (funcIdx === undefined || definedFuncAt(ctx, funcIdx) !== registry.functionForUnit(unitId)) return undefined;
+  return {
+    declaration,
+    funcIdx,
+    name: declaration.name?.text ?? registry.functionForUnit(unitId)!.name,
+  };
+}
+
+/**
+ * Read a user module binding that TypeScript resolved to a same-named ambient
+ * declaration in script mode (#2176). The source lookup establishes lexical
+ * ownership; Program ABI allocator identity then prevents another module's
+ * same-named global from serving the read.
+ */
+function compileExactAmbientShadowedModuleBinding(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+): ValType | undefined {
+  const declaration = findUserBindingDecl(id);
+  if (!declaration || !ts.isVariableDeclaration(declaration)) return undefined;
+  const binding = ctx.programAbiGlobals?.moduleBinding(declaration);
+  if (!binding) return undefined;
+  const localIdx = ctx.mod.globals.indexOf(binding.value);
+  if (localIdx < 0) return undefined;
+  if (binding.tdz) {
+    const tdzLocalIdx = ctx.mod.globals.indexOf(binding.tdz);
+    if (tdzLocalIdx < 0) return undefined;
+    const tdzResult = analyzeTdzAccess(ctx, id);
+    if (tdzResult === "check") {
+      emitTdzCheckAtGlobal(ctx, fctx, ctx.numImportGlobals + tdzLocalIdx, id.text);
+    } else if (tdzResult === "throw") {
+      emitStaticTdzThrow(ctx, fctx, id.text);
+    }
+  }
+  fctx.body.push({ op: "global.get", index: ctx.numImportGlobals + localIdx });
+  return binding.value.type;
+}
+
 /** The non-`with` identifier lowering (locals, globals, funcs, builders,
  *  ReferenceError). Split out so the Tier-2 dynamic `with` path can invoke it as
  *  the HasBinding-miss fallback (#2663 Slice 1). */
@@ -1110,9 +1183,35 @@ function compileIdentifierCore(
   // source file is not visible through this import binding.
   const importedDefaultExpression = resolveDefaultExpressionImportGlobal(ctx, id);
   if (importedDefaultExpression) {
+    emitTdzCheckAtGlobal(ctx, fctx, importedDefaultExpression.initializedGlobalIdx, name);
     fctx.body.push({ op: "global.get", index: importedDefaultExpression.globalIdx });
     return importedDefaultExpression.type;
   }
+
+  // Default/named imports of top-level functions must retain source identity.
+  // The graph-wide funcMap is keyed by spelling, so two dependencies that both
+  // declare `function source()` cannot safely be projected through that map.
+  const importedFunction = exactImportedTopLevelFunction(ctx, id);
+  if (importedFunction) {
+    const constructible =
+      importedFunction.declaration.asteriskToken === undefined &&
+      !(importedFunction.declaration.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false);
+    const valueType = emitCachedFuncClosureAccess(
+      ctx,
+      fctx,
+      importedFunction.name,
+      importedFunction.funcIdx,
+      constructible,
+    );
+    if (valueType) return valueType;
+  }
+
+  const resolvedValueDeclaration = ctx.oracle.valueDeclarationOf(id);
+  const readsAmbientDeclaration = resolvedValueDeclaration?.getSourceFile().isDeclarationFile === true;
+  const ambientShadowType = readsAmbientDeclaration
+    ? compileExactAmbientShadowedModuleBinding(ctx, fctx, id)
+    : undefined;
+  if (ambientShadowType) return ambientShadowType;
 
   // (#4618) A class declaration is already represented by its canonical,
   // identity-stable class-object singleton, so it never needs a value-copy
@@ -1123,7 +1222,7 @@ function compileIdentifierCore(
   // capture global. Per-site synthetic identities keep duplicate lexical
   // declarations distinct while preserving the ordinary class name for the
   // first declaration.
-  const declaredClass = ctx.oracle.valueDeclarationOf(id);
+  const declaredClass = resolvedValueDeclaration;
   if (declaredClass && (ts.isClassDeclaration(declaredClass) || ts.isClassExpression(declaredClass))) {
     const classIdentity =
       ctx.anonClassExprNames.get(declaredClass) ??
@@ -1139,7 +1238,7 @@ function compileIdentifierCore(
   // body reads. The promoted global holds the box; deref it (global.get;
   // struct.get field 0) rather than returning the ref cell as if it were the
   // value (which coerced ref→f64 to `f64.const 0` / ref→externref to garbage).
-  const capturedBox = getCapturedBoxGlobal(ctx, name);
+  const capturedBox = readsAmbientDeclaration ? undefined : getCapturedBoxGlobal(ctx, name);
   if (capturedBox !== undefined) {
     const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
     if (tdzResult === "check") {
@@ -1154,9 +1253,10 @@ function compileIdentifierCore(
   // funcMap, classObjectGlobals, …) must not serve a read that is undeclared
   // for THIS module's environment record — see moduleGoalReadIsUndeclared.
   const unresolvedInModuleGoal = moduleGoalReadIsUndeclared(ctx, id);
+  const graphNameRegistryUnavailable = unresolvedInModuleGoal || readsAmbientDeclaration;
 
   // Check captured globals (variables promoted from enclosing scope for callbacks)
-  const capturedIdx = unresolvedInModuleGoal ? undefined : ctx.capturedGlobals.get(name);
+  const capturedIdx = graphNameRegistryUnavailable ? undefined : ctx.capturedGlobals.get(name);
   if (capturedIdx !== undefined) {
     // TDZ check: throw ReferenceError if let/const variable accessed before initialization
     // Apply static analysis — captured globals are often accessed from closures,
@@ -1179,7 +1279,7 @@ function compileIdentifierCore(
   }
 
   // Check module-level globals (top-level let/const declarations)
-  const moduleIdx = unresolvedInModuleGoal ? undefined : ctx.moduleGlobals.get(name);
+  const moduleIdx = graphNameRegistryUnavailable ? undefined : ctx.moduleGlobals.get(name);
   if (moduleIdx !== undefined) {
     // TDZ check: throw ReferenceError if let/const variable accessed before initialization
     // Apply static analysis for module-level globals
@@ -1457,7 +1557,7 @@ function compileIdentifierCore(
   {
     // (#3505) A foreign module's class must not resolve by bare name — see
     // `unresolvedInModuleGoal`.
-    let resolvedClassName = unresolvedInModuleGoal ? undefined : (ctx.classExprNameMap.get(name) ?? name);
+    let resolvedClassName = graphNameRegistryUnavailable ? undefined : (ctx.classExprNameMap.get(name) ?? name);
     // (#4618) Checker-verified identity: a bare name is not a binding. A
     // nested FUNCTION named like a class elsewhere (react's StrictMode batch
     // declares `class Foo` in one test and `function Foo()` in the next) was
@@ -1698,7 +1798,7 @@ function compileIdentifierCore(
   // path (which would otherwise re-wrap the func index into a fresh closure,
   // ignoring the live value). Gated on the normally-empty set — byte-identical
   // for programs that never reassign a function declaration.
-  if (fctx.localMap.get(name) === undefined && !unresolvedInModuleGoal && ctx.liveFuncBindingGlobals?.has(name)) {
+  if (fctx.localMap.get(name) === undefined && !graphNameRegistryUnavailable && ctx.liveFuncBindingGlobals?.has(name)) {
     const liveGlobalIdx = ctx.moduleGlobals.get(name);
     if (liveGlobalIdx !== undefined) {
       fctx.body.push({ op: "global.get", index: liveGlobalIdx });
@@ -1713,7 +1813,7 @@ function compileIdentifierCore(
   // (#3505) A foreign module's function declaration must not resolve by bare
   // name (funcMap is graph-wide) — skip the funcref-as-value arm so the read
   // reaches the undeclared -> ReferenceError emission below.
-  const funcRefIdx = unresolvedInModuleGoal ? undefined : ctx.funcMap.get(name);
+  const funcRefIdx = graphNameRegistryUnavailable ? undefined : ctx.funcMap.get(name);
   // (#1809) Only wrap DEFINED functions (index >= numImportFuncs) in a funcref
   // closure. A host import (e.g. the ambient DOM global `resizeTo`/`resizeBy`
   // from lib.dom.d.ts) has no in-module body to forward to via `ref.func`, so

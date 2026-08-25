@@ -18,7 +18,7 @@ import {
   mapTsTypeToWasm,
   unwrapPromiseType,
 } from "../checker/type-mapper.js";
-import type { FieldDef, FuncHandle, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
+import type { FieldDef, FuncHandle, GlobalDef, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
 import {
   exactPreparedAccessorExpressionKey,
   exactPreparedAccessorSyntaxKey,
@@ -2139,7 +2139,9 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           });
         }
 
-        // Always add "default" alias so ESM semantics are preserved
+        // Keep the established entry ABI: callable identifier defaults are
+        // surfaced as raw Wasm functions. Linked modules use exact snapshot
+        // cells instead of entering this entry-only export block.
         ctx.mod.exports.push({
           name: "default",
           desc: { kind: "func", index: funcIdx },
@@ -2786,30 +2788,45 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   // run before `new Ctor()` captures the prototype, and `obj.prop = v` must run between
   // `var before = ...typeof obj.prop` and `var after = ...obj.prop === v`).
   for (const stmt of sourceFile.statements) {
-    // A non-identifier default export has no declaration binding that an
-    // importing module can alias. Give the expression a graph-local live cell
-    // and execute the ExportAssignment in source order so
-    // `import value from "./module"` observes the evaluated value instead of
-    // the old graceful-null fallback. Identifier/function defaults continue
-    // to use their canonical declaration binding.
+    // A linked module's default-export expression is evaluated once, in source
+    // order, even when that expression is an identifier. Give it a graph-local
+    // cell so an importer observes that snapshot instead of following the
+    // identifier's declaration as a live alias. Entry identifier defaults keep
+    // the established callable Wasm-export ABI (#1074); named function
+    // expressions keep their canonical callable binding.
     if (
       ts.isExportAssignment(stmt) &&
       !stmt.isExportEquals &&
-      !ts.isIdentifier(stmt.expression) &&
+      (!isEntryFile || !ts.isIdentifier(stmt.expression)) &&
       !(ts.isFunctionExpression(stmt.expression) && stmt.expression.name)
     ) {
       const expressionGlobals = (ctx.defaultExpressionGlobals ??= new WeakMap());
       if (!expressionGlobals.has(stmt)) {
         let ordinal = ctx.mod.globals.length;
-        let bindingName = `__default_expr_${ordinal}`;
-        while (ctx.moduleGlobals.has(bindingName)) {
+        let valueName = `__default_expr_${ordinal}`;
+        let initializedName = `${valueName}_initialized`;
+        const hasAllocatedName = (name: string): boolean => ctx.mod.globals.some((global) => global.name === name);
+        while (hasAllocatedName(valueName) || hasAllocatedName(initializedName)) {
           ordinal += 1;
-          bindingName = `__default_expr_${ordinal}`;
+          valueName = `__default_expr_${ordinal}`;
+          initializedName = `${valueName}_initialized`;
         }
         const type: ValType = { kind: "externref" };
-        registerModuleGlobal(ctx, bindingName, type);
-        expressionGlobals.set(stmt, { bindingName, type });
-        if (isEntryFile) (ctx.deferredDefaultExpressionExports ??= new Set()).add(bindingName);
+        const value: GlobalDef = {
+          name: valueName,
+          type,
+          mutable: true,
+          init: [{ op: "ref.null.extern" }],
+        };
+        const initialized: GlobalDef = {
+          name: initializedName,
+          type: { kind: "i32" },
+          mutable: true,
+          init: [{ op: "i32.const", value: 0 }],
+        };
+        ctx.mod.globals.push(value, initialized);
+        expressionGlobals.set(stmt, { value, initialized, type });
+        if (isEntryFile) (ctx.deferredDefaultExpressionExports ??= new Set()).add(value);
       }
       ctx.moduleInitStatements.push(stmt);
       continue;
@@ -3271,6 +3288,10 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     for (const stmt of sourceFile.statements) {
       if (!ts.isExportAssignment(stmt) || stmt.isExportEquals) continue;
       if (!ts.isIdentifier(stmt.expression)) continue;
+      // Identifier-backed defaults now have an exact snapshot cell. Exporting
+      // the underlying module global here would incorrectly make
+      // `let value = 1; export default value; value = 2` expose 2 instead of 1.
+      if (ctx.defaultExpressionGlobals?.has(stmt)) continue;
       const varName = stmt.expression.text;
       // Skip if already handled as a function export
       if (ctx.funcMap.has(varName)) continue;

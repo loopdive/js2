@@ -92,6 +92,7 @@ import {
 } from "./helpers.js";
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
+import { emitTdzCheckAtGlobal } from "../statements/tdz.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { tryEmitUndeclaredCalleeReferenceError } from "./undeclared-callee.js"; // undeclared-identifier call → ReferenceError
 import { compileInternalCallArgument } from "./internal-call-argument.js";
@@ -1305,6 +1306,9 @@ export function compileIdentifierCall(
   if (ts.isIdentifier(expr.expression)) {
     const funcName = expr.expression.text;
     const defaultExpressionImport = resolveDefaultExpressionImportGlobal(ctx, expr.expression);
+    if (defaultExpressionImport) {
+      emitTdzCheckAtGlobal(ctx, fctx, defaultExpressionImport.initializedGlobalIdx, funcName);
+    }
 
     // Linked runtime eval can replace a script function binding with an
     // interpreted closure. Such a binding must call its live externref global

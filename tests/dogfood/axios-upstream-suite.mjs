@@ -17,7 +17,9 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GENERATED_ROOT = resolve(HERE, "..", "..", ".axios-upstream-suite-generated");
-const REPORT_PATH = join(HERE, "report", "axios-upstream-suite.json");
+const REPORT_PATH = process.env.DOGFOOD_AXIOS_REPORT_PATH
+  ? resolve(process.env.DOGFOOD_AXIOS_REPORT_PATH)
+  : join(HERE, "report", "axios-upstream-suite.json");
 
 function moduleSpecifier(fromDirectory, target) {
   let value = relative(fromDirectory, target).replace(/\\/g, "/");
