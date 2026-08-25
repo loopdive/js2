@@ -19,23 +19,23 @@
     "async.return": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:94",
+      "declaredAt": "src/ir/dialect/js.ts:95",
       "why": "Resolves an async function's Promise with the returned value.",
-      "evidence": ["src/ir/dialect/js.ts:89"]
+      "evidence": ["src/ir/dialect/js.ts:90"]
     },
     "async.throw": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:110",
+      "declaredAt": "src/ir/dialect/js.ts:111",
       "why": "Rejects an async function's Promise.",
-      "evidence": ["src/ir/dialect/js.ts:104"]
+      "evidence": ["src/ir/dialect/js.ts:105"]
     },
     "await": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:76",
+      "declaredAt": "src/ir/dialect/js.ts:77",
       "why": "Suspends on a Promise, wrapping a non-Promise via Promise.resolve (§27.2.1.4).",
-      "evidence": ["src/ir/dialect/js.ts:62"]
+      "evidence": ["src/ir/dialect/js.ts:63"]
     },
     "binary": {
       "verdict": "unresolved",
@@ -177,37 +177,37 @@
     "dyn.eq": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:187",
+      "declaredAt": "src/ir/dialect/js.ts:188",
       "why": "ECMAScript abstract/strict equality over dynamically-tagged values (§7.2.13/§7.2.15).",
-      "evidence": ["src/ir/dialect/js.ts:182"]
+      "evidence": ["src/ir/dialect/js.ts:183"]
     },
     "dyn.member_get": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:224",
+      "declaredAt": "src/ir/dialect/js.ts:225",
       "why": "ECMAScript property lookup [[Get]] by dynamic key — the open-map half of JS objects.",
-      "evidence": ["src/ir/dialect/js.ts:219"]
+      "evidence": ["src/ir/dialect/js.ts:220"]
     },
     "dyn.member_set": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:240",
+      "declaredAt": "src/ir/dialect/js.ts:241",
       "why": "ECMAScript [[Set]] by dynamic key, with spec evaluation order.",
-      "evidence": ["src/ir/dialect/js.ts:235"]
+      "evidence": ["src/ir/dialect/js.ts:236"]
     },
     "dyn.to_number": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:164",
+      "declaredAt": "src/ir/dialect/js.ts:165",
       "why": "ECMAScript ToNumber over a dynamically-tagged value (§7.1.4).",
-      "evidence": ["src/ir/dialect/js.ts:159"]
+      "evidence": ["src/ir/dialect/js.ts:160"]
     },
     "dyn.truthy": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:132",
+      "declaredAt": "src/ir/dialect/js.ts:133",
       "why": "ECMAScript ToBoolean over a dynamically-tagged value (§7.1.2).",
-      "evidence": ["src/ir/dialect/js.ts:129"]
+      "evidence": ["src/ir/dialect/js.ts:130"]
     },
     "early.return": {
       "verdict": "neutral",
@@ -219,37 +219,37 @@
     "extern.call": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:530",
+      "declaredAt": "src/ir/dialect/js.ts:531",
       "why": "Calls a method on a JS host class instance.",
-      "evidence": ["src/ir/dialect/js.ts:524"]
+      "evidence": ["src/ir/dialect/js.ts:525"]
     },
     "extern.new": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:506",
+      "declaredAt": "src/ir/dialect/js.ts:507",
       "why": "Constructs a JS host class instance through its registered import surface.",
-      "evidence": ["src/ir/dialect/js.ts:501"]
+      "evidence": ["src/ir/dialect/js.ts:502"]
     },
     "extern.prop": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:549",
+      "declaredAt": "src/ir/dialect/js.ts:550",
       "why": "Reads a property off a JS host class instance.",
-      "evidence": ["src/ir/dialect/js.ts:544"]
+      "evidence": ["src/ir/dialect/js.ts:545"]
     },
     "extern.propSet": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:567",
+      "declaredAt": "src/ir/dialect/js.ts:568",
       "why": "Writes a property on a JS host class instance.",
-      "evidence": ["src/ir/dialect/js.ts:564"]
+      "evidence": ["src/ir/dialect/js.ts:565"]
     },
     "extern.regex": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:587",
+      "declaredAt": "src/ir/dialect/js.ts:588",
       "why": "A RegExp literal — an ECMAScript language form with its own grammar.",
-      "evidence": ["src/ir/dialect/js.ts:584"]
+      "evidence": ["src/ir/dialect/js.ts:585"]
     },
     "fnctor.get": {
       "verdict": "neutral",
@@ -275,16 +275,16 @@
     "forof.iter": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:380",
+      "declaredAt": "src/ir/dialect/js.ts:381",
       "why": "`for (x of it)` over the @@iterator protocol, as a statement form.",
       "evidence": ["src/ir/nodes.ts:1805"]
     },
     "forof.string": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:708",
+      "declaredAt": "src/ir/dialect/js.ts:711",
       "why": "This is `%String.prototype%[@@iterator]` inlined as a statement form. The per-iteration element is a CODE POINT rendered as a one-element string — the intent field resolves to `__str_charAt_cp`, deliberately not the code-unit `string.char_at` next door. Its general sibling `forof.iter` is already in the dialect, so keeping the string specialization in core splits one protocol across the boundary.",
-      "evidence": ["src/ir/dialect/js.ts:717", "src/ir/integration.ts:5072"]
+      "evidence": ["src/ir/dialect/js.ts:720", "src/ir/integration.ts:5080"]
     },
     "forof.vec": {
       "verdict": "neutral",
@@ -296,30 +296,30 @@
     "gen.epilogue": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:419",
+      "declaredAt": "src/ir/dialect/js.ts:420",
       "why": "Materializes the Generator object a generator function returns (§27.5).",
-      "evidence": ["src/ir/dialect/js.ts:415"]
+      "evidence": ["src/ir/dialect/js.ts:416"]
     },
     "gen.push": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:265",
+      "declaredAt": "src/ir/dialect/js.ts:266",
       "why": "Appends a yielded value to a generator object's buffer.",
-      "evidence": ["src/ir/dialect/js.ts:262"]
+      "evidence": ["src/ir/dialect/js.ts:263"]
     },
     "gen.setReturn": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:481",
+      "declaredAt": "src/ir/dialect/js.ts:482",
       "why": "Records a generator's return completion value.",
-      "evidence": ["src/ir/dialect/js.ts:478"]
+      "evidence": ["src/ir/dialect/js.ts:479"]
     },
     "gen.yieldStar": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:451",
+      "declaredAt": "src/ir/dialect/js.ts:452",
       "why": "`yield*` delegation (§27.5.3.7).",
-      "evidence": ["src/ir/dialect/js.ts:446"]
+      "evidence": ["src/ir/dialect/js.ts:447"]
     },
     "global.get": {
       "verdict": "neutral",
@@ -360,37 +360,37 @@
     "iter.done": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:317",
+      "declaredAt": "src/ir/dialect/js.ts:318",
       "why": "IteratorComplete — reads `done` off a result object (§7.4.4).",
-      "evidence": ["src/ir/dialect/js.ts:310"]
+      "evidence": ["src/ir/dialect/js.ts:311"]
     },
     "iter.new": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:286",
+      "declaredAt": "src/ir/dialect/js.ts:287",
       "why": "GetIterator — the @@iterator protocol (§7.4.2).",
-      "evidence": ["src/ir/dialect/js.ts:281"]
+      "evidence": ["src/ir/dialect/js.ts:282"]
     },
     "iter.next": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:303",
+      "declaredAt": "src/ir/dialect/js.ts:304",
       "why": "IteratorNext (§7.4.3).",
-      "evidence": ["src/ir/dialect/js.ts:297"]
+      "evidence": ["src/ir/dialect/js.ts:298"]
     },
     "iter.return": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:344",
+      "declaredAt": "src/ir/dialect/js.ts:345",
       "why": "IteratorClose — the protocol's cleanup call (§7.4.9).",
-      "evidence": ["src/ir/dialect/js.ts:339"]
+      "evidence": ["src/ir/dialect/js.ts:340"]
     },
     "iter.value": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:330",
+      "declaredAt": "src/ir/dialect/js.ts:331",
       "why": "IteratorValue — reads `value` off a result object (§7.4.5).",
-      "evidence": ["src/ir/dialect/js.ts:324"]
+      "evidence": ["src/ir/dialect/js.ts:325"]
     },
     "labeled.block": {
       "verdict": "neutral",
@@ -404,7 +404,7 @@
       "where": "core",
       "declaredAt": "src/ir/nodes.ts:1322",
       "why": "Static field read by name, resolved to a struct index at lowering. Dynamic keys are `dyn.member_get`, which is in the dialect.",
-      "evidence": ["src/ir/nodes.ts:1315", "src/ir/dialect/js.ts:224"]
+      "evidence": ["src/ir/nodes.ts:1315", "src/ir/dialect/js.ts:225"]
     },
     "object.new": {
       "verdict": "neutral",
@@ -418,7 +418,7 @@
       "where": "core",
       "declaredAt": "src/ir/nodes.ts:1333",
       "why": "Static field write by name. The JS `[[Set]]` path is `dyn.member_set`, which is in the dialect.",
-      "evidence": ["src/ir/nodes.ts:1328", "src/ir/dialect/js.ts:240"]
+      "evidence": ["src/ir/nodes.ts:1328", "src/ir/dialect/js.ts:241"]
     },
     "raw.wasm": {
       "verdict": "neutral",
@@ -480,16 +480,16 @@
     "string.char_at": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:630",
+      "declaredAt": "src/ir/dialect/js.ts:633",
       "why": "ECMAScript §22.1.3.1, twice over: the index is normalized by ToIntegerOrInfinity (§7.1.5) and an out-of-range index yields the EMPTY STRING rather than trapping. That total-function convention is the thing a non-JS producer would have to work around — Java throws, Rust panics.",
-      "evidence": ["src/ir/dialect/js.ts:628", "src/ir/string-runtime.ts:152"]
+      "evidence": ["src/ir/dialect/js.ts:631", "src/ir/string-runtime.ts:152"]
     },
     "string.char_code_at": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:642",
+      "declaredAt": "src/ir/dialect/js.ts:645",
       "why": "ECMAScript §22.1.3.2: out-of-range yields NaN. The repo even carries `utf16CharCodeAt` as the reference semantics for backend-independent evidence tests, which is a spec obligation, not a representation choice.",
-      "evidence": ["src/ir/dialect/js.ts:640", "src/ir/string-runtime.ts:160"]
+      "evidence": ["src/ir/dialect/js.ts:643", "src/ir/string-runtime.ts:160"]
     },
     "string.concat": {
       "verdict": "neutral",
@@ -518,15 +518,15 @@
       "where": "core",
       "declaredAt": "src/ir/nodes.ts:1244",
       "why": "The MEANING is settled and it is not encoding-parameterized: every backend returns the UTF-16 CODE-UNIT count. The linear backend calls `__str_length_utf16` regardless of `inputEncoding`, and the WasmGC native provider reads a field documented as the UTF-16 code-unit length. What is NOT settled is the placement: that commitment is shared verbatim with Java/C#/the whole UTF-16 family, so it is not ECMAScript-specific the way `char_at`'s out-of-range sentinel is, yet it is a language commitment a Rust or Python producer could not use.",
-      "evidence": ["src/ir/nodes.ts:1260", "src/ir/backend/linear-integration.ts:1665", "src/ir/string-runtime.ts:15"],
+      "evidence": ["src/ir/nodes.ts:1260", "src/ir/backend/linear-integration.ts:1634", "src/ir/string-runtime.ts:15"],
       "settledBy": "A policy call phase 2 has to make anyway: does `js` mean ECMAScript-SPECIFIC, or LANGUAGE-COMMITTED? If the former, `string.len` stays in core with a documented commitment; if the latter it moves — and the same answer then governs a future `utf16-string` dialect shared by the family, which is the third option."
     },
     "string.repeat": {
       "verdict": "js",
       "where": "dialect",
-      "declaredAt": "src/ir/dialect/js.ts:619",
+      "declaredAt": "src/ir/dialect/js.ts:620",
       "why": "ECMAScript String.prototype.repeat owns both the f64 count normalization through ToIntegerOrInfinity and the negative/+Infinity RangeError. A non-JS producer would have to work around that language contract rather than merely select a backend provider.",
-      "evidence": ["src/ir/dialect/js.ts:610", "src/ir/string-runtime.ts:82"]
+      "evidence": ["src/ir/dialect/js.ts:611", "src/ir/string-runtime.ts:82"]
     },
     "switch": {
       "verdict": "neutral",
@@ -599,14 +599,14 @@
       "where": "core",
       "declaredAt": "src/ir/nodes.ts:1733",
       "why": "Builds a dense vector from statically-known elements. Sparse literals are explicitly out of scope and fall back to legacy, so no hole can reach this node.",
-      "evidence": ["src/ir/from-ast.ts:4481"]
+      "evidence": ["src/ir/from-ast.ts:4482"]
     },
     "vec.set": {
       "verdict": "neutral",
       "where": "core",
       "declaredAt": "src/ir/nodes.ts:1703",
       "why": "One planned in-bounds store. Bounds and growth policy stay explicit in the surrounding IR; a holey-array store is routed to a runtime helper instead.",
-      "evidence": ["src/ir/nodes.ts:1697", "src/ir/from-ast.ts:369"]
+      "evidence": ["src/ir/nodes.ts:1697", "src/ir/from-ast.ts:370"]
     },
     "vec.set_length": {
       "verdict": "neutral",

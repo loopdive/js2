@@ -44,6 +44,7 @@ import { verifyIrIntrinsicInstruction } from "./intrinsic-support.js";
 import { verifyIrAsyncPlan } from "./async-plan.js";
 import { irFnctorShapeEquals, validateIrFnctorShape } from "./fnctor-abi.js";
 import { IR_STRING_REPEAT_FN } from "./string-runtime.js";
+import { parseIrCountedStringAppendSiteId } from "./counted-string-append-provenance.js";
 // #4418 — shared, cached dominance analysis (formerly a private set-based
 // computation in this file, #1850).
 import { crossCheckDominance, dominanceOf, type DominanceInfo } from "./analysis/dominance.js";
@@ -449,6 +450,7 @@ export function verifyIrFunction(
 
   // #1924 — per-instruction operand / result / slot type rules.
   verifyInstrTypeRules(func, typeOf, errors, declarations);
+  verifyCountedStringAppendProvenance(func, errors);
 
   // #1798 — defense-in-depth: every `return` terminator's value types must be
   // Wasm-assignment-compatible with the function's declared `resultTypes`.
@@ -2296,6 +2298,43 @@ function checkSymbolicRefCoherence(instr: RoadmapSymbolicInstr, blockId: number,
       `${instr.kind} ${instr.target.name} carrier ${observed} disagrees with ${seen.kind} used by ${seen.via} elsewhere in this function`,
     );
   }
+}
+
+function countedStringAppendProvenanceProblem(
+  instr: Extract<IrInstr, { kind: "string.repeat" }>,
+  ownerUnitId: IrFunction["unitId"],
+): string | null {
+  if (instr.countedStringAppendSite === undefined) return null;
+  const countedSite = parseIrCountedStringAppendSiteId(instr.countedStringAppendSite);
+  return !countedSite || countedSite.ownerUnitId !== ownerUnitId
+    ? "string.repeat carries malformed or foreign-owner counted-string provenance"
+    : null;
+}
+
+/** Authenticate the optional semantic site across every executable instruction root. */
+function verifyCountedStringAppendProvenance(func: IrFunction, errors: IrVerifyError[]): void {
+  const visited = new WeakSet<object>();
+  const checkBuffer = (instructions: readonly IrInstr[], location?: string, block?: number): void => {
+    for (const instr of instructions) {
+      forEachInstrDeep(instr, (nested) => {
+        if (visited.has(nested)) return;
+        visited.add(nested);
+        if (nested.kind !== "string.repeat") return;
+        const problem = countedStringAppendProvenanceProblem(nested, func.unitId);
+        if (problem !== null) {
+          errors.push({
+            message: location === undefined ? problem : `${location}: ${problem}`,
+            func: func.name,
+            ...(block === undefined ? {} : { block }),
+          });
+        }
+      });
+    }
+  };
+
+  for (const block of func.blocks) checkBuffer(block.instrs, undefined, block.id as number);
+  for (const state of func.asyncPlan?.states ?? []) checkBuffer(state.body, `asyncPlan state ${state.id}`);
+  for (const state of func.asyncRuntime?.states ?? []) checkBuffer(state.body, `asyncRuntime state ${state.id}`);
 }
 
 /** Full typed contract for the throwing ECMAScript repeat instruction. */

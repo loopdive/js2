@@ -8,6 +8,7 @@ import { mergeIrIntegrationReports } from "../src/codegen/ir-overlay-safety.js";
 import { planCountedStringAppend } from "../src/ir/analysis/counted-string-append.js";
 import type { IrCountedStringAppendLoweringPlan } from "../src/ir/ast-lowering-plans.js";
 import { irIntrinsicFuncRef } from "../src/ir/callable-bindings.js";
+import { createIrCountedStringAppendSiteId } from "../src/ir/counted-string-append-provenance.js";
 import { lowerFunctionAstToIr } from "../src/ir/from-ast.js";
 import { buildIrUnitInventory, createDerivedIrUnitId, type IrSourceId, type IrUnitId } from "../src/ir/identity.js";
 import { buildIrIntegrationReport } from "../src/ir/integration-report.js";
@@ -85,9 +86,16 @@ function fixture(tripCount: number): {
   );
   const ownerUnitId = identityContext.unitIdByDeclaration.get(declaration);
   if (!ownerUnitId) throw new Error("fixture lost its exact owner UnitId");
+  const sourceId = requireIrPlanningSourceId(identityContext, sourceFile);
   const loweringPlan = Object.freeze({
     ownerUnitId,
-    sourceId: requireIrPlanningSourceId(identityContext, sourceFile),
+    sourceId,
+    siteId: createIrCountedStringAppendSiteId({
+      sourceId,
+      ownerUnitId,
+      loopStart: loop.getStart(sourceFile),
+      loopEnd: loop.getEnd(),
+    }),
     sourceFile,
     syntaxPlan,
     provider: irIntrinsicFuncRef(IR_STRING_REPEAT_FN),
@@ -166,15 +174,20 @@ describe("#3518 Transaction B2 counted-string Prepared cutover", () => {
     expect(zero.instructions.filter((instruction) => instruction.kind === "string.repeat")).toHaveLength(0);
     expect(zero.instructions.filter((instruction) => instruction.kind === "string.concat")).toHaveLength(0);
     expect(zero.lowered.countedStringAppendPlans).toEqual([zero.exact.loweringPlan]);
+    expect(zero.exact.loweringPlan.siteId).toMatch(/^ir-counted-string-append-site:v1:/);
 
     const one = lowerCounted(1);
     expect(one.instructions.filter((instruction) => instruction.kind === "string.repeat")).toHaveLength(0);
     expect(one.instructions.filter((instruction) => instruction.kind === "string.concat")).toHaveLength(1);
     expect(one.lowered.countedStringAppendPlans).toEqual([one.exact.loweringPlan]);
+    expect(one.exact.loweringPlan.siteId).toMatch(/^ir-counted-string-append-site:v1:/);
 
     const aggregate = lowerCounted(3);
     expect(aggregate.instructions.filter((instruction) => instruction.kind === "string.repeat")).toHaveLength(1);
     expect(aggregate.instructions.filter((instruction) => instruction.kind === "string.concat")).toHaveLength(1);
+    expect(
+      aggregate.instructions.find((instruction) => instruction.kind === "string.repeat")?.countedStringAppendSite,
+    ).toBe(aggregate.exact.loweringPlan.siteId);
     expect(aggregate.lowered.main.blocks).toHaveLength(1);
     expect(aggregate.lowered.countedStringAppendPlans).toEqual([aggregate.exact.loweringPlan]);
   });
@@ -212,12 +225,19 @@ describe("#3518 Transaction B2 counted-string Prepared cutover", () => {
     expect(() => lower({ ...exact.loweringPlan, sourceId: "ir-source:v1:stale" as IrSourceId })).toThrow(
       /counted-string plan identity drift/,
     );
+    expect(() =>
+      lower({
+        ...exact.loweringPlan,
+        siteId: `${exact.loweringPlan.siteId}:stale` as typeof exact.loweringPlan.siteId,
+      }),
+    ).toThrow(/counted-string plan identity drift/);
     expect(() => lower(exact.loweringPlan, true)).toThrow(/counted-string plan census drift/);
   });
 
   it("preserves exact receipts across split reports and rejects duplicate consumption", () => {
     const exact = fixture(3);
     const receipt = Object.freeze({
+      siteId: exact.loweringPlan.siteId,
       plan: exact.loweringPlan,
       finalInstructionDigest: "0123456789abcdef",
     });
@@ -241,7 +261,26 @@ describe("#3518 Transaction B2 counted-string Prepared cutover", () => {
     const merged = mergeIrIntegrationReports(terminalReport, empty);
     expect(merged.preparedCountedStringAppendReceipts).toEqual([receipt]);
     expect(Object.isFrozen(merged.preparedCountedStringAppendReceipts)).toBe(true);
-    expect(() => mergeIrIntegrationReports(terminalReport, terminalReport)).toThrow(/duplicate counted-string loop/);
+    expect(() => mergeIrIntegrationReports(terminalReport, terminalReport)).toThrow(/duplicate counted-string site/);
+
+    const reparsed = fixture(3);
+    expect(reparsed.loweringPlan.syntaxPlan.loop).not.toBe(exact.loweringPlan.syntaxPlan.loop);
+    expect(reparsed.loweringPlan.siteId).toBe(exact.loweringPlan.siteId);
+    const reparsedReceipt = Object.freeze({
+      siteId: reparsed.loweringPlan.siteId,
+      plan: reparsed.loweringPlan,
+      finalInstructionDigest: "0123456789abcdef",
+    });
+    const reparsedReport = buildIrIntegrationReport(
+      ["test"],
+      [],
+      buildIrLegacyUnitProjection([{ unitId: reparsed.ownerUnitId, legacyName: "test" }]),
+      ["test"],
+      [],
+      [{ artifactUnitId: reparsed.ownerUnitId, terminalOwnerUnitId: reparsed.ownerUnitId, name: "test" }],
+      [reparsedReceipt],
+    );
+    expect(() => mergeIrIntegrationReports(terminalReport, reparsedReport)).toThrow(/duplicate counted-string site/);
     expect(() =>
       mergeIrIntegrationReports(
         { ...empty, compiledArtifactEvidence: [], preparedCountedStringAppendReceipts: [receipt] },
@@ -270,7 +309,7 @@ describe("#3518 Transaction B2 counted-string Prepared cutover", () => {
         ],
         [receipt],
       ),
-    ).toThrow(/prepared counted-string receipt is mutable, duplicated, uncompiled/);
+    ).toThrow(/prepared counted-string receipt site is duplicated or has no exact compiled terminal artifact/);
   });
 
   it("keeps the multi-source counted loop on direct ownership until Transaction C", async () => {

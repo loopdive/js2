@@ -2,6 +2,7 @@
 
 import type { IrUnitId } from "../ir/identity.js";
 import type { IrIntegrationReport } from "../ir/integration-report.js";
+import { requireValidPreparedCountedStringAppendReceipt } from "../ir/counted-string-append-provenance.js";
 import { asVal, type IrType } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
 import {
@@ -259,11 +260,12 @@ export function mergeIrIntegrationReports(
         .map((artifact) => artifact.terminalOwnerUnitId),
     );
     for (const receipt of report.preparedCountedStringAppendReceipts) {
-      if (!terminalOwners.has(receipt.plan.ownerUnitId)) {
+      const identity = requireValidPreparedCountedStringAppendReceipt(receipt);
+      if (!terminalOwners.has(identity.ownerUnitId)) {
         throw new IrInvariantError(
           "selection-preparation-mismatch",
           "patch",
-          `${side} split IR report has a counted-string receipt without an exact terminal patch for ${receipt.plan.ownerUnitId}`,
+          `${side} split IR report has a counted-string receipt without an exact terminal patch for ${identity.ownerUnitId}`,
         );
       }
     }
@@ -274,16 +276,17 @@ export function mergeIrIntegrationReports(
     ...(first.preparedCountedStringAppendReceipts ?? []),
     ...(second.preparedCountedStringAppendReceipts ?? []),
   ];
-  const receiptLoops = new Set<object>();
+  const receiptSites = new Set<string>();
   for (const receipt of countedStringReceipts) {
-    if (receiptLoops.has(receipt.plan.syntaxPlan.loop)) {
+    requireValidPreparedCountedStringAppendReceipt(receipt);
+    if (receiptSites.has(receipt.siteId)) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "patch",
-        `split IR integration reports duplicate counted-string loop for ${receipt.plan.ownerUnitId}`,
+        `split IR integration reports duplicate counted-string site ${receipt.siteId}`,
       );
     }
-    receiptLoops.add(receipt.plan.syntaxPlan.loop);
+    receiptSites.add(receipt.siteId);
   }
   return {
     compiled: [...first.compiled, ...second.compiled],
