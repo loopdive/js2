@@ -1400,7 +1400,15 @@ export function collectDeclaredGlobals(
       if (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) {
         if (stmt.name) userModuleBindings.add(stmt.name.text);
       } else if (ts.isVariableStatement(stmt)) {
-        for (const decl of stmt.declarationList.declarations) addBindingName(decl.name);
+        // An ambient declaration is a type-level promise that the host owns
+        // this binding; it does not create a module runtime cell. Treating
+        // `declare const document: any` as a user-owned module binding
+        // suppresses the matching lib.dom `global_document` import and makes
+        // every bare read lower to null. Only concrete variable statements
+        // shadow ambient host globals here.
+        if (!hasDeclareModifier(stmt)) {
+          for (const decl of stmt.declarationList.declarations) addBindingName(decl.name);
+        }
       } else if (ts.isImportDeclaration(stmt) && stmt.importClause) {
         const clause = stmt.importClause;
         if (clause.name) userModuleBindings.add(clause.name.text);

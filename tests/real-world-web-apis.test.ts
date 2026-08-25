@@ -147,8 +147,7 @@ describe("real-world: Web APIs", () => {
     const body = makeEl();
     const document = { createElement: () => makeEl(), body };
 
-    const exports = await instantiate(
-      `
+    const source = `
         declare const document: any;
         export function render(label: string): number {
           const box = document.createElement("div");
@@ -157,9 +156,10 @@ describe("real-world: Web APIs", () => {
           document.body.append(box);
           return 1;
         }
-      `,
-      { document },
-    );
+      `;
+    const result = await compileValid(source);
+    expect(hostImportNames(result)).toContain("global_document");
+    const exports = await instantiate(source, { document });
 
     expect(exports.render("Hello")).toBe(1);
     expect(body.children).toHaveLength(1);
