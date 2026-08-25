@@ -196,6 +196,20 @@ describe("#4492 a builtin prototype in [[Prototype]] position (standalone)", () 
     expect(lines).toEqual(["arr=[object Array]", "obj=[object Object]", "np=[object Object]"]);
   });
 
+  it("Object.prototype.toString is callable but not constructable", async () => {
+    const lines = await runLines(`
+      LOG("call=" + Object.prototype.toString());
+      var verdict = "no-throw";
+      try {
+        new Object.prototype.toString();
+      } catch (e) {
+        verdict = e instanceof TypeError ? "TypeError" : "other";
+      }
+      LOG("construct=" + verdict);
+    `);
+    expect(lines).toEqual(["call=[object Object]", "construct=TypeError"]);
+  });
+
   // ── GUARDS: shapes that must NOT move. These pass on both arms by design. ──
 
   it("GUARD an ordinary object prototype still links, and Object.create(null) still has none", async () => {
@@ -268,11 +282,10 @@ describe("#4492 a builtin prototype in [[Prototype]] position (standalone)", () 
     expect(lines).toEqual(["call=function"]);
   });
 
-  it.fails("RESIDUAL a runtime `delete` on a builtin proto member is invisible to the static call", async () => {
-    // The second half of `built-ins/Object/prototype/S15.2.4_A1_T2`. The delete
-    // IS recorded (`hasOwnProperty` and the dynamic read both go absent) but the
-    // syntactic member call keeps its compile-time answer. Routed to the
-    // three-op-agreement family (#4596), not to this change-set.
+  it("a runtime delete removes Object.prototype.toString from the direct call path", async () => {
+    // The second half of `built-ins/Object/prototype/S15.2.4_A1_T2`. The
+    // source-level delete must be observed by the syntactic call just as it is
+    // by hasOwnProperty and the dynamic property read.
     const lines = await runLines(`
       LOG("before=" + Object.prototype.toString());
       delete Object.prototype.toString;

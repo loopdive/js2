@@ -9,7 +9,7 @@
 // generic valueOf / toString / toLocaleString fallbacks. It returns `undefined`
 // when nothing matched, so the caller in calls.ts continues its post-arm
 // dispatch. Moved verbatim: the emitted Wasm is byte-identical.
-import { ts } from "../../ts-api.js";
+import { ts, forEachChild } from "../../ts-api.js";
 import {
   isBigIntType,
   isBooleanType,
@@ -170,6 +170,67 @@ import {
 } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
+
+/**
+ * A source-level delete removes the builtin prototype member before the call
+ * is evaluated.  The generic zero-argument `.toString()` fast path below is a
+ * static answer for the *present* intrinsic and would otherwise resurrect it
+ * for `Object.prototype.toString()` after `delete Object.prototype.toString`.
+ * Keep the check syntactic and shadow-aware; dynamic receivers continue to use
+ * their existing runtime lookup.
+ */
+function sourceDeletesBuiltinPrototypeMember(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: ts.Expression,
+  member: string,
+): boolean {
+  const proto = skipTransparentExpressions(receiver);
+  if (!ts.isPropertyAccessExpression(proto) || proto.name.text !== "prototype") return false;
+  const builtinName = resolveBuiltinNamespaceValueName(ctx, proto.expression);
+  if (!builtinName) return false;
+  if (fctx.localMap.has(builtinName) || (fctx.boxedCaptures?.has(builtinName) ?? false)) return false;
+  const key = `${builtinName}.prototype.${member}`;
+  if (!ctx.deletedBuiltinPrototypeMembers?.has(key)) return false;
+
+  // The module-level delete scan is intentionally order-independent so that
+  // earlier reflective reads do not fold while a later delete is present. For
+  // this direct call, however, the distinction matters: the intrinsic is
+  // callable before the delete and absent afterwards. Cache only the exact
+  // builtin-prototype delete positions for this source file.
+  const cacheHolder = ctx as unknown as {
+    __builtinPrototypeDeletePositions?: WeakMap<ts.SourceFile, Map<string, number[]>>;
+  };
+  const sourceFile = receiver.getSourceFile();
+  const cache = (cacheHolder.__builtinPrototypeDeletePositions ??= new WeakMap());
+  let positions = cache.get(sourceFile);
+  if (!positions) {
+    positions = new Map();
+    const walk = (node: ts.Node): void => {
+      if (ts.isDeleteExpression(node)) {
+        const target = node.expression;
+        if (ts.isPropertyAccessExpression(target) && ts.isPropertyAccessExpression(target.expression)) {
+          const prototype = target.expression;
+          if (
+            prototype.name.text === "prototype" &&
+            ts.isIdentifier(prototype.expression) &&
+            ts.isIdentifier(target.name)
+          ) {
+            const deletedKey = `${prototype.expression.text}.prototype.${target.name.text}`;
+            const entries = positions!.get(deletedKey);
+            if (entries) entries.push(node.getStart(sourceFile));
+            else positions!.set(deletedKey, [node.getStart(sourceFile)]);
+          }
+        }
+      }
+      forEachChild(node, walk);
+    };
+    walk(sourceFile);
+    cache.set(sourceFile, positions);
+  }
+  const callStart = receiver.getStart(sourceFile);
+  return (positions.get(key) ?? []).some((deleteStart) => deleteStart < callStart);
+}
 import {
   BUILTIN_CLASS_NAMES,
   coerceNumberMethodArgToF64,
@@ -3248,6 +3309,20 @@ export function compileReceiverMethodCall(
 
   const errorPrototypeToString = tryCompileStandaloneErrorPrototypeToString(ctx, fctx, expr, propAccess);
   if (errorPrototypeToString !== undefined) return errorPrototypeToString;
+
+  // A whole-program delete scan proves that this exact builtin-prototype
+  // member is absent. Calling the resulting `undefined` must throw a
+  // catchable TypeError; do not fall through to the generic externref call
+  // ladder, which would reintroduce a host-only toString import in standalone.
+  if (
+    ctx.standalone &&
+    propAccess.name.text === "toString" &&
+    expr.arguments.length === 0 &&
+    sourceDeletesBuiltinPrototypeMember(ctx, fctx, propAccess.expression, "toString")
+  ) {
+    emitThrowTypeError(ctx, fctx, "Object.prototype.toString is not a function");
+    return { kind: "externref" };
+  }
 
   // `Array` is a Function-valued builtin constructor.  When source transfers
   // `Object.prototype.toString` onto `Function.prototype.toString`, the
