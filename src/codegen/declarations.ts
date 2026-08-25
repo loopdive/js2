@@ -76,6 +76,7 @@ import {
   KNOWN_CONSTRUCTORS,
   MATH_HOST_METHODS_1ARG,
   MATH_HOST_METHODS_2ARG,
+  nativeGeneratorBindingType,
   parseRegExpLiteral,
   resolveIdentifierType,
   resolveWasmType,
@@ -2387,6 +2388,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
    * let/const pass so both scopes register the same type.
    */
   function moduleGlobalWasmType(decl: ts.VariableDeclaration, varType: ts.Type): ValType {
+    const nativeGeneratorType = nativeGeneratorBindingType(ctx, decl.initializer);
+    if (nativeGeneratorType) return nativeGeneratorType;
     // (#4222 ES5 residual) The bounded sized-Array carrier is a nominal
     // subtype of the ordinary externref vec.  Module globals need the same
     // concrete slot as function-local bindings; otherwise the initializer can
