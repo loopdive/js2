@@ -90,6 +90,28 @@ describe("tail call optimization", () => {
     // (We can't easily distinguish which function has return_call in WAT output)
   });
 
+  it("keeps an ordinary call boundary for externref results", async () => {
+    const src = `
+      function makeObject(depth: number): any {
+        if (depth <= 0) return { value: 42 };
+        return makeObject(depth - 1);
+      }
+      function objectTrampoline(depth: number): any {
+        return makeObject(depth);
+      }
+      export function test(): number {
+        return objectTrampoline(1).value;
+      }
+    `;
+    const wat = await compileWat(src);
+    const start = wat.indexOf("(func $objectTrampoline");
+    const end = wat.indexOf("\n(func $", start + 1);
+    const body = wat.slice(start, end < 0 ? undefined : end);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(body).toMatch(/\bcall (?:\$makeObject|\d+)\b/);
+    expect(body).not.toContain("return_call");
+  });
+
   it("deep recursion does not overflow stack with tail calls", async () => {
     const src = `
       function countdown(n: number): number {

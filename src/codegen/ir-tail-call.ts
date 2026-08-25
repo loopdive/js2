@@ -69,6 +69,10 @@ function resultsMatchCaller(calleeResults: ValType[], caller: CallerSig): boolea
   if (calleeResults.length !== 1) return false;
   const calleeRet = calleeResults[0]!;
   const callerRet = caller.returnType;
+  // Wasmtime 47 can corrupt a WasmGC value returned through an externref
+  // `return_call`. Preserve an ordinary call + return for that carrier. Keep
+  // this guard in sync with both legacy checks in control-flow.ts.
+  if (calleeRet.kind === "externref" || callerRet.kind === "externref") return false;
   if (calleeRet.kind === callerRet.kind) return true;
   // ref/ref_null are compatible for return purposes.
   if (
