@@ -147,6 +147,7 @@ import {
   emitKnownRestMethodArguments,
   knownMethodRestInfo,
 } from "./object-method-rest-abi.js";
+import { objectLiteralMethodNeedsCallReceiver } from "../object-literal-method-receiver.js";
 import {
   buildThrowJsErrorInstrs,
   canonicalClassExpressionName,
@@ -1556,6 +1557,12 @@ export function compileReceiverMethodCall(
     let funcIdx = hasReceiverMember
       ? ctx.funcMap.get(classMemberFuncKey(ctx, fullName, receiverMemberKind))
       : undefined; // (#1983)
+    if (funcIdx !== undefined && objectLiteralMethodNeedsCallReceiver(ctx, expr)) {
+      // Route the dynamic-prototype object-literal method through
+      // compileCallablePropertyCall, which installs its actual call-time
+      // receiver. The static `__anon_*_method` stub cannot do that.
+      funcIdx = undefined;
+    }
     if (process.env.DEBUG_MARKED_CODEGEN === "1" && (methodName === "lexInline" || methodName === "lex")) {
       console.error(
         "[marked-call-receiver]",
@@ -2030,6 +2037,9 @@ export function compileReceiverMethodCall(
       const methodName = propAccess.name.text;
       const fullName = `${structTypeName}_${methodName}`;
       let funcIdx = ctx.funcMap.get(fullName);
+      if (funcIdx !== undefined && objectLiteralMethodNeedsCallReceiver(ctx, expr)) {
+        funcIdx = undefined;
+      }
       // If no method found, check callable property on struct
       if (funcIdx === undefined) {
         const callablePropResult = compileCallablePropertyCall(ctx, fctx, expr, propAccess, structTypeName);

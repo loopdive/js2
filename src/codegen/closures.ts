@@ -164,6 +164,15 @@ import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-fun
 import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 export { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding };
 
+/**
+ * Synthetic closure binding used by standalone object-literal method lowering
+ * to retain the method's [[HomeObject]].  It is deliberately not a source
+ * spelling: object-literal methods capture the object being constructed, so a
+ * borrowed call can resolve `super` against that object rather than against
+ * the call-time `this` receiver.
+ */
+export const SUPER_HOME_OBJECT_CAPTURE_NAME = "__js2_super_home_object";
+
 function emitClosureDefaultReturnValue(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2966,6 +2975,8 @@ export function compileArrowAsClosure(
   ctx: CodegenContext,
   fctx: FunctionContext,
   arrow: ts.ArrowFunction | ts.FunctionExpression,
+  /** Object-literal [[HomeObject]] to carry for standalone `super` reads. */
+  homeObjectLocal?: number,
 ): ValType | null {
   const closureId = ctx.closureCounter++;
   const closureName = `__closure_${closureId}`;
@@ -3063,6 +3074,21 @@ export function compileArrowAsClosure(
     fctx.body.push({ op: "local.set", index: thisLocal });
   }
   const { captures, selfBindingName } = planClosureCaptures(ctx, fctx, arrow, body, additionalCaptureNames);
+  // Object-literal method closures need a stable [[HomeObject]] for `super`.
+  // Capture the freshly allocated object itself, rather than using
+  // `__current_this`: a detached/borrowed call is allowed to supply a
+  // different this-value while the method's home object remains unchanged.
+  if (homeObjectLocal !== undefined && !captures.some((capture) => capture.name === SUPER_HOME_OBJECT_CAPTURE_NAME)) {
+    captures.push({
+      name: SUPER_HOME_OBJECT_CAPTURE_NAME,
+      type: { kind: "externref" },
+      localIdx: homeObjectLocal,
+      mutable: false,
+      alreadyBoxed: false,
+      hasTdzFlag: false,
+      eagerDominatingBox: false,
+    });
+  }
   captureOwningDirectEvalState(ctx, fctx, arrow, reachesDirectEval, captures);
 
   // 3. Create struct type: field 0 = funcref, fields 1..N = captured vars
