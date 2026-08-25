@@ -5278,13 +5278,18 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
           continue;
         }
 
-        // Host constructors must receive an ordinary JS object for an options
-        // bag. A closed WasmGC data struct coerced to externref is opaque to JS:
-        // Hono's `new Response(body, init)` therefore saw `{ status: 404 }` as
-        // an empty ResponseInit and silently produced status 200. Reify plain
-        // data structs at this external-constructor boundary while preserving
-        // class instances (whose identity/prototype must cross unchanged).
-        if (expected?.kind === "externref" && (actual.kind === "ref" || actual.kind === "ref_null")) {
+        // Request/Response consume their second argument as a Web IDL
+        // dictionary. A closed WasmGC data struct coerced to externref is opaque
+        // to the host, so reify that exact init bag as an ordinary JS object.
+        // Do not apply this to arbitrary extern constructors: identity consumers
+        // such as WeakRef must receive the original WasmGC reference so a value
+        // returned by the host can still be cast to its original struct type.
+        const consumesWebInitDictionary = (className === "Request" || className === "Response") && i === 1;
+        if (
+          consumesWebInitDictionary &&
+          expected?.kind === "externref" &&
+          (actual.kind === "ref" || actual.kind === "ref_null")
+        ) {
           const structName = ctx.typeIdxToStructName.get(actual.typeIdx);
           const isPlainDataStruct =
             structName !== undefined && !ctx.classSet.has(structName) && !!ctx.structFields.get(structName)?.length;

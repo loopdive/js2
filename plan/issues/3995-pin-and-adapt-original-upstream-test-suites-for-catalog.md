@@ -121,6 +121,31 @@ reported as passing infrastructure. This includes the event constructors used
 by Fizz and event-plugin tests, which JSDOM exposes on `window` but not on
 Node's `globalThis` by default.
 
+## 2026-08-26 PR quality and equivalence audit
+
+The combined upstream-suite branch exposed two generic boundary regressions
+before it could land:
+
+- the host-call fallback for `identifier.call/apply` also claimed the
+  non-callable `Reflect` namespace, so `Reflect.apply(...)` emitted legacy
+  `__js_array_new`/`__js_array_push` imports instead of its native-first
+  boundary lowering. The fallback now requires a callable or genuinely
+  dynamic receiver type;
+- plain struct materialization was applied to every extern constructor
+  argument. That correctly made `new Response(body, init)` dictionaries
+  visible to the host, but cloned the target of `new WeakRef(target)` and
+  broke its round-trip Wasm struct identity. Materialization is now limited to
+  the second `Request`/`Response` Web IDL dictionary argument.
+
+The policy gate was then remeasured rather than widened speculatively. The
+intentional TypedArray instance-wiring import is documented in
+[#4360](https://github.com/loopdive/js2wasm/blob/main/plan/issues/4360-host-arraybuffer-copy-typedarray-views.md): native-first imports move exactly
+393 to 394, with legacy-semantic and unknown imports still zero. The runtime
+support added by this package-compatibility slice moves `src/runtime.ts` from
+the previous 17,949-line ceiling to the measured 18,188 lines. The baseline is
+set to that exact count; the resolveImport, adapter, capability, legacy, and
+unknown ceilings are unchanged.
+
 ## Provenance
 
 Migrated on 2026-08-01 from a GitHub issue on `loopdive/js2` (opened 2026-07-30)

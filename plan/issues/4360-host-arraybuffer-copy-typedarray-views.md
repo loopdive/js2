@@ -99,3 +99,14 @@ larger representation problem remains with
 [#2773](https://github.com/loopdive/js2wasm/blob/main/plan/issues/2773-value-rep-substrate-epic.md).
 The original #3416 residual also still needs to be rerun before this issue can
 be marked done.
+
+## 2026-08-26 host-import ratchet audit
+
+The concrete TypedArray carrier adds exactly one native-first import,
+`__register_typed_array`. It is classified as `instance-wiring`: the call only
+records the constructor brand on a compiler-created vec so later host
+`.buffer` reads can select the matching TypedArray mirror. It is not a semantic
+fallback or an unknown import. Across the unchanged 33-probe policy corpus the
+TypedArray probe therefore moves from 3 to 4 imports and the total from 393 to
+394, while legacy-semantic and unknown imports remain zero. The checked-in
+host-import baseline records only that measured one-import increase.

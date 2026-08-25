@@ -7594,6 +7594,12 @@ function compileCallExpression(
       // Case 1: identifier.call(thisArg, args...) — standalone function
       if (ts.isIdentifier(innerExpr)) {
         const funcName = innerExpr.text;
+        const innerFact = ctx.oracle.typeFactOf(innerExpr);
+        const innerCanBeHostCallable =
+          ctx.oracle.signatureOf(innerExpr) !== undefined ||
+          innerFact.kind === "function" ||
+          innerFact.kind === "any" ||
+          innerFact.kind === "unknown";
         const valueDeclaration = ctx.oracle.valueDeclarationOf(innerExpr);
         const aliasedImportTarget =
           valueDeclaration && (ts.isImportClause(valueDeclaration) || ts.isImportSpecifier(valueDeclaration))
@@ -7965,6 +7971,7 @@ function compileCallExpression(
           !noJsHost(ctx) &&
           closureInfo === undefined &&
           funcIdx === undefined &&
+          innerCanBeHostCallable &&
           (ctx.oracle.valueDeclarationOf(innerExpr) !== undefined ||
             fctx.localMap.has(funcName) ||
             (fctx.boxedCaptures?.has(funcName) ?? false) ||
