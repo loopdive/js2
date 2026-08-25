@@ -275,6 +275,19 @@ export function tryDynamicReceiverRuntimeDispatchReads(
   return PA_FALLTHROUGH;
 }
 
+// (#4640 residual) Native Error instances use the same namespace carrier as
+// their bare constructor value, including the length/name/prototype seed.
+function isBuiltinConstructorCarrierName(name: string): boolean {
+  return isBuiltinConstructorIdentityName(name) || isWasiErrorName(name);
+}
+
+function emitBuiltinConstructorCarrier(ctx: CodegenContext, fctx: FunctionContext, builtinName: string): ValType {
+  if (isBuiltinConstructorIdentityName(builtinName)) {
+    return emitBuiltinConstructorIdentity(ctx, fctx, builtinName);
+  }
+  return emitBuiltinNamespaceObject(ctx, fctx, builtinName)!;
+}
+
 export function tryConstructorPrototypeIdentity(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -473,17 +486,15 @@ export function tryConstructorPrototypeIdentity(
     const builtinName = objType.getSymbol()?.name;
     if (
       builtinName !== undefined &&
-      isBuiltinConstructorIdentityName(builtinName) &&
+      isBuiltinConstructorCarrierName(builtinName) &&
       isExternalDeclaredClass(objType, ctx.checker)
     ) {
-      // Evaluate the receiver for its side effects (spec: the object expression is
-      // evaluated), then discard it — the constructor identity does not depend on
-      // the receiver instance.
+      // Evaluate the receiver for spec side effects before returning its identity.
       const objResult = compileExpression(ctx, fctx, expr.expression);
       if (objResult) {
         fctx.body.push({ op: "drop" });
       }
-      return emitBuiltinConstructorIdentity(ctx, fctx, builtinName);
+      return emitBuiltinConstructorCarrier(ctx, fctx, builtinName);
     }
   }
 
