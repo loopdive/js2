@@ -51,6 +51,10 @@ loc-budget-allow:
   # indexed object substrate; moving the arms out would split the carrier
   # tests from the helpers they extend.
   - src/codegen/object-runtime.ts
+  # The filter result-carrier and open-object guards are the corresponding
+  # residual substrate decisions in the standalone ES5 filter lane.
+  - src/codegen/statements/variables.ts
+  - src/codegen/declarations/object-shape-widening.ts
 func-budget-allow:
   # `compileObjectDefineProperty` +29: the mapped-arguments §10.4.4.2 block gains
   #   the `applyAttributeState` closure and the flag-word computation. Both are
@@ -71,6 +75,7 @@ func-budget-allow:
   - src/codegen/object-ops.ts::compilePropertyIntrospection
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+  - src/codegen/statements/variables.ts::compileVariableStatement
 ---
 
 # #4638 — array element/descriptor substrate

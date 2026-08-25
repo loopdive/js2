@@ -36,6 +36,7 @@
  *   agree on accessor indices.
  */
 
+import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
@@ -50,6 +51,21 @@ export interface FilterLoopView {
   logicalLenTmp: number;
   iTmp: number;
   getOp: "array.get_u" | "array.get_s" | "array.get";
+}
+
+/**
+ * Whether a filter result can carry a non-number through a typed numeric
+ * receiver and therefore must stay on the dynamic externref carrier at its
+ * binding site. The output widening in `compileArrayFilter` and the slot type
+ * chosen by declarations/variables must agree; otherwise a `number[]` slot
+ * coerces an inherited accessor's string to NaN before the next read.
+ */
+export function filterResultNeedsDynamicCarrier(ctx: CodegenContext, initializer: ts.Expression | undefined): boolean {
+  if (!ctx.standalone || !ctx.protoIndexDirty || !initializer || !ts.isCallExpression(initializer)) return false;
+  if (!ts.isPropertyAccessExpression(initializer.expression) || initializer.expression.name.text !== "filter")
+    return false;
+  const resultFact = ctx.oracle.typeFactOf(initializer);
+  return resultFact.kind === "array" && resultFact.element.kind === "number";
 }
 
 /**
@@ -81,6 +97,14 @@ export interface OverlayFilterAccess {
   hasIdx: Instr[];
   /** `[] → []`: stores the fresh `Get(O, ToString(i))` into the element local. */
   loadElem: Instr[];
+  /**
+   * When a numeric typed lane is widened for an inherited accessor, preserve
+   * the raw JS value as an externref alongside the numeric callback value.
+   * `filter` must store the former in its result: `Get` can produce a string
+   * (or any other non-number) even though the callback's statically typed
+   * parameter is a number.
+   */
+  rawElemLocal?: number;
 }
 
 /**
@@ -99,6 +123,7 @@ export function overlayFilterAccess(
   loop: FilterLoopView,
   elemType: ValType,
   elemLocal: number,
+  rawElemLocal?: number,
 ): OverlayFilterAccess | null {
   if (!overlayRouteActive(ctx)) return null;
   const anyValueElem = isAnyValue(elemType, ctx);
@@ -151,10 +176,12 @@ export function overlayFilterAccess(
     loadElem: [
       ...idxArg,
       { op: "call", funcIdx: getIdxFn },
+      ...(rawElemLocal === undefined ? [] : ([{ op: "local.tee", index: rawElemLocal }] satisfies Instr[])),
       ...(elemType.kind === "f64" ? ([{ op: "call", funcIdx: unboxFn }] satisfies Instr[]) : []),
       ...(anyValueElem ? ([{ op: "call", funcIdx: anyFromExternFn! }] satisfies Instr[]) : []),
       { op: "local.set", index: elemLocal },
     ],
+    ...(rawElemLocal === undefined ? {} : { rawElemLocal }),
   };
 }
 

@@ -27,11 +27,12 @@
 // The presence gate is unconditional (both lanes); the overlay-aware element
 // read is gated on the #4159 `vecAccessorDescriptorDirty` pre-scan flag, so a
 // module that never installs a non-data descriptor keeps the dense kernel.
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { resetTest262RuntimeEvalProviderForTest } from "../scripts/test262-import-object.mjs";
 import { runTest262File } from "./test262-runner.js";
 
 const TEST262 = existsSync(join(__dirname, "..", "test262", "harness", "assert.js"));
@@ -51,6 +52,37 @@ async function bothLanes(src: string, expected: unknown): Promise<void> {
   expect(await run(src, "standalone"), "standalone").toStrictEqual(expected);
   expect(await run(src, "gc"), "gc").toStrictEqual(expected);
 }
+
+const FILTER_TEST262_ROOT = join(process.cwd(), "test262", "test", "built-ins", "Array", "prototype", "filter");
+const EXACT_ES5_FILTER_ROWS = ["15.4.4.20-5-7.js", "15.4.4.20-9-b-2.js", "15.4.4.20-9-b-15.js"] as const;
+
+describe.skipIf(!TEST262)("§15.4.4.20 exact ES5 standalone residual rows", () => {
+  const previousEvalEngine = process.env.JS2WASM_EVAL_ENGINE;
+  beforeAll(() => {
+    // The exact 5-7 row reaches eval as a callback thisArg. Pin this small
+    // ratchet to the refusal/interpreter provider so a developer checkout
+    // without the optional QuickJS artifact cannot turn it into a link error.
+    process.env.JS2WASM_EVAL_ENGINE = "interpreter";
+    resetTest262RuntimeEvalProviderForTest();
+  });
+  afterAll(() => {
+    if (previousEvalEngine === undefined) Reflect.deleteProperty(process.env, "JS2WASM_EVAL_ENGINE");
+    else process.env.JS2WASM_EVAL_ENGINE = previousEvalEngine;
+    resetTest262RuntimeEvalProviderForTest();
+  });
+
+  for (const file of EXACT_ES5_FILTER_ROWS) {
+    it(`passes the literal Test262 row ${file}`, async () => {
+      const result = await runTest262File(
+        join(FILTER_TEST262_ROOT, file),
+        "built-ins/Array/prototype/filter",
+        120_000,
+        "standalone",
+      );
+      expect(result.status, result.error ?? file).toBe("pass");
+    }, 180_000);
+  }
+});
 
 describe("§15.4.4.20 filter — HasProperty is re-evaluated per index", () => {
   it("skips indices a callback removed by shrinking .length (test262 15.4.4.20-9-4)", async () => {
