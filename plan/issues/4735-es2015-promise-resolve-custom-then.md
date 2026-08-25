@@ -146,6 +146,7 @@ TypeScript 5 and TypeScript 7: pass
 Biome lint (changed files): pass
 Prettier check (changed files): pass
 LOC budget: pass; function budget: pass
+Native-first host-import policy: pass (393/393 maximum)
 git diff --check: pass; core.hooksPath=.husky with executable pre-commit/pre-push
 ```
 

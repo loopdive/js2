@@ -4300,8 +4300,13 @@ export function emitStandalonePromiseThen(
   // takes the compiler's native reaction path above. The bridge intentionally
   // keeps this narrow: it handles compiled closure values and leaves the
   // existing native substrate untouched for the default slot.
-  const { newIdx: objVecNewIdx, pushIdx: objVecPushIdx } = ensureObjVecBuilders(ctx);
-  const applyClosureIdx = reserveApplyClosure(ctx);
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+  const applyClosureIdx = ctx.funcMap.get("__apply_closure");
+  if (objVecNewIdx === undefined || objVecPushIdx === undefined || applyClosureIdx === undefined) {
+    fctx.body.push(...nativeBody);
+    return;
+  }
   const argsLocal = allocLocal(fctx, `__then_override_args_${fctx.locals.length}`, {
     kind: "externref",
   });
