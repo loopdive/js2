@@ -30,7 +30,7 @@ The baseline is the freshly fetched `upstream/main` commit
 submodule is `b363f29d3c43c626dc852744ad64a0b48a003693`.
 
 The exact target is
-`test/language/statements/for-of/iterator-as-proxy.js`. It fails in both
+`test262/test/language/statements/for-of/iterator-as-proxy.js`. It fails in both
 execution lanes with the same null-closure symptom:
 
 | lane | result | diagnostic | wasm sha |
@@ -41,9 +41,9 @@ execution lanes with the same null-closure symptom:
 Known-good synchronous iterator controls, run against the same commit, pass in
 both lanes:
 
-- `test/language/statements/for-of/generic-iterable.js` (host sha
+- `test262/test/language/statements/for-of/generic-iterable.js` (host sha
   `3b9b9f0b74bd`, standalone sha `6ba6e722b18b`)
-- `test/language/statements/for-of/head-expr-obj-iterator-method.js` (host sha
+- `test262/test/language/statements/for-of/head-expr-obj-iterator-method.js` (host sha
   `8d5ae71ef7a6`, standalone sha `11ff3bff4cf8`)
 
 The baseline command used `runTest262File` for the target and controls with a
