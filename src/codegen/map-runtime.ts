@@ -24,9 +24,10 @@
  * is active (`ctx.standalone || ctx.wasi`). The JS-host path is untouched.
  */
 import { ts } from "../ts-api.js";
+import { isVoidType } from "../checker/type-mapper.js";
 import type { Instr, StructTypeDef, ArrayTypeDef, ValType } from "../ir/types.js";
 import { ensureAnyValueType, undefinedSingletonActive } from "./any-helpers.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { ensureObjVecBuilders, reserveApplyClosure, FLAG_DEFAULT } from "./object-runtime.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
@@ -35,11 +36,13 @@ import { compileArrowAsClosure, compileExpression, VOID_RESULT } from "./shared.
 import { isNullOrUndefinedLiteral } from "./destructuring-params.js";
 import { emitReceiverBrandCheck, type ReceiverBrandSpec } from "./receiver-brand.js";
 import { emitThrowTypeError } from "./js-errors.js";
-import { coercionInstrs } from "./type-coercion.js";
+import { coercionInstrs, emitGuardedRefCast } from "./type-coercion.js";
+import { resolveWasmType, resolveWasmTypeForClosureReturn } from "./index.js";
+import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
 import { nativeStringLiteralInstrs } from "./native-string-literals.js"; // (#4629) dyn-dispatch fill key compares
 import { getWellKnownSymbolId } from "./literals.js"; // (#4629) @@iterator id
-import { getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js"; // (#4629) iterator closure singleton
+import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js"; // (#4629) iterator closure singleton
 
 /** WasmGC `eq` abstract heap type, signed-LEB `0x6d` = -19. Used for ref.eq on
  *  object keys (only GC eqrefs can be compared by identity). */
@@ -1698,14 +1701,42 @@ export function tryCompileNativeMapSizeGet(
   return { kind: "i32" } as ValType;
 }
 
+/** Resolve a function-typed local stored in an externref slot to the canonical
+ * Wasm closure wrapper, mirroring the standalone array-HOF callback path. */
+function resolveDynamicCallbackClosure(
+  ctx: CodegenContext,
+  cbArg: ts.Expression,
+): { closureInfo: ClosureInfo; selfStructTypeIdx: number } | undefined {
+  const cbType = ctx.checker.getTypeAtLocation(cbArg);
+  const sigs = cbType.getCallSignatures();
+  if (sigs.length !== 1) return undefined;
+  const sig = sigs[0]!;
+  const paramTypes: ValType[] = [];
+  for (const param of sig.parameters) {
+    const loc = param.valueDeclaration ?? param.declarations?.[0] ?? cbArg;
+    paramTypes.push(resolveWasmType(ctx, ctx.checker.getTypeOfSymbolAtLocation(param, loc)));
+  }
+  const returnType = ctx.checker.getReturnTypeOfSignature(sig);
+  const results: ValType[] =
+    isVoidType(returnType) || (returnType.flags & ts.TypeFlags.Never) !== 0
+      ? []
+      : [resolveWasmTypeForClosureReturn(ctx, returnType)];
+  const wrapper = getOrCreateFuncRefWrapperTypes(ctx, paramTypes, results);
+  if (!wrapper) return undefined;
+  return {
+    closureInfo: wrapper.closureInfo,
+    selfStructTypeIdx: getClosureFuncSelfTypeIdx(ctx, wrapper.liftedFuncTypeIdx) ?? wrapper.structTypeIdx,
+  };
+}
+
 /**
  * (#2162) Intercept `Map.prototype.forEach` / `Set.prototype.forEach` in
  * standalone / `nativeStrings` mode and drive the callback over the native
  * `$Map` backing store. Spec 24.1.3.5 / 24.2.3.6: invoke
  * `callbackfn(value, key, collection)` for every live entry in insertion order
- * (a Set passes the value as both `value` and `key`). The `thisArg` 2nd
- * argument is accepted but, like the array-method native callbacks, only honored
- * when the callback closes over `this` itself — out of scope for this slice.
+ * (a Set passes the value as both `value` and `key`). The optional `thisArg`
+ * is installed in `__current_this` around each callback invocation, matching
+ * the array-method closure path.
  *
  * Reuses the entries-vector walk from `__map_iter_next` (index 0..entryCount,
  * skipping tombstones via `F_HASH & TOMBSTONE_BIT`) and the closure-call shape
@@ -1738,7 +1769,10 @@ export function tryCompileNativeCollectionForEach(
   const willBeClosure =
     ts.isArrowFunction(cbArg) ||
     ts.isFunctionExpression(cbArg) ||
-    (ts.isIdentifier(cbArg) && (ctx.funcMap.has(cbArg.text) || ctx.closureMap.has(cbArg.text)));
+    (ts.isIdentifier(cbArg) &&
+      (ctx.funcMap.has(cbArg.text) ||
+        ctx.closureMap.has(cbArg.text) ||
+        ((ctx.standalone || ctx.wasi) && ctx.checker.getTypeAtLocation(cbArg).getCallSignatures().length === 1)));
   if (!willBeClosure) {
     // (#3573) Spec 24.1.3.5 / 24.2.3.6: "If IsCallable(callbackfn) is false,
     // throw a TypeError". A statically non-callable LITERAL argument (`null` /
@@ -1802,12 +1836,50 @@ export function tryCompileNativeCollectionForEach(
     ts.isArrowFunction(cbArg) || ts.isFunctionExpression(cbArg)
       ? compileArrowAsClosure(ctx, fctx, cbArg)
       : compileExpression(ctx, fctx, cbArg);
-  if (!cbResult || (cbResult.kind !== "ref" && cbResult.kind !== "ref_null")) return undefined;
-  const closureTypeIdx = (cbResult as { typeIdx: number }).typeIdx;
-  const closureInfo = ctx.closureInfoByTypeIdx.get(closureTypeIdx);
-  if (!closureInfo) return undefined;
-  const closureTmp = allocLocal(fctx, `__mfe_cb_${fctx.locals.length}`, cbResult);
+  let closureTypeIdx: number | undefined;
+  let closureInfo: ClosureInfo | undefined;
+  let closureValue = cbResult;
+  if (cbResult && (cbResult.kind === "ref" || cbResult.kind === "ref_null")) {
+    closureTypeIdx = (cbResult as { typeIdx: number }).typeIdx;
+    closureInfo = ctx.closureInfoByTypeIdx.get(closureTypeIdx);
+  } else if ((ctx.standalone || ctx.wasi) && cbResult?.kind === "externref") {
+    const dynamic = resolveDynamicCallbackClosure(ctx, cbArg);
+    if (dynamic) {
+      closureInfo = dynamic.closureInfo;
+      closureTypeIdx = dynamic.selfStructTypeIdx;
+      fctx.body.push({ op: "any.convert_extern" });
+      emitGuardedRefCast(fctx, dynamic.selfStructTypeIdx);
+      fctx.body.push({ op: "ref.as_non_null" });
+      closureValue = { kind: "ref", typeIdx: dynamic.selfStructTypeIdx };
+    }
+  }
+  if (!closureInfo || closureTypeIdx === undefined) return undefined;
+  const closureTmp = allocLocal(fctx, `__mfe_cb_${fctx.locals.length}`, closureValue!);
   fctx.body.push({ op: "local.set", index: closureTmp });
+
+  // Evaluate the optional thisArg after the callback, as required by call
+  // argument order. Arrow callbacks keep lexical this, but their thisArg is
+  // still evaluated for side effects.
+  let thisArgTmp: number | undefined;
+  let prevThisTmp: number | undefined;
+  let currentThisGlobalIdx: number | undefined;
+  const thisArgExpr = reflective === undefined ? callExpr.arguments[1] : undefined;
+  if (thisArgExpr !== undefined) {
+    const thisArgType = compileExpression(ctx, fctx, thisArgExpr);
+    if (thisArgType && thisArgType.kind !== "externref") {
+      fctx.body.push(...coercionInstrs(ctx, thisArgType, { kind: "externref" }, fctx));
+    } else if (!thisArgType) {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    if (!ts.isArrowFunction(cbArg)) {
+      currentThisGlobalIdx = ensureCurrentThisGlobal(ctx);
+      thisArgTmp = allocLocal(fctx, `__mfe_this_${fctx.locals.length}`, { kind: "externref" });
+      prevThisTmp = allocLocal(fctx, `__mfe_prevthis_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: thisArgTmp });
+    } else {
+      fctx.body.push({ op: "drop" });
+    }
+  }
 
   const numParams = closureInfo.paramTypes.length;
   const iTmp = allocLocal(fctx, `__mfe_i_${fctx.locals.length}`, {
@@ -1857,6 +1929,14 @@ export function tryCompileNativeCollectionForEach(
   // The closure funcref's FIRST param is the closure env itself; push it before
   // the user args (mirrors array-methods.ts callClosure).
   const callClosure: Instr[] = [
+    ...(thisArgTmp !== undefined && prevThisTmp !== undefined && currentThisGlobalIdx !== undefined
+      ? [
+          { op: "global.get", index: currentThisGlobalIdx },
+          { op: "local.set", index: prevThisTmp },
+          { op: "local.get", index: thisArgTmp },
+          { op: "global.set", index: currentThisGlobalIdx },
+        ]
+      : []),
     { op: "local.get", index: closureTmp },
     // entry.value / entry.key are stored as `anyref` (boxed numbers are
     // `__box_number` externrefs wrapped via any.convert_extern). Externalize to
@@ -1900,6 +1980,12 @@ export function tryCompileNativeCollectionForEach(
     { op: "call_ref", typeIdx: closureInfo.funcTypeIdx },
     // forEach ignores the callback result; drop whatever it returned.
     ...((closureInfo.returnType === null ? [] : [{ op: "drop" }]) satisfies Instr[]),
+    ...(thisArgTmp !== undefined && prevThisTmp !== undefined && currentThisGlobalIdx !== undefined
+      ? [
+          { op: "local.get", index: prevThisTmp },
+          { op: "global.set", index: currentThisGlobalIdx },
+        ]
+      : []),
   ];
 
   // i = 0; loop { if i >= entryCount break; entry = entries[i]; i++;
