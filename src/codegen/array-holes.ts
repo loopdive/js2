@@ -44,6 +44,7 @@ import { allocTempLocal } from "./context/locals.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { isBrandedBuiltinName } from "./builtin-brands.js"; // (#4176) named proto-write pre-scan
 import { planHoleyArrayCarrier } from "./holey-array-plan.js"; // (#4222) isolated sparse-carrier proof
+import { recordDescriptorArrayReceiver } from "./declarations/descriptor-array-carrier.js"; // (#4670)
 
 /**
  * Cheap AST pre-scan: set `ctx.usesArrayHoles` when the program contains any
@@ -101,6 +102,10 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     }
     if (!ctx.vecAccessorDescriptorDirty && isNonDataDescriptorDefine(node)) {
       ctx.vecAccessorDescriptorDirty = true;
+    }
+    const descriptorArrayReceiver = indexedDescriptorArrayReceiver(node);
+    if (descriptorArrayReceiver !== undefined) {
+      recordDescriptorArrayReceiver(ctx, descriptorArrayReceiver);
     }
     if (!ctx.inheritedSetDescriptorDirty) {
       // (#4602) Statically-named triggers poison only their own keys; a
@@ -285,6 +290,27 @@ function isNonDataDescriptorDefine(node: ts.Node): boolean {
     return node.arguments.length >= 2 && !isDataOnlyDescriptorBag(node.arguments[1]);
   }
   return false;
+}
+
+/**
+ * (#4670) Return a direct identifier receiver for a non-data descriptor on a
+ * canonical array-index key. This is intentionally narrower than the module
+ * dirty flag: only these writes need an identity-preserving array carrier.
+ */
+function indexedDescriptorArrayReceiver(node: ts.Node): string | undefined {
+  if (!isNonDataDescriptorDefine(node) || !ts.isCallExpression(node)) return undefined;
+  const callee = node.expression;
+  if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "defineProperty") return undefined;
+  const key = literalPropertyKeyOf(node.arguments[1]);
+  if (!isCanonicalArrayIndexKey(key)) return undefined;
+  const receiver = unwrapExpr(node.arguments[0]);
+  return ts.isIdentifier(receiver) ? receiver.text : undefined;
+}
+
+function isCanonicalArrayIndexKey(key: string | undefined): boolean {
+  if (key === undefined) return false;
+  const index = Number(key);
+  return Number.isInteger(index) && index >= 0 && index < 0xffffffff && String(index) === key;
 }
 
 /**
