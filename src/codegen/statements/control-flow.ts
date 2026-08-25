@@ -280,6 +280,8 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
           "Derived constructors may only return an object or undefined",
           { flush: fctx },
         );
+        const callInstr = (funcIdx: number | undefined): Instr[] =>
+          funcIdx === undefined ? [] : [{ op: "call", funcIdx }];
         const returned = allocLocal(fctx, `__derived_ret_${fctx.locals.length}`, { kind: "externref" });
         fctx.body.push({ op: "local.set", index: returned });
         // `null` is not an Object for [[Construct]], even though its JS
@@ -292,16 +294,16 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
           then: throwInstrs,
           else: [
             { op: "local.get", index: returned },
-            ...(typeofUndefinedIdx === undefined ? [] : [{ op: "call", funcIdx: typeofUndefinedIdx }]),
+            ...callInstr(typeofUndefinedIdx),
             {
               op: "if",
               blockType: { kind: "val", type: { kind: "externref" } },
               then: [{ op: "local.get", index: selfIdx }],
               else: [
                 { op: "local.get", index: returned },
-                ...(typeofObjectIdx === undefined ? [] : [{ op: "call", funcIdx: typeofObjectIdx }]),
+                ...callInstr(typeofObjectIdx),
                 { op: "local.get", index: returned },
-                ...(typeofFunctionIdx === undefined ? [] : [{ op: "call", funcIdx: typeofFunctionIdx }]),
+                ...callInstr(typeofFunctionIdx),
                 { op: "i32.or" },
                 {
                   op: "if",
