@@ -254,6 +254,7 @@ import {
   type IrClassLowering,
   type IrClosureLowering,
   type IrDynamicLowering,
+  type IrFnctorLowering,
   type IrLowerResolver,
   type IrObjectStructLowering,
   type IrRefCellLowering,
@@ -293,6 +294,7 @@ import { simplifyCFG } from "./passes/simplify-cfg.js";
 import { gvnFromEnv } from "./passes/gvn.js"; // #4424
 import { UnionStructRegistry } from "./passes/tagged-union-types.js";
 import { runTaggedUnions } from "./passes/tagged-unions.js";
+import type { IrFnctorShape } from "./fnctor-abi.js";
 import {
   collectModuleInitPopulation,
   makeModuleInitSynthetic,
@@ -5201,6 +5203,12 @@ function makeResolver(
     // -------------------------------------------------------------------
     resolveClass(shape: IrClassShape): IrClassLowering | null {
       return classResolver.resolve(shape);
+    },
+    // #3521 — exact source/unit fnctor sidecar. A missing observation is a
+    // deliberate null so the lowerer cannot fall back to constructorName or
+    // the legacy name-keyed maps.
+    resolveFnctor(shape: IrFnctorShape): IrFnctorLowering | null {
+      return ctx.programAbiFnctors?.resolve(shape) ?? null;
     },
     // -------------------------------------------------------------------
     // Vec dispatch (slice 6 part 2 — #1181).

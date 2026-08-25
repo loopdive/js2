@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { irClassTypeRef, irSupportTypeRef, irTypeBindingKey } from "../ir/abi-bindings.js";
+import { irClassTypeRef, irFnctorLayoutTypeRef, irSupportTypeRef, irTypeBindingKey } from "../ir/abi-bindings.js";
 import { irCallableBindingKey } from "../ir/callable-bindings.js";
-import type { IrBindingId, IrClassId, IrSourceId } from "../ir/identity.js";
+import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "../ir/identity.js";
 import type { IrClosureSignature, IrType, IrTypeRef, IrVecLayoutRef } from "../ir/nodes.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
@@ -35,6 +35,8 @@ const PROGRAM_ABI_TYPE_ROLE = Object.freeze({
   refCell: 10,
   objectLayout: 11,
   nativeMapCarrier: 12,
+  /** (#3521) Source/unit-qualified reserved fnctor struct layout. */
+  fnctorLayout: 13,
   classLayout: 0,
 } as const);
 
@@ -528,6 +530,70 @@ export class ProgramAbiTypeRegistry {
     const support = Object.freeze({ carrierRef: ref, valueType });
     this.dynamicCarrierSupport = Object.freeze({ support, ...(nativeType ? { type: nativeType, cell: cell! } : {}) });
     return support;
+  }
+
+  /**
+   * Plan the exact reserved struct layout of one admitted source-local
+   * function-style constructor.  Unlike entry-source support layouts, a
+   * fnctor belongs to its inventoried constructor unit so two same-named
+   * constructors in different source units cannot alias a type slot.
+   */
+  prepareFnctorLayoutType(unitId: IrUnitId, ref: IrTypeRef, type: StructTypeDef): IrTypeRef {
+    if (this.planned) {
+      throw new ProgramAbiInvariantError(
+        "planning-sealed",
+        `cannot prepare fnctor layout ${ref.name} after retained type planning`,
+      );
+    }
+    if (ref.kind !== "type" || ref.binding.kind !== "support") {
+      throw new ProgramAbiInvariantError(
+        "invalid-binding-reference",
+        `fnctor layout ${ref.name} is not a support type reference`,
+      );
+    }
+    if (type.kind !== "struct") {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `fnctor layout ${ref.name} must point to a struct, got ${type.kind}`,
+      );
+    }
+    const physicalIndices = this.ctx.mod.types.reduce<number[]>((indices, candidate, index) => {
+      if (candidate === type) indices.push(index);
+      return indices;
+    }, []);
+    if (physicalIndices.length !== 1) {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `fnctor layout ${ref.name} must identify one live allocator struct object`,
+      );
+    }
+    const expected = irFnctorLayoutTypeRef(unitId, ref.name);
+    if (expected.binding.bindingId !== ref.binding.bindingId) {
+      throw new ProgramAbiInvariantError(
+        "invalid-binding-reference",
+        `fnctor layout ${ref.name} is not owned by constructor unit ${unitId}`,
+      );
+    }
+    const cell = this.session.typeCellFor(type) ?? this.session.createTypeCell(type);
+    const structuralReferenceKey = irTypeBindingKey(ref.binding);
+    this.session.ensurePlan({
+      id: ref.binding.bindingId,
+      structuralOrder: this.session.structuralOrder.forUnit(unitId, {
+        domain: "type",
+        roleOrdinal: PROGRAM_ABI_TYPE_ROLE.fnctorLayout,
+      }),
+      structuralReferenceKey,
+      displayName: ref.name,
+      slotPolicy: "required",
+      slotSpace: "type",
+      intent: {
+        kind: "type",
+        shapeKey: canonicalProgramAbiTypeDef(type),
+      },
+    });
+    this.session.registerStructuralReference(ref.binding.bindingId, structuralReferenceKey);
+    this.attachTypeLocator(ref.binding.bindingId, cell);
+    return ref;
   }
 
   /**

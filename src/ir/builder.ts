@@ -753,7 +753,7 @@ export class IrFunctionBuilder {
 
   /**
    * Emit a nominal function-style constructor instance. The flattened
-   * capture ABI includes one optional TDZ flag per capture; user arguments
+   * capture ABI is the legacy values-then-TDZ-flags segment; user arguments
    * remain a separate list so a resolver cannot accidentally reorder them.
    */
   emitFnctorNew(
@@ -773,6 +773,11 @@ export class IrFunctionBuilder {
     if (args.length !== shape.userParamTypes.length) {
       throw new Error(
         `IrFunctionBuilder: fnctor.new arg count ${args.length} != constructor arity ${shape.userParamTypes.length} (func ${this.id.name})`,
+      );
+    }
+    if (shape.hiddenIdentity !== (constructorIdentity !== null)) {
+      throw new Error(
+        `IrFunctionBuilder: fnctor.new hidden identity ${shape.hiddenIdentity ? "must be present" : "must be absent"} (func ${this.id.name})`,
       );
     }
     const result = this.allocator.fresh();

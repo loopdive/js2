@@ -46,7 +46,9 @@ export interface IrFnctorShape {
   readonly fields: readonly IrFnctorField[];
   readonly captures: readonly IrFnctorCapture[];
   readonly userParamTypes: readonly IrType[];
-  /** Identity argument is always the final synthesized constructor argument. */
+  /** Whether the active ABI carries the final hidden externref identity argument. */
+  readonly hiddenIdentity: boolean;
+  /** Identity metadata remains source/unit-qualified even when the active ABI omits the operand (WASI). */
   readonly constructorIdentity: {
     readonly unitId: IrUnitId;
     readonly paramIndex: number;
@@ -60,7 +62,8 @@ export interface IrFnctorResolution {
   readonly constructor: IrFuncRef;
   readonly captureParamTypes: readonly IrType[];
   readonly userParamTypes: readonly IrType[];
-  readonly constructorIdentityParamIndex: number;
+  readonly constructorIdentityParamIndex: number | null;
+  readonly hiddenIdentity: boolean;
   /** True only for the standalone/WASI foreign-return constructor ABI. */
   readonly resultIsExternref: boolean;
 }
@@ -193,6 +196,9 @@ function validateShapeScalars(shape: IrFnctorShape): string | null {
   const captureError = validateCaptures(shape.captures);
   if (captureError) return captureError;
   if (!nonEmpty(shape.constructorIdentity.unitId)) return "fnctor identity has an empty unit";
+  if (shape.constructorIdentity.unitId !== shape.constructorUnitId) {
+    return "fnctor identity unit differs from the constructor unit";
+  }
   if (!Number.isSafeInteger(shape.constructorIdentity.paramIndex) || shape.constructorIdentity.paramIndex < 0) {
     return "fnctor identity has an invalid parameter index";
   }
@@ -201,6 +207,7 @@ function validateShapeScalars(shape: IrFnctorShape): string | null {
   if (shape.constructorIdentity.paramIndex !== expectedIdentityIndex) {
     return `fnctor identity index ${shape.constructorIdentity.paramIndex} does not follow captures/user parameters ${expectedIdentityIndex}`;
   }
+  if (typeof shape.hiddenIdentity !== "boolean") return "fnctor shape has an invalid hidden-identity mode";
   return null;
 }
 
@@ -256,6 +263,7 @@ export function irFnctorShapeEquals(a: IrFnctorShape, b: IrFnctorShape): boolean
     fnctorRefEquals(a.reservedLayout, b.reservedLayout) &&
     fieldsEqual(a.fields, b.fields) &&
     capturesEqual(a.captures, b.captures) &&
+    a.hiddenIdentity === b.hiddenIdentity &&
     a.userParamTypes.length === b.userParamTypes.length &&
     a.userParamTypes.every((type, index) => irTypeEquals(type, b.userParamTypes[index]!)) &&
     a.constructorIdentity.unitId === b.constructorIdentity.unitId &&
@@ -282,6 +290,18 @@ export function validateIrFnctorResolution(resolution: IrFnctorResolution): stri
   ) {
     return "fnctor resolved capture ABI length does not match the shape";
   }
+  // The legacy constructor ABI is values first, then all paired TDZ flags,
+  // then user parameters and the optional hidden identity. Keep this order
+  // explicit: interleaving a flag after its capture shifts every later slot.
+  const expectedCaptureTypes: IrType[] = resolution.shape.captures.map((capture) => capture.type);
+  for (const capture of resolution.shape.captures) {
+    if (capture.hasTdzFlag) expectedCaptureTypes.push({ kind: "val", val: { kind: "i32" } });
+  }
+  for (let i = 0; i < expectedCaptureTypes.length; i++) {
+    if (!irTypeEquals(resolution.captureParamTypes[i]!, expectedCaptureTypes[i]!)) {
+      return `fnctor resolved capture parameter ${i} differs from the shape`;
+    }
+  }
   if (resolution.userParamTypes.length !== resolution.shape.userParamTypes.length) {
     return "fnctor resolved user ABI length does not match the shape";
   }
@@ -290,8 +310,12 @@ export function validateIrFnctorResolution(resolution: IrFnctorResolution): stri
       return `fnctor resolved user parameter ${i} differs from the shape`;
     }
   }
-  if (resolution.constructorIdentityParamIndex !== resolution.shape.constructorIdentity.paramIndex) {
+  const expectedIdentityIndex = resolution.hiddenIdentity ? resolution.shape.constructorIdentity.paramIndex : null;
+  if (resolution.constructorIdentityParamIndex !== expectedIdentityIndex) {
     return "fnctor resolved identity parameter index differs from the shape";
+  }
+  if (resolution.hiddenIdentity !== resolution.shape.hiddenIdentity) {
+    return "fnctor resolved hidden-identity mode differs from the shape";
   }
   return null;
 }
