@@ -881,6 +881,12 @@ export const RE_FIELD_NSCRATCH = 5; // #1959 — scratch slots for PROGRESS guar
 // resolve the `g` flag and reset `lastIndex` at RUNTIME — the borrowed form has
 // no regex EXPRESSION for `staticRegExpFlags` to read.
 export const RE_FIELD_LASTINDEX = 6;
+// Keep the legacy f64 slot for the common numeric fast path, but preserve a
+// non-numeric assignment opaquely until g/y exec applies ToLength. This mirrors
+// the host lane's deferred-lastIndex contract without widening every existing
+// numeric reflection site.
+export const RE_FIELD_LASTINDEX_RAW = 7;
+export const RE_FIELD_LASTINDEX_RAW_PRESENT = 8;
 
 /**
  * Push `2 * nGroups + nScratch` (the VM caps-array length) onto the stack,
@@ -963,11 +969,12 @@ export function ensureStandaloneRegExpStruct(ctx: CodegenContext): number {
     // caps array is sized `2*nGroups + nScratch`; scratch slots are never
     // reported as captures. Field added after source to keep lastIndex last.
     { name: "nScratch", type: { kind: "i32" } as ValType, mutable: false },
-    // [[LastIndex]] (§22.2.7.1) — a plain writable number property on the
-    // RegExp object. Stored as f64; exec applies ToLength at use time. Only
-    // g/y exec mutates it (#1913); reads/writes route through the #1914
-    // reflection path below.
+    // [[LastIndex]] (§22.2.7.1) — keep the numeric slot for the hot path, and
+    // pair it with an opaque raw value/presence bit for deferred ToLength of
+    // object assignments (`re.lastIndex = {valueOf(){...}}`).
     { name: "lastIndex", type: { kind: "f64" } as ValType, mutable: true },
+    { name: "lastIndexRaw", type: { kind: "externref" } as ValType, mutable: true },
+    { name: "lastIndexRawPresent", type: { kind: "i32" } as ValType, mutable: true },
   ];
   ctx.mod.types.push({
     kind: "struct",
@@ -1798,6 +1805,8 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                 },
                 { op: "i32.const", value: 0 }, // nScratch
                 { op: "f64.const", value: 0 }, // lastIndex
+                { op: "ref.null.extern" }, // raw lastIndex
+                { op: "i32.const", value: 0 }, // raw present
                 { op: "struct.new", typeIdx: structTypeIdx },
                 { op: "return" },
               ],
@@ -2290,6 +2299,8 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     },
     { op: "i32.const", value: 0 },
     { op: "f64.const", value: 0 },
+    { op: "ref.null.extern" },
+    { op: "i32.const", value: 0 },
     { op: "struct.new", typeIdx: structTypeIdx },
   ];
 
@@ -2373,6 +2384,8 @@ function emitStandaloneRegExpStruct(
   fctx.body.push({ op: "i32.const", value: compiled.nScratch });
   // field 6: lastIndex — fresh RegExp objects start at 0 (§22.2.3.3).
   fctx.body.push({ op: "f64.const", value: 0 });
+  // fields 7/8: no deferred raw value on a fresh object.
+  fctx.body.push({ op: "ref.null.extern" }, { op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx });
   return { kind: "ref", typeIdx };
 }
@@ -2549,7 +2562,12 @@ export function compileStandaloneRegExpConstructor(
           { op: "struct.get", typeIdx: structTypeIdx, fieldIdx },
         );
       }
-      undefinedArm.push({ op: "f64.const", value: 0 }, { op: "struct.new", typeIdx: structTypeIdx });
+      undefinedArm.push(
+        { op: "f64.const", value: 0 },
+        { op: "ref.null.extern" },
+        { op: "i32.const", value: 0 },
+        { op: "struct.new", typeIdx: structTypeIdx },
+      );
     }
 
     fctx.body.push({ op: "local.get", index: flagsLocal });
@@ -2615,7 +2633,12 @@ export function compileStandaloneRegExpConstructor(
     ]) {
       fctx.body.push({ op: "local.get", index: regexpLocal }, { op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
     }
-    fctx.body.push({ op: "f64.const", value: 0 }, { op: "struct.new", typeIdx: structTypeIdx });
+    fctx.body.push(
+      { op: "f64.const", value: 0 },
+      { op: "ref.null.extern" },
+      { op: "i32.const", value: 0 },
+      { op: "struct.new", typeIdx: structTypeIdx },
+    );
     return { kind: "ref", typeIdx: structTypeIdx };
   }
 
@@ -2741,6 +2764,39 @@ export function loadStandaloneRegExpStruct(
   }
   fctx.body.push({ op: "local.set", index: regexpLocal });
   return { regexpLocal, structTypeIdx: storedRegexpType.typeIdx };
+}
+
+/** Emit `ToLength(R.lastIndex)` for a g/y operation. */
+function standaloneRegExpLastIndexAsF64(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  regexpLocal: number,
+  structTypeIdx: number,
+): Instr[] {
+  // Build the raw-value coercion in the real function context so any canonical
+  // ToPrimitive/ToNumber dependencies and temporary locals are registered in
+  // the ordinary way, then embed the resulting instruction sequence in the
+  // value-producing branch below.
+  const rawStart = fctx.body.length;
+  fctx.body.push(
+    { op: "local.get", index: regexpLocal },
+    { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW },
+  );
+  coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" }, "number");
+  const rawToNumber = fctx.body.splice(rawStart);
+  return [
+    { op: "local.get", index: regexpLocal },
+    { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "f64" } },
+      then: rawToNumber,
+      else: [
+        { op: "local.get", index: regexpLocal },
+        { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
+      ],
+    },
+  ];
 }
 
 /**
@@ -2919,17 +2975,12 @@ export function emitRegexSearchCall(
     fctx.body.push({
       op: "if",
       blockType: { kind: "val", type: { kind: "i32" } },
-      then: [
-        { op: "local.get", index: regexpLocal },
-        { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
-        { op: "i32.trunc_sat_f64_s" },
-      ],
+      then: [...standaloneRegExpLastIndexAsF64(ctx, fctx, regexpLocal, structTypeIdx), { op: "i32.trunc_sat_f64_s" }],
       else: [{ op: "i32.const", value: 0 }],
     });
   } else if (options?.gyLastIndex) {
     fctx.body.push(
-      { op: "local.get", index: regexpLocal },
-      { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
+      ...standaloneRegExpLastIndexAsF64(ctx, fctx, regexpLocal, structTypeIdx),
       // trunc_sat: NaN→0 (= ToLength(NaN)); huge values saturate and the search
       // loop's `start > slen` check yields the spec's no-match result. Negative
       // values clamp to 0 inside __regex_search, matching ToLength.
@@ -2961,6 +3012,9 @@ export function emitRegexSearchCall(
         else: [{ op: "f64.const", value: 0 }],
       },
       { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
+      { op: "local.get", index: regexpLocal },
+      { op: "i32.const", value: 0 },
+      { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
     ];
     if (options.gyLastIndex === "runtime") {
       fctx.body.push(
@@ -3873,6 +3927,11 @@ function emitStandaloneRegExpMatchCore(
     fctx.body.push({ op: "local.get", index: regexpLocal });
     fctx.body.push({ op: "f64.const", value: 0 });
     fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX });
+    fctx.body.push(
+      { op: "local.get", index: regexpLocal },
+      { op: "i32.const", value: 0 },
+      { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
+    );
     return { kind: "ref_null", typeIdx: matchVecTypeIdx };
   }
 
@@ -3993,6 +4052,11 @@ function emitStandaloneRegExpMatchAllCore(
   fctx.body.push({ op: "local.get", index: regexpLocal });
   fctx.body.push({ op: "f64.const", value: 0 });
   fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX });
+  fctx.body.push(
+    { op: "local.get", index: regexpLocal },
+    { op: "i32.const", value: 0 },
+    { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
+  );
   return { kind: "ref", typeIdx: outerVecTypeIdx };
 }
 
@@ -4742,11 +4806,7 @@ export function emitRegExpTestFromLocals(
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: { kind: "i32" } },
-    then: [
-      { op: "local.get", index: regexpLocal },
-      { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
-      { op: "i32.trunc_sat_f64_s" },
-    ],
+    then: [...standaloneRegExpLastIndexAsF64(ctx, fctx, regexpLocal, structTypeIdx), { op: "i32.trunc_sat_f64_s" }],
     else: [{ op: "i32.const", value: 0 }],
   });
   fctx.body.push({ op: "local.get", index: stickyLocal });
@@ -4776,6 +4836,9 @@ export function emitRegExpTestFromLocals(
         else: [{ op: "f64.const", value: 0 }],
       },
       { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
+      { op: "local.get", index: regexpLocal },
+      { op: "i32.const", value: 0 },
+      { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
     ],
   });
   emitTestCapsRelease(ctx, fctx, capsLocal); // last read of `caps` is above
@@ -5154,11 +5217,10 @@ function flattenExternrefArgToString(ctx: CodegenContext, fctx: FunctionContext,
 /**
  * `re.lastIndex = value` on a standalone RegExp receiver (#1914).
  *
- * [[LastIndex]] is a plain writable data property (§22.2.7.1); the struct
- * stores it as f64. The spec defers coercion to exec's ToLength, so only
- * numeric writes are accepted here — non-numeric RHS values are a narrowed
- * refusal rather than a silently mis-modelled store. Leaves the RHS f64 on
- * the stack (assignment-expression value).
+ * [[LastIndex]] is a plain writable data property (§22.2.7.1). Numeric writes
+ * stay in the f64 fast slot; all other values are preserved in the raw slot and
+ * converted only when g/y exec performs ToLength. In particular, assignment
+ * itself must not invoke an object's `valueOf`.
  */
 export function tryCompileStandaloneRegExpLastIndexWrite(
   ctx: CodegenContext,
@@ -5178,19 +5240,43 @@ export function tryCompileStandaloneRegExpLastIndexWrite(
   const { regexpLocal, structTypeIdx } = loaded;
 
   fctx.body.push({ op: "local.get", index: regexpLocal });
-  const valType = compileExpression(ctx, fctx, value, { kind: "f64" });
+  // Compile without a numeric expectation: asking for f64 here would run the
+  // observable `valueOf` during assignment, before a surrounding try/catch.
+  const valType = compileExpression(ctx, fctx, value);
   if (!valType) return null;
-  if (valType.kind === "i32") {
-    fctx.body.push({ op: "f64.convert_i32_s" });
-  } else if (valType.kind !== "f64") {
-    reportStandaloneRegExpUnsupported(ctx, value, "non-numeric lastIndex writes");
-    return null;
+  if (valType.kind === "i32" || valType.kind === "f64") {
+    if (valType.kind === "i32") {
+      fctx.body.push({ op: "f64.convert_i32_s" });
+    }
+    const tmp = allocLocal(fctx, `__re_lastindex_${fctx.locals.length}`, { kind: "f64" });
+    fctx.body.push({ op: "local.tee", index: tmp });
+    fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX });
+    // A numeric write supersedes any previously deferred raw value.
+    fctx.body.push(
+      { op: "local.get", index: regexpLocal },
+      { op: "i32.const", value: 0 },
+      { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
+      { op: "local.get", index: tmp },
+    );
+    return { kind: "f64" };
   }
-  const tmp = allocLocal(fctx, `__re_lastindex_${fctx.locals.length}`, { kind: "f64" });
-  fctx.body.push({ op: "local.tee", index: tmp });
-  fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX });
-  fctx.body.push({ op: "local.get", index: tmp });
-  return { kind: "f64" };
+
+  // Preserve object/string/BigInt/null/undefined values opaquely. `externref`
+  // is the common boundary representation; this conversion does not perform
+  // ToPrimitive and therefore keeps user code deferred until exec.
+  if (valType.kind !== "externref") {
+    coerceType(ctx, fctx, valType, { kind: "externref" });
+  }
+  const rawTmp = allocLocal(fctx, `__re_lastindex_raw_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.tee", index: rawTmp });
+  fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW });
+  fctx.body.push(
+    { op: "local.get", index: regexpLocal },
+    { op: "i32.const", value: 1 },
+    { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
+    { op: "local.get", index: rawTmp },
+  );
+  return { kind: "externref" };
 }
 
 /**
