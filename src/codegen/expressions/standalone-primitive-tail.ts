@@ -87,6 +87,48 @@ export function tryCompileWrapperDynamicMethodCall(
 }
 
 /**
+ * After deleting `String.prototype.toString`, wrapper instances inherit
+ * `Object.prototype.toString`. Re-emit that borrowed call before the native
+ * String-wrapper fast path can recover and stringify [[StringData]] directly.
+ */
+export function tryCompileStandaloneDeletedStringToString(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+  receiverType: ts.Type,
+  expectedType: ValType | undefined,
+  compileCallExpression: (
+    ctx: CodegenContext,
+    fctx: FunctionContext,
+    expr: ts.CallExpression,
+    expectedType?: ValType,
+  ) => InnerResult,
+): InnerResult | undefined {
+  if (
+    !ctx.standalone ||
+    propAccess.name.text !== "toString" ||
+    !isStringWrapperType(receiverType) ||
+    !ctx.deletedBuiltinPrototypeMembers?.has("String.prototype.toString")
+  ) {
+    return undefined;
+  }
+
+  const objectProto = ts.factory.createPropertyAccessExpression(
+    ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier("Object"), "prototype"),
+    "toString",
+  );
+  const borrowed = ts.factory.createPropertyAccessExpression(objectProto, "call");
+  const borrowedCall = ts.factory.createCallExpression(borrowed, undefined, [
+    propAccess.expression,
+    ...Array.from(callExpr.arguments),
+  ]);
+  ts.setTextRange(borrowedCall, callExpr);
+  (borrowedCall as { parent?: ts.Node }).parent = callExpr.parent;
+  return compileCallExpression(ctx, fctx, borrowedCall, expectedType);
+}
+
+/**
  * Compile `Boolean.prototype.toString()` and Boolean wrapper `toString()` in
  * standalone mode.  The native prototype has the built-in false slot, while
  * a wrapper's slot is recovered by the shared runtime primitive engine.
