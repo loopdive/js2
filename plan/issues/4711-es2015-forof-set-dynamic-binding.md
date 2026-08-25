@@ -16,7 +16,7 @@ language_feature: for-of, Set, mutable-binding
 goal: spec-completeness
 assignee: codex/4711-es2015-forof-set-dynamic-binding
 loc-budget-max-source: 180
-related: [4704, 4708, 4702]
+related: [4704, 4708, 4702, 4930]
 ---
 
 # ES2015 `for-of` Set dynamic and mutable binding values
@@ -112,4 +112,8 @@ controls (`array.js`, `array-contract.js`, `array-expand.js`,
 line cap; no iterator/storage code changed. A temporary validation worktree
 stacked #4708 commit `cd1bf056a` on this commit; all five Set rows then passed
 in both host and standalone lanes. The #4708 commit and its files are not part
-of this PR.
+of this PR. After merging upstream main as `1e47a46d8`, the exact Set matrix
+remained unchanged: both owned rows passed in both lanes, both standalone
+native-mutation controls retained their expected #4708 failures, and all other
+controls passed. Full standalone control closure depends on #4930 (the #4708
+live native Set iteration PR).
