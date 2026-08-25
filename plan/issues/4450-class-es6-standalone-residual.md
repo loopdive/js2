@@ -16,6 +16,10 @@ related: [4444, 4447, 2158, 2175]
 oracle-ratchet-allow:
   - src/codegen/class-bodies.ts
   - src/codegen/literals.ts
+loc-budget-allow:
+  - src/codegen/class-bodies.ts
+  - src/codegen/literals.ts
+  - src/codegen/statements/control-flow.ts
 ---
 
 # #4450 — class ES6 standalone residual
