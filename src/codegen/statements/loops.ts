@@ -13,7 +13,11 @@ import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative
 import type { CodegenContext, FunctionContext, HoistedCharRead } from "../context/types.js";
 import { emitCoercedLocalSet, emitWebCompatCallAssignmentTarget, updateLocalType } from "../expressions/helpers.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
-import { nativeGeneratorInfoForForOfSubject, tryCompileNativeGeneratorForOf } from "../generators-native.js";
+import {
+  nativeGeneratorInfoForForOfBinding,
+  nativeGeneratorInfoForForOfSubject,
+  tryCompileNativeGeneratorForOf,
+} from "../generators-native.js";
 import {
   addIteratorImports,
   ensureI32Condition,
@@ -2709,6 +2713,32 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
   if (iterableType.kind === "ref" || iterableType.kind === "ref_null") {
     const genInfo = nativeGeneratorInfoForForOfSubject(ctx, iterableType);
     if (genInfo && tryCompileNativeGeneratorForOf(ctx, fctx, stmt, iterableType, genInfo)) {
+      return;
+    }
+  }
+
+  // A native generator assigned to a local/module binding crosses the binding
+  // as externref, but `extern.convert_any` preserves the underlying GC ref.
+  // Recover that ref before selecting the same direct driver used by `g()`.
+  const boundGenInfo = nativeGeneratorInfoForForOfBinding(ctx, stmt.expression);
+  const simpleNativeHead =
+    !stmt.awaitModifier &&
+    (ts.isIdentifier(stmt.initializer) ||
+      (ts.isVariableDeclarationList(stmt.initializer) &&
+        stmt.initializer.declarations.length === 1 &&
+        ts.isIdentifier(stmt.initializer.declarations[0]!.name)));
+  if (boundGenInfo && simpleNativeHead) {
+    fctx.body.push({ op: "any.convert_extern" });
+    fctx.body.push({ op: "ref.cast_null", typeIdx: boundGenInfo.stateTypeIdx });
+    if (
+      tryCompileNativeGeneratorForOf(
+        ctx,
+        fctx,
+        stmt,
+        { kind: "ref_null", typeIdx: boundGenInfo.stateTypeIdx },
+        boundGenInfo,
+      )
+    ) {
       return;
     }
   }

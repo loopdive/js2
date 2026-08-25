@@ -976,6 +976,30 @@ export function nativeGeneratorInfoForForOfSubject(
 }
 
 /**
+ * Resolve a native generator hidden behind a local/module binding. Generator
+ * values crossing an externref binding retain their GC identity, so a for-of
+ * consumer can recover the state struct before selecting the native driver.
+ */
+export function nativeGeneratorInfoForForOfBinding(
+  ctx: CodegenContext,
+  subject: ts.Expression,
+): NativeGeneratorInfo | undefined {
+  let expr = subject;
+  while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
+  if (!ts.isIdentifier(expr)) return undefined;
+  const binding = ctx.oracle.variableDeclarationOf(expr);
+  if (!binding?.initializer) return undefined;
+  let init = binding.initializer;
+  while (ts.isParenthesizedExpression(init)) init = init.expression;
+  if (!ts.isCallExpression(init) || !ts.isIdentifier(init.expression)) return undefined;
+  const targetDeclarations = ctx.oracle.declarationsOf(init.expression);
+  for (const info of ctx.nativeGenerators.values()) {
+    if (targetDeclarations.includes(info.decl)) return info;
+  }
+  return undefined;
+}
+
+/**
  * #1665 — drive a `for (… of gen())` loop over a Wasm-native generator state
  * machine WITHOUT the JS-host iterator protocol. The generator state ref is
  * expected to already be on the stack (the caller compiled the iterable
@@ -1047,6 +1071,28 @@ export function tryCompileNativeGeneratorForOf(
 
   const resultLocal = allocLocal(fctx, `__nativegen_res_${fctx.locals.length}`, resultRef);
 
+  // IteratorClose on an abrupt loop exit resumes the generator with an
+  // implicit `return(undefined)`. Keep the carrier in a local so every
+  // break/return/outer-continue site can inline the same close sequence.
+  const closeValueLocal = emitCarrierValue(ctx, fctx, undefined, info);
+  const doneFlag = allocLocal(fctx, `__nativegen_done_${fctx.locals.length}`, { kind: "i32" });
+  const closeGenerator = (): Instr[] => [
+    { op: "local.get", index: doneFlag },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...setStateFieldFromLocal(info, iterLocal, info.abruptFieldIdx, closeValueLocal),
+        ...setStateI32FromConst(info, iterLocal, info.modeFieldIdx, 1),
+        { op: "local.get", index: iterLocal },
+        { op: "call", funcIdx: resumeIdx },
+        { op: "drop" },
+      ],
+      else: [],
+    },
+  ];
+
   // Loop variable: the generator's element ValType (f64 numeric, or the native
   // string ref for a string generator — #2171). const-ness recorded so
   // shadowing/TDZ logic downstream stays consistent.
@@ -1064,6 +1110,18 @@ export function tryCompileNativeGeneratorForOf(
   for (let i = 0; i < fctx.continueStack.length; i++) fctx.continueStack[i]! += 2;
   if (fctx.generatorReturnDepth !== undefined) fctx.generatorReturnDepth += 2;
 
+  const closeBreakStackLen = fctx.breakStack.length;
+  const closeContinueStackLen = fctx.continueStack.length;
+  if (!fctx.finallyStack) fctx.finallyStack = [];
+  fctx.finallyStack.push({
+    cloneFinally: closeGenerator,
+    cloneFinallyAtDepth: closeGenerator,
+    breakStackLen: closeBreakStackLen,
+    continueStackLen: closeContinueStackLen,
+    breakDepthBaseline: fctx.breakStack.slice(),
+    continueDepthBaseline: fctx.continueStack.slice(),
+  });
+
   fctx.breakStack.push(1);
   fctx.continueStack.push(0);
 
@@ -1080,7 +1138,11 @@ export function tryCompileNativeGeneratorForOf(
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
-    then: [{ op: "br", depth: 2 }], // if + loop = depth 2 to exit block
+    then: [
+      { op: "i32.const", value: 1 },
+      { op: "local.set", index: doneFlag },
+      { op: "br", depth: 2 },
+    ], // if + loop = depth 2 to exit block
     else: [],
   });
 
@@ -1103,6 +1165,8 @@ export function tryCompileNativeGeneratorForOf(
   fctx.breakStack.pop();
   fctx.continueStack.pop();
 
+  fctx.finallyStack.pop();
+
   // Restore depths.
   for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]! -= 2;
   for (let i = 0; i < fctx.continueStack.length; i++) fctx.continueStack[i]! -= 2;
@@ -1121,6 +1185,9 @@ export function tryCompileNativeGeneratorForOf(
       },
     ],
   });
+  // A break targeting this for-of loop is handled here; return, outer break,
+  // and outer continue have already inlined `closeGenerator` above.
+  fctx.body.push(...closeGenerator());
   return true;
 }
 
