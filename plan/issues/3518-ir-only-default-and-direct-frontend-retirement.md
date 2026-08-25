@@ -24,21 +24,29 @@ oracle-ratchet-allow:
   - src/codegen/multi-prepared-array-leaf.ts
 loc-budget-allow:
   - src/codegen/index.ts
+  - src/codegen/ir-prepared-free-functions.ts
   - src/ir/backend/linear-integration.ts
   - src/ir/builder.ts
+  - src/ir/from-ast.ts
   - src/ir/integration.ts
   - src/ir/lower.ts
   - src/ir/nodes.ts
   - src/ir/prepared-component-dependencies.ts
+  - src/ir/select.ts
   - src/ir/verify.ts
 func-budget-allow:
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::planIrOverlay
   - src/ir/backend/linear-integration.ts::compileLinearIrFunctions
   - src/ir/backend/linear-integration.ts::makeLinearIrResolver
+  - src/ir/from-ast.ts::lowerFunctionAstToIr
+  - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/integration.ts::makeResolver
   - src/ir/lower.ts::emitInstrTree
   - src/ir/lower.ts::lowerIrFunctionBody
   - src/ir/passes/inline-small.ts::renameInstrOperands
   - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
+  - src/ir/select-identity.ts::planIrCompilationByIdentity
 ---
 # #3518 — IR-only default and direct front-end retirement
 
@@ -1056,7 +1064,170 @@ while retaining all 18 semantic and guard cases. Add explicit `const` counter,
 `const` accumulator, and read-only/imported accumulator negatives so the
 shared proof does not preserve the direct handler's current over-acceptance.
 
+##### B2 implementation checkpoint contract (2026-08-24)
+
+B2 is a stacked implementation worktree while the independently queueable B1
+provider foundation is still landing; it must not be published as a completed
+cutover until its parent is on `main`. The checkpoint has five atomic proof
+boundaries:
+
+1. production selection calls the shared checker/oracle proof, retains every
+   accepted loop under its exact source and terminal UnitId, and bare selector
+   callers keep the historical conservative deferral;
+2. `from-ast` consumes that exact plan before generic loop lowering and emits
+   no write for zero trips, one concat for one trip, or exactly one
+   provider-bound repeat plus one concat for two or more trips;
+3. a `PreparedCountedStringAppendReceipt` survives early/late report merging,
+   is removed when its owner is deferred, and is published only after the
+   exact terminal patch succeeds with a digest of the final provider-bound IR;
+4. single-source linear compilation runs identity selection once before user
+   slots, reserves repeat only from the retained exact plan, and later
+   authenticates the same source/preparation/reservation object. The direct
+   AST `.repeat` heuristic remains a separate compatibility authority and the
+   multi-source path remains Transaction C; and
+5. focused kills cover missing proof, builder-off rollback, stale
+   owner/source/provider, unconsumed or duplicate plan/receipt rows, all three
+   trip-count shapes, reservation mismatch, default-on direct-body poison, and
+   a multi-source direct-poison control that stays legacy-owned until
+   Transaction C.
+
+The checkpoint's runtime verdict must additionally execute WasmGC standalone
+and linear artifacts and inspect the target body rather than merely finding a
+repeat helper elsewhere in the module. A green selector claim, a whole-module
+helper name, or a compact route summary is not acceptance evidence.
+
+For this bounded checkpoint, the counted-loop consumer is the only producer of
+`IrBuilder.emitStringRepeat`, so the final per-function repeat census is exact.
+Before Transaction C or any second IR repeat producer lands, the instruction
+must gain plan/site provenance and a coexistence mutation; a function-wide
+count must not silently become a general association proof. After the shared
+counted proof is retained, any build, legality, provider-authentication, or
+lowering failure is fatal rather than eligible for direct retry. A receipt is
+publishable only after its exact terminal artifact compiled; a synthetic child
+artifact is not terminal-patch evidence.
+
+The change-scoped LOC/function allowances above are limited to these explicit
+B2 seams: single-source selection, exact plan consumption, final receipt
+publication/filtering, and backend orchestration. They do not authorize a
+second recognizer, multi-source admission, or generic direct-path growth.
+
 #### Transaction C — exact multi-source string leaf
+
+Transaction C is a standalone-WasmGC graph-composition transaction. It does
+not claim that the current direct-only multi-source linear compiler has gained
+Prepared graph identity, exact UnitId slot adapters, or authenticated receipt
+composition. The linear acceptance evidence in Transaction B is the
+single-source B2 control proving that the same semantic `string.repeat`
+instruction lowers through the linear provider. A future multi-linear cutover
+must first land graph-wide identity/options propagation, duplicate-label-safe
+slot ownership, and early graph preparation as its own reviewed transaction;
+finding `$__str_repeat` somewhere in a direct multi-linear module is not that
+evidence.
+
+Before the multi-source route is wired, land a small provenance foundation.
+The B2 receipt census is intentionally function-wide only while the counted
+consumer is the sole `IrBuilder.emitStringRepeat` producer. C introduces a
+second composition boundary, so every counted `string.repeat` must retain an
+immutable source-qualified site identity derived from its exact
+`IrCountedStringAppendPlan`. Builder creation, verifier, clone/map/inlining,
+in-memory digest, WasmGC preparation, linear preparation, and both receipt
+validators must preserve and authenticate that identity. Receipt construction
+must join each plan to its exact final instruction site rather than accepting
+only equal per-function counts/providers. Add non-vacuous coexistence,
+reorder, replacement, duplicate-site, missing-site, and borrowed-site
+mutations for WasmGC and linear before the production C route can claim a
+body.
+
+Land C as three independently reviewable signed checkpoints:
+
+1. **C0 — counted repeat site provenance.** Add the immutable site identity
+   and replace both function-wide receipt associations with exact plan/site
+   joins. This checkpoint changes no route policy.
+2. **C1 — pure string leaf planner.** Add the structural/source-qualified
+   candidate, exact retained-plan, callback/import, UnitId, Program ABI, and
+   support-receipt validator with mutation-heavy pure tests, but no skip or
+   production orchestration.
+3. **C2 — standalone WasmGC orchestration.** Wire the planner before generic
+   function-value handling, assert non-overlap with scalar/array/Fibonacci/
+   bench-loop routes, prepare only the target body, revalidate after all direct
+   owners, merge the exact report/receipt, add the rollback switch to #4522,
+   and publish raw audit/runtime evidence.
+
+##### C0 implementation checkpoint contract (2026-08-24)
+
+C0 is a behavior-neutral provenance and authentication transaction. It must
+not enable another source route, change the B2 direct/Prepared matrix, or claim
+the multi-source cutover. Add a branded primitive
+`IrCountedStringAppendSiteId` and derive it with one shared factory from the
+exact `{ sourceId, ownerUnitId, loopStart, loopEnd }` tuple, using the loop's
+source-file positions and a collision-free canonical encoding. Every retained
+`IrCountedStringAppendLoweringPlan`, including the zero- and one-trip shapes,
+owns this required site ID. Only the two-or-more-trip shape emits a
+`string.repeat`, whose new `countedStringAppendSite` field is optional so
+unrelated/future general repeat producers remain valid and distinguishable.
+Do not reuse the diagnostic `{ line, column }` instruction `site`, which is
+neither source-qualified nor unique.
+
+Own the brand, factory/parser, and final exact-site join in a new
+`src/ir/counted-string-append-provenance.ts` module. That module accepts only
+identity primitives, lowering plans, and final IR artifacts; it must not import
+the TypeScript checker or recreate the syntax recognizer. This keeps one
+backend-independent authority callable from both WasmGC and linear without an
+IR-to-codegen dependency cycle.
+
+The factory is called at the source/UnitId projection seam after the live AST
+proof has been revalidated. Both
+`src/codegen/ir-overlay-identity.ts::projectIrIntegrationLoweringPlans` and
+`src/ir/backend/linear-integration.ts::planLinearIrOverlay` consume that one
+factory; neither may invent its own encoding. `from-ast` passes the retained
+ID into the sole counted `emitStringRepeat` call. The verifier validates the
+canonical ID grammar and source span, while final preparation authenticates
+membership and ownership. This field is semantic, serialized contract state
+and participates automatically in the canonical instruction digest, so C0
+bumps the JS-dialect IR contract and JSON schema from **v5.2 to v5.3**. It does
+not claim executable Prepared-program serialization, which remains a separate
+prerequisite.
+
+Replace both positional function-wide repeat censuses with one shared exact
+site join:
+
+1. build a unique `expectedBySite` over retained plans with trip count at
+   least two and reject duplicate expected IDs;
+2. scan every successful final artifact deeply, including artifacts without a
+   counted sidecar, and ignore only generic repeats whose site field is absent;
+3. for each provenance-bearing repeat require a canonical known site, its
+   exact source and terminal owner, and the expected canonical provider;
+4. reject foreign, borrowed, forged, or duplicate sites, then require every
+   expected site exactly once;
+5. require zero/one-trip plans to emit no provenance-bearing repeat but still
+   publish their plan receipt; and
+6. digest the final instruction list and publish receipts in canonical retained
+   plan order only after backend lowering and exact terminal patch success.
+
+`PreparedCountedStringAppendReceipt` exposes and authenticates the plan's site
+ID. Report validation, deferral filtering, and merge duplicate detection use
+that canonical ID as their authority; live `syntaxPlan.loop` object identity
+remains only an earlier stale-proof check and cannot authorize publication.
+A receipt-bearing input report must independently carry its exact terminal
+artifact, so another merge input cannot launder the receipt. WasmGC and linear
+must use the same join helper and failure vocabulary.
+
+Until ownership-transfer provenance exists, reject provenance-bearing
+functions from `inline-small` and `monomorphize`; preserving an enumerable
+field while cloning or moving the instruction is not proof that its original
+terminal owner still owns it. Other mappers/provider attachment must preserve
+the field exactly, and digest mutations must prove that removing, changing, or
+borrowing it changes or invalidates the authenticated evidence.
+
+C0 focused evidence is non-vacuous and backend-paired: an unrelated generic
+repeat may coexist; reordered counted repeats still join by site; replacement
+with a no-site repeat, unknown/forged site, duplicate site, deleted site,
+same-source different-owner borrowing, and cross-source borrowing all fail.
+Zero/one-trip plans publish receipts without a repeat. Mapper/clone/provider
+tests preserve the site, the verifier rejects malformed/noncanonical IDs, and
+report merge rejects a duplicate canonical site even when its AST objects were
+cloned or reparsed. C0 runs the existing B2 WasmGC/linear runtime controls and
+proves byte/runtime route policy is unchanged before its signed checkpoint.
 
 Add `src/codegen/multi-prepared-string-leaf.ts` rather than broadening the
 numeric scalar or array recognizers. The route is default-on only for
@@ -1125,7 +1296,7 @@ Add `tests/issue-3518-bench-string-prepared-cutover.test.ts` and extend
 - the Prepared target uses no dynamic carrier, externref round trip, boxing,
   per-iteration allocation/call, AST method dispatcher, or second repeat/concat;
 - host-string WasmGC, native-string WasmGC, and linear each lower the same
-  in-memory v5.2 `string.repeat` instruction through their authenticated
+  in-memory v5.3 `string.repeat` instruction through their authenticated
   provider; clone/digest/provider/signature tamper fails before artifact side
   effects, and no executable serialization claim is made unless that separate
   substrate lands;

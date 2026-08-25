@@ -1163,13 +1163,16 @@ function recordExternalCallable(
         (ref.binding.kind !== "intrinsic" ||
           ref.binding.symbol !== IR_STRING_REPEAT_FN ||
           (intent.kind === "callable" &&
+            // Native preparation owns a defined intrinsic provider. The host
+            // route owns an intrinsic alias whose canonical allocator is the
+            // exact env import, so both sides of that alias must satisfy this
+            // same signature predicate.
+            (intent.origin === "intrinsic" || intent.origin === "import") &&
             intent.signature.params.length === 2 &&
             intent.signature.params[1] === '{"kind":"f64"}' &&
             intent.signature.results.length === 1 &&
             intent.signature.params[0] === intent.signature.results[0] &&
-            (intent.signature.params[0] === '{"kind":"externref"}' ||
-              intent.signature.params[0] === '{"kind":"i32"}' ||
-              intent.signature.params[0]?.startsWith('{"kind":"ref"')))),
+            stringRepeatCarrierSignatureIsCanonical(intent.signature.params[0]))),
     });
   }
   evidence.externalCallables.set(
@@ -1180,6 +1183,12 @@ function recordExternalCallable(
       programAbiBindingId: match?.id ?? null,
     }),
   );
+}
+
+function stringRepeatCarrierSignatureIsCanonical(type: string): boolean {
+  if (type === '{"kind":"externref"}' || type === '{"kind":"i32"}') return true;
+  const match = /^\{"kind":"(?:ref|ref_null)","typeIdx":(0|[1-9][0-9]*)\}$/.exec(type);
+  return match !== null && Number.isSafeInteger(Number(match[1]));
 }
 
 function recordConstructorNewSupportDependency(
