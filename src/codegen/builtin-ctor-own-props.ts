@@ -71,7 +71,12 @@
  */
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { withSpeculativeCompile } from "./context/speculative.js";
-import { BUILTIN_CTOR_ARITY, NUMBER_CONSTANT_VALUES, tryEnsureNativeProtoBrand } from "./builtin-value-read.js";
+import {
+  BUILTIN_CTOR_ARITY,
+  NUMBER_CONSTANT_VALUES,
+  TYPED_ARRAY_BYTES_PER_ELEMENT,
+  tryEnsureNativeProtoBrand,
+} from "./builtin-value-read.js";
 import { ensureStandaloneBuiltinStaticMethodClosure } from "./property-access.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js";
@@ -255,6 +260,21 @@ export function pushBuiltinCtorOwnPropSeed(
       fctx.body.push({ op: "drop" });
       return { commit: true, value: undefined };
     });
+  }
+
+  // (#4490 wave 2) Int8Array's `BYTES_PER_ELEMENT` is an own data property of
+  // the constructor.  Seed it on the same carrier as `length`/`name` so the
+  // dynamic read, `in`, delete, and gOPD paths observe one mutable entry.  The
+  // descriptor is non-writable, non-enumerable, and non-configurable (§23.2.4).
+  if (builtinName === "Int8Array") {
+    fctx.body.push({ op: "local.get", index: objLocal });
+    addStringConstantGlobal(ctx, "BYTES_PER_ELEMENT");
+    for (const instr of stringConstantExternrefInstrs(ctx, "BYTES_PER_ELEMENT")) fctx.body.push(instr);
+    fctx.body.push({ op: "f64.const", value: TYPED_ARRAY_BYTES_PER_ELEMENT[builtinName] ?? 1 });
+    fctx.body.push({ op: "call", funcIdx: boxIdx });
+    fctx.body.push({ op: "f64.const", value: 0 });
+    fctx.body.push({ op: "call", funcIdx: defineIdx });
+    fctx.body.push({ op: "drop" });
   }
 
   // (#2875 w4-F) Static METHODS — { w:true, e:false, c:true }, value = the

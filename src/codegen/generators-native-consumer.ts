@@ -846,9 +846,24 @@ function buildOpenResultValueReadExtern(
       return [...read, ...toF64, ...sentinelAwareF64BoxInstrs(f64Scratch, boxNumberIdx, undefInstrs)];
     }
     // ref/ref_null elem (native string / struct): wrap to externref. A null
-    // ref (the done default) converts to the null externref = canonical
-    // undefined.
-    return [...read, { op: "extern.convert_any" }];
+    // ref (the done default) must use the lane's canonical undefined value;
+    // `extern.convert_any(null)` is the JS value `null`, not `undefined`.
+    const refType = e.elemValType as { kind: "ref" | "ref_null"; typeIdx: number };
+    const refLocal = allocLocal(fctx, `__gen_ref_value_${fctx.locals.length}`, {
+      kind: "ref_null",
+      typeIdx: refType.typeIdx,
+    });
+    return [
+      ...read,
+      { op: "local.tee", index: refLocal },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: externVT },
+        then: [...undefInstrs],
+        else: [{ op: "local.get", index: refLocal }, { op: "extern.convert_any" }],
+      },
+    ];
   };
 
   // (#3505) No-match tail: under a JS host, a LEGACY (eager-buffer) generator's

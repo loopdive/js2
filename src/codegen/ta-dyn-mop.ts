@@ -434,11 +434,30 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
           { op: "extern.convert_any" },
         ];
       case "constructor": {
+        // (#4490 wave 2) Int8Array is the first concrete TypedArray ctor whose
+        // value is backed by the mutable `$Object` carrier.  A dynamically
+        // materialized Int8Array view must return that carrier, not mint a
+        // parallel `$__ta_ctor` singleton, or `view.constructor` would split
+        // identity from the bare `Int8Array` value and its own-property state.
+        const int8Carrier = ctx.builtinObjectGlobals.get("ctor:Int8Array");
+        const int8: Instr[] =
+          int8Carrier === undefined
+            ? []
+            : [
+                { op: "local.get", index: kind },
+                { op: "i32.const", value: 0 },
+                { op: "i32.eq" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [{ op: "global.get", index: int8Carrier }, { op: "return" }],
+                },
+              ];
         // Runtime kind → the per-kind $__ta_ctor SINGLETON (the same object a
         // bare ctor identifier mention produces — ref.eq identity, #3177).
         // Kinds with no registered singleton (ctor never mentioned as a value
         // in this module) answer undefined.
-        const out: Instr[] = [];
+        const out: Instr[] = [...int8];
         for (const [k, globalIdx] of [...ctx.taCtorSingletonGlobals.entries()].sort((a, b) => a[0] - b[0])) {
           out.push({ op: "local.get", index: kind });
           out.push({ op: "i32.const", value: k });
