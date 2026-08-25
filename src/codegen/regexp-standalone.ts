@@ -85,6 +85,7 @@ import { tryCompileCoercedStringMatch, tryCompileCoercedStringSearch } from "./s
 import { isPlainToStringReplacement } from "./string-proto-replace.js";
 import { tryCompileStandaloneRegExpFunctionReplace } from "./regex-replace-fn.js";
 import { nativeStringRepr } from "./builtin-scaffold.js";
+import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../ir/regexp-runtime-contract.js";
@@ -242,11 +243,11 @@ function isStaticStandaloneRegExpCreation(ctx: CodegenContext, expr: ts.Expressi
   if (unwrapped.kind === ts.SyntaxKind.RegularExpressionLiteral) return true;
   if (ts.isNewExpression(unwrapped)) {
     const callee = stripStaticWrapper(unwrapped.expression);
-    return ts.isIdentifier(callee) && isGlobalRegExpIdentifier(ctx, callee);
+    return isGlobalRegExpConstructorExpression(ctx, callee);
   }
   if (ts.isCallExpression(unwrapped) && !unwrapped.questionDotToken) {
     const callee = stripStaticWrapper(unwrapped.expression);
-    return ts.isIdentifier(callee) && isGlobalRegExpIdentifier(ctx, callee);
+    return isGlobalRegExpConstructorExpression(ctx, callee);
   }
   return false;
 }
@@ -460,6 +461,64 @@ export function isGlobalRegExpIdentifier(ctx: CodegenContext, ident: ts.Identifi
   if (ident.text !== "RegExp") return false;
   const sym = ctx.checker.getSymbolAtLocation(ident);
   return isDeclarationFileOnlySymbol(sym);
+}
+
+/**
+ * Whether an expression is the ambient RegExp constructor value.
+ *
+ * TypeScript gives `RegExp.prototype.constructor` the broad `Function` type
+ * (and therefore gives a variable initialized from it no construct signature)
+ * even though the ES5 value is the callable/constructable RegExp intrinsic.
+ * The standalone `new` dispatcher must retain that identity when the
+ * constructor is read through the prototype or a const/var alias; otherwise
+ * the generic externref constructor path sees a plain carrier object and
+ * reports "RegExp is not a constructor" at runtime.
+ *
+ * This is intentionally a syntax-and-binding proof, not a broad name check:
+ * shadowed `RegExp` bindings do not satisfy `isGlobalRegExpIdentifier`, and an
+ * alias is only followed through a variable declaration initializer. Writes or
+ * cycles decline and keep the ordinary dynamic path.
+ */
+export function isGlobalRegExpConstructorExpression(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const seen = new Set<ts.Symbol>();
+
+  const isPrototypeExpression = (candidate: ts.Expression): boolean => {
+    const unwrapped = stripStaticWrapper(candidate);
+    if (!ts.isPropertyAccessExpression(unwrapped) || unwrapped.name.text !== "prototype") return false;
+    const base = stripStaticWrapper(unwrapped.expression);
+    return ts.isIdentifier(base) && isGlobalRegExpIdentifier(ctx, base);
+  };
+
+  const visit = (candidate: ts.Expression): boolean => {
+    const unwrapped = stripStaticWrapper(candidate);
+    if (ts.isIdentifier(unwrapped)) {
+      if (isGlobalRegExpIdentifier(ctx, unwrapped)) return true;
+      const symbol = ctx.checker.getSymbolAtLocation(unwrapped);
+      if (!symbol || seen.has(symbol)) return false;
+      seen.add(symbol);
+      const declarations = symbol.getDeclarations() ?? [];
+      if (declarations.length === 0) return false;
+      let foundVariable = false;
+      for (const declaration of declarations) {
+        if (!ts.isVariableDeclaration(declaration) || declaration.initializer === undefined) return false;
+        // A mutable alias remains claimable only when the whole binding is
+        // never assigned after its declaration. `const` naturally passes;
+        // `var`/`let` are checked because JavaScript's checker still reports
+        // their initializer as the useful identity even after a rebind.
+        if (bindingHasWrites(ctx, declaration, symbol)) return false;
+        foundVariable = true;
+        if (!visit(declaration.initializer)) return false;
+      }
+      return foundVariable;
+    }
+
+    if (ts.isPropertyAccessExpression(unwrapped) && unwrapped.name.text === "constructor") {
+      return isPrototypeExpression(unwrapped.expression);
+    }
+    return false;
+  };
+
+  return visit(expr);
 }
 
 function isDeclarationFileOnlySymbol(sym: ts.Symbol | undefined): boolean {
@@ -4240,6 +4299,22 @@ export function tryCompileStandaloneRegExpPropertyRead(
 ): ValType | null | undefined {
   if (!usesNativeRegExpProvider(ctx) || ts.isPrivateIdentifier(expr.name)) return undefined;
   const propName = expr.name.text;
+  // `var re = new RegExp(); re.constructor` is still a RegExp constructor
+  // read when JavaScript checking widens `re` to `any`. The ordinary
+  // reflection set below deliberately only covers fields physically stored on
+  // the native carrier, so keep this identity arm separate. It is guarded by
+  // the same whole-file proof used by RegExp(R)'s identity lowering: an
+  // explicit `.constructor`/descriptor/prototype override must stay on the
+  // dynamic object path rather than being silently replaced with the builtin.
+  if (
+    propName === "constructor" &&
+    regExpIdentityBrandIsProvable(expr.expression) &&
+    isKnownBackendCreatedRegExpReceiver(ctx, expr.expression)
+  ) {
+    const loaded = loadStandaloneRegExpStruct(ctx, fctx, expr.expression);
+    if (loaded === null) return null;
+    return emitBuiltinConstructorIdentity(ctx, fctx, "RegExp");
+  }
   if (!STANDALONE_REGEXP_REFLECTION_PROPS.has(propName)) return undefined;
   const objType = ctx.checker.getTypeAtLocation(expr.expression);
   const nonNull = objType.getNonNullableType?.() ?? objType;
