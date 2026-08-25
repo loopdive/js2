@@ -93,7 +93,10 @@ import {
   ensureDynamicPatternTokenDecoder,
   makeDynamicPatternAccessors,
   TOKEN_ANY,
+  TOKEN_OPT,
   TOKEN_PIPE,
+  TOKEN_PLUS,
+  TOKEN_STAR,
   TOKEN_UNSUPPORTED,
 } from "./regexp-dynamic-pattern.js";
 
@@ -1096,6 +1099,13 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
   // verbatim as its match payload. `.` (ANY) and any multi-unit escape make
   // source text != matched text, which that path has no way to express.
   const PLAIN = 30;
+  // #4516 — Annex B `\\c` fallback quantifiers are only valid immediately
+  // after an atom. Keep malformed/ordinary dynamic quantifiers loud.
+  const CAN_QUANTIFY = 31;
+  // Emission lookahead for a quantifier following the current atom.
+  const NEXT = 32;
+  // Start pc of the current quantified atom's loop.
+  const QSTART = 33;
   const readFlatUnit = (dataLocal: number, offLocal: number, indexLocal: number): Instr[] => [
     { op: "local.get", index: dataLocal },
     { op: "local.get", index: offLocal },
@@ -1324,6 +1334,8 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "local.set", index: CHARS },
     { op: "i32.const", value: 1 },
     { op: "local.set", index: PLAIN },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: CAN_QUANTIFY },
     { op: "local.get", index: START },
     { op: "local.set", index: I },
     {
@@ -1387,12 +1399,106 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                   then: [
                     { op: "i32.const", value: 0 },
                     { op: "local.set", index: SIMPLE },
+                    { op: "i32.const", value: 0 },
+                    { op: "local.set", index: CAN_QUANTIFY },
                   ],
                   else: [
-                    { op: "local.get", index: CHARS },
-                    { op: "i32.const", value: 1 },
-                    { op: "i32.add" },
-                    { op: "local.set", index: CHARS },
+                    // `*`, `+`, and `?` are operators rather than program
+                    // records. They add the records needed to wrap the
+                    // immediately preceding atom; a leading/repeated
+                    // quantifier remains a loud unsupported pattern.
+                    ...tk.kindIs(TOKEN_STAR),
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        { op: "local.get", index: CAN_QUANTIFY },
+                        {
+                          op: "if",
+                          blockType: { kind: "empty" },
+                          then: [
+                            { op: "local.get", index: CHARS },
+                            { op: "i32.const", value: 2 },
+                            { op: "i32.add" },
+                            { op: "local.set", index: CHARS },
+                          ],
+                          else: [
+                            { op: "i32.const", value: 0 },
+                            { op: "local.set", index: SIMPLE },
+                          ],
+                        },
+                        { op: "i32.const", value: 0 },
+                        { op: "local.set", index: PLAIN },
+                        { op: "i32.const", value: 0 },
+                        { op: "local.set", index: CAN_QUANTIFY },
+                      ],
+                      else: [
+                        ...tk.kindIs(TOKEN_PLUS),
+                        {
+                          op: "if",
+                          blockType: { kind: "empty" },
+                          then: [
+                            { op: "local.get", index: CAN_QUANTIFY },
+                            {
+                              op: "if",
+                              blockType: { kind: "empty" },
+                              then: [
+                                { op: "local.get", index: CHARS },
+                                { op: "i32.const", value: 1 },
+                                { op: "i32.add" },
+                                { op: "local.set", index: CHARS },
+                              ],
+                              else: [
+                                { op: "i32.const", value: 0 },
+                                { op: "local.set", index: SIMPLE },
+                              ],
+                            },
+                            { op: "i32.const", value: 0 },
+                            { op: "local.set", index: PLAIN },
+                            { op: "i32.const", value: 0 },
+                            { op: "local.set", index: CAN_QUANTIFY },
+                          ],
+                          else: [
+                            ...tk.kindIs(TOKEN_OPT),
+                            {
+                              op: "if",
+                              blockType: { kind: "empty" },
+                              then: [
+                                { op: "local.get", index: CAN_QUANTIFY },
+                                {
+                                  op: "if",
+                                  blockType: { kind: "empty" },
+                                  then: [
+                                    { op: "local.get", index: CHARS },
+                                    { op: "i32.const", value: 1 },
+                                    { op: "i32.add" },
+                                    { op: "local.set", index: CHARS },
+                                  ],
+                                  else: [
+                                    { op: "i32.const", value: 0 },
+                                    { op: "local.set", index: SIMPLE },
+                                  ],
+                                },
+                                { op: "i32.const", value: 0 },
+                                { op: "local.set", index: PLAIN },
+                                { op: "i32.const", value: 0 },
+                                { op: "local.set", index: CAN_QUANTIFY },
+                              ],
+                              else: [
+                                // A literal or `.` is an atom that a later
+                                // quantifier may decorate.
+                                { op: "local.get", index: CHARS },
+                                { op: "i32.const", value: 1 },
+                                { op: "i32.add" },
+                                { op: "local.set", index: CHARS },
+                                { op: "i32.const", value: 1 },
+                                { op: "local.set", index: CAN_QUANTIFY },
+                              ],
+                            },
+                          ],
+                        },
+                      ],
+                    },
                   ],
                 },
               ],
@@ -1571,10 +1677,52 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                         ...readToken(J),
                         ...tk.kindIs(TOKEN_PIPE),
                         { op: "br_if", depth: 1 },
-                        { op: "local.get", index: ALTN },
-                        { op: "i32.const", value: 1 },
-                        { op: "i32.add" },
-                        { op: "local.set", index: ALTN },
+                        // Quantifiers contribute only their loop scaffolding:
+                        // `*` is SPLIT+atom+JMP (+2 records), while `+`/`?`
+                        // each add one. Other tokens contribute one record.
+                        ...tk.kindIs(TOKEN_STAR),
+                        {
+                          op: "if",
+                          blockType: { kind: "empty" },
+                          then: [
+                            { op: "local.get", index: ALTN },
+                            { op: "i32.const", value: 2 },
+                            { op: "i32.add" },
+                            { op: "local.set", index: ALTN },
+                          ],
+                          else: [
+                            ...tk.kindIs(TOKEN_PLUS),
+                            {
+                              op: "if",
+                              blockType: { kind: "empty" },
+                              then: [
+                                { op: "local.get", index: ALTN },
+                                { op: "i32.const", value: 1 },
+                                { op: "i32.add" },
+                                { op: "local.set", index: ALTN },
+                              ],
+                              else: [
+                                ...tk.kindIs(TOKEN_OPT),
+                                {
+                                  op: "if",
+                                  blockType: { kind: "empty" },
+                                  then: [
+                                    { op: "local.get", index: ALTN },
+                                    { op: "i32.const", value: 1 },
+                                    { op: "i32.add" },
+                                    { op: "local.set", index: ALTN },
+                                  ],
+                                  else: [
+                                    { op: "local.get", index: ALTN },
+                                    { op: "i32.const", value: 1 },
+                                    { op: "i32.add" },
+                                    { op: "local.set", index: ALTN },
+                                  ],
+                                },
+                              ],
+                            },
+                          ],
+                        },
                         ...advanceByToken(J),
                         { op: "br", depth: 0 },
                       ],
@@ -1626,10 +1774,102 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                         // exactly `CHARS` records and stays inside the
                         // `NINSTR * 3` program array.
                         ...readToken(K),
-                        ...tk.value(),
-                        { op: "local.set", index: CH },
-                        ...emitRecord(tk.recordOp(), dynamicCharOperand),
-                        ...advanceByToken(K),
+                        // Quantifiers are operators: wrap the immediately
+                        // preceding atom instead of emitting a standalone
+                        // record. The decoder scopes these tokens to the
+                        // Annex B `\\c` fallback, so ordinary unsupported
+                        // quantifier patterns still take the refusal path.
+                        { op: "local.get", index: K },
+                        ...tk.len(),
+                        { op: "i32.add" },
+                        { op: "local.set", index: NEXT },
+                        ...readToken(NEXT),
+                        ...tk.kindIs(TOKEN_STAR),
+                        {
+                          op: "if",
+                          blockType: { kind: "empty" },
+                          then: [
+                            { op: "local.get", index: PC },
+                            { op: "local.set", index: QSTART },
+                            ...emitRecord(
+                              [{ op: "i32.const", value: ReOp.SPLIT }],
+                              [{ op: "local.get", index: PC }, { op: "i32.const", value: 1 }, { op: "i32.add" }],
+                              [{ op: "local.get", index: PC }, { op: "i32.const", value: 3 }, { op: "i32.add" }],
+                            ),
+                            ...readToken(K),
+                            ...tk.value(),
+                            { op: "local.set", index: CH },
+                            ...emitRecord(tk.recordOp(), dynamicCharOperand),
+                            ...emitRecord([{ op: "i32.const", value: ReOp.JMP }], [{ op: "local.get", index: QSTART }]),
+                            ...readToken(NEXT),
+                            ...advanceByToken(NEXT),
+                            { op: "local.get", index: NEXT },
+                            { op: "local.set", index: K },
+                          ],
+                          else: [
+                            ...tk.kindIs(TOKEN_PLUS),
+                            {
+                              op: "if",
+                              blockType: { kind: "empty" },
+                              then: [
+                                { op: "local.get", index: PC },
+                                { op: "local.set", index: QSTART },
+                                ...readToken(K),
+                                ...tk.value(),
+                                { op: "local.set", index: CH },
+                                ...emitRecord(tk.recordOp(), dynamicCharOperand),
+                                ...emitRecord(
+                                  [{ op: "i32.const", value: ReOp.SPLIT }],
+                                  [{ op: "local.get", index: QSTART }],
+                                  [{ op: "local.get", index: PC }, { op: "i32.const", value: 1 }, { op: "i32.add" }],
+                                ),
+                                ...readToken(NEXT),
+                                ...advanceByToken(NEXT),
+                                { op: "local.get", index: NEXT },
+                                { op: "local.set", index: K },
+                              ],
+                              else: [
+                                ...tk.kindIs(TOKEN_OPT),
+                                {
+                                  op: "if",
+                                  blockType: { kind: "empty" },
+                                  then: [
+                                    { op: "local.get", index: PC },
+                                    { op: "local.set", index: QSTART },
+                                    ...emitRecord(
+                                      [{ op: "i32.const", value: ReOp.SPLIT }],
+                                      [
+                                        { op: "local.get", index: PC },
+                                        { op: "i32.const", value: 1 },
+                                        { op: "i32.add" },
+                                      ],
+                                      [
+                                        { op: "local.get", index: PC },
+                                        { op: "i32.const", value: 2 },
+                                        { op: "i32.add" },
+                                      ],
+                                    ),
+                                    ...readToken(K),
+                                    ...tk.value(),
+                                    { op: "local.set", index: CH },
+                                    ...emitRecord(tk.recordOp(), dynamicCharOperand),
+                                    ...readToken(NEXT),
+                                    ...advanceByToken(NEXT),
+                                    { op: "local.get", index: NEXT },
+                                    { op: "local.set", index: K },
+                                  ],
+                                  else: [
+                                    ...readToken(K),
+                                    ...tk.value(),
+                                    { op: "local.set", index: CH },
+                                    ...emitRecord(tk.recordOp(), dynamicCharOperand),
+                                    ...advanceByToken(K),
+                                  ],
+                                },
+                              ],
+                            },
+                          ],
+                        },
                         { op: "br", depth: 0 },
                       ],
                     },
@@ -1803,6 +2043,9 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
       { name: "tok", type: { kind: "i32" } },
       { name: "altn", type: { kind: "i32" } },
       { name: "plain", type: { kind: "i32" } },
+      { name: "canQuantify", type: { kind: "i32" } },
+      { name: "next", type: { kind: "i32" } },
+      { name: "qstart", type: { kind: "i32" } },
     ],
     body,
     exported: false,

@@ -3409,7 +3409,7 @@ function classifyEvalCallExpression(expr: ts.CallExpression, checker: ts.TypeChe
  * Wasm-instantiate pipeline (~50ms). 65,536 × 50ms = an hour of wall-clock,
  * so the test always hits the 30s pool ceiling. By detecting the literal-
  * fence shape `"/" + X + "/"` we can route directly to the RegExp
- * constructor host call — same observable semantics for any code that
+ * constructor path — same observable semantics for any code that
  * inspects `.source` / `.flags` / matching behavior, but ~one
  * host-call's worth of work instead of two.
  *
@@ -3422,10 +3422,6 @@ function tryEvalAsRegExpPeephole(
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): InnerResult | undefined {
-  // #1474 — this peephole desugars `eval("/" + X + "/")` to a RegExp_new
-  // host call. RegExp has no Wasm-native engine yet, so refuse to register
-  // the host import in --target standalone (eval itself is also host-only).
-  if (ctx.standalone) return undefined;
   if (expr.arguments.length !== 1) return undefined;
 
   // Strip parens around the argument.
@@ -3447,6 +3443,16 @@ function tryEvalAsRegExpPeephole(
   if (inner.left.text !== "/") return undefined;
 
   const xExpr = inner.right;
+
+  // The standalone lane has a Wasm-native RegExp carrier now. Route the exact
+  // literal-fence shape through the native constructor instead of the
+  // runtime-eval provider, whose foreign RegExp object cannot be reflected
+  // through the standalone carrier (`pattern.source` became undefined in the
+  // ES5 BMP escape tests). This preserves the peephole's one-evaluation
+  // property while keeping the module host-free.
+  if (ctx.standalone) {
+    return compileStandaloneRegExpConstructor(ctx, fctx, [xExpr], expr) ?? undefined;
+  }
 
   // Register `RegExp_new(pattern, flags) -> externref` on demand. The 7 target
   // tests (regexp/S7.8.5_*, comments/S7.4_A6, AnnexB/RegExp/RegExp-*-escape-BMP)
