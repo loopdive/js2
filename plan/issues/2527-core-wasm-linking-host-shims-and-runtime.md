@@ -31,6 +31,8 @@ func-budget-allow:
   - src/codegen/index.ts::generateMultiModule
   - src/codegen/index.ts::emitIteratorMethodExport
   - src/package-linker.ts::compileLinkedProject
+oracle-ratchet-allow:
+  - src/codegen/index.ts
 ---
 
 ## Phase 0 spike result (2026-06-20) — GREEN ✅
