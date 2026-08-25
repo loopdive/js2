@@ -119,6 +119,7 @@ export function createCodegenContext(
     stringLiteralCounter: 0,
     funcSourceText: new Map(),
     stringGlobalMap: new Map(),
+    hostStringGlobalMap: new Map(),
     numImportGlobals: 0,
     hasStringImports: false,
     enumValues: new Map(),

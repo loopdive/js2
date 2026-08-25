@@ -117,6 +117,30 @@ describe("#4383 JS-host BigInt arbitrary-width carrier", () => {
     expect(exports.counts!()).toBe(22);
   });
 
+  it("keeps Object(wideBigInt).valueOf() exact in JS-host mode", async () => {
+    const exports = await compileToWasm(`
+      export function objectValueOf(): bigint {
+        return Object(${WIDE}n).valueOf();
+      }
+    `);
+
+    expect(exports.objectValueOf!()).toBe(WIDE);
+  });
+
+  it.each(["standalone", "wasi"] as const)(
+    "keeps %s Object(BigInt) boxing on the native i64 helper",
+    async (target) => {
+      const result = await compile(`export function test(): bigint { return Object(123n).valueOf(); }`, {
+        target,
+        emitWat: true,
+        optimize: 0,
+      });
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(result.imports.some((entry) => entry.name === "__new_BigInt")).toBe(false);
+      expect(result.wat).toContain("(func $__new_BigInt (param i64) (result externref)");
+    },
+  );
+
   it("preserves a wide BigInt through any-return and module initialization", async () => {
     const exports = await compileToWasm(`
       const value: any = ${WIDE}n;
@@ -141,9 +165,9 @@ describe("#4383 JS-host BigInt arbitrary-width carrier", () => {
     const built = buildImports(result.imports, {}, result.stringPool);
     const { instance } = await instantiateWasm(result.binary, built.env, built.string_constants);
     built.setInstance?.(instance);
-    // Fast `any` is a tagged carrier; the assertion here is intentionally the
-    // module-init/instantiation bar. The ordinary host ABI is covered above.
-    expect(instance.exports.test).toBeTypeOf("function");
+    const test = instance.exports.test;
+    expect(test).toBeTypeOf("function");
+    expect((test as () => unknown)()).toBe(WIDE);
   });
 
   it("passes wide literals through conditional, logical, and nullish branches", async () => {

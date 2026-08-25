@@ -1478,6 +1478,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   funcSourceText: Map<string, string>;
   /** Map from string literal value → global import index */
   stringGlobalMap: Map<string, number>;
+  /** Host-string globals needed beside native-string literals at JS boundaries. */
+  hostStringGlobalMap: Map<string, number>;
   /** Number of imported globals (string constants) */
   numImportGlobals: number;
   /** Whether wasm:js-string imports have been registered */

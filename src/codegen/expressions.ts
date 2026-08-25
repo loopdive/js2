@@ -47,6 +47,7 @@ import {
   VOID_RESULT,
 } from "./shared.js";
 import { compileStringLiteral, emitNativeStringToHostExternref } from "./string-ops.js";
+import { compileHostBigIntLiteralText } from "./bigint-host-literal.js";
 import { ensureImportMetaObject } from "./import-meta.js";
 import { coerceType as coerceTypeImpl, pushDefaultValue } from "./type-coercion.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
@@ -990,7 +991,7 @@ function compileBigIntLiteral(
     !ctx.wasi &&
     (expectedType?.kind === "externref" || (expectedType !== undefined && isAnyValue(expectedType, ctx)));
   if (hostBigIntRef) {
-    const stringType = compileStringLiteral(ctx, fctx, text, expr);
+    const stringType = compileHostBigIntLiteralText(ctx, fctx, text);
     if (!stringType) return null;
     if (stringType.kind !== "externref") {
       // `fast`/native-strings still targets the JS host. Convert the native

@@ -2303,7 +2303,7 @@ export function coerceType(
       }
     }
     if (to.kind === "externref") {
-      if (ctx.standalone || ctx.wasi) {
+      if (isAnyValue(from, ctx)) {
         addUnionImports(ctx);
         const anyToExternIdx = ensureAnyToExternHelper(ctx);
         if (anyToExternIdx !== undefined) {
@@ -4273,7 +4273,7 @@ export function coercionInstrs(ctx: CodegenContext, from: ValType, to: ValType, 
   }
   // ref/ref_null → externref: extern.convert_any
   if ((from.kind === "ref" || from.kind === "ref_null") && to.kind === "externref") {
-    if ((ctx.standalone || ctx.wasi) && isAnyValue(from, ctx)) {
+    if (isAnyValue(from, ctx)) {
       addUnionImports(ctx);
       const anyToExternIdx = ensureAnyToExternHelper(ctx);
       if (anyToExternIdx !== undefined) {
