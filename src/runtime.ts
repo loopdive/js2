@@ -7531,11 +7531,17 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
           }
         }
       }
-      // Always report success — Array.prototype.pop etc. call
-      // `delete O[len-1]` on sparse arrayLikes where the index may not be
-      // present in the sidecar. Returning false here throws a Proxy
-      // invariant TypeError. Sidecar delete is best-effort.
-      _sidecarDelete(obj, key);
+      if (
+        !wsh.deleteStructProperty(obj, key, liveExports, {
+          hasOwn: _wasmStructHasOwn,
+          sidecarDelete: _sidecarDelete,
+          propDescs: _wasmPropDescs,
+          accessors: _wasmStructAccessors,
+          deletedKeys: _wasmStructDeletedKeys,
+          integrity: [_wasmFrozenObjs, _wasmSealedObjs],
+        })
+      )
+        return false;
       // #1364b — if `obj` is a registered class prototype or class object and
       // `key` is a method/static name from its allowlist, mark it deleted so
       // subsequent `Object.getOwnPropertyDescriptor(obj, key)` returns
