@@ -137,3 +137,8 @@ The focused regression test's standalone direct control returns `10` after
 the fix. `node_modules/.bin/tsc --noEmit --types node --pretty false` also
 passes, and Prettier reports all three changed files formatted. Changed
 compiler source is 59 added lines, below the 180-line limit.
+
+After merging upstream/main at `21c94b707` (merge commit
+`9dfe9b256`), the same focused Vitest file passed 3/3, the five-row Test262
+set above passed 5/5, TypeScript type-checking passed, and targeted Biome
+lint passed.
