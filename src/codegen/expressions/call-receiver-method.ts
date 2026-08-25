@@ -2025,7 +2025,13 @@ export function compileReceiverMethodCall(
         const callablePropResult = compileCallablePropertyCall(ctx, fctx, expr, propAccess, structTypeName);
         if (callablePropResult !== undefined) return callablePropResult;
       }
-      if ((funcIdx = directObjectMethodFuncIdx(ctx, expr, funcIdx)) !== undefined) {
+      // Keep a per-literal method handle selected by directObjectMethodFuncIdx
+      // through the late re-lookup below. A deduped sibling may leave the
+      // name-keyed placeholder pointing at a different (empty) body.
+      const nameMethodFuncIdx = funcIdx;
+      const directMethodFuncIdx = directObjectMethodFuncIdx(ctx, expr, funcIdx);
+      const hasLiteralMethodOverride = directMethodFuncIdx !== undefined && directMethodFuncIdx !== nameMethodFuncIdx;
+      if ((funcIdx = directMethodFuncIdx) !== undefined) {
         // Push self (the receiver) as first argument, with type hint from method's first param
         const structMethodPTypes = getFuncParamTypes(ctx, funcIdx);
         const recvType = compileExpression(ctx, fctx, propAccess.expression, structMethodPTypes?.[0]);
@@ -2089,7 +2095,7 @@ export function compileReceiverMethodCall(
           }
           // Set __argc before the call so the callee knows the actual arg count
           maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, smMethodParamCount);
-          const finalStructMethodIdx = ctx.funcMap.get(fullName) ?? funcIdx;
+          const finalStructMethodIdx = hasLiteralMethodOverride ? funcIdx : (ctx.funcMap.get(fullName) ?? funcIdx);
           fctx.body.push({ op: "call", funcIdx: finalStructMethodIdx });
           const elseInstrs = fctx.body;
           fctx.body = savedBody;
@@ -2154,7 +2160,7 @@ export function compileReceiverMethodCall(
         // Set __argc before the call so the callee knows the actual arg count
         maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, nnMethodParamCount);
         // Re-lookup funcIdx: argument compilation may trigger addUnionImports
-        const finalStructMethodIdx = ctx.funcMap.get(fullName) ?? funcIdx;
+        const finalStructMethodIdx = hasLiteralMethodOverride ? funcIdx : (ctx.funcMap.get(fullName) ?? funcIdx);
         fctx.body.push({ op: "call", funcIdx: finalStructMethodIdx });
 
         const sig = ctx.checker.getResolvedSignature(expr);
