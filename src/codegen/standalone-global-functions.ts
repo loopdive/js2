@@ -21,6 +21,7 @@ import { addStringConstantGlobal, addUnionImports } from "./registry/imports.js"
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitNativeEscape, emitNativeUnescape } from "./escape-native.js"; // (#4556) Annex B §B.2.1/§B.2.2
 import { emitNativeUriDecode, emitNativeUriEncode, URI_DECODE_MASK, URI_ENCODE_MASK } from "./uri-encoding-native.js";
+import { emitStandaloneIntrinsicEvalValue } from "./expressions/eval-inline.js";
 
 export const STANDALONE_ES5_GLOBAL_FUNCTION_NAMES = [
   "parseInt",
@@ -268,8 +269,18 @@ export function tryEmitStandaloneGlobalFunctionIdentifier(
   return emitStandaloneGlobalFunctionValue(ctx, fctx, name);
 }
 
+function moduleNeedsStandaloneEvalGlobalSeed(ctx: CodegenContext): boolean {
+  return (
+    ctx.standalone && (ctx.runtimeEvalBoundaryPlan?.sites.some((site) => site.kind === "global-eval-property") ?? false)
+  );
+}
+
 /** Build the one-time seeds for the native realm object in `objectLocal`. */
-export function standaloneGlobalFunctionSeedInstrs(ctx: CodegenContext, objectLocal: number): Instr[] | null {
+export function standaloneGlobalFunctionSeedInstrs(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  objectLocal: number,
+): Instr[] | null {
   if (!ctx.standalone && !ctx.wasi) return [];
 
   // Settle every possible late import before capturing any function index in
@@ -284,9 +295,42 @@ export function standaloneGlobalFunctionSeedInstrs(ctx: CodegenContext, objectLo
     closures.set(name, closure);
   }
 
-  const defineIdx = ctx.funcMap.get("__defineProperty_value");
-  if (defineIdx === undefined) return null;
+  // `%eval%` is not one of the native ES5 call helpers above: its first-class
+  // value is the identity-stable indirect-eval wrapper from the runtime-eval
+  // seam. Seed that same wrapper on the realm object so `this.eval` and
+  // `Object.getOwnPropertyDescriptor(this, "eval")` observe the existing bare
+  // `eval` value rather than an absent property. Keep the detached body live
+  // while the wrapper can register its provider import and shift indices.
   const body: Instr[] = [];
+  if (moduleNeedsStandaloneEvalGlobalSeed(ctx)) {
+    ctx.liveBodies.add(body);
+    const savedBody = fctx.body;
+    fctx.body = body;
+    addStringConstantGlobal(ctx, "eval");
+    body.push({ op: "local.get", index: objectLocal }, ...stringConstantExternrefInstrs(ctx, "eval"));
+    let evalType: ValType | undefined;
+    try {
+      evalType = emitStandaloneIntrinsicEvalValue(ctx, fctx);
+    } finally {
+      fctx.body = savedBody;
+    }
+    if (evalType === undefined) {
+      ctx.liveBodies.delete(body);
+      return null;
+    }
+    if (evalType.kind !== "externref") body.push({ op: "extern.convert_any" });
+  }
+
+  const defineIdx = ctx.funcMap.get("__defineProperty_value");
+  if (defineIdx === undefined) {
+    ctx.liveBodies.delete(body);
+    return null;
+  }
+
+  if (moduleNeedsStandaloneEvalGlobalSeed(ctx)) {
+    // Host flag bits: writable=1, enumerable=2, configurable=4.
+    body.push({ op: "f64.const", value: 0x05 }, { op: "call", funcIdx: defineIdx }, { op: "drop" });
+  }
 
   for (const name of STANDALONE_ES5_GLOBAL_FUNCTION_NAMES) {
     const closure = closures.get(name)!;
@@ -297,5 +341,6 @@ export function standaloneGlobalFunctionSeedInstrs(ctx: CodegenContext, objectLo
     // Host flag bits: writable=1, enumerable=2, configurable=4.
     body.push({ op: "f64.const", value: 0x05 }, { op: "call", funcIdx: defineIdx }, { op: "drop" });
   }
+  ctx.liveBodies.delete(body);
   return body;
 }

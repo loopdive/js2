@@ -2765,7 +2765,7 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
   fctx.body = savedBody;
   ctx.liveBodies.delete(savedBody);
   ctx.liveBodies.add(namespaceSeeds);
-  const functionSeeds = standaloneGlobalFunctionSeedInstrs(ctx, objLocal);
+  const functionSeeds = standaloneGlobalFunctionSeedInstrs(ctx, fctx, objLocal);
   const newObjectIdx = ctx.funcMap.get("__new_plain_object");
   const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
   const boxNumberIdx = ctx.funcMap.get("__box_number");
