@@ -18,6 +18,9 @@ loc-budget: 180
 loc-budget-allow:
   - src/codegen/closures.ts
   - src/codegen/literals.ts
+func-budget-allow:
+  - src/codegen/closures.ts::compileArrowAsCallback
+  - src/codegen/literals.ts::compileObjectLiteralWithAccessors
 ---
 
 # #4723 — for-of array assignment-rest property setter must not read the target
