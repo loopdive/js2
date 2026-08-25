@@ -511,22 +511,8 @@ function irTypeKey(t: IrType): string {
     return `fnctor:${JSON.stringify({
       sourceId: t.shape.sourceId,
       constructorUnitId: t.shape.constructorUnitId,
-      constructorName: t.shape.constructorName,
-      constructorTarget: t.shape.constructorTarget,
-      reservedLayout: t.shape.reservedLayout,
-      constructorIdentity: t.shape.constructorIdentity,
-      fields: t.shape.fields.map((field) => ({
-        name: field.name,
-        ordinal: field.ordinal,
-        type: irTypeKey(field.type),
-      })),
-      captures: t.shape.captures.map((capture) => ({
-        name: capture.name,
-        ordinal: capture.ordinal,
-        hasTdzFlag: capture.hasTdzFlag,
-        type: irTypeKey(capture.type),
-      })),
-      userParamTypes: t.shape.userParamTypes.map(irTypeKey),
+      constructorTarget: canonicalFnctorRef(t.shape.constructorTarget),
+      reservedLayout: canonicalFnctorRef(t.shape.reservedLayout),
     })}`;
   }
   // #1926 — union members / boxed inner are IrTypes; recurse via irTypeKey.
@@ -538,6 +524,19 @@ function irTypeKey(t: IrType): string {
   // refinements are distinct types under irTypeEquals; keys must match that).
   if (t.kind === "dynamic") return t.tag === undefined ? "dyn" : `dyn:${t.tag}`;
   return `b:${irTypeKey(t.inner)}`;
+}
+
+function canonicalFnctorRef(ref: { readonly kind: string; readonly binding: unknown }): string {
+  return `${ref.kind}:${canonicalFnctorJson(ref.binding)}`;
+}
+
+function canonicalFnctorJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalFnctorJson).join(",")}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalFnctorJson(entry)}`)
+    .join(",")}}`;
 }
 
 function valTypeKey(v: ValType): string {
@@ -777,6 +776,14 @@ function collectUses(instr: IrInstr): readonly IrValueId[] {
     case "string.char_at":
     case "string.char_code_at":
       return [instr.value, instr.index];
+    case "fnctor.new":
+      return [
+        ...instr.captureArgs,
+        ...instr.args,
+        ...(instr.constructorIdentity === null ? [] : [instr.constructorIdentity]),
+      ];
+    case "fnctor.get":
+      return [instr.value];
     case "object.new":
       return instr.values;
     case "object.get":
