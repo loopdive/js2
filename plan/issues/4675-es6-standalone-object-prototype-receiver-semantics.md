@@ -25,6 +25,8 @@ loc-budget-allow:
   - src/codegen/object-runtime.ts
 func-budget-allow:
   - src/codegen/object-runtime.ts::ensureObjectRuntime
+coercion-sites-allow:
+  - src/codegen/object-runtime.ts
 ---
 
 # #4675 — ES2015 standalone Object.prototype ordinary semantics
