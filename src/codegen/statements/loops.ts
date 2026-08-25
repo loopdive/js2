@@ -1542,13 +1542,16 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
   // Null guard: if string ref is nullable, throw TypeError on null (#775)
   // In JS, `for (const c of null)` throws TypeError
   if (strType.kind === "ref_null") {
+    // Register the throw's string global while the guarded body is still live
+    // in fctx.body, so a new import-global shift repairs those instructions.
+    const nullThrow = forOfToObjectTypeError(ctx, fctx);
     const guardedInstrs = fctx.body.splice(strNullGuardStart);
     fctx.body.push({ op: "local.get", index: strLocal });
     fctx.body.push({ op: "ref.is_null" });
     fctx.body.push({
       op: "if",
       blockType: { kind: "empty" },
-      then: forOfToObjectTypeError(ctx, fctx),
+      then: nullThrow,
       else: guardedInstrs,
     });
   }
@@ -1909,6 +1912,7 @@ function compileForOfArray(
   // If null from a failed guarded cast (wrong struct type), just skip the loop.
   // Only throw TypeError for genuinely null values (e.g. `for (const x of null)`).
   if (vecType.kind === "ref_null") {
+    const nullThrow = forOfToObjectTypeError(ctx, fctx);
     const guardedInstrs = fctx.body.splice(nullGuardStart);
     const backupLocal: number | undefined = (fctx as any).__lastGuardedCastBackup;
     fctx.body.push({ op: "local.get", index: vecLocal });
@@ -1924,7 +1928,7 @@ function compileForOfArray(
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: forOfToObjectTypeError(ctx, fctx),
+            then: nullThrow,
             else: [], // wrong struct type → skip loop
           },
         ],
@@ -1934,7 +1938,7 @@ function compileForOfArray(
       fctx.body.push({
         op: "if",
         blockType: { kind: "empty" },
-        then: forOfToObjectTypeError(ctx, fctx),
+        then: nullThrow,
         else: guardedInstrs,
       });
     }
@@ -2241,13 +2245,14 @@ function emitArrayKeysEntriesLoop(
 
   // Null guard: throw TypeError for genuinely null receiver (`arr` is null).
   if (vecType.kind === "ref_null") {
+    const nullThrow = forOfToObjectTypeError(ctx, fctx);
     const guardedInstrs = fctx.body.splice(nullGuardStart);
     fctx.body.push({ op: "local.get", index: vecLocal });
     fctx.body.push({ op: "ref.is_null" });
     fctx.body.push({
       op: "if",
       blockType: { kind: "empty" },
-      then: forOfToObjectTypeError(ctx, fctx),
+      then: nullThrow,
       else: guardedInstrs,
     });
   }

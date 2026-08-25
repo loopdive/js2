@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { runTest262File } from "./test262-runner.js";
 
 const FOR_OF_ROOT = "language/statements/for-of";
+const FOR_AWAIT_OF_ROOT = "language/statements/for-await-of";
 const EXACT = "head-expr-to-obj.js";
 const CONTROLS = [
   "head-expr-obj-iterator-method.js",
@@ -28,6 +29,13 @@ describe("#4705 — synchronous for-of RHS ToObject", () => {
   it.each(CONTROLS)("keeps synchronous for-of control %s passing", async (name) => {
     const file = join("test262/test", FOR_OF_ROOT, name);
     const result = await runTest262File(file, FOR_OF_ROOT, 30_000);
+    expect(result.status, `${name}: ${result.reason ?? result.error ?? ""}`).toBe("pass");
+  });
+
+  it("keeps detached guarded bodies synchronized after the throw adds a string global", async () => {
+    const name = "async-func-decl-dstr-array-elem-init-evaluation.js";
+    const file = join("test262/test", FOR_AWAIT_OF_ROOT, name);
+    const result = await runTest262File(file, FOR_AWAIT_OF_ROOT, 30_000);
     expect(result.status, `${name}: ${result.reason ?? result.error ?? ""}`).toBe("pass");
   });
 });
