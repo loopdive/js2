@@ -10,6 +10,7 @@
 // tail is a single `return compileTailDispatch(...)`. Moved verbatim: the
 // emitted Wasm is byte-identical.
 import { forEachChild, ts } from "../../ts-api.js";
+import { planAsyncClosureActivation } from "../async-activation.js";
 import { isNumberType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, resolveArrayInfo } from "../array-methods.js";
@@ -154,10 +155,24 @@ export function compileTailDispatch(
       // shape inline would either expose caller bindings or omit IIFE-owned
       // bindings from the eval environment. Use the normal closure path.
       const reachesDirectEval = functionMayReachDirectEval(callee, ctx.oracle);
-      if (isGeneratorIIFE || isRecursiveNamedFnExprIIFE || reachesDirectEval || argumentsEscapesIife(callee, expr)) {
+      // A genuinely-suspending async IIFE needs its own Promise/frame
+      // activation. Inlining its statements into a synchronous caller makes
+      // `await` use the legacy identity lowering, so a pending Promise is
+      // consumed as the awaited value (for numeric results, unboxed to NaN).
+      // Route only engine-claimed async shapes through the ordinary closure
+      // path; await-free/elidable IIFEs keep the byte-identical fast path.
+      const isAsyncIIFE = callee.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+      const isDrivenAsyncIIFE = isAsyncIIFE && planAsyncClosureActivation(ctx, callee, /*isAsync*/ true) !== null;
+      if (
+        isGeneratorIIFE ||
+        isRecursiveNamedFnExprIIFE ||
+        reachesDirectEval ||
+        argumentsEscapesIife(callee, expr) ||
+        isDrivenAsyncIIFE
+      ) {
         // Cannot inline: a generator IIFE needs a generator context for `yield`,
         // and a recursive named-fn-expr IIFE needs a real callable to bind its
-        // own name to. Compile as closure, store in temp local, invoke via
+        // own name to; a driven async IIFE needs a real frame. Compile as closure, store in temp local, invoke via
         // call_ref — the closure path binds `function*`'s context and a named
         // expression's own name (self-reference) correctly.
         const closureType = compileArrowFunction(ctx, fctx, callee as ts.FunctionExpression);

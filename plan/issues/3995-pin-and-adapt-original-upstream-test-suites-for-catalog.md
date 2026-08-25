@@ -3,7 +3,7 @@ id: 3995
 title: "npm-compat: pin and adapt original upstream test suites for catalog packages"
 status: ready
 created: 2026-07-30
-updated: 2026-08-25
+updated: 2026-08-26
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -20,6 +20,12 @@ oracle-ratchet-allow:
   # registry-free facts, so it cannot answer whether their concrete typeIdx
   # values match; keep this exact representation query at the codegen seam.
   - src/codegen/literals.ts
+  # Async continuation planning needs declaration identity to prove a callable
+  # is a lexical `const`, plus the exact resumed AwaitExpression type to keep
+  # the synthetic delivery local ABI aligned. TypeOracle intentionally does
+  # not expose symbols, declaration lists, resolved signatures, or ValTypes.
+  - src/codegen/async-cps.ts
+  - src/codegen/async-frame.ts
 loc-budget-allow:
   - src/codegen/closures.ts
   - src/codegen/expressions/calls.ts
@@ -48,7 +54,17 @@ loc-budget-allow:
   # CFG to admit conditional-owned awaits, with one shared nested-declaration
   # activation decision for reservation and final body compilation.
   - src/codegen/async-cps.ts
+  - src/codegen/async-frame.ts
   - src/codegen/statements/nested-declarations.ts
+  # The completed trailing-slash path preserves class-expression private
+  # receiver identity, dynamic void-cleared fields, and bounded async call
+  # continuations across the generic class/expression seams.
+  - src/codegen/class-bodies.ts
+  - src/codegen/expressions.ts
+  - src/codegen/expressions/helpers.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/expressions/calls-optional.ts
 func-budget-allow:
   # The dispatcher adds one narrow selector for `vec.push(...runtimeSource)`;
   # the runtime-sized copy lives in extracted helpers below the switch.
@@ -82,6 +98,10 @@ func-budget-allow:
   - src/codegen/extern-declarations.ts::registerBuiltinExternClasses
   - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
   - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations
+  # A nested await continuation installs its delivered-value alias only while
+  # compiling the corresponding resume state, then restores the prior map.
+  - src/codegen/async-frame.ts::buildStateBody
+  - src/codegen/expressions.ts::compileExpressionInner
 ---
 # npm-compat: pin and adapt original upstream test suites for catalog packages
 
@@ -1388,3 +1408,49 @@ unresolved continuation rather than producing a later callback result. The
 exact conservative outcome therefore remains **2/36 before the fatal/pending
 third callback**. Neither the generated callback source nor its expectations
 were edited for this measurement.
+
+## 2026-08-26 Hono trailing-slash completion checkpoint
+
+The exact pinned and transformed-but-otherwise-unchanged
+`src/middleware/trailing-slash/index.test.ts` now compiles, validates, exposes
+all **36** declared callbacks, and passes **36/36** in Wasm. A final isolated
+worker run compiled the 1,165,051-byte binary in **6.432 s**. No upstream
+assertion, callback, or expected value changed.
+
+Three generic runtime/compiler boundaries closed the post-conditional-CFG
+residue. A named class expression now keeps its actual private-field receiver
+when the lexical and visible class carriers refer to the same declaration,
+instead of projecting `this` through a duplicate synthetic class layout.
+Inferred native-ref fields that the class later clears with `void` use the
+dynamic externref carrier, preserving the real `undefined` state rather than
+materializing an empty native array. The class-body scan is cached per AST
+declaration: the uncached first implementation increased the exact compile to
+**29.230 s**, while the cached implementation restored the isolated result to
+**6.432 s**.
+
+The last two callbacks used
+`expect(await response.text()).toBe("wildcard")`. That nested await made the
+whole async test closure fall back to synchronous passthrough, so its earlier
+`await app.request(...)` exposed the raw pending host Promise and `status`
+became `NaN`. The linear async planner now admits the bounded, replay-safe form
+where the awaited value is the first dynamic argument of a checker-proven
+`const` callable and all enclosing member/call operations occur after that
+call. Recompilation therefore repeats only an immutable binding read. Mutable
+or global callees, earlier arguments, embedding as another operand, and
+concrete scalar callable parameters remain on their prior lane; the latter
+need a separate typed continuation ABI and are explicitly pinned by the
+focused regression.
+
+Focused Hono/compiler evidence is **27/27** in
+`tests/issue-3995-hono-class-boundary.test.ts`, including both the dynamic
+nested-await activation and its concrete-scalar non-admission control. The
+separate exact encode file remains **44/44** from the preceding checkpoint.
+
+A fresh full selected-Hono run now scores **170/322** native-admitted callbacks
+in Wasm, up from the preceding branch measurement of **138/322**. All 20
+selected modules were attempted: 18 compiled, 16 validated, and the runner
+recorded zero runtime-failed callbacks outside the ordinary scored failures.
+The trailing-slash module contributes the directly measured **36/36**. This is
+a branch-wide result rather than attribution of all 32 additional passes to
+the final nested-await slice; the report preserves each remaining package
+failure and the separately deferred upstream inventory.

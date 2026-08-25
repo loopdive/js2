@@ -1372,6 +1372,13 @@ function compileExpressionInner(
   }
 
   if (ts.isAwaitExpression(expr)) {
+    const deliveredLocal = fctx.asyncAwaitValueLocals?.get(expr);
+    if (deliveredLocal !== undefined) {
+      const deliveredType = getLocalType(fctx, deliveredLocal);
+      fctx.body.push({ op: "local.get", index: deliveredLocal });
+      return deliveredType ?? { kind: "externref" };
+    }
+
     // (#2967 2c) The legacy async-CPS lane (`asyncCpsActive` /
     // `emitAsyncStateMachine`) is DELETED — an await in an ACTIVATED async fn
     // is consumed by the $AsyncFrame planners (`planLinearAwaits` / the CFG

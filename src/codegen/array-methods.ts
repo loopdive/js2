@@ -1933,7 +1933,9 @@ export function compileArrayMethodCall(
       result = compileArraySplice(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "at":
-      result = compileArrayAt(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      result = shouldUseHostArrayMethod(ctx, receiverIsExternref)
+        ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "at")
+        : compileArrayAt(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "fill":
       result = compileArrayFill(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);

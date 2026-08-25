@@ -26,6 +26,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, resolveArrayInfo } from "../array-methods.js";
 import { isWiredTypedArrayViewName } from "../array-object-proto.js";
 import { ensureWrapperProtoDynamicMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
+import { exactClassExpressionTypeName } from "../class-expression-identity.js";
 import {
   emitStandalonePromiseFinally,
   emitStandalonePromiseThen,
@@ -1350,6 +1351,49 @@ export function compileReceiverMethodCall(
     if (recvSymName === "Boolean" && wrapperMethodName === "valueOf") {
       compileExpression(ctx, fctx, propAccess.expression, { kind: "i32" });
       return { kind: "i32" };
+    }
+  }
+
+  // An array or property read can retain a union of unrelated class instance
+  // types. Selecting the first member's method body is unsound: the runtime
+  // value may carry any member's private fields and implementation. On the JS
+  // host lane, use the existing runtime class-member bridge when every
+  // candidate has an externref-compatible ABI. The bridge ref.tests the real
+  // WasmGC instance and dispatches to that class's own method.
+  if (!ctx.standalone && !ctx.wasi && receiverType.isUnion() && !ts.isPrivateIdentifier(propAccess.name)) {
+    const methodName = propAccess.name.text;
+    const classNames = new Set<string>();
+    let bridgeCompatible = true;
+    for (const memberType of receiverType.types) {
+      const memberName =
+        exactClassExpressionTypeName(ctx, memberType) ??
+        canonicalClassExpressionName(ctx, memberType.getSymbol()?.name);
+      if (!memberName || !ctx.classSet.has(memberName)) continue;
+      classNames.add(memberName);
+
+      let owner: string | undefined = memberName;
+      let methodParams: ValType[] | undefined;
+      while (owner !== undefined) {
+        const fullName = `${owner}_${methodName}`;
+        const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")) ?? ctx.funcMap.get(fullName);
+        if (methodIdx !== undefined) {
+          methodParams = getFuncParamTypes(ctx, methodIdx);
+          break;
+        }
+        owner = ctx.classParentMap.get(owner);
+      }
+      if (
+        methodParams === undefined ||
+        methodParams.length === 0 ||
+        methodParams.slice(1).some((param) => param.kind !== "externref" && param.kind !== "ref_extern")
+      ) {
+        bridgeCompatible = false;
+        break;
+      }
+    }
+    if (bridgeCompatible && classNames.size > 1) {
+      const dynamicResult = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, methodName, true);
+      if (dynamicResult !== undefined) return dynamicResult;
     }
   }
 

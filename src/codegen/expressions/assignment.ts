@@ -105,6 +105,7 @@ import {
   emitThrowTypeError,
   emitWebCompatCallAssignmentTarget,
   getFuncParamTypes,
+  resolvePrivateThisFieldCarrier,
   updateLocalType,
   widenLocalToNullable,
 } from "./helpers.js";
@@ -4310,7 +4311,10 @@ function compilePropertyAssignment(
     if (dynSet !== undefined) return dynSet;
   }
 
-  const typeName = resolveStructNameForExpr(ctx, fctx, target.expression);
+  let typeName = resolveStructNameForExpr(ctx, fctx, target.expression);
+  if (ts.isPrivateIdentifier(target.name)) {
+    typeName = resolvePrivateThisFieldCarrier(ctx, fctx, target.name, target.expression) ?? typeName;
+  }
   if (!typeName) {
     // No struct type resolved. Mirror the compound/logical assignment fallback:
     // treat the receiver as a host/dynamic object and route the write through

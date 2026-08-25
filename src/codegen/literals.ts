@@ -281,6 +281,48 @@ function hasHeterogeneousNestedArrayCarriers(
   return false;
 }
 
+/** Resolve a direct constructor binding through import aliases to its exact class. */
+function exactConstructedClassName(ctx: CodegenContext, expression: ts.NewExpression): string | undefined {
+  const typeName = exactClassExpressionTypeName(ctx, ctx.checker.getTypeAtLocation(expression.expression));
+  if (typeName !== undefined) return typeName;
+
+  let target: ts.Expression = expression.expression;
+  while (
+    ts.isParenthesizedExpression(target) ||
+    ts.isAsExpression(target) ||
+    ts.isTypeAssertionExpression(target) ||
+    ts.isSatisfiesExpression(target) ||
+    ts.isNonNullExpression(target)
+  ) {
+    target = target.expression;
+  }
+  if (!ts.isIdentifier(target)) return undefined;
+
+  let symbol = ctx.checker.getSymbolAtLocation(target);
+  const seen = new Set<ts.Symbol>();
+  while (symbol && (symbol.flags & ts.SymbolFlags.Alias) !== 0 && !seen.has(symbol)) {
+    seen.add(symbol);
+    try {
+      const aliased = ctx.checker.getAliasedSymbol(symbol);
+      if (aliased === symbol) break;
+      symbol = aliased;
+    } catch {
+      return undefined;
+    }
+  }
+  for (const declaration of symbol?.getDeclarations() ?? []) {
+    let candidate: ts.Node = declaration;
+    if (ts.isVariableDeclaration(candidate) && candidate.initializer) {
+      candidate = unwrapArrayCarrierExpression(candidate.initializer);
+    }
+    if (!ts.isClassExpression(candidate) && !ts.isClassDeclaration(candidate)) continue;
+    const syntheticName = ctx.anonClassExprNames.get(candidate);
+    if (syntheticName && ctx.classSet.has(syntheticName)) return syntheticName;
+    if (candidate.name && ctx.classSet.has(candidate.name.text)) return candidate.name.text;
+  }
+  return undefined;
+}
+
 /** Exact synthetic classes constructed by every real element, when provable. */
 function exactConstructedClassNames(ctx: CodegenContext, expr: ts.ArrayLiteralExpression): string[] | null {
   const names: string[] = [];
@@ -297,7 +339,7 @@ function exactConstructedClassNames(ctx: CodegenContext, expr: ts.ArrayLiteralEx
       value = value.expression;
     }
     if (!ts.isNewExpression(value)) return null;
-    const name = exactClassExpressionTypeName(ctx, ctx.checker.getTypeAtLocation(value.expression));
+    const name = exactConstructedClassName(ctx, value);
     if (!name) return null;
     names.push(name);
   }

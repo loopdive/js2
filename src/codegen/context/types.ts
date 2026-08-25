@@ -697,6 +697,14 @@ export interface FunctionContext {
    */
   inlinedIifeNodes?: Set<ts.Node>;
   /**
+   * Resume-delivered values for bounded awaits nested in a containing
+   * expression. The async planner records the original AwaitExpression node;
+   * the resume emitter scopes that node to its delivered local while compiling
+   * the continuation expression, so the legacy await passthrough is never
+   * re-evaluated after suspension.
+   */
+  asyncAwaitValueLocals?: Map<ts.AwaitExpression, number>;
+  /**
    * (#2865) The `__self` capture-struct layout of a LIFTED CLOSURE body
    * (closures.ts materializes each capture from `__self` field `i+1` into a
    * named local in the body prologue). The async drive lane compiles the body

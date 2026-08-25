@@ -14,7 +14,6 @@ import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, ensureLateImport, valTypesMatch, VOID_RESULT } from "../shared.js";
 import { compileNativeStringMethodCall } from "../string-ops.js";
 import { defaultValueInstrs, pushDefaultValue } from "../type-coercion.js";
-import { undefinedSingletonActive } from "../any-helpers.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { compileCallablePropertyCall } from "./calls-closures.js";
@@ -71,9 +70,11 @@ export function compileOptionalCallExpression(
   const tmp = allocLocal(fctx, `__optcall_${fctx.locals.length}`, objType);
   fctx.body.push({ op: "local.tee", index: tmp });
   fctx.body.push({ op: "ref.is_null" });
-  // (#2106 S1) Under the `undefinedSingleton` regime standalone `undefined` is
-  // a NON-null externref, so the short-circuit must also test the singleton.
-  if (undefinedSingletonActive(ctx) && objType.kind === "externref") {
+  // An externref can carry host JavaScript `undefined` as a non-null reference
+  // even when the standalone undefined-singleton regime is inactive (for
+  // example an omitted argument supplied by the generic call wrapper).
+  // Optional chaining must short-circuit both representations.
+  if (objType.kind === "externref") {
     const isUndefIdx = ensureExternIsUndefinedImport(ctx);
     if (isUndefIdx !== undefined) {
       flushLateImportShifts(ctx, fctx);
