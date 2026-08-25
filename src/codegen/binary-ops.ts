@@ -537,6 +537,21 @@ export function compileBinaryExpression(
 ): InnerResult {
   const op = expr.operatorToken.kind;
 
+  // A parameter widened to preserve an observable `arguments` value is
+  // intentionally dynamic even when TypeScript inferred a scalar from one
+  // call site. JavaScript `+` must inspect the runtime primitive after
+  // ToPrimitive; sending that operand through the ordinary numeric hint would
+  // eagerly apply ToNumber and turn `(function (x) { return x + arguments[1] })
+  // (1, "1")` into `2` instead of `"11"`.
+  if (
+    op === ts.SyntaxKind.PlusToken &&
+    [expr.left, expr.right].some(
+      (operand) => ts.isIdentifier(operand) && fctx.rawArgumentsParamNames?.has(operand.text),
+    )
+  ) {
+    return emitAnyAdd(ctx, fctx, expr);
+  }
+
   // Handle assignment
   if (op === ts.SyntaxKind.EqualsToken) {
     return compileAssignment(ctx, fctx, expr);

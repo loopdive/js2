@@ -905,6 +905,15 @@ function lowerParamType(
   if (hasReferenceReassignment && (isAnonymousReference || isScalar)) {
     wasmType = { kind: "externref" };
   }
+  // A formal named `arguments` shadows the function's implicit arguments
+  // binding. It is still an ordinary JavaScript parameter, so an omitted
+  // actual must arrive as `undefined` rather than the scalar/ref zero used by
+  // the native ABI defaults. Keep this boundary dynamic (unless an explicit
+  // native annotation deliberately opts into a Wasm-only representation) so
+  // `function f(arguments) { return arguments; } f()` observes undefined.
+  if (param.name.getText(sourceFile) === "arguments" && nativeParam === null) {
+    wasmType = { kind: "externref" };
+  }
   // Runtime eval publishes top-level script functions through an externref
   // AOT-callable adapter. Structurally typed object parameters need the same
   // representation-neutral carrier: an object literal arriving through that

@@ -612,6 +612,10 @@ export interface FunctionContext {
    * narrowed to a WasmGC ref that the host cannot reconstruct reliably.
    */
   captureExternrefNames?: Set<string>;
+  /** Formal bindings whose values must remain raw for an observable
+   * `arguments` object. Their checker type may be a scalar, but identifier
+   * reads must not eagerly unbox the call-site value. */
+  rawArgumentsParamNames?: Set<string>;
   /** Return type */
   returnType: ValType | null; // null = void
   /** Accumulated body instructions */

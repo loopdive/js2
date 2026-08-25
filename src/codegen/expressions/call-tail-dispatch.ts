@@ -152,7 +152,19 @@ export function compileTailDispatch(
       // shape inline would either expose caller bindings or omit IIFE-owned
       // bindings from the eval environment. Use the normal closure path.
       const reachesDirectEval = functionMayReachDirectEval(callee, ctx.oracle);
-      if (isGeneratorIIFE || isRecursiveNamedFnExprIIFE || reachesDirectEval || argumentsEscapesIife(callee, expr)) {
+      // Likewise, a function expression that reads its own `arguments` needs
+      // the argc/extras carrier. The inline path can materialize only the
+      // values it chooses to bind and cannot preserve the call-site ABI (in
+      // particular surplus strings/objects), so route it through a real
+      // closure activation.
+      const observesOwnArguments = ts.isFunctionExpression(callee) && needsImplicitArgumentsObject(callee);
+      if (
+        isGeneratorIIFE ||
+        isRecursiveNamedFnExprIIFE ||
+        reachesDirectEval ||
+        observesOwnArguments ||
+        argumentsEscapesIife(callee, expr)
+      ) {
         // Cannot inline: a generator IIFE needs a generator context for `yield`,
         // and a recursive named-fn-expr IIFE needs a real callable to bind its
         // own name to. Compile as closure, store in temp local, invoke via

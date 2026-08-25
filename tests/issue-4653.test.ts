@@ -227,10 +227,42 @@ describe("#4653 D — a var initialized from a REDECLARED function gets a neutra
   });
 });
 
+describe("#4653 P/V — raw arguments and omitted actuals", () => {
+  // ROW S13_A15_T3. A formal named `arguments` is an ordinary JavaScript
+  // binding: when the call omits it, the value is `undefined`, not the null
+  // zero of a nullable reference ABI. Keep both the omitted and supplied
+  // cases live so the widening cannot simply special-case zero arguments.
+  it("keeps an omitted named `arguments` parameter undefined", async () => {
+    expect(
+      await runScript(`
+        var arguments = "The Ultimate Question";
+        function __func(arguments) { return arguments; }
+        if (typeof __func() !== "undefined") throw new Error("typeof __func() was not undefined");
+        if (__func("The Ultimate Question") !== "The Ultimate Question") {
+          throw new Error("supplied arguments value was not preserved");
+        }
+      `),
+    ).toBe(null);
+  });
+
+  // ROW S13_A2_T2. The surplus string is visible through the function's
+  // implicit arguments object, so `+` must perform ToPrimitive at runtime
+  // instead of taking the numeric fast path inferred from `arg`.
+  it("concatenates a surplus string through an arguments-observing IIFE", async () => {
+    expect(
+      await runScript(`
+        var x = (function __func(arg) { return arg + arguments[1]; })(1, "1");
+        if (x !== "11") throw new Error("x === " + String(x));
+        if (typeof __func !== "undefined") throw new Error("IIFE name leaked");
+      `),
+    ).toBe(null);
+  });
+});
+
 // ───────────────────────── measured residuals ─────────────────────────
 //
-// Each of these reproduces one of the nine #4653 rows this change did NOT fix,
-// with the root measured on this branch. They are `it.fails` so the suite
+// Each of these reproduces one of the seven #4653 rows this change does NOT
+// fix, with the root measured on this branch. They are `it.fails` so the suite
 // records the current answer and flips loudly when the owning lane lands.
 
 describe("#4653 residuals — measured standalone", () => {
@@ -297,39 +329,6 @@ describe("#4653 residuals — measured standalone", () => {
         if (p1 !== "alert") throw new Error("global p1 === " + String(p1));
         if (getRight() !== "napravo") throw new Error("outer getRight() === " + String(getRight()));
         if (out !== "w1") throw new Error("out === " + String(out));
-      `),
-    ).toBe(null);
-  });
-
-  // ROW S13_A15_T3. An OMITTED argument for a parameter whose wasm type is a
-  // nullable reference is materialized as `ref.null <typeidx>`, which surfaces
-  // in JS as `null`, not `undefined`. Measured: with a single zero-arg call site
-  // the answer is correct; adding ONE call site that passes a string makes the
-  // parameter a string ref and the omitted argument becomes `null`
-  // (`typeof === "object"`, `v === null` true). The test's `arguments`-named
-  // parameter is incidental — a plainly-named parameter behaves identically.
-  it.fails("(#4653 residual, value-rep) an omitted reference-typed argument is `undefined`", async () => {
-    expect(
-      await runScript(`
-        function pass(q) { return q; }
-        var missing = pass();
-        var given = pass("X");
-        if (given !== "X") throw new Error("given === " + String(given));
-        if (missing !== undefined) throw new Error("missing === " + String(missing) + " (null? " + (missing === null) + ")");
-        if (typeof missing !== "undefined") throw new Error("typeof missing === " + typeof missing);
-      `),
-    ).toBe(null);
-  });
-
-  // ROW S13_A2_T2. `arg + arguments[1]` compiled to a numeric add. Measured:
-  // `arguments[1]` on its own IS the string "1" and `typeof arguments[1]` IS
-  // "string"; only the `+` folded to f64 because its LEFT operand is provably
-  // numeric and the right one is dynamic.
-  it.fails("(#4653 residual, binary-+) `number + <dynamic string>` concatenates", async () => {
-    expect(
-      await runScript(`
-        var x = (function (arg) { return arg + arguments[1]; })(1, "1");
-        if (x !== "11") throw new Error("x === " + String(x));
       `),
     ).toBe(null);
   });

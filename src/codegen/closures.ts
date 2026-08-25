@@ -1558,6 +1558,14 @@ export function computeClosureWrapperSig(
   }
 
   // 1. Parameter types. (#3359) A TS `this` param is type-level only — exclude it.
+  // An ordinary function expression that uses its implicit `arguments` object
+  // must retain the raw JavaScript value at each unannotated parameter
+  // boundary. TypeScript may infer a scalar ABI (for example, `string`), but
+  // the arguments vec is observable and must contain the original value rather
+  // than a numeric conversion. Keep the closure wrapper dynamic just like the
+  // declaration lowering path does.
+  const preservesRawArguments =
+    (ts.isFunctionExpression(arrow) || ts.isFunctionDeclaration(arrow)) && needsImplicitArgumentsObject(arrow);
   const arrowParams: ValType[] = [];
   for (const p of runtimeParameters(arrow)) {
     const paramType = ctx.checker.getTypeAtLocation(p);
@@ -1576,6 +1584,14 @@ export function computeClosureWrapperSig(
       jsdocType !== undefined
         ? ts.isJSDocOptionalType(jsdocType)
         : ts.getJSDocParameterTags(p).some((tag) => tag.isBracketed === true);
+    if (
+      preservesRawArguments &&
+      p.type === undefined &&
+      ts.getJSDocType(p) === undefined &&
+      (wasmType.kind === "f64" || wasmType.kind === "i32")
+    ) {
+      wasmType = { kind: "externref" };
+    }
     if (p.type === undefined && p.initializer === undefined && jsdocOptional) {
       wasmType = { kind: "externref" };
     }
@@ -2132,6 +2148,8 @@ export function compileLiftedClosureBody(
     thisStructName: resolveLiftedMethodThisStruct(ctx, arrow),
   };
   const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
+  const preservesRawArguments =
+    ts.isFunctionExpression(arrow) && ts.isBlock(arrow.body) && needsImplicitArgumentsObject(arrow, reachesDirectEval);
   if (reachesDirectEval) {
     liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(arrow);
     liftedFctx.directEvalActivationBindingNames = collectDirectEvalActivationBindingNames(arrow);
@@ -2142,6 +2160,17 @@ export function compileLiftedClosureBody(
     }
   }
   initializeFunctionPoisonPillContext(ctx, liftedFctx, arrow);
+
+  // Keep the source value visible through identifier reads as well as through
+  // the arguments vec. Checker narrowing can otherwise turn this widened
+  // externref parameter back into a scalar before `+`/`typeof` observes it.
+  if (preservesRawArguments) {
+    liftedFctx.rawArgumentsParamNames = new Set(
+      runtimeParameters(arrow)
+        .filter((p, i) => arrowParams[i]?.kind === "externref" && ts.isIdentifier(p.name))
+        .map((p) => (p.name as ts.Identifier).text),
+    );
+  }
 
   // Track the body before capture/TDZ prologues so late imports can shift
   // their call indices before the saved-function swap exposes it (#1384).
