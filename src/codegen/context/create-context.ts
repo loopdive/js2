@@ -479,13 +479,11 @@ export function createCodegenContext(
   if (ctx.nativeStrings) {
     registerNativeStringTypes(ctx);
 
-    // #2527 P2a — every native-string artifact carries one complete, frozen
-    // runtime GC rec group. WasmGC canonicalizes whole recursive groups, so a
-    // subset selected by ordinary dead-type elimination is not link-compatible
-    // with a provider that happened to retain more members. The vec/string
-    // registrations above are intentionally eager and consecutive; record the
-    // exact range here so DCE retains it and the binary emitter wraps it in one
-    // `(rec ...)` entry.
+    // #2527 P2a — artifacts crossing the package/runtime core-Wasm boundary
+    // carry one complete, frozen runtime GC rec group. Keep this opt-in: older
+    // provider seams (notably QuickJS runtime-eval) already share their own
+    // established type layout, and regrouping those otherwise unrelated
+    // modules changes their runtime exception/value ABI.
     const members = RUNTIME_RECGROUP_TYPE_NAMES.map((name) => {
       const index = ctx.mod.types.findIndex((type) => type.kind !== "rec" && type.name === name);
       if (index < 0) throw new Error(`canonical runtime rec-group member '${name}' was not registered`);
@@ -500,11 +498,13 @@ export function createCodegenContext(
         );
       }
     }
-    ctx.mod.canonicalRuntimeRecGroup = {
-      start,
-      end: start + members.length - 1,
-      abiVersion: RUNTIME_RECGROUP_ABI_VERSION,
-    };
+    if (options?.canonicalRuntimeTypes === true || ctx.runtimeProvider || linkedNamespaces.has("js2wasm:runtime")) {
+      ctx.mod.canonicalRuntimeRecGroup = {
+        start,
+        end: start + members.length - 1,
+        abiVersion: RUNTIME_RECGROUP_ABI_VERSION,
+      };
+    }
   }
 
   return ctx;

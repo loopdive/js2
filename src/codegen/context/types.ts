@@ -127,6 +127,8 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
    * compiles must leave this unset.
    */
   runtimeProvider?: boolean;
+  /** Retain and emit the frozen runtime GC rec group for a core-Wasm link boundary. */
+  canonicalRuntimeTypes?: boolean;
   /** Standalone target (#1470): pure WasmGC, no JS host imports and no WASI
    *  runtime. Implies `nativeStrings: true` and refuses to emit any
    *  `wasm:js-string` namespace or `env::__concat_*` / `__extern_toString` /

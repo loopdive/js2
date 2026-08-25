@@ -1876,6 +1876,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       ...input.options,
       packageLinking: false,
       packageCacheDir: undefined,
+      canonicalRuntimeTypes: true,
       // Provider module initialization is exported and invoked only after its
       // own host adapter has been wired to its own instance.
       deferTopLevelInit: true,
@@ -2070,6 +2071,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     ...input.options,
     packageLinking: false,
     packageCacheDir: undefined,
+    canonicalRuntimeTypes: true,
     link: [...new Set([...(input.options.link ?? []), ...Array.from(rootBindings.values(), (v) => v.module)])],
     linkedPackageBindings: rootBindings,
   };

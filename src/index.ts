@@ -936,6 +936,8 @@ export interface CompileOptions {
    * uses it to publish compiler-owned formatter exports.
    */
   runtimeProvider?: boolean;
+  /** Internal package-linker switch for the frozen cross-module runtime type group. */
+  canonicalRuntimeTypes?: boolean;
   /**
    * Node API emulation (#2603). Opt-in via `--emulate node`. When set, the
    * checker is given an ambient `process` declaration so Node globals js2wasm

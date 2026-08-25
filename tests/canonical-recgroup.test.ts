@@ -34,7 +34,7 @@ import {
 
 function modOf(source: string): WasmModule {
   const ast = analyzeSource(source);
-  const { module } = generateModule(ast, { nativeStrings: true });
+  const { module } = generateModule(ast, { nativeStrings: true, canonicalRuntimeTypes: true });
   return module;
 }
 
@@ -190,6 +190,23 @@ describe("#2527 canonical runtime rec-group identity primitive", () => {
       hash: fingerprint.hash.replace(/^./, fingerprint.hash[0] === "0" ? "1" : "0"),
     });
     expect(drifted.valid).toBe(false);
+  });
+
+  it("keeps the frozen group scoped to explicit core-Wasm link boundaries", async () => {
+    const legacy = await compile(`export function value(): string { return "legacy"; }`, {
+      target: "standalone",
+      emitWat: false,
+    });
+    expect(legacy.success, legacy.errors.map((error) => error.message).join("; ")).toBe(true);
+    expect(legacy.runtimeRecGroupFingerprint).toBeUndefined();
+
+    const linked = await compile(`export function value(): string { return "linked"; }`, {
+      target: "standalone",
+      canonicalRuntimeTypes: true,
+      emitWat: false,
+    });
+    expect(linked.success, linked.errors.map((error) => error.message).join("; ")).toBe(true);
+    expect(linked.runtimeRecGroupFingerprint?.abiVersion).toBe(RUNTIME_RECGROUP_ABI_VERSION);
   });
 
   it("publishes and consumes the explicit js2wasm:runtime number ABI", async () => {

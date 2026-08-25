@@ -870,6 +870,7 @@ function buildCodegenOptions(
     externImportModule: options.externImportModule,
     importMemory: options.importMemory,
     runtimeProvider: options.runtimeProvider === true,
+    canonicalRuntimeTypes: options.canonicalRuntimeTypes === true,
     jsxRuntime: prep?.jsxRuntime,
     dtsEntrypointSeeds: prep?.dtsEntrypointSeeds,
   };
