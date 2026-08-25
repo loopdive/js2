@@ -2878,8 +2878,17 @@ export function emitIteratorPrototypeSingleton(
   kind: NativeIteratorPrototypeKind,
 ): ValType | null {
   ensureObjectRuntime(ctx);
+  // StringIteratorPrototype has an own configurable Symbol.toStringTag per
+  // ES2015 §21.1.5.3. Materialize that descriptor on the standalone singleton
+  // so both direct reads and Object.prototype.toString observe the intrinsic
+  // tag. Register the late symbol import before capturing any function index;
+  // adding it shifts existing body indices.
+  const boxSymbolIdx =
+    kind === "String" ? ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]) : undefined;
+  if (kind === "String") flushLateImportShifts(ctx, fctx);
   const newObjectIdx = ctx.funcMap.get("__new_plain_object");
   if (newObjectIdx === undefined) return null;
+  const defineValueIdx = kind === "String" ? ctx.funcMap.get("__defineProperty_value") : undefined;
 
   const globalName = `__native_${kind.toLowerCase()}_iterator_prototype`;
   let globalIdx = ctx.builtinObjectGlobals.get(globalName);
@@ -2894,10 +2903,34 @@ export function emitIteratorPrototypeSingleton(
     ctx.builtinObjectGlobals.set(globalName, globalIdx);
   }
 
-  const initBody: Instr[] = [
-    { op: "call", funcIdx: newObjectIdx },
-    { op: "global.set", index: globalIdx },
-  ];
+  const objLocal =
+    kind === "String"
+      ? allocLocal(fctx, `__${kind.toLowerCase()}_iter_proto_${fctx.locals.length}`, { kind: "externref" })
+      : undefined;
+  const initBody: Instr[] =
+    objLocal === undefined
+      ? [
+          { op: "call", funcIdx: newObjectIdx },
+          { op: "global.set", index: globalIdx },
+        ]
+      : [
+          { op: "call", funcIdx: newObjectIdx },
+          { op: "local.set", index: objLocal },
+        ];
+  if (kind === "String" && boxSymbolIdx !== undefined && defineValueIdx !== undefined) {
+    initBody.push(
+      { op: "local.get", index: objLocal! },
+      { op: "i32.const", value: 4 }, // Symbol.toStringTag
+      { op: "call", funcIdx: boxSymbolIdx },
+    );
+    addStringConstantGlobal(ctx, "String Iterator");
+    initBody.push(...stringConstantExternrefInstrs(ctx, "String Iterator"));
+    // writable:false, enumerable:false, configurable:true.
+    initBody.push({ op: "f64.const", value: 0x04 }, { op: "call", funcIdx: defineValueIdx }, { op: "drop" });
+  }
+  if (objLocal !== undefined) {
+    initBody.push({ op: "local.get", index: objLocal }, { op: "global.set", index: globalIdx });
+  }
   fctx.body.push({ op: "global.get", index: globalIdx });
   fctx.body.push({ op: "ref.is_null" });
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });

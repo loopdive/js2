@@ -44,6 +44,10 @@ const PROTOS: ReadonlyArray<[string, object]> = [
   ["Object.prototype", Object.prototype],
   ["Array.prototype", Array.prototype],
   ["String.prototype", String.prototype],
+  // (#4747) verifyProperty() destructively probes configurable
+  // StringIteratorPrototype[@@toStringTag]; restore it before the strict
+  // rerun in this in-process realm, matching scripts/test262-worker.mjs.
+  ["%StringIteratorPrototype%", Object.getPrototypeOf(""[Symbol.iterator]())],
   ["Number.prototype", Number.prototype],
   ["Boolean.prototype", Boolean.prototype],
   ["Function.prototype", Function.prototype],
@@ -114,6 +118,23 @@ function snapshotProto(name: string, proto: object): ProtoSnapshot {
     if ("value" in d) values.set(key, d.value);
   }
   return { name, proto, ownKeys, ownSymbols, values, descs };
+}
+
+function sameDataDescriptor(
+  actual: PropertyDescriptor | undefined,
+  expected: PropertyDescriptor | undefined,
+  value: unknown,
+): boolean {
+  // A configurable verifyProperty() probe can delete a data property and a
+  // plain assignment recreates it with writable/enumerable defaults. Matching
+  // the value alone would therefore preserve the wrong descriptor flags.
+  if (!actual || !("value" in actual) || actual.value !== value) return false;
+  if (!expected) return true;
+  return (
+    actual.writable === expected.writable &&
+    actual.enumerable === expected.enumerable &&
+    actual.configurable === expected.configurable
+  );
 }
 
 // Snapshot at MODULE LOAD — import this module before any test executes.
@@ -229,24 +250,24 @@ export function restoreHostBuiltins(): boolean {
     // re-application as the fallback (#1160 defineProperty-poisoned shapes).
     for (const [key, orig] of values) {
       const cur = Object.getOwnPropertyDescriptor(proto, key);
-      if (cur && "value" in cur && cur.value === orig) continue;
+      const originalDesc = descs.get(key);
+      if (sameDataDescriptor(cur, originalDesc, orig)) continue;
       try {
         (proto as Record<string | symbol, unknown>)[key] = orig;
       } catch {
         /* fall through */
       }
       const after = Object.getOwnPropertyDescriptor(proto, key);
-      if (!after || !("value" in after) || after.value !== orig) {
-        const d = descs.get(key);
-        if (d) {
+      if (!sameDataDescriptor(after, originalDesc, orig)) {
+        if (originalDesc) {
           try {
-            Object.defineProperty(proto, key, d);
+            Object.defineProperty(proto, key, originalDesc);
           } catch {
             /* residual check below */
           }
         }
         const final = Object.getOwnPropertyDescriptor(proto, key);
-        if (!final || ("value" in final && final.value !== orig)) clean = false;
+        if (!sameDataDescriptor(final, originalDesc, orig)) clean = false;
       }
     }
   }

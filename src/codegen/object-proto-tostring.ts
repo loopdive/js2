@@ -743,6 +743,13 @@ export function resolveObjectToStringTag(
   if (symName === "ArrayBuffer") return "ArrayBuffer";
   if (symName === "SharedArrayBuffer") return "SharedArrayBuffer";
 
+  // (#4747) String iterator carriers are opaque native records in standalone,
+  // so their intrinsic prototype tag cannot be discovered through the generic
+  // externref classifier. The checker-proven type is narrow enough to avoid
+  // reclassifying arbitrary iterator-like objects; host mode keeps the dynamic
+  // native path through deferOrStandalone().
+  if (symName === "StringIterator") return deferOrStandalone("String Iterator");
+
   // Array (real `__vec_`/`__arr_` arrays, via the established resolver) — the
   // host sees an opaque GC vec and mis-tags it [object Object].
   if (resolveArrayInfo(ctx, nn)) return "Array";
