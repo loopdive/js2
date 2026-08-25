@@ -10211,6 +10211,34 @@ function resolveImport(
           return undefined;
         };
       }
+      // Keyed collections can retain compiled function values as ordinary
+      // data. A raw Wasm closure is an opaque object to V8, while the generic
+      // extern-class argument path exposes it as a non-callable Proxy. Store
+      // the identity-cached callable bridge instead, and apply the same
+      // normalization to later key lookups so Map/Set identity remains stable.
+      // Non-callable Wasm structs keep the existing live host proxy behavior.
+      const keyedCollectionMethod =
+        (intent.className === "Map" || intent.className === "WeakMap") &&
+        (m === "set" || m === "get" || m === "has" || m === "delete")
+          ? "map"
+          : (intent.className === "Set" || intent.className === "WeakSet") &&
+              (m === "add" || m === "has" || m === "delete")
+            ? "set"
+            : undefined;
+      if (keyedCollectionMethod !== undefined) {
+        return (self: any, ...args: any[]) => {
+          if (self == null) return undefined;
+          const exports = callbackState?.getExports();
+          const wrappedArgs = args.map((arg) => {
+            if (!_isWasmStruct(arg)) return arg;
+            const callable = _maybeWrapCallableUnknownArity(arg, callbackState);
+            return callable !== arg ? callable : _wrapForHost(arg, exports);
+          });
+          const fn = self[m] ?? _sidecarGet(self, m);
+          if (typeof fn === "function") return fn.call(self, ...wrappedArgs);
+          return undefined;
+        };
+      }
       // (#1438) Map.prototype.forEach / Set.prototype.forEach take a
       // callback and an optional thisArg. The callback can be a wasm
       // closure struct (no `[[Call]]`); wrap it as a JS Function so the

@@ -94,6 +94,7 @@ import { tryEmitStandaloneGlobalFunctionIdentifier } from "../standalone-global-
 import { evaluateInstanceOfRhsForEffects } from "../instanceof-rhs-evaluation.js"; // (#4491 T3) §13.10.1 step 3
 import { resolveBuiltinCtorAssignedAliasName } from "../builtin-ctor-assigned-alias.js"; // (#4491 T3)
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
+import { tryEmitCompiledModuleNamespaceObject } from "../module-namespace-value.js";
 
 const switchCaseLexicalDeclarationCache = new WeakMap<ts.SourceFile, Map<string, ts.Node[]>>();
 
@@ -1217,6 +1218,9 @@ function compileIdentifierCore(
     );
     if (valueType) return valueType;
   }
+
+  const namespaceObject = tryEmitCompiledModuleNamespaceObject(ctx, fctx, id);
+  if (namespaceObject) return namespaceObject;
 
   const resolvedValueDeclaration = ctx.oracle.valueDeclarationOf(id);
   const readsAmbientDeclaration = resolvedValueDeclaration?.getSourceFile().isDeclarationFile === true;

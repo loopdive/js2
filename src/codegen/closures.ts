@@ -1733,6 +1733,22 @@ export function computeClosureWrapperSig(
     ) {
       wasmType = { kind: "externref" };
     }
+    // A lifted arrow/function expression is a first-class JavaScript value.
+    // Once it is retained in an object or passed through an untyped call site,
+    // its TypeScript-only structural annotation cannot be used as a nominal
+    // runtime ABI. Two structurally compatible object values are commonly
+    // represented by distinct `__anon_*` WasmGC types; casting the caller's
+    // ordinary property bag to the annotation's nominal struct traps before
+    // the function body runs. Keep anonymous object parameters on the open
+    // externref carrier so property reads retain JavaScript's structural
+    // semantics. Native vectors, strings, classes, and other branded carriers
+    // remain specialized.
+    if (wasmType.kind === "ref" || wasmType.kind === "ref_null") {
+      const structName = ctx.typeIdxToStructName.get(wasmType.typeIdx);
+      if (structName?.startsWith("__anon_") === true) {
+        wasmType = { kind: "externref" };
+      }
+    }
     // #4701: preserve a nonnumeric value written back through a mapped
     // arguments slot, but leave ordinary numeric closure ABIs untouched.
     if (

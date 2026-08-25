@@ -32,7 +32,12 @@ import { emitOverlayRoutedElementGet, overlayRouteActive } from "./typed-lane-ov
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js"; // (#2580 M2 slice 1) (#2984)
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { emitCachedMethodClosureAccess, emitFuncRefAsClosure, getOrCreateFuncRefWrapperTypes } from "./closures.js";
+import {
+  emitCachedFuncClosureAccess,
+  emitCachedMethodClosureAccess,
+  emitFuncRefAsClosure,
+  getOrCreateFuncRefWrapperTypes,
+} from "./closures.js";
 import {
   BUILTIN_STATIC_METHOD_ARITY,
   ensureBuiltinFnMetaType,
@@ -3499,6 +3504,53 @@ function tryEmitRealmGlobalModuleGlobalElementRead(
   return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
 }
 
+/**
+ * Materialize a function exported through a compiled sibling namespace import.
+ *
+ * Direct `ns.fn()` calls already resolve statically in calls.ts, but reading the
+ * same member as a value (`createStore(ns.reducer)`) used to compile the
+ * namespace identifier as null and then perform a runtime property read on it.
+ * Keep this exact and fail-closed: only immutable, top-level function exports
+ * with a Program-ABI-owned body qualify. Namespace objects and mutable exports
+ * continue through the ordinary runtime lane.
+ */
+function tryEmitNamespaceImportFunctionValue(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+): ValType | undefined {
+  if (!ts.isIdentifier(expr.expression) || ts.isPrivateIdentifier(expr.name)) return undefined;
+  const namespaceDeclaration = ctx.oracle.valueDeclarationOf(expr.expression);
+  if (namespaceDeclaration === undefined || !ts.isNamespaceImport(namespaceDeclaration)) return undefined;
+  const declaration = ctx.oracle.valueDeclarationOf(expr.name);
+  if (
+    declaration === undefined ||
+    !ts.isFunctionDeclaration(declaration) ||
+    declaration.name === undefined ||
+    declaration.body === undefined ||
+    declaration.parent !== declaration.getSourceFile() ||
+    ctx.reassignedFunctionDeclarations?.has(declaration)
+  ) {
+    return undefined;
+  }
+  const registry = ctx.programAbiSourceCallables;
+  const identity = registry?.identityContext;
+  const unitId = identity?.unitIdByDeclaration.get(declaration);
+  if (
+    unitId === undefined ||
+    identity?.declarationByUnitId.get(unitId) !== declaration ||
+    registry?.functionForUnit(unitId) === undefined
+  ) {
+    return undefined;
+  }
+  const funcIdx = registry.handleForUnit(unitId);
+  if (funcIdx === undefined || definedFuncAt(ctx, funcIdx) !== registry.functionForUnit(unitId)) return undefined;
+  const constructible =
+    declaration.asteriskToken === undefined &&
+    !(declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false);
+  return emitCachedFuncClosureAccess(ctx, fctx, declaration.name.text, funcIdx, constructible) ?? undefined;
+}
+
 export function compilePropertyAccess(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3508,6 +3560,9 @@ export function compilePropertyAccess(
   if (expr.questionDotToken) {
     return compileOptionalPropertyAccess(ctx, fctx, expr);
   }
+
+  const namespaceFunctionValue = tryEmitNamespaceImportFunctionValue(ctx, fctx, expr);
+  if (namespaceFunctionValue !== undefined) return namespaceFunctionValue;
 
   // #1886 Slice B: linear-backed Uint8Array `buf.length` → the len i32 local
   // (widened to f64). Only fires for a registered linear-safe buffer; any other

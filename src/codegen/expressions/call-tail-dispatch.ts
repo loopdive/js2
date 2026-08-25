@@ -1813,6 +1813,22 @@ export function compileTailDispatch(
         return matchedClosureInfo.returnType ?? VOID_RESULT;
       }
     }
+
+    // A JavaScript implementation imported without declarations commonly
+    // leaves the inner result typed as `any`, even when the value returned at
+    // runtime is one of our compiled closure wrappers. In that case there is
+    // no checker call signature for the exact arm above to match, and the
+    // generic tail used to evaluate both calls but silently answer
+    // `undefined`. Reuse the ordinary dynamic-call ladder for the outer call:
+    // it evaluates the inner call exactly once, dispatches a Wasm closure by
+    // its runtime funcref shape, and retains the host-call fallback for a real
+    // host function. This is the untyped twin of the exact signature path, not
+    // a package-specific compose optimization. Typed call results continue to
+    // the established exact/fallback paths below.
+    if (!callSigs || callSigs.length === 0) {
+      const dynamicCallOfCall = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+      if (dynamicCallOfCall !== null) return dynamicCallOfCall;
+    }
   }
 
   // Handle ConditionalExpression as callee (not wrapped in parens):

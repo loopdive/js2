@@ -299,6 +299,19 @@ const __upstreamSpyCallValues = [];
 const __upstreamTimerSpies = { setTimeout: null, clearTimeout: null };
 let __upstreamSetTimeoutCallCount = 0;
 let __upstreamClearTimeoutCallCount = 0;
+function __upstreamMockCallsByIndex(index) {
+  const calls = [];
+  const base = __upstreamSpyCallBases[index] || 0;
+  for (let record = base; record < __upstreamSpyCallOwners.length; record++) {
+    if (__upstreamSpyCallOwners[record] !== index) continue;
+    const args = [];
+    const start = __upstreamSpyCallStarts[record] || 0;
+    const length = __upstreamSpyCallLengths[record] || 0;
+    for (let arg = 0; arg < length; arg++) args.push(__upstreamSpyCallValues[start + arg]);
+    calls.push(args);
+  }
+  return calls;
+}
 function __upstreamMockCalls(actual) {
   if (actual === __upstreamBareTimerAliases.setTimeout) {
     return { length: __upstreamSetTimeoutCallCount };
@@ -307,19 +320,7 @@ function __upstreamMockCalls(actual) {
     return { length: __upstreamClearTimeoutCallCount };
   }
   for (let index = 0; index < __upstreamSpyFunctions.length; index++) {
-    if (__upstreamSpyFunctions[index] === actual) {
-      const calls = [];
-      const base = __upstreamSpyCallBases[index] || 0;
-      for (let record = base; record < __upstreamSpyCallOwners.length; record++) {
-        if (__upstreamSpyCallOwners[record] !== index) continue;
-        const args = [];
-        const start = __upstreamSpyCallStarts[record] || 0;
-        const length = __upstreamSpyCallLengths[record] || 0;
-        for (let arg = 0; arg < length; arg++) args.push(__upstreamSpyCallValues[start + arg]);
-        calls.push(args);
-      }
-      return calls;
-    }
+    if (__upstreamSpyFunctions[index] === actual) return __upstreamMockCallsByIndex(index);
   }
   // Keep the live mock.calls vector on the spy itself. A WasmGC vector stored
   // inside another host-like vector is copied at the boundary and then stops
@@ -337,20 +338,23 @@ const vi = {
     const spyIndex = __upstreamSpyFunctions.length;
     __upstreamSpyCallCounts.push(0);
     __upstreamSpyCallBases.push(__upstreamSpyCallOwners.length);
-    const callList = [];
     function spy(...args) {
       __upstreamSpyCallCounts[spyIndex] = (__upstreamSpyCallCounts[spyIndex] || 0) + 1;
       __upstreamSpyCallOwners.push(spyIndex);
       __upstreamSpyCallStarts.push(__upstreamSpyCallValues.length);
       __upstreamSpyCallLengths.push(args.length);
       for (let index = 0; index < args.length; index++) __upstreamSpyCallValues.push(args[index]);
-      callList.push(args);
       if (typeof implementation === "function") return implementation.apply(this, args);
     }
     __upstreamSpyFunctions.push(spy);
-    spy.mock = { calls: callList };
+    const mock = {};
+    Object.defineProperty(mock, "calls", {
+      get() { return __upstreamMockCallsByIndex(spyIndex); },
+      enumerable: true,
+      configurable: true,
+    });
+    spy.mock = mock;
     spy.mockClear = function() {
-      callList.length = 0;
       __upstreamSpyCallCounts[spyIndex] = 0;
       __upstreamSpyCallBases[spyIndex] = __upstreamSpyCallOwners.length;
       return spy;

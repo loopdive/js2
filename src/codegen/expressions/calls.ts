@@ -125,7 +125,7 @@ import {
   TYPED_ARRAY_NAMES,
   typedArrayVecStorage,
 } from "../index.js";
-import { getVecInfo } from "../type-coercion.js";
+import { buildVecFromExternMaterializer, getVecInfo, vecFromExternFuncIdx } from "../type-coercion.js";
 import {
   compileArrayConstructorCall,
   compileObjectLiteralAsExternref,
@@ -4033,6 +4033,19 @@ export function tryEmitInlineDynamicCall(
   // arm can mis-cast its first arg to the vec type.
   candidates.push(...restCandidates);
 
+  // Dynamic callers save every argument as externref, while a selected
+  // closure may expose a concrete vec formal. Reserve the generic cross-rep
+  // materializers before capturing any helper indices below: a caller-owned
+  // array/vec is a valid JavaScript argument even when its allocation type is
+  // not the callee's exact inferred vec type.
+  for (const candidate of candidates) {
+    for (const paramType of candidate.info.paramTypes) {
+      if (paramType.kind === "ref" || paramType.kind === "ref_null") {
+        buildVecFromExternMaterializer(ctx, paramType.typeIdx);
+      }
+    }
+  }
+
   // Ensure box/unbox helpers exist (standalone: registered as native defined
   // functions, no import; host: late imports). Their indices are captured AFTER
   // the flush below — capturing them here, BEFORE a real import insertion (the
@@ -4051,8 +4064,26 @@ export function tryEmitInlineDynamicCall(
   // below): ensure the imports HERE, before the box/unbox indices are
   // captured, so the capture happens after every import insertion this
   // function performs (the stale-capture hazard the note above describes).
-  if (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback) {
+  const needsProvidedUndefinedCheck = candidates.some((candidate) => {
+    const fixedCount =
+      candidate.info.hasRestParam === true && candidate.info.paramTypes.length > 0
+        ? candidate.info.paramTypes.length - 1
+        : candidate.info.paramTypes.length;
+    return candidate.info.paramTypes
+      .slice(0, Math.min(arity, fixedCount))
+      .some((paramType) => paramType.kind === "f64" || paramType.kind === "ref_null");
+  });
+  // Explicit `undefined` is just as observable as an omitted argument. A
+  // dynamic caller stores every provided value as externref, so scalar/default
+  // and nullable-reference formals must classify that value before unboxing or
+  // casting it. This is required even when the host-call fallback is disabled:
+  // the exact Wasm-closure arm still needs to deliver the f64 undefined
+  // sentinel / typed-null default marker. Native-first targets route this name
+  // to the in-Wasm object runtime, so the check does not create a host import.
+  if (needsProvidedUndefinedCheck || (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback)) {
     ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  }
+  if (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback) {
     ensureHostCallFallbackImports(ctx, hostCallPlan);
   }
 
@@ -4412,9 +4443,52 @@ export function tryEmitInlineDynamicCall(
         callBody.push({ op: "i32.trunc_sat_f64_s" });
       } else if (pType.kind === "externref") {
         // already externref
-      } else if (pType.kind === "ref" || pType.kind === "ref_null") {
-        callBody.push({ op: "any.convert_extern" });
-        callBody.push({ op: "ref.cast", typeIdx: (pType as { typeIdx: number }).typeIdx });
+      } else if (pType.kind === "ref") {
+        const vecMaterializerIdx = vecFromExternFuncIdx(ctx, pType.typeIdx);
+        if (vecMaterializerIdx !== undefined) {
+          callBody.push({ op: "call", funcIdx: vecMaterializerIdx });
+          callBody.push({ op: "ref.as_non_null" });
+        } else {
+          callBody.push({ op: "any.convert_extern" });
+          callBody.push({ op: "ref.cast", typeIdx: pType.typeIdx });
+        }
+      } else if (pType.kind === "ref_null") {
+        // A concrete nullable-ref formal with a default commonly receives the
+        // host `undefined` singleton through this any-typed dispatch lane. It
+        // must arrive as typed null so the callee's default-parameter prologue
+        // can observe the missing argument. Casting the host singleton directly
+        // to the concrete GC type traps with `illegal cast` before the function
+        // runs (Redux's `currentReducer(currentState, action)` with an omitted
+        // initial state). Real null also remains nullable via ref.cast_null.
+        if (isUndefinedIdx !== undefined) {
+          callBody.push({ op: "call", funcIdx: isUndefinedIdx });
+          callBody.push({
+            op: "if",
+            blockType: { kind: "val", type: pType },
+            then: [{ op: "ref.null", typeIdx: pType.typeIdx }],
+            else: (() => {
+              const vecMaterializerIdx = vecFromExternFuncIdx(ctx, pType.typeIdx);
+              return vecMaterializerIdx === undefined
+                ? [
+                    { op: "local.get", index: argLocals[i]! } as Instr,
+                    { op: "any.convert_extern" } as Instr,
+                    { op: "ref.cast_null", typeIdx: pType.typeIdx } as Instr,
+                  ]
+                : [
+                    { op: "local.get", index: argLocals[i]! } as Instr,
+                    { op: "call", funcIdx: vecMaterializerIdx } as Instr,
+                  ];
+            })(),
+          });
+        } else {
+          const vecMaterializerIdx = vecFromExternFuncIdx(ctx, pType.typeIdx);
+          if (vecMaterializerIdx !== undefined) {
+            callBody.push({ op: "call", funcIdx: vecMaterializerIdx });
+          } else {
+            callBody.push({ op: "any.convert_extern" });
+            callBody.push({ op: "ref.cast_null", typeIdx: pType.typeIdx });
+          }
+        }
       }
     }
 

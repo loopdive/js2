@@ -159,13 +159,14 @@ function hasLiveFunctionBinding(ctx: CodegenContext, fctx: FunctionContext, name
 
 /**
  * True when this local callable is populated from a runtime element read in
- * its own function, for example Hono's `handler = middleware[i][0][0]`.
+ * its own function, for example Hono's `handler = middleware[i][0][0]` or
+ * Redux's `const reducer = reducers[key]`.
  * Such a table can hold several unrelated closure-wrapper structs, so the
  * signature-selected inline ladder is not authoritative for the value read at
  * runtime. This is deliberately narrower than "no direct initializer":
  * ordinary `const fn = makeFn()` closures retain the zero-import typed path.
  */
-function bindingIsAssignedFromElementRead(ctx: CodegenContext, identifier: ts.Identifier): boolean {
+function bindingIsPopulatedFromElementRead(ctx: CodegenContext, identifier: ts.Identifier): boolean {
   const declaration = ctx.oracle.valueDeclarationOf(identifier);
   if (!declaration || !ts.isVariableDeclaration(declaration)) return false;
 
@@ -182,6 +183,8 @@ function bindingIsAssignedFromElementRead(ctx: CodegenContext, identifier: ts.Id
     });
     return found;
   };
+
+  if (declaration.initializer && containsElementRead(declaration.initializer)) return true;
 
   let found = false;
   const visit = (node: ts.Node): void => {
@@ -1486,16 +1489,23 @@ export function compileIdentifierCall(
     const calleeBindingDecl = ctx.oracle.valueDeclarationOf(expr.expression);
     const calleeIsParameterBinding =
       calleeBindingDecl !== undefined && (ts.isParameter(calleeBindingDecl) || ts.isBindingElement(calleeBindingDecl));
+    // A runtime table read is not represented by the one closure signature
+    // cached under this local's spelling. The slot may hold any callable the
+    // table exposes, including a closure compiled in a later source unit.
+    // Route it through the dynamic boundary below instead of committing to a
+    // stale `closureMap`/local signature and nulling a different funcref cast.
+    const calleeComesFromElementRead = bindingIsPopulatedFromElementRead(ctx, expr.expression);
     let closureInfo =
       isLocallyShadowed ||
       nestedBindingVisible ||
       defaultExpressionImport !== undefined ||
       calleeIsParameterBinding ||
+      calleeComesFromElementRead ||
       (!hasVisibleClosureStorage && ctx.funcMap.has(funcName))
         ? undefined
         : ctx.closureMap.get(funcName);
 
-    if (!closureInfo && !nestedBindingVisible && defaultExpressionImport === undefined) {
+    if (!closureInfo && !nestedBindingVisible && defaultExpressionImport === undefined && !calleeComesFromElementRead) {
       closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
     }
     // (#4133) An out-of-scope nested binding lets the closure/local paths above
@@ -2489,7 +2499,7 @@ export function compileIdentifierCall(
       // program created (`this.beep = fn` / bare `getRight = fn`) is legitimate —
       // see implicit-global-binding.ts for why the two arms below got it wrong.
       const implicitCallee = isSloppyImplicitGlobalBinding(ctx, fctx, funcName);
-      const dyn = bindingIsAssignedFromElementRead(ctx, expr.expression)
+      const dyn = calleeComesFromElementRead
         ? null
         : tryEmitInlineDynamicCall(ctx, fctx, expr, isKnownVariable || isRuntimeEvalGlobal || implicitCallee);
       if (dyn !== null) return dyn;
