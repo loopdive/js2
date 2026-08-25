@@ -2779,8 +2779,12 @@ export function compileNamespaceStaticCall(
         const paramTypes = getFuncParamTypes(ctx, funcIdx);
         const staticParamCount = paramTypes ? paramTypes.length : expr.arguments.length;
         const calleeReadsArgsEarly = ctx.funcUsesArguments.has(fullName);
+        const memberDecl = ctx.fnMetaMemberDecls?.get(fullName);
         for (let i = 0; i < Math.min(expr.arguments.length, staticParamCount); i++) {
-          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i], true);
+          const sourceParam =
+            memberDecl !== undefined && ts.isMethodDeclaration(memberDecl) ? memberDecl.parameters[i] : undefined;
+          const forceArrayLiteralVec = sourceParam !== undefined && ts.isArrayBindingPattern(sourceParam.name);
+          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i], forceArrayLiteralVec);
         }
         if (expr.arguments.length > staticParamCount) {
           if (calleeReadsArgsEarly) {

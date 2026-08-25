@@ -15,6 +15,10 @@ goal: standalone-mode
 related: [4450, 4447, 4690]
 loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
+  - src/codegen/expressions/call-receiver-method.ts
+func-budget-allow:
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
 ---
 
 # #4691 — ES2015 standalone class-method array destructuring preserves explicit null

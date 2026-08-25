@@ -1954,9 +1954,13 @@ export function compileReceiverMethodCall(
       const restInfoNn = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 1);
       const handledRestNn =
         restInfoNn !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoNn, 1);
+      const memberDecl = ctx.fnMetaMemberDecls?.get(fullName);
       if (!handledRestNn) {
         for (let i = 0; i < Math.min(expr.arguments.length, methodParamCount); i++) {
-          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1], true); // +1 to skip self
+          const sourceParam =
+            memberDecl !== undefined && ts.isMethodDeclaration(memberDecl) ? memberDecl.parameters[i] : undefined;
+          const forceArrayLiteralVec = sourceParam !== undefined && ts.isArrayBindingPattern(sourceParam.name);
+          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1], forceArrayLiteralVec); // +1 to skip self
         }
       }
       if (!handledRestNn && expr.arguments.length > methodParamCount) {

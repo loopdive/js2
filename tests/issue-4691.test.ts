@@ -27,10 +27,23 @@ const exactRows = [
   "test262/test/language/statements/class/dstr/meth-static-ary-ptrn-elem-id-init-skipped.js",
 ] as const;
 
+const definePropertyRegressionRows = [
+  "test262/test/built-ins/Object/defineProperty/15.2.3.6-4-205.js",
+  "test262/test/built-ins/Object/defineProperty/15.2.3.6-4-242.js",
+  "test262/test/built-ins/Object/defineProperty/15.2.3.6-4-531-6.js",
+] as const;
+
 describe("#4691 class-method array destructuring residual", () => {
   it("passes all four authoritative standalone Test262 rows", async () => {
     for (const file of exactRows) {
       const result = await runTest262File(file, "issue-4691-exact", 120_000, "standalone");
+      expect(result.status, `${file}: ${result.error ?? ""}`).toBe("pass");
+    }
+  }, 120_000);
+
+  it("does not widen unrelated array arguments in the standalone harness", async () => {
+    for (const file of definePropertyRegressionRows) {
+      const result = await runTest262File(file, "issue-4691-regression", 120_000, "standalone");
       expect(result.status, `${file}: ${result.error ?? ""}`).toBe("pass");
     }
   }, 120_000);
