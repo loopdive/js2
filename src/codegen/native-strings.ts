@@ -352,6 +352,22 @@ export function ensureStrTruthyHelper(ctx: CodegenContext): number | undefined {
   return funcIdx;
 }
 
+/**
+ * (#4492 wave-5) The `ctx.nativeStrHelpers` key of the ToString dispatcher this
+ * file owns. Exported so a finalize-time arm can LOOK UP the built helper (to
+ * splice into it, or to call it back) without re-spelling the name — this file
+ * is the engine-owned home of that vocabulary (#2108 `SANCTIONED`), and a second
+ * spelling elsewhere is precisely the drift that gate measures.
+ */
+export const ANY_TO_STRING_HELPER = "__any_to_string";
+
+/**
+ * (#4492 wave-5) …and the `ctx.funcMap` key of the externref-entry ToString
+ * dispatcher, for the same reason. `__extern_toString` is an IMPORT in host mode
+ * and a defined native in standalone; the key is the same either way.
+ */
+export const EXTERN_TO_STRING_HELPER = "__extern_toString";
+
 export function ensureAnyToStringHelper(ctx: CodegenContext): number {
   ensureNativeStringHelpers(ctx);
   const existing = ctx.nativeStrHelpers.get("__any_to_string");
@@ -908,7 +924,7 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
         // (#2962) before the "[object Object]" terminal.
         objectOrErrorTag(() => [{ op: "local.get", index: L_V }]);
 
-  const body: Instr[] = [
+  const stringArmAndBelow: Instr[] = [
     // if (v is a $AnyString) return it directly
     { op: "local.get", index: L_V },
     { op: "ref.test", typeIdx: anyStrTypeIdx },
@@ -932,11 +948,42 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
             { op: "local.set", index: L_BOX },
             ...boxDispatch,
           ],
-          // else (boxed primitive externref shape, null ref, plain object, vec,
-          // …) → recover number/boolean boxes, then "[object Object]"
+          // else (boxed primitive externref shape, plain object, vec, …) →
+          // recover number/boolean boxes, then "[object Object]"
           else: residualArm,
         },
       ],
+    },
+  ];
+
+  // (#4621 D) §7.1.17 ToString(null) is "null". A RAW null ref never reached
+  // the tag-0 arm above — that arm only fires for an `$AnyValue` BOX carrying
+  // tag 0 — so it fell through `residualArm` to the "[object Object]" terminal.
+  // The residual-arm comment even listed "null ref" among the shapes it
+  // handled; it did not handle it, it rendered it as an object.
+  //
+  // Measured on `language/expressions/addition/S11.6.1_A3.2_T2.4`:
+  // `new String("1") + null` produced `"1[object Object]"`. Any addition with an
+  // OBJECT operand routes through `addition-to-primitive.ts`, which boxes both
+  // sides to anyref and lands here; the all-primitive spellings (`"" + null`)
+  // fold statically and were always right, which is what hid this.
+  //
+  // Scope note: in this representation the null externref IS the JavaScript
+  // `null` (`x === null` lowers to a bare `ref.is_null`, binary-ops.ts) while
+  // `undefined` is the tag-1 box / #4489 singleton, so this arm cannot swallow
+  // an `undefined`. The one other producer of a raw null here is the #1105
+  // nullable-`$AnyString` "undefined sentinel", which now renders "null"
+  // instead of "[object Object]" — both are wrong for that sentinel, and the
+  // spec-correct answer for the value this arm actually exists to serve is
+  // "null".
+  const body: Instr[] = [
+    { op: "local.get", index: L_V },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: strRef },
+      then: litStr("null"),
+      else: stringArmAndBelow,
     },
   ];
 

@@ -125,13 +125,75 @@ export function addOperandCallableSourceText(
 ): string | undefined {
   if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   if (!ts.isIdentifier(expr)) return undefined;
-  if (fctx.localMap.has(expr.text)) return undefined;
   const captured = ctx.funcSourceText.get(expr.text);
   if (!captured) return undefined;
+  if (!identifierIsTheCapturedFunction(ctx, fctx, expr, captured)) return undefined;
   const file = expr.getSourceFile();
   if (identifierIsWrittenTo(file, expr.text)) return undefined;
   if (hasToPrimitiveOverrideAssignment(file, expr.text)) return undefined;
   return ctx.oracle.signatureOf(expr) !== undefined ? captured : undefined;
+}
+
+/**
+ * (#4491 T4 parity, 2026-08-23) Does `expr` name the very function whose source
+ * text `ctx.funcSourceText` captured under that bare name?
+ *
+ * This replaces the original `fctx.localMap.has(expr.text)` guard, which asked a
+ * question whose answer is "yes" for every function in a test262 file. The
+ * harness wraps the whole script in a synthetic `export function test()`, so
+ * every top-level declaration is a LOCAL of that wrapper — the guard therefore
+ * fired unconditionally and this fold was a no-op *precisely where the module
+ * was written to matter*. The other spelling of the same question,
+ * `f1.toString()` (`call-receiver-method.ts`), reads the SAME map with no such
+ * guard, so the two disagreed exactly where the guard fired:
+ *
+ * ```
+ * f1 + 1            -> "function () { [native code] }1"    (the residue path)
+ * f1.toString() + 1 -> "function f1() { return 0; }1"      (#1463's map)
+ * ```
+ *
+ * measured standalone on `8794ab2c9` — which is `S11.6.1_A2.2_T3` CHECK#1
+ * failing, the row this module's own header names as the invariant it exists to
+ * hold. Reported by dev-4515, who deliberately left the fix here rather than
+ * patch another lane's module.
+ *
+ * The #3364 shadowing hazard the old guard cited is REAL and is still refused —
+ * but "is this identifier a shadowing local?" is a resolution question, not a
+ * name-in-a-map question. Asking the oracle makes the guard both narrower and
+ * WIDER than before:
+ *
+ *  - narrower: a local that IS the captured function (every harness file) now
+ *    folds, which is the whole point of the module;
+ *  - wider: a shadow the old guard never saw — a binding at MODULE scope that
+ *    reuses a top-level function's name — is now refused too, because the
+ *    resolved declaration is not that `FunctionDeclaration`.
+ *
+ * The `getText()` equality is not belt-and-braces: `funcSourceText` is keyed by
+ * BARE NAME (it inherits #1463's keying, see the header), so two same-named
+ * functions in different scopes collide in the map. Comparing the resolved
+ * declaration's own text to the captured string makes a collision refuse
+ * instead of folding the wrong function's source.
+ */
+function identifierIsTheCapturedFunction(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.Identifier,
+  captured: string,
+): boolean {
+  const decl = ctx.oracle.valueDeclarationOf(expr);
+  if (decl === undefined) {
+    // Unresolvable: keep the historical conservative answer rather than
+    // inventing a new one — a local of that name is still a possible shadow.
+    return !fctx.localMap.has(expr.text);
+  }
+  if (!ts.isFunctionDeclaration(decl)) return false;
+  try {
+    return decl.getText(decl.getSourceFile()) === captured;
+  } catch {
+    // Synthetic nodes lacking source positions — the same case the capture
+    // sites swallow; refuse rather than fold an unverifiable match.
+    return false;
+  }
 }
 
 /**

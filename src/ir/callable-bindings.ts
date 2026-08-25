@@ -12,6 +12,9 @@ import type { IrCallableBinding, IrFuncRef } from "./nodes.js";
 
 type IrCallableBindingOwnerId = IrSourceId | IrUnitId | IrClassId;
 
+/** Stable role for the compiler-owned constructor of one nominal fnctor. */
+export const IR_FNCTOR_CONSTRUCTOR_SUPPORT_ROLE = "fnctor-constructor";
+
 function requireNonEmpty(value: string, label: string): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new TypeError(`${label} must be a non-empty string`);
@@ -103,6 +106,23 @@ export function irSupportFuncRef(
   return funcRef(name, {
     kind: "support",
     bindingId: createIrBindingId({ ownerId: checkedOwnerId, domain: "support", role: checkedRole, ordinal }),
+  });
+}
+
+/** Exact binding identity for a compiler-owned nominal-fnctor constructor. */
+export function irFnctorConstructorBindingId(unitId: IrUnitId): IrBindingId {
+  return createIrBindingId({
+    ownerId: requireNonEmpty(unitId, "fnctor constructor owner") as IrUnitId,
+    domain: "support",
+    role: IR_FNCTOR_CONSTRUCTOR_SUPPORT_ROLE,
+  });
+}
+
+/** Reference one exact nominal-fnctor constructor support function. */
+export function irFnctorConstructorFuncRef(unitId: IrUnitId, adapterName: string): IrFuncRef {
+  return funcRef(requireNonEmpty(adapterName, "fnctor constructor compatibility name"), {
+    kind: "support",
+    bindingId: irFnctorConstructorBindingId(unitId),
   });
 }
 

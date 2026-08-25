@@ -24,10 +24,11 @@
 // machinery: per-element status objects (`$Object` via the object runtime) and
 // a native `AggregateError` (`$Error_struct`, `.errors` on `$props`), lazily
 // registered ONLY when a module compiles one (ensureSettledAnyCombinators) so
-// all/race-only modules stay byte-identical. String arguments, f64-backed
-// `number[]` vecs (the Gap-4 output-representation escalation), and
-// generator-state arguments still fall through to the existing host path
-// (follow-ups).
+// all/race-only modules stay byte-identical. (#2867 string-combinator slice)
+// String arguments drain through `__combinator_to_vec`'s code-point string arm
+// under native strings. f64-backed `number[]` vecs (the Gap-4
+// output-representation escalation) and generator-state arguments still fall
+// through to the existing host path (follow-ups).
 //
 // **THE WIDEN HAS LANDED — this module is LIVE on `--target standalone`.**
 // (#2867 S2 correction, 2026-08-15.) This header said "inert until the widen …
@@ -44,11 +45,12 @@
 // error mentions emitted host imports, and a direct compile probe of eight
 // combinator shapes (array literal, array var, `race`, `resolve`,
 // `new Promise`, ctor-input, `all([])`, `any`-typed arg) returns `imports=[]`.
-// The one genuine remaining host-route is a **string** argument
-// (`Promise.all('')` → `Native-first adapter cannot bind env::Promise_all`),
-// which is the separately-documented deferred case in the Scope note above.
+// The last host-route — a **string** argument (`Promise.all('')` →
+// `Native-first adapter cannot bind env::Promise_all`) — closed with the
+// (#2867 string-combinator slice): `__combinator_to_vec` now has a native
+// code-point string arm (see `buildToVecStringArm`).
 
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import type { Instr, LocalDef, ValType } from "../ir/types.js";
 import {
   addFuncType,
@@ -57,7 +59,20 @@ import {
   getOrRegisterVecType,
 } from "./registry/types.js";
 import { allocLocal } from "./context/locals.js";
-import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable mint/push
+import { definedFuncAt, mintDefinedFunc, nativeStrHelperHandle, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable mint/push
+import {
+  CLOSURE_CAPTURE_FIELD_BASE,
+  closureArityField,
+  closureBagField,
+  closureBagInitInstr,
+  getClosureFuncSelfTypeIdx,
+  getFuncRefWrapperRootTypeIdx,
+  getOrCreateFuncRefWrapperTypes,
+} from "./closures/funcref-wrapper-types.js";
+import { emitWasiErrorConstructor } from "./registry/error-types.js";
+import { ensureExnTag } from "./registry/imports.js";
+import { emitGuardedFuncRefCast } from "./type-coercion.js";
+import { emitNullCheckThrow } from "./property-access.js";
 // (#3137) allSettled/any additions: status objects live on the object runtime
 // ($Object via __new_plain_object/__extern_set), the AggregateError is a native
 // $Error_struct (tag from builtin-tags), and the "status"/"fulfilled"/… keys are
@@ -66,7 +81,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 // all/race-only modules stay byte-identical.
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
 import { BUILTIN_TYPE_TAGS } from "./builtin-tags.js";
 import {
   ensureAsyncDriveRuntime,
@@ -74,6 +89,7 @@ import {
   PROMISE_STATE_FULFILLED,
   PROMISE_STATE_PENDING,
   PROMISE_STATE_REJECTED,
+  isStandalonePromiseActive,
 } from "./async-scheduler.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
@@ -85,6 +101,233 @@ export type NativeCombinator = "all" | "race" | "allSettled" | "any";
 
 export function isNativeCombinatorMethod(method: string): method is NativeCombinator {
   return method === "all" || method === "race" || method === "allSettled" || method === "any";
+}
+
+/**
+ * (#4682) The small NewPromiseCapability substrate used by the bounded
+ * custom-constructor arm.  This is deliberately separate from the aggregate
+ * state below: the first slice only admits an empty array, where the only
+ * observable combinator work is constructing C and validating the executor's
+ * captured resolve/reject pair.
+ */
+interface CustomCapabilityRuntime {
+  stateTypeIdx: number;
+  executorTypeIdx: number;
+  executorFuncIdx: number;
+}
+
+type CtxWithCustomCapability = CodegenContext & { __promiseCustomCapability?: CustomCapabilityRuntime };
+
+function customCapabilityTypeError(ctx: CodegenContext): Instr[] {
+  // NewPromiseCapability's executor protocol throws a TypeError before the
+  // combinator touches an empty iterable when either captured slot is not
+  // callable.  Reuse the in-module standalone Error constructor and native
+  // exception tag so this arm never introduces an env import.
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
+  const ctorIdx = ctx.funcMap.get("__new_TypeError");
+  if (ctorIdx === undefined) return [{ op: "unreachable" }];
+  return [{ op: "ref.null.extern" }, { op: "call", funcIdx: ctorIdx }, { op: "throw", tagIdx: ensureExnTag(ctx) }];
+}
+
+/** Register the two-argument capability executor and its mutable slots once. */
+function ensureCustomCapabilityRuntime(ctx: CodegenContext): CustomCapabilityRuntime | null {
+  const cached = (ctx as CtxWithCustomCapability).__promiseCustomCapability;
+  if (cached) return cached;
+
+  const wrapper = getOrCreateFuncRefWrapperTypes(ctx, [EXTERNREF, EXTERNREF], []);
+  if (!wrapper) return null;
+
+  // The capability record stores the two values supplied by C's constructor.
+  // `undefined` is represented by a null externref on this native path. The
+  // selected Test262 cohort intentionally uses undefined for the first call;
+  // a later slice can add a presence bit for explicit null.
+  const stateTypeIdx = ctx.mod.types.length;
+  ctx.mod.types.push({
+    kind: "struct",
+    name: "$__promise_custom_capability",
+    fields: [
+      { name: "$resolve", type: EXTERNREF, mutable: true },
+      { name: "$reject", type: EXTERNREF, mutable: true },
+    ],
+  });
+  ctx.structMap.set("$__promise_custom_capability", stateTypeIdx);
+  ctx.typeIdxToStructName.set(stateTypeIdx, "$__promise_custom_capability");
+  ctx.structFields.set("$__promise_custom_capability", [
+    { name: "$resolve", type: EXTERNREF, mutable: true },
+    { name: "$reject", type: EXTERNREF, mutable: true },
+  ]);
+
+  // This subtype is a normal `(externref, externref) -> void` closure with one
+  // capture: the mutable capability record. Its inherited header makes it
+  // callable by the ordinary `executor(...)` lowering in a compiled C body.
+  const executorTypeIdx = ctx.mod.types.length;
+  ctx.mod.types.push({
+    kind: "struct",
+    name: "$__promise_custom_capability_executor",
+    fields: [
+      { name: "func", type: { kind: "funcref" }, mutable: false },
+      closureArityField(),
+      closureBagField(),
+      { name: "$capability", type: { kind: "ref", typeIdx: stateTypeIdx }, mutable: false },
+    ],
+    superTypeIdx: wrapper.structTypeIdx,
+  });
+  ctx.structMap.set("$__promise_custom_capability_executor", executorTypeIdx);
+  ctx.typeIdxToStructName.set(executorTypeIdx, "$__promise_custom_capability_executor");
+  ctx.structFields.set("$__promise_custom_capability_executor", [
+    { name: "func", type: { kind: "funcref" }, mutable: false },
+    closureArityField(),
+    closureBagField(),
+    { name: "$capability", type: { kind: "ref", typeIdx: stateTypeIdx }, mutable: false },
+  ]);
+
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
+  const typeErrorIdx = ctx.funcMap.get("__new_TypeError");
+  const exnTag = ensureExnTag(ctx);
+  const executorFuncIdx = mintDefinedFunc(ctx);
+  const stateLocal = 3;
+  const body: Instr[] = [
+    // state = self.$capability
+    { op: "local.get", index: 0 },
+    { op: "ref.cast", typeIdx: executorTypeIdx },
+    { op: "struct.get", typeIdx: executorTypeIdx, fieldIdx: CLOSURE_CAPTURE_FIELD_BASE },
+    { op: "local.set", index: stateLocal },
+    // A second call is only an error once a non-undefined slot was stored.
+    { op: "local.get", index: stateLocal },
+    { op: "struct.get", typeIdx: stateTypeIdx, fieldIdx: 0 },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    { op: "local.get", index: stateLocal },
+    { op: "struct.get", typeIdx: stateTypeIdx, fieldIdx: 1 },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    { op: "i32.or" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then:
+        typeErrorIdx === undefined
+          ? [{ op: "unreachable" }]
+          : [{ op: "ref.null.extern" }, { op: "call", funcIdx: typeErrorIdx }, { op: "throw", tagIdx: exnTag }],
+    },
+    // Capture resolve and reject even when either is undefined. This mirrors
+    // GetCapabilitiesExecutor's sentinel semantics for the selected cohort.
+    { op: "local.get", index: stateLocal },
+    { op: "local.get", index: 1 },
+    { op: "struct.set", typeIdx: stateTypeIdx, fieldIdx: 0 },
+    { op: "local.get", index: stateLocal },
+    { op: "local.get", index: 2 },
+    { op: "struct.set", typeIdx: stateTypeIdx, fieldIdx: 1 },
+  ];
+  const funcTypeIdx = wrapper.liftedFuncTypeIdx;
+  pushDefinedFunc(ctx, executorFuncIdx, {
+    name: "__promise_custom_capability_executor",
+    typeIdx: funcTypeIdx,
+    locals: [{ name: "$capability", type: { kind: "ref", typeIdx: stateTypeIdx } }],
+    body,
+    exported: false,
+  });
+  ctx.funcMap.set("__promise_custom_capability_executor", executorFuncIdx);
+
+  const result: CustomCapabilityRuntime = {
+    stateTypeIdx,
+    executorTypeIdx,
+    executorFuncIdx,
+  };
+  (ctx as CtxWithCustomCapability).__promiseCustomCapability = result;
+  return result;
+}
+
+/**
+ * (#4682) Invoke an ordinary compiled constructor with a native capability
+ * executor and validate the captured slots. This is intentionally limited to
+ * an empty iterable; callers use the established native combinator emitter for
+ * the resulting aggregate once this protocol completes.
+ */
+export function emitStandalonePromiseCustomCapabilityCheck(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  constructorLocal: number,
+  constructorInfo: ClosureInfo,
+  constructorSelfTypeIdx: number,
+): boolean {
+  if (!isStandalonePromiseActive(ctx)) return false;
+  const runtime = ensureCustomCapabilityRuntime(ctx);
+  const wrapperRoot = getFuncRefWrapperRootTypeIdx(ctx);
+  if (!runtime || wrapperRoot === undefined) return false;
+
+  const stateLocal = allocLocal(fctx, `__promise_capability_state_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: runtime.stateTypeIdx,
+  });
+  fctx.body.push(
+    { op: "ref.null.extern" },
+    { op: "ref.null.extern" },
+    { op: "struct.new", typeIdx: runtime.stateTypeIdx },
+    { op: "local.set", index: stateLocal },
+  );
+  const executorLocal = allocLocal(fctx, `__promise_capability_executor_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: runtime.executorTypeIdx,
+  });
+  fctx.body.push(
+    { op: "ref.func", funcIdx: runtime.executorFuncIdx },
+    { op: "i32.const", value: 2 },
+    closureBagInitInstr(),
+    { op: "local.get", index: stateLocal },
+    { op: "struct.new", typeIdx: runtime.executorTypeIdx },
+    { op: "local.set", index: executorLocal },
+  );
+
+  // C's lifted closure ABI always carries its self struct first. The
+  // capability executor itself is passed as the first user parameter; any
+  // extra formals get their ordinary default values.
+  fctx.body.push({ op: "local.get", index: constructorLocal });
+  for (let i = 0; i < constructorInfo.paramTypes.length; i++) {
+    const p = constructorInfo.paramTypes[i]!;
+    if (i === 0) {
+      fctx.body.push({ op: "local.get", index: executorLocal }, { op: "extern.convert_any" });
+    } else {
+      // This arm is admitted only for the one-parameter constructors in the
+      // Test262 capability cohort. Keep a defensive default for malformed
+      // declarations instead of emitting an invalid stack shape.
+      if (p.kind === "externref") fctx.body.push({ op: "ref.null.extern" });
+      else if (p.kind === "f64") fctx.body.push({ op: "f64.const", value: 0 });
+      else if (p.kind === "i32") fctx.body.push({ op: "i32.const", value: 0 });
+      else fctx.body.push({ op: "ref.null", typeIdx: (p as { typeIdx: number }).typeIdx });
+    }
+  }
+  const constructorSelf = getClosureFuncSelfTypeIdx(ctx, constructorInfo.funcTypeIdx) ?? constructorSelfTypeIdx;
+  fctx.body.push(
+    { op: "local.get", index: constructorLocal },
+    { op: "struct.get", typeIdx: constructorSelf, fieldIdx: 0 },
+  );
+  emitGuardedFuncRefCast(fctx, constructorInfo.funcTypeIdx);
+  emitNullCheckThrow(ctx, fctx, { kind: "ref_null", typeIdx: constructorInfo.funcTypeIdx });
+  fctx.body.push({ op: "call_ref", typeIdx: constructorInfo.funcTypeIdx });
+  if (constructorInfo.returnType !== null) fctx.body.push({ op: "drop" });
+
+  // NewPromiseCapability validates both captured values after C returns.
+  const resolveCallable = [
+    { op: "local.get", index: stateLocal } as Instr,
+    { op: "struct.get", typeIdx: runtime.stateTypeIdx, fieldIdx: 0 } as Instr,
+    { op: "any.convert_extern" } as Instr,
+    { op: "ref.test", typeIdx: wrapperRoot } as Instr,
+  ];
+  const rejectCallable = [
+    { op: "local.get", index: stateLocal } as Instr,
+    { op: "struct.get", typeIdx: runtime.stateTypeIdx, fieldIdx: 1 } as Instr,
+    { op: "any.convert_extern" } as Instr,
+    { op: "ref.test", typeIdx: wrapperRoot } as Instr,
+  ];
+  fctx.body.push(...resolveCallable, ...rejectCallable, { op: "i32.and" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [],
+    else: customCapabilityTypeError(ctx),
+  });
+  return true;
 }
 
 interface CombinatorRuntime {
@@ -1162,6 +1405,21 @@ const TOVEC_CAP = 5;
 const TOVEC_LEN = 6;
 const TOVEC_DATA = 7;
 const TOVEC_GROW = 8;
+// (#2867 string-combinator slice) String-arm locals — present only when the
+// native-string arm is emitted (`toVecStringArmAvailable`).
+const TOVEC_SFLAT = 9;
+const TOVEC_SI = 10;
+const TOVEC_SCH = 11;
+
+/**
+ * (#2867 string-combinator slice) The string arm exists only under native
+ * strings — the same predicate gates the `isDynamicCombinatorArgEligible`
+ * string admission in calls.ts, so the compile-time gate and the runtime arm
+ * can never disagree.
+ */
+function toVecStringArmAvailable(ctx: CodegenContext): boolean {
+  return ctx.nativeStrings === true;
+}
 
 /** Idempotently register `__combinator_to_vec` with the vec-only eager body. */
 export function ensureCombinatorToVec(ctx: CodegenContext): void {
@@ -1169,6 +1427,10 @@ export function ensureCombinatorToVec(ctx: CodegenContext): void {
   const vecTypeIdx = getOrRegisterVecType(ctx, "externref", EXTERNREF);
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   const arrRefNull: ValType = { kind: "ref_null", typeIdx: arrTypeIdx };
+  const stringArm = toVecStringArmAvailable(ctx);
+  // The string arm calls __str_flatten / __str_charAt_cp — register them
+  // BEFORE minting our funcIdx so their stable handles exist at body build.
+  if (stringArm) ensureNativeStringHelpers(ctx);
   const typeIdx = addFuncType(ctx, [EXTERNREF], [EXTERNREF]);
   const funcIdx = mintDefinedFunc(ctx); // (#1916 S3) stable handle
   pushDefinedFunc(ctx, funcIdx, {
@@ -1183,8 +1445,15 @@ export function ensureCombinatorToVec(ctx: CodegenContext): void {
       { name: "$len", type: { kind: "i32" } },
       { name: "$data", type: arrRefNull },
       { name: "$grow", type: arrRefNull },
+      ...(stringArm
+        ? [
+            { name: "$sflat", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } as ValType },
+            { name: "$si", type: { kind: "i32" } as ValType },
+            { name: "$sch", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } as ValType },
+          ]
+        : []),
     ],
-    body: buildToVecCommonHead(vecTypeIdx).concat([{ op: "ref.null.extern" }]),
+    body: buildToVecCommonHead(ctx, vecTypeIdx).concat([{ op: "ref.null.extern" }]),
     exported: false,
   });
   ctx.funcMap.set("__combinator_to_vec", funcIdx);
@@ -1192,11 +1461,14 @@ export function ensureCombinatorToVec(ctx: CodegenContext): void {
 
 /**
  * The head shared by both bodies: null → return null (not iterable);
- * canonical `$Vec` → return the input unchanged. Falls through otherwise.
+ * canonical `$Vec` → return the input unchanged; native string → a fresh
+ * `$Vec` of its code-point substrings (§22.1.5 String iteration — the
+ * (#2867 string-combinator) arm, present only under native strings).
+ * Falls through otherwise.
  * Built FRESH per call — never alias one Instr[] into two bodies (#2169b:
  * a shared instruction object is double-remapped by DCE's type-index pass).
  */
-function buildToVecCommonHead(vecTypeIdx: number): Instr[] {
+function buildToVecCommonHead(ctx: CodegenContext, vecTypeIdx: number): Instr[] {
   return [
     { op: "local.get", index: TOVEC_X },
     { op: "ref.is_null" },
@@ -1212,6 +1484,102 @@ function buildToVecCommonHead(vecTypeIdx: number): Instr[] {
       op: "if",
       blockType: { kind: "empty" },
       then: [{ op: "local.get", index: TOVEC_X }, { op: "return" }],
+    },
+    ...buildToVecStringArm(ctx, vecTypeIdx),
+  ];
+}
+
+/**
+ * (#2867 string-combinator slice) Strings ARE iterable per §22.1.5: the String
+ * iterator yields code POINTS (a well-formed surrogate pair is one 2-code-unit
+ * element). Flatten once, then walk with `__str_charAt_cp` (the same helper
+ * the for-of / spread string lowerings use), advancing the cursor by the
+ * returned element's `.len`. The result vec is sized at the code-UNIT count —
+ * an upper bound on code points; `$Vec.len` carries the true element count, so
+ * the tail slack is never read. Empty string → `$Vec{0}` (fulfils `all` with
+ * `[]`, leaves `race` pending — spec behaviour for an empty iterable).
+ */
+function buildToVecStringArm(ctx: CodegenContext, vecTypeIdx: number): Instr[] {
+  if (!toVecStringArmAvailable(ctx) || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return [];
+  const flattenIdx = nativeStrHelperHandle(ctx, "__str_flatten");
+  const charAtCpIdx = nativeStrHelperHandle(ctx, "__str_charAt_cp");
+  if (flattenIdx === undefined || charAtCpIdx === undefined) return [];
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+  return [
+    { op: "local.get", index: TOVEC_X },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        // sflat = __str_flatten(x)
+        { op: "local.get", index: TOVEC_X },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+        { op: "call", funcIdx: flattenIdx },
+        { op: "local.set", index: TOVEC_SFLAT },
+        // cap = sflat.len (code units — upper bound on code points)
+        { op: "local.get", index: TOVEC_SFLAT },
+        { op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 0 },
+        { op: "local.set", index: TOVEC_CAP },
+        // data = new arr[cap]; len = 0; si = 0
+        { op: "local.get", index: TOVEC_CAP },
+        { op: "array.new_default", typeIdx: arrTypeIdx },
+        { op: "local.set", index: TOVEC_DATA },
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: TOVEC_LEN },
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: TOVEC_SI },
+        {
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                { op: "local.get", index: TOVEC_SI },
+                { op: "local.get", index: TOVEC_CAP },
+                { op: "i32.ge_s" },
+                { op: "br_if", depth: 1 },
+                // sch = __str_charAt_cp(sflat, si) — 1 unit, or 2 for a pair
+                { op: "local.get", index: TOVEC_SFLAT },
+                { op: "ref.as_non_null" },
+                { op: "local.get", index: TOVEC_SI },
+                { op: "call", funcIdx: charAtCpIdx },
+                { op: "ref.cast", typeIdx: ctx.nativeStrTypeIdx },
+                { op: "local.set", index: TOVEC_SCH },
+                // data[len] = sch; len++
+                { op: "local.get", index: TOVEC_DATA },
+                { op: "local.get", index: TOVEC_LEN },
+                { op: "local.get", index: TOVEC_SCH },
+                { op: "extern.convert_any" },
+                { op: "array.set", typeIdx: arrTypeIdx },
+                { op: "local.get", index: TOVEC_LEN },
+                { op: "i32.const", value: 1 },
+                { op: "i32.add" },
+                { op: "local.set", index: TOVEC_LEN },
+                // si += sch.len (skips the low surrogate of a pair)
+                { op: "local.get", index: TOVEC_SI },
+                { op: "local.get", index: TOVEC_SCH },
+                { op: "ref.as_non_null" },
+                { op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 0 },
+                { op: "i32.add" },
+                { op: "local.set", index: TOVEC_SI },
+                { op: "br", depth: 0 },
+              ],
+            },
+          ],
+        },
+        // return $Vec{len, data}
+        { op: "local.get", index: TOVEC_LEN },
+        { op: "local.get", index: TOVEC_DATA },
+        { op: "ref.as_non_null" },
+        { op: "struct.new", typeIdx: vecTypeIdx },
+        { op: "extern.convert_any" },
+        { op: "return" },
+      ],
     },
   ];
 }
@@ -1300,7 +1668,7 @@ export function fillCombinatorToVec(ctx: CodegenContext): void {
   }
 
   fn.body = [
-    ...buildToVecCommonHead(vecTypeIdx),
+    ...buildToVecCommonHead(ctx, vecTypeIdx),
 
     // it = __call_@@iterator(x)  (null when x has no @@iterator method)
     { op: "local.get", index: TOVEC_X },

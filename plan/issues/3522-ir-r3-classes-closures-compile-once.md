@@ -4,7 +4,9 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-15
+updated: 2026-08-21
+assignee: ttraenkler/fable-lead
+branch: claude/ir-3522-static-nested-family
 priority: critical
 horizon: xl
 complexity: XL
@@ -92,6 +94,7 @@ loc-budget-allow:
   - src/ir/prepared-component-dependencies.ts
   - src/ir/select.ts
 func-budget-allow:
+  - src/ir/select.ts::isPhase1Expr
   - src/codegen/class-bodies.ts::collectClassDeclaration
   - src/codegen/declarations.ts::compileDeclarations
   - src/codegen/function-body.ts::compileFunctionBody
@@ -2865,3 +2868,185 @@ STATIC members on nested classes (the sealing-order transaction above), field
 initializers carrying call edges (the attribution transaction above), computed
 member names, nested heritage, and then top-level class expressions with their
 module-global binding ABI.
+
+### Slice record — nested class STATIC METHODS, the sealing-order transaction (2026-08-22)
+
+The boundary the previous slice deferred and named next. Measured on
+`origin/main` `34e102dc8` before any change and again after, through the
+production `compile` seam with `experimentalIR: true, trackIrOutcomes: true`.
+Every row is identical on `gc` and `standalone`, and every `run=` value was
+cross-checked against the same program in node.
+
+| Fixture                                        | Before        | After         | run |
+| ---------------------------------------------- | ------------- | ------------- | --- |
+| nested class reached ONLY via a static, no `new` | legacy=1 ir=0 | legacy=0 ir=2 | 42  |
+| two statics, no `new`                          | legacy=1 ir=0 | legacy=0 ir=3 | 42  |
+| static calling a sibling static                | legacy=1 ir=0 | legacy=0 ir=3 | 42  |
+| static + instance method                       | legacy=1 ir=0 | legacy=0 ir=3 | 42  |
+| static + initialized field + instance method   | legacy=1 ir=0 | legacy=0 ir=4 | 42  |
+| static + explicit constructor                  | legacy=1 ir=0 | legacy=0 ir=4 | 42  |
+| multi-parameter static                         | legacy=1 ir=0 | legacy=0 ir=2 | 42  |
+| string-returning static                        | legacy=1 ir=0 | legacy=0 ir=2 | 42  |
+
+The gain is the whole enclosing function plus every member: before the slice the
+owner read `body-shape-rejected@select` and the members were never inventoried.
+The identical static-method shape on a TOP-LEVEL class already compiled once
+(`legacy=0 ir=4`), so no lowering, ABI, value representation or import surface
+was added — the capability was already proven.
+
+**The recorded terminal diagnostic reproduces exactly, and only for ONE shape.**
+Relaxing the member-shape gate alone gives, for a class reached ONLY through its
+static side:
+
+```
+run  kind=invariant  code=unexpected-internal-throw  stage=lower
+ABI draft ir-binding:v1:callable:…class-implicit-constructor…:body:…
+  would mutate sealed prepared scope
+  prepared-component:…class-static-method:…+…root:top-level-function:…
+```
+
+Bisected by shape one at a time, the invariant fires **iff** no `new` appears
+anywhere in the transaction: `static-only, no new` · `two statics, no new` ·
+`static calling a static` all throw, while the same class WITH a `new Box()`
+somewhere, or beside any instance method, field or explicit constructor, is
+clean. The stack names the site: `emitInstrTree → resolveClass →
+ClassRegistry.resolve → initRef → bindUnitCallableSlot →
+planProgramAbiUnitCallable`. `ClassRegistry.resolve` binds the source-owned
+`_init` callable for **every** class shape the lowering materializes, not only
+for constructed ones, and `prepareImplicitConstructorSupports` — which plans that
+binding up front — scanned for `new <Identifier>` only. With no `new`, nothing
+planned it, so `initRef` planned it lazily during lowering, after the static
+component had sealed.
+
+**The transaction is an ORDERING one; nothing about the seal moves.** Three
+source edits:
+
+1. `isBoundedPreparedNestedOrdinaryClass` (`src/ir/class-accessor-safety.ts`)
+   rejected every static member. It now admits a static METHOD under exactly the
+   member shape instance methods already carry — undecorated, identifier-named,
+   body-bearing, non-abstract, non-async, non-generator, fixed-arity. A static
+   method's definition evaluation is a method's: a body-bearing callable
+   installed on the constructor object, with nothing running in the containing
+   frame. Static FIELDS and static ACCESSORS stay rejected (below).
+2. `prepareImplicitConstructorSupports` (`src/codegen/ir-plain-implicit-constructors.ts`)
+   now reaches a bounded nested class through a STATIC MEMBER ACCESS on its
+   identifier, exactly as it already does for `new <Identifier>`, so the support
+   pair is planned in the same pre-seal planning phase as the static member.
+   The reaching walk moved into `collectPreparedImplicitConstructorClasses` (the
+   function budget caps the caller at 300 LOC). The static admission is
+   restricted to classes that actually carry a static member, so every
+   pre-existing static-free shape keeps the exact `new`-only population.
+3. `isPhase1Expr` (`src/ir/select.ts`) — the correctness fix this slice forced,
+   below.
+
+**A prepared class binding is not a first-class IR value (the correctness fix).**
+Admitting statics made a static-side ALIAS reachable, and it leaked. Measured
+before the fix, `class Box { static k() {…} } const Alias = Box; return
+Alias.k();` claimed and EMITTED `Box_k` while `run` fell back, and recorded the
+post-claim BUILD error `ir/from-ast: identifier "Box" is not in scope in run` —
+split ownership, which R3 exists to prevent. The equivalent instance-member
+program was already withdrawn correctly, by the `constructor-resolution-unsupported`
+arm on `new Alias()`; the static side has no such arm. The class-declaration and
+`const C = class {…}` arms add the binding NAME to the selector scope purely so
+the dedicated `new C(...)`, `C.staticMember` and `x instanceof C` arms can
+consume it — those resolve the binding themselves and never reach the generic
+identifier accept, so anything that DOES reach it is a bare value use. That
+accept now rejects a name in `currentPreparedClassBindingNames`, withdrawing the
+owner at selection so the class withdraws with it. A/B'd against unmodified
+`origin/main` on seven class-binding shapes — nested `instanceof` on a
+declaration, top-level `instanceof`, top-level class-as-value, nested
+`new`-only declaration, nested `new`-only class expression, nested
+class-expression `instanceof`, and static-beside-`new` — all byte-identical
+before and after; only the two aliasing shapes move, and both move from a leak
+to a clean demotion.
+
+Exact static-member boundary, measured one shape at a time:
+
+| Static member shape                       | Verdict                                   |
+| ----------------------------------------- | ----------------------------------------- |
+| static method, any arity, number/string   | claims                                    |
+| static reached from a sibling static body | claims                                    |
+| static beside field / method / ctor       | claims                                    |
+| static FIELD                              | direct (`body-shape-rejected`)            |
+| static ACCESSOR                           | direct (`body-shape-rejected`)            |
+| computed static name                      | direct (`body-shape-rejected`)            |
+| `async` / generator static                | direct (`body-shape-rejected`)            |
+| heritage                                  | direct (the explicit #4448/#4575 guard)   |
+| static capturing the enclosing frame      | direct (`class-member-unsupported`)       |
+| static-ONLY class EXPRESSION              | direct (`body-shape-rejected`) — residual |
+| class binding used as a VALUE             | owner AND class withdrawn together        |
+
+A static FIELD stays out because its initializer runs at class-definition time
+IN the containing frame, which is exactly the inertness the predicate asserts —
+a different ordered contract. A static ACCESSOR stays out because its descriptor
+is not on the ordinary descriptor-by-name-and-kind path this family resolves.
+
+**Residual, measured not assumed: the static-ONLY class EXPRESSION.** A nested
+class expression whose binding is consumed by a `new` is already admitted, and
+one carrying a static BESIDE an instance member is admitted by this slice
+(`const Box = class { static base() {…} get() { return Box.base() + 2; } }`
+compiles once). What stays out is the static-ONLY expression: its `const`
+binding is proven safe only for CONSTRUCTION uses
+(`boundedClassExpressionBindingHasOnlyStaticConstructionUses`), which a static
+member access is not, so the binding never reaches the projected local-class set
+and the owner rejects at `body-shape-rejected` — its base behaviour, a clean
+demotion, not a failure. Widening that binding proof is a separate transaction
+from the sealing order and is left to the class-expression boundary.
+
+Coverage is `tests/issue-3522-nested-class-static.test.ts`, **33/33** on `gc`
+and `standalone`: direct class/function body poison on every expected body,
+exact terminal outcomes, one shared prepared component across owner + statics
+whose id is asserted to NAME the `class-static-method` scope (the scope whose
+seal the draft used to arrive after), Wasm validation, runtime results
+cross-checked against node, dual-run legacy↔IR equality on six fixtures, and a
+static-call evaluation-ORDER chain checked against the DIRECT path rather than a
+hard-coded constant. The WAT proof uses a parameterised fixture so the static
+call cannot constant-fold: the prepared owner, the static and the instance
+method carry no `externref`, boxing, `call_ref`, `call_indirect`, `ref.test` or
+`__call_m_*` traffic; `run` reaches the static as a direct `return_call`; the
+STATIC callable declares no receiver slot while the instance method beside it
+declares `(param (ref null …))`; and `run` contains no `struct.new` — a class
+reached only through its static side allocates nothing, so the ordering fix
+plans the `_init` binding without forcing a construction. Eleven negative
+boundaries are verified rather than assumed (the table above plus a
+name-shadowing direct↔IR parity check and a positive control proving the direct
+class-body emitter is still reached).
+
+One pin in the implicit-constructor suite moved: "keeps a nested class with a
+static member direct" pinned a static METHOD, which this slice admits. It now
+pins the static ACCESSOR, the boundary that remains.
+
+**A pre-existing defect found while A/B-ing, neither introduced nor hidden
+here:** `const Box = class { get() { return 42; } }; const b = new Box(); return
+b instanceof Box ? b.get() : 0;` returns **0**, not 42 — identically on this
+branch and on unmodified `origin/main`, on the direct path. Nested
+class-expression `instanceof` evaluates false. Not this slice's territory;
+recorded so it is not rediscovered as a regression.
+
+Gates: focused class-family suites (nested implicit-constructor, accessor,
+field, class-expression ownership, nested-class ownership, static class-method)
+plus the new suite **114/114**; `check:ir-fallbacks --verbose` OK — no
+unintended, post-claim or module-level increases (only the two unchanged
+deferred string-builder candidates); `check:ir-only` **READY** on both lanes —
+single-host and standalone each **38/38 terminal units, 38 IR-emitted, 0 legacy
+bodies, 0 unsupported, 0 invariants**, byte-identical to the same run on
+unmodified base; `check:ir-only --policy=hybrid` **READY**;
+`gen:ir-adoption --check` byte-clean with no row refresh needed; typecheck
+**543 errors on base and 543 on this branch** (all pre-existing `@types/node`
+noise under symlinked `node_modules`) — no new errors; lint and `format:check`
+green on every changed file.
+
+Budget grants for this change-set are in this file's frontmatter, not in any
+`scripts/*-baseline.json`: `src/ir/select.ts` was already granted under
+`loc-budget-allow`, and `src/ir/select.ts::isPhase1Expr` is added under
+`func-budget-allow`. Both report the same **+16 LOC** for the value-use guard
+(`10040 → 10056`; `isPhase1Expr` `1072 → 1088`). The reaching-set
+extraction kept `prepareImplicitConstructorSupports` under its own 300-LOC cap
+without a grant.
+
+Remaining nested class-family boundaries, in the order their surfaces grow:
+field initializers carrying call edges (the attribution transaction recorded in
+the previous slice), static-ONLY class expressions (the binding-proof residual
+above), computed member names, static fields with their class-definition-time
+ordered contract, nested heritage, and then top-level class expressions with
+their module-global binding ABI.

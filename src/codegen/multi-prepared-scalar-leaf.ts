@@ -261,7 +261,8 @@ export type MultiPreparedScalarLeafReceipt =
       readonly legacyName: string;
     };
 
-interface MultiPreparedLeafRouteBase {
+/** Common immutable prepared-body receipt shared by the narrow multi-source routes. */
+export interface MultiPreparedLeafRouteBase {
   readonly sourceFile: ts.SourceFile;
   readonly declaration: ts.FunctionDeclaration;
   readonly unitId: IrUnitId;
@@ -306,6 +307,7 @@ export interface MultiPreparedFunctionValueLeafRoute extends MultiPreparedLeafRo
 export type MultiPreparedEarlyLeafRoute =
   | MultiPreparedScalarLeafRoute
   | MultiPreparedFunctionValueLeafRoute
+  | import("./multi-prepared-array-leaf.js").MultiPreparedArrayLeafRoute
   | import("./multi-prepared-fibonacci-pair.js").MultiPreparedFibonacciPairRoute;
 
 function invariant(stage: "resolve" | "patch", detail: string): never {

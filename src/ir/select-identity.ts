@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts, forEachChild } from "../ts-api.js";
+import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import type { IrClassId, IrSourceId, IrTerminalUnitRecord, IrUnitId, IrUnitRecord } from "./identity.js";
 import { collectModuleInitPopulation } from "./module-init.js";
 import {
@@ -9,7 +10,7 @@ import {
   type IrPlanningIdentityContext,
   type IrPlanningIdentityInvariantCode,
 } from "./planning-identity.js";
-import type { IrUnitTypeMap, TypeMap, TypeMapEntry } from "./propagate.js";
+import type { IrFnctorAdmission, IrUnitTypeMap, TypeMap, TypeMapEntry } from "./propagate.js";
 import type { IrRecursiveTypeEvidence } from "./type-evidence.js";
 import type { IrClassMethodDescriptor } from "./nodes.js";
 import { claimPreparedTimerShims } from "./injected-timer-shim.js";
@@ -86,12 +87,51 @@ export interface IrIdentitySelection {
   readonly classMembers?: ReadonlyMap<IrUnitId, IrIdentityClassMemberClaim>;
   readonly fallbacks?: ReadonlyMap<IrUnitId, IrIdentityFallback>;
   readonly localCallees?: ReadonlyMap<IrUnitId, ReadonlySet<IrUnitId>>;
+  /** Exact admitted fnctor allocation sites owned by claimed function units. */
+  readonly fnctorAdmissions?: ReadonlyMap<IrUnitId, ReadonlyArray<IrFnctorAdmission>>;
+  /** Exact counted-string plans owned by claimed function units. */
+  readonly countedStringAppendPlans?: ReadonlyMap<IrUnitId, readonly IrCountedStringAppendPlan[]>;
   readonly moduleInit?: IrIdentityModuleInitAssessment;
   /** Policy needed only while projecting back through the legacy name seam. */
   readonly legacyProjection?: {
     readonly includeEmptyModuleInit: boolean;
     readonly demoteOnLegacyCaller: boolean;
   };
+}
+
+function collectCountedStringAppendPlans(
+  sourceFile: ts.SourceFile,
+  claimedUnitIds: ReadonlySet<IrUnitId>,
+  functions: readonly IndexedFunction[],
+  plan: IrIdentitySelectionOptions["planCountedStringAppend"],
+): ReadonlyMap<IrUnitId, readonly IrCountedStringAppendPlan[]> | undefined {
+  if (!plan) return undefined;
+  const declarationByUnitId = new Map(functions.map((entry) => [entry.unit.unitId, entry.declaration] as const));
+  const result = new Map<IrUnitId, readonly IrCountedStringAppendPlan[]>();
+  for (const unitId of claimedUnitIds) {
+    const declaration = declarationByUnitId.get(unitId);
+    if (!declaration?.body) continue;
+    const plans: IrCountedStringAppendPlan[] = [];
+    const visit = (node: ts.Node): void => {
+      if (node !== declaration.body && ts.isFunctionLike(node)) return;
+      if (ts.isForStatement(node)) {
+        const candidate = plan(node);
+        if (candidate) {
+          if (candidate.loop !== node || candidate.sourceFile !== sourceFile) {
+            selectorIdentityInvariant(
+              "source-record-mismatch",
+              `counted-string plan for ${unitId} does not retain its exact loop/source identity`,
+            );
+          }
+          plans.push(candidate);
+        }
+      }
+      forEachChild(node, visit);
+    };
+    visit(declaration.body);
+    if (plans.length > 0) result.set(unitId, Object.freeze([...plans]));
+  }
+  return result.size > 0 ? result : undefined;
 }
 
 export type IrIdentitySelectionOptions = Omit<IrSelectionOptions, "recursiveTypeEvidence"> & {
@@ -474,6 +514,112 @@ function directIdentifierCallees(body: ts.Block): readonly string[] {
   return names;
 }
 
+/**
+ * Collect only resolver-approved allocation sites from exact claimed units.
+ * This is intentionally a second, identity-keyed view: the legacy selector
+ * has no safe way to project a NewExpression through a function name.  The
+ * callback is allowed to return evidence only after proving the same-source
+ * declaration/site, approved+reserved fnctor, fixed unconditional
+ * `this.input: string`, and all no-alias/no-reassignment/no-escape/collision
+ * gates.  Any malformed result is discarded rather than widened.
+ */
+function collectFnctorAdmissions(
+  sourceFile: ts.SourceFile,
+  sourceId: IrSourceId,
+  claimed: ReadonlySet<IrUnitId>,
+  functions: readonly IndexedFunction[],
+  identityContext: IrPlanningIdentityContext,
+  resolver: IrIdentitySelectionOptions["resolveFnctorAdmission"] | undefined,
+): ReadonlyMap<IrUnitId, ReadonlyArray<IrFnctorAdmission>> | undefined {
+  if (!resolver) return undefined;
+  const admissions = new Map<IrUnitId, IrFnctorAdmission[]>();
+  for (const indexed of functions) {
+    if (!claimed.has(indexed.unit.unitId)) continue;
+    const sites: IrFnctorAdmission[] = [];
+    const visit = (node: ts.Node): void => {
+      if (node !== indexed.declaration && ts.isFunctionLike(node)) return;
+      if (ts.isNewExpression(node)) {
+        const admission = resolver(node);
+        // Do not trust a resolver's display-name projection.  The site and
+        // source are rechecked at the identity seam before retaining it.
+        if (
+          admission !== undefined &&
+          admission.constructorSite === node &&
+          admission.sourceId === sourceId &&
+          node.getSourceFile() === sourceFile &&
+          identityContext.sourceFileBySourceId.get(admission.sourceId) === sourceFile &&
+          identityContext.declarationByUnitId.get(admission.constructorUnitId) === admission.constructorDeclaration &&
+          identityContext.unitIdByDeclaration.get(admission.constructorDeclaration) === admission.constructorUnitId &&
+          admission.constructorDeclaration.getSourceFile() === sourceFile
+        ) {
+          sites.push(admission);
+        }
+      }
+      forEachChild(node, visit);
+    };
+    visit(indexed.declaration.body!);
+    if (sites.length > 0) admissions.set(indexed.unit.unitId, sites);
+  }
+  return admissions.size > 0 ? admissions : undefined;
+}
+
+function assessIdentityModuleInit(
+  sourceFile: ts.SourceFile,
+  sourceId: IrSourceId,
+  identityContext: IrPlanningIdentityContext,
+  functionsByName: ReadonlyMap<string, readonly IndexedFunction[]>,
+  claimed: ReadonlyMap<IrUnitId, IrIdentityFunctionClaim>,
+  uniqueFunctions: ReadonlyMap<string, ts.FunctionDeclaration>,
+  localClasses: ReadonlySet<string>,
+): IrIdentityModuleInitAssessment | undefined {
+  const moduleInitId = identityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
+  const inventoryModuleInits = identityContext.inventory.terminalUnits.filter(
+    (terminal) => terminal.sourceId === sourceId && terminal.observedKind === "module-init",
+  );
+  if (
+    inventoryModuleInits.length > 1 ||
+    (moduleInitId === undefined &&
+      (inventoryModuleInits.length !== 0 ||
+        sourceHasModuleInitUnit(sourceFile) ||
+        identityContext.moduleInitUnitIdBySourceId.has(sourceId))) ||
+    (inventoryModuleInits.length === 1 && !sourceHasModuleInitUnit(sourceFile)) ||
+    (moduleInitId !== undefined &&
+      (inventoryModuleInits.length !== 1 ||
+        inventoryModuleInits[0]!.id !== moduleInitId ||
+        identityContext.moduleInitUnitIdBySourceId.get(sourceId) !== moduleInitId))
+  ) {
+    return selectorIdentityInvariant(
+      "invalid-module-init",
+      `IR identity selector has no exact source-owned module-init population for ${sourceId}`,
+    );
+  }
+  if (moduleInitId === undefined) return undefined;
+  const terminal = identityContext.terminalByUnitId.get(moduleInitId);
+  if (
+    !terminal ||
+    terminal !== inventoryModuleInits[0] ||
+    identityContext.unitByUnitId.get(moduleInitId) !== terminal ||
+    terminal.sourceId !== sourceId ||
+    terminal.observedKind !== "module-init"
+  ) {
+    return selectorIdentityInvariant(
+      "invalid-module-init",
+      `IR identity selector module-init ${moduleInitId} is not source-owned`,
+    );
+  }
+  const claimedNames = new Set<string>();
+  for (const [name, candidates] of functionsByName) {
+    if (candidates.length === 1 && claimed.has(candidates[0]!.unit.unitId)) claimedNames.add(name);
+  }
+  const assessment = assessModuleInit(sourceFile, claimedNames, uniqueFunctions, localClasses);
+  return {
+    unitId: moduleInitId,
+    displayName: terminal.displayName,
+    legacyMatchName: terminal.legacyMatchName,
+    ...assessment,
+  };
+}
+
 function buildIdentityCallGraph(
   functions: readonly IndexedFunction[],
   functionsByName: ReadonlyMap<string, readonly IndexedFunction[]>,
@@ -660,8 +806,32 @@ export function planIrCompilationByIdentity(
       .filter(([, candidates]) => candidates.length === 1 && asyncUnitIds.has(candidates[0]!.unit.unitId))
       .map(([name]) => name),
   );
-  const { recursiveTypeEvidence: _recursive, isPreparedInjectedTimerShim: _timer, ...runtimeOptions } = options;
-  configureIrStructuralSelectorPredicates(sourceFile, runtimeOptions, uniqueClasses, uniqueFunctions, asyncNames);
+  const countedStringAppendPlanCache = options.planCountedStringAppend
+    ? new Map<ts.ForStatement, IrCountedStringAppendPlan | null>()
+    : undefined;
+  const cachedCountedStringAppendPlan = options.planCountedStringAppend
+    ? (loop: ts.ForStatement): IrCountedStringAppendPlan | null => {
+        if (countedStringAppendPlanCache!.has(loop)) return countedStringAppendPlanCache!.get(loop)!;
+        const plan = options.planCountedStringAppend!(loop);
+        countedStringAppendPlanCache!.set(loop, plan);
+        return plan;
+      }
+    : undefined;
+  const {
+    recursiveTypeEvidence: _recursive,
+    isPreparedInjectedTimerShim: _timer,
+    planCountedStringAppend: _countedStringAppend,
+    ...runtimeOptions
+  } = options;
+  configureIrStructuralSelectorPredicates(
+    sourceFile,
+    cachedCountedStringAppendPlan
+      ? { ...runtimeOptions, planCountedStringAppend: cachedCountedStringAppendPlan }
+      : runtimeOptions,
+    uniqueClasses,
+    uniqueFunctions,
+    asyncNames,
+  );
   const trackFallbacks = options.trackFallbacks === true;
   const reasons = new Map<IrUnitId, IrFallbackReason>();
   const details = new Map<IrUnitId, string>();
@@ -1011,54 +1181,29 @@ export function planIrCompilationByIdentity(
     }
   }
 
-  const moduleInitId = identityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
-  const inventoryModuleInits = identityContext.inventory.terminalUnits.filter(
-    (terminal) => terminal.sourceId === sourceId && terminal.observedKind === "module-init",
+  const fnctorAdmissions = collectFnctorAdmissions(
+    sourceFile,
+    sourceId,
+    new Set(claimed.keys()),
+    functions,
+    identityContext,
+    options.resolveFnctorAdmission,
   );
-  if (
-    inventoryModuleInits.length > 1 ||
-    (moduleInitId === undefined &&
-      (inventoryModuleInits.length !== 0 ||
-        sourceHasModuleInitUnit(sourceFile) ||
-        identityContext.moduleInitUnitIdBySourceId.has(sourceId))) ||
-    (inventoryModuleInits.length === 1 && !sourceHasModuleInitUnit(sourceFile)) ||
-    (moduleInitId !== undefined &&
-      (inventoryModuleInits.length !== 1 ||
-        inventoryModuleInits[0]!.id !== moduleInitId ||
-        identityContext.moduleInitUnitIdBySourceId.get(sourceId) !== moduleInitId))
-  ) {
-    return selectorIdentityInvariant(
-      "invalid-module-init",
-      `IR identity selector has no exact source-owned module-init population for ${sourceId}`,
-    );
-  }
-  let moduleInit: IrIdentityModuleInitAssessment | undefined;
-  if (moduleInitId) {
-    const terminal = identityContext.terminalByUnitId.get(moduleInitId);
-    if (
-      !terminal ||
-      terminal !== inventoryModuleInits[0] ||
-      identityContext.unitByUnitId.get(moduleInitId) !== terminal ||
-      terminal.sourceId !== sourceId ||
-      terminal.observedKind !== "module-init"
-    ) {
-      return selectorIdentityInvariant(
-        "invalid-module-init",
-        `IR identity selector module-init ${moduleInitId} is not source-owned`,
-      );
-    }
-    const claimedNames = new Set<string>();
-    for (const [name, candidates] of functionsByName) {
-      if (candidates.length === 1 && claimed.has(candidates[0]!.unit.unitId)) claimedNames.add(name);
-    }
-    const assessment = assessModuleInit(sourceFile, claimedNames, uniqueFunctions, localClasses);
-    moduleInit = {
-      unitId: moduleInitId,
-      displayName: terminal.displayName,
-      legacyMatchName: terminal.legacyMatchName,
-      ...assessment,
-    };
-  }
+  const countedStringAppendPlans = collectCountedStringAppendPlans(
+    sourceFile,
+    new Set(claimed.keys()),
+    functions,
+    cachedCountedStringAppendPlan,
+  );
+  const moduleInit = assessIdentityModuleInit(
+    sourceFile,
+    sourceId,
+    identityContext,
+    functionsByName,
+    claimed,
+    uniqueFunctions,
+    localClasses,
+  );
 
   const fallbacks = trackFallbacks
     ? new Map(
@@ -1080,6 +1225,8 @@ export function planIrCompilationByIdentity(
     ...(classClaims.size ? { classMembers: classClaims } : {}),
     ...(fallbacks ? { fallbacks } : {}),
     ...(localCallees ? { localCallees } : {}),
+    ...(fnctorAdmissions ? { fnctorAdmissions } : {}),
+    ...(countedStringAppendPlans ? { countedStringAppendPlans } : {}),
     ...(moduleInit ? { moduleInit } : {}),
     legacyProjection: { includeEmptyModuleInit: true, demoteOnLegacyCaller },
   };

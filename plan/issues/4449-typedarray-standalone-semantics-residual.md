@@ -1,10 +1,10 @@
 ---
 id: 4449
 title: "standalone: TypedArray.prototype ES6 semantics residual (~556 non-reflection tests) — species protocol, detached-buffer checks, custom-ctor paths"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-25
 priority: high
 horizon: l
 feasibility: hard
@@ -13,6 +13,13 @@ area: codegen, conformance
 es_edition: es6
 goal: standalone-mode
 related: [4444, 2159, 2175]
+loc-budget-allow:
+  - src/codegen/array-methods.ts
+  - src/codegen/dataview-native.ts
+  - src/codegen/expressions/call-receiver-method.ts
+func-budget-allow:
+  - src/codegen/array-methods.ts::compileArrayMethodCall
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
 ---
 
 # #4449 — TypedArray.prototype standalone semantics residual
@@ -35,19 +42,84 @@ baseline_sha `734fab88`):
 Heaviest methods: `set` (37), `map` (35), `slice` (34), `filter` (32),
 `subarray` (31), `copyWithin` (27), `fill` (20), `reduce`/`reduceRight` (38).
 
-## Direction (not yet a full plan)
+## Implementation Plan (2026-08-25)
 
-- **Triage-first slice** like #4447: pick one representative per sub-bucket,
-  identify where the standalone TypedArray methods live (grep TypedArray under
-  `src/codegen/`), and confirm which failures are (a) missing protocol steps in
-  otherwise-working methods vs (b) blocked on #2175 reflective receivers.
-- The `speciesctor`/`custom-ctor` buckets need a SpeciesConstructor lookup on a
-  runtime receiver — check whether that genuinely requires #2175's prototype
-  objects or can key off the receiver's brand struct.
-- Detached-buffer checks are likely a bounded, high-yield first slice: one
-  `IsDetachedBuffer` guard emitted at each method entry.
-- Write the full `## Implementation Plan` (fable lane) before dispatching an
-  implementation agent, per the plan/implement split.
+Work in bounded commits; do not turn the 556-file residual into one rewrite.
+
+1. **Freeze a current cohort.** Run the standalone TypedArray path filter and
+   save the result file under `.tmp/`. Partition non-passes into reflection,
+   detached-buffer, species/custom-ctor, and per-method semantics. Exclude the
+   reflection filename families owned by #2159/#2175 and record the exact
+   denominator used for every before/after claim.
+2. **Trace the native carrier once.** Start in
+   `src/codegen/dataview-native.ts`, especially the `%TypedArray%.prototype`
+   helpers and the shared backing-buffer window. Confirm how a view reaches its
+   backing vec and how detachment is represented (`buf.length < 0`). Reuse the
+   existing DataView/ArrayBuffer detached-buffer throw builders; do not add a
+   host import or a second detached-state representation.
+3. **Land detached-buffer validation first.** Add a shared TypedArray
+   `ValidateTypedArray` entry helper and call it at each affected prototype
+   method at the specification-required point relative to argument coercion.
+   Use representative tests that detach before entry and during `valueOf` /
+   callback evaluation so a blanket early check cannot falsely pass the slice.
+4. **Implement TypedArraySpeciesCreate.** Read `receiver.constructor`, then
+   `constructor[Symbol.species]`; default on null/undefined, require a
+   constructor otherwise, construct with the requested length/buffer tuple,
+   and verify the result is a compatible non-detached TypedArray of sufficient
+   length. Thread this through `map`, `filter`, `slice`, and `subarray` rather
+   than duplicating lookup logic per method. If first-class method reflection
+   is truly required, leave only those exact files on #2159/#2175 and record
+   evidence; do not classify ordinary species lookup as reflection by default.
+5. **Close method-semantic clusters by shared algorithm.** Attack in this
+   order: `set` overlap/coercion, `map`/`filter` callback and result creation,
+   `slice`/`subarray` bounds/species, `copyWithin`/`fill` index coercion, then
+   reduce/reduceRight empty and traversal behavior. Each commit gets a focused
+   unit test under `tests/issue-4449-*.test.ts` and a before/after path-filter
+   delta.
+6. **Regression audit.** Run the full TypedArray filter in standalone and GC
+   modes, plus the focused tests. Report new passes, losses, remaining
+   failures by cluster, and reassign only proven external blockers to their
+   owning issues.
+
+Primary ownership: `src/codegen/dataview-native.ts` and new focused tests.
+Coordinate before editing shared reflection/prototype-object machinery owned
+by #2159/#2175 or class/destructuring files owned by #4447/#4450.
+
+## Implementation Update (2026-08-25)
+
+This bounded slice implements step 3 for the shared-backing static view lane.
+`emitTaViewValidate` checks the backing byte vector's shared detached marker
+(`length < 0`), null backing references, and fixed-view out-of-bounds windows;
+auto-length views retain their live-buffer semantics. It emits a catchable
+standalone `TypeError` before materialization and therefore before method
+argument/callback evaluation.
+
+The guard is wired into the ordinary array-method dispatcher and the earlier
+standalone packed-carrier `map`/`filter` and scalar-HOF fast paths. The latter
+were the reason a validation helper in `array-methods.ts` alone missed the
+highest-yield map/reduce cases. Species/custom-constructor result allocation
+remains open and is not claimed by this slice; reflection-only filename
+families remain attributed to #2159/#2175.
+
+This closes only the detached/shared-view validation slice. The parent issue
+remains in progress until species/custom-constructor and remaining per-method
+clusters satisfy the acceptance criteria below.
+
+## Test Results (2026-08-25)
+
+- `CI=true node_modules/.bin/vitest run tests/issue-4449.test.ts --pool=forks --maxWorkers=1 --minWorkers=1 --reporter=dot`
+  — **4 passed**. Covers detached `map` and `reduce` callback ordering,
+  fixed-view OOB after resize, and an in-bounds resize regression.
+- The standalone TypedArray filter was started from this worktree as run
+  `20260825-012742` using `TEST262_TARGET=standalone`, the interpreter lane,
+  `TEST262_PATH_FILTER='built-ins/TypedArray'`, and 16 weighted chunks. It was
+  stopped after the runner's bounded retry budget (the partial report has 886
+  rows: **191 pass / 886 total, 21.6%**). It is recorded as a before snapshot,
+  not an after delta: compile-timeout retries and the unsupported
+  `$262.detachArrayBuffer` interpreter harness dominate this broad cohort. The
+  exact ES2015 baseline remains the plan's 556-test cohort;
+  species/custom-constructor failures and reflection filename families are
+  still open blockers.
 
 ## Acceptance
 

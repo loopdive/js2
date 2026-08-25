@@ -363,7 +363,7 @@ function isStringYieldExpression(ctx: CodegenContext, expr: ts.Expression | unde
  * the body (not descending into nested functions).
  *
  *  - all-numeric (or zero-yield) → `{kind:"f64"}` (the historical fast path);
- *  - all-string → the native `$AnyString` ref (#2171);
+ *  - all-string (including a direct `yield*` string) → the native `$AnyString` ref (#2171);
  *  - anything else (object yields, or a MIX of numeric/string/object) →
  *    `{kind:"externref"}`, the universal boxed-`any` carrier (#2864 F1). Every
  *    JS value coerces to externref host-free in standalone/WASI (numbers via the
@@ -383,7 +383,24 @@ function generatorElemValType(ctx: CodegenContext, decl: GeneratorDecl): ValType
     if (isFunctionLikeScope(node)) {
       return; // a yield here belongs to an inner generator
     }
-    if (ts.isYieldExpression(node) && !node.asteriskToken) {
+    if (ts.isYieldExpression(node)) {
+      // A direct `yield* "abc"` is lowered by the generic iterable cursor,
+      // whose values are native strings in the standalone iterator runtime.
+      // Include that operand in the carrier decision; otherwise the generator
+      // defaults to f64 and each delegated character becomes NaN.
+      if (node.asteriskToken) {
+        if (isStringYieldExpression(ctx, node.expression)) sawString = true;
+      } else if (isNumericExpression(ctx, node.expression)) sawNumeric = true;
+      else if (isStringYieldExpression(ctx, node.expression)) sawString = true;
+      else sawOther = true;
+    }
+    // (#3505) A top-level `return expr;` feeds the SAME result-struct value
+    // field as a yield (the return terminator builds the result directly), so
+    // its type participates in the carrier decision too. Deciding from yields
+    // alone made `function* g() { return 'str'; }` an f64 carrier whose plan
+    // then bailed on the string return — legacy host path on the gc lane and
+    // a #680 refusal in standalone, for a shape the machine supports.
+    if (ts.isReturnStatement(node) && node.expression) {
       if (isNumericExpression(ctx, node.expression)) sawNumeric = true;
       else if (isStringYieldExpression(ctx, node.expression)) sawString = true;
       else sawOther = true;
@@ -889,12 +906,12 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         // (#2173 slice-2b) Not a native-gen call nor a numeric vec — try a
         // GENERIC iterable (`yield* arr.values()`, `yield* customIterable`).
         // Driven by the standalone-native `__iterator`/`__iterator_next` runtime
-        // (#2038) → zero host imports. Same STRING-outer bail as the other arms:
-        // the iterator value rides externref and re-yields through the OUTER
+        // (#2038) → zero host imports. The iterator value rides externref and re-yields through the OUTER
         // result struct's `value` field; an f64 outer unboxes it and a boxed-any
-        // outer passes it through, but a concrete-ref (string) outer has no
-        // repair seam — bail to the host path (the clean #680 refusal).
-        if (!elemIsString && isGenericIterableDelegate(ctx, subject)) {
+        // outer passes it through. A direct string operand is the one concrete
+        // ref case supported here: the iterator runtime returns native-string
+        // refs, and the emitter casts the externref back to that ref below.
+        if ((!elemIsString || isStringYieldExpression(ctx, subject)) && isGenericIterableDelegate(ctx, subject)) {
           // (#2864 R1) `const x = yield* it` — the delegation completion value
           // (§27.5.3.7) is the iterator's done-result `value`; for the common
           // array/`.values()` shape that is `undefined`. The done-arm delivers
@@ -2440,7 +2457,32 @@ export function registerNativeGenerator(
   leadingCaptures?: NativeGeneratorCaptureParam[],
 ): NativeGeneratorInfo | null {
   const existing = ctx.nativeGenerators.get(functionName);
-  if (existing) return existing;
+  // Idempotent re-registration (shadow-aliased entries included) returns the
+  // decl's own info rather than minting a duplicate state machine.
+  const own = nativeGeneratorInfoForDecl(ctx, functionName, decl);
+  if (own) return own;
+  // (#3505) Same source name, DIFFERENT declaration - two module files in one
+  // compileMulti graph (or two scopes) each declare `function* g`. The registry
+  // is name-keyed, so returning `existing` here aliased every later declaration
+  // to the FIRST-registered body: test262 instn-uniq-env-rec's entry generator
+  // resumed the fixture's empty body and yielded the absent-value sentinel
+  // (NaN) instead of its own return value. Register the new declaration under a
+  // unique INTERNAL name (state struct + resume fn derive from it) and let the
+  // bare key point at the LATEST declaration - the same last-wins order
+  // `ctx.funcMap` already gives colliding plain function declarations. The
+  // shadowed info is re-keyed under a space-separated alias (no source
+  // identifier contains a space) so the dispatch-table walkers that iterate
+  // `ctx.nativeGenerators.values()` still see every registered generator; the
+  // re-key happens at the final `set` below so a candidate/plan bail leaves
+  // the registry untouched.
+  let internalName = functionName;
+  let shadowAliasKey: string | undefined;
+  if (existing) {
+    let shadowIdx = 0;
+    while (ctx.nativeGenerators.has(`${functionName} shadowed${shadowIdx}`)) shadowIdx++;
+    shadowAliasKey = `${functionName} shadowed${shadowIdx}`;
+    internalName = `${functionName}__redecl${shadowIdx + 1}`;
+  }
   if (!isNativeGeneratorCandidate(ctx, decl)) return null;
 
   const plan = buildNativeGeneratorPlan(ctx, decl);
@@ -2617,8 +2659,13 @@ export function registerNativeGenerator(
   // of `__GenBrand_{n-1}` — each distinct by ancestry depth). Type-level only:
   // no field/layout/operand changes, and every `ref.test`/`ref.cast` site
   // becomes nominally precise for free.
-  const brandName = `__GenBrand_${ctx.nativeGenerators.size}`;
+  // (#3505) `nativeGenerators.size` stalls when a redeclared name overwrites
+  // its bare key (alias + overwrite net one entry per TWO registrations), so
+  // suffix with the always-unique type index when the size-derived name is
+  // already taken. Non-colliding modules keep the historical names.
+  let brandName = `__GenBrand_${ctx.nativeGenerators.size}`;
   const brandTypeIdx = ctx.mod.types.length;
+  if (ctx.structMap.has(brandName)) brandName = `__GenBrand_${ctx.nativeGenerators.size}_${brandTypeIdx}`;
   ctx.mod.types.push({
     kind: "struct",
     name: brandName,
@@ -2629,7 +2676,7 @@ export function registerNativeGenerator(
   ctx.typeIdxToStructName.set(brandTypeIdx, brandName);
   ctx.genStateBrandTipIdx = brandTypeIdx;
 
-  const stateName = `__GenState_${sanitizeTypeName(functionName)}`;
+  const stateName = `__GenState_${sanitizeTypeName(internalName)}`;
   const stateTypeIdx = ctx.mod.types.length;
   ctx.mod.types.push({
     kind: "struct",
@@ -2644,7 +2691,7 @@ export function registerNativeGenerator(
 
   const yieldCount = plan.states.filter((s) => s.terminator.kind === "yield").length;
   const info: NativeGeneratorInfo = {
-    functionName,
+    functionName: internalName,
     decl,
     synthesizedThis,
     stateTypeIdx,
@@ -2697,6 +2744,7 @@ export function registerNativeGenerator(
       return flags.length > 0 ? flags : undefined;
     })(),
   };
+  if (shadowAliasKey !== undefined && existing) ctx.nativeGenerators.set(shadowAliasKey, existing);
   ctx.nativeGenerators.set(functionName, info);
   return info;
 }
@@ -2706,6 +2754,34 @@ export function registerNativeGenerator(
  * lookup). The inner of a `yield*` is usually declared before the outer (source
  * order) and already in `ctx.nativeGenerators`. Returns null if not registered.
  */
+/**
+ * (#3505) Resolve the native-generator info registered for EXACTLY this
+ * declaration. The registry's bare key is name-keyed and last-wins under
+ * same-name redeclarations (two module files each declaring `function* g`),
+ * so a name hit is verified against the decl and shadow-aliased entries are
+ * scanned before concluding this decl has no native registration.
+ */
+export function nativeGeneratorInfoForDecl(
+  ctx: CodegenContext,
+  name: string,
+  decl: ts.Node,
+): NativeGeneratorInfo | undefined {
+  const byName = ctx.nativeGenerators.get(name);
+  if (byName && byName.decl === decl) return byName;
+  // Scan ONLY this name's shadow aliases — never other names' entries: one
+  // declaration may legitimately register under several names (e.g. a class
+  // method under its classMemberFuncKey and again under a different key from
+  // another emit site), and answering with a different-name info here would
+  // hand the caller a state machine whose funcMap/resume wiring belongs to
+  // the other name (measured: 617 class gen-method standalone tests broke on
+  // exactly that in the first cut of this fix).
+  for (let shadowIdx = 0; ; shadowIdx++) {
+    const alias = ctx.nativeGenerators.get(`${name} shadowed${shadowIdx}`);
+    if (!alias) return undefined;
+    if (alias.decl === decl) return alias;
+  }
+}
+
 function ensureRegisteredNativeGenerator(ctx: CodegenContext, name: string): NativeGeneratorInfo | null {
   const existing = ctx.nativeGenerators.get(name);
   if (existing) return existing;
@@ -3550,8 +3626,8 @@ function compileState(
         }
 
         // Re-yielded value: unbox the externref `value` to the OUTER element type
-        // (f64 outer → native `__unbox_number` via coerceType; boxed-any outer →
-        // pass through). String outers bailed in `emitYield`.
+        // (f64 outer → native `__unbox_number`; string outer → guarded native
+        // string ref cast; boxed-any outer → pass through).
         const valueInstrs: Instr[] = [];
         {
           const savedC = fctx.body;
@@ -3559,6 +3635,8 @@ function compileState(
           fctx.body.push({ op: "local.get", index: valueLocal });
           if (info.elemValType.kind === "f64") {
             coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" }, "number");
+          } else if (info.elemValType.kind === "ref" || info.elemValType.kind === "ref_null") {
+            coerceType(ctx, fctx, { kind: "externref" }, info.elemValType);
           }
           fctx.body = savedC;
         }

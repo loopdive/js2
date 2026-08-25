@@ -22,10 +22,31 @@ import {
   LINEAR_STRING_PAYLOAD_PREFIX_BYTES,
   LINEAR_STRING_PAYLOAD_SIZE_OFFSET,
 } from "../ir/analysis/linear-memory-plan.js";
-import type { Instr, WasmModule } from "../ir/types.js";
+import type { Instr, WasmFunction, WasmModule } from "../ir/types.js";
 import type { LinearContext, LinearFuncContext } from "./context.js";
 
 export const LINEAR_STRING_REPEAT_FN = "__str_repeat";
+
+export interface LinearStringRepeatReservation {
+  readonly provider: WasmFunction;
+}
+
+/**
+ * Exact authority for an IR preparation that required the repeat provider.
+ *
+ * The preparation object is deliberately opaque here: this runtime module
+ * authenticates object identity, while the IR adapter authenticates the
+ * preparation's source/owner/provider contents. Keeping both checks makes a
+ * stale plan or a reservation borrowed from another source fail closed.
+ */
+export interface LinearStringRepeatReservationReceipt {
+  readonly sourceFile: ts.SourceFile;
+  readonly preparation: object;
+  readonly reservation: LinearStringRepeatReservation;
+}
+
+const reservations = new WeakMap<WasmModule, LinearStringRepeatReservation>();
+const reservationReceipts = new WeakSet<LinearStringRepeatReservationReceipt>();
 
 const LINEAR_MEMORY_MAX_BYTES = 256 * 65_536;
 const STRING_RECORD_HEADER_BYTES = 12;
@@ -246,4 +267,84 @@ export function addLinearStringRepeatRuntime(mod: WasmModule): void {
     body,
     exported: false,
   });
+}
+
+/** Reserve the exact provider object before user function slots are assigned. */
+export function reserveLinearStringRepeatProvider(mod: WasmModule): LinearStringRepeatReservation {
+  const saved = reservations.get(mod);
+  if (saved) {
+    authenticateLinearStringRepeatProvider(mod, saved);
+    return saved;
+  }
+  addLinearStringRepeatRuntime(mod);
+  const matches = mod.functions.filter((func) => func.name === LINEAR_STRING_REPEAT_FN);
+  if (matches.length !== 1) throw new Error("linear string.repeat reservation requires one exact provider");
+  const reservation = Object.freeze({ provider: matches[0]! });
+  reservations.set(mod, reservation);
+  authenticateLinearStringRepeatProvider(mod, reservation);
+  return reservation;
+}
+
+/** Authenticate identity, uniqueness, and `(i32,f64)->i32` before emission. */
+export function authenticateLinearStringRepeatProvider(
+  mod: WasmModule,
+  reservation: LinearStringRepeatReservation,
+): number {
+  const localIndex = mod.functions.indexOf(reservation.provider);
+  const duplicateCount =
+    mod.functions.filter((func) => func.name === LINEAR_STRING_REPEAT_FN).length +
+    mod.imports.filter((entry) => entry.desc.kind === "func" && entry.name === LINEAR_STRING_REPEAT_FN).length;
+  const signature = localIndex < 0 ? undefined : mod.types[reservation.provider.typeIdx];
+  if (
+    localIndex < 0 ||
+    duplicateCount !== 1 ||
+    reservation.provider.name !== LINEAR_STRING_REPEAT_FN ||
+    signature?.kind !== "func" ||
+    signature.params.length !== 2 ||
+    signature.params[0]?.kind !== "i32" ||
+    signature.params[1]?.kind !== "f64" ||
+    signature.results.length !== 1 ||
+    signature.results[0]?.kind !== "i32"
+  ) {
+    throw new Error("linear string.repeat reservation lost its exact provider ABI");
+  }
+  return mod.imports.filter((entry) => entry.desc.kind === "func").length + localIndex;
+}
+
+export function linearStringRepeatReservation(mod: WasmModule): LinearStringRepeatReservation | undefined {
+  return reservations.get(mod);
+}
+
+/** Bind one exact early IR preparation to the module's reserved provider. */
+export function issueLinearStringRepeatReservationReceipt(
+  mod: WasmModule,
+  reservation: LinearStringRepeatReservation,
+  sourceFile: ts.SourceFile,
+  preparation: object,
+): LinearStringRepeatReservationReceipt {
+  if (reservations.get(mod) !== reservation) {
+    throw new Error("linear string.repeat receipt does not name this module's exact reservation");
+  }
+  authenticateLinearStringRepeatProvider(mod, reservation);
+  const receipt = Object.freeze({ sourceFile, preparation, reservation });
+  reservationReceipts.add(receipt);
+  return receipt;
+}
+
+/** Re-authenticate the source, preparation, reservation, provider, and ABI. */
+export function authenticateLinearStringRepeatReservationReceipt(
+  mod: WasmModule,
+  receipt: LinearStringRepeatReservationReceipt,
+  sourceFile: ts.SourceFile,
+  preparation: object,
+): number {
+  if (
+    !reservationReceipts.has(receipt) ||
+    receipt.sourceFile !== sourceFile ||
+    receipt.preparation !== preparation ||
+    reservations.get(mod) !== receipt.reservation
+  ) {
+    throw new Error("linear string.repeat reservation receipt lost its exact source/preparation identity");
+  }
+  return authenticateLinearStringRepeatProvider(mod, receipt.reservation);
 }

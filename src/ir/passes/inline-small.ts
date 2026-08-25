@@ -575,6 +575,12 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       if (l === inst.lhs && r === inst.rhs) return inst;
       return { ...inst, lhs: l, rhs: r };
     }
+    case "string.repeat": {
+      const value = mapId(rename, inst.value);
+      const count = mapId(rename, inst.count);
+      if (value === inst.value && count === inst.count) return inst;
+      return { ...inst, value, count };
+    }
     case "dyn.member_get": {
       const recv = mapId(rename, inst.recv);
       const key = mapId(rename, inst.key);
@@ -599,6 +605,28 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       const index = mapId(rename, inst.index);
       if (value === inst.value && index === inst.index) return inst;
       return { ...inst, value, index };
+    }
+    case "fnctor.new": {
+      let changed = false;
+      const captureArgs = inst.captureArgs.map((value) => {
+        const next = mapId(rename, value);
+        changed ||= next !== value;
+        return next;
+      });
+      const args = inst.args.map((value) => {
+        const next = mapId(rename, value);
+        changed ||= next !== value;
+        return next;
+      });
+      const constructorIdentity = inst.constructorIdentity === null ? null : mapId(rename, inst.constructorIdentity);
+      changed ||= constructorIdentity !== inst.constructorIdentity;
+      if (!changed) return inst;
+      return { ...inst, captureArgs, args, constructorIdentity };
+    }
+    case "fnctor.get": {
+      const value = mapId(rename, inst.value);
+      if (value === inst.value) return inst;
+      return { ...inst, value };
     }
     case "object.new": {
       let changed = false;

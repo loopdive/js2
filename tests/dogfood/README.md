@@ -117,7 +117,7 @@ then compares its result with the same operation in native Node.
 | **clsx** (className joiner)             | #3748 | `dist/clsx.mjs`           | per-op string equality (see below — driver epilogue, not a raw export call) |
 | **cookie** (RFC-6265 parser/serializer) | #3751 | `dist/index.js`           | per-op JSON-normalized equality (direct export calls, no epilogue)          |
 | **eslint** (JavaScript linter)          | #1400 | `lib/api.js`              | bounded full-package compile/validate; `Linter.verify` API workload         |
-| **eslint selected upstream unit**       | #4293 | `lib/shared/deep-merge-arrays.js` | all 44 original cases from the matching source tag                    |
+| **eslint selected upstream unit**       | #3995 | five `lib/shared/*` utilities | all 158 original cases from the matching source tag                    |
 | **prettier** (code formatter)           | —     | `standalone.mjs`          | bounded package-entry compile/validate; runtime diff pending                |
 | **react** (UI library)                  | —     | `index.js`                | bounded package-entry compile/validate                                      |
 | **react upstream suite**                | —     | `cjs/react.production.js` | React's own real `packages/react/src/__tests__` unit tests                  |
@@ -393,8 +393,8 @@ correct `Linter.verify` behavior, and a timeout is not a pass.
 The package-entry timeout does not prevent smaller original units from exposing
 real runtime semantics. ESLint's npm tarball omits its tests, so the selected
 upstream-unit lane clones the exact `v10.0.3` source commit
-`bfce7eaa0ec5d6591fd247b7ff57b51e45fb88a1`, verifies it, and runs all 44 bodies
-from `tests/lib/shared/deep-merge-arrays.js` against the byte-verified published
+`bfce7eaa0ec5d6591fd247b7ff57b51e45fb88a1`, verifies it, and runs all 158
+bodies from five shared-utility files against the byte-verified published
 implementation:
 
 ```bash
@@ -402,13 +402,18 @@ pnpm run dogfood:eslint-upstream-suite
 DOGFOOD_ESLINT_UPSTREAM_SUITE=1 pnpm exec vitest run tests/dogfood/eslint-upstream-suite.test.ts
 ```
 
-Only the two CommonJS bindings are adapted: the package-relative implementation
-require points at the pinned npm payload, and `node:assert` is replaced by one
-deterministic `deepStrictEqual` shim shared by the Node and Wasm lanes. No test
-body is transcribed, rejected, or skipped. The current baseline is **44/44 in
-both Node and Wasm**. #4293 fixed the generic nested-array carrier bug exposed by
-the seven former divergences. The npm-compat card calls this a “selected
-upstream unit” so 44/44 can never be mistaken for ESLint's whole suite.
+The adapter keeps the original test bodies and changes only their bindings: the
+package-relative implementation require points at the pinned npm payload, and
+`node:assert`/Chai is replaced by one deterministic callable assertion plus a
+plain method object shared by the Node and Wasm lanes. The split is deliberate:
+Wasm does not preserve properties assigned onto a function value, while it does
+preserve methods on an ordinary object. No test body is transcribed, rejected,
+or silently skipped. The current measured slice is **158/158 in Node and
+50/158 in Wasm**; the deep-merge unit is **44/44 in both lanes**. The remaining
+Wasm failures are compiler/runtime mismatches in typed reference-array HOFs and
+serialization helpers, and remain visible in the per-file report. The
+npm-compat card calls this a “selected upstream unit” so these numbers can never
+be mistaken for ESLint's whole suite.
 
 ## jsdom (#3995)
 
@@ -767,3 +772,48 @@ regression floor (`equal >= 18` at `total === 21`).
 
 This harness does **not** fix any compiler bug — pure tooling, same as the
 other harnesses' scope notes above.
+
+## @js-temporal/polyfill — spike harness (#4628)
+
+Unlike every other harness here, this one is a **spike instrument, not a
+regression gate**. It exists to answer one question for
+[#4628](https://js2wasm.loopdive.com/dashboard/issue.html?slug=4628-temporal-runtime-object-spike):
+can js2wasm compile `@js-temporal/polyfill` well enough to install a real
+`Temporal` global? So it runs the **compile + validate** lane only — the cheap
+half — with no differential-execution lane and, deliberately, **no pass/fail
+floor** in the vitest wrapper.
+
+Two pins, not one: the polyfill's published ESM bundle is **not**
+self-contained. `dist/index.esm.js` carries exactly one import against
+`jsbi@^4.3.0`, so `jsbi-4.3.0.tgz` is pinned alongside it and the harness links
+them into a single module (jsbi's `export default JSBI;` dropped, the import
+rewritten to `const e=JSBI;`). Both edits are asserted, so an upstream bump that
+changes the bundle shape fails loudly instead of quietly measuring something
+else.
+
+```bash
+# slice lane — split at top-level statement boundaries, compile chunk by chunk
+node tests/dogfood/temporal-polyfill-harness.mjs --no-umd --no-whole --slices=25
+# whole-bundle lane (see the caveat below)
+JS2WASM_COMPILE_PROFILE=stream node tests/dogfood/temporal-polyfill-harness.mjs --no-umd
+# vitest contract wrapper (cheap acquisition/link lane always runs)
+DOGFOOD_TEMPORAL_POLYFILL=1 pnpm test -- tests/dogfood/temporal-polyfill.test.ts
+```
+
+Report: `tests/dogfood/report/temporal-polyfill-surface.json` (gitignored). Pin:
+`temporal-polyfill-pin.json`.
+
+**Current state (2026-08-23):** the slice lane compiles **342 / 342 top-level
+statements with zero compile errors**, but 5 of 14 slices emit a binary that
+fails `WebAssembly.compile()` (all one family: a call thunk pushing one operand
+fewer than the callee's declared arity). The **whole-bundle lane does not
+terminate** — 157 KB in one module ran 45 minutes without finishing, while the
+same statements sliced up sum to ~24 seconds. Per the rule at the top of this
+file, a compile timeout is an unverified workload, never a pass. Full
+measurements, the scaling curve and the Option A / Option B decision are in the
+issue.
+
+The `--slices=N` mode is the reusable part: when a whole-module compile will not
+terminate, it still yields a bucketed cause list, and it **reports coverage**
+(slices run / skipped, statements covered / total) so partial results can never
+be mistaken for a whole-bundle number.

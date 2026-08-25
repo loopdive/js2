@@ -38,6 +38,7 @@ import { emitArrayBufferProtoMemberBody, emitDataViewProtoMemberBody } from "./d
 import { emitDateProtoMemberBody } from "./expressions/builtins.js"; // (#3219) reflective Date getter bodies
 import { emitDateReflectiveSetterBody } from "./date-reflective-setters.js"; // (#3174) reflective Date setter/toISOString bodies
 import { allocLocal } from "./context/locals.js";
+import { emitBoxedProtoValueOfBody } from "./boxed-proto-valueof.js"; // (#4582)
 import { emitThisReceiverGuardConvert } from "./property-access.js";
 import { compileArraySliceFromVecLocal } from "./array-methods.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
@@ -66,7 +67,13 @@ import { emitObjectProtoOrRefusal as emitProtoMemberBodyRefusal } from "./object
 // (#4491) `Object.prototype.isPrototypeOf` — the §20.1.3.3 chain walk, routed
 // to the same `__isPrototypeOf` native the typed call path uses.
 import { emitObjectProtoIsPrototypeOfBody } from "./object-proto-is-prototype-of.js";
+// (#4479 slice 2) Annex B §B.2.2's four legacy accessor methods — the reflective
+// member bodies for `Object.prototype.__{define,lookup}{Getter,Setter}__`.
+import { ANNEX_B_ACCESSOR_ARITY, emitObjectProtoAnnexBAccessorBody } from "./object-proto-annex-b-accessors.js";
 import { emitWrapperProtoValueOfBody, isWrapperBrandName } from "./wrapper-proto-value-of.js";
+import { emitWrapperProtoToStringBody } from "./wrapper-proto-to-string.js"; // (#4619)
+import { emitFunctionProtoToStringBody } from "./function-proto-to-string.js"; // (#4492 wave-5)
+import { emitObjectProtoValueOfBody } from "./object-proto-value-of.js"; // (#4492 wave-5)
 import { emitStringConcatMemberBody } from "./string-proto-concat.js";
 import { emitStringSubstringMemberBody } from "./string-proto-substring.js";
 import { emitStringSplitMemberBody } from "./string-proto-split.js"; // (#4220) reflective String.prototype.split
@@ -81,6 +88,7 @@ import {
 } from "./string-proto-tostring.js"; // (#3992)
 import { standaloneGlobalFunctionSeedInstrs } from "./standalone-global-functions.js";
 import { emitBuiltinNamespaceObject } from "./builtin-static-globals.js";
+import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -130,8 +138,19 @@ const ARRAY_PROTO_METHODS = [
   "with",
 ] as const;
 
-/** `Object.prototype`'s own method names (ES2024 §20.1.3). */
+/**
+ * `Object.prototype`'s own method names (ES2024 §20.1.3), plus Annex B §B.2.2's
+ * four legacy accessor methods (#4479 slice 2), which are own properties of
+ * `Object.prototype` in every web-reality engine and are asserted as such by
+ * `built-ins/Object/prototype/__{define,lookup}{Getter,Setter}__/prop-desc.js`.
+ * Their bodies live in `object-proto-annex-b-accessors.ts`; listing them here is
+ * what makes `Object.prototype.__defineGetter__` resolve as a value at all.
+ */
 const OBJECT_PROTO_METHODS = [
+  "__defineGetter__",
+  "__defineSetter__",
+  "__lookupGetter__",
+  "__lookupSetter__",
   "hasOwnProperty",
   "isPrototypeOf",
   "propertyIsEnumerable",
@@ -251,6 +270,8 @@ const STRING_PROTO_METHODS = [
   "toWellFormed",
   "trim",
   "trimEnd",
+  "trimLeft",
+  "trimRight",
   "trimStart",
   "valueOf",
 ] as const;
@@ -302,7 +323,7 @@ const ITERATOR_PROTO_METHODS = [
 ] as const;
 
 /** `Function.prototype`'s own method names (ES2024 §20.2.3). */
-const FUNCTION_PROTO_METHODS = ["apply", "bind", "call", "toString"] as const;
+const FUNCTION_PROTO_METHODS = ["apply", "bind", "call", "toString", FUNCTION_PROTO_HAS_INSTANCE_MEMBER] as const;
 
 /** `Symbol.prototype`'s own method names (ES2024 §20.4.3). `description` is an
  * accessor getter, resolved by the computed-access path. */
@@ -481,6 +502,9 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
     hasOwnProperty: 1,
     isPrototypeOf: 1,
     propertyIsEnumerable: 1,
+    // (#4479 slice 2) Annex B §B.2.2, declared beside the bodies that read the
+    // arg slots this arity sizes.
+    ...ANNEX_B_ACCESSOR_ARITY,
     // Map.prototype.set(key, value) is arity 2 (ES2024 §24.1.3); add/get/has/delete
     // default to 1.
     set: 2,
@@ -527,6 +551,8 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
     toLocaleUpperCase: 0,
     trim: 0,
     trimEnd: 0,
+    trimLeft: 0,
+    trimRight: 0,
     trimStart: 0,
     isWellFormed: 0,
     toWellFormed: 0,
@@ -901,6 +927,9 @@ function emitStringRequireObjectCoercible(ctx: CodegenContext, fctx: FunctionCon
  * `$__any_to_string` are functions (append-only, no index shift).
  */
 function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
+  // (#4582) `thisStringValue`, not a string OPERATION — boxed-proto-valueof.ts.
+  if (member === "valueOf")
+    return emitBoxedProtoValueOfBody(ctx, fctx, "String") ?? emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
   // (#2742) The superseded-wiring carve-out — see string-proto-tostring.ts.
   if (SUPERSEDED_BY_BORROWED_PATH.has(member)) return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
 
@@ -1733,10 +1762,18 @@ function makeGlue(
     memberParamSlots: (member) => (name === "String" ? (STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0) : 0),
     // (#4485) §B.2.4.3 — `Date.prototype.toGMTString` IS `Date.prototype.
     // toUTCString` (one function object, asserted by test262 annexB
-    // .../toGMTString/value.js). Alias the closure identity, not the member
-    // set: `toGMTString` stays in `DATE_PROTO_METHODS` so it is still an own
-    // property for hasOwnProperty/gOPD. No other family has an identity alias.
-    memberAliasOf: (member) => (name === "Date" && member === "toGMTString" ? "toUTCString" : undefined),
+    // .../toGMTString/value.js). The Annex B String aliases have the same
+    // identity rule: trimLeft→trimStart and trimRight→trimEnd. Alias the
+    // closure identity, not the member set: each spelling stays in its own
+    // proto CSV entry for hasOwnProperty/gOPD.
+    memberAliasOf: (member) =>
+      name === "Date" && member === "toGMTString"
+        ? "toUTCString"
+        : name === "String" && member === "trimLeft"
+          ? "trimStart"
+          : name === "String" && member === "trimRight"
+            ? "trimEnd"
+            : undefined,
     // (#2193 PR-B) Array.prototype.slice is now a real native closure body;
     // (#2875 slice 1) String.prototype.{charAt,at} likewise. Other Array/String
     // members + all Object members still degrade to a catchable TypeError.
@@ -1748,6 +1785,20 @@ function makeGlue(
       // nothing) for every other family/member, so the ladder below is reached
       // byte-identically.
       (member === "valueOf" && isWrapperBrandName(name) ? emitWrapperProtoValueOfBody(c, fctx, name) : null) ??
+      // (#4619 family D) The `toString` twin of the arm above, in the same
+      // position and for the same reason — routed FIRST so it serves String too.
+      (member === "toString" && isWrapperBrandName(name) ? emitWrapperProtoToStringBody(c, fctx, name) : null) ??
+      // (#4492 wave-5) §20.2.3.5 `Function.prototype.toString` — the reflective
+      // VALUE. Same "ask first, emit second" contract as the two arms above, so a
+      // decline leaves the ladder byte-identical.
+      (name === "Function" && member === "toString" ? emitFunctionProtoToStringBody(c, fctx) : null) ??
+      // ES2015 §19.2.3.6 — the inherited `@@hasInstance` method. Its body is
+      // shared with the standalone dynamic-instanceof substrate so ordinary
+      // function receivers and direct `Function.prototype` reads use the same
+      // prototype walk and TypeError sentinel.
+      (name === "Function" && member === FUNCTION_PROTO_HAS_INSTANCE_MEMBER
+        ? emitFunctionProtoHasInstanceBody(c, fctx)
+        : null) ??
       (name === "Array"
         ? emitArrayProtoMemberBody(c, fctx, member)
         : name === "String"
@@ -1757,12 +1808,22 @@ function makeGlue(
             // return null → fall through to the legacy path.
             name === "Date"
             ? (emitDateProtoMemberBody(c, fctx, member) ?? emitDateReflectiveSetterBody(c, fctx, member))
-            : // (#4491) `Object.prototype.isPrototypeOf` has a real answer — the
-              // §20.1.3.3 chain walk. Every other Object member still degrades
-              // to the catchable refusal (`toString`'s classifier lives inside
-              // it).
-              ((name === "Object" ? emitObjectProtoIsPrototypeOfBody(c, fctx, member) : null) ??
-              emitProtoMemberBodyRefusal(c, fctx, name, member))),
+            : // (#4582) `thisNumberValue` / `thisBooleanValue`; see the String twin above.
+              member === "valueOf" && (name === "Number" || name === "Boolean")
+              ? (emitBoxedProtoValueOfBody(c, fctx, name === "Number" ? "Number" : "Boolean") ??
+                emitProtoMemberBodyRefusal(c, fctx, name, member))
+              : // (#4491) `Object.prototype.isPrototypeOf` has a real answer — the
+                // §20.1.3.3 chain walk. (#4479 slice 2) So do Annex B §B.2.2's
+                // four legacy accessor methods. Every other Object member still
+                // degrades to the catchable refusal (`toString`'s classifier
+                // lives inside it).
+                ((name === "Object" ? emitObjectProtoIsPrototypeOfBody(c, fctx, member) : null) ??
+                (name === "Object" ? emitObjectProtoAnnexBAccessorBody(c, fctx, member) : null) ??
+                // (#4492 wave-5) §20.1.3.7 — the inherited `valueOf` every
+                // OrdinaryToPrimitive walk reaches; refusing it made ToPrimitive
+                // throw where the spec just falls through to `toString`.
+                (name === "Object" ? emitObjectProtoValueOfBody(c, fctx, member) : null) ??
+                emitProtoMemberBodyRefusal(c, fctx, name, member))),
   };
 }
 

@@ -271,14 +271,15 @@ export function compileOptionalCallExpression(
   // non-null branch would emit a default value and the call would never happen
   // (#2049). `compileCallablePropertyCall` implements exactly this — extract the
   // closure field, push self + args, `call_ref` — and already normalizes a
-  // nullable receiver via a guarded cast. It recompiles the receiver
-  // (`propAccess.expression`) once inside this non-null branch, which runs only
-  // when the receiver is non-null, so re-evaluation is restricted to
-  // side-effect-free receivers to preserve `?.` short-circuit semantics.
-  if (!methodResolved && isSideEffectFreeOptionalReceiver(propAccess.expression)) {
+  // nullable receiver via a guarded cast. Pass the receiver already captured
+  // for the nullish test so a live property chain is not evaluated twice.
+  if (!methodResolved && isSupportedOptionalCallableReceiverShape(propAccess.expression)) {
     const structName = resolveStructName(ctx, tsReceiverType);
     if (structName) {
-      const delegated = compileCallablePropertyCall(ctx, fctx, expr, propAccess, structName);
+      const delegated = compileCallablePropertyCall(ctx, fctx, expr, propAccess, structName, {
+        localIdx: tmp,
+        type: objType,
+      });
       if (delegated !== undefined) {
         if (delegated !== null && delegated !== VOID_RESULT) {
           resultType = delegated;
@@ -397,13 +398,12 @@ function isRepeatableDynamicOptionalReceiver(expr: ts.Expression): boolean {
 }
 
 /**
- * The closure-field fallback in `compileOptionalCallExpression` re-evaluates the
- * receiver inside the non-null branch by delegating to the regular call path.
- * That is only correct when evaluating the receiver has no observable side
- * effect. Identifiers, `this`, and member chains rooted in those qualify;
- * calls and element access do not.
+ * Receiver shapes supported by the closure-field fallback. The receiver value
+ * itself is captured before delegation, so a property chain may contain a live
+ * getter without being evaluated twice. Calls and element access remain on
+ * their existing optional-call paths.
  */
-function isSideEffectFreeOptionalReceiver(expr: ts.Expression): boolean {
+function isSupportedOptionalCallableReceiverShape(expr: ts.Expression): boolean {
   let cur: ts.Expression = expr;
   for (;;) {
     if (ts.isIdentifier(cur) || cur.kind === ts.SyntaxKind.ThisKeyword) return true;

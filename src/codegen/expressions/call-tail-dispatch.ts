@@ -73,6 +73,7 @@ import { classMemberFuncKey } from "../class-member-keys.js";
 import { matchClosureInfoBySignature } from "./closure-sig-match.js"; // (#4394) exact-first closure pick
 import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
 import { tryEmitDynamicElementHostMethodCall } from "./dynamic-element-host-call.js";
+import { tryNormalizeStaticStringElementCallee } from "./element-access-callee-normalization.js"; // (#4625)
 import {
   classInstanceHasField,
   coerceNumberMethodArgToF64,
@@ -1284,12 +1285,44 @@ export function compileTailDispatch(
         if (arrMethodResult !== undefined) return arrMethodResult;
       }
 
+      // (#4625) `x["toString"]()` — a static identifier-shaped string key naming
+      // an AMBIENT member is the bracket spelling of a method call, not a
+      // callable-element read. Route it onto the property-access path (the one
+      // #4619/#4481 taught about wrapper receivers) instead of letting the
+      // `cea` arm below read a value the compiler never materialises. Every arm
+      // that already lowers a bracket call correctly runs above this point, so
+      // their bytes cannot move; see the module header for the placement
+      // argument and the ambient-declaration condition.
+      {
+        const normalized = tryNormalizeStaticStringElementCallee(ctx, fctx, expr, elemAccess, compileCallExpression);
+        if (normalized !== undefined) return normalized;
+      }
+
       // ELEM ACCESS RESOLVED, NO METHOD MATCHED — try callable element type
       // (#1306). Covers `fns[0](args)` and `fns[ConstKey](args)` where
       // `fns` is an array (or other element-access-able value) of callables.
       {
         const cea = compileCallableElementAccessCall(ctx, fctx, expr, elemAccess);
         if (cea !== undefined) return cea;
+      }
+
+      // A JavaScript empty-array literal starts as an evolving `any[]` in
+      // TypeScript.  Its element call signature is therefore absent even when
+      // the program has populated it with closures (`let fns = [];
+      // fns.push(() => 1); fns[0]()`); the callable-element helper correctly
+      // declines a statically non-callable element type, but the old fallback
+      // then evaluated and dropped the call.  Preserve JS's dynamic call
+      // semantics for this narrow array/any-element shape.  Typed arrays and
+      // arrays with a concrete primitive element type keep their existing
+      // TypeError/fallback behavior.
+      {
+        const elementFact = ctx.oracle.typeFactOf(elemAccess);
+        const elementIsUnresolved =
+          elementFact.kind === "any" || elementFact.kind === "unknown" || elementFact.kind === "unresolvable";
+        if (ctx.standalone && elementIsUnresolved && resolveArrayInfo(ctx, receiverType)) {
+          const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+          if (dyn !== null) return dyn;
+        }
       }
 
       // (#3166 S1) Computed-key call on a class-instance FIELD holding a

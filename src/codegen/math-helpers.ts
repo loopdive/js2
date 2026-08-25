@@ -22,7 +22,8 @@
  * `random` — a host RNG import, not a dialect gap.
  */
 import type { Instr, ValType } from "../ir/types.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
+import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
+import { recordStdlibMathHelper } from "./compiler-support-abi.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 import { emitSelfHostedMathFunc } from "./stdlib-selfhost.js"; // (#3141) self-hosted stdlib driver
@@ -268,5 +269,18 @@ export function emitInlineMathFunctions(ctx: CodegenContext, needed: Set<string>
     if (needed.has(method)) {
       addedFuncs.set(builtin.name, emitSelfHostedMathFunc(ctx, builtin));
     }
+  }
+
+  // (#3520 C35) Record the whole emitted family for Program ABI ownership.
+  // Most of these are already owned by an `intrinsic-provider` row, because the
+  // IR asked for the intrinsic by name. The ones that are NOT are the helpers
+  // pulled in as CALLEES of a requested intrinsic — `__math_reduce_trig` behind
+  // `Math.sin`, `Math_atan` behind `Math.atan2` — and those were the last two
+  // Math functions still landing on the positional fallback. Recording the
+  // whole family and letting the planner skip anything already owned keeps that
+  // distinction out of this emitter.
+  for (const [name, funcIdx] of addedFuncs) {
+    const func = definedFuncAt(ctx, funcIdx);
+    if (func) recordStdlibMathHelper(ctx, name, func);
   }
 }

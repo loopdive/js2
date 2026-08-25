@@ -60,6 +60,7 @@ import type { IrClassInstanceInitializer } from "./class-instance-initializers.j
 // #2766 — reuse the legacy counted-loop proof predicates (pure AST analysis, no
 // codegen state) to port the `safeIndexedArrays` in-bounds proof into the IR.
 import { isIncreasingStep, loopBodyMutatesIndexOrArray } from "./analysis/loop-shape.js";
+import { countedStringAppendPlanIsCurrent } from "./analysis/counted-string-append.js";
 // (#3741) native-i32 slot storage for provably-int32 mutable locals
 import {
   COMPOUND_TO_BITWISE_TOKEN,
@@ -84,7 +85,7 @@ import {
   irUnitFuncRef,
   sameIrCallableBinding,
 } from "./callable-bindings.js";
-import { IR_NUMBER_TO_FIXED_FN, IR_NUMBER_TO_STRING_FN } from "./string-runtime.js";
+import { IR_NUMBER_TO_FIXED_FN, IR_NUMBER_TO_STRING_FN, IR_STRING_REPEAT_FN } from "./string-runtime.js";
 import { timerArg, timerResult } from "./timer-shim-lowering.js";
 import { irBool, irTypeIsBoolean, lowerBooleanToString } from "./boolean-brand.js";
 import { collectOuterWrites } from "./closure-captures.js";
@@ -102,6 +103,7 @@ import {
   type IrHostDateGetterLoweringPlan,
   type IrHostDateSnapshotLoweringPlan,
   type IrHostVoidCallbackLoweringPlan,
+  type IrCountedStringAppendLoweringPlan,
   type IrImportedCallLoweringPlan,
   type IrImportedOptionalParamPlan,
   type IrTopLevelFunctionValueLoweringPlan,
@@ -163,7 +165,7 @@ import {
   type IrLiftedFunctionArtifactIdentity,
   type IrUnitId,
 } from "./identity.js";
-import type { IrPlanningIdentityContext } from "./planning-identity.js";
+import { requireIrPlanningSourceId, type IrPlanningIdentityContext } from "./planning-identity.js";
 // (#3931) the #2682 canonical char-read-loop recogniser, ported to the IR.
 import {
   type CharReadProof,
@@ -877,6 +879,8 @@ export interface AstToIrOptions {
   readonly hostDateGetters?: ReadonlyMap<ts.CallExpression, IrHostDateGetterLoweringPlan>;
   /** (#2856) Exact Promise-delay construction/timer/resolve node plans. */
   readonly promiseDelays?: IrPromiseDelayLoweringPlans;
+  /** Exact source/unit/provider plans for counted-string loop consumption. */
+  readonly countedStringAppends?: ReadonlyMap<ts.ForStatement, IrCountedStringAppendLoweringPlan>;
   /** Exact source-unit identities for nested executable declarations. */
   readonly identityContext?: IrPlanningIdentityContext;
   /**
@@ -967,6 +971,8 @@ export interface LoweredFunctionResult {
   readonly lifted: readonly IrFunction[];
   /** Exact allocation-side provenance for `lifted`, joined by ID rather than array position. */
   readonly liftedUnitProvenance: readonly IrDerivedUnitProvenance[];
+  /** Plans actually consumed by this exact source artifact. */
+  readonly countedStringAppendPlans?: readonly IrCountedStringAppendLoweringPlan[];
 }
 
 function isDirectSourceVarStatement(statement: ts.Statement): boolean {
@@ -1308,6 +1314,8 @@ export function lowerFunctionAstToIr(
     hostDateSnapshots: options.hostDateSnapshots,
     hostDateGetters: options.hostDateGetters,
     promiseDelays: options.promiseDelays,
+    countedStringAppends: options.countedStringAppends,
+    consumedCountedStringAppends: [],
     identityContext: options.identityContext,
     classShapes: options.classShapes,
     resolver: options.resolver,
@@ -1378,8 +1386,28 @@ export function lowerFunctionAstToIr(
   }
 
   lowerStatementList(stmts, cx);
+  const expectedCountedStringAppends = [...(options.countedStringAppends?.values() ?? [])].filter(
+    (plan) => plan.ownerUnitId === options.ownerUnitId,
+  );
+  if (
+    expectedCountedStringAppends.length !== cx.consumedCountedStringAppends.length ||
+    expectedCountedStringAppends.some((plan) => !cx.consumedCountedStringAppends.includes(plan))
+  ) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: counted-string plan census drift for ${options.ownerUnitId}`,
+    );
+  }
 
-  return { main: builder.finish(), lifted, liftedUnitProvenance };
+  return {
+    main: builder.finish(),
+    lifted,
+    liftedUnitProvenance,
+    ...(cx.consumedCountedStringAppends.length > 0
+      ? { countedStringAppendPlans: Object.freeze([...cx.consumedCountedStringAppends]) }
+      : {}),
+  };
 }
 
 /** Lower an implicit constructor through the same constructor IR pipeline. */
@@ -2256,6 +2284,8 @@ interface LowerCtx {
   readonly hostDateSnapshots?: ReadonlyMap<ts.NewExpression, IrHostDateSnapshotLoweringPlan>;
   readonly hostDateGetters?: ReadonlyMap<ts.CallExpression, IrHostDateGetterLoweringPlan>;
   readonly promiseDelays?: IrPromiseDelayLoweringPlans;
+  readonly countedStringAppends?: ReadonlyMap<ts.ForStatement, IrCountedStringAppendLoweringPlan>;
+  readonly consumedCountedStringAppends: IrCountedStringAppendLoweringPlan[];
   readonly identityContext?: IrPlanningIdentityContext;
   /** Slice 4 (#1169d) — class shape registry, keyed by className. */
   readonly classShapes?: ReadonlyMap<string, IrClassShape>;
@@ -3813,6 +3843,7 @@ function describeIrType(t: IrType): string {
   }
   if (t.kind === "class") return `class<${t.shape.className}>`;
   if (t.kind === "extern") return `extern<${t.className}>`;
+  if (t.kind === "fnctor") return `fnctor<${t.shape.constructorName}>`;
   // #1926 — union members / boxed inner are IrTypes; recurse.
   if (t.kind === "union") return `union<${t.members.map(describeIrType).join(",")}>`;
   // #2949 — dynamic leaf; render the optional tag refinement when present.
@@ -9526,7 +9557,96 @@ function provenIndexSlotReadI32(indexName: string, cx: LowerCtx): IrValueId | nu
   return cx.builder.emitSlotRead(binding.slotIndex);
 }
 
+/** Consume one exact #3518 plan before generic loop lowering can emit work. */
+function lowerPreparedCountedStringAppend(stmt: ts.ForStatement, cx: LowerCtx): boolean {
+  const loweringPlan = cx.countedStringAppends?.get(stmt);
+  if (!loweringPlan) return false;
+  requireMatchingLoweringPlanOwner("counted string append", loweringPlan.ownerUnitId, cx.ownerUnitId, cx.funcName);
+  if (!cx.checker || !cx.oracle || !cx.identityContext) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: counted-string plan has no checker/oracle/identity context (${cx.funcName})`,
+    );
+  }
+  const plan = loweringPlan.syntaxPlan;
+  if (
+    loweringPlan.sourceFile !== plan.sourceFile ||
+    loweringPlan.sourceFile !== stmt.getSourceFile() ||
+    loweringPlan.sourceId !== requireIrPlanningSourceId(cx.identityContext, loweringPlan.sourceFile) ||
+    plan.loop !== stmt ||
+    loweringPlan.provider.binding.kind !== "intrinsic" ||
+    loweringPlan.provider.binding.symbol !== IR_STRING_REPEAT_FN ||
+    !countedStringAppendPlanIsCurrent({ checker: cx.checker, oracle: cx.oracle }, plan) ||
+    cx.consumedCountedStringAppends.includes(loweringPlan)
+  ) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: counted-string plan identity drift (${cx.funcName})`,
+    );
+  }
+
+  const binding = cx.scope.get(plan.accumulatorWrite.text);
+  const symbol = cx.checker.getSymbolAtLocation(plan.accumulatorWrite);
+  const logicalType = binding?.kind === "slot" ? (binding.asType ?? binding.type) : undefined;
+  if (
+    !binding ||
+    binding.kind !== "slot" ||
+    binding.i32Storage === true ||
+    logicalType?.kind !== "string" ||
+    symbol !== plan.accumulatorSymbol
+  ) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: counted-string accumulator lost its exact mutable string slot (${cx.funcName})`,
+    );
+  }
+
+  if (plan.tripCount > 0) {
+    const lhs = cx.builder.emitSlotReadAs(binding.slotIndex, logicalType);
+    const fragment = lowerExpr(plan.fragmentExpression, cx, logicalType);
+    const fragmentType = cx.builder.typeOf(fragment);
+    if (fragmentType.kind !== "string") {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: counted-string fragment lost its string carrier (${cx.funcName})`,
+      );
+    }
+    const fragmentEncoding = inferStringEncoding(plan.fragmentExpression, cx) ?? "wtf16";
+    const appended =
+      plan.tripCount === 1
+        ? fragment
+        : cx.builder.emitStringRepeat(
+            fragment,
+            cx.builder.emitConst({ kind: "f64", value: plan.tripCount }, irVal({ kind: "f64" })),
+            fragmentEncoding,
+          );
+    const proof = proveTypedStringAppend(
+      typedValueEvidence(plan.accumulatorRead, logicalType, binding.stringEncoding ?? "wtf16", cx, logicalType),
+      typedValueEvidence(plan.fragmentExpression, fragmentType, fragmentEncoding, cx),
+    );
+    if (!proof) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: counted-string append lost its typed encoding proof (${cx.funcName})`,
+      );
+    }
+    const concatMode = cx.ownedStringAppendSymbols.has(plan.accumulatorSymbol) ? "owned-append" : "immutable";
+    const result = cx.builder.emitStringConcat(lhs, appended, proof.resultEncoding, concatMode);
+    cx.builder.emitSlotWrite(binding.slotIndex, result);
+    cx.scope.set(plan.accumulatorWrite.text, { ...binding, stringEncoding: proof.resultEncoding });
+  }
+
+  cx.consumedCountedStringAppends.push(loweringPlan);
+  return true;
+}
+
 function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (bodyCx: LowerCtx) => void): void {
+  if (!bodyOverride && lowerPreparedCountedStringAppend(stmt, cx)) return;
   // #2952 slice 3 — adopt a labeled statement's pre-allocated id when set
   // (consumed here; cleared so init/body contexts don't leak it inward).
   const loopLabel = cx.pendingLoopLabel ?? cx.builder.freshLoopLabel();
@@ -13306,6 +13426,10 @@ function liftNestedFunction(
     hostDateSnapshots: cx.hostDateSnapshots,
     hostDateGetters: cx.hostDateGetters,
     promiseDelays: cx.promiseDelays,
+    // Counted-loop proofs belong only to the exact terminal declaration.
+    // A lifted nested function must never borrow or satisfy its owner's plan.
+    countedStringAppends: undefined,
+    consumedCountedStringAppends: [],
     identityContext: cx.identityContext,
     classShapes: cx.classShapes,
     resolver: cx.resolver,
@@ -13443,6 +13567,10 @@ function liftClosureBody(
     hostDateSnapshots: cx.hostDateSnapshots,
     hostDateGetters: cx.hostDateGetters,
     promiseDelays: cx.promiseDelays,
+    // Counted-loop proofs belong only to the exact terminal declaration.
+    // A lifted closure must never borrow or satisfy its owner's plan.
+    countedStringAppends: undefined,
+    consumedCountedStringAppends: [],
     identityContext: cx.identityContext,
     classShapes: cx.classShapes,
     resolver: cx.resolver,

@@ -307,6 +307,12 @@ export function prepareDependencyCompleteClosureSupport(
       case "extern":
       case "dynamic":
         return;
+      case "fnctor":
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `prepared closure support encountered unresolved fnctor ${type.shape.constructorName}`,
+        );
     }
   };
 

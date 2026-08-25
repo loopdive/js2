@@ -879,6 +879,16 @@ jobs:
       TEST262_TARGET: ${{ matrix.target.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.target.result_prefix }}
       JS2WASM_EVAL_ENGINE: ${{ matrix.target.test262_target == 'standalone' && (inputs.eval_engine || 'quickjs') || '' }}
+      # (#4654) The standalone lane's eval-heavy rows can legitimately exceed the
+      # 90 s per-test default: a single test262 file that reconstructs a RegExp
+      # through the runtime-eval membrane runs ~65k evals at ~1.6 ms each, so it
+      # needs 130-200 s of honest work. Vitest kills a test that blows the limit
+      # WITHOUT writing a jsonl row, so the run under-reports its own denominator
+      # instead of recording a failure (measured on the same mechanism: 202 of 816
+      # eval-code rows missing at 2 workers). Only tests that would otherwise be
+      # KILLED consume the extra budget; the job's timeout-minutes is the real cap.
+      # Host cells keep the 90 s default (empty = tests/test262-shared.ts default).
+      TEST262_IT_TIMEOUT_MS: ${{ matrix.target.test262_target == 'standalone' && '300000' || '' }}
       # The shared provider artifact makes QuickJS the authoritative CI
       # standalone lane. Host cells leave the flag empty; the interpreter
       # escape hatch still uses this full-tier switch.
@@ -1083,6 +1093,16 @@ jobs:
       TEST262_TARGET: ${{ matrix.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.result_prefix }}
       JS2WASM_EVAL_ENGINE: ${{ matrix.test262_target == 'standalone' && 'quickjs' || '' }}
+      # (#4654) The standalone lane's eval-heavy rows can legitimately exceed the
+      # 90 s per-test default: a single test262 file that reconstructs a RegExp
+      # through the runtime-eval membrane runs ~65k evals at ~1.6 ms each, so it
+      # needs 130-200 s of honest work. Vitest kills a test that blows the limit
+      # WITHOUT writing a jsonl row, so the run under-reports its own denominator
+      # instead of recording a failure (measured on the same mechanism: 202 of 816
+      # eval-code rows missing at 2 workers). Only tests that would otherwise be
+      # KILLED consume the extra budget; the job's timeout-minutes is the real cap.
+      # Host cells keep the 90 s default (empty = tests/test262-shared.ts default).
+      TEST262_IT_TIMEOUT_MS: ${{ matrix.test262_target == 'standalone' && '300000' || '' }}
       TEST262_FULL_RUNTIME_EVAL: ${{ matrix.test262_target == 'standalone' && '1' || '' }}
       TEST262_CHUNK_INDEX: ${{ matrix.chunk_index }}
       TEST262_CHUNK_TOTAL: ${{ matrix.chunk_total }}

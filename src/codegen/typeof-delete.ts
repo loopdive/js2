@@ -13,6 +13,8 @@ import { reportError } from "./context/errors.js";
 import { elementReadOfRebindWidenedArray } from "./declarations/array-rebind-element-widening.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { typeofFoldContradictedByFieldVerdict } from "./fnctor-ctor-param-types.js";
+import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#4637 A2) §10.2.1.3 step 13
+import { overlayRouteActive } from "./typed-lane-overlay-route.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -32,6 +34,7 @@ import { compileStandaloneRegExpLiteral } from "./regexp-standalone.js";
 import { addImport, localGlobalIdx } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import {
+  emitArgumentsOrdinaryNamedDelete, // (#4622) `delete arguments.length`
   emitArgumentsTypeofComparison,
   emitPropertyDeleteWithUnmappedArgumentsWriteback,
   prepareDynamicArgumentsDeleteIndex, // (#4491) runtime `delete arguments[i]`
@@ -45,8 +48,10 @@ import {
   emitGlobalEnvironmentDelete,
   emitRuntimeEvalBindingDelete,
   emitRuntimeEvalBindingRead,
+  emitRuntimeEvalGlobalRead,
   tryEmitNonConfigurableGlobalObjectDelete,
 } from "./global-environment.js";
+import { isSloppyImplicitGlobalBinding } from "./expressions/implicit-global-binding.js"; // (#4640)
 import { runtimeEvalStateMayShadowBinding } from "./direct-eval-environment.js";
 
 // (#2726 group (b), partial) The only value properties of the global object with
@@ -501,6 +506,17 @@ export function compileDeleteExpression(
         return { kind: "i32" };
       }
     }
+  }
+
+  // (#4622) §10.4.4 — `delete arguments.length` on the compiler-materialized
+  // arguments object. Ahead of BOTH the struct-field arms and the generic
+  // `__delete_property` arm: the arguments object is an opaque `$Vec`, so the
+  // generic arm asks `__vec_gopd`, which answers with ARRAY rules
+  // (`length` non-configurable) and refuses the delete — `false` in sloppy
+  // code, a thrown TypeError in strict code. The index arms above run first and
+  // are unaffected; this arm only claims static NON-index keys.
+  if (ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner)) {
+    if (emitArgumentsOrdinaryNamedDelete(ctx, fctx, inner)) return { kind: "i32", boolean: true };
   }
 
   // Try to resolve struct type and field for property access: delete obj.prop
@@ -1188,7 +1204,45 @@ export function compileInstanceOf(
  * Determine the typeof result string for a TS type at compile time.
  * Returns null if the type cannot be statically resolved (e.g., any/unknown).
  */
+/**
+ * (#4529) True for the empty anonymous object type `{}` — no properties, no
+ * call/construct signatures, no index signatures. TS uses it as the narrowing
+ * of `unknown` behind a nullish guard, where it means "any non-nullish value",
+ * so a typeof fold on it is unsound.
+ */
+function isEmptyAnonymousObjectType(tsType: ts.Type): boolean {
+  if (!(tsType.flags & ts.TypeFlags.Object)) return false;
+  const objectFlags = (tsType as ts.ObjectType).objectFlags;
+  if (!(objectFlags & ts.ObjectFlags.Anonymous)) return false;
+  if (tsType.getProperties().length > 0) return false;
+  if ((tsType.getCallSignatures?.()?.length ?? 0) > 0) return false;
+  if ((tsType.getConstructSignatures?.()?.length ?? 0) > 0) return false;
+  const withIndex = tsType as ts.Type & {
+    getStringIndexType?: () => ts.Type | undefined;
+    getNumberIndexType?: () => ts.Type | undefined;
+  };
+  return withIndex.getStringIndexType?.() === undefined && withIndex.getNumberIndexType?.() === undefined;
+}
+
 function staticTypeofForType(ctx: CodegenContext, tsType: ts.Type): string | null {
+  // (#4529) The empty anonymous object type `{}` admits EVERY non-nullish
+  // value — number, string, function, symbol — not just objects. It is what
+  // TS narrows `unknown` to after a `!= null` / `!== undefined` guard, so
+  // jest-get-type's `typeof value === 'number'` chain (an `unknown` param
+  // behind null/undefined early-returns) folded every compare against the
+  // constant "object" and classified every primitive as an object. `{}` is
+  // dynamic; never fold it.
+  if (isEmptyAnonymousObjectType(tsType)) return null;
+  // (#4637 A2) The INSTANCE shape of a function-style constructor whose body can
+  // `return` a foreign value is not a commitment about the runtime value:
+  // §10.2.1.3 step 13 substitutes the returned object, which may be a FUNCTION.
+  // `resolveWasmType` already degrades the slot to externref off the same
+  // predicate (`fnctor-foreign-return.ts`), but the fold below reads the TS type
+  // and answered the constant "object" — measured on this branch's base
+  // (`.tmp/p6.js`, standalone): `i === G` and `i.prop` are right while
+  // `typeof i` said "object" for a value that IS `G`. Never fold it; the runtime
+  // `__typeof` reads the value.
+  if (typeIsForeignReturnFnctorInstance(tsType)) return null;
   if (tsType.flags & ts.TypeFlags.Null) return "object";
   if (tsType.flags & ts.TypeFlags.Undefined || tsType.flags & ts.TypeFlags.Void) return "undefined";
   if (tsType.flags & ts.TypeFlags.BigInt || tsType.flags & ts.TypeFlags.BigIntLiteral) return "bigint";
@@ -1283,7 +1337,15 @@ function emitAnnexBTypeofFlagBranch(ctx: CodegenContext, fctx: FunctionContext, 
   compileStringLiteral(ctx, fctx, "undefined");
   const undefStrLocal = allocLocal(fctx, `__typeof_undef_${fctx.locals.length}`, strType);
   fctx.body.push({ op: "local.set", index: undefStrLocal });
-  fctx.body.push({ op: "local.get", index: flagLocal });
+  const boxed = fctx.boxedTdzFlags?.get(name);
+  if (boxed) {
+    // Captured Annex-B outer bindings keep the flag in a shared ref cell;
+    // `tdzFlagLocals` points at that cell rather than an i32 local.
+    fctx.body.push({ op: "local.get", index: boxed.localIdx });
+    fctx.body.push({ op: "struct.get", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 });
+  } else {
+    fctx.body.push({ op: "local.get", index: flagLocal });
+  }
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: strType },
@@ -1483,11 +1545,23 @@ function runtimeEvalMayRebindIdentifier(
  * Kill the fold for annotation-free parameters in JS files; the runtime
  * `__typeof_*` predicates / `$AnyValue` tag path answer correctly standalone.
  * TypeScript parameters keep the #1304 fold (an explicit annotation is a
- * compiler-enforced contract there), and the standalone/wasi gate keeps the
- * host/gc lanes byte-identical.
+ * compiler-enforced contract there).
+ *
+ * (#4649) The original `standalone || wasi` gate is GONE: the unsoundness is a
+ * property of the SOURCE (JSDoc is unenforced at runtime), not of the backend.
+ * It made the js-host lane fold `typeof desc` in `propertyHelper.js`
+ * (`@param {PropertyDescriptor|undefined} desc`) to the constant `"object"`,
+ * so verifyProperty's own primitive-descriptor rejection was unreachable and
+ * `test/harness/verifyProperty-desc-is-not-object.js` never threw.
  */
 function typeofFoldUnsoundForJsParam(ctx: CodegenContext, operand: ts.Expression): boolean {
-  if (ctx.standalone !== true && ctx.wasi !== true) return false;
+  // (#4648) Lane-agnostic since 2026-08-23. #4394 gated this standalone/wasi to
+  // keep the host/gc lanes byte-identical, but the unsoundness is a property of
+  // the SOURCE (a JSDoc `@param {Function}` is not enforced at runtime), not of
+  // the backend: on the JS-host lane `asyncTest(null)` folded
+  // `typeof testFunc !== "function"` to false just the same, skipped the
+  // harness's own guard, and reported a TypeError where the test expects a
+  // Test262Error (`asyncHelpers-asyncTest-rejects-non-callable`).
   let bare: ts.Expression = operand;
   while (
     ts.isParenthesizedExpression(bare) ||
@@ -1589,6 +1663,31 @@ export function compileTypeofExpression(
       const withBinding = findWithBinding(fctx, ident.text);
       if (withBinding) {
         return compileStringLiteral(ctx, fctx, staticTypeofForWasmType(ctx, withBinding.field.type));
+      }
+      // (#4640) A SLOPPY IMPLICIT GLOBAL — a name some `<name> = v` (or
+      // `this.<name> = v`) in this module creates on the realm global object.
+      // §13.5.3 says `typeof` of an unresolvable Reference is `"undefined"`, and
+      // that is exactly what every fold below answers — but this name is NOT
+      // unresolvable once the assignment has run, so the fold is a static lie:
+      //
+      //     var obj = new Object(); __ref = obj;
+      //     typeof __ref            // folded "undefined", spec "object"
+      //
+      // (`language/types/reference/S8.7_A5_T2` CHECK#2.) The bare READ of the
+      // same name already resolves it from the global object; this makes
+      // `typeof` agree, with the §13.5.3 non-throwing lookup
+      // (`missingAsUndefined`) so a read BEFORE the assignment still answers
+      // `"undefined"` instead of throwing.
+      if (isSloppyImplicitGlobalBinding(ctx, fctx, ident.text)) {
+        addUnionImports(ctx);
+        const typeofIdx = ctx.funcMap.get("__typeof");
+        if (typeofIdx !== undefined) {
+          const valueType = emitRuntimeEvalGlobalRead(ctx, fctx, ident.text, true);
+          if (valueType !== null) {
+            fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__typeof") ?? typeofIdx });
+            return { kind: "externref" };
+          }
+        }
       }
       const sym = ctx.checker.getSymbolAtLocation(ident);
       const hasValueDecl = !!sym?.valueDeclaration;
@@ -1694,6 +1793,21 @@ export function compileTypeofExpression(
     // (#4428) Same disagreement one level down: `typeof x[0]` on an array whose
     // element representation was widened must read the value, not the type.
     if (elementReadOfRebindWidenedArray(ctx, bareTdz)) {
+      forceRuntimeTypeof = true;
+    }
+    // (#2668) Indexed reads can become `undefined` after a descriptor-overlay
+    // mutation (`delete a[i]`, an accessor descriptor, or an inherited index),
+    // even when TypeScript still reports the element's declared type. A static
+    // `typeof a[i]` fold would therefore hide the runtime tombstone/getter
+    // result. Keep the read on the normal runtime typeof path whenever the
+    // standalone overlay route is armed; the route's dynamic get helper then
+    // supplies the actual value before `__typeof` classifies it.
+    if (
+      !forceRuntimeTypeof &&
+      ctx.standalone === true &&
+      overlayRouteActive(ctx) &&
+      ts.isElementAccessExpression(bareTdz)
+    ) {
       forceRuntimeTypeof = true;
     }
     // (#4394) JSDoc-typed JS parameter — the declared type is not enforced at
@@ -1877,6 +1991,29 @@ export function compileTypeofComparison(
         fctx.body.push({ op: "i32.const", value: result });
         return { kind: "i32" };
       }
+      // (#4640) The `typeof x <op> "<literal>"` twin of the sloppy-implicit-
+      // global arm in `compileTypeofExpression`. It has to be repeated here
+      // because this comparison fast path is a SEPARATE ladder that never calls
+      // that function — and it is the spelling test262 actually uses
+      // (`typeof(__ref) !== "undefined"`, `language/types/reference/S8.7_A5_T2`),
+      // so fixing only the general form fixes nothing measurable.
+      if (isSloppyImplicitGlobalBinding(ctx, fctx, ident.text)) {
+        addUnionImports(ctx);
+        const typeofIdx = ctx.funcMap.get("__typeof");
+        if (typeofIdx !== undefined) {
+          const valueType = emitRuntimeEvalGlobalRead(ctx, fctx, ident.text, true);
+          if (valueType !== null) {
+            fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__typeof") ?? typeofIdx });
+            const literalType = compileStringLiteral(ctx, fctx, stringLiteral);
+            if (literalType) {
+              return emitHostEqualityFromStack(ctx, fctx, { kind: "externref" }, literalType, true, isNeq);
+            }
+            fctx.body.push({ op: "drop" });
+            fctx.body.push({ op: "i32.const", value: isEq ? 0 : 1 });
+            return { kind: "i32" };
+          }
+        }
+      }
       const sym = ctx.checker.getSymbolAtLocation(ident);
       if (!sym?.valueDeclaration) {
         const annexB = emitAnnexBTypeofFlagBranch(ctx, fctx, ident.text);
@@ -1965,6 +2102,19 @@ export function compileTypeofComparison(
   // (#4428) Element read off an array whose ELEMENT representation was widened
   // — the checker still reports the first declaration's element type.
   if (staticTypeof !== null && elementReadOfRebindWidenedArray(ctx, operand)) {
+    staticTypeof = null;
+  }
+  // (#2668) A descriptor-overlay mutation can make an indexed read disappear
+  // (or invoke an accessor with a different value) without changing the
+  // checker-visible element type. Do not fold `typeof a[i]` while the
+  // standalone overlay route is armed; compile the indexed read and classify
+  // its actual runtime result instead.
+  if (
+    staticTypeof !== null &&
+    ctx.standalone === true &&
+    overlayRouteActive(ctx) &&
+    ts.isElementAccessExpression(operand)
+  ) {
     staticTypeof = null;
   }
   // (#2623 P-7) Same unsound-fold guard as compileTypeofExpression: a

@@ -6,7 +6,7 @@ import {
   type IrDirectCallTarget,
   type IrIntegrationLoweringPlans,
 } from "../ir/ast-lowering-plans.js";
-import { irUnitFuncRef } from "../ir/callable-bindings.js";
+import { irIntrinsicFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
 import type { IrUnitId } from "../ir/identity.js";
 import { irVal } from "../ir/nodes.js";
 import {
@@ -22,12 +22,15 @@ export type { IrIdentityImportedFunctionResolver } from "../ir/imported-function
 import { IrInvariantError } from "../ir/outcomes.js";
 import {
   buildIrLegacyUnitProjection,
+  requireIrPlanningSourceId,
   type IrLegacyUnitProjection,
   type IrPlanningIdentityContext,
 } from "../ir/planning-identity.js";
+import { IR_STRING_REPEAT_FN } from "../ir/string-runtime.js";
 import {
   buildIrUnitTypeMap,
   projectIrUnitTypeMapToLegacy,
+  type IrFnctorPropagationAdmissionResolver,
   type IrUnitTypeMap,
   type TypeMap,
   type TypeMapEntry,
@@ -64,6 +67,11 @@ export interface IrOverlayIdentityMaps {
   readonly projectedTypeMap: TypeMap;
 }
 
+export interface IrOverlayIdentityMapOptions {
+  /** Exact source-qualified constructor evidence; absent means no fnctor extension. */
+  readonly resolveFnctorAdmission?: IrFnctorPropagationAdmissionResolver;
+}
+
 function mismatch(detail: string): never {
   throw new IrInvariantError("selection-preparation-mismatch", "resolve", detail);
 }
@@ -75,8 +83,15 @@ export function buildIrOverlayIdentityMaps(
   // (#743) Shared `.d.ts` entrypoint seed map (flag-gated upstream) — the same
   // object the legacy lane consults, so IR/legacy seed facts cannot diverge.
   entrypointSeeds?: import("../checker/dts-entrypoint-seeds.js").DtsEntrypointSeeds,
+  options?: IrOverlayIdentityMapOptions,
 ): IrOverlayIdentityMaps {
-  const unitTypeMap = buildIrUnitTypeMap([sourceFile], checker, identityContext, entrypointSeeds);
+  const unitTypeMap = buildIrUnitTypeMap(
+    [sourceFile],
+    checker,
+    identityContext,
+    entrypointSeeds,
+    options?.resolveFnctorAdmission ? { resolveFnctorAdmission: options.resolveFnctorAdmission } : undefined,
+  );
   const projectedTypeMap = projectIrUnitTypeMapToLegacy([sourceFile], unitTypeMap, identityContext);
   return { unitTypeMap, projectedTypeMap };
 }
@@ -332,6 +347,38 @@ export function projectIrIntegrationLoweringPlans(
       directCalls.set(call, directCall);
     }
   }
+  const countedStringAppends = new Map<
+    ts.ForStatement,
+    import("../ir/ast-lowering-plans.js").IrCountedStringAppendLoweringPlan
+  >();
+  for (const [ownerUnitId, syntaxPlans] of plan.identityPlan.identitySelection.countedStringAppendPlans ?? []) {
+    if (!activeOwnerUnitIds.has(ownerUnitId)) continue;
+    const declaration = plan.identityPlan.identityContext.declarationByUnitId.get(ownerUnitId);
+    if (!declaration || !ts.isFunctionDeclaration(declaration) || !declaration.body) {
+      mismatch(`counted-string owner ${ownerUnitId} is not an exact bodyful function declaration`);
+    }
+    for (const syntaxPlan of syntaxPlans) {
+      let cursor: ts.Node | undefined = syntaxPlan.loop;
+      while (cursor && cursor !== declaration) cursor = cursor.parent;
+      if (cursor !== declaration || syntaxPlan.sourceFile !== declaration.getSourceFile()) {
+        mismatch(`counted-string plan for ${ownerUnitId} is detached from its exact declaration/source`);
+      }
+      if (countedStringAppends.has(syntaxPlan.loop)) {
+        mismatch(`counted-string loop for ${ownerUnitId} was planned more than once`);
+      }
+      const sourceFile = syntaxPlan.sourceFile;
+      countedStringAppends.set(
+        syntaxPlan.loop,
+        Object.freeze({
+          ownerUnitId,
+          sourceId: requireIrPlanningSourceId(plan.identityPlan.identityContext, sourceFile),
+          sourceFile,
+          syntaxPlan,
+          provider: irIntrinsicFuncRef(IR_STRING_REPEAT_FN),
+        }),
+      );
+    }
+  }
   return {
     identityContext: plan.identityPlan.identityContext,
     ...(plan.classShapesById ? { classShapesById: plan.classShapesById } : {}),
@@ -348,6 +395,7 @@ export function projectIrIntegrationLoweringPlans(
     hostDateGetters: new Map(
       [...(plan.hostDateGetters ?? [])].filter(([, hostDate]) => activeOwnerUnitIds.has(hostDate.ownerUnitId)),
     ),
+    countedStringAppends,
     promiseDelays: plan.promiseDelays,
     suspendingAsyncUnitIds: new Set(
       [...plan.suspendingAsyncUnitIds].filter((unitId) => activeOwnerUnitIds.has(unitId)),

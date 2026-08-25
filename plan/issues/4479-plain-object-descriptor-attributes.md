@@ -22,6 +22,24 @@ loc-budget-allow:
   # `__defineProperties` (L1197) has carried the identical signature since
   # #3991 — this change is what makes the two appliers agree.
   - src/codegen/object-runtime-descriptors.ts
+  # SLICE 2 — +19. The four Annex B §B.2.2 bodies live in the NEW
+  # `src/codegen/object-proto-annex-b-accessors.ts` (the gate's own prescribed
+  # remedy). What is left here is irreducible registry data: the four member
+  # NAMES in `OBJECT_PROTO_METHODS` (which is what makes
+  # `Object.prototype.__defineGetter__` resolve as a value at all), a one-line
+  # `...ANNEX_B_ACCESSOR_ARITY` spread into `PROTO_METHOD_LENGTH` — the arity is
+  # declared ONCE, in the module that owns the bodies, because it also sizes the
+  # reflective closure's param slots — one import, and one `emitMemberBody`
+  # dispatch line. The rest is the comment saying why Annex B names belong in a
+  # §20.1.3 table; shaving it deletes the pointer, not the code.
+  - src/codegen/array-object-proto.ts
+  # SLICE 2 — +8. One import line plus a THREE-line arm beside the existing
+  # `hasOwnProperty` / `propertyIsEnumerable` introspection arm, for the same
+  # documented reason: the receiver of `o.__defineGetter__(k, f)` may be ANY
+  # object, so the extern-class dispatch below it hunts a member no builtin
+  # declares. The arm is a call plus a returns-if-handled; its body is in the
+  # new module. Already trimmed once (8 lines → 3) before asking for this.
+  - src/codegen/expressions/call-receiver-method.ts
 func-budget-allow:
   # +10, and the same +13/+9 change-set as the LOC entries above — the two gates
   # are measuring one edit from two angles, so the rationale is the same one.
@@ -38,6 +56,12 @@ func-budget-allow:
   # header says so). Splitting it is index-shifting surgery; the change here is
   # one default parameter on a local closure.
   - src/codegen/object-runtime-descriptors.ts::buildObjectDescriptorHelpers
+  # SLICE 2 — +6, and it is the SAME three-line arm the LOC entry above covers;
+  # the two gates measure one edit from two angles. `compileReceiverMethodCall`
+  # is the receiver-method dispatch ladder, and an arm that must run BEFORE
+  # extern-class dispatch has to be physically inside it. Splitting the ladder
+  # is #3399's work with real ordering risk, not this slice's.
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
 priority: high
 horizon: l
 feasibility: hard
@@ -279,3 +303,261 @@ Measured after the fix; array/`arguments`-exotic rows (44) are excluded as
 | 1 | `15.2.3.6-4-625gs` — global `this.prop` precedence | global-object lane. |
 | 21 | long tail of one-offs (`15.2.3.6-3-123`, `-4-21`, `-59`, `-408`, `-410`, `-570`, `-584`, `-589`, `-622`, `create/15.2.3.5-4-263`, `defineProperties/15.2.3.7-5-b-8`, `property-description-must-be-an-object-not-symbol`, `gOPD/15.2.3.3-4-116`, `defineProperty/15.2.3.6-3-138`, …) | no single dominant cause; needs per-row triage. |
 | 28 | `JS2WASM_EVAL_ENGINE=quickjs` provider not built | **environment, not the compiler.** Constant across base and after; the default engine is `quickjs` and the artifact is absent in an agent worktree. Build it (`node scripts/build-quickjs-eval-provider.mjs`) or sweep with `JS2WASM_EVAL_ENGINE=interpreter` to see these rows at all. |
+
+## Fresh residual map (2026-08-16, baseline 7,893/8,115 — 43 rows for the next slice)
+
+- `built-ins/Object/S15.2.1.1_A2_T11.js` :: Test262Error: The value of n_obj.constructor is expected to equal the 
+- `built-ins/Object/S15.2.2.1_A2_T2.js` :: TypeError: n_obj is not a function
+- `built-ins/Object/S15.2.2.1_A2_T5.js` :: Test262Error: n_obj.getFullYear() must return 1978 Expected SameValue(
+- `built-ins/Object/S15.2.2.1_A2_T6.js` :: TypeError: n_obj is not a function
+- `built-ins/Object/S15.2.2.1_A2_T7.js` :: Test262Error: The value of n_obj.constructor is expected to equal the 
+- `built-ins/Object/create/15.2.3.5-4-15.js` :: Test262Error: result !== true
+- `built-ins/Object/defineProperties/15.2.3.7-2-16.js` :: Test262Error: result !== true
+- `built-ins/Object/defineProperties/15.2.3.7-6-a-113.js` :: illegal cast [in __closure_62() ← __closure_57 ← __call_fn_method_3 ← 
+- `built-ins/Object/defineProperties/15.2.3.7-6-a-179.js` :: Test262Error: arr.length Expected SameValue(«0», «4294967295») to be t
+- `built-ins/Object/defineProperties/15.2.3.7-6-a-183.js` :: Test262Error: arr[1] Expected SameValue(«2», «"abc"») to be true
+- `built-ins/Object/defineProperties/15.2.3.7-6-a-204.js` :: Test262Error: Expected obj[0] to equal 101, actually 0
+- `built-ins/Object/defineProperties/15.2.3.7-6-a-231.js` :: Test262Error: Expected obj[1] to be writable, but was not.
+- `built-ins/Object/defineProperty/15.2.3.6-3-123.js` :: dereferencing a null pointer [in __module_init()]
+- `built-ins/Object/defineProperty/15.2.3.6-3-138.js` :: Test262Error: typeof (obj.property) Expected SameValue(«"number"», «"u
+- `built-ins/Object/defineProperty/15.2.3.6-4-117.js` :: illegal cast [in __closure_62() ← __closure_57 ← __call_fn_method_3 ← 
+- `built-ins/Object/defineProperty/15.2.3.6-4-183.js` :: Test262Error: arrObj.length Expected SameValue(«0», «4294967295») to b
+- `built-ins/Object/defineProperty/15.2.3.6-4-195.js` :: Test262Error: Expected obj[0] to equal 13, actually 0
+- `built-ins/Object/defineProperty/15.2.3.6-4-21.js` :: TypeError: TypeError: Getter/setter must be a function
+- `built-ins/Object/defineProperty/15.2.3.6-4-243-1.js` :: Test262Error: Expected obj[1] to equal 3, actually 0
+- `built-ins/Object/defineProperty/15.2.3.6-4-243-2.js` :: Test262Error: Expected a TypeError to be thrown but no exception was t
+- `built-ins/Object/defineProperty/15.2.3.6-4-292-1.js` :: Test262Error: Expected a === 20, actually 0
+- `built-ins/Object/defineProperty/15.2.3.6-4-293-2.js` :: Test262Error: Expected "a === 10", actually 0
+- `built-ins/Object/defineProperty/15.2.3.6-4-293-3.js` :: Test262Error: Expected "a === 10", actually 0
+- `built-ins/Object/defineProperty/15.2.3.6-4-294-1.js` :: Test262Error: Expected "a === 10", actually 0
+- `built-ins/Object/defineProperty/15.2.3.6-4-295-1.js` :: Test262Error: Expected "a === 10", actually 0
+- `built-ins/Object/defineProperty/15.2.3.6-4-296-1.js` :: Test262Error: Expected "a === 10", actually 0
+- `built-ins/Object/defineProperty/15.2.3.6-4-589.js` :: Test262Error: teamMeeting.startTime Expected SameValue(«NaN», «Invalid
+- `built-ins/Object/defineProperty/15.2.3.6-4-622.js` :: TypeError: Cannot convert undefined or null to object
+- `built-ins/Object/defineProperty/S15.2.3.6_A1.js` :: standalone target emitted host imports: env::Document_createElement (#
+- `built-ins/Object/freeze/15.2.3.9-2-a-11.js` :: Test262Error: 0 descriptor should not be writable; 0 descriptor should
+- `built-ins/Object/freeze/15.2.3.9-2-a-12.js` :: Test262Error: 0 value should be a
+- `built-ins/Object/freeze/15.2.3.9-2-a-14.js` :: Test262Error: 0 descriptor should not be writable; 0 descriptor should
+- `built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-116.js` :: Test262Error: desc.writable Expected SameValue(«undefined», «true») to
+- `built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-34.js` :: Test262Error: desc.value Expected SameValue(«undefined», «[object Obje
+- `built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-4.js` :: Test262Error: desc.writable Expected SameValue(«undefined», «true») to
+- `built-ins/Object/getOwnPropertyNames/15.2.3.4-4-1.js` :: Test262Error: result1[expResult[p1]] !== true
+- `built-ins/Object/keys/15.2.3.14-5-13.js` :: Test262Error: arr.length Expected SameValue(«9999», «4») to be true
+- `built-ins/Object/keys/15.2.3.14-5-a-4.js` :: Test262Error: typeof array[0] Expected SameValue(«"string"», «"undefin
+- `built-ins/Object/preventExtensions/15.2.3.10-2.js` :: Test262Error: o2 Expected SameValue(«0», «[object Object]») to be true
+- `built-ins/Object/preventExtensions/15.2.3.10-3-5.js` :: Test262Error: typeof strObj[0] Expected SameValue(«"string"», «"undefi
+- `built-ins/Object/prototype/S15.2.4_A1_T2.js` :: Test262Error: The result of evaluating (e instanceof TypeError) is exp
+- `built-ins/Object/prototype/constructor/S15.2.4.1_A1_T2.js` :: TypeError: is not a constructor
+- `built-ins/Object/prototype/valueOf/S15.2.4.4_A14.js` :: Test262Error: (1, Object.prototype.valueOf)() throws a TypeError excep
+
+---
+
+# Slice 2 — landed (48 rows, 0 regressions)
+
+**Read this first: the 48 are ADDITIVE to the 43-row map above, not drawn from
+it.** Every one of those 43 rows was re-measured live at base and again on the
+final tree, and all 43 still fail with a byte-identical error string (43 / 43
+unchanged). This slice's mechanism does not touch them. Their per-row verdicts
+are in "The 43-row map — per-row disposition" below; the mechanism it DOES fix
+was sitting unlisted in the same `built-ins/Object` bucket, at 0 / 54.
+
+## Why the largest mechanism was not in the map
+
+The instruction was "re-measure all 43 live, bucket by mechanism, take the
+largest mechanisms". Bucketing the 43 gives no mechanism larger than **6 rows**,
+and the two biggest are both out of this issue's lane:
+
+| rows | bucket | lane |
+| ---: | --- | --- |
+| 6 | `arguments` `[[ParameterMap]]` write-through (`15.2.3.6-4-{292-1,293-2,293-3,294-1,295-1,296-1}`) | `$Vec`-backed `arguments` — #3251 |
+| 12 | Array receivers / array-index descriptors | #3251, explicitly out of scope |
+| 5 | `Object(v)` / `new Object(v)` loses the argument's carrier | value-representation, see below |
+| 3 | gOPD of `<Builtin>.prototype.constructor` | native-proto own-props |
+| 3 | index props of String / Arguments / Array exotics | #3251 |
+| 14 | one-offs, one bucket each | per-row triage |
+
+So I widened the measurement to the whole `built-ins/Object` tree instead of the
+43-row list, and bucketed **296** standalone failures by error signature. The
+two largest signatures — `called value is not a function` (18) and
+`Expected a Test262Error but got a undefined` (16) — turned out to be **one**
+mechanism, and it is squarely this issue's subject: **Annex B §B.2.2's four
+legacy property-descriptor accessor methods on `Object.prototype` were not
+implemented host-free at all.** Measured, all four directories, standalone:
+**54 files, 54 failures, 0 passes.**
+
+`object-proto-name-in.ts` had already written the gap down —
+`OBJECT_PROTOTYPE_OWN_NAMES` excludes these four names precisely because "an
+`in` answer must not claim a member the read side cannot serve". This slice is
+that read side.
+
+## Root cause — one mechanism, two entry points, no missing storage
+
+`Object.prototype.__defineGetter__` read as `undefined`, so the ordinary
+spelling `subject.__defineGetter__(k, f)` died at `TypeError: called value is
+not a function` before any descriptor logic ran. There was no gap in descriptor
+STORAGE: `$PropEntry` has carried `$get`/`$set` slots and per-property w/e/c
+flags since #2992, and `__defineProperty_accessor` already implements
+§10.1.6.3's accessor merge, including the get/set-SPECIFIED bits. Nothing
+routed to it.
+
+Two entry points needed serving, and they need the same semantics:
+
+1. the reflective member CLOSURE — `Object.prototype.__lookupGetter__` read as a
+   value, `.call(o, k)`, `.length`, `.name`, and its own `prop-desc`;
+2. the DIRECT call site — `o.__defineGetter__(k, f)`, which is how every test262
+   row but `this-non-obj.js` spells it.
+
+## Fix
+
+| # | file | change |
+| --- | --- | --- |
+| 1 | **new** `src/codegen/object-proto-annex-b-accessors.ts` | Two natives — `__annexb_define_accessor(O, P, fn, isSetter)` (§B.2.2.2/.3) and `__annexb_lookup_accessor(O, P, half)` (§B.2.2.4/.5) — composed entirely from existing natives, plus the reflective member body and the direct-call arm that both route to them. |
+| 2 | `array-object-proto.ts` | The four names join `OBJECT_PROTO_METHODS`; `...ANNEX_B_ACCESSOR_ARITY` joins `PROTO_METHOD_LENGTH`; `makeGlue`'s `Object` arm gains the body dispatch. |
+| 3 | `expressions/call-receiver-method.ts` | A three-line arm beside the `hasOwnProperty` introspection arm. |
+
+Everything is a composition; no new runtime state:
+
+| spec step | existing native |
+| --- | --- |
+| RequireObjectCoercible | `ref.is_null` ∨ `__extern_is_undefined` |
+| IsCallable | `__typeof_function` |
+| ToPropertyKey | `__to_property_key` |
+| DefinePropertyOrThrow (accessor) | `__defineProperty_accessor` |
+| its extensibility failure case | `__object_isExtensible` + `__hasOwnProperty` |
+| `O.[[GetOwnProperty]]` | `__getOwnPropertyDescriptor` |
+| `O.[[GetPrototypeOf]]` | `__getPrototypeOf` |
+| `desc.[[Get]]` / `[[Set]]` | `__extern_get` |
+
+**Three decisions that a plausible simpler implementation gets wrong, each
+asserted by a test262 row:**
+
+- **Exactly ONE of the `[[Get]]`/`[[Set]]` SPECIFIED bits is set.** §B.2.2.2's
+  descriptor names only `[[Get]]`, so redefining the getter of an existing
+  accessor must PRESERVE its setter (`define-existing.js`). Setting both bits —
+  or leaving both clear, which the runtime reads as the legacy "both specified"
+  — silently clears the other half.
+- **IsCallable runs BEFORE ToPropertyKey.** `getter-non-callable.js` rejects
+  five non-callable getters and then asserts the key's `toString` ran **zero**
+  times.
+- **The lookup needs no IsAccessorDescriptor test.** A DATA descriptor's `get`
+  field reads back `undefined`, which is exactly step 4.b.ii's answer, so one
+  `__extern_get` serves both branches.
+
+The extensibility check is the one place the composition is not free:
+`__defineProperty_accessor` treats a new key on a non-extensible object as a
+lenient no-op (its own documented contract), while DefinePropertyOrThrow must
+throw. That check therefore lives in the calling native, not in the applier.
+
+## Test Results — every figure below is from a run I executed
+
+Scoped standalone sweep, `built-ins/Object/prototype/__{define,lookup}{Getter,Setter}__`,
+all 54 files, real `runTest262File`, base = the same worktree with the three
+source files reverted:
+
+| run | pass | fail |
+| --- | ---: | ---: |
+| base (`d0ae8a947`, fix reverted) | **0** | 54 |
+| after | **48** | 6 |
+| delta | **+48** | **0 regressions** |
+
+The after figure was re-measured a THIRD time on the final tree, after the
+post-sweep refactor (the arity moved to a single declaration and the call-site
+arm was trimmed for the LOC gate): still 48 / 54, so the refactor is confirmed
+behaviour-identical rather than assumed to be.
+
+**Regression sweep — 700 files, base and after, both mine.** A deterministic
+stratified sample: every 7th file of `built-ins/Object` outside `prototype/`
+(420) plus every 4th file of `language/{statements/for-in, expressions/{object,
+in,delete}}` (280) — the areas where a change to `Object.prototype`'s own-name
+set could plausibly be observed.
+
+| run | pass | of |
+| --- | ---: | ---: |
+| base | 635 | 700 |
+| after | 635 | 700 |
+| after, re-run on the FINAL tree | 635 | 700 |
+
+**0 regressions, 0 incidental fixes**, on both after-runs. One row differed in error TEXT only
+(`S15.2.1.1_A2_T11`: a 53 s compilation timeout under box contention at base
+versus its real assertion message after) — `fail` on both sides, and its real
+signature is identical in the dedicated 43-row runs.
+
+The `built-ins/Object/prototype` sub-tree was swept in full at base as part of
+calibration (248 files, 139 pass) and every one of its non-Annex-B rows is
+inside the after sweep above.
+
+**Pins** — `tests/issue-4479-s2.test.ts`, 25 tests, all green: 12 standalone
+behaviours, their 12 host-lane counterparts, and one `it.fails` residual.
+`tests/issue-4479.test.ts` (slice 1) still 16 / 16.
+
+- **The host lane is unchanged, and this is measured, not assumed.** The whole
+  pin file was run against the reverted tree: the host lane produced the
+  identical 7 failures / 5 passes, test for test. Host mode routes an unknown
+  method through the JS runtime's `fixed-extern-method-call` shim, whose table
+  does not carry these four names; that is a standing host-runtime gap, so the
+  7 are `it.fails` with the measurement recorded in the file.
+- **Two pins were VACUOUS at base and were strengthened before landing.** The
+  non-callable-getter and null-`this` pins only asserted that a TypeError was
+  thrown — and on the un-fixed base `__defineGetter__` was `undefined`, so
+  calling it threw "called value is not a function", also a TypeError, also
+  before any `toString`. Each now also asserts the SUCCESS half (a callable
+  getter installs; a `.call` on a real receiver round-trips), which is what
+  makes them discriminate "rejected for the right reason" from "not
+  implemented".
+
+**Equivalence** — per-file loop (the suite OOMs in one invocation), 11 files
+the diff plausibly touches, all green: `object-create`,
+`object-define-property`, `-accessors`, `-extended`, `-return`, `object-keys`,
+`object-literal-getters-setters`, `object-mutability`, `hasownproperty-call`,
+`issue-799-prototype-chain`, `computed-setter-class`.
+
+**Gates** — `typecheck`, `lint`, `oracle-ratchet` (+0 raw-checker),
+`coercion-sites` (+0), `dead-exports`, `pushraw` (+0) all clean. LOC/func growth
+is granted in this file's frontmatter with per-file rationale.
+
+**Cross-lane hazard checked (dev-4620's `try_table` ref-blocktype trap):** this
+diff emits no `try_table`. Its throws are terminal `throw <tag>` sequences with
+no protected region, and the ref-typed blocktypes it does use are on `if` — the
+same shape `__getPrototypeOf` already ships. Consistent with the sweep: zero
+unreachable-at-entry traps across the 54.
+
+## Residuals — slice 2's own 6, with owners
+
+| rows | files | owner / next step |
+| ---: | --- | --- |
+| 4 | `__lookup{Getter,Setter}__/lookup-proto-{get,proto}-err.js` | **Proxy carrier representation (#2615 / #4397).** A Proxy in the MIDDLE of the chain is severed at `Object.create` time: `__object_create` keeps `$proto` only for a `$Object`, and a Proxy is not one, so the link becomes null and the walk ends a level early. Not the Annex B walk — the same tests with the Proxy as the DIRECT receiver (`lookup-own-{get,proto}-err.js`) both flip in this slice. Pinned `it.fails`. |
+| 2 | `__define{Getter,Setter}__/define-abrupt.js` | Same lane: a Proxy `defineProperty` trap must relay its abrupt completion through `__defineProperty_accessor`. |
+
+**Deliberately NOT done:** `OBJECT_PROTOTYPE_OWN_NAMES` in
+`object-proto-name-in.ts` still excludes the four names, so
+`'__defineGetter__' in obj` keeps answering `false`. Widening it changes the
+`in` answer for every ordinary receiver in the corpus — a different blast
+radius from serving the four reads — and no row in this slice needs it. That
+file's own comment is the reason the exclusion existed; half of that reason is
+now gone, so it is a clean, measurable follow-up rather than a leftover.
+
+## The 43-row map — per-row disposition
+
+Base and final-tree runs both mine; **43 / 43 identical**, i.e. this slice
+changed none of them. Grouped by mechanism, with the lane that owns each:
+
+| rows | mechanism | files | owner |
+| ---: | --- | --- | --- |
+| 6 | `arguments` `[[ParameterMap]]` write-through: `Object.defineProperty(arguments, "0", …)` must be observable through the mapped parameter | `defineProperty/15.2.3.6-4-{292-1,293-2,293-3,294-1,295-1,296-1}` (the whole `"a === 10, actually 0"` signature) | **#3251 / a new mapped-arguments issue.** `arguments` is materialized as an opaque `$Vec` COPY of the parameters (`arguments-object-mop.ts` header), so there is no write-through to attach a descriptor to — a representation feature, not an attribute gap. |
+| 12 | Array receiver / array-index descriptors | `defineProperties/15.2.3.7-6-a-{113,179,183,204,231}`, `defineProperty/15.2.3.6-4-{117,183,195,243-1,243-2}`, `freeze/15.2.3.9-2-a-14`, `keys/15.2.3.14-5-13` | **#3251**, explicitly out of scope for this issue. |
+| 5 | `Object(v)` / `new Object(v)` on an OBJECT argument returns the right identity but the WRONG carrier | `S15.2.1.1_A2_T11`, `S15.2.2.1_A2_T{2,5,6,7}` | **value-representation lane.** Measured directly: `(new Object(d)).getFullYear()` is `undefined` and `(new Object(func))()` throws even without an intervening variable, so it is not the local's slot — `emitObjectCoercion` (`expressions/calls-guards.ts`) compiles the argument to `externref` and returns `{kind:"externref"}`, and the result's TS type is `Object`, so both the receiver-type dispatch and the local's slot lose the argument's type. Identity itself is already correct (`nd === d` is `true`). |
+| 3 | index properties of String / `arguments` exotics | `freeze/15.2.3.9-2-a-{11,12}`, `preventExtensions/15.2.3.10-3-5` | **#3251** (exotic index receivers). |
+| 3 | gOPD of a builtin prototype's `constructor` returns no data-descriptor shape | `getOwnPropertyDescriptor/15.2.3.3-4-{4,34,116}` | native-proto own-props (`native-proto-own-props.ts`) — `constructor` is in no member CSV. |
+| 2 | `Properties` is the `arguments` object | `create/15.2.3.5-4-15`, `defineProperties/15.2.3.7-2-16` | **#4161 carrier-bag lane** — carried over unchanged from slice 1's residuals. |
+| 1 | `Object.preventExtensions(o)` assigned to a `var` initialized with `undefined` reads back `0` | `preventExtensions/15.2.3.10-2` | **carrier lane, not descriptors.** `var o2 = undefined` picks an f64 slot and the later object assignment coerces to `0`. Corpus-wide this signature is 26 rows, of which 24 are BigInt/TypedArray — not one mechanism. |
+| 1 | `document.createElement` | `defineProperty/S15.2.3.6_A1` | DOM; will not pass. |
+| 10 | one-offs, one bucket each | `defineProperty/15.2.3.6-{3-123,3-138,4-21,4-589,4-622}`, `getOwnPropertyNames/15.2.3.4-4-1`, `keys/15.2.3.14-5-a-4`, `prototype/S15.2.4_A1_T2`, `prototype/constructor/S15.2.4.1_A1_T2`, `prototype/valueOf/S15.2.4.4_A14` | per-row triage. Two are worth naming: `15.2.3.6-4-21` is the `{get: undefined}` accessor redefine (the #2992 accessor-merge lane — the singleton-regime arm in `object-runtime-descriptors.ts` throws on a NULL half where the legacy arm allows it), and `S15.2.4.4_A14` is one instance of a ~10-row `built-ins/Object` family where a builtin invoked with `this = undefined` must throw a TypeError and throws nothing. |
+
+**Where the next slice's leverage is, measured on the same 296-failure scan:**
+the RequireObjectCoercible-on-a-builtin family (`Object.assign(null, …)`,
+`Object.hasOwn(null, …)`, `Object.getOwnPropertySymbols(undefined)`,
+`isPrototypeOf.call(null, …)`, `valueOf` with no receiver — ~10 rows, all
+"Expected a TypeError … no exception was thrown at all"), and the
+integrity-level enforcement family (frozen/sealed/non-extensible writes plus
+`seal`/`freeze`/`preventExtensions`'s `throws-when-false`, ~12 rows). Both are
+larger than anything left in the 43-row map.

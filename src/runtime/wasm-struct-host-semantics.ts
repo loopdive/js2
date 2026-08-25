@@ -25,6 +25,8 @@ const PRIMITIVE_STRING_INTRINSICS: Readonly<Record<string, Function | undefined>
   toString: String.prototype.toString,
   trim: String.prototype.trim,
   trimEnd: String.prototype.trimEnd,
+  trimLeft: String.prototype.trimLeft,
+  trimRight: String.prototype.trimRight,
   trimStart: String.prototype.trimStart,
   valueOf: String.prototype.valueOf,
 });

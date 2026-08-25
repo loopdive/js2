@@ -75,12 +75,13 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { BUILTIN_CLASS_NAMES } from "./builtin-class-names.js";
 import { sourceHasMethodOverride } from "./member-override-scan.js";
-import { flushLateImportShifts } from "./late-imports.js";
+import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 
 /**
  * `fillApplyClosure` dispatches arities 0..8 and answers the undefined sentinel
@@ -113,6 +114,13 @@ export function compileCallDispatchTail(ctx: CodegenContext, fctx: FunctionConte
   const inherited = tryEmitProtoInheritedMethodCall(ctx, fctx, expr);
   if (inherited !== undefined) return inherited;
 
+  // (#4640 D1) The callee is a plain identifier whose RUNTIME value is nullish.
+  // A nullish value can never be callable, so this is the one slice of the
+  // silence below that is provably a §13.3.6.1 TypeError rather than an
+  // unrecognised shape.
+  const nullishCallee = tryEmitNullishIdentifierCalleeTypeError(ctx, fctx, expr);
+  if (nullishCallee !== undefined) return nullishCallee;
+
   // Graceful fallback: compile the callee expression and all arguments for side
   // effects, then push `ref.null.extern`. This avoids hard compile errors for
   // unrecognized call patterns (chained calls, dynamic dispatch, uncommon AST
@@ -124,6 +132,113 @@ export function compileCallDispatchTail(ctx: CodegenContext, fctx: FunctionConte
     const argType = compileExpression(ctx, fctx, arg);
     if (argType) fctx.body.push({ op: "drop" });
   }
+  fctx.body.push({ op: "ref.null.extern" });
+  return { kind: "externref" };
+}
+
+/**
+ * (#4640 D1) `var x = undefined; x()` / `var x = null; x()` — §13.3.6.1
+ * EvaluateCall step 4: after the callee reference and the argument list are
+ * evaluated, `IsCallable(func)` is checked and a **TypeError** is thrown.
+ *
+ * ## What was actually wrong (it is not what the issue's map said)
+ *
+ * The map read this family as "the thrown thing is `[object Object]`, not a
+ * TypeError instance". Measured on the base branch, the call threw **nothing at
+ * all**: `try { var x = undefined; x(); } catch (e) {}` fell through with no
+ * exception. The `[object Object]` in the failure text is the test's OWN
+ * `Test262Error` — thrown on the line after the call that should have thrown,
+ * then rendered by the catch block. So this is not an error-identity fix; the
+ * `emitThrowTypeError` lowering already mints a real `$Error_struct` TypeError.
+ * It is a missing throw.
+ *
+ * ## Why it lands HERE and not in `tryNonCallableValueCall`
+ *
+ * That static guard (#4221) is the natural home, and it declines on purpose:
+ * `var x = undefined` is an unannotated mutable binding with a nullish
+ * initializer, which `isEvolvingAnyBinding` treats as committing NOTHING (the
+ * #4616 carve-out — `let x = null; … x = function(){…}; x()` is a real idiom and
+ * a static throw there would be a hard miscompile). Relaxing that guard to catch
+ * this row would reintroduce exactly the miscompile it was added to prevent. The
+ * runtime check has no such tension: a value that IS nullish when the call
+ * executes cannot be callable, whatever the checker believed.
+ *
+ * ## Why it is a narrowing, not a new risk
+ *
+ * It sits immediately before the graceful fallback, so every shape it can claim
+ * already answers the VALUE `undefined` with the callee never invoked. It only
+ * replaces that silent wrong answer when the callee is nullish AT RUNTIME —
+ * every non-nullish value keeps the fallback's behaviour byte-for-byte
+ * (`ref.null.extern`), because "our dispatch did not recognise this shape" and
+ * "this value is not callable" are different claims and only the second is
+ * provable here.
+ *
+ * Restricted to a plain **identifier** callee. A member callee (`o.f()`) reads
+ * `null` on this lane for reasons that are frequently OUR gap rather than the
+ * program's — a member our object model failed to resolve is indistinguishable
+ * from an absent one, so throwing there would convert compiler gaps into hard
+ * runtime throws. An identifier read is a local/global slot read: if it answers
+ * nullish, the binding really holds `null`/`undefined`.
+ *
+ * Host-lane untouched (`standalone`/`wasi` only) — the JS-host lane routes
+ * these calls through `__extern_call`, which already throws.
+ *
+ * Order is §13.3.6.1's: callee, then arguments, THEN the throw.
+ */
+export function tryEmitNullishIdentifierCalleeTypeError(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): ValType | undefined {
+  if (!ctx.standalone && !ctx.wasi) return undefined;
+  if (expr.questionDotToken !== undefined || ts.isOptionalChain(expr)) return undefined;
+  const callee = expr.expression;
+  if (!ts.isIdentifier(callee)) return undefined;
+  // A name the module compiled to a real function never reaches this tail; if it
+  // somehow does, the binding is not a value slot and must not be second-guessed.
+  if (ctx.funcMap.has(callee.text)) return undefined;
+  if (ctx.classSet.has(callee.text)) return undefined;
+  if (BUILTIN_CLASS_NAMES.has(callee.text)) return undefined;
+
+  // Register the undefined-sentinel probe BEFORE anything is emitted for this
+  // call, and flush against the already-emitted body — the #1839/#117/#1886
+  // late-registration index-shift class.
+  const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  flushLateImportShifts(ctx, fctx);
+
+  const calleeLocal = allocLocal(fctx, `__nc_callee_${fctx.locals.length}`, { kind: "externref" });
+  const calleeType = compileExpression(ctx, fctx, callee, { kind: "externref" });
+  if (calleeType === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (calleeType.kind !== "externref") {
+    coerceType(ctx, fctx, calleeType, { kind: "externref" });
+  }
+  fctx.body.push({ op: "local.set", index: calleeLocal });
+
+  for (const arg of expr.arguments) {
+    const argType = compileExpression(ctx, fctx, arg);
+    if (argType) fctx.body.push({ op: "drop" });
+  }
+
+  // nullish = ref.is_null(callee) || __extern_is_undefined(callee). The #2106
+  // `undefined` singleton is a DISTINCT non-null externref standalone, so
+  // `ref.is_null` alone misses the `var x = undefined` half of the family.
+  fctx.body.push({ op: "local.get", index: calleeLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  const resolvedIsUndef = ctx.funcMap.get("__extern_is_undefined") ?? isUndefIdx;
+  if (resolvedIsUndef !== undefined) {
+    fctx.body.push({ op: "local.get", index: calleeLocal });
+    fctx.body.push({ op: "call", funcIdx: resolvedIsUndef });
+    fctx.body.push({ op: "i32.or" });
+  }
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    // `forceInModuleCtor` for the same reason `typeErrorThrowInstrs` uses it:
+    // this builds a half-detached `then:` array, and registering an import from
+    // inside one is the index-shift trap.
+    then: buildThrowJsErrorInstrs(ctx, "TypeError", `${callee.text} is not a function`, { forceInModuleCtor: true }),
+  });
   fctx.body.push({ op: "ref.null.extern" });
   return { kind: "externref" };
 }

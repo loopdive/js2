@@ -19,13 +19,100 @@
     "packages/diff-sequences/src/__tests__/index.test.ts",
     "packages/jest-docblock/src/__tests__/index.test.ts",
     "packages/jest-diff/src/__tests__/escapeControlCharacters.test.ts",
-    "packages/jest-config/src/__tests__/stringToBytes.test.ts"
+    "packages/jest-config/src/__tests__/stringToBytes.test.ts",
+    "packages/jest-jasmine2/src/__tests__/pTimeout.test.ts",
+    "packages/jest-matcher-utils/src/__tests__/Replaceable.test.ts",
+    "packages/jest-jasmine2/src/__tests__/queueRunner.test.ts",
+    "packages/jest-jasmine2/src/__tests__/iterators.test.ts",
+    "packages/jest-jasmine2/src/__tests__/itToTestAlias.test.ts",
+    "packages/jest-jasmine2/src/__tests__/itTestError.test.ts",
+    "packages/jest-jasmine2/src/__tests__/todoError.test.ts",
+    "packages/jest-jasmine2/src/__tests__/hooksError.test.ts",
+    "packages/jest-config/src/__tests__/parseShardPair.test.ts",
+    "packages/jest-core/src/__tests__/globals.test.ts",
+    "packages/jest-jasmine2/src/__tests__/concurrent.test.ts",
+    "packages/jest-haste-map/src/lib/__tests__/getPlatformExtension.test.js",
+    "packages/jest-config/src/__tests__/Defaults.test.ts",
+    "packages/jest-watcher/src/lib/__tests__/formatTestNameByPattern.test.ts",
+    "packages/jest-watcher/src/lib/__tests__/scroll.test.ts",
+    "packages/jest-haste-map/src/__tests__/get_mock_name.test.js",
+    "packages/jest-core/src/__tests__/FailedTestsCache.test.js",
+    "packages/jest-core/src/lib/__tests__/serializeToJSON.test.ts",
+    "packages/jest-haste-map/src/lib/__tests__/fast_path.test.js",
+    "packages/jest-watcher/src/lib/__tests__/prompt.test.ts",
+    "packages/jest-environment-node/src/__tests__/globals_cleanup_3.test.ts",
+    "packages/jest-jasmine2/src/__tests__/expectationResultFactory.test.ts"
   ],
   "dependencies": {
     "detect-newline": {
       "version": "3.1.0",
       "sourceSha256": "7306f2ecc168c9e20be4a2a3d44a0dad59ea21dc0bf4cd41ea85829bc79e2c18"
+    },
+    "@jest/get-type": {
+      "version": "30.1.0",
+      "sourceSha256": "568e74bbefa9a86accea3c9289cfb93568cd4354bc822650a0e203b03bca341d"
+    },
+    "jest-util": {
+      "version": "30.4.1",
+      "sourceSha256": "ef7320f8e85b76a67a65ec29e9c55e724b7a25de5b2aad75c3ed1c82a53cc7d4",
+      "files": {
+        "isError.ts": "119ebfd40f2f3552bff9e699149832c8fce37acc45e2b30e2f47e72b872e2e3d"
+      }
+    },
+    "graceful-fs": {
+      "version": "4.2.11",
+      "sourcePath": "graceful-fs.js",
+      "sourceSha256": "7da35669b6b6b0e4aafee31674c033f2cebb0c8f9ae010f709dcc185d3f17786"
+    },
+    "pretty-format": {
+      "version": "30.4.1",
+      "files": {
+        "index.ts": "b5bfcf02e9c1d011b5b7067bb2be3106f23cf223263319355353635936800856"
+      }
+    },
+    "ansi-styles": {
+      "version": "5.2.0",
+      "sourcePath": "index.js",
+      "sourceSha256": "c70399f5f872fefec57b56264e9ebb46905bd558e15c53632644afd0da0cede3"
+    },
+    "react-is-18": {
+      "version": "18.3.1",
+      "sourcePath": "cjs/react-is.development.js",
+      "sourceSha256": "f9740ad16de473fec0eef0532319f907a68d19531669e4be72fd64d551fef59b"
+    },
+    "react-is-19": {
+      "version": "19.2.8",
+      "sourcePath": "cjs/react-is.development.js",
+      "sourceSha256": "44314886ebca6d96bdb050470894181ee4d27ab04484153a6918700fdc4f97e3"
+    },
+    "chalk": {
+      "version": "4.1.2",
+      "sourcePath": "source/index.js",
+      "sourceSha256": "a7eda1e88414e0e3f050a09621a35e8d656550077da044606c16b053148f6459"
+    },
+    "jest-regex-util": {
+      "version": "30.4.0",
+      "files": {
+        "index.ts": "4d0717d1797d7579161e68c3bbb90a322f9ac9059a8fd6f1f4e249194bfb45ee"
+      }
+    },
+    "ci-info": {
+      "version": "4.4.0",
+      "sourcePath": "index.js",
+      "sourceSha256": "94772d86a718ebeefa1273918175b3816fa051a4d544ce565bcc53c58d5fc74f"
+    },
+    "jest-config": {
+      "version": "30.4.2",
+      "files": {
+        "getCacheDirectory.ts": "820d6a06b31ae243f1c6208f53882f7f4693487060f1303b3b10b3cf9a5a5a0b"
+      }
+    },
+    "jest-config-defaults": {
+      "version": "30.4.2",
+      "files": {
+        "Defaults.ts": "0110649a41319578e3e3ad8305a717089641ec6ca58aee048a8f7e7e55e837f2"
+      }
     }
   },
-  "_note": "The complete packages/**/__tests__ inventory is verified. The adapter runs the original synchronous @jest/get-type, jest-util, diff-sequences, jest-docblock, jest-diff, and jest-config unit files against their matching release-tag TypeScript implementations, including isError's node:util/types and jest-docblock's node:os host seams. The shared runner supplies the minimal Jest spy facade needed by the selected jest-util callbacks; runner, snapshot, filesystem, worker, async, DOM, and larger package graphs remain explicit deferred coverage."
+  "_note": "The complete packages/**/__tests__ inventory is verified. The adapter runs the original Jest utility files against their matching release-tag TypeScript implementations, including jest-jasmine2's timer-driven pTimeout and queueRunner tests and jest-matcher-utils' Replaceable object/array/Map paths. Verified package-name seams cover @jest/get-type, jest-util's formatTime and convertDescriptorToString, detect-newline, chalk@4.1.2, ansi-styles, supports-color, has-flag, ci-info@4.4.0, jest-regex-util@30.4.0, node:util/types, node:os, and node:tty; the Jest config Defaults/getCacheDirectory adapters are generated beside pinned upstream files and leave the original test body and checkout untouched. The shared runner supplies deterministic spies, fake timers, ANSI string snapshots, array-aware object-subset assertions, and cleanup between generated modules. Its spy ledger uses flat scalar and argument vectors because nested WasmGC vectors can become stale across a host boundary. The original jest-watcher scroll, jest-watcher prompt, jest-haste-map get_mock_name, and jest-core FailedTestsCache units are also admitted without adapters. Runner, filesystem, worker, async, DOM, and larger package graphs remain explicit deferred coverage."
 }

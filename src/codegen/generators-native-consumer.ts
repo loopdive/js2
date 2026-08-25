@@ -693,7 +693,7 @@ export function tryCompileNativeGeneratorResultProperty(
 
   if (propName === "done") {
     // `done` is i32 for every carrier — test each result type, read field 1.
-    fctx.body.push(buildOpenResultRead(anyLocal, resultEntries, RESULT_DONE_FIELD, { kind: "i32" }));
+    fctx.body.push(buildOpenResultRead(ctx, anyLocal, resultEntries, RESULT_DONE_FIELD, { kind: "i32" }));
     // (#2938) boolean brand — see the typed arm above.
     return { kind: "i32", boolean: true };
   }
@@ -725,7 +725,7 @@ export function tryCompileNativeGeneratorResultProperty(
     // BOX site consults it, resurrecting the sentinel to canonical `undefined`.
     const fieldType: ValType = { kind: "f64", undefSentinel: true };
     const f64Entries = resultEntries.filter((e) => e.elemValType.kind === "f64");
-    fctx.body.push(buildOpenResultRead(anyLocal, f64Entries, RESULT_VALUE_FIELD, { kind: "f64" }));
+    fctx.body.push(buildOpenResultRead(ctx, anyLocal, f64Entries, RESULT_VALUE_FIELD, { kind: "f64" }));
     return fieldType;
   }
 
@@ -846,19 +846,44 @@ function buildOpenResultValueReadExtern(
       return [...read, ...toF64, ...sentinelAwareF64BoxInstrs(f64Scratch, boxNumberIdx, undefInstrs)];
     }
     // ref/ref_null elem (native string / struct): wrap to externref. A null
-    // ref (the done default) converts to the null externref = canonical
-    // undefined.
-    return [...read, { op: "extern.convert_any" }];
+    // ref (the done default) must use the lane's canonical undefined value;
+    // `extern.convert_any(null)` is the JS value `null`, not `undefined`.
+    const refType = e.elemValType as { kind: "ref" | "ref_null"; typeIdx: number };
+    const refLocal = allocLocal(fctx, `__gen_ref_value_${fctx.locals.length}`, {
+      kind: "ref_null",
+      typeIdx: refType.typeIdx,
+    });
+    return [
+      ...read,
+      { op: "local.tee", index: refLocal },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: externVT },
+        then: [...undefInstrs],
+        else: [{ op: "local.get", index: refLocal }, { op: "extern.convert_any" }],
+      },
+    ];
   };
 
+  // (#3505) No-match tail: under a JS host, a LEGACY (eager-buffer) generator's
+  // `next()` result is a HOST object, not any native result struct — it lands
+  // here whenever a module mixes native and legacy generators (e.g. two module
+  // files declaring same-named generators, one of which bails to the legacy
+  // path). Read it through the host accessor instead of answering null. The
+  // import exists exactly when a legacy generator was compiled, so pure-native
+  // host modules keep their bytes (the #3032 host-bytes contract holds there).
+  const hostValueIdx = !ctx.standalone && !ctx.wasi ? ctx.funcMap.get("__gen_result_value") : undefined;
+  const hostTail: Instr[] =
+    hostValueIdx !== undefined
+      ? [{ op: "local.get", index: anyLocal }, { op: "extern.convert_any" }, { op: "call", funcIdx: hostValueIdx }]
+      : [{ op: "ref.null.extern" }];
   const wrap = (i: number): Instr[] => {
-    // No-match tail. Deliberately left as the null externref rather than
-    // routed through `undefInstrs` (#2864 wave-2 S1): this arm is reached only
-    // when the receiver is not ANY known result struct — a defensive path, not
-    // the absent-value path — and changing it would move JS-HOST bytes (where
-    // `undefInstrs` is a `__get_undefined` call) for no measured gain. The
-    // #3032 contract is host bytes identical unless deliberately widening W6.
-    if (i >= entries.length) return [{ op: "ref.null.extern" }];
+    // No-match tail (defensive when no host accessor is available): the null
+    // externref rather than `undefInstrs` (#2864 wave-2 S1) — this arm is not
+    // the absent-value path, and routing it through `undefInstrs` would move
+    // JS-HOST bytes for no measured gain.
+    if (i >= entries.length) return hostTail;
     const e = entries[i]!;
     return [
       { op: "local.get", index: anyLocal },
@@ -883,6 +908,7 @@ function buildOpenResultValueReadExtern(
  * result (value externref / done i32), so no per-entry coercion is needed.
  */
 function buildOpenResultRead(
+  ctx: CodegenContext,
   anyLocal: number,
   entries: { typeIdx: number; elemValType: ValType }[],
   fieldIdx: number,
@@ -894,10 +920,27 @@ function buildOpenResultRead(
       : returnVT.kind === "externref"
         ? { op: "ref.null.extern" }
         : { op: "f64.const", value: 0 };
+  // (#3505) Host-lane no-match fallback: a LEGACY generator's host result
+  // object reaches this open reader in modules that mix native and legacy
+  // generators. Read the field through the host accessor when it exists
+  // (it is registered exactly when a legacy generator compiled); pure-native
+  // modules keep the inert default and their existing bytes.
+  let hostTail: Instr[] | undefined;
+  if (!ctx.standalone && !ctx.wasi) {
+    const hostIdx =
+      fieldIdx === RESULT_DONE_FIELD
+        ? ctx.funcMap.get("__gen_result_done")
+        : returnVT.kind === "f64"
+          ? ctx.funcMap.get("__gen_result_value_f64")
+          : ctx.funcMap.get("__gen_result_value");
+    if (hostIdx !== undefined) {
+      hostTail = [{ op: "local.get", index: anyLocal }, { op: "extern.convert_any" }, { op: "call", funcIdx: hostIdx }];
+    }
+  }
   // Each level emits its own `ref.test` condition then the `if`; the tail (no
-  // match) yields the inert default.
+  // match) yields the host read when available, else the inert default.
   const wrap = (i: number): Instr[] => {
-    if (i >= entries.length) return [def];
+    if (i >= entries.length) return hostTail ?? [def];
     const e = entries[i]!;
     return [
       { op: "local.get", index: anyLocal },
