@@ -19,7 +19,6 @@ import { pushDefaultValue } from "../type-coercion.js";
 import { compileStandaloneRegExpConstructor, isGlobalRegExpIdentifier } from "../regexp-standalone.js";
 import { foreignReturnFunctionNames } from "../fnctor-foreign-return.js"; // (#4637 A2) §10.2.1.3 step 13
 import { isFreshOrdinaryObjectExpression } from "../native-ordinary-instanceof.js";
-import { resolveArrayInfo } from "../array-methods.js";
 
 /**
  * (#4221) Unwrap the transparent wrappers that sit between a call expression
@@ -74,13 +73,8 @@ export const NEVER_CALLABLE_FACT_KINDS = new Set([
  */
 function isDynamicallyCallableExternrefArrayElement(ctx: CodegenContext, callee: ts.Expression): boolean {
   if (!ts.isElementAccessExpression(callee)) return false;
-  const receiverType = ctx.checker.getTypeAtLocation(callee.expression);
-  const checker = ctx.checker as typeof ctx.checker & {
-    isArrayType?: (type: ts.Type) => boolean;
-    isTupleType?: (type: ts.Type) => boolean;
-  };
-  if (!checker.isArrayType?.(receiverType) && !checker.isTupleType?.(receiverType)) return false;
-  return resolveArrayInfo(ctx, receiverType)?.elemType.kind === "externref";
+  const receiverFact = ctx.oracle.typeFactOf(callee.expression);
+  return receiverFact.kind === "array" && receiverFact.element.kind === "undefined";
 }
 
 /**
