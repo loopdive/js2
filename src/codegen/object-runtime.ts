@@ -4960,6 +4960,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     propEntryTypeIdx,
     propMapTypeIdx,
     objectTypeIdx,
+    proxyTypeIdx,
+    proxyTrapsTypeIdx,
     objRefNull,
     propMapRef,
     boundaryObjectGetPrototypeIdx,

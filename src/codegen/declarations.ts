@@ -2258,6 +2258,34 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   function moduleInitForcesExternref(decl: ts.VariableDeclaration): boolean {
     if (!decl.initializer) return false;
     if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) return true;
+    // (#4721) `new Proxy(target, handler)` is an externref carrier even though
+    // TypeScript gives the expression the target's structural type.  Top-level
+    // `var`/`let`/`const` bindings are module globals and bypass the function-local
+    // Proxy slot override in variables.ts; retaining the inferred target struct
+    // here would guarded-cast the host/native Proxy to null before `p[key]` can
+    // reach the Proxy MOP.  The revocable result is likewise a dynamic handle.
+    let proxyInit = decl.initializer;
+    while (
+      ts.isParenthesizedExpression(proxyInit) ||
+      ts.isAsExpression(proxyInit) ||
+      ts.isTypeAssertionExpression(proxyInit) ||
+      ts.isNonNullExpression(proxyInit) ||
+      ts.isSatisfiesExpression(proxyInit)
+    ) {
+      proxyInit = proxyInit.expression;
+    }
+    if (
+      (ts.isNewExpression(proxyInit) &&
+        ts.isIdentifier(proxyInit.expression) &&
+        proxyInit.expression.text === "Proxy") ||
+      (ts.isCallExpression(proxyInit) &&
+        ts.isPropertyAccessExpression(proxyInit.expression) &&
+        ts.isIdentifier(proxyInit.expression.expression) &&
+        proxyInit.expression.expression.text === "Proxy" &&
+        proxyInit.expression.name.text === "revocable")
+    ) {
+      return true;
+    }
     // (#3365) Script top-level `this` is the host global object. The checker
     // describes it as the enormous structural `typeof globalThis` type, but
     // module init receives a genuine host externref. Keep the storage and all
