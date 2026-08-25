@@ -350,6 +350,40 @@ function tryCompileStandaloneFunctionHasInstanceRead(
   fctx.body.push({ op: "extern.convert_any" });
   return { kind: "externref" };
 }
+
+/** Fallback when no proto-index companion is demanded by the module. */
+function tryCompileStandaloneArrayIteratorRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.ElementAccessExpression,
+): ValType | undefined {
+  if (!ctx.standalone || ctx.funcMap.has("__protoidx_get_k") || fctx.localMap.has("Symbol")) return undefined;
+  if (resolveComputedKeyExpression(ctx, expr.argumentExpression) !== "@@iterator") return undefined;
+  const receiver = skipTransparentExpressions(expr.expression);
+  if (
+    !ts.isPropertyAccessExpression(receiver) ||
+    receiver.name.text !== "prototype" ||
+    !ts.isIdentifier(receiver.expression) ||
+    receiver.expression.text !== "Array" ||
+    fctx.localMap.has("Array") ||
+    (fctx.boxedCaptures?.has("Array") ?? false)
+  ) {
+    return undefined;
+  }
+  const receiverType = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
+  if (!receiverType) return undefined;
+  if (receiverType.kind !== "externref") coerceType(ctx, fctx, receiverType, { kind: "externref" });
+  fctx.body.push({ op: "drop" });
+  const brand = ensureArrayNativeProtoGlue(ctx);
+  if (brand === undefined) return undefined;
+  const closure = ensureStandaloneNativeMethodClosure(ctx, brand, "values", "method", {
+    refusalBodyFallback: true,
+  });
+  if (!closure) return undefined;
+  fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure), { op: "extern.convert_any" });
+  return { kind: "externref" };
+}
+
 import { tryBuiltinPrototypeGetterBrandThrow } from "./builtin-prototype-brand.js";
 import { tryCompileFunctionPoisonRead } from "./function-poison-pill-access.js";
 import { isFnctorLayoutStructName } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
@@ -4590,6 +4624,9 @@ export function compileElementAccess(
   // for a symbol key (which has no standalone symbol-key arm).
   const builtinProtoIteratorRead = tryCompileStandaloneBuiltinProtoIteratorRead(ctx, fctx, expr);
   if (builtinProtoIteratorRead !== undefined) return builtinProtoIteratorRead;
+
+  const arrayIteratorRead = tryCompileStandaloneArrayIteratorRead(ctx, fctx, expr);
+  if (arrayIteratorRead !== undefined) return arrayIteratorRead;
 
   // #1886 Slice B: linear-backed Uint8Array read `buf[i]` → i32.load8_u(ptr+i).
   // Only fires when `buf` is a registered linear-safe buffer in this function;

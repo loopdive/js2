@@ -98,6 +98,7 @@ import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } 
  * the symbol member is resolved by the computed-access path).
  */
 const ARRAY_PROTO_METHODS = [
+  "@@1", // Symbol.iterator — identity alias of `values`
   "at",
   "concat",
   "copyWithin",
@@ -1770,13 +1771,15 @@ function makeGlue(
     // closure identity, not the member set: each spelling stays in its own
     // proto CSV entry for hasOwnProperty/gOPD.
     memberAliasOf: (member) =>
-      name === "Date" && member === "toGMTString"
-        ? "toUTCString"
-        : name === "String" && member === "trimLeft"
-          ? "trimStart"
-          : name === "String" && member === "trimRight"
-            ? "trimEnd"
-            : undefined,
+      name === "Array" && member === "@@1"
+        ? "values"
+        : name === "Date" && member === "toGMTString"
+          ? "toUTCString"
+          : name === "String" && member === "trimLeft"
+            ? "trimStart"
+            : name === "String" && member === "trimRight"
+              ? "trimEnd"
+              : undefined,
     // (#2193 PR-B) Array.prototype.slice is now a real native closure body;
     // (#2875 slice 1) String.prototype.{charAt,at} likewise. Other Array/String
     // members + all Object members still degrade to a catchable TypeError.
