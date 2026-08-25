@@ -423,7 +423,6 @@ Open-PR audit: [PR 4849](https://github.com/loopdive/js2/pull/4849) contains
 the shared Axios baseline and the previous checkpoints above. No other open PR
 mentions Axios or issue 4527, and no open work overlaps this prototype bridge;
 the generic fix remains necessary on top of that baseline.
-
 ## 2026-08-26 checkpoint (default-exported builtin-subclass constructors)
 
 The largest remaining full-suite cluster was 25 instances of `null is not a

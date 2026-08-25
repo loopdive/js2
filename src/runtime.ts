@@ -13122,6 +13122,24 @@ assert._isSameValue = isSameValue;
               const proto = _getOrVivifyFnPrototype(fnctorCtor, callbackState);
               if (proto != null) return proto;
             }
+            // A named data struct is the Wasm representation of an ordinary
+            // ECMAScript object (object literal, AST node, class data carrier).
+            // Its physical host prototype is null only because WasmGC structs
+            // are opaque to JavaScript; absent an explicit/fnctor link above,
+            // its language-level default is still %Object.prototype%. This is
+            // especially observable when Object.create(struct) is inspected
+            // twice: the first getPrototypeOf returns the original struct
+            // identity, and this second hop must reach Object.prototype rather
+            // than misclassifying the struct as a null-prototype dictionary.
+            const exports = callbackState?.getExports();
+            const isDataStruct = exports?.__is_data_struct as ((value: any) => number) | undefined;
+            if (typeof isDataStruct === "function") {
+              try {
+                if (isDataStruct(obj) === 1) return Object.prototype;
+              } catch {
+                // Missing/stale bridge export — retain the native fallback.
+              }
+            }
           }
           try {
             return Object.getPrototypeOf(obj);

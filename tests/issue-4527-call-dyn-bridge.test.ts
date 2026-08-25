@@ -36,6 +36,78 @@ async function run(files: Record<string, string>, entry: string, expectedImports
 }
 
 describe("issue #4527: cross-module dynamic callback invocation", () => {
+  it("preserves an Object.create result through a callback-driven strategy", async () => {
+    const w = await run(
+      {
+        "./utils.js": `
+          const { toString } = Object.prototype;
+          const { getPrototypeOf } = Object;
+          const { iterator, toStringTag } = Symbol;
+          const kindOf = (value) => toString.call(value).slice(8, -1).toLowerCase();
+          function forEach(values, callback) {
+            for (let index = 0; index < values.length; index++) {
+              callback.call(null, values[index], index, values);
+            }
+          }
+          function hasOwnProp(object, property) {
+            return Object.prototype.hasOwnProperty.call(object, property);
+          }
+          function isUndefined(value) { return typeof value === 'undefined'; }
+          function isPlainObject(value) {
+            if (kindOf(value) !== 'object') return false;
+            const prototype = getPrototypeOf(value);
+            return (
+              (prototype === null ||
+                prototype === Object.prototype ||
+                Object.getPrototypeOf(prototype) === null) &&
+              !(toStringTag in value) &&
+              !(iterator in value)
+            );
+          }
+          const { isArray } = Array;
+          export default { forEach, hasOwnProp, isUndefined, isPlainObject, isArray };
+        `,
+        "./strategy.js": `
+          import utils from './utils.js';
+          export function mergeConfig(config1, config2) {
+            function getMergedValue(source) {
+              if (utils.isPlainObject(source)) return { ...source };
+              if (utils.isArray(source)) return source.slice();
+              return source;
+            }
+            function valueFromConfig2(a, b) {
+              if (!utils.isUndefined(b)) return getMergedValue(b);
+            }
+            const config = Object.create(null);
+            const mergeMap = { data: valueFromConfig2 };
+            utils.forEach(Object.keys({ ...config1, ...config2 }), function compute(prop) {
+              const merge = utils.hasOwnProp(mergeMap, prop) ? mergeMap[prop] : valueFromConfig2;
+              const a = utils.hasOwnProp(config1, prop) ? config1[prop] : undefined;
+              const b = utils.hasOwnProp(config2, prop) ? config2[prop] : undefined;
+              config[prop] = merge(a, b, prop);
+            });
+            return config;
+          }
+        `,
+        "./main.js": `
+          import { mergeConfig } from './strategy.js';
+          function expectValue(actual) {
+            return {
+              toBe(expected) { return Object.is(actual, expected) ? 1 : 0; }
+            };
+          }
+          export function t() {
+            const value = Object.create({});
+            const merged = mergeConfig({}, { data: value });
+            return expectValue(merged.data).toBe(value);
+          }
+        `,
+      },
+      "./main.js",
+    );
+    expect(w.t()).toBe(1);
+  });
+
   it("materializes a nested fallback captured only by a host callback", async () => {
     const w = await run(
       {
