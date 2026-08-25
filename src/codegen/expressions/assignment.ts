@@ -151,8 +151,6 @@ import {
   emitCaptureRuntimeEvalBindingValueCell,
   emitGlobalEnvironmentKey,
   emitGlobalEnvironmentObject,
-  emitRefreshRuntimeEvalBindingValueCellForWrite,
-  emitRuntimeEvalBindingCellWrite,
   ensureGlobalEnvironmentOperation,
 } from "../global-environment.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
@@ -167,6 +165,7 @@ import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
 import { emitToPropertyKeyOnce } from "./computed-member-reference.js";
 import { inheritedSetAffectsKey } from "../inherited-set-gate.js"; // (#4602) per-key #4504 gate
+import { compileRuntimeEvalShadowedAssignment } from "./runtime-eval-assignment.js";
 
 /**
  * Emit a null/undefined guard for an externref-typed destructuring source.
@@ -322,53 +321,11 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
     if (!isUnresolvableIdent(ctx, fctx, expr.left)) {
       const runtimeBinding = emitCaptureRuntimeEvalBindingValueCell(ctx, fctx, name);
       if (runtimeBinding) {
-        const wrapRuntimeEvalCallable = isStaticallyCallableExpression(ctx, expr.right);
-        const rhsType = compileExpression(
-          ctx,
-          fctx,
-          expr.right,
-          wrapRuntimeEvalCallable ? undefined : { kind: "externref" },
-        );
-        if (!rhsType) {
-          reportError(ctx, expr, "Failed to compile runtime-eval-shadowed assignment value");
-          return null;
-        }
-        if (rhsType.kind !== "externref") coerceType(ctx, fctx, rhsType, { kind: "externref" });
-        const rhsLocal = allocLocal(fctx, `__runtime_eval_shadow_rhs_${fctx.locals.length}`, {
-          kind: "externref",
+        return compileRuntimeEvalShadowedAssignment(ctx, fctx, expr, expr.left, name, runtimeBinding, {
+          isStaticallyCallableExpression,
+          tryEmitAmbientIdentifierGlobalWriteFromLocal,
+          emitIdentifierWriteFromLocal,
         });
-        fctx.body.push({ op: "local.set", index: rhsLocal });
-
-        const savedPresent = pushBody(fctx);
-        let cellValueLocal = rhsLocal;
-        if (wrapRuntimeEvalCallable) {
-          fctx.body.push({ op: "local.get", index: rhsLocal });
-          emitRuntimeEvalAotCallableAdapter(ctx, fctx);
-          cellValueLocal = allocLocal(fctx, `__runtime_eval_shadow_cell_value_${fctx.locals.length}`, {
-            kind: "externref",
-          });
-          fctx.body.push({ op: "local.set", index: cellValueLocal });
-        }
-        const refreshedBinding = emitRefreshRuntimeEvalBindingValueCellForWrite(ctx, fctx, name, runtimeBinding);
-        emitRuntimeEvalBindingCellWrite(fctx, refreshedBinding ?? runtimeBinding, cellValueLocal);
-        const presentBody = fctx.body;
-        popBody(fctx, savedPresent);
-
-        const savedMiss = pushBody(fctx);
-        if (!tryEmitAmbientIdentifierGlobalWriteFromLocal(ctx, fctx, expr.left, rhsLocal)) {
-          emitIdentifierWriteFromLocal(ctx, fctx, expr.left, rhsLocal);
-        }
-        const missBody = fctx.body;
-        popBody(fctx, savedMiss);
-
-        fctx.body.push(
-          { op: "local.get", index: runtimeBinding.valueCellLocal },
-          { op: "ref.is_null" },
-          { op: "i32.eqz" },
-          { op: "if", blockType: { kind: "empty" }, then: presentBody, else: missBody },
-          { op: "local.get", index: rhsLocal },
-        );
-        return { kind: "externref" };
       }
     }
     // The ambient global value properties are non-writable. They are not

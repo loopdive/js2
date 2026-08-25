@@ -199,6 +199,7 @@ import {
   enclosingFunctionOwnScopeMayReachDirectEval,
   functionMayReachDirectEval,
   RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME,
+  widenClosureReturnForDirectEval as widenEvalReturn,
 } from "./direct-eval-environment.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
 import {
@@ -1662,8 +1663,7 @@ export function computeClosureWrapperSig(
       }
     }
   }
-
-  return { params: arrowParams, returnType: closureReturnType, hasRestParam };
+  return { params: arrowParams, returnType: widenEvalReturn(ctx, arrow, closureReturnType), hasRestParam };
 }
 
 /**
