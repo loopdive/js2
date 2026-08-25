@@ -82,6 +82,10 @@ export function isSupportedBuiltinNamespace(name: string): boolean {
  * untouched.
  */
 export const BUILTIN_CONSTRUCTOR_IDENTITY_NAMES: ReadonlySet<string> = new Set([
+  // (#4746) Promise's standalone bare value uses the same reified constructor
+  // carrier as the other native constructors, so runtime own-property
+  // reflection sees its spec `length`, `name`, and `prototype` properties.
+  "Promise",
   "Set",
   "Map",
   "WeakMap",
