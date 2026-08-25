@@ -264,6 +264,31 @@
         opacity: 0.9;
       }
 
+      .compatibility-report-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-top: 1.25rem;
+      }
+
+      .compatibility-report-label {
+        color: var(--fg-faint);
+        font-family: var(--mono);
+        font-size: 12px;
+        letter-spacing: 0.04em;
+      }
+
+      .compatibility-report-actions .npm-packages-button {
+        gap: 8px;
+      }
+
+      .compatibility-report-actions .npm-packages-button img {
+        width: 36px;
+        height: auto;
+        display: block;
+      }
+
       .hero-actions .btn-solid,
       .hero-actions .btn-outline {
         min-height: 50px;
@@ -504,6 +529,62 @@
         line-height: 1.72;
         color: var(--fg-faint);
       }
+      .host-bench-sources-footnote {
+        grid-column: 1 / -1;
+        margin-top: -8px;
+        padding-top: 8px;
+        border-top: 1px solid var(--fg-faintest, rgba(255, 255, 255, 0.08));
+      }
+      .host-bench-sources-footnote > summary {
+        cursor: pointer;
+        list-style: none;
+        color: var(--fg-faint, rgba(255, 255, 255, 0.55));
+        font-family: var(--mono, ui-monospace, monospace);
+        font-size: 11px;
+        letter-spacing: 0.05em;
+        padding: 4px 0;
+      }
+      .host-bench-sources-footnote > summary::-webkit-details-marker {
+        display: none;
+      }
+      .host-bench-sources-footnote > summary::before {
+        content: "+ ";
+        color: var(--fg-soft, rgba(255, 255, 255, 0.75));
+      }
+      .host-bench-sources-footnote[open] > summary::before {
+        content: "− ";
+      }
+      .host-bench-sources-footnote > summary:hover {
+        color: var(--fg);
+      }
+      .host-bench-sources-footnote .host-bench-section-desc {
+        max-width: 780px;
+        margin: 8px 0 16px;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .host-bench-source-list {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .host-bench-source-list .bench-test-group {
+        grid-column: auto;
+        margin: 0;
+        padding: 12px;
+      }
+      .host-bench-source-list .bench-test-title {
+        font-size: 11px;
+        line-height: 1.35;
+      }
+      .host-bench-source-list .bench-test-desc {
+        margin-bottom: 8px;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .host-bench-source-list .bench-test-source summary {
+        font-size: 10px;
+      }
 
       .diagram-title {
         font-family: var(--mono);
@@ -583,6 +664,9 @@
         .edition-chart {
           grid-column: span 1;
         }
+        .host-bench-source-list {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
       }
 
       @media (max-width: 720px) {
@@ -594,6 +678,9 @@
       @media (max-width: 440px) {
         #conformance-donut-slot {
           padding-top: 0;
+        }
+        .host-bench-source-list {
+          grid-template-columns: 1fr;
         }
       }
 
@@ -1648,9 +1735,8 @@
             versions. The goals below describe where the project is headed, not what it delivers today.
           </p>
           <p>
-            On compatibility: standalone mode already runs a growing subset of programs as pure WebAssembly with no JS
-            runtime, while full coverage still relies on a JavaScript host and its WebAssembly GC support. Reducing that
-            dependency so more code runs standalone is an explicit goal under active work &mdash; progress is tracked in
+            The JavaScript host is optional. Standalone mode compiles to pure WebAssembly with no JS runtime and now
+            tracks a few points behind the host-backed path; closing that gap is under active work. Both figures are in
             the compatibility report below.
           </p>
           <p>The project is guided by the following goals:</p>
@@ -1710,33 +1796,29 @@
         <div class="intro">
           <h2>Goal: 100% ECMAScript compatibility.</h2>
           <p>
-            Which JS language features compile to WebAssembly today, which still rely on host support, and which are
-            still on the roadmap. Status is derived from ECMAScript Test262 pass rates and known compiler limitations.
+            Which JS language features compile today and which are still on the roadmap, derived from Test262 pass rates
+            and known compiler limitations.
           </p>
           <p class="feat-tables-note">
-            Each edition's percentage and
+            Each edition's
             <span class="feat-tables-note-mono">pass / total</span>
-            count cover
-            <strong>every</strong>
-            Test262 test in that edition. Each feature row below is sliced from that same population by the tests'
-            <span class="feat-tables-note-mono">features:</span>
-            tags, so every row is a
+            covers every Test262 test in that edition; each row below is a
             <strong>subset</strong>
-            of its edition — when a section reads 100%, every row in it does too. Two caveats: a test can carry several
-            feature tags, so rows
-            <em>overlap</em>
-            (they are slices, not a sum); and the ≤ES3 / ES5 core-language sections predate
+            of it, sliced by the tests'
             <span class="feat-tables-note-mono">features:</span>
-            tags, so they show the edition headline only. The ES2016+ edition membership list is synchronized from
-            TC39's finished-proposals record on every site build; the detailed rows retain examples where the compiler
-            has a curated demo.
+            tags — so a section at 100% has every row at 100%. Rows
+            <em>overlap</em>
+            (a test can carry several tags), and the ≤ES3 / ES5 sections predate those tags, so they show the edition
+            headline only. ES2016+ membership syncs from TC39's finished-proposals record on every build.
           </p>
-          <p style="margin-top: 1.25rem">
-            <a class="btn-outline" id="conformance-report-link" href="./benchmarks/report.html">
-              Compatibility Test Report
+          <div class="compatibility-report-actions">
+            <span class="compatibility-report-label">Compatibility Test Report:</span>
+            <a class="btn-outline" id="conformance-report-link" href="./benchmarks/report.html">ECMAScript</a>
+            <a class="btn-outline npm-packages-button" href="./npm-compat.html">
+              <img src="./npm-logo-white.svg" alt="npm" />
+              <span>packages</span>
             </a>
-            <a class="btn-outline" href="./npm-compat.html">Real npm Packages</a>
-          </p>
+          </div>
         </div>
         <!-- <div class="stats-grid">
           <div class="stat-item">
@@ -1890,7 +1972,7 @@ ref.test (ref $String)
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="language/expressions/delete">
-                <span class="feat-badge partial">⚠</span>
+                <span class="feat-badge full">✓</span>
                 <span class="feat-name">delete operator</span>
                 <span class="feat-desc">Remove object properties</span>
 
@@ -2319,7 +2401,7 @@ const found = arr.find(x =&gt; x &gt; 5);</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="language/expressions/property-accessors">
-                <span class="feat-badge partial">⚠</span>
+                <span class="feat-badge full">✓</span>
                 <span class="feat-name">Property accessors (get / set)</span>
                 <span class="feat-desc">Getter and setter property definitions</span>
                 <details>
@@ -2867,7 +2949,7 @@ const { a, ...rest } = obj;</pre
                 </details>
               </div>
               <div class="feat-row" data-t262-paths="built-ins/global,built-ins/globalThis">
-                <span class="feat-badge partial">⚠</span>
+                <span class="feat-badge full">✓</span>
                 <span class="feat-name">globalThis</span>
                 <span class="feat-desc">Universal global object reference</span>
                 <details>
@@ -3588,9 +3670,8 @@ match (value) {
             extending past the JS baseline mean Wasm is faster. The left chart pins both runtimes to their baseline
             tier, the no-optimizing-JIT path that matters for cold starts and multi-tenant edge runtimes; the right
             chart is the production setup with both full optimizing pipelines. These benchmarks run in a JS host
-            (Wasmtime/WASI figures are in the section below). Source for each program is shown inline below the charts.
-            Use &ldquo;Run Browser Benchmark&rdquo; to measure live in your browser, including additional DOM
-            benchmarks.
+            (Wasmtime/WASI figures are in the section below). Source footnotes are available below the charts. Use
+            &ldquo;Run Browser Benchmark&rdquo; to measure live in your browser, including additional DOM benchmarks.
           </p>
           <div class="conformance-diagrams">
             <div class="diagram-panel">
@@ -3613,22 +3694,22 @@ match (value) {
                 legend="Production tiers enabled — V8 TurboFan for JS, Liftoff→TurboFan for Wasm. Bars show speedup over the warm/hot JS runtime."
               ></perf-benchmark-chart>
             </div>
-            <h4 class="host-bench-section-title">Sources</h4>
-            <p class="host-bench-section-desc">
-              One bar per program above. Each block below is the measured kernel — the single exported function the
-              harness times, taken verbatim from
-              <code>website/playground/examples/benchmarks/</code>
-              . Each file also exports a
-              <code>main()</code>
-              that draws the playground's DOM card; that scaffolding is compiled but never timed, so it is not shown
-              here.
-            </p>
-            <div class="bench-test-group" data-test="fib">
-              <h4 class="bench-test-title">fib — fib(30)</h4>
-              <p class="bench-test-desc">Recursive — pure i32/f64 math, no host calls.</p>
-              <details class="bench-test-source">
-                <summary>Show source</summary>
-                <pre class="how-code js">
+            <details class="host-bench-sources-footnote">
+              <summary>Source footnotes · fib · loop · string · array</summary>
+              <p class="host-bench-section-desc">
+                Each source is the measured kernel taken verbatim from
+                <code>website/playground/examples/benchmarks/</code>
+                . The files also export a
+                <code>main()</code>
+                for the playground card; that scaffolding is compiled but not timed.
+              </p>
+              <div class="host-bench-source-list">
+                <div class="bench-test-group" data-test="fib">
+                  <h4 class="bench-test-title">fib — fib(30)</h4>
+                  <p class="bench-test-desc">Recursive — pure i32/f64 math, no host calls.</p>
+                  <details class="bench-test-source">
+                    <summary>Show source</summary>
+                    <pre class="how-code js">
 export function fib(n: number): number {
   if (n &lt;= 1) return n;
   return fib(n - 1) + fib(n - 2);
@@ -3637,43 +3718,43 @@ export function fib(n: number): number {
 export function bench_fib(): number {
   return fib(30);
 }</pre
-                >
-              </details>
-            </div>
-            <div class="bench-test-group" data-test="loop">
-              <h4 class="bench-test-title">loop — 1M Int32 sum</h4>
-              <p class="bench-test-desc">Tight i32 loop with explicit | 0 wrap, no allocations.</p>
-              <details class="bench-test-source">
-                <summary>Show source</summary>
-                <pre class="how-code js">
+                    >
+                  </details>
+                </div>
+                <div class="bench-test-group" data-test="loop">
+                  <h4 class="bench-test-title">loop — 1M Int32 sum</h4>
+                  <p class="bench-test-desc">Tight i32 loop with explicit | 0 wrap, no allocations.</p>
+                  <details class="bench-test-source">
+                    <summary>Show source</summary>
+                    <pre class="how-code js">
 export function bench_loop(): number {
   let s = 0;
   for (let i = 0; i &lt; 1000000; i++) s = (s + i) | 0;
   return s;
 }</pre
-                >
-              </details>
-            </div>
-            <div class="bench-test-group" data-test="string">
-              <h4 class="bench-test-title">string — concat 1k</h4>
-              <p class="bench-test-desc">wasm:js-string concat per iteration.</p>
-              <details class="bench-test-source">
-                <summary>Show source</summary>
-                <pre class="how-code js">
+                    >
+                  </details>
+                </div>
+                <div class="bench-test-group" data-test="string">
+                  <h4 class="bench-test-title">string — concat 1k</h4>
+                  <p class="bench-test-desc">wasm:js-string concat per iteration.</p>
+                  <details class="bench-test-source">
+                    <summary>Show source</summary>
+                    <pre class="how-code js">
 export function bench_string(): number {
   let str = "";
   for (let i = 0; i &lt; 1000; i++) str = str + "abcde";
   return str.length;
 }</pre
-                >
-              </details>
-            </div>
-            <div class="bench-test-group" data-test="array">
-              <h4 class="bench-test-title">array — fill+sum 10k</h4>
-              <p class="bench-test-desc">Wasm GC array — push / get loop.</p>
-              <details class="bench-test-source">
-                <summary>Show source</summary>
-                <pre class="how-code js">
+                    >
+                  </details>
+                </div>
+                <div class="bench-test-group" data-test="array">
+                  <h4 class="bench-test-title">array — fill+sum 10k</h4>
+                  <p class="bench-test-desc">Wasm GC array — push / get loop.</p>
+                  <details class="bench-test-source">
+                    <summary>Show source</summary>
+                    <pre class="how-code js">
 export function bench_array(): number {
   const arr: number[] = [];
   for (let i = 0; i &lt; 10000; i++) arr.push(i);
@@ -3681,9 +3762,11 @@ export function bench_array(): number {
   for (let i = 0; i &lt; arr.length; i++) total = total + arr[i];
   return total;
 }</pre
-                >
-              </details>
-            </div>
+                    >
+                  </details>
+                </div>
+              </div>
+            </details>
           </div>
         </div>
 
@@ -5192,6 +5275,8 @@ console.log(instance.exports.run()); // &rarr; 55</pre
         edition === "ES5" ||
         /^ES20\d{2}$/.test(edition);
       const normalizeEditionLabel = (edition) => (edition === "≤ ES3" || edition === "ES3" ? "ES3 / Core" : edition);
+      const isLegacyEditionBucket = (edition) =>
+        edition === "Unclassified (legacy)" || edition === "≤ ES3" || edition === "ES3" || edition === "ES3 / Core";
       const PUBLISHED_EDITION_RELEASE_MONTH = 6;
       const latestPublishedEditionYear = (referenceDate = new Date()) => {
         const date =
@@ -5231,11 +5316,19 @@ console.log(instance.exports.run()); // &rarr; 55</pre
                 }));
               const proposalBucket =
                 editions.find((edition) => String(edition?.edition || "") === PROPOSAL_LABEL) ?? null;
+              // The static landing-page section is labelled ES3 / Core, but
+              // the current classifier deliberately keeps its old-test
+              // residue off the edition timeline as "Unclassified (legacy)".
+              // Keep the headline population visible on that section without
+              // presenting the metadata residue as a measured timeline stop.
+              const legacyBucket =
+                editions.find((edition) => isLegacyEditionBucket(String(edition?.edition || ""))) ?? null;
 
               return {
                 editionList,
                 editionMap: new Map(editionList.map((edition) => [edition.normalizedEdition, edition])),
                 proposalBucket,
+                legacyBucket,
               };
             })();
             pendingByLane.set(lane, pending);
@@ -6068,7 +6161,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           // per-edition bars show standalone numbers in standalone mode.
           const hostEnabled = hostToggle ? hostToggle.checked : true;
           try {
-            const { editionList, editionMap, proposalBucket } = await loadEditionBuckets(hostEnabled);
+            const { editionList, editionMap, proposalBucket, legacyBucket } = await loadEditionBuckets(hostEnabled);
             const panel = document.querySelector(".feat-panel");
             if (panel instanceof HTMLElement) {
               editionList.forEach((edition) => {
@@ -6083,7 +6176,10 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               const ensured = ensureEditionLabel(section);
               if (!ensured) return;
               const label = ensured.labelSpan.textContent?.trim() || "";
-              const bucket = label === "Proposals" ? proposalBucket : editionMap.get(label);
+              const bucket =
+                label === "Proposals"
+                  ? proposalBucket
+                  : (editionMap.get(label) ?? (label === "ES3 / Core" ? legacyBucket : null));
               const existingBar = ensured.el.querySelector(".feat-edition-passbar");
 
               if (!bucket) {

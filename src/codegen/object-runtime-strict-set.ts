@@ -79,6 +79,8 @@ export interface StrictSetHelperState {
   ) => number;
   /** `$Object` struct type index — the receiver discriminator. */
   objectTypeIdx: number;
+  /** #4504's completed-set result channel, absent in flag-clear modules. */
+  externSetResultGlobalIdx?: number;
 }
 
 /**
@@ -105,7 +107,7 @@ export function buildStrictSetHelper(ctx: CodegenContext, s: StrictSetHelperStat
   addStringConstantGlobal(ctx, message);
 
   // params: 0=obj 1=key 2=value
-  const body: Instr[] = [
+  const legacyBody: Instr[] = [
     // Non-$Object receiver → the ordinary (side-table aware) write, no throw.
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
@@ -138,6 +140,38 @@ export function buildStrictSetHelper(ctx: CodegenContext, s: StrictSetHelperStat
       ],
     },
   ];
+  const body: Instr[] =
+    s.externSetResultGlobalIdx === undefined
+      ? legacyBody
+      : [
+          // `__reflect_set` performs one write and leaves the detailed outcome
+          // behind it.  Its public result remains boolean; strict assignment
+          // reads the adjacent tri-state so an unadmitted host boundary stays
+          // lenient while a real refusal throws catchably.
+          // A finalize-prepended specialised Reflect arm (for example the
+          // dynamic TypedArray lane) can return before `__reflect_set` reaches
+          // its core reset. Clear the channel here as well so a prior refusal
+          // cannot poison that unadmitted strict write.
+          { op: "i32.const", value: 0 }, // SET_RESULT_UNADMITTED
+          { op: "global.set", index: s.externSetResultGlobalIdx },
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: reflectSetIdx },
+          { op: "drop" },
+          { op: "global.get", index: s.externSetResultGlobalIdx },
+          { op: "i32.const", value: 2 }, // SET_RESULT_REFUSED
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...stringConstantExternrefInstrs(ctx, message),
+              { op: "call", funcIdx: typeErrorCtorIdx },
+              { op: "throw", tagIdx: exnTagIdx },
+            ],
+          },
+        ];
 
   s.registerNative(
     "__extern_set_strict",

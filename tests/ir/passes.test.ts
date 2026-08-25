@@ -486,6 +486,7 @@ describe("#3523 — batchStringConcat", () => {
     };
 
     expect(verifyIrFunction(fn)).toEqual([]);
+    expect(batchStringConcat(fn, undefined, 2)).toBe(fn);
     const batched = batchStringConcat(fn);
     expect(batched).not.toBe(fn);
     expect(batched.blocks[0]!.instrs.slice(0, 3)).toEqual(operandCalls);

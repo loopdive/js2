@@ -1,7 +1,7 @@
 ---
 id: 4383
 title: "UUID original suite exposes vector, crypto, exception, and callback ABI gaps"
-status: in_progress
+status: in-progress
 sprint: current
 created: 2026-08-12
 updated: 2026-08-13
@@ -133,6 +133,25 @@ struct reads. This is a real compatibility increment, but it does not fix the
 broad vector, crypto, digest, exception, and dynamic-state failures: **65/75**
 upstream callbacks still fail and remain follow-up work for the final 75/75
 acceptance target.
+
+## 2026-08-16 re-measure (main `a9b20d4c`, curated-suite triage)
+
+Still **10/75 Wasm, 75/75 Node**, all ten modules validate — unchanged from
+the 2026-08-12 checkpoint; the 65 remaining failures bucket as:
+
+| bucket | count | note |
+| --- | --- | --- |
+| `[object WebAssembly.Exception]` (uncaught wasm exception) | 24 | v35 digest paths + v1/v6/v7 option/state paths |
+| `RuntimeError: illegal cast` | 21 | v1/v6/v7 dynamic-state clusters |
+| assertion: `Invalid UUID` / stringify invalid | 7 | byte-vector parse/stringify round-trips |
+| `crypto.getRandomValues: argument is not a typed-array (Uint8Array required)` | 6 | compiled Uint8Array loses host typed-array identity (see `tests/issue-4383-uuid-typed-array-identity.test.ts`) |
+| `crypto is not defined` | 3 | v4 native-random probes |
+| validate/version null-result table cases | 4 | helpers return null/undefined |
+
+Per-file: `v35` 0/21 · `v7` 0/14 · `v1` 0/10 · `v6` 0/8 · `v4` 6/10 ·
+`parse` 1/5 · `stringify` 3/4 · `rng` 0/1 · `validate` 0/1 · `version` 0/1.
+The open acceptance boxes above are all still open; no drift, no progress
+since the checkpoint.
 
 ## Reproduction
 

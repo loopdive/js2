@@ -2,9 +2,9 @@
 id: 4451
 title: "Sibling invalid-module miscompile: callback tuple slot typed struct-ref, element read lowered f64 (boundary-policy.ts __cb_0)"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 priority: high
 horizon: m

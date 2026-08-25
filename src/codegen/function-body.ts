@@ -28,6 +28,7 @@ import {
   resolveWasmType,
 } from "./index.js";
 import { ensureExnTag } from "./registry/imports.js";
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   coerceType,
@@ -48,7 +49,7 @@ import {
 import { beginNestedFunctionNameScope, endNestedFunctionNameScope } from "./nested-function-name-scope.js"; // (#4456)
 import { emitThrowReferenceError } from "./expressions/helpers.js";
 import { compileObjectLiteralAsExternref } from "./literals.js";
-import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { shouldRegisterArgumentsWithHost } from "./helpers/arguments-registration.js";
 import { seedDeclarationArgumentsCallee } from "./arguments-callee.js"; // (#4243) §10.6 step 13.a
 import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
@@ -59,10 +60,10 @@ import { collectI32SpecializedArrays } from "./array-element-typing.js";
 // dependency-free analysis module so the IR front-end can reuse the SAME
 // hardened #1120/#1236 proof without importing this emit-heavy module.
 // Re-exported here because `codegen/index.ts` and tests import it by this path.
-export { collectI32CoercedLocals } from "./analysis/i32-coerced-locals.js";
-import { collectI32CoercedLocals } from "./analysis/i32-coerced-locals.js";
+export { collectI32CoercedLocals } from "../ir/analysis/i32-coerced-locals.js";
+import { collectI32CoercedLocals } from "../ir/analysis/i32-coerced-locals.js";
 import { detectArrayReduceFusion, applyArrayReduceFusion } from "./array-reduce-fusion.js";
-import { compileNativeGeneratorFunction } from "./generators-native.js";
+import { compileNativeGeneratorFunction, nativeGeneratorInfoForDecl } from "./generators-native.js";
 import { maybeActivateAsync } from "./async-activation.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
 import {
@@ -155,6 +156,7 @@ export const INLINE_DISALLOWED_OPS = new Set([
   "br",
   "br_if",
   "try",
+  "try_table",
   "throw",
   "rethrow",
   "unreachable",
@@ -280,6 +282,16 @@ function assertDirectFunctionBodyAllowed(name: string): void {
 }
 
 export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclaration, func: WasmFunction): void {
+  // Captured-global lookup is scoped to the function body currently being
+  // emitted. A preceding module-init pass or sibling function may have
+  // promoted a same-named lexical binding, but reusing that name-keyed entry
+  // would route this function's object-literal methods to the wrong global.
+  // The concrete globals remain in the module; only the short-lived lookup
+  // maps are reset before this body's lowering starts.
+  ctx.capturedGlobals.clear();
+  ctx.capturedGlobalsWidened.clear();
+  ctx.capturedBoxGlobals?.clear();
+  ctx.capturedGlobalsOwner?.clear();
   const sig = ctx.checker.getSignatureFromDeclaration(decl);
   if (!sig) {
     reportError(ctx, decl, `Cannot resolve signature for function '${func.name}'`);
@@ -408,7 +420,6 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
     i32CoercedLocals: i32CoercedLocals.size > 0 ? i32CoercedLocals : undefined,
     i32SpecializedArrays: i32SpecializedArrays.size > 0 ? i32SpecializedArrays : undefined,
   };
-
   // A nested lexical descendant can direct-eval a name owned by this function,
   // so mark the whole ancestor chain before any parameter/default/body lowering
   // can capture those bindings through a narrower, non-canonical cell type.
@@ -641,7 +652,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   // We create a vec struct (same as Array) populated from all function parameters.
   // Use externref elements so that all parameter types (numbers, strings, objects)
   // are preserved — matching the closure version in closures.ts (#771).
-  if (decl.body && (bodyUsesArguments(decl.body) || fctx.directEvalBindingNames !== undefined)) {
+  if (decl.body && needsImplicitArgumentsObject(decl, fctx.directEvalBindingNames !== undefined)) {
     // Ensure __box_number and __unbox_number are available for mapped arguments sync
     const hasNumericParam = params.some((p) => p.type.kind === "f64" || p.type.kind === "i32");
     if (hasNumericParam) {
@@ -710,7 +721,9 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
     // The generator returnType is already externref (the frame carrier).
     emitAsyncGenerator(ctx, fctx, decl);
   } else if (isGenerator) {
-    const nativeGenerator = ctx.nativeGenerators.get(func.name);
+    // (#3505) Decl-aware lookup: a declaration whose own registration bailed
+    // must not borrow a same-named other declaration's state machine.
+    const nativeGenerator = nativeGeneratorInfoForDecl(ctx, func.name, decl);
     if (nativeGenerator) {
       compileNativeGeneratorFunction(ctx, fctx, decl, nativeGenerator);
     } else if (ctx.standalone || ctx.wasi) {
@@ -787,13 +800,15 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
               { op: "local.set", index: pendingThrowLocal },
             ]
           : [];
-      fctx.body.push({
-        op: "try",
-        blockType: { kind: "empty" },
-        body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
-        catches: [{ tagIdx, body: catchBody }],
-        catchAll: catchAllBody.length > 0 ? catchAllBody : undefined,
-      });
+      fctx.body.push(
+        buildTargetTaggedTry(
+          ctx,
+          { kind: "empty" },
+          [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
+          [{ tagIdx, body: catchBody }],
+          catchAllBody.length > 0 ? catchAllBody : undefined,
+        ),
+      );
 
       // Return __create_generator or __create_async_generator depending on async flag.
       // Note: ctx.asyncFunctions excludes async generators (by design), so we check

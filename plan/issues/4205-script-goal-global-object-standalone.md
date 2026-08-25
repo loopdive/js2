@@ -3,9 +3,9 @@ id: 4205
 title: "Script-goal global object: the pre-scan must track the lowering — nested / aliased `this.x = v` and `this.x++` (the filed 137-file / `with`-masking framing is RETRACTED, see the implementation record)"
 status: done
 assignee: ttraenkler/sendev-w25
-sprint: current
+sprint: 78
 created: 2026-08-07
-updated: 2026-08-07
+updated: 2026-08-18
 completed: 2026-08-07
 loc-budget-allow:
   - src/codegen/expressions/unary-updates.ts

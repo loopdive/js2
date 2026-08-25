@@ -3,6 +3,15 @@ import { ts, forEachChild } from "../ts-api.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
 import type { BuildIrUnitInventoryOptions } from "../ir/identity.js";
 import type { FuncTypeDef, Instr, ValType, WasmModule } from "../ir/types.js";
+import {
+  countImportedFuncs,
+  declareExternCImports,
+  declareImportedMemory,
+  emitExternCBoundaryArg,
+  emitExternCBoundaryResult,
+  type ExternCImportSpec,
+  resolveExternCValType,
+} from "./c-abi.js";
 import { createEmptyModule } from "../ir/types.js";
 import { linearAllocatorPolicy, type LinearAllocatorPolicyId } from "../ir/analysis/linear-memory-plan.js";
 import * as linearIr from "../ir/backend/linear-integration.js";
@@ -16,7 +25,7 @@ import { finalizeLinearArena } from "./export-arena.js";
 import * as numberFormat from "./number-format.js";
 import { addLinearStackArenaRuntime } from "./runtime-stack-arena.js";
 import { compileLinearStringMethodCall } from "./string-methods.js";
-import { addLinearStringRepeatRuntime, sourceMayUseLinearStringRepeat } from "./string-repeat.js";
+import { reserveLinearStringRepeatProvider, sourceMayUseLinearStringRepeat } from "./string-repeat.js";
 import {
   addArrayRuntime,
   addFmodRuntime,
@@ -31,12 +40,26 @@ import {
   addUint8ArrayRuntime,
   FMOD_FN,
 } from "./runtime.js";
+import {
+  finalizeLinkedDataImage,
+  LINKED_ARENA_DEFAULT_CHUNK_BYTES,
+  type LinkedHeapOptions,
+  RODATA_BIAS_GLOBAL,
+} from "./linked-arena.js";
 import { linearStringLiteralInstrs } from "./string-literals.js";
 
 /** Type tag for class instances in linear memory */
 const CLASS_TYPE_TAG = 5;
 
-/** Data segment base address — must be below HEAP_START (1024) */
+/**
+ * Data segment base address — must be below HEAP_START (1024).
+ *
+ * **Standalone mode only** (#4540). In linked mode the segment is PASSIVE and
+ * this value stops being an address: it becomes the base the literal offsets
+ * were assigned from, which `__rodata_bias` corrects at runtime. An active
+ * segment at 64 would be written at instantiation into the memory owner's
+ * shadow stack, before any instruction of ours runs. See ADR-0022.
+ */
 const DATA_SEGMENT_BASE = 64;
 
 function isUint8ArrayTypeText(text: string): boolean {
@@ -99,6 +122,97 @@ export interface LinearOptions {
   /** Shared IR allocation policy. Direct-backend fallbacks remain arena-backed. */
   allocationPolicy?: LinearAllocatorPolicyId;
   irInventoryOptions?: BuildIrUnitInventoryOptions;
+  /**
+   * External C functions this module calls (#4539). Declared before any
+   * defined function so indices are stable; see `declareExternCImports`.
+   */
+  externImports?: readonly ExternCImportSpec[];
+  /**
+   * Import linear memory from another module instead of defining one — the
+   * ADR-0020 link topology, where the engine artifact owns the memory.
+   */
+  importMemory?: {
+    module: string;
+    name: string;
+    min: number;
+    max?: number;
+    /** memory64 index type (#4554). Refused for now; see declareImportedMemory. */
+    indexType?: "i32" | "i64";
+  };
+  /**
+   * Linked-mode heap (#4540) — REQUIRED whenever {@link importMemory} is set.
+   *
+   * Names the extern-C import that provides the host allocator. `__malloc` then
+   * bump-allocates inside chunks carved from it and never calls `memory.grow`,
+   * so the memory's owner stays its only grower.
+   *
+   * It is required rather than optional because the alternative is the measured
+   * failure this option exists to remove: with a memory we do not own and the
+   * standalone arena, `__heap_ptr` starts at 1024 — inside the pinned
+   * artifact's 64 KiB shadow stack — so the first allocation writes through the
+   * engine's stack. Making that combination unrepresentable is the fix; a
+   * default would just move the trap.
+   */
+  linkedHeap?: {
+    /** Name of the extern-C import providing `malloc(size: i32) -> ptr: i32`. */
+    mallocImport: string;
+    /** Bytes per carved chunk (default: one Wasm page). */
+    chunkBytes?: number;
+  };
+  /**
+   * Which allocator backs the heap (#4557).
+   *
+   * `"malloc-v1"` emits the real allocator — free lists, boundary tags,
+   * coalescing, in-place `realloc` — and exports `js2wasm_malloc` /
+   * `js2wasm_calloc` / `js2wasm_free` / `js2wasm_realloc` /
+   * `js2wasm_usable_size` so the QuickJS artifact can install them through
+   * `JS_NewRuntime2`. `__malloc` keeps its bump fast path; only the source of
+   * its chunks moves, from the engine's heap to ours.
+   *
+   * Defaults to `"bump"`, which is #4540's shipped fallback and the reason it
+   * was kept: if the measured comparison against the artifact's dlmalloc does
+   * not hold, this option is simply not set.
+   */
+  heapAllocator?: "bump" | "malloc-v1";
+}
+
+/**
+ * Resolve {@link LinearOptions.linkedHeap} into the runtime's concrete form,
+ * and make the catastrophic combination unrepresentable (#4540).
+ *
+ * `importMemory` without `linkedHeap` is the measured corruption: the arena
+ * would start bump-allocating at 1024, inside the memory owner's shadow stack.
+ * `linkedHeap` without `importMemory` is meaningless — we own the memory, so
+ * there is no host allocator to defer to. Both are refused here, before any
+ * bytes exist, rather than diagnosed later from a corrupted heap.
+ */
+function resolveLinkedHeap(
+  opts: LinearOptions,
+  externImportIndices: Map<string, number>,
+): LinkedHeapOptions | undefined {
+  if (!opts.importMemory && !opts.linkedHeap) return undefined;
+  if (opts.importMemory && !opts.linkedHeap) {
+    throw new Error(
+      "generateLinearModule: importMemory was set without linkedHeap. A module that does not own " +
+        "its memory must carve its arena from the owner's allocator; the standalone arena would " +
+        "start allocating at a fixed low address inside the owner's shadow stack (#4540).",
+    );
+  }
+  if (opts.linkedHeap && !opts.importMemory) {
+    throw new Error(
+      "generateLinearModule: linkedHeap was set without importMemory. Carving from a host " +
+        "allocator only makes sense when another module owns the address space (#4540).",
+    );
+  }
+  const { mallocImport, chunkBytes } = opts.linkedHeap!;
+  const mallocFuncIdx = externImportIndices.get(mallocImport);
+  if (mallocFuncIdx === undefined) {
+    throw new Error(
+      `generateLinearModule: linkedHeap.mallocImport '${mallocImport}' is not among externImports. ` +
+        "Declare it (params [i32], results [i32]) so the arena can call it (#4540).",
+    );
+  }
+  return { mallocFuncIdx, chunkBytes: chunkBytes ?? LINKED_ARENA_DEFAULT_CHUNK_BYTES };
 }
 
 /**
@@ -107,15 +221,50 @@ export interface LinearOptions {
  */
 export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): WasmModule {
   const mod = createEmptyModule();
+  // #4539 — imports FIRST, before any runtime function exists. A function's
+  // index is `numImportFuncs + position`, so a later import would shift every
+  // index; `declareExternCImports` throws rather than allow that. With no
+  // imports requested this is a no-op and emitted output is unchanged.
+  if (opts.importMemory) {
+    const { module, name, min, max, indexType } = opts.importMemory;
+    declareImportedMemory(mod, module, name, min, max, indexType);
+  }
+  const externImportIndices = declareExternCImports(mod, opts.externImports ?? []);
+  // The index lives here rather than only in funcMap because an ambient
+  // `declare function` of the same name is later registered as a user
+  // function and would overwrite the funcMap entry — silently retargeting the
+  // call at a body-less local slot with a TS-derived (f64) signature. Keeping
+  // the extern binding in its own map makes it authoritative.
+  // Types are RESOLVED through the address model here (#4554) so every later
+  // consumer — the call site's boundary marshalling included — sees concrete
+  // Wasm types and never has to re-decide how wide a handle is.
+  const externImportSigs = new Map<string, { index: number; params: ValType[]; results: ValType[] }>();
+  for (const spec of opts.externImports ?? []) {
+    const index = externImportIndices.get(spec.name);
+    if (index === undefined) continue;
+    externImportSigs.set(spec.name, {
+      index,
+      params: spec.params.map((t) => resolveExternCValType(t)),
+      results: spec.results.map((t) => resolveExternCValType(t)),
+    });
+  }
   const allocationPolicy = linearAllocatorPolicy(opts.allocationPolicy ?? "arena-v1");
-  const dataSegmentBase = numberFormat.addRuntime(mod, ast, opts.exposeArenaReset, DATA_SEGMENT_BASE);
+  const linkedHeap = resolveLinkedHeap(opts, externImportIndices);
+  const dataSegmentBase = numberFormat.addRuntime(
+    mod,
+    ast,
+    opts.exposeArenaReset,
+    DATA_SEGMENT_BASE,
+    linkedHeap,
+    opts.heapAllocator,
+  );
 
   // Add memory and runtime functions first
   if (allocationPolicy.id === "analysis-stack-arena-v1") addLinearStackArenaRuntime(mod);
   addUint8ArrayRuntime(mod);
   addArrayRuntime(mod);
   addStringRuntime(mod);
-  if (sourceMayUseLinearStringRepeat(ast.sourceFile)) addLinearStringRepeatRuntime(mod);
+  if (sourceMayUseLinearStringRepeat(ast.sourceFile)) reserveLinearStringRepeatProvider(mod);
   addMapRuntime(mod);
   addSetRuntime(mod);
   addNumericMapRuntime(mod);
@@ -140,11 +289,28 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     init: [{ op: "i32.const", value: 0 }],
   });
 
+  // #4540 — linked mode rebases every literal reference through one global.
+  // It must exist BEFORE any function is compiled, because each literal site
+  // reads its index while being emitted. Not created in standalone mode, so
+  // that lane's global layout (and emitted bytes) is untouched.
+  let roDataBiasGlobalIdx: number | undefined;
+  if (linkedHeap !== undefined) {
+    roDataBiasGlobalIdx = mod.globals.length;
+    mod.globals.push({
+      name: RODATA_BIAS_GLOBAL,
+      type: { kind: "i32" },
+      mutable: true,
+      init: [{ op: "i32.const", value: 0 }],
+    });
+  }
+
   const ctx: LinearContext = {
     mod,
     checker: ast.checker,
     funcMap: new Map(),
-    numImportFuncs: 0,
+    // #4539 — derived, not hard-coded. Zero when nothing is imported, so
+    // output is unchanged for every existing caller.
+    numImportFuncs: countImportedFuncs(mod),
     currentFunc: null,
     errors: [],
     classLayouts: new Map(),
@@ -155,7 +321,17 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     closureEnvGlobalIdx,
     moduleGlobals: new Map(),
     moduleCollectionTypes: new Map(),
+    externImportSigs: externImportSigs.size > 0 ? externImportSigs : undefined,
+    ...(roDataBiasGlobalIdx !== undefined ? { roDataBiasGlobalIdx } : {}),
   };
+
+  // #4539 — extern imports are callable by name. They occupy indices [0, n),
+  // so registering them here lets the ordinary call path resolve them; the
+  // signature map drives boundary marshalling at each call site.
+  for (const spec of opts.externImports ?? []) {
+    const idx = externImportIndices.get(spec.name);
+    if (idx !== undefined) ctx.funcMap.set(spec.name, idx);
+  }
 
   // Register runtime functions in funcMap
   for (let i = 0; i < mod.functions.length; i++) {
@@ -273,6 +449,13 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
 
   emitClosureTable(ctx);
 
+  // #4540 — LAST, so the start function's index is stable: every earlier
+  // finalizer may still append functions, and a start index computed before
+  // them would name someone else's body.
+  if (roDataBiasGlobalIdx !== undefined) {
+    finalizeLinkedDataImage(mod, roDataBiasGlobalIdx, dataSegmentBase);
+  }
+
   // Surface codegen diagnostics so compiler.ts fails the compile rather than
   // emitting a structurally invalid binary for unsupported constructs (#1868).
   if (ctx.errors.length > 0) mod.codegenErrors = ctx.errors;
@@ -291,7 +474,7 @@ export function generateLinearMultiModule(multiAst: MultiTypedAST, opts: LinearO
   addUint8ArrayRuntime(mod);
   addArrayRuntime(mod);
   addStringRuntime(mod);
-  if (multiAst.sourceFiles.some(sourceMayUseLinearStringRepeat)) addLinearStringRepeatRuntime(mod);
+  if (multiAst.sourceFiles.some(sourceMayUseLinearStringRepeat)) reserveLinearStringRepeatProvider(mod);
   addMapRuntime(mod);
   addSetRuntime(mod);
   addNumericMapRuntime(mod);
@@ -311,7 +494,9 @@ export function generateLinearMultiModule(multiAst: MultiTypedAST, opts: LinearO
     mod,
     checker: multiAst.checker,
     funcMap: new Map(),
-    numImportFuncs: 0,
+    // #4539 — derived, not hard-coded. Zero when nothing is imported, so
+    // output is unchanged for every existing caller.
+    numImportFuncs: countImportedFuncs(mod),
     currentFunc: null,
     errors: [],
     classLayouts: new Map(),
@@ -1809,8 +1994,18 @@ export function compileExpression(ctx: LinearContext, fctx: LinearFuncContext, e
           fctx.body.push({ op: "local.get", index: localIdx }); // table index
           fctx.body.push({ op: "call_indirect", typeIdx: cbTypeIdx, tableIdx: 0 });
         } else {
+          // #4539 — an extern-C binding wins over any same-named local slot.
+          // A `declare function` is registered as a user function too, so
+          // consulting funcMap first would retarget the call at a body-less
+          // slot carrying a TS-derived signature.
+          const externSig = ctx.externImportSigs?.get(funcName);
           const funcIdx = ctx.funcMap.get(funcName);
-          if (funcIdx !== undefined) {
+          if (externSig !== undefined) {
+            // The declared C signature is authoritative and this backend's
+            // `number` is f64, so arguments and result convert at the
+            // boundary rather than being assumed to match.
+            emitExternCCall(ctx, fctx, expr, funcName, externSig.index, externSig);
+          } else if (funcIdx !== undefined) {
             for (const arg of expr.arguments) {
               compileCallArg(ctx, fctx, arg);
             }
@@ -5571,4 +5766,51 @@ function emitClosureSetup(
 
   // Push the table index as the i32 argument value
   fctx.body.push({ op: "i32.const", value: tableIdx });
+}
+
+/**
+ * Emit a call to an extern-C import, marshalling at the boundary (#4539).
+ *
+ * Arity is validated here rather than left to Wasm validation: a C callee is
+ * fixed-arity, and a mismatch caught at the call site names the function and
+ * the source location, where a validation failure would surface as an opaque
+ * "type mismatch" against a whole module.
+ */
+function emitExternCCall(
+  ctx: LinearContext,
+  fctx: LinearFuncContext,
+  expr: ts.CallExpression,
+  funcName: string,
+  funcIdx: number,
+  sig: { params: ValType[]; results: ValType[] },
+): void {
+  if (expr.arguments.length !== sig.params.length) {
+    ctx.errors.push({
+      message:
+        `extern-C import '${funcName}' takes ${sig.params.length} argument(s), ` +
+        `called with ${expr.arguments.length}. C imports are fixed-arity — ` +
+        "there are no defaults to fill in.",
+      ...nodeLoc(expr),
+    });
+    fctx.body.push({ op: "f64.const", value: 0 });
+    return;
+  }
+  try {
+    for (let i = 0; i < expr.arguments.length; i++) {
+      compileCallArg(ctx, fctx, expr.arguments[i]);
+      emitExternCBoundaryArg(fctx.body, sig.params[i]);
+    }
+    fctx.body.push({ op: "call", funcIdx });
+    // A void C function leaves nothing on the stack; the linear backend's
+    // expression positions always expect a value, so push the same `f64.const
+    // 0` the rest of the backend uses for a void result.
+    if (sig.results.length === 0) {
+      fctx.body.push({ op: "f64.const", value: 0 });
+    } else {
+      emitExternCBoundaryResult(fctx.body, sig.results[0]);
+    }
+  } catch (error) {
+    ctx.errors.push({ message: (error as Error).message, ...nodeLoc(expr) });
+    fctx.body.push({ op: "f64.const", value: 0 });
+  }
 }

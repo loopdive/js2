@@ -24,6 +24,12 @@
 //     function-local Wasm indices (local.get, etc.) which would be invalid
 //     in a different caller's local frame. Plain SSA ops (const, binary,
 //     select, ...) are safe to splice.
+//   - A callee that crosses an external capability boundary (`extern.*` or a
+//     direct import call) has at most one local call site. Duplicating such a
+//     body at multiple sites grows every host-bound coercion/call sequence;
+//     keeping the shared helper preserves that boundary. Single-site helpers
+//     remain eligible, so this is a fan-out guard rather than a blanket ban on
+//     external operations.
 //
 // ## Algorithm
 //
@@ -66,6 +72,7 @@
 
 import {
   asValueId,
+  forEachInstrDeep,
   forEachNestedBuffer,
   type IrBlock,
   type IrBranch,
@@ -96,11 +103,20 @@ export function inlineSmall(mod: IrModule, registry?: AllocSiteRegistry): IrModu
   }
 
   const recursiveSet = computeRecursiveSet(mod, byUnitId);
+  const localUnitCallSiteCounts = computeLocalUnitCallSiteCounts(mod, byUnitId);
+  const externalCapabilityBoundaryUnits = computeExternalCapabilityBoundaryUnits(mod);
 
   const newFunctions: IrFunction[] = [];
   let anyChanged = false;
   for (const fn of mod.functions) {
-    const inlined = inlineIntoFunction(fn, byUnitId, recursiveSet, registry);
+    const inlined = inlineIntoFunction(
+      fn,
+      byUnitId,
+      recursiveSet,
+      localUnitCallSiteCounts,
+      externalCapabilityBoundaryUnits,
+      registry,
+    );
     if (inlined !== fn) anyChanged = true;
     newFunctions.push(inlined);
   }
@@ -116,6 +132,8 @@ function inlineIntoFunction(
   caller: IrFunction,
   byUnitId: ReadonlyMap<IrUnitId, IrFunction>,
   recursiveSet: ReadonlySet<IrUnitId>,
+  localUnitCallSiteCounts: ReadonlyMap<IrUnitId, number>,
+  externalCapabilityBoundaryUnits: ReadonlySet<IrUnitId>,
   registry?: AllocSiteRegistry,
 ): IrFunction {
   // Nested instruction buffers have their own def/use walk and can retain
@@ -179,7 +197,7 @@ function inlineIntoFunction(
 
       const binding = rewritten.target.binding;
       const callee = binding.kind === "unit" ? byUnitId.get(binding.unitId) : undefined;
-      if (!callee || !canInline(callee, recursiveSet)) {
+      if (!callee || !canInline(callee, recursiveSet, localUnitCallSiteCounts, externalCapabilityBoundaryUnits)) {
         newInstrs.push(rewritten);
         continue;
       }
@@ -272,9 +290,21 @@ function inlineIntoFunction(
 // Inlinability check
 // ---------------------------------------------------------------------------
 
-function canInline(callee: IrFunction, recursiveSet: ReadonlySet<IrUnitId>): boolean {
+function canInline(
+  callee: IrFunction,
+  recursiveSet: ReadonlySet<IrUnitId>,
+  localUnitCallSiteCounts: ReadonlyMap<IrUnitId, number>,
+  externalCapabilityBoundaryUnits: ReadonlySet<IrUnitId>,
+): boolean {
   if (callee.blocks.length !== 1) return false;
   if (recursiveSet.has(callee.unitId)) return false;
+  // Preserve a shared host/capability boundary when duplicating it would fan
+  // out across multiple local call sites. This is deliberately keyed by exact
+  // unit identity and exact structural import bindings: compatibility labels
+  // neither create nor erase the boundary. Single-site helpers still inline.
+  if ((localUnitCallSiteCounts.get(callee.unitId) ?? 0) > 1 && externalCapabilityBoundaryUnits.has(callee.unitId)) {
+    return false;
+  }
   const body = callee.blocks[0]!;
   if (body.instrs.length > MAX_CALLEE_INSTRS) return false;
   const term = body.terminator;
@@ -330,6 +360,66 @@ function canInline(callee: IrFunction, recursiveSet: ReadonlySet<IrUnitId>): boo
     }
   }
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// External-boundary fan-out analysis
+// ---------------------------------------------------------------------------
+
+/**
+ * Count every exact call to a locally-visible unit, including calls nested in
+ * declarative instruction buffers. The count describes the input module, not
+ * only callers that this pass can currently rewrite: a nested or otherwise
+ * non-inlinable site still makes duplicating the same external boundary at a
+ * different site a multi-site expansion.
+ */
+function computeLocalUnitCallSiteCounts(
+  mod: IrModule,
+  byUnitId: ReadonlyMap<IrUnitId, IrFunction>,
+): Map<IrUnitId, number> {
+  const counts = new Map<IrUnitId, number>();
+  for (const fn of mod.functions) {
+    for (const block of fn.blocks) {
+      for (const instr of block.instrs) {
+        forEachInstrDeep(instr, (nested) => {
+          if (
+            nested.kind !== "call" ||
+            nested.target.binding.kind !== "unit" ||
+            !byUnitId.has(nested.target.binding.unitId)
+          ) {
+            return;
+          }
+          const unitId = nested.target.binding.unitId;
+          counts.set(unitId, (counts.get(unitId) ?? 0) + 1);
+        });
+      }
+    }
+  }
+  return counts;
+}
+
+/** Exact units whose bodies contain an external capability boundary. */
+function computeExternalCapabilityBoundaryUnits(mod: IrModule): Set<IrUnitId> {
+  const units = new Set<IrUnitId>();
+  for (const fn of mod.functions) {
+    let found = false;
+    for (const block of fn.blocks) {
+      for (const instr of block.instrs) {
+        forEachInstrDeep(instr, (nested) => {
+          if (isExternalCapabilityBoundary(nested)) found = true;
+        });
+        if (found) break;
+      }
+      if (found) break;
+    }
+    if (found) units.add(fn.unitId);
+  }
+  return units;
+}
+
+function isExternalCapabilityBoundary(instr: IrInstr): boolean {
+  if (instr.kind.startsWith("extern.")) return true;
+  return instr.kind === "call" && instr.target.binding.kind === "import";
 }
 
 // ---------------------------------------------------------------------------
@@ -484,6 +574,12 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       const r = mapId(rename, inst.rhs);
       if (l === inst.lhs && r === inst.rhs) return inst;
       return { ...inst, lhs: l, rhs: r };
+    }
+    case "string.repeat": {
+      const value = mapId(rename, inst.value);
+      const count = mapId(rename, inst.count);
+      if (value === inst.value && count === inst.count) return inst;
+      return { ...inst, value, count };
     }
     case "dyn.member_get": {
       const recv = mapId(rename, inst.recv);
@@ -967,6 +1063,18 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       const v = mapId(rename, inst.value);
       if (v === inst.value) return inst;
       return { ...inst, value: v };
+    }
+    // (#4070) Exhaustiveness gate. The runtime arm throws rather than
+    // returning `inst` unchanged: skipping the rename for an unknown kind
+    // would splice callee-scope SSA ids into the caller, which is a silent
+    // miscompile rather than a missed optimisation.
+    default: {
+      const _exhaustive: never = inst;
+      void _exhaustive;
+      // invariant (producer-promise): union/switch agreement, per #4035/#4502.
+      throw new Error(
+        `ir/inline-small: renameInstrOperands has no case for IR instruction kind ${(inst as { readonly kind: string }).kind}`,
+      );
     }
   }
 }

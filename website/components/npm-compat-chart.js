@@ -91,6 +91,30 @@ class NpmCompatChart extends HTMLElement {
     return `${d.toISOString().slice(0, 16).replace("T", " ")} UTC`;
   }
 
+  // The headline. NOT `generatedAt` — that is when the artifact was assembled,
+  // which since the per-package split (2026-08-23) is a moment that describes
+  // no package in particular. Packages are measured in independent CI rows, so
+  // the fast 22 can be minutes old while react-dom and lit, whose rows take
+  // 3-4 h and ~40 min, are hours or days behind. Rendering one timestamp over
+  // that spread presented the oldest numbers as current: on the day of the
+  // split the page said "measured 15:27 UTC" above react-dom figures from
+  // three days earlier. So say the range, and name who is behind.
+  _measuredSummary(data) {
+    const range = data?.measuredRange;
+    const newest = range?.newest ?? data?.generatedAt;
+    if (!newest) return "—";
+    const head = this._fmtDate(newest) || "—";
+    const stale = data?.refresh?.stalePackages ?? [];
+    const fresh = data?.refresh?.freshCount;
+    const total = data?.refresh?.totalCount ?? data?.packages?.length;
+    if (stale.length === 0) return head;
+
+    const counted = fresh != null && total != null ? ` · ${fresh} of ${total} packages` : "";
+    const oldest = range?.oldest && range.oldest !== newest ? this._fmtDate(range.oldest) : "";
+    const behind = `${stale.join(", ")} last measured ${oldest || "earlier"}`;
+    return `${head}${counted} · ${behind}`;
+  }
+
   // ratio = nodeUs / wasmUs. >1 => wasm faster. <1 => node faster.
   _perfLabel(ratio) {
     if (ratio == null) return { text: "—", cls: "" };
@@ -135,6 +159,10 @@ class NpmCompatChart extends HTMLElement {
   }
 
   _currentSpeedSnapshot(pkg) {
+    // A failed matrix worker carries the last committed package row forward
+    // so other packages can still publish. Do not append that old measurement
+    // as if it were a point from the current refresh.
+    if (pkg?.refresh?.status === "stale") return null;
     const perf = pkg.perf;
     if (!perf) return null;
     const lanes = perf.lanes ?? { jsHost: perf };
@@ -357,6 +385,7 @@ class NpmCompatChart extends HTMLElement {
     const validates = pkg.validation?.validates;
     const npmPackageUrl = this._npmUrl(pkg);
     const npmCodeUrl = this._npmUrl(pkg, true);
+    const playgroundUrl = `./playground/?npm=${encodeURIComponent(String(pkg.name ?? ""))}`;
     const issueLink = pkg.issue
       ? `<a class="issue" href="${this._issueUrl(pkg.issue)}" target="_blank" rel="noopener">#${pkg.issue}</a>`
       : "";
@@ -389,6 +418,24 @@ class NpmCompatChart extends HTMLElement {
               : `${badge(null, "unverified")} <span class="muted">${this._esc(pkg.correctness.reason ?? "correctness unknown")}</span>`,
         )
       : "";
+
+    // EVERY card carries its own measurement time, not only the stale ones.
+    // Showing a date exclusively on stale cards frames freshness as an
+    // exception; with packages measured in independent rows it is a per-package
+    // property, and "when was THIS number taken" is a question the reader has
+    // for react-dom and acorn alike.
+    const measuredAt = pkg.measuredAt ?? pkg.refresh?.lastMeasuredAt ?? null;
+    const isStale = pkg.refresh?.status === "stale";
+    const refreshNotice = measuredAt
+      ? this._row(
+          "measured",
+          isStale
+            ? `<span class="muted">${this._esc(this._fmtDate(measuredAt))} — not re-measured in this run</span>`
+            : `<span class="muted">${this._esc(this._fmtDate(measuredAt))}</span>`,
+        )
+      : isStale
+        ? this._row("measured", `<span class="muted">not re-measured in this run</span>`)
+        : "";
 
     // Tests — the "own test suite" vs "differential ops" distinction is
     // load-bearing, so it is the row's own label, never blurred into one number.
@@ -458,6 +505,69 @@ class NpmCompatChart extends HTMLElement {
       }
     }
 
+    // ReactDOM's server renderer is a separate published graph and therefore
+    // has its own upstream-test denominator. Keep that result visible instead
+    // of merging server-renderer failures into the client renderer row.
+    const serverTestData = pkg.tests?.server;
+    const serverTests =
+      serverTestData && serverTestData.total != null
+        ? this._row(
+            "server tests",
+            `<span class="mono">${serverTestData.passed ?? 0}/${serverTestData.total}</span>${
+              serverTestData.passRatePct != null ? ` <span class="muted">${serverTestData.passRatePct}%</span>` : ""
+            } <span class="tag">upstream server suite</span>${
+              serverTestData.upstreamTestsSeen
+                ? ` <span class="muted">${serverTestData.selected ?? serverTestData.admitted ?? 0} of ${serverTestData.upstreamTestsSeen} selected</span>`
+                : ""
+            }`,
+          )
+        : "";
+
+    const fizzTestData = pkg.tests?.fizz;
+    const fizzTests =
+      fizzTestData && fizzTestData.total != null
+        ? this._row(
+            "browser Fizz tests",
+            `<span class="mono">${fizzTestData.passed ?? 0}/${fizzTestData.total}</span>${
+              fizzTestData.passRatePct != null ? ` <span class="muted">${fizzTestData.passRatePct}%</span>` : ""
+            } <span class="tag">upstream browser Fizz suite</span>${
+              fizzTestData.upstreamTestsSeen
+                ? ` <span class="muted">${fizzTestData.selected ?? fizzTestData.admitted ?? 0} of ${fizzTestData.upstreamTestsSeen} selected</span>`
+                : ""
+            }`,
+          )
+        : "";
+
+    const nodeFizzTestData = pkg.tests?.nodeFizz;
+    const nodeFizzTests =
+      nodeFizzTestData && nodeFizzTestData.total != null
+        ? this._row(
+            "Node Fizz tests",
+            `<span class="mono">${nodeFizzTestData.passed ?? 0}/${nodeFizzTestData.total}</span>${
+              nodeFizzTestData.passRatePct != null ? ` <span class="muted">${nodeFizzTestData.passRatePct}%</span>` : ""
+            } <span class="tag">upstream Node Fizz suite</span>${
+              nodeFizzTestData.upstreamTestsSeen
+                ? ` <span class="muted">${nodeFizzTestData.selected ?? nodeFizzTestData.admitted ?? 0} of ${nodeFizzTestData.upstreamTestsSeen} selected</span>`
+                : ""
+            }`,
+          )
+        : "";
+
+    const edgeFizzTestData = pkg.tests?.edgeFizz;
+    const edgeFizzTests =
+      edgeFizzTestData && edgeFizzTestData.total != null
+        ? this._row(
+            "Edge Fizz tests",
+            `<span class="mono">${edgeFizzTestData.passed ?? 0}/${edgeFizzTestData.total}</span>${
+              edgeFizzTestData.passRatePct != null ? ` <span class="muted">${edgeFizzTestData.passRatePct}%</span>` : ""
+            } <span class="tag">upstream Edge Fizz suite</span>${
+              edgeFizzTestData.upstreamTestsSeen
+                ? ` <span class="muted">${edgeFizzTestData.selected ?? edgeFizzTestData.admitted ?? 0} of ${edgeFizzTestData.upstreamTestsSeen} selected</span>`
+                : ""
+            }`,
+          )
+        : "";
+
     // Perf — historical ratios stay split by input knowledge and placement;
     // full methodology lives below the dashboard.
     let perf;
@@ -512,16 +622,20 @@ class NpmCompatChart extends HTMLElement {
             ? `<span class="badge" title="The published entry module only re-exports other packages, so these badges describe the barrel — see the tests row for the real implementation.">entry is a barrel</span>`
             : ""
         }</div>
-        <div class="rows">${correctness}${tests}${perf}${bugs}</div>
-        <a class="entry mono" href="${npmCodeUrl}" target="_blank" rel="noopener"
-          title="View ${this._esc(pkg.entryFile)} in ${this._esc(pkg.name)} ${this._esc(pkg.version)} on npm">${this._esc(pkg.entryFile)}</a>
+        <div class="rows">${refreshNotice}${correctness}${tests}${serverTests}${fizzTests}${nodeFizzTests}${edgeFizzTests}${perf}${bugs}</div>
+        <div class="card-links">
+          <a class="playground-link" href="${playgroundUrl}"
+            title="Open ${this._esc(pkg.name)} test files in the playground">Open tests in playground&nbsp;↗</a>
+          <a class="entry mono" href="${npmCodeUrl}" target="_blank" rel="noopener"
+            title="View ${this._esc(pkg.entryFile)} in ${this._esc(pkg.name)} ${this._esc(pkg.version)} on npm">${this._esc(pkg.entryFile)}</a>
+        </div>
       </div>`;
   }
 
   _render(data, history) {
     this._data = data;
     const measuredDate = document.getElementById("npm-compat-measured");
-    if (measuredDate) measuredDate.textContent = this._fmtDate(data.generatedAt) || "—";
+    if (measuredDate) measuredDate.textContent = this._measuredSummary(data);
     const pkgs = [...(data.packages ?? [])].sort(
       (left, right) =>
         (right.weeklyDownloads ?? Number.NEGATIVE_INFINITY) - (left.weeklyDownloads ?? Number.NEGATIVE_INFINITY) ||
@@ -926,6 +1040,20 @@ class NpmCompatChart extends HTMLElement {
           text-decoration: none;
         }
         .entry:hover { color: var(--text-muted, rgba(255,255,255,0.46)); text-decoration: underline; }
+        .card-links {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: baseline;
+          gap: 4px 14px;
+        }
+        .playground-link {
+          display: inline-block;
+          margin-top: 10px;
+          color: var(--accent, #8ba4ff);
+          font-size: 10px;
+          text-decoration: none;
+        }
+        .playground-link:hover { text-decoration: underline; }
         .note {
           margin-top: 18px;
           font-size: 11px;

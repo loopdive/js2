@@ -4,7 +4,7 @@ title: "Landing page: the JS-host toggle greys rows out but never re-measures th
 status: done
 completed: 2026-08-11
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-18
 priority: medium
 horizon: m
 feasibility: medium
@@ -12,7 +12,7 @@ reasoning_effort: medium
 task_type: bugfix
 area: website
 goal: dogfood
-sprint: current
+sprint: 78
 related: [2636, 2910, 2914, 4137, 2928, 2929]
 # id 4362 reserved via `claim-issue.mjs --allocate --allow-unscanned` on
 # 2026-08-11 (gh CLI unavailable in the container; pr_scan=degraded).

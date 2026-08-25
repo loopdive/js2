@@ -37,6 +37,7 @@ const SUPPORTED_STATIC_PROPS: ReadonlyMap<string, readonly string[]> = new Map([
   // bare-identifier value read, which previously leaked `env.global_<Name>`.
   ["Math", []],
   ["JSON", []],
+  ["Proxy", []],
   ["Reflect", []],
   // #2907 — Error-family constructors as bare-value carriers. `expectedError =
   // TypeError`, `[TypeError, RangeError]`, `Object.isFrozen(TypeError)`. A `new
@@ -108,6 +109,21 @@ export const BUILTIN_CONSTRUCTOR_IDENTITY_NAMES: ReadonlySet<string> = new Set([
   "Number",
   "String",
   "Boolean",
+  // (#4621 family C) `Date`. #4485's residual named this exactly: the bare
+  // identifier read `null`, so `S10.2.3_A1.{1,2}_T3` failed on `Date === null`
+  // while every other constructor in those files already had a carrier
+  // (`Object`/`Array` namespace objects, the Error family, the #4223 wrappers,
+  // `RegExp` above, `Function` via #4442).
+  //
+  // Safe by the same argument the wrapper block above makes, re-verified for
+  // `Date` specifically: every SYNTACTIC use is intercepted BEFORE identifier
+  // resolution reaches this arm — `new Date(…)` / `Date(…)` at the
+  // construct/call site, `Date.now` / `Date.UTC` / `Date.parse` /
+  // `Date.prototype` at the property-access site, `x instanceof Date` at the
+  // instanceof lowering, `typeof Date` at the typeof fold. Only the BARE-VALUE
+  // read changes, and it changes from `ref.null.extern` — a value no conforming
+  // program can observe as the constructor — to the identity-stable carrier.
+  "Date",
 ]);
 
 export function isBuiltinConstructorIdentityName(name: string): boolean {
@@ -226,6 +242,45 @@ export function resolveBuiltinNamespaceValueName(ctx: CodegenContext, expr: ts.E
   const init = unwrapExpression(decl.initializer);
   if (ts.isIdentifier(init) && isSupportedBuiltinNamespace(init.text)) return init.text;
   return undefined;
+}
+
+/**
+ * Resolve a const object-binding alias of a builtin static method.
+ *
+ * Deno's primordials bootstrap snapshots intrinsics with declarations such as
+ * `const { ownKeys: ReflectOwnKeys } = Reflect`. The binding is stored through
+ * the ordinary externref object-destructuring path, while TypeScript describes
+ * its return using the lib declaration's structural array type. Call lowering
+ * needs the canonical builtin closure signature instead: for example the
+ * native Reflect.ownKeys closure returns the object runtime's externref key
+ * vector. Keeping that representation prevents generic callable dispatch from
+ * replacing the live result with a mismatched typed-array default.
+ */
+export function resolveBuiltinStaticBindingAlias(
+  ctx: CodegenContext,
+  expr: ts.Expression,
+): { builtinName: string; propName: string } | undefined {
+  const unwrapped = unwrapExpression(expr);
+  if (!ts.isIdentifier(unwrapped)) return undefined;
+  const symbol = ctx.checker.getSymbolAtLocation(unwrapped);
+  const declaration = symbol?.valueDeclaration;
+  if (!declaration || !ts.isBindingElement(declaration) || declaration.dotDotDotToken) return undefined;
+  const pattern = declaration.parent;
+  if (!ts.isObjectBindingPattern(pattern)) return undefined;
+  const variable = pattern.parent;
+  if (!ts.isVariableDeclaration(variable) || variable.name !== pattern || !variable.initializer) return undefined;
+  const list = variable.parent;
+  if (!ts.isVariableDeclarationList(list) || !(list.flags & ts.NodeFlags.Const)) return undefined;
+
+  const builtinName = resolveBuiltinNamespaceValueName(ctx, variable.initializer);
+  if (!builtinName) return undefined;
+  const property = declaration.propertyName ?? declaration.name;
+  const propName =
+    ts.isIdentifier(property) || ts.isStringLiteral(property) || ts.isNumericLiteral(property)
+      ? property.text
+      : undefined;
+  if (!propName || BUILTIN_STATIC_METHOD_ARITY[builtinName]?.[propName] === undefined) return undefined;
+  return { builtinName, propName };
 }
 
 function hiddenName(builtinName: string, propName: string): string {

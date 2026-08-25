@@ -2,10 +2,10 @@
 id: 4071
 title: "Own-property ENUMERATION is dead in standalone for array indices and function own properties — Object.keys returns [] while writes round-trip"
 status: done
-sprint: current
+sprint: 78
 assignee: ttraenkler/L-enum
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 completed: 2026-08-02
 priority: high
 horizon: m

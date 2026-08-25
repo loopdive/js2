@@ -3,9 +3,9 @@ id: 4247
 title: "Standalone array exotics: a non-array-index element key (`a[4294967295]`, `a[-1]`, `a[1.1]`, `a[true]`) traps or is silently dropped instead of naming a property"
 status: done
 completed: 2026-08-08
-sprint: current
+sprint: 78
 created: 2026-08-08
-updated: 2026-08-08
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

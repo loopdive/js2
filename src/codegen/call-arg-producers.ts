@@ -152,7 +152,7 @@ export function instrPopsPushes(instr: Instr, mod: WasmModule): { pops: number; 
   // condition. The nested bodies are separate instruction lists and are walked
   // on their own, so from this list's point of view the block is one opaque
   // instruction with a known signature.
-  if (op === "block" || op === "loop" || op === "try" || op === "if") {
+  if (op === "block" || op === "loop" || op === "try" || op === "try_table" || op === "if") {
     const condPop = op === "if" ? 1 : 0;
     const bt = (instr as { blockType?: { kind: string; typeIdx?: number } }).blockType;
     if (!bt || bt.kind === "empty") return { pops: condPop, pushes: 0 };

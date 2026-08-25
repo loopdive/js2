@@ -4,6 +4,18 @@
 > or `src/ir/`. It should take ~10 minutes. If it takes longer, file an issue
 > against this doc.
 
+> **A third axis — the producer axis — is being drawn (#3954).** The two axes
+> below are about *lowering*; the producer axis is about *which source language
+> an instruction's semantics come from*. Its first slice has landed: the 23
+> uncontested ECMAScript instruction kinds now live in `src/ir/dialect/js.ts`,
+> behind the `scripts/check-ir-dialect.mjs` gate. See
+> [The producer axis](#the-producer-axis) below.
+>
+> **A C++ front-end is an explicit non-goal** — value semantics, RAII
+> scope-exit lifetimes, pointer arithmetic and precise ABI layout are outside
+> what `IrType`'s GC-managed `object`/`class`/`boxed` kinds can express. That
+> should target LLVM. Do not design for it.
+
 ## TL;DR
 
 There are **two orthogonal axes** in the compiler back-half. They are not a
@@ -143,6 +155,76 @@ today it lives in `src/codegen/` directly; end-state it is the
 intent (whose linear implementation compares pointers/handles). The IR node
 says "compare object identity" — it never names `ref.eq`. What IR must not
 carry is a node whose _semantics_ only exist on one backend.
+
+## The producer axis
+
+The two axes above are both about **lowering** — which Wasm shape, from which
+front-end representation. The producer axis is a different question:
+
+> **Does this instruction's meaning come from a language specification, or from
+> compilation in general?**
+
+`dyn.truthy` is ECMA-262 §7.1.2. `iter.next` is the JS iterator protocol.
+`await` is JS async semantics. None of them means anything to a source language
+that is not JavaScript. Those live in **`src/ir/dialect/js.ts`**. The neutral
+core — control flow, calls, closures, refcells, slots, arithmetic, try/throw —
+stays in `src/ir/nodes.ts`.
+
+The boundary is enforced, not conventional (`scripts/check-ir-dialect.mjs`, in
+`quality`): only `nodes.ts` may import a dialect (it assembles the `IrInstr`
+union and re-exports the names), and it must re-export every name a dialect
+declares. The split is a declaration move — all 54 importers of `nodes.js` are
+unaffected.
+
+**Unsettled kinds stay in core.** `vec.*`, `class.*`, `object.*`, `string.*`,
+`box`/`unbox`/`tag.test`, `forof.vec`/`forof.string` and `coerce.to_externref`
+are *not* in the dialect, because whether they are neutral is genuinely open —
+`vec.*` array holes turn out to live in `src/codegen/array-holes.ts`, above the
+IR, and `string.*` is already parameterized by `IrStringEncoding` rather than
+hardcoding UTF-16. #4551 owns the per-kind verdict. Placing a kind on a hunch
+gives a guess the authority of a lint rule.
+
+Why this axis was drawn before the `ir-full-coverage` push rather than after:
+the work is O(instruction kinds), and kinds went 51 → 78 in the three months to
+2026-08-01. Doing it later costs proportionally more, and `ir-full-coverage` is
+expected to add roughly 40 more.
+
+### The tag-domain seam (#3954 phase 1)
+
+The dialect split answers "which instruction kinds are JavaScript's?". The
+**tag-domain seam** answers the other half: "what does a *dynamic value* mean?".
+
+`IrType`'s dynamic leaf no longer names ECMAScript. It carries an opaque
+`TagId` resolved against a **`TagDomain`** (`src/ir/tag-domain.ts`, a
+zero-import leaf) that states four things about a source language's dynamic
+values: the partition set, each partition's Wasm-carrier kind, the refinement
+lattice, and the truthiness / numeric-coercion predicates.
+
+- **`src/ir/js-tag-domain.ts`** is the sole implementation — ECMAScript. Every
+  predicate arm there **cites its spec clause** (ToBoolean §7.1.2, ToNumber
+  §7.1.4, …), so a reader can tell a conformance decision from a lowering
+  convenience without already knowing which it is. That legibility is the
+  deliverable; a second front-end is a side effect.
+- **`src/ir/producer.ts`** is the single wiring point — a pure lookup from
+  producer id to domain, deliberately not a mutable global (a domain left set
+  by a previous compilation would silently reinterpret the next one's tags, and
+  this process runs many compilations).
+- **`scripts/check-jstag-seam.mjs`** (in `quality`) ratchets it: a committed
+  per-file baseline of direct `JsTag` value usage under `src/`, growth fails,
+  `--update-on-decrease` banks improvements. Two files remain by design — the
+  JavaScript producer (`from-ast.ts`, entitled to name JavaScript partitions)
+  and the WasmGC lowering (`integration.ts`, which emits these integers as
+  `$AnyValue.tag` constants).
+
+**C++ is an explicit non-goal on this axis, now and later.** It needs value
+semantics, copy/move/destructors, RAII scope-exit lifetimes, pointer
+arithmetic, precise struct layout/ABI and template monomorphization;
+`IrType`'s `object`/`class`/`boxed` kinds all assume GC-managed reference
+identity and cannot express "destroyed at scope end". A C++ front-end should
+target LLVM. Do not design for it.
+
+Full design: #3954 (four phases — this tag-domain seam, the dialect split,
+synthetic-tag-domain falsification, out-of-tree producer).
 
 ## When NOT to use IR yet
 

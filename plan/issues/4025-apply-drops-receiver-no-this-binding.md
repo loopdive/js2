@@ -2,9 +2,9 @@
 id: 4025
 title: "`.apply(thisArg)` DROPS the receiver — no `this`-binding thunk is emitted, so `f.apply(o) === o` is false (`.call()` emits one and is correct)"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-01
-updated: 2026-08-04
+updated: 2026-08-18
 completed: 2026-08-04
 assignee: "ttraenkler/claude-harvest"
 priority: high

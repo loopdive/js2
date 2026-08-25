@@ -20,6 +20,7 @@ interface HostImportPolicyBaseline {
     maximumResolveImportLines: number;
     maximumResolveImportCases: number;
     maximumOwnedAdapterLines: number;
+    maximumExplicitCapabilityLines: number;
   };
 }
 
@@ -309,11 +310,22 @@ const ownedAdapterPaths = [
   "src/runtime/compatibility-adapter.ts",
   "src/runtime/compatibility-semantic-adapter.ts",
 ] as const;
+// Explicit provider implementations are tracked separately so #4401 does not
+// conflate required platform-capability code with implicit semantic-host debt.
+const explicitCapabilityPaths = [
+  "src/runtime/clock-capability-adapter.ts",
+  "src/runtime/compiled-capability-authority.ts",
+  "src/runtime/dom-capability-adapter.ts",
+  "src/runtime/standalone-dom-string-bridge.ts",
+  "src/runtime/standalone-timer-callback-bridge.ts",
+  "src/runtime/timer-capability-adapter.ts",
+] as const;
 const migrationMetrics = {
   runtimeTsLines: countLines(runtimeSource),
   resolveImportLines: countLines(resolveSource),
   resolveImportCases: resolveSource.match(/^ {4}case "/gm)?.length ?? 0,
   ownedAdapterLines: ownedAdapterPaths.reduce((total, path) => total + countLines(readRepoFile(path)), 0),
+  explicitCapabilityLines: explicitCapabilityPaths.reduce((total, path) => total + countLines(readRepoFile(path)), 0),
 };
 
 const budgetViolations: string[] = [];
@@ -349,6 +361,7 @@ for (const [metric, maximum] of [
   ["resolveImportLines", baseline.runtimeSource.maximumResolveImportLines],
   ["resolveImportCases", baseline.runtimeSource.maximumResolveImportCases],
   ["ownedAdapterLines", baseline.runtimeSource.maximumOwnedAdapterLines],
+  ["explicitCapabilityLines", baseline.runtimeSource.maximumExplicitCapabilityLines],
 ] as const) {
   if (migrationMetrics[metric] > maximum) {
     budgetViolations.push(`${metric} ${migrationMetrics[metric]} > maximum ${maximum}`);

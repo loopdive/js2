@@ -45,6 +45,7 @@ import { addFuncType } from "./registry/types.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
+import { buildOrdinaryToPrimitiveProbe, resolveOrdinaryToPrimitiveProbeDeps } from "./ordinary-to-primitive-probe.js"; // (#4492 wave-5)
 
 export const CLASS_TO_PRIMITIVE = "__class_to_primitive";
 
@@ -287,11 +288,46 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
     },
   ];
 
-  // string hint: toString → valueOf. Inherited toString yields the primitive
-  // "[object Object]", so an ABSENT toString resolves to it as the FIRST method.
+  // string hint: toString → valueOf.
+  //
+  // (ES5 standalone lane) An ABSENT `toString` must NOT be answered here with
+  // the inherited-`Object.prototype.toString` string "[object Object]". This
+  // driver cannot tell "a class instance that happens to have no toString" from
+  // "a value that is not a user object at all" — both miss every per-struct
+  // dispatcher arm and land on this branch. And EVERY value that is neither a
+  // `$Object` nor a `$Vec` reaches the driver: `undefined`, an `$AnyValue`
+  // tagged box, a `$PropEntry` slot value, a RegExp match array, a boxed
+  // primitive crossing the open-`any` boundary. Answering "[object Object]" for
+  // those STOMPS a value the caller was about to render correctly, because
+  // `__to_primitive` accepts the driver's primitive result and hands that
+  // string on instead of the original carrier.
+  //
+  // That is an ACTION-AT-A-DISTANCE bug, not a local one: while a module emits
+  // no `__call_toString` arm at all, `fillClassToPrimitive` leaves the
+  // "return the input unchanged" stub and everything renders fine. The moment
+  // any single struct in the module contributes one arm — one harness object
+  // literal with a `toString` field is enough — this full body takes over and
+  // every unrelated carrier in that module starts rendering "[object Object]".
+  // Measured on the first full ES5 run after the callable-dynamic arm landed:
+  // `"1" + undefined` → "1[object Object]", `undefined in obj` false,
+  // `[0,"a"].join` → "[object Object], [object Object]", the
+  // harness compare-array failure messages, the RegExp exec match arrays.
+  // Two earlier fixes patched single carriers ($BoxedBoolean, $Error) with
+  // early-outs in `__to_primitive`; this is the shared source of all of them.
+  //
+  // Returning the input UNCHANGED loses nothing for a real object: the two
+  // callers both re-render it. `__any_to_string`'s terminal accepts only a
+  // primitive from the driver and otherwise emits the same "[object Object]"
+  // literal it emitted before, and `__to_primitive`'s class arm falls through
+  // to its own "return unchanged" tail. So a genuine class instance with no
+  // `toString` still stringifies to "[object Object]" — via the caller, which
+  // knows whether the value is an object.
+  //
+  // The `numberHint` twin's `returnObjectTag` stays: it fires only when
+  // `valueOf` MATCHED a dispatcher arm and returned an object, which proves the
+  // receiver really is a user object this driver may describe.
   const stringHint: Instr[] = [
     ...callAndReturnIfPrimitive(callToStringIdx, L_RS),
-    // toString absent → inherited toString → "[object Object]" (primitive, first)
     ...presentNonNull(L_RS),
     {
       op: "if",
@@ -302,8 +338,9 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
         // valueOf absent (inherited → object) or present-object → both object → TypeError
         ...throwTypeError,
       ],
-      // toString absent → default Object.prototype.toString
-      else: returnObjectTag,
+      // toString absent → fall through to the shared "return input unchanged"
+      // tail; the caller decides whether "[object Object]" is the right answer.
+      else: [],
     },
   ];
 
@@ -311,6 +348,9 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
     { name: "rv", type: { kind: "externref" } },
     { name: "rs", type: { kind: "externref" } },
   ];
+
+  const runtimeWalk = buildClassToPrimitiveRuntimeWalk(ctx, fn);
+
   fn.body = [
     { op: "local.get", index: L_HINT },
     {
@@ -319,9 +359,96 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
       then: stringHint,
       else: numberHint,
     },
+    ...runtimeWalk,
     // Shared tail: reached only when BOTH methods are absent (number hint) —
     // a nominal struct with no valueOf/toString → return the input unchanged,
     // exactly as the pre-#2638 fall-through did (no regression).
+    { op: "local.get", index: 0 },
+  ];
+}
+
+/**
+ * (#4492 wave-5) The RUNTIME §7.1.1.1 tail of `__class_to_primitive`, reached
+ * only after every COMPILE-TIME dispatcher above it has missed.
+ *
+ * The per-struct `__call_valueOf` / `__call_toString` dispatchers are keyed by
+ * struct TYPE, so they see a method only where the compiler could attach it to
+ * the shape. The ES5 way to give an instance a `toString` is the PROTOTYPE —
+ *
+ *     function F(v){ this.value = v; }
+ *     F.prototype.toString = function(){ return this.value + ""; };
+ *
+ * — and that write lands in the runtime prototype bag, where no dispatcher arm
+ * can be minted for it. Measured on campaign HEAD `c42bdbe3e`
+ * (`.tmp/probes/t3.js`, standalone): `new F(undefined).toString()` answered
+ * `"undefined"` (the direct call resolves it statically) while
+ * `String(new F(undefined))` and a borrowed `String.prototype.slice` on the same
+ * receiver both answered `"[object Object]"` — one value, two renderings, and
+ * the spelling a test reaches for is the one that was wrong.
+ *
+ * `__extern_get` walks own slots AND the prototype chain, so the shared walk
+ * (ordinary-to-primitive-probe.ts) sees what the direct call sees. Placed at the
+ * TAIL, it can only claim values this driver was about to return UNCHANGED — a
+ * strictly-additive second chance, never a displacement.
+ *
+ * Appends the two scratch locals it needs to `fn.locals` (existing indices are
+ * unaffected) and returns `[]` — emitting nothing, growing nothing — when the
+ * walk's runtime natives are unavailable.
+ */
+function buildClassToPrimitiveRuntimeWalk(ctx: CodegenContext, fn: WasmFunction): Instr[] {
+  const probeDeps = resolveOrdinaryToPrimitiveProbeDeps(ctx);
+  if (probeDeps === undefined) return [];
+  const L_OBJ = 0;
+  const L_HINT = 1;
+  const L_PM = 1 + fn.locals.length; // externref: probe method slot
+  const L_PR = L_PM + 1; // externref: probe result slot
+  fn.locals.push({ name: "pm", type: { kind: "externref" } }, { name: "pr", type: { kind: "externref" } });
+
+  const walk = (order: readonly ("toString" | "valueOf")[]): Instr[] =>
+    buildOrdinaryToPrimitiveProbe(ctx, probeDeps, {
+      recv: () => [{ op: "local.get", index: L_OBJ }],
+      methodLocal: L_PM,
+      resultLocal: L_PR,
+      order,
+      onPrimitive: () => [{ op: "local.get", index: L_PR }, { op: "return" }],
+      // §7.1.1.1: only the STRING hint may stop on an absent first method — an
+      // absent `toString` resolves to `Object.prototype.toString`, which returns
+      // a primitive, so `valueOf` is unreachable. `built-ins/String/S9.8_A5_T1`
+      // check #13 measures exactly that.
+      stopWhenFirstAbsent: order[0] === "toString",
+    });
+
+  // The same object/function guard `emitAddOrdinaryToPrimitiveResidue` uses:
+  // this driver is also reached by `undefined`, `$AnyValue` boxes, `$PropEntry`
+  // slot values and boxed primitives (see the string-hint note above), and none
+  // of those may be sent through a property read.
+  return [
     { op: "local.get", index: L_OBJ },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: L_OBJ },
+        { op: "call", funcIdx: probeDeps.typeofObjectIdx },
+        { op: "local.get", index: L_OBJ },
+        { op: "call", funcIdx: probeDeps.typeofFunctionIdx },
+        { op: "i32.or" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: L_HINT },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: walk(["toString", "valueOf"]),
+              else: walk(["valueOf", "toString"]),
+            },
+          ],
+        },
+      ],
+    },
   ];
 }

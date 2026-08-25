@@ -27,6 +27,7 @@ import {
 } from "../nodes.js";
 import type { IrStringConcatMode, IrStringEncoding } from "../string-runtime.js";
 import type { BlockType, Instr, ValType } from "../types.js";
+import { buildStandardTryTable } from "../try-table.js";
 import type {
   BackendEmitter,
   BackendI32BitwiseOp,
@@ -72,6 +73,17 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
   emitStringConcat(alloc: AllocSiteId | undefined, mode: IrStringConcatMode, out: Instr[], provider?: IrFuncRef): void {
     const ops = this.stringRuntime?.emitStringConcat?.(alloc, mode, provider);
     if (!ops) throw new Error("WasmGcEmitter: string.concat runtime is unavailable");
+    out.push(...ops);
+  }
+
+  emitStringRepeat(
+    alloc: AllocSiteId | undefined,
+    inputEncoding: IrStringEncoding,
+    out: Instr[],
+    provider?: IrFuncRef,
+  ): void {
+    const ops = this.stringRuntime?.emitStringRepeat?.(alloc, inputEncoding, provider);
+    if (!ops) throw new Error("WasmGcEmitter: string.repeat runtime is unavailable");
     out.push(...ops);
   }
 
@@ -353,6 +365,8 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
   // lifted function reference through emitFuncRef, captures, and any required
   // ref.cast.
   emitClosureNew(layout: IrClosureLowering, _captureCount: number, out: Instr[]): void {
+    const authorityGlobalIdx = layout.domCallbackAuthorityGlobalIdx?.();
+    if (authorityGlobalIdx !== undefined) out.push({ op: "global.get", index: authorityGlobalIdx });
     out.push({ op: "struct.new", typeIdx: layout.structTypeIdx });
   }
 
@@ -431,6 +445,46 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
     catchAll: Instr[] | undefined,
     out: Instr[],
   ): void {
+    if (this.stringRuntime?.standardizedExceptions?.()) {
+      if (catches.length > 0) {
+        out.push(
+          buildStandardTryTable(
+            blockType,
+            body,
+            catches.map((clause) => ({
+              kind: "catch",
+              tagIdx: clause.tagIdx,
+              payloadType: { kind: "externref" },
+              body: clause.body,
+            })),
+          ),
+        );
+        return;
+      }
+
+      if (!catchAll) {
+        throw new Error("WasmGcEmitter: standardized try requires a handler");
+      }
+      const tagIdx = this.stringRuntime.ensureExnTag?.();
+      if (tagIdx === undefined) {
+        throw new Error("WasmGcEmitter: standardized try requires the shared exception tag");
+      }
+      const handler = [...catchAll];
+      const terminal = handler[handler.length - 1];
+      if (!terminal || terminal.op !== "rethrow" || terminal.depth !== 0) {
+        throw new Error("WasmGcEmitter: standardized finally handler must end in rethrow 0");
+      }
+      // The handler block result leaves the caught externref on the operand
+      // stack beneath the balanced finally body. Replace legacy rethrow with
+      // a throw of that same payload through the module's shared tag.
+      handler[handler.length - 1] = { op: "throw", tagIdx };
+      out.push(
+        buildStandardTryTable(blockType, body, [
+          { kind: "catch", tagIdx, payloadType: { kind: "externref" }, body: handler },
+        ]),
+      );
+      return;
+    }
     out.push({
       op: "try",
       blockType,

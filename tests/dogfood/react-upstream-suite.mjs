@@ -41,10 +41,18 @@ import { setupReact } from "./setup-react.mjs";
 import { setupReactUpstreamSuite } from "./setup-react-upstream-suite.mjs";
 import { extractReactUpstreamTests } from "./react-upstream-extract.mjs";
 import { installReactTestEnvironment } from "./react-test-environment.mjs";
-import { REACT_EXPECT_SHIM, LAST_ERROR_EXPORT, buildTestFunction } from "./react-upstream-shim.mjs";
+import { installReactUpstreamInfrastructure } from "./react-upstream-infrastructure.mjs";
+import { REACT_EXPECT_SHIM, LAST_ERROR_EXPORT, buildTestFunction, withTimeout } from "./react-upstream-shim.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = join(HERE, "report", "react-upstream-suite.json");
+// React's lifted suite intentionally admits tests that need infrastructure the
+// harness cannot provide. Those tests still run against the native oracle and
+// the compiled lane, but a missing async dependency must not hold the complete
+// npm-compat refresh for ten seconds per test. The timeout is a watchdog, not
+// a test selection filter: timed-out tests remain in the report as failures or
+// harness-incompatible results.
+const DEFAULT_REACT_TEST_TIMEOUT_MS = 2_000;
 
 // `var exports = {}` makes the published CommonJS implementation an internal
 // module value. Every byte of the implementation after that one binding is
@@ -74,7 +82,7 @@ function buildNativeRunners(tests) {
   return new Function("__REACT__", "require", source);
 }
 
-async function runNative(tests, nativeReact) {
+async function runNative(tests, nativeReact, timeoutMs, infrastructure) {
   try {
     // A few upstream tests intentionally require the published ReactDOM
     // package (for example Portal coverage).  Supplying Node's real resolver
@@ -82,7 +90,41 @@ async function runNative(tests, nativeReact) {
     // still reports the same call as unavailable if the compiler cannot lower
     // it, rather than hiding the gap behind an oracle-build failure.
     const nativeRequire = createRequire(import.meta.url);
-    const runners = buildNativeRunners(tests)(nativeReact, nativeRequire);
+    const hostRequire = (name) => {
+      // These packages are React's monorepo-only test infrastructure and are
+      // intentionally absent from node_modules. Resolve them through the same
+      // explicit host surface used by the compiled lane so a native failure
+      // means the test or implementation disagrees, not that the oracle could
+      // not find a package that was never published.
+      if (name === "react") return nativeReact;
+      if (name === "react-dom") return infrastructure?.reactDom ?? nativeRequire(name);
+      if (name === "react-dom/client") return infrastructure?.reactDomClient ?? nativeRequire(name);
+      if (name === "react-dom/server") return infrastructure?.reactDomServer ?? nativeRequire(name);
+      if (name === "react-test-renderer") return infrastructure?.reactTestRenderer ?? nativeRequire(name);
+      if (name === "react-noop-renderer") {
+        if (!infrastructure?.reactNoop) throw new Error("React upstream noop renderer infrastructure is unavailable");
+        return infrastructure.reactNoop;
+      }
+      if (name === "react-native-renderer") {
+        if (!infrastructure?.reactNativeRenderer)
+          throw new Error("React upstream native renderer infrastructure is unavailable");
+        return infrastructure.reactNativeRenderer;
+      }
+      if (name === "internal-test-utils") {
+        if (!infrastructure?.internalTestUtils)
+          throw new Error("React upstream internal test utilities are unavailable");
+        return infrastructure.internalTestUtils;
+      }
+      if (name === "react/jsx-runtime") return infrastructure?.reactJsxRuntime ?? nativeRequire(name);
+      if (name === "react/jsx-dev-runtime") return infrastructure?.reactJsxDevRuntime ?? nativeRequire(name);
+      if (name === "create-react-class") return infrastructure?.createReactClass ?? nativeRequire(name);
+      if (name === "create-react-class/factory") {
+        const factory = nativeRequire("create-react-class/factory");
+        return factory;
+      }
+      return nativeRequire(name);
+    };
+    const runners = buildNativeRunners(tests)(nativeReact, hostRequire);
     const out = [];
     for (const test of tests) {
       let value;
@@ -91,7 +133,7 @@ async function runNative(tests, nativeReact) {
         // An async upstream body returns a promise; awaiting it here is what
         // makes its assertions observable at all. A rejection is a failure,
         // exactly as Jest would score it.
-        value = await runners.tests[test.id]();
+        value = await withTimeout(runners.tests[test.id](), timeoutMs, `native ${test.fullName}`);
       } catch (thrown) {
         error = thrown instanceof Error ? thrown.message : String(thrown);
       }
@@ -134,19 +176,29 @@ function quarantineFromErrors(moduleSource, tests, errors) {
   return offenders;
 }
 
-export async function runHarness({ quiet = false, filter = process.env.DOGFOOD_REACT_FILTER || "" } = {}) {
+export async function runHarness({
+  quiet = false,
+  filter = process.env.DOGFOOD_REACT_FILTER || "",
+  testTimeoutMs = Number(process.env.DOGFOOD_REACT_TEST_TIMEOUT_MS || DEFAULT_REACT_TEST_TIMEOUT_MS),
+  compileTimeoutMs = Number(process.env.DOGFOOD_REACT_COMPILE_TIMEOUT_MS || 30_000),
+} = {}) {
   const log = quiet ? () => {} : (...values) => console.log(...values);
   installReactTestEnvironment();
 
   // --- 1. ACQUIRE ----------------------------------------------------------
   const { root: packageRoot, version, pin } = setupReact();
   const { root: suiteRoot, pin: suitePin } = setupReactUpstreamSuite();
-  const productionModulePath = join(packageRoot, "package", "cjs", "react.production.js");
-  const reactSource = readFileSync(productionModulePath, "utf-8");
+  // Jest runs React's upstream unit files against the development build. Keep
+  // the published production artifact as the default npm-compat lane, while
+  // allowing the upstream harness to select the matching development graph so
+  // warning/act assertions are not misclassified as missing infrastructure.
+  const build = process.env.DOGFOOD_REACT_BUILD === "development" ? "development" : "production";
+  const modulePath = join(packageRoot, "package", "cjs", `react.${build}.js`);
+  const reactSource = readFileSync(modulePath, "utf-8");
 
   const report = {
     generatedAt: new Date().toISOString(),
-    react: { version, source: pin.tarball, entryModule: "package/cjs/react.production.js" },
+    react: { version, source: pin.tarball, build, entryModule: `package/cjs/react.${build}.js` },
     upstreamSuite: {
       repo: suitePin.repo,
       tag: suitePin.tag,
@@ -171,6 +223,24 @@ export async function runHarness({ quiet = false, filter = process.env.DOGFOOD_R
     root: suiteRoot,
     testFiles: suitePin.testFiles,
     admitAll: process.env.DOGFOOD_REACT_ADMIT_ALL !== "0",
+    supportedInfrastructure: new Set([
+      "needs-react-dom",
+      "needs-react-noop",
+      "needs-test-utils",
+      "needs-act",
+      "needs-console-assertions",
+      // The native oracle captures console.error/warn, and the Wasm host
+      // exposes the same console methods. Direct console assertions are
+      // therefore test infrastructure we do provide, not a reason to reject
+      // an upstream test before it runs.
+      "asserts-on-console",
+      "needs-jest-runtime",
+      "needs-dom",
+      "dev-build-only",
+      "needs-feature-flags",
+      "needs-scheduler",
+      "needs-external-module",
+    ]),
   });
   const filterPattern = filter ? new RegExp(filter, "i") : null;
   const extracted = filterPattern
@@ -203,12 +273,18 @@ export async function runHarness({ quiet = false, filter = process.env.DOGFOOD_R
   // radius to the batch, and the failing batch is still REPORTED rather than
   // dropped.
   const require = createRequire(import.meta.url);
-  const nativeReact = require(productionModulePath);
+  const nativeReact = require(modulePath);
+  const hostInfrastructure = installReactUpstreamInfrastructure({ react: nativeReact, build });
 
   const batches = new Map();
   for (const test of extracted.tests) {
-    if (!batches.has(test.file)) batches.set(test.file, []);
-    batches.get(test.file).push(test);
+    // The create-react-class integration file contains a large amount of
+    // nested class/factory code. Compiling all 27 lifted bodies as one module
+    // can keep the compiler busy indefinitely; one real upstream test per
+    // module bounds that compiler work without removing or rewriting tests.
+    const batchKey = test.file.endsWith("createReactClassIntegration-test.js") ? `${test.file}::${test.id}` : test.file;
+    if (!batches.has(batchKey)) batches.set(batchKey, []);
+    batches.get(batchKey).push(test);
   }
 
   const quarantined = [];
@@ -233,7 +309,11 @@ export async function runHarness({ quiet = false, filter = process.env.DOGFOOD_R
       moduleSource = buildModuleSource(reactSource, batchTests);
       const started = performance.now();
       try {
-        result = await compile(moduleSource, { fileName: "react.production.js", skipSemanticDiagnostics: true });
+        result = await withTimeout(
+          compile(moduleSource, { fileName: `react.${build}.js`, skipSemanticDiagnostics: true }),
+          compileTimeoutMs,
+          `compile ${file}`,
+        );
       } catch (thrown) {
         result = { success: false, errors: [{ message: thrown instanceof Error ? thrown.message : String(thrown) }] };
       }
@@ -287,8 +367,9 @@ export async function runHarness({ quiet = false, filter = process.env.DOGFOOD_R
       }
     }
 
+    const reportFile = file.split("::", 1)[0];
     batchReports.push({
-      file,
+      file: reportFile,
       tests: batchTests.length,
       compileMs,
       binaryBytes: result?.binary?.length ?? 0,
@@ -297,11 +378,20 @@ export async function runHarness({ quiet = false, filter = process.env.DOGFOOD_R
       firstError,
     });
     log(
-      `[dogfood]   ${file.replace(/^.*\//, "")}: ${batchTests.length} tests, ` +
+      `[dogfood]   ${reportFile.replace(/^.*\//, "")}: ${batchTests.length} tests, ` +
         `${validates ? "valid" : `INVALID — ${String(firstError).slice(0, 70)}`}`,
     );
 
-    const nativeResults = new Map((await runNative(batchTests, nativeReact)).map((entry) => [entry.id, entry]));
+    // The native oracle receives the exact host React values it would see in
+    // Node.  Only the compiled call path may opt into reifying values that
+    // crossed the Wasm/host boundary.
+    hostInfrastructure.infrastructure.prepareReactValues = false;
+    const nativeResults = new Map(
+      (await runNative(batchTests, nativeReact, testTimeoutMs, hostInfrastructure.infrastructure)).map((entry) => [
+        entry.id,
+        entry,
+      ]),
+    );
     for (const test of batchTests) {
       runResults.set(test.id, { native: nativeResults.get(test.id) ?? {}, compiled, firstError });
     }
@@ -360,12 +450,15 @@ export async function runHarness({ quiet = false, filter = process.env.DOGFOOD_R
     }
     let value;
     try {
-      value = await compiled[test.id]();
+      hostInfrastructure.infrastructure.prepareReactValues = true;
+      value = await withTimeout(compiled[test.id](), testTimeoutMs, `compiled ${test.fullName}`);
     } catch (error) {
       entry.status = "trapped";
       entry.compiledMessage = error instanceof Error ? error.message : String(error);
       tests.push(entry);
       continue;
+    } finally {
+      hostInfrastructure.infrastructure.prepareReactValues = false;
     }
     entry.compiledPassed = value === 1;
     entry.status = value === 1 ? "pass" : "fail";
@@ -421,6 +514,7 @@ export async function runHarness({ quiet = false, filter = process.env.DOGFOOD_R
   writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
   log(`[dogfood] ${report.summary.headline}`);
   log(`[dogfood] full report → ${REPORT_PATH}`);
+  hostInfrastructure.cleanup();
   return report;
 }
 

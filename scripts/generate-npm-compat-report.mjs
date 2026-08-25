@@ -23,7 +23,7 @@
 // and copies it to website/public/benchmarks/results/).
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
@@ -67,7 +67,7 @@ import { runHarness as runWebpackUpstreamSuite } from "../tests/dogfood/webpack-
 import { runHarness as runJestUpstreamSuite } from "../tests/dogfood/jest-upstream-suite.mjs";
 import { runHarness as runTailwindcssUpstreamSuite } from "../tests/dogfood/tailwindcss-upstream-suite.mjs";
 import { runHarness as runTypescriptUpstreamSuite } from "../tests/dogfood/typescript-upstream-suite.mjs";
-import { NPM_COMPAT_CATALOG, NPM_COMPAT_CATALOG_NAMES } from "../tests/dogfood/npm-compat-catalog.mjs";
+import { NPM_COMPAT_ALL_PACKAGE_NAMES, NPM_COMPAT_CATALOG } from "../tests/dogfood/npm-compat-catalog.mjs";
 import { runNpmCompatCatalogHarness } from "../tests/dogfood/npm-compat-catalog-harness.mjs";
 import { NPM_COMPAT_UPSTREAM_SOURCES } from "../tests/dogfood/npm-compat-upstream-sources.mjs";
 
@@ -75,27 +75,30 @@ import { setupAcorn } from "../tests/dogfood/setup-acorn.mjs";
 import { setupClsx } from "../tests/dogfood/setup-clsx.mjs";
 import { setupCookie } from "../tests/dogfood/setup-cookie.mjs";
 import { setupEslint } from "../tests/dogfood/setup-eslint.mjs";
+import { setupMarked } from "../tests/dogfood/setup-marked.mjs";
 import { setupPrettier } from "../tests/dogfood/setup-prettier.mjs";
 import { setupReact } from "../tests/dogfood/setup-react.mjs";
 import { CLSX_OPS } from "../tests/dogfood/clsx-ops.mjs";
 import { setupNpmCompatCatalogPackage } from "../tests/dogfood/npm-compat-catalog.mjs";
 import { buildNpmCompatPerfDriver, getNpmCompatPerfSpec } from "../tests/dogfood/npm-compat-perf-specs.mjs";
+import { COOKIE_OPS } from "../tests/dogfood/cookie-ops.mjs";
 import {
   failedPerfLane,
   measureJsHostPerf,
   measureStandalonePerf,
   mergeNpmPerfHistory,
   npmPerfHistoryPoint,
+  npmPerfOptimizationFailure,
+  npmPerfOptimizationOmittedPasses,
   npmPerfRows,
   packagePerfRecord,
   skippedPerfLane,
 } from "./lib/npm-compat-perf.mjs";
+import { summarizePlaygroundFiles } from "./lib/npm-compat-playground.mjs";
 import { renderHarnessThrownText } from "./lib/wasm-exn-render.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const PACKAGE_NAMES = [
-  ...new Set(["acorn", "marked", "clsx", "cookie", "eslint", "prettier", "react", ...NPM_COMPAT_CATALOG_NAMES]),
-];
+const PACKAGE_NAMES = [...NPM_COMPAT_ALL_PACKAGE_NAMES];
 const UPSTREAM_SUITE_RUNNERS = new Map([
   ["acorn", runAcornOfficialSuite],
   ["axios", runAxiosUpstreamSuite],
@@ -196,6 +199,10 @@ if (unknownPackages.length > 0 || selectedPackages.size === 0) {
   );
 }
 const focusedRun = selectedPackages.size !== PACKAGE_NAMES.length;
+const partialOutputPath = optionValue("--partial-output");
+if (partialOutputPath && !focusedRun) {
+  throw new Error("--partial-output requires a focused run via --only");
+}
 const writeArtifacts = !cliArgs.includes("--no-write") && !focusedRun;
 const inspectWatFunctions = optionValue("--inspect-wat")
   ?.split(",")
@@ -239,6 +246,9 @@ if (profileRuntime && !profileOutputPath) {
 }
 if (!Number.isSafeInteger(profileIterations) || profileIterations < 1) {
   throw new Error("--profile-iterations expects a positive integer");
+}
+if (reuseStandaloneBinaryPath && writeArtifacts) {
+  throw new Error("--reuse-standalone-binary is diagnostic-only and cannot publish npm-compat artifacts");
 }
 
 const RESULTS_PATH = resolve(ROOT, "benchmarks", "results", "npm-compat.json");
@@ -287,8 +297,18 @@ function committedHistoryPoints() {
       // PREVIOUS run — labelling that point `sourceRevision: HEAD` made it
       // collide with the live point (also HEAD) and the previous run was
       // dropped on every single refresh. See mergeNpmPerfHistory.
-      const { generatedAt, packages } = npmPerfHistoryPoint(report.packages ?? [], report.generatedAt);
-      return { generatedAt, recordedIn: revision, packages };
+      const { generatedAt, optimizationLevels, packages } = npmPerfHistoryPoint(
+        report.packages ?? [],
+        report.generatedAt,
+        null,
+        report.performanceMethodology?.optimizationLevels,
+      );
+      return {
+        generatedAt,
+        recordedIn: revision,
+        ...(optimizationLevels ? { optimizationLevels } : {}),
+        packages,
+      };
     });
   } catch (error) {
     console.warn(
@@ -390,6 +410,32 @@ const STANDALONE_BENCHMARK_EXPORT = "__npmCompatStandaloneBenchmark";
 const STANDALONE_STATIC_OPERATION_EXPORT = "__npmCompatStaticOperation";
 const CLSX_PERF_OP_NAME = "op_two_strings";
 const LIT_WHEN_PERF_EXPORT = "__npmCompatLitWhen";
+const NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL = 4,
+  NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL = 4;
+
+function npmCompatOptimizationLevel(placement) {
+  return placement === "standalone" ? NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL : NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL;
+}
+
+function requestedOptimizationMetadata(placement, extra = {}) {
+  return {
+    optimizationRequested: true,
+    optimizationVerified: false,
+    ...extra,
+    optimizationLevel: npmCompatOptimizationLevel(placement),
+  };
+}
+
+function verifiedOptimizationMetadata(placement, extra = {}) {
+  return {
+    ...requestedOptimizationMetadata(placement, extra),
+    optimizationVerified: true,
+  };
+}
+
+function failedOptimizedPerfLane(placement, status, diagnostic, extra = {}) {
+  return failedPerfLane(placement, status, diagnostic, requestedOptimizationMetadata(placement, extra));
+}
 
 function chunkedStringArray(value, chunkSize = 1024) {
   const chunks = [];
@@ -453,8 +499,14 @@ async function compileStandaloneLane({
   inputMode = "compile-time-static",
   runtimeArgument,
 }) {
+  let optimizationVerified = false;
+  let optimizationOmittedPasses = [];
   const failStandalone = (status, diagnostic, extra = {}) =>
-    failedPerfLane("standalone", status, diagnostic, { inputMode, ...extra });
+    failedOptimizedPerfLane("standalone", status, diagnostic, {
+      inputMode,
+      optimizationVerified,
+      ...extra,
+    });
   const compileStarted = performance.now();
   let result;
   let staticEvaluation;
@@ -462,7 +514,7 @@ async function compileStandaloneLane({
     const compileOptions = {
       allowJs: true,
       skipSemanticDiagnostics: true,
-      optimize: 4,
+      optimize: NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL,
       target: "standalone",
       // Linked npm graphs can need their complete instance (including
       // internal callback exports) while module initialization runs. Keep
@@ -501,6 +553,12 @@ async function compileStandaloneLane({
     if (staticOperationExport && !reuseStandaloneBinaryPath) {
       if (!result.success || !result.binary?.length) {
         return failStandalone("compile-error", firstCompileDiagnostic(result), {
+          compileDurationMs: performance.now() - compileStarted,
+        });
+      }
+      const stageOptimizationFailure = npmPerfOptimizationFailure(result, NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL);
+      if (stageOptimizationFailure) {
+        return failStandalone("optimization-error", stageOptimizationFailure, {
           compileDurationMs: performance.now() - compileStarted,
         });
       }
@@ -560,6 +618,13 @@ export function ${STANDALONE_BENCHMARK_EXPORT}(iterations) {
           compileDurationMs: performance.now() - compileStarted,
         });
       }
+      const residualOptimizationFailure = npmPerfOptimizationFailure(residual, NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL);
+      if (residualOptimizationFailure) {
+        return failStandalone("optimization-error", residualOptimizationFailure, {
+          phase: "static-residual",
+          compileDurationMs: performance.now() - compileStarted,
+        });
+      }
       staticEvaluation = {
         operationEvaluatedInWasm: true,
         operationResultType: "number",
@@ -577,6 +642,14 @@ export function ${STANDALONE_BENCHMARK_EXPORT}(iterations) {
   const compileDurationMs = performance.now() - compileStarted;
   if (!result.success || !result.binary?.length) {
     return failStandalone("compile-error", firstCompileDiagnostic(result), { compileDurationMs });
+  }
+  if (!reuseStandaloneBinaryPath) {
+    const optimizationFailure = npmPerfOptimizationFailure(result, NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL);
+    if (optimizationFailure) {
+      return failStandalone("optimization-error", optimizationFailure, { compileDurationMs });
+    }
+    optimizationOmittedPasses = npmPerfOptimizationOmittedPasses(result, NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL);
+    optimizationVerified = true;
   }
   if (inspectWatFunctions?.length) {
     if (inspectWatOutputPath) {
@@ -748,6 +821,11 @@ export function ${STANDALONE_BENCHMARK_EXPORT}(iterations) {
       benchmarkUsesIr: result.irCompiledFuncs?.includes(STANDALONE_BENCHMARK_EXPORT) ?? false,
       irCompiledFunctions: result.irCompiledFuncs ?? [],
       target: "standalone",
+      ...(optimizationVerified
+        ? verifiedOptimizationMetadata("standalone", {
+            ...(optimizationOmittedPasses.length > 0 ? { optimizationOmittedPasses } : {}),
+          })
+        : requestedOptimizationMetadata("standalone", { binaryProvenance: "reused-unverified" })),
       ...(runtimeArgument === undefined ? {} : { runtimeArgumentSuppliedAfterCompile: true }),
       ...(staticEvaluation ? { staticEvaluation } : {}),
     };
@@ -780,13 +858,13 @@ export function ${resultFloorExport}(input, options) {
   return parse(input, options).body.length;
 }`
     : source;
-  // optimize: 4 — perf numbers must reflect a realistic (wasm-opt'd) deployment,
+  // JS-host O4 — perf numbers must reflect a realistic wasm-opt deployment,
   // not the debug-friendly unoptimized binary the correctness harnesses use.
   const compileStart = performance.now();
   const result = await compile(compileSourceText, {
     fileName: "acorn.mjs",
     skipSemanticDiagnostics: true,
-    optimize: 4,
+    optimize: NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL,
     ...(inspectWatFunctions?.length
       ? {
           emitWat: true,
@@ -796,6 +874,8 @@ export function ${resultFloorExport}(input, options) {
   });
   const compileDurationMs = performance.now() - compileStart;
   if (!result.success || !result.binary?.length) return null;
+  const optimizationFailure = npmPerfOptimizationFailure(result, NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL);
+  if (optimizationFailure) return failedOptimizedPerfLane("js-host", "optimization-error", optimizationFailure);
   if (inspectWatFunctions?.length) {
     console.log(`[npm-compat] acorn WAT (${inspectWatFunctions.join(", ")})\n${result.wat ?? "(unavailable)"}`);
   }
@@ -896,11 +976,11 @@ export function ${resultFloorExport}(input, options) {
     ? compiledOperation(source, parseOptions)
     : compiledOperation(source, parseOptions).body.length;
   if (actualChecksum !== expectedChecksum) {
-    return failedPerfLane(
+    return failedOptimizedPerfLane(
       "js-host",
       "result-mismatch",
       `Acorn checksum mismatch: ${actualChecksum} !== ${expectedChecksum}`,
-      { expectedChecksum, actualChecksum },
+      { expectedChecksum, actualChecksum, optimizationVerified: true },
     );
   }
   return {
@@ -923,6 +1003,7 @@ export function ${resultFloorExport}(input, options) {
     actualChecksum,
     testCompiledToWasm: false,
     target: "js-host",
+    ...verifiedOptimizationMetadata("js-host"),
     resultObservation: inspectResultFloor ? "inside-wasm-number" : "js-host-full-ast",
     ...(boundaryCensus ? { boundaryCensus } : {}),
   };
@@ -1017,7 +1098,7 @@ async function perfAcorn() {
     : skippedPerfLane("standalone", "runtime-dynamic");
   return packagePerfRecord(
     jsHost?.sampleOp ?? standalone?.sampleOp ?? "parse(own dist bundle).body.length",
-    jsHost ?? failedPerfLane("js-host", "compile-error", "host compilation failed"),
+    jsHost ?? failedOptimizedPerfLane("js-host", "compile-error", "host compilation failed"),
     standalone,
     { standaloneDynamic },
   );
@@ -1037,7 +1118,7 @@ export function ${op.name}(first, second) {
   const result = await compile(clsxSource + "\n" + epilogue, {
     fileName: "clsx.mjs",
     skipSemanticDiagnostics: true,
-    optimize: 4,
+    optimize: NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL,
     ...(inspectWatFunctions?.length
       ? {
           emitWat: true,
@@ -1046,6 +1127,8 @@ export function ${op.name}(first, second) {
       : {}),
   });
   if (!result.success || !result.binary?.length) return null;
+  const optimizationFailure = npmPerfOptimizationFailure(result, NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL);
+  if (optimizationFailure) return failedOptimizedPerfLane("js-host", "optimization-error", optimizationFailure);
   if (inspectWatFunctions?.length) {
     console.log(`[npm-compat] clsx WAT (${inspectWatFunctions.join(", ")})\n${result.wat ?? "(unavailable)"}`);
   }
@@ -1062,7 +1145,14 @@ export function ${op.name}(first, second) {
   const expected = nativeClsx(...hostArguments);
   const actual = exp[op.name](...hostArguments);
   if (actual !== expected) {
-    return failedPerfLane("js-host", "result-mismatch", `clsx result mismatch: ${String(actual)} !== ${expected}`);
+    return failedOptimizedPerfLane(
+      "js-host",
+      "result-mismatch",
+      `clsx result mismatch: ${String(actual)} !== ${expected}`,
+      {
+        optimizationVerified: true,
+      },
+    );
   }
   const sampleOp = `${op.name}.length (host-owned arguments)`;
   const moduleImports = WebAssembly.Module.imports(await WebAssembly.compile(result.binary)).map(
@@ -1081,15 +1171,22 @@ export function ${op.name}(first, second) {
     actualChecksum: actual.length,
     testCompiledToWasm: false,
     target: "js-host",
+    ...verifiedOptimizationMetadata("js-host"),
   };
   if (!inspectConstantFloor) return measured;
 
   const floorResult = await compile(`export function ${op.name}() { return ${JSON.stringify(expected)}; }`, {
     fileName: "clsx-constant-floor.mjs",
     skipSemanticDiagnostics: true,
-    optimize: 4,
+    optimize: NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL,
   });
   if (!floorResult.success || !floorResult.binary?.length) return measured;
+  const floorOptimizationFailure = npmPerfOptimizationFailure(floorResult, NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL);
+  if (floorOptimizationFailure) {
+    return failedOptimizedPerfLane("js-host", "optimization-error", floorOptimizationFailure, {
+      phase: "constant-floor",
+    });
+  }
   const floorImports = {
     env: {},
     "wasm:js-string": jsString,
@@ -1184,7 +1281,7 @@ async function perfClsx() {
     : skippedPerfLane("standalone", "runtime-dynamic");
   return packagePerfRecord(
     jsHost?.sampleOp ?? standalone?.sampleOp ?? standaloneDynamic?.sampleOp ?? `${CLSX_PERF_OP_NAME}.length`,
-    jsHost ?? failedPerfLane("js-host", "compile-error", "host compilation failed"),
+    jsHost ?? failedOptimizedPerfLane("js-host", "compile-error", "host compilation failed"),
     standalone,
     { standaloneDynamic },
   );
@@ -1196,7 +1293,7 @@ async function perfCookieJsHost() {
   const result = await compile(cookieSource, {
     fileName: "index.js",
     skipSemanticDiagnostics: true,
-    optimize: 4,
+    optimize: NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL,
     ...(inspectWatFunctions?.length
       ? {
           emitWat: true,
@@ -1205,6 +1302,8 @@ async function perfCookieJsHost() {
       : {}),
   });
   if (!result.success || !result.binary?.length) return null;
+  const optimizationFailure = npmPerfOptimizationFailure(result, NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL);
+  if (optimizationFailure) return failedOptimizedPerfLane("js-host", "optimization-error", optimizationFailure);
   if (inspectWatFunctions?.length) {
     console.log(`[npm-compat] cookie WAT (${inspectWatFunctions.join(", ")})\n${result.wat ?? "(unavailable)"}`);
   }
@@ -1252,10 +1351,11 @@ async function perfCookieJsHost() {
   const expectedChecksum = observe(nativeModule.parseCookie(header));
   const actualChecksum = observe(exp.parseCookie(header));
   if (actualChecksum !== expectedChecksum) {
-    return failedPerfLane(
+    return failedOptimizedPerfLane(
       "js-host",
       "result-mismatch",
       `cookie checksum mismatch: ${actualChecksum} !== ${expectedChecksum}`,
+      { optimizationVerified: true },
     );
   }
   const sampleOp = "parseCookie(8-pair header); verify a/h";
@@ -1274,6 +1374,7 @@ async function perfCookieJsHost() {
     actualChecksum,
     testCompiledToWasm: false,
     target: "js-host",
+    ...verifiedOptimizationMetadata("js-host"),
     ...(boundaryCensus ? { boundaryCensus } : {}),
   };
 }
@@ -1357,7 +1458,7 @@ async function perfCookie() {
     : skippedPerfLane("standalone", "runtime-dynamic");
   return packagePerfRecord(
     jsHost?.sampleOp ?? standalone?.sampleOp ?? standaloneDynamic?.sampleOp ?? "parseCookie(8-pair header); verify a/h",
-    jsHost ?? failedPerfLane("js-host", "compile-error", "host compilation failed"),
+    jsHost ?? failedOptimizedPerfLane("js-host", "compile-error", "host compilation failed"),
     standalone,
     { standaloneDynamic },
   );
@@ -1379,11 +1480,13 @@ async function perfLitJsHost() {
     {
       fileName: "when.js",
       skipSemanticDiagnostics: true,
-      optimize: 4,
+      optimize: NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL,
     },
   );
   const compileDurationMs = performance.now() - compileStarted;
   if (!result.success || !result.binary?.length) return null;
+  const optimizationFailure = npmPerfOptimizationFailure(result, NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL);
+  if (optimizationFailure) return failedOptimizedPerfLane("js-host", "optimization-error", optimizationFailure);
   if (inspectBinaryPath) {
     writeFileSync(inspectBinaryPath, result.binary);
     console.log(`[npm-compat] wrote lit JS-host binary to ${inspectBinaryPath}`);
@@ -1405,10 +1508,11 @@ async function perfLitJsHost() {
   const expectedChecksum = nativeModule.when(true, truthy, falsy);
   const actualChecksum = exports[LIT_WHEN_PERF_EXPORT](true, truthy, falsy);
   if (!Object.is(actualChecksum, expectedChecksum)) {
-    return failedPerfLane(
+    return failedOptimizedPerfLane(
       "js-host",
       "result-mismatch",
       `lit when checksum mismatch: ${String(actualChecksum)} !== ${String(expectedChecksum)}`,
+      { optimizationVerified: true },
     );
   }
   const sampleOp = "select one of two runtime-owned callbacks";
@@ -1425,6 +1529,7 @@ async function perfLitJsHost() {
     actualChecksum,
     testCompiledToWasm: false,
     target: "js-host",
+    ...verifiedOptimizationMetadata("js-host"),
   };
 }
 
@@ -1440,7 +1545,7 @@ async function perfLit() {
   };
   return packagePerfRecord(
     jsHost?.sampleOp ?? standalone?.sampleOp ?? standaloneDynamic?.sampleOp ?? "select one of two callbacks",
-    jsHost ?? failedPerfLane("js-host", "compile-error", "host compilation failed"),
+    jsHost ?? failedOptimizedPerfLane("js-host", "compile-error", "host compilation failed"),
     standalone,
     { standaloneDynamic },
   );
@@ -1467,12 +1572,12 @@ function reportCompileDiagnostic(report) {
 }
 
 function packagePerfFailure(spec, diagnostic, status = "compile-error") {
-  const jsHost = runJsHostLane ? failedPerfLane("js-host", status, diagnostic) : skippedPerfLane("js-host");
+  const jsHost = runJsHostLane ? failedOptimizedPerfLane("js-host", status, diagnostic) : skippedPerfLane("js-host");
   const standalone = runStandaloneLane
-    ? failedPerfLane("standalone", status, diagnostic)
+    ? failedOptimizedPerfLane("standalone", status, diagnostic)
     : skippedPerfLane("standalone");
   const standaloneDynamic = runStandaloneDynamicLane
-    ? failedPerfLane("standalone", status, diagnostic, { inputMode: "runtime-dynamic" })
+    ? failedOptimizedPerfLane("standalone", status, diagnostic, { inputMode: "runtime-dynamic" })
     : skippedPerfLane("standalone", "runtime-dynamic");
   return packagePerfRecord(spec.sampleOp, jsHost, standalone, { standaloneDynamic });
 }
@@ -1493,19 +1598,21 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
     result = await compileProject(driverPath, {
       allowJs: true,
       skipSemanticDiagnostics: true,
-      optimize: 4,
-      target,
+      ...(compileOptions ?? {}),
       // Project graphs can initialize package singletons while they are being
       // instantiated.  Defer that start work until the generated import
       // object has wired the instance, for both host and standalone lanes.
       deferTopLevelInit: true,
       ...(target === "gc" ? { platform: "node" } : {}),
-      ...(compileOptions ?? {}),
+      // The report owns its deployment tier. Per-package compatibility
+      // options may not silently change the artifact being compared.
+      target,
+      optimize: npmCompatOptimizationLevel(target === "standalone" ? "standalone" : "js-host"),
       preserveDebugNames,
     });
   } catch (error) {
     return {
-      failure: failedPerfLane(
+      failure: failedOptimizedPerfLane(
         lane === "js-host" ? "js-host" : "standalone",
         "compile-error",
         error instanceof Error ? error.message : String(error),
@@ -1516,7 +1623,7 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
   const compileDurationMs = performance.now() - compileStarted;
   if (!result.success || !result.binary?.length) {
     return {
-      failure: failedPerfLane(
+      failure: failedOptimizedPerfLane(
         lane === "js-host" ? "js-host" : "standalone",
         "compile-error",
         firstCompileDiagnostic(result),
@@ -1527,6 +1634,18 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
       ),
     };
   }
+  const placement = target === "standalone" ? "standalone" : "js-host";
+  const optimizationFailure = npmPerfOptimizationFailure(result, npmCompatOptimizationLevel(placement));
+  if (optimizationFailure) {
+    return {
+      failure: failedOptimizedPerfLane(placement, "optimization-error", optimizationFailure, {
+        ...(lane === "standalone-dynamic" ? { inputMode: "runtime-dynamic" } : {}),
+        compileDurationMs,
+        optimizationVerified: false,
+      }),
+    };
+  }
+  const optimizationOmittedPasses = npmPerfOptimizationOmittedPasses(result, npmCompatOptimizationLevel(placement));
 
   let module;
   const moduleCompileStarted = performance.now();
@@ -1534,12 +1653,13 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
     module = await WebAssembly.compile(result.binary);
   } catch (error) {
     return {
-      failure: failedPerfLane(
+      failure: failedOptimizedPerfLane(
         lane === "js-host" ? "js-host" : "standalone",
         "validation-error",
         error instanceof Error ? error.message : String(error),
         {
           ...(lane === "standalone-dynamic" ? { inputMode: "runtime-dynamic" } : {}),
+          optimizationVerified: true,
           compileDurationMs,
           binaryBytes: result.binary.length,
         },
@@ -1552,12 +1672,13 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
   );
   if (target === "standalone" && moduleImports.length > 0) {
     return {
-      failure: failedPerfLane(
+      failure: failedOptimizedPerfLane(
         "standalone",
         "host-import-error",
         `standalone binary retained ${moduleImports.length} host import(s)`,
         {
           inputMode: lane === "standalone-dynamic" ? "runtime-dynamic" : "compile-time-static",
+          optimizationVerified: true,
           compileDurationMs,
           moduleCompileDurationMs,
           binaryBytes: result.binary.length,
@@ -1577,7 +1698,7 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
     if (typeof init === "function") init();
   } catch (error) {
     return {
-      failure: failedPerfLane(
+      failure: failedOptimizedPerfLane(
         lane === "js-host" ? "js-host" : "standalone",
         "runtime-error",
         renderHarnessThrownText(error, instance),
@@ -1589,6 +1710,7 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
                 ? "runtime-dynamic"
                 : "compile-time-static",
           phase: instance ? "module-init" : "instantiate",
+          optimizationVerified: true,
           compileDurationMs,
           moduleCompileDurationMs,
           binaryBytes: result.binary.length,
@@ -1606,6 +1728,9 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
     compileDurationMs,
     moduleCompileDurationMs,
     instantiateDurationMs: performance.now() - instantiateStarted,
+    optimizationMetadata: verifiedOptimizationMetadata(placement, {
+      ...(optimizationOmittedPasses.length > 0 ? { optimizationOmittedPasses } : {}),
+    }),
   };
 }
 
@@ -1641,8 +1766,9 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
       expectedChecksum = spec.nativeOperation(nativeModule, input);
       actualChecksum = compiled.exports.__npmCompatPerf(input);
     } catch (error) {
-      return failedPerfLane("js-host", "runtime-error", renderHarnessThrownText(error), {
+      return failedOptimizedPerfLane("js-host", "runtime-error", renderHarnessThrownText(error), {
         phase: "checksum",
+        optimizationVerified: true,
         inputMode: "runtime-dynamic",
         compileDurationMs: compiled.compileDurationMs,
         binaryBytes: compiled.result.binary.length,
@@ -1650,11 +1776,11 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
       });
     }
     if (!Object.is(actualChecksum, expectedChecksum)) {
-      return failedPerfLane(
+      return failedOptimizedPerfLane(
         "js-host",
         "result-mismatch",
         `checksum mismatch: Wasm ${String(actualChecksum)}, Node ${String(expectedChecksum)}`,
-        { expectedChecksum, actualChecksum },
+        { expectedChecksum, actualChecksum, optimizationVerified: true },
       );
     }
     let wasmIndex = 0;
@@ -1672,8 +1798,9 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
           ),
       );
     } catch (error) {
-      return failedPerfLane("js-host", "runtime-error", renderHarnessThrownText(error), {
+      return failedOptimizedPerfLane("js-host", "runtime-error", renderHarnessThrownText(error), {
         phase: "measure",
+        optimizationVerified: true,
         inputMode: "runtime-dynamic",
         compileDurationMs: compiled.compileDurationMs,
         binaryBytes: compiled.result.binary.length,
@@ -1691,6 +1818,7 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
       actualChecksum,
       testCompiledToWasm: false,
       target: "js-host",
+      ...compiled.optimizationMetadata,
     };
   };
 
@@ -1703,8 +1831,9 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
       expectedChecksum = spec.nativeOperation(nativeModule, spec.staticInput);
       actualChecksum = compiled.exports.__npmCompatStandaloneBenchmark(1);
     } catch (error) {
-      return failedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, compiled.exports), {
+      return failedOptimizedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, compiled.exports), {
         phase: "checksum",
+        optimizationVerified: true,
         inputMode: "compile-time-static",
         compileDurationMs: compiled.compileDurationMs,
         binaryBytes: compiled.result.binary.length,
@@ -1712,11 +1841,11 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
       });
     }
     if (!Object.is(actualChecksum, expectedChecksum)) {
-      return failedPerfLane(
+      return failedOptimizedPerfLane(
         "standalone",
         "result-mismatch",
         `checksum mismatch: Wasm ${String(actualChecksum)}, Node ${String(expectedChecksum)}`,
-        { expectedChecksum, actualChecksum },
+        { expectedChecksum, actualChecksum, optimizationVerified: true },
       );
     }
     let measured;
@@ -1733,8 +1862,9 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
         },
       );
     } catch (error) {
-      return failedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, compiled.exports), {
+      return failedOptimizedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, compiled.exports), {
         phase: "measure",
+        optimizationVerified: true,
         inputMode: "compile-time-static",
         compileDurationMs: compiled.compileDurationMs,
         binaryBytes: compiled.result.binary.length,
@@ -1754,6 +1884,7 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
       benchmarkUsesIr: compiled.result.irCompiledFuncs?.includes(STANDALONE_BENCHMARK_EXPORT) ?? false,
       irCompiledFunctions: compiled.result.irCompiledFuncs ?? [],
       target: "standalone",
+      ...compiled.optimizationMetadata,
     };
   };
 
@@ -1767,8 +1898,9 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
       expectedChecksum = spec.nativeOperation(nativeModule, spec.dynamicInput(spec.staticInput, seed, 0));
       actualChecksum = compiled.exports.__npmCompatStandaloneDynamic(1, seed);
     } catch (error) {
-      return failedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, compiled.exports), {
+      return failedOptimizedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, compiled.exports), {
         phase: "checksum",
+        optimizationVerified: true,
         inputMode: "runtime-dynamic",
         compileDurationMs: compiled.compileDurationMs,
         binaryBytes: compiled.result.binary.length,
@@ -1776,11 +1908,11 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
       });
     }
     if (!Object.is(actualChecksum, expectedChecksum)) {
-      return failedPerfLane(
+      return failedOptimizedPerfLane(
         "standalone",
         "result-mismatch",
         `checksum mismatch: Wasm ${String(actualChecksum)}, Node ${String(expectedChecksum)}`,
-        { expectedChecksum, actualChecksum },
+        { expectedChecksum, actualChecksum, optimizationVerified: true },
       );
     }
     let measured;
@@ -1798,8 +1930,9 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
         { inputMode: "runtime-dynamic" },
       );
     } catch (error) {
-      return failedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, compiled.exports), {
+      return failedOptimizedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, compiled.exports), {
         phase: "measure",
+        optimizationVerified: true,
         inputMode: "runtime-dynamic",
         compileDurationMs: compiled.compileDurationMs,
         binaryBytes: compiled.result.binary.length,
@@ -1819,6 +1952,7 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
       benchmarkUsesIr: compiled.result.irCompiledFuncs?.includes(STANDALONE_BENCHMARK_EXPORT) ?? false,
       irCompiledFunctions: compiled.result.irCompiledFuncs ?? [],
       target: "standalone",
+      ...compiled.optimizationMetadata,
       runtimeArgumentSuppliedAfterCompile: true,
     };
   };
@@ -1870,18 +2004,235 @@ function knownBugsFor(name) {
 // or other host facilities out of the compiler score. Preserve the original
 // `harnessIncompatible` field for compatibility, but expose the user-facing
 // meaning explicitly so the card can distinguish unavailable infrastructure
-// from compiler-quarantined or invalid-module tests.
-function annotateUnavailableInfra(tests) {
-  if (!tests || typeof tests !== "object") return tests;
-  const unavailableInfra = Number.isFinite(tests.unavailableInfra)
-    ? tests.unavailableInfra
-    : Number.isFinite(tests.harnessIncompatible)
-      ? tests.harnessIncompatible
-      : null;
-  return unavailableInfra === null ? tests : { ...tests, unavailableInfra };
+// from compiler-quarantined or invalid-module tests. A native-oracle failure is
+// not automatically unavailable infrastructure: those tests did run, but
+// their expected renderer/oracle behavior could not be reproduced.
+function countUnavailableInfrastructure(report) {
+  const explicit = report?.extraction?.unavailableInfra;
+  if (Number.isFinite(explicit)) return Math.max(0, explicit);
+  const counts = report?.extraction?.rejectionCounts;
+  if (!counts || typeof counts !== "object") return 0;
+  return Object.entries(counts).reduce(
+    (total, [reason, count]) => (reason.startsWith("needs-") ? total + (Number.isFinite(count) ? count : 0) : total),
+    0,
+  );
 }
 
-async function buildPackageEntry({ name, version, issue, entryFile, shape, report, tests, perf, entryIsBarrel }) {
+function annotateUnavailableInfra(tests) {
+  if (!tests || typeof tests !== "object") return tests;
+  const unavailableInfra = Number.isFinite(tests.unavailableInfra) ? tests.unavailableInfra : 0;
+  return { ...tests, unavailableInfra };
+}
+
+function githubRawSource(source, filePath) {
+  if (!source?.repo || !source?.ref || !filePath) return null;
+  const match = source.repo.match(/github\.com\/([^/]+)\/([^/#]+?)(?:\.git)?$/);
+  if (!match) return null;
+  const normalizedFilePath = filePath.replace(/\\/g, "/");
+  const path = [source.root && !normalizedFilePath.startsWith(`${source.root}/`) ? source.root : "", normalizedFilePath]
+    .filter(Boolean)
+    .join("/")
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  return `https://raw.githubusercontent.com/${match[1]}/${match[2]}/${encodeURIComponent(source.ref)}/${path}`;
+}
+
+function suiteSourceFromReport(report, options = {}) {
+  const suite = report?.upstreamSuite ?? report?.testSuite ?? null;
+  if (!suite?.repo || !suite?.tag) return null;
+  return {
+    repo: suite.repo,
+    ref: suite.commit ?? suite.tag,
+    root: options.sourceRoot ?? suite.testDirectory ?? "",
+  };
+}
+
+function suiteFilePaths(report, options = {}) {
+  const suite = report?.upstreamSuite ?? report?.testSuite ?? null;
+  const candidates = [
+    suite?.testFilePaths,
+    suite?.testFiles,
+    suite?.selectedFiles,
+    report?.compile?.details?.map((entry) => entry.file),
+    report?.compile?.files?.map((entry) => entry.file),
+    [...new Set((report?.results?.tests ?? []).map((entry) => entry.file))],
+  ];
+  const paths = candidates.find((value) => Array.isArray(value) && value.length > 0) ?? [];
+  const root = options.sourceRoot ?? suite?.testDirectory ?? "";
+  return [...new Set(paths.filter((value) => typeof value === "string").map((value) => value.replace(/\\/g, "/")))]
+    .map((value) => (root && !value.startsWith(`${root}/`) ? `${root}/${value}` : value))
+    .sort();
+}
+
+function fileMatches(resultFile, sourceFile) {
+  const resultPath = String(resultFile ?? "").replace(/\\/g, "/");
+  const sourcePath = String(sourceFile ?? "").replace(/\\/g, "/");
+  return resultPath === sourcePath || resultPath.endsWith(`/${sourcePath}`) || sourcePath.endsWith(`/${resultPath}`);
+}
+
+function firstResultError(results, compile) {
+  for (const result of results.filter((entry) => entry.status !== "harness-incompatible")) {
+    const error =
+      result.wasmError ??
+      result.compiledError ??
+      result.compiledMessage ??
+      result.runtimeError ??
+      result.nativeError ??
+      result.nativeMessage ??
+      result.skippedReason ??
+      result.error;
+    if (error) return String(error);
+  }
+  const compileError =
+    compile?.errors?.[0]?.message ??
+    compile?.validationError ??
+    compile?.runtimeError ??
+    compile?.nativeError ??
+    compile?.error ??
+    compile?.threw;
+  return compileError ? String(compileError) : null;
+}
+
+function buildSuiteFile(report, sourceFile, source, { singleFile = false } = {}) {
+  const tests = (report?.results?.tests ?? []).filter((entry) => fileMatches(entry.file, sourceFile));
+  const compile = [...(report?.compile?.details ?? []), ...(report?.compile?.files ?? [])].find((entry) =>
+    fileMatches(entry.file, sourceFile),
+  );
+  const scored = tests.filter((entry) => entry.status !== "harness-incompatible").length;
+  const passed = tests.filter((entry) => entry.status === "passed" || entry.status === "pass").length;
+  const failed = tests.filter((entry) =>
+    [
+      "failed",
+      "fail",
+      "runtime-failed",
+      "runtime-shape-failed",
+      "trapped",
+      "compiled-threw",
+      "compiled-parse-threw",
+      "compile-failed",
+      "divergent",
+    ].includes(entry.status),
+  ).length;
+  const compileFailed = tests.some((entry) => entry.status === "compile-failed");
+  const aggregatePassed = Number(report?.results?.passed ?? 0);
+  const aggregateTotal = Number(report?.results?.scored ?? report?.results?.total ?? 0);
+  const aggregateFailed = Math.max(0, aggregateTotal - aggregatePassed);
+  const hasAggregate = singleFile && tests.length === 0 && (aggregateTotal > 0 || aggregateFailed > 0);
+  const filePassed = hasAggregate ? aggregatePassed : passed;
+  const fileTotal = hasAggregate ? aggregateTotal : scored;
+  const fileFailed = hasAggregate ? aggregateFailed : failed;
+  const status =
+    compile?.success === false || compileFailed
+      ? "compile_error"
+      : fileFailed > 0
+        ? "fail"
+        : filePassed > 0
+          ? "pass"
+          : "skip";
+  const error = firstResultError(tests, compile) ?? (hasAggregate ? report?.results?.runtimeError : null);
+  const sourceUrl = githubRawSource(source, sourceFile);
+  return {
+    path: sourceFile,
+    status,
+    ...(tests.length > 0 || hasAggregate || compile?.success === false
+      ? { passed: filePassed, total: fileTotal || (compile?.success === false ? 1 : 0) }
+      : {}),
+    ...(error ? { error } : {}),
+    ...(tests.length > 0 ? { tests: tests.map((entry) => ({ name: entry.name, status: entry.status })) } : {}),
+    ...(sourceUrl ? { sourceUrl } : {}),
+  };
+}
+
+function buildNpmSuitePlayground(report, options = {}) {
+  const source = suiteSourceFromReport(report, options);
+  const sourceFiles = suiteFilePaths(report, options);
+  if (!source || sourceFiles.length === 0) return null;
+  const files = sourceFiles.map((sourceFile) =>
+    buildSuiteFile(report, sourceFile, source, { singleFile: sourceFiles.length === 1 }),
+  );
+  const hasPerTestResults = files.some((file) => file.tests?.length || file.total != null);
+  const summary = hasPerTestResults
+    ? summarizePlaygroundFiles(files)
+    : {
+        pass: Number(report?.results?.passed ?? 0),
+        fail: Math.max(
+          0,
+          Number(report?.results?.scored ?? report?.results?.total ?? 0) - Number(report?.results?.passed ?? 0),
+        ),
+        compile_error: report?.compile?.success === false ? files.length : 0,
+        skip: 0,
+        total: Number(report?.results?.scored ?? report?.results?.total ?? 0),
+      };
+  return {
+    kind: options.kind ?? "upstream-suite",
+    label: options.label ?? "original upstream unit tests",
+    source: { repo: source.repo, ref: source.ref },
+    files,
+    summary,
+    ...(options.note ? { note: options.note } : {}),
+  };
+}
+
+function buildDifferentialPlayground(report, options = {}) {
+  const recordedEntries = Array.isArray(report?.diff?.fixtures)
+    ? report.diff.fixtures
+    : Array.isArray(report?.diff?.ops)
+      ? report.diff.ops
+      : [];
+  const entries = recordedEntries.length > 0 ? recordedEntries : (options.fallbackEntries ?? []);
+  const compileBlocked = report?.compile?.success === false || report?.validation?.validates === false;
+  const files = entries.map((entry) => {
+    const rawStatus = entry.status ?? "skipped";
+    const status = ["equal", "pass", "passed"].includes(rawStatus)
+      ? "pass"
+      : ["skipped", "skip"].includes(rawStatus)
+        ? compileBlocked
+          ? "compile_error"
+          : "skip"
+        : "fail";
+    const error =
+      entry.compiledError ??
+      entry.wasmError ??
+      entry.skippedReason ??
+      entry.nativeError ??
+      (status === "skip" ? report?.diff?.skippedReason : null) ??
+      null;
+    const path = entry.fixture ?? entry.op ?? entry.name ?? options.sourcePath ?? "test.js";
+    const sourcePath =
+      entry.fixture && options.sourcePath ? `${options.sourcePath}/${entry.fixture}` : options.sourcePath;
+    return {
+      path,
+      status,
+      passed: status === "pass" ? 1 : 0,
+      total: 1,
+      ...(error ? { error: String(error) } : {}),
+      ...(sourcePath ? { sourceUrl: `https://raw.githubusercontent.com/loopdive/js2/main/${sourcePath}` } : {}),
+    };
+  });
+  const summary = summarizePlaygroundFiles(files);
+  return {
+    kind: "differential",
+    label: options.label ?? "differential tests",
+    files,
+    summary,
+    ...(options.note ? { note: options.note } : {}),
+  };
+}
+
+async function buildPackageEntry({
+  name,
+  version,
+  issue,
+  entryFile,
+  shape,
+  report,
+  tests,
+  perf,
+  entryIsBarrel,
+  playground,
+}) {
   return {
     name,
     version,
@@ -1897,6 +2248,13 @@ async function buildPackageEntry({ name, version, issue, entryFile, shape, repor
     // as evidence the package compiles (#3977).
     ...(entryIsBarrel ? { entryIsBarrel: true } : {}),
     tests: annotateUnavailableInfra(tests),
+    playground: playground ?? {
+      kind: "unavailable",
+      label: "package tests",
+      files: [],
+      summary: { pass: 0, fail: 0, compile_error: 0, skip: 0, total: 0 },
+      note: tests?.reason ?? "No committed unit-test adapter is available for this package.",
+    },
     // (#4127) The correctness axis, kept separate from compile/validation so a
     // package that compiles to a valid module but computes the WRONG ANSWER
     // cannot read as green. `unverified` means nothing is known — it is never
@@ -1915,7 +2273,22 @@ async function buildPackageEntry({ name, version, issue, entryFile, shape, repor
   };
 }
 
-const packages = [];
+// Every row records WHEN ITS OWN measurement finished, not when the run
+// ended. Packages are measured in independent CI rows now (one per package,
+// see npm-compat-refresh.yml), so a single run-level timestamp would describe
+// a moment that applies to no package in particular — and on the dashboard it
+// read as "everything here was measured at 15:27" while react-dom's numbers
+// were three days old. `measuredAt` is the per-package truth the page renders;
+// the summary's `generatedAt` stays what it always was (when this artifact was
+// assembled) and is still what the promotion freshness compare comes down to.
+class MeasuredPackageList extends Array {
+  push(...rows) {
+    const measuredAt = new Date().toISOString();
+    return super.push(...rows.map((row) => (row?.measuredAt ? row : { ...row, measuredAt })));
+  }
+}
+
+const packages = new MeasuredPackageList();
 
 if (perfOnly) {
   const name = [...selectedPackages][0];
@@ -2011,6 +2384,10 @@ if (!perfOnly && selectedPackages.has("acorn")) {
           passRatePct: acornSuite.summary?.passRatePct ?? null,
           sourceIssue: 3729,
         },
+        playground: buildNpmSuitePlayground(acornSuite, {
+          sourceRoot: "test",
+          label: "Acorn official unit tests",
+        }),
         perf: acornPerf,
       }),
     );
@@ -2056,6 +2433,14 @@ if (!perfOnly && selectedPackages.has("marked")) {
           commit: markedSuite.upstreamSuite?.commit ?? null,
         },
       },
+      playground: buildDifferentialPlayground(markedReport, {
+        sourcePath: "tests/dogfood/fixtures/marked-inputs",
+        label: "marked fixture tests",
+        fallbackEntries: readdirSync(join(ROOT, "tests/dogfood/fixtures/marked-inputs"))
+          .filter((file) => file.endsWith(".md"))
+          .sort()
+          .map((fixture) => ({ fixture })),
+      }),
       perf: await perfNpmCompatPackage("marked", {
         setupFactory: setupMarked,
         report: markedReport,
@@ -2114,6 +2499,11 @@ if (!perfOnly && selectedPackages.has("clsx")) {
             total: clsxReport.summary.opDiff?.total ?? null,
           },
         },
+        playground: buildDifferentialPlayground(clsxReport, {
+          sourcePath: "tests/dogfood/clsx-ops.mjs",
+          label: "clsx differential operations",
+          fallbackEntries: CLSX_OPS.map((op) => ({ op: op.name })),
+        }),
         perf: clsxPerf,
       }),
     );
@@ -2170,6 +2560,11 @@ if (!perfOnly && selectedPackages.has("cookie")) {
             total: cookieReport.summary.opDiff?.total ?? null,
           },
         },
+        playground: buildDifferentialPlayground(cookieReport, {
+          sourcePath: "tests/dogfood/cookie-ops.mjs",
+          label: "cookie differential operations",
+          fallbackEntries: COOKIE_OPS.map((op) => ({ op: op.name })),
+        }),
         perf: cookiePerf,
       }),
     );
@@ -2217,6 +2612,9 @@ if (!perfOnly && selectedPackages.has("eslint")) {
       shape: "cjs-project",
       report: eslintReport,
       tests: eslintTests,
+      playground: buildNpmSuitePlayground(eslintSuite, {
+        label: "ESLint upstream unit tests",
+      }),
       perf: await perfNpmCompatPackage("eslint", {
         setupFactory: setupEslint,
         report: eslintReport,
@@ -2292,9 +2690,13 @@ if (!perfOnly && selectedPackages.has("react")) {
         executed: reactSuite.results?.executed ?? null,
         upstreamTestsSeen: reactSuite.extraction?.upstreamTestsSeen ?? null,
         harnessIncompatible: reactSuite.results?.harnessIncompatible ?? null,
+        unavailableInfra: countUnavailableInfrastructure(reactSuite),
         quarantined: reactSuite.compile?.quarantined?.length ?? null,
         sourceIssue: 3958,
       },
+      playground: buildNpmSuitePlayground(reactSuite, {
+        label: "React upstream unit tests",
+      }),
       perf: await perfNpmCompatPackage("react", {
         setupFactory: setupReact,
         report: reactReport,
@@ -2345,12 +2747,16 @@ if (!perfOnly && selectedPackages.has("lit")) {
           admitted: litSuite.extraction?.admitted ?? null,
           upstreamTestsSeen: litSuite.extraction?.upstreamTestsSeen ?? null,
           harnessIncompatible: litSuite.results?.harnessIncompatible ?? null,
+          unavailableInfra: countUnavailableInfrastructure(litSuite),
           // The headline finding, and the reason the pass rate is low: most of
           // lit's corpus sits behind an implementation module the validator
           // rejects (#3978), so those tests never ran against Wasm at all.
           implementationInvalidTests: litSuite.summary?.implementationInvalidTests ?? null,
           sourceIssue: 3977,
         },
+        playground: buildNpmSuitePlayground(litSuite, {
+          label: "Lit upstream unit tests",
+        }),
         perf: await perfLit(),
       }),
     );
@@ -2361,7 +2767,15 @@ if (!perfOnly && selectedPackages.has("react-dom")) {
   console.log("[npm-compat] react-dom — package entry + react-dom's own upstream unit tests...");
   const reactDomEntry = NPM_COMPAT_CATALOG.find((entry) => entry.name === "react-dom");
   const reactDomReport = await runNpmCompatCatalogHarness("react-dom", { quiet: true });
-  const reactDomSuite = await runConfiguredUpstreamSuite("react-dom", { quiet: true });
+  // (#4604) react-dom is the roster's largest suite by an order of magnitude
+  // and has twice burned a whole CI run with `quiet: true` hiding all
+  // progress — a 350-min timeout and a genuine hang produce the same
+  // single-line log. NPM_COMPAT_SUITE_LOGS=1 (set by npm-compat-refresh.yml)
+  // keeps its per-batch [dogfood] lines so the job log shows which lane and
+  // batch the clock went to.
+  const reactDomSuite = await runConfiguredUpstreamSuite("react-dom", {
+    quiet: process.env.NPM_COMPAT_SUITE_LOGS !== "1",
+  });
   const reactDomImplementationReport = {
     ...reactDomReport,
     // The package-entry probe only compiles the small environment selector.
@@ -2405,6 +2819,7 @@ if (!perfOnly && selectedPackages.has("react-dom")) {
         admitted: reactDomSuite.extraction?.admitted ?? null,
         upstreamTestsSeen: reactDomSuite.extraction?.upstreamTestsSeen ?? null,
         harnessIncompatible: reactDomSuite.results?.harnessIncompatible ?? null,
+        unavailableInfra: countUnavailableInfrastructure(reactDomSuite),
         // Why 0 can be scored while 1,942 are admitted: while #3982 is open the
         // implementation module itself may be rejected, and the suite's OWN
         // test file pins that this is REPORTED with the compiler's message,
@@ -2412,8 +2827,94 @@ if (!perfOnly && selectedPackages.has("react-dom")) {
         // card does the same via implementationInvalidTests, #3977/#3978).
         implementationInvalidTests: reactDomSuite.summary?.implementationInvalidTests ?? null,
         implementationError: reactDomSuite.summary?.implementationError ?? null,
+        // Server-renderer tests run in a separate published browser bundle.
+        // Keep the lane visible in the committed artifact instead of folding
+        // its failures into the client renderer's denominator.
+        server: {
+          passed: reactDomSuite.server?.results?.passed ?? null,
+          total: reactDomSuite.server?.results?.scored ?? null,
+          passRatePct: reactDomSuite.server?.summary?.passRatePct ?? null,
+          admitted: reactDomSuite.server?.extraction?.admitted ?? null,
+          selected: reactDomSuite.server?.extraction?.selected ?? null,
+          upstreamTestsSeen: reactDomSuite.server?.extraction?.upstreamTestsSeen ?? null,
+          harnessIncompatible: reactDomSuite.server?.results?.harnessIncompatible ?? null,
+          implementationInvalidTests: reactDomSuite.server?.results?.implementationInvalidTests ?? null,
+          compile: reactDomSuite.server?.compile
+            ? {
+                success: reactDomSuite.server.compile.success ?? false,
+                durationMs: reactDomSuite.server.compile.durationMs ?? null,
+                binaryBytes: reactDomSuite.server.compile.binaryBytes ?? null,
+                invalidBatches: reactDomSuite.server.compile.invalidBatches ?? null,
+              }
+            : null,
+          validation: reactDomSuite.server?.validation ?? null,
+        },
+        // Browser Fizz is a third, independently published renderer graph.
+        // Keep its denominator separate from both the client and legacy SSR
+        // lanes: a Fizz test never ran against the client module merely
+        // because it came from the same upstream test directory.
+        fizz: {
+          passed: reactDomSuite.fizz?.results?.passed ?? null,
+          total: reactDomSuite.fizz?.results?.scored ?? null,
+          passRatePct: reactDomSuite.fizz?.summary?.passRatePct ?? null,
+          admitted: reactDomSuite.fizz?.extraction?.admitted ?? null,
+          selected: reactDomSuite.fizz?.extraction?.selected ?? null,
+          upstreamTestsSeen: reactDomSuite.fizz?.extraction?.upstreamTestsSeen ?? null,
+          harnessIncompatible: reactDomSuite.fizz?.results?.harnessIncompatible ?? null,
+          implementationInvalidTests: reactDomSuite.fizz?.results?.implementationInvalidTests ?? null,
+          compile: reactDomSuite.fizz?.compile
+            ? {
+                success: reactDomSuite.fizz.compile.success ?? false,
+                durationMs: reactDomSuite.fizz.compile.durationMs ?? null,
+                binaryBytes: reactDomSuite.fizz.compile.binaryBytes ?? null,
+                invalidBatches: reactDomSuite.fizz.compile.invalidBatches ?? null,
+              }
+            : null,
+          validation: reactDomSuite.fizz?.validation ?? null,
+        },
+        nodeFizz: {
+          passed: reactDomSuite.nodeFizz?.results?.passed ?? null,
+          total: reactDomSuite.nodeFizz?.results?.scored ?? null,
+          passRatePct: reactDomSuite.nodeFizz?.summary?.passRatePct ?? null,
+          admitted: reactDomSuite.nodeFizz?.extraction?.admitted ?? null,
+          selected: reactDomSuite.nodeFizz?.extraction?.selected ?? null,
+          upstreamTestsSeen: reactDomSuite.nodeFizz?.extraction?.upstreamTestsSeen ?? null,
+          harnessIncompatible: reactDomSuite.nodeFizz?.results?.harnessIncompatible ?? null,
+          implementationInvalidTests: reactDomSuite.nodeFizz?.results?.implementationInvalidTests ?? null,
+          compile: reactDomSuite.nodeFizz?.compile
+            ? {
+                success: reactDomSuite.nodeFizz.compile.success ?? false,
+                durationMs: reactDomSuite.nodeFizz.compile.durationMs ?? null,
+                binaryBytes: reactDomSuite.nodeFizz.compile.binaryBytes ?? null,
+                invalidBatches: reactDomSuite.nodeFizz.compile.invalidBatches ?? null,
+              }
+            : null,
+          validation: reactDomSuite.nodeFizz?.validation ?? null,
+        },
+        edgeFizz: {
+          passed: reactDomSuite.edgeFizz?.results?.passed ?? null,
+          total: reactDomSuite.edgeFizz?.results?.scored ?? null,
+          passRatePct: reactDomSuite.edgeFizz?.summary?.passRatePct ?? null,
+          admitted: reactDomSuite.edgeFizz?.extraction?.admitted ?? null,
+          selected: reactDomSuite.edgeFizz?.extraction?.selected ?? null,
+          upstreamTestsSeen: reactDomSuite.edgeFizz?.extraction?.upstreamTestsSeen ?? null,
+          harnessIncompatible: reactDomSuite.edgeFizz?.results?.harnessIncompatible ?? null,
+          implementationInvalidTests: reactDomSuite.edgeFizz?.results?.implementationInvalidTests ?? null,
+          compile: reactDomSuite.edgeFizz?.compile
+            ? {
+                success: reactDomSuite.edgeFizz.compile.success ?? false,
+                durationMs: reactDomSuite.edgeFizz.compile.durationMs ?? null,
+                binaryBytes: reactDomSuite.edgeFizz.compile.binaryBytes ?? null,
+                invalidBatches: reactDomSuite.edgeFizz.compile.invalidBatches ?? null,
+              }
+            : null,
+          validation: reactDomSuite.edgeFizz?.validation ?? null,
+        },
         sourceIssue: 3982,
       },
+      playground: buildNpmSuitePlayground(reactDomSuite, {
+        label: "React DOM upstream unit tests",
+      }),
       perf: await perfNpmCompatPackage("react-dom", {
         setupFactory: () => setupNpmCompatCatalogPackage("react-dom"),
         report: reactDomImplementationReport,
@@ -2489,6 +2990,7 @@ for (const entry of NPM_COMPAT_CATALOG) {
             commit: catalogUpstreamReport.upstreamSuite?.commit ?? null,
           },
           packageApiWorkload: workload?.tests ?? undefined,
+          unavailableInfra: countUnavailableInfrastructure(catalogUpstreamReport),
         }
       : null) ??
     workload?.tests ??
@@ -2515,6 +3017,9 @@ for (const entry of NPM_COMPAT_CATALOG) {
       shape: entry.shape,
       report,
       tests,
+      playground: buildNpmSuitePlayground(catalogUpstreamReport, {
+        label: `${entry.name} upstream unit tests`,
+      }),
       perf: await perfNpmCompatPackage(entry.name, {
         setupFactory: () => setupNpmCompatCatalogPackage(entry.name),
         report,
@@ -2526,15 +3031,32 @@ for (const entry of NPM_COMPAT_CATALOG) {
 
 for (const pkg of packages) {
   pkg.weeklyDownloads = NPM_DOWNLOADS_SNAPSHOT.packages[pkg.name] ?? null;
+  pkg.playground ??= {
+    kind: "unavailable",
+    label: "package tests",
+    files: [],
+    summary: { pass: 0, fail: 0, compile_error: 0, skip: 0, total: 0 },
+    note: pkg.tests?.reason ?? "No committed unit-test adapter is available for this package.",
+  };
 }
 packages.sort(
   (left, right) =>
     (right.weeklyDownloads ?? Number.NEGATIVE_INFINITY) - (left.weeklyDownloads ?? Number.NEGATIVE_INFINITY) ||
     left.name.localeCompare(right.name),
 );
-
+const measuredAtStamps = packages.map((packageRow) => packageRow.measuredAt).filter(Boolean);
 const summary = {
   generatedAt: new Date().toISOString(),
+  // The spread of per-package measurement times (see MeasuredPackageList).
+  // The dashboard headline is built from this rather than `generatedAt`, so a
+  // corpus whose oldest and newest numbers are days apart says so.
+  measuredRange:
+    measuredAtStamps.length > 0
+      ? {
+          oldest: measuredAtStamps.reduce((left, right) => (left < right ? left : right)),
+          newest: measuredAtStamps.reduce((left, right) => (left > right ? left : right)),
+        }
+      : null,
   // (#4127) How much of the corpus carries correctness evidence at all. The
   // `unverified` list is named, not just counted, so the size of the blind spot
   // is legible rather than implied.
@@ -2548,6 +3070,12 @@ const summary = {
   },
   performanceMethodology: {
     baseline: "same pinned package, inputs, and result observation in native Node",
+    optimizationLevels: {
+      "js-host": NPM_COMPAT_JS_HOST_OPTIMIZE_LEVEL,
+      standalone: NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL,
+    },
+    optimizationPassPolicy:
+      "Binaryen O4 is required. Standardized-EH modules may omit only the unsupported Flatten pass; the omission is recorded on each affected lane.",
     inputModes: {
       "compile-time-static": "package, test driver, and fixed inputs are visible to the Wasm compiler",
       "runtime-dynamic":
@@ -2557,13 +3085,66 @@ const summary = {
   packages,
 };
 
+// Focused matrix workers do not write aggregate artifacts: a partial report
+// must never replace the complete dashboard with one package group. They do
+// write a self-contained fragment for the coordinator job, which combines all
+// groups after the slow work has finished.
+if (partialOutputPath) {
+  mkdirSync(dirname(resolve(ROOT, partialOutputPath)), { recursive: true });
+  writeFileSync(
+    resolve(ROOT, partialOutputPath),
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        generatedAt: summary.generatedAt,
+        sourceRevision: currentRevision(),
+        summaryMeta: {
+          note: summary.note,
+          popularity: summary.popularity,
+          performanceMethodology: summary.performanceMethodology,
+        },
+        packages,
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  console.log(`[npm-compat] wrote partial report ${resolve(ROOT, partialOutputPath)}`);
+}
+
+function assertMeasuredOptimizationReceipts(packageRows) {
+  for (const packageRow of packageRows) {
+    for (const [laneName, lane] of Object.entries(packageRow.perf?.lanes ?? {})) {
+      if (lane?.status !== "measured") continue;
+      const expectedLevel = npmCompatOptimizationLevel(lane.placement);
+      if (
+        lane.optimizationRequested !== true ||
+        lane.optimizationVerified !== true ||
+        lane.optimizationLevel !== expectedLevel
+      ) {
+        throw new Error(
+          `${packageRow.name}.${laneName} lacks a verified O${expectedLevel} optimizer receipt ` +
+            `(received ${String(lane.optimizationLevel)}/${String(lane.optimizationRequested)}/${String(lane.optimizationVerified)})`,
+        );
+      }
+    }
+  }
+}
+
+if (!reuseStandaloneBinaryPath) assertMeasuredOptimizationReceipts(packages);
+
 // Successful placements become separate chart rows. Failed or deliberately
 // skipped placements remain visible in the package JSON/cards and are never
 // converted to misleading zero-duration bars.
 const perfRows = npmPerfRows(packages);
 const perfHistory = mergeNpmPerfHistory(readHistoryArtifact(), [
   ...committedHistoryPoints(),
-  npmPerfHistoryPoint(packages, summary.generatedAt, currentRevision()),
+  npmPerfHistoryPoint(
+    packages,
+    summary.generatedAt,
+    currentRevision(),
+    summary.performanceMethodology.optimizationLevels,
+  ),
 ]);
 
 if (writeArtifacts) {
@@ -2581,7 +3162,18 @@ if (writeArtifacts) {
   copyFileSync(HISTORY_RESULTS_PATH, HISTORY_PUBLIC_PATH);
   console.log(`[npm-compat] wrote ${HISTORY_RESULTS_PATH}`);
   console.log(`[npm-compat] wrote ${HISTORY_PUBLIC_PATH}`);
+} else if (partialOutputPath) {
+  console.log("[npm-compat] skipped aggregate artifact writes (partial report is ready for the coordinator)");
 } else {
   console.log("[npm-compat] skipped aggregate artifact writes");
   console.log(JSON.stringify({ ...summary, perfRows, perfHistory }, null, 2));
 }
+
+// (#4604) Every report is written at this point, but a timed-out upstream test
+// can leave live host timer chains behind (React's scheduler shim reschedules
+// `setTimeout(run, 0)` while render work remains), and those keep the event
+// loop — and therefore the CI step — alive indefinitely after the run is
+// complete. Unref'd so a clean drain still exits naturally and immediately;
+// the forced exit only fires when leaked handles would otherwise hang a
+// finished run. All artifact writes above are synchronous.
+setTimeout(() => process.exit(process.exitCode ?? 0), 10_000).unref();

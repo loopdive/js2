@@ -34,6 +34,9 @@ import { mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
 import { addFuncType } from "../src/codegen/registry/types.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
 import { JsTag } from "../src/ir/js-tag.js";
+// #3954 phase 1 — `IrType`'s dynamic leaf carries an opaque TagId, so a
+// refinement is named through the JS tag domain, not the enum.
+import { JS_TAG_IDS } from "../src/ir/js-tag-domain.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { repairStructTypeMismatches } from "../src/codegen/fixups.js";
 import { peepholeOptimize } from "../src/codegen/peephole.js";
@@ -264,7 +267,7 @@ function truthyBool(name: string): IrFunction {
   const b = new IrFunctionBuilder(identities.next(name), [F64], true);
   const x = b.addParam("x", I32);
   b.openBlock();
-  const d = b.emitBox(x, irDynamic(JsTag.Boolean));
+  const d = b.emitBox(x, irDynamic(JS_TAG_IDS.Boolean));
   const t = b.emitDynTruthy(d);
   const one = b.emitConst({ kind: "f64", value: 1 }, F64);
   const zero = b.emitConst({ kind: "f64", value: 0 }, F64);

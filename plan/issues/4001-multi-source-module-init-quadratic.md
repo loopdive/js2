@@ -4,7 +4,7 @@ id: 4001
 title: "compileMulti recompiles and re-emits the whole graph initializer once per source (quadratic)"
 status: done
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 completed: 2026-08-01
 assignee: ttraenkler/claude
 priority: critical
@@ -14,7 +14,7 @@ task_type: performance
 area: compiler, codegen
 language_feature: multi-module-compilation
 goal: npm-library-support
-sprint: current
+sprint: 78
 required_by: [1282, 1400, 2693]
 es_edition: n/a
 related: [1282, 2965, 3672, 3782, 3872]

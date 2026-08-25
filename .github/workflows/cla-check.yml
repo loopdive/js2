@@ -115,6 +115,16 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         with:
           github-token: ${{ github.token }}
+          # Retry transient GitHub API failures. Without this, github-script
+          # defaults to `retries: 0`, so ONE 503 on the commit-status POST fails
+          # this REQUIRED check even though the CLA decision itself succeeded.
+          # Observed twice on PR #4645 (2026-08-17, edge regions `sea` then
+          # `westus3`): the log shows the gate resolving "Author … is exempt
+          # (allowlist); CLA not required." and then dying on
+          # `POST /repos/…/statuses/…` with 503 — the verdict was computed and
+          # only the write failed. 503 is not in `retry-exempt-status-codes`
+          # (400,401,403,404,422), so it is retried by this setting.
+          retries: 3
           script: |
             const gate = await import(`${process.env.GITHUB_WORKSPACE}/.github/cla/cla-gate.mjs`);
             const fs = require("node:fs");

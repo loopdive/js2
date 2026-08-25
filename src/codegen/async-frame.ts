@@ -37,7 +37,7 @@ import type { Instr, ValType, WasmFunction } from "../ir/types.js";
  */
 import { forEachChild, ts } from "../ts-api.js";
 import type { AsyncCfgPlan, AsyncCfgState, AsyncCpsPlan, AsyncResumePoint } from "./async-cps.js";
-import { awaitIsStaticallyResolved } from "./async-static.js"; // (#3723) settled-local flow test
+import { awaitIsStaticallyResolved } from "../ir/async-static.js"; // (#3723) settled-local flow test
 import {
   ASYNC_CPS_ENABLED,
   FORAWAIT_ITER_SPILL,
@@ -61,8 +61,10 @@ import {
   tryCatchAsyncSpillInfo,
 } from "./async-cps.js";
 import { ensureNativeGeneratorResultType } from "./generators-native.js";
-import { undefinedExternInstrs } from "./any-helpers.js"; // (#3178) canonical undefined for the done-result value
+import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js"; // (#3178) canonical undefined for the done-result value
+import { recordAsyncFrameMachinery } from "./compiler-support-abi.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3 / #2710) stable-regime minting
+import { buildNativeAwaitClassification, buildNativeAwaitSuspendArm } from "./prepared-native-async-await.js";
 import {
   type AsyncDriveRuntime,
   PROMISE_STATE_FULFILLED,
@@ -97,6 +99,7 @@ import { ensureExnTag } from "./registry/imports.js";
 import { addFuncType, getOrRegisterRefCellType, getOrRegisterVecType } from "./registry/types.js";
 import { coerceType, compileExpression, compileStatement, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 
 /**
  * Is the host-free async **drive layer** (#2895 PATH B) active for this module?
@@ -142,10 +145,11 @@ export interface HostAsyncImports {
   undefinedIdx?: number;
 }
 
-function asyncUndefinedInstrs(hostImports: HostAsyncImports | undefined): Instr[] {
-  return hostImports?.undefinedIdx === undefined
-    ? [{ op: "ref.null.extern" }]
-    : [{ op: "call", funcIdx: hostImports.undefinedIdx }];
+function asyncUndefinedInstrs(ctx: CodegenContext, info: AsyncFrameInfo): Instr[] {
+  if (info.hostImports?.undefinedIdx !== undefined) {
+    return [{ op: "call", funcIdx: info.hostImports.undefinedIdx }];
+  }
+  return info.canonicalUndefinedResult ? canonicalUndefinedExternInstrs(ctx) : [{ op: "ref.null.extern" }];
 }
 
 /**
@@ -317,6 +321,17 @@ export interface AsyncFrameInfo {
    * closures.ts capture aliasing flow through the cell.
    */
   spillCellInfo?: Map<number, { refCellTypeIdx: number; valType: ValType }>;
+  /**
+   * (#4618) Spilled let/const bindings whose TDZ FLAG must survive suspends.
+   * Each gets an i32 ref-cell frame field (`tdzcell_<name>`, starting at
+   * `tdzCellFieldStart`); the entry creates the cell at struct.new (0 =
+   * uninitialized) and the resume prologue re-binds it into
+   * `boxedTdzFlags`/`tdzFlagLocals` so inits/checks/capture-prepends all
+   * flow through one suspend-surviving cell.
+   */
+  tdzCellNames?: string[];
+  tdzCellFieldStart?: number;
+  tdzCellTypeIdx?: number;
   /** Field index of the result `$Promise` the async fn returns / settles. */
   resultPromiseFieldIdx: number;
   /**
@@ -334,6 +349,18 @@ export interface AsyncFrameInfo {
    * `$Promise` + microtask-ring backend (standalone/wasi).
    */
   host: boolean;
+  /**
+   * Prepared native IR Promise<void> frames settle with the canonical native
+   * undefined singleton. Transitional direct native async/generator frames
+   * retain their existing null-sentinel behavior until that path is retired.
+   */
+  canonicalUndefinedResult?: boolean;
+  /**
+   * Prepared native IR awaits always resume through the microtask ring, even
+   * when their operand is already settled. This preserves the mandatory
+   * asynchronous turn without widening the transitional direct-native path.
+   */
+  alwaysAsyncAwait?: boolean;
   /** Host backend import indices (present iff `host`). */
   hostImports?: HostAsyncImports;
   /** Host backend: `__cb_<id>` callback id of the fulfill step adapter. */
@@ -589,10 +616,38 @@ export function buildAsyncFrameInfo(
     });
   }
 
+  // (#4618) TDZ flag CELLS for spilled let/const bindings. The resume fn's
+  // locals reset on every re-entry, so a raw i32 TDZ flag flipped in state k
+  // is LOST by state k+1 — a hoisted fn-decl capturing the binding then
+  // throws "X is not defined" from its boxed flag param even though the
+  // declaration ran. Persist each flagged spill's TDZ state in an i32 ref
+  // cell frame field: the entry creates the cell (0 = uninitialized), the
+  // resume prologue re-binds it into `boxedTdzFlags`/`tdzFlagLocals` (both
+  // emitLocalTdzInit and the call-site flag prepend are already cell-aware),
+  // and cell identity survives every suspend.
+  const tdzCellNames: string[] = [];
+  let tdzCellTypeIdx: number | undefined;
+  if (decl.asteriskToken === undefined && activatingFctx?.tdzFlagLocals !== undefined) {
+    for (const name of spillNames) {
+      if (activatingFctx.tdzFlagLocals.has(name)) tdzCellNames.push(name);
+    }
+    if (tdzCellNames.length > 0) {
+      tdzCellTypeIdx = getOrRegisterRefCellType(ctx, { kind: "i32" });
+      for (const name of tdzCellNames) {
+        stateFields.push({
+          name: `tdzcell_${name}`,
+          type: { kind: "ref_null", typeIdx: tdzCellTypeIdx },
+          mutable: true,
+        });
+      }
+    }
+  }
+  const tdzCellFieldStart = spillFieldOffset + spillNames.length;
+
   // Trailing result-promise field — after spills so `spillFieldOffset` is stable.
   // Host backend: the result promise is a host Promise object (externref); there
   // is no native `$Promise` struct in the module at all.
-  const resultPromiseFieldIdx = spillFieldOffset + spillNames.length;
+  const resultPromiseFieldIdx = spillFieldOffset + spillNames.length + tdzCellNames.length;
   const resultPromiseFieldType: ValType = hostImports
     ? { kind: "externref" }
     : { kind: "ref", typeIdx: promiseTypeIdx };
@@ -624,6 +679,9 @@ export function buildAsyncFrameInfo(
     spillFieldOffset,
     derivedSpillInit: derivedSpillInit.size > 0 ? derivedSpillInit : undefined,
     spillCellInfo: spillCellInfo.size > 0 ? spillCellInfo : undefined,
+    tdzCellNames: tdzCellNames.length > 0 ? tdzCellNames : undefined,
+    tdzCellFieldStart: tdzCellNames.length > 0 ? tdzCellFieldStart : undefined,
+    tdzCellTypeIdx,
     resultPromiseFieldIdx,
     promiseTypeIdx,
     host: hostImports !== undefined,
@@ -713,7 +771,7 @@ function bindingLiveAcrossLaterAwait(name: string, k: number, plan: AsyncCpsPlan
  * resumes with `v` unchanged. So an await whose operand type carries no `then`
  * is a pass-through no matter what the syntax looks like.
  *
- * This exists because {@link import("./async-static.js").awaitIsStaticallyResolved}
+ * This exists because {@link import("../ir/async-static.js").awaitIsStaticallyResolved}
  * cannot answer it. That helper is deliberately a checker-free LEAF module (it
  * imports only `ts-api`, so the IR front-end can consume it without closing the
  * #3324 import cycle), which means it recognises literals and
@@ -1569,17 +1627,23 @@ export function ensureAsyncResumeFunction(
     exported: false,
   };
   pushDefinedFunc(ctx, resumeFuncIdx, resumePlaceholder);
+  // (#3520 C35) Owned by the async function's OWN unit, not the entry source:
+  // a second async function cannot renumber this one. `resumePlaceholder` is
+  // filled in place below, so the recorded object is the one the module keeps.
+  recordAsyncFrameMachinery(ctx, info.decl, "resume", resumePlaceholder);
 
   const stepFulfillFuncIdx = mintDefinedFunc(ctx);
   info.stepFulfillFuncIdx = stepFulfillFuncIdx;
   ctx.funcMap.set(stepFulfillName, stepFulfillFuncIdx);
-  pushDefinedFunc(ctx, stepFulfillFuncIdx, {
+  const stepFulfillFunc: WasmFunction = {
     name: stepFulfillName,
     typeIdx: stepTypeIdx,
     locals: buildStepAdapterLocals(info),
     body: buildStepAdapterBody(info, resumeFuncIdx, /*reject*/ false),
     exported: info.host,
-  });
+  };
+  pushDefinedFunc(ctx, stepFulfillFuncIdx, stepFulfillFunc);
+  recordAsyncFrameMachinery(ctx, info.decl, "stepFulfill", stepFulfillFunc);
   // Host backend: the `__make_callback` host bridge dispatches by the exported
   // `__cb_<id>` NAME, so the adapters need real export entries (the `exported`
   // flag alone only opts into the module-init guard). The late-import shift
@@ -1595,13 +1659,15 @@ export function ensureAsyncResumeFunction(
   const stepRejectFuncIdx = mintDefinedFunc(ctx);
   info.stepRejectFuncIdx = stepRejectFuncIdx;
   ctx.funcMap.set(stepRejectName, stepRejectFuncIdx);
-  pushDefinedFunc(ctx, stepRejectFuncIdx, {
+  const stepRejectFunc: WasmFunction = {
     name: stepRejectName,
     typeIdx: stepTypeIdx,
     locals: buildStepAdapterLocals(info),
     body: buildStepAdapterBody(info, resumeFuncIdx, /*reject*/ true),
     exported: info.host,
-  });
+  };
+  pushDefinedFunc(ctx, stepRejectFuncIdx, stepRejectFunc);
+  recordAsyncFrameMachinery(ctx, info.decl, "stepReject", stepRejectFunc);
   if (info.host) {
     ctx.mod.exports.push({
       name: stepRejectName,
@@ -1646,6 +1712,31 @@ export function ensureAsyncResumeFunction(
   // eager hydration; frame-core also preserves force-boxed capture aliases.
   const selectiveSpillRestores = cfg.states.some((state) => state.restoreSpillNames !== undefined);
   initializeSpillLocals(info, resumeFctx, frameLocal, !selectiveSpillRestores, info.spillCellInfo);
+  // (#4618) Re-bind the suspend-surviving TDZ flag cells: load each cell from
+  // its frame field and register it in boxedTdzFlags + tdzFlagLocals so
+  // emitLocalTdzInit / emitLocalTdzCheck / the call-site flag prepend all
+  // flow through the ONE cell whose state persists across re-entries.
+  if (info.tdzCellNames !== undefined && info.tdzCellTypeIdx !== undefined && info.tdzCellFieldStart !== undefined) {
+    for (let i = 0; i < info.tdzCellNames.length; i++) {
+      const tdzName = info.tdzCellNames[i]!;
+      const cellLocal = allocLocal(resumeFctx, `__tdz_box_${tdzName}`, {
+        kind: "ref_null",
+        typeIdx: info.tdzCellTypeIdx,
+      });
+      resumeFctx.body.push({ op: "local.get", index: frameLocal });
+      resumeFctx.body.push({
+        op: "struct.get",
+        typeIdx: info.stateTypeIdx,
+        fieldIdx: info.tdzCellFieldStart + i,
+      });
+      resumeFctx.body.push({ op: "local.set", index: cellLocal });
+      (resumeFctx.boxedTdzFlags ??= new Map()).set(tdzName, {
+        refCellTypeIdx: info.tdzCellTypeIdx,
+        localIdx: cellLocal,
+      });
+      (resumeFctx.tdzFlagLocals ??= new Map()).set(tdzName, cellLocal);
+    }
+  }
   // (#2865) A lifted-CLOSURE body (arrow / fn-expr) keeps its captures in the
   // `__self` struct — closures.ts materializes each into a NAMED local in the
   // lifted body's prologue, and every identifier/call site in the body resolves
@@ -1966,107 +2057,23 @@ export function ensureAsyncResumeFunction(
           // Classify the assimilated value; set suspendedLocal + SENT/ERROR/MODE.
           // No `br` inside these nested ifs — the single advance/suspend
           // `br`/`return` is emitted flat below at a known control depth.
-          out.push({ op: "i32.const", value: 0 });
-          out.push({ op: "local.set", index: suspendedLocal });
-
-          const deliverFromP: Instr[] = [
-            { op: "local.get", index: frameLocal },
-            { op: "local.get", index: pLocal },
-            {
-              op: "struct.get",
-              typeIdx: info.promiseTypeIdx,
-              fieldIdx: 1,
-            },
-            {
-              op: "struct.set",
-              typeIdx: info.stateTypeIdx,
-              fieldIdx: SENT_FIELD,
-            },
-          ];
-          const rejectFromP: Instr[] = [
-            // (#2958) The frame is consuming this awaited promise's rejection
-            // (the reason is re-thrown into the resume machine, where a
-            // try/catch in the async body may handle it), so mark it handled —
-            // otherwise an inlined `await Promise.reject(x)` would be reported as
-            // unhandled. No-op when tracking is inactive.
-            ...(rt && rt.markRejectionHandledFuncIdx >= 0
-              ? ([
-                  { op: "local.get", index: pLocal },
-                  { op: "call", funcIdx: rt.markRejectionHandledFuncIdx },
-                ] satisfies Instr[])
-              : []),
-            { op: "local.get", index: frameLocal },
-            { op: "local.get", index: pLocal },
-            {
-              op: "struct.get",
-              typeIdx: info.promiseTypeIdx,
-              fieldIdx: 1,
-            },
-            {
-              op: "struct.set",
-              typeIdx: info.stateTypeIdx,
-              fieldIdx: ERROR_FIELD,
-            },
-            ...setStateI32FromConst(info, frameLocal, MODE_FIELD, MODE_THROW),
-          ];
-          const markPending: Instr[] = [
-            { op: "i32.const", value: 1 },
-            { op: "local.set", index: suspendedLocal },
-          ];
-          const deliverPlain: Instr[] = [
-            { op: "local.get", index: frameLocal },
-            { op: "local.get", index: awaitedLocal },
-            {
-              op: "struct.set",
-              typeIdx: info.stateTypeIdx,
-              fieldIdx: SENT_FIELD,
-            },
-          ];
-          const pendingOrRejected: Instr[] = [
-            { op: "local.get", index: pLocal },
-            {
-              op: "struct.get",
-              typeIdx: info.promiseTypeIdx,
-              fieldIdx: 0,
-            },
-            { op: "i32.const", value: PROMISE_STATE_REJECTED },
-            { op: "i32.eq" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: rejectFromP,
-              else: markPending,
-            },
-          ];
           out.push(
-            { op: "local.get", index: awaitedLocal },
-            { op: "any.convert_extern" },
-            { op: "ref.test", typeIdx: info.promiseTypeIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: awaitedLocal },
-                { op: "any.convert_extern" },
-                { op: "ref.cast", typeIdx: info.promiseTypeIdx },
-                { op: "local.set", index: pLocal },
-                { op: "local.get", index: pLocal },
-                {
-                  op: "struct.get",
-                  typeIdx: info.promiseTypeIdx,
-                  fieldIdx: 0,
-                },
-                { op: "i32.const", value: PROMISE_STATE_FULFILLED },
-                { op: "i32.eq" },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: deliverFromP,
-                  else: pendingOrRejected,
-                },
-              ],
-              else: deliverPlain,
-            },
+            ...buildNativeAwaitClassification({
+              alwaysAsync: info.alwaysAsyncAwait === true,
+              awaitedLocal,
+              promiseLocal: pLocal,
+              frameLocal,
+              suspendedLocal,
+              promiseTypeIdx: info.promiseTypeIdx,
+              stateTypeIdx: info.stateTypeIdx,
+              sentField: SENT_FIELD,
+              errorField: ERROR_FIELD,
+              enqueueFuncIdx: rt?.enqueueFuncIdx ?? -1,
+              fulfillStepFuncIdx: info.stepFulfillFuncIdx ?? -1,
+              rejectStepFuncIdx: info.stepRejectFuncIdx ?? -1,
+              markRejectionHandledFuncIdx: rt?.markRejectionHandledFuncIdx ?? -1,
+              setThrowMode: setStateI32FromConst(info, frameLocal, MODE_FIELD, MODE_THROW),
+            }),
           );
 
           // Advance-or-suspend. STATE = resumeState for both (suspend → the
@@ -2099,11 +2106,17 @@ export function ensureAsyncResumeFunction(
           ];
           // Advance: `br` to the dispatch `loop` to re-enter at STATE=resumeState.
           const advanceArm: Instr[] = [{ op: "br", depth: loopDepth }];
+          const suspendOrQueuedArm = buildNativeAwaitSuspendArm(
+            info.alwaysAsyncAwait === true,
+            suspendedLocal,
+            suspendArm,
+            [...storeSpills(info, resumeFctx, frameLocal, term.spillNames), { op: "return" }],
+          );
           out.push({ op: "local.get", index: suspendedLocal });
           out.push({
             op: "if",
             blockType: { kind: "empty" },
-            then: suspendArm,
+            then: suspendOrQueuedArm,
             else: advanceArm,
           });
           break;
@@ -2182,7 +2195,7 @@ export function ensureAsyncResumeFunction(
           // Fall off the body — fulfil with undefined. (`return v` inside the
           // lead already settles via the `asyncDriveReturn` hook and returns.)
           out.push({ op: "local.get", index: resultPromiseLocal });
-          out.push(...asyncUndefinedInstrs(hostImports));
+          out.push(...asyncUndefinedInstrs(ctx, info));
           out.push({ op: "call", funcIdx: settleFulfillIdx });
           out.push({ op: "drop" });
           out.push({ op: "return" });
@@ -2524,15 +2537,7 @@ export function ensureAsyncResumeFunction(
         {
           op: "loop",
           blockType: { kind: "empty" },
-          body: [
-            {
-              op: "try",
-              blockType: { kind: "empty" },
-              body: chain,
-              catches: [{ tagIdx: exnTag, body: route }],
-              ...(catchAllRoute !== undefined ? { catchAll: catchAllRoute } : {}),
-            },
-          ],
+          body: [buildTargetTaggedTry(ctx, { kind: "empty" }, chain, [{ tagIdx: exnTag, body: route }], catchAllRoute)],
         },
       ],
     });
@@ -2544,17 +2549,14 @@ export function ensureAsyncResumeFunction(
         body: [{ op: "loop", blockType: { kind: "empty" }, body: chain }],
       },
     ];
-    resumeFctx.body.push({
-      op: "try",
-      blockType: { kind: "empty" },
-      body: dispatch,
-      catches: [
+    resumeFctx.body.push(
+      buildTargetTaggedTry(ctx, { kind: "empty" }, dispatch, [
         {
           tagIdx: exnTag,
           body: [{ op: "local.set", index: reasonLocal }, ...rejectTail],
         },
-      ],
-    });
+      ]),
+    );
   }
 
   resumePlaceholder.locals = resumeFctx.locals;
@@ -2751,6 +2753,11 @@ function emitAsyncFrameEntry(
     } else {
       fctx.body.push(defaultSpillInstr(info.spillTypes[i]!));
     }
+  }
+  // (#4618) TDZ flag cells — one fresh 0-initialized i32 cell per flagged spill.
+  for (let i = 0; i < (info.tdzCellNames?.length ?? 0); i++) {
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "struct.new", typeIdx: info.tdzCellTypeIdx! });
   }
   fctx.body.push({ op: "local.get", index: resultPromiseLocal });
   fctx.body.push({ op: "struct.new", typeIdx: info.stateTypeIdx });
@@ -3197,6 +3204,11 @@ export function emitAsyncGenerator(ctx: CodegenContext, fctx: FunctionContext, d
     } else {
       fctx.body.push(defaultSpillInstr(info.spillTypes[i]!));
     }
+  }
+  // (#4618) TDZ flag cells — one fresh 0-initialized i32 cell per flagged spill.
+  for (let i = 0; i < (info.tdzCellNames?.length ?? 0); i++) {
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "struct.new", typeIdx: info.tdzCellTypeIdx! });
   }
   // result_promise: fresh pending $Promise (overwritten by the first next()).
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });

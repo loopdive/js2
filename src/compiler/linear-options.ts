@@ -12,5 +12,15 @@ export function buildLinearOptions(
     exposeArenaReset: options.allocator === "arena-reset",
     allocationPolicy: options.allocator === "analysis-stack" ? "analysis-stack-arena-v1" : "arena-v1",
     irInventoryOptions,
+    // #4539 — link topology. Both are undefined for every existing caller, so
+    // the emitted binary is unchanged unless a link is explicitly requested.
+    externImports: options.linearExternImports,
+    importMemory: options.linearImportMemory,
+    // #4540 — heap ownership in linked mode. Undefined unless a link is
+    // requested, so standalone emission is untouched.
+    linkedHeap: options.linearLinkedHeap,
+    // #4557 — own allocator. Undefined for every existing caller, so the bump
+    // arena and its emitted bytes are untouched unless it is asked for.
+    heapAllocator: options.linearHeapAllocator,
   };
 }

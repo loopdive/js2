@@ -3,9 +3,9 @@ id: 4233
 title: "Standalone: the ES5 RegExp cluster — `env::RegExp_exec` leak, zero-arg `exec`/`test`, `RegExp(R)` identity, undefined pattern/flags"
 status: done
 completed: 2026-08-08
-sprint: current
+sprint: 78
 created: 2026-08-08
-updated: 2026-08-08
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

@@ -2,10 +2,10 @@
 id: 4023
 title: "annexB B.3.3: web-compat function hoisting not skipped on Early Error — 96 ES5 standalone + host failures in annexB/language/{global,function}-code"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-01
 completed: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 priority: medium
 horizon: m
 feasibility: medium

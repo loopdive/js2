@@ -159,6 +159,8 @@ export interface ImportDescriptor {
 }
 
 export type { ExportBoundaryKind, ExportSignature, TypedArrayKind } from "./ir/types.js";
+import type { ExternCImportSpec as LinearExternCImportSpec } from "./codegen-linear/c-abi.js";
+export type { LinearExternCImportSpec };
 export type {
   HostImportInventoryEntry,
   HostImportInventorySummary,
@@ -334,6 +336,8 @@ export interface CompileResult {
    * results once codegen has begun.
    */
   irOutcomes?: readonly IrObservedOutcome[];
+  /** Physical direct-AST body entries and exhaustive source-unit disposition census. */
+  irBodyRouteAudit?: import("./codegen/legacy-body-audit.js").IrBodyRouteAudit;
 }
 
 /** A single compile diagnostic (error or warning) with its source position. */
@@ -898,11 +902,67 @@ export interface CompileOptions {
    * lifetime to the host GC and have no linear allocator.
    */
   allocator?: "bump" | "arena-reset" | "analysis-stack";
+  /**
+   * External C functions the emitted linear module imports (#4539).
+   *
+   * Linking against a C library — e.g. the pinned engine artifact of ADR-0020
+   * — requires the module to declare the functions it calls. Declared before
+   * any defined function so indices stay stable; omitting this leaves the
+   * emitted binary byte-identical.
+   *
+   * `linear` target only.
+   */
+  linearExternImports?: readonly LinearExternCImportSpec[];
+  /**
+   * Import linear memory from another module instead of defining one (#4539).
+   *
+   * Required when linking against an artifact that EXPORTS memory: both sides
+   * must address one memory and only one may own it. `linear` target only.
+   */
+  linearImportMemory?: {
+    module: string;
+    name: string;
+    min: number;
+    max?: number;
+    /**
+     * memory64 index type (#4554). The field exists so a 64-bit caller has
+     * somewhere to say so; `"i64"` is currently **refused** rather than
+     * accepted and ignored, which would emit 32-bit limits for a 64-bit
+     * memory.
+     */
+    indexType?: "i32" | "i64";
+  };
+  /**
+   * Linked-mode heap (#4540) — REQUIRED alongside {@link linearImportMemory}.
+   *
+   * When the memory belongs to another module, the arena must be carved from
+   * that module's allocator instead of owning a fixed address range. Names the
+   * `linearExternImports` entry providing `malloc(size: i32) -> ptr: i32`.
+   *
+   * Compilation is refused if only one of the two is given: a memory-importing
+   * module with the standalone arena starts allocating at 1024, which is inside
+   * the pinned engine artifact's shadow stack.
+   */
+  linearLinkedHeap?: {
+    mallocImport: string;
+    chunkBytes?: number;
+  };
+  /**
+   * Which allocator backs the linear heap (#4557).
+   *
+   * `"malloc-v1"` emits a real allocator (free lists, coalescing, in-place
+   * `realloc`) and exports the five entry points the QuickJS artifact imports
+   * for `JS_NewRuntime2`, so the engine allocates through us instead of its own
+   * dlmalloc. Defaults to `"bump"` — ADR-0017's monotonic arena, and #4540's
+   * shipped fallback.
+   */
+  linearHeapAllocator?: "bump" | "malloc-v1";
 }
 
 import * as path from "path";
 import { IncrementalLanguageService, IncrementalProjectLanguageService } from "./checker/index.js";
 import { compileFilesSource, compileMultiSource, compileSource, compileToObjectSource } from "./compiler.js";
+import { withIrCompileRoute } from "./compiler/ir-cutover-invocation.js";
 import { ModuleResolver, resolveAllImports } from "./resolve.js";
 import { buildCompiledImports as buildCompiledImportsRuntime } from "./runtime.js";
 
@@ -1128,7 +1188,15 @@ export async function compileProject(entryFile: string, options?: CompileOptions
     }
   }
 
-  return withImportObject(await compileMultiSource(files, entryKey, effectiveOptions, undefined, projectResolutions));
+  return withImportObject(
+    await compileMultiSource(
+      files,
+      entryKey,
+      withIrCompileRoute(effectiveOptions, "compileProject"),
+      undefined,
+      projectResolutions,
+    ),
+  );
 }
 
 /**
@@ -1161,7 +1229,11 @@ export function createIncrementalCompiler(defaultOptions?: CompileOptions): {
   let projectService: IncrementalProjectLanguageService | undefined;
   return {
     compile(source: string, options?: CompileOptions): Promise<CompileResult> {
-      return compileSource(source, { ...defaultOptions, ...options }, service);
+      return compileSource(
+        source,
+        withIrCompileRoute({ ...defaultOptions, ...options }, "incremental.compile"),
+        service,
+      );
     },
     async compileMulti(
       files: Record<string, string>,
@@ -1170,7 +1242,12 @@ export function createIncrementalCompiler(defaultOptions?: CompileOptions): {
     ): Promise<CompileResult> {
       projectService ??= new IncrementalProjectLanguageService();
       return withImportObject(
-        await compileMultiSource(files, entryFile, { ...defaultOptions, ...options }, projectService),
+        await compileMultiSource(
+          files,
+          entryFile,
+          withIrCompileRoute({ ...defaultOptions, ...options }, "incremental.compileMulti"),
+          projectService,
+        ),
       );
     },
     dispose() {

@@ -4,7 +4,7 @@ title: "Standalone error model — throw where the spec requires (Overlay A)"
 status: done
 completed: 2026-08-02
 assignee: ttraenkler/M-errmodel
-sprint: current
+sprint: 78
 priority: high
 horizon: l
 feasibility: hard

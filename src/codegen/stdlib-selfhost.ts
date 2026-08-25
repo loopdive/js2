@@ -82,6 +82,7 @@ import type { StdlibMathBuiltin } from "../stdlib/math.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, nativeStrHelperHandle, pushDefinedFunc } from "./func-space.js";
+import { ensureExnTag } from "./registry/imports.js";
 
 const F64: IrType = irVal({ kind: "f64" });
 
@@ -288,6 +289,12 @@ function irTypeContainsContextIndex(type: IrType, seen = new Set<object>()): boo
       return type.members.some((member) => irTypeContainsContextIndex(member, seen));
     case "boxed":
       return irTypeContainsContextIndex(type.inner, seen);
+    case "fnctor":
+      return (
+        type.shape.fields.some((field) => irTypeContainsContextIndex(field.type, seen)) ||
+        type.shape.captures.some((capture) => irTypeContainsContextIndex(capture.type, seen)) ||
+        type.shape.userParamTypes.some((param) => irTypeContainsContextIndex(param, seen))
+      );
     case "string":
     case "extern":
     case "dynamic":
@@ -637,6 +644,12 @@ function lowerAndRegister(ctx: CodegenContext, name: string, ir: IrFunction): nu
     // -----------------------------------------------------------------
     nativeStrings(): boolean {
       return ctx.nativeStrings;
+    },
+    ensureExnTag(): number {
+      return ensureExnTag(ctx);
+    },
+    standardizedExceptions(): boolean {
+      return ctx.standalone || ctx.wasi;
     },
     resolveString(): ValType {
       if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {

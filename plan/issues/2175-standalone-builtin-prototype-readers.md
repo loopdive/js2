@@ -1,12 +1,12 @@
 ---
 id: 2175
 title: "architect spec: standalone builtin-prototype object representation + native-method-closure dispatch"
-status: ready
+status: suspended
 model: fable
 fable_role: spec
 sprint: current
 created: 2026-06-16
-updated: 2026-07-17
+updated: 2026-08-22
 priority: high
 feasibility: hard
 model: fable
@@ -21,10 +21,31 @@ loc-budget-allow:
   - src/codegen/object-runtime.ts
   - src/codegen/object-runtime-descriptors.ts
   - src/codegen/property-access-dispatch.ts
+  # +15 lines: the guard clause routing a non-callable builtin namespace
+  # receiving bind/call/apply to a catchable TypeError. The rationale, the
+  # namespace/invoker tables and the emit all live in the subsystem module
+  # (src/codegen/function-prototype-callable.ts); what remains here is the
+  # dispatch arm itself, which has to sit in the ordered chain.
+  - src/codegen/expressions/call-builtin-static.ts
 func-budget-allow:
   - src/codegen/object-runtime.ts::ensureObjectRuntime
   - src/codegen/object-runtime-descriptors.ts::buildObjectDescriptorHelpers
   - src/codegen/context/create-context.ts::createCodegenContext
+  # +12 lines — same arm; see the loc-budget note above.
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
+  # +11 lines: the `<callable>.{apply,call,bind,toString}.length` spec-arity
+  # guard clause. The table and the callability gate live in the subsystem
+  # module (src/codegen/function-prototype-callable.ts); only the ordered
+  # dispatch arm is here, and it must precede the generic signature count.
+  - src/codegen/property-access-dispatch.ts::tryLengthAndNameReads
+coercion-sites-allow:
+  # 2026-08-21 lane D (arguments inside `new F(…)`): __box_number/__unbox_number
+  # here are a REPRESENTATION transfer, not a hand-rolled ToNumber — numeric
+  # ctor params ride the externref arguments vector and the mapped-arguments
+  # writeback restores the declared param slot type. Same class as the
+  # bound-fn-meta declaration (#4562): routing through the coercion engine
+  # would coerce values §10.4.4 says must pass through unchanged.
+  - src/codegen/fnctor-ctor-arguments.ts
 depends_on: [2101]
 origin: "2026-06-16 — sdev5 #2161a refinement: RegExp.prototype-as-object refusal is the convergent gate across RegExp/class/TypedArray standalone reflection"
 ---
@@ -2081,3 +2102,223 @@ is a larger, spec-semantics slice than P1-as-written and should be re-planned
 and re-scoped as such — the ~11 P1 candidates are a lower bound on its value,
 since the general defect affects every inherited accessor, not just builtin
 prototypes.
+
+---
+
+## 2026-08-20 — mutable seeded data methods after honest descriptor reification
+
+PR #4658's merge-group run exposed 264 previously vacuous `propertyHelper.js`
+passes after #4491 made attribute-only descriptor bags readable. The largest
+real defect underneath them was not descriptor creation: `gOPD` already
+reported the correct flags. It was the immutable builtin-prototype shortcuts:
+
+- assignment updated the seeded companion entry, but flowing reads still
+  returned the original singleton closure;
+- deletion removed the companion entry, but the CSV `hasOwnProperty` shortcut
+  still reported the method as present.
+
+The bounded repair makes the seeded companion authoritative for data-method
+reads and own-presence checks. It deliberately excludes accessors (not seeded)
+and `constructor` (a separate carrier). An authentic replay recovered 221 of
+222 direct `verifyProperty` data-method regressions; the one unmeasured direct
+row needs the local QuickJS provider. The separate primordial-property row also
+passes. Representative Array, Date, TypedArray, Set, String, and Annex B rows
+all pass without narrowing descriptor reification again.
+
+### Recorded residual implementation plan
+
+Two related surfaces remain outside this bounded repair and must be kept as
+explicit follow-up work rather than hidden by another vacuity shortcut:
+
+1. Make syntactic `<Builtin>.prototype.<method>` reads consult the seeded
+   companion before returning their static singleton whenever the module can
+   mutate that method. Keep identity-fast output byte-stable for modules with no
+   prototype mutation, and pin assignment, restoration, deletion, and
+   inheritance from `Object.prototype`.
+2. Make `propertyIsEnumerable` use the companion's real entry for seeded data
+   methods. The current CSV arm always returns false, so delete-and-recreate with
+   `{ enumerable: true }` disagrees with `gOPD`. Pin both true and false flags,
+   deletion, and a same-named inherited entry to preserve own-only semantics.
+
+Both follow-ups must use the existing finalize-filled companion helpers; do not
+bake `$NativeProto` type indices early, and do not route own-property checks
+through `__protoidx_has_r`, which intentionally walks on to `Object.prototype`.
+
+## Progress — 2026-08-21: %Function.prototype% branded as a Function object
+
+Two ES5 standalone rows for the `%Function.prototype%` intrinsic, measured with
+the serial single-test probe on `claude/pull-from-upstream-zgdo0m`:
+
+| test262 file (standalone)                          | before | after |
+| -------------------------------------------------- | ------ | ----- |
+| `built-ins/Function/prototype/S15.3.4_A1.js`       | fail (`[object Object]`) | pass |
+| `built-ins/Function/prototype/S15.3.4_A3_T1.js`    | fail (`null`)            | pass |
+
+Root cause was two independent holes in the intrinsic's object identity, not in
+its callability (`function-prototype-callable.ts` already mints a real
+`[[Call]]` entry):
+
+1. **Brand.** `resolveObjectToStringTag` routed every `X.prototype` receiver to
+   the §20.1.3.6 step-13 `Object` default unless the builtin appeared in
+   `NATIVE_PROTO_BRAND_TAGS` (Number/String/Boolean/Array). `Function.prototype`
+   IS a built-in *function* object (§20.2.3), so step 6 tags it `Function`.
+   Added `["Function", "Function"]` to that table — which also lights the
+   matching `$NativeProto` brand arm in the runtime classifier, so the stored
+   `obj.getClass = Object.prototype.toString` idiom agrees with the fold.
+2. **`$proto` link.** `Object.getPrototypeOf(Function.prototype)` answered
+   `null` — the native `__getPrototypeOf` walk finds no `$proto` on the
+   intrinsic. Worse than a miss: it made
+   `getPrototypeOf(Function.prototype) === getPrototypeOf([1,2])` spuriously
+   true. Added a narrow arm in `tryCompileEs5GetPrototypeOfEarly` that answers
+   the identity-stable `Object.prototype` singleton this file already emits for
+   `Math`/`JSON`.
+
+The `getPrototypeOf` arm is deliberately `Function.prototype` **only**. Builtin
+prototypes do not uniformly inherit from `%Object.prototype%`
+(`Int8Array.prototype` → `%TypedArray%.prototype`, `TypeError.prototype` →
+`Error.prototype`), and this hook runs *before* the typed-array / generator /
+class arms, so a blanket branch here would preempt them with a wrong answer.
+
+**Known residual, deliberately not fixed here:** `getPrototypeOf(Array.prototype)`
+returns an object that is not `ref.eq`-identical to `Object.prototype`
+(measured: `SameValue(«[object Object]», «[object Object]»)` fails). That is the
+same class of defect for the other builtin prototypes and belongs with the
+`$NativeProto` `$proto`-seeding work this issue tracks, not in a `getPrototypeOf`
+special case.
+
+Controls re-run before and after, identical results (6 `Object/prototype/toString`
+rows + 3 `Object/getPrototypeOf` rows): 8 pass / 1 pre-existing fail
+(`Object.prototype.toString.call-function.js`, unrelated — `Function()`
+call-constructed function object, not the intrinsic prototype).
+
+Gates: `check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet` all exit 0. `tsc --noEmit` clean on both touched files
+(pre-existing TS2591 noise elsewhere).
+
+**Validation debt:** scoped serial probes only — no vitest suite, no full
+standalone ES5 run (a shared measurement run owns the box).
+
+## Progress — 2026-08-21: `JSON.bind()` throws TypeError instead of hard-CE'ing
+
+| test262 file (standalone)                              | before | after |
+| ------------------------------------------------------ | ------ | ----- |
+| `built-ins/Function/prototype/bind/15.3.4.5-2-7.js`    | compile_error (`'__get_builtin' … not supported in --target standalone`) | pass |
+
+Traced the leak to `call-receiver-method.ts:4078` (the generic host-delegated
+`Namespace.member()` path), not to the value-read module. A builtin namespace
+object is not callable and does not own `bind`/`call`/`apply` — those live on
+`%Function.prototype%`, which is not on a namespace's prototype chain (`Math`,
+`JSON`, `Reflect`, `Atomics` inherit straight from `%Object.prototype%`). So the
+call is a TypeError twice over, and refusing to compile turns a catchable
+runtime error into a lost file.
+
+New `tryEmitNonCallableNamespaceInvokerThrow` in
+`src/codegen/function-prototype-callable.ts` (next to the `%Function.prototype%`
+[[Call]] helper), dispatched from `compileBuiltinStaticCall` ahead of the
+`Math.*` arm. Same reshape as the existing `%Function.prototype%` and Atomics
+arms: degrade to the spec's TypeError rather than leak a host import.
+
+Narrow on both axes, deliberately: only `bind`/`call`/`apply` (a blanket
+"unknown namespace member throws" would preempt the `Math.<unknown>`
+fallthrough that lets `Array.prototype.every.call(Math, …)` be rewritten as
+`Math.every(…)`), and only the ambient binding (`isGlobalBuiltinIdentifier`),
+so a local object named `JSON` keeps ordinary member-call semantics.
+
+Controls, before/after identical: 8 sibling `bind/15.3.4.5-2-*` rows
+(7 pass / 1 pre-existing fail `-2-6`); ad-hoc `Math.round` / `JSON.stringify` /
+`Reflect.has` still pass; `Math.max.apply` / `f.bind(...)` fail identically
+before and after (a pre-existing `illegal cast in __call_fn_method_3`,
+unrelated).
+
+Budget allowances granted above (`+15` file lines, `+12` function lines): the
+tables, rationale and emit live in the subsystem module; only the ordered
+dispatch arm remains in the god-file.
+
+Gates: loc / func / coercion-sites / oracle-ratchet all exit 0; prettier and
+biome clean; `tsc --noEmit` clean on both touched files.
+
+**Validation debt:** scoped serial probes only.
+
+## Progress — 2026-08-21: `<callable>.{call,bind}.length` reports the spec arity
+
+| test262 file (standalone)                                | before | after |
+| --------------------------------------------------------- | ------ | ----- |
+| `built-ins/Function/prototype/call/S15.3.4.4_A2_T2.js`   | fail (`f.call.length` = 2, spec 1) | pass |
+
+The receiver shape does NOT reach the `%Function.prototype%` glue table, which
+is why the one-entry fix the triage suggested would have been a no-op — worth
+recording, because the two paths disagreed and only one was wrong:
+
+- `Function.prototype.call.length` → **1** (correct). Root is a reachable
+  builtin, so `tryStandaloneBuiltinAndWasiMemberReads`' `<Builtin>.prototype
+  .<member>` meta fold answers from the glue's `PROTO_METHOD_LENGTH`.
+- `f.call.length` for a user closure `f` → **2** (wrong). Root is not a
+  builtin, so the generic `<fn>.length` fold in
+  `property-access-dispatch.ts::tryLengthAndNameReads` counts the LIB
+  declaration's formals via `expectedArgumentCountOfSignature`.
+
+Measured (`function f(a,b,c){}`, standalone), against §20.2.3:
+
+| read              | before | spec | after |
+| ----------------- | ------ | ---- | ----- |
+| `f.call.length`   | 2      | 1    | 1     |
+| `f.bind.length`   | 2      | 1    | 1     |
+| `f.apply.length`  | 2      | 2    | 2     |
+| `f.toString.length` | 0    | 0    | 0     |
+| `f.length`        | 3      | 3    | 3     |
+
+Two defects, both fixed:
+
+1. **`expectedArgumentCountOfParams` counted the TypeScript `this`
+   pseudo-parameter.** It is a type annotation, not a FormalParameter, so
+   §15.1.5 never sees it. In `lib.es5.d.ts` a top-level `this:` parameter
+   appears on exactly three signatures — `Function.prototype.{apply,call,bind}`
+   — which is why the over-count by one was invisible everywhere else, and why
+   `apply` (2 counted, 2 correct) hid it. `calls.ts`'s `countSpecLength` already
+   skipped it; this is the same rule in the module that owns the count.
+
+2. **Fixing (1) alone traded one wrong answer for another:** `lib.es5.d.ts`
+   writes `apply(this, thisArg, argArray?)` with the second argument OPTIONAL,
+   so §15.1.5's prefix walk stops there and answers 1 where §20.2.3.1 pins 2.
+   That is the same "TS's param count can disagree with the runtime
+   Function.length" divergence the fold's own comment records for
+   `Array.prototype.toSorted`. `functionPrototypeMemberSpecLength`
+   (function-prototype-callable.ts) states the four spec numbers and runs first,
+   gated on the receiver being provably callable so a plain object owning a
+   property named `call` keeps the ordinary path, and skipped for a
+   `.bind(...)` result (whose length is `max(0, target.length - boundArgs)`).
+
+Controls, 13 runnable rows before and after — identical except the target row:
+5 `Function/prototype/call/*`, 3 `apply/*` (incl. `length.js` and `name.js`),
+both `function/length-dflt.js` (the #4436 prefix-count rows), and
+`Array/prototype/{map,filter}/length.js`. Two pre-existing fails
+(`call/S15.3.4.4_A1_T1.js`, `apply/S15.3.4.3_A1_T1.js` — `typeof obj.call` on a
+plain object reads `undefined`; a different, unfixed hole) are unchanged.
+
+Budget allowance granted above (`+11` function lines).
+
+Gates: loc / func / coercion-sites / oracle-ratchet all exit 0; prettier and
+biome clean; `tsc --noEmit` clean on all three touched files.
+
+**Validation debt:** scoped serial probes only. The `this`-skip in (1) is
+spec-correct for user TypeScript that declares an explicit `this` parameter,
+but that surface was reasoned about (no top-level `this:` in any other bundled
+`lib.*.d.ts` method signature) rather than measured.
+
+## Suspended Work — builtin-prototype readers (2026-08-22)
+
+Merged via #4723: `arguments` inside `new F(…)` (the __extras_argv/__argc
+protocol at the ctor call site, `fnctor-ctor-arguments.ts`) and instanceof
+boolean branding. Wave-5 T9 later seeded `constructor` into the builtin-proto
+companion — which turned out to also break the QuickJS provider canary until
+#4491's T10 stopped `constructor` taking the `Object.prototype` fallthrough in
+the proto-index walk.
+
+Open, with prices attached in #4491: the `memberCsv` exclusion is load-bearing
+(a CSV entry would mint a brand-keyed closure, making `Error.prototype.
+constructor` a callable refusal stub); `Date`/`Function` decline the seed for
+want of an identity-stable carrier (#4200 follow-ups); `Iterator` needs an
+accessor pair. Four `tests/issue-4200.test.ts` guards are now stale against the
+seed and need #4200's owner to adjudicate.
+
+Resume from #4491's "Suspended Work" section.

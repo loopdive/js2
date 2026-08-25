@@ -2,9 +2,9 @@
 id: 4035
 title: "gate the host-bridge export suite behind an inspect/debug option — standalone modules pay ~17-20 kB for a JS-interop ABI no wasmtime deployment uses"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-01
-updated: 2026-08-02
+updated: 2026-08-18
 completed: 2026-08-02
 priority: high
 horizon: l

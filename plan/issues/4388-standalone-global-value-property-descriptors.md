@@ -3,7 +3,7 @@ id: 4388
 title: "Standalone global object omits ES5 value-property descriptors"
 status: done
 created: 2026-08-12
-updated: 2026-08-13
+updated: 2026-08-18
 priority: high
 feasibility: easy
 reasoning_effort: high
@@ -11,7 +11,7 @@ task_type: bugfix
 area: codegen, standalone, object-runtime
 language_feature: global-object, property-descriptors
 goal: es5-test262
-sprint: current
+sprint: 78
 es_edition: ES5
 assignee: ttraenkler/codex-es5-descriptor
 related: [2984, 2988, 2996, 3365, 4242]

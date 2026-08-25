@@ -9,9 +9,11 @@ import {
   type IrPlanningIdentityContext,
   type IrPlanningIdentityInvariantCode,
 } from "./planning-identity.js";
-import type { IrUnitTypeMap, TypeMap, TypeMapEntry } from "./propagate.js";
+import type { IrFnctorAdmission, IrUnitTypeMap, TypeMap, TypeMapEntry } from "./propagate.js";
 import type { IrRecursiveTypeEvidence } from "./type-evidence.js";
 import type { IrClassMethodDescriptor } from "./nodes.js";
+import { claimPreparedTimerShims } from "./injected-timer-shim.js";
+import { demoteOnLegacyCallerPolicy } from "./legacy-caller-policy.js";
 import {
   boundedPreparedNestedOrdinaryClassBindingName,
   exactPreparedAccessorSyntaxKey,
@@ -84,6 +86,8 @@ export interface IrIdentitySelection {
   readonly classMembers?: ReadonlyMap<IrUnitId, IrIdentityClassMemberClaim>;
   readonly fallbacks?: ReadonlyMap<IrUnitId, IrIdentityFallback>;
   readonly localCallees?: ReadonlyMap<IrUnitId, ReadonlySet<IrUnitId>>;
+  /** Exact admitted fnctor allocation sites owned by claimed function units. */
+  readonly fnctorAdmissions?: ReadonlyMap<IrUnitId, ReadonlyArray<IrFnctorAdmission>>;
   readonly moduleInit?: IrIdentityModuleInitAssessment;
   /** Policy needed only while projecting back through the legacy name seam. */
   readonly legacyProjection?: {
@@ -96,6 +100,8 @@ export type IrIdentitySelectionOptions = Omit<IrSelectionOptions, "recursiveType
   readonly recursiveTypeEvidence?: IrRecursiveTypeEvidence;
   /** Exact allocator evidence required before a promoted nested accessor may claim its body slot. */
   readonly nestedClassMemberCallableAvailable?: (unitId: IrUnitId) => boolean;
+  /** Checker/AST/use proof for the one compiler-owned setTimeout wrapper slice. */
+  readonly isPreparedInjectedTimerShim?: (declaration: ts.FunctionDeclaration) => boolean;
 };
 
 export interface IrLegacySelectionProjection {
@@ -470,6 +476,112 @@ function directIdentifierCallees(body: ts.Block): readonly string[] {
   return names;
 }
 
+/**
+ * Collect only resolver-approved allocation sites from exact claimed units.
+ * This is intentionally a second, identity-keyed view: the legacy selector
+ * has no safe way to project a NewExpression through a function name.  The
+ * callback is allowed to return evidence only after proving the same-source
+ * declaration/site, approved+reserved fnctor, fixed unconditional
+ * `this.input: string`, and all no-alias/no-reassignment/no-escape/collision
+ * gates.  Any malformed result is discarded rather than widened.
+ */
+function collectFnctorAdmissions(
+  sourceFile: ts.SourceFile,
+  sourceId: IrSourceId,
+  claimed: ReadonlySet<IrUnitId>,
+  functions: readonly IndexedFunction[],
+  identityContext: IrPlanningIdentityContext,
+  resolver: IrIdentitySelectionOptions["resolveFnctorAdmission"] | undefined,
+): ReadonlyMap<IrUnitId, ReadonlyArray<IrFnctorAdmission>> | undefined {
+  if (!resolver) return undefined;
+  const admissions = new Map<IrUnitId, IrFnctorAdmission[]>();
+  for (const indexed of functions) {
+    if (!claimed.has(indexed.unit.unitId)) continue;
+    const sites: IrFnctorAdmission[] = [];
+    const visit = (node: ts.Node): void => {
+      if (node !== indexed.declaration && ts.isFunctionLike(node)) return;
+      if (ts.isNewExpression(node)) {
+        const admission = resolver(node);
+        // Do not trust a resolver's display-name projection.  The site and
+        // source are rechecked at the identity seam before retaining it.
+        if (
+          admission !== undefined &&
+          admission.constructorSite === node &&
+          admission.sourceId === sourceId &&
+          node.getSourceFile() === sourceFile &&
+          identityContext.sourceFileBySourceId.get(admission.sourceId) === sourceFile &&
+          identityContext.declarationByUnitId.get(admission.constructorUnitId) === admission.constructorDeclaration &&
+          identityContext.unitIdByDeclaration.get(admission.constructorDeclaration) === admission.constructorUnitId &&
+          admission.constructorDeclaration.getSourceFile() === sourceFile
+        ) {
+          sites.push(admission);
+        }
+      }
+      forEachChild(node, visit);
+    };
+    visit(indexed.declaration.body!);
+    if (sites.length > 0) admissions.set(indexed.unit.unitId, sites);
+  }
+  return admissions.size > 0 ? admissions : undefined;
+}
+
+function assessIdentityModuleInit(
+  sourceFile: ts.SourceFile,
+  sourceId: IrSourceId,
+  identityContext: IrPlanningIdentityContext,
+  functionsByName: ReadonlyMap<string, readonly IndexedFunction[]>,
+  claimed: ReadonlyMap<IrUnitId, IrIdentityFunctionClaim>,
+  uniqueFunctions: ReadonlyMap<string, ts.FunctionDeclaration>,
+  localClasses: ReadonlySet<string>,
+): IrIdentityModuleInitAssessment | undefined {
+  const moduleInitId = identityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
+  const inventoryModuleInits = identityContext.inventory.terminalUnits.filter(
+    (terminal) => terminal.sourceId === sourceId && terminal.observedKind === "module-init",
+  );
+  if (
+    inventoryModuleInits.length > 1 ||
+    (moduleInitId === undefined &&
+      (inventoryModuleInits.length !== 0 ||
+        sourceHasModuleInitUnit(sourceFile) ||
+        identityContext.moduleInitUnitIdBySourceId.has(sourceId))) ||
+    (inventoryModuleInits.length === 1 && !sourceHasModuleInitUnit(sourceFile)) ||
+    (moduleInitId !== undefined &&
+      (inventoryModuleInits.length !== 1 ||
+        inventoryModuleInits[0]!.id !== moduleInitId ||
+        identityContext.moduleInitUnitIdBySourceId.get(sourceId) !== moduleInitId))
+  ) {
+    return selectorIdentityInvariant(
+      "invalid-module-init",
+      `IR identity selector has no exact source-owned module-init population for ${sourceId}`,
+    );
+  }
+  if (moduleInitId === undefined) return undefined;
+  const terminal = identityContext.terminalByUnitId.get(moduleInitId);
+  if (
+    !terminal ||
+    terminal !== inventoryModuleInits[0] ||
+    identityContext.unitByUnitId.get(moduleInitId) !== terminal ||
+    terminal.sourceId !== sourceId ||
+    terminal.observedKind !== "module-init"
+  ) {
+    return selectorIdentityInvariant(
+      "invalid-module-init",
+      `IR identity selector module-init ${moduleInitId} is not source-owned`,
+    );
+  }
+  const claimedNames = new Set<string>();
+  for (const [name, candidates] of functionsByName) {
+    if (candidates.length === 1 && claimed.has(candidates[0]!.unit.unitId)) claimedNames.add(name);
+  }
+  const assessment = assessModuleInit(sourceFile, claimedNames, uniqueFunctions, localClasses);
+  return {
+    unitId: moduleInitId,
+    displayName: terminal.displayName,
+    legacyMatchName: terminal.legacyMatchName,
+    ...assessment,
+  };
+}
+
 function buildIdentityCallGraph(
   functions: readonly IndexedFunction[],
   functionsByName: ReadonlyMap<string, readonly IndexedFunction[]>,
@@ -610,7 +722,6 @@ export function planIrCompilationByIdentity(
     );
   }
   if (!options?.experimentalIR) return { units: new Map(), funcs: new Map() };
-
   const functions = collectFunctions(sourceFile, sourceId, identityContext);
   const functionsByName = new Map<string, IndexedFunction[]>();
   const units = new Map<IrUnitId, IrIdentitySelectionUnit>();
@@ -657,14 +768,15 @@ export function planIrCompilationByIdentity(
       .filter(([, candidates]) => candidates.length === 1 && asyncUnitIds.has(candidates[0]!.unit.unitId))
       .map(([name]) => name),
   );
-  const { recursiveTypeEvidence: _recursiveTypeEvidence, ...runtimeOptions } = options;
+  const { recursiveTypeEvidence: _recursive, isPreparedInjectedTimerShim: _timer, ...runtimeOptions } = options;
   configureIrStructuralSelectorPredicates(sourceFile, runtimeOptions, uniqueClasses, uniqueFunctions, asyncNames);
   const trackFallbacks = options.trackFallbacks === true;
   const reasons = new Map<IrUnitId, IrFallbackReason>();
   const details = new Map<IrUnitId, string>();
   const helperTypes = helperTypeMap(functionsByName, typeMap);
   const individuallyClaimed = new Map<IrUnitId, IrIdentityFunctionClaim>();
-  for (const indexed of functions) {
+  const preparedTimerUnitIds = claimPreparedTimerShims(identityContext, functions, options, individuallyClaimed);
+  for (const indexed of functions.filter(({ unit }) => !preparedTimerUnitIds.has(unit.unitId))) {
     if (!indexed.declaration.name) {
       if (trackFallbacks) reasons.set(indexed.unit.unitId, "unnamed");
       continue;
@@ -979,13 +1091,13 @@ export function planIrCompilationByIdentity(
   }
 
   const claimed = new Map(individuallyClaimed);
-  const demoteOnLegacyCaller = options.jsHostExterns !== true;
+  const demoteOnLegacyCaller = demoteOnLegacyCallerPolicy(options);
   let localCallees: ReadonlyMap<IrUnitId, ReadonlySet<IrUnitId>> | undefined;
   if (individuallyClaimed.size > 0) {
     const graph = buildIdentityCallGraph(functions, functionsByName, uniqueFunctions, localClasses);
     localCallees = graph.callees;
     for (const unitId of [...claimed.keys()]) {
-      if (!graph.hasExternalCall.has(unitId)) continue;
+      if (!graph.hasExternalCall.has(unitId) || preparedTimerUnitIds.has(unitId)) continue;
       claimed.delete(unitId);
       if (trackFallbacks) reasons.set(unitId, "external-call");
     }
@@ -1007,54 +1119,23 @@ export function planIrCompilationByIdentity(
     }
   }
 
-  const moduleInitId = identityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
-  const inventoryModuleInits = identityContext.inventory.terminalUnits.filter(
-    (terminal) => terminal.sourceId === sourceId && terminal.observedKind === "module-init",
+  const fnctorAdmissions = collectFnctorAdmissions(
+    sourceFile,
+    sourceId,
+    new Set(claimed.keys()),
+    functions,
+    identityContext,
+    options.resolveFnctorAdmission,
   );
-  if (
-    inventoryModuleInits.length > 1 ||
-    (moduleInitId === undefined &&
-      (inventoryModuleInits.length !== 0 ||
-        sourceHasModuleInitUnit(sourceFile) ||
-        identityContext.moduleInitUnitIdBySourceId.has(sourceId))) ||
-    (inventoryModuleInits.length === 1 && !sourceHasModuleInitUnit(sourceFile)) ||
-    (moduleInitId !== undefined &&
-      (inventoryModuleInits.length !== 1 ||
-        inventoryModuleInits[0]!.id !== moduleInitId ||
-        identityContext.moduleInitUnitIdBySourceId.get(sourceId) !== moduleInitId))
-  ) {
-    return selectorIdentityInvariant(
-      "invalid-module-init",
-      `IR identity selector has no exact source-owned module-init population for ${sourceId}`,
-    );
-  }
-  let moduleInit: IrIdentityModuleInitAssessment | undefined;
-  if (moduleInitId) {
-    const terminal = identityContext.terminalByUnitId.get(moduleInitId);
-    if (
-      !terminal ||
-      terminal !== inventoryModuleInits[0] ||
-      identityContext.unitByUnitId.get(moduleInitId) !== terminal ||
-      terminal.sourceId !== sourceId ||
-      terminal.observedKind !== "module-init"
-    ) {
-      return selectorIdentityInvariant(
-        "invalid-module-init",
-        `IR identity selector module-init ${moduleInitId} is not source-owned`,
-      );
-    }
-    const claimedNames = new Set<string>();
-    for (const [name, candidates] of functionsByName) {
-      if (candidates.length === 1 && claimed.has(candidates[0]!.unit.unitId)) claimedNames.add(name);
-    }
-    const assessment = assessModuleInit(sourceFile, claimedNames, uniqueFunctions, localClasses);
-    moduleInit = {
-      unitId: moduleInitId,
-      displayName: terminal.displayName,
-      legacyMatchName: terminal.legacyMatchName,
-      ...assessment,
-    };
-  }
+  const moduleInit = assessIdentityModuleInit(
+    sourceFile,
+    sourceId,
+    identityContext,
+    functionsByName,
+    claimed,
+    uniqueFunctions,
+    localClasses,
+  );
 
   const fallbacks = trackFallbacks
     ? new Map(
@@ -1076,6 +1157,7 @@ export function planIrCompilationByIdentity(
     ...(classClaims.size ? { classMembers: classClaims } : {}),
     ...(fallbacks ? { fallbacks } : {}),
     ...(localCallees ? { localCallees } : {}),
+    ...(fnctorAdmissions ? { fnctorAdmissions } : {}),
     ...(moduleInit ? { moduleInit } : {}),
     legacyProjection: { includeEmptyModuleInit: true, demoteOnLegacyCaller },
   };

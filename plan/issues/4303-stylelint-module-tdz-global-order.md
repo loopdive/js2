@@ -2,9 +2,9 @@
 id: 4303
 title: "Stylelint plans module TDZ global noop before its value global"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-09
-updated: 2026-08-11
+updated: 2026-08-18
 completed: 2026-08-11
 priority: high
 horizon: m

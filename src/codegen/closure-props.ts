@@ -72,6 +72,9 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { protoIndexRecvGetMissInstrs } from "./proto-index-store.js"; // (#4176) inherited proto-named consult
 import { INSTANCE_BAG_FIELD } from "./closures/closure-header-layout.js"; // (#4241) one spelling of the slot name
+// (#4491 T9) one spelling of the #4008 builtin-instance carrier set, shared with
+// the fold-routing predicates so the two cannot drift apart.
+import { BUILTIN_INSTANCE_CARRIER_STRUCT_NAMES } from "./builtin-instance-key-presence.js";
 import { addFuncType } from "./registry/types.js";
 
 /** WasmGC `eq` abstract heap type (used for `ref.cast`/`ref.null` to eqref). */
@@ -166,6 +169,30 @@ export function buildClosurePropGetMissArm(ctx: CodegenContext, getMiss: () => I
 /** Build `__extern_set`'s non-object receiver arm. */
 export function buildClosurePropSetMissArm(ctx: CodegenContext): Instr[] {
   const closurePropSetIdx = ctx.funcMap.get(CLOSURE_PROP_SET);
+  // #4504 installs a final native-companion decision tail after this arm.
+  // Keep the historical unconditional terminal miss in flag-clear modules,
+  // but let a non-closure receiver fall through to that tail when the shared
+  // result channel is active (Date/Number and other no-bag carriers still
+  // have an inherited descriptor chain).
+  if (ctx.externSetResultGlobalIdx !== undefined) {
+    const isClosurePropCarrierIdx = ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER);
+    if (closurePropSetIdx === undefined || isClosurePropCarrierIdx === undefined) return [];
+    return [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: isClosurePropCarrierIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: closurePropSetIdx },
+          { op: "return" },
+        ],
+      },
+    ];
+  }
   return closurePropSetIdx === undefined
     ? [{ op: "return" }]
     : [
@@ -182,9 +209,14 @@ export function buildClosurePropMethodCallElseArm(
   ctx: CodegenContext,
   externGetIdx: number,
   applyClosureIdx: number,
+  // (#4221) See `buildVecOrClosurePropMethodCallElseArm` — the absent-callee
+  // TypeError guard, threaded through to the terminal miss arm.
+  absentCalleeGuard: () => Instr[] = () => [],
 ): Instr[] {
   const isClosurePropCarrierIdx = ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER);
-  if (isClosurePropCarrierIdx === undefined) return [{ op: "ref.null.extern" }];
+  if (isClosurePropCarrierIdx === undefined) {
+    return [{ op: "ref.null.extern" }, ...absentCalleeGuard()];
+  }
   // (#3673) Prefer the reserved `__closure_method_call` helper: it keeps the
   // own-property route below AND adds the %Function.prototype%
   // `call`/`apply` builtins, which a bare own-property lookup can never find
@@ -198,7 +230,7 @@ export function buildClosurePropMethodCallElseArm(
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "externref" } },
-      else: buildProtoNamedMethodMissArm(ctx, applyClosureIdx),
+      else: buildProtoNamedMethodMissArm(ctx, applyClosureIdx, absentCalleeGuard),
       then:
         closureMethodCallIdx !== undefined
           ? ([
@@ -254,14 +286,32 @@ export function buildClosurePropMethodCallElseArm(
  * prototype — this returns `undefined` and the caller keeps its exact previous
  * `ref.null.extern`, so the emission is byte-identical for those modules.
  */
-function buildProtoNamedMethodMissArm(ctx: CodegenContext, applyClosureIdx: number): Instr[] {
+function buildProtoNamedMethodMissArm(
+  ctx: CodegenContext,
+  applyClosureIdx: number,
+  // (#4221) `__extern_method_call`'s absent-callee TypeError guard. This arm is
+  // the LAST word on `recv.<name>(…)` for a receiver the runtime models fully
+  // (a fnctor/class instance, a bare primitive): reaching its end with nothing
+  // resolved means the property is genuinely absent, and §13.3.6.2 step 5 says
+  // that is a TypeError — not `undefined`. It used to answer the undefined
+  // sentinel, which is why
+  //
+  //     function FACTORY(){ this.id = 0; this.id = this.func();
+  //                         function func(){ return "id_string"; } }
+  //     new FACTORY();      // must throw; completed normally (S13.2.2_A11)
+  //
+  // constructed successfully. Empty off the standalone lane (a JS host throws
+  // on its own), so the gc lane is byte-identical.
+  absentCalleeGuard: () => Instr[] = () => [],
+): Instr[] {
   const consult = protoIndexRecvGetMissInstrs(ctx, 0, 1);
-  if (!consult) return [{ op: "ref.null.extern" }];
+  if (!consult) return [{ op: "ref.null.extern" }, ...absentCalleeGuard()];
   return [
     ...consult,
     ...(ctx.funcMap.has("__nullish_to_null")
       ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
       : []),
+    ...absentCalleeGuard(),
     { op: "local.get", index: 0 }, // thisArg — the ORIGINAL primitive receiver
     { op: "local.get", index: 2 }, // args
     { op: "call", funcIdx: applyClosureIdx },
@@ -373,7 +423,7 @@ export function reserveClosurePropHelpers(ctx: CodegenContext): void {
  */
 function builtinInstanceCarrierTypeIdxs(ctx: CodegenContext): number[] {
   const out: number[] = [];
-  for (const name of ["__StandaloneRegExp", "__Date"]) {
+  for (const name of BUILTIN_INSTANCE_CARRIER_STRUCT_NAMES) {
     const idx = ctx.structMap.get(name);
     if (idx !== undefined) out.push(idx);
   }
@@ -604,6 +654,9 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
   const externGetIdx = ctx.funcMap.get("__extern_get");
   const externSetIdx = ctx.funcMap.get("__extern_set");
   const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
+  const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
+  const setOwnIdx = ctx.funcMap.get("__extern_set_own");
+  const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
 
   const setBody = (name: string, locals: { name: string; type: ValType }[], body: Instr[]): void => {
     const idx = ctx.funcMap.get(name);
@@ -709,6 +762,42 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
             { op: "local.get", index: 1 }, // key
             { op: "call", funcIdx: externGetIdx },
           ];
+    // (#4563) The bag answer is only authoritative for a key the bag OWNS.
+    //
+    // The read below used to `return` unconditionally once the bag was non-null,
+    // so the first own property defined on ANY callable carrier — a closure or
+    // a `$__bound_fn` — permanently shadowed the §8.10.5 inherited-property
+    // fallback two lines down. Measured, standalone:
+    //
+    //     var b = foo.bind({});
+    //     Function.prototype.p1 = 12;
+    //     b.p1                                   // 12   (bag still null)
+    //     Object.defineProperty(b, "zz", {value: 1, configurable: true});
+    //     b.p1                                   // was undefined — want 12
+    //
+    // An ordinary object with a prototype keeps inheriting through the same
+    // sequence, which is what isolates this to the carrier bag rather than to
+    // the define. It is also why the bound-function `length`/`name` seed
+    // (§20.2.3.2) could not land: seeding those own properties put every bound
+    // function into this state.
+    //
+    // The discriminator has to be `hasOwn` on the bag, NOT "is the read
+    // undefined": a bag entry whose stored value IS `undefined` is a real own
+    // property and must win over the prototype, exactly as `f.prototype =
+    // undefined` already does through `protoEdgeArm` above.
+    //
+    // Without the predicate the emitted body is byte-identical to the pre-#4563
+    // one, so a module that cannot resolve it keeps today's answer.
+    const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
+    const bagOwnGuardedRead: Instr[] =
+      hasOwnIdx === undefined
+        ? [...bagRead, { op: "return" }]
+        : [
+            { op: "local.get", index: 2 }, // bag
+            { op: "local.get", index: 1 }, // key
+            { op: "call", funcIdx: hasOwnIdx },
+            { op: "if", blockType: { kind: "empty" }, then: [...bagRead, { op: "return" }] },
+          ];
     const body: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "call", funcIdx: isClosureIdx },
@@ -732,7 +821,7 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [...bagRead, { op: "return" }],
+            then: bagOwnGuardedRead,
           },
         ],
       },
@@ -754,24 +843,108 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
   }
 
   // ── __closure_prop_set(externref obj, externref key, externref value) -> () ──
-  // if is_closure(obj) { bag = ensure(obj); __extern_set(bag, key, value) }
+  // Look up an existing bag before the inherited resolver; only MISS/ALLOW
+  // reaches ensure + the direct own write.  Calling __extern_set on the bag
+  // would restart a prototype walk with the bag as `this`.
   if (isClosureIdx !== undefined && bagEnsureIdx !== undefined && externSetIdx !== undefined) {
-    const body: Instr[] = [
-      { op: "local.get", index: 0 },
-      { op: "call", funcIdx: isClosureIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
+    const sharedSetAvailable =
+      bagLookupIdx !== undefined &&
+      setDecideIdx !== undefined &&
+      setOwnIdx !== undefined &&
+      setResultGlobalIdx !== undefined;
+    const body: Instr[] = sharedSetAvailable
+      ? [
           { op: "local.get", index: 0 },
-          { op: "call", funcIdx: bagEnsureIdx }, // -> bag externref
-          { op: "local.get", index: 1 }, // key
-          { op: "local.get", index: 2 }, // value
-          { op: "call", funcIdx: externSetIdx }, // __extern_set(bag,key,value) -> ()
-        ],
-      },
-    ];
-    setBody(CLOSURE_PROP_SET, [], body);
+          { op: "call", funcIdx: isClosureIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "call", funcIdx: bagLookupIdx! },
+              { op: "local.set", index: 3 },
+              { op: "local.get", index: 0 },
+              { op: "local.get", index: 3 },
+              { op: "local.get", index: 1 },
+              { op: "local.get", index: 2 },
+              { op: "call", funcIdx: setDecideIdx! },
+              { op: "local.tee", index: 4 },
+              { op: "i32.const", value: 2 }, // SET_DECISION_HANDLED
+              { op: "i32.eq" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "i32.const", value: 1 },
+                  { op: "global.set", index: setResultGlobalIdx! },
+                  { op: "return" },
+                ],
+              },
+              { op: "local.get", index: 4 },
+              { op: "i32.const", value: 3 }, // SET_DECISION_REFUSED
+              { op: "i32.eq" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "i32.const", value: 2 },
+                  { op: "global.set", index: setResultGlobalIdx! },
+                  { op: "return" },
+                ],
+              },
+              { op: "local.get", index: 3 },
+              { op: "ref.is_null" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: 0 },
+                  { op: "call", funcIdx: bagEnsureIdx },
+                  { op: "local.set", index: 3 },
+                ],
+              },
+              { op: "local.get", index: 3 },
+              { op: "ref.is_null" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                // A missing side-bag allocation is an unadmitted
+                // representation boundary, not an OrdinarySet refusal.
+                then: [{ op: "return" }],
+              },
+              { op: "local.get", index: 3 },
+              { op: "local.get", index: 1 },
+              { op: "local.get", index: 2 },
+              { op: "call", funcIdx: setOwnIdx! },
+              { op: "global.set", index: setResultGlobalIdx! },
+            ],
+          },
+        ]
+      : [
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: isClosureIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "call", funcIdx: bagEnsureIdx }, // -> bag externref
+              { op: "local.get", index: 1 }, // key
+              { op: "local.get", index: 2 }, // value
+              { op: "call", funcIdx: externSetIdx }, // __extern_set(bag,key,value) -> ()
+            ],
+          },
+        ];
+    setBody(
+      CLOSURE_PROP_SET,
+      sharedSetAvailable
+        ? [
+            { name: "__bag", type: { kind: "externref" } },
+            { name: "__decision", type: { kind: "i32" } },
+          ]
+        : [],
+      body,
+    );
   } else {
     // Deps absent — keep a valid empty body (void result).
     setBody(CLOSURE_PROP_SET, [], []);

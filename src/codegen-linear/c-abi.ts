@@ -18,6 +18,9 @@
 
 import type { FuncTypeDef, Instr, ValType, WasmModule } from "../ir/types.js";
 import { absoluteFuncIndexCached } from "../emit/resolve-layout.js"; // (#1916 S3)
+// `refcount/ownership.ts` imports `ExternCImportSpec` back from here, but only
+// as a TYPE, so the cycle is erased by tsc and there is no runtime cycle.
+import { type ArgOwnership, type ImportOwnership, resolveImportOwnership } from "./refcount/ownership.js";
 
 // ── Linear-memory aggregate header layout (mirrors runtime.ts) ───────
 //
@@ -385,4 +388,288 @@ export function inferSemantic(wasmType: ValType, tsTypeText: string | undefined)
   if (cleaned.endsWith("[]") || cleaned.startsWith("Array<")) return "array";
   if (cleaned === "void") return "number_f64"; // shouldn't occur for params
   return "object";
+}
+
+// ── Import direction (#4539) ─────────────────────────────────────────
+//
+// Everything above marshals the EXPORT direction: TS functions surfaced to a C
+// caller. This section is the inverse — declaring external C functions that the
+// linear module CALLS, which is what linking against a C library (e.g. the
+// pinned engine artifact of ADR-0020) requires.
+//
+// Ordering is load-bearing. A function's index is `numImportFuncs + position`,
+// so every import must be declared BEFORE any defined function is added.
+// Declaring one afterwards would shift every existing index — the failure mode
+// the WasmGC lane works around with late `addUnionImports` shifting, which this
+// backend deliberately does not replicate. `declareExternCImports` therefore
+// REFUSES rather than silently corrupting indices.
+
+// ── Address domain (#4554) ───────────────────────────────────────────
+//
+// Pointers, sizes and handles are `i32` because the TARGET is wasm32, not
+// because they are inherently 32-bit; under memory64 they become `i64`. Naming
+// the role instead of the width keeps that a one-line change here rather than
+// a hunt through every declaration site.
+//
+// This is deliberately NOT an adoption of memory64, which is often slower on
+// today's engines (64-bit bounds checks cannot use the 4 GiB guard-page trick)
+// and costs cache through wider pointers. It only stops foreclosing it.
+
+/** The role a scalar plays, when its width is a property of the target. */
+export type AddressKind = "ptr" | "size" | "handle";
+
+/** A param/result type: an exact Wasm type, or a role resolved per target. */
+export type ExternCValType = ValType | { address: AddressKind };
+
+/** Which Wasm type each address role lowers to on a given target. */
+export interface LinearAddressModel {
+  readonly pointer: ValType;
+  readonly size: ValType;
+  readonly handle: ValType;
+}
+
+/** wasm32: every address role is an `i32`. The status quo, stated once. */
+export const WASM32_ADDRESS_MODEL: LinearAddressModel = {
+  pointer: { kind: "i32" },
+  size: { kind: "i32" },
+  handle: { kind: "i32" },
+};
+
+/** Resolve a declared extern type against the target's address model. */
+export function resolveExternCValType(t: ExternCValType, model: LinearAddressModel = WASM32_ADDRESS_MODEL): ValType {
+  if (!("address" in t)) return t;
+  switch (t.address) {
+    case "ptr":
+      return model.pointer;
+    case "size":
+      return model.size;
+    case "handle":
+      return model.handle;
+  }
+}
+
+/** An external C function this module calls. */
+export interface ExternCImportSpec {
+  /** Wasm import module name, e.g. `"qjs"`. */
+  module: string;
+  /** Wasm import field name, e.g. `"qjs_eval"`. */
+  name: string;
+  /**
+   * Parameter types. Prefer an {@link AddressKind} — `{ address: "handle" }` —
+   * over a literal `i32` wherever the value is an address rather than a number
+   * that happens to be 32 bits wide.
+   */
+  params: ExternCValType[];
+  results: ExternCValType[];
+  /**
+   * Whether the callee takes ownership of handle-typed arguments.
+   *
+   * Declared here rather than inferred because the callee is foreign code the
+   * analysis cannot see — it is a hand-written summary. The refcount /
+   * handle-scope pass (#4542) consumes this; that issue requires every import
+   * to carry one, so the field is intentionally not optional-with-a-default:
+   * a wrong default is a leak or a double-free, and "unset" must stay
+   * distinguishable from "borrows".
+   *
+   * #4542 widened the field to accept a full {@link ImportOwnership} record.
+   * The `"borrows"` / `"consumes"` shorthand still means exactly what it did —
+   * it is the argument axis — but it cannot describe an import that RETURNS a
+   * handle, because the caller then also has to know whether that handle
+   * arrives with a reference it owns. `resolveImportOwnership` REFUSES the
+   * shorthand on a handle-returning import rather than picking one; see
+   * `refcount/ownership.ts` for the three axes and which of them may be
+   * derived (only the conservative safety ones).
+   */
+  ownership?: ArgOwnership | ImportOwnership;
+  /**
+   * This import is part of the dynamic-tier ENGINE surface (ADR-0020), so its
+   * JSValue handles are the refcount pass's responsibility.
+   *
+   * It exists because `{ address: "handle" }` carries two meanings that happen
+   * to coincide on wasm32 and are not the same idea:
+   *   - #4554's meaning — "a pointer-width scalar whose ROLE is a handle",
+   *     which is why `tests/issue-4539-c-link.test.ts` uses it on a plain
+   *     `int c_double(int)` to prove the role emits the same bytes as the
+   *     width; and
+   *   - #4542's meaning — "a reference the engine counts".
+   *
+   * Only the second one obliges anybody. Inferring "engine import" from the
+   * type role would make the first unusable, so it is DECLARED. With
+   * `engine: true`, {@link declareExternCImports} refuses an import whose
+   * ownership annotation is missing or incoherent — the "compile error, not a
+   * default" rule, applied at the declaration rather than deep inside lowering.
+   */
+  engine?: boolean;
+}
+
+/** Count the function imports already declared on a module. */
+export function countImportedFuncs(mod: WasmModule): number {
+  let n = 0;
+  for (const imp of mod.imports) if (imp.desc.kind === "func") n++;
+  return n;
+}
+
+/** Find an existing structurally-identical func type, or append one. */
+function internFuncType(mod: WasmModule, params: ValType[], results: ValType[]): number {
+  const same = (a: ValType[], b: ValType[]): boolean =>
+    a.length === b.length && a.every((t, i) => t.kind === b[i].kind);
+  for (let i = 0; i < mod.types.length; i++) {
+    const t = mod.types[i];
+    if (t.kind === "func" && same(t.params, params) && same(t.results, results)) return i;
+  }
+  const typeIdx = mod.types.length;
+  const def: FuncTypeDef = { kind: "func", params, results };
+  mod.types.push(def);
+  return typeIdx;
+}
+
+/**
+ * Declare external C functions this module imports, in order.
+ *
+ * MUST run before any defined function exists on `mod`; throws otherwise, so
+ * an index-shifting mistake is a loud failure at build time rather than a
+ * miscompile. Returns `name → function index`; imports occupy `[0, n)`.
+ *
+ * Also VALIDATES ownership (#4542): every `engine: true` import, and every
+ * import that declares an `ownership` at all, is resolved here. An engine
+ * import missing its annotation fails at declaration — where the mistake was
+ * made — rather than surfacing later as a leak or a double-free.
+ */
+export function declareExternCImports(
+  mod: WasmModule,
+  specs: readonly ExternCImportSpec[],
+  model: LinearAddressModel = WASM32_ADDRESS_MODEL,
+): Map<string, number> {
+  const indices = new Map<string, number>();
+  if (specs.length === 0) return indices;
+  for (const spec of specs) {
+    // A non-engine import that declares nothing is left alone: `{ address:
+    // "handle" }` is also a plain width role (#4554), and demanding an
+    // annotation there would break that meaning — see `ExternCImportSpec.engine`.
+    if (spec.engine === true || spec.ownership !== undefined) resolveImportOwnership(spec);
+  }
+  if (mod.functions.length > 0) {
+    throw new Error(
+      `declareExternCImports: ${mod.functions.length} function(s) already defined. ` +
+        "Imports must be declared before any function is added — adding one later shifts every " +
+        "function index. Move the call earlier in generateLinearModule.",
+    );
+  }
+  for (const spec of specs) {
+    const existing = indices.get(`${spec.module}.${spec.name}`);
+    if (existing !== undefined) continue;
+    const typeIdx = internFuncType(
+      mod,
+      spec.params.map((t) => resolveExternCValType(t, model)),
+      spec.results.map((t) => resolveExternCValType(t, model)),
+    );
+    const funcIdx = countImportedFuncs(mod);
+    mod.imports.push({
+      module: spec.module,
+      name: spec.name,
+      desc: { kind: "func", typeIdx },
+    });
+    indices.set(`${spec.module}.${spec.name}`, funcIdx);
+    indices.set(spec.name, funcIdx);
+  }
+  return indices;
+}
+
+/**
+ * Import the module's linear memory instead of defining it.
+ *
+ * Required when linking against an artifact that EXPORTS memory (the ADR-0020
+ * topology): both sides must address one memory, and only one may own it.
+ * `addRuntime` skips defining memory when an import is present.
+ */
+export function declareImportedMemory(
+  mod: WasmModule,
+  module: string,
+  name: string,
+  min: number,
+  max?: number,
+  indexType: "i32" | "i64" = "i32",
+): void {
+  if (mod.memories.length > 0) {
+    throw new Error(
+      "declareImportedMemory: this module already DEFINES a memory. A module may not both " +
+        "define and import one; declare the import before the runtime is added.",
+    );
+  }
+  // #4554 — the parameter exists so a memory64 caller has somewhere to say so,
+  // and is REFUSED rather than accepted-and-ignored. Accepting it would emit
+  // wasm32 limits for a 64-bit memory: a module that instantiates and then
+  // addresses the wrong bytes. A loud refusal is the only honest answer until
+  // the emitter can encode 64-bit limits.
+  if (indexType === "i64") {
+    throw new Error(
+      "declareImportedMemory: memory64 (i64 index type) is not supported yet — the emitter " +
+        "cannot encode 64-bit limits, and emitting 32-bit ones for a 64-bit memory would " +
+        "silently address the wrong memory. See #4554.",
+    );
+  }
+  if (hasImportedMemory(mod)) return;
+  mod.imports.push({ module, name, desc: { kind: "memory", min, max } });
+}
+
+/** Whether the module imports its linear memory rather than defining one. */
+export function hasImportedMemory(mod: WasmModule): boolean {
+  return mod.imports.some((imp) => imp.desc.kind === "memory");
+}
+
+/**
+ * Boundary marshalling for a call to an extern-C import (#4539).
+ *
+ * This backend compiles a TS `number` to **f64**, while a C signature is
+ * whatever it declares — typically `i32` for handles and sizes. So each
+ * argument is converted into the declared parameter type on the way in, and
+ * the result back into the f64 domain on the way out.
+ *
+ * KNOWN LIMITATION, stated rather than hidden: the conversion assumes the
+ * argument expression produced f64, which holds for ordinary `number`
+ * expressions but NOT for values already in i32 form via native type
+ * annotations (`type i32 = number`). Mixing those with extern calls is
+ * therefore not yet supported; it needs the expression-level type tracking
+ * the direct backend does not have. Emitting a wrong conversion silently is
+ * the failure this comment exists to prevent someone from causing.
+ */
+export function emitExternCBoundaryArg(out: Instr[], declared: ValType): void {
+  switch (declared.kind) {
+    case "f64":
+      return; // already the backend's domain
+    case "i32":
+      out.push({ op: "i32.trunc_f64_s" });
+      return;
+    case "i64":
+      out.push({ op: "i64.trunc_f64_s" });
+      return;
+    case "f32":
+      out.push({ op: "f32.demote_f64" });
+      return;
+    default:
+      throw new Error(
+        `extern-C import parameter type '${declared.kind}' is not supported yet. ` +
+          "Supported: f64, i32, i64, f32 — the scalar C ABI. A reference type " +
+          "cannot cross this boundary by value.",
+      );
+  }
+}
+
+/** Convert an extern-C result back into the backend's f64 value domain. */
+export function emitExternCBoundaryResult(out: Instr[], declared: ValType): void {
+  switch (declared.kind) {
+    case "f64":
+      return;
+    case "i32":
+      out.push({ op: "f64.convert_i32_s" });
+      return;
+    case "i64":
+      out.push({ op: "f64.convert_i64_s" });
+      return;
+    case "f32":
+      out.push({ op: "f64.promote_f32" });
+      return;
+    default:
+      throw new Error(`extern-C import result type '${declared.kind}' is not supported yet.`);
+  }
 }

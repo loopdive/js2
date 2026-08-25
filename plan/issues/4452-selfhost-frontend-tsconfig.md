@@ -2,9 +2,9 @@
 id: 4452
 title: "analyzeFiles hardcodes its own compilerOptions — self-host front-end rejects the compiler's own source (rootDir, interop, 121-error strictness cluster)"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 priority: high
 horizon: m

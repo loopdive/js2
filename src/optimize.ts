@@ -136,7 +136,7 @@ export interface OptimizeResult {
   binary: Uint8Array;
   /** true if optimization was applied */
   optimized: boolean;
-  /** Warning message if optimization was skipped */
+  /** Warning message if optimization was skipped or an unsupported pass was omitted. */
   warning?: string;
 }
 
@@ -574,15 +574,16 @@ function optimizeWithSystemBinary(
     void referenceTypes;
     void exceptionHandling;
 
+    const execOptions = {
+      // (#4157 entry 31) 600s, was 60s: acorn-scale modules with the inline
+      // caches enabled exceed 60s under -O4, and the catch below silently
+      // shipped the UNOPTIMIZED binary — measured as a phantom +57% size.
+      timeout: 600_000,
+      stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"],
+    };
     let stderr: Buffer | string = "";
     try {
-      n.execFileSync(wasmOptPath, args, {
-        // (#4157 entry 31) 600s, was 60s: acorn-scale modules with the inline
-        // caches enabled exceed 60s under -O4, and the catch below silently
-        // shipped the UNOPTIMIZED binary — measured as a phantom +57% size.
-        timeout: 600_000,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      n.execFileSync(wasmOptPath, args, execOptions);
     } catch (err) {
       // Surface wasm-opt's actual error message instead of falling through to
       // the misleading "not available" warning. A validator error here means
@@ -590,7 +591,36 @@ function optimizeWithSystemBinary(
       // seeing, not a missing-binary problem.
       const e = err as { stderr?: Buffer | string; message?: string };
       stderr = e.stderr ?? e.message ?? "unknown error";
-      const text = Buffer.isBuffer(stderr) ? stderr.toString("utf-8") : String(stderr);
+      let text = Buffer.isBuffer(stderr) ? stderr.toString("utf-8") : String(stderr);
+
+      // (#4586) Standardized Wasm EH uses `try_table`, which Binaryen 125's
+      // O4-only Flatten pass classifies as control flow but does not implement.
+      // Binaryen aborts at Flatten.cpp instead of declining the pass. Preserve
+      // the standardized output required by current Wasmtime/Wasmer and retry
+      // the SAME O4 pipeline with only that unsupported pass omitted. Keep this
+      // signature deliberately narrow: every other optimizer failure must
+      // remain loud and return the raw binary below.
+      const unsupportedFlatten =
+        level === 4 &&
+        text.includes("Flatten.cpp:") &&
+        (text.includes("unexpected expr type") || text.includes("Unsupported instruction for Flatten: try_table"));
+      if (unsupportedFlatten) {
+        try {
+          n.execFileSync(wasmOptPath, [...args, "--skip-pass=flatten"], execOptions);
+          const optimizedBinary = n.readFileSync(outputPath);
+          return {
+            binary: new Uint8Array(optimizedBinary),
+            optimized: true,
+            warning:
+              "wasm-opt -O4 omitted Binaryen's unsupported flatten pass for standardized try_table output; all remaining O4 passes completed.",
+          };
+        } catch (retryError) {
+          const retry = retryError as { stderr?: Buffer | string; message?: string };
+          const retryStderr = retry.stderr ?? retry.message ?? "unknown error";
+          const retryText = Buffer.isBuffer(retryStderr) ? retryStderr.toString("utf-8") : String(retryStderr);
+          text = `${text.trim()}\nRetry without flatten failed: ${retryText.trim()}`;
+        }
+      }
       // (#4157 entry 31) LOUD, unconditionally: the warning field alone was
       // ignored by every consumer, so a timeout here silently shipped an
       // unoptimized binary into perf measurements twice. stderr is the one

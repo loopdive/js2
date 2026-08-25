@@ -1017,6 +1017,7 @@ describe("#3520 ProgramAbiSession", () => {
       { ...draft, structuralOrder: { ...draft.structuralOrder, sourceId: foreign.sourceId } },
       { ...draft, intent: { ...draft.intent, valueType: "f64" } },
       { ...draft, intent: { ...draft.intent, mutable: false } },
+      { ...draft, intent: { ...draft.intent, capability: "dom" } },
     ];
     for (const mismatch of mismatches) {
       expectInvariant(() => session.ensurePlan(mismatch), "session-draft-mismatch");

@@ -3,9 +3,9 @@ id: 3953
 title: "verify the #2097 high-water raise actually executes on a real merge, and make its silence loud — a floor that is too low must stop being cost-free"
 status: done
 completed: 2026-08-02
-sprint: current
+sprint: 78
 created: 2026-08-01
-updated: 2026-08-02
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

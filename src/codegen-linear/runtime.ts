@@ -5,10 +5,35 @@ import {
   LINEAR_STRING_PAYLOAD_PREFIX_BYTES,
   LINEAR_STRING_PAYLOAD_SIZE_OFFSET,
 } from "../ir/analysis/linear-memory-plan.js";
+import { hasImportedMemory } from "./c-abi.js";
 import { hashProbeAdvanceInstrs, hashProbeInitInstrs } from "./emit-idioms.js";
+import { addHeapAllocatorRuntime, heapAllocFuncIndex } from "./heap-allocator.js";
+import {
+  ARENA_LIMIT_GLOBAL,
+  hasChunkedArena,
+  LINKED_ARENA_DEFAULT_CHUNK_BYTES,
+  type LinkedHeapOptions,
+  linkedMallocPrologue,
+} from "./linked-arena.js";
 import { isLinearStringLiteralCacheGlobal } from "./string-literals.js";
 
-/** Heap starts at byte offset 1024 (leave low addresses for null/sentinel) */
+/**
+ * Heap starts at byte offset 1024 (leave low addresses for null/sentinel).
+ *
+ * **Standalone mode only.** This is an absolute address, and it is only valid
+ * because a standalone module owns its whole memory. In linked mode it is
+ * catastrophic — 1024 is inside the pinned engine artifact's shadow stack
+ * `[0, 65536)` — so {@link addRuntime} ignores it there and takes every address
+ * from the memory's owner. See ADR-0022 / #4540.
+ *
+ * The full set of absolute-address constants in this backend, audited
+ * 2026-08-19, all of which land inside the artifact's shadow stack or static
+ * data and all of which are therefore bypassed or refused in linked mode:
+ * `HEAP_START` (1024, here), `DATA_SEGMENT_BASE` (64, index.ts), Ryū
+ * `TABLE_BASE` (1024) / `LINEAR_NUMBER_FORMAT_DATA_BASE` (16384) /
+ * `LINEAR_NUMBER_FORMAT_HEAP_START` (65536, all number-format.ts). Address 0
+ * stays the null sentinel in both modes and is never written.
+ */
 const HEAP_START = 1024;
 
 /** Wasm page size in bytes (64 KiB) — the unit `memory.grow` operates on. */
@@ -65,6 +90,26 @@ export interface ArenaOptions {
    */
   exposeArenaReset?: boolean;
   heapStart?: number;
+  /**
+   * Linked mode (#4540): carve the arena out of a HOST allocator instead of
+   * owning the address space. See {@link LinkedHeapOptions}.
+   */
+  linkedHeap?: LinkedHeapOptions;
+  /**
+   * Which allocator backs `__malloc` (#4557).
+   *
+   * - `"bump"` (default) — ADR-0017's monotonic arena. Nothing is ever freed.
+   * - `"malloc-v1"` — the real allocator in `heap-allocator.ts`: free lists,
+   *   boundary tags, coalescing, `realloc` in place. `__malloc` stays a bump
+   *   arena, but its chunks are now carved from OUR heap instead of the
+   *   engine's, so ADR-0017's zero-metadata typed path survives while
+   *   `free`/`realloc`/`usable_size` become implementable — which is what
+   *   `JS_NewRuntime2` requires before QuickJS can allocate through us.
+   *
+   * Default-off: the standalone lane's emitted bytes must not move (#4557
+   * acceptance criterion, `prove-emit-identity`).
+   */
+  heapAllocator?: "bump" | "malloc-v1";
 }
 
 /**
@@ -82,9 +127,60 @@ export interface ArenaOptions {
  * ADR-0017.
  */
 export function addRuntime(mod: WasmModule, opts: ArenaOptions = {}): void {
-  const heapStart = opts.heapStart ?? HEAP_START;
-  // Add memory (1 page = 64 KiB, growable to 256 pages = 16 MiB)
-  if (mod.memories.length === 0) {
+  const ownAllocator = opts.heapAllocator === "malloc-v1";
+  if (opts.linkedHeap !== undefined && !hasImportedMemory(mod)) {
+    throw new Error(
+      "linear runtime: linkedHeap was requested but the module does not import its memory. " +
+        "Carving from a host allocator only makes sense when another module owns the address " +
+        "space; a module that defines its own memory must use the standalone arena (#4540).",
+    );
+  }
+  // #4557 — the own-allocator inversion. `__malloc` keeps its bump fast path;
+  // what changes is WHERE the chunks come from. With `malloc-v1` the real
+  // allocator is emitted first and the arena carves from OUR `__heap_alloc`,
+  // which in turn takes regions from the host allocator (linked) or from
+  // `memory.grow` (standalone). Two consequences worth being explicit about:
+  //   - linked mode still emits NO `memory.grow`, so #4540's "the memory's
+  //     owner is its only grower" survives the inversion by construction;
+  //   - `free`/`realloc`/`usable_size` become implementable, which is the
+  //     precondition for `JS_NewRuntime2` and the whole point of the issue.
+  let linked: LinkedHeapOptions | undefined = opts.linkedHeap;
+  if (ownAllocator) {
+    addHeapAllocatorRuntime(mod, {
+      regionSourceFuncIdx: opts.linkedHeap?.mallocFuncIdx,
+      regionBytes: opts.linkedHeap?.chunkBytes,
+    });
+    linked = {
+      mallocFuncIdx: heapAllocFuncIndex(mod),
+      chunkBytes: opts.linkedHeap?.chunkBytes ?? LINKED_ARENA_DEFAULT_CHUNK_BYTES,
+    };
+  }
+  // Linked mode has no address space of its own, so the baked-in floor is
+  // meaningless there: the bump pointer starts at 0 ("no chunk carved yet")
+  // and every real address comes from the host allocator.
+  const heapStart = linked !== undefined ? 0 : (opts.heapStart ?? HEAP_START);
+  if (linked !== undefined && opts.exposeArenaReset) {
+    // `__arena_reset` rewinds one bump pointer to a fixed floor. In linked mode
+    // the arena is a CHAIN of host-allocated chunks, so rewinding would (a)
+    // strand every chunk but the current one — an unbounded leak the export
+    // exists precisely to prevent — and (b) hand the next tenant addresses
+    // inside a chunk the host may already have reused. Refuse rather than ship
+    // a reset that silently means something else. Freeing the chain needs a
+    // chunk list; that is follow-up work, not a default.
+    throw new Error(
+      "linear runtime: exposeArenaReset is not supported with a chunked arena. The arena is a " +
+        "chain of allocated chunks; an O(1) rewind would leak every chunk but the last. " +
+        "See #4540 (linked mode) and #4557 (own allocator).",
+    );
+  }
+  // Add memory (1 page = 64 KiB, growable to 256 pages = 16 MiB).
+  //
+  // #4539: skip this entirely when the module IMPORTS its memory. A module may
+  // not both define and import one, and when linking against an artifact that
+  // exports memory (the ADR-0020 topology) the artifact owns it. Re-exporting
+  // an imported memory is legal but deliberately not done here: the owner
+  // already exports it, and a second export invites two names for one memory.
+  if (mod.memories.length === 0 && !hasImportedMemory(mod)) {
     mod.memories.push({ min: 1, max: 256 });
     // Export memory so tests can inspect it
     mod.exports.push({
@@ -102,6 +198,21 @@ export function addRuntime(mod: WasmModule, opts: ArenaOptions = {}): void {
     init: [{ op: "i32.const", value: heapStart }],
   };
   mod.globals.push(heapPtrGlobal);
+
+  // Linked mode carries one extra global: the end of the chunk currently being
+  // bump-allocated from. It is emitted ONLY in that mode, so standalone
+  // modules keep their exact global layout (and byte-identical output).
+  const arenaLimitGlobalIdx = mod.globals.length;
+  if (linked !== undefined) {
+    mod.globals.push({
+      name: ARENA_LIMIT_GLOBAL,
+      type: { kind: "i32" },
+      mutable: true,
+      init: [{ op: "i32.const", value: 0 }],
+    });
+  }
+  const hostMallocIdx = linked?.mallocFuncIdx ?? -1;
+  const chunkBytes = linked?.chunkBytes ?? LINKED_ARENA_DEFAULT_CHUNK_BYTES;
 
   // Register __malloc function type
   const mallocTypeIdx = mod.types.length;
@@ -127,7 +238,12 @@ export function addRuntime(mod: WasmModule, opts: ArenaOptions = {}): void {
   // subsequent store traps cleanly rather than corrupting live data.
   const local_ret = 1; // local 0 is the `size` param
   const local_next = 2;
-  const mallocBody: Instr[] = [
+  const local_chunk = 3; // linked mode only
+
+  // Standalone prologue: we own the address space, so "not enough room" means
+  // "grow the memory". Leaves `ret` = the address to hand back and `next` = the
+  // new bump position.
+  const standalonePrologue: Instr[] = [
     // ret = __heap_ptr
     { op: "global.get", index: heapPtrGlobalIdx },
     { op: "local.set", index: local_ret },
@@ -167,6 +283,20 @@ export function addRuntime(mod: WasmModule, opts: ArenaOptions = {}): void {
       ],
       else: [],
     },
+  ];
+
+  const mallocBody: Instr[] = [
+    ...(linked === undefined
+      ? standalonePrologue
+      : linkedMallocPrologue({
+          heapPtrGlobalIdx,
+          arenaLimitGlobalIdx,
+          hostMallocIdx,
+          chunkBytes,
+          localRet: local_ret,
+          localNext: local_next,
+          localChunk: local_chunk,
+        })),
     // __heap_ptr = next
     { op: "local.get", index: local_next },
     { op: "global.set", index: heapPtrGlobalIdx },
@@ -200,6 +330,9 @@ export function addRuntime(mod: WasmModule, opts: ArenaOptions = {}): void {
     locals: [
       { name: "__malloc_ret", type: { kind: "i32" } },
       { name: "__malloc_next", type: { kind: "i32" } },
+      // The chunk-size scratch exists only on the linked path, so the
+      // standalone frame — and therefore the emitted bytes — is unchanged.
+      ...(linked !== undefined ? [{ name: "__malloc_chunk", type: { kind: "i32" } as ValType }] : []),
     ],
     body: mallocBody,
     exported: false,
@@ -244,11 +377,36 @@ function align8(value: number): number {
  * so the baked-in value wins and the emitted bytes are unchanged.
  */
 export function finalizeLinearHeapLayout(mod: WasmModule): void {
+  // #4540 — in linked mode there is no floor to lift. The bump pointer starts
+  // at 0 (meaning "no chunk carved") and literal data is copied into a chunk we
+  // allocated, so "the heap must sit above the data segments" is not a
+  // relationship that exists. Lifting it here would bake an absolute constant
+  // back into the exact mode this slice removes them from.
   let dataEnd = 0;
   for (const seg of mod.dataSegments ?? []) {
+    // A passive segment has no address, so it cannot constrain the heap floor.
+    if (seg.passive) continue;
     dataEnd = Math.max(dataEnd, seg.offset + seg.bytes.length);
   }
   if (dataEnd === 0) return;
+
+  // Data segments are initialised before any code runs, so the *declared*
+  // minimum has to cover them — this is true in every mode, including the
+  // #4557 own-allocator one where there is no floor to lift but the module
+  // still defines its own memory and still emits active segments.
+  const memoryForSegments = mod.memories[0];
+  if (memoryForSegments !== undefined) {
+    const neededPages = Math.ceil(dataEnd / WASM_PAGE_SIZE);
+    if (neededPages > memoryForSegments.min) memoryForSegments.min = neededPages;
+    if (memoryForSegments.max !== undefined && memoryForSegments.max < memoryForSegments.min) {
+      memoryForSegments.max = memoryForSegments.min;
+    }
+  }
+
+  // A chunked arena has no absolute floor to lift: its bump pointer starts at 0
+  // ("no chunk carved yet") and every address comes from an allocator. Lifting
+  // one here would bake back the absolute constant this design removed.
+  if (hasChunkedArena(mod)) return;
 
   const heapPtr = mod.globals.find((g) => g.name === "__heap_ptr");
   if (heapPtr === undefined) return;
@@ -269,14 +427,8 @@ export function finalizeLinearHeapLayout(mod: WasmModule): void {
     }
   }
 
-  // Data segments are initialised before any code runs, so the *declared*
-  // minimum has to cover them (memory.grow in __malloc is too late).
-  const memory = mod.memories[0];
-  if (memory !== undefined) {
-    const neededPages = Math.ceil(dataEnd / WASM_PAGE_SIZE);
-    if (neededPages > memory.min) memory.min = neededPages;
-    if (memory.max !== undefined && memory.max < memory.min) memory.max = memory.min;
-  }
+  // (`memory.min` was raised above, before the chunked-arena early return —
+  // active segments must be in bounds whichever allocator is in use.)
 
   if (newHeapStart === oldHeapStart) return;
   init.value = newHeapStart;

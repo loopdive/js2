@@ -59,7 +59,7 @@ import {
   detectI32LoopVar,
   isIncreasingStep,
   loopBodyMutatesStringReadInvariants,
-} from "../codegen/statements/loop-analysis.js";
+} from "./analysis/loop-shape.js";
 
 /** The recognised shape — receiver + induction variable of a canonical loop. */
 export interface CanonicalCharReadLoop {
@@ -87,6 +87,13 @@ export interface CharReadProof {
   } | null;
   /** Host-strings: `(recv, i32) -> i32` unguarded code-unit read helper. */
   readonly trustedFuncName: string | null;
+  /**
+   * (#4517) i32 slot holding `recv.length`, hoisted into the preheader by the
+   * same invariance proof as `hoist`, so `lowerForStatement` can emit the loop
+   * CONDITION as `i32.lt_s(i, len)`. `null` means "not available" — the caller
+   * then keeps the generic condition lowering, unchanged.
+   */
+  readonly lenSlot: number | null;
 }
 
 /** Proof map for the loop body currently being lowered, keyed by receiver NAME. */

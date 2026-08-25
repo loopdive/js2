@@ -3,7 +3,7 @@ id: 4398
 title: "Target-neutral explicit platform capabilities with swappable providers"
 status: done
 created: 2026-08-13
-updated: 2026-08-13
+updated: 2026-08-18
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -11,7 +11,7 @@ task_type: feature
 area: host-interop, linking, compiler, platform
 language_feature: host-capabilities
 goal: platform
-sprint: current
+sprint: 78
 parent: 4395
 depends_on: [4396]
 required_by: [4399]

@@ -2,7 +2,7 @@
 id: 4016
 title: "standalone: String.prototype search-value methods refuse the spec's plain-ToString path"
 status: done
-sprint: current
+sprint: 78
 priority: high
 horizon: l
 feasibility: hard

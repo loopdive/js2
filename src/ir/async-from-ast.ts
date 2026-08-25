@@ -8,6 +8,8 @@ import { coerceIrValueToExternref } from "./value-coercion.js";
 export interface PreparedAsyncPromiseAllPlan {
   readonly target: IrFuncRef;
   readonly resultType: IrType;
+  /** Native projection keeps the pending Promise vector in its physical carrier. */
+  readonly argumentType?: IrType;
 }
 
 /** Prepared-async evidence consumed by AST-to-IR lowering. */
@@ -53,13 +55,19 @@ export function tryLowerPreparedAsyncPromiseAll(input: {
   }
 
   const externref = irVal({ kind: "externref" });
-  const thisArg = input.builder.emitConst({ kind: "null", ty: externref }, externref);
-  const iterable = coerceIrValueToExternref(
-    input.builder,
-    input.lowerExpression(input.expression.arguments[0]!, externref),
-  );
-  const directCall = input.builder.emitConst({ kind: "i32", value: 1 }, irVal({ kind: "i32" }));
-  const result = input.builder.emitCall(plan.target, [thisArg, iterable, directCall], externref);
+  const result = (() => {
+    if (plan.argumentType) {
+      const iterable = input.lowerExpression(input.expression.arguments[0]!, plan.argumentType);
+      return input.builder.emitCall(plan.target, [iterable], externref);
+    }
+    const thisArg = input.builder.emitConst({ kind: "null", ty: externref }, externref);
+    const iterable = coerceIrValueToExternref(
+      input.builder,
+      input.lowerExpression(input.expression.arguments[0]!, externref),
+    );
+    const directCall = input.builder.emitConst({ kind: "i32", value: 1 }, irVal({ kind: "i32" }));
+    return input.builder.emitCall(plan.target, [thisArg, iterable, directCall], externref);
+  })();
   if (result === null)
     throw new Error(`ir/from-ast: prepared Promise.all provider returned void in ${input.functionName}`);
   return result;

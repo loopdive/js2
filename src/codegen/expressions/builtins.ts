@@ -21,6 +21,7 @@ import {
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, VOID_RESULT } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
+import { emitSymbolArgToNumberThrow } from "../tonumber-symbol-throw.js"; // (#4556)
 import { emitThrowRangeError, emitThrowTypeError } from "./helpers.js";
 import { isStaticNaN, tryStaticToNumber } from "./misc.js";
 import { sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
@@ -968,7 +969,7 @@ const DATE_MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug",
  * not reachable: civil years are calendar years). Returns
  * `$NativeString(len, off=0, data)`; the buffer is sized for the longest format.
  */
-function ensureDateFormatStringHelper(ctx: CodegenContext): number {
+export function ensureDateFormatStringHelper(ctx: CodegenContext): number {
   const existing = ctx.funcMap.get("__date_format_string");
   if (existing !== undefined) return existing;
 
@@ -2312,11 +2313,7 @@ function compileDateMethodCall(
     // Read curTs FIRST.
     const tempCurTs = allocTempLocal(fctx, { kind: "i64" });
     fctx.body.push({ op: "local.get", index: tempRef });
-    fctx.body.push({
-      op: "struct.get",
-      typeIdx: dateTypeIdx,
-      fieldIdx: 0,
-    });
+    fctx.body.push({ op: "struct.get", typeIdx: dateTypeIdx, fieldIdx: 0 });
     fctx.body.push({ op: "local.set", index: tempCurTs });
 
     // Mapping: setDate(d) → [d], setMonth(mo, d?) → [mo, d],
@@ -2330,6 +2327,9 @@ function compileDateMethodCall(
     fctx.body.push({ op: "i32.const", value: args.length === 0 ? 1 : 0 });
     fctx.body.push({ op: "local.set", index: tempAnyInvalid });
 
+    // (#4556) ToNumber(Symbol) throws — tonumber-symbol-throw.ts.
+    const dateSym = emitSymbolArgToNumberThrow(ctx, fctx, args, { kind: "f64" });
+    if (dateSym !== undefined) return dateSym;
     const argLocals: Partial<Record<"y" | "mo" | "d", number>> = {};
     for (let i = 0; i < unitsForArgs.length && i < args.length; i++) {
       const unit = unitsForArgs[i]!;
@@ -2351,18 +2351,31 @@ function compileDateMethodCall(
       fctx.body.push({ op: "local.set", index: tempAnyInvalid });
     }
 
-    // Legacy setYear: if 0 <= y <= 99, y += 1900 (§B.2.3.5).
+    // Legacy setYear: if 0 <= ToIntegerOrInfinity(y) <= 99, yyyy = 1900 + that
+    // INTEGER (§B.2.4.2 steps 5-6); otherwise yyyy = y unchanged.
+    // (#4485) The window test and the +1900 must both use the TRUNCATED value,
+    // not the raw f64. Testing the raw double mis-routes every fractional year
+    // in (-1, 0): `setYear(-0.9999999)` truncates to -0, which IS in [0, 99],
+    // so the spec answer is 1900 — but `-0.9999999 >= 0` is false, so the raw
+    // test fell through to the else arm and later truncation produced year 0
+    // (test262 annexB .../setYear/year-number-relative.js). f64.trunc(-0.9…)
+    // is -0, and both `-0 >= 0` and `-0 + 1900 === 1900` hold in IEEE-754, so
+    // the ToIntegerOrInfinity "-0 → +0" normalisation needs no extra opcode.
     if (isLegacySetYear && argLocals.y !== undefined) {
       const yLocal = argLocals.y;
+      const yTrunc = allocTempLocal(fctx, { kind: "f64" });
       fctx.body.push({ op: "local.get", index: yLocal });
+      fctx.body.push({ op: "f64.trunc" });
+      fctx.body.push({ op: "local.set", index: yTrunc });
+      fctx.body.push({ op: "local.get", index: yTrunc });
       fctx.body.push({ op: "f64.const", value: 0 });
       fctx.body.push({ op: "f64.ge" });
-      fctx.body.push({ op: "local.get", index: yLocal });
+      fctx.body.push({ op: "local.get", index: yTrunc });
       fctx.body.push({ op: "f64.const", value: 99 });
       fctx.body.push({ op: "f64.le" });
       fctx.body.push({ op: "i32.and" });
       const savedY = pushBody(fctx);
-      fctx.body.push({ op: "local.get", index: yLocal });
+      fctx.body.push({ op: "local.get", index: yTrunc });
       fctx.body.push({ op: "f64.const", value: 1900 });
       fctx.body.push({ op: "f64.add" });
       const yThenInstrs = fctx.body;
@@ -3341,20 +3354,10 @@ function compileMathCall(
 
   const f64Hint: ValType = { kind: "f64" };
 
-  // ToNumber(Symbol) must throw TypeError (§7.1.4 step 5). Symbols lower to i32
-  // ids, so the f64Hint coercion path would silently leak the id as a number
-  // (e.g. `Math.abs(Symbol())` returned the raw counter). Detect a symbol-typed
-  // argument, evaluate every argument up to and including it for side effects in
-  // source order, then throw — matching how `Number(Symbol())` is handled.
-  const symbolArgIdx = expr.arguments.findIndex((a) => ctx.oracle.staticJsTypeOf(a) === "symbol");
-  if (symbolArgIdx >= 0) {
-    for (let i = 0; i <= symbolArgIdx; i++) {
-      const t = compileExpression(ctx, fctx, expr.arguments[i]!);
-      if (t !== null) fctx.body.push({ op: "drop" });
-    }
-    emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a number");
-    return { kind: "f64" };
-  }
+  // ToNumber(Symbol) must throw TypeError (§7.1.4 step 5) — see
+  // tonumber-symbol-throw.ts; `Math.abs(Symbol())` used to leak the raw id.
+  const mathSym = emitSymbolArgToNumberThrow(ctx, fctx, expr.arguments, { kind: "f64" });
+  if (mathSym !== undefined) return mathSym;
 
   if (method === "round" && expr.arguments.length >= 1) {
     // JS Math.round: compare frac = x - floor(x) to 0.5.

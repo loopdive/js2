@@ -108,6 +108,7 @@ import ts from "typescript";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitThrowTypeError, noJsHost } from "./js-errors.js";
+import { compileExpression } from "./shared.js"; // (#4556)
 
 /** WasmGC `none` bottom heap type (signed LEB −18) — `ref.null none`, the
  *  canonical `anyref` null (mirrors receiver-brand.ts / map-runtime.ts). */
@@ -397,6 +398,10 @@ export function tryBuiltinPrototypeMethodBrandThrow(
   expectedType?: ValType,
 ): ValType | undefined {
   if (!noJsHost(ctx) && !ctx.strictNoHostImports) return undefined;
+  // (#4556) `<Builtin>.prototype.isPrototypeOf(V)` is not a brand THROW — it
+  // has a real answer. Handled here so the dispatch site stays untouched.
+  const isProto = tryBuiltinPrototypeIsPrototypeOf(ctx, fctx, expr, propAccess);
+  if (isProto !== undefined) return isProto;
   const ctor = builtinPrototypeReceiver(ctx, propAccess.expression);
   if (ctor === undefined) return undefined;
   const method = propAccess.name.text;
@@ -414,6 +419,61 @@ export function tryBuiltinPrototypeMethodBrandThrow(
     `TypeError: Method ${ctor}.prototype.${method} called on incompatible receiver ${ctor}.prototype`,
     expectedType ?? (ctx.fast ? { kind: "i32" } : { kind: "f64" }),
   );
+}
+
+/**
+ * (#4556) Method-call arm: `<Builtin>.prototype.isPrototypeOf(V)`.
+ *
+ * §20.1.3.3 is "walk V's prototype chain looking for O". With
+ * `O = <Ctor>.prototype` that is exactly OrdinaryHasInstance(<Ctor>, V) minus
+ * the IsCallable check a lib constructor always passes — i.e. the SAME question
+ * `V instanceof <Ctor>` already answers, and standalone already answers it
+ * natively (`[1,2] instanceof Array` is `true`, `{} instanceof Array` is
+ * `false`). So we compile the call away into the `instanceof` lowering rather
+ * than materialising a prototype OBJECT that standalone does not have.
+ *
+ * Without this the receiver `Array.prototype` compiled to a null ref and the
+ * call trapped with "Cannot access property on null or undefined" — an
+ * uncatchable abort where the spec wants `true` (test262
+ * `built-ins/Array/{S15.4.1_A1.1_T3, S15.4.2.1_A1.1_T3, length/S15.4.2.2_A1.1_T3}`).
+ *
+ * `Object` is DELIBERATELY EXCLUDED. Its borrowed/direct spellings already
+ * route to the native open-object chain walk `__isPrototypeOf`, which walks the
+ * REAL chain and is strictly more faithful than the brand equivalence here —
+ * `Object.prototype.isPrototypeOf(new String("a"))` is `true` per spec, and a
+ * brand test would not say so. Never shadow a working path with a weaker one.
+ *
+ * Reached from {@link tryBuiltinPrototypeMethodBrandThrow}, which is already
+ * the first arm on the `<Builtin>.prototype.<m>(…)` dispatch — hanging it there
+ * keeps the call site unchanged.
+ */
+function tryBuiltinPrototypeIsPrototypeOf(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+): ValType | undefined {
+  if (propAccess.name.text !== "isPrototypeOf") return undefined;
+  const ctor = builtinPrototypeReceiver(ctx, propAccess.expression);
+  if (ctor === undefined || ctor === "Object") return undefined;
+  const value = expr.arguments[0];
+  if (value === undefined) {
+    // §20.1.3.3 step 1 — a missing argument is not an Object, so `false`.
+    fctx.body.push({ op: "i32.const", value: 0 });
+    return { kind: "i32", boolean: true };
+  }
+  // `<Ctor>.prototype`'s own base identifier IS the constructor reference.
+  const ctorRef = (propAccess.expression as ts.PropertyAccessExpression).expression;
+  const synth = ts.factory.createBinaryExpression(value, ts.SyntaxKind.InstanceOfKeyword, ctorRef);
+  ts.setTextRange(synth, expr);
+  (synth as unknown as { parent: ts.Node }).parent = expr.parent;
+  // Routed through the general expression compiler, NOT `compileInstanceOf`
+  // directly: the BUILTIN `instanceof` arms (`resolveInstanceOfRHS` and the
+  // host / object-family / wrapper lowerings) live ABOVE it in expressions.ts,
+  // and `compileInstanceOf` alone only knows USER class struct tags — it
+  // answered `false` for `Array() instanceof Array`.
+  const r = compileExpression(ctx, fctx, synth);
+  return r === null ? undefined : r;
 }
 
 // ───────────────────────── (#4076) borrowed-receiver arm ─────────────────────
@@ -440,7 +500,13 @@ export function tryBuiltinPrototypeMethodBrandThrow(
  *   - `Object.prototype.isPrototypeOf` — §20.1.3.3 step 1 is
  *     "If V is not an Object, return false", which runs BEFORE ToObject(this).
  *     Whether it throws depends on the ARGUMENT, not the receiver, so a
- *     receiver-only gate cannot decide it.
+ *     receiver-only gate cannot decide it. (#4623) It is now IN the table, with
+ *     the missing half supplied: {@link tryBorrowedPrototypeNullishThisThrow}
+ *     additionally requires the argument to be PROVABLY an object
+ *     ({@link provablyObjectValuedArgument}), so step 1 cannot have returned
+ *     first. A non-object (or unprovable) argument still declines, which is
+ *     what keeps `{null,undefined}-this-and-primitive-arg-returns-false.js`
+ *     answering `false` rather than throwing.
  *   - `String.prototype.*` — already routed through
  *     `emitBorrowedStringReceiverToString` (#3254), which performs
  *     RequireObjectCoercible + ToString on the borrowed receiver. Duplicating it
@@ -462,6 +528,8 @@ const NULLISH_THIS_THROWS: ReadonlyMap<string, ReadonlyMap<string, ValType>> = n
       ["toLocaleString", { kind: "externref" }],
       ["hasOwnProperty", { kind: "i32", boolean: true }],
       ["propertyIsEnumerable", { kind: "i32", boolean: true }],
+      // (#4623) Conditional on the argument — see ARGUMENT_MUST_BE_OBJECT.
+      ["isPrototypeOf", { kind: "i32", boolean: true }],
     ]),
   ],
   [
@@ -514,6 +582,40 @@ function skipParens(expr: ts.Expression): ts.Expression {
  * here. Used only for the `Function.prototype` family, whose step 2 is
  * "If IsCallable(func) is false, throw a TypeError exception" (§20.2.3).
  */
+/**
+ * (#4623) Methods whose nullish-`this` throw is reached ONLY when their first
+ * VALUE argument is an object, because an earlier step answers for a
+ * non-object one. `Object.prototype.isPrototypeOf` (§20.1.3.3) is the whole
+ * population: step 1 "If V is not an Object, return false" precedes step 2's
+ * `ToObject(this value)`.
+ */
+const ARGUMENT_MUST_BE_OBJECT: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["Object", new Set(["isPrototypeOf"])],
+]);
+
+/**
+ * (#4623) Is `expr` **provably** an object value, whatever the checker infers?
+ *
+ * Syntax proof only, in the same spirit as {@link syntacticallyNotCallable}: a
+ * function/class/object/array literal and a `new` expression each evaluate to
+ * an object in every program (§13.3.5 EvaluateNew yields the freshly created
+ * instance even for a constructor that returns a primitive). An identifier is
+ * deliberately NOT accepted — under `allowJs` its type is routinely `any`, and
+ * a wrong throw here is catchable and therefore observable.
+ */
+function provablyObjectValuedArgument(expr: ts.Expression | undefined): boolean {
+  if (expr === undefined) return false;
+  const e = skipParens(expr);
+  return (
+    ts.isFunctionExpression(e) ||
+    ts.isArrowFunction(e) ||
+    ts.isClassExpression(e) ||
+    ts.isObjectLiteralExpression(e) ||
+    ts.isArrayLiteralExpression(e) ||
+    ts.isNewExpression(e)
+  );
+}
+
 function syntacticallyNotCallable(expr: ts.Expression): boolean {
   const e = skipParens(expr);
   return (
@@ -585,6 +687,12 @@ export function tryBorrowedPrototypeNullishThisThrow(
   const invalidThis =
     provablyNullishReceiver(ctx, receiver) || (ctor === "Function" && syntacticallyNotCallable(receiver));
   if (!invalidThis) return undefined;
+  // (#4623) …and, for the methods whose earlier step answers for a non-object
+  // argument, the argument must be provably an object or the throw is not the
+  // spec's answer. `.call(recv, V)` puts `V` in argument slot 1.
+  if (ARGUMENT_MUST_BE_OBJECT.get(ctor)?.has(method) === true && !provablyObjectValuedArgument(expr.arguments[1])) {
+    return undefined;
+  }
 
   for (const arg of expr.arguments) {
     const t = compileArg(arg);

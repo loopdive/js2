@@ -55,8 +55,10 @@
  * runtime — it emits `struct.get`/`struct.set` directly and never calls
  * `ensureLateImport` for these names.
  */
+import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { buildArgumentsLengthAbsentMiss, buildArgumentsLengthAbsentTail } from "./arguments-length-brand.js"; // (#4658)
 import { BFN_ID_FIELD_IDX, BFN_STATE_FIELD_IDX } from "./builtin-fn-meta.js"; // (#4241) header-derived
 import { ensureNativeCharCodeAtHelper } from "./char-code-at-helpers.js";
 import { getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js"; // (#3673 round 19b)
@@ -72,6 +74,7 @@ import {
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#4221) absent-callee TypeError
+import { buildResolvedCalleeGuard } from "./resolved-callee-guard.js"; // (#4656) §7.3.14 callability
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import {
@@ -97,6 +100,7 @@ import {
 } from "./carrier-bag-visibility.js";
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { reserveClosurePrototypeEdge } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge
+import { reserveProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
 // (#4230 L1) the #3251 overlay companion as a THIRD key source for the vec key walks
 import { buildOverlayPushKeys, buildVecOverlayHasArm, reserveVecOverlayPushKeys } from "./vec-overlay-keys.js";
 // (#4194) instance expando substrate — composes AROUND the #3537/#3468 arms and
@@ -127,16 +131,23 @@ import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.j
 // (#4160) prototype-index store — reserve + registration-time consult builders
 // (all resolve to `undefined` unless `ctx.standalone && ctx.protoIndexDirty`).
 import {
+  SET_DECISION_ALLOW_OWN,
+  SET_DECISION_HANDLED,
+  SET_DECISION_MISS,
+  SET_DECISION_REFUSED,
   protoIndexForInPushInstrs,
   protoIndexGetIdxMissInstrs,
   protoIndexHasIdxInstrs,
   protoIndexOwnViewSubstituteInstrs,
   protoIndexRecvGetMissInstrs,
   protoIndexRecvHasMissInstrs,
+  protoIndexSetDecisionInstrs,
   reserveProtoIndexStore,
 } from "./proto-index-store.js";
 import { reserveArrayToPrimitiveString } from "./array-to-primitive.js";
+import { holeTestInstrs } from "./array-holes.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
+import { f64HolesActive, f64HoleTestInstrs } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 // (#2106 S1) function-level-only cycle with any-helpers.ts (which imports
 // ensureObjectRuntime) — same tolerated shape as native-strings ↔ any-helpers.
 import { buildIsUndefinedExternBody, undefinedExternInstrs, undefinedSingletonActive } from "./any-helpers.js";
@@ -152,7 +163,7 @@ import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
 import { buildObjectEnumerationHelpers } from "./object-runtime-enumeration.js"; // (#3274 wave-B) enumeration/array-like/object-static helper builders
 import { buildObjectPrototypeHelpers } from "./object-runtime-prototype.js"; // (#3274 wave-B) prototype-chain helper builders
 import * as fnctorArray from "./fnctor-array-prototype.js";
-import { isSyntheticStructName } from "./emit-helpers.js";
+import { isEnumerableOwnFieldName, isSyntheticStructName } from "./emit-helpers.js";
 import { isUserDeclaredStruct } from "./user-declared-structs.js"; // (#3920) user shape vs builtin carrier
 import {
   type ColdFieldLocation,
@@ -189,10 +200,20 @@ import { ensureArgcGlobal } from "./statements/nested-declarations.js";
 import { buildLazyNativeProtoGetInstrs, flushPendingNativeProtoSeeders, getBuiltinBrand } from "./native-proto.js";
 import { applyUndefinedInstrs, guardNullableApplyArguments } from "./apply-closure-args.js";
 import { vecConstructorArmInstrs } from "./vec-constructor-carrier.js"; // (#4220) runtime `<array>.constructor`
-import { registerStringExoticHasOwn, stringExoticHasOwnPrologue } from "./string-exotic-own-props.js"; // (#4232) §10.4.3 own props
+import {
+  registerStringExoticHasOwn,
+  registerStringExoticPushKeys,
+  stringExoticHasOwnPrologue,
+} from "./string-exotic-own-props.js"; // (#4232/#4491) §10.4.3 own props + own keys
 import { ensureWrapperConstructorCarriers, wrapperConstructorArmInstrs } from "./wrapper-constructor-carrier.js"; // (#4223) runtime `<wrapper>.constructor`
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 import { backedBoundsGuard, canonicalIndexDigitStep } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
+import { fillHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649) js-host late-bound carrier test
+import {
+  buildOwnToPrimitiveOverridePresent,
+  buildWrapperSlotShortCircuit,
+  type ToPrimitiveSlotDeps,
+} from "./to-primitive-wrapper-slot.js"; // (#4492 wave-5) __to_primitive's [[PrimitiveValue]] arms
 export { fillProxyDispatch } from "./object-runtime-proxy.js";
 
 /** Initial `$PropMap` capacity. Must be a power of two (mask = cap - 1).
@@ -237,7 +258,7 @@ export const FLAG_TOMBSTONE = 0x80;
  */
 export const WRAPPER_PRIMITIVE_KEY = "[[PrimitiveValue]]";
 /** Default for a data property created by `o.x = v` — w/e/c all true. */
-const FLAG_DEFAULT = FLAG_WRITABLE | FLAG_ENUMERABLE | FLAG_CONFIGURABLE;
+export const FLAG_DEFAULT = FLAG_WRITABLE | FLAG_ENUMERABLE | FLAG_CONFIGURABLE; // (#4629) map/set dyn-dispatch fill reads it
 
 /**
  * `$Object.flags` (field 4) object-level integrity bits (#1472 Phase B Blocker
@@ -253,8 +274,10 @@ const OBJ_FLAG_FROZEN = 0x04;
 // carrier. Set on the `$Object.flags` field (a genuine internal slot, NOT an
 // own property — so a plain `{ rawJSON: '…' }` is distinguishable from a real
 // raw-JSON object). `JSON.isRawJSON` reads this bit. 0x10/0x20 are #4120's
-// callable/ctor brand (builtin-callable-brand.ts), 0x40+ free; the isFrozen/
-// isSealed/isExtensible helpers mask only their own bits, so all stay inert.
+// callable/ctor brand (builtin-callable-brand.ts), 0x40 is #4658's `arguments`
+// brand on the #3251 vec-overlay COMPANION (arguments-length-brand.ts), 0x80+
+// free; the isFrozen/isSealed/isExtensible helpers mask only their own bits, so
+// all stay inert.
 export const OBJ_FLAG_RAWJSON = 0x08;
 
 /**
@@ -1044,6 +1067,13 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // (#2660 M3) The function-value → prototype-object identity edge — same
     // reserve-before-arms-bake discipline; see `closure-prototype-edge.ts`.
     reserveClosurePrototypeEdge(ctx);
+    // (#4637 A1) The bag↔callable proto-view map. Must come AFTER
+    // `reserveClosurePropHelpers` (its fill bakes `__closure_bag_ensure`'s
+    // funcIdx) and BEFORE `buildObjectPrototypeHelpers` below, which bakes
+    // `call __proto_from_function` / `call __function_from_proto` into
+    // `__object_create` / `__getPrototypeOf` / `__isPrototypeOf` /
+    // `__object_setPrototypeOf`.
+    reserveProtoFunctionValue(ctx, objectTypeIdx);
     // (#3537) reserve the array-expando side table right after — same
     // reserve-before-arms-bake discipline, appended indices only.
     reserveVecPropHelpers(ctx);
@@ -2056,6 +2086,27 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                   blockType: { kind: "empty" },
                   then: buildVecOrClosurePropGetMissArm(ctx, getMiss),
                 },
+                // (#4639/#4637 cross-lane trap, 2026-08-23) TEST before the
+                // cast: `__fnctor_proto_start` answers whatever the S2 store
+                // holds, and for `G.prototype = P` with `P` a FUNCTION that WAS
+                // a raw CALLABLE, not a `$Object` — a naked `ref.cast` here was
+                // an UNCATCHABLE `illegal cast` trap on an inherited read.
+                // (#4643) That callable no longer arrives — the S2 store is
+                // canonicalized at the WRITE (`fnctor-prototype.ts`), so the
+                // walk now resolves the read through the callable's bag. The
+                // test STAYS: the global can still hold a non-object the
+                // proto-view map cannot canonicalize (`G.prototype = 5`), whose
+                // graceful answer is this miss arm's `undefined`. Do not restore
+                // the naked cast.
+                { op: "local.get", index: 7 },
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: objectTypeIdx },
+                { op: "i32.eqz" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: buildVecOrClosurePropGetMissArm(ctx, getMiss),
+                },
                 { op: "local.get", index: 7 },
                 { op: "any.convert_extern" },
                 { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -2613,6 +2664,35 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     );
   }
 
+  // (#4631) __new_BigInt(i64) -> externref : Object(bigint) — box via
+  // __box_bigint (the native bigint carrier), then wrap with the same
+  // [[PrimitiveValue]] internal slot as the other primitive wrappers. This is
+  // the §7.1.18 Table-13 BigInt row host-free; without it the coercion site's
+  // `env::__new_BigInt` late import resolved to nothing and `Object(1n)`
+  // evaluated to null (harness deepEqual-primitives-bigint).
+  {
+    addUnionImportsViaRegistry(ctx);
+    const boxBigIdx = ctx.funcMap.get("__box_bigint");
+    if (boxBigIdx !== undefined) {
+      const body: Instr[] = [
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: boxBigIdx }, // boxed bigint externref
+        { op: "local.set", index: 1 },
+        ...emitWrapperBuildTail(1, 2),
+      ];
+      registerNative(
+        "__new_BigInt",
+        [{ kind: "i64" }],
+        [{ kind: "externref" }],
+        [
+          { name: "boxed", type: { kind: "externref" } },
+          { name: "o", type: objRef },
+        ],
+        body,
+      );
+    }
+  }
+
   // ── $__obj_grow(ref $Object) -> void ─────────────────────────────────────
   //
   // Double the capacity and rehash live (non-tombstone) entries into a fresh
@@ -2777,6 +2857,15 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     );
   }
   const objGrowIdx = ctx.funcMap.get("__obj_grow")!;
+  // #4504 is a standalone runtime slice.  Keeping the gate here (rather than
+  // only at individual callers) prevents descriptor-bearing host/native-first
+  // builds from gaining a private result global whose index could be shifted by
+  // later imports.
+  const inheritedSetRuntimeActive = ctx.standalone && inheritedSetAnyDirty(ctx);
+  const SET_RESULT_UNADMITTED = 0;
+  const SET_RESULT_SUCCESS = 1;
+  const SET_RESULT_REFUSED = 2;
+  let externSetResultGlobalIdx: number | undefined;
 
   // ── __extern_set(externref obj, externref key, externref value) -> void ──
   //
@@ -2794,6 +2883,400 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // body bakes its `call`; body filled in finalize (fillAccessorDrivers) once
     // `__call_fn_method_1` exists.
     const callAccessorSetIdx = reserveAccessorSetDriver(ctx);
+    // #4504 keeps the descriptor decision out of modules that cannot observe
+    // it.  This is intentionally NOT `vecAccessorDescriptorDirty`: a plainly
+    // data descriptor with an omitted/false `writable` bit is enough to change
+    // [[Set]], while it does not affect vec accessor write-back.
+    externSetResultGlobalIdx = inheritedSetRuntimeActive ? nextModuleGlobalIdx(ctx) : undefined;
+    if (externSetResultGlobalIdx !== undefined) {
+      ctx.mod.globals.push({
+        name: "__extern_set_result",
+        type: { kind: "i32" },
+        mutable: true,
+        init: [{ op: "i32.const", value: SET_RESULT_UNADMITTED }],
+      });
+      ctx.externSetResultGlobalIdx = externSetResultGlobalIdx;
+    }
+
+    let externSetDecideIdx: number | undefined;
+    let externSetOwnIdx: number | undefined;
+    if (inheritedSetRuntimeActive) {
+      // `__extern_set_decide(origRecv, ownLayer, key, value) -> decision` is
+      // the one descriptor authority.  A carrier supplies its existing bag as
+      // `ownLayer` (or null without allocating); a normal `$Object` supplies
+      // itself.  It returns at the FIRST live descriptor, so an inherited
+      // writable data property cannot accidentally expose a farther accessor.
+      externSetDecideIdx = registerNative(
+        "__extern_set_decide",
+        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+        [{ kind: "i32" }],
+        [
+          { name: "origAny", type: { kind: "anyref" } },
+          { name: "ownAny", type: { kind: "anyref" } },
+          { name: "own", type: objRefNull },
+          { name: "entry", type: entryRefNull },
+          { name: "setter", type: { kind: "externref" } },
+          { name: "cursor", type: objRefNull },
+          { name: "fnctorProto", type: { kind: "externref" } },
+        ],
+        [
+          // Own layer wins.  For carriers this is the pre-existing side bag;
+          // it is never ensured here, so an inherited refusal cannot fabricate
+          // an own property as a side effect of merely checking it.
+          { op: "local.get", index: 1 },
+          { op: "any.convert_extern" },
+          { op: "local.tee", index: 5 },
+          { op: "ref.test", typeIdx: objectTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 5 },
+              { op: "ref.cast", typeIdx: objectTypeIdx },
+              { op: "local.set", index: 6 },
+              { op: "local.get", index: 6 },
+              { op: "ref.as_non_null" },
+              { op: "local.get", index: 2 },
+              { op: "call", funcIdx: objFindIdx },
+              { op: "local.tee", index: 7 },
+              { op: "ref.is_null" },
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: 7 },
+                  { op: "ref.as_non_null" },
+                  { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+                  { op: "i32.const", value: FLAG_ACCESSOR },
+                  { op: "i32.and" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      { op: "local.get", index: 7 },
+                      { op: "ref.as_non_null" },
+                      { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 5 },
+                      { op: "extern.convert_any" },
+                      { op: "local.tee", index: 8 },
+                      { op: "ref.is_null" },
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: [{ op: "i32.const", value: SET_DECISION_REFUSED }, { op: "return" }],
+                      },
+                      { op: "local.get", index: 0 },
+                      { op: "local.get", index: 8 },
+                      { op: "local.get", index: 3 },
+                      { op: "call", funcIdx: callAccessorSetIdx },
+                      { op: "i32.const", value: SET_DECISION_HANDLED },
+                      { op: "return" },
+                    ],
+                  },
+                  { op: "local.get", index: 7 },
+                  { op: "ref.as_non_null" },
+                  { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+                  { op: "i32.const", value: FLAG_WRITABLE },
+                  { op: "i32.and" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [{ op: "i32.const", value: SET_DECISION_ALLOW_OWN }, { op: "return" }],
+                    else: [{ op: "i32.const", value: SET_DECISION_REFUSED }, { op: "return" }],
+                  },
+                ],
+              },
+            ],
+          },
+          // Start the explicit inherited walk at receiver.$proto for ordinary
+          // objects, or at the registered fnctor prototype for a closed
+          // function/class instance.  The ORIGINAL receiver remains param 0.
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "local.tee", index: 4 },
+          { op: "ref.test", typeIdx: objectTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 4 },
+              { op: "ref.cast", typeIdx: objectTypeIdx },
+              { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
+              { op: "local.set", index: 9 },
+            ],
+            else:
+              fnctorProtoStartIdx === undefined
+                ? ([
+                    { op: "ref.null", typeIdx: objectTypeIdx },
+                    { op: "local.set", index: 9 },
+                  ] satisfies Instr[])
+                : ([
+                    { op: "local.get", index: 0 },
+                    { op: "call", funcIdx: fnctorProtoStartIdx },
+                    { op: "local.tee", index: 10 },
+                    { op: "ref.is_null" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        { op: "ref.null", typeIdx: objectTypeIdx },
+                        { op: "local.set", index: 9 },
+                      ],
+                      else: [
+                        { op: "local.get", index: 10 },
+                        { op: "any.convert_extern" },
+                        { op: "ref.cast", typeIdx: objectTypeIdx },
+                        { op: "local.set", index: 9 },
+                      ],
+                    },
+                  ] satisfies Instr[]),
+          },
+          {
+            op: "block",
+            blockType: { kind: "empty" },
+            body: [
+              {
+                op: "loop",
+                blockType: { kind: "empty" },
+                body: [
+                  { op: "local.get", index: 9 },
+                  { op: "ref.is_null" },
+                  { op: "br_if", depth: 1 },
+                  { op: "local.get", index: 9 },
+                  { op: "ref.as_non_null" },
+                  { op: "local.get", index: 2 },
+                  { op: "call", funcIdx: objFindIdx },
+                  { op: "local.tee", index: 7 },
+                  { op: "ref.is_null" },
+                  { op: "i32.eqz" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      { op: "local.get", index: 7 },
+                      { op: "ref.as_non_null" },
+                      { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+                      { op: "i32.const", value: FLAG_ACCESSOR },
+                      { op: "i32.and" },
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: [
+                          { op: "local.get", index: 7 },
+                          { op: "ref.as_non_null" },
+                          { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 5 },
+                          { op: "extern.convert_any" },
+                          { op: "local.tee", index: 8 },
+                          { op: "ref.is_null" },
+                          {
+                            op: "if",
+                            blockType: { kind: "empty" },
+                            then: [{ op: "i32.const", value: SET_DECISION_REFUSED }, { op: "return" }],
+                          },
+                          { op: "local.get", index: 0 },
+                          { op: "local.get", index: 8 },
+                          { op: "local.get", index: 3 },
+                          { op: "call", funcIdx: callAccessorSetIdx },
+                          { op: "i32.const", value: SET_DECISION_HANDLED },
+                          { op: "return" },
+                        ],
+                      },
+                      // `Object.freeze(proto)` is represented by the
+                      // containing `$Object` integrity flag in this runtime;
+                      // it does not rewrite every entry's writable bit. A
+                      // frozen data descriptor is terminal and non-writable.
+                      // Keep this after the accessor branch: freeze leaves a
+                      // setter callable.
+                      { op: "local.get", index: 9 },
+                      { op: "ref.as_non_null" },
+                      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+                      { op: "i32.const", value: OBJ_FLAG_FROZEN },
+                      { op: "i32.and" },
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: [{ op: "i32.const", value: SET_DECISION_REFUSED }, { op: "return" }],
+                      },
+                      { op: "local.get", index: 7 },
+                      { op: "ref.as_non_null" },
+                      { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+                      { op: "i32.const", value: FLAG_WRITABLE },
+                      { op: "i32.and" },
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: [{ op: "i32.const", value: SET_DECISION_ALLOW_OWN }, { op: "return" }],
+                        else: [{ op: "i32.const", value: SET_DECISION_REFUSED }, { op: "return" }],
+                      },
+                    ],
+                  },
+                  { op: "local.get", index: 9 },
+                  { op: "ref.as_non_null" },
+                  { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
+                  { op: "local.set", index: 9 },
+                  { op: "br", depth: 0 },
+                ],
+              },
+            ],
+          },
+          // Explicit links exhausted: now (and only now) probe the receiver's
+          // implicit native-prototype companions.  The helper owns the full
+          // brand→Object sequence and preserves nearest-descriptor order.
+          ...(protoIndexSetDecisionInstrs(ctx, 0, 2, 3) ?? [{ op: "i32.const", value: SET_DECISION_MISS }]),
+        ],
+      );
+
+      // Allowed own data updates/creates are centralized here so carrier bags
+      // never recurse through `__extern_set` as the hidden bag receiver.  That
+      // would restart an Object companion walk with the wrong `this`.
+      externSetOwnIdx = registerNative(
+        "__extern_set_own",
+        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+        [{ kind: "i32" }],
+        [
+          { name: "o", type: objRefNull },
+          { name: "cap", type: { kind: "i32" } },
+          { name: "load", type: { kind: "i32" } },
+          { name: "any", type: { kind: "anyref" } },
+          { name: "seq", type: { kind: "i32" } },
+          { name: "entry", type: entryRefNull },
+        ],
+        [
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "local.tee", index: 6 },
+          { op: "ref.test", typeIdx: objectTypeIdx },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "i32.const", value: SET_RESULT_UNADMITTED }, { op: "return" }],
+          },
+          { op: "local.get", index: 6 },
+          { op: "ref.cast", typeIdx: objectTypeIdx },
+          { op: "local.set", index: 3 },
+          { op: "local.get", index: 3 },
+          { op: "ref.as_non_null" },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: objFindIdx },
+          { op: "local.tee", index: 8 },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 8 },
+              { op: "ref.as_non_null" },
+              { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+              { op: "i32.const", value: FLAG_ACCESSOR },
+              { op: "i32.and" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [{ op: "i32.const", value: SET_RESULT_REFUSED }, { op: "return" }],
+              },
+              { op: "local.get", index: 8 },
+              { op: "ref.as_non_null" },
+              { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+              { op: "i32.const", value: FLAG_WRITABLE },
+              { op: "i32.and" },
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [{ op: "i32.const", value: SET_RESULT_REFUSED }, { op: "return" }],
+              },
+            ],
+          },
+          { op: "local.get", index: 3 },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+          { op: "i32.const", value: OBJ_FLAG_FROZEN },
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "i32.const", value: SET_RESULT_REFUSED }, { op: "return" }],
+          },
+          { op: "local.get", index: 8 },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 3 },
+              { op: "ref.as_non_null" },
+              { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+              { op: "i32.const", value: OBJ_FLAG_NONEXTENSIBLE },
+              { op: "i32.and" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [{ op: "i32.const", value: SET_RESULT_REFUSED }, { op: "return" }],
+              },
+            ],
+          },
+          { op: "local.get", index: 3 },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 2 },
+          { op: "local.get", index: 3 },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 3 },
+          { op: "i32.add" },
+          { op: "local.set", index: 5 },
+          { op: "local.get", index: 3 },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 1 },
+          { op: "array.len" },
+          { op: "local.set", index: 4 },
+          { op: "local.get", index: 5 },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "i32.const", value: 10 },
+          { op: "i32.mul" },
+          { op: "local.get", index: 4 },
+          { op: "i32.const", value: 7 },
+          { op: "i32.mul" },
+          { op: "i32.ge_s" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "local.get", index: 3 }, { op: "ref.as_non_null" }, { op: "call", funcIdx: objGrowIdx }],
+          },
+          { op: "local.get", index: 3 },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 5 },
+          { op: "local.set", index: 7 },
+          { op: "local.get", index: 3 },
+          { op: "ref.as_non_null" },
+          { op: "local.get", index: 7 },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 5 },
+          { op: "local.get", index: 3 },
+          { op: "ref.as_non_null" },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "any.convert_extern" },
+          { op: "local.get", index: 8 },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [{ op: "i32.const", value: FLAG_DEFAULT }],
+            else: [
+              { op: "local.get", index: 8 },
+              { op: "ref.as_non_null" },
+              { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+            ],
+          },
+          { op: "local.get", index: 7 },
+          { op: "call", funcIdx: objInsertIdx },
+          { op: "i32.const", value: SET_RESULT_SUCCESS },
+        ],
+      );
+    }
     // (#4504) §9.1.9 OrdinarySetWithOwnDescriptor step 3 — the PROTOTYPE-CHAIN
     // accessor walk. #1888 S5b implemented only the OWN-accessor branch and said
     // so ("Inherited-accessor set (proto-chain) is out of scope for this slice;
@@ -2822,7 +3305,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // keeps accessor-free modules byte-identical: emitting the walk
     // unconditionally drifted 6 of the 60 emit-identity corpus entries.
     const inheritedAccessorArm: Instr[] = ((): Instr[] => {
-      if (!ctx.vecAccessorDescriptorDirty) return [];
+      if (inheritedSetRuntimeActive || !ctx.vecAccessorDescriptorDirty) return [];
       const setterOnlyThrow: Instr[] = buildThrowJsErrorInstrs(
         ctx,
         "TypeError",
@@ -2938,6 +3421,13 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 { op: "local.get", index: 1 },
                 { op: "local.get", index: 2 },
                 { op: "call", funcIdx: boundaryObjectSetIdx },
+                ...(inheritedSetRuntimeActive
+                  ? ([
+                      { op: "local.tee", index: 10 },
+                      { op: "global.set", index: externSetResultGlobalIdx! },
+                      { op: "local.get", index: 10 },
+                    ] satisfies Instr[])
+                  : []),
                 {
                   op: "if",
                   blockType: { kind: "empty" },
@@ -2950,12 +3440,93 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           // the original Error receiver when an accessor is invoked.
           ...buildErrorPropSetArm(ctx),
           ...buildInstanceOrVecOrClosurePropSetMissArm(ctx),
+          ...(inheritedSetRuntimeActive
+            ? ([
+                // Date/boxed primitive/native-proto values have no expando
+                // bag helper.  They still participate in the inherited native
+                // companion walk.  A MISS/ALLOW remains the established
+                // no-bag no-op (Date own expando storage is #4504's excluded
+                // 4-408 control); HANDLED/REFUSED publish a final outcome.
+                { op: "local.get", index: 0 },
+                { op: "ref.null.extern" },
+                { op: "local.get", index: 1 },
+                { op: "local.get", index: 2 },
+                { op: "call", funcIdx: externSetDecideIdx! },
+                { op: "local.tee", index: 10 },
+                { op: "i32.const", value: SET_DECISION_HANDLED },
+                { op: "i32.eq" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "i32.const", value: SET_RESULT_SUCCESS },
+                    { op: "global.set", index: externSetResultGlobalIdx! },
+                    { op: "return" },
+                  ],
+                },
+                { op: "local.get", index: 10 },
+                { op: "i32.const", value: SET_DECISION_REFUSED },
+                { op: "i32.eq" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "i32.const", value: SET_RESULT_REFUSED },
+                    { op: "global.set", index: externSetResultGlobalIdx! },
+                    { op: "return" },
+                  ],
+                },
+                { op: "return" },
+              ] satisfies Instr[])
+            : []),
         ],
       },
       // o = cast<$Object>(any)
       { op: "local.get", index: 6 },
       { op: "ref.cast", typeIdx: objectTypeIdx },
       { op: "local.set", index: 3 },
+      ...(inheritedSetRuntimeActive
+        ? ([
+            // One completed decision owns both the side effect (a setter can
+            // run here) and the outcome.  `Reflect.set` / strict assignment
+            // consume the published result; neither preflights and replays.
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "call", funcIdx: externSetDecideIdx! },
+            { op: "local.tee", index: 10 },
+            { op: "i32.const", value: SET_DECISION_HANDLED },
+            { op: "i32.eq" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "i32.const", value: SET_RESULT_SUCCESS },
+                { op: "global.set", index: externSetResultGlobalIdx! },
+                { op: "return" },
+              ],
+            },
+            { op: "local.get", index: 10 },
+            { op: "i32.const", value: SET_DECISION_REFUSED },
+            { op: "i32.eq" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "i32.const", value: SET_RESULT_REFUSED },
+                { op: "global.set", index: externSetResultGlobalIdx! },
+                { op: "return" },
+              ],
+            },
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "call", funcIdx: externSetOwnIdx! },
+            { op: "global.set", index: externSetResultGlobalIdx! },
+            { op: "return" },
+          ] satisfies Instr[])
+        : []),
       // (#1888 S5b) Accessor write gate — runs BEFORE the FROZEN gate because a
       // setter is invoked regardless of [[Extensible]]/frozen state (§10.1.5.3
       // OrdinarySetWithOwnDescriptor calls Set even on a frozen object; only data
@@ -3130,7 +3701,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               { name: "protoCursor", type: objRefNull },
               { name: "protoEntry", type: entryRefNull },
             ] as { name: string; type: ValType }[])
-          : []),
+          : inheritedSetRuntimeActive
+            ? ([{ name: "setDecision", type: { kind: "i32" } }] as { name: string; type: ValType }[])
+            : []),
       ],
       body,
     );
@@ -3152,6 +3725,23 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   {
     const reflectSetExternSetIdx = ctx.funcMap.get("__extern_set")!;
     const body: Instr[] = [
+      ...(inheritedSetRuntimeActive
+        ? ([
+            // Execute exactly one shared [[Set]] attempt.  The resolver/caller
+            // publishes success or refusal after a setter returns, so this
+            // cannot invoke a side-effecting inherited setter twice.
+            { op: "i32.const", value: SET_RESULT_UNADMITTED },
+            { op: "global.set", index: externSetResultGlobalIdx! },
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "call", funcIdx: reflectSetExternSetIdx },
+            { op: "global.get", index: externSetResultGlobalIdx! },
+            { op: "i32.const", value: SET_RESULT_SUCCESS },
+            { op: "i32.eq" },
+            { op: "return" },
+          ] satisfies Instr[])
+        : []),
       // any = any.convert_extern(obj); if !ref.test $Object → ask the
       // explicit boundary adapter, otherwise false. Adapter result 1 means the
       // JS [[Set]] succeeded; 0 (unadmitted) and 2 (refused) both map to false.
@@ -3283,7 +3873,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
 
   // (#3983) __extern_set_strict — strict [[Set]]/PutValue TypeError. MUST follow
   // `__extern_set` + `__reflect_set` (the body bakes their funcIdx); see module.
-  buildStrictSetHelper(ctx, { registerNative, objectTypeIdx });
+  buildStrictSetHelper(ctx, { registerNative, objectTypeIdx, externSetResultGlobalIdx });
 
   // ── __delete_property(externref obj, externref key) -> i32 ───────────────
   //
@@ -3301,12 +3891,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // params: 0=obj(externref) 1=key(externref)
   // locals: 2=any(anyref) 3=o(ref null $Object) 4=e($PropEntry?) 5=cbd(i32)
   {
-    // (#4010 S2) The non-$Object head, owned by carrier-bag-delete.ts: the
-    // #2896 builtin-fn metadata arm FIRST (unchanged), then the #3468/#3537
-    // carrier-bag arm, then the historical `return 1` no-op success. See that
-    // module for why the bag consult is tri-state and strictly additive.
+    // (#4010 S2) The non-$Object head, owned by carrier-bag-delete.ts: the #2896
+    // builtin-fn metadata arm FIRST (unchanged), then the #3468/#3537 carrier-bag
+    // arm, then the historical `return 1` no-op success — see that module.
     reserveCarrierBagDelete(ctx);
     const body: Instr[] = [
+      ...protoIndexOwnViewSubstituteInstrs(ctx, 0), // (#4556) $NativeProto → companion
       ...buildNonObjectDeleteArms(ctx, {
         bfnDeleteIdx,
         boundaryDeleteIdx: boundaryObjectDeleteIdx,
@@ -3569,6 +4159,17 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     propEntryTypeIdx,
     objFindIdx,
   });
+  // (#4491) The ENUMERATION half of the same §10.4.3 gap. Minted here — where
+  // `__objvec_push` has just become available — so it exists by the time
+  // `buildObjectEnumerationHelpers` / `buildObjectDescriptorHelpers` assemble
+  // `__object_keys` / `__getOwnPropertyNames` further down; both resolve it by
+  // NAME and emit nothing when it is absent.
+  registerStringExoticPushKeys(ctx, {
+    objectTypeIdx,
+    propEntryTypeIdx,
+    objFindIdx,
+    objVecPushIdx,
+  });
   // (#2175 P2) A `$NativeProto` receiver is substituted by its brand COMPANION,
   // where `defineProperty(<Builtin>.prototype, …)` actually stored the entry
   // (#4176 write arms). Own-layer only, no chain walk, no-op for every other
@@ -3695,6 +4296,19 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // locals: 2=o(ref null $Object) 3=any(anyref)
   {
     const body: Instr[] = [
+      // (#4491) §10.4.3 String-exotic own properties (`length` + the canonical
+      // indices) are DERIVED from the wrapper's [[PrimitiveValue]], so the
+      // `__obj_find` walk below never sees them: `"0" in new String("abc")`
+      // answered `false` while `hasOwnProperty("0")` answered `true` (#4232
+      // taught only the own-predicate). An OWN property is also a HasProperty
+      // hit, so the same consult-only prologue is sound here — it answers 1 or
+      // falls through untouched, never 0.
+      //
+      // This is what makes `for…in` over a String object yield its indices:
+      // the for-in loop re-checks each key's liveness with `__extern_has`
+      // (#2066), so an index key the enumerator produced was dropped again one
+      // instruction later.
+      ...stringExoticHasOwnPrologue(strExoticHasOwnIdx),
       // any = any.convert_extern(obj); if !ref.test $Object → carrier bag,
       // then (#4176) the RECEIVER-AWARE proto-companion consult, else 0.
       // HasProperty (§7.3.12) is prototype-inclusive, so a closure/vec/struct
@@ -3873,6 +4487,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     const typeofNumberIdx = ctx.funcMap.get("__typeof_number")!;
     const typeofStringIdx = ctx.funcMap.get("__typeof_string")!;
     const typeofBooleanIdx = ctx.funcMap.get("__typeof_boolean")!;
+    const typeofUndefinedIdx = ctx.funcMap.get("__typeof_undefined")!;
+    const typeofBigintIdx = ctx.funcMap.get("__typeof_bigint")!;
     const typeofFunctionIdx = ctx.funcMap.get("__typeof_function")!;
 
     const typeErrorMessage = "Cannot convert object to primitive value";
@@ -3892,6 +4508,16 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // #1910/#1472 S2 — the boxed-primitive internal-slot $PropEntry (or null).
     const L_SLOT = 5;
 
+    // (#4564) `undefined` is a non-null `$AnyValue` singleton; rejecting it
+    // would incorrectly advance from `valueOf` to `toString`. BigInt is also a
+    // primitive result. Keep every runtime-tag predicate in one cascade.
+    const primitiveTypePredicates = [
+      typeofNumberIdx,
+      typeofBooleanIdx,
+      typeofStringIdx,
+      typeofUndefinedIdx,
+      typeofBigintIdx,
+    ];
     const returnIfPrimitive = (localIdx: number): Instr[] => [
       { op: "local.get", index: localIdx },
       { op: "ref.is_null" },
@@ -3900,27 +4526,15 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         blockType: { kind: "empty" },
         then: [{ op: "local.get", index: localIdx }, { op: "return" }],
       },
-      { op: "local.get", index: localIdx },
-      { op: "call", funcIdx: typeofNumberIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: localIdx }, { op: "return" }],
-      },
-      { op: "local.get", index: localIdx },
-      { op: "call", funcIdx: typeofBooleanIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: localIdx }, { op: "return" }],
-      },
-      { op: "local.get", index: localIdx },
-      { op: "call", funcIdx: typeofStringIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: localIdx }, { op: "return" }],
-      },
+      ...primitiveTypePredicates.flatMap((predicateIdx): Instr[] => [
+        { op: "local.get", index: localIdx },
+        { op: "call", funcIdx: predicateIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "local.get", index: localIdx }, { op: "return" }],
+        },
+      ]),
     ];
 
     const throwTypeError = (): Instr[] => [
@@ -4007,6 +4621,21 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       },
     ];
 
+    // (#4492 wave-5) FACTORIES — each call returns fresh `Instr` objects, so the
+    // two emission sites below never alias one array into two tree positions.
+    const slotDeps: ToPrimitiveSlotDeps = {
+      anyLocal: L_ANY,
+      slotLocal: L_SLOT,
+      objectTypeIdx,
+      propEntryTypeIdx,
+      objFindIdx,
+      wrapperPrimitiveKey: WRAPPER_PRIMITIVE_KEY,
+      flagInternal: FLAG_INTERNAL,
+      stringExtern,
+    };
+    const wrapperSlotShortCircuit = (): Instr[] => buildWrapperSlotShortCircuit(slotDeps);
+    const ownToPrimitiveOverridePresent = (): Instr[] => buildOwnToPrimitiveOverridePresent(slotDeps);
+
     const body: Instr[] = [
       // Non-objects return unchanged (ToPrimitive step 1).
       { op: "local.get", index: 0 },
@@ -4041,10 +4670,59 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             },
           ] satisfies Instr[])
         : []),
+      // (ES5 standalone lane) …and a `$BoxedBoolean`. This arm was MISSING while
+      // its number and string siblings were present, so `true`/`false` was the
+      // one primitive that fell through to the non-`$Object` tail and got asked
+      // `__class_to_primitive`. That answered correctly ONLY while the module
+      // emitted no `__call_toString` dispatcher at all (absent dispatcher ⇒
+      // "return the input unchanged"); the moment ANY struct in the module
+      // contributed a dispatcher arm, the boxed boolean matched none of them and
+      // `__class_to_primitive`'s string-hint tail rendered its
+      // "toString absent ⇒ inherited Object.prototype.toString" answer,
+      // "[object Object]". Measured: `String.prototype.trim.call(true)` and
+      // `new Boolean().indexOf(…)` both flipped the moment an unrelated object
+      // literal in the same file gained a dispatcher arm — an action-at-a-
+      // distance bug that the early-out removes at the source. §7.1.1 step 1:
+      // ToPrimitive of a value that is ALREADY primitive returns it unchanged.
+      ...(ctx.nativeBoxBooleanTypeIdx >= 0
+        ? ([
+            { op: "local.get", index: L_ANY },
+            { op: "ref.test", typeIdx: ctx.nativeBoxBooleanTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "local.get", index: 0 }, { op: "return" }],
+            },
+          ] satisfies Instr[])
+        : []),
       ...(ctx.anyStrTypeIdx >= 0
         ? ([
             { op: "local.get", index: L_ANY },
             { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "local.get", index: 0 }, { op: "return" }],
+            },
+          ] satisfies Instr[])
+        : []),
+      // (ES5 standalone lane) The native ERROR struct returns UNCHANGED — the
+      // same action-at-a-distance hazard as the boxed-boolean arm above, third
+      // instance. An error's spec toString is Error.prototype.toString, served
+      // by `__any_to_string`'s error arm AFTER ToPrimitive hands the struct
+      // back unchanged. That held only while the module emitted no
+      // `__call_toString` dispatcher; once ANY struct contributed an arm (a
+      // harness object literal with a `toString` field suffices),
+      // `__class_to_primitive`'s string-hint tail rendered the error as
+      // "[object Object]". Measured on the first full ES5 run after the
+      // dispatcher arm landed: every `errObj.toString()` and every thrown-
+      // error rendering regressed — the 15.11.4.4-* family, try/S12.14_A19,
+      // and ~14 harness asyncHelpers/compare-array rows whose failure
+      // MESSAGES stringify errors.
+      ...(ctx.errorStructTypeIdx >= 0
+        ? ([
+            { op: "local.get", index: L_ANY },
+            { op: "ref.test", typeIdx: ctx.errorStructTypeIdx },
             {
               op: "if",
               blockType: { kind: "empty" },
@@ -4097,45 +4775,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               ]
             : [{ op: "local.get", index: 0 }, { op: "return" }],
       },
-      // #1910/#1472 S2 — boxed primitive wrapper short-circuit. A `new Number`/
-      // `new String`/`new Boolean` wrapper carries its [[PrimitiveValue]] in the
-      // reserved, FLAG_INTERNAL own-slot. §7.1.1.1: the wrapper's intrinsic
-      // valueOf/toString return that internal primitive, so when the slot exists
-      // we return it directly (BEFORE the ordinary valueOf/toString own-prop
-      // probe) — the slot value is already a primitive, and the caller applies the
-      // final ToNumber/ToString per its hint. Plain objects lack this slot, so
-      // __obj_find returns null and we fall through to OrdinaryToPrimitive.
-      { op: "local.get", index: L_ANY },
-      { op: "ref.cast", typeIdx: objectTypeIdx },
-      ...stringExtern(WRAPPER_PRIMITIVE_KEY),
-      { op: "call", funcIdx: objFindIdx },
-      { op: "local.tee", index: L_SLOT },
-      { op: "ref.is_null" },
+      // #1910/#1472 S2 — boxed primitive wrapper short-circuit, now GATED on "no
+      // own valueOf/toString" (#4492 wave-5). Full rationale + the measured
+      // failure on `buildWrapperSlotShortCircuit` / `buildOwnToPrimitiveOverridePresent`.
+      ...ownToPrimitiveOverridePresent(),
       { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          // entry present — confirm it is the internal slot (FLAG_INTERNAL), then
-          // return extern.convert_any(entry.value).
-          { op: "local.get", index: L_SLOT },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 }, // flags
-          { op: "i32.const", value: FLAG_INTERNAL },
-          { op: "i32.and" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: L_SLOT },
-              { op: "ref.as_non_null" },
-              { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 }, // value (anyref)
-              { op: "extern.convert_any" },
-              { op: "return" },
-            ],
-          },
-        ],
-      },
+      { op: "if", blockType: { kind: "empty" }, then: wrapperSlotShortCircuit() },
       ...isStringHint,
       {
         op: "if",
@@ -4143,6 +4788,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         then: [...tryOrdinaryMethod("toString", true), ...tryOrdinaryMethod("valueOf", false)],
         else: [...tryOrdinaryMethod("valueOf", false), ...tryOrdinaryMethod("toString", true)],
       },
+      ...wrapperSlotShortCircuit(),
       ...throwTypeError(),
     ];
 
@@ -5270,41 +5916,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           ]
         : [{ name: "any", type: { kind: "anyref" } }];
 
-    // (#4221) §13.3.6.2 EvaluateCall step 5 — a method call whose resolved
-    // callee is ABSENT must throw TypeError, not silently answer `undefined`.
-    // `fillApplyClosure` documents this throw as its deferred "S2", carved out
-    // because pulling the error machinery in at FINALIZE shifts func indices.
-    // Emitting it HERE sidesteps that: `ensureObjectRuntime` runs during
-    // codegen, where minting the in-module `__new_TypeError` only APPENDS a
-    // defined func — the same discipline the `__to_primitive` TypeError
-    // already uses in this file.
-    //
-    // Scope is deliberately the resolved-method-is-null case only. A non-null
-    // but non-callable value keeps the legacy `__apply_closure` answer: the
-    // callable-brand classifier does not recognise every callable shape, and a
-    // false positive here turns a working call into a hard throw.
-    //
-    // Standalone/WASI only — with a JS host this call is a host import where
-    // the engine already throws, so the gc lane stays byte-identical.
-    const throwNotAFunctionInstrs: Instr[] = noJsHost(ctx)
-      ? (() => {
-          emitWasiErrorConstructor(ctx, "TypeError", 1);
-          return buildThrowJsErrorInstrs(ctx, "TypeError", "called value is not a function", {
-            forceInModuleCtor: true,
-          });
-        })()
-      : [];
-    let resolvedMethodGuard: Instr[] = [];
-    if (throwNotAFunctionInstrs.length > 0) {
-      const methodLocalIdx = 3 + methodCallLocals.length;
-      methodCallLocals.push({ name: "resolvedMethod", type: { kind: "externref" } });
-      resolvedMethodGuard = [
-        { op: "local.tee", index: methodLocalIdx },
-        { op: "ref.is_null" },
-        { op: "if", blockType: { kind: "empty" }, then: throwNotAFunctionInstrs },
-        { op: "local.get", index: methodLocalIdx },
-      ];
-    }
+    // (#4221/#4656) The resolved-callee TypeError guard — see
+    // `resolved-callee-guard.ts` for the ABSENT and provably-PRIMITIVE arms and
+    // why the primitive test is sound where a negative callable test is not.
+    const resolvedMethodGuard = buildResolvedCalleeGuard(ctx, methodCallLocals);
     const boundaryCallResultLocal = boundaryObjectCallIdx === undefined ? undefined : 3 + methodCallLocals.length;
     if (boundaryCallResultLocal !== undefined) {
       methodCallLocals.push({ name: "boundaryCallResult", type: { kind: "externref" } });
@@ -5341,7 +5956,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             : []),
           // (#4221) an ABSENT callee is a TypeError, not `undefined`. Empty off
           // the standalone lane (see the guard builder above).
-          ...resolvedMethodGuard,
+          ...resolvedMethodGuard(),
           // __apply_closure(m, recv, args)
           { op: "local.get", index: 0 },
           { op: "local.get", index: 2 },
@@ -5368,7 +5983,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 },
               ] satisfies Instr[])
             : []),
-          ...buildVecOrClosurePropMethodCallElseArm(ctx, externGetIdx, applyClosureIdx),
+          ...buildVecOrClosurePropMethodCallElseArm(ctx, externGetIdx, applyClosureIdx, resolvedMethodGuard),
         ],
       },
     ];
@@ -5532,58 +6147,77 @@ export function ensureWrapperStringValueHelper(ctx: CodegenContext): number {
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
     { op: "local.tee", index: 1 },
-    { op: "ref.test", typeIdx: objectTypeIdx },
+    // (#4492 wave-5) A PRIMITIVE string is its own [[StringData]] (§7.1.1 step
+    // 1), so identity here makes this helper the complete "read the string data,
+    // never the user's valueOf/toString" operation — which is what the String
+    // exotic own properties (`.length`, `w[i]`) need, and what they were
+    // (wrongly) asking `__to_primitive` for. Unreachable from the #2161-B1
+    // coercion caller, whose `else` branch runs only after `ref.test $AnyString`
+    // has already FAILED, so that site stays byte-identical.
+    { op: "ref.test", typeIdx: anyStrTypeIdx },
     {
       op: "if",
       blockType: { kind: "val", type: anyStrRefNull },
       then: [
-        // e = __obj_find(cast<$Object>(a), WRAPPER_PRIMITIVE_KEY)
         { op: "local.get", index: 1 },
-        { op: "ref.cast", typeIdx: objectTypeIdx },
-        ...((): Instr[] => {
-          addStringConstantGlobal(ctx, WRAPPER_PRIMITIVE_KEY);
-          return stringConstantExternrefInstrs(ctx, WRAPPER_PRIMITIVE_KEY);
-        })(),
-        { op: "call", funcIdx: objFindIdx },
-        { op: "local.tee", index: 2 },
-        { op: "ref.is_null" },
+        { op: "ref.cast", typeIdx: anyStrTypeIdx },
+      ],
+      else: [
+        { op: "local.get", index: 1 },
+        { op: "ref.test", typeIdx: objectTypeIdx },
         {
           op: "if",
           blockType: { kind: "val", type: anyStrRefNull },
-          then: [{ op: "ref.null", typeIdx: anyStrTypeIdx }],
-          else: [
-            // confirm the entry is the internal slot (FLAG_INTERNAL)
-            { op: "local.get", index: 2 },
-            { op: "ref.as_non_null" },
-            { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 }, // flags
-            { op: "i32.const", value: FLAG_INTERNAL },
-            { op: "i32.and" },
+          then: [
+            // e = __obj_find(cast<$Object>(a), WRAPPER_PRIMITIVE_KEY)
+            { op: "local.get", index: 1 },
+            { op: "ref.cast", typeIdx: objectTypeIdx },
+            ...((): Instr[] => {
+              addStringConstantGlobal(ctx, WRAPPER_PRIMITIVE_KEY);
+              return stringConstantExternrefInstrs(ctx, WRAPPER_PRIMITIVE_KEY);
+            })(),
+            { op: "call", funcIdx: objFindIdx },
+            { op: "local.tee", index: 2 },
+            { op: "ref.is_null" },
             {
               op: "if",
               blockType: { kind: "val", type: anyStrRefNull },
-              then: [
-                // v = entry.value (anyref); if it is a native string, return it
+              then: [{ op: "ref.null", typeIdx: anyStrTypeIdx }],
+              else: [
+                // confirm the entry is the internal slot (FLAG_INTERNAL)
                 { op: "local.get", index: 2 },
                 { op: "ref.as_non_null" },
-                { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 }, // value
-                { op: "local.tee", index: 3 },
-                { op: "ref.test", typeIdx: anyStrTypeIdx },
+                { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 }, // flags
+                { op: "i32.const", value: FLAG_INTERNAL },
+                { op: "i32.and" },
                 {
                   op: "if",
                   blockType: { kind: "val", type: anyStrRefNull },
                   then: [
-                    { op: "local.get", index: 3 },
-                    { op: "ref.cast", typeIdx: anyStrTypeIdx },
+                    // v = entry.value (anyref); if it is a native string, return it
+                    { op: "local.get", index: 2 },
+                    { op: "ref.as_non_null" },
+                    { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 }, // value
+                    { op: "local.tee", index: 3 },
+                    { op: "ref.test", typeIdx: anyStrTypeIdx },
+                    {
+                      op: "if",
+                      blockType: { kind: "val", type: anyStrRefNull },
+                      then: [
+                        { op: "local.get", index: 3 },
+                        { op: "ref.cast", typeIdx: anyStrTypeIdx },
+                      ],
+                      else: [{ op: "ref.null", typeIdx: anyStrTypeIdx }],
+                    },
                   ],
                   else: [{ op: "ref.null", typeIdx: anyStrTypeIdx }],
                 },
               ],
-              else: [{ op: "ref.null", typeIdx: anyStrTypeIdx }],
             },
           ],
+          else: [{ op: "ref.null", typeIdx: anyStrTypeIdx }],
         },
       ],
-      else: [{ op: "ref.null", typeIdx: anyStrTypeIdx }],
     },
   ];
 
@@ -6763,7 +7397,7 @@ function isNonArrayByteVecName(name: string): boolean {
   return false;
 }
 
-function collectStandaloneArrayCarrierTypeIdxs(ctx: CodegenContext): number[] {
+export function collectStandaloneArrayCarrierTypeIdxs(ctx: CodegenContext): number[] {
   const carriers = new Set<number>();
   const objVecTypeIdx = ctx.objectRuntimeTypes?.objVecTypeIdx;
   if (objVecTypeIdx !== undefined) carriers.add(objVecTypeIdx);
@@ -6801,6 +7435,7 @@ function collectStandaloneArrayCarrierTypeIdxs(ctx: CodegenContext): number[] {
  * array carriers (`__vec_*`, template vectors, `$ObjVec`) return true.
  */
 export function fillExternIsArray(ctx: CodegenContext): void {
+  fillHostArrayCarrierPredicate(ctx); // (#4649) js-host twin, same finalize slot
   if (!ctx.externIsArrayReserved) return;
   const funcIdx = ctx.funcMap.get("__extern_is_array");
   if (funcIdx === undefined) return;
@@ -7174,11 +7809,40 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
     const generic = boxVecElementToExternref(ctx, elemType);
     return generic === null ? null : { getOp: "array.get", boxOps: generic };
   };
+  // (#4491 T11) The dynamic read chokepoint must honour the f64 ABSENCE marker:
+  // `__extern_get_idx` is what the native HOF loop, `(arr as any)[i]`, for-in
+  // and `Array.prototype.<m>.call` all read through, and boxing the raw bits
+  // through `__box_number` would hand a callback a sNaN NUMBER where the spec
+  // says `undefined`. Same discipline as the `$Hole` / `UNDEF_F64_BITS` maps in
+  // `__vec_get` (vec-access-exports.ts). Scratch f64 local appended after the
+  // eager body's locals; no-op unless the module can produce the marker.
+  // A hole reads through the PROTOTYPE CHAIN, not flat `undefined` — same
+  // `idxMiss()` an out-of-bounds index already uses, so `[0, , 2]` with
+  // `Array.prototype[1] = 1` reads `1` at the hole (§10.1.8.1 OrdinaryGet).
+  const f64HoleUndef = f64HolesActive(ctx) ? idxMiss() : undefined;
+  let f64HoleScratch = -1;
+  if (f64HoleUndef !== undefined) {
+    f64HoleScratch = 2 + fn.locals.length;
+    fn.locals.push({ name: "__f64hole_get_v", type: { kind: "f64" } });
+  }
   const vecArms: Instr[] = [];
   for (const { typeIdx, arrTypeIdx, elemType } of carriers) {
     const readBox = packedElemReadBox(elemType);
     if (readBox === null) continue; // unsupported element kind — leave to null fallback
-    const { getOp, boxOps } = readBox;
+    const { getOp } = readBox;
+    const boxOps =
+      f64HoleUndef !== undefined && elemType.kind === "f64"
+        ? ([
+            { op: "local.tee", index: f64HoleScratch },
+            ...f64HoleTestInstrs(),
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              then: f64HoleUndef.map((instr) => ({ ...instr })),
+              else: [{ op: "local.get", index: f64HoleScratch }, ...readBox.boxOps],
+            },
+          ] satisfies Instr[])
+        : readBox.boxOps;
     vecArms.push(
       { op: "local.get", index: 2 },
       { op: "ref.test", typeIdx },
@@ -7346,7 +8010,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
     const shapeFieldIdx = fields.findIndex((field) => field?.name === "$shape");
     const shapeId = ctx.shapeIdByStructName.get(structName);
     for (const field of fields) {
-      if (!field?.name || field.name.startsWith("$") || field.name.startsWith("__")) continue;
+      if (!isEnumerableOwnFieldName(field?.name)) continue;
       const presenceSlot = presenceSlotOf(fields, field.name);
       if (presenceSlot) {
         const typeDef = ctx.mod.types[typeIdx];
@@ -7666,7 +8330,7 @@ function collectClosedStructEnumerationEntries(ctx: CodegenContext): EnumShapeEn
 
     const byName = new Map<string, EnumOwnField>();
     for (const field of fields) {
-      if (!field?.name || field.name.startsWith("$") || field.name.startsWith("__")) continue;
+      if (!isEnumerableOwnFieldName(field?.name)) continue;
       const presenceSlot = presenceSlotOf(fields, field.name);
       byName.set(field.name, {
         name: field.name,
@@ -7942,6 +8606,7 @@ export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
  */
 export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
   if (!ctx.standalone || ctx.anyStrTypeIdx < 0) return;
+  const inheritedSetGetMissActive = inheritedSetAnyDirty(ctx);
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
@@ -8124,21 +8789,49 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
     const receiverArms: Instr[] = [];
     for (const entry of entries) {
       const then: Instr[] = [];
-      if (entry.presenceSlot !== undefined) {
+      // A presence-tracked physical slot is only an own property while its
+      // bit is set.  In an active #4504 module an absent slot must fall out of
+      // this receiver arm so the ordinary getter can continue to the explicit
+      // fnctor prototype.  Keep the old terminal-undefined behaviour when the
+      // feature is not armed, both for compatibility and byte identity.
+      if (inheritedSetGetMissActive && entry.cold !== undefined) {
+        then.push(
+          ...coldFieldPresenceInstrs(entry.cold, [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }]),
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: readAndBox(entry),
+          },
+        );
+      } else if (inheritedSetGetMissActive && entry.presenceSlot !== undefined) {
         then.push(
           { op: "local.get", index: 0 },
           { op: "any.convert_extern" },
           { op: "ref.cast", typeIdx: entry.typeIdx },
           ...presenceTestInstrs(entry.typeIdx, entry.presenceSlot),
-          { op: "i32.eqz" },
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }]), { op: "return" }],
+            then: readAndBox(entry),
           },
         );
+      } else {
+        if (entry.presenceSlot !== undefined) {
+          then.push(
+            { op: "local.get", index: 0 },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: entry.typeIdx },
+            ...presenceTestInstrs(entry.typeIdx, entry.presenceSlot),
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }]), { op: "return" }],
+            },
+          );
+        }
+        then.push(...readAndBox(entry));
       }
-      then.push(...readAndBox(entry));
       const exactThen: Instr[] =
         entry.shapeRange !== undefined
           ? [
@@ -8797,7 +9490,12 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
   // chokepoint the `in` operator and the HOF presence gates consult, so all
   // three agree about which indices exist. Route-inactive modules (the common
   // case) emit the unguarded push, byte-for-byte as before.
-  const gateKeysOnPresence = overlayRouteActive(ctx) && externHasIdxIdx !== undefined;
+  // (#4491 T11) …and the same gate is what makes `Object.keys` agree with `in`
+  // and `hasOwnProperty` about an f64 hole. Before this, the three disagreed:
+  // on `x=[]; x[0]=0; x[3]=3`, `in` said true, `hasOwnProperty` said false and
+  // `keys` listed `0,1,2,3`. All three now consult `__extern_has_idx`, which
+  // `fillF64HoleHasIdxArms` teaches about the absence marker.
+  const gateKeysOnPresence = (overlayRouteActive(ctx) || f64HolesActive(ctx)) && externHasIdxIdx !== undefined;
   /** `__objvec_push(out, ToString(i))`, presence-gated under the overlay route. */
   const pushKeyI = (outLocal: number, iLocal: number): Instr[] => {
     const push: Instr[] = [
@@ -8925,7 +9623,9 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
             {
               op: "if",
               blockType: { kind: "empty" },
-              then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+              // (#4658) `in` must agree with `hasOwnProperty` and gOPD after a
+              // §10.4.4 `delete args.length`; all three read the same tombstone.
+              then: [...buildArgumentsLengthAbsentTail(ctx, 0), { op: "i32.const", value: 1 }, { op: "return" }],
             },
           ] satisfies Instr[])
         : []),
@@ -9017,6 +9717,13 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
               op: "if",
               blockType: { kind: "empty" },
               then: [
+                // (#4658) A branded arguments object whose `length` was deleted
+                // has no own `length` and no inherited one either, so the
+                // DYNAMIC read answers `undefined` — keeping it in step with
+                // `in` / `hasOwnProperty` / gOPD. The compile-time `.length`
+                // fold on a vec-typed receiver still reads the field; that
+                // residual is pinned in tests/issue-4658.test.ts.
+                ...buildArgumentsLengthAbsentMiss(ctx, 0, getMiss),
                 { op: "local.get", index: gAny },
                 { op: "ref.cast", typeIdx: vecBaseIdx },
                 { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 },
@@ -9103,6 +9810,19 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
   const unboxNumIdx = ctx.funcMap.get("__unbox_number");
   if (unboxNumIdx === undefined) return;
   const vecBaseIdx = getOrRegisterVecBaseType(ctx);
+  const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
+  const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
+  const descriptorDecisionAvailable =
+    ctx.standalone && inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined && setDecideIdx !== undefined;
+  const RESULT_SUCCESS = 1;
+  const RESULT_REFUSED = 2;
+  const publishSuccess = (): Instr[] =>
+    setResultGlobalIdx === undefined
+      ? []
+      : ([
+          { op: "i32.const", value: RESULT_SUCCESS },
+          { op: "global.set", index: setResultGlobalIdx },
+        ] satisfies Instr[]);
 
   // Enumerate concrete `__vec_<elemKind>` carriers (same filter as
   // `fillExternGetIdxVecArms`) with a trap-free write unbox arm.
@@ -9125,27 +9845,87 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
   const setAny = 3 + fn.locals.length;
   const setN = setAny + 1;
   const setI = setAny + 2;
+  const setDecision = setAny + 3;
+
+  // A numeric miss (including a `$Hole` in a backed externref vec) has no
+  // logical own element. Give an inherited descriptor exactly one chance to
+  // handle/refuse before the ordinary store recreates it. A MISS/ALLOW falls
+  // through to that store; fixed-size OOB writes retain their historical
+  // no-growth no-op below.
+  const buildNumericMissDecision = (): Instr[] =>
+    !descriptorDecisionAvailable
+      ? []
+      : [
+          { op: "local.get", index: 0 },
+          { op: "ref.null.extern" },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: setDecideIdx! },
+          { op: "local.tee", index: setDecision },
+          { op: "i32.const", value: SET_DECISION_HANDLED },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...publishSuccess(), { op: "return" }],
+          },
+          { op: "local.get", index: setDecision },
+          { op: "i32.const", value: SET_DECISION_REFUSED },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "i32.const", value: RESULT_REFUSED },
+              { op: "global.set", index: setResultGlobalIdx! },
+              { op: "return" },
+            ],
+          },
+        ];
 
   for (const { typeIdx, arrTypeIdx, elemType } of carriers) {
     const unbox = unboxExternrefToVecElement(ctx, elemType);
     if (unbox === null) continue; // unsupported element kind → store no-op (as before)
+    // Build fresh instruction objects for each control-flow arm. Reusing one
+    // array here would share type-index-bearing nodes between `then`/`else`,
+    // which later remap/finalize passes are allowed to mutate in place.
+    const buildStore = (): Instr[] => [
+      { op: "local.get", index: setAny },
+      { op: "ref.cast", typeIdx },
+      { op: "struct.get", typeIdx, fieldIdx: 1 },
+      { op: "local.get", index: setI },
+      { op: "local.get", index: 2 },
+      ...unboxExternrefToVecElement(ctx, elemType)!,
+      { op: "array.set", typeIdx: arrTypeIdx },
+      ...publishSuccess(),
+      { op: "return" },
+    ];
+    const holeAware = descriptorDecisionAvailable && ctx.usesArrayHoles && elemType.kind === "externref";
     carrierArms.push(
       { op: "local.get", index: setAny },
       { op: "ref.test", typeIdx },
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [
-          // vec.data[i] = unbox(value)
-          { op: "local.get", index: setAny },
-          { op: "ref.cast", typeIdx },
-          { op: "struct.get", typeIdx, fieldIdx: 1 },
-          { op: "local.get", index: setI },
-          { op: "local.get", index: 2 },
-          ...unbox,
-          { op: "array.set", typeIdx: arrTypeIdx },
-          { op: "return" },
-        ],
+        then: holeAware
+          ? [
+              // `$Hole` is physical backing storage but not a JS own
+              // property. Dense values keep the direct overwrite fast path;
+              // a hole first consults the shared inherited-set resolver.
+              { op: "local.get", index: setAny },
+              { op: "ref.cast", typeIdx },
+              { op: "struct.get", typeIdx, fieldIdx: 1 },
+              { op: "local.get", index: setI },
+              { op: "array.get", typeIdx: arrTypeIdx },
+              ...holeTestInstrs(ctx),
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [...buildNumericMissDecision(), ...buildStore()],
+                else: buildStore(),
+              },
+            ]
+          : buildStore(),
       },
     );
   }
@@ -9155,6 +9935,7 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
     { name: "__vec_set_any", type: { kind: "anyref" } },
     { name: "__vec_set_n", type: { kind: "f64" } },
     { name: "__vec_set_i", type: { kind: "i32" } },
+    ...(descriptorDecisionAvailable ? ([{ name: "__vec_set_decision", type: { kind: "i32" } }] as const) : []),
   );
 
   const arm: Instr[] = [
@@ -9193,6 +9974,7 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
               op: "if",
               blockType: { kind: "empty" },
               then: carrierArms,
+              else: buildNumericMissDecision(),
             },
             // NUMERIC key on a vec: handled here terminally — in-bounds stored
             // above (each carrier arm returns), OOB/grow/unsupported kind stays
@@ -9432,7 +10214,8 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
       // null → NaN handled by the shared clamp below). Abrupt completions
       // (throwing valueOf/toString, both-objects TypeError) propagate as Wasm
       // throws out of `__extern_length` to the borrow caller.
-      const L_PRIM = 4;
+      const primExtPos = lenFn.locals.findIndex((l) => l.name === "primExt"); // (#4556)
+      const L_PRIM = primExtPos >= 0 ? 1 + primExtPos : 1 + lenFn.locals.length;
       const isObjectRefLength =
         (cand.lengthFieldType.kind === "ref" || cand.lengthFieldType.kind === "ref_null") &&
         !isStringRefType(cand.lengthFieldType);
@@ -9476,10 +10259,9 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
               : isObjectRefLength
                 ? objectRefRead
                 : [];
-      if (isObjectRefLength && !lenPrimLocalAdded) {
-        // Scratch externref local for the ToPrimitive result — appended once.
-        // Registered locals are [any, lenF64, lenTrunc] after the single
-        // externref param, so the new local's index is 4 (= L_PRIM).
+      if (isObjectRefLength && !lenPrimLocalAdded && primExtPos < 0) {
+        // Scratch externref local for the ToPrimitive result — appended once,
+        // and only when the registration did not already provide it (#4556).
         lenFn.locals.push({ name: "primExt", type: { kind: "externref" } });
         lenPrimLocalAdded = true;
       }
@@ -10089,4 +10871,6 @@ export const OBJECT_RUNTIME_HELPER_NAMES: ReadonlySet<string> = new Set([
   "__new_Number",
   "__new_String",
   "__new_Boolean",
+  // (#4631) BigInt wrapper — same [[PrimitiveValue]] slot pattern.
+  "__new_BigInt",
 ]);

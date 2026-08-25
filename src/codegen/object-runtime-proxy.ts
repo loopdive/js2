@@ -9,6 +9,7 @@
  * back (still called from `ensureObjectRuntime`). Byte-identity IDENTICAL across
  * gc/standalone/wasi is the acceptance gate (`scripts/prove-emit-identity.mjs`).
  */
+import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import type { ObjectRuntimeTypes } from "./object-runtime.js";
@@ -306,6 +307,10 @@ export function ensureProxyRuntime(
               { op: "local.get", index: 1 },
               { op: "local.get", index: 2 },
               { op: "call", funcIdx: forwardIdx },
+              // The outer __extern_set proxy guard distinguishes this
+              // trap-absent forward from a real set-trap result. In #4504 it
+              // must leave the target's result channel untouched, including
+              // UNADMITTED; this placeholder is dropped by that guard.
               { op: "ref.null.extern" },
             ]
           : trapFieldIdx === TRAP_HAS || trapFieldIdx === TRAP_DELETE
@@ -1367,6 +1372,41 @@ export function ensureProxyRuntime(
   // __extern_set(obj, key, value) -> () : if proxy → set_dispatch(obj,key,value); drop; return
   const setBody = findBody("__extern_set");
   if (setBody) {
+    const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
+    const inheritedSetRuntimeActive = ctx.standalone && inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined;
+    const isTruthyIdx = ctx.funcMap.get("__is_truthy");
+    const resultAwareGuard = inheritedSetRuntimeActive && isTruthyIdx !== undefined;
+    const callSetDispatch = (): Instr[] => [
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: 1 },
+      { op: "local.get", index: 2 },
+      { op: "call", funcIdx: setDispatchIdx },
+    ];
+    const noSetTrap = (): Instr[] => [
+      // This guard runs only after the outer `ref.test $Proxy`. Do not infer a
+      // boolean from the dispatch result: a trap-absent forward can complete
+      // with SUCCESS, REFUSED, or UNADMITTED, all of which the target already
+      // published in the shared channel.
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: proxyTypeIdx },
+      { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "i32.const", value: 1 }],
+        else: [
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: proxyTypeIdx },
+          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_SET },
+          { op: "ref.is_null" },
+        ],
+      },
+    ];
     const guard: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
@@ -1374,14 +1414,38 @@ export function ensureProxyRuntime(
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 0 },
-          { op: "local.get", index: 1 },
-          { op: "local.get", index: 2 },
-          { op: "call", funcIdx: setDispatchIdx },
-          { op: "drop" },
-          { op: "return" },
-        ],
+        then: resultAwareGuard
+          ? [
+              ...noSetTrap(),
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                // A trap-absent forward owns no Proxy boolean result. Drop
+                // the dispatch placeholder and preserve exactly whatever the
+                // target's __extern_set wrote (including UNADMITTED).
+                then: [...callSetDispatch(), { op: "drop" }, { op: "return" }],
+                // Only an actual trap return is boolean-coerced into the
+                // #4504 result channel.
+                else: [
+                  ...callSetDispatch(),
+                  { op: "call", funcIdx: isTruthyIdx! },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      { op: "i32.const", value: 1 },
+                      { op: "global.set", index: setResultGlobalIdx! },
+                    ],
+                    else: [
+                      { op: "i32.const", value: 2 },
+                      { op: "global.set", index: setResultGlobalIdx! },
+                    ],
+                  },
+                  { op: "return" },
+                ],
+              },
+            ]
+          : [...callSetDispatch(), { op: "drop" }, { op: "return" }],
       },
     ];
     setBody.unshift(...guard);

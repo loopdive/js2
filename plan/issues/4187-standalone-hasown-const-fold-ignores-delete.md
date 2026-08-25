@@ -4,14 +4,14 @@ title: "standalone: hasOwnProperty const-fold ignores runtime delete — the #27
 status: done
 completed: 2026-08-07
 completed_slice: "the const-fold/runtime divergence itself — measured +1 / -0 over 2,654 files, exposure 5 modules. The 8 sibling files this issue named did NOT flip and are blocked behind separate defects (see Residue); option 2 (drop the standalone gate outright) is untested, not rejected."
-sprint: current
+sprint: 78
 priority: medium
 horizon: s
 feasibility: medium
 goal: standalone-gap
 assignee: ttraenkler/W29
 created: 2026-08-06
-updated: 2026-08-07
+updated: 2026-08-18
 found-by: ttraenkler/W9-descriptor-proto-residue
 loc-budget-allow:
   # The fix is ~5 lines of code in three god-files; the overage is the

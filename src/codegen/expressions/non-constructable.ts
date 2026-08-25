@@ -25,6 +25,11 @@ export function resolvesToAmbientGlobal(ctx: CodegenContext, id: ts.Identifier):
   return decls.every((d) => d.getSourceFile().isDeclarationFile);
 }
 
+/** Ambient-global proof with the source spelling checked at the same boundary. */
+export function resolvesToNamedAmbientGlobal(ctx: CodegenContext, expr: ts.Expression, name: string): boolean {
+  return ts.isIdentifier(expr) && expr.text === name && resolvesToAmbientGlobal(ctx, expr);
+}
+
 /**
  * The strength of a non-constructability conclusion.
  *
@@ -96,6 +101,36 @@ export function classifyNonConstructableValue(ctx: CodegenContext, calleeExpr: t
     if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression)) {
       const m = e.expression.name.text;
       if (m === "bind" || m === "call" || m === "apply") return "probe";
+    }
+    // (#4483) `var F = <function>.call` — the VALUE of `Function.prototype.{call,
+    // apply,bind}`. Those three are ordinary built-in FUNCTIONS: §20.2.3 gives
+    // them no [[Construct]], so `new F()` is a §13.3.5.1 step-5 TypeError. This
+    // is the READ, not the CALL two lines above: `f.call(x)` returns an
+    // arbitrary value that may well be a constructor (hence "probe"), whereas
+    // `f.call` IS the intrinsic and the answer is decided here ("provable").
+    // Narrowed to a receiver the oracle types as a function so a user object
+    // carrying its own `call`/`bind` property can never be intercepted.
+    // (`built-ins/Function/prototype/{apply,call}/S15.3.4.{3,4}_A{8,7}_T5`.)
+    if (ts.isPropertyAccessExpression(e)) {
+      const m = e.name.text;
+      if (m === "bind" || m === "call" || m === "apply") {
+        // A receiver typed `Function` (e.g. the `Function("…")` product) is a
+        // function object too — the oracle reports it as the builtin, not as
+        // `function`, because `Function` has first-class compiler handling.
+        // Transparent wrappers are unwrapped so a written-out `(fn as any).call`
+        // is read as the function it is; a receiver that is genuinely `any`
+        // still declines, because then nothing is proven.
+        let receiver: ts.Expression = e.expression;
+        while (
+          ts.isParenthesizedExpression(receiver) ||
+          ts.isAsExpression(receiver) ||
+          ts.isNonNullExpression(receiver)
+        ) {
+          receiver = receiver.expression;
+        }
+        const fact = ctx.oracle.typeFactOf(receiver);
+        if (fact.kind === "function" || (fact.kind === "builtin" && fact.name === "Function")) return "provable";
+      }
     }
     return "no";
   };

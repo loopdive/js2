@@ -3,7 +3,7 @@ id: 4203
 title: "Standalone substrate: codegen cannot distinguish an EXPLICITLY-null receiver from an absent one — `f.bind(null)()` / `f.call(null)` in strict code answer `undefined` where the spec says `null` (12 measured files, §10.4.3)"
 status: done
 created: 2026-08-07
-updated: 2026-08-07
+updated: 2026-08-18
 completed: 2026-08-07
 assignee: ttraenkler/W22
 # The mechanism lives in the new leaf module src/codegen/explicit-null-receiver.ts.
@@ -26,7 +26,7 @@ area: codegen
 goal: es5
 feasibility: hard
 reasoning_effort: max
-sprint: current
+sprint: 78
 horizon: m
 related: [4196, 4192, 3140, 2106]
 origin: "W21 (§10.4.3 residue census) handed the file list to W19 (#4196); W19 measured it on branch issue-4196-bind-construct, 2026-08-07"

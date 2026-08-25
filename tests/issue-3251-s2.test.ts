@@ -61,16 +61,22 @@ describe("#3251 S2 — write-lane enforcement (dynamic lane)", () => {
     ).toBe(142);
   });
 
-  it("a getter-only index silently ignores the write and keeps answering", async () => {
+  it("a getter-only index refuses Reflect and throws in strict module code without changing value", async () => {
     expect(
       await runStandalone(`${MK}
         export function test(): number {
           const arr: any = mkArr();
           Object.defineProperty(arr, "1", { get: function (): any { return 100; }, configurable: true });
-          arr[1] = 5;
-          return arr[1] as number;
+          let caught = 0;
+          try {
+            arr[1] = 5;
+          } catch (error) {
+            caught = error instanceof TypeError ? 1 : 2;
+          }
+          const reflected = Reflect.set(arr, "1", 6);
+          return caught * 1000 + (reflected === false ? 200 : 0) + (arr[1] as number);
         }`),
-    ).toBe(100);
+    ).toBe(1300);
   });
 
   it("gOPD stays fresh after a dynamic write to a writable defined index", async () => {

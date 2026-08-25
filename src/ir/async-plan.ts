@@ -191,9 +191,7 @@ export interface PreparedIrAsyncHostAdapter {
   readonly target: IrFuncRef;
 }
 
-export interface PreparedIrAsyncRuntime {
-  readonly kind: "host-wasmgc";
-  readonly adapters: readonly PreparedIrAsyncHostAdapter[];
+interface PreparedIrAsyncRuntimeBase {
   /** Backend-only layouts keyed by the exact logical types in `asyncPlan`. */
   readonly typeLayouts?: readonly {
     readonly logicalType: IrType;
@@ -204,6 +202,16 @@ export interface PreparedIrAsyncRuntime {
   /** State bodies with post-freeze intrinsic provider attachments. */
   readonly states: readonly IrAsyncState[];
 }
+
+export type PreparedIrAsyncRuntime =
+  | (PreparedIrAsyncRuntimeBase & {
+      readonly kind: "host-wasmgc";
+      readonly adapters: readonly PreparedIrAsyncHostAdapter[];
+    })
+  | (PreparedIrAsyncRuntimeBase & {
+      readonly kind: "standalone-native-wasmgc";
+      readonly adapters: readonly [];
+    });
 
 export type IrAsyncPlanInvariantCode =
   | "forbidden-data"

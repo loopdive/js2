@@ -39,8 +39,9 @@ import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, VOID_RESULT } from "../shared.js";
 import { compileStatement, hoistFunctionDeclarations } from "../statements.js";
 import { ensureExtrasArgvGlobal, maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
-import { isStaticUndefinedArg } from "../string-ops.js";
+import { compileStringLiteral, isStaticUndefinedArg } from "../string-ops.js";
 import { isStrictFunction } from "../helpers/is-strict-function.js";
+import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
 import {
   defaultValueInstrs,
   emitGuardedFuncRefCast,
@@ -52,6 +53,7 @@ import {
   compileCallableElementAccessCall,
   compileClosureCall,
   emitMatchedClosureCallArguments, // (#4394) rest-aware matched-closure args
+  runtimeSignatureParameters, // (#4491) drops the synthetic `arguments` rest
 } from "./calls-closures.js";
 import { tsSignatureHasRest } from "./closure-sig-match.js"; // (#4394)
 import {
@@ -71,6 +73,7 @@ import { classMemberFuncKey } from "../class-member-keys.js";
 import { matchClosureInfoBySignature } from "./closure-sig-match.js"; // (#4394) exact-first closure pick
 import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
 import { tryEmitDynamicElementHostMethodCall } from "./dynamic-element-host-call.js";
+import { tryNormalizeStaticStringElementCallee } from "./element-access-callee-normalization.js"; // (#4625)
 import {
   classInstanceHasField,
   coerceNumberMethodArgToF64,
@@ -86,169 +89,18 @@ import {
   emitSetArgc,
   functionExprBodyReferencesOwnName,
   tryEmitInlineDynamicCall,
-  usesArguments,
 } from "./calls.js";
+import { enterInlineIifeBindingScope, argumentsEscapesIife } from "./inline-iife-scope.js"; // (#4555)
 
-function cloneNameMap<T>(map: Map<string, T> | undefined): Map<string, T> | undefined {
-  return map ? new Map(map) : undefined;
-}
-
-function cloneNameSet(set: Set<string> | undefined): Set<string> | undefined {
-  return set ? new Set(set) : undefined;
-}
-
-function restoreNameMap<T>(
-  current: Map<string, T> | undefined,
-  saved: Map<string, T> | undefined,
-  names: ReadonlySet<string>,
-): Map<string, T> | undefined {
-  let restored = current;
-  for (const name of names) {
-    if (saved?.has(name)) {
-      restored ??= new Map();
-      restored.set(name, saved.get(name)!);
-    } else {
-      restored?.delete(name);
-    }
-  }
-  return restored;
-}
-
-function restoreNameSet(
-  current: Set<string> | undefined,
-  saved: Set<string> | undefined,
-  names: ReadonlySet<string>,
-): Set<string> | undefined {
-  let restored = current;
-  for (const name of names) {
-    if (saved?.has(name)) {
-      restored ??= new Set();
-      restored.add(name);
-    } else {
-      restored?.delete(name);
-    }
-  }
-  return restored;
-}
-
-/**
- * The inline-IIFE fast path shares a Wasm FunctionContext with its caller, but
- * it must not share the caller's source-level binding namespace. Snapshot and
- * temporarily hide only names declared by the IIFE. Changes to every other
- * name remain live, which is load-bearing for closures that box a genuinely
- * captured outer binding while the IIFE body is compiled (#3128).
- */
-function enterInlineIifeBindingScope(fctx: FunctionContext, names: ReadonlySet<string>) {
-  const snapshot = {
-    localMap: new Map(fctx.localMap),
-    boxedCaptures: cloneNameMap(fctx.boxedCaptures),
-    boxedTdzFlags: cloneNameMap(fctx.boxedTdzFlags),
-    tdzFlagLocals: cloneNameMap(fctx.tdzFlagLocals),
-    directEvalBindingNames: cloneNameSet(fctx.directEvalBindingNames),
-    directEvalActivationBindingNames: cloneNameSet(fctx.directEvalActivationBindingNames),
-    directEvalOuterBindingNames: cloneNameSet(fctx.directEvalOuterBindingNames),
-    directEvalActivationBindings: cloneNameMap(fctx.directEvalActivationBindings),
-    forInIdentifierVars: cloneNameSet(fctx.forInIdentifierVars),
-    promotedCaptureNames: cloneNameSet(fctx.promotedCaptureNames),
-    nestedFnClosureMemos: cloneNameMap(fctx.nestedFnClosureMemos),
-    readOnlyBindings: cloneNameSet(fctx.readOnlyBindings),
-    constBindings: cloneNameSet(fctx.constBindings),
-    hoistedFuncs: cloneNameSet(fctx.hoistedFuncs),
-    narrowedNonNull: cloneNameSet(fctx.narrowedNonNull),
-    undefWidenedLocals: cloneNameSet(fctx.undefWidenedLocals),
-    nullGuardAliases: cloneNameMap(fctx.nullGuardAliases),
-    aliasedNullGuardNonNull: cloneNameSet(fctx.aliasedNullGuardNonNull),
-    fnctorWidenedLocals: cloneNameSet(fctx.fnctorWidenedLocals),
-    annexBCancelled: fctx.annexBCancelled
-      ? new Map(Array.from(fctx.annexBCancelled, ([name, ranges]) => [name, ranges.map((range) => ({ ...range }))]))
-      : undefined,
-    annexBOuterBindings: cloneNameSet(fctx.annexBOuterBindings),
-    annexBRepeatedOuterBindings: cloneNameSet(fctx.annexBRepeatedOuterBindings),
-    annexBExistingDirectFunctionBindings: cloneNameSet(fctx.annexBExistingDirectFunctionBindings),
-    moduleBindingShadowLocals: cloneNameMap(fctx.moduleBindingShadowLocals),
-  };
-
-  for (const name of names) {
-    fctx.localMap.delete(name);
-    fctx.boxedCaptures?.delete(name);
-    fctx.boxedTdzFlags?.delete(name);
-    fctx.tdzFlagLocals?.delete(name);
-    fctx.directEvalBindingNames?.delete(name);
-    fctx.directEvalActivationBindingNames?.delete(name);
-    fctx.directEvalOuterBindingNames?.delete(name);
-    fctx.directEvalActivationBindings?.delete(name);
-    fctx.forInIdentifierVars?.delete(name);
-    fctx.promotedCaptureNames?.delete(name);
-    fctx.nestedFnClosureMemos?.delete(name);
-    fctx.readOnlyBindings?.delete(name);
-    fctx.constBindings?.delete(name);
-    fctx.hoistedFuncs?.delete(name);
-    fctx.narrowedNonNull?.delete(name);
-    fctx.undefWidenedLocals?.delete(name);
-    fctx.nullGuardAliases?.delete(name);
-    fctx.aliasedNullGuardNonNull?.delete(name);
-    fctx.fnctorWidenedLocals?.delete(name);
-    fctx.annexBCancelled?.delete(name);
-    fctx.annexBOuterBindings?.delete(name);
-    fctx.annexBRepeatedOuterBindings?.delete(name);
-    fctx.annexBExistingDirectFunctionBindings?.delete(name);
-    fctx.moduleBindingShadowLocals?.delete(name);
-  }
-
-  return () => {
-    fctx.localMap = restoreNameMap(fctx.localMap, snapshot.localMap, names)!;
-    fctx.boxedCaptures = restoreNameMap(fctx.boxedCaptures, snapshot.boxedCaptures, names);
-    fctx.boxedTdzFlags = restoreNameMap(fctx.boxedTdzFlags, snapshot.boxedTdzFlags, names);
-    fctx.tdzFlagLocals = restoreNameMap(fctx.tdzFlagLocals, snapshot.tdzFlagLocals, names);
-    fctx.directEvalBindingNames = restoreNameSet(fctx.directEvalBindingNames, snapshot.directEvalBindingNames, names);
-    fctx.directEvalActivationBindingNames = restoreNameSet(
-      fctx.directEvalActivationBindingNames,
-      snapshot.directEvalActivationBindingNames,
-      names,
-    );
-    fctx.directEvalOuterBindingNames = restoreNameSet(
-      fctx.directEvalOuterBindingNames,
-      snapshot.directEvalOuterBindingNames,
-      names,
-    );
-    fctx.directEvalActivationBindings = restoreNameMap(
-      fctx.directEvalActivationBindings,
-      snapshot.directEvalActivationBindings,
-      names,
-    );
-    fctx.forInIdentifierVars = restoreNameSet(fctx.forInIdentifierVars, snapshot.forInIdentifierVars, names);
-    fctx.promotedCaptureNames = restoreNameSet(fctx.promotedCaptureNames, snapshot.promotedCaptureNames, names);
-    fctx.nestedFnClosureMemos = restoreNameMap(fctx.nestedFnClosureMemos, snapshot.nestedFnClosureMemos, names);
-    fctx.readOnlyBindings = restoreNameSet(fctx.readOnlyBindings, snapshot.readOnlyBindings, names);
-    fctx.constBindings = restoreNameSet(fctx.constBindings, snapshot.constBindings, names);
-    fctx.hoistedFuncs = restoreNameSet(fctx.hoistedFuncs, snapshot.hoistedFuncs, names);
-    fctx.narrowedNonNull = restoreNameSet(fctx.narrowedNonNull, snapshot.narrowedNonNull, names);
-    fctx.undefWidenedLocals = restoreNameSet(fctx.undefWidenedLocals, snapshot.undefWidenedLocals, names);
-    fctx.nullGuardAliases = restoreNameMap(fctx.nullGuardAliases, snapshot.nullGuardAliases, names);
-    fctx.aliasedNullGuardNonNull = restoreNameSet(
-      fctx.aliasedNullGuardNonNull,
-      snapshot.aliasedNullGuardNonNull,
-      names,
-    );
-    fctx.fnctorWidenedLocals = restoreNameSet(fctx.fnctorWidenedLocals, snapshot.fnctorWidenedLocals, names);
-    fctx.annexBCancelled = restoreNameMap(fctx.annexBCancelled, snapshot.annexBCancelled, names);
-    fctx.annexBOuterBindings = restoreNameSet(fctx.annexBOuterBindings, snapshot.annexBOuterBindings, names);
-    fctx.annexBRepeatedOuterBindings = restoreNameSet(
-      fctx.annexBRepeatedOuterBindings,
-      snapshot.annexBRepeatedOuterBindings,
-      names,
-    );
-    fctx.annexBExistingDirectFunctionBindings = restoreNameSet(
-      fctx.annexBExistingDirectFunctionBindings,
-      snapshot.annexBExistingDirectFunctionBindings,
-      names,
-    );
-    fctx.moduleBindingShadowLocals = restoreNameMap(
-      fctx.moduleBindingShadowLocals,
-      snapshot.moduleBindingShadowLocals,
-      names,
-    );
-  };
+function isPristineStringPrototypeExpression(fctx: FunctionContext, expression: ts.Expression): boolean {
+  return (
+    ts.isPropertyAccessExpression(expression) &&
+    expression.name.text === "prototype" &&
+    ts.isIdentifier(expression.expression) &&
+    expression.expression.text === "String" &&
+    !fctx.localMap.has("String") &&
+    !(fctx.boxedCaptures?.has("String") ?? false)
+  );
 }
 
 /**
@@ -300,7 +152,7 @@ export function compileTailDispatch(
       // shape inline would either expose caller bindings or omit IIFE-owned
       // bindings from the eval environment. Use the normal closure path.
       const reachesDirectEval = functionMayReachDirectEval(callee, ctx.oracle);
-      if (isGeneratorIIFE || isRecursiveNamedFnExprIIFE || reachesDirectEval) {
+      if (isGeneratorIIFE || isRecursiveNamedFnExprIIFE || reachesDirectEval || argumentsEscapesIife(callee, expr)) {
         // Cannot inline: a generator IIFE needs a generator context for `yield`,
         // and a recursive named-fn-expr IIFE needs a real callable to bind its
         // own name to. Compile as closure, store in temp local, invoke via
@@ -328,7 +180,7 @@ export function compileTailDispatch(
         const params = callee.parameters;
         const args = expr.arguments;
         // Check if the IIFE body references `arguments` (only for function expressions, not arrows)
-        const iifeNeedsArguments = ts.isFunctionExpression(callee) && callee.body && usesArguments(callee.body);
+        const iifeNeedsArguments = ts.isFunctionExpression(callee) && needsImplicitArgumentsObject(callee);
         // Support IIFEs with matching parameter/argument counts
         if (params.length <= args.length) {
           const iifeBindingNames = collectDirectEvalBindingNames(callee);
@@ -816,7 +668,18 @@ export function compileTailDispatch(
           // Fall through to the host bridge if the native path declined.
         }
         const importName = methodName === "@@iterator" ? "__iterator" : "__async_iterator";
-        const recvType = compileExpression(ctx, fctx, elemAccess.expression);
+        // `%String.prototype%` is the empty String value (§22.1.3). Its
+        // general first-class representation is a `$NativeProto` metadata
+        // object, which the iterator provider cannot coerce to text. Preserve
+        // the intrinsic call semantics by feeding the provider the equivalent
+        // empty native string. This exact pristine-realm shape is used by
+        // Deno to discover `%StringIteratorPrototype%` during bootstrap.
+        const recvType =
+          methodName === "@@iterator" &&
+          (ctx.standalone || ctx.wasi) &&
+          isPristineStringPrototypeExpression(fctx, elemAccess.expression)
+            ? compileStringLiteral(ctx, fctx, "")
+            : compileExpression(ctx, fctx, elemAccess.expression);
         if (recvType) {
           if (recvType.kind === "ref" || recvType.kind === "ref_null") {
             fctx.body.push({ op: "extern.convert_any" });
@@ -1422,6 +1285,19 @@ export function compileTailDispatch(
         if (arrMethodResult !== undefined) return arrMethodResult;
       }
 
+      // (#4625) `x["toString"]()` — a static identifier-shaped string key naming
+      // an AMBIENT member is the bracket spelling of a method call, not a
+      // callable-element read. Route it onto the property-access path (the one
+      // #4619/#4481 taught about wrapper receivers) instead of letting the
+      // `cea` arm below read a value the compiler never materialises. Every arm
+      // that already lowers a bracket call correctly runs above this point, so
+      // their bytes cannot move; see the module header for the placement
+      // argument and the ambient-declaration condition.
+      {
+        const normalized = tryNormalizeStaticStringElementCallee(ctx, fctx, expr, elemAccess, compileCallExpression);
+        if (normalized !== undefined) return normalized;
+      }
+
       // ELEM ACCESS RESOLVED, NO METHOD MATCHED — try callable element type
       // (#1306). Covers `fns[0](args)` and `fns[ConstKey](args)` where
       // `fns` is an array (or other element-access-able value) of callables.
@@ -1773,12 +1649,14 @@ export function compileTailDispatch(
       // aware) — the old kind-only scan picked whichever same-arity closure
       // registered first; a wrong ref-result typeIdx makes the guarded funcref
       // cast below null → call_ref trap (standalone deepEqual-* family).
-      const sigParamCount = sig.parameters.length;
+      // (#4491) Drop the checker's synthetic `arguments`-derived rest symbol.
+      const runtimeSigParams = runtimeSignatureParameters(sig);
+      const sigParamCount = runtimeSigParams.length;
       const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
       const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
       const sigParamWasmTypes: ValType[] = [];
       for (let i = 0; i < sigParamCount; i++) {
-        const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
+        const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
         sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
       }
 
@@ -1898,12 +1776,14 @@ export function compileTailDispatch(
     if (callSigs && callSigs.length > 0) {
       const sig = callSigs[0]!;
 
-      const sigParamCount = sig.parameters.length;
+      // (#4491) See the sibling site above.
+      const runtimeSigParams = runtimeSignatureParameters(sig);
+      const sigParamCount = runtimeSigParams.length;
       const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
       const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
       const sigParamWasmTypes: ValType[] = [];
       for (let i = 0; i < sigParamCount; i++) {
-        const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
+        const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
         sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
       }
 

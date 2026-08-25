@@ -117,7 +117,7 @@ then compares its result with the same operation in native Node.
 | **clsx** (className joiner)             | #3748 | `dist/clsx.mjs`           | per-op string equality (see below — driver epilogue, not a raw export call) |
 | **cookie** (RFC-6265 parser/serializer) | #3751 | `dist/index.js`           | per-op JSON-normalized equality (direct export calls, no epilogue)          |
 | **eslint** (JavaScript linter)          | #1400 | `lib/api.js`              | bounded full-package compile/validate; `Linter.verify` API workload         |
-| **eslint selected upstream unit**       | #4293 | `lib/shared/deep-merge-arrays.js` | all 44 original cases from the matching source tag                    |
+| **eslint selected upstream unit**       | #3995 | five `lib/shared/*` utilities | all 158 original cases from the matching source tag                    |
 | **prettier** (code formatter)           | —     | `standalone.mjs`          | bounded package-entry compile/validate; runtime diff pending                |
 | **react** (UI library)                  | —     | `index.js`                | bounded package-entry compile/validate                                      |
 | **react upstream suite**                | —     | `cjs/react.production.js` | React's own real `packages/react/src/__tests__` unit tests                  |
@@ -186,10 +186,11 @@ pnpm run dogfood:redux-workload
 
 The upstream lane verifies all nine original runtime test files at
 `reduxjs/redux@v5.0.1` and registers all 82 callbacks against the matching
-published bundle. Node reproduces 78 synchronous callbacks; four async
-callbacks remain explicitly harness-incompatible. All nine generated modules
-compile and validate, and the initial Wasm baseline is **5/78**. Per-file
-runtime traps and assertion differences are retained in the JSON report.
+published bundle. Node reproduces all 82 callbacks. The shared runner supplies
+the Node-compatible `global` alias used by Redux's console-warning tests in
+both the native and Wasm lanes. All nine generated modules compile and
+validate; the current Wasm baseline is **13/82**. Per-file runtime traps and
+assertion differences are retained in the JSON report.
 
 The smaller generated API driver remains as an independent secondary signal.
 It consumes `combineReducers`, `createStore`, `subscribe`, and
@@ -392,8 +393,8 @@ correct `Linter.verify` behavior, and a timeout is not a pass.
 The package-entry timeout does not prevent smaller original units from exposing
 real runtime semantics. ESLint's npm tarball omits its tests, so the selected
 upstream-unit lane clones the exact `v10.0.3` source commit
-`bfce7eaa0ec5d6591fd247b7ff57b51e45fb88a1`, verifies it, and runs all 44 bodies
-from `tests/lib/shared/deep-merge-arrays.js` against the byte-verified published
+`bfce7eaa0ec5d6591fd247b7ff57b51e45fb88a1`, verifies it, and runs all 158
+bodies from five shared-utility files against the byte-verified published
 implementation:
 
 ```bash
@@ -401,13 +402,18 @@ pnpm run dogfood:eslint-upstream-suite
 DOGFOOD_ESLINT_UPSTREAM_SUITE=1 pnpm exec vitest run tests/dogfood/eslint-upstream-suite.test.ts
 ```
 
-Only the two CommonJS bindings are adapted: the package-relative implementation
-require points at the pinned npm payload, and `node:assert` is replaced by one
-deterministic `deepStrictEqual` shim shared by the Node and Wasm lanes. No test
-body is transcribed, rejected, or skipped. The current baseline is **44/44 in
-both Node and Wasm**. #4293 fixed the generic nested-array carrier bug exposed by
-the seven former divergences. The npm-compat card calls this a “selected
-upstream unit” so 44/44 can never be mistaken for ESLint's whole suite.
+The adapter keeps the original test bodies and changes only their bindings: the
+package-relative implementation require points at the pinned npm payload, and
+`node:assert`/Chai is replaced by one deterministic callable assertion plus a
+plain method object shared by the Node and Wasm lanes. The split is deliberate:
+Wasm does not preserve properties assigned onto a function value, while it does
+preserve methods on an ordinary object. No test body is transcribed, rejected,
+or silently skipped. The current measured slice is **158/158 in Node and
+50/158 in Wasm**; the deep-merge unit is **44/44 in both lanes**. The remaining
+Wasm failures are compiler/runtime mismatches in typed reference-array HOFs and
+serialization helpers, and remain visible in the per-file report. The
+npm-compat card calls this a “selected upstream unit” so these numbers can never
+be mistaken for ESLint's whole suite.
 
 ## jsdom (#3995)
 
@@ -476,9 +482,9 @@ Three rules keep the number honest:
    expected to fail — a failure that is run and counted is more honest than a
    test filtered out before it runs. What they are not is _compiler evidence_:
    the native oracle fails them too, so they land in `harness-incompatible` and
-   sit outside the pass rate. Eight more are compile-quarantined by name rather
-   than described as executed. The report prints selected, executed, scored,
-   infra-blocked and quarantined counts so none can hide another.
+   sit outside the pass rate. Any compile-quarantined test is reported by name
+   rather than described as executed. The report prints selected, executed,
+   scored, infra-blocked and quarantined counts so none can hide another.
 2. **The `expect` shim implements only the matchers the admitted tests use**
    (`SUPPORTED_MATCHERS`); a test using anything else is rejected rather than
    scored against an approximation of Jest. The same shim source runs on both
@@ -488,24 +494,76 @@ Three rules keep the number honest:
    `harness-incompatible` bucket instead of being counted as a compiler bug.
 
 Both React harnesses install the same explicit jsdom browser-global set for
-their native oracle. ReactDOM's extractor also removes unsupported ESM helper
-imports before building a `new Function`, recording their bindings as
-unavailable instead of allowing one import to poison every test in a batch.
-Renderer, Jest, and internal-test-utils bindings remain in the explicit
-`harness-incompatible` bucket until equivalent compiled modules are available;
-the harness never turns a native-only adapter into compiler evidence.
+their native oracle. `react-upstream-infrastructure.mjs` supplies the
+cross-package host half required by the original tests: ReactDOM client/server,
+the test renderer and noop renderer, `prop-types`, `create-react-class`, web
+streams, Jest spies/mocks, and `internal-test-utils` assertions. The published
+ReactDOM/client/server and test-renderer entries are resolved with
+`NODE_ENV=production` and aliased to the exact pinned React object; this avoids
+the real dev-renderer/production-React peer mismatch that otherwise fails in
+React's internal `actQueue` path. Production test-renderer has no `act` or
+committed tree, so the noop adapter uses a jsdom ReactDOM root and
+`flushSync`, including a test-renderer-shaped JSON/ref view. The setup also
+unrefs scheduler `MessagePort`s and restores the CommonJS module cache during
+cleanup, so a finished suite exits cleanly.
+
+The test-only dependencies are pinned in `devDependencies`:
+`react-test-renderer`, `create-react-class`, `prop-types`, and
+`web-streams-polyfill`. A compile-stuck large integration file is split into
+one upstream test per module; a per-test/compile watchdog records a timeout
+instead of blocking the rest of the corpus. Native-oracle failures still stay
+in the explicit `harness-incompatible` bucket and are never turned into
+compiler evidence.
+
+The shared upstream runner and the React shim both expose Node's `global`
+spelling as an alias of `globalThis`; this is required by React and Redux's
+original polyfill and console-warning tests and is installed identically in
+the native and Wasm lanes.
 
 Failures stay in the corpus. The vitest wrapper enforces a pass FLOOR, not a
 target, so a regression is caught while the remaining frontier stays visible.
 
-Current exact result (2026-08-09): **64/64** natively scoreable upstream tests
-pass against compiled Wasm. The harness admits 272 of React's 273 tests (one is
-upstream-skipped), executes 264, reports 200 as needing unavailable
-Jest/renderer infrastructure on both lanes, and keeps eight explicitly
-compile-quarantined. The production
-`__DEV__ = false` constant is embedded in the shared native/Wasm source because
-that is the transform React itself applies to `react.production.js`; it does
-not precompute a test result.
+Current exact result (2026-08-20): **92/178** natively scoreable upstream tests
+pass against compiled Wasm. The harness admits and executes 272 of React's
+273 tests (one is upstream-skipped), reports 94 native-oracle-incompatible
+tests, and has zero compile-quarantined batches across 44 valid Wasm batches.
+The production `__DEV__ = false` constant is embedded in the shared native/Wasm
+source because that is the transform React itself applies to
+`react.production.js`; it does not precompute a test result. The remaining
+incompatible cases are recorded as infrastructure/behavior mismatches (mostly
+production warning expectations, renderer semantics, and compiled component
+closures crossing the Wasm/host boundary), not silently skipped package
+lookups.
+
+### ReactDOM's platform lanes
+
+`react-dom-upstream-suite.mjs` uses the same pinned React checkout, extractor,
+jsdom host, and native oracle, but keeps each published renderer graph
+independent. The 2,001 admitted ReactDOM tests are split into the client graph,
+legacy browser SSR, browser Fizz (60 tests), Node Fizz (35), and Edge Fizz (2).
+Each lane records its own compile, validation, native-oracle, and Wasm result
+counts in the report and on the npm-compat card. The Node lane exposes the real
+Node `stream.PassThrough` through a named host capability; browser and Edge use
+the standard Web Streams, messaging, encoder, headers, abort, and async-hooks
+host surface.
+
+To keep a local iteration bounded, use separate limits rather than silently
+dropping a platform:
+
+```bash
+DOGFOOD_REACT_DOM_TEST_LIMIT=1 \
+DOGFOOD_REACT_DOM_SERVER_TEST_LIMIT=1 \
+DOGFOOD_REACT_DOM_FIZZ_TEST_LIMIT=1 \
+DOGFOOD_REACT_DOM_NODE_FIZZ_TEST_LIMIT=1 \
+DOGFOOD_REACT_DOM_EDGE_FIZZ_TEST_LIMIT=1 \
+node --import tsx tests/dogfood/react-dom-upstream-suite.mjs --json
+```
+
+Concise upstream arrows are lifted as expression statements, so the full
+corpus is now admitted except for the two tests upstream marks `.skip`.
+Compiler/runtime failures remain failures; host-incompatible native tests and
+private test scaffolding are reported separately rather than converted into
+passes.
 
 ## lit upstream suite (#3977)
 
@@ -543,13 +601,19 @@ js2wasm cannot compile lit's published bytes at all, which no per-test number
 would have surfaced.
 
 Otherwise the rules are the React ones: 583 of 587 upstream tests are admitted
-(the 4 rejections are upstream's own `.skip`), the DOM-dependent ~90 % runs and
-lands in `harness-incompatible` via the native oracle, and lit's repo-internal
-`test-utils` — which ship in no tarball — resolve to a stub that throws, so
-those tests still run and fail on both sides instead of vanishing. The `assert`
-shim covers the 26 chai members lit's tests actually use, surveyed across all
-58 files; `equal` is `==` and `strictEqual` is `===`, because lit depends on the
-difference.
+(the 4 rejections are upstream's own `.skip`), and the DOM-dependent ~90 % runs
+through the jsdom browser surface. The shared browser bootstrap now exposes
+the standard DOM constructors used by lit (`HTMLAnchorElement`,
+`HTMLFieldSetElement`, `HTMLLabelElement`, `HTMLSpanElement`, and
+`ElementInternals`) in both the native and compiled lanes. Conservative
+extraction treats DOM, window, shadow-root, custom-element, constructable
+stylesheet, and Lit warning globals as supplied infrastructure; it no longer
+turns those source references into unavailable-infrastructure rejections.
+Lit's repo-internal `test-utils` — which ship in no tarball — still resolve to a
+stub that throws, so those tests run and fail on both sides instead of
+vanishing. The `assert` shim covers the 26 chai members lit's tests actually
+use, surveyed across all 58 files; `equal` is `==` and `strictEqual` is `===`,
+because lit depends on the difference.
 
 The suite found #3978, #3979 and #3980.
 
@@ -708,3 +772,48 @@ regression floor (`equal >= 18` at `total === 21`).
 
 This harness does **not** fix any compiler bug — pure tooling, same as the
 other harnesses' scope notes above.
+
+## @js-temporal/polyfill — spike harness (#4628)
+
+Unlike every other harness here, this one is a **spike instrument, not a
+regression gate**. It exists to answer one question for
+[#4628](https://js2wasm.loopdive.com/dashboard/issue.html?slug=4628-temporal-runtime-object-spike):
+can js2wasm compile `@js-temporal/polyfill` well enough to install a real
+`Temporal` global? So it runs the **compile + validate** lane only — the cheap
+half — with no differential-execution lane and, deliberately, **no pass/fail
+floor** in the vitest wrapper.
+
+Two pins, not one: the polyfill's published ESM bundle is **not**
+self-contained. `dist/index.esm.js` carries exactly one import against
+`jsbi@^4.3.0`, so `jsbi-4.3.0.tgz` is pinned alongside it and the harness links
+them into a single module (jsbi's `export default JSBI;` dropped, the import
+rewritten to `const e=JSBI;`). Both edits are asserted, so an upstream bump that
+changes the bundle shape fails loudly instead of quietly measuring something
+else.
+
+```bash
+# slice lane — split at top-level statement boundaries, compile chunk by chunk
+node tests/dogfood/temporal-polyfill-harness.mjs --no-umd --no-whole --slices=25
+# whole-bundle lane (see the caveat below)
+JS2WASM_COMPILE_PROFILE=stream node tests/dogfood/temporal-polyfill-harness.mjs --no-umd
+# vitest contract wrapper (cheap acquisition/link lane always runs)
+DOGFOOD_TEMPORAL_POLYFILL=1 pnpm test -- tests/dogfood/temporal-polyfill.test.ts
+```
+
+Report: `tests/dogfood/report/temporal-polyfill-surface.json` (gitignored). Pin:
+`temporal-polyfill-pin.json`.
+
+**Current state (2026-08-23):** the slice lane compiles **342 / 342 top-level
+statements with zero compile errors**, but 5 of 14 slices emit a binary that
+fails `WebAssembly.compile()` (all one family: a call thunk pushing one operand
+fewer than the callee's declared arity). The **whole-bundle lane does not
+terminate** — 157 KB in one module ran 45 minutes without finishing, while the
+same statements sliced up sum to ~24 seconds. Per the rule at the top of this
+file, a compile timeout is an unverified workload, never a pass. Full
+measurements, the scaling curve and the Option A / Option B decision are in the
+issue.
+
+The `--slices=N` mode is the reusable part: when a whole-module compile will not
+terminate, it still yields a bucketed cause list, and it **reports coverage**
+(slices run / skipped, statements covered / total) so partial results can never
+be mistaken for a whole-bundle number.

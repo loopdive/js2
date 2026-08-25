@@ -17,6 +17,8 @@ import type { ObjectRuntimeTypes } from "../object-runtime.js";
 import type { FallbackCounts } from "../fallback-telemetry.js";
 import type { CompileTargetProfile } from "../../target-profile.js";
 import type { IrRuntimeEvalBoundaryPlan } from "../../ir/runtime-eval-boundary-plan.js";
+import type { StandaloneCapabilityDemandState } from "./capability-state.js";
+import type * as BodyRouteAudit from "./body-route-audit.js";
 
 export interface CodegenError {
   message: string;
@@ -71,14 +73,13 @@ export interface CodegenError {
 }
 
 /** Result returned by generateModule / generateMultiModule. */
-export interface CodegenResult {
+export interface CodegenResult extends BodyRouteAudit.Result {
   module: WasmModule;
   errors: CodegenError[];
   /**
    * #2089 — silent-fallback telemetry counters captured during this codegen
-   * run (per class → per site → count). Surfaced so the gate
-   * (`scripts/check-codegen-fallbacks.ts`) can aggregate structured counts
-   * rather than parsing warning strings. Optional so existing callers that
+   * run (per class → per site → count). Surfaced for structured gate
+   * aggregation rather than warning parsing. Optional so existing callers that
    * destructure `{ module, errors }` are unaffected.
    */
   fallbackCounts?: FallbackCounts;
@@ -87,7 +88,7 @@ export interface CodegenResult {
 }
 
 /** Public options for backend code generation. */
-export interface CodegenOptions {
+export interface CodegenOptions extends BodyRouteAudit.Options {
   /** Whether to generate source positions for source map */
   sourceMap?: boolean;
   /** Fast mode: i32 default numbers */
@@ -343,6 +344,8 @@ export interface ClosureInfo {
    * callable/property/method bridges. An ordinary allocation clears the bit.
    */
   hostOneShotOnly?: boolean;
+  /** Compiler-only carrier admitted exclusively by the reusable DOM callback dispatcher. */
+  domCallbackOnly?: boolean;
   /**
    * True when a source closure observes the call-site arity protocol through
    * its own `arguments`, a rest parameter, or a parameter default. Undefined
@@ -601,6 +604,13 @@ export interface FunctionContext {
   /** Bindings widened because their assignments cross representation domains.
    * Reads keep the boxed carrier; concrete consumers perform coercion at use. */
   mixedAssignmentCarrierVars?: Set<string>;
+  /**
+   * Callback captures whose ABI deliberately remains externref.  Their
+   * checker type may be a concrete array/object, but the value crossed a host
+   * callback boundary and must stay dynamically dispatched rather than being
+   * narrowed to a WasmGC ref that the host cannot reconstruct reliably.
+   */
+  captureExternrefNames?: Set<string>;
   /** Return type */
   returnType: ValType | null; // null = void
   /** Accumulated body instructions */
@@ -613,6 +623,7 @@ export interface FunctionContext {
   continueStack: number[];
   /** Map from label name to break/continue stack indices for labeled break/continue */
   labelMap: Map<string, { breakIdx: number; continueIdx: number }>;
+  evalCompletionLocal?: number; // §13 eval completion register — statements/eval-completion-value.ts
   /** Depth for `return` inside generator body -- adjusted by loop/block nesting */
   generatorReturnDepth?: number;
   /** Map from variable name → ref cell info (for mutable closure captures) */
@@ -767,6 +778,14 @@ export interface FunctionContext {
    * void; the async result is delivered through the promise. Mirrors the
    * `isGenerator` `return` arm. Undefined on every non-resume body.
    */
+  /**
+   * (#4630) Set on the LIFTED body of a parked (legacy pass-through) async
+   * arrow / function expression whose result was promoted to `externref`. Every
+   * `return` and the default tail settle the completion value through
+   * `Promise.resolve(v)` so a DYNAMIC call (`testFunc()` through an `any`
+   * binding) hands `.then` a real `$Promise`. See `async-eager-promise.ts`.
+   */
+  eagerAsyncPromiseReturn?: boolean;
   asyncDriveReturn?: {
     /** Local holding the frame's result `$Promise` (loaded at resume entry). */
     resultPromiseLocal: number;
@@ -1068,7 +1087,7 @@ export interface FunctionContext {
    * Stack of catch rethrow info. Each entry tracks a catch variable name and the
    * current depth (number of block-like structures) from the catch boundary.
    */
-  catchRethrowStack?: { varName: string; depth: number }[];
+  catchRethrowStack?: { varName: string; depth: number; exnLocalIdx?: number }[];
   /**
    * Stack of pending finally blocks. When a return/break/continue exits a try
    * block that has a finally clause, the finally instructions must be inlined
@@ -1164,6 +1183,17 @@ export interface FunctionContext {
      * index is additionally added to `unmappedIndices`.)
      */
     nonWritableIndices?: Set<number>;
+    /**
+     * Argument indices whose `Object.defineProperty(arguments, "<i>", …)` was
+     * routed to the RUNTIME define (#4491) — an accessor, a `writable:false`
+     * data descriptor, or any shape the inline mapped fast path declines. That
+     * route records a real descriptor in the sidecar, which from then on is the
+     * authority for the index; the inline fast path writes only the opaque vec
+     * slot, so taking it afterwards would leave the two disagreeing (a later
+     * `{value: 20}` updated `arguments[0]` while `getOwnPropertyDescriptor`
+     * still reported the old value). Consulted by the fast-path predicate.
+     */
+    runtimeDefinedIndices?: Set<number>;
   };
   /**
    * #1210: bindings detected as `let s = ""; for (...) s += <expr>` builders
@@ -1266,7 +1296,7 @@ export interface FunctionContext {
   typedThisLocalIdx?: number;
 }
 
-export interface CodegenContext {
+export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRouteAudit.Context {
   mod: WasmModule;
   /**
    * Immutable target/provider/interop policy resolved once at context creation.
@@ -1447,7 +1477,7 @@ export interface CodegenContext {
    *  the extern class of the global's declared type ("Document") — recorded
    *  at registration for the IR host-extern path (#2856), which types the
    *  `call global_<name>` handle as `IrType.extern { className }`. */
-  declaredGlobals: Map<string, { type: ValType; funcIdx: number; className?: string }>;
+  declaredGlobals: Map<string, { type: ValType; funcIdx: number; className?: string; member?: string }>;
   /** Counter for generated callback functions (__cb_0, __cb_1, ...) */
   callbackCounter: number;
   /** Map from captured variable name → global index in mod.globals */
@@ -1526,6 +1556,24 @@ export interface CodegenContext {
    * order. Clear — the common case — keeps every array read byte-identical.
    */
   usesArrayHoles: boolean;
+  /**
+   * (#4491 T11) Set when a body actually EMITTED the f64 absence marker
+   * (`HOLE_F64_BITS`) — an array-literal elision in an f64 carrier, or the
+   * grow-gap fill. Strictly narrower than {@link usesArrayHoles}, which only
+   * says the program contains *some* elision: a module whose only elisions sit
+   * in `any[]`/`string[]` literals sets the flag above and never mints an f64
+   * marker.
+   *
+   * Readable ONLY by FINALIZE-time consumers (`__vec_get`'s host-boundary map,
+   * `fillF64HoleHasIdxArms`), which run after every body — a body-compile-time
+   * consumer must keep using `usesArrayHoles`, because function compilation
+   * order is not source order and the read of `a[i]` can precede the literal
+   * that introduces the marker.
+   *
+   * Measured: without this, `benchmarks/array.ts` grew 19 bytes in `__vec_get`
+   * for a compare that could never fire.
+   */
+  f64HoleMarkerEmitted?: boolean;
   /** Exact, escape-free `new Array(n)` declarations admitted to #4222's carrier. */
   holeyArrayDeclarations: Set<ts.VariableDeclaration>;
   /** Exact constructor nodes that materialize the dedicated sparse carrier. */
@@ -1561,6 +1609,22 @@ export interface CodegenContext {
    */
   protoNamedDirty: boolean;
   /**
+   * (#4492 wave-5) The MEMBER NAMES behind `protoNamedDirty` — the `<m>` of every
+   * `<BrandedBuiltin>.prototype.<m> = …` the pre-scan saw.
+   *
+   * `protoNamedDirty` alone cannot gate a ToPrimitive consult: the test262
+   * harness prelude writes to some builtin prototype in nearly every module, so
+   * the flag is on almost always. The NAME is the precise question — "did this
+   * program override `Function.prototype.toString`?" — which is what decides
+   * whether a callable's inherited `toString` may be believed (see
+   * `ordinary-to-primitive-probe.ts`'s `userInstalledOnly`).
+   *
+   * Best-effort by construction: the pre-scan stops walking once every dirty
+   * flag is set, so a write after that point is not recorded. Missing a name
+   * only DECLINES the chain consult, which is the safe direction.
+   */
+  protoNamedWrittenMembers: Set<string>;
+  /**
    * (#2175 V2-S3b-1) Set by the same pre-scan when a branded builtin's
    * `.prototype` can reach the DYNAMIC reader as a runtime value — i.e. a
    * `<Builtin>.prototype` read in VALUE position (bound to a variable, passed
@@ -1594,6 +1658,34 @@ export interface CodegenContext {
    * runtime guard. Per-MODULE over-approximation; see #4159 for the rationale.
    */
   vecAccessorDescriptorDirty: boolean;
+  /**
+   * (#4504) A descriptor that can affect inherited [[Set]] may exist in this
+   * module: an accessor, a non-writable data descriptor, an accessor
+   * declaration, or dynamically introduced code.  This is deliberately
+   * separate from `vecAccessorDescriptorDirty`: the latter protects typed vec
+   * value write-back and can stay clear for a provably data descriptor whose
+   * `writable` bit is false, while that descriptor is still load-bearing for
+   * the ordinary inherited-set decision.  Clear keeps the resolver and its
+   * result channel out of flag-clear modules.
+   */
+  inheritedSetDescriptorDirty: boolean;
+  /**
+   * (#4602) Property KEYS a #4504-relevant descriptor could be installed
+   * under, when every trigger in the module names its key statically (an
+   * accessor declaration's literal name, a `defineProperty` call with a
+   * literal key and non-provably-writable descriptor, a literal
+   * `defineProperties`/`create` bag entry, a literal `__defineGetter__`/
+   * `__defineSetter__` key).  A trigger whose key cannot be resolved
+   * statically (freeze, a captured define builtin, a computed name, dynamic
+   * code) sets `inheritedSetDescriptorDirty` instead, which supersedes this
+   * set.  Consumers with a static property name gate per key via
+   * `inheritedSetAffectsKey`; key-dynamic runtime machinery activates on
+   * `inheritedSetAnyDirty`.  A clean key compiles byte-identical to a
+   * flag-clear module — that is the whole point: one accessor declaration in
+   * a 226KB bundle must not demote every unrelated member write (measured
+   * ~1.7x on acorn standalone, #4602).
+   */
+  inheritedSetDirtyKeys: Set<string>;
   /**
    * (#4222) The module contains a `delete <elementAccess>`, so some array index
    * may be semantically ABSENT while its dense backing slot still holds a
@@ -1876,6 +1968,31 @@ export interface CodegenContext {
    */
   closurePropHeadGlobalIdx?: number;
   /**
+   * (#4637 A1) Set when `ensureObjectRuntime` reserved the function-value
+   * proto-view helpers (`__proto_from_function`, `__function_from_proto`) — the
+   * bag↔callable identity map that lets a FUNCTION sit in a `[[Prototype]]`
+   * position that `(ref null $Object)` cannot hold. Same reserve-then-fill
+   * discipline as `closurePropHelpersReserved`; standalone/wasi only, so the
+   * gc/host path stays byte-identical.
+   */
+  protoFunctionValueReserved?: boolean;
+  /**
+   * (#4637 A1) Type index of the `$ProtoFnEntry` linked-list node
+   * `{ next: (ref null $ProtoFnEntry); bag: (ref null $Object); fn: externref }`.
+   */
+  protoFnEntryTypeIdx?: number;
+  /**
+   * (#4637 A1) Global index of `$__proto_fn_head`
+   * (`(mut ref null $ProtoFnEntry)`, init `ref.null`).
+   */
+  protoFnHeadGlobalIdx?: number;
+  /**
+   * (#4637 A1) The `$Object` type index the proto-view helpers were reserved
+   * against, threaded from `ensureObjectRuntime` so the FINALIZE fill does not
+   * keep a second copy of that layout fact.
+   */
+  protoFnObjectTypeIdx?: number;
+  /**
    * (#3537) Set when `ensureObjectRuntime` reserved the array ($Vec) expando
    * side-table helpers (`__is_vec_prop_carrier`, `__vec_bag_lookup`,
    * `__vec_bag_ensure`, `__vec_prop_get`, `__vec_prop_set`) — the ARRAY arm of
@@ -1907,6 +2024,12 @@ export interface CodegenContext {
   protoIndexStoreReserved?: boolean;
   /** (#4160) Set once `fillProtoIndexStore` has run (idempotency latch). */
   protoIndexStoreFilled?: boolean;
+  /** (#4504) Mutable result channel for one completed native [[Set]] attempt:
+   * 0 = unadmitted, 1 = success/handled, 2 = refused.  `Reflect.set` exposes
+   * it as a boolean while strict assignment distinguishes refusal from an
+   * unadmitted host boundary.  Undefined when the descriptor resolver is not
+   * emitted. */
+  externSetResultGlobalIdx?: number;
   /** (#4160) Global index of `__protoidx_obj_companion` (`(mut externref)`). */
   protoIndexObjCompanionGlobalIdx?: number;
   /** (#4160) Global index of `__protoidx_arr_companion` (`(mut externref)`). */
@@ -2564,6 +2687,9 @@ export interface CodegenContext {
   /** Deferred `export default <variable>` where variable is a module global (#1108).
    *  Resolved after all collectDeclarations calls when global indices are final. */
   deferredDefaultGlobalExport?: string;
+  /** Synthetic globals for entry-file `export default <expression>` exports.
+   *  The module-global indices are resolved after late imports are complete. */
+  deferredDefaultExpressionExports?: Set<string>;
   /** Runtime storage for `export default <expression>` in linked modules.
    * Identifier/function defaults use their existing binding; expression
    * defaults need a stable cell that default imports can alias. */
@@ -2655,10 +2781,29 @@ export interface CodegenContext {
   classTagCounter: number;
   /** Map from class name → unique tag value (for instanceof support) */
   classTagMap: Map<string, number>;
+  /**
+   * (#4618) Per-class record of the capture globals its member bodies were
+   * compiled against. Module-init compiles twice (discovery + final emission)
+   * and `capturedGlobals` is CLEARED between passes, but class member bodies
+   * compile only ONCE — permanently bound to pass-1 globals. The re-compile's
+   * early-return re-binds these exact globals into `capturedGlobals` (and
+   * syncs the frame's fresh local into them) so frame reads and method writes
+   * share one store. Keyed by resolved class name → captured name →
+   * the pass-1 global index (+ widened flag).
+   */
+  classMemberCaptureGlobals?: Map<ts.Node, Map<string, { globalIdx: number; widened: boolean }>>;
+  /**
+   * (#4618) Which FunctionContext value-promoted each `capturedGlobals` name.
+   * `capturedGlobals` is name-keyed and not cleared between sibling callback
+   * bodies of one pass, so a same-named binding in a DIFFERENT function must
+   * mint a fresh global instead of silently reusing the sibling's. Entries
+   * are advisory (owners may be dead fctxs); compared by identity only.
+   */
+  capturedGlobalsOwner?: Map<string, FunctionContext>;
   /** Map from TS symbol name → synthetic class name for class expressions */
   classExprNameMap: Map<string, string>;
-  /** Map from ClassExpression AST node → synthetic class name */
-  anonClassExprNames: Map<ts.ClassExpression, string>;
+  /** Map from class AST node → synthetic class name (expressions and nested declarations). */
+  anonClassExprNames: Map<ts.ClassExpression | ts.ClassDeclaration, string>;
   /** Map from function/class identifier → its ES-spec .name string value */
   functionNameMap: Map<string, string>;
   /** Whether to attach source positions for source map generation */
@@ -3173,6 +3318,14 @@ export interface CodegenContext {
      * the trampoline's null-`this` arm throws a catchable TypeError.
      */
     methodUsesThis?: boolean;
+    /**
+     * (#4630) The wrapper's declared result was PROMOTED to `externref` for a
+     * parked async function DECLARATION whose own wasm result is void — see
+     * `parkedAsyncDeclarationWrapsPromise`. The finalize rebuild must settle the
+     * completion value through `Promise.resolve` instead of falling through with
+     * an empty stack (which would not validate against the promoted result).
+     */
+    eagerAsyncPromiseWrap?: boolean;
   }[];
   /** True if Math.clz32 or Math.imul is used — requires ToUint32 Wasm helper */
   needsToUint32: boolean;
@@ -3323,6 +3476,14 @@ export interface CodegenContext {
    *  later reads. Mirrors `methodClosureGlobals` (#1394) for the function-decl
    *  case where the same JS identifier is read as a value at multiple sites. */
   funcClosureGlobals: Map<string, number>;
+  /** (#4530) Canonical singleton KEY per target function index. An import
+   *  alias (`import cx from 'clsx'` → funcMap "cx" → clsx's funcIdx) reads the
+   *  same function value under a different name; keying the singleton pair by
+   *  name alone minted a SECOND trampoline/cache for the alias, breaking
+   *  `default === named` identity and giving the alias a wrapper the call-site
+   *  dispatch candidates never match. First name to materialize a funcIdx
+   *  claims the key; later aliases reuse it. */
+  funcClosureSingletonKeyByFuncIdx: Map<number, string>;
   /** Whether targeting WASI */
   wasi: boolean;
   /** Whether Node-compatible ambient globals such as `global` are enabled. */
@@ -3862,6 +4023,26 @@ export interface CodegenContext {
       ctorFuncName: string;
       /** Exact leading-capture ABI used when the synthesized constructor was minted. */
       captureLayout: import("../fnctor-constructor-identity.js").FnctorCaptureLayout;
+      /**
+       * (#2071) The synthesized ctor was minted with an EXTERNREF result (its
+       * body may `return` a foreign object, so §10.2.1.3 step 13 is resolved
+       * at runtime via `emitConstructReturnSelect`). Every `new` site of this
+       * fnctor — builder and cache-hit alike — must report the externref
+       * result type; reporting the struct type against a widened ctor is a
+       * Wasm type error at the call site. Standalone/WASI only; absent/false
+       * keeps the historical `(ref $Struct)` ABI byte-identically.
+       */
+      resultIsExtern?: boolean;
+      /**
+       * (fnctor-ctor-arguments.ts) The synthesized ctor materializes an
+       * `arguments` object, so its call sites must publish over-supplied
+       * arguments through `__extras_argv`/`__argc` instead of dropping them.
+       * Cached with the ctor because the CACHE-HIT arm emits the call site
+       * without ever seeing the declaration: a second `new F(…)` that forgot
+       * this fact silently passed the builder's protocol-speaking callee a
+       * stale/empty extras vector.
+       */
+      readsArguments?: boolean;
     }
   >;
   /**

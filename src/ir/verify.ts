@@ -20,15 +20,29 @@
 // On failure, returns a list of `IrVerifyError`s rather than throwing, so
 // callers can decide whether to bail or fall back to the legacy path.
 
-import type { IrBlock, IrFunction, IrInstr, IrLabelId, IrType, IrValueId } from "./nodes.js";
+import type { IrBlock, IrFunction, IrInstr, IrLabelId, IrModuleDeclarations, IrType, IrValueId } from "./nodes.js";
 import { asVal, forEachInstrDeep, forEachNestedBuffer, irTypeEquals } from "./nodes.js";
+// #4605 — the module-level declared-type tables and the rules that read them.
+// `verifyIrFunction` stays standalone: the tables arrive as an optional
+// parameter, and their absence is always a conservative skip.
+import { declaredCallProblems, declaredGlobalProblem, irBindingKey } from "./declared-types.js";
 import type { ValType } from "./types.js";
-// #2949 slice 1 — canonical JsTag policy for the dynamic-operand rules
-// (payload-kind consistency of unbox/tag.test on `dynamic` values). Imported
-// from the dependency-free leaf, so this adds no codegen module-graph pull.
-import { JsTag, jsTagUnboxKind } from "./js-tag.js";
+// #2949 slice 1 / #3954 phase 1 — the dynamic-operand rules (payload-kind
+// consistency of unbox/tag.test) are DOMAIN questions, not ECMAScript ones:
+// "does this partition have a payload, and what shape is it?". The verifier
+// therefore asks a `TagDomain` rather than reading `jsTagUnboxKind`/`JsTag[…]`
+// directly.
+// #3954 phase 3 (W3) — WHICH domain is now a PARAMETER, threaded from
+// `verifyIrFunction` down to the per-instruction rules, defaulting to
+// `defaultTagDomain()` so every existing caller is unchanged. Before this slice
+// the domain was reached as a global at the point of use, so there was no
+// channel at all by which the verifier could be told that the IR in front of it
+// belongs to another producer.
+import { defaultTagDomain } from "./producer.js";
+import type { TagDomain } from "./tag-domain.js";
 import { verifyIrIntrinsicInstruction } from "./intrinsic-support.js";
 import { verifyIrAsyncPlan } from "./async-plan.js";
+import { IR_STRING_REPEAT_FN } from "./string-runtime.js";
 // #4418 — shared, cached dominance analysis (formerly a private set-based
 // computation in this file, #1850).
 import { crossCheckDominance, dominanceOf, type DominanceInfo } from "./analysis/dominance.js";
@@ -291,6 +305,7 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
           return;
         } else if (
           (nested.kind === "string.concat" ||
+            nested.kind === "string.repeat" ||
             nested.kind === "string.eq" ||
             nested.kind === "string.char_at" ||
             nested.kind === "string.char_code_at" ||
@@ -318,7 +333,31 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
   }
 }
 
-export function verifyIrFunction(func: IrFunction): IrVerifyError[] {
+/**
+ * Structurally verify one `IrFunction`.
+ *
+ * `domain` (#3954 phase 3, W3) is the {@link TagDomain} the function's
+ * `dynamic` values are interpreted against — it decides which partitions exist,
+ * which of them are payload-less singletons (rule R2) and what carrier shape
+ * each payload has (the `unbox`/`tag.test` `tag` consistency rule). It defaults
+ * to the producer axis's default domain, so callers that do not care are
+ * unchanged; a non-JS producer passes its own and the verifier stops answering
+ * from ECMAScript.
+ *
+ * `declarations` (#4605) is the OPTIONAL module-level declared-type table —
+ * `IrModule.declaredSignatures` / `.declaredGlobals`, keyed by
+ * {@link irBindingKey}. When a binding has an entry, the `call` / `global.get`
+ * / `global.set` rules check each reference against the DECLARATION, which
+ * catches the shape intra-function coherence structurally cannot: ONE mistaken
+ * reference that is perfectly coherent with itself. When it is absent — the
+ * default, and every existing caller — the #4603 coherence behaviour is
+ * unchanged. Use {@link irModuleDeclarations} to derive it from an `IrModule`.
+ */
+export function verifyIrFunction(
+  func: IrFunction,
+  domain: TagDomain = defaultTagDomain(),
+  declarations?: IrModuleDeclarations,
+): IrVerifyError[] {
   const errors: IrVerifyError[] = [];
   const defs = new Set<IrValueId>();
 
@@ -390,7 +429,7 @@ export function verifyIrFunction(func: IrFunction): IrVerifyError[] {
   const typeOf = buildDefTypeMap(func);
 
   for (const block of func.blocks) {
-    verifyBlock(func, block, defs, errors, defBlock, dominance);
+    verifyBlock(func, block, defs, errors, defBlock, dominance, domain);
   }
 
   // Check branch-arg arity AND types against target block signatures (#1924).
@@ -408,7 +447,7 @@ export function verifyIrFunction(func: IrFunction): IrVerifyError[] {
   }
 
   // #1924 — per-instruction operand / result / slot type rules.
-  verifyInstrTypeRules(func, typeOf, errors);
+  verifyInstrTypeRules(func, typeOf, errors, declarations);
 
   // #1798 — defense-in-depth: every `return` terminator's value types must be
   // Wasm-assignment-compatible with the function's declared `resultTypes`.
@@ -557,6 +596,8 @@ function verifyInstrStructure(
   block: IrBlock,
   localDefs: ReadonlySet<IrValueId>,
   errors: IrVerifyError[],
+  // #3954 phase 3 (W3) — see `verifyIrFunction`.
+  domain: TagDomain,
 ): void {
   // The lowerer emits an unconditional `i32.eqz` on a loop `condValue`, so
   // a non-i32 cond produces invalid Wasm that bricks the whole module.
@@ -655,22 +696,29 @@ function verifyInstrStructure(
   if (instr.kind === "unbox" || instr.kind === "tag.test") {
     const operandIr = operandIrType(func, block, instr.value, localDefs);
     if (operandIr && operandIr.kind === "dynamic") {
-      // #2949 R2/R3 — dynamic operands discriminate on the JS partition,
-      // so `jsTag` is REQUIRED (the ValType `tag` cannot distinguish
+      // #2949 R2/R3 — dynamic operands discriminate on the domain partition,
+      // so `tagId` is REQUIRED (the ValType `tag` cannot distinguish
       // e.g. String from Object — both are reference-shaped).
-      if (instr.jsTag === undefined) {
+      if (instr.tagId === undefined) {
         errors.push({
-          message: `${instr.kind} on a dynamic operand requires jsTag (#2949)`,
+          message: `${instr.kind} on a dynamic operand requires tagId (#2949)`,
           func: func.name,
           block: block.id as number,
         });
       } else {
-        const payload = jsTagUnboxKind(instr.jsTag);
-        // R2 — Null/Undefined are singleton partitions with no payload:
-        // unboxing them is invalid (identity is observed via tag.test).
+        // #3954 phase 3 (W3) — `domain` is the caller's, not a global. Note it
+        // is still an ERROR (thrown by `nameOf`) to hand a partition from one
+        // domain to a verifier holding another: that is a producer bug, and
+        // the loud failure is the point.
+        const tagId = instr.tagId;
+        const tagName = domain.nameOf(tagId);
+        const payload = domain.carrierKindOf(tagId);
+        // R2 — a payload-less SINGLETON partition (ECMAScript: Null /
+        // Undefined) cannot be unboxed; identity is observed via tag.test.
+        // Which partitions those are is the domain's answer, not ours.
         if (instr.kind === "unbox" && payload === null) {
           errors.push({
-            message: `unbox with payload-less JsTag ${JsTag[instr.jsTag]} is invalid — use tag.test (#2949)`,
+            message: `unbox with payload-less partition ${tagName} is invalid — use tag.test (#2949)`,
             func: func.name,
             block: block.id as number,
           });
@@ -691,7 +739,7 @@ function verifyInstrStructure(
           const consistent = payload === "ref" ? refShaped : k === payload;
           if (!consistent) {
             errors.push({
-              message: `${instr.kind} tag ${k} is inconsistent with jsTag ${JsTag[instr.jsTag]} (payload kind ${payload}) (#2949)`,
+              message: `${instr.kind} tag ${k} is inconsistent with partition ${tagName} (payload kind ${payload}) (#2949)`,
               func: func.name,
               block: block.id as number,
             });
@@ -707,7 +755,7 @@ function verifyInstrStructure(
     } else if (operandIr) {
       // Union operand (V1) — the ValType `tag` is REQUIRED (#2949 made
       // the field optional on the node because dynamic operands use
-      // `jsTag` instead) and must name a member of the union.
+      // `tagId` instead) and must name a member of the union.
       if (!instr.tag) {
         errors.push({
           message: `${instr.kind} on a union operand requires a ValType tag`,
@@ -833,6 +881,9 @@ function verifyBlock(
   errors: IrVerifyError[],
   defBlock: ReadonlyMap<IrValueId, number> | null,
   dominance: DominanceInfo | null,
+  // #3954 phase 3 (W3) — the tag domain this IR belongs to, threaded from
+  // `verifyIrFunction` rather than reached as a global at the point of use.
+  domain: TagDomain,
 ): void {
   const here = block.id as number;
   // #1850 — cross-block dominance: a use whose value is defined in a *different*
@@ -965,7 +1016,7 @@ function verifyBlock(
       // Per-instruction structural (type-system) rules — extracted so the
       // scope walk stays readable (#2952 slice 4; the checks need only the
       // instr + operand types, none of the walk state).
-      verifyInstrStructure(instr, func, block, localDefs, errors);
+      verifyInstrStructure(instr, func, block, localDefs, errors, domain);
 
       if (instr.result !== null) {
         if (defs.has(instr.result)) {
@@ -1068,6 +1119,8 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
     case "string.concat":
     case "string.eq":
       return [instr.lhs, instr.rhs];
+    case "string.repeat":
+      return [instr.value, instr.count];
     case "string.len":
       return [instr.value];
     case "string.char_at":
@@ -1215,6 +1268,24 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
     // (#2856) early.return — the optional return value is a direct use.
     case "early.return":
       return instr.value !== null ? [instr.value] : [];
+    // (#4070) Exhaustiveness gate. A new IR instruction kind added without a
+    // case here is a COMPILE error at this line, not a runtime surprise at
+    // claim time. The runtime arm is deliberately a throw rather than `[]`:
+    // under-reporting an instruction's uses makes the verifier silently pass
+    // an instruction it cannot see, which is the unsound direction for a
+    // detector (it would report "nothing wrong" precisely when it cannot look).
+    default: {
+      const _exhaustive: never = instr;
+      void _exhaustive;
+      // invariant (producer-promise): the IrInstr union and this switch are
+      // kept in agreement by the `never` assignment above, so reaching here
+      // means a caller fabricated an instruction outside the union. Per #4035
+      // /#4502 a bare `Error` classifies as `unexpected-internal-throw` (a hard
+      // error), which is correct — this is not a capability gap to demote.
+      throw new Error(
+        `ir/verify: collectUses has no case for IR instruction kind ${(instr as { readonly kind: string }).kind}`,
+      );
+    }
   }
 }
 
@@ -1475,10 +1546,678 @@ function unopOperandKind(op: import("./nodes.js").IrUnop): ValType["kind"] | nul
 }
 
 /**
+ * (#4603) The Wasm scalar kind a `const` literal materializes, or `null` when
+ * the literal is reference-shaped and carries its own IrType.
+ *
+ * Derived from `emitConstInstr` in `lower.ts`, the single const-lowering
+ * implementation: `bool` pushes `i32.const 0/1`, so its carrier is `i32`, not
+ * a distinct Wasm type. `null` carries an explicit `ty` and `undefined` is
+ * never materialized as a value by Phase 1 lowering, so neither constrains a
+ * scalar `resultType`.
+ */
+function constResultKind(v: import("./nodes.js").IrConst): ValType["kind"] | null {
+  switch (v.kind) {
+    case "i32":
+      return "i32";
+    case "i64":
+      return "i64";
+    case "f32":
+      return "f32";
+    case "f64":
+      return "f64";
+    case "bool":
+      // `emitConstInstr` lowers bool to `i32.const` — the boolean brand is a
+      // value-domain fact on top of the same i32 carrier (`boolean-brand.ts`).
+      return "i32";
+    default:
+      return null;
+  }
+}
+
+/**
+ * (#4603) The verifier's local alias for the shared structural binding key.
+ * `declared-types.ts` owns the one implementation (#4605) — the module-level
+ * declaration tables are keyed by exactly this string, so producer and
+ * verifier must never grow a second key function.
+ */
+const bindingKey = irBindingKey;
+
+/**
+ * Per-kind type-rule coverage status (#4523). `"checked"` means `checkInstr`
+ * below has a `case` arm implementing a real type rule for that kind; a
+ * `{ skip }` entry records WHY the kind has no rule *in `checkInstr`*, using
+ * one of five categories (see `TYPE_RULE_CATEGORIES`).
+ *
+ * This is a `Record` over the `IrInstr["kind"]` union ON PURPOSE — it is the
+ * compile-time half of the hybrid policy decided in #4523:
+ *
+ *   - a NEW `IrInstr` kind fails `pnpm run typecheck` until its author
+ *     classifies it here (opt-out for new kinds), and
+ *   - DELETING an existing `checkInstr` case makes the instr fall through to
+ *     the `default:` arm, which sees `"checked"` and pushes a verifier error
+ *     (loud failure for rule removal), and
+ *   - the 62 non-`"checked"` kinds stay an explicit, reasoned baseline rather
+ *     than 62 empty `case` arms (opt-in stays for the legacy set).
+ *
+ * `rule-worth-adding:` IS the roadmap denominator — those are the kinds with
+ * NO type rule anywhere in this file today and a real, derivable one available
+ * from data already on the instruction.
+ *
+ * Keep this map adjacent to `checkInstr`: they are two halves of one contract.
+ */
+export type TypeRuleStatus = "checked" | { readonly skip: string };
+
+/**
+ * The five triage categories (#4523). A skip reason MUST start with one of
+ * these followed by `": "` — `typeRuleCategoryOf` parses the prefix and the
+ * coverage test pins the per-category counts.
+ *
+ *   - `structural`        — no typed value operands at all (labels, buffers,
+ *                           literals); the def-use/scope walk is already total.
+ *   - `checked-elsewhere` — a real type rule for this kind already runs in
+ *                           this file, just not inside `checkInstr`.
+ *   - `resolver-typed`    — the operand/result carrier is chosen at lowering
+ *                           from data NOT on the instruction; nothing for the
+ *                           mid-end to check.
+ *   - `dynamic-by-design` — operates on boxed/host values that carry no
+ *                           static type constraint.
+ *   - `rule-worth-adding` — no rule today, a real one is derivable. Roadmap.
+ */
+export const TYPE_RULE_CATEGORIES = [
+  "structural",
+  "checked-elsewhere",
+  "resolver-typed",
+  "dynamic-by-design",
+  "rule-worth-adding",
+] as const;
+
+export type TypeRuleCategory = (typeof TYPE_RULE_CATEGORIES)[number];
+
+/** Parse the category prefix off a `{ skip }` reason. `"checked"` → null. */
+export function typeRuleCategoryOf(status: TypeRuleStatus): TypeRuleCategory | null {
+  if (status === "checked") return null;
+  const head = status.skip.slice(0, status.skip.indexOf(":"));
+  return (TYPE_RULE_CATEGORIES as readonly string[]).includes(head) ? (head as TypeRuleCategory) : null;
+}
+
+export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
+  // --- checked here (33 — 16 from #4523, +16 from #4603, + repeat) --------
+  binary: "checked",
+  intrinsic: "checked",
+  "slot.read": "checked",
+  "slot.write": "checked",
+  "string.char_at": "checked",
+  "string.char_code_at": "checked",
+  "string.concat": "checked",
+  "string.repeat": "checked",
+  "string.const": "checked",
+  "string.eq": "checked",
+  "string.len": "checked",
+  unary: "checked",
+  "vec.get": "checked",
+  "vec.len": "checked",
+  "vec.new_fixed": "checked",
+  "vec.set": "checked",
+  "vec.set_length": "checked",
+
+  // --- checked-elsewhere (13) --------------------------------------------
+  // `verifyInstrStructure` owns these: it needs `operandIrType` (a whole-
+  // function scan) plus the block/localDefs walk state, which `checkInstr`
+  // does not have. Re-implementing them here would duplicate, not add.
+  box: { skip: "checked-elsewhere: union-membership + no-re-box rules in verifyInstrStructure (#2949 R1)" },
+  unbox: {
+    skip: "checked-elsewhere: dynamic-operand tagId + payload-kind rules in verifyInstrStructure (#2949 R2/R3)",
+  },
+  "tag.test": { skip: "checked-elsewhere: shares unbox's dynamic-operand tagId rules in verifyInstrStructure (#2949)" },
+  "dyn.truthy": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#2949 S5.1)" },
+  "dyn.to_number": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#2949 S5.3)" },
+  "dyn.eq": { skip: "checked-elsewhere: both-operands-dynamic rule in verifyInstrStructure (#2949 S5.2)" },
+  "dyn.member_get": { skip: "checked-elsewhere: recv/key/result all-dynamic rules in verifyInstrStructure (#3053 U1)" },
+  "dyn.member_set": {
+    skip: "checked-elsewhere: recv/key/value dynamic + void-result rules in verifyInstrStructure (#3795)",
+  },
+  "while.loop": { skip: "checked-elsewhere: condValue-must-be-i32 rule in verifyInstrStructure (#1980)" },
+  "for.loop": { skip: "checked-elsewhere: condValue-must-be-i32 rule in verifyInstrStructure (#1980)" },
+  "if.stmt": { skip: "checked-elsewhere: cond-must-be-i32 rule in verifyInstrStructure (#2952 slice 2)" },
+  switch: {
+    skip: "checked-elsewhere: disc i32/f64 + parallel-arrays + single-default in verifyInstrStructure; discSlot bound is a residual gap",
+  },
+
+  // --- structural (5) ----------------------------------------------------
+  // No typed value operands whatsoever — the def-use walk and the label-scope
+  // walk are already total over these, so a type rule has nothing to bind to.
+  try: { skip: "structural: buffers only; payloadSlot bound is a residual gap" },
+  "br.label": {
+    skip: "structural: label + mode literals, no value operands; label binding enforced in the scope walk (#2952 slice 2)",
+  },
+  "labeled.block": { skip: "structural: label + body buffer, no value operands" },
+  "gen.epilogue": { skip: "structural: no value operands; only an optional provider ref" },
+  "extern.regex": { skip: "structural: pattern/flags are string literals, no value operands" },
+
+  // --- resolver-typed (23) -----------------------------------------------
+  // The operand/result carrier is decided at lowering from data that is NOT
+  // on the instruction (a shape, a signature, an iterator protocol, the CPS
+  // transform). The mid-end cannot derive the expected type to compare against.
+  "raw.wasm": { skip: "resolver-typed: opaque backend op sequence; only stackDelta is mid-end-visible" },
+  "object.get": { skip: "resolver-typed: field type comes from the receiver's shape at lowering, not from the instr" },
+  "object.set": { skip: "resolver-typed: field type comes from the receiver's shape at lowering, not from the instr" },
+  "closure.cap": { skip: "resolver-typed: capture slot type comes from the closure signature at lowering" },
+  "closure.call": { skip: "resolver-typed: callee signature is resolved from the closure value at lowering" },
+  "refcell.new": { skip: "resolver-typed: cell struct type is allocated by the resolver at lowering" },
+  "refcell.get": { skip: "resolver-typed: payload type comes from the cell's resolver-allocated struct" },
+  "refcell.set": { skip: "resolver-typed: payload type comes from the cell's resolver-allocated struct" },
+  "class.super_call": { skip: "resolver-typed: method signature resolved from parentShape + methodName at lowering" },
+  "class.get": { skip: "resolver-typed: field type comes from the receiver's class shape at lowering" },
+  "class.set": { skip: "resolver-typed: field type comes from the receiver's class shape at lowering" },
+  "class.call": { skip: "resolver-typed: method signature resolved from the receiver's shape at lowering" },
+  "class.static_call": { skip: "resolver-typed: static method signature resolved from shape + methodName at lowering" },
+  "iter.new": { skip: "resolver-typed: iterator carrier chosen by the iteration-protocol lowering" },
+  "iter.next": { skip: "resolver-typed: result object carrier chosen by the iteration-protocol lowering" },
+  "iter.value": { skip: "resolver-typed: yielded value type is whatever the iterator produces (boxed at lowering)" },
+  "iter.return": { skip: "resolver-typed: early-exit protocol call, carrier chosen at lowering" },
+  "gen.push": { skip: "resolver-typed: queue element carrier chosen by the generator lowering" },
+  "gen.yieldStar": { skip: "resolver-typed: delegation carrier chosen by the generator lowering" },
+  "gen.setReturn": { skip: "resolver-typed: return-slot carrier chosen by the generator lowering" },
+  await: { skip: "resolver-typed: #1373 Phase B is type-only; the CPS transform picks the carrier" },
+  "async.return": { skip: "resolver-typed: #1373 Phase B is type-only; the CPS transform picks the carrier" },
+  "async.throw": { skip: "resolver-typed: #1373 Phase B is type-only; the CPS transform picks the carrier" },
+
+  // --- dynamic-by-design (5) ---------------------------------------------
+  // Boxed / host values that carry no static type constraint to check.
+  throw: { skip: "dynamic-by-design: the thrown value is any JS value on the boxed carrier" },
+  "extern.new": {
+    skip: "dynamic-by-design: host constructor args are externref-boxed, no static arity/type available",
+  },
+  "extern.call": { skip: "dynamic-by-design: host method args are externref-boxed, no static signature available" },
+  "extern.prop": { skip: "dynamic-by-design: host property read, result is externref by construction" },
+  "extern.propSet": { skip: "dynamic-by-design: host property write, value is externref-boxed" },
+
+  // --- #4523's rule-worth-adding roadmap, retired by #4603 ---------------
+  // 16 of the 17 kinds now carry a real rule in `checkInstr`. The 17th
+  // (`early.return`) turned out to be checked already — see below.
+  const: "checked",
+  call: "checked",
+  "global.get": "checked",
+  "global.set": "checked",
+  select: "checked",
+  if: "checked",
+  "object.new": "checked",
+  "closure.new": "checked",
+  "class.new": "checked",
+  "class.super_init": "checked",
+  "class.instanceof": "checked",
+  "coerce.to_externref": "checked",
+  "iter.done": "checked",
+  "forof.vec": "checked",
+  "forof.iter": "checked",
+  "forof.string": "checked",
+  // (#4603) NOT a rule-worth-adding gap — a MISCLASSIFICATION in #4523's
+  // triage. `verifyIrFunction` has walked every `early.return` since #2856
+  // and applied exactly the rule the old skip reason described (arity vs
+  // `func.resultTypes`, then `returnTypeAssignable`), carrying the `demote`
+  // flag that marks it a designed demote-to-legacy signal. Re-implementing it
+  // in `checkInstr` would double-report every violation and would lose the
+  // `demote` flag, promoting a demotion into a hard invariant.
+  "early.return": {
+    skip: "checked-elsewhere: arity + returnTypeAssignable vs func.resultTypes in verifyIrFunction, with the #1798/#2856 demote flag",
+  },
+};
+
+/**
+ * The `default:` arm's decision (#4523), factored out so a test can exercise
+ * every branch without a synthetic `IrInstr` and without weakening the
+ * production wiring — `checkInstr` calls exactly this function.
+ *
+ * Returns the verifier-error message, or `null` when reaching `default:` is
+ * legitimate (the kind carries a `{ skip }` reason).
+ *
+ * @param kind   the instruction kind that fell through to `default:`
+ * @param status that kind's entry in `TYPE_RULE_STATUS`
+ */
+export function typeRuleCoverageProblem(kind: IrInstr["kind"], status: TypeRuleStatus | undefined): string | null {
+  if (status === undefined) {
+    return `type-rule status missing for '${kind}' — TYPE_RULE_STATUS is out of sync with the IrInstr union (#4523)`;
+  }
+  if (status === "checked") {
+    return `type-rule missing for '${kind}' — TYPE_RULE_STATUS says checked, but no checkInstr case handled it (#4523)`;
+  }
+  return null;
+}
+
+/**
  * Walk every instruction (incl. nested buffers) once and apply the per-kind
  * type rules. `typeOf` is the precomputed def→IrType map.
+ *
+ * Coverage policy and the map that pins it: see `TYPE_RULE_STATUS` above.
  */
-function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, IrType>, errors: IrVerifyError[]): void {
+/**
+ * (#4603) Shared state for the rules that retired #4523's `rule-worth-adding`
+ * bucket. Most are pure per-instruction checks, but the three symbolic-ref
+ * kinds (`call`, `global.get`, `global.set`) compare each reference against
+ * the others in the SAME function, so the walk carries their state here.
+ */
+interface RoadmapRuleCtx {
+  readonly func: IrFunction;
+  readonly typeOf: ReadonlyMap<IrValueId, IrType>;
+  readonly errors: IrVerifyError[];
+  /** `func.slots.length` — the bound every `forof.*` slot index must respect. */
+  readonly numSlots: number;
+  readonly callSignatures: Map<string, { arity: number; resultKind: ValType["kind"] | null }>;
+  readonly globalKinds: Map<string, { kind: ValType["kind"]; via: "global.get" | "global.set" }>;
+  /**
+   * (#4605) The module's declared-type tables, when the caller supplied them.
+   * A binding WITH an entry is checked against the declaration; a binding
+   * without one falls back to #4603 coherence. Never a source of errors on its
+   * own — absence is always a conservative skip.
+   */
+  readonly declarations: IrModuleDeclarations | undefined;
+}
+
+/** Kinds whose rule is a fixed or self-declared carrier on the instr itself. */
+type RoadmapCarrierInstr = Extract<
+  IrInstr,
+  { kind: "const" | "select" | "if" | "class.instanceof" | "iter.done" | "coerce.to_externref" }
+>;
+
+/** Kinds whose rule compares a value LIST against a declaration on the instr. */
+type RoadmapAggregateInstr = Extract<
+  IrInstr,
+  {
+    kind: "object.new" | "closure.new" | "class.new" | "class.super_init" | "forof.vec" | "forof.iter" | "forof.string";
+  }
+>;
+
+/** Kinds that resolve through a symbolic ref with no declared type in scope. */
+type RoadmapSymbolicInstr = Extract<IrInstr, { kind: "call" | "global.get" | "global.set" }>;
+
+function roadmapError(ctx: RoadmapRuleCtx, blockId: number, message: string): void {
+  ctx.errors.push({ message, func: ctx.func.name, block: blockId });
+}
+
+/**
+ * (#4603) Dispatch for the 16 kinds this issue moved out of
+ * `rule-worth-adding`. Returns `true` when a rule owned the kind, so
+ * `checkInstr` can skip its own switch.
+ *
+ * These live outside `checkInstr` only to keep both functions inside the
+ * per-function LOC budget (#3399); the coverage contract is unchanged. Delete
+ * an arm below and the kind falls through to `checkInstr`'s `default:`, which
+ * still sees `"checked"` in `TYPE_RULE_STATUS` and reports the desync — the
+ * same loud failure #4523 wired up.
+ */
+function checkRoadmapRule(instr: IrInstr, blockId: number, ctx: RoadmapRuleCtx): boolean {
+  switch (instr.kind) {
+    case "const":
+    case "select":
+    case "if":
+    case "class.instanceof":
+    case "iter.done":
+    case "coerce.to_externref":
+      checkRoadmapCarrierRule(instr, blockId, ctx);
+      return true;
+    case "object.new":
+    case "closure.new":
+    case "class.new":
+    case "class.super_init":
+    case "forof.vec":
+    case "forof.iter":
+    case "forof.string":
+      checkRoadmapAggregateRule(instr, blockId, ctx);
+      return true;
+    case "call":
+    case "global.get":
+    case "global.set":
+      checkSymbolicRefCoherence(instr, blockId, ctx);
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** #4603 — fixed / self-declared result carriers, and the two cond rules. */
+function checkRoadmapCarrierRule(instr: RoadmapCarrierInstr, blockId: number, ctx: RoadmapRuleCtx): void {
+  const { typeOf } = ctx;
+  switch (instr.kind) {
+    case "const": {
+      // The literal decides the carrier; `resultType` only annotates it.
+      const want = constResultKind(instr.value);
+      if (want === null || instr.result === null || !instr.resultType) return;
+      const got = asVal(instr.resultType)?.kind ?? null;
+      if (got !== null && got !== want) {
+        roadmapError(ctx, blockId, `const ${instr.value.kind} resultType must be ${want}, got ${got}`);
+      }
+      return;
+    }
+    case "select": {
+      // Wasm `select` pops [whenTrue, whenFalse, cond] — cond is i32, and both
+      // arms must carry the same type as the pushed result.
+      const condKind = valKindOf(typeOf, instr.condition);
+      if (condKind !== null && condKind !== "i32") {
+        roadmapError(ctx, blockId, `select condition must be i32, got ${condKind}`);
+      }
+      checkArmsAgainstResult(
+        "select",
+        [
+          ["whenTrue", instr.whenTrue],
+          ["whenFalse", instr.whenFalse],
+        ],
+        instr.resultType,
+        blockId,
+        ctx,
+      );
+      return;
+    }
+    case "if": {
+      // (#1392) Short-circuiting value-producing if/else. `if.stmt` already has
+      // the cond rule in `verifyInstrStructure`; this is its value dual. Each
+      // arm carrier leaves the Wasm `if (result T)` block's value, so each must
+      // match `resultType`.
+      const condKind = valKindOf(typeOf, instr.cond);
+      if (condKind !== null && condKind !== "i32") {
+        roadmapError(ctx, blockId, `if cond must be i32, got ${condKind}`);
+      }
+      checkArmsAgainstResult(
+        "if",
+        [
+          ["thenValue", instr.thenValue],
+          ["elseValue", instr.elseValue],
+        ],
+        instr.resultType,
+        blockId,
+        ctx,
+      );
+      return;
+    }
+    case "class.instanceof":
+    case "iter.done": {
+      // Both produce a JS boolean on the i32 carrier — fixed, no lookup.
+      if (instr.result === null || !instr.resultType) return;
+      const got = asVal(instr.resultType)?.kind ?? null;
+      if (got !== null && got !== "i32") {
+        roadmapError(ctx, blockId, `${instr.kind} resultType must be i32 (bool), got ${got}`);
+      }
+      return;
+    }
+    default: {
+      // `coerce.to_externref` — normally externref. The explicit
+      // closure-boundary pack reuses this representation op with a `callable`
+      // resultType, which also lowers to externref, so both spellings are
+      // valid and nothing else is.
+      const rt = instr.resultType;
+      if (instr.result === null || rt === null || rt.kind === "callable") return;
+      const got = asVal(rt)?.kind ?? null;
+      if (got !== null && got !== "externref") {
+        roadmapError(ctx, blockId, `coerce.to_externref resultType must be externref or a callable, got ${got}`);
+      }
+    }
+  }
+}
+
+/** Shared by `select` / `if`: each arm carrier must match `resultType`. */
+function checkArmsAgainstResult(
+  kind: "select" | "if",
+  arms: readonly (readonly [string, IrValueId])[],
+  resultType: IrType | null,
+  blockId: number,
+  ctx: RoadmapRuleCtx,
+): void {
+  const want = resultType ? (asVal(resultType)?.kind ?? null) : null;
+  if (want === null) return;
+  for (const [label, v] of arms) {
+    const k = valKindOf(ctx.typeOf, v);
+    if (k !== null && k !== want) {
+      roadmapError(ctx, blockId, `${kind} ${label} must be ${want} (the resultType), got ${k} (value ${v})`);
+    }
+  }
+}
+
+/**
+ * #4603 — a value LIST checked against a declaration carried by the same
+ * instruction (a shape's fields / constructor params, a closure's capture
+ * field types), plus the `forof.*` loop-state slot bounds.
+ */
+function checkRoadmapAggregateRule(instr: RoadmapAggregateInstr, blockId: number, ctx: RoadmapRuleCtx): void {
+  switch (instr.kind) {
+    case "object.new": {
+      // `values` is parallel to `shape.fields` — both are ON the instr, so the
+      // arity and the per-field carrier are fully derivable here.
+      if (instr.values.length !== instr.shape.fields.length) {
+        roadmapError(
+          ctx,
+          blockId,
+          `object.new value count ${instr.values.length} != shape field count ${instr.shape.fields.length}`,
+        );
+        return;
+      }
+      for (let i = 0; i < instr.values.length; i++) {
+        const field = instr.shape.fields[i]!;
+        checkDeclaredCarrier(field.type, instr.values[i]!, `object.new value for field '${field.name}'`, blockId, ctx);
+      }
+      return;
+    }
+    case "closure.new": {
+      if (instr.captures.length !== instr.captureFieldTypes.length) {
+        roadmapError(
+          ctx,
+          blockId,
+          `closure.new capture count ${instr.captures.length} != captureFieldTypes count ${instr.captureFieldTypes.length}`,
+        );
+        return;
+      }
+      for (let i = 0; i < instr.captures.length; i++) {
+        checkDeclaredCarrier(instr.captureFieldTypes[i]!, instr.captures[i]!, `closure.new capture ${i}`, blockId, ctx);
+      }
+      return;
+    }
+    case "class.new":
+    case "class.super_init": {
+      // The constructor signature lives on the shape carried BY the instr
+      // (`shape` for a `new`, `parentShape` for a derived `super(...)`).
+      const shape = instr.kind === "class.new" ? instr.shape : instr.parentShape;
+      const declared = shape.constructorParams;
+      if (instr.args.length !== declared.length) {
+        roadmapError(
+          ctx,
+          blockId,
+          `${instr.kind} arg count ${instr.args.length} != constructor arity ${declared.length} (class ${shape.className})`,
+        );
+        return;
+      }
+      for (let i = 0; i < instr.args.length; i++) {
+        checkDeclaredCarrier(
+          declared[i]!,
+          instr.args[i]!,
+          `${instr.kind} arg ${i}`,
+          blockId,
+          ctx,
+          ` (class ${shape.className})`,
+        );
+      }
+      return;
+    }
+    default:
+      checkForOfSlots(instr, blockId, ctx);
+  }
+}
+
+/** One declared-vs-actual carrier comparison, skipped unless both are known. */
+function checkDeclaredCarrier(
+  declared: IrType,
+  value: IrValueId,
+  label: string,
+  blockId: number,
+  ctx: RoadmapRuleCtx,
+  suffix = "",
+): void {
+  const want = asVal(declared)?.kind ?? null;
+  const got = valKindOf(ctx.typeOf, value);
+  if (want !== null && got !== null && got !== want) {
+    roadmapError(ctx, blockId, `${label} must be ${want}, got ${got}${suffix}`);
+  }
+}
+
+/**
+ * #4603 — every `forof.*` pre-allocates its loop state in `func.slots`, and the
+ * lowerer emits a bare `local.get`/`local.set` per index, so an out-of-range
+ * index is invalid Wasm exactly like a bad `slot.read`.
+ */
+function checkForOfSlots(
+  instr: Extract<IrInstr, { kind: "forof.vec" | "forof.iter" | "forof.string" }>,
+  blockId: number,
+  ctx: RoadmapRuleCtx,
+): void {
+  const slots: readonly (readonly [string, number])[] =
+    instr.kind === "forof.vec"
+      ? [
+          ["counterSlot", instr.counterSlot],
+          ["lengthSlot", instr.lengthSlot],
+          ["vecSlot", instr.vecSlot],
+          ["dataSlot", instr.dataSlot],
+          ["elementSlot", instr.elementSlot],
+        ]
+      : instr.kind === "forof.string"
+        ? [
+            ["counterSlot", instr.counterSlot],
+            ["lengthSlot", instr.lengthSlot],
+            ["strSlot", instr.strSlot],
+            ["elementSlot", instr.elementSlot],
+          ]
+        : [
+            ["iterSlot", instr.iterSlot],
+            ["resultSlot", instr.resultSlot],
+            ["elementSlot", instr.elementSlot],
+          ];
+  for (const [label, idx] of slots) {
+    if (!Number.isSafeInteger(idx) || idx < 0 || idx >= ctx.numSlots) {
+      roadmapError(ctx, blockId, `${instr.kind} ${label} ${idx} out of bounds (function has ${ctx.numSlots} slots)`);
+    }
+  }
+  if (instr.kind !== "forof.vec") return;
+  // The element carrier is read straight out of the vec's backing array, so a
+  // divergent `elementType` mis-types every body use.
+  const vecType = ctx.typeOf.get(instr.vec);
+  if (vecType?.kind === "vec" && !irTypeEquals(instr.elementType, vecType.elementType)) {
+    roadmapError(
+      ctx,
+      blockId,
+      `forof.vec elementType ${describeKind(instr.elementType)} does not match the vec's element type ${describeKind(vecType.elementType)}`,
+    );
+  }
+}
+
+/**
+ * #4603 coherence, upgraded by #4605 to declaration-matching wherever the
+ * module supplies a declaration for the binding.
+ *
+ * The IR resolves globals and callables lazily through symbolic refs. When no
+ * declared-type table is in scope — the default for every single-function
+ * caller — the only derivable rule is that every reference to one binding
+ * inside one function must agree with the others, and a disagreement is a
+ * producer bug. That misses the most common defect shape: ONE mistaken
+ * reference, perfectly coherent with itself. `IrModule.declaredSignatures` /
+ * `.declaredGlobals` (#4605) close exactly that gap; a binding they do not
+ * mention keeps the coherence behaviour unchanged.
+ */
+function checkSymbolicRefCoherence(instr: RoadmapSymbolicInstr, blockId: number, ctx: RoadmapRuleCtx): void {
+  const key = bindingKey(instr.target.binding);
+  if (key === null) return; // malformed ref — `verifySymbolicReferences` owns it
+  if (instr.kind === "call") {
+    const resultKind = instr.resultType ? (asVal(instr.resultType)?.kind ?? null) : null;
+    const signature = ctx.declarations?.declaredSignatures?.get(key);
+    if (signature !== undefined) {
+      const want = signature.result ? (asVal(signature.result)?.kind ?? null) : null;
+      const args = instr.args.length;
+      for (const p of declaredCallProblems(instr.target.name, args, resultKind, signature, want)) {
+        roadmapError(ctx, blockId, p);
+      }
+      return;
+    }
+    const seen = ctx.callSignatures.get(key);
+    if (seen === undefined) {
+      ctx.callSignatures.set(key, { arity: instr.args.length, resultKind });
+      return;
+    }
+    if (seen.arity !== instr.args.length) {
+      roadmapError(
+        ctx,
+        blockId,
+        `call ${instr.target.name} arity ${instr.args.length} disagrees with ${seen.arity} used elsewhere in this function`,
+      );
+    }
+    if (seen.resultKind !== null && resultKind !== null && seen.resultKind !== resultKind) {
+      roadmapError(
+        ctx,
+        blockId,
+        `call ${instr.target.name} resultType ${resultKind} disagrees with ${seen.resultKind} used elsewhere in this function`,
+      );
+    }
+    return;
+  }
+  const observed =
+    instr.kind === "global.get"
+      ? instr.resultType
+        ? (asVal(instr.resultType)?.kind ?? null)
+        : null
+      : valKindOf(ctx.typeOf, instr.value);
+  if (observed === null) return;
+  const declaredType = ctx.declarations?.declaredGlobals?.get(key);
+  if (declaredType !== undefined) {
+    const problem = declaredGlobalProblem(instr.kind, instr.target.name, observed, asVal(declaredType)?.kind ?? null);
+    if (problem !== null) roadmapError(ctx, blockId, problem);
+    return;
+  }
+  const seen = ctx.globalKinds.get(key);
+  if (seen === undefined) {
+    ctx.globalKinds.set(key, { kind: observed, via: instr.kind });
+    return;
+  }
+  if (seen.kind !== observed) {
+    roadmapError(
+      ctx,
+      blockId,
+      `${instr.kind} ${instr.target.name} carrier ${observed} disagrees with ${seen.kind} used by ${seen.via} elsewhere in this function`,
+    );
+  }
+}
+
+/** Full typed contract for the throwing ECMAScript repeat instruction. */
+function checkStringRepeatTypeRule(
+  instr: Extract<IrInstr, { kind: "string.repeat" }>,
+  blockId: number,
+  ctx: RoadmapRuleCtx,
+): void {
+  if (instr.result === null || instr.resultType?.kind !== "string") {
+    roadmapError(ctx, blockId, "string.repeat must produce a string result");
+  }
+  if (instr.alloc === undefined) {
+    roadmapError(ctx, blockId, "string.repeat must carry a string allocation site");
+  }
+  const valueType = ctx.typeOf.get(instr.value);
+  if (valueType && valueType.kind !== "string") {
+    roadmapError(ctx, blockId, `string.repeat value must be string, got ${valueType.kind}`);
+  }
+  const countType = ctx.typeOf.get(instr.count);
+  const countKind = countType ? asVal(countType)?.kind : undefined;
+  if (countType && countKind !== "f64") {
+    roadmapError(ctx, blockId, `string.repeat count must be f64, got ${countKind ?? countType.kind}`);
+  }
+  if (!(["ascii", "utf8-guaranteed", "wtf16"] as readonly unknown[]).includes(instr.encodingEvidence)) {
+    roadmapError(ctx, blockId, `string.repeat has invalid encoding evidence ${String(instr.encodingEvidence)}`);
+  }
+  if (
+    instr.provider &&
+    (instr.provider.binding.kind !== "intrinsic" || instr.provider.binding.symbol !== IR_STRING_REPEAT_FN)
+  ) {
+    roadmapError(ctx, blockId, "string.repeat carries a non-canonical provider binding");
+  }
+}
+
+function verifyInstrTypeRules(
+  func: IrFunction,
+  typeOf: ReadonlyMap<IrValueId, IrType>,
+  errors: IrVerifyError[],
+  declarations?: IrModuleDeclarations,
+): void {
   const numSlots = func.slots?.length ?? 0;
 
   // #2949 R4 — a dynamic-typed value may only feed box/unbox/tag.test, moves
@@ -1490,7 +2229,24 @@ function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, I
   // kind rule below, so the dynamic case needs this explicit check.
   const isDynamicValue = (v: IrValueId): boolean => typeOf.get(v)?.kind === "dynamic";
 
+  // (#4603) The 16 kinds this issue moved out of `rule-worth-adding` are ruled
+  // by `checkRoadmapRule`. The context also carries the intra-function
+  // coherence state for the lazily-resolved symbolic refs: the first reference
+  // to a binding records its shape and every later one must agree (see
+  // `bindingKey` for why that — and not declaration-matching — is the
+  // derivable rule for `call` / `global.get` / `global.set`).
+  const roadmap: RoadmapRuleCtx = {
+    func,
+    typeOf,
+    errors,
+    numSlots,
+    callSignatures: new Map(),
+    globalKinds: new Map(),
+    declarations,
+  };
+
   const checkInstr = (instr: IrInstr, blockId: number): void => {
+    if (checkRoadmapRule(instr, blockId, roadmap)) return;
     switch (instr.kind) {
       case "intrinsic": {
         for (const message of verifyIrIntrinsicInstruction(instr, typeOf)) {
@@ -1612,6 +2368,10 @@ function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, I
         }
         break;
       }
+      case "string.repeat": {
+        checkStringRepeatTypeRule(instr, blockId, roadmap);
+        break;
+      }
       case "string.char_code_at": {
         if (instr.result !== null && instr.resultType) {
           const got = asVal(instr.resultType)?.kind ?? null;
@@ -1728,6 +2488,16 @@ function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, I
             block: blockId,
           });
         }
+        break;
+      }
+      // (#4523) Coverage backstop. `default:` fires exactly when NO case arm
+      // above matched, so a kind whose rule was deleted lands here while
+      // `TYPE_RULE_STATUS` still calls it "checked" — a desync the map alone
+      // cannot catch (the map stays type-correct). Valid IR never reaches an
+      // error here: every non-"checked" kind carries a `{ skip }` reason.
+      default: {
+        const message = typeRuleCoverageProblem(instr.kind, TYPE_RULE_STATUS[instr.kind]);
+        if (message !== null) errors.push({ message, func: func.name, block: blockId });
         break;
       }
     }

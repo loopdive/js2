@@ -10,10 +10,9 @@ import type { IrFunction } from "./nodes.js";
 import { IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import {
   derivePreparedComponentDependencies,
-  type PreparedClassAccessorWritebackEvidence,
-  type PreparedComponentClosureSupportEvidence,
   type PreparedComponentDependencyFailure,
   type PreparedComponentDependencyReport,
+  type PreparedInstructionSupportSidecars,
 } from "./prepared-component-dependencies.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program-abi.js";
 import type { Import } from "./types.js";
@@ -175,15 +174,15 @@ function planBlockingClassLayouts(
   return selected.size > 0;
 }
 
-export function sealDependencyCompletePreparedComponents(input: {
-  readonly ctx: CodegenContext;
-  readonly entries: readonly PreparedComponentArtifactEntry[];
-  readonly inventory: IrUnitInventory;
-  readonly closureSupport?: PreparedComponentClosureSupportEvidence;
-  readonly classAccessorWritebacks?: ReadonlyMap<IrUnitId, PreparedClassAccessorWritebackEvidence>;
-  readonly callableImports: ReadonlyMap<string, Import>;
-  readonly onSealFailure: (terminalUnitId: IrUnitId, error: IrUnsupportedError) => void;
-}): ReadonlyMap<IrUnitId, string> {
+export function sealDependencyCompletePreparedComponents(
+  input: PreparedInstructionSupportSidecars & {
+    readonly ctx: CodegenContext;
+    readonly entries: readonly PreparedComponentArtifactEntry[];
+    readonly inventory: IrUnitInventory;
+    readonly callableImports: ReadonlyMap<string, Import>;
+    readonly onSealFailure: (terminalUnitId: IrUnitId, error: IrUnsupportedError) => void;
+  },
+): ReadonlyMap<IrUnitId, string> {
   const { ctx, entries, inventory } = input;
   const session = ctx.programAbiSession;
   if (!session) {
@@ -245,6 +244,7 @@ export function sealDependencyCompletePreparedComponents(input: {
       ...(input.closureSupport ? { closureSupport: input.closureSupport } : {}),
       exceptionSupportPrepared: ctx.exnTagIdx >= 0,
       ...(input.classAccessorWritebacks ? { classAccessorWritebacks: input.classAccessorWritebacks } : {}),
+      ...(input.dynamicInstructionSupport ? { dynamicInstructionSupport: input.dynamicInstructionSupport } : {}),
       abi: {
         get: (id) => session.getDraft(id),
         bindingIdsForStructuralReference: (key) => session.bindingIdsForStructuralReference(key),
@@ -315,6 +315,25 @@ export function sealDependencyCompletePreparedComponents(input: {
     }
     report = derive(candidateTerminalUnitIds);
   }
+
+  // Numeric Promise boundary readers are declared before preparation, but
+  // `__unbox_number` becomes an owned support dependency only after the
+  // provider fixed point above. Pre-plan only these two already-published
+  // aliases when their exact callable binding is about to join a component.
+  const completeDependencyIds = new Set(
+    report.components.flatMap((component) =>
+      component.status === "complete" ? component.abiDependencies.map((dependency) => dependency.bindingId) : [],
+    ),
+  );
+  const numericPromiseBoundaryTargets = new Set<IrBindingId>();
+  for (const name of ["__typeof_number", "__unbox_number"] as const) {
+    if (!ctx.mod.exports.some((entry) => entry.name === name)) continue;
+    const index = ctx.funcMap.get(name);
+    const helper = index === undefined ? undefined : definedFuncAt(ctx, index);
+    const bindingId = helper ? session.locatorBindingId(helper) : undefined;
+    if (bindingId && completeDependencyIds.has(bindingId)) numericPromiseBoundaryTargets.add(bindingId);
+  }
+  ctx.programAbiExports?.planAliasesForTargets(numericPromiseBoundaryTargets);
 
   const componentIdByTerminalUnitId = new Map<IrUnitId, string>();
   for (const component of report.components) {

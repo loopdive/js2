@@ -116,7 +116,14 @@ export function sourceHasMethodOverride(ctx: CodegenContext, anchor: ts.Node, me
  * Non-identifier receivers answer `false` (nothing to match), which is the
  * conservative direction: the static arm stays.
  */
-export function sourceOverridesMethodOnReceiver(recvExpr: ts.Expression, methodName: string): boolean {
+export function sourceOverridesMethodOnReceiver(
+  recvExpr: ts.Expression,
+  methodName: string,
+  // (#4482) Optional: enables the CONSTRUCTED-INSTANCE half below, which needs
+  // to resolve `a` in `a.toString()` back to its `new A(…)` initializer. Absent
+  // ctx keeps the pre-existing binding-only behaviour exactly.
+  ctx?: CodegenContext,
+): boolean {
   if (!ts.isIdentifier(recvExpr)) return false;
   const recvName = recvExpr.text;
   const sf = recvExpr.getSourceFile();
@@ -160,5 +167,117 @@ export function sourceOverridesMethodOnReceiver(recvExpr: ts.Expression, methodN
     forEachChild(node, visit);
   }
   visit(sf);
-  return found;
+  if (found) return true;
+  return constructedInstanceInstallsMethod(recvExpr, methodName, ctx);
+}
+
+/**
+ * (#4482) The CONSTRUCTED-INSTANCE half of {@link sourceOverridesMethodOnReceiver}.
+ *
+ * A binding initialized from `new A(…)` acquires whatever `A`'s constructor
+ * installs on `this`, and the binding-name scan above cannot see it — the
+ * assignment's receiver is `this`, not the binding. So
+ *
+ *     function A(v){ this.value = v;
+ *                    this.toString = function(){ return this.value + ""; } }
+ *     new A(7).toString();      // must be "7"; answered "[object Object]"
+ *
+ * kept the static `Object.prototype.toString` arm and never saw the own slot —
+ * while `String(a)` and `"" + a` (which go through the reflective dispatcher)
+ * already answered `"7"`. Declining routes the direct call to that same
+ * dispatcher.
+ *
+ * Receiver-precise like its caller: the binding must resolve to ONE variable
+ * declaration whose initializer is `new <Id>(…)`, and the installing write must
+ * be DIRECTLY in that constructor's body (not inside a nested function, whose
+ * `this` is a different binding). A constructor that installs nothing keeps the
+ * static arm, so a module without this pattern compiles byte-identically.
+ */
+function constructedInstanceInstallsMethod(
+  recvExpr: ts.Identifier,
+  methodName: string,
+  ctx: CodegenContext | undefined,
+): boolean {
+  if (ctx === undefined) return false;
+  const binding = ctx.oracle.valueDeclarationOf(recvExpr);
+  if (binding === undefined || !ts.isVariableDeclaration(binding) || binding.initializer === undefined) return false;
+  const init = binding.initializer;
+  if (!ts.isNewExpression(init) || !ts.isIdentifier(init.expression)) return false;
+  const ctorDecl = ctx.oracle.valueDeclarationOf(init.expression);
+  if (ctorDecl === undefined) return false;
+  const body = ts.isFunctionDeclaration(ctorDecl)
+    ? ctorDecl.body
+    : ts.isVariableDeclaration(ctorDecl) &&
+        ctorDecl.initializer !== undefined &&
+        (ts.isFunctionExpression(ctorDecl.initializer) || ts.isArrowFunction(ctorDecl.initializer))
+      ? (ctorDecl.initializer.body as ts.Node | undefined)
+      : undefined;
+  if (body === undefined || !ts.isBlock(body)) return false;
+
+  let installs = false;
+  function visit(node: ts.Node): void {
+    if (installs) return;
+    // `this` inside a nested function is NOT the instance under construction.
+    if (node !== body && ts.isFunctionLike(node)) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      !ts.isPrivateIdentifier(node.left.name) &&
+      node.left.name.text === methodName &&
+      node.left.expression.kind === ts.SyntaxKind.ThisKeyword
+    ) {
+      installs = true;
+      return;
+    }
+    forEachChild(node, visit);
+  }
+  visit(body);
+  if (installs) return true;
+  return ctorPrototypeInstallsMethod(init.expression, methodName);
+}
+
+/**
+ * (#2875 b2) The PROTOTYPE-INSTALLED half of {@link constructedInstanceInstallsMethod}.
+ *
+ * `constructedInstanceInstallsMethod` only sees slots the constructor writes on
+ * `this`. The other ES5 way to give an instance a `toString` is the prototype:
+ *
+ *     function F(v){ this.value = v; }
+ *     F.prototype.toString = function(){ return this.value + ""; };
+ *     new F(7).toString();          // must be "7"
+ *
+ * — and that write's receiver is `F.prototype`, which neither the binding scan
+ * nor the `this` scan matches. So the caller kept the static
+ * `Object.prototype.toString` arm and answered "[object Object]".
+ *
+ * Matches a WHOLE-property write `<Ctor>.prototype.<methodName> = …` anywhere
+ * in the constructor's file. Deliberately not receiver-precise beyond the
+ * constructor identity: the prototype object is shared by every instance of
+ * `F`, so one such write shadows the inherited member for all of them.
+ */
+function ctorPrototypeInstallsMethod(ctorId: ts.Identifier, methodName: string): boolean {
+  const sf = ctorId.getSourceFile();
+  if (!sf) return false;
+  let installs = false;
+  function visit(node: ts.Node): void {
+    if (installs) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      !ts.isPrivateIdentifier(node.left.name) &&
+      node.left.name.text === methodName &&
+      ts.isPropertyAccessExpression(node.left.expression) &&
+      node.left.expression.name.text === "prototype" &&
+      ts.isIdentifier(node.left.expression.expression) &&
+      node.left.expression.expression.text === ctorId.text
+    ) {
+      installs = true;
+      return;
+    }
+    forEachChild(node, visit);
+  }
+  visit(sf);
+  return installs;
 }

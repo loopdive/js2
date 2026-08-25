@@ -2,9 +2,9 @@
 id: 4264
 title: "`with` statement, ES5 standalone: the object environment's value is destroyed by the destination's stale carrier — a with-assigned var keeps its primitive slot, strict-eq routes off the stale type, and a with-hoisted var is `null` not `undefined`"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-18
 completed: 2026-08-09
 priority: high
 horizon: l

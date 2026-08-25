@@ -14,6 +14,19 @@ iptables -t mangle -F
 iptables -t mangle -X
 ipset destroy allowed-domains 2>/dev/null || true
 
+# Reset chain POLICIES to ACCEPT. `iptables -F` clears the RULES but NOT the
+# chain policy, and this script is re-run on every container start/attach via
+# postStartCommand. On a re-run the policies set at the bottom of this file are
+# still DROP while every ACCEPT rule has just been flushed away -- a total
+# blackout. Everything below would then fail starting with the GitHub-meta
+# fetch, and `set -e` would abort, leaving the container with DROP policies and
+# no rules at all (no network until it is recreated). Restoring ACCEPT here lets
+# the script reach the network it needs to rebuild the allowlist; the DROP
+# policies are re-applied further down once the allowlist is populated.
+iptables -P INPUT ACCEPT
+iptables -P FORWARD ACCEPT
+iptables -P OUTPUT ACCEPT
+
 # 2. Selectively restore ONLY internal Docker DNS resolution
 if [ -n "$DOCKER_DNS_RULES" ]; then
     echo "Restoring Docker DNS rules..."
@@ -63,10 +76,19 @@ while read -r cidr; do
         exit 1
     fi
     echo "Adding GitHub range $cidr"
-    ipset add allowed-domains "$cidr"
+    ipset add -exist allowed-domains "$cidr"
 done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | aggregate -q)
 
-# Resolve and add other allowed domains
+# Resolve and add other allowed domains.
+#
+# A domain that no longer resolves must NOT abort the whole script: third-party
+# hostnames get retired (statsig.anthropic.com lost its A record and silently
+# broke every run of this file), and killing the firewall setup over one dead
+# hostname is far worse than leaving that one hostname unreachable. Only the
+# domains this container genuinely cannot work without are fatal.
+REQUIRED_DOMAINS="api.anthropic.com registry.npmjs.org"
+unresolved=""
+
 for domain in \
     "registry.npmjs.org" \
     "api.anthropic.com" \
@@ -81,8 +103,15 @@ for domain in \
     echo "Resolving $domain..."
     ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
     if [ -z "$ips" ]; then
-        echo "ERROR: Failed to resolve $domain"
-        exit 1
+        case " $REQUIRED_DOMAINS " in
+            *" $domain "*)
+                echo "ERROR: Failed to resolve REQUIRED domain $domain"
+                exit 1
+                ;;
+        esac
+        echo "WARNING: Failed to resolve $domain - skipping (not required)"
+        unresolved="$unresolved $domain"
+        continue
     fi
     
     while read -r ip; do
@@ -91,9 +120,13 @@ for domain in \
             exit 1
         fi
         echo "Adding $ip for $domain"
-        ipset add allowed-domains "$ip"
+        ipset add -exist allowed-domains "$ip"
     done < <(echo "$ips")
 done
+
+if [ -n "$unresolved" ]; then
+    echo "NOTE: the following domains did not resolve and are NOT allowlisted:$unresolved"
+fi
 
 # Get host IP from default route
 HOST_IP=$(ip route | grep default | cut -d" " -f3)
@@ -105,9 +138,29 @@ fi
 HOST_NETWORK=$(echo "$HOST_IP" | sed "s/\.[0-9]*$/.0\/24/")
 echo "Host network detected as: $HOST_NETWORK"
 
-# Restrict ttyd (port 7681) to Tailscale CGNAT range only
-iptables -A INPUT -p tcp --dport 7681 -s 100.64.0.0/10 -j ACCEPT
-iptables -A INPUT -p tcp --dport 7681 -j DROP
+# ttyd (port 7681) is an UNAUTHENTICATED writable web terminal, so it must not
+# be broadly reachable. WHERE that gets enforced depends on the host:
+#
+#   * Native Linux Docker DNATs published ports and PRESERVES the client's
+#     source address, so the source filter below does what it says.
+#   * Docker Desktop (macOS/Windows) forwards through a userland proxy that
+#     REWRITES the source: every client arrives as one fixed proxy address
+#     (measured 2026-08-20: 172.66.144.201) whether it came from loopback, the
+#     LAN, or Tailscale. A source filter cannot discriminate there - it drops
+#     ttyd for everyone, which is exactly what happened once this script
+#     started applying again. On such a host the only layer that sees the real
+#     client is the host port BINDING, so restrict `appPort` in
+#     devcontainer.json (bind 7681 to loopback or to the Tailscale address)
+#     rather than pretending to filter here.
+#
+# Default is therefore to allow 7681 here and let the binding restrict it. Set
+# TTYD_SOURCE_FILTER=1 on a source-preserving host to filter in-container too.
+if [ "${TTYD_SOURCE_FILTER:-0}" = "1" ]; then
+    iptables -A INPUT -p tcp --dport 7681 -s 100.64.0.0/10 -j ACCEPT
+    iptables -A INPUT -p tcp --dport 7681 -j DROP
+else
+    iptables -A INPUT -p tcp --dport 7681 -j ACCEPT
+fi
 
 # Set up remaining iptables rules
 iptables -A INPUT -s "$HOST_NETWORK" -j ACCEPT

@@ -4,7 +4,7 @@ title: "Differential whole-program target matrix — Node oracle vs JS-host, sta
 status: backlog
 sprint: Backlog
 created: 2026-07-26
-updated: 2026-08-12
+updated: 2026-08-20
 priority: high
 horizon: m
 feasibility: medium
@@ -14,7 +14,7 @@ area: testing, compiler, codegen-linear
 language_feature: whole-program-semantics
 es_edition: multi
 goal: test-infrastructure
-related: [1203, 1854, 1941, 2711, 3518, 3781]
+related: [1203, 1854, 1941, 2711, 3518, 3781, 4567, 4568, 4569, 4570, 4572]
 ---
 
 # #3681 — Differential whole-program target matrix
@@ -90,6 +90,26 @@ behavioral interaction they protect. Test262 remains authoritative for
 language conformance, and its license/metadata rules are preserved when a
 minimized case is derived from it.
 
+## Node API contract corpus
+
+Add a focused corpus partition for provider-backed `node:*` APIs. Its manifest
+records the canonical module/member, import shape, arguments, environment and
+capabilities, applicable targets, and observables. Coverage of one member is not
+reported as coverage of its whole module.
+
+In addition to stdout and exit behavior, Node API fixtures compare:
+
+- returned values and stable object fields;
+- error name/class, `code`, selected stable message fragments, and first-error
+  ordering;
+- argument coercion and side effects that occur before provider dispatch;
+- callback cardinality and relative `nextTick`/microtask/timer/event-loop order;
+- emitted import/provider selection and explicit target-inapplicability reason.
+
+Every module/member/target row remains in the denominator as pass, known
+divergence, unsupported, unknown, compile failure, runtime failure, or harness
+failure. A missing provider or unseen dynamic member is not a skipped pass.
+
 ## Reusable corpus interchange
 
 Define a small, documented fixture manifest for source files, arguments,
@@ -132,6 +152,11 @@ wildcards and output deletion are forbidden.
 - [ ] A versioned fixture manifest can import/export a focused case without
       losing arguments, observables, applicability, seed, license, or
       provenance; at least one round-trip fixture proves the interchange.
+- [ ] The Node API partition reports per-module, per-member, import-shape, and
+      per-target denominators, with unsupported and unknown rows retained.
+- [ ] Focused Node API fixtures compare stable errors, validation/side-effect
+      order, and callback scheduling, with positive controls proving the
+      harness detects each kind of divergence.
 - [ ] Test262 remains a separate, authoritative standards signal; differential
       pass counts are not labeled conformance.
 

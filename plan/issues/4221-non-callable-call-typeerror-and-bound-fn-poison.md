@@ -3,8 +3,8 @@ id: 4221
 title: "Calling a non-callable answers undefined instead of throwing TypeError; bound functions do not poison caller/arguments"
 status: done
 completed: 2026-08-08
-updated: 2026-08-11
-sprint: current
+updated: 2026-08-18
+sprint: 78
 created: 2026-08-08
 priority: high
 horizon: m

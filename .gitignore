@@ -28,6 +28,11 @@ benchmarks/results/*.json
 !benchmarks/results/npm-compat.json
 !benchmarks/results/npm-compat-perf.json
 !benchmarks/results/npm-compat-history.json
+# #4544 Part A — the native-binary size/startup baseline that gates ADR-0021.
+# Hand-refreshed by `node scripts/benchmark-native-aot.mjs`; no CI job promotes
+# it, because it needs a toolchain (wasmtime, wamrc, a native wabt) that the
+# runners do not carry.
+!benchmarks/results/native-aot-baseline.json
 benchmarks/results/*.md
 benchmarks/results/*.txt
 # #1528 — the ~15 MB test262 baseline JSONL lives in loopdive/js2wasm-baselines.
@@ -76,6 +81,7 @@ tests/dogfood/.marked/
 tests/dogfood/.acorn-test-suite/
 tests/dogfood/.cookie/
 tests/dogfood/.clsx/
+tests/dogfood/.temporal-polyfill/
 tests/dogfood/.eslint/
 tests/dogfood/.eslint-upstream-suite/
 tests/dogfood/.prettier/
@@ -161,3 +167,4 @@ examples/native-messaging/node-fs.wasm
 # Claude Code session transcripts (bind-mounted into devcontainer, host-persisted)
 .claude-sessions/
 tests/dogfood/.react-dom-upstream-suite-impl/
+tests/dogfood/.react-dom-upstream-suite-project/

@@ -72,12 +72,42 @@ type UseClass = "safe-evidence" | "safe" | "bail";
  */
 export type NumericLocalOracle = (node: ts.Node, name: string) => boolean;
 
+/**
+ * (#4121) "Is codegen about to widen this binding's slot to a boxed carrier,
+ * even though the checker declared a scalar type?"
+ *
+ * The admission gate below keys on the CHECKER's declared type, but the slot
+ * codegen mints is decided elsewhere: `let i = 0` is declared `number` while a
+ * later `i = s.indexOf(";")` (unresolvable receiver) widens the slot to
+ * `externref`. The declared type and the emitted representation then disagree,
+ * and the pass whose whole job is to reconcile them never sees the binding.
+ * This oracle lets codegen say which bindings it is about to widen, so
+ * admission keys on the representation rather than the declaration.
+ *
+ * It only ADMITS a candidate. Both proofs (route 1 use-site, route 2
+ * definition-site) then run unchanged and still have to earn the f64 slot.
+ */
+export type WidenedCarrierOracle = (decl: ts.VariableDeclaration) => boolean;
+
 export class UsageInference {
   private declCache = new WeakMap<ts.VariableDeclaration, InferredScalar | null>();
   private fnCache = new WeakMap<ts.Node, Set<ts.Symbol>>();
   private numericLocals: NumericLocalOracle | undefined;
+  private widenedCarrier: WidenedCarrierOracle | undefined;
 
   constructor(private readonly checker: ts.TypeChecker) {}
+
+  /**
+   * (#4121) Install the "codegen is about to box this slot" predicate. Called
+   * once, before any function body compiles; clears the memo caches so an early
+   * query cannot pin a pre-oracle verdict (same contract as
+   * {@link setNumericLocalOracle}).
+   */
+  setWidenedCarrierOracle(oracle: WidenedCarrierOracle): void {
+    this.widenedCarrier = oracle;
+    this.declCache = new WeakMap();
+    this.fnCache = new WeakMap();
+  }
 
   /**
    * (#3765) Install the whole-program DEFINITION-site verdict as a second,
@@ -157,7 +187,7 @@ export class UsageInference {
     if (cached) return cached;
     const result = new Set<ts.Symbol>();
     try {
-      analyzeFunctionBody(this.checker, fn, result, this.numericLocals);
+      analyzeFunctionBody(this.checker, fn, result, this.numericLocals, this.widenedCarrier);
     } catch {
       result.clear();
     }
@@ -175,6 +205,7 @@ function analyzeFunctionBody(
   fn: FunctionLikeWithBody,
   out: Set<ts.Symbol>,
   numericLocals?: NumericLocalOracle,
+  widenedCarrier?: WidenedCarrierOracle,
 ): void {
   // 1. Collect candidate symbols: function-local any/unknown identifier
   //    bindings (not for-of/in).
@@ -204,7 +235,14 @@ function analyzeFunctionBody(
     // var-hoister NaN-inits). Out of scope — bail to keep the boxed carrier.
     if (isLetConst && !decl.initializer) return;
     const t = checker.getTypeAtLocation(decl);
-    if (!t || !(t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown))) return;
+    // (#4121) Admission keys on the REPRESENTATION codegen is about to emit,
+    // not on the checker's declared type. A declared-`any` binding is boxed by
+    // definition and always a candidate; a declared-scalar binding is one only
+    // when codegen says it is widening that slot to a boxed carrier anyway
+    // (`let i = 0; i = s.indexOf(";")` — declared `number`, slot `externref`).
+    // Admission proves nothing on its own: both routes still run below.
+    const declaredBoxed = t !== undefined && (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+    if (!declaredBoxed && widenedCarrier?.(decl) !== true) return;
     const sym = checker.getSymbolAtLocation(decl.name);
     if (!sym) return;
     const state = candidates.get(sym) ?? {

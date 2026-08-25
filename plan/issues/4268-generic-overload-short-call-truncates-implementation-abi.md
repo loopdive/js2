@@ -2,9 +2,9 @@
 id: 4268
 title: "codegen: preserve implementation arity when a generic overload's first call is shorter"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-18
 priority: high
 horizon: s
 feasibility: medium

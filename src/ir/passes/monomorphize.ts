@@ -507,6 +507,28 @@ function irTypeKey(t: IrType): string {
   if (t.kind === "class") return `cls:${t.shape.classId}`;
   // Slice 10 (#1169i): extern is keyed solely on className.
   if (t.kind === "extern") return `ext:${t.className}`;
+  if (t.kind === "fnctor") {
+    return `fnctor:${JSON.stringify({
+      sourceId: t.shape.sourceId,
+      constructorUnitId: t.shape.constructorUnitId,
+      constructorName: t.shape.constructorName,
+      constructorTarget: t.shape.constructorTarget,
+      reservedLayout: t.shape.reservedLayout,
+      constructorIdentity: t.shape.constructorIdentity,
+      fields: t.shape.fields.map((field) => ({
+        name: field.name,
+        ordinal: field.ordinal,
+        type: irTypeKey(field.type),
+      })),
+      captures: t.shape.captures.map((capture) => ({
+        name: capture.name,
+        ordinal: capture.ordinal,
+        hasTdzFlag: capture.hasTdzFlag,
+        type: irTypeKey(capture.type),
+      })),
+      userParamTypes: t.shape.userParamTypes.map(irTypeKey),
+    })}`;
+  }
   // #1926 — union members / boxed inner are IrTypes; recurse via irTypeKey.
   if (t.kind === "union") {
     const parts = [...t.members].map(irTypeKey).sort();
@@ -538,6 +560,7 @@ function simplifyForName(s: string): string {
   if (s.startsWith("v:")) return s.slice(2);
   if (s.startsWith("u:")) return `union_${s.slice(2).replace(/\|/g, "_")}`;
   if (s.startsWith("b:")) return `boxed_${s.slice(2)}`;
+  if (s.startsWith("fnctor:")) return `fnctor_${s.slice("fnctor:".length)}`;
   return s;
 }
 
@@ -747,6 +770,8 @@ function collectUses(instr: IrInstr): readonly IrValueId[] {
     case "string.concat":
     case "string.eq":
       return [instr.lhs, instr.rhs];
+    case "string.repeat":
+      return [instr.value, instr.count];
     case "string.len":
       return [instr.value];
     case "string.char_at":
@@ -943,5 +968,16 @@ function collectUses(instr: IrInstr): readonly IrValueId[] {
     // (#2856) early.return — the optional return value is a direct use.
     case "early.return":
       return instr.value !== null ? [instr.value] : [];
+    // (#4070) Exhaustiveness gate — see the twin in src/ir/verify.ts. This
+    // local copy drives the pass's own use counting; a silently-empty result
+    // would make an instruction look dead.
+    default: {
+      const _exhaustive: never = instr;
+      void _exhaustive;
+      // invariant (producer-promise): union/switch agreement, per #4035/#4502.
+      throw new Error(
+        `ir/monomorphize: collectUses has no case for IR instruction kind ${(instr as { readonly kind: string }).kind}`,
+      );
+    }
   }
 }

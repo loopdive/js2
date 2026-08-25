@@ -184,7 +184,7 @@ describe("#3520 exact planning owner identity", () => {
     );
   });
 
-  it("rejects an exact unowned compiler support boundary without falling through to module init", () => {
+  it("uses the exact compiler timer terminal as its own planning owner", () => {
     const fixture = source(
       "/repo/timer.ts",
       `
@@ -202,12 +202,14 @@ describe("#3520 exact planning owner identity", () => {
     const context = buildIrPlanningIdentityContext(inventory);
 
     expect(context.moduleInitUnitIdBySourceFile.has(fixture)).toBe(true);
-    expect(context.unitByUnitId.get(unitId(context, timer))).toMatchObject({
-      terminal: false,
-      terminalOwnerId: null,
-      unownedReason: "no-r0-attempt-root",
+    const timerId = unitId(context, timer);
+    expect(context.unitByUnitId.get(timerId)).toMatchObject({
+      terminal: true,
+      terminalOwnerId: timerId,
+      kind: "synthetic-support",
+      syntheticRole: "compiler-unit:timer-shim:set-timeout",
     });
-    expectPlanningInvariant(() => requireIrPlanningOwnerUnitId(context, timer.body!), "unowned-planning-owner");
+    expect(requireIrPlanningOwnerUnitId(context, timer.body!)).toBe(timerId);
   });
 
   it("rejects declaration-only nodes instead of inventing a module owner", () => {

@@ -96,6 +96,7 @@
  * answer (`0`), so a skipped fill degrades to exactly today's behaviour instead
  * of trapping.
  */
+import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -246,6 +247,12 @@ export function fillInstanceTombstones(ctx: CodegenContext): void {
   const ensureIdx = ctx.funcMap.get(CLOSURE_BAG_ENSURE);
   const externGetIdx = ctx.funcMap.get("__extern_get");
   const externSetIdx = ctx.funcMap.get("__extern_set");
+  // #4504: an internal tombstone marker must never be routed through the
+  // public [[Set]] entry point while its inherited-descriptor resolver is
+  // active.  The marker belongs to the hidden bag's OWN table; a prototype
+  // setter on Object.prototype must neither observe delete nor replace it.
+  const externSetOwnIdx = ctx.funcMap.get("__extern_set_own");
+  const inheritedSetRuntimeActive = ctx.standalone && inheritedSetAnyDirty(ctx) && externSetOwnIdx !== undefined;
   if (lookupIdx === undefined || ensureIdx === undefined || externGetIdx === undefined || externSetIdx === undefined) {
     return;
   }
@@ -303,7 +310,9 @@ export function fillInstanceTombstones(ctx: CodegenContext): void {
       { op: "local.get", index: 2 }, // obj = bag
       { op: "local.get", index: 1 }, // key
       { op: "local.get", index: 2 }, // value = bag  ← the marker
-      { op: "call", funcIdx: externSetIdx },
+      ...(inheritedSetRuntimeActive
+        ? ([{ op: "call", funcIdx: externSetOwnIdx! }, { op: "drop" }] satisfies Instr[])
+        : ([{ op: "call", funcIdx: externSetIdx }] satisfies Instr[])),
       { op: "i32.const", value: 1 },
     ],
   );

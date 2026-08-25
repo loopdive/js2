@@ -72,8 +72,15 @@ import { emitJsonStringifyValue } from "./json-codec-native.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
+import { emitMathValueReadBody } from "./math-value-read.js"; // (#4565)
+import { ensureHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649)
+import {
+  emitStringFromCharCodeValueBody,
+  prepareStringFromCharCodeValueRead,
+} from "./string-fromcharcode-value-read.js"; // (#4491 wave-5 T6)
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureExternStrictEqHelper } from "./any-helpers.js";
 import { sameValueNumberOps } from "./same-value-number-ops.js";
+import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
 
 export const BUILTIN_CTOR_NAMES = new Set([
   "Object",
@@ -452,16 +459,15 @@ export function emitArrayIsArrayExternrefPredicate(ctx: CodegenContext, fctx: Fu
   fctx.body.push({ op: "local.set", index: externTmp });
   let emittedTerm = false;
 
-  if (vecTypeIdxs.length > 0) {
-    const anyTmp = allocLocal(fctx, `__isarr_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  // (#4649) The compiled-carrier half is a CALL to the finalize-filled
+  // `__host_array_carrier`, not an inline `ref.test` ladder over
+  // `ctx.vecTypeMap` — that ladder was an emission-time snapshot, so a carrier
+  // registered LATER (a `boolean[]` first minted by a test262 body, after the
+  // harness prefix baked its ladder) answered `false`. See host-array-carrier.ts.
+  const carrierIdx = vecTypeIdxs.length > 0 ? ensureHostArrayCarrierPredicate(ctx) : undefined;
+  if (carrierIdx !== undefined) {
     fctx.body.push({ op: "local.get", index: externTmp });
-    fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "local.set", index: anyTmp });
-    for (let vi = 0; vi < vecTypeIdxs.length; vi++) {
-      fctx.body.push({ op: "local.get", index: anyTmp });
-      fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdxs[vi]! });
-      if (vi > 0) fctx.body.push({ op: "i32.or" });
-    }
+    fctx.body.push({ op: "call", funcIdx: carrierIdx });
     emittedTerm = true;
   }
 
@@ -882,6 +888,17 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       paramTypes = [{ kind: "externref" }];
       returnType = BOOLEAN_PREDICATE_RESULT;
       break;
+    case "Object.assign":
+      // Deno snapshots Object.assign into its primordials object, then invokes
+      // that captured function while constructing `Deno.core`. Register the
+      // native object runtime before minting the closure so every funcidx used
+      // by the body is settled. The closure exposes the builtin's declared
+      // two-argument shape; its second argument is packed into the same
+      // `$ObjVec` consumed by the direct Object.assign lowering.
+      ensureObjVecBuilders(ctx);
+      paramTypes = [{ kind: "externref" }, { kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
     case "Object.keys":
       paramTypes = [{ kind: "externref" }];
       // Standalone Object.keys returns the object-runtime `$ObjVec` as an
@@ -900,6 +917,23 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     case "Object.hasOwn":
       paramTypes = [{ kind: "externref" }, { kind: "externref" }];
       returnType = BOOLEAN_PREDICATE_RESULT;
+      break;
+    case "Object.defineProperty":
+      ensureObjectRuntime(ctx);
+      paramTypes = [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
+    case "Object.setPrototypeOf":
+      ensureObjectRuntime(ctx);
+      paramTypes = [{ kind: "externref" }, { kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
+    case "Object.freeze":
+    case "Object.seal":
+    case "Object.preventExtensions":
+      ensureObjectRuntime(ctx);
+      paramTypes = [{ kind: "externref" }];
+      returnType = { kind: "externref" };
       break;
     // (#2933) Namespace static-method VALUE reads for the fixed-arity `Reflect.*`
     // methods that the standalone CALL path already backs with a simple
@@ -926,6 +960,14 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     case "Reflect.ownKeys":
       paramTypes = [{ kind: "externref" }];
       returnType = { kind: "externref" };
+      break;
+    case "Reflect.getOwnPropertyDescriptor":
+      paramTypes = [{ kind: "externref" }, { kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
+    case "Reflect.defineProperty":
+      paramTypes = [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }];
+      returnType = BOOLEAN_PREDICATE_RESULT;
       break;
     // (#2933) JSON.stringify as a VALUE — fixed 1-arg compact form. Serialises
     // host-free via the native `__json_stringify_root` (the SAME entry the
@@ -969,6 +1011,39 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       }
       ensureAnyHelpers(ctx); // __any_to_f64 / __any_box_f64
       const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
+      paramTypes = [{ kind: "ref_null", typeIdx: vecTypeIdx }];
+      returnType = { kind: "externref" };
+      break;
+    }
+    // (#4491 wave-5 T6) `String.fromCharCode` as a VALUE — genuinely VARIADIC
+    // (§22.1.2.1 takes a code-unit LIST). Reified on the SAME canonical variadic
+    // convention as `Math.max`/`Math.min` above — ONE `(ref null $vec_externref)`
+    // args param, `externref` result — so all three share ONE lifted func type
+    // and the single variadic dispatch arm in call-identifier.ts serves them
+    // all. Body lives in string-fromcharcode-value-read.ts. Falls through to the
+    // Phase-3 generic throw body when the native-string / any-value substrate is
+    // unavailable (identity + reflective `.name`/`.length` still work).
+    case "String.fromCharCode": {
+      addUnionImports(ctx);
+      if (!prepareStringFromCharCodeValueRead(ctx)) {
+        const genericArity = BUILTIN_STATIC_METHOD_ARITY[builtinName]?.[propName];
+        if (genericArity === undefined) return null;
+        paramTypes = [];
+        for (let i = 0; i < genericArity; i++) paramTypes.push({ kind: "externref" });
+        returnType = { kind: "externref" };
+        genericThrowBody = true;
+        break;
+      }
+      const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
+      if (getArrTypeIdxFromVec(ctx, vecTypeIdx) < 0) {
+        const genericArity = BUILTIN_STATIC_METHOD_ARITY[builtinName]?.[propName];
+        if (genericArity === undefined) return null;
+        paramTypes = [];
+        for (let i = 0; i < genericArity; i++) paramTypes.push({ kind: "externref" });
+        returnType = { kind: "externref" };
+        genericThrowBody = true;
+        break;
+      }
       paramTypes = [{ kind: "ref_null", typeIdx: vecTypeIdx }];
       returnType = { kind: "externref" };
       break;
@@ -1071,6 +1146,21 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     if (key === "Array.isArray") {
       closureFctx.body.push({ op: "local.get", index: 1 });
       emitArrayIsArrayExternrefPredicate(ctx, closureFctx);
+    } else if (key === "Object.assign") {
+      const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
+      const assignIdx = ctx.funcMap.get("__object_assign");
+      if (assignIdx === undefined) return null;
+      const sourcesLocal = allocLocal(closureFctx, "assign_sources", { kind: "externref" });
+      closureFctx.body.push(
+        { op: "call", funcIdx: newIdx },
+        { op: "local.set", index: sourcesLocal },
+        { op: "local.get", index: sourcesLocal },
+        { op: "local.get", index: 2 },
+        { op: "call", funcIdx: pushIdx },
+        { op: "local.get", index: 1 },
+        { op: "local.get", index: sourcesLocal },
+        { op: "call", funcIdx: assignIdx },
+      );
     } else if (key === "Object.keys") {
       const keysIdx = ensureLateImport(ctx, "__object_keys", [{ kind: "externref" }], [{ kind: "externref" }]);
       if (keysIdx === undefined) return null;
@@ -1106,6 +1196,33 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       closureFctx.body.push({ op: "local.get", index: 1 });
       closureFctx.body.push({ op: "local.get", index: 2 });
       closureFctx.body.push({ op: "call", funcIdx: hasOwnIdx });
+    } else if (key === "Object.defineProperty") {
+      const defineIdx = ctx.funcMap.get("__obj_define_from_desc");
+      if (defineIdx === undefined) return null;
+      closureFctx.body.push(
+        { op: "local.get", index: 1 },
+        { op: "local.get", index: 2 },
+        { op: "local.get", index: 3 },
+        { op: "call", funcIdx: defineIdx },
+      );
+    } else if (key === "Object.setPrototypeOf") {
+      const setPrototypeIdx = ctx.funcMap.get("__object_setPrototypeOf");
+      if (setPrototypeIdx === undefined) return null;
+      closureFctx.body.push(
+        { op: "local.get", index: 1 },
+        { op: "local.get", index: 2 },
+        { op: "call", funcIdx: setPrototypeIdx },
+      );
+    } else if (key === "Object.freeze" || key === "Object.seal" || key === "Object.preventExtensions") {
+      const helperName =
+        key === "Object.freeze"
+          ? "__object_freeze"
+          : key === "Object.seal"
+            ? "__object_seal"
+            : "__object_preventExtensions";
+      const integrityIdx = ctx.funcMap.get(helperName);
+      if (integrityIdx === undefined) return null;
+      closureFctx.body.push({ op: "local.get", index: 1 }, { op: "call", funcIdx: integrityIdx });
     } else if (key === "Reflect.get") {
       // (#2933) Same native the 2-arg standalone `Reflect.get(target, key)` call
       // path uses (calls.ts). The value closure is fixed 2-arg — the optional
@@ -1144,13 +1261,74 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       closureFctx.body.push({ op: "local.get", index: 3 });
       closureFctx.body.push({ op: "call", funcIdx: idx });
     } else if (key === "Reflect.ownKeys") {
-      // Native __object_keys — string own keys of the $Object hash-map, per the
-      // standalone `Reflect.ownKeys(target)` call path (Symbol/non-enumerable
-      // keys are out of scope for the open-object runtime, consistent with it).
-      const idx = ensureLateImport(ctx, "__object_keys", [{ kind: "externref" }], [{ kind: "externref" }]);
+      // Reflect.ownKeys includes non-enumerable own properties. The native
+      // runtime does not yet retain symbol-keyed properties, so its strongest
+      // available approximation is __getOwnPropertyNames, not __object_keys
+      // (which deliberately implements Object.keys' enumerable-only view).
+      // This distinction is observable for builtin namespace carriers: Deno's
+      // primordials bootstrap discovers JSON.parse/stringify through this
+      // extracted function value.
+      const idx = ensureLateImport(ctx, "__getOwnPropertyNames", [{ kind: "externref" }], [{ kind: "externref" }]);
       if (idx === undefined) return null;
       closureFctx.body.push({ op: "local.get", index: 1 });
       closureFctx.body.push({ op: "call", funcIdx: idx });
+    } else if (key === "Reflect.getOwnPropertyDescriptor") {
+      // The first-class Reflect method must share the direct call path's
+      // native descriptor provider. Deno snapshots this method through object
+      // destructuring before using it to copy every primordial descriptor.
+      const runtime = ensureObjectRuntime(ctx);
+      const beforeThrow = closureFctx.body.length;
+      emitThrowTypeError(ctx, closureFctx, "Reflect.getOwnPropertyDescriptor called on non-object");
+      const throwInstrs = closureFctx.body.splice(beforeThrow);
+      closureFctx.body.push(
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: runtime.objectTypeIdx },
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: runtime.proxyTypeIdx },
+        { op: "i32.or" },
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+      );
+      const idx = ensureLateImport(
+        ctx,
+        "__getOwnPropertyDescriptor",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      if (idx === undefined) return null;
+      closureFctx.body.push({ op: "local.get", index: 1 }, { op: "local.get", index: 2 }, { op: "call", funcIdx: idx });
+    } else if (key === "Reflect.defineProperty") {
+      // Deno snapshots Reflect.defineProperty and invokes it with descriptor
+      // objects returned by Reflect.getOwnPropertyDescriptor. Route that
+      // first-class call through the same native dynamic-descriptor applier as
+      // the direct syntax and surface its boolean [[DefineOwnProperty]] result.
+      const runtime = ensureObjectRuntime(ctx);
+      const beforeThrow = closureFctx.body.length;
+      emitThrowTypeError(ctx, closureFctx, "Reflect.defineProperty called on non-object");
+      const throwInstrs = closureFctx.body.splice(beforeThrow);
+      closureFctx.body.push(
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: runtime.objectTypeIdx },
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: runtime.proxyTypeIdx },
+        { op: "i32.or" },
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+      );
+      const defineIdx = ctx.funcMap.get("__obj_define_from_desc");
+      const truthyIdx = ctx.funcMap.get("__is_truthy");
+      if (defineIdx === undefined || truthyIdx === undefined) return null;
+      closureFctx.body.push(
+        { op: "local.get", index: 1 },
+        { op: "local.get", index: 2 },
+        { op: "local.get", index: 3 },
+        { op: "call", funcIdx: defineIdx },
+        { op: "call", funcIdx: truthyIdx },
+      );
     } else if (key === "JSON.stringify") {
       // Ensure the native codec (`__json_stringify_value` + its 1-arg entry
       // `__json_stringify_root`, `anyref -> ref $AnyString`) is registered; the
@@ -1248,6 +1426,12 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
         { op: "local.get", index: accLocal },
         { op: "call", funcIdx: boxNumIdx },
       );
+    } else if (key === "String.fromCharCode" && !genericThrowBody) {
+      // (#4491 wave-5 T6) Variadic fold body. Params: 0=self, 1=argsVec.
+      const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
+      if (!emitStringFromCharCodeValueBody(ctx, closureFctx, vecTypeIdx, getArrTypeIdxFromVec(ctx, vecTypeIdx))) {
+        return null;
+      }
     } else if (
       (key === "Number.isInteger" ||
         key === "Number.isFinite" ||
@@ -1316,6 +1500,11 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
           ],
         },
       );
+    } else if (genericThrowBody && builtinName === "Math" && emitMathValueReadBody(ctx, closureFctx, propName)) {
+      // (#4565; supersedes the #4491 wave-4 lane G arm, same defect) — the
+      // upstream module mints the `Math_<fn>` kernel late itself, so it needs
+      // no collector-phase seeding. Kept BEFORE the `genericThrowBody` arm
+      // below because that arm claims every `default:` case.
     } else if (genericThrowBody) {
       // (#2984 Phase 3) Degrade-to-catchable body: a real TypeError instance +
       // `throw` — the EXACT helper the Phase-2 proto refusal bodies use,
@@ -1341,7 +1530,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
   // Math.min share the SAME lifted func type (one vec param → one `ref.test`
   // arm serves both; `call_ref` dispatches to the right body via the funcref
   // value). Idempotent — the wrapper types are cached per signature.
-  if ((key === "Math.max" || key === "Math.min") && !genericThrowBody) {
+  if ((key === "Math.max" || key === "Math.min" || key === "String.fromCharCode") && !genericThrowBody) {
     const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
     ctx.variadicBuiltinClosure = {
       funcTypeIdx: wrapperTypes.liftedFuncTypeIdx,

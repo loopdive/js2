@@ -119,7 +119,19 @@ export function bodyRequiresArgumentsHostRegistration(ctx: CodegenContext, body:
     const node = stack.pop()!;
 
     // Normal nested functions bind their own `arguments`; arrows inherit it.
-    if (ts.isFunctionLike(node) && !ts.isArrowFunction(node)) continue;
+    // A method/accessor's computed NAME is the exception: it is evaluated
+    // while the containing object/class is defined, in the outer function's
+    // scope. Visit that expression, but never the nested callable's parameters
+    // or body.
+    if (ts.isFunctionLike(node) && !ts.isArrowFunction(node)) {
+      if (
+        (ts.isMethodDeclaration(node) || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) &&
+        ts.isComputedPropertyName(node.name)
+      ) {
+        stack.push(node.name.expression);
+      }
+      continue;
+    }
     if (ts.isWithStatement(node)) return true;
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") return true;
 

@@ -19,6 +19,7 @@ import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
 import { DATA_STRUCT_HOST_BRIDGE_ORDINAL, publishDataStructHostBridge } from "./data-struct-host-bridge.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { recordStructFieldAccessor } from "./struct-field-accessor-abi.js"; // (#3520 C34) structural ownership
 
 /**
  * Emit exported getter/setter helper functions so the JS runtime can read
@@ -35,6 +36,21 @@ import { ensureLateImport, flushLateImportShifts } from "./shared.js";
  * The runtime discovers these exports and uses them as fallback when
  * direct JS property access on a WasmGC struct returns undefined.
  */
+
+/**
+ * (#4616) Field names travel to the host as one comma-JOINED CSV string
+ * (`__struct_field_names`), so a field name CONTAINING a comma (cookie's
+ * snapshot table keys — `"Expires=Sun, 26 Jul …"`) made the host's split
+ * re-derive phantom names: the key was never found, and even a literal-key
+ * property read answered undefined. Escape commas with U+0001 (never present
+ * in real keys); the runtime's `_structFieldNamesRaw` reverses it after the
+ * split. The `__sget_`/`__shas_`/`__sset_` export names keep the RAW name —
+ * only the CSV wire format is escaped.
+ */
+function escapeStructFieldNameForCsv(name: string): string {
+  return name.includes(",") ? name.split(",").join("\u0001") : name;
+}
+
 export function emitStructFieldGetters(ctx: CodegenContext): void {
   try {
     _emitStructFieldGettersInner(ctx);
@@ -103,13 +119,15 @@ export function emitStructFieldPresenceGetters(ctx: CodegenContext): void {
 
     const funcName = `__shas_${fieldName}`;
     const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
-    ctx.mod.functions.push({
+    const presenceFunc = {
       name: funcName,
       typeIdx,
       locals: [{ name: "__any", type: { kind: "anyref" } }],
       body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }, ...dispatch],
       exported: true,
-    } as WasmFunction);
+    } as WasmFunction;
+    ctx.mod.functions.push(presenceFunc);
+    recordStructFieldAccessor(ctx, "has", fieldName, presenceFunc);
     ctx.mod.exports.push({ name: funcName, desc: { kind: "func", index: funcIdx } });
   }
 }
@@ -127,13 +145,15 @@ export function emitStructFieldBooleanMarkers(ctx: CodegenContext): void {
   for (const fieldName of [...ctx.booleanPropertyNames].sort()) {
     const funcName = `__sbool_${fieldName}`;
     const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
-    ctx.mod.functions.push({
+    const markerFunc = {
       name: funcName,
       typeIdx,
       locals: [],
       body: [{ op: "i32.const", value: 1 }],
       exported: true,
-    } as WasmFunction);
+    } as WasmFunction;
+    ctx.mod.functions.push(markerFunc);
+    recordStructFieldAccessor(ctx, "bool", fieldName, markerFunc);
     ctx.mod.exports.push({ name: funcName, desc: { kind: "func", index: funcIdx } });
   }
 }
@@ -316,13 +336,15 @@ function _emitStructFieldGettersInner(ctx: CodegenContext): void {
     const locals: { name: string; type: ValType }[] = [{ name: "__any", type: { kind: "anyref" } }];
     if (useSentinel) locals.push({ name: "__sent_f64", type: { kind: "f64" } });
 
-    mod.functions.push({
+    const getterFunc = {
       name: funcName,
       typeIdx: getterTypeIdx,
       locals,
       body: funcBody,
       exported: true,
-    } as WasmFunction);
+    } as WasmFunction;
+    mod.functions.push(getterFunc);
+    recordStructFieldAccessor(ctx, "get", fieldName, getterFunc);
 
     mod.exports.push({
       name: funcName,
@@ -540,7 +562,7 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
       unboxSymbolIdx,
     );
 
-    mod.functions.push({
+    const setterFunc = {
       name: funcName,
       typeIdx: setterTypeIdx,
       locals: [
@@ -549,7 +571,9 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
       ],
       body: funcBody,
       exported: true,
-    } as WasmFunction);
+    } as WasmFunction;
+    mod.functions.push(setterFunc);
+    recordStructFieldAccessor(ctx, "set", fieldName, setterFunc);
 
     mod.exports.push({
       name: funcName,
@@ -851,11 +875,11 @@ export function resolveSameShapeFieldNameCollisions(ctx: CodegenContext): readon
   };
 
   for (const group of byShape.values()) {
-    const distinctNameCsvs = new Set(group.map((m) => m.names.join(",")));
+    const distinctNameCsvs = new Set(group.map((m) => m.names.map(escapeStructFieldNameForCsv).join(",")));
     if (distinctNameCsvs.size < 2) continue;
 
     for (const m of group) {
-      const csv = m.names.join(",");
+      const csv = m.names.map(escapeStructFieldNameForCsv).join(",");
       const shapeId = allocateShapeId(csv);
       ctx.shapeIdByStructName.set(m.structName, shapeId);
       collidingTypeIdxs.push({ typeIdx: m.typeIdx, structName: m.structName, shapeId });
@@ -992,7 +1016,7 @@ function emitStructFieldNamesExport(
   // Register comma-separated field name strings as string constants.
   const legacyTypeIdxToGlobalIdx = new Map<number, number>();
   for (const { typeIdx, names } of legacyEntries) {
-    const csv = names.join(",");
+    const csv = names.map(escapeStructFieldNameForCsv).join(",");
     addStringConstantGlobal(ctx, csv);
     const globalIdx = ctx.stringGlobalMap.get(csv);
     if (globalIdx !== undefined) legacyTypeIdxToGlobalIdx.set(typeIdx, globalIdx);

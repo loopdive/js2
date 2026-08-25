@@ -56,6 +56,16 @@ export interface WasmModule {
   /** Node builtin module names detected from imports (#1044) */
   nodeBuiltinModules: Set<string>;
   /**
+   * Exact compiler-owned platform-capability import allocators.
+   *
+   * Import names and signatures are public ABI and therefore cannot prove
+   * who allocated a slot: user source can deliberately declare the same
+   * spelling.  This sidecar keys the actual module import object so later
+   * capability/Program-ABI planning can distinguish a certified provider
+   * slot from an ambient look-alike without serializing mutable authority.
+   */
+  platformCapabilityImportProvenance?: Map<Import, { readonly capabilityId: string; readonly providerId: string }>;
+  /**
    * JSX runtime import specifier detected during import preprocessing (#1540).
    * `"react/jsx-runtime"` by default; `preact/jsx-runtime`, etc. for other
    * configured `jsxImportSource` values. Recorded so the import manifest
@@ -79,8 +89,20 @@ export interface WasmModule {
   funcOrdinalToPosition: number[];
   /** Linear memory definitions */
   memories: { min: number; max?: number }[];
-  /** Data segments for linear memory (string literals, etc.) */
-  dataSegments: { offset: number; bytes: Uint8Array }[];
+  /**
+   * Data segments for linear memory (string literals, etc.).
+   *
+   * `passive` (#4540): a passive segment carries **no address**. It is not
+   * written at instantiation; the module copies it somewhere it OWNS with
+   * `memory.init`. That distinction is load-bearing in the ADR-0020 link
+   * topology, where the memory belongs to the engine artifact: an ACTIVE
+   * segment writes at its link-time offset straight through whatever the
+   * engine has there (measured: the artifact's shadow stack is [0, 65536) and
+   * its static data [65536, 170392), so our default bases at 64 / 1024 /
+   * 16384 all land inside them). `offset` is ignored for passive segments and
+   * is kept only so the array element type stays uniform.
+   */
+  dataSegments: { offset: number; bytes: Uint8Array; passive?: boolean }[];
   /** Whether the module has top-level executable statements (module init code) */
   hasTopLevelStatements?: boolean;
   /** Wasm start function index — runs automatically on instantiation (#907) */
@@ -397,7 +419,22 @@ type InstrBase =
   | { op: "return_call_ref"; typeIdx: TypeHandle }
   | { op: "memory.size" }
   | { op: "memory.grow" }
+  // Bulk memory (#4540). `memory.init` copies from a PASSIVE data segment to a
+  // runtime-chosen destination — the mechanism that lets linked-mode literal
+  // data live at an address we allocated instead of a link-time constant.
+  // Stack: [dest:i32, src_offset:i32, len:i32] -> []
+  | { op: "memory.init"; dataIdx: number }
+  | { op: "data.drop"; dataIdx: number }
+  // Bulk memory, the other half (#4540 own-allocator slice). A real `calloc`
+  // must zero and a real `realloc` must relocate; hand-written byte loops for
+  // either put an interpreter loop on the allocator's hot path. Neither of
+  // these names a data segment, so neither needs the data-count section.
+  // Stack: memory.copy [dest:i32, src:i32, len:i32] -> []
+  //        memory.fill [dest:i32, byte:i32, len:i32] -> []
+  | { op: "memory.copy" }
+  | { op: "memory.fill" }
   | { op: "try"; blockType: BlockType; body: Instr[]; catches: CatchClause[]; catchAll?: Instr[] }
+  | { op: "try_table"; blockType: BlockType; body: Instr[]; catches: TryTableCatch[] }
   | { op: "throw"; tagIdx: number }
   | { op: "rethrow"; depth: number }
   | { op: "any.convert_extern" }
@@ -534,6 +571,15 @@ export interface CatchClause {
   body: Instr[];
 }
 
+/** A standardized exception-handling clause attached to `try_table`. */
+export interface TryTableCatch {
+  kind: "catch" | "catch_ref" | "catch_all" | "catch_all_ref";
+  /** Present for the tagged `catch` / `catch_ref` forms. */
+  tagIdx?: number;
+  /** Relative label depth of the enclosing handler block. */
+  depth: number;
+}
+
 export interface TagDef {
   name: string;
   /** Type index of the tag's function signature (params = exception values) */
@@ -586,6 +632,7 @@ export function createEmptyModule(): WasmModule {
     stringPool: [],
     externClasses: [],
     nodeBuiltinModules: new Set(),
+    platformCapabilityImportProvenance: new Map(),
     stringLiteralValues: new Map(),
     asyncFunctions: new Set(),
     declaredFuncRefs: [],

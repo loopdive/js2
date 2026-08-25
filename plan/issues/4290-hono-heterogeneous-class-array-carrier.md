@@ -2,9 +2,9 @@
 id: 4290
 title: "codegen: widen heterogeneous class-instance array carriers"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-18
 completed: 2026-08-09
 priority: high
 horizon: s

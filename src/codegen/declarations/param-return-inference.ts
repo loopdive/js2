@@ -9,8 +9,11 @@ import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { isSyntacticallyBooleanExpr } from "../../checker/oracle.js";
 import { fnctorCtorParamTypesFlagEnabled, numericReturnsFlagEnabled } from "../../derivation-flags.js";
 import { forEachChild, ts } from "../../ts-api.js";
+import { numericAdmissionEnabled } from "../analysis/mixed-assignment-carrier.js";
 import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { hasAsyncModifier, resolveWasmType } from "../index.js";
+import { overlayRouteActive } from "../typed-lane-overlay-route.js";
+import { getVecInfo } from "../type-coercion.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 
@@ -189,6 +192,14 @@ export interface CallSiteParamInference {
    * narrowing has no proof behind it. See {@link functionNameEscapesAsValue}.
    */
   escapesAsValue: boolean;
+  /**
+   * (#4555) Whether some call site supplies FEWER arguments than this
+   * parameter's index — i.e. the parameter is observably `undefined` at
+   * runtime. Already used to withdraw a native-scalar narrowing; also the
+   * proof the numeric-RETURN inference needs before it may promote a
+   * `return <param>` to f64. See {@link parameterMayBeUndefined}.
+   */
+  sawUnderApplied: boolean;
 }
 
 /**
@@ -336,6 +347,16 @@ export function inferParamTypeFromCallSites(
   let conflict = false;
   let sawCallSite = false;
   let sawUnderApplied = false;
+  // (#4491) A call site whose argument's TS type is exclusively `void` /
+  // `undefined` — e.g. `verifyEqualTo(arr, "0", getFunc())` where `getFunc`
+  // returns nothing. See the withdrawal rule below.
+  let sawNullishArg = false;
+  // (#4530) A call site whose argument is `any`/`unknown` AND none of the
+  // stronger sub-proofs below (numeric usage verdict, string verdict, .d.ts
+  // seed) resolved it — an OPAQUE argument that can hold any runtime value.
+  // See the ref-narrowing withdrawal rule below.
+  let sawOpaqueAnyArg = false;
+  let sawCatchVarArg = false;
 
   const isRecursiveCall = (call: ts.CallExpression | ts.NewExpression): boolean => {
     const target = ctx.oracle.valueDeclarationOf(call.expression);
@@ -451,12 +472,82 @@ export function inferParamTypeFromCallSites(
                 // also has a proven-array call; ignoring the recursive value
                 // narrows `children` to a vec and destroys element arguments.
                 conflict = true;
+              } else if (!ts.isIdentifier(arg)) {
+                // (#4616 smoke regression) Scoped to NON-identifier `any`
+                // args. A plain identifier bound to an (untyped) local or
+                // enclosing param — the native-messaging framing core's
+                // `readFillExact(read, buf, …)` where `buf` is the caller's
+                // own untyped param — routinely carries the very type the
+                // OTHER call sites agreed on; flagging it withdrew the vec
+                // narrowing module-wide and the WASI byte path silently
+                // no-opped (node_fs/deno scale variants: ZERO output at every
+                // size). The clsx poison shapes (#4530) — `arguments[i]`,
+                // call results, member reads — are all non-identifiers and
+                // stay flagged.
+                sawOpaqueAnyArg = true;
+              } else {
+                // (#4630) EXCEPTION to the trusted-identifier rule: a
+                // CATCH-CLAUSE binding can hold ANY thrown value, so it is
+                // never evidence that this param matches the other sites'
+                // agreement. The asyncHelpers harness's
+                // `catch (e) { sink(e) }` next to `sink("fulfilled")` agreed
+                // on native-string; the thrown TypeError then coerced to a
+                // null string ref and `err instanceof TypeError` read null.
+                // Recorded SEPARATELY from sawOpaqueAnyArg only because the
+                // withdrawal is scoped to SPECULATIVE narrowings on UNANNOTATED
+                // params in the same way (see the rule below); the once-observed
+                // "11 throwsAsync-* regressions" that scoped it to native-string
+                // ONLY were measured to be FALSE PASSES, not regressions — those
+                // tests were reporting `Test262:AsyncTestComplete` because the
+                // narrowed `$DONE` param null-coerced the error it was handed.
+                // See the second slice in plan/issues/4630.
+                const argDecl = ctx.oracle.variableDeclarationOf(arg);
+                if (argDecl && ts.isVariableDeclaration(argDecl) && ts.isCatchClause(argDecl.parent)) {
+                  sawCatchVarArg = true;
+                }
               }
             } else if (isRecursiveCall(node)) {
               conflict = true;
+            } else {
+              // (#4530) e.g. `f(arguments[i])` — an ElementAccess/other `any`
+              // expression the sub-proofs above cannot see through.
+              sawOpaqueAnyArg = true;
             }
           } else {
+            // (#4491) `void` / `undefined` maps to i32 in the type mapper
+            // ("void → no result, handled in codegen"), which is a lowering
+            // convention for a RESULT, not a claim that this argument is the
+            // number 0. Record the position; the withdrawal rule below keeps a
+            // native scalar from being inferred out of it.
+            if ((argType.flags & ~(ts.TypeFlags.Void | ts.TypeFlags.Undefined)) === 0) sawNullishArg = true;
             const wasmType = resolveWasmType(ctx, argType);
+            // (#4611) A GC-ref claim sourced from a DYNAMIC member read is only
+            // as strong as the receiver's DECLARED shape. Acorn's
+            // `pushComment(options, options.onComment)`: `options` is an open
+            // `{}` object, so the read compiles to `__extern_get` (externref,
+            // any host value), but TS's `isArray(options.onComment)` guard
+            // flow-narrows the LOCATION to `any[]` and the vec narrowing here
+            // pinned the param — a HOST array capture then guarded-cast to
+            // null and the closure's push trapped (swallowed by the method
+            // bridge; acorn's onComment family read back empty). When the
+            // declared property/element fact cannot vouch for the type, treat
+            // the site as opaque — the #4530 withdrawal below then keeps any
+            // ref agreement from other sites from surviving it.
+            if (wasmType.kind === "ref" || wasmType.kind === "ref_null") {
+              let declaredFact: { kind: string } | undefined;
+              if (ts.isPropertyAccessExpression(arg) && !ts.isPrivateIdentifier(arg.name)) {
+                declaredFact = ctx.oracle.propertyFactOf(arg.expression, arg.name.text);
+              } else if (ts.isElementAccessExpression(arg)) {
+                declaredFact = ctx.oracle.elementFactOf(arg.expression);
+              }
+              if (
+                declaredFact !== undefined &&
+                (declaredFact.kind === "any" || declaredFact.kind === "unknown" || declaredFact.kind === "unresolvable")
+              ) {
+                sawOpaqueAnyArg = true;
+                return;
+              }
+            }
             if (agreed === null) {
               agreed = wasmType;
             } else if (agreed.kind !== wasmType.kind) {
@@ -489,6 +580,141 @@ export function inferParamTypeFromCallSites(
   if (type !== null && type.kind === "ref" && sawUnderApplied) {
     type = { kind: "ref_null", typeIdx: type.typeIdx };
   }
+  // (#4555) The same under-application rule, applied to the NATIVE SCALAR
+  // narrowings the #3548 rule left alone. A `ref` at least has `ref.null` as a
+  // filler; `f64`/`i32`/`i64` have NO encoding of `undefined`, so the caller's
+  // pad emits a zero (`pushDefaultValue`) and the missing argument silently
+  // becomes `0` instead. That is observable ES semantics, not a representation
+  // detail: `function f(a, b) { return b === undefined; } f(1, 2); f(1);`
+  // returned `false` for the second call, because the `f(1, 2)` site narrowed
+  // `b` to f64 and the `f(1)` site padded it with `f64.const 0`.
+  // Withdrawing the narrowing leaves the parameter on its resolved `externref`,
+  // which carries the real `undefined`. Only the under-applied POSITION is
+  // withdrawn — a fully-applied parameter of the same function keeps its
+  // native slot, so numeric kernels are untouched.
+  if (type !== null && sawUnderApplied && (type.kind === "f64" || type.kind === "i32" || type.kind === "i64")) {
+    type = null;
+  }
+  // (#4491) The same rule for an argument that IS `undefined` rather than
+  // missing. A call site passing a void call's result (`h(getFunc())`) can only
+  // ever deliver `undefined`, and `f64`/`i32`/`i64` have no encoding for it — the
+  // argument silently becomes `0`, which is what made the harness's
+  // `verifyEqualTo(arrObj, "0", getFunc())` report "Expected obj[0] to equal 0".
+  // Withdrawing the narrowing leaves the parameter on its resolved `externref`,
+  // whose default value IS the canonical `undefined` (`pushDefaultValue` →
+  // `emitUndefinedValue` → the #2106 `$undefined` singleton in standalone).
+  if (type !== null && sawNullishArg && (type.kind === "f64" || type.kind === "i32" || type.kind === "i64")) {
+    type = null;
+  }
+  // (#4530) Soundness, same shape as the #2867 S2 escape rule: a call site
+  // passing an OPAQUE `any` argument (no numeric/string/seed verdict) can
+  // deliver any runtime value, so an agreed GC-`ref` narrowing from the OTHER
+  // sites is unproven — clsx's `toVal(mix)` had one object-literal site and one
+  // `toVal(arguments[i])` site; the literal narrowed `mix` to that struct,
+  // `typeof mix` then static-folded to "object", and every string/number/array
+  // argument silently took the object branch with zero enumerable keys. Only
+  // the trapping/misfolding ref narrowing is withdrawn; scalar narrowings keep
+  // their existing coerce-don't-trap risk profile (same split as #2867 S2).
+  // (#4616 smoke regression) The opaque-any withdrawal is scoped to
+  // SPECULATIVE narrowings on UNANNOTATED params. A param with an explicit
+  // concrete type annotation (`buf: Uint8Array` in the native-messaging
+  // framing core) is vouched for by the annotation — a violating call site is
+  // a TS type error, not a runtime wildcard — and withdrawing its refined vec
+  // rep degraded the WASI byte path to a silent no-op (the node_fs/deno scale
+  // variants emitted ZERO output at every size).
+  const paramHasConcreteAnnotation = (): boolean => {
+    let found = false;
+    const scan = (node: ts.Node): void => {
+      if (found) return;
+      if (ts.isFunctionDeclaration(node) && node.name?.text === funcName) {
+        const p = node.parameters[paramIndex];
+        // Syntactic check (no checker query): any explicit annotation other
+        // than the `any`/`unknown` keywords vouches for the param.
+        if (
+          p?.type !== undefined &&
+          p.type.kind !== ts.SyntaxKind.AnyKeyword &&
+          p.type.kind !== ts.SyntaxKind.UnknownKeyword
+        ) {
+          found = true;
+        }
+        return;
+      }
+      ts.forEachChild(node, scan);
+    };
+    scan(sourceFile);
+    return found;
+  };
+  if (
+    sawOpaqueAnyArg &&
+    type !== null &&
+    (type.kind === "ref" || type.kind === "ref_null") &&
+    !paramHasConcreteAnnotation()
+  ) {
+    type = null;
+  }
+  // (#4630) A catch-clause binding withdraws ANY GC-`ref` agreement, not just a
+  // native-string one. `catch (e)` binds whatever was thrown — a value the other
+  // call sites say nothing about — so the agreement is never proof for it, and
+  // the ABI boundary for a ref narrowing GUARD-CASTS a violating value to null
+  // rather than trapping. That silent null is what made
+  // `asyncHelpers-asyncTest-return-not-thenable` report `[false×6]`: `$DONE`'s
+  // param was agreed onto `(ref null $Test262Error)` by the
+  // `$DONE(new Test262Error(…))` site, so the TypeError handed to
+  // `catch (syncError) { $DONE(syncError) }` arrived as null and
+  // `error instanceof TypeError` read false.
+  //
+  // The narrower native-string-only rule this replaces was scoped that way to
+  // protect 12 `throwsAsync-*` tests that turned out to be passing *because* of
+  // the same nulling — they printed `Test262:AsyncTestComplete` for errors they
+  // should have reported. Widening does not regress them; it stops hiding them,
+  // and the substrate work (`async-eager-promise.ts`, both the closure and the
+  // declaration half) is what makes them pass honestly.
+  if (
+    sawCatchVarArg &&
+    type !== null &&
+    (type.kind === "ref" || type.kind === "ref_null") &&
+    !paramHasConcreteAnnotation()
+  ) {
+    type = null;
+  }
+  // (#4491 wave-4) Soundness for the DESCRIPTOR-DIRTY module: withdraw a
+  // narrowing to a concrete `__vec_*` carrier.
+  //
+  // The checker's element type is not a proof of the runtime CARRIER once a
+  // descriptor can exist. `var arr = []; Object.defineProperty(arr, "1", {get})`
+  // is `number[]` to the checker after the first numeric element write, but
+  // codegen materialises it as `$__vec_externref` so the overlay can hold
+  // accessor entries. Narrowing the callee's parameter to `$__vec_f64` then
+  // makes the ARGUMENT boundary a carrier conversion, and `emitVecToVecBody`
+  // implements that as an element-wise COPY into a fresh `struct.new` — a
+  // brand-new vec. The #3251 overlay side table is keyed by vec IDENTITY
+  // (`ref.eq`), so the callee receives an array with NO descriptors at all:
+  // accessor get/set, `writable:false` enforcement and companion values all
+  // vanish, and the element read answers the raw backing slot.
+  //
+  // Measured (standalone, this base): `function f(o, k, v) { return o[k]; }`
+  // called once as `f(arr, "1", getFunc())` answered `0` while the identical
+  // read at module level answered `3` (the getter). Making the SAME call site
+  // polymorphic — which withdraws the narrowing through the #4530 rule —
+  // answered `3`. That is the whole `propertyHelper.js` verification family
+  // (`verifyEqualTo` / `verifyWritable` / `verifyProperty`), whose `obj`
+  // parameter is monomorphic on the array under test in every array-descriptor
+  // test262 file.
+  //
+  // Scoped to `overlayRouteActive` — the module-wide pre-scan flag that already
+  // routes typed-lane element access through the dynamic lane (#4159). In such
+  // a module the vec-typed parameter buys nothing (every access is routed
+  // anyway) and costs identity, so the withdrawal is free where it applies and
+  // byte-identical everywhere else. Withdrawing leaves the parameter on its
+  // resolved `externref`, which passes the ORIGINAL struct by reference.
+  if (
+    type !== null &&
+    (type.kind === "ref" || type.kind === "ref_null") &&
+    overlayRouteActive(ctx) &&
+    getVecInfo(ctx, (type as { typeIdx: number }).typeIdx) !== null
+  ) {
+    type = null;
+  }
   // (#2867 S2) Soundness, same shape as the #3548 under-application rule: if the
   // function ALSO escapes as a value, callers exist that this scan never saw, so
   // an agreed GC-`ref` narrowing is unproven. Withdraw it — a ref narrowing is
@@ -501,7 +727,7 @@ export function inferParamTypeFromCallSites(
   if (escapesAsValue && type !== null && (type.kind === "ref" || type.kind === "ref_null")) {
     type = null;
   }
-  return { type, sawCallSite, escapesAsValue };
+  return { type, sawCallSite, escapesAsValue, sawUnderApplied };
 }
 
 /**
@@ -1052,6 +1278,44 @@ export function inferNumericReturnTypes(ctx: CodegenContext, sourceFile: ts.Sour
     }
   }
 
+  // (#4606) MIXED kernels — at least one boolean-valued `return` alongside at
+  // least one that is not — must not be promoted AT ALL. `isNumericExpr` counts
+  // `true`/`false`, `!x` and every comparison as numeric (they lower to i32), so
+  //
+  //     function m(x) { if (x > 5) return true; return x + 1; }
+  //
+  // proves "numeric" and gets an f64 result carrier. That is sound for
+  // arithmetic and WRONG for identity: the `true` arm crosses back out as the
+  // number 1, so `typeof m(9)` is "number" and `` `${m(9)}` `` is "1" where node
+  // says "boolean" / "true". #2795 already carved out the PURELY-boolean kernels
+  // (branded i32, so they box as JS booleans) — this is the remaining half of
+  // the same gap: a kernel that is neither purely numeric nor purely boolean has
+  // no single scalar carrier that preserves both, so it keeps its boxed
+  // (externref) carrier and the tag survives.
+  //
+  // Removal must be a FIXPOINT, not one pass: `isNumericExpr` admits a call to
+  // any member of `numeric`, so dropping `m` can invalidate a caller that was
+  // only numeric because `m` was. Re-running `isNumericExpr` against the shrunk
+  // set drops those too (the callee's own TS type is `any`, so the call arm's
+  // checker fallback answers false).
+  let mixedChanged = true;
+  let mixedSafety = numeric.size + 1;
+  while (mixedChanged && mixedSafety-- > 0) {
+    mixedChanged = false;
+    for (const fnName of [...numeric]) {
+      // Purely-boolean kernels keep #2795's branded-i32 carrier — their tag is
+      // already preserved, and nothing they call can have been dropped (a call
+      // arm is boolean only for a member of `boolean`, which never shrinks here).
+      if (boolean.has(fnName)) continue;
+      const info = fnInfo.get(fnName)!;
+      const mixed = info.returns.some((r) => isBooleanExpr(r));
+      if (mixed || !info.returns.every((r) => isNumericExpr(r, info.paramNames))) {
+        numeric.delete(fnName);
+        mixedChanged = true;
+      }
+    }
+  }
+
   const result = new Map<string, ValType>();
   for (const fnName of numeric) {
     result.set(fnName, boolean.has(fnName) ? { kind: "i32", boolean: true } : { kind: "f64" });
@@ -1072,6 +1336,104 @@ export function inferNumericReturnTypes(ctx: CodegenContext, sourceFile: ts.Sour
  * fixpoint: only calls to an already-admitted callee are evidence, so a
  * return-only recursive cycle cannot type itself.
  */
+/**
+ * (#4555) Can `expr` — an identifier — be `undefined` at runtime because it
+ * names a PARAMETER that some call site does not supply?
+ *
+ * The value side of this is already handled: an under-applied parameter no
+ * longer narrows to a native scalar, so it carries the real `undefined`. The
+ * RETURN side was not, and the two must agree — a function whose result type
+ * is f64 coerces that `undefined` back to `NaN` on the way out:
+ *
+ *     function g(a, b) { return b; }
+ *     g(1, 2);   //  2
+ *     g(1);      //  was NaN, want undefined
+ *
+ * Answers `false` for a parameter with a default or a `?` marker (those have a
+ * defined value at every call) and for anything that is not a parameter of a
+ * named function declaration, so the numeric-kernel promotion is unchanged
+ * everywhere it was already sound.
+ */
+function lastIndexOfParameterName(owner: ts.FunctionDeclaration, declaration: ts.ParameterDeclaration): number {
+  // §10.2.1: with duplicate formal names the LAST one owns the binding, so it
+  // is that position's supplied-ness that decides. The checker resolves a
+  // reference to the FIRST declaration, which for `function f(x, a, b, x)`
+  // called as `f(1, 2)` reported a supplied parameter for a binding that is
+  // `undefined`. Non-duplicate names are unaffected (the two indices coincide).
+  if (!ts.isIdentifier(declaration.name)) return owner.parameters.indexOf(declaration);
+  const name = declaration.name.text;
+  let last = -1;
+  owner.parameters.forEach((parameter, index) => {
+    if (ts.isIdentifier(parameter.name) && parameter.name.text === name) last = index;
+  });
+  return last;
+}
+
+function parameterMayBeUndefined(ctx: CodegenContext, expr: ts.Identifier): boolean {
+  const declaration = ctx.oracle.valueDeclarationOf(expr);
+  if (!declaration || !ts.isParameter(declaration)) return false;
+  if (declaration.initializer !== undefined || declaration.questionToken !== undefined) return false;
+  const owner = declaration.parent;
+  if (!ts.isFunctionDeclaration(owner) || owner.name === undefined) return false;
+  const index = lastIndexOfParameterName(owner, declaration);
+  if (index < 0) return false;
+  return inferParamTypeFromCallSites(ctx, owner.name.text, index, owner.getSourceFile()).sawUnderApplied;
+}
+
+/**
+ * (#4121 slice 2) The route-2 CALL-DEFINITION arm: "is this direct call's
+ * result a proven `f64` carrier?", as a predicate the whole-program numeric
+ * fixpoint can consult.
+ *
+ * Route 2 (#3765) already has a call arm, but it reads `numericFunctions` —
+ * a NAME-keyed set built from every function-like of that name in the program.
+ * One same-named member of the population withdraws the name for all of them:
+ *
+ *     const o = { g: function () { return "s"; } };
+ *     function g(x) { return x + 1; }
+ *     var i = g(1);      // `g` withdrawn by `o.g`; `i` stays boxed
+ *
+ * {@link inferBindingAwareNumericReturnTypes} resolves the callee to its exact
+ * DECLARATION, so it keeps the verdict the name-keyed set has to give up. This
+ * predicate exposes that precision to the fixpoint.
+ *
+ * Two facts it deliberately does NOT launder:
+ *  - **booleans.** A boolean-branded `i32` return is the `` `${b}` `` → `1`
+ *    trap the issue's "must still decline" list names; only a plain `f64`
+ *    carrier qualifies.
+ *  - **cycles.** The return map is itself a grounded least fixpoint that
+ *    declines ungrounded recursion, so nothing here can enter a cycle that the
+ *    slot fixpoint's own groundedness pass would otherwise reject.
+ *
+ * Answers `undefined` — meaning "re-running the fixpoint would learn nothing" —
+ * whenever the map is empty, either kill switch is off, or every proven name is
+ * already in `priorNumericFunctions`. That is the gate that keeps the second
+ * analysis pass off programs it cannot change.
+ */
+export function bindingAwareNumericCallEvidence(
+  ctx: CodegenContext,
+  priorNumericFunctions: ReadonlySet<string> | undefined,
+): ((call: ts.CallExpression) => boolean) | undefined {
+  if (!numericReturnsFlagEnabled() || !numericAdmissionEnabled()) return undefined;
+  const carriers = ctx.bindingAwareNumericReturnTypes;
+  if (!carriers || carriers.size === 0) return undefined;
+  let adds = false;
+  for (const [name, carrier] of carriers) {
+    if (carrier.kind === "f64" && priorNumericFunctions?.has(name) !== true) {
+      adds = true;
+      break;
+    }
+  }
+  if (!adds) return undefined;
+  return (call) => {
+    const callee = call.expression;
+    if (!ts.isIdentifier(callee)) return false;
+    if (carriers.get(callee.text)?.kind !== "f64") return false;
+    const declaration = ctx.oracle.valueDeclarationOf(callee);
+    return declaration !== undefined && ts.isFunctionDeclaration(declaration);
+  };
+}
+
 export function inferBindingAwareNumericReturnTypes(
   ctx: CodegenContext,
   sourceFiles: readonly ts.SourceFile[],
@@ -1150,6 +1512,9 @@ export function inferBindingAwareNumericReturnTypes(
     if (ts.isNumericLiteral(expr)) return true;
     if (expr.kind === ts.SyntaxKind.TrueKeyword || expr.kind === ts.SyntaxKind.FalseKeyword) return true;
     if (ts.isIdentifier(expr)) {
+      // (#4555) An under-applied parameter is `undefined` at some call, which
+      // an f64 result would render as NaN. See `parameterMayBeUndefined`.
+      if (parameterMayBeUndefined(ctx, expr)) return false;
       // The local oracle is a grounded NUMBER-carrier proof: its construction
       // explicitly rejects every booleanish definition and resolves the exact
       // lexical slot, so same-name/shadowed bindings cannot leak evidence.

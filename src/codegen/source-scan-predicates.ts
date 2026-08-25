@@ -248,10 +248,29 @@ export function collectGlobalObjectPropertyNames(
       else aliasDisqualified.add(node.name.text);
       return;
     }
+    // (#4640) `this.y++` / `++this.y` / `this.x += 1` CREATE the property too.
+    // §13.4.4.1 and §13.15.2 both end in PutValue on the same Reference the
+    // plain `this.y = v` form uses, so a missing property is created (with
+    // `NaN`, or the ToNumber'd result) rather than left absent. Only `=` was
+    // collected, so `this.y++; isNaN(y)` — the whole point of
+    // `identifier-resolution/S11.1.2_A1_T1` and `types/reference/S8.7.2_A3` —
+    // left `y` unregistered and the bare read threw `y is not defined`.
+    //
+    // Widening is safe in the same direction the file's header argues: a name
+    // registered here is only ever consulted AFTER locals / captures / module
+    // globals / functions have all missed, and if the write did not actually
+    // run the read gets the runtime `__hasOwnProperty` miss and throws the
+    // ReferenceError the spec asks for anyway.
+    if (ts.isPostfixUnaryExpression(node) || ts.isPrefixUnaryExpression(node)) {
+      if (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) {
+        pendingTargets.push(node.operand);
+      }
+      return;
+    }
     if (!ts.isBinaryExpression(node)) return;
     const op = node.operatorToken.kind;
     if (op < ts.SyntaxKind.FirstAssignment || op > ts.SyntaxKind.LastAssignment) return;
-    if (op === ts.SyntaxKind.EqualsToken) pendingTargets.push(node.left);
+    pendingTargets.push(node.left);
     // `g = somethingElse` re-points an alias, so a later `g.q = 7` is not
     // provably a write through the global object.
     if (ts.isIdentifier(node.left)) aliasDisqualified.add(node.left.text);
@@ -388,6 +407,29 @@ export function recordScriptVarBindingNames(target: Set<string>, sourceFile: ts.
     forEachChild(node, walk);
   };
   walk(sourceFile);
+}
+
+/** Per-file memo for {@link scriptVarBindingNames}. */
+const scriptVarBindingNameCache = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
+
+/**
+ * (#4489) Memoized set form of {@link recordScriptVarBindingNames}, for callers
+ * that need the names rather than a set to accumulate into.
+ *
+ * The `__module_init` `undefined` seed asks for this once per module-init pass
+ * (the body is compiled twice, #2965) and the walk is over the whole top-level
+ * region, so it is memoized per source file. Ambient files answer the empty set:
+ * `collectDeclarations` never gives an ambient declaration a value global, so
+ * there is nothing to seed and a name collected from one would be a phantom
+ * (the #4018 hazard on the TDZ side).
+ */
+export function scriptVarBindingNames(sourceFile: ts.SourceFile): ReadonlySet<string> {
+  const cached = scriptVarBindingNameCache.get(sourceFile);
+  if (cached !== undefined) return cached;
+  const names = new Set<string>();
+  if (!sourceFile.isDeclarationFile) recordScriptVarBindingNames(names, sourceFile);
+  scriptVarBindingNameCache.set(sourceFile, names);
+  return names;
 }
 
 /** Names owned by the declarative half of a Script's GlobalEnvironmentRecord.

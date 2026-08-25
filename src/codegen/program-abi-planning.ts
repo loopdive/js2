@@ -37,6 +37,18 @@ export const PROGRAM_ABI_CALLABLE_ROLE = Object.freeze({
   // the guard that keeps it that way.
   callableProvider: 12,
   classConstructorNew: 13,
+  // (#3520 C34) Per-field host accessors (`__sget_*` / `__sset_*` / `__shas_*` /
+  // `__sbool_*`). See struct-field-accessor-abi.ts for the derived-ordinal
+  // encoding; the family was previously the largest population left on the
+  // positional `retainedModuleFunction` fallback.
+  structFieldAccessor: 14,
+  // (#3520 C35) The last four compiler-authored callable families that were
+  // still falling through to the positional `retainedModuleFunction` label.
+  // See compiler-support-abi.ts for each family's derived-ordinal encoding.
+  closureArgcDispatcher: 15,
+  asyncFrameMachinery: 16,
+  vecFromExternMaterializer: 17,
+  stdlibMathHelper: 18,
 } as const);
 
 /**
@@ -471,6 +483,7 @@ export function planProgramAbiGlobal(ctx: CodegenContext, plan: ProgramAbiGlobal
   if (!session) return;
   const { binding } = plan.ref;
   const origin = binding.kind === "source" ? "source" : binding.kind;
+  const capability = binding.kind === "source" ? binding.capability : undefined;
   if (origin === "source" && (plan.anchor.kind !== "source" || plan.storageOwnerUnitId === undefined)) {
     throw new ProgramAbiInvariantError(
       "invalid-callable-provenance",
@@ -503,6 +516,7 @@ export function planProgramAbiGlobal(ctx: CodegenContext, plan: ProgramAbiGlobal
         ? {
             sourceId: plan.anchor.sourceId,
             unitId: plan.storageOwnerUnitId,
+            ...(capability ? { capability } : {}),
           }
         : {}),
     },

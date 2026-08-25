@@ -4,9 +4,9 @@ title: "SOUNDNESS: the vec sparse tail traps every dynamic MOP chokepoint (`a.le
 status: done
 completed: 2026-08-15
 assignee: ttraenkler/claude-es5-standalone
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: hard

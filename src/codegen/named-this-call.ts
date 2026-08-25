@@ -28,7 +28,9 @@ import { bodyReferencesOwnThis } from "./helpers/body-references-own-this.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
 import { thisReceiverIsGlobalObject } from "./helpers/sloppy-this-global.js";
 import { addFuncType } from "./registry/types.js";
+import { ensureExnTag } from "./registry/imports.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
+import { buildStandardTryTable } from "../ir/try-table.js";
 
 interface NamedThisCallTarget {
   readonly trampolineFuncIdx: FuncHandle;
@@ -115,7 +117,14 @@ function receiverIsAdmitted(
   // dispatch. The trampoline still runtime-splits a null value to the legacy
   // unbound call, so a detached/nullish reach does not enter the fast arm.
   if (inner.kind === ts.SyntaxKind.ThisKeyword) {
-    return fctx.readsCurrentThis === true || thisReceiverIsGlobalObject(ctx, fctx, inner);
+    // (#4536/#3729) A CLASS METHOD's own `this` is its receiver param
+    // (`localMap` carries "this"), not `__current_this` — acorn's
+    // `finishNode(node, type) { return finishNodeAt.call(this, …) }` is
+    // exactly this shape. The compiled receiver value is param 0 either way,
+    // so the trampoline install is as sound as for the readsCurrentThis rung;
+    // refusing it dropped the receiver and silently skipped every
+    // `this.options.ranges`-guarded write in the callee.
+    return fctx.readsCurrentThis === true || fctx.localMap.has("this") || thisReceiverIsGlobalObject(ctx, fctx, inner);
   }
   const fact = ctx.oracle.typeFactOf(inner);
   if (!factIsStaticallyNullish(fact)) return true;
@@ -209,31 +218,83 @@ function ensureNamedThisCallTrampoline(
   const prevThisLocal = trampolineParams.length;
   const resultType = results[0];
   const resultLocal = resultType === undefined ? -1 : prevThisLocal + 1;
-  const exactCall = callTarget(targetFuncIdx, params.length);
+  const standardizedEh = ctx.wasi || ctx.standalone;
+  const unwindExnLocal = resultType === undefined ? prevThisLocal + 1 : resultLocal + 1;
+  const exactCall = (): Instr[] => callTarget(targetFuncIdx, params.length);
 
   // Save the ambient receiver, install `receiver`, run the exact call, restore
   // on both the normal and the unwinding exit.
-  const installAndCall = (receiver: readonly Instr[]): Instr[] => [
-    { op: "global.get", index: currentThisGlobalIdx },
-    { op: "local.set", index: prevThisLocal },
-    ...receiver,
-    { op: "global.set", index: currentThisGlobalIdx },
-    {
-      op: "try",
-      blockType: resultType === undefined ? { kind: "empty" } : { kind: "val", type: resultType },
-      body: exactCall,
-      catches: [],
-      catchAll: [
-        { op: "local.get", index: prevThisLocal },
-        { op: "global.set", index: currentThisGlobalIdx },
-        { op: "rethrow", depth: 0 },
-      ],
-    },
-    ...(resultLocal < 0 ? [] : ([{ op: "local.set", index: resultLocal }] satisfies Instr[])),
-    { op: "local.get", index: prevThisLocal },
-    { op: "global.set", index: currentThisGlobalIdx },
-    ...(resultLocal < 0 ? [] : ([{ op: "local.get", index: resultLocal }] satisfies Instr[])),
-  ];
+  const installAndCall = (receiver: readonly Instr[]): Instr[] => {
+    const blockType =
+      resultType === undefined ? ({ kind: "empty" } as const) : ({ kind: "val", type: resultType } as const);
+    // (#4620) A CONCRETE-ref `try_table` block type is a shape no lane can use
+    // on today's engine. Isolated in a HAND-BUILT module (no compiler
+    // involved), on Node v22.22.2 / V8 12.4.254.21: a `try_table` whose block
+    // type is `(ref null <typeidx>)` traps `RuntimeError: unreachable` on
+    // ENTRY, with nothing thrown, while the same module with an `i32` or
+    // `externref` block type runs fine. Abstract single-byte ref types
+    // (`externref`, `funcref`) are unaffected; only the two-byte
+    // `0x63 <typeidx>` form is.
+    //
+    // Here that killed every `.call` on a named function that reads `this` and
+    // returns a ref — a string or an object, i.e. the whole
+    // `10.4.3-1-{1,2,4,5}-s` primitive-`this` family — before the protected
+    // call ever ran (a side-effect probe showed the callee never executed;
+    // patching the two try_tables in the emitted binary to plain `block`s made
+    // the same module return the right value).
+    //
+    // The ordinary `try`/`catch` lowering never hits it because it emits an
+    // EMPTY try_table block type and `return`s out of the protected body. This
+    // does the same thing with a local: the call's result is parked in
+    // `__result` inside the try body, so the try_table carries no value across
+    // its own boundary, and the value is read after the scaffold. Scalar
+    // results keep the pre-existing (working) value-typed shape so their bytes
+    // do not move.
+    const parkResultInLocal = standardizedEh && (resultType?.kind === "ref" || resultType?.kind === "ref_null");
+    const tryBlockType = parkResultInLocal ? ({ kind: "empty" } as const) : blockType;
+    const protectedCall: Instr = standardizedEh
+      ? buildStandardTryTable(
+          tryBlockType,
+          parkResultInLocal ? [...exactCall(), { op: "local.set", index: resultLocal }] : exactCall(),
+          [
+            {
+              kind: "catch",
+              tagIdx: ensureExnTag(ctx),
+              payloadType: { kind: "externref" },
+              body: [
+                { op: "local.set", index: unwindExnLocal },
+                { op: "local.get", index: prevThisLocal },
+                { op: "global.set", index: currentThisGlobalIdx },
+                { op: "local.get", index: unwindExnLocal },
+                { op: "throw", tagIdx: ensureExnTag(ctx) },
+              ],
+            },
+          ],
+        )
+      : {
+          op: "try",
+          blockType,
+          body: exactCall(),
+          catches: [],
+          catchAll: [
+            { op: "local.get", index: prevThisLocal },
+            { op: "global.set", index: currentThisGlobalIdx },
+            { op: "rethrow", depth: 0 },
+          ],
+        };
+    return [
+      { op: "global.get", index: currentThisGlobalIdx },
+      { op: "local.set", index: prevThisLocal },
+      ...receiver,
+      { op: "global.set", index: currentThisGlobalIdx },
+      protectedCall,
+      // The parked-result shape already stored it inside the try body.
+      ...(resultLocal < 0 || parkResultInLocal ? [] : ([{ op: "local.set", index: resultLocal }] satisfies Instr[])),
+      { op: "local.get", index: prevThisLocal },
+      { op: "global.set", index: currentThisGlobalIdx },
+      ...(resultLocal < 0 ? [] : ([{ op: "local.get", index: resultLocal }] satisfies Instr[])),
+    ];
+  };
 
   const liveCall: Instr[] = installAndCall([{ op: "local.get", index: 0 }]);
 
@@ -263,6 +324,7 @@ function ensureNamedThisCallTrampoline(
     locals: [
       { name: "__previous_this", type: { kind: "externref" } },
       ...(resultType === undefined ? [] : [{ name: "__result", type: resultType }]),
+      ...(standardizedEh ? [{ name: "__unwind_exception", type: { kind: "externref" } as const }] : []),
     ],
     body,
     exported: false,

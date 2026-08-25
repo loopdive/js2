@@ -1,7 +1,7 @@
-import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { runDogfoodScript } from "./run-dogfood-script";
 
 // @ts-expect-error — .mjs dogfood setup has no declaration file
 import { loadLitUpstreamSuitePin } from "./setup-lit-upstream-suite.mjs";
@@ -52,9 +52,8 @@ describe("lit upstream suite", () => {
   });
 
   const heavy = process.env.DOGFOOD_LIT_UPSTREAM === "1" ? it : it.skip;
-  heavy("runs lit's own unit tests against compiled Wasm", { timeout: 3_600_000 }, () => {
-    const out = execFileSync("npx", ["tsx", join(HERE, "lit-upstream-suite.mjs"), "--json"], {
-      encoding: "utf-8",
+  heavy("runs lit's own unit tests against compiled Wasm", { timeout: 3_600_000 }, async () => {
+    const out = await runDogfoodScript(join(HERE, "lit-upstream-suite.mjs"), ["--json"], {
       maxBuffer: 256 * 1024 * 1024,
     });
     const report = JSON.parse(out);

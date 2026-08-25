@@ -3,7 +3,7 @@
 // Shared async/await CPS analysis and state-machine contracts (#1042/#1373b).
 
 import type { TypeOracle } from "../checker/oracle.js";
-import { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "./async-static.js";
+import { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "../ir/async-static.js";
 import { isPromiseType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { forEachChild, ts } from "../ts-api.js";
@@ -159,7 +159,7 @@ export function analyzeAsyncBody(_ctx: CodegenContext, fn: ts.FunctionLikeDeclar
 // moved to the leaf module `async-static.ts` so the IR front-end can import
 // them without an import cycle (this file imports codegen/index.ts, which
 // imports ir/select.ts). Re-exported here for existing callers.
-export { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "./async-static.js";
+export { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "../ir/async-static.js";
 
 /** Promise static combinators whose call result is already a real Promise. */
 const PROMISE_COMBINATOR_NAMES = new Set(["all", "race", "any", "allSettled"]);
@@ -3861,9 +3861,15 @@ function collectReferencedAfter(root: ts.Node, target: ts.AwaitExpression, out: 
       return; // the await's own operand executes BEFORE resumption — skip it
     }
     if (isNestedFunctionScope(node)) {
-      // A nested scope after the target may still reference our locals (closure
-      // capture), so when we're already past the target, collect from it too.
-      if (passedTarget) collectReferencedIdentifiers(node, out);
+      // A nested scope may reference our locals (closure capture) and run
+      // after the await REGARDLESS of where it is declared: a hoisted function
+      // declaration or an arrow created before the suspend point is routinely
+      // invoked from the resumed continuation (#4618 — react it-bodies declare
+      // `function ParentComponent(){…}` before `await act(...)` and render it
+      // after). Collect from every nested scope, not just ones lexically after
+      // the target; the outer `ownLocals` filter keeps this to genuine
+      // captures, and an over-approximated spill is only an extra frame field.
+      collectReferencedIdentifiers(node, out);
       return;
     }
     if (passedTarget && ts.isIdentifier(node)) {

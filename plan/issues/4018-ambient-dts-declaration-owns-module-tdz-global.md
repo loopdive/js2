@@ -4,7 +4,7 @@ id: 4018
 title: "An ambient .d.ts declaration can win the module-TDZ lookup and abort the compile"
 status: done
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 completed: 2026-08-01
 assignee: ttraenkler/claude
 priority: critical
@@ -14,7 +14,7 @@ task_type: bug
 area: compiler, codegen
 language_feature: multi-module-compilation
 goal: npm-library-support
-sprint: current
+sprint: 78
 required_by: [1282, 1400, 2693]
 es_edition: n/a
 related: [1282, 3672, 4001, 4019]

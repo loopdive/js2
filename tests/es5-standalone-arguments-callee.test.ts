@@ -129,20 +129,41 @@ describe("#4243 arguments.callee is an own property (§10.6 step 13.a)", () => {
     ).toBe(1);
   });
 
-  it("is absent in a strict function (§10.6 step 14 takes over)", async () => {
-    // The strict arguments object must NOT get the data property. It is
-    // specified to carry a %ThrowTypeError% accessor instead, which this issue
-    // does not yet mint — so the assertion is that the sloppy seed is correctly
-    // gated OFF, not that the strict behaviour is complete.
+  it("is a %ThrowTypeError% ACCESSOR in a strict function (§10.6 step 14)", async () => {
+    // (#4555) This assertion used to be `descriptor === undefined`, with the
+    // note that #4243 gated the sloppy DATA property off but did not mint the
+    // accessor step 14 specifies. That accessor now exists, so the strict
+    // arguments object carries `{ get, set, enumerable: false,
+    // configurable: false }` — the shape test262's `10.6-13-c-3-s` checks.
     expect(
       await runStandalone(`
         function f1(): number {
           "use strict";
-          return Object.getOwnPropertyDescriptor(arguments as any, "callee") === undefined ? 1 : 0;
+          var d: any = Object.getOwnPropertyDescriptor(arguments as any, "callee");
+          if (d === undefined) return 0;
+          if (d.enumerable !== false || d.configurable !== false) return 0;
+          if (!d.hasOwnProperty("get") || !d.hasOwnProperty("set")) return 0;
+          if (d.hasOwnProperty("value") || d.hasOwnProperty("writable")) return 0;
+          return 1;
         }
         export function test(): number { return f1(); }
       `),
     ).toBe(1);
+  });
+
+  it("makes a WRITE to strict arguments.callee throw TypeError (§10.6 step 14, 10.6-14-c-4-s)", async () => {
+    // (#4555) The set half of the poison. `arguments-callee-poison.ts` covers
+    // only a direct syntactic READ; a write — and a write through an escaped
+    // arguments object — needs the real accessor.
+    expect(
+      await runStandalone(`
+        function f1(): any { "use strict"; return arguments; }
+        export function test(): number {
+          var argObj: any = f1();
+          try { argObj.callee = 1; return 1; } catch (e) { return e instanceof TypeError ? 2 : 3; }
+        }
+      `),
+    ).toBe(2);
   });
 
   it("throws TypeError on a direct read in strict code (§10.6 step 14, 10.6-2gs)", async () => {

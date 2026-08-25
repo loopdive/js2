@@ -4,9 +4,9 @@ title: "Standalone: named keys on builtin prototypes (Object/Function/Array/Stri
 status: done
 assignee: ttraenkler/W4-proto-followups
 completed: 2026-08-06
-sprint: current
+sprint: 78
 created: 2026-08-06
-updated: 2026-08-11
+updated: 2026-08-18
 priority: high
 horizon: l
 feasibility: hard

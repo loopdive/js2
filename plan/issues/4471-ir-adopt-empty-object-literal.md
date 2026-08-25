@@ -2,7 +2,7 @@
 id: 4471
 title: "IR: adopt the empty object literal `{}`"
 status: done
-sprint: current
+sprint: 78
 priority: medium
 horizon: s
 area: ir

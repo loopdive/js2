@@ -3,7 +3,7 @@ id: 3899
 title: "perf: gc-native String scan kernels (startsWith/endsWith/trim, and the text-search mix) are 4-7× slower than JS on the perf page"
 status: done
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-18
 completed: 2026-07-31
 priority: high
 feasibility: medium
@@ -12,7 +12,7 @@ task_type: optimization
 area: codegen
 language_feature: string-methods
 goal: performance
-sprint: current
+sprint: 78
 horizon: l
 es_edition: multi
 depends_on: [3898]

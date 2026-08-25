@@ -7,6 +7,7 @@
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { ensureAnyValueType } from "./any-helpers.js";
+import { ensureDateAnyToStringHelper } from "./date-any-to-string.js"; // (#4491 T4-B)
 import { emitNativeHtmlWrapperHelpers } from "./html-wrapper-native.js";
 import { emitStrSearchHelpers } from "./native-strings-search.js";
 import { emitStrCaseHelpers } from "./native-strings-transform.js";
@@ -219,12 +220,13 @@ function ensureErrorToStringHelper(ctx: CodegenContext): number | undefined {
   const L_MSG = 4;
 
   const returnName: Instr[] = [{ op: "local.get", index: L_NAME }, { op: "ref.as_non_null" }, { op: "return" }];
+  const returnMsg: Instr[] = [{ op: "local.get", index: L_MSG }, { op: "ref.as_non_null" }, { op: "return" }];
 
   const body: Instr[] = [
     { op: "local.get", index: L_V },
     { op: "ref.cast", typeIdx: errStructIdx },
     { op: "local.set", index: L_E },
-    // name = ($name is a native string) ? it : "Error"
+    // name = ($name is a native string) ? it : "Error"   (steps 3-4)
     { op: "local.get", index: L_E },
     { op: "struct.get", typeIdx: errStructIdx, fieldIdx: 2 }, // $name (externref)
     { op: "any.convert_extern" },
@@ -240,24 +242,42 @@ function ensureErrorToStringHelper(ctx: CodegenContext): number | undefined {
       else: litStr("Error"),
     },
     { op: "local.set", index: L_NAME },
-    // msg — null / non-string → name alone (steps 4–6; non-string is the
-    // documented construction-time-ToString residual).
+    // msg = ($message is a native string) ? it : ""      (steps 5-6)
+    // (#4485) An absent / non-string message is the EMPTY STRING, not "return
+    // name now". The old early-return conflated steps 5-6 with steps 7-9 and so
+    // could never reach step 7 (`name is "" → return msg`): `new Error()` with
+    // `e.name = ""` answered "Error" instead of "" (test262
+    // .../toString/15.11.4.4-8-2.js). Materialising the empty string here keeps
+    // the two decisions separate and makes the step order the spec's.
+    // A non-string message remains the documented construction-time-ToString
+    // residual — §20.5.1.1 stores ToString(message), our ctor stores the raw arg.
     { op: "local.get", index: L_E },
     { op: "struct.get", typeIdx: errStructIdx, fieldIdx: 1 }, // $message (externref)
     { op: "any.convert_extern" },
     { op: "local.tee", index: L_TMP },
     { op: "ref.test", typeIdx: anyStrTypeIdx },
-    { op: "i32.eqz" },
-    { op: "if", blockType: { kind: "empty" }, then: returnName.map((i) => ({ ...i })) },
-    { op: "local.get", index: L_TMP },
-    { op: "ref.cast", typeIdx: anyStrTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: strRef },
+      then: [
+        { op: "local.get", index: L_TMP },
+        { op: "ref.cast", typeIdx: anyStrTypeIdx },
+      ],
+      else: litStr(""),
+    },
     { op: "local.set", index: L_MSG },
-    // empty message → name alone (§20.5.3.4 step 6)
+    // (#4485) step 7 — empty NAME → the message alone. `new Error("m")` with
+    // `e.name = ""` is `"m"`, not `": m"` (.../toString/15.11.4.4-8-1.js).
+    { op: "local.get", index: L_NAME },
+    { op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 }, // len
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: returnMsg },
+    // step 8 — empty message → name alone
     { op: "local.get", index: L_MSG },
     { op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 }, // len
     { op: "i32.eqz" },
     { op: "if", blockType: { kind: "empty" }, then: returnName.map((i) => ({ ...i })) },
-    // name + ": " + msg
+    // step 9 — name + ": " + msg
     { op: "local.get", index: L_NAME },
     { op: "ref.as_non_null" },
     ...litStr(": "),
@@ -332,6 +352,22 @@ export function ensureStrTruthyHelper(ctx: CodegenContext): number | undefined {
   return funcIdx;
 }
 
+/**
+ * (#4492 wave-5) The `ctx.nativeStrHelpers` key of the ToString dispatcher this
+ * file owns. Exported so a finalize-time arm can LOOK UP the built helper (to
+ * splice into it, or to call it back) without re-spelling the name — this file
+ * is the engine-owned home of that vocabulary (#2108 `SANCTIONED`), and a second
+ * spelling elsewhere is precisely the drift that gate measures.
+ */
+export const ANY_TO_STRING_HELPER = "__any_to_string";
+
+/**
+ * (#4492 wave-5) …and the `ctx.funcMap` key of the externref-entry ToString
+ * dispatcher, for the same reason. `__extern_toString` is an IMPORT in host mode
+ * and a defined native in standalone; the key is the same either way.
+ */
+export const EXTERN_TO_STRING_HELPER = "__extern_toString";
+
 export function ensureAnyToStringHelper(ctx: CodegenContext): number {
   ensureNativeStringHelpers(ctx);
   const existing = ctx.nativeStrHelpers.get("__any_to_string");
@@ -398,37 +434,27 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
   const errToStrIdx = ensureErrorToStringHelper(ctx);
   const errStructTypeIdx = errToStrIdx !== undefined ? ctx.errorStructTypeIdx : -1;
 
+  // (#4491 T4-B) …and the §21.4.4.41 Date arm, on the same discipline and for
+  // the same reason: a `__Date` is a nominal struct, so it reaches this
+  // terminal's generic "[object Object]" while the statically-resolved
+  // `d.toString()` renders correctly. `undefined` when the module never built a
+  // Date (or has no native strings), which leaves the terminal byte-identical.
+  const dateToStrIdx = ensureDateAnyToStringHelper(ctx);
+  const dateStructTypeIdx = dateToStrIdx !== undefined ? (ctx.structMap.get("__Date") ?? -1) : -1;
+
   // number_toString returns an externref that is really a `ref $AnyString` in
   // native-strings mode; convert it back with any.convert_extern + ref.cast.
   const numToStrIdx = ctx.funcMap.get("number_toString");
 
   const litStr = (value: string): Instr[] => nativeStringLiteralInstrs(ctx, value);
 
-  // (#2962) Shared terminal for an unrecognized object ref: `$Error_struct` →
-  // `__error_to_string` (a real "TypeError: boom"), anything else → the
-  // canonical "[object Object]". `loadRef` is a FACTORY (fresh instruction
-  // objects per use) because the ref is loaded twice (test + call) — aliasing
-  // one instr array into two tree positions double-shifts funcIdx fields when
-  // post-codegen passes walk the tree (the #1448 corruption class).
-  const objectOrErrorTag = (loadRef: () => Instr[]): Instr[] =>
-    errToStrIdx !== undefined && errStructTypeIdx >= 0
-      ? [
-          ...loadRef(),
-          { op: "ref.test", typeIdx: errStructTypeIdx },
-          {
-            op: "if",
-            blockType: { kind: "val", type: strRef },
-            then: [...loadRef(), { op: "call", funcIdx: errToStrIdx }],
-            else: litStr("[object Object]"),
-          },
-        ]
-      : litStr("[object Object]");
-
   // `box` (the $AnyValue ref) lives in local 1; the original anyref param in 0.
   const L_V = 0;
   const L_BOX = 1;
   // #1910/#1472 S2 — scratch anyref for the tag-5 string-vs-wrapper recovery.
   const L_RECOVER = 2;
+  // (ES5 standalone lane) scratch anyref for the OrdinaryToPrimitive terminal.
+  const L_TOPRIM = 3;
 
   const numberArm = (loadNumeric: Instr[]): Instr[] =>
     numToStrIdx !== undefined
@@ -439,6 +465,154 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
           { op: "ref.cast", typeIdx: anyStrTypeIdx },
         ]
       : litStr("[object Object]");
+
+  // (ES5 standalone lane) §7.1.17 step 5 — ToString of an OBJECT is
+  // `ToString(? ToPrimitive(argument, string))`, and it is `ToPrimitive` that
+  // runs a user `toString`/`valueOf`. Every arm above this terminal handles a
+  // value that is ALREADY primitive, so reaching here means "an object we could
+  // not render" — precisely where the OrdinaryToPrimitive step belongs.
+  //
+  // Root cause this closes: a plain-function-constructor ("fnctor") instance —
+  // `function F(){ this.toString = function(){…} }; new F()` — is a NOMINAL
+  // WasmGC struct, so it is neither `$Object` nor `$Vec`. `__to_primitive`'s
+  // `$Object` arm (the only ToPrimitive step `__any_to_string` had, in
+  // `recoverNonStringExtern`) misses it, and the value fell straight through to
+  // the "[object Object]" literal. Measured standalone before this change:
+  // `"" + new F()`, `String(new F())`, and every borrowed
+  // `String.prototype.<m>.call(new F(), …)` answered "[object Object]" for a
+  // receiver whose own OR inherited `toString` returns "OWN".
+  //
+  // The driver is `__class_to_primitive(obj, stringHint)` (class-to-primitive.ts)
+  // rather than `__to_primitive`, deliberately: it dispatches ONLY on the
+  // per-struct `__call_valueOf`/`__call_toString` arms, so a `$Object`, a `$Vec`
+  // or a bare closure struct gets `ref.null.extern` from the dispatchers and the
+  // driver's string-hint tail answers the same "[object Object]" as before. The
+  // blast radius is therefore exactly "nominal struct carrying a user
+  // valueOf/toString", leaving the `$Object` and array renderings byte-identical.
+  //
+  // Only a PRIMITIVE result is accepted (`$AnyString`, boxed number / i31 small
+  // int, boxed boolean); anything else falls back to "[object Object]". That is
+  // what makes the terminal non-recursive: it never re-enters `__any_to_string`,
+  // so a driver that answers with another object cannot loop.
+  const classToPrimIdx = ctx.funcMap.get("__class_to_primitive");
+  const boxNumTerminalIdx = ctx.nativeBoxNumberTypeIdx;
+  const boxBoolTerminalIdx = ctx.nativeBoxBooleanTypeIdx;
+  const objectTag = (loadRef: () => Instr[]): Instr[] => {
+    if (classToPrimIdx === undefined) return litStr("[object Object]");
+    const boxArms: Instr[] =
+      boxNumTerminalIdx >= 0 && boxBoolTerminalIdx >= 0
+        ? [
+            { op: "local.get", index: L_TOPRIM },
+            { op: "ref.test", typeIdx: boxNumTerminalIdx },
+            { op: "local.get", index: L_TOPRIM },
+            { op: "ref.test", typeIdx: -20 }, // abstract i31 (#3673 small int)
+            { op: "i32.or" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: strRef },
+              then: numberArm([
+                { op: "local.get", index: L_TOPRIM },
+                { op: "ref.test", typeIdx: -20 },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "f64" } },
+                  then: [
+                    { op: "local.get", index: L_TOPRIM },
+                    { op: "ref.cast", typeIdx: -20 },
+                    { op: "i31.get_s" },
+                    { op: "f64.convert_i32_s" },
+                  ],
+                  else: [
+                    { op: "local.get", index: L_TOPRIM },
+                    { op: "ref.cast", typeIdx: boxNumTerminalIdx },
+                    { op: "struct.get", typeIdx: boxNumTerminalIdx, fieldIdx: 0 },
+                  ],
+                },
+              ]),
+              else: [
+                { op: "local.get", index: L_TOPRIM },
+                { op: "ref.test", typeIdx: boxBoolTerminalIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: strRef },
+                  then: [
+                    { op: "local.get", index: L_TOPRIM },
+                    { op: "ref.cast", typeIdx: boxBoolTerminalIdx },
+                    { op: "struct.get", typeIdx: boxBoolTerminalIdx, fieldIdx: 0 },
+                    {
+                      op: "if",
+                      blockType: { kind: "val", type: strRef },
+                      then: litStr("true"),
+                      else: litStr("false"),
+                    },
+                  ],
+                  else: litStr("[object Object]"),
+                },
+              ],
+            },
+          ]
+        : litStr("[object Object]");
+    return [
+      ...loadRef(),
+      { op: "extern.convert_any" },
+      { op: "i32.const", value: 1 }, // string hint (§7.1.17 → ToPrimitive(_, string))
+      { op: "call", funcIdx: classToPrimIdx },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: L_TOPRIM },
+      { op: "ref.test", typeIdx: anyStrTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: strRef },
+        then: [
+          { op: "local.get", index: L_TOPRIM },
+          { op: "ref.cast", typeIdx: anyStrTypeIdx },
+        ],
+        else: boxArms,
+      },
+    ];
+  };
+
+  // (#2962) Shared terminal for an unrecognized object ref: `$Error_struct` →
+  // `__error_to_string` (a real "TypeError: boom"), anything else → the
+  // OrdinaryToPrimitive terminal above, which ends at the canonical
+  // "[object Object]". `loadRef` is a FACTORY (fresh instruction
+  // objects per use) because the ref is loaded twice (test + call) — aliasing
+  // one instr array into two tree positions double-shifts funcIdx fields when
+  // post-codegen passes walk the tree (the #1448 corruption class).
+  const objectOrErrorTagInner = (loadRef: () => Instr[]): Instr[] =>
+    errToStrIdx !== undefined && errStructTypeIdx >= 0
+      ? [
+          ...loadRef(),
+          { op: "ref.test", typeIdx: errStructTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: strRef },
+            then: [...loadRef(), { op: "call", funcIdx: errToStrIdx }],
+            else: objectTag(loadRef),
+          },
+        ]
+      : objectTag(loadRef);
+
+  // (#4491 T4-B) The Date arm sits OUTSIDE the error arm, same factory
+  // discipline. `d.toString()` is folded statically to `__date_format_string`;
+  // every DYNAMIC spelling (`String(d)`, `"" + d`, `d + d`, a template
+  // substitution) arrived here and answered "[object Object]" — one value, two
+  // renderings, and the spelling one reaches for when checking is the correct
+  // one. `__date_any_to_string` calls that same formatter, so the two cannot
+  // drift.
+  const objectOrErrorTag = (loadRef: () => Instr[]): Instr[] =>
+    dateToStrIdx !== undefined && dateStructTypeIdx >= 0
+      ? [
+          ...loadRef(),
+          { op: "ref.test", typeIdx: dateStructTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: strRef },
+            then: [...loadRef(), { op: "call", funcIdx: dateToStrIdx }],
+            else: objectOrErrorTagInner(loadRef),
+          },
+        ]
+      : objectOrErrorTagInner(loadRef);
 
   // #1910/#1472 S2 — recover the string for an externref that is tagged as a
   // string (tag 5) but is NOT actually a `$AnyString`. The generic
@@ -750,7 +924,7 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
         // (#2962) before the "[object Object]" terminal.
         objectOrErrorTag(() => [{ op: "local.get", index: L_V }]);
 
-  const body: Instr[] = [
+  const stringArmAndBelow: Instr[] = [
     // if (v is a $AnyString) return it directly
     { op: "local.get", index: L_V },
     { op: "ref.test", typeIdx: anyStrTypeIdx },
@@ -774,11 +948,42 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
             { op: "local.set", index: L_BOX },
             ...boxDispatch,
           ],
-          // else (boxed primitive externref shape, null ref, plain object, vec,
-          // …) → recover number/boolean boxes, then "[object Object]"
+          // else (boxed primitive externref shape, plain object, vec, …) →
+          // recover number/boolean boxes, then "[object Object]"
           else: residualArm,
         },
       ],
+    },
+  ];
+
+  // (#4621 D) §7.1.17 ToString(null) is "null". A RAW null ref never reached
+  // the tag-0 arm above — that arm only fires for an `$AnyValue` BOX carrying
+  // tag 0 — so it fell through `residualArm` to the "[object Object]" terminal.
+  // The residual-arm comment even listed "null ref" among the shapes it
+  // handled; it did not handle it, it rendered it as an object.
+  //
+  // Measured on `language/expressions/addition/S11.6.1_A3.2_T2.4`:
+  // `new String("1") + null` produced `"1[object Object]"`. Any addition with an
+  // OBJECT operand routes through `addition-to-primitive.ts`, which boxes both
+  // sides to anyref and lands here; the all-primitive spellings (`"" + null`)
+  // fold statically and were always right, which is what hid this.
+  //
+  // Scope note: in this representation the null externref IS the JavaScript
+  // `null` (`x === null` lowers to a bare `ref.is_null`, binary-ops.ts) while
+  // `undefined` is the tag-1 box / #4489 singleton, so this arm cannot swallow
+  // an `undefined`. The one other producer of a raw null here is the #1105
+  // nullable-`$AnyString` "undefined sentinel", which now renders "null"
+  // instead of "[object Object]" — both are wrong for that sentinel, and the
+  // spec-correct answer for the value this arm actually exists to serve is
+  // "null".
+  const body: Instr[] = [
+    { op: "local.get", index: L_V },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: strRef },
+      then: litStr("null"),
+      else: stringArmAndBelow,
     },
   ];
 
@@ -792,6 +997,7 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
     locals: [
       { name: "box", type: { kind: "ref_null", typeIdx: anyValueTypeIdx } },
       { name: "recover", type: { kind: "anyref" } },
+      { name: "toprim", type: { kind: "anyref" } },
     ],
     body,
     exported: false,

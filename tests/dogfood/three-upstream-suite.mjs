@@ -25,7 +25,13 @@ function moduleSpecifier(fromDirectory, target) {
 }
 
 function transformThreeTest(source, filePath, generatedPath) {
-  return source.replace(/from\s+(["'])(\.\.?\/[^"']+)\1/g, (_match, quote, specifier) => {
+  // Three's QUnit modules are default-exported for the browser runner. The
+  // default value is intentionally unused by this adapter, but retaining the
+  // export lets the compiler elide the registration call as an unused module
+  // result. Keep the original module body and callbacks intact while making
+  // the registration expression an ordinary top-level side effect.
+  const registered = source.replace(/\bexport\s+default\s+QUnit\.module\b/g, "QUnit.module");
+  return registered.replace(/from\s+(["'])(\.\.?\/[^"']+)\1/g, (_match, quote, specifier) => {
     const target = resolve(dirname(filePath), specifier);
     return `from ${quote}${moduleSpecifier(dirname(generatedPath), target)}${quote}`;
   });

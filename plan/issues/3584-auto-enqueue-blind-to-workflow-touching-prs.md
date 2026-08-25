@@ -2,9 +2,9 @@
 id: 3584
 title: "auto-enqueue.yml can never enqueue a PR that touches .github/workflows/** (silent forever-stall)"
 status: done
-sprint: current
+sprint: 78
 created: 2026-07-24
-updated: 2026-07-31
+updated: 2026-08-18
 completed: 2026-07-31
 assignee: ttraenkler/dev-ci-3584
 priority: high

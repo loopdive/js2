@@ -84,7 +84,7 @@
 import type { DtsEntrypointSeeds } from "../checker/dts-entrypoint-seeds.js";
 import { fnctorCtorParamTypesFlagEnabled } from "../derivation-flags.js";
 import { ts, forEachChild } from "../ts-api.js";
-import { buildIrUnitInventory, type IrUnitId } from "./identity.js";
+import { buildIrUnitInventory, type IrSourceId, type IrUnitId } from "./identity.js";
 import {
   buildIrLegacyUnitProjection,
   buildIrPlanningIdentityContext,
@@ -209,6 +209,70 @@ export type IrUnitTypeMap = ReadonlyMap<IrUnitId, TypeMapEntry>;
  */
 export type TypeMap = ReadonlyMap<string, TypeMapEntry>;
 
+/**
+ * The narrow constructor evidence that may cross the propagation/selector
+ * boundary for a function-style constructor.
+ *
+ * This is deliberately a seed, rather than an IR node or a lowering plan.
+ * The future fnctor lowerer may embed it in an `IrFnctorShape`, but the
+ * middle-end must not infer a fnctor from a name or from an ordinary object
+ * literal.  A producer is required to prove all of the literal `true`
+ * evidence below before returning an admission.  Returning `undefined` from
+ * an admission resolver means Unsupported and leaves the existing dynamic
+ * path untouched.
+ */
+export interface IrFnctorAdmission {
+  readonly kind: "fnctor-admission";
+  /** Exact source identity of both the constructor declaration and site. */
+  readonly sourceId: IrSourceId;
+  /** Exact inventory identity of the constructor declaration. */
+  readonly constructorUnitId: IrUnitId;
+  readonly constructorDeclaration: ts.FunctionDeclaration | ts.FunctionExpression;
+  /** The one direct allocation site represented by this admission. */
+  readonly constructorSite: ts.NewExpression;
+  /** Minimal shape contract reserved for the future fnctor lowering seam. */
+  readonly shape: {
+    readonly kind: "fnctor-shape";
+    readonly fields: readonly [{ readonly name: "input"; readonly type: "string" }];
+  };
+  /**
+   * Soundness facts are literal `true` so a resolver cannot accidentally
+   * hand the selector a partially checked object.  In particular, an
+   * approved name or reserved type index alone is not sufficient evidence.
+   */
+  readonly proof: {
+    readonly sameSource: true;
+    readonly approved: true;
+    readonly reserved: true;
+    readonly directConstructor: true;
+    readonly fixedUnconditionalInput: true;
+    readonly noAlias: true;
+    readonly noReassignment: true;
+    readonly noEscape: true;
+    readonly noCrossSourceCollision: true;
+  };
+}
+
+/** Resolver used by propagation. It must be exact-source and fail closed. */
+export type IrFnctorPropagationAdmissionResolver = (
+  site: ts.NewExpression,
+  sourceId: IrSourceId,
+  scope: ReadonlyMap<string, LatticeType>,
+) => IrFnctorAdmission | undefined;
+
+/** Resolver used by selector shape checks. The closure owns source identity. */
+export type IrFnctorSelectionAdmissionResolver = (site: ts.NewExpression) => IrFnctorAdmission | undefined;
+
+/** Optional, opt-in propagation precision. No resolver means no fnctor facts. */
+export interface IrPropagationOptions {
+  readonly resolveFnctorAdmission?: IrFnctorPropagationAdmissionResolver;
+}
+
+/** Construct the sole lattice shape admitted for a proven fnctor allocation. */
+export function irFnctorInputStringAtom(): LatticeAtom {
+  return { kind: "object", fields: [{ name: "input", type: { kind: "string" } }] };
+}
+
 const UNKNOWN: LatticeType = { kind: "unknown" };
 const F64: LatticeType = { kind: "f64" };
 const I32: LatticeType = { kind: "i32" };
@@ -244,12 +308,31 @@ export function buildIrUnitTypeMap(
   checker: ts.TypeChecker | undefined,
   identityContext: IrPlanningIdentityContext,
   entrypointSeeds?: DtsEntrypointSeeds,
+  propagationOptions?: IrPropagationOptions,
 ): IrUnitTypeMap {
   const functions = collectIndexedFunctionDeclarations(sourceFiles, identityContext);
   const decls = new Map(functions.map((info) => [info.unitId, info.declaration] as const));
   if (decls.size === 0) return new Map();
 
   const resolveCallTarget = makeCallTargetResolver(functions, checker, identityContext);
+  // Fnctor admission is an explicit opt-in.  It is intentionally represented
+  // as the same first-refusal extension used by the satellite evaluators so
+  // every ordinary expression rule remains unchanged when no admission
+  // resolver is installed.  The resolver owns the exact source/constructor/
+  // gate proof; propagation only materializes the fixed `{input: string}`
+  // lattice atom after that proof succeeds.
+  const resolveFnctorAdmission = propagationOptions?.resolveFnctorAdmission;
+  const fnctorExtension: InferExtension | undefined = resolveFnctorAdmission
+    ? {
+        tryInfer: (expr, scope) => {
+          if (!objectShapesEnabled() || !ts.isNewExpression(expr)) return undefined;
+          const sourceId = identityContext.sourceIdBySourceFile.get(expr.getSourceFile());
+          if (sourceId === undefined) return undefined;
+          const admission = resolveFnctorAdmission(expr, sourceId, scope);
+          return admission === undefined ? undefined : irFnctorInputStringAtom();
+        },
+      }
+    : undefined;
 
   // Seed: explicit TS annotations + checker-derived signatures.
   const entries = new Map<IrUnitId, { params: LatticeType[]; returnType: LatticeType }>();
@@ -315,7 +398,7 @@ export function buildIrUnitTypeMap(
           }
         }
         for (let i = 0; i < newParams.length && i < site.argExprs.length; i++) {
-          const argType = inferExpr(site.argExprs[i]!, callerScope, entries, resolveCallTarget);
+          const argType = inferExpr(site.argExprs[i]!, callerScope, entries, resolveCallTarget, fnctorExtension);
           newParams[i] = join(newParams[i]!, argType);
         }
       }
@@ -358,10 +441,17 @@ export function buildIrUnitTypeMap(
           seed.returnType.kind === "bool" ||
           seed.returnType.kind === "string" ||
           seed.returnType.kind === "object";
-        walkBodyForReturns(fn.body, ownScope, entries, resolveCallTarget, (t) => {
-          if (seedConcrete && t.kind === "dynamic") return; // keep seed authority
-          newReturn = join(newReturn, t);
-        });
+        walkBodyForReturns(
+          fn.body,
+          ownScope,
+          entries,
+          resolveCallTarget,
+          (t) => {
+            if (seedConcrete && t.kind === "dynamic") return; // keep seed authority
+            newReturn = join(newReturn, t);
+          },
+          fnctorExtension,
+        );
       }
 
       // --- detect change ---------------------------------------------

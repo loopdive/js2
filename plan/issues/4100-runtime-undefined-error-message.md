@@ -2,10 +2,10 @@
 id: 4100
 title: "new Error(m) with a RUNTIME-undefined m renders \"Error: undefined\" instead of the name alone (§20.5.1.1 step 3)"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-02
 completed: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 priority: medium
 horizon: s
 feasibility: medium

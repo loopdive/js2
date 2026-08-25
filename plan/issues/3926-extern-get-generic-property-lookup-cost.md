@@ -4,9 +4,9 @@ title: "perf: `__extern_get` generic property lookup is the largest non-parser f
 status: done
 completed: 2026-08-06
 assignee: ttraenkler/claude-fable
-sprint: current
+sprint: 78
 created: 2026-07-31
-updated: 2026-08-06
+updated: 2026-08-18
 loc-budget-allow:
   - src/codegen/object-runtime.ts
 priority: high

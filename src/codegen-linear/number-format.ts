@@ -18,8 +18,17 @@ import type { Instr, LocalDef, ValType, WasmModule } from "../ir/types.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { NUMBER_TO_STRING_RUNTIME } from "./coercion-engine.js";
 import type { LinearContext } from "./context.js";
+import { isLinkedArena, type LinkedHeapOptions } from "./linked-arena.js";
 import { addRuntime as addBaseRuntime } from "./runtime.js";
 
+// All three are ABSOLUTE addresses and are STANDALONE-MODE ONLY (#4540). In the
+// ADR-0020 link topology they name bytes the engine artifact owns: 1024 and
+// 16384 are inside its shadow stack [0, 65536), and 65536 is the exact first
+// byte of its static data. The tables are addressed by these constants across a
+// large generated body — as `i32.const` operands AND as `offset=` immediates —
+// so rebasing them is a per-site rewrite where one miss reads engine memory and
+// returns a plausible wrong number. Until that rewrite exists, `addRuntime`
+// REFUSES number formatting in linked mode. See ADR-0022.
 const TABLE_BASE = 1024;
 /** Keep literals above the immutable Ryū tables in modules that need formatting. */
 export const LINEAR_NUMBER_FORMAT_DATA_BASE = 16384;
@@ -62,7 +71,15 @@ export function emitLinearStringData(ctx: LinearContext, dataSegmentBase: number
   for (const literal of ctx.stringLiterals.values()) {
     bytes.set(literal.bytes, literal.offset - dataSegmentBase);
   }
-  ctx.mod.dataSegments.push({ offset: dataSegmentBase, bytes });
+  // #4540 — in linked mode the segment is PASSIVE: it carries no address and is
+  // inert at instantiation. `finalizeLinkedDataImage` copies it into a block
+  // obtained from the memory owner's allocator. `offset` is retained only as
+  // the link-time base the literal offsets were assigned from.
+  ctx.mod.dataSegments.push({
+    offset: dataSegmentBase,
+    bytes,
+    ...(isLinkedArena(ctx.mod) ? { passive: true } : {}),
+  });
 }
 
 export function addRuntime(
@@ -70,11 +87,30 @@ export function addRuntime(
   ast: TypedAST,
   exposeArenaReset: boolean | undefined,
   defaultDataSegmentBase: number,
+  linkedHeap?: LinkedHeapOptions,
+  heapAllocator?: "bump" | "malloc-v1",
 ): number {
   const enabled = sourceMayUseLinearNumberToString(ast);
+  if (enabled && linkedHeap !== undefined) {
+    // #4540 — the Ryū tables are addressed by CONSTANTS baked across a large
+    // generated body (`TABLE_BASE` + per-table cursors, consumed as `i32.const`
+    // operands and `offset=` immediates). In linked mode those constants name
+    // bytes inside the engine's shadow stack, and rebasing them means rewriting
+    // every one of those sites correctly — miss one and the formatter silently
+    // reads engine memory and returns plausible garbage. Refuse the
+    // combination until the tables are rebased with the same bias the literal
+    // image uses; a wrong number is worse than a refused compile.
+    throw new Error(
+      "linear number formatter: number.toString() is not yet supported in linked mode — the Ryū " +
+        "tables are placed at fixed link-time addresses that belong to the memory's owner. " +
+        "See #4540.",
+    );
+  }
   addBaseRuntime(mod, {
     exposeArenaReset,
     ...(enabled ? { heapStart: LINEAR_NUMBER_FORMAT_HEAP_START } : {}),
+    ...(linkedHeap !== undefined ? { linkedHeap } : {}),
+    ...(heapAllocator !== undefined ? { heapAllocator } : {}),
   });
   if (enabled) addLinearNumberToStringRuntime(mod);
   return enabled ? LINEAR_NUMBER_FORMAT_DATA_BASE : defaultDataSegmentBase;

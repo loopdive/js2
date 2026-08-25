@@ -68,11 +68,13 @@ export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
+import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
+import { objectLiteralDataPropertyName } from "./property-key-fold.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
-import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "../codegen/async-static.js";
+import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "./async-static.js";
 import { closureSignatureEquals, type IrClassShape, type IrClosureSignature, type IrType } from "./nodes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
@@ -86,7 +88,9 @@ import {
 import { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 
-import { binaryOpCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
+import { binaryOpCapability, domSurfaceCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
+import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
+import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
 import { isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-bindings.js";
@@ -99,7 +103,7 @@ import type {
   IrPrimitiveExpressionFamily,
   IrStableFunctionCallPlan,
 } from "./module-bindings.js";
-import type { LatticeType, TypeMap } from "./propagate.js";
+import type { IrFnctorAdmission, IrFnctorSelectionAdmissionResolver, LatticeType, TypeMap } from "./propagate.js";
 import type { RecursiveTypeEvidence } from "./type-evidence.js";
 import type { IntrinsicId } from "./intrinsics.js";
 
@@ -340,6 +344,12 @@ export interface IrSelection {
    *  individually claimed); callers must treat a missing map as "no edge
    *  information" and behave conservatively. */
   readonly localCallees?: ReadonlyMap<string, ReadonlySet<string>>;
+  /**
+   * Exact allocation-site evidence retained for a future fnctor lowering
+   * pass.  This is deliberately absent from the legacy projection: a
+   * NewExpression node cannot be made source-safe by a display-name map.
+   */
+  readonly fnctorAdmissions?: ReadonlyMap<string, ReadonlyArray<IrFnctorAdmission>>;
   /** (#3142) Module-level (top-level statement) claim assessment — gate G3
    *  of the legacy-frontend retirement. Slice 1 added the assessment
    *  (telemetry: the `check:ir-fallbacks` gate ratchets a `module-level`
@@ -397,6 +407,26 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    */
   readonly implicitParamUsesNumericVecAbi?: (parameter: ts.ParameterDeclaration) => boolean;
   /**
+   * (#4612) True when the LEGACY backend has ALREADY registered this
+   * unannotated position with a carrier the IR's `dynamic` cannot equal.
+   *
+   * The `dynamic` verdict below is only sound because the IR's dynamic carrier
+   * is by construction the same one legacy gives the same declaration
+   * (`resolvePositionType`'s dynamic arm in codegen/index.ts says so). #4155
+   * broke that equality for one family: legacy refines an unannotated position
+   * whose checker type is an approved-standalone function-style-constructor
+   * instance to that fnctor's reserved struct, which the IR — reading the
+   * propagated lattice, not the checker — never sees. Claiming such a position
+   * as dynamic guarantees a POST-claim `abi-signature-parity` withdrawal (plus
+   * a #3551 caller cascade); declining here keeps it a pre-claim decline.
+   *
+   * Pass a `ts.ParameterDeclaration` for a parameter position, or the owning
+   * declaration for the return position. Provided by the real-compile call
+   * site, which owns the registered legacy signatures; bare selector callers
+   * omit it and keep the historical behaviour.
+   */
+  readonly dynamicCarrierDivergesFromLegacy?: (position: ts.Node) => boolean;
+  /**
    * Standalone/WASI normally close claims over local callers. A production
    * planner may exempt a callee when its direct callable and IR overlay share
    * one fully certified ABI, making a legacy caller's pre-emitted call safe.
@@ -447,6 +477,13 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    *  strictNoHostImports). Gates the host-extern capability. */
   readonly jsHostExterns?: boolean;
   /**
+   * (#4576) Exact checker-owned standalone DOM subtree plan. This is a
+   * provider capability, not permission to enable the generic host-extern
+   * surface: `jsHostExterns` remains false. The plan is all-or-nothing for its
+   * source component and authorizes only its recorded AST nodes.
+   */
+  readonly standaloneDomCapability?: IrStandaloneDomCapabilityPlan;
+  /**
    * Proven primitive value family used by coercion-sensitive builtin
    * acceptance. Invalid local annotations and type assertions return
    * `undefined`; this is evidence, not receiver routing.
@@ -469,6 +506,15 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   readonly isArrayExpression?: (expr: ts.Expression) => boolean;
   /** Exact pre-scanned sized-Array constructor sites for the sparse carrier. */
   readonly isHoleyArrayConstructor?: (expr: ts.NewExpression) => boolean;
+  /**
+   * Exact, source-qualified admission for the one future fnctor shape whose
+   * constructor stores an unconditional `this.input: string`.  The resolver
+   * owns declaration identity, approved/reserved gate evidence, direct-site
+   * validation, and alias/reassignment/escape/collision checks.  Returning
+   * `undefined` keeps this constructor on the existing Unsupported path.
+   * This hook is planning-only; it does not authorize lowering by itself.
+   */
+  readonly resolveFnctorAdmission?: IrFnctorSelectionAdmissionResolver;
   /** Exact direct filter consumers of that sparse carrier. */
   readonly isHoleyArrayFilterCall?: (expr: ts.CallExpression) => boolean;
   /** True only when this backend owns the dedicated sparse filter provider. */
@@ -489,6 +535,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   readonly supportsSymbolicMathHelpers?: boolean;
   /** Backend owns a no-radix f64 → abstract-string formatter. */
   readonly supportsNumberToString?: boolean;
+  /** Backend owns bounded-literal f64.toFixed → abstract-string formatting. */
+  readonly supportsNumberToFixed?: boolean;
   /**
    * (#4462) The active backend has the HOST-FREE console sink (#3469's
    * `__stdout_acc` rope + `__stdout_append`), so `console.<m>(arg)` has
@@ -504,13 +552,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * build demotion.
    */
   readonly supportsLiteralStringReplace?: boolean;
-  /**
-   * True only when the active backend can materialise a fixed array of
-   * checker-proven strings as an externref vec. The default is false: native
-   * strings and host-free lanes use a different string carrier and must stay
-   * on the legacy path instead of failing after an IR claim.
-   */
-  readonly supportsHostStringArrayLiterals?: boolean;
+  /** Backend can materialize a fixed logical-string vector. */
+  readonly supportsStringArrayLiterals?: boolean;
   /**
    * The active backend has both the JS-host eval capability and the host
    * externref string carrier needed by the exact indirect-eval import ABI.
@@ -660,7 +703,7 @@ export function planIrCompilation(
   // (#2856) Arm the host-extern identifier resolution for this run. Mode-gated
   // via the capability table: only a JS-host compile may claim host-global
   // shapes; standalone/wasi defer so legacy keeps its #1472/#2907 refusal.
-  armHostGlobalResolvers(options);
+  armHostGlobalResolvers(sourceFile, options);
   currentModuleBindingResolver = options?.resolveModuleBinding ?? null;
   // (#1373b C-1) Arm the async claim gate for this run (consulted by
   // `whyNotIrClaimable`'s async-modifier arm via `isAsyncIrReady`), and
@@ -1010,13 +1053,12 @@ export function planIrCompilation(
   //     masks (e.g. `joinNums` in `algorithms.ts` under wasi). Keep the
   //     conservative caller-direction demotion there until those callee
   //     bodies are rejected up front by the body-shape work (#2856/#2857).
-  // -------------------------------------------------------------------------
-  const demoteOnLegacyCaller = options?.jsHostExterns !== true;
+  // (#4521) The policy lives in ./legacy-caller-policy.ts, shared with select-identity.ts.
+  const demoteOnLegacyCaller = demoteOnLegacyCallerPolicy(options);
   // #3214 A+B1 — B0 made an exact FunctionTypeNode source boundary use the
-  // canonical externref callable ABI in both front-ends.  Host mode can now use
-  // the same caller-direction relaxation for callable-param functions as for
-  // scalar leaves. Standalone/WASI retain the conservative closure until B1 is
-  // explicitly implemented for their carrier/runtime.
+  // canonical externref callable ABI in both front-ends, so host mode uses the
+  // same caller-direction relaxation for callable-param functions as for
+  // scalar leaves; standalone/WASI retain the conservative closure until B1.
   const { callers, callees, hasExternalCall } = buildLocalCallGraph(declByName, localClasses);
 
   const claimed = new Set(individuallyClaimed);
@@ -1400,6 +1442,10 @@ let currentHostGlobalResolver: ((node: ts.Identifier) => string | undefined) | n
  * and report the honest, target-owned reason.
  */
 let currentDeferredHostGlobalResolver: ((node: ts.Identifier) => string | undefined) | null = null;
+// Exact standalone provider authority. This stays separate from both host
+// resolvers so a DOM plan cannot accidentally arm `window`, `performance`, or
+// an unregistered extern member.
+let currentStandaloneDomCapability: IrStandaloneDomCapabilityPlan | null = null;
 
 /**
  * (#4457) Arm both host-global resolvers for a selector run: the live one when
@@ -1407,11 +1453,23 @@ let currentDeferredHostGlobalResolver: ((node: ts.Identifier) => string | undefi
  * defers. Exactly one is non-null for a given run (both are null when no
  * resolver was supplied at all).
  */
-function armHostGlobalResolvers(options: IrSelectionOptions | undefined): void {
-  const deferred = hostExternCapability(options?.jsHostExterns === true) === "defer";
+function armHostGlobalResolvers(sourceFile: ts.SourceFile, options: IrSelectionOptions | undefined): void {
+  const deferred = hostExternCapability(jsHostExternsEnabled(options)) === "defer";
   const resolver = options?.resolveHostGlobal ?? null;
   currentHostGlobalResolver = resolver && !deferred ? resolver : null;
   currentDeferredHostGlobalResolver = resolver && deferred ? resolver : null;
+  const candidate = options?.standaloneDomCapability;
+  currentStandaloneDomCapability =
+    candidate &&
+    candidate.sourceFile === sourceFile &&
+    domSurfaceCapability(jsHostExternsEnabled(options), true) !== "defer" &&
+    !jsHostExternsEnabled(options)
+      ? candidate
+      : null;
+}
+
+function standaloneDomOperation(node: ts.Node): IrStandaloneDomOperation | undefined {
+  return currentStandaloneDomCapability?.operation(node);
 }
 
 /**
@@ -1493,7 +1551,7 @@ export function configureIrStructuralSelectorPredicates(
   currentLocalClassDeclarations = localClassDeclarations;
   configureDynamicScanSource(sourceFile, functionDeclarations);
   currentAsyncDeclNames = asyncDeclarationNames;
-  armHostGlobalResolvers(options);
+  armHostGlobalResolvers(sourceFile, options);
   currentModuleBindingResolver = options?.resolveModuleBinding ?? null;
   currentDynMemberReadBuildable = options?.dynMemberReadBuildable ?? true;
   currentDynamicRuntimeBuildable = options?.dynamicRuntimeBuildable ?? true;
@@ -2311,7 +2369,12 @@ function resolveParamType(p: ts.ParameterDeclaration, mapped: LatticeType | unde
   // members don't participate in propagation (`entry` is undefined there) and
   // must keep the null rejection, not silently become dynamic-claimable.
   // Lattice `union` stays null: #2135's union rows own that shape.
-  if (mapped && (mapped.kind === "unknown" || mapped.kind === "dynamic")) return "dynamic";
+  // (#4612) …unless the legacy slot already carries a refined fnctor-instance
+  // struct here, in which case `dynamic` is a guaranteed post-claim parity
+  // withdrawal — decline instead. See `dynamicCarrierDivergesFromLegacy`.
+  if (mapped && (mapped.kind === "unknown" || mapped.kind === "dynamic")) {
+    return currentSelectionOptions?.dynamicCarrierDivergesFromLegacy?.(p) === true ? null : "dynamic";
+  }
   return null;
 }
 
@@ -2361,7 +2424,11 @@ function resolveReturnType(
   // #2949 slice 2 — same dynamic arm as `resolveParamType` (see the rationale
   // there). A dynamic return is claimable only when every return statement
   // returns a dynamic-typed MOVE (enforced by `dynamicUsesAreMoveOnly`).
-  if (mapped && (mapped.kind === "unknown" || mapped.kind === "dynamic")) return "dynamic";
+  // (#4612) …and only when legacy has not already registered this return slot
+  // with a refined fnctor-instance struct.
+  if (mapped && (mapped.kind === "unknown" || mapped.kind === "dynamic")) {
+    return currentSelectionOptions?.dynamicCarrierDivergesFromLegacy?.(fn) === true ? null : "dynamic";
+  }
   return null;
 }
 
@@ -2648,6 +2715,24 @@ function dynamicUsesAreMoveOnly(
       }
       if (currentDynamicRuntimeBuildable && argumentIsDynamic && expectedKind === "f64") {
         if (!scanExpr(a, true)) return false;
+        continue;
+      }
+      // #2949 — the SYMMETRIC counterpart of the unbox arm above: a CONCRETE
+      // argument reaching a dynamic callee parameter crosses the same carrier
+      // boundary as a concrete equality operand, and the direct-call lowering
+      // already boxes it there through the canonical tag-aware boxer.
+      //
+      // Without this arm the scan demanded a dynamic-shaped operand at every
+      // dynamic parameter position, so a caller that merely HAS a dynamic
+      // binding of its own (which is what makes this scan run at all) was
+      // rejected for an argument that has nothing to do with that binding —
+      // e.g. Acorn's `isIdentifierStart(code, astral)` passing its proven-f64
+      // `code` to `isInAstralSet(code, set)`, whose own `code` is dynamic.
+      //
+      // Admission is exactly the operand family `boxConcreteToDynamic`
+      // accepts, so the claim can never withdraw on a missing box.
+      if (!argumentIsDynamic && expectedKind === "dynamic" && concreteDynamicAssignmentOperandIsBuildable(unwrap(a))) {
+        if (!scanExpr(a, false)) return false;
         continue;
       }
       if (!scanExpr(a, expectedKind === "dynamic")) return false;
@@ -3373,6 +3458,16 @@ function isPhase1StatementListInScope(
         // Identifier or (#3000) a PrivateIdentifier (`this.#x = v`).
         if (!ts.isIdentifier(s.expression.left.name) && !ts.isPrivateIdentifier(s.expression.left.name))
           return shapeNo("nontail-assign-computedprop", s.expression);
+        const standaloneDomSet = standaloneDomOperation(s.expression.left);
+        if (standaloneDomSet?.kind === "member-set") {
+          if (!isPhase1Expr(standaloneDomSet.access.expression, scope, localClasses)) {
+            return shapeNo("nontail-dom-assign-recv", standaloneDomSet.access.expression);
+          }
+          if (!isPhase1Expr(s.expression.right, scope, localClasses)) {
+            return shapeNo("nontail-dom-assign-rhs", s.expression.right);
+          }
+          continue;
+        }
         if (!moduleExternPropertyWriteIsProven(s.expression.left, s.expression.right)) {
           return shapeNo("nontail-module-extern-assign-value", s.expression.right);
         }
@@ -4606,6 +4701,13 @@ function isPhase1BodyStatement(
           // bodies, in addition to plain-Identifier field writes.
           if (!ts.isIdentifier(stmt.expression.left.name) && !ts.isPrivateIdentifier(stmt.expression.left.name))
             return false;
+          const standaloneDomSet = standaloneDomOperation(stmt.expression.left);
+          if (standaloneDomSet?.kind === "member-set") {
+            return (
+              isPhase1Expr(standaloneDomSet.access.expression, scope, localClasses) &&
+              isPhase1Expr(stmt.expression.right, scope, localClasses)
+            );
+          }
           if (!moduleExternPropertyWriteIsProven(stmt.expression.left, stmt.expression.right)) {
             return shapeNo("body-module-extern-assign-value", stmt.expression.right);
           }
@@ -4890,6 +4992,13 @@ function isPhase1Tail(
     ) {
       if (!ts.isIdentifier(expr.left.name) && !ts.isPrivateIdentifier(expr.left.name))
         return shapeNo("tail-assign-computedprop", expr);
+      const standaloneDomSet = standaloneDomOperation(expr.left);
+      if (standaloneDomSet?.kind === "member-set") {
+        return (
+          isPhase1Expr(standaloneDomSet.access.expression, scope, localClasses) &&
+          isPhase1Expr(expr.right, scope, localClasses)
+        );
+      }
       if (!moduleExternPropertyWriteIsProven(expr.left, expr.right)) {
         return shapeNo("tail-module-extern-assign-value", expr.right);
       }
@@ -5820,7 +5929,8 @@ function expressionTouchesScalarModuleBinding(expr: ts.Expression): boolean {
     if (touched) return;
     if (ts.isIdentifier(node)) {
       const binding = moduleBinding(node);
-      if ((binding && binding.valueKind.kind !== "extern") || moduleScalarAliasFamily(node) !== undefined) {
+      const scalarBinding = binding && !isIrModuleReferenceValueKind(binding.valueKind);
+      if (scalarBinding || moduleScalarAliasFamily(node) !== undefined) {
         touched = true;
         return;
       }
@@ -5982,7 +6092,7 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
   const binding = moduleBinding(candidate);
   if (binding?.valueKind.kind === "f64") return "f64";
   if (binding?.valueKind.kind === "i32") return "boolean";
-  if (binding?.valueKind.kind === "extern") return "extern";
+  if (binding?.valueKind.kind === "extern" || binding?.valueKind.kind === "capability-extern") return "extern";
   // A #4208 update-retyped module binding has deliberately stale checker
   // evidence: after `value--`, a Boolean/string initializer now holds a
   // Number. Do not fall through to scalarExpressionFamily and resurrect the
@@ -6359,7 +6469,12 @@ function selectorSupportsNumberToString(): boolean {
 
 function isBoundedToFixedCall(expr: ts.CallExpression): boolean {
   if (!ts.isPropertyAccessExpression(expr.expression) || expr.expression.name.text !== "toFixed") return false;
-  if (currentModuleBindingResolver?.supportsHostNumberToString !== true) return false;
+  if (
+    currentSelectionOptions?.supportsNumberToFixed !== true &&
+    currentModuleBindingResolver?.supportsHostNumberToString !== true
+  ) {
+    return false;
+  }
   if (expr.arguments.length !== 1 || !ts.isNumericLiteral(expr.arguments[0]!)) return false;
   const digits = Number(expr.arguments[0]!.text.replace(/_/g, ""));
   return (
@@ -6410,7 +6525,7 @@ function certifiedHostIndirectEval(
   const shape = exactIndirectEvalStatement(expr);
   if (
     !shape ||
-    currentSelectionOptions?.jsHostExterns !== true ||
+    !jsHostExternsEnabled(currentSelectionOptions) ||
     currentSelectionOptions?.supportsHostIndirectEval !== true ||
     !selectorSeesAmbientBinding(shape.evalIdentifier) ||
     (scope?.has("eval") ?? false) ||
@@ -8022,6 +8137,120 @@ function isAffineThreeDeepElementAccess(expr: ts.ElementAccessExpression): boole
   return indexHasMultiply;
 }
 
+function phase1FnctorNewExpression(
+  expr: ts.NewExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean | undefined {
+  const fnctorAdmission = currentSelectionOptions?.resolveFnctorAdmission?.(expr);
+  if (fnctorAdmission === undefined) return undefined;
+  for (const arg of expr.arguments ?? []) {
+    if (ts.isSpreadElement(arg) || !isPhase1Expr(arg, scope, localClasses)) {
+      return shapeNo("expr-new-fnctor-arg", arg);
+    }
+  }
+  return true;
+}
+
+function phase1NewExpression(
+  expr: ts.NewExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (!ts.isIdentifier(expr.expression)) return shapeNo("expr-new-callee-nonident", expr.expression);
+  const fnctorAdmission = phase1FnctorNewExpression(expr, scope, localClasses);
+  if (fnctorAdmission !== undefined) return fnctorAdmission;
+  const promiseDelay = currentSelectionOptions?.promiseDelays?.resolve(expr);
+  if (promiseDelay) {
+    for (const capture of promiseDelay.executorCaptureNames) {
+      if (!scope.has(capture)) return shapeNo("expr-promise-delay-capture-scope", expr);
+    }
+    return true;
+  }
+  const ctorName = expr.expression.text;
+  const isLocalClass = localClassValueIsUnshadowed(ctorName, scope) && localClasses.has(ctorName);
+  const isAmbientConstructor = !isLocalClass && selectorSeesAmbientBinding(expr.expression);
+  if (currentSelectionOptions?.isHoleyArrayConstructor?.(expr) === true) {
+    if (ctorName !== "Array" || isLocalClass || scope.has("Array")) {
+      return capabilityNo("constructor-resolution-unsupported", "expr-new-holey-array-identity", expr);
+    }
+    if ((expr.typeArguments?.length ?? 0) !== 0 || expr.arguments?.length !== 1) {
+      return capabilityNo("constructor-arity-unsupported", "expr-new-holey-array-shape", expr);
+    }
+    const length = expr.arguments[0]!;
+    if (ts.isSpreadElement(length) || !ts.isNumericLiteral(length)) {
+      return capabilityNo("constructor-arity-unsupported", "expr-new-holey-array-length", length);
+    }
+    const numericLength = Number(length.text.replace(/_/g, ""));
+    if (!Number.isInteger(numericLength) || numericLength < 0 || numericLength > 0x7fff_ffff) {
+      return capabilityNo("constructor-arity-unsupported", "expr-new-holey-array-length", length);
+    }
+    return true;
+  }
+  if (
+    ctorName === "RegExp" &&
+    isAmbientConstructor &&
+    currentSelectionOptions?.supportsBackendCapability?.("host-regexp-constructor") === false
+  ) {
+    return capabilityNo("regexp-constructor-unsupported", "expr-new-regexp-target", expr);
+  }
+  if (!isLocalClass && isKnownExternClass(ctorName) && !isAmbientConstructor) {
+    return capabilityNo("constructor-resolution-unsupported", "expr-new-extern-identity", expr.expression);
+  }
+  if (NATIVE_TYPED_ARRAY_CLASSES.has(ctorName) && isAmbientConstructor) {
+    return capabilityNo("typed-array-constructor-unsupported", "expr-new-native-typed-array", expr);
+  }
+  if (LEGACY_ERROR_CONSTRUCTOR_CLASSES.has(ctorName) && isAmbientConstructor) {
+    return capabilityNo("error-constructor-unsupported", "expr-new-error-constructor", expr);
+  }
+  if (isLocalClass) {
+    if (localClassHasKnownProjectionGap(ctorName)) {
+      return capabilityNo("class-projection-unsupported", "expr-new-local-class-shape", expr);
+    }
+    const expectedArity = projectedConstructorArity(ctorName);
+    const actualArity = expr.arguments ? staticCallArgumentCount(expr.arguments) : 0;
+    if (expectedArity === undefined) {
+      return capabilityNo("class-projection-unsupported", "expr-new-local-class-constructor", expr);
+    }
+    if (actualArity !== null && actualArity !== expectedArity) {
+      return capabilityNo("constructor-arity-unsupported", "expr-new-local-class-arity", expr);
+    }
+  }
+  if (currentModuleBindingResolver?.isDirectModuleBinding(expr.expression)) {
+    return shapeNo("expr-new-module-binding-callee", expr.expression);
+  }
+  const hostDateSnapshot =
+    ctorName === "Date" && isAmbientConstructor ? currentSelectionOptions?.hostDateSnapshots?.(expr) : undefined;
+  if (ctorName === "Date" && !isLocalClass) {
+    if (!isAmbientConstructor) {
+      return capabilityNo("constructor-resolution-unsupported", "expr-new-date-identity", expr.expression);
+    }
+    if (currentSelectionOptions?.supportsBackendCapability?.("host-date-snapshot") === false) {
+      return capabilityNo("date-constructor-unsupported", "expr-new-date-target", expr);
+    }
+    if (currentSubjectIsModuleInit && !hostDateSnapshot) {
+      return capabilityNo("date-constructor-unsupported", "expr-new-module-native-date", expr);
+    }
+    if (!hostDateSnapshot) {
+      return capabilityNo("date-constructor-unsupported", "expr-new-date-snapshot-shape", expr);
+    }
+  }
+  if (!isLocalClass && !isKnownExternClass(ctorName)) {
+    return capabilityNo("constructor-resolution-unsupported", "expr-new-ctor-unknown", expr.expression);
+  }
+  if (expr.typeArguments && expr.typeArguments.length > 0 && !isExactModuleMapGenericInitializer(expr)) {
+    return shapeNo("expr-new-type-args", expr);
+  }
+  if (currentModuleBindingResolver && !currentModuleBindingResolver.externCallArgumentsMatch(expr)) {
+    return shapeNo("expr-new-module-extern-call-brand", expr);
+  }
+  if (!expr.arguments) return true;
+  for (const arg of expr.arguments) {
+    if (!isPhase1Expr(arg, scope, localClasses)) return shapeNo("expr-new-arg", arg);
+  }
+  return true;
+}
+
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
   if (
     (expressionTouchesModuleExtern(expr) || expressionTouchesModuleMapGetAlias(expr)) &&
@@ -8114,7 +8343,23 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (isUnrepresentableModuleBinding(expr)) {
       return shapeNo("expr-module-storage-unrepresentable", expr);
     }
-    if (scope.has(expr.text)) return true;
+    if (scope.has(expr.text)) {
+      // (#3522) A prepared nested class binding is a CONSTRUCTOR IDENTITY, not
+      // a first-class IR value. The class-declaration and `const C = class {…}`
+      // arms add the name to `scope` so the dedicated `new C(...)`,
+      // `C.staticMember` and `x instanceof C` arms can consume it — those arms
+      // resolve the binding themselves and never reach this generic identifier
+      // accept. Anything that DOES reach here is a bare value use
+      // (`const Alias = C;`, `return C;`, passing `C` as an argument), which
+      // `ir/from-ast` cannot represent: it reports
+      // "identifier \"C\" is not in scope" as a POST-CLAIM build error, after
+      // the class members have already been claimed and emitted — the exact
+      // split-ownership state R3 exists to prevent. Reject the owner here, at
+      // selection, so the whole class withdraws with it.
+      return currentPreparedClassBindingNames.has(expr.text)
+        ? shapeNo("expr-prepared-class-binding-value", expr)
+        : true;
+    }
     if (
       currentHostGlobalResolver !== null &&
       !localClasses.has(expr.text) &&
@@ -8122,6 +8367,11 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     ) {
       return true;
     }
+    // (#4576) A certified standalone `document` is a provider-owned global
+    // read, not a generic host-global admission. Node identity proves this
+    // exact occurrence is the receiver of `document.body` or the registered
+    // `document.createElement(tag)` call in the closed plan.
+    if (standaloneDomOperation(expr)?.kind === "global-get") return true;
     // (#4462) …unless it is `console` in a lane that HAS a host-free sink and a
     // call shape the builder lowers. Checked before the reject arm below, which
     // would otherwise bucket it as target-unserviceable.
@@ -8371,6 +8621,16 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // `methodName`. If not, the function falls back to legacy.
     if (ts.isPropertyAccessExpression(expr.expression)) {
       if (!ts.isIdentifier(expr.expression.name)) return false;
+      const standaloneDomCall = standaloneDomOperation(expr);
+      if (isDirectStandaloneDomMemberCall(standaloneDomCall)) {
+        // Arity, optional/computed syntax, declaration identity, and boundary
+        // families were certified when the source-wide plan was built. Keep
+        // ordinary Phase-1 recursion for lexical scope and argument effects.
+        if (!isPhase1Expr(standaloneDomCall.access.expression, scope, localClasses)) return false;
+        return standaloneDomCall.call.arguments.every(
+          (argument) => !ts.isSpreadElement(argument) && isPhase1Expr(argument, scope, localClasses),
+        );
+      }
       // #4385 — exact ambient `%Function.prototype%()` call. This is a
       // callable intrinsic object, not a dynamic method lookup. Its arguments
       // are still ordinary evaluated expressions; the runtime entry point
@@ -8772,126 +9032,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     }
     return true;
   }
-  // Slice 4 (#1169d) + Slice 10 (#1169i): NewExpression. Callee must be
-  // an Identifier naming either:
-  //   - a class declared in the same compilation unit (slice 4), or
-  //   - a host extern class known to the IR (slice 10 — RegExp,
-  //     Uint8Array, DataView, Map, …).
-  // Args are Phase-1 expressions. The lowerer validates the
-  // constructor's signature against the args (slice 4 against the
-  // class shape; slice 10 against `getExternClassInfo`'s
-  // constructorParams).
-  if (ts.isNewExpression(expr)) {
-    if (!ts.isIdentifier(expr.expression)) return shapeNo("expr-new-callee-nonident", expr.expression);
-    // (#2856 async-delay slice) Intercept the exact checker-certified
-    // Promise<number> timer construction before the generic constructor arm
-    // rejects its type argument and arrow.  The resolver has already proven
-    // the whole nested relationship; selection only rechecks that its two
-    // transitive executor captures are live in this function scope.
-    const promiseDelay = currentSelectionOptions?.promiseDelays?.resolve(expr);
-    if (promiseDelay) {
-      for (const capture of promiseDelay.executorCaptureNames) {
-        if (!scope.has(capture)) return shapeNo("expr-promise-delay-capture-scope", expr);
-      }
-      return true;
-    }
-    const ctorName = expr.expression.text;
-    const isLocalClass = localClassValueIsUnshadowed(ctorName, scope) && localClasses.has(ctorName);
-    const isAmbientConstructor = !isLocalClass && selectorSeesAmbientBinding(expr.expression);
-    if (currentSelectionOptions?.isHoleyArrayConstructor?.(expr) === true) {
-      if (ctorName !== "Array" || isLocalClass || scope.has("Array")) {
-        return capabilityNo("constructor-resolution-unsupported", "expr-new-holey-array-identity", expr);
-      }
-      if ((expr.typeArguments?.length ?? 0) !== 0 || expr.arguments?.length !== 1) {
-        return capabilityNo("constructor-arity-unsupported", "expr-new-holey-array-shape", expr);
-      }
-      const length = expr.arguments[0]!;
-      if (ts.isSpreadElement(length) || !ts.isNumericLiteral(length)) {
-        return capabilityNo("constructor-arity-unsupported", "expr-new-holey-array-length", length);
-      }
-      const numericLength = Number(length.text.replace(/_/g, ""));
-      if (!Number.isInteger(numericLength) || numericLength < 0 || numericLength > 0x7fff_ffff) {
-        return capabilityNo("constructor-arity-unsupported", "expr-new-holey-array-length", length);
-      }
-      return true;
-    }
-    // The IR slice lowers RegExp construction through the host `RegExp_new`
-    // extern-class ABI. Host-free targets own RegExp in legacy native codegen,
-    // including its runtime pattern compiler, so defer the whole function
-    // before from-ast can type-check native strings against externref params.
-    if (
-      ctorName === "RegExp" &&
-      isAmbientConstructor &&
-      currentSelectionOptions?.supportsBackendCapability?.("host-regexp-constructor") === false
-    ) {
-      return capabilityNo("regexp-constructor-unsupported", "expr-new-regexp-target", expr);
-    }
-    if (!isLocalClass && isKnownExternClass(ctorName) && !isAmbientConstructor) {
-      return capabilityNo("constructor-resolution-unsupported", "expr-new-extern-identity", expr.expression);
-    }
-    if (NATIVE_TYPED_ARRAY_CLASSES.has(ctorName) && isAmbientConstructor) {
-      return capabilityNo("typed-array-constructor-unsupported", "expr-new-native-typed-array", expr);
-    }
-    if (LEGACY_ERROR_CONSTRUCTOR_CLASSES.has(ctorName) && isAmbientConstructor) {
-      return capabilityNo("error-constructor-unsupported", "expr-new-error-constructor", expr);
-    }
-    if (isLocalClass) {
-      if (localClassHasKnownProjectionGap(ctorName)) {
-        return capabilityNo("class-projection-unsupported", "expr-new-local-class-shape", expr);
-      }
-      const expectedArity = projectedConstructorArity(ctorName);
-      const actualArity = expr.arguments ? staticCallArgumentCount(expr.arguments) : 0;
-      if (expectedArity === undefined) {
-        return capabilityNo("class-projection-unsupported", "expr-new-local-class-constructor", expr);
-      }
-      if (actualArity !== null && actualArity !== expectedArity) {
-        return capabilityNo("constructor-arity-unsupported", "expr-new-local-class-arity", expr);
-      }
-    }
-    if (currentModuleBindingResolver?.isDirectModuleBinding(expr.expression)) {
-      return shapeNo("expr-new-module-binding-callee", expr.expression);
-    }
-    // Date is native-struct-owned in legacy, while this slice deliberately
-    // lowers only checker-certified host snapshots through synthetic extern
-    // imports. Exact immediate module-init snapshots share that same host ABI
-    // so a Calendar cannot mix UTC-native module state with local host getters.
-    const hostDateSnapshot =
-      ctorName === "Date" && isAmbientConstructor ? currentSelectionOptions?.hostDateSnapshots?.(expr) : undefined;
-    if (ctorName === "Date" && !isLocalClass) {
-      if (!isAmbientConstructor) {
-        return capabilityNo("constructor-resolution-unsupported", "expr-new-date-identity", expr.expression);
-      }
-      if (currentSelectionOptions?.supportsBackendCapability?.("host-date-snapshot") === false) {
-        return capabilityNo("date-constructor-unsupported", "expr-new-date-target", expr);
-      }
-      if (currentSubjectIsModuleInit && !hostDateSnapshot) {
-        return capabilityNo("date-constructor-unsupported", "expr-new-module-native-date", expr);
-      }
-      if (!hostDateSnapshot) {
-        return capabilityNo("date-constructor-unsupported", "expr-new-date-snapshot-shape", expr);
-      }
-    }
-    if (!isLocalClass && !isKnownExternClass(ctorName)) {
-      return capabilityNo("constructor-resolution-unsupported", "expr-new-ctor-unknown", expr.expression);
-    }
-    // Type arguments are erased before lowering, but accepting them in the
-    // general constructor surface would silently widen generic local classes
-    // and shadowable builtin names. The one certified exception is the direct
-    // module initializer `const cache = new Map<K, V>()`: its ambient
-    // constructor identity, extern Map storage, arity, and host ABI are all
-    // checker-proven by the shared module-binding resolver.
-    if (expr.typeArguments && expr.typeArguments.length > 0 && !isExactModuleMapGenericInitializer(expr)) {
-      return shapeNo("expr-new-type-args", expr);
-    }
-    if (currentModuleBindingResolver && !currentModuleBindingResolver.externCallArgumentsMatch(expr)) {
-      return shapeNo("expr-new-module-extern-call-brand", expr);
-    }
-    if (!expr.arguments) return true;
-    for (const arg of expr.arguments) {
-      if (!isPhase1Expr(arg, scope, localClasses)) return shapeNo("expr-new-arg", arg);
-    }
-    return true;
-  }
+  if (ts.isNewExpression(expr)) return phase1NewExpression(expr, scope, localClasses);
   // Slice 1: `typeof <expr>` is claimable when its operand is a Phase-1
   // expression. The resulting value is a string tag ("number" / "boolean" /
   // "string" / …); downstream it only composes with `isPhase1BinaryOp`'s
@@ -8949,6 +9090,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // the mangled `__priv_x` slot. Non-class receivers with a private name are
     // a TS error and never reach here.
     if (!ts.isIdentifier(expr.name) && !ts.isPrivateIdentifier(expr.name)) return false;
+    const standaloneDomGet = standaloneDomOperation(expr);
+    if (standaloneDomGet?.kind === "member-get") {
+      return isPhase1Expr(standaloneDomGet.access.expression, scope, localClasses);
+    }
     // Slice 11 (#1169n) — optional chaining (`obj?.prop`). The lowerer
     // doesn't yet emit the null-guard branch, so accept the shape
     // structurally but the lowerer will throw clean fallback when it
@@ -9049,7 +9194,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (
       everyElementPrimitive &&
       primitiveFamilies.has("string") &&
-      currentSelectionOptions?.supportsHostStringArrayLiterals !== true
+      currentSelectionOptions?.supportsStringArrayLiterals !== true
     ) {
       return shapeNo("expr-arraylit-string-backend", expr);
     }
@@ -9144,8 +9289,16 @@ function isStaticSpreadSource(
  * Slice-2 acceptance check for object literals. Accepts only "plain data"
  * literals: PropertyAssignment / ShorthandPropertyAssignment with
  * Identifier / StringLiteral / NumericLiteral keys and Phase-1-claimable
- * initializers. Rejects spread, methods, accessors, computed keys, and
- * duplicate keys (last-write-wins is JS spec; deferred to a later slice).
+ * initializers. Rejects spread, methods, accessors, and duplicate keys
+ * (last-write-wins is JS spec; deferred to a later slice).
+ *
+ * (#4513) A COMPUTED key is accepted when it folds to a static string —
+ * `{ ["a"]: v }`, `` { [`a`]: v } ``, `{ [0]: v }` — since the IR object shape
+ * is static and a folded key is indistinguishable from a plain one. Keys that
+ * need a value environment (`const k = "a"`, `Symbol.iterator`, template
+ * substitution, arithmetic) still reject: see `property-key-fold.ts` for why
+ * the fold is syntactic, and for the measurement showing a numeric key needs no
+ * canonicalisation step (the scanner has already done it).
  */
 function isPhase1ObjectLiteral(
   expr: ts.ObjectLiteralExpression,
@@ -9221,7 +9374,12 @@ function isPhase1ObjectLiteral(
   const seen = new Set<string>();
   for (const prop of expr.properties) {
     if (ts.isPropertyAssignment(prop)) {
-      const name = phase1PropertyName(prop.name);
+      // (#4513) Data-property keys resolve through the shared fold, which adds
+      // the statically-foldable COMPUTED keys (`{ ["a"]: v }`, `` { [`a`]: v } ``,
+      // `{ [0]: v }`) to the identifier/string/numeric set. A key that does not
+      // fold keeps this arm — no new reason code, because a non-folding computed
+      // key is the same condition `objectlit-computed-key` already names.
+      const name = objectLiteralDataPropertyName(prop.name);
       if (name === null) return shapeNo("objectlit-computed-key", prop.name);
       if (seen.has(name)) return shapeNo("objectlit-duplicate-key", prop.name); // duplicate key — defer
       seen.add(name);
@@ -9308,11 +9466,15 @@ function isInertEmptyObjectLiteral(expr: ts.ObjectLiteralExpression): boolean {
 }
 
 /**
- * Resolve an object literal property name to a string. Identifier and
- * StringLiteral keys produce their text. NumericLiteral keys produce the
- * canonical JS toString of the number. ComputedPropertyName always
- * returns null — slice 2 doesn't see through computed keys, even when
- * the key expression is itself a string literal.
+ * Resolve a property name to a string. Identifier and StringLiteral keys
+ * produce their text; NumericLiteral keys produce `.text`, already canonical.
+ * ComputedPropertyName always returns null.
+ *
+ * (#4513) The object-literal DATA-PROPERTY site no longer calls this — it uses
+ * `objectLiteralDataPropertyName`, which adds the computed-key fold. This
+ * function keeps rejecting computed names because its remaining callers are
+ * class-member / OrdinaryToPrimitive / prepared-scope method naming, where a
+ * computed name means something different (see `phase1MemberName`).
  */
 function phase1PropertyName(name: ts.PropertyName): string | null {
   if (ts.isIdentifier(name)) return name.text;
@@ -9549,6 +9711,16 @@ export function buildLocalCallGraph(
         // resolve as external identifier calls.  Uncertified `new Promise`
         // shapes retain the ordinary graph behavior below.
         if (currentSelectionOptions?.promiseDelays?.resolve(node)) return;
+        // #3521 — an admitted function-style constructor is also a certified
+        // leaf for the local call graph.  Only the exact resolver may suppress
+        // the ordinary unknown-constructor rejection; its arguments still
+        // need the normal nested-call walk.
+        if (currentSelectionOptions?.resolveFnctorAdmission?.(node) !== undefined) {
+          if (node.arguments) {
+            for (const argument of node.arguments) visit(argument);
+          }
+          return;
+        }
         if (currentSelectionOptions?.isHoleyArrayConstructor?.(node) === true) {
           if (node.arguments) {
             for (const argument of node.arguments) visit(argument);

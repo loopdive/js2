@@ -4,7 +4,7 @@ title: "Standalone: borrowed `<Builtin>.prototype.<m>.call(<invalid this>)` answ
 status: done
 completed: 2026-08-02
 assignee: ttraenkler/H-errmodel
-sprint: current
+sprint: 78
 priority: high
 horizon: m
 feasibility: hard

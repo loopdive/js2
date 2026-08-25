@@ -3,9 +3,9 @@ id: 4420
 title: "A compile can report success:true and emit a module the engine rejects — gate on WebAssembly.compile"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 created: 2026-08-14
-updated: 2026-08-15
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

@@ -3,9 +3,9 @@ id: 4248
 title: "Standalone: `Number`/`Boolean`/`String`.prototype are not wrapper objects — own members invisible, no [[PrimitiveValue]], default-receiver methods answer null"
 status: done
 completed: 2026-08-09
-sprint: current
+sprint: 78
 created: 2026-08-08
-updated: 2026-08-09
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

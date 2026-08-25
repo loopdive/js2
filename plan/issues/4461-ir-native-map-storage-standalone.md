@@ -2,9 +2,9 @@
 id: 4461
 title: "IR: model the native $Map struct as module-binding storage so Map claims in standalone"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 assignee: ttraenkler/opus-4461
 priority: medium

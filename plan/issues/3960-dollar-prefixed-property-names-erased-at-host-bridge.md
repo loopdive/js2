@@ -2,9 +2,9 @@
 id: 3960
 title: "User properties named `$…` / `__…` are erased from the host bridge — Object.keys and JSON.stringify silently drop them"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 completed: 2026-08-01
 priority: high
 horizon: s

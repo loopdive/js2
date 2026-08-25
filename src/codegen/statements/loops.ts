@@ -43,6 +43,7 @@ import {
   getOrRegisterVecBaseType,
 } from "../registry/types.js";
 import { overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
+import { reserveVecIndexEnumerable } from "../vec-index-enumerable.js"; // (#4491) overlay-aware index [[Enumerable]]
 import { coerceType, compileExpression, compileStatement, valTypesMatch } from "../shared.js";
 import {
   compileArrayDestructuring,
@@ -51,6 +52,11 @@ import {
   compileObjectDestructuring,
   ensureAsyncIterator,
 } from "./destructuring.js";
+import { emitForInStaticUnroll } from "./for-in-static-unroll.js"; // (#4561)
+// (#4491 T9) a `new Date()` / `new RegExp()` receiver is a closed STRUCT but not a
+// closed SHAPE — it carries own properties in the #4008 bag, so it must enumerate
+// dynamically rather than unroll its declared (inherited, non-enumerable) members.
+import { forInReceiverIsDynamic } from "../builtin-instance-key-presence.js";
 import { blockLoop, restoreBlockScopedShadows, saveBlockScopedShadows, shiftLoopDepths } from "./shared.js";
 import {
   bodyHasMatchingCharRead,
@@ -66,8 +72,9 @@ import {
   loopBodyMutatesIndexOrArray,
   loopBodyMutatesStringReadInvariants,
   varCounterRedeclarationBlocksI32,
-} from "./loop-analysis.js";
+} from "../../ir/analysis/loop-shape.js";
 import { emitForAwaitElementUnwrap, emitForAwaitStepCapCheck } from "./for-await-helpers.js";
+import { buildStandardTryTable } from "../../ir/try-table.js";
 import {
   compileForOfAssignDestructuring,
   compileForOfDestructuring,
@@ -76,6 +83,7 @@ import {
 import { collectPatternBindingNames } from "./tdz.js";
 import { tryCompileCountedStringAppend } from "./counted-string-append.js";
 import { emitHoleToUndefined } from "../array-holes.js"; // (#2001 S1)
+import { emitF64HoleToUndef, f64HolesActive } from "../vec-f64-hole-presence.js"; // (#4491 T11)
 import { definedFuncAt, nativeStrHelperHandle } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 
 /**
@@ -1799,6 +1807,7 @@ function compileForOfArray(
   // index — for-of uses array iterator Get, which yields undefined for holes).
   // Gated on externref element + `usesArrayHoles`.
   if (ctx.usesArrayHoles && elemType.kind === "externref") emitHoleToUndefined(ctx, fctx);
+  emitF64HoleToUndef(ctx, fctx, elemType); // (#4491 T11) f64 twin
   // Coerce from the READ value's type (packed i8/i16 arrive on the stack as the
   // widened i32, #2934) to the local's declared type.
   const elemLocalType = getLocalType(fctx, elemLocal);
@@ -2517,31 +2526,64 @@ function compileForOfDirectIterator(
     // rejection reaches the user catch. Per §7.4.6 step 6, an error thrown by
     // `return()` itself is suppressed (the original throw wins) — hence the
     // empty inner catch_all. Mirrors the __iterator path's #1347 wrapper.
-    fctx.body.push({
-      op: "try",
-      blockType: { kind: "empty" },
-      body: [blockLoopInstr],
-      catches: [],
-      catchAll: [
-        { op: "local.get", index: doneFlagDirect },
-        { op: "i32.eqz" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
+    const catchBodyPrefix: Instr[] = [
+      { op: "local.get", index: doneFlagDirect },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          ctx.wasi || ctx.standalone
+            ? buildStandardTryTable({ kind: "empty" }, closeCallInstrs(), [
+                {
+                  kind: "catch",
+                  tagIdx: ensureExnTag(ctx),
+                  payloadType: { kind: "externref" },
+                  body: [{ op: "drop" }],
+                },
+              ])
+            : {
+                op: "try",
+                blockType: { kind: "empty" },
+                body: closeCallInstrs(),
+                catches: [],
+                catchAll: [], // suppress return() errors per §7.4.6 step 6
+              },
+        ],
+        else: [],
+      },
+    ];
+    if (ctx.wasi || ctx.standalone) {
+      const tagIdx = ensureExnTag(ctx);
+      const exnLocal = allocLocal(fctx, `__forawait_close_exn_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push(
+        buildStandardTryTable(
+          { kind: "empty" },
+          [blockLoopInstr],
+          [
             {
-              op: "try",
-              blockType: { kind: "empty" },
-              body: closeCallInstrs(),
-              catches: [],
-              catchAll: [], // suppress return() errors per §7.4.6 step 6
+              kind: "catch",
+              tagIdx,
+              payloadType: { kind: "externref" },
+              body: [
+                { op: "local.set", index: exnLocal },
+                ...catchBodyPrefix,
+                { op: "local.get", index: exnLocal },
+                { op: "throw", tagIdx },
+              ],
             },
           ],
-          else: [],
-        },
-        { op: "rethrow", depth: 0 },
-      ],
-    });
+        ),
+      );
+    } else {
+      fctx.body.push({
+        op: "try",
+        blockType: { kind: "empty" },
+        body: [blockLoopInstr],
+        catches: [],
+        catchAll: [...catchBodyPrefix, { op: "rethrow", depth: 0 }],
+      });
+    }
   } else {
     fctx.body.push(blockLoopInstr);
   }
@@ -2937,17 +2979,28 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
     // wrapping the inner __iterator_return call in a nested try/catch_all
     // whose catchAll is empty (drops any exception). The outer catch_all
     // then `rethrow 0` re-raises the ORIGINAL exception. (#1347)
-    const innerCloseTry: Instr = {
-      op: "try",
-      blockType: { kind: "empty" },
-      body: [
-        { op: "local.get", index: iterLocal },
-        { op: "call", funcIdx: returnIdx },
-      ],
-      catches: [],
-      catchAll: [], // suppress any error from GetMethod / return() per spec step 6
-    };
-    const catchAllBody: Instr[] = [
+    const closeBody: Instr[] = [
+      { op: "local.get", index: iterLocal },
+      { op: "call", funcIdx: returnIdx },
+    ];
+    const innerCloseTry: Instr =
+      ctx.wasi || ctx.standalone
+        ? buildStandardTryTable({ kind: "empty" }, closeBody, [
+            {
+              kind: "catch",
+              tagIdx: ensureExnTag(ctx),
+              payloadType: { kind: "externref" },
+              body: [{ op: "drop" }],
+            },
+          ])
+        : {
+            op: "try",
+            blockType: { kind: "empty" },
+            body: closeBody,
+            catches: [],
+            catchAll: [], // suppress any error from GetMethod / return() per spec step 6
+          };
+    const closeOnThrowBody: Instr[] = [
       { op: "local.get", index: doneFlag },
       { op: "i32.eqz" },
       {
@@ -2956,15 +3009,38 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
         then: [innerCloseTry],
         else: [],
       },
-      { op: "rethrow", depth: 0 },
     ];
-    fctx.body.push({
-      op: "try",
-      blockType: { kind: "empty" },
-      body: [blockLoopInstr],
-      catches: [],
-      catchAll: catchAllBody,
-    });
+    if (ctx.wasi || ctx.standalone) {
+      const tagIdx = ensureExnTag(ctx);
+      const exnLocal = allocLocal(fctx, `__iterator_close_exn_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push(
+        buildStandardTryTable(
+          { kind: "empty" },
+          [blockLoopInstr],
+          [
+            {
+              kind: "catch",
+              tagIdx,
+              payloadType: { kind: "externref" },
+              body: [
+                { op: "local.set", index: exnLocal },
+                ...closeOnThrowBody,
+                { op: "local.get", index: exnLocal },
+                { op: "throw", tagIdx },
+              ],
+            },
+          ],
+        ),
+      );
+    } else {
+      fctx.body.push({
+        op: "try",
+        blockType: { kind: "empty" },
+        body: [blockLoopInstr],
+        catches: [],
+        catchAll: [...closeOnThrowBody, { op: "rethrow", depth: 0 }],
+      });
+    }
   } else {
     fctx.body.push(blockLoopInstr);
   }
@@ -3250,23 +3326,51 @@ function emitArrayForIn(
   // an early branch rather than wrapping the block in an `if`, so the user
   // body's break/continue depths are untouched. Route-inactive modules and the
   // host key path emit the bare block, byte-for-byte as before.
-  const forInHasIdx = !hostKeys && overlayRouteActive(ctx) ? ctx.funcMap.get("__extern_has_idx") : undefined;
+  // (#4491 T11) …and an f64 HOLE is the same kind of absence as a deleted
+  // index, so it joins the same gate. Leaving `for…in` out was measurable, not
+  // theoretical: `Object/keys/15.2.3.14-6-2` builds its expected list from
+  // `for…in` + `hasOwnProperty` and compares it against `Object.keys`, so once
+  // `Object.keys` learned about holes the row failed on the DISAGREEMENT until
+  // `for…in` learned too.
+  const forInHasIdx =
+    !hostKeys && (overlayRouteActive(ctx) || f64HolesActive(ctx)) ? ctx.funcMap.get("__extern_has_idx") : undefined;
+  // (#4491) `[[Enumerable]]` joins the SAME gate. §14.7.5.10 EnumerateObject-
+  // Properties yields only own ENUMERABLE keys, and since #3251 an array index
+  // can carry `enumerable: false` — `Object.defineProperties(arr, {"0": {value:
+  // 1001, writable: true, configurable: true}})`, where §6.2.5.6 defaults the
+  // absent attribute to false. The descriptor already records it correctly; the
+  // index loop enumerated it anyway. Reserved here (append-only mint, no funcIdx
+  // shift) and filled at finalize — vec-index-enumerable.ts.
+  // `keyLocal` must actually hold the decimal key STRING for the native to look
+  // it up: without `number_toString` the native lane leaves a raw f64 there, so
+  // the gate would be a type error rather than a wrong answer. Decline instead.
+  const forInEnumIdx = hostKeys || numToStrIdx === undefined ? undefined : reserveVecIndexEnumerable(ctx);
+  const skipGate: Instr[] = [];
+  if (forInHasIdx !== undefined) {
+    skipGate.push(
+      { op: "local.get", index: vecLocal },
+      { op: "extern.convert_any" },
+      { op: "local.get", index: iLocal },
+      { op: "f64.convert_i32_s" },
+      { op: "call", funcIdx: forInHasIdx },
+      { op: "i32.eqz" },
+      { op: "br_if", depth: 0 },
+    );
+  }
+  if (forInEnumIdx !== undefined) {
+    skipGate.push(
+      { op: "local.get", index: vecLocal },
+      { op: "extern.convert_any" },
+      { op: "local.get", index: keyLocal },
+      { op: "call", funcIdx: forInEnumIdx },
+      { op: "i32.eqz" },
+      { op: "br_if", depth: 0 },
+    );
+  }
   loopBody.push({
     op: "block",
     blockType: { kind: "empty" },
-    body:
-      forInHasIdx === undefined
-        ? userBody
-        : [
-            { op: "local.get", index: vecLocal },
-            { op: "extern.convert_any" },
-            { op: "local.get", index: iLocal },
-            { op: "f64.convert_i32_s" },
-            { op: "call", funcIdx: forInHasIdx },
-            { op: "i32.eqz" },
-            { op: "br_if", depth: 0 },
-            ...userBody,
-          ],
+    body: skipGate.length === 0 ? userBody : [...skipGate, ...userBody],
   });
 
   // increment + restart
@@ -3490,8 +3594,7 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     // `$Object` (so `__object_keys` would return empty) — those keep the
     // static-unroll path below, which is exact for a non-mutated closed shape.
     const recvWasmType = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(stmt.expression));
-    const isDynamicReceiver =
-      recvWasmType.kind === "externref" || recvWasmType.kind === "anyref" || recvWasmType.kind === "ref_extern";
+    const isDynamicReceiver = forInReceiverIsDynamic(ctx, recvWasmType);
     if (isDynamicReceiver) {
       ensureObjectRuntime(ctx);
       // #2964 — for-in must enumerate inherited enumerable keys too, so route
@@ -3510,30 +3613,17 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
   if (keysIdx === undefined || lenIdx === undefined || getIdx === undefined) {
     // Fallback: static unrolling. Used in standalone for a closed-shape receiver
     // (WasmGC struct) — the static key set is exact — and as the historical
-    // fallback when no enumeration primitive is available.
-    // (#4138) Strip null/undefined before reading the static shape: a receiver
-    // that flowed through `Array.pop()` / an optional access types as
-    // `T | undefined`, and a UNION's getProperties() is the COMMON property
-    // set — empty here — so the loop silently enumerated nothing (the runtime
-    // null case is already handled by the guards the loop emits). This is the
-    // narrow slice of #4138; a receiver that is genuinely POLYMORPHIC at
-    // runtime still unrolls one static shape, and closed structs remain
-    // non-enumerable through the dynamic runtime — both stay open in #4138.
-    const exprType = ctx.checker.getTypeAtLocation(stmt.expression).getNonNullableType();
-    const props = exprType.getProperties();
-    if (props.length === 0) return;
-    for (const prop of props) {
-      // (#51) Materialize each enumerated key via the dual-mode helper. Under
-      // nativeStrings `stringGlobalMap` holds a `-1` sentinel global, so the old
-      // `global.get <sentinel>` reached binary emit as "global index out of
-      // range — -1". `stringConstantExternrefInstrs` emits the NativeString
-      // inline (externref) standalone and a host `global.get` only under GC.
-      addStringConstantGlobal(ctx, prop.name);
-      for (const instr of stringConstantExternrefInstrs(ctx, prop.name)) fctx.body.push(instr);
-      fctx.body.push({ op: "local.set", index: keyLocal });
-      if (callTarget) emitWebCompatCallAssignmentTarget(ctx, fctx, callTarget);
-      compileStatement(ctx, fctx, stmt.statement);
-    }
+    // fallback when no enumeration primitive is available. (#4561) It owns its
+    // own `block $break` / per-iteration `block $continue` scaffolding; see
+    // `for-in-static-unroll.ts` for why it had none.
+    emitForInStaticUnroll(
+      ctx,
+      fctx,
+      stmt,
+      keyLocal,
+      callTarget ? () => emitWebCompatCallAssignmentTarget(ctx, fctx, callTarget) : undefined,
+      () => compileStatement(ctx, fctx, stmt.statement),
+    );
     return;
   }
 

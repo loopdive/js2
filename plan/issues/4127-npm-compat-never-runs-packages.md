@@ -2,9 +2,9 @@
 id: 4127
 title: "npm-compat never RUNS the packages it reports on — a silent wrong answer produces a fully green row, so green carries no correctness information"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-18
 completed: 2026-08-03
 priority: high
 horizon: m

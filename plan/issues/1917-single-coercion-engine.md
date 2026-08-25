@@ -4,10 +4,10 @@ title: "One coercion engine — four divergent coercion matrices disagree about 
 status: done
 completed: 2026-07-24
 assignee: ttraenkler/sdev-1917
-sprint: current
+sprint: 78
 model: opus
 created: 2026-06-10
-updated: 2026-07-24
+updated: 2026-08-18
 priority: high
 feasibility: medium
 reasoning_effort: high

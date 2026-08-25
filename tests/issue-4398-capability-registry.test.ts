@@ -5,6 +5,79 @@ import { compile, formatCompileExplanation, validatePlatformCapabilityRequiremen
 import { buildCompiledAdapterImports, buildCompiledImports } from "../src/runtime.js";
 
 describe("#4398 explicit platform capability requirements", () => {
+  it("selects the target-specific timer provider and records its exact ABI", async () => {
+    const source = `
+      export function schedule(callback: any, ms: number): any {
+        return setTimeout(callback, ms);
+      }
+    `;
+    const [js, standalone] = await Promise.all([
+      compile(source, { fileName: "issue-4398-timer-js.ts", skipSemanticDiagnostics: true }),
+      compile(source, {
+        fileName: "issue-4398-timer-standalone.ts",
+        target: "standalone",
+        skipSemanticDiagnostics: true,
+      }),
+    ]);
+    expect(js.success, js.errors.map((error) => error.message).join("; ")).toBe(true);
+    expect(standalone.success, standalone.errors.map((error) => error.message).join("; ")).toBe(true);
+    expect(js.capabilityProviderDiagnostics).toEqual([]);
+    expect(standalone.capabilityProviderDiagnostics).toEqual([]);
+
+    const jsTimers = js.capabilityRequirements?.find(({ id }) => id === "timers");
+    const standaloneTimers = standalone.capabilityRequirements?.find(({ id }) => id === "timers");
+    const timerImport = {
+      module: "env",
+      name: "__timer_set_timeout",
+      kind: "func",
+      params: ["externref", "externref"],
+      results: ["externref"],
+    };
+    expect(jsTimers).toEqual({
+      id: "timers",
+      abiNamespace: "js2wasm:capability/timers",
+      abiVersion: 1,
+      permissions: ["timers:schedule"],
+      selectedProviders: ["js-host"],
+      compatibleProviders: ["js-host", "embedder"],
+      imports: [timerImport],
+    });
+    expect(standaloneTimers).toEqual({
+      id: "timers",
+      abiNamespace: "js2wasm:capability/timers",
+      abiVersion: 1,
+      permissions: ["timers:schedule"],
+      selectedProviders: ["embedder"],
+      compatibleProviders: ["js-host", "embedder"],
+      imports: [timerImport],
+    });
+    expect(standalone.explanation).toMatchObject({
+      schemaVersion: 1,
+      status: "declared-host-capability",
+      target: { target: "standalone", environment: "none", capabilityPolicy: "explicit-only" },
+      capabilities: [
+        expect.objectContaining({
+          id: "timers",
+          selectedProviders: ["embedder"],
+        }),
+      ],
+      capabilityDiagnostics: [],
+    });
+    expect(formatCompileExplanation(standalone.explanation!)).toContain("timers@1: embedder [timers:schedule]");
+
+    const drifted = {
+      ...standaloneTimers!,
+      imports: standaloneTimers!.imports.map((entry) => ({ ...entry, params: ["externref"] })),
+    };
+    expect(validatePlatformCapabilityRequirements([drifted], "none")).toEqual([
+      expect.objectContaining({
+        capability: "timers",
+        provider: "embedder",
+        code: "provider-import-mismatch",
+      }),
+    ]);
+  });
+
   it("projects the same clock and randomness contracts onto JS and WASI providers", async () => {
     const source = `
       export function sample(): number {
@@ -37,14 +110,14 @@ describe("#4398 explicit platform capability requirements", () => {
         abiNamespace: `js2wasm:capability/${id}`,
         abiVersion: 1,
         selectedProviders: ["js-host"],
-        compatibleProviders: ["js-host", "wasi-preview1"],
+        compatibleProviders: id === "clock" ? ["js-host", "wasi-preview1", "embedder"] : ["js-host", "wasi-preview1"],
       });
       expect(wasiRequirement).toMatchObject({
         id,
         abiNamespace: `js2wasm:capability/${id}`,
         abiVersion: 1,
         selectedProviders: ["wasi-preview1"],
-        compatibleProviders: ["js-host", "wasi-preview1"],
+        compatibleProviders: id === "clock" ? ["js-host", "wasi-preview1", "embedder"] : ["js-host", "wasi-preview1"],
       });
       expect(jsRequirement?.imports.every((entry) => entry.params && entry.results)).toBe(true);
       expect(wasiRequirement?.imports.every((entry) => entry.params && entry.results)).toBe(true);

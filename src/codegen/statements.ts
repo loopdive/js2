@@ -24,11 +24,12 @@ import {
 import { tryCompileAnnexBModuleBlockFnEvaluation } from "./annexb-global-live-binding.js";
 import { emitCachedFuncClosureAccess } from "./closures.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
-import { getLocalType } from "./context/locals.js";
+import { allocLocal, getLocalType } from "./context/locals.js";
 import { attachSourcePos, getSourcePos } from "./context/source-pos.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { compileExpression, registerCompileStatement } from "./shared.js";
 import { restoreBlockScopedShadows, saveBlockScopedShadows } from "./statements/shared.js";
+import { resetCompletionValueForStatement, sinkExpressionStatementValue } from "./statements/eval-completion-value.js";
 import { compileWithStatement } from "./with-scope.js";
 import { expressionRunsUserCode } from "./module-init-collection.js"; // (#4433) bare `typeof f();`
 
@@ -57,6 +58,8 @@ import {
 import { compileVariableStatement } from "./statements/variables.js";
 import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { coerceType } from "./type-coercion.js";
+import { compileClassExpression } from "./expressions/new-super.js";
+import { emitLazyClassObjectGet } from "./expressions/extern.js";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the existing public API surface
@@ -138,8 +141,7 @@ function bareTypeofStatementOperand(expr: ts.Expression): ts.Expression | undefi
 function compileExpressionStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ExpressionStatement): void {
   const typeofOperand = bareTypeofStatementOperand(stmt.expression);
   const evaluated = typeofOperand ?? stmt.expression;
-  const resultType = compileExpression(ctx, fctx, evaluated);
-  if (resultType !== null) fctx.body.push({ op: "drop" });
+  sinkExpressionStatementValue(ctx, fctx, compileExpression(ctx, fctx, evaluated));
 }
 
 function restoreMapEntry<K, V>(map: Map<K, V>, key: K, hadEntry: boolean, value: V | undefined): void {
@@ -317,6 +319,11 @@ export function compileStatement(ctx: CodegenContext, fctx: FunctionContext, stm
   }
 
   try {
+    ctx.irBodyRouteAuditSession?.recordFrame("compileStatement", fctx, stmt);
+    // (#4515) §13 `UpdateEmpty(…, undefined)`: `if` / `try` / `switch` / `with`
+    // and every loop start their completion value at `undefined` rather than
+    // inheriting the previous statement's. No-op outside an inline eval.
+    resetCompletionValueForStatement(ctx, fctx, stmt);
     compileStatementInner(ctx, fctx, stmt);
   } catch (e) {
     // Defensive: catch any unhandled crash in statement compilation
@@ -564,7 +571,41 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
   // ClassDeclaration in statement position (e.g., inside for loops, if blocks,
   // switch cases, labeled statements, try/catch/finally, etc.)
   if (ts.isClassDeclaration(stmt)) {
-    compileNestedClassDeclaration(ctx, fctx, stmt);
+    // (#4618) A nested class whose name collided with a class in another
+    // scope was collected under a per-site synthetic identity (see
+    // collectClassesFromStatements). Compile it under that identity and bind
+    // the scoped class VALUE to a same-named LOCAL, exactly like
+    // `const Foo = class {…}` — locals outrank the name-keyed
+    // classObjectGlobals read, so `new Foo()` / `createElement(Foo)` in this
+    // scope resolve to THIS declaration, not the first same-named one.
+    const scopedSynthetic = ctx.anonClassExprNames.get(stmt);
+    compileNestedClassDeclaration(ctx, fctx, stmt, scopedSynthetic);
+    // Only synthetic nested duplicates need a local singleton binding.  The
+    // ordinary class-declaration path intentionally keeps its historical
+    // module/class binding: eagerly materialising every class object here
+    // changes module-init ordering and can hand the host a half-initialised
+    // prototype (the Test262 class-elements cluster exposed this as
+    // "Cannot convert undefined or null to object").
+    const scopedName = scopedSynthetic;
+    if (scopedName !== undefined && stmt.name !== undefined) {
+      const bindName = stmt.name.text;
+      // Bind the SINGLETON class object (registered with the #4618 host
+      // [[Construct]] bridge — parent chain, mirror crossing), not the
+      // legacy ctor-value closure, so the scoped class behaves identically
+      // to a non-colliding declaration.
+      let vt: import("../ir/types.js").ValType | null = null;
+      if (emitLazyClassObjectGet(ctx, fctx, scopedName)) {
+        vt = { kind: "externref" };
+      } else {
+        vt = compileClassExpression(ctx, fctx, stmt as unknown as ts.ClassExpression);
+      }
+      if (vt !== null) {
+        if (vt.kind !== "externref") coerceType(ctx, fctx, vt, { kind: "externref" });
+        let localIdx = fctx.localMap.get(bindName);
+        if (localIdx === undefined) localIdx = allocLocal(fctx, bindName, { kind: "externref" });
+        fctx.body.push({ op: "local.set", index: localIdx });
+      }
+    }
     return;
   }
 

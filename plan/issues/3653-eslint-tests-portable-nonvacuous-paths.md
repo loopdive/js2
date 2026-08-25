@@ -4,7 +4,7 @@ id: 3653
 title: "ESLint integration tests: portable dependency paths and non-vacuous skip semantics"
 status: done
 created: 2026-07-26
-updated: 2026-07-31
+updated: 2026-08-18
 completed: 2026-07-31
 priority: critical
 feasibility: easy
@@ -13,7 +13,7 @@ task_type: test
 area: test-infrastructure
 language_feature: npm-package-integration
 goal: npm-library-support
-sprint: current
+sprint: 78
 required_by: [1400]
 es_edition: n/a
 related: [1282, 1400, 1573, 2693]

@@ -49,9 +49,11 @@ import { appendFnctorInternalFields } from "./fnctor-identity-fields.js";
 import { type AllocLabelResult, analyzeFnctorAllocLabels, fnctorLayoutsEnabled } from "./fnctor-alloc-labels.js"; // (#3927) per-type layout plan
 import { analyzeStableArrayPrototypeNames } from "./fnctor-array-prototype-analysis.js";
 import { applyColdTailSplit } from "./fnctor-cold-tail.js";
+import { fnctorBodyMayReturnForeignObject, foreignReturnFunctionNames } from "./fnctor-foreign-return.js"; // (#2071)
 import { applyFnctorLayoutSplit, fnctorLayoutEmitEnabled } from "./fnctor-layout-emit.js"; // (#3927) per-type layout EMISSION
 import { recordFnctorFieldProvenance } from "./fnctor-field-provenance.js";
 import { fnctorFieldNumericWriteViolation, inferFnctorFieldTypeFromCtorParam } from "./fnctor-ctor-param-types.js";
+import { fnctorDeclFromSymbol, lateAssignedFunctionExpression } from "./fnctor-ctor-decl.js"; // (#4653)
 import { resolveWasmType } from "./index.js";
 
 /** Classification of a `new F()` fnctor allocation site. */
@@ -70,6 +72,13 @@ export interface FnctorEscapeGateResult {
    * S3 consults this via the node identity at `compileNewFunctionDeclaration`.
    */
   readonly sites: ReadonlyMap<ts.NewExpression, FnctorGateClass>;
+  /**
+   * (#4506 S1) Per `new F()` site, the fnctor NAME it resolves to — the same
+   * key `approvedNames` / `ctorDeclByName` / `stableArrayPrototypeNames` use.
+   * Published so a consumer can go from a site to its constructor without
+   * repeating the raw-checker symbol resolution this analysis already did.
+   */
+  readonly siteCtorName: ReadonlyMap<ts.NewExpression, string>;
   /** Sites approved for reconstruction (`reconstruct`) — the (A)∧(B) set. */
   readonly approved: ReadonlySet<ts.NewExpression>;
   /**
@@ -242,6 +251,7 @@ const EMPTY_WRITE_ONCE: ProtoMethodWriteOnceResult = {
 function emptyResult(compilePath: FnctorCompilePath, sourceFileCount: number): FnctorEscapeGateResult {
   return {
     sites: new Map(),
+    siteCtorName: new Map(),
     approved: new Set(),
     approvedNames: new Set(),
     stableArrayPrototypeNames: new Set(),
@@ -251,25 +261,6 @@ function emptyResult(compilePath: FnctorCompilePath, sourceFileCount: number): F
     protoMethodWriteOnce: EMPTY_WRITE_ONCE,
     provenance: { compilePath, sourceFileCount, refusals: new Map(), refusedNames: [] },
   };
-}
-
-/**
- * Resolve a fnctor symbol to the function-like declaration that supplies its
- * constructor body — a top-level `function F(){…}`, a `var F = function(){…}`, or
- * a bare `FunctionExpression`. Returns `undefined` for anything else (arrow, class
- * — those never reach here via `resolveFnctorSymbol`).
- */
-function fnctorDeclFromSymbol(sym: ts.Symbol): ts.FunctionDeclaration | ts.FunctionExpression | undefined {
-  for (const decl of sym.getDeclarations() ?? []) {
-    if (ts.isFunctionDeclaration(decl) && decl.body) return decl;
-    if (ts.isFunctionExpression(decl) && decl.body) return decl;
-    if (ts.isVariableDeclaration(decl) && decl.initializer) {
-      let init: ts.Expression = decl.initializer;
-      while (ts.isParenthesizedExpression(init)) init = init.expression;
-      if (ts.isFunctionExpression(init) && init.body) return init;
-    }
-  }
-  return undefined;
 }
 
 /** Max callee-chain depth the single-return struct inference will follow. */
@@ -307,7 +298,9 @@ export function resolveFnctorSymbol(checker: ts.TypeChecker, calleeExpr: ts.Expr
       if (ts.isArrowFunction(init)) return undefined; // arrows are not constructors
     }
   }
-  return undefined;
+  // (#4653) `var F; … F = function(){…};` — the SAME recogniser
+  // `fnctorDeclFromSymbol` uses, so gate and resolver keep one population.
+  return lateAssignedFunctionExpression(checker, sym) ? sym : undefined;
 }
 
 /**
@@ -496,11 +489,41 @@ function classifyUse(
 
   // `someMethod.call(inst, …)` / `.apply(inst, …)` — `inst` is the receiver arg
   // of a reflective generic-method call → array-like dynamic use.
+  //
+  // (#4506 S2) `<anything>.isPrototypeOf(inst)` joins them. §20.1.3.4 is a
+  // [[Prototype]]-CHAIN WALK over the argument — the single consumer this whole
+  // reconstruction exists to serve — but the argument was classified `neutral`,
+  // because the `Object.*`/`Reflect.*` namespace arm below requires
+  // `callee.expression` to be an IDENTIFIER and every real spelling of this call
+  // has a property-access receiver (`Object.prototype.isPrototypeOf(i)`,
+  // `F.prototype.isPrototypeOf(i)`, `proto.isPrototypeOf(i)`). So the dominant
+  // shape of the family — a fnctor whose ONLY dynamic consumer is the walk —
+  // classified `keep-static`, kept the bespoke struct, and answered `false`:
+  // measured on this branch, `types/object/S8.6.2_A1` #2.2 and
+  // `S13.2.2_A1_T1`/`_T2` all fail on exactly that. Matching on the METHOD NAME
+  // rather than the receiver is what the other reflective arms already do
+  // (`GENERIC_METHOD_CALL` above), and a same-named user method is not a
+  // counter-example: a wrong `dynamic` costs a representation choice the gate is
+  // free to make, never a wrong answer.
   if (ts.isCallExpression(parent) && parent.arguments.length > 0 && parent.arguments[0] === useNode) {
     const callee = parent.expression;
     if (ts.isPropertyAccessExpression(callee) && GENERIC_METHOD_CALL.has(callee.name.text)) {
       return "dynamic";
     }
+    if (ts.isPropertyAccessExpression(callee) && callee.name.text === "isPrototypeOf") return "dynamic";
+  }
+
+  // (#4506 S2) `<key> in inst` — §12.10.3 HasProperty is the other chain walk,
+  // and it is invisible to every clause above: the parent is a BinaryExpression
+  // whose `right` is the instance, which the assignment clause above matches
+  // only for `EqualsToken`. `language/expressions/in/S8.12.6_A2_T2`
+  // (`Robin.prototype = __proto; "phylum" in new Robin`) is the measured row.
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.InKeyword &&
+    parent.right === useNode
+  ) {
+    return "dynamic";
   }
 
   // (#4176) `Object.create({}, { prop: inst })` / `Object.defineProperties(o,
@@ -532,8 +555,39 @@ function classifyUse(
   // any/unknown parameter counts as dynamic; a typed parameter is neutral here
   // (the callee's own uses would be classified at that param's site in a fuller
   // interprocedural pass — out of scope for S1's conservative single-level view).
-  if (ts.isCallExpression(parent)) {
-    const argIdx = parent.arguments.indexOf(useNode);
+  //
+  // (#4639 C1) A `new F(inst)` argument counts too. `ts.isCallExpression` is
+  // FALSE for a `NewExpression`, so before this the CONSTRUCT spelling never
+  // reached this clause at all and every constructor argument classified
+  // `neutral` — the instance kept its bespoke struct. That is the whole of the
+  // `new String(obj)` ToPrimitive family: measured on this branch's base, in one
+  // module and on the SAME instance,
+  //
+  //     String(o)      // "tostr"   — `(value?: any)` ⇒ dynamic ⇒ `$Object`
+  //     new String(o)  // "[object Object]" — never classified ⇒ closed struct
+  //
+  // and the divergence is per-VALUE, not per-module: adding `String(other)` for
+  // a DIFFERENT instance leaves `new String(o)` wrong. Downstream,
+  // `__extern_toString` → `__to_primitive` reduces a `$Object` through
+  // OrdinaryToPrimitive (so an INHERITED `F.prototype.toString` runs) but hands
+  // a nominal struct to `__class_to_primitive`, whose per-struct
+  // `__call_toString` has no entry for a PROTOTYPE-assigned method and answers
+  // null — the canonical "[object Object]".
+  //
+  // Same conservatism as the call clause: only an explicitly `any`/`unknown`
+  // parameter (which is what `new String(value?: any)`, `new Number`,
+  // `new Boolean` and `new Error(message?: any)` all declare) classifies
+  // dynamic; a TYPED constructor parameter stays neutral, so a typed user class
+  // cannot be moved off its struct by this.
+  //
+  // STANDALONE-ONLY, the same narrowest-site wiring the #4394 `throw` clause
+  // above uses. The gc/host lane reduces a nominal struct through the host
+  // `_hostToPrimitive`, so it does not have this defect, and widening the
+  // classification there would move representation choices in a lane this
+  // change-set did not measure. Keeping it host-free means the host emit is
+  // byte-identical.
+  if (ts.isCallExpression(parent) || (ts.isNewExpression(parent) && standalone === true)) {
+    const argIdx = (parent.arguments ?? ([] as readonly ts.Expression[])).indexOf(useNode);
     if (argIdx >= 0) {
       // (#4163) ANY argument of a builtin `Object.*` / `Reflect.*` namespace
       // call is a DYNAMIC consumer: the standalone lowering of every such
@@ -1288,6 +1342,19 @@ function buildReceiverStructMap(
       if (!ctorSym && expr.expression.kind === ts.SyntaxKind.ThisKeyword) {
         ctorSym = resolveEnclosingFnctorOwner(checker, expr)?.sym;
       }
+      // (#2071) `new F()` does NOT prove an F-struct when F's body may return
+      // a foreign object (§10.2.1.3 step 13 substitutes it) — a pin here
+      // narrows the read result to the struct's field type and misreads the
+      // override (ToNumber("A") = NaN). Same predicate as the ctor-ABI
+      // widening, so pin and ABI can never disagree.
+      const ctorDecl = ctorSym?.valueDeclaration;
+      if (ctorDecl !== undefined && ts.isFunctionDeclaration(ctorDecl) && fnctorBodyMayReturnForeignObject(ctorDecl)) {
+        return undefined;
+      }
+      // Fn-expression / assigned-later ctor spellings: match by name.
+      if (ctorSym !== undefined && foreignReturnFunctionNames(expr.getSourceFile()).has(ctorSym.name)) {
+        return undefined;
+      }
       return ctorSym ? `__fnctor_${ctorSym.name}` : undefined;
     }
     if (ts.isPropertyAccessExpression(expr)) {
@@ -1478,6 +1545,7 @@ export function analyzeFnctorEscapeGate(
   compilePath: FnctorCompilePath = "single",
 ): FnctorEscapeGateResult {
   const sites = new Map<ts.NewExpression, FnctorGateClass>();
+  const siteCtorName = new Map<ts.NewExpression, string>();
   const approved = new Set<ts.NewExpression>();
   const approvedNames = new Set<string>();
   const stableArrayPrototypeNames = analyzeStableArrayPrototypeNames(checker, sourceFiles, resolveFnctorSymbol);
@@ -1544,7 +1612,7 @@ export function analyzeFnctorEscapeGate(
   // costs only the optimization and is COUNTED, so the decline is visible.
   const declFilesByName = new Map<string, Set<ts.SourceFile>>();
   for (const { ctorSym } of newSites) {
-    const decl = fnctorDeclFromSymbol(ctorSym);
+    const decl = fnctorDeclFromSymbol(ctorSym, checker);
     if (!decl) continue;
     const seen = declFilesByName.get(ctorSym.name);
     if (seen) seen.add(decl.getSourceFile());
@@ -1556,7 +1624,7 @@ export function analyzeFnctorEscapeGate(
       refuse(ctorSym.name, "multi-module-name-collision");
       continue;
     }
-    const decl = fnctorDeclFromSymbol(ctorSym);
+    const decl = fnctorDeclFromSymbol(ctorSym, checker);
     if (decl) ctorDeclByName.set(ctorSym.name, decl);
   }
 
@@ -1686,6 +1754,15 @@ export function analyzeFnctorEscapeGate(
     else cls = "keep-static";
 
     sites.set(newExpr, cls);
+    // (#4506 S1) Record the fnctor NAME this site resolves to. The analysis has
+    // already done the resolution the hard way (`resolveFnctorSymbol` + alias
+    // canonicalisation); publishing it lets a consumer ask "which constructor is
+    // this site?" without re-running a raw-checker symbol query of its own —
+    // the class of query #1930 D3 puts outside `ctx.oracle`, and one the slot
+    // typer would otherwise have to duplicate (and could get subtly wrong for
+    // `new (F as any)()`, where the identifier TEXT and the symbol name can
+    // disagree).
+    siteCtorName.set(newExpr, ctorSym.name);
     if (cls === "reconstruct") {
       approved.add(newExpr);
       approvedNames.add(ctorSym.name);
@@ -1731,6 +1808,7 @@ export function analyzeFnctorEscapeGate(
 
   return {
     sites,
+    siteCtorName,
     approved,
     approvedNames,
     stableArrayPrototypeNames,
@@ -1752,6 +1830,44 @@ export function analyzeFnctorEscapeGate(
       ? { allocLabels: analyzeFnctorAllocLabels(checker, sourceFiles, ctorDeclByName, compilePath) }
       : {}),
   };
+}
+
+/** Identity key for "can one slot hold both?" — ref kinds compare by target type. */
+function fnctorSlotKey(t: ValType): string {
+  return t.kind === "ref" || t.kind === "ref_null" ? `ref:${(t as { typeIdx: number }).typeIdx}` : t.kind;
+}
+
+/**
+ * (#4250) Widen an already-recorded fnctor field whose LATER constructor write
+ * stores a kind its slot cannot hold. Returns true when the slot was widened.
+ *
+ * Only the FIRST `this.<field> = …` used to type the slot, so a constructor that
+ * writes two different kinds to one field silently lost the second:
+ *
+ *     function FACTORY(){ this.id = 0; this.id = func();
+ *                         function func(){ return "id_string"; } }
+ *
+ * typed `$id` from `0` (f64) and coerced the string write to NaN (test262
+ * `S13.2.2_A12` read back `0`). A slot must hold every value the constructor
+ * stores, so a disagreeing later write demotes it to the boxed `externref`.
+ *
+ * Deliberately narrow: both sides must be CONCRETELY typed and disagree. A write
+ * the checker gave up on (`externref`) proves nothing about the slot — that is
+ * the pre-existing exposure the whole-program write-kind verdict (#4250) owns —
+ * so it is left alone rather than de-optimizing every constructor that seeds a
+ * numeric field from an untyped value.
+ */
+function widenSlotOnWriteKindDisagreement(ctx: CodegenContext, existing: FieldDef, valueExpr: ts.Expression): boolean {
+  if (existing.type.kind === "externref" || existing.dynamicObjectCarrier === true) return false;
+  // Chain unwrap, byte-identical to the carrier loop in `recordThisField`.
+  let carrierExpr = valueExpr;
+  while (ts.isBinaryExpression(carrierExpr) && carrierExpr.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    carrierExpr = carrierExpr.right;
+  }
+  const written = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(carrierExpr));
+  if (written.kind === "externref" || fnctorSlotKey(written) === fnctorSlotKey(existing.type)) return false;
+  existing.type = { kind: "externref" };
+  return true;
 }
 
 /**
@@ -1790,6 +1906,10 @@ export function deriveFnctorFields(
   // narrowing is applied optimistically and reverted below for any field that
   // turns out to be presence-tracked.
   const ctorParamNarrowed = new Map<string, ValType>();
+  // (#4250) Fields whose OWN constructor writes disagree in machine kind — the
+  // slot was widened to the boxed carrier and must not be re-narrowed by a
+  // downstream whole-program promotion.
+  const writeKindConflicted = new Set<string>();
 
   // Record one `this.<field>` slot from an assignment whose LHS is `this.<field>`.
   // `valueExpr` is the value being assigned to THAT field (for type inference) —
@@ -1800,6 +1920,12 @@ export function deriveFnctorFields(
     const existing = fields.find((f) => f.name === fieldName);
     if (existing) {
       if (!conditional) onlyConditional.set(fieldName, false);
+      // (#4250) A later write whose value kind cannot live in the slot the FIRST
+      // write chose widens it to the boxed carrier — see `widenSlotOnWriteKindDisagreement`.
+      if (widenSlotOnWriteKindDisagreement(ctx, existing, valueExpr)) {
+        writeKindConflicted.add(fieldName);
+        ctorParamNarrowed.delete(fieldName);
+      }
       return;
     }
     // Prefer the RHS type — when `this` is `any`, the LHS type is also `any`
@@ -2100,6 +2226,10 @@ export function deriveFnctorFields(
   for (const field of fields) {
     if (field.type.kind !== "externref") continue;
     if (onlyConditional.get(field.name) === true) continue;
+    // (#4250) A slot this constructor itself proved heterogeneous stays boxed —
+    // the name-keyed verdict is about OTHER writes and cannot outvote a
+    // disagreement inside the body it is typing.
+    if (writeKindConflicted.has(field.name)) continue;
     if (!ctx.numericPropertyNames?.has(field.name)) continue;
     if (ctx.classAccessorSet.has(`${flowStructName}_${field.name}`)) continue;
     field.type = { kind: "f64" };
@@ -2131,6 +2261,7 @@ export function deriveFnctorFields(
     for (const field of fields) {
       if (field.type.kind !== "externref") continue;
       if (onlyConditional.get(field.name) === true) continue;
+      if (writeKindConflicted.has(field.name)) continue; // (#4250) see the numeric loop
       if (!ctx.stringPropertyNames?.has(field.name)) continue;
       if (ctx.classAccessorSet.has(`${flowStructName}_${field.name}`)) continue;
       field.type = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };

@@ -6,8 +6,9 @@
  * Contains: coerceType, pushDefaultValue, defaultValueInstrs, coercionInstrs.
  */
 
-import type { ArrayTypeDef, Instr, StructTypeDef, TypeDef, ValType } from "../ir/types.js";
+import type { ArrayTypeDef, Instr, StructTypeDef, TypeDef, ValType, WasmFunction } from "../ir/types.js";
 import { coercionPlan } from "./coercion-plan.js";
+import { recordVecFromExternMaterializer } from "./compiler-support-abi.js";
 import { boxToAny, UNDEF_F64_BITS } from "./value-tags.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
@@ -34,6 +35,7 @@ import {
   unpackedElemType,
 } from "./shared.js";
 import { tryEmitFastToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default OFF
+import { structMustReifyAtExternrefBoundary } from "./struct-boundary-reify.js"; // (#2358, #4491)
 
 /**
  * Emit a guarded ref.cast: use ref.test to check if the cast will succeed.
@@ -193,32 +195,6 @@ function emitWithCurrentThis(
   fctx.body.push({ op: "local.get", index: resultLocal });
   releaseTempLocal(fctx, prevThisLocal);
   releaseTempLocal(fctx, resultLocal);
-}
-
-/**
- * (#2358) Does a nominal OBJECT-LITERAL struct carry a USER ToPrimitive method —
- * `valueOf` / `@@toPrimitive` / `toString` — as a struct FIELD (stored as an
- * eqref/ref closure)? Used to gate the ref-struct→externref materialization:
- * such objects must cross the boundary as a `$Object` so `__to_primitive` can
- * dispatch the method once the typeIdx is erased (e.g. inside an `any` param);
- * plain data structs keep the byte-identical `extern.convert_any`.
- *
- * SCOPE: object literals only. A CLASS instance stores its methods as separate
- * `ClassName_<m>(self)` functions (NOT struct fields), so the field-copy
- * materializer cannot carry them onto the `$Object`; the class any-param case is
- * deferred to a follow-up (it has a partial `__call_<m>` / `$__shape_brand`
- * mechanism that wants its own slice). So this predicate matches FIELDS only.
- */
-function structHasUserToPrimitive(ctx: CodegenContext, name: string): boolean {
-  const fields = ctx.structFields.get(name);
-  if (fields) {
-    for (const f of fields) {
-      if (f.name === "valueOf" || f.name === "toString" || f.name === "@@toPrimitive") {
-        if (f.type.kind === "ref" || f.type.kind === "ref_null" || f.type.kind === "eqref") return true;
-      }
-    }
-  }
-  return false;
 }
 
 /**
@@ -1167,13 +1143,19 @@ export function buildVecFromExternMaterializer(ctx: CodegenContext, vecTypeIdx: 
 
   const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [resultType], "$vec_from_extern_type");
   const funcIdx = mintDefinedFunc(ctx);
-  pushDefinedFunc(ctx, funcIdx, {
+  const materializer: WasmFunction = {
     name,
     typeIdx,
     locals: fctx.locals,
     body,
     exported: false,
-  });
+  };
+  pushDefinedFunc(ctx, funcIdx, materializer);
+  // (#3520 C35) Owned by the vec SHAPE, not the numeric type index its label is
+  // spelled with — `vecTypeIdx` is a position in the type space, so a dead-type
+  // compaction moves it. See compiler-support-abi.ts for the ordinal encoding.
+  const shapeName = (ctx.mod.types[vecTypeIdx] as { name?: string } | undefined)?.name;
+  if (shapeName) recordVecFromExternMaterializer(ctx, shapeName, materializer);
   ctx.funcMap.set(name, funcIdx);
   (ctx.vecFromExternMap ??= new Map<number, string>()).set(vecTypeIdx, name);
   return name;
@@ -2469,7 +2451,22 @@ export function coerceType(
     // Build else-branch: when cast fails, construct from JS object if possible
     let elseBranch: Instr[];
     if (vecInfo) {
-      elseBranch = buildVecFromExternref(ctx, fctx, tmpExternLocal, toIdx, vecInfo);
+      // (#4614) A NULL input must stay `ref.null $vec` — `ref.test` answers
+      // false for null, so without this guard the materializer built an EMPTY
+      // vec out of nothing (`__extern_length(null)` → 0) and
+      // `flag ? rows() : null` bound to a vec slot read back as a TRUTHY
+      // zero-length array: cookie's `tableRows || cases` then selected the
+      // phantom empty table and every it.each registration vanished.
+      elseBranch = [
+        { op: "local.get", index: tmpExternLocal },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "ref_null", typeIdx: toIdx } },
+          then: [{ op: "ref.null", typeIdx: toIdx }],
+          else: buildVecFromExternref(ctx, fctx, tmpExternLocal, toIdx, vecInfo),
+        },
+      ];
     } else {
       // Check if the target is a tuple struct — if so, try converting from any known vec type
       const tupleFields = getTupleFields(ctx, toIdx);
@@ -2780,7 +2777,7 @@ export function coerceType(
     if (
       (ctx.standalone === true || ctx.wasi === true) &&
       name !== undefined &&
-      structHasUserToPrimitive(ctx, name) &&
+      structMustReifyAtExternrefBoundary(ctx, name) &&
       materializeStructAsObject(ctx, fctx, typeIdx)
     ) {
       return;

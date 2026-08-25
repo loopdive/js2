@@ -86,6 +86,7 @@ import { undefinedExternInstrs } from "./any-helpers.js";
 // module can reach the expression/coercion engines without a cycle back through
 // property-access.ts / index.ts.
 import { coerceType, compileExpression } from "./shared.js";
+import { inheritedSetAffectsKey } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 
 /**
  * Names with dedicated lowerings (array length, proto walk, constructor
@@ -326,6 +327,14 @@ export function tryEmitFnctorTypedFieldGet(
     `get:${f.structName}.${propName}:${f.fieldType.kind}${f.presenceSlot === undefined ? "" : ":presence"}`,
   );
   if (!fnctorTypedReadsEnabled()) return undefined;
+  // A clear flow-presence bit means this fnctor has no own data property.
+  // When inherited descriptors are observable, preserve the dynamic getter so
+  // it can continue into the fnctor prototype instead of returning the slot's
+  // local `undefined`.
+  if (ctx.standalone && inheritedSetAffectsKey(ctx, propName) && f.presenceSlot !== undefined) {
+    note(fnctorTypedReadStats.declines, `get:inherited-presence:${f.structName}.${propName}`);
+    return undefined;
+  }
   if (f.nullable) emitReceiverNullGuard(fctx, recvType as ValType, throwInstrs());
   if (f.presenceSlot === undefined) {
     fctx.body.push({ op: "struct.get", typeIdx: f.structTypeIdx, fieldIdx: f.fieldIdx });
@@ -388,6 +397,15 @@ export function tryEmitFnctorTypedFieldSet(
     `set:${f.structName}.${propName}:${f.fieldType.kind}${f.presenceSlot === undefined ? "" : ":presence"}`,
   );
   if (!fnctorTypedReadsEnabled()) return undefined;
+  // A flow-grown slot is physically allocated in the struct but becomes an
+  // own property only when its presence bit is set. Do not let this typed
+  // write shortcut materialize an absent slot ahead of an inherited setter or
+  // non-writable descriptor; its caller falls through to the already-reserved
+  // member dispatcher, whose absent branch delegates once to `__extern_set`.
+  if (ctx.standalone && inheritedSetAffectsKey(ctx, propName) && f.presenceSlot !== undefined) {
+    note(fnctorTypedReadStats.declines, `set:inherited-presence:${f.structName}.${propName}`);
+    return undefined;
+  }
   if (f.nullable) emitReceiverNullGuard(fctx, recvType as ValType, throwInstrs());
   // A presence-tracked write is a read-modify-write of the shared presence
   // word, so the receiver must live in a (repeatable) local.

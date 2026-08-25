@@ -4,6 +4,7 @@
 export type IrStringRuntimeIntrinsic =
   | "constant"
   | "concat"
+  | "repeat"
   | "equals"
   | "length"
   | "char-at"
@@ -14,12 +15,14 @@ export type IrStringRuntimeIntrinsic =
 export type IrStringEncoding = "ascii" | "utf8-guaranteed" | "wtf16";
 export type IrStringConcatMode = "immutable" | "owned-append";
 
-export type IrStringRuntimeOperand = "string" | "number-index";
+export type IrStringRuntimeOperand = "string" | "number-index" | "number-count";
 export type IrStringRuntimeResult = "string" | "number" | "boolean";
 
 /** Backend-neutral callable intents attached during final IR preparation. */
 export const IR_STRING_CONCAT_FN = "__ir_string_concat";
 export const IR_STRING_CONCAT_OWNED_FN = "__ir_string_concat_owned";
+/** Full `String.prototype.repeat` semantics over the backend's string carrier. */
+export const IR_STRING_REPEAT_FN = "__ir_string_repeat";
 /** Semantic prefix for an exact host-provided fixed-arity concat operation. */
 export const IR_STRING_CONCAT_MANY_PREFIX = "string.concat$arity";
 export const IR_STRING_EQUALS_FN = "__ir_string_equals";
@@ -37,6 +40,12 @@ export const IR_STRING_LITERAL_MATERIALIZE_FN = "__ir_string_literal_materialize
  * emits this call and the resolver picks the provider.
  */
 export const IR_NUMBER_TO_STRING_FN = "__ir_number_to_string";
+/**
+ * Bounded `Number::toFixed(value, fractionDigits)` as a backend-neutral
+ * callable intent. The native provider adapts the formatter's historical
+ * `externref` result back to the lane's `(ref $AnyString)` carrier.
+ */
+export const IR_NUMBER_TO_FIXED_FN = "__ir_number_to_fixed";
 
 export function irStringConcatManySymbol(arity: number): string {
   if (!Number.isInteger(arity) || arity < 3) {
@@ -65,6 +74,15 @@ export interface IrStringRuntimeSpec {
   readonly result: IrStringRuntimeResult;
   readonly allocatesResult: boolean;
   readonly index?: IrStringIndexContract;
+  readonly count?: IrStringRepeatCountContract;
+}
+
+export interface IrStringRepeatCountContract {
+  readonly conversion: "ToIntegerOrInfinity";
+  readonly negative: "range-error-or-backend-trap";
+  readonly positiveInfinity: "range-error-or-backend-trap";
+  readonly nan: 0;
+  readonly negativeZero: 0;
 }
 
 const CHAR_AT_INDEX: IrStringIndexContract = Object.freeze({
@@ -81,6 +99,14 @@ const CHAR_CODE_AT_INDEX: IrStringIndexContract = Object.freeze({
   outOfBounds: "nan",
 });
 
+const REPEAT_COUNT: IrStringRepeatCountContract = Object.freeze({
+  conversion: "ToIntegerOrInfinity",
+  negative: "range-error-or-backend-trap",
+  positiveInfinity: "range-error-or-backend-trap",
+  nan: 0,
+  negativeZero: 0,
+});
+
 /**
  * Semantic ABI for typed string IR. It contains no artifact symbols or
  * instruction encodings; concrete backends bind these operations separately.
@@ -91,6 +117,12 @@ export const IR_STRING_RUNTIME: Readonly<Record<IrStringRuntimeIntrinsic, IrStri
     operands: Object.freeze(["string", "string"] as const),
     result: "string",
     allocatesResult: true,
+  }),
+  repeat: Object.freeze({
+    operands: Object.freeze(["string", "number-count"] as const),
+    result: "string",
+    allocatesResult: true,
+    count: REPEAT_COUNT,
   }),
   equals: Object.freeze({
     operands: Object.freeze(["string", "string"] as const),
@@ -135,4 +167,13 @@ export function utf16CharCodeAt(value: string, position: number | undefined): nu
 export function utf16CharAt(value: string, position: number | undefined): string {
   const codeUnit = utf16CharCodeAt(value, position);
   return Number.isNaN(codeUnit) ? "" : String.fromCharCode(codeUnit);
+}
+
+/** Reference semantics used by backend-independent repeat-provider tests. */
+export function repeatString(value: string, count: number): string {
+  const integerCount = toIntegerOrInfinity(count);
+  if (integerCount < 0 || integerCount === Number.POSITIVE_INFINITY) {
+    throw new RangeError("Invalid count value");
+  }
+  return value.repeat(integerCount);
 }

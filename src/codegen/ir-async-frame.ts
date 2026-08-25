@@ -11,9 +11,11 @@ import type { FieldDef, ValType, WasmFunction } from "../ir/types.js";
 import { coerceType } from "./shared.js";
 import { definedFuncAt } from "./func-space.js";
 import { allocLocal } from "./context/locals.js";
+import { ensureAsyncDriveRuntime } from "./async-scheduler.js";
 
 export interface PreparedIrAsyncFrameResolver {
   resolveFunc(ref: IrFuncRef): number;
+  callResultAdapter?(ref: IrFuncRef): "native-string-from-externref" | undefined;
 }
 
 function preparedHostImports(fn: IrFunction, resolver: PreparedIrAsyncFrameResolver): HostAsyncImports {
@@ -54,7 +56,8 @@ function buildFrameInfo(
   ctx: CodegenContext,
   fn: IrFunction,
   params: readonly { readonly name: string; readonly type: ValType }[],
-  hostImports: HostAsyncImports,
+  hostImports: HostAsyncImports | undefined,
+  promiseTypeIdx: number,
 ): PreparedIrAsyncFrameLayout {
   const plan = fn.asyncPlan;
   if (!plan) throw new Error(`IR async function ${fn.name} has no prepared plan`);
@@ -83,14 +86,20 @@ function buildFrameInfo(
     { name: "error", type: { kind: "externref" }, mutable: true },
     ...params.map((param) => ({ name: `param_${param.name}`, type: param.type, mutable: false })),
     ...spillNames.map((name, index) => ({ name: `spill_${name}`, type: spillTypes[index]!, mutable: true })),
-    { name: "result_promise", type: { kind: "externref" }, mutable: true },
+    {
+      name: "result_promise",
+      type: hostImports ? { kind: "externref" } : { kind: "ref", typeIdx: promiseTypeIdx },
+      mutable: true,
+    },
   ];
   const stateName = `$AsyncFrame_${sanitizeTypeName(functionName)}`;
   const stateTypeIdx = ctx.mod.types.length;
   ctx.mod.types.push({ kind: "struct", name: stateName, fields });
   ctx.structMap.set(stateName, stateTypeIdx);
   ctx.typeIdxToStructName.set(stateTypeIdx, stateName);
-  ctx.structFields.set(stateName, fields);
+  // Prepared frames are compiler-private typed state. Keeping them out of the
+  // source-visible struct-field registry prevents generic property dispatch
+  // from retaining access ladders for private state/spill fields.
   const spillFieldOffset = PARAM_FIELD_OFFSET + params.length;
   const resultPromiseFieldIdx = spillFieldOffset + spillNames.length;
   const info: AsyncFrameInfo = {
@@ -106,9 +115,11 @@ function buildFrameInfo(
     spillTypes,
     spillFieldOffset,
     resultPromiseFieldIdx,
-    promiseTypeIdx: -1,
-    host: true,
-    hostImports,
+    promiseTypeIdx,
+    host: hostImports !== undefined,
+    canonicalUndefinedResult: hostImports === undefined && plan.runtimeIntents.includes("value.undefined"),
+    alwaysAsyncAwait: hostImports === undefined,
+    ...(hostImports ? { hostImports } : {}),
   };
   return { info, valueNames, valueTypes, physicalSpillNames };
 }
@@ -227,6 +238,12 @@ function preparedCfg(
         case "call": {
           for (const arg of instr.args) emitGet(fctx, Number(arg));
           fctx.body.push({ op: "call", funcIdx: resolver.resolveFunc(instr.target) });
+          if (resolver.callResultAdapter?.(instr.target) === "native-string-from-externref") {
+            if (ctx.anyStrTypeIdx < 0) {
+              throw new Error(`IR async frame ${fn.name} lost its native string carrier`);
+            }
+            fctx.body.push({ op: "any.convert_extern" }, { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
+          }
           if (instr.result !== null) {
             if (instr.resultType === null) throw new Error(`IR async frame ${fn.name} has an untyped call result`);
             fctx.body.push({ op: "local.set", index: localOf(fctx, Number(instr.result)) });
@@ -373,7 +390,11 @@ export function lowerPreparedIrAsyncFunction(
     labelMap: new Map(),
     savedBodies: [],
   };
-  const layout = buildFrameInfo(ctx, fn, params, preparedHostImports(fn, resolver));
+  const runtime = fn.asyncRuntime;
+  if (!runtime) throw new Error(`IR async function ${fn.name} has no prepared runtime attachment`);
+  const hostImports = runtime.kind === "host-wasmgc" ? preparedHostImports(fn, resolver) : undefined;
+  const promiseTypeIdx = runtime.kind === "standalone-native-wasmgc" ? ensureAsyncDriveRuntime(ctx).promiseTypeIdx : -1;
+  const layout = buildFrameInfo(ctx, fn, params, hostImports, promiseTypeIdx);
   const previous = ctx.currentFunc;
   ctx.currentFunc = fctx;
   try {

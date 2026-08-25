@@ -2,9 +2,9 @@
 id: 4267
 title: "codegen: give top-level overload implementations a canonical callable owner"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-18
 priority: high
 horizon: s
 feasibility: medium

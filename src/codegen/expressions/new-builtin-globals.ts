@@ -18,7 +18,7 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import { addUnionImports, getArrTypeIdxFromVec, getOrRegisterVecType, typedArrayVecStorage } from "../index.js";
 import { coercionPlan } from "../coercion-plan.js";
-import { emitToString } from "../coercion-engine.js";
+import { emitToString, getExternrefToStringProvider } from "../coercion-engine.js";
 import { emitTaViewConstruct, emitTaViewConstructWindowed } from "../dataview-native.js";
 import { emitNativeDateParse } from "../date-parse-native.js";
 import { compileObjectLiteralAsExternref } from "../literals.js";
@@ -34,7 +34,8 @@ import { coerceType, compileArrowAsClosure, compileExpression } from "../shared.
 import type { InnerResult } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { coerceType as coerceTypeImpl } from "../type-coercion.js";
-import { ensureDateDaysFromCivilHelper, ensureDateStruct } from "./builtins.js";
+import { ensureDateDaysFromCivilHelper, ensureDateFormatStringHelper, ensureDateStruct } from "./builtins.js";
+import { emitStandaloneDateTimestamp } from "../standalone-clock-capability.js";
 import { emitObjectCoercion } from "./calls-guards.js";
 import {
   emitDynamicNewFunctionHostEval,
@@ -45,6 +46,7 @@ import {
 } from "./eval-inline.js";
 import { emitThrowTypeError, noJsHost } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { emitNewBooleanToBooleanArg } from "../new-boolean-tobooleanarg.js"; // (#4619)
 import {
   emitHostTaBufferConstruct,
   hostTaBufferArgSymName,
@@ -54,6 +56,19 @@ import {
 
 /** Sentinel: the `new` target is not one of the built-in global constructors. */
 export const NEW_GLOBAL_FALLTHROUGH = Symbol("new-builtin-global-fallthrough");
+
+/**
+ * (#4616) Is the single `new Date(arg)` argument DYNAMIC — statically able to
+ * hold a String at runtime without being string-typed (any/unknown/
+ * unresolvable, or a union with a string part)? Such an arg needs the runtime
+ * string-vs-ToNumber dispatch below; statically-typed number/Date args keep
+ * the plain ToNumber(ms) path.
+ */
+function isDynamicMaybeStringArg(ctx: CodegenContext, arg: ts.Expression): boolean {
+  const fact = ctx.oracle.typeFactOf(arg);
+  if (fact.kind === "any" || fact.kind === "unknown" || fact.kind === "unresolvable") return true;
+  return fact.kind === "union" && fact.parts.some((p) => p.kind === "string");
+}
 
 /**
  * (#4100) "Is the Error message null-or-undefined?" — leaves an i32 on the stack.
@@ -159,6 +174,32 @@ function isStaticUndefinedExpr(expr: ts.Expression, fctx: FunctionContext): bool
 }
 
 /**
+ * Does `new String(value)` need the RUNTIME ToString walk rather than the
+ * compile-time one?
+ *
+ * Only for an ARRAY (or tuple) argument. That is the one shape where the static
+ * lowering is structurally wrong: `emitToString` answers a GC-ref receiver with
+ * `$__any_to_string`, which stringifies the vec as `"[object Object]"`, while
+ * §23.1.3.36 says an Array's `toString` is `join(",")`. The `String(x)` call
+ * arm has always had a dedicated array arm for exactly this reason
+ * (`tryEmitArrayToStringNative`, #2160); this is the `new String(x)` half.
+ *
+ * Deliberately NOT widened to every object. `{valueOf: function(){}, toString:
+ * void 0}` — an ABSENT `toString` whose `valueOf` returns `undefined`, so
+ * ToPrimitive answers the primitive `undefined` and ToString answers
+ * `"undefined"` — is answered correctly by the static path and NOT by the
+ * runtime one (measured: `String/prototype/substring/S15.5.4.15_A1_T9`
+ * regressed when the object case was included). The two walks disagree on
+ * absent/undefined-returning coercion methods, and that disagreement is its own
+ * work item; this arm claims only the shape where the static answer cannot be
+ * right.
+ */
+function needsRuntimeToStringForWrapper(ctx: CodegenContext, value: ts.Expression): boolean {
+  const fact = ctx.oracle.typeFactOf(value);
+  return fact.kind === "array" || fact.kind === "tuple";
+}
+
+/**
  * Emit the argument stored in a String wrapper's [[StringData]] slot.
  * Returns true when a statically-known Symbol emitted a terminal TypeError.
  */
@@ -168,6 +209,41 @@ function emitStringWrapperValue(ctx: CodegenContext, fctx: FunctionContext, valu
     if (valueType !== null) fctx.body.push({ op: "drop" });
     emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a string");
     return true;
+  }
+  // (ES5 standalone lane) §22.1.1.1 step 2 is `? ToString(value)` — the SAME
+  // conversion `String(value)` performs. `emitToString` below answers it from
+  // the STATIC type, and for a GC-ref receiver that means `$__any_to_string`,
+  // which stringifies structurally. So the two spellings disagreed exactly
+  // where the conversion is interesting:
+  //
+  //     function F() {}
+  //     F.prototype.toString = function () { return "abc"; };
+  //     String(new F())      // "abc"
+  //     new String(new F())  // "[object Object]"   ← measured
+  //     new String(new Array(1, 2, 3))  // "[object Object]", spec "1,2,3"
+  //
+  // `__extern_toString` is the runtime `ToString(ToPrimitive(v,"string"))` the
+  // `String(x)` path reaches: it walks OrdinaryToPrimitive (so an INHERITED
+  // `toString` runs) and reduces a vec through `Array.prototype.toString`.
+  // Routing the host-free lane's non-primitive values through it makes the two
+  // agree. Statically-primitive values keep the cheaper static lowering, and a
+  // module without the object runtime (no `__extern_toString`) keeps today's
+  // path — so this can only change the answer where it is currently structural.
+  if (noJsHost(ctx) && needsRuntimeToStringForWrapper(ctx, value)) {
+    const compiled = compileExpression(ctx, fctx, value, { kind: "externref" });
+    if (compiled !== null) {
+      if (compiled.kind !== "externref") coerceType(ctx, fctx, compiled, { kind: "externref" });
+      const toStringIdx = getExternrefToStringProvider(ctx);
+      if (toStringIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: toStringIdx });
+        return false;
+      }
+      // No object runtime in this module — fall back to the static lowering on
+      // the value already compiled (externref is one of its input kinds).
+      const fallback = emitToString(ctx, fctx, compiled, ctx.oracle.typeFactOf(value), "string");
+      if (fallback.kind !== "externref") coerceType(ctx, fctx, fallback, { kind: "externref" });
+      return false;
+    }
   }
   const valueTsType = ctx.oracle.typeFactOf(value);
   const valueType = compileExpression(ctx, fctx, value);
@@ -323,7 +399,9 @@ export function tryCompileBuiltinGlobalNew(
             const t = compileExpression(ctx, fctx, args[0]!);
             if (t !== null) fctx.body.push({ op: "drop" });
             fctx.body.push({ op: "f64.const", value: 1 });
-          } else {
+          } else if (!emitNewBooleanToBooleanArg(ctx, fctx, args[0]!)) {
+            // (#4619) …and an object/string argument needs §7.1.2 ToBoolean,
+            // not this f64 coercion, which INVERTS it. See the module.
             compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
           }
         } else {
@@ -790,7 +868,7 @@ export function tryCompileBuiltinGlobalNew(
       // breaking unrelated Date tests). See the matching Date.now() fallback in
       // expressions/calls.ts.
       if (ctx.standalone === true) {
-        fctx.body.push({ op: "i64.const", value: 0n });
+        emitStandaloneDateTimestamp(ctx, fctx);
         fctx.body.push({ op: "struct.new", typeIdx: dateTypeIdx });
         return { kind: "ref", typeIdx: dateTypeIdx };
       }
@@ -842,6 +920,47 @@ export function tryCompileBuiltinGlobalNew(
         const argType = compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
         if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
         fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__date_parse_host")! });
+      } else if (
+        !ctx.standalone &&
+        !ctx.wasi &&
+        isDynamicMaybeStringArg(ctx, args[0]!) &&
+        ctx.funcMap.has("__date_parse_host")
+      ) {
+        // (#4616) §21.4.2.1 for a DYNAMIC single arg (any/unknown/union-with-
+        // string): ToPrimitive yields a String → parse as if by Date.parse;
+        // anything else → ToNumber(ms). The static-type arms above can't see
+        // this (an `any` holding "Wed, 21 Oct 2015 …" ToNumbered to NaN, which
+        // silently dropped cookie's `expires` on every parsed Set-Cookie).
+        // Branch at runtime on `__typeof_string`; both callees are registered
+        // up-front (collector / addUnionImports), so no late-import shift can
+        // strand the arm indices.
+        const argType = compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
+        if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+        addUnionImports(ctx);
+        flushLateImportShifts(ctx, fctx);
+        const typeofStringIdx = ctx.funcMap.get("__typeof_string");
+        const unboxNumberIdx = ctx.funcMap.get("__unbox_number");
+        const parseHostIdx = ctx.funcMap.get("__date_parse_host")!;
+        if (typeofStringIdx === undefined || unboxNumberIdx === undefined) {
+          coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
+        } else {
+          const extLocal = allocTempLocal(fctx, { kind: "externref" });
+          fctx.body.push({ op: "local.tee", index: extLocal });
+          fctx.body.push({ op: "call", funcIdx: typeofStringIdx });
+          fctx.body.push({
+            op: "if",
+            blockType: { kind: "val", type: { kind: "f64" } },
+            then: [
+              { op: "local.get", index: extLocal },
+              { op: "call", funcIdx: parseHostIdx },
+            ],
+            else: [
+              { op: "local.get", index: extLocal },
+              { op: "call", funcIdx: unboxNumberIdx },
+            ],
+          });
+          releaseTempLocal(fctx, extLocal);
+        }
       } else {
         compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
       }
@@ -1425,4 +1544,86 @@ export function tryCompileErrorCtorCallWithoutNew(
 
   const result = tryCompileBuiltinGlobalNew(ctx, fctx, expr as unknown as ts.NewExpression);
   return result === NEW_GLOBAL_FALLTHROUGH ? undefined : result;
+}
+
+/** `__date_format_string` mode selector for §21.4.4.41 `toString`. */
+const DATE_FORMAT_MODE_TO_STRING = 2;
+
+/**
+ * (#4640 D7) `Date()` / `Date(1970, 1)` / `Date(anything)` called WITHOUT `new`.
+ *
+ * §21.4.2.1 step 1: "If NewTarget is undefined, then let now be the time value
+ * ... return ToDateString(now)". Every argument is IGNORED — not ToNumber'd, not
+ * inspected — and the result is a **String**, never a Date object. The `new`
+ * form (handled by {@link tryCompileBuiltinGlobalNew}) is a different clause
+ * entirely, which is why this cannot delegate the way the Error-family arm does.
+ *
+ * ## Why this is a CRASH fix, not a cosmetic one
+ *
+ * Before this arm, a bare `Date(...)` matched nothing and fell through to the
+ * generic builtin-identifier terminal, which yields `ref.null.extern`. The
+ * checker types the call `string` (lib.es5's `DateConstructor` call signature),
+ * so nothing downstream re-checked it: `Date.parse(Date())` handed a NULL
+ * externref to the native `__date_parse`, whose first act is
+ * `any.convert_extern` + `ref.cast` to the string struct — an **illegal cast
+ * trap**, not a wrong answer (`built-ins/Date/S15.9.2.1_A2`). The static type
+ * being right while the runtime value is `null` is exactly what made this
+ * invisible: `typeof Date()` folds to `"string"` off the checker type, so the
+ * obvious probe agrees with the spec while the emitted value does not.
+ *
+ * ## Shape
+ *
+ * The same time value the zero-arg `new Date()` arm uses
+ * ({@link emitStandaloneDateTimestamp} standalone, `__date_now` on host), fed to
+ * the SAME `__date_format_string` formatter mode `d.toString()` compiles to, so
+ * the two spellings cannot drift — one formatter, as in `date-any-to-string.ts`.
+ *
+ * ## Declines (absent-not-wrong)
+ *
+ * - No native strings (`ctx.nativeStrings` false / no `$NativeString` type):
+ *   the formatter builds a native string and there is nothing to build it into.
+ *   Host mode keeps its prior behaviour rather than getting a half-answer.
+ * - A shadowed `Date` (a local, a `class Date {}`, an import) is not the ambient
+ *   global and is left to the ordinary call lane.
+ *
+ * Arguments are still COMPILED and dropped: ArgumentListEvaluation runs before
+ * [[Call]], so `Date(sideEffect())` must observe the side effect even though the
+ * value is discarded.
+ */
+export function tryCompileDateCallWithoutNew(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): InnerResult | undefined {
+  if (expr.questionDotToken) return undefined;
+  const callee = expr.expression;
+  if (!ts.isIdentifier(callee) || callee.text !== "Date") return undefined;
+  if (ctx.classSet.has("Date")) return undefined;
+  if (!resolvesToAmbientGlobal(ctx, callee)) return undefined;
+  if (!ctx.nativeStrings || ctx.nativeStrTypeIdx < 0) return undefined;
+
+  for (const arg of expr.arguments ?? []) {
+    const argResult = compileExpression(ctx, fctx, arg);
+    if (argResult) fctx.body.push({ op: "drop" });
+  }
+
+  const fmtIdx = ensureDateFormatStringHelper(ctx);
+  if (ctx.wasi && ctx.funcMap.has("__wasi_date_now")) {
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__wasi_date_now")! });
+    fctx.body.push({ op: "i64.trunc_sat_f64_s" });
+  } else if (ctx.standalone === true) {
+    emitStandaloneDateTimestamp(ctx, fctx);
+  } else {
+    const dateNowIdx = ensureLateImport(ctx, "__date_now", [], [{ kind: "f64" }]);
+    if (dateNowIdx === undefined) {
+      fctx.body.push({ op: "i64.const", value: 0n });
+    } else {
+      flushLateImportShifts(ctx, fctx);
+      fctx.body.push({ op: "call", funcIdx: dateNowIdx });
+      fctx.body.push({ op: "i64.trunc_sat_f64_s" });
+    }
+  }
+  fctx.body.push({ op: "i32.const", value: DATE_FORMAT_MODE_TO_STRING });
+  fctx.body.push({ op: "call", funcIdx: fmtIdx });
+  return { kind: "ref", typeIdx: ctx.nativeStrTypeIdx };
 }

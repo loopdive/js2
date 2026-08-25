@@ -2,10 +2,10 @@
 id: 4429
 title: "String-hint ToPrimitive drops the receiver `this` — `'' + a` / `String(a)` call toString with wrong this (in-tree #2679 tests failing)"
 status: done
-sprint: current
+sprint: 78
 assignee: ttraenkler/claude-es5-standalone
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 priority: high
 horizon: s

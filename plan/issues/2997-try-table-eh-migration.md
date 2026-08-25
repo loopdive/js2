@@ -1,7 +1,7 @@
 ---
 id: 2997
 title: "Migrate legacy Wasm EH (try/catch 0x06/0x07) to try_table so binaries run under modern wasmtime/wasmer"
-status: ready
+status: in-review
 sprint: Backlog
 created: 2026-07-02
 priority: medium
@@ -408,3 +408,22 @@ architect spec first" — the spec is above.
 - Port the finally/break-continue-return depth regressions from #993 and #1858
   to the gated path (nested try, `continue outer` inside finally).
 - The #2962 exception-render harness stays green (host lane, unchanged bytes).
+
+## Implementation status — 2026-08-20
+
+The target-gated migration is implemented for standalone/WASI output while the
+JavaScript-host lane retains the legacy encoding. The implementation adds the
+`try_table` IR, binary/object/WAT encoders, structured branch-depth retargeting,
+walker/fixup support, and matching IR-backend lowering.
+
+Focused coverage now proves:
+
+- simple catch, nested catch/rethrow/finally, break/continue, and return-through-
+  finally semantics;
+- a real WASI exception module executing under current Wasmtime;
+- the pinned `deno_core` 0.407.0 wrapper transaction precompiling under
+  Wasmtime 47 and booting in two isolated stores with probe value `42`; and
+- the JavaScript-host lane continuing to use the legacy representation.
+
+The broader host-lane conversion to `exnref`/`throw_ref` remains the separately
+scoped slice 2 and is not required by the Deno/Wasmtime prototype.

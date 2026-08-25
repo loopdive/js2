@@ -4,7 +4,7 @@ id: 4038
 title: "Internal error compiling expression: Cannot read properties of undefined (reading 'kind')"
 status: done
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 completed: 2026-08-02
 assignee: ttraenkler/claude
 priority: critical
@@ -13,7 +13,7 @@ reasoning_effort: high
 task_type: bug
 area: codegen, observability
 goal: npm-library-support
-sprint: current
+sprint: 78
 required_by: [1282, 1400, 2693]
 es_edition: n/a
 related: [1282, 4030, 4033]

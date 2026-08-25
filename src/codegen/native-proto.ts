@@ -38,6 +38,9 @@ import { ensureBuiltinFnMetaType, pushBuiltinFnSingletonValueInstrs } from "./bu
 import { addFuncType } from "./registry/types.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+// (#4491 T9) `constructor` is an own data property of every builtin prototype and
+// is deliberately NOT in `memberCsv`; the companion gets it from the #4200 carrier.
+import { pushCompanionConstructorSeed } from "./builtin-proto-constructor-seed.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError } from "./js-errors.js"; // (#2984) refusal-body fallback
 import { allocLocal } from "./context/locals.js";
 
@@ -162,6 +165,23 @@ export interface NativeProtoBuiltinGlue {
    * arity), so families that don't define it emit byte-identical modules.
    */
   memberParamSlots?: (member: string) => number;
+  /**
+   * (#4485) Member-IDENTITY alias. Some spec members are not merely equivalent
+   * to another member, they ARE the same function object: §B.2.4.3 says "the
+   * function object that is the initial value of `Date.prototype.toGMTString`
+   * is the same function object that is the initial value of
+   * `Date.prototype.toUTCString`" — `Date.prototype.toGMTString ===
+   * Date.prototype.toUTCString` must hold. Returning the canonical member name
+   * here routes the whole closure factory (func name, `nativeClosureMeta`, and
+   * the per-(brand, member) meta struct type that gives the value its identity)
+   * to the canonical member, so both reads resolve to ONE singleton.
+   *
+   * Only closure IDENTITY is aliased — the alias name stays its own entry in
+   * `memberCsv`, so `hasOwnProperty` / `getOwnPropertyDescriptor` /
+   * `getOwnPropertyNames` still see it as its own own-property of the proto.
+   * A member with no alias (the default) is unaffected.
+   */
+  memberAliasOf?: (member: string) => string | undefined;
   /**
    * Emit a method/getter closure BODY into `fctx`, given the externref `this`
    * already bound to closure-param index 1 and any further args at indices
@@ -310,6 +330,19 @@ function nativeProtoSeederRegistry(ctx: CodegenContext): Map<number, string> {
   return slot.__nativeProtoSeeders;
 }
 
+/**
+ * (#4491 T9) Brands whose seeder installed a `constructor` companion entry —
+ * i.e. those with an identity-stable carrier (`hasBuiltinProtoConstructorCarrier`).
+ * Read by {@link seededNativeProtoDataMembersByBrand} so `__nproto_hasown`
+ * consults the companion for `constructor` on exactly those brands instead of
+ * answering the unconditional spec `1`, which no `delete` could ever retract.
+ */
+function nativeProtoSeededConstructorBrands(ctx: CodegenContext): Set<number> {
+  const slot = ctx as unknown as { __nativeProtoSeededCtors?: Set<number> };
+  if (!slot.__nativeProtoSeededCtors) slot.__nativeProtoSeededCtors = new Set();
+  return slot.__nativeProtoSeededCtors;
+}
+
 /** Brands materialized before the object runtime existed — see the ordering note. */
 function pendingNativeProtoSeeds(ctx: CodegenContext): Set<number> {
   const slot = ctx as unknown as { __nativeProtoPendingSeeds?: Set<number> };
@@ -341,6 +374,44 @@ export function flushPendingNativeProtoSeeders(ctx: CodegenContext): void {
 export function nativeProtoSeedersByBrandOffset(ctx: CodegenContext): ReadonlyMap<number, string> {
   const out = new Map<number, string>();
   for (const [brand, name] of nativeProtoSeederRegistry(ctx)) out.set(brand - BUILTIN_BRAND_BASE, name);
+  return out;
+}
+
+/**
+ * Data-method keys whose builtin prototype companion is authoritative.
+ *
+ * A registered seeder installs these members as ordinary `$PropEntry` values,
+ * so later assignment or deletion must be observed from that table rather than
+ * from the immutable `$NativeProto.$memberCsv` / singleton-closure shortcuts.
+ * Accessors are deliberately absent because the current seeder does not install
+ * them; constructors have their own carrier and are not part of `memberCsv`.
+ *
+ * (#4491 T9) …but a `constructor` the seeder DID install is appended here even
+ * though it is not a CSV member, and for the same reason the CSV members are
+ * listed: its companion entry is now the real own property, so a `delete
+ * <B>.prototype.constructor` must be observable. Without this the ES5
+ * "`constructor` is own, unconditionally" arm in `native-proto-own-props.ts`
+ * answers `1` forever and `propertyHelper.js`'s `isConfigurable`
+ * (`delete o[k]; return !hasOwnProperty(o, k)`) reports the property as
+ * NON-configurable — measured as "constructor descriptor should be
+ * configurable" on `Error`/`Set`/`WeakSet` prop-desc with the seed in place and
+ * this list unchanged. A brand with NO carrier seeds nothing and is absent from
+ * the set, so its unconditional arm is untouched.
+ */
+export function seededNativeProtoDataMembersByBrand(ctx: CodegenContext): ReadonlyMap<number, readonly string[]> {
+  const out = new Map<number, readonly string[]>();
+  const seededCtors = nativeProtoSeededConstructorBrands(ctx);
+  for (const [brand, seederName] of nativeProtoSeederRegistry(ctx)) {
+    if (ctx.funcMap.get(seederName) === undefined) continue;
+    const glue = getNativeProtoBuiltinGlue(ctx, brand);
+    if (!glue) continue;
+    const members = glue.memberCsv
+      .split(",")
+      .map((member) => member.trim())
+      .filter((member) => member.length > 0 && !member.startsWith("@@") && glue.memberKind(member) === "method");
+    if (seededCtors.has(brand)) members.push("constructor");
+    if (members.length > 0) out.set(brand, members);
+  }
   return out;
 }
 
@@ -440,7 +511,17 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
   seedFctx.params = [{ name: "__companion", type: { kind: "externref" } }];
   seedFctx.localMap = new Map([["__companion", 0]]);
 
+  // (#4491 T9) `constructor` FIRST — it is an own data property of every builtin
+  // prototype but is deliberately absent from `memberCsv` (see the doc above and
+  // builtin-proto-constructor-seed.ts for why that exclusion is load-bearing).
+  // Emitted before the member loop so the carrier's own late imports, if any,
+  // shift `__defineProperty_value` before the loop bakes it.
   let installed = 0;
+  if (pushCompanionConstructorSeed(ctx, seedFctx, glue.name, PROTO_METHOD_DEFINE_FLAGS)) {
+    installed = 1;
+    nativeProtoSeededConstructorBrands(ctx).add(brand);
+  }
+  const defineValueIdx2 = ctx.funcMap.get("__defineProperty_value") ?? defineValueIdx;
   for (const rawMember of glue.memberCsv.split(",")) {
     const member = rawMember.trim();
     if (member.length === 0) continue;
@@ -500,7 +581,7 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
     for (const instr of pushBuiltinFnSingletonValueInstrs(ctx, closure)) body.push(instr);
     body.push({ op: "extern.convert_any" });
     body.push({ op: "f64.const", value: PROTO_METHOD_DEFINE_FLAGS });
-    body.push({ op: "call", funcIdx: defineValueIdx });
+    body.push({ op: "call", funcIdx: defineValueIdx2 });
     body.push({ op: "drop" }); // the helper returns the target
     installed++;
   }
@@ -596,7 +677,7 @@ function makeNativeClosureFctx(
 export function ensureStandaloneNativeMethodClosure(
   ctx: CodegenContext,
   brand: number,
-  member: string,
+  memberIn: string,
   kind: "method" | "getter",
   opts?: {
     /**
@@ -625,6 +706,16 @@ export function ensureStandaloneNativeMethodClosure(
 ): { type: { kind: "ref"; typeIdx: number }; funcIdx: number } | null {
   const glue = getNativeProtoBuiltinGlue(ctx, brand);
   if (!glue) return null;
+
+  // (#4485) Identity alias FIRST, before anything keys off the member name.
+  // `Date.prototype.toGMTString` is not a copy of `toUTCString`, it is the same
+  // function object (§B.2.4.3), so every downstream key — `funcName`,
+  // `nativeClosureMeta`, and above all the `proto:<brand>:<kind>:<member>` meta
+  // struct type that IS the value's identity — must be the canonical member's.
+  // Rewriting here (rather than at each call site) makes the aliasing hold for
+  // every route into the factory: plain value read, gOPD synthesis, reflective
+  // call. `.name` correctly reports the canonical name for an aliased member.
+  const member = glue.memberAliasOf?.(memberIn) ?? memberIn;
 
   // Lifted user params: externref `this`, plus (for methods) externref args.
   // S1 RegExp closures take at most one string arg; over-declaring args is

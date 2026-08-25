@@ -3,9 +3,9 @@ id: 4220
 title: "Standalone: a transferred `String.prototype.split` throws `not yet implemented` — the ES5 split battery never runs"
 status: done
 completed: 2026-08-08
-sprint: current
+sprint: 78
 created: 2026-08-08
-updated: 2026-08-08
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

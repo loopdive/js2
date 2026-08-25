@@ -2,9 +2,9 @@
 id: 4423
 title: "Compile scaling: param inference was quadratic (4.4x at 512 functions) + per-call O(imports) scan"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 priority: high
 horizon: m

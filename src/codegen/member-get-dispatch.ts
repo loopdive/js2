@@ -64,6 +64,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js";
 import { presenceTestInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { coldFieldReadArm, findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split
+import { inheritedSetAffectsKey } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import {
   findFnctorLayoutStructsForField,
   findFnctorResidStructsForField,
@@ -579,6 +580,15 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
               { op: "call", funcIdx: getIdx },
             ]
           : [{ op: "ref.null.extern" }];
+    // A clear presence bit is a logical own-property miss, not an own
+    // `undefined` value.  Keep the existing undefined path outside #4504;
+    // the active path reaches the normal getter/prototype walk.  The fallback
+    // is cloned because this fill can splice a presence miss into multiple
+    // independently-remapped instruction trees.
+    const presenceMiss = (): Instr[] =>
+      ctx.standalone && inheritedSetAffectsKey(ctx, propName)
+        ? (structuredClone(fallback) as Instr[])
+        : (undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }]);
 
     // (#3927) Cold-tail arms — the hop for a flow-grown field this fnctor moved
     // off the main struct. They come AFTER every inline struct candidate (a
@@ -614,7 +624,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
             1,
             coldLocalIdx,
             { kind: "externref" },
-            undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
+            presenceMiss(),
             coercionInstrs(ctx, loc.fieldType, { kind: "externref" }),
           ),
           else: buildResidArmChain(idx + 1),
@@ -633,7 +643,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
             loc,
             1,
             { kind: "externref" },
-            undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
+            presenceMiss(),
             coercionInstrs(ctx, loc.fieldType, { kind: "externref" }),
           ),
           else: buildLayoutArmChain(idx + 1),
@@ -654,7 +664,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
             1,
             coldLocalIdx,
             { kind: "externref" },
-            undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
+            presenceMiss(),
             coercionInstrs(ctx, loc.fieldType, { kind: "externref" }),
           ),
           else: buildColdArmChain(idx + 1),
@@ -721,7 +731,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
                 op: "if",
                 blockType: { kind: "val", type: { kind: "externref" } },
                 then: readValueInstrs,
-                else: undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
+                else: presenceMiss(),
               },
             ]
           : readValueInstrs;
@@ -928,6 +938,10 @@ export function fillTypedMemberGetF64Dispatch(ctx: CodegenContext): void {
             { op: "call", funcIdx: unboxIdx },
           ]
         : [{ op: "f64.const", value: NaN }];
+    const presenceMiss = (): Instr[] =>
+      ctx.standalone && inheritedSetAffectsKey(ctx, propName)
+        ? (structuredClone(fallback) as Instr[])
+        : [{ op: "f64.const", value: NaN }];
 
     // Accessor candidates disable field arms entirely (see doc above).
     const candidates =
@@ -956,9 +970,10 @@ export function fillTypedMemberGetF64Dispatch(ctx: CodegenContext): void {
                 op: "if",
                 blockType: { kind: "val", type: { kind: "f64" } as ValType },
                 then: readValue,
-                // absent → undefined → ToNumber = NaN (matches the generic
-                // arm's undefined-extern → __unbox_number result).
-                else: [{ op: "f64.const", value: NaN }],
+                // In an active descriptor-aware module, a presence-clear
+                // slot is a logical own miss: consult inherited getters/data
+                // through the generic path before applying ToNumber.
+                else: presenceMiss(),
               },
             ]
           : readValue;

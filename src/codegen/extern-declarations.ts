@@ -13,12 +13,14 @@ import type { CodegenContext, ExternClassInfo } from "./context/types.js";
 import type { NodeBuiltinImport } from "../import-resolver.js";
 import { hasDeclareModifier } from "./ast-modifiers.js";
 import { isExternalDeclaredClass, isVoidType, mapTsTypeToWasm } from "../checker/type-mapper.js";
+import { FS_PATH_BASED_MEMBERS, WASI_NODE_FS_ALIAS_SENTINEL } from "../checker/node-capability-map.js";
 import { addFuncType } from "./registry/types.js";
 import { addImport, addStringConstantGlobal, addStringImports } from "./registry/imports.js";
 import { brandExternMethodResult } from "./shared.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { nativeTypeFromTypeNode } from "./native-type-annotations.js";
 import { reportError } from "./context/errors.js";
+import { registerAmbientParseImport } from "./ambient-parse-import.js";
 import {
   heritageBaseName,
   isExternDeclaredLibName,
@@ -30,7 +32,6 @@ import {
   typeRefName,
   type LibDeclIndex,
 } from "./lib-decl-index.js";
-
 // ── Built-in extern class registration ───────────────────────────────
 
 /** Helper to create an extern method signature with externref params and results */
@@ -367,6 +368,49 @@ export function registerBuiltinExternClasses(ctx: CodegenContext): void {
       methods,
       properties: new Map([["size", { type: { kind: "externref" }, readonly: true }]]),
     });
+  }
+
+  // TextEncoder / TextDecoder are Web and Node globals, but JavaScript
+  // packages frequently use them without importing a DOM or Node declaration
+  // file.  In that case the checker has no nominal class to hand to the
+  // normal extern collector and `new TextEncoder()` used to compile as a
+  // null/undefined value.  Register the small host surface synthetically so
+  // the existing extern-class constructor and method dispatch can bind the
+  // real constructors supplied by `getWebHostConstructors()` in runtime.ts.
+  // Host-free targets deliberately keep the native UTF-8 lowering and must
+  // not acquire TextEncoder_* imports (#1752/#1780).
+  if (!ctx.nativeStrings && !ctx.strictNoHostImports) {
+    if (!ctx.externClasses.has("TextEncoder")) {
+      const methods = new Map<string, { params: ValType[]; results: ValType[]; requiredParams: number }>();
+      methods.set("encode", externMethod(1)); // encode(input?) -> Uint8Array
+      methods.set("encodeInto", externMethod(2)); // encodeInto(input, destination) -> result
+      ctx.externClasses.set("TextEncoder", {
+        importPrefix: "TextEncoder",
+        namespacePath: [],
+        className: "TextEncoder",
+        constructorParams: [],
+        methods,
+        properties: new Map([["encoding", { type: { kind: "externref" }, readonly: true }]]),
+      });
+    }
+    if (!ctx.externClasses.has("TextDecoder")) {
+      const methods = new Map<string, { params: ValType[]; results: ValType[]; requiredParams: number }>();
+      methods.set("decode", externMethod(2)); // decode(input?, options?) -> string
+      ctx.externClasses.set("TextDecoder", {
+        importPrefix: "TextDecoder",
+        namespacePath: [],
+        className: "TextDecoder",
+        // label? and options? are both optional; null padding is stripped by
+        // the generic extern_class constructor adapter in runtime.ts.
+        constructorParams: [{ kind: "externref" }, { kind: "externref" }],
+        methods,
+        properties: new Map([
+          ["encoding", { type: { kind: "externref" }, readonly: true }],
+          ["fatal", { type: { kind: "externref" }, readonly: true }],
+          ["ignoreBOM", { type: { kind: "externref" }, readonly: true }],
+        ]),
+      });
+    }
   }
 
   // #1238 — synthetic ExternClassInfo for String and Array.
@@ -766,7 +810,7 @@ export function collectExternDeclarations(
             ? []
             : [nativeOf(stmt.type) ?? mapLibTypeNodeToWasm(stmt.type, libIndex, scope)];
           const typeIdx = addFuncType(ctx, params, results);
-          addImport(ctx, ctx.externImportModule ?? "env", name, { kind: "func", typeIdx });
+          registerAmbientParseImport(ctx, sourceFile, name, typeIdx);
         } else {
           const sig = ctx.checker.getSignatureFromDeclaration(stmt);
           if (sig) {
@@ -781,7 +825,7 @@ export function collectExternDeclarations(
             // (#4238) `externImportModule` retargets extern declarations at a
             // wasm-to-wasm provider namespace (`js2wasm:qjs`) instead of the
             // `env` JS-host module. Unset for every user compile.
-            addImport(ctx, ctx.externImportModule ?? "env", name, { kind: "func", typeIdx });
+            registerAmbientParseImport(ctx, sourceFile, name, typeIdx);
           }
         }
       }
@@ -1288,6 +1332,7 @@ export function collectDeclaredGlobals(
   libFile: ts.SourceFile,
   userFile: ts.SourceFile,
   libIndex?: LibDeclIndex,
+  allUserFiles?: readonly ts.SourceFile[],
 ): void {
   // First collect identifiers referenced in user source
   const referencedNames = new Set<string>();
@@ -1328,8 +1373,43 @@ export function collectDeclaredGlobals(
     }
     forEachChild(node, collectRefs);
   };
-  for (const stmt of userFile.statements) {
-    forEachChild(stmt, collectRefs);
+  const bindingSourceFiles = allUserFiles ?? [userFile];
+  for (const sourceFile of bindingSourceFiles) {
+    for (const stmt of sourceFile.statements) {
+      forEachChild(stmt, collectRefs);
+    }
+  }
+
+  // Do not register a host global when the module owns a same-named top-level
+  // binding.  lib.dom has callable globals such as `dispatchEvent`; ReactDOM's
+  // package graph also defines an internal `dispatchEvent` helper.  Letting
+  // the ambient collector install `global_dispatchEvent` beside that module
+  // binding changes the closure value selected by `.bind` and turns a real
+  // function into a non-callable externref.  Nested bindings are resolved by
+  // their lexical local maps, so only module-scope declarations need this
+  // pre-pass exclusion.
+  const userModuleBindings = new Set<string>();
+  const addBindingName = (name: ts.BindingName): void => {
+    if (ts.isIdentifier(name)) userModuleBindings.add(name.text);
+    else
+      for (const element of name.elements)
+        if (!ts.isOmittedExpression(element) && element.name) addBindingName(element.name);
+  };
+  for (const sourceFile of bindingSourceFiles) {
+    for (const stmt of sourceFile.statements) {
+      if (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) {
+        if (stmt.name) userModuleBindings.add(stmt.name.text);
+      } else if (ts.isVariableStatement(stmt)) {
+        for (const decl of stmt.declarationList.declarations) addBindingName(decl.name);
+      } else if (ts.isImportDeclaration(stmt) && stmt.importClause) {
+        const clause = stmt.importClause;
+        if (clause.name) userModuleBindings.add(clause.name.text);
+        if (clause.namedBindings) {
+          if (ts.isNamespaceImport(clause.namedBindings)) userModuleBindings.add(clause.namedBindings.name.text);
+          else for (const specifier of clause.namedBindings.elements) userModuleBindings.add(specifier.name.text);
+        }
+      }
+    }
   }
 
   for (const stmt of libFile.statements) {
@@ -1337,7 +1417,7 @@ export function collectDeclaredGlobals(
     for (const decl of stmt.declarationList.declarations) {
       if (!ts.isIdentifier(decl.name)) continue;
       const name = decl.name.text;
-      if (!referencedNames.has(name)) continue; // only register used globals
+      if (!referencedNames.has(name) || userModuleBindings.has(name)) continue; // only register used, unshadowed globals
       if (ctx.declaredGlobals.has(name)) continue;
       // (#4218) Extern-class classification + declared-type class name:
       // syntactic on the lib path (`declare var document: Document` → the
@@ -1379,7 +1459,9 @@ export function collectDeclaredGlobals(
       // binding here only affects genuine bare-value uses, which fall through to
       // the native-namespace carrier (identifiers.ts:emitBuiltinNamespaceObject)
       // or the `ref.null.extern` graceful default. Host/gc mode is unchanged.
-      if (ctx.strictNoHostImports || ctx.standalone) continue;
+      const certifiedStandaloneDocument =
+        ctx.standalone && ctx.requiresStandaloneDomCapability === true && name === "document";
+      if (ctx.strictNoHostImports || (ctx.standalone && !certifiedStandaloneDocument)) continue;
       const importName = `global_${name}`;
       const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
       addImport(ctx, "env", importName, { kind: "func", typeIdx });
@@ -1390,6 +1472,49 @@ export function collectDeclaredGlobals(
         // as `IrType.extern { className }` and dispatch member access on it.
         ctx.declaredGlobals.set(name, { type: { kind: "externref" }, funcIdx, className: declaredClassName });
       }
+    }
+  }
+
+  // Ambient browser/JS APIs such as `queueMicrotask`, `parseInt`, and
+  // `requestAnimationFrame` are declared as `declare function` rather than
+  // `declare var` in lib.dom/lib.es*.  Treat those declarations as first-class
+  // globals too.  Previously the checker knew their callable type (so
+  // `typeof queueMicrotask` folded to "function"), but identifier lowering had
+  // no value binding: assigning the function to a local produced a null
+  // externref and the eventual indirect call trapped.  Register the same
+  // cached host-global thunk used by declared variables so both direct and
+  // first-class calls observe the real host function.
+  for (const stmt of libFile.statements) {
+    if (!ts.isFunctionDeclaration(stmt) || !hasDeclareModifier(stmt) || !stmt.name) continue;
+    const name = stmt.name.text;
+    // Timer call sites have a dedicated callback-aware ABI. Do not also
+    // expose the lib.dom declarations as `global_<name>` externrefs in the
+    // multi-file path: that shadows the timer import and passes a Wasm
+    // closure directly to the host timer, so the callback can never run.
+    // queueMicrotask follows the same rule until its multi-file lowering is
+    // available; treating it as an ordinary host function has the same
+    // unwrapped-callback failure mode.
+    if (
+      name === "setTimeout" ||
+      name === "setInterval" ||
+      name === "clearTimeout" ||
+      name === "clearInterval" ||
+      name === "queueMicrotask"
+    ) {
+      continue;
+    }
+    if (!referencedNames.has(name) || userModuleBindings.has(name) || ctx.declaredGlobals.has(name)) continue;
+    // No JS host exists for standalone/WASI modules.  Keep the host-free
+    // behavior used by the variable-global path above.
+    if (ctx.strictNoHostImports || ctx.standalone || ctx.wasi) continue;
+    const importName = `global_${name}`;
+    if (!ctx.funcMap.has(importName)) {
+      const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
+      addImport(ctx, "env", importName, { kind: "func", typeIdx });
+    }
+    const funcIdx = ctx.funcMap.get(importName);
+    if (funcIdx !== undefined) {
+      ctx.declaredGlobals.set(name, { type: { kind: "externref" }, funcIdx });
     }
   }
 
@@ -1511,6 +1636,12 @@ const DOM_ONLY_GLOBALS = new Set([
   "cancelAnimationFrame",
 ]);
 
+// Named node:fs bindings the WASI compiler deliberately owns: fd/file writes
+// lower in-module, while known path-based calls reach the precise no-provider
+// gate. Keep this exact; an arbitrary name would otherwise disappear after
+// import preprocessing (#4565 review).
+const WASI_HANDLED_NODE_FS_MEMBERS = new Set(["readSync", "writeSync", "writeFileSync", ...FS_PATH_BASED_MEMBERS]);
+
 /**
  * Register Node.js builtin module imports as externref host imports (#1044).
  *
@@ -1528,18 +1659,16 @@ export function registerNodeBuiltinImports(ctx: CodegenContext, builtins: NodeBu
       // preprocessing leaves a type-level `process` binding in the AST and
       // node-fs-api.ts lowers supported stream calls directly to WASI.
       if (builtin.moduleName === "process") continue;
-      // #2631/#2655 — `node:fs` is likewise a compile-time API surface when the
-      // program uses the fd-based synchronous primitives readSync / writeSync:
-      // those are stripped by import preprocessing and lowered by node-fs-api.ts
-      // (tryCompileNodeFsCall) to EITHER imported `node:fs` shim calls
-      // (--link node:fs) OR direct `wasi_snapshot_preview1.fd_read`/`fd_write`
-      // syscalls (standalone --target wasi, #2655). Either way the `fs` builtin
-      // import itself is consumed at compile time and must not error here.
-      // Path-based fs usage is rejected at the call site (PATH_BASED_FS_FNS in
-      // calls.ts) / by the no-provider gate in tryCompileNodeFsCall, not here.
+      // `node:fs` is a compile-time API surface only when every named binding
+      // is either lowered by WASI or owned by the precise no-provider call-site
+      // gate. Imports are stripped by preprocessing, so failing open here would
+      // turn unknown calls into silent no-ops.
       if (
         builtin.moduleName === "fs" &&
-        (ctx.wasiNodeFsFuncs.has("readSync") || ctx.wasiNodeFsFuncs.has("writeSync"))
+        !ctx.wasiNodeFsFuncs.has(WASI_NODE_FS_ALIAS_SENTINEL) &&
+        builtin.namedBindings !== undefined &&
+        builtin.namedBindings.length > 0 &&
+        builtin.namedBindings.every((name) => WASI_HANDLED_NODE_FS_MEMBERS.has(name))
       ) {
         continue;
       }
@@ -1563,9 +1692,28 @@ export function registerNodeBuiltinImports(ctx: CodegenContext, builtins: NodeBu
     }
     const funcIdx = ctx.funcMap.get(importName);
     if (funcIdx !== undefined) {
-      // Register as a declared global so identifier resolution picks it up
-      ctx.declaredGlobals.set(builtin.localName, { type: { kind: "externref" }, funcIdx });
-      ctx.nodeBuiltinGlobals.set(builtin.localName, funcIdx);
+      // (#4616-adjacent, jest-docblock) NAMED bindings are MEMBER reads, not
+      // the module object. Binding `import { EOL } from 'os'` to the module
+      // thunk made `EOL` read the whole `os` module (string-concatenated as
+      // "[object Object]"). Register each named binding with its member name;
+      // the identifier read emits `__extern_get(__node_<mod>(), member)`.
+      if (builtin.namedBindings !== undefined && builtin.namedBindings.length > 0) {
+        for (const member of builtin.namedBindings) {
+          if (ctx.declaredGlobals.has(member)) continue;
+          ctx.declaredGlobals.set(member, { type: { kind: "externref" }, funcIdx, member });
+          ctx.nodeBuiltinGlobals.set(member, funcIdx);
+        }
+        // A default import alongside the named list still binds the module
+        // object under its own name.
+        if (!builtin.namedBindings.includes(builtin.localName) && !ctx.declaredGlobals.has(builtin.localName)) {
+          ctx.declaredGlobals.set(builtin.localName, { type: { kind: "externref" }, funcIdx });
+          ctx.nodeBuiltinGlobals.set(builtin.localName, funcIdx);
+        }
+      } else {
+        // Register as a declared global so identifier resolution picks it up
+        ctx.declaredGlobals.set(builtin.localName, { type: { kind: "externref" }, funcIdx });
+        ctx.nodeBuiltinGlobals.set(builtin.localName, funcIdx);
+      }
     }
   }
 }
@@ -1647,6 +1795,13 @@ const LIB_GLOBALS = new Set([
   "Element",
   "Node",
   "Event",
+  // Ambient callable globals are scanned alongside DOM constructors. These
+  // are declared as `function` in lib.dom rather than `var`, so without a
+  // trigger here their value bindings were never collected (for example
+  // ReactDOM's scheduler stores `queueMicrotask` before calling it).
+  "queueMicrotask",
+  "requestAnimationFrame",
+  "cancelAnimationFrame",
   // #1065 — ambient builtin constructors that need host-global resolution
   // for bare-identifier uses (e.g. `x.constructor === Array`). Call-site
   // fast paths intercept before identifier resolution runs.

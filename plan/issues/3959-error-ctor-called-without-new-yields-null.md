@@ -2,9 +2,9 @@
 id: 3959
 title: "`Error(msg)` without `new` compiles to `ref.null.extern` — every React production error path traps"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 completed: 2026-08-01
 priority: high
 horizon: s

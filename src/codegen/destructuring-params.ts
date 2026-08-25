@@ -425,6 +425,13 @@ function boxToExternref(
   // undefined map (needs a scratch local).
   fctx?: FunctionContext,
 ): Instr[] {
+  // The registry key describes the logical producer, but the backing-array
+  // element is the value that is actually on the Wasm stack here.  They can
+  // intentionally differ: Int32Array/Uint32Array use the dedicated
+  // `i32_elem` key while their storage still yields an i32.  Always prefer the
+  // physical element kind for opcode selection; using `elemKey` for that case
+  // falls through to `extern.convert_any(i32)` and invalidates the module.
+  const storageKind = srcElemType?.kind ?? elemKey;
   // (#2669) When the backing array ALREADY stores externref elements, the value
   // produced by `array.get` is already an externref and needs no conversion.
   // The vec-type-map key alone is misleading here: a `ref_*` keyed vec (a vec of
@@ -458,11 +465,11 @@ function boxToExternref(
     }
     return [{ op: "drop" }, { op: "ref.null.extern" }];
   }
-  if (elemKey === "externref") {
+  if (storageKind === "externref" || storageKind === "ref_extern") {
     // Already externref, just pass through
     return [];
   }
-  if (elemKey === "f64") {
+  if (storageKind === "f64") {
     addUnionImports(ctx);
     const boxIdx = ctx.funcMap.get("__box_number");
     if (boxIdx !== undefined) {
@@ -509,7 +516,7 @@ function boxToExternref(
     // Fallback: drop and push null
     return [{ op: "drop" }, { op: "ref.null.extern" }];
   }
-  if (elemKey === "i32") {
+  if (storageKind === "i32") {
     addUnionImports(ctx);
     const boxIdx = ctx.funcMap.get("__box_number");
     if (boxIdx !== undefined) {
@@ -517,7 +524,7 @@ function boxToExternref(
     }
     return [{ op: "drop" }, { op: "ref.null.extern" }];
   }
-  if (elemKey === "i64") {
+  if (storageKind === "i64") {
     // (#3394) An i64-carrier vec element (a `bigint`, or a heterogeneous
     // `number | bigint` tuple element stored as i64) must be BOXED before it
     // reifies as an externref — the `array.get` yields a raw i64, and falling
@@ -781,6 +788,20 @@ export function destructureParamObjectExternref(
       if (localIdx === undefined) {
         localIdx = allocLocal(fctx, localName, elemType);
       }
+      // (#4618) A boxed capture's slot IS the ref cell (a spilled async-frame
+      // binding referenced by a hoisted fn-decl). A plain local.set here would
+      // coerce the extracted VALUE to the cell type — any.convert_extern +
+      // ref.cast on a symbol/object value is a guaranteed trap. Redirect the
+      // element's stores to a scratch local typed as the cell's VALUE type,
+      // then write the result through the cell (the #3396/#1177
+      // boxedForInitStore convention) so captures observe the binding.
+      const boxedDstrCell = fctx.boxedCaptures?.get(localName);
+      const boxedDstrCellLocalIdx = boxedDstrCell !== undefined ? fctx.localMap.get(localName) : undefined;
+      const boxedDstrRedirected =
+        boxedDstrCell !== undefined && boxedDstrCellLocalIdx !== undefined && localIdx === boxedDstrCellLocalIdx;
+      if (boxedDstrRedirected) {
+        localIdx = allocLocal(fctx, `__box_dstr_${localName}_${fctx.locals.length}`, boxedDstrCell.valType);
+      }
       const localType = getLocalType(fctx, localIdx);
 
       if (element.initializer) {
@@ -857,6 +878,21 @@ export function destructureParamObjectExternref(
         }
         fctx.body.push({ op: "local.set", index: localIdx });
         if (isDecl) emitLocalTdzInit(fctx, localName);
+      }
+      // (#4618) Flush the redirected scratch value through the ref cell.
+      if (boxedDstrRedirected) {
+        fctx.body.push({ op: "local.get", index: boxedDstrCellLocalIdx! });
+        fctx.body.push({ op: "ref.is_null" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [],
+          else: [
+            { op: "local.get", index: boxedDstrCellLocalIdx! },
+            { op: "local.get", index: localIdx },
+            { op: "struct.set", typeIdx: boxedDstrCell!.refCellTypeIdx, fieldIdx: 0 },
+          ],
+        });
       }
     } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
       const nestedLocal = allocLocal(fctx, `__ext_dparam_nested_${fctx.locals.length}`, elemType);

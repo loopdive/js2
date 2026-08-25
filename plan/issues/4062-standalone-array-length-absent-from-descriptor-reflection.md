@@ -3,9 +3,9 @@ id: 4062
 title: "D3 — named-key presence on an ARRAY receiver disagrees with the read path in standalone (`a.foo === 7` but `a.hasOwnProperty(\"foo\") === false`)"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-15
+updated: 2026-08-18
 priority: high
 horizon: s
 feasibility: medium

@@ -4,9 +4,9 @@ title: "IR: adopt SPREAD in array literals (`[...a, x]`) for statically-provable
 status: done
 completed: 2026-08-15
 assignee: ttraenkler/opus-4487
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 priority: medium
 horizon: s
 feasibility: medium

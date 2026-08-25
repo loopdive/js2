@@ -35,6 +35,7 @@
 import { ts } from "../../ts-api.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { compileIdentifier } from "../expressions/identifiers.js";
+import { inlinedCalleeHasBoundReceiver } from "../expressions/inlined-call-receiver.js"; // (#4555)
 import { emitUndefined } from "../expressions/late-imports.js";
 import { coerceType } from "../shared.js";
 import { isStrictContext } from "./is-strict-function.js";
@@ -205,4 +206,59 @@ export function receiverIsRealmGlobalObject(
   if (cur.kind === ts.SyntaxKind.ThisKeyword) return thisReceiverIsGlobalObject(ctx, fctx, cur);
   if (!ts.isIdentifier(cur) || cur.text !== "globalThis") return false;
   return fctx.localMap.get("globalThis") === undefined && !ctx.moduleGlobals.has("globalThis");
+}
+
+/**
+ * (#4555) True when `expr` — a `this` — lexically belongs to the body of a
+ * **non-arrow function expression that the inline-IIFE path spliced into the
+ * current function** (`fctx.inlinedIifeNodes`, recorded by
+ * `call-tail-dispatch.ts`).
+ *
+ * The inliner emits the callee's body with no separate activation, so the
+ * `ThisKeyword` arm sees the ENCLOSING function's receiver bindings —
+ * `typedThisLocalIdx`, or a `this` in `localMap`. For a function expression
+ * that is wrong: `(function(){ … })()` is called with no receiver, so §10.4.3
+ * gives it the global object (sloppy) or `undefined` (strict), never the
+ * caller's `this`. Inside a constructor twin the divergence is visible:
+ *
+ *     function FACTORY() { (function(){ this.feat = "x"; })(); }
+ *     new FACTORY;            // wrote `feat` onto the INSTANCE, not the global
+ *
+ * — and, because the enclosing receiver is a typed struct, a `this.<prop>`
+ * read in the inlined body compiled to a `ref.cast` against that struct and
+ * trapped outright.
+ *
+ * Arrow functions are deliberately transparent here: an arrow DOES inherit the
+ * enclosing `this`, so the inliner's reuse of the caller's bindings is exactly
+ * right for them and this predicate must not fire.
+ *
+ * `thisBelongsToTopLevelCode` answers the sibling question for the `__module_init`
+ * arm; this one covers every other enclosing function, which that arm never
+ * reaches because the receiver-binding arms run first.
+ */
+export function thisBelongsToInlinedIifeBody(fctx: FunctionContext, expr: ts.Node): boolean {
+  if (fctx.inlinedIifeNodes === undefined || fctx.inlinedIifeNodes.size === 0) return false;
+  for (let node: ts.Node | undefined = expr.parent; node; node = node.parent) {
+    if (ts.isSourceFile(node)) return false;
+    if (ts.isArrowFunction(node)) continue; // transparent — inherits `this`
+    if (ts.isFunctionExpression(node)) {
+      // (#4246) A receiver-bound inline is NOT a receiver-less IIFE: its `this`
+      // is the value the caller passed, installed in `localMap` by
+      // `planInlinedReceiver`. Defer to that rung rather than overriding it.
+      if (inlinedCalleeHasBoundReceiver(node)) return false;
+      return fctx.inlinedIifeNodes.has(node);
+    }
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isMethodDeclaration(node) ||
+      ts.isConstructorDeclaration(node) ||
+      ts.isGetAccessorDeclaration(node) ||
+      ts.isSetAccessorDeclaration(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isClassExpression(node)
+    ) {
+      return false;
+    }
+  }
+  return false;
 }

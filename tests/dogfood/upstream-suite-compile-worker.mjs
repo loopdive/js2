@@ -2,7 +2,8 @@ import { performance } from "node:perf_hooks";
 import { readFileSync } from "node:fs";
 
 import { compile, compileProject } from "../../src/index.ts";
-import { wrapExports } from "../../src/runtime.ts";
+import { buildCompiledImports, wrapExports } from "../../src/runtime.ts";
+import { getWebHostConstructors } from "../../src/runtime/web-host-constructors.ts";
 
 const generatedPath = process.argv[2];
 const mode = process.argv[3] ?? "project";
@@ -29,8 +30,86 @@ function errorText(error, instance) {
   return text;
 }
 
+async function loadNodeHostDependencies() {
+  const { createRequire } = await import("node:module");
+  const require = createRequire(import.meta.url);
+  const dependencies = Object.create(null);
+  const { DOM_GLOBALS } = await import("./react-test-environment.mjs");
+  // Resolve both the namespace-qualified import and the exported class/function
+  // names. This keeps the worker generic for upstream suites that use a small
+  // Node builtin surface without replacing any package implementation.
+  for (const moduleName of [
+    "node:async_hooks",
+    "node:assert",
+    "node:assert/strict",
+    "node:buffer",
+    "node:child_process",
+    "node:crypto",
+    "node:dns",
+    "node:events",
+    "node:fs",
+    "node:fs/promises",
+    "node:http",
+    "node:https",
+    "node:module",
+    "node:net",
+    "node:os",
+    "node:perf_hooks",
+    "node:process",
+    "node:querystring",
+    "node:readline",
+    "node:stream",
+    "node:string_decoder",
+    "node:timers",
+    "node:timers/promises",
+    "node:tls",
+    "node:tty",
+    "node:url",
+    "node:util",
+    "node:vm",
+    "node:worker_threads",
+    "node:zlib",
+  ]) {
+    try {
+      const namespace = require(moduleName);
+      dependencies[moduleName] = namespace;
+      dependencies[moduleName.slice(5)] = namespace;
+      Object.assign(dependencies, namespace);
+    } catch {
+      // Optional builtins remain subject to the compiler's normal diagnostic.
+    }
+  }
+  // Node exposes the WHATWG encoding/stream constructors globally, but the
+  // compiled adapter resolves extern classes from the explicit dependency
+  // map. Forward the same host constructors so upstream Node tests can use
+  // TextEncoder/TextDecoder and related Web APIs without a package shim.
+  Object.assign(dependencies, getWebHostConstructors());
+  for (const name of DOM_GLOBALS) {
+    const value = globalThis[name];
+    if (value !== undefined) dependencies[name] = value;
+  }
+  return dependencies;
+}
+
+// The compiler's default web import object is intentionally hermetic and
+// therefore cannot see the JSDOM globals installed by this worker. Upstream
+// ReactDOM tests need the actual document/window objects and their constructors
+// at the Wasm boundary, so bind exactly the explicit environment surface rather
+// than relying on an ambient empty-object provider.
+async function loadWebHostDependencies() {
+  const { DOM_GLOBALS } = await import("./react-test-environment.mjs");
+  const dependencies = Object.create(null);
+  Object.assign(dependencies, getWebHostConstructors());
+  for (const name of DOM_GLOBALS) {
+    const value = globalThis[name];
+    if (value !== undefined) dependencies[name] = value;
+  }
+  return dependencies;
+}
+
 async function main() {
   const started = performance.now();
+  const platform = process.env.DOGFOOD_PLATFORM ?? "web";
   // ReactDOM's original tests execute against Jest's jsdom environment. The
   // compiler worker is a separate process, so the parent harness's globals do
   // not cross the process boundary. Install the same explicit browser-global
@@ -38,7 +117,14 @@ async function main() {
   // lane; other upstream suites keep the worker hermetic.
   if (process.env.DOGFOOD_INSTALL_JSDOM === "1") {
     const { installReactTestEnvironment } = await import("./react-test-environment.mjs");
+    const { installReactUpstreamInfrastructure } = await import("./react-upstream-infrastructure.mjs");
     installReactTestEnvironment();
+    const { createRequire } = await import("node:module");
+    const workerRequire = createRequire(import.meta.url);
+    installReactUpstreamInfrastructure({
+      react: workerRequire("react"),
+      preferReactDomAct: process.env.DOGFOOD_REACT_DOM_ACT === "1",
+    });
   }
   let result;
   try {
@@ -46,7 +132,13 @@ async function main() {
       allowJs: true,
       skipSemanticDiagnostics: true,
       target: "gc",
-      platform: "web",
+      platform,
+      // A package opts into the Node host lane explicitly when it imports
+      // path-based `node:fs` APIs. Keep the default web lane hermetic, but do
+      // enable the compiler's real-fs capability gate for that same opt-in;
+      // otherwise the worker resolves the namespace and still emits a null
+      // provider for `readFileSync`/`existsSync`.
+      allowFs: platform === "node" || process.env.DOGFOOD_NODE_HOST_DEPS === "1",
       experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
       // The upstream compatibility lane only needs the binary. WAT is a
       // diagnostic artifact and can become quadratic for large generated
@@ -66,7 +158,8 @@ async function main() {
             skipSemanticDiagnostics: true,
             experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
             sourceMap: true,
-            platform: "web",
+            platform,
+            allowFs: platform === "node" || process.env.DOGFOOD_NODE_HOST_DEPS === "1",
             deferTopLevelInit: true,
           })
         : await compileProject(generatedPath, projectOptions);
@@ -119,7 +212,12 @@ async function main() {
   }
 
   try {
-    const imports = result.importObject ?? {};
+    const imports = buildCompiledImports(
+      result,
+      platform === "node" || process.env.DOGFOOD_NODE_HOST_DEPS === "1"
+        ? await loadNodeHostDependencies()
+        : await loadWebHostDependencies(),
+    );
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
     imports.setInstance?.(instance);
     imports.__setInstance?.(instance);
@@ -158,10 +256,38 @@ async function main() {
           }
         }
       }
+    } else if (typeof exports.runUpstreamTest === "function") {
+      // Run one callback at a time so Promise-returning upstream tests can be
+      // awaited without putting the whole synchronous suite behind one async
+      // state machine. This keeps the Wasm/native contract aligned while
+      // preserving the original fast path for synchronous callbacks.
+      const count = Number(await exports.upstreamTestCount());
+      statuses = [];
+      errors = [];
+      for (let index = 0; index < count; index++) {
+        let value;
+        let thrown = null;
+        try {
+          value = await exports.runUpstreamTest(index);
+        } catch (error) {
+          thrown = error;
+        }
+        statuses.push(Number(value) === 1);
+        if (Number(value) === 1) errors.push("");
+        else if (thrown) errors.push(errorText(thrown, instance));
+        else {
+          try {
+            errors.push(String(exports.upstreamTestErrors()[index] ?? ""));
+          } catch {
+            errors.push("");
+          }
+        }
+      }
     } else {
-      statuses = Array.from(await exports.runUpstreamTests(), (value) => Number(value) === 1);
+      statuses = Array.from(exports.runUpstreamTests(), (value) => Number(value) === 1);
       errors = Array.from(exports.upstreamTestErrors(), String);
     }
+    await exports.cleanupUpstreamTestEnvironment?.();
     emit({
       compile: { success: true, validates: true, durationMs, binaryBytes: result.binary.length, errors: [] },
       wasm: { count: Number(exports.upstreamTestCount()), statuses, errors },

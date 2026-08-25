@@ -23,6 +23,7 @@ export const OP = {
   catch_all: 0x19,
   drop: 0x1a,
   select: 0x1b,
+  try_table: 0x1f,
   local_get: 0x20,
   local_set: 0x21,
   local_tee: 0x22,
@@ -474,6 +475,12 @@ export const SECTION = {
   element: 9,
   code: 10,
   data: 11,
+  /**
+   * Data-count section (#4540). Must be emitted BETWEEN element (9) and code
+   * (10) when any body uses `memory.init` / `data.drop` — validation is
+   * single-pass and needs the segment count before it validates code.
+   */
+  dataCount: 12,
   tag: 13,
 } as const;
 

@@ -12,6 +12,7 @@ import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import { addUnionImports } from "./registry/imports.js";
+import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
 import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js";
 import {
@@ -21,6 +22,7 @@ import {
 } from "./closures/transferred-native-proto.js";
 import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import { ensureAnyToExternHelper, isAnyValue } from "./any-helpers.js";
+import { buildVecFromExternMaterializer } from "./type-coercion.js";
 import { buildClosureResultBoxing } from "./closures/result-boxing.js";
 import { buildMethodDispatchPrologue } from "./closures/method-dispatch-prologue.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
@@ -30,7 +32,20 @@ import {
   PROGRAM_ABI_CALLABLE_ROLE,
   resolveProgramAbiSupportCallableHandle,
 } from "./program-abi-planning.js";
+import { recordClosureArgcDispatcher } from "./compiler-support-abi.js";
 import { DATA_STRUCT_HOST_BRIDGE_ORDINAL, publishDataStructHostBridge } from "./data-struct-host-bridge.js";
+import { definedFuncHandleOf } from "./func-space.js";
+import {
+  STANDALONE_TIMER_CALLBACK_BINDINGS_EXPORT,
+  STANDALONE_TIMER_CALLBACK_BINDINGS_PHYSICAL_BASE,
+  STANDALONE_TIMER_CALLBACK_DISPATCH_EXPORT,
+  STANDALONE_TIMER_CALLBACK_DISPATCH_PHYSICAL_BASE,
+  STANDALONE_TIMER_CALLBACK_MANIFEST_EXPORT,
+  STANDALONE_TIMER_CALLBACK_MANIFEST_MAGIC,
+  STANDALONE_TIMER_CALLBACK_MANIFEST_PHYSICAL_BASE,
+  STANDALONE_TIMER_CALLBACK_MARKER_EXPORT,
+  STANDALONE_TIMER_CALLBACK_MARKER_PHYSICAL_BASE,
+} from "../timer-capability-contract.js";
 
 const CLOSURE_HOST_BRIDGE_ROLE = "closure-host-bridge";
 const CLOSURE_HOST_BRIDGE_MANIFEST_NAME = "__\0js2_closure_host_bridge";
@@ -43,6 +58,7 @@ const CLOSURE_HOST_BRIDGE_MANIFEST_MAGIC = 0x5a200000;
 const publishedClosureHostBridgeBits = new WeakMap<CodegenContext, number>();
 const publishedClosureHostBridgeFuncs = new WeakMap<CodegenContext, Map<number, WasmFunction>>();
 const publishedClosureHostBridgeManifests = new WeakSet<CodegenContext>();
+const publishedStandaloneTimerCallbackManifests = new WeakSet<CodegenContext>();
 
 const CLOSURE_HOST_BRIDGE_ORDINAL = Object.freeze({
   directCall0: 0,
@@ -59,6 +75,7 @@ const CLOSURE_HOST_BRIDGE_ORDINAL = Object.freeze({
   closureArity: 11,
   isClosure: 12,
   closureHasRest: 13,
+  isCtorClosure: 14,
 } as const);
 
 /**
@@ -82,6 +99,7 @@ function closureHostBridgeDefinition(logicalName: string): { physicalBase: strin
   if (logicalName === "__closure_arity") return { physicalBase: "$ce", bit: 14 };
   if (logicalName === "__is_closure") return { physicalBase: "$cf", bit: 15 };
   if (logicalName === "__closure_has_rest") return { physicalBase: "$cg", bit: 16 };
+  if (logicalName === "__is_ctor_closure") return { physicalBase: "$ch", bit: 17 };
   throw new Error(`unknown closure host bridge ${logicalName}`);
 }
 
@@ -168,7 +186,7 @@ function emitClosureHostBridgeManifest(ctx: CodegenContext): void {
 
   const bindingsTableIdx =
     ctx.mod.imports.filter((entry) => entry.desc.kind === "table").length + ctx.mod.tables.length;
-  ctx.mod.tables.push({ elementType: "funcref", min: 17, max: 17 });
+  ctx.mod.tables.push({ elementType: "funcref", min: 18, max: 18 });
   const markerTableIdx = bindingsTableIdx + 1;
   ctx.mod.tables.push({ elementType: "funcref", min: 0, max: 0 });
   for (const [bit, func] of publishedClosureHostBridgeFuncs.get(ctx) ?? []) {
@@ -245,6 +263,89 @@ function methodClosureHostBridgeOrdinal(arity: number): number | undefined {
  */
 export function emitClosureCallExport(ctx: CodegenContext): void {
   emitClosureCallExportN(ctx, 0);
+}
+
+/**
+ * Retain the exact zero-argument dispatcher needed by the standalone timer
+ * capability without retaining the general JavaScript closure host bridge.
+ *
+ * The dispatcher is resolved from the compiler-owned allocator object, never
+ * from a public/user-controlled export label. `stripHostBridgeExports` removes
+ * the ordinary `__call_fn_0`/`$c0` names later, while this reserved alias stays
+ * as the sole callback entry point.
+ */
+export function publishStandaloneTimerCallbackDispatch(ctx: CodegenContext): void {
+  if (!ctx.requiresStandaloneTimerCallbackDispatch) return;
+  if (publishedStandaloneTimerCallbackManifests.has(ctx)) return;
+  const dispatcher = publishedClosureHostBridgeFuncs.get(ctx)?.get(CLOSURE_HOST_BRIDGE_ORDINAL.directCall0);
+  if (!dispatcher) {
+    throw new Error("standalone timer callback dispatcher was requested but __call_fn_0 was not emitted");
+  }
+  const funcIdx = definedFuncHandleOf(ctx, dispatcher);
+  if (funcIdx === undefined) {
+    throw new Error("standalone timer callback dispatcher lost its compiler-owned function handle");
+  }
+  const publishFamily = (
+    logicalName: string,
+    physicalBase: string,
+    desc: { kind: "func" | "global" | "table"; index: number },
+  ): void => {
+    const occupied = new Set(ctx.mod.exports.map(({ name }) => name));
+    if (!occupied.has(logicalName)) {
+      ctx.mod.exports.push({ name: logicalName, desc });
+      occupied.add(logicalName);
+    }
+    let maxOccupiedSuffix = -1;
+    for (const name of occupied) {
+      if (!name.startsWith(physicalBase)) continue;
+      const suffix = name.slice(physicalBase.length);
+      if (/^\$*$/.test(suffix)) maxOccupiedSuffix = Math.max(maxOccupiedSuffix, suffix.length);
+    }
+    for (let suffixLength = 0; suffixLength <= maxOccupiedSuffix + 1; suffixLength++) {
+      const name = `${physicalBase}${"$".repeat(suffixLength)}`;
+      if (occupied.has(name)) continue;
+      ctx.mod.exports.push({ name, desc });
+      occupied.add(name);
+    }
+  };
+
+  const bindingsTableIdx =
+    ctx.mod.imports.filter((entry) => entry.desc.kind === "table").length + ctx.mod.tables.length;
+  ctx.mod.tables.push({ elementType: "funcref", min: 1, max: 1 });
+  const markerTableIdx = bindingsTableIdx + 1;
+  ctx.mod.tables.push({ elementType: "funcref", min: 0, max: 0 });
+  ctx.mod.elements.push({
+    tableIdx: bindingsTableIdx,
+    offset: [{ op: "i32.const", value: 0 }],
+    funcIndices: [funcIdx],
+  });
+  const manifestGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+  ctx.mod.globals.push({
+    name: STANDALONE_TIMER_CALLBACK_MANIFEST_EXPORT,
+    type: { kind: "i32" },
+    mutable: false,
+    init: [{ op: "i32.const", value: STANDALONE_TIMER_CALLBACK_MANIFEST_MAGIC }],
+  });
+
+  publishFamily(STANDALONE_TIMER_CALLBACK_DISPATCH_EXPORT, STANDALONE_TIMER_CALLBACK_DISPATCH_PHYSICAL_BASE, {
+    kind: "func",
+    index: funcIdx,
+  });
+  publishFamily(STANDALONE_TIMER_CALLBACK_MANIFEST_EXPORT, STANDALONE_TIMER_CALLBACK_MANIFEST_PHYSICAL_BASE, {
+    kind: "global",
+    index: manifestGlobalIdx,
+  });
+  publishFamily(STANDALONE_TIMER_CALLBACK_MARKER_EXPORT, STANDALONE_TIMER_CALLBACK_MARKER_PHYSICAL_BASE, {
+    kind: "table",
+    index: markerTableIdx,
+  });
+  publishFamily(STANDALONE_TIMER_CALLBACK_BINDINGS_EXPORT, STANDALONE_TIMER_CALLBACK_BINDINGS_PHYSICAL_BASE, {
+    kind: "table",
+    index: bindingsTableIdx,
+  });
+  // These names deliberately omit `host_bridge`: #4035 strips the general JS
+  // inspection bridge but must retain this explicit platform-capability path.
+  publishedStandaloneTimerCallbackManifests.add(ctx);
 }
 
 /**
@@ -327,7 +428,23 @@ function needsExternToAnyForClosureParam(paramType: ValType): boolean {
  * `anyref`/`eqref` params need no cast. Caller must have checked
  * `needsExternToAnyForClosureParam(paramType)` first.
  */
-function externToClosureParamRef(paramType: ValType): Instr[] {
+function externToClosureParamRef(ctx: CodegenContext, paramType: ValType): Instr[] {
+  // (#4536) A vec-typed closure param (e.g. `arr = []` typing the lifted
+  // signature with a native vec) can receive a HOST array externref through
+  // this dynamic bridge — `ArrayHelpers.groupBy([1,2,3], fn)` crossing via
+  // `__extern_method_call` hands the raw JS array in. A bare `ref.cast` then
+  // traps (illegal cast). Route vec params through the #2831 materializer
+  // `__vec_from_extern_<vecTypeIdx>` instead: same-rep vecs short-circuit via
+  // its internal `ref.test`, host arrays are materialized into a fresh vec.
+  if (paramType.kind === "ref" || paramType.kind === "ref_null") {
+    const helperName = buildVecFromExternMaterializer(ctx, paramType.typeIdx);
+    const helperIdx = helperName !== undefined ? ctx.funcMap.get(helperName) : undefined;
+    if (helperIdx !== undefined) {
+      const ops: Instr[] = [{ op: "call", funcIdx: helperIdx }];
+      if (paramType.kind === "ref") ops.push({ op: "ref.as_non_null" });
+      return ops;
+    }
+  }
   const ops: Instr[] = [{ op: "any.convert_extern" }];
   if (paramType.kind === "ref") {
     ops.push({ op: "ref.cast", typeIdx: paramType.typeIdx });
@@ -453,7 +570,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
     // A one-shot host callback is invoked only through __call_fn_0 by the
     // compiler-owned -2 wrapper. It cannot be returned, over-applied, or used
     // as a method, so wider generic dispatchers would be dead artifact weight.
-    if (info.hostOneShotOnly === true && arity !== 0) continue;
+    if (info.domCallbackOnly === true || (info.hostOneShotOnly === true && arity !== 0)) continue;
     const hostArity = closureHostArity(info);
     if (hostArity > arity) continue;
 
@@ -536,9 +653,15 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   body.push({ op: "any.convert_extern" });
   body.push({ op: "local.set", index: anyLocal });
 
-  let funcrefDispatch: Instr[] = [{ op: "ref.null.extern" }];
+  let funcrefDispatch: Instr[] = hostCallableFallbackTerminal(ctx, arity, 0, [{ op: "ref.null.extern" }], 1) ?? [
+    { op: "ref.null.extern" },
+  ];
 
-  for (const entry of entries) {
+  // `funcrefDispatch` is built by prepending each arm, so reverse the
+  // priority order returned by `orderClosureDispatchEntries` to keep the
+  // broad-signature arm first at runtime.
+  const dispatchEntries = orderClosureDispatchEntries(ctx, entries);
+  for (const entry of [...dispatchEntries].reverse()) {
     const funcTypeDef = mod.types[entry.funcTypeIdx];
 
     const buildArgConversion = (argLocalIdx: number, paramType: ValType | undefined): Instr[] => {
@@ -569,7 +692,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
           // ref domain so the subsequent `call_ref` typechecks. In
           // `wasm:js-string` (gc) mode string params ARE externref, so this
           // branch is skipped and the arg passes raw.
-          ops.push(...externToClosureParamRef(paramType));
+          ops.push(...externToClosureParamRef(ctx, paramType));
         }
         // externref param: no conversion
       }
@@ -681,7 +804,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   // (collectClosureBaseWrapperTypeIdxs): chain a `ref.test` per distinct self
   // shape, extracting field 0 from whichever matches. `funcLocal` stays null
   // when nothing matches and the dispatch falls through as before.
-  body.push(...buildFuncrefExtraction(ctx, entries, anyLocal, funcLocal));
+  body.push(...buildFuncrefExtraction(ctx, dispatchEntries, anyLocal, funcLocal));
   body.push(...funcrefDispatch);
 
   publishClosureHostBridge(
@@ -780,6 +903,104 @@ function buildFuncrefExtraction(
 }
 
 /**
+ * Order overlapping funcref signatures before emitting a dynamic dispatcher.
+ *
+ * Wasm function-reference subtyping is contravariant in parameters.  That
+ * means a closure whose parameter is `externref` can also satisfy a
+ * `ref.test` for a closure whose parameter is a narrower GC reference.  The
+ * old insertion order consequently let a `(self, ref $Vec)` arm claim a
+ * `(self, externref)` closure first; its argument conversion then attempted
+ * to cast an ordinary host event object to `$Vec` and trapped.  Put broad
+ * parameter signatures first (and concrete result signatures first), while
+ * keeping rest-parameter arms ahead of ordinary vec arms.  The method
+ * dispatcher uses this order directly; the plain dispatcher reverses it when
+ * constructing its nested if ladder below.
+ */
+function orderClosureDispatchEntries<T extends { funcTypeIdx: number; rest?: unknown }>(
+  ctx: CodegenContext,
+  entries: T[],
+): T[] {
+  const breadth = (type: ValType | undefined): number =>
+    type?.kind === "externref" || type?.kind === "anyref" ? 1 : 0;
+  const score = (entry: T) => {
+    const def = ctx.mod.types[entry.funcTypeIdx];
+    if (!def || def.kind !== "func") return { params: 0, results: 0 };
+    // Skip the lifted self parameter. Host dispatch only converts user args.
+    const params = def.params.slice(1).reduce((sum, type) => sum + breadth(type), 0);
+    const results = def.results.reduce((sum, type) => sum + breadth(type), 0);
+    return { params, results };
+  };
+  const ordered = entries
+    .map((entry, index) => ({ entry, index, score: score(entry) }))
+    .sort((a, b) => {
+      // Shape-qualified rest entries must win over a same-signature ordinary
+      // vec entry.  The stable index tie-break preserves deterministic output.
+      const restOrder = Number(Boolean(b.entry.rest)) - Number(Boolean(a.entry.rest));
+      if (restOrder !== 0) return restOrder;
+      // Function-parameter contravariance: broad host-facing parameters first.
+      if (a.score.params !== b.score.params) return b.score.params - a.score.params;
+      // Function-result covariance: concrete results first, broad externref
+      // results last, so a broad result arm cannot claim a narrower closure.
+      if (a.score.results !== b.score.results) return a.score.results - b.score.results;
+      return a.index - b.index;
+    })
+    .map(({ entry }) => entry);
+  return ordered;
+}
+
+/**
+ * (#4618) Host-callable fallback terminal for the `__call_fn_N` /
+ * `__call_fn_method_N` dispatchers. A callable that matched NO closure-struct
+ * arm can be a genuine HOST function that crossed the boundary and came back
+ * (react's `Children.forEach(children, callback, ctx)` passes the jest-mock
+ * callback through an extern method call; the compiled wrapper's
+ * `forEachFunc.apply(this, arguments)` then dispatched it here and the old
+ * `ref.null.extern` terminal silently dropped the invocation — every
+ * ReactChildren mock-args/count test). Emit
+ * `__call_function_<arity>(fn, thisArg, args…)` for a non-null unmatched
+ * callee; null keeps the old null answer. Host lane only; arity ≤ 4 (the
+ * fixed-arity ABI); anything else keeps the null terminal.
+ */
+function hostCallableFallbackTerminal(
+  ctx: CodegenContext,
+  arity: number,
+  fnParamIdx: number,
+  thisInstrs: readonly Instr[],
+  argParamStart: number,
+): Instr[] | undefined {
+  // Native-first modules classify their host boundary explicitly
+  // (`__boundary_callback_call_N`, see planHostCallFallback); an implicit
+  // `__call_function_N` there trips the host-import-policy ratchet (#4397).
+  // Keep the legacy null terminal for that profile.
+  if (ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first" || arity > 4) {
+    return undefined;
+  }
+  const importName = `__call_function_${arity}`;
+  const externRef: ValType = { kind: "externref" };
+  const params: ValType[] = [externRef, externRef];
+  for (let i = 0; i < arity; i++) params.push(externRef);
+  const idx = ensureLateImport(ctx, importName, params, [externRef]);
+  if (idx === undefined) return undefined;
+  flushLateImportShifts(ctx, null);
+  const callIdx = ctx.funcMap.get(importName) ?? idx;
+  const callInstrs: Instr[] = [{ op: "local.get", index: fnParamIdx }];
+  callInstrs.push(...thisInstrs);
+  for (let i = 0; i < arity; i++) callInstrs.push({ op: "local.get", index: argParamStart + i });
+  callInstrs.push({ op: "call", funcIdx: callIdx });
+  return [
+    { op: "local.get", index: fnParamIdx },
+    { op: "any.convert_extern" },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } as ValType },
+      then: [{ op: "ref.null.extern" }],
+      else: callInstrs,
+    },
+  ];
+}
+
+/**
  * Emit `__call_fn_method_<arity>` export (#1636-S1): call an N-arg WasmGC
  * closure from JS with a host-supplied `this`-value. Signature is
  * `(thisVal: externref, closure: externref, arg0..arg<arity-1>) -> externref`.
@@ -832,7 +1053,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   const nativeProtoReceiverEntries = collectTransferredNativeProtoReceivers(ctx, arity);
 
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-    if (info.hostOneShotOnly === true) continue;
+    if (info.hostOneShotOnly === true || info.domCallbackOnly === true) continue;
     const hostArity = closureHostArity(info);
     if (hostArity > arity) continue;
     const typeDef = mod.types[typeIdx];
@@ -918,12 +1139,21 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   };
   body.push(...buildTransferredNativeProtoCallInstrs(ctx, nativeProtoReceiverEntries, arity, npArgs));
 
-  let funcrefDispatch: Instr[] = [{ op: "ref.null.extern" }];
+  let funcrefDispatch: Instr[] = hostCallableFallbackTerminal(ctx, arity, 1, [{ op: "local.get", index: 0 }], 2) ?? [
+    { op: "ref.null.extern" },
+  ];
   // (#3673 round 10) per-entry callBody capture for the arity-bucketed
   // dispatch built after the loop.
   const callBodyByEntry: { entry: (typeof entries)[number]; callBody: Instr[] }[] = [];
 
-  for (const entry of entries) {
+  // The method dispatcher emits the arity bucket as a flat, ordered ladder;
+  // keep its priority order directly.  The fallback nested ladder below is
+  // assembled by prepending, so it reverses this sequence once more.
+  const dispatchEntries = orderClosureDispatchEntries(ctx, entries);
+  // The fallback ladder is built by prepending arms, whereas the arity bucket
+  // below consumes `callBodyByEntry` in sequence. Build the nested ladder in
+  // reverse and restore the flat list afterward so both paths agree.
+  for (const entry of [...dispatchEntries].reverse()) {
     const funcTypeDef = mod.types[entry.funcTypeIdx];
 
     const buildArgConversion = (argLocalIdx: number, formalIndex: number, paramType: ValType | undefined): Instr[] => {
@@ -950,7 +1180,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
           // WasmGC struct ref, e.g. a native-strings `string`) needs the host
           // externref lowered into the internal ref domain before `call_ref`.
           // Skipped in gc mode where string params are already externref.
-          ops.push(...externToClosureParamRef(paramType));
+          ops.push(...externToClosureParamRef(ctx, paramType));
         }
       }
       // The widened dispatcher receives a real JS `undefined` carrier in each
@@ -1079,6 +1309,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
     ];
     callBodyByEntry.push({ entry, callBody });
   }
+  callBodyByEntry.reverse();
 
   // (#1712) Per-shape funcref extraction — same rationale as
   // `emitClosureCallExportN` / `buildFuncrefExtraction`: shared captures pass
@@ -1086,7 +1317,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   // require their own shape arms. The funcref dispatch below leaves its
   // externref result on the stack (null fallthrough when `funcLocal` stayed
   // null because no shape matched).
-  body.push(...buildFuncrefExtraction(ctx, entries, anyLocal, funcLocal));
+  body.push(...buildFuncrefExtraction(ctx, dispatchEntries, anyLocal, funcLocal));
 
   // (#3673 round 10) Arity-bucketed signature dispatch. The full ladder below
   // is one funcref `ref.test` per DISTINCT closure func type (≈48 in compiled
@@ -1126,7 +1357,16 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
       bucket.push(item);
     }
     const bucketArms: Instr[] = [];
-    for (const [closureArity, items] of buckets) {
+    for (const [closureArity] of buckets) {
+      // A rest closure accepts every host arity at or above its fixed prefix.
+      // Its Wasm funcref often has the same vec signature as an ordinary
+      // callback, so leaving it in only the prefix bucket lets the ordinary
+      // arm claim it first (and cast a host argument to the vec). Include rest
+      // entries in every compatible bucket and keep the dispatch order from
+      // `callBodyByEntry`, where rest arms precede ordinary vec arms.
+      const items = callBodyByEntry.filter(
+        ({ entry }) => entry.rest !== undefined || entry.closureArity === closureArity,
+      );
       bucketArms.push(
         { op: "local.get", index: declaredLocal },
         { op: "i32.const", value: closureArity },
@@ -1241,13 +1481,19 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
     { op: "global.set", index: argcGlobalIdx },
     { op: "local.get", index: arity + 3 },
   );
-  ctx.mod.functions.push({
+  const argcFunc = {
     name: argcExportName,
     typeIdx: argcTypeIdx,
     locals: [{ name: "__result", type: { kind: "externref" } }],
     body: argcBody,
     exported: true,
-  } as WasmFunction);
+  } as WasmFunction;
+  ctx.mod.functions.push(argcFunc);
+  // (#3520 C35) The wrapper's Program ABI identity is `(entry source,
+  // "closure-argc-dispatcher", arity)`. C31 left this family on the positional
+  // fallback deliberately; the arity is the one component of it that no import
+  // or dead-slot compaction can move.
+  recordClosureArgcDispatcher(ctx, arity, argcFunc);
   ctx.mod.exports.push({
     name: argcExportName,
     desc: { kind: "func", index: argcFuncIdx },
@@ -1303,6 +1549,70 @@ export function emitIsClosureExport(ctx: CodegenContext): void {
 }
 
 /**
+ * Emit `__is_ctor_closure(externref) -> i32` (#4661) — the js-host lane's bridge
+ * to the IsConstructor answer the STANDALONE lane already computes natively.
+ *
+ * ## Why this export exists
+ * `__reflect_construct_newtarget` wraps a wasm-struct `newTarget` with
+ * `_wrapForHost`, which is not callable, so V8's §26.1.2 step-3
+ * IsConstructor(newTarget) check rejected EVERY compiled function — test262's
+ * `isConstructor(function(){})` answered `false`. The naive repair (route every
+ * closure through the constructible `_wrapCallableForHost`, as
+ * `__construct_closure` does) inverts the error: arrows and generators would
+ * then report `true`. The runtime needs the BIT, not a blanket policy.
+ *
+ * ## Why no new field, and no second predicate
+ * The bit already exists in the type system. `#3371`'s
+ * `getOrCreateConstructibleFuncRefWrapperTypes` mints a nominally distinct
+ * struct SUBTYPE (`__constructible_fn_wrap_N_struct`, one extra
+ * `$__constructible i32`) for ordinary function declarations/expressions, and
+ * every such type is registered in {@link CodegenContext.constructibleClosureTypeIdxs}.
+ * The standalone `__reflect_is_constructor` (`reflect-construct-native.ts`)
+ * answers IsConstructor from exactly that set — which is why standalone passes
+ * `test/harness/isConstructor.js` today and js-host does not. So this is a
+ * `ref.test` chain over the SAME registry, not a new source of truth: the two
+ * lanes cannot drift apart, and no allocation site changes.
+ *
+ * A distinct ROOT wrapper type for non-constructible callables was rejected
+ * (#3205): two closures of one signature would stop being assignable to one
+ * slot. The registry is over SUBTYPES, which keeps root assignability intact.
+ *
+ * No-op when the module registered no constructible closure, exactly like
+ * `__is_closure` — so a module without ordinary function values is byte-identical.
+ */
+export function emitIsCtorClosureExport(ctx: CodegenContext): void {
+  const ctorTypeIdxs = [...ctx.constructibleClosureTypeIdxs].sort((a, b) => a - b);
+  if (ctorTypeIdxs.length === 0) return;
+
+  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$is_ctor_closure_type");
+  const body: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }];
+  for (const ctorType of ctorTypeIdxs) {
+    body.push(
+      { op: "local.get", index: 1 },
+      { op: "ref.test", typeIdx: ctorType },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+      },
+    );
+  }
+  body.push({ op: "i32.const", value: 0 });
+
+  publishClosureHostBridge(
+    ctx,
+    {
+      name: "__is_ctor_closure",
+      typeIdx,
+      locals: [{ name: "__any", type: { kind: "anyref" } }],
+      body,
+      exported: true,
+    } as WasmFunction,
+    CLOSURE_HOST_BRIDGE_ORDINAL.isCtorClosure,
+  );
+}
+
+/**
  * Emit `__closure_arity(externref) -> i32` (#2623 P-7 / B-1). Returns the
  * DECLARED formal-parameter count of a registered Wasm closure struct, or -1
  * when the value is not a closure. Used by the JS-side dynamic bridge
@@ -1328,7 +1638,7 @@ function collectClosureArityEntries(
   const seenFuncTypeIdx = new Set<number>();
   const entries: { funcTypeIdx: number; selfTypeIdx: number; closureArity: number }[] = [];
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-    if (info.hostOneShotOnly === true) continue;
+    if (info.hostOneShotOnly === true || info.domCallbackOnly === true) continue;
     const typeDef = mod.types[typeIdx];
     if (!typeDef || typeDef.kind !== "struct") continue;
     if (seenFuncTypeIdx.has(info.funcTypeIdx)) continue;

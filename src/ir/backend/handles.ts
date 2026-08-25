@@ -130,6 +130,12 @@ export interface IrClosureLowering {
   /** Field index for capture position `i` (0-based). Valid only for captured-subtype lowerings. */
   capFieldIdx(index: number): number;
   readonly funcTypeIdx: number;
+  /**
+   * Exact private singleton appended to certified standalone DOM callback
+   * carriers. The thunk resolves the live absolute global index so a late
+   * import-global insertion cannot stale the allocation operand.
+   */
+  readonly domCallbackAuthorityGlobalIdx?: () => number;
 }
 
 /**
@@ -349,7 +355,7 @@ export interface IrDynamicLowering {
    * number — the S5.P producer admits a dynamic relational operand ONLY against
    * a numeric literal/concrete.
    */
-  emitToNumber(): readonly Instr[];
+  emitToNumber(scratch?: () => number): readonly Instr[];
   /**
    * One carrier on the stack → the operand shape this backend's equality
    * helper takes (#2949 S5.2). Emitted once per operand, immediately after that

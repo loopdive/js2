@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-08-16T02:52:20.669Z",
+  "timestamp": "2026-08-24T22:28:49.024Z",
   "benchmarks": [
     {
       "name": "fib",
@@ -202,6 +202,36 @@
         },
         {
           "module": "env",
+          "name": "__js_array_new",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__js_array_new"
+          },
+          "paramCount": 0
+        },
+        {
+          "module": "env",
+          "name": "__call_function",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__unbox_number",
+          "kind": "func",
+          "intent": {
+            "type": "unbox",
+            "targetType": "number"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__box_number",
           "kind": "func",
           "intent": {
@@ -243,23 +273,53 @@
         },
         {
           "module": "env",
-          "name": "__unbox_number",
+          "name": "__call_function_0",
           "kind": "func",
           "intent": {
-            "type": "unbox",
-            "targetType": "number"
+            "type": "builtin",
+            "name": "__call_function_0"
           },
-          "paramCount": 1
+          "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__box_number",
+          "name": "__call_function_1",
           "kind": "func",
           "intent": {
-            "type": "box",
-            "targetType": "number"
+            "type": "builtin",
+            "name": "__call_function_1"
           },
-          "paramCount": 1
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__call_function_2",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_2"
+          },
+          "paramCount": 4
+        },
+        {
+          "module": "env",
+          "name": "__call_function_3",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_3"
+          },
+          "paramCount": 5
+        },
+        {
+          "module": "env",
+          "name": "__call_function_4",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_4"
+          },
+          "paramCount": 6
         }
       ],
       "stringPool": [
@@ -495,6 +555,36 @@
         },
         {
           "module": "env",
+          "name": "__js_array_new",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__js_array_new"
+          },
+          "paramCount": 0
+        },
+        {
+          "module": "env",
+          "name": "__call_function",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__unbox_number",
+          "kind": "func",
+          "intent": {
+            "type": "unbox",
+            "targetType": "number"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__box_number",
           "kind": "func",
           "intent": {
@@ -536,23 +626,53 @@
         },
         {
           "module": "env",
-          "name": "__unbox_number",
+          "name": "__call_function_0",
           "kind": "func",
           "intent": {
-            "type": "unbox",
-            "targetType": "number"
+            "type": "builtin",
+            "name": "__call_function_0"
           },
-          "paramCount": 1
+          "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__box_number",
+          "name": "__call_function_1",
           "kind": "func",
           "intent": {
-            "type": "box",
-            "targetType": "number"
+            "type": "builtin",
+            "name": "__call_function_1"
           },
-          "paramCount": 1
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__call_function_2",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_2"
+          },
+          "paramCount": 4
+        },
+        {
+          "module": "env",
+          "name": "__call_function_3",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_3"
+          },
+          "paramCount": 5
+        },
+        {
+          "module": "env",
+          "name": "__call_function_4",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_4"
+          },
+          "paramCount": 6
         }
       ],
       "stringPool": [
@@ -787,6 +907,36 @@
         },
         {
           "module": "env",
+          "name": "__js_array_new",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__js_array_new"
+          },
+          "paramCount": 0
+        },
+        {
+          "module": "env",
+          "name": "__call_function",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__unbox_number",
+          "kind": "func",
+          "intent": {
+            "type": "unbox",
+            "targetType": "number"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__box_number",
           "kind": "func",
           "intent": {
@@ -838,23 +988,53 @@
         },
         {
           "module": "env",
-          "name": "__unbox_number",
+          "name": "__call_function_0",
           "kind": "func",
           "intent": {
-            "type": "unbox",
-            "targetType": "number"
+            "type": "builtin",
+            "name": "__call_function_0"
           },
-          "paramCount": 1
+          "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__box_number",
+          "name": "__call_function_1",
           "kind": "func",
           "intent": {
-            "type": "box",
-            "targetType": "number"
+            "type": "builtin",
+            "name": "__call_function_1"
           },
-          "paramCount": 1
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__call_function_2",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_2"
+          },
+          "paramCount": 4
+        },
+        {
+          "module": "env",
+          "name": "__call_function_3",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_3"
+          },
+          "paramCount": 5
+        },
+        {
+          "module": "env",
+          "name": "__call_function_4",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_4"
+          },
+          "paramCount": 6
         }
       ],
       "stringPool": [
@@ -1091,6 +1271,36 @@
         },
         {
           "module": "env",
+          "name": "__js_array_new",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__js_array_new"
+          },
+          "paramCount": 0
+        },
+        {
+          "module": "env",
+          "name": "__call_function",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__unbox_number",
+          "kind": "func",
+          "intent": {
+            "type": "unbox",
+            "targetType": "number"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__box_number",
           "kind": "func",
           "intent": {
@@ -1132,23 +1342,53 @@
         },
         {
           "module": "env",
-          "name": "__unbox_number",
+          "name": "__call_function_0",
           "kind": "func",
           "intent": {
-            "type": "unbox",
-            "targetType": "number"
+            "type": "builtin",
+            "name": "__call_function_0"
           },
-          "paramCount": 1
+          "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__box_number",
+          "name": "__call_function_1",
           "kind": "func",
           "intent": {
-            "type": "box",
-            "targetType": "number"
+            "type": "builtin",
+            "name": "__call_function_1"
           },
-          "paramCount": 1
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__call_function_2",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_2"
+          },
+          "paramCount": 4
+        },
+        {
+          "module": "env",
+          "name": "__call_function_3",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_3"
+          },
+          "paramCount": 5
+        },
+        {
+          "module": "env",
+          "name": "__call_function_4",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_4"
+          },
+          "paramCount": 6
         }
       ],
       "stringPool": [
@@ -1395,6 +1635,36 @@
         },
         {
           "module": "env",
+          "name": "__js_array_new",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__js_array_new"
+          },
+          "paramCount": 0
+        },
+        {
+          "module": "env",
+          "name": "__call_function",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__unbox_number",
+          "kind": "func",
+          "intent": {
+            "type": "unbox",
+            "targetType": "number"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__box_number",
           "kind": "func",
           "intent": {
@@ -1436,23 +1706,53 @@
         },
         {
           "module": "env",
-          "name": "__unbox_number",
+          "name": "__call_function_0",
           "kind": "func",
           "intent": {
-            "type": "unbox",
-            "targetType": "number"
+            "type": "builtin",
+            "name": "__call_function_0"
           },
-          "paramCount": 1
+          "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__box_number",
+          "name": "__call_function_1",
           "kind": "func",
           "intent": {
-            "type": "box",
-            "targetType": "number"
+            "type": "builtin",
+            "name": "__call_function_1"
           },
-          "paramCount": 1
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__call_function_2",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_2"
+          },
+          "paramCount": 4
+        },
+        {
+          "module": "env",
+          "name": "__call_function_3",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_3"
+          },
+          "paramCount": 5
+        },
+        {
+          "module": "env",
+          "name": "__call_function_4",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_4"
+          },
+          "paramCount": 6
         }
       ],
       "stringPool": [
@@ -1713,6 +2013,36 @@
         },
         {
           "module": "env",
+          "name": "__js_array_new",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__js_array_new"
+          },
+          "paramCount": 0
+        },
+        {
+          "module": "env",
+          "name": "__call_function",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__unbox_number",
+          "kind": "func",
+          "intent": {
+            "type": "unbox",
+            "targetType": "number"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__box_number",
           "kind": "func",
           "intent": {
@@ -1764,23 +2094,53 @@
         },
         {
           "module": "env",
-          "name": "__unbox_number",
+          "name": "__call_function_0",
           "kind": "func",
           "intent": {
-            "type": "unbox",
-            "targetType": "number"
+            "type": "builtin",
+            "name": "__call_function_0"
           },
-          "paramCount": 1
+          "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__box_number",
+          "name": "__call_function_1",
           "kind": "func",
           "intent": {
-            "type": "box",
-            "targetType": "number"
+            "type": "builtin",
+            "name": "__call_function_1"
           },
-          "paramCount": 1
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__call_function_2",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_2"
+          },
+          "paramCount": 4
+        },
+        {
+          "module": "env",
+          "name": "__call_function_3",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_3"
+          },
+          "paramCount": 5
+        },
+        {
+          "module": "env",
+          "name": "__call_function_4",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_4"
+          },
+          "paramCount": 6
         }
       ],
       "stringPool": [
@@ -2050,6 +2410,36 @@
         },
         {
           "module": "env",
+          "name": "__js_array_new",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__js_array_new"
+          },
+          "paramCount": 0
+        },
+        {
+          "module": "env",
+          "name": "__call_function",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function"
+          },
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__unbox_number",
+          "kind": "func",
+          "intent": {
+            "type": "unbox",
+            "targetType": "number"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__box_number",
           "kind": "func",
           "intent": {
@@ -2101,23 +2491,53 @@
         },
         {
           "module": "env",
-          "name": "__unbox_number",
+          "name": "__call_function_0",
           "kind": "func",
           "intent": {
-            "type": "unbox",
-            "targetType": "number"
+            "type": "builtin",
+            "name": "__call_function_0"
           },
-          "paramCount": 1
+          "paramCount": 2
         },
         {
           "module": "env",
-          "name": "__box_number",
+          "name": "__call_function_1",
           "kind": "func",
           "intent": {
-            "type": "box",
-            "targetType": "number"
+            "type": "builtin",
+            "name": "__call_function_1"
           },
-          "paramCount": 1
+          "paramCount": 3
+        },
+        {
+          "module": "env",
+          "name": "__call_function_2",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_2"
+          },
+          "paramCount": 4
+        },
+        {
+          "module": "env",
+          "name": "__call_function_3",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_3"
+          },
+          "paramCount": 5
+        },
+        {
+          "module": "env",
+          "name": "__call_function_4",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__call_function_4"
+          },
+          "paramCount": 6
         }
       ],
       "stringPool": [

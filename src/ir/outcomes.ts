@@ -94,6 +94,7 @@ export type IrUnsupportedCode =
   | "type-resolution-unsupported"
   | "imported-call-planning-unsupported"
   | "late-preparation-unsupported"
+  | "timer-component-not-isolated"
   // (#3536) The IR-lowered function's interned typeIdx differs from the
   // collect-time registered signature that legacy-compiled callers already
   // baked their call-argument coercions against (e.g. an implicit-`any`
@@ -105,7 +106,6 @@ export type IrUnsupportedCode =
   | "new-target-threading"
   | "static-class-member"
   | "module-init-legacy-coupling";
-
 export type IrInvariantCode =
   | "unknown-function-ref"
   | "unknown-global-ref"

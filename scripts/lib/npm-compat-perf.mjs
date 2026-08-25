@@ -35,6 +35,32 @@ function stddev(values) {
   return Math.sqrt(variance);
 }
 
+/**
+ * Run one Wasm/Node timing pair.  Reversing the order on every round keeps
+ * scheduler, CPU-frequency, and thermal drift from always favouring the lane
+ * measured second.
+ */
+function measurePair(round, measureWasm, measureNode) {
+  if (round % 2 === 0) {
+    return { wasm: measureWasm(), node: measureNode() };
+  }
+  const node = measureNode();
+  const wasm = measureWasm();
+  return { wasm, node };
+}
+
+export function summarizePairedRatios(wasmSamplesUs, nodeSamplesUs) {
+  const nodeFallbackUs = median(nodeSamplesUs);
+  const ratioSamples = wasmSamplesUs.map(
+    (wasmSample, index) => Number(nodeSamplesUs[index] ?? nodeFallbackUs) / Math.max(Number(wasmSample), 0.000001),
+  );
+  return {
+    ratio: median(ratioSamples),
+    ratioStd: stddev(ratioSamples),
+    ratioSamples,
+  };
+}
+
 function timingConfig(options) {
   return {
     calibrationMs: options.calibrationMs ?? 100,
@@ -52,9 +78,7 @@ function inputModeForPlacement(placement) {
 function measuredResult(sampleOp, placement, inputMode, iterations, wasmSamplesUs, nodeSamplesUs, config) {
   const wasmUs = median(wasmSamplesUs);
   const nodeUs = median(nodeSamplesUs);
-  const ratioSamples = wasmSamplesUs.map(
-    (wasmSample, index) => (nodeSamplesUs[index] ?? nodeUs) / Math.max(wasmSample, 0.000001),
-  );
+  const ratioSummary = summarizePairedRatios(wasmSamplesUs, nodeSamplesUs);
   return {
     status: "measured",
     placement,
@@ -64,8 +88,9 @@ function measuredResult(sampleOp, placement, inputMode, iterations, wasmSamplesU
     nodeUs,
     wasmStdUs: stddev(wasmSamplesUs),
     nodeStdUs: stddev(nodeSamplesUs),
-    ratio: nodeUs / Math.max(wasmUs, 0.000001),
-    ratioStd: stddev(ratioSamples),
+    ...ratioSummary,
+    measurementOrder: "alternating-paired",
+    ratioEstimator: "median-of-paired-ratios",
     iters: iterations,
     warmupRounds: config.warmupRounds,
     measuredRounds: config.measuredRounds,
@@ -89,14 +114,22 @@ export function measureJsHostPerf(sampleOp, wasmOperation, nodeOperation, option
     calibrate(nodeOperation, config.calibrationMs, config.targetMs),
   );
   for (let round = 0; round < config.warmupRounds; round++) {
-    timeIt(wasmOperation, iterations);
-    timeIt(nodeOperation, iterations);
+    measurePair(
+      round,
+      () => timeIt(wasmOperation, iterations),
+      () => timeIt(nodeOperation, iterations),
+    );
   }
   const wasmSamplesUs = [];
   const nodeSamplesUs = [];
   for (let round = 0; round < config.measuredRounds; round++) {
-    wasmSamplesUs.push((timeIt(wasmOperation, iterations) / iterations) * 1000);
-    nodeSamplesUs.push((timeIt(nodeOperation, iterations) / iterations) * 1000);
+    const sample = measurePair(
+      round,
+      () => (timeIt(wasmOperation, iterations) / iterations) * 1000,
+      () => (timeIt(nodeOperation, iterations) / iterations) * 1000,
+    );
+    wasmSamplesUs.push(sample.wasm);
+    nodeSamplesUs.push(sample.node);
   }
   return measuredResult(
     sampleOp,
@@ -124,18 +157,30 @@ export function measureStandalonePerf(sampleOp, wasmBatch, nodeBatch, options = 
     calibrate(() => nodeBatch(1), config.calibrationMs, config.targetMs),
   );
   for (let round = 0; round < config.warmupRounds; round++) {
-    wasmBatch(iterations);
-    nodeBatch(iterations);
+    measurePair(
+      round,
+      () => wasmBatch(iterations),
+      () => nodeBatch(iterations),
+    );
   }
   const wasmSamplesUs = [];
   const nodeSamplesUs = [];
   for (let round = 0; round < config.measuredRounds; round++) {
-    const wasmStarted = performance.now();
-    wasmBatch(iterations);
-    wasmSamplesUs.push(((performance.now() - wasmStarted) / iterations) * 1000);
-    const nodeStarted = performance.now();
-    nodeBatch(iterations);
-    nodeSamplesUs.push(((performance.now() - nodeStarted) / iterations) * 1000);
+    const sample = measurePair(
+      round,
+      () => {
+        const started = performance.now();
+        wasmBatch(iterations);
+        return ((performance.now() - started) / iterations) * 1000;
+      },
+      () => {
+        const started = performance.now();
+        nodeBatch(iterations);
+        return ((performance.now() - started) / iterations) * 1000;
+      },
+    );
+    wasmSamplesUs.push(sample.wasm);
+    nodeSamplesUs.push(sample.node);
   }
   return measuredResult(
     sampleOp,
@@ -167,6 +212,33 @@ export function failedPerfLane(placement, status, diagnostic, extra = {}) {
   };
 }
 
+const O4_TRY_TABLE_FLATTEN_OMISSION =
+  "wasm-opt -O4 omitted Binaryen's unsupported flatten pass for standardized try_table output; all remaining O4 passes completed.";
+
+function wasmOptWarnings(result) {
+  return (result?.errors ?? []).filter(
+    (entry) => entry?.severity === "warning" && /\bwasm-opt\b/i.test(String(entry.message ?? "")),
+  );
+}
+
+function isVerifiedO4FlattenOmission(warning, optimizationLevel) {
+  return optimizationLevel === 4 && String(warning.message ?? "") === O4_TRY_TABLE_FLATTEN_OMISSION;
+}
+
+export function npmPerfOptimizationOmittedPasses(result, optimizationLevel) {
+  return wasmOptWarnings(result).some((warning) => isVerifiedO4FlattenOmission(warning, optimizationLevel))
+    ? ["flatten"]
+    : [];
+}
+
+export function npmPerfOptimizationFailure(result, optimizationLevel) {
+  const warning = wasmOptWarnings(result).find(
+    (candidate) => !isVerifiedO4FlattenOmission(candidate, optimizationLevel),
+  );
+  if (!warning) return null;
+  return `wasm-opt -O${optimizationLevel} did not produce the measured artifact: ${String(warning.message)}`;
+}
+
 export function packagePerfRecord(sampleOp, jsHost, standalone, additionalLanes = {}) {
   const record = {
     sampleOp,
@@ -182,6 +254,9 @@ export function packagePerfRecord(sampleOp, jsHost, standalone, additionalLanes 
       "nodeStdUs",
       "ratio",
       "ratioStd",
+      "ratioSamples",
+      "measurementOrder",
+      "ratioEstimator",
       "iters",
       "warmupRounds",
       "measuredRounds",
@@ -205,6 +280,7 @@ export function npmPerfRows(packages) {
     ]) {
       const lane = pkg.perf.lanes[key];
       if (lane?.status !== "measured") continue;
+      const optimizationVerified = lane.optimizationVerified === true;
       rows.push({
         name: `${pkg.name} · ${label}`,
         path: `${pkg.entryFile}#${key}`,
@@ -213,8 +289,9 @@ export function npmPerfRows(packages) {
         wasmStdUs: lane.wasmStdUs,
         jsStdUs: lane.nodeStdUs,
         ratioStd: lane.ratioStd ?? 0,
-        wasmOptimized: true,
-        wasmOptimizeLevel: 4,
+        wasmOptimized: optimizationVerified,
+        wasmOptimizeLevel: optimizationVerified ? lane.optimizationLevel : null,
+        wasmOmittedPasses: optimizationVerified ? (lane.optimizationOmittedPasses ?? []) : [],
         warmupRounds: lane.warmupRounds,
         measuredRounds: lane.measuredRounds,
         sampleOp: lane.sampleOp,
@@ -237,7 +314,7 @@ function measuredRatio(lane) {
  * the per-package history charts. Older reports predate `perf.lanes`; their
  * top-level perf record was the JS-host/runtime-dynamic lane.
  */
-export function npmPerfHistoryPoint(packages, generatedAt, sourceRevision = null) {
+export function npmPerfHistoryPoint(packages, generatedAt, sourceRevision = null, optimizationLevels = null) {
   const snapshots = {};
   for (const pkg of packages) {
     const perf = pkg?.perf;
@@ -262,6 +339,7 @@ export function npmPerfHistoryPoint(packages, generatedAt, sourceRevision = null
   return {
     generatedAt,
     ...(sourceRevision ? { sourceRevision } : {}),
+    ...(optimizationLevels ? { optimizationLevels } : {}),
     packages: snapshots,
   };
 }

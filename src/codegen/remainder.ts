@@ -5,7 +5,7 @@ import {
   remainderFastPathPlan,
   UNKNOWN_REMAINDER_FAST_PATH,
   type RemainderFastPathPlan,
-} from "./analysis/remainder-fast-path.js";
+} from "../ir/analysis/remainder-fast-path.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureFmod } from "./fmod.js";

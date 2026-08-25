@@ -48,9 +48,14 @@ import {
   LINEAR_IR_VEC_INIT_F64_FN,
 } from "../../codegen-linear/runtime.js";
 import { linearStringLiteralInstrs } from "../../codegen-linear/string-literals.js";
+import {
+  authenticateLinearStringRepeatProvider,
+  linearStringRepeatReservation,
+} from "../../codegen-linear/string-repeat.js";
 import { IR_STRING_COMPARE_FN, lowerFunctionAstToIr, type IrFromAstResolver, typeNodeToIr } from "../from-ast.js";
 import { collectIrDirectCallLoweringPlans, type IrDirectCallTarget } from "../ast-lowering-plans.js";
 import { irUnitFuncRef } from "../callable-bindings.js";
+import { attachIrStringSupport } from "../string-support.js";
 import { lowerIrFunctionBody, type IrLowerResolver } from "../lower.js";
 import { AllocSiteRegistry } from "../alloc-registry.js";
 import {
@@ -68,10 +73,11 @@ import {
   type LinearStorageKind,
 } from "../analysis/linear-memory-plan.js";
 import { bindLinearStringRuntime } from "../analysis/linear-string-runtime.js";
-import type { IrStringConcatMode, IrStringEncoding } from "../string-runtime.js";
+import { IR_STRING_REPEAT_FN, type IrStringConcatMode, type IrStringEncoding } from "../string-runtime.js";
 import { IR_VEC_ELEM_SET_PREFIX } from "../vector-runtime.js";
 import {
   asVal,
+  forEachInstrDeep,
   irVal,
   type AllocSiteId,
   type IrFuncRef,
@@ -86,6 +92,7 @@ import {
   buildIrUnitInventory,
   indexIrTerminalDeclarations,
   type BuildIrUnitInventoryOptions,
+  type IrTerminalUnitRecord,
   type IrUnitId,
 } from "../identity.js";
 import {
@@ -236,6 +243,15 @@ function requireUniqueLinearOwner(
   return owners[0]!;
 }
 
+function isLinearIrAttemptRoot(terminal: IrTerminalUnitRecord): boolean {
+  return !(
+    terminal.kind === "synthetic-support" &&
+    terminal.syntheticRole === "compiler-unit:timer-shim:set-timeout" &&
+    terminal.terminalOwnerId === terminal.id &&
+    terminal.lexicalOwnerId === null
+  );
+}
+
 /**
  * Validate the complete structural population received by the linear source
  * seam. Every direction is checked against the same authoritative planning
@@ -257,7 +273,8 @@ export function indexLinearIrSourceOwners(
   const expected = identityContext.inventory.terminalUnits.filter(
     (terminal) =>
       terminal.sourceId === sourceId &&
-      (terminal.observedKind === "function" || terminal.observedKind === "class-member"),
+      (terminal.observedKind === "function" || terminal.observedKind === "class-member") &&
+      isLinearIrAttemptRoot(terminal),
   );
   const liveNodes = new Set<ts.Node>();
   const visit = (node: ts.Node): void => {
@@ -394,7 +411,11 @@ export function terminalPredicate(
     checker,
   });
   const terminals = indexIrTerminalDeclarations(sourceFile, inventory);
-  return (node) => terminals.has(node);
+  const attemptRootIds = new Set(inventory.terminalUnits.filter(isLinearIrAttemptRoot).map((terminal) => terminal.id));
+  return (node) => {
+    const unitId = terminals.get(node);
+    return unitId !== undefined && attemptRootIds.has(unitId);
+  };
 }
 
 function planLinearIrOverlay(
@@ -412,7 +433,7 @@ function planLinearIrOverlay(
   const propagated = buildIrUnitTypeMap(sourceFiles, ctx.checker, identityContext);
   const recursiveTypeEvidence = buildIrRecursiveTypeEvidence(sourceFiles, ctx.checker, propagated, identityContext);
   const evidenceChecker = overlayCertifiedCheckerTypes(ctx.checker, recursiveTypeEvidence.checkerTypeOverrides);
-  const { selection } = projectIrSelectionToLegacy(
+  const projectedSelection = projectIrSelectionToLegacy(
     planIrCompilationByIdentity(
       sourceFile,
       identityContext,
@@ -431,7 +452,17 @@ function planLinearIrOverlay(
       },
       propagated,
     ),
+  ).selection;
+  const excludedCompilerSupportNames = new Set(
+    inventory.terminalUnits
+      .filter((terminal) => !isLinearIrAttemptRoot(terminal))
+      .map((terminal) => terminal.legacyMatchName),
   );
+  const selection = {
+    ...projectedSelection,
+    funcs: new Set([...projectedSelection.funcs].filter((name) => !excludedCompilerSupportNames.has(name))),
+    fallbacks: projectedSelection.fallbacks?.filter((fallback) => !excludedCompilerSupportNames.has(fallback.name)),
+  };
   return {
     identityContext,
     recursiveTypeEvidence,
@@ -458,6 +489,36 @@ function prepareLinearIntrinsicFunctions(functions: readonly IrFunction[], sourc
       sourceFile,
       policy: { target: "host", backend: "linear" },
     })?.functions ?? functions
+  );
+}
+
+function prepareLinearStringRepeatFunctions(
+  ctx: LinearContext,
+  functions: readonly IrFunction[],
+): readonly IrFunction[] {
+  let usesRepeat = false;
+  for (const fn of functions) {
+    const instructionBuffers = [
+      ...fn.blocks.map((block) => block.instrs),
+      ...(fn.asyncPlan?.states.map((state) => state.body) ?? []),
+    ];
+    for (const buffer of instructionBuffers) {
+      for (const instr of buffer) {
+        forEachInstrDeep(instr, (nested) => {
+          usesRepeat ||= nested.kind === "string.repeat";
+        });
+      }
+    }
+  }
+  if (!usesRepeat) return functions;
+  const reservation = linearStringRepeatReservation(ctx.mod);
+  if (!reservation) throw new Error("linear-ir: string.repeat provider was not reserved before user slots");
+  authenticateLinearStringRepeatProvider(ctx.mod, reservation);
+  return functions.map((fn) =>
+    attachIrStringSupport(fn, {
+      storageForConst: () => undefined,
+      providerForLength: () => undefined,
+    }),
   );
 }
 
@@ -735,7 +796,10 @@ export function compileLinearIrFunctions(
     const fn = built.get(ownerUnitId);
     return fn ? [fn] : [];
   });
-  const preparedFunctions = prepareLinearIntrinsicFunctions(plannedFunctions, sourceFile.fileName);
+  const preparedFunctions = prepareLinearStringRepeatFunctions(
+    ctx,
+    prepareLinearIntrinsicFunctions(plannedFunctions, sourceFile.fileName),
+  );
   for (const fn of preparedFunctions) built.set(fn.unitId, fn);
   irModule = { functions: preparedFunctions };
   memoryPlan = planLinearMemory(irModule, allocRegistry, allocationPolicy);
@@ -913,6 +977,19 @@ function resolveLinearImportFunc(
   throw new Error(`linear-ir: imported function '${module}.${field}' missing`);
 }
 
+function authenticatePreparedLinearStringRepeatProvider(ctx: LinearContext): number {
+  const reservation = linearStringRepeatReservation(ctx.mod);
+  if (!reservation) throw new Error("linear-ir: string.repeat provider was not reserved before user slots");
+  return authenticateLinearStringRepeatProvider(ctx.mod, reservation);
+}
+
+function resolvePreparedLinearStringRepeatProvider(ctx: LinearContext, provider?: IrFuncRef): number {
+  if (!provider || provider.binding.kind !== "intrinsic" || provider.binding.symbol !== IR_STRING_REPEAT_FN) {
+    throw new Error("linear-ir: string.repeat has no exact prepared provider");
+  }
+  return authenticatePreparedLinearStringRepeatProvider(ctx);
+}
+
 /**
  * The linear resolver: required name/table methods plus the L2 fixed-f64-vec,
  * aggregate/refcell subsets and the L3 i32-pointer string representation.
@@ -1058,6 +1135,9 @@ function makeLinearIrResolver(
           return resolveRuntimeFunc(ref.binding.symbol);
         case "intrinsic": {
           const symbol = ref.binding.symbol;
+          if (symbol === IR_STRING_REPEAT_FN) {
+            return authenticatePreparedLinearStringRepeatProvider(ctx);
+          }
           // #2956 L3: resolve from-ast's abstract choices onto canonical linear runtimes.
           if (symbol === IR_STRING_COMPARE_FN) return resolveRuntimeFunc("__str_cmp");
           if (
@@ -1167,6 +1247,9 @@ function makeLinearIrResolver(
         return [{ op: "call", funcIdx: resolveRuntimeFunc(LINEAR_IR_STRING_APPEND_ASCII_FN) }];
       }
       return [{ op: "call", funcIdx: resolveLinearRuntimeOperation(ctx, operation) }];
+    },
+    emitStringRepeat(_alloc?: AllocSiteId, _inputEncoding?: IrStringEncoding, provider?: IrFuncRef): readonly Instr[] {
+      return [{ op: "call", funcIdx: resolvePreparedLinearStringRepeatProvider(ctx, provider) }];
     },
     emitStringEquals(): readonly Instr[] {
       return [{ op: "call", funcIdx: resolveRuntimeFunc("__str_eq") }];

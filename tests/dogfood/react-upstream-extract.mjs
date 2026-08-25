@@ -22,6 +22,8 @@
 //
 // The only STRUCTURAL rejection left is a `done`-callback signature, which
 // cannot be turned into a callable function without a scheduler to invoke it.
+// Expression-bodied arrows are normalized to an expression statement so they
+// retain the upstream assertion while fitting the lifted test-function ABI.
 // `INFRA_PATTERNS` / `SUPPORTED_MATCHERS` below are therefore no longer an
 // admission filter by default — they are the conservative mode kept behind
 // `admitAll: false` (`DOGFOOD_REACT_ADMIT_ALL=0`), still used for the prelude
@@ -65,8 +67,21 @@ const SUPPORTED_MATCHERS = new Set([
   "toBeDefined",
   "toBeTruthy",
   "toBeFalsy",
+  "toBeNaN",
   "toBeInstanceOf",
   "toHaveLength",
+  "toHaveBeenCalled",
+  "toBeCalled",
+  "toHaveBeenCalledTimes",
+  "toBeCalledTimes",
+  "toHaveBeenCalledWith",
+  "toBeGreaterThan",
+  "toBeCalledWith",
+  "toMatch",
+  "toContainEqual",
+  "toHaveBeenNthCalledWith",
+  "toMatchInlineSnapshot",
+  "toMatchRenderedOutput",
 ]);
 
 function transpileJsx(source, fileName) {
@@ -116,7 +131,47 @@ function filterPreludeStatement(statement, sourceFile, supportedInfrastructure) 
   // and retain its local names in `droppedNames`.  Conservative admission then
   // rejects a test that reaches for one, while admit-all records it as a native
   // harness failure instead of letting one import poison an entire batch.
-  if (ts.isImportDeclaration(statement) || ts.isImportEqualsDeclaration(statement)) return null;
+  if (ts.isImportDeclaration(statement) || ts.isImportEqualsDeclaration(statement)) {
+    // The one selected React core test import is a tiny Jest scheduler
+    // patch. Keep its public binding and satisfy it from the explicit host
+    // infrastructure instead of dropping the declaration and reporting an
+    // avoidable `patchMessageChannel is not defined` failure.
+    if (
+      ts.isImportDeclaration(statement) &&
+      statement.moduleSpecifier.getText(sourceFile).replace(/["']/g, "") ===
+        "../../../../scripts/jest/patchMessageChannel"
+    ) {
+      return "var patchMessageChannel = globalThis.__js2ReactUpstreamInfrastructure.patchMessageChannel;";
+    }
+    // ReactDOM's Fizz tests import this small DOM helper from the monorepo's
+    // private test utilities. The helper only manipulates the jsdom tree and
+    // executes inline scripts; expose an equivalent host capability instead
+    // of dropping its bindings and rejecting every Fizz test that uses them.
+    if (
+      ts.isImportDeclaration(statement) &&
+      statement.moduleSpecifier.getText(sourceFile).replace(/["']/g, "") === "../test-utils/FizzTestUtils"
+    ) {
+      return (
+        "var insertNodesAndExecuteScripts = __js2FizzTestUtils.insertNodesAndExecuteScripts;\n" +
+        "var mergeOptions = __js2FizzTestUtils.mergeOptions;\n" +
+        "var stripExternalRuntimeInNodes = __js2FizzTestUtils.stripExternalRuntimeInNodes;\n" +
+        "var getVisibleChildren = __js2FizzTestUtils.getVisibleChildren;"
+      );
+    }
+    return null;
+  }
+  // The create-react-class integration suite configures its factory through
+  // a CommonJS call expression. A function returned by a host call cannot be
+  // relied on as an indirect Wasm callable, so bind the explicit shim facade
+  // that performs each create-class call on the host. The upstream test
+  // bodies and their spec objects remain unchanged.
+  if (/create-react-class\/factory/.test(text) && /\bcreateReactClass\s*=/.test(text)) {
+    return "createReactClass = __js2CreateReactClass;";
+  }
+  // Destructuring assignments from React's private test utility package can
+  // contain several infrastructure names at once. Keep them as a unit; the
+  // generated require facade supplies the same named helpers in both lanes.
+  if (/require\(\s*["']internal-test-utils["']\s*\)/.test(text)) return text;
   // Scaffolding that only exists to wire up the infrastructure this harness
   // deliberately does not have (`let ReactDOMClient;`, the `internal-test-utils`
   // destructure, `jest.resetModules()`). Dropping it here rather than rejecting
@@ -127,9 +182,9 @@ function filterPreludeStatement(statement, sourceFile, supportedInfrastructure) 
   for (const [pattern, reason] of INFRA_PATTERNS) {
     if (!supportedInfrastructure.has(reason) && pattern.test(text)) return null;
   }
-  if (/require\(\s*['"]react['"]\s*\)/.test(text)) {
-    return text.replace(/require\(\s*['"]react['"]\s*\)/g, "__REACT__");
-  }
+  // Keep React requires in the generated source. The shim resolves them to
+  // the pinned implementation, and Jest-mocked-version tests need the call
+  // to go through that resolver rather than being rewritten to __REACT__.
   return text;
 }
 
@@ -178,17 +233,44 @@ function declaredNames(node, into = new Set()) {
   return into;
 }
 
-// Any `.toSomething(` / `.resolves` / `.rejects` call the shim would have to
-// honour. Over-collecting is harmless (a supported matcher costs nothing);
-// under-collecting is not, because an unimplemented matcher would silently
-// score a test the shim never actually checked.
+// Walk the syntax tree instead of looking for every `.toSomething(` in the
+// source. React's tests quite legitimately call `value.toString()` and
+// `text.toLowerCase()` while constructing an expected value; treating those as
+// Jest matchers rejected otherwise runnable tests. A matcher is only a call
+// whose receiver is rooted at `expect(...)` (optionally through `.not`,
+// `.resolves`, or `.rejects`).
+function matcherReceiver(node) {
+  if (ts.isParenthesizedExpression(node)) return matcherReceiver(node.expression);
+  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) return node.expression.text === "expect";
+  return (
+    ts.isPropertyAccessExpression(node) &&
+    (node.name.text === "not" || node.name.text === "resolves" || node.name.text === "rejects") &&
+    matcherReceiver(node.expression)
+  );
+}
+
 function matcherRejection(text) {
-  for (const match of text.matchAll(/\.\s*([a-zA-Z][\w$]*)\s*\(/g)) {
-    const name = match[1];
-    if (!/^(to[A-Z]|resolves|rejects)/.test(name)) continue;
-    if (!SUPPORTED_MATCHERS.has(name)) return `unsupported-matcher:${name}`;
-  }
-  return null;
+  const sourceFile = ts.createSourceFile(
+    "react-upstream-matcher-check.js",
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  let rejection = null;
+  const visit = (node) => {
+    if (rejection) return;
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const name = node.expression.name.text;
+      if (/^to[A-Z]/.test(name) && matcherReceiver(node.expression.expression) && !SUPPORTED_MATCHERS.has(name)) {
+        rejection = `unsupported-matcher:${name}`;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return rejection;
 }
 
 function classifyBody(fn, text, bodyText, droppedNames, admitAll, supportedInfrastructure) {
@@ -292,16 +374,41 @@ export function extractReactUpstreamTests({ root, testFiles, admitAll = false, s
           continue;
         }
         const fn = entry.node.arguments[1];
-        if (!fn || !(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) || !ts.isBlock(fn.body)) {
+        const isFunction = fn && (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn));
+        if (!isFunction || (!ts.isBlock(fn.body) && !ts.isExpression(fn.body))) {
           rejected.push({ ...record, reason: "no-block-body" });
           continue;
         }
 
-        const bodyText = fn.body.statements.map((statement) => statement.getText(sourceFile)).join("\n");
+        // Most ReactDOM server-integration tests use concise arrows. Lift the
+        // expression as a statement rather than rejecting it: this preserves
+        // its exact call/arguments and lets buildTestFunction append the
+        // harness's numeric success sentinel. Async concise arrows must await
+        // the upstream promise before the sentinel is returned.
+        const isAsync = fn.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true;
+        const bodyText = ts.isBlock(fn.body)
+          ? fn.body.statements.map((statement) => statement.getText(sourceFile)).join("\n")
+          : `${isAsync ? "await " : ""}(${fn.body.getText(sourceFile)});`;
         const preludeText = [...localScope, ...localEach].join("\n");
+        // Some React files rely on the repository-wide Jest setup to expose
+        // console assertions, even though their local describe's beforeEach
+        // only initializes React and act. Reproduce that setup explicitly so
+        // those tests execute instead of failing on an undefined helper.
+        const fallbackPrelude = [];
+        if (/\b(?:let|var)\s+assertConsoleErrorDev\b/.test(preludeText))
+          fallbackPrelude.push(
+            'if (typeof assertConsoleErrorDev !== "function") assertConsoleErrorDev = require("internal-test-utils").assertConsoleErrorDev;',
+          );
+        if (/\b(?:let|var)\s+assertConsoleWarnDev\b/.test(preludeText))
+          fallbackPrelude.push(
+            'if (typeof assertConsoleWarnDev !== "function") assertConsoleWarnDev = require("internal-test-utils").assertConsoleWarnDev;',
+          );
+        if (/\b(?:let|var)\s+act\b/.test(preludeText))
+          fallbackPrelude.push('if (typeof act !== "function") act = require("internal-test-utils").act;');
+        const completePrelude = [...(preludeText ? [preludeText] : []), ...fallbackPrelude].join("\n");
         const reason = classifyBody(
           fn,
-          `${preludeText}\n${bodyText}`,
+          `${completePrelude}\n${bodyText}`,
           bodyText,
           localDropped,
           admitAll,
@@ -314,9 +421,9 @@ export function extractReactUpstreamTests({ root, testFiles, admitAll = false, s
 
         tests.push({
           ...record,
-          prelude: preludeText,
+          prelude: completePrelude,
           body: bodyText,
-          isAsync: fn.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true,
+          isAsync,
         });
       }
     };

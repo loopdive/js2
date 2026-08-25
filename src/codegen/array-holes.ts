@@ -58,6 +58,7 @@ import { planHoleyArrayCarrier } from "./holey-array-plan.js"; // (#4222) isolat
  * lazy flag would desync reads against stores.
  */
 export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
+  const pendingBagIdents = new Set<string>();
   const visit = (node: ts.Node): void => {
     if (
       ctx.usesArrayHoles &&
@@ -65,6 +66,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
       ctx.protoNamedDirty &&
       ctx.protoMemberDirty &&
       ctx.vecAccessorDescriptorDirty &&
+      ctx.inheritedSetDescriptorDirty &&
       ctx.vecIndexDeleteDirty &&
       ctx.vecOwnKeysDirty &&
       ctx.dynamicCodeDirty
@@ -82,14 +84,41 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (!ctx.protoIndexDirty && isProtoIndexWrite(node)) {
       ctx.protoIndexDirty = true;
     }
-    if (!ctx.protoNamedDirty && isProtoNamedWrite(node)) {
+    if (isProtoNamedWrite(node)) {
       ctx.protoNamedDirty = true;
+      // (#4492 wave-5) …and WHICH member. The flag is on in nearly every
+      // test262 module (the harness prelude writes some builtin prototype), so
+      // only the name can answer "did this program override
+      // `Function.prototype.toString`?" — the question that decides whether a
+      // callable's INHERITED `toString` may be believed by the ToPrimitive walk.
+      if (ts.isBinaryExpression(node)) {
+        const lhs = unwrapExpr(node.left);
+        if (ts.isPropertyAccessExpression(lhs)) ctx.protoNamedWrittenMembers.add(lhs.name.text);
+      }
     }
     if (!ctx.protoMemberDirty && isProtoMemberValueUse(node)) {
       ctx.protoMemberDirty = true;
     }
     if (!ctx.vecAccessorDescriptorDirty && isNonDataDescriptorDefine(node)) {
       ctx.vecAccessorDescriptorDirty = true;
+    }
+    if (!ctx.inheritedSetDescriptorDirty) {
+      // (#4602) Statically-named triggers poison only their own keys; a
+      // trigger whose key cannot be named sets the module-wide flag, which
+      // supersedes the key set (consumers check the flag first). Identifier
+      // bags queue for the dedicated post-visit resolution walk.
+      const poisoned = inheritedSetDescriptorUseKeys(node);
+      if (poisoned === "all") {
+        if (process.env.JS2WASM_DEBUG_4602) {
+          console.error(
+            `[4602] ALL-trigger kind=${ts.SyntaxKind[node.kind]} text=${node.getText().slice(0, 120).replace(/\n/g, " ")}`,
+          );
+        }
+        ctx.inheritedSetDescriptorDirty = true;
+      } else if (poisoned !== null) {
+        if (Array.isArray(poisoned)) for (const key of poisoned) ctx.inheritedSetDirtyKeys.add(key);
+        else pendingBagIdents.add((poisoned as { bagIdentifier: string }).bagIdentifier);
+      }
     }
     if (!ctx.vecIndexDeleteDirty && isIndexDelete(node)) {
       ctx.vecIndexDeleteDirty = true;
@@ -109,12 +138,26 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
       ctx.protoNamedDirty = true;
       ctx.protoMemberDirty = true;
       ctx.vecAccessorDescriptorDirty = true;
+      ctx.inheritedSetDescriptorDirty = true;
       ctx.vecIndexDeleteDirty = true;
       ctx.vecOwnKeysDirty = true;
     }
     forEachChild(node, visit);
   };
   visit(root);
+  for (const name of pendingBagIdents) {
+    if (ctx.inheritedSetDescriptorDirty) break;
+    const resolved = resolveBagIdentifierKeys(root, name);
+    if (resolved === "all") {
+      if (process.env.JS2WASM_DEBUG_4602) console.error(`[4602] bag identifier "${name}" escapes — all-keys`);
+      ctx.inheritedSetDescriptorDirty = true;
+    } else for (const key of resolved) ctx.inheritedSetDirtyKeys.add(key);
+  }
+  if (process.env.JS2WASM_DEBUG_4602) {
+    console.error(
+      `[4602] allDirty=${ctx.inheritedSetDescriptorDirty} dynamicCode=${ctx.dynamicCodeDirty} keys=${JSON.stringify([...ctx.inheritedSetDirtyKeys])}`,
+    );
+  }
   planHoleyArrayCarrier(ctx, root);
 }
 
@@ -242,6 +285,274 @@ function isNonDataDescriptorDefine(node: ts.Node): boolean {
     return node.arguments.length >= 2 && !isDataOnlyDescriptorBag(node.arguments[1]);
   }
   return false;
+}
+
+/**
+ * Is a descriptor literal definitely an ordinary writable data descriptor?
+ *
+ * `Object.defineProperty(o, "p", { value: 1 })` is deliberately NOT safe:
+ * an omitted `writable` defaults to false.  The inherited-set resolver can be
+ * omitted only when the pre-scan can prove both the data kind and
+ * `writable: true`; every unknown spelling pays for the resolver rather than
+ * silently treating a refusal as an own-property create.
+ */
+function isProvablyWritableDataDescriptorLiteral(node: ts.Expression | undefined): boolean {
+  if (!node || !ts.isObjectLiteralExpression(node)) return false;
+  let writableTrue = false;
+  for (const prop of node.properties) {
+    if (!ts.isPropertyAssignment(prop) || ts.isComputedPropertyName(prop.name)) return false;
+    const name = prop.name;
+    const key = ts.isIdentifier(name) ? name.text : ts.isStringLiteral(name) ? name.text : undefined;
+    if (key === undefined || !DATA_DESCRIPTOR_KEYS.has(key)) return false;
+    if (key === "writable") {
+      if (prop.initializer.kind !== ts.SyntaxKind.TrueKeyword) return false;
+      writableTrue = true;
+    }
+  }
+  return writableTrue;
+}
+
+/**
+ * (#4504) Detect descriptors that can change an inherited [[Set]] outcome.
+ * Accessor declarations are included because class/object-literal accessors
+ * install prototype descriptors without passing through an Object builtin.
+ */
+function inheritedSetDescriptorUseKeys(
+  node: ts.Node,
+): "all" | readonly string[] | { readonly bagIdentifier: string } | null {
+  if (ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) {
+    return accessorDeclarationKeys(node.name);
+  }
+  // Stored Object builtins are lowered by the same builtin capture path as
+  // direct calls (`const dp = Object.defineProperty; dp(proto, ...)`). This
+  // pre-scan intentionally has no binding/flow state, so recognize the value
+  // reference itself as the conservative gate; a harmless uncalled capture
+  // only enables the already-reserved standalone resolver. Its future key is
+  // unknowable here, so it is an all-keys trigger.
+  if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Object") {
+    const method = node.name.text;
+    const isDirectCallee = ts.isCallExpression(node.parent) && node.parent.expression === node;
+    if (method === "freeze") return "all";
+    // Preserve the direct-call precision below: a literal
+    // `{ value: 1, writable: true }` does not need the resolver. Only a
+    // stored/captured define builtin loses that proof.
+    if (!isDirectCallee && (method === "defineProperty" || method === "defineProperties")) return "all";
+  }
+  if (!ts.isCallExpression(node)) return null;
+  const callee = node.expression;
+  if (!ts.isPropertyAccessExpression(callee)) return null;
+  const method = callee.name.text;
+  // Annex B's legacy mutators install an accessor directly on their receiver.
+  // Do not try to prove that receiver is a prototype in this early syntactic
+  // scan: an unnecessary resolver is safe; a missed setter is not.
+  if (method === "__defineGetter__" || method === "__defineSetter__") {
+    const key = literalPropertyKeyOf(node.arguments[0]);
+    return key === undefined ? "all" : [key];
+  }
+  if (!ts.isIdentifier(callee.expression)) return null;
+  const ns = callee.expression.text;
+  // `Object.freeze(proto)` turns every existing data descriptor non-writable,
+  // including one later reached through an inherited write, and the frozen
+  // object's key set is unknowable here.  Per-module conservative gate.
+  if (ns === "Object" && method === "freeze") return "all";
+  if (method === "defineProperty" && (ns === "Object" || ns === "Reflect")) {
+    if (isProvablyWritableDataDescriptorLiteral(node.arguments[2])) return null;
+    const key = literalPropertyKeyOf(node.arguments[1]);
+    return key === undefined ? "all" : [key];
+  }
+  if (method === "defineProperties" && ns === "Object") {
+    return descriptorBagPoisonedKeysOrIdent(node.arguments[1]);
+  }
+  if (method === "create" && ns === "Object") {
+    if (node.arguments.length < 2) return null;
+    return descriptorBagPoisonedKeysOrIdent(node.arguments[1]);
+  }
+  return null;
+}
+
+/**
+ * A Properties bag that is a plain identifier — the standard buble/rollup ES5
+ * accessor pattern (`var protoAccessors = {...}; …;
+ * Object.defineProperties(C.prototype, protoAccessors)`) — is deferred to
+ * `resolveBagIdentifierKeys`, which resolves the identifier's key set with a
+ * dedicated conservative walk after the main scan.
+ */
+function descriptorBagPoisonedKeysOrIdent(
+  node: ts.Expression | undefined,
+): "all" | readonly string[] | { readonly bagIdentifier: string } {
+  if (node) {
+    const inner = unwrapExpr(node);
+    if (ts.isIdentifier(inner)) return { bagIdentifier: inner.text };
+  }
+  return descriptorBagPoisonedKeys(node);
+}
+
+/** A statically-known ToPropertyKey for a literal key argument, else undefined. */
+function literalPropertyKeyOf(node: ts.Expression | undefined): string | undefined {
+  if (!node) return undefined;
+  const inner = unwrapExpr(node);
+  if (ts.isStringLiteral(inner)) return inner.text;
+  // Canonical numeric-string form, matching ToPropertyKey (`1e0` → "1").
+  if (ts.isNumericLiteral(inner)) return String(Number(inner.text));
+  return undefined;
+}
+
+/** Keys an accessor DECLARATION installs, or "all" for a computed name. */
+function accessorDeclarationKeys(name: ts.PropertyName): "all" | readonly string[] {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return [name.text];
+  if (ts.isNumericLiteral(name)) return [String(Number(name.text))];
+  // A private accessor (`get #x`) never answers a public string-keyed [[Set]].
+  if (ts.isPrivateIdentifier(name)) return [];
+  return "all"; // computed name — key unknowable in this binding-free scan
+}
+
+/**
+ * (#4602) Resolve the possible key set of an identifier used as a Properties
+ * bag. Binding-free and name-based, so it is deliberately a whitelist of SAFE
+ * occurrences; anything unrecognized is an escape and answers "all":
+ *
+ *  - a declaration `var N = {…literal…}` contributes the literal's
+ *    non-provably-writable keys (`descriptorBagPoisonedKeys`);
+ *  - an assignment `N = {…literal…}` contributes the same; a non-literal RHS
+ *    is "all";
+ *  - a DIRECT property write `N.k = …` (any assignment operator — `||=` can
+ *    create the key) poisons `k`; a computed key it cannot read is "all";
+ *  - a property/element READ with base `N` is safe (`N.k.get = fn` mutates
+ *    `N.k`'s object, which cannot grow `N`'s own key set);
+ *  - the bag-argument position of `Object.defineProperties` /
+ *    `Object.create` is safe (that is the consumer being analyzed);
+ *  - `delete N.k` only shrinks the set — safe.
+ *
+ * Name-based matching conflates same-named bindings across scopes; the union
+ * over all of them is a superset of any one binding's keys, which is the
+ * sound direction. This resolves the ubiquitous buble/rollup ES5 accessor
+ * shape (acorn ships nine of them) without a real flow analysis.
+ */
+function resolveBagIdentifierKeys(root: ts.Node, name: string): "all" | ReadonlySet<string> {
+  let all = false;
+  const keys = new Set<string>();
+  const merge = (r: "all" | readonly string[]): void => {
+    if (r === "all") all = true;
+    else for (const k of r) keys.add(k);
+  };
+  /** Climb transparent wrappers so `(N as any)` is judged by ITS parent. */
+  const effectiveParent = (node: ts.Node): { wrapper: ts.Node; parent: ts.Node | undefined } => {
+    let wrapper: ts.Node = node;
+    let parent = node.parent as ts.Node | undefined;
+    while (
+      parent &&
+      (ts.isParenthesizedExpression(parent) ||
+        ts.isAsExpression(parent) ||
+        ts.isNonNullExpression(parent) ||
+        ts.isSatisfiesExpression?.(parent))
+    ) {
+      wrapper = parent;
+      parent = parent.parent;
+    }
+    return { wrapper, parent };
+  };
+  const visit = (node: ts.Node): void => {
+    if (all) return;
+    if (ts.isIdentifier(node) && node.text === name) {
+      const { wrapper, parent } = effectiveParent(node);
+      if (!parent) {
+        all = true;
+        return;
+      }
+      // NAME positions — not value uses of the binding.
+      if (ts.isPropertyAccessExpression(parent) && parent.name === node) return;
+      if (
+        (ts.isPropertyAssignment(parent) ||
+          ts.isMethodDeclaration(parent) ||
+          ts.isGetAccessorDeclaration(parent) ||
+          ts.isSetAccessorDeclaration(parent) ||
+          ts.isPropertySignature(parent) ||
+          ts.isEnumMember(parent)) &&
+        parent.name === node
+      ) {
+        return;
+      }
+      // Declaration site: literal init contributes keys; other init escapes.
+      if (ts.isVariableDeclaration(parent) && parent.name === node) {
+        if (parent.initializer === undefined) return; // writes are matched below
+        const init = unwrapExpr(parent.initializer);
+        if (ts.isObjectLiteralExpression(init)) merge(descriptorBagPoisonedKeys(init as ts.Expression));
+        else all = true;
+        return;
+      }
+      // Whole-binding assignment `N = …`.
+      if (
+        ts.isBinaryExpression(parent) &&
+        parent.left === wrapper &&
+        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      ) {
+        const rhs = unwrapExpr(parent.right);
+        if (ts.isObjectLiteralExpression(rhs)) merge(descriptorBagPoisonedKeys(rhs as ts.Expression));
+        else all = true;
+        return;
+      }
+      // Property-access base.
+      if (
+        (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+        parent.expression === wrapper
+      ) {
+        const { wrapper: access, parent: gp } = effectiveParent(parent);
+        // A DIRECT write `N.k ⟶= …` (any assignment operator) can create `k`.
+        if (
+          gp &&
+          ts.isBinaryExpression(gp) &&
+          gp.left === access &&
+          gp.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+          gp.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+        ) {
+          const key = ts.isPropertyAccessExpression(parent)
+            ? ts.isIdentifier(parent.name)
+              ? parent.name.text
+              : undefined
+            : literalPropertyKeyOf(parent.argumentExpression);
+          if (key === undefined) all = true;
+          else keys.add(key);
+        }
+        return; // a read base cannot grow N's own key set
+      }
+      // The sanctioned bag-argument position of defineProperties/create.
+      if (ts.isCallExpression(parent) && parent.arguments[1] === wrapper) {
+        const callee = parent.expression;
+        if (
+          ts.isPropertyAccessExpression(callee) &&
+          ts.isIdentifier(callee.expression) &&
+          callee.expression.text === "Object" &&
+          (callee.name.text === "defineProperties" || callee.name.text === "create")
+        ) {
+          return;
+        }
+      }
+      all = true; // every other occurrence is an escape
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  visit(root);
+  return all ? "all" : keys;
+}
+
+/**
+ * The statically-named keys of a Properties bag whose descriptors are NOT
+ * provably writable data, or "all" when the bag (or any entry's key) cannot
+ * be resolved statically.
+ */
+function descriptorBagPoisonedKeys(node: ts.Expression | undefined): "all" | readonly string[] {
+  if (!node || !ts.isObjectLiteralExpression(node)) return "all";
+  const keys: string[] = [];
+  for (const prop of node.properties) {
+    if (!ts.isPropertyAssignment(prop)) return "all";
+    if (isProvablyWritableDataDescriptorLiteral(prop.initializer)) continue;
+    const name = prop.name;
+    if (ts.isIdentifier(name) || ts.isStringLiteral(name)) keys.push(name.text);
+    else if (ts.isNumericLiteral(name)) keys.push(String(Number(name.text)));
+    else return "all";
+  }
+  return keys;
 }
 
 /**
@@ -414,6 +725,20 @@ function isProtoNamedWrite(node: ts.Node): boolean {
       return true;
     }
   }
+  // Annex B's direct mutators are descriptor writes too.  The native
+  // prototype companion must be reserved before bodies compile so a later
+  // inherited set can see the installed accessor.  `.call`/aliases are left
+  // to the conservative inherited-set gate above; they do not have a stable
+  // structural receiver for this narrow store-reservation predicate.
+  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+    const callee = node.expression;
+    if (
+      (callee.name.text === "__defineGetter__" || callee.name.text === "__defineSetter__") &&
+      isBrandedBuiltinPrototypeExpr(callee.expression)
+    ) {
+      return true;
+    }
+  }
   return false;
 }
 
@@ -454,6 +779,26 @@ function isProtoMemberValueUse(node: ts.Node): boolean {
   if (!isBrandedBuiltinPrototypeExpr(node)) return false;
   const parent: ts.Node | undefined = node.parent;
   if (parent === undefined) return true;
+  // (#4492) `delete <Builtin>.prototype.<name>` is the ONE member-access parent
+  // the syntactic path does NOT handle. Recording a deleted OWN member needs the
+  // brand COMPANION seeded — `__nproto_hasown`'s seeded-member ladder asks the
+  // companion, and everything else falls to the immutable `$memberCsv` scan,
+  // which resurrects the member. Without arming, `delete` reported success and
+  // `hasOwnProperty` kept answering true.
+  //
+  // Measured, and it explains a pair that looked contradictory: `String/
+  // prototype/S15.5.4_A3` PASSED while `S15.5.4_A1` FAILED on the identical
+  // `delete String.prototype.toString; String.prototype.toString()` — because
+  // A3 happens to read `Object.prototype` as a VALUE one line earlier, which
+  // armed the flag by accident. A1 opens with the delete and armed nothing.
+  if (
+    (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+    unwrapExpr(parent.expression) === unwrapExpr(node) &&
+    parent.parent !== undefined &&
+    ts.isDeleteExpression(parent.parent)
+  ) {
+    return true;
+  }
   // Object-of-a-member-access ⇒ the syntactic path handles it; not a value use.
   if (
     (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
@@ -640,4 +985,63 @@ export function holeTestInstrs(ctx: CodegenContext): Instr[] {
   ensureHoleType(ctx);
   const holeTypeIdx = ctx.holeTypeIdx;
   return [{ op: "any.convert_extern" }, { op: "ref.test", typeIdx: holeTypeIdx }];
+}
+
+/**
+ * (#4556) `Array.prototype.join` step 4.b — "If element is undefined or null,
+ * let next be the empty String" (§23.1.3.18) — plus the `$Hole` sentinel that
+ * denotes an absent index, as one reusable runtime test.
+ *
+ * The join fold used to test ONLY for `$Hole`, so a genuine `undefined` or
+ * `null` element reached `__extern_toString` and stringified faithfully:
+ * `[0, undefined, null, 3].join()` answered `"0,undefined,null,3"` instead of
+ * `"0,,,3"`. Both the `undefined` and the `null` halves are needed, and neither
+ * is a hole — this is deliberately NOT gated on `ctx.usesArrayHoles`, since a
+ * hole-free `any[]` can still hold `undefined`.
+ *
+ * Call this UP FRONT, before the fold bakes any funcIdx: it registers
+ * `__extern_is_undefined` as a late import, which shifts defined-func indices.
+ * Returns the stash local the caller must `local.set` the element into, and the
+ * i32-producing test that reads it.
+ */
+export function joinEmptyElementTest(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  ensureIsUndefined: () => number | undefined,
+): { elemLocal: number; test: Instr[] } {
+  const elemLocal = allocTempLocal(fctx, { kind: "externref" });
+  const isUndefIdx = ensureIsUndefined();
+  const nullish: Instr[] = [
+    { op: "local.get", index: elemLocal },
+    { op: "ref.is_null" }, // JS `null`
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 1 }],
+      else:
+        isUndefIdx !== undefined
+          ? [
+              { op: "local.get", index: elemLocal },
+              // Re-resolved by NAME: the fold's other late imports may have
+              // shifted defined-func indices since `ensureIsUndefined` ran.
+              { op: "call", funcIdx: ctx.funcMap.get("__extern_is_undefined") ?? isUndefIdx },
+            ]
+          : [{ op: "i32.const", value: 0 }],
+    },
+  ];
+  const holeTest = ctx.usesArrayHoles ? holeTestInstrs(ctx) : [];
+  if (holeTest.length === 0) return { elemLocal, test: nullish };
+  return {
+    elemLocal,
+    test: [
+      { op: "local.get", index: elemLocal },
+      ...holeTest,
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "i32.const", value: 1 }],
+        else: nullish,
+      },
+    ],
+  };
 }

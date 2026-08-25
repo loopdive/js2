@@ -5,6 +5,7 @@ import type { ValType } from "../../ir/types.js";
 import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { getArrTypeIdxFromVec } from "../registry/types.js";
+import { compileObjectLiteralAsExternref, resolvePropertyNameText } from "../literals.js";
 import {
   canCompilePropertyAccessForNullishObservation,
   compilePropertyAccessForNullishObservation,
@@ -27,6 +28,29 @@ export function compileInternalCallArgument(
   expression: ts.Expression,
   expectedType: ValType | undefined,
 ): ValType | null {
+  // A native `externref` parameter is an open JavaScript-value boundary. A
+  // plain object literal must therefore use the runtime `$Object` carrier,
+  // even when TypeScript gives the literal a concrete contextual object type.
+  // Boxing a closed Wasm struct as externref makes dynamic operations such as
+  // a captured `Object.assign(target, source)` unable to enumerate the source.
+  if (
+    expectedType?.kind === "externref" &&
+    (ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone || ctx.wasi) &&
+    ts.isObjectLiteralExpression(expression) &&
+    expression.properties.every(
+      (property) =>
+        ts.isPropertyAssignment(property) ||
+        ts.isShorthandPropertyAssignment(property) ||
+        ts.isSpreadAssignment(property),
+    ) &&
+    expression.properties.every(
+      (property) => ts.isSpreadAssignment(property) || resolvePropertyNameText(ctx, property) !== undefined,
+    )
+  ) {
+    const objectValue = compileObjectLiteralAsExternref(ctx, fctx, expression);
+    if (objectValue !== null) return objectValue;
+  }
+
   if (expectedType?.kind !== "externref" || ctx.standalone || ctx.wasi) {
     return compileExpression(ctx, fctx, expression, expectedType);
   }

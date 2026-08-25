@@ -1,7 +1,7 @@
 ---
 id: 2929
 title: "Interpreter direct eval + with + Proxy-MOP convergence"
-status: in_progress
+status: in-progress
 created: 2026-07-02
 updated: 2026-08-11
 priority: medium

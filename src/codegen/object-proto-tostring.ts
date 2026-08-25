@@ -75,6 +75,8 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { WRAPPER_PRIMITIVE_KEY, ensureObjectRuntime } from "./object-runtime.js";
+import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js";
+import { buildArgumentsIsBrandedCall, reserveArgumentsLengthBrand } from "./arguments-length-brand.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { flushLateImportShifts } from "./shared.js";
@@ -101,6 +103,116 @@ const TYPEOF_PREDICATE_TAGS: ReadonlyArray<readonly [string, string]> = [
 ];
 
 /**
+ * The builtin PROTOTYPE objects whose §20.1.3.6 tag is NOT the step-13 default,
+ * because the prototype object itself carries the exotic slot its instances do.
+ *
+ * | prototype           | spec                                     | tag                |
+ * | ------------------- | ---------------------------------------- | ------------------ |
+ * | `Number.prototype`  | §21.1.3 — IS a Number object, value `+0` | `[object Number]`  |
+ * | `String.prototype`  | §22.1.3 — IS a String object, value `""` | `[object String]`  |
+ * | `Boolean.prototype` | §20.3.3 — IS a Boolean object, `false`   | `[object Boolean]` |
+ * | `Array.prototype`   | §23.1.3 — IS an Array exotic object      | `[object Array]`   |
+ * | `Function.prototype`| §20.2.3 — IS a built-in function object  | `[object Function]`|
+ *
+ * These are the ones the runtime sees as a `$NativeProto` rather than as
+ * the carrier its instances use, so the `$__vec_base` / `$Object`-wrapper arms
+ * above miss them and the receiver reached the loud refusal. It is the SAME
+ * spec fact `unshiftNativeProtoToPrimitiveArm` (native-proto-wrapper-primitive.ts)
+ * already encodes for `__to_primitive`; this is the §20.1.3.6 half of it.
+ *
+ * Deliberately NOT a catch-all over every `$NativeProto`. `Date.prototype`,
+ * `RegExp.prototype` and `Error.prototype` WERE exotic in ES5 and are ordinary
+ * objects from ES2015 on (so `[object Object]`) — a different right answer from
+ * the five listed, which a single default arm would get wrong. Anything not
+ * listed keeps falling through to the refusal, which stays loud.
+ */
+const NATIVE_PROTO_BRAND_TAGS: ReadonlyArray<readonly [string, string]> = [
+  ["Number", "Number"],
+  ["String", "String"],
+  ["Boolean", "Boolean"],
+  ["Array", "Array"],
+  // (§20.2.3) `Function.prototype` IS a built-in *function* object — it has a
+  // [[Call]] slot (it is the `%Function.prototype%` intrinsic that returns
+  // undefined for any argument list), so §20.1.3.6 step 6 tags it `Function`,
+  // not the step-13 `Object` default every other `X.prototype` gets. Callability
+  // is already minted (`function-prototype-callable.ts`); this is the BRAND that
+  // makes `Object.prototype.toString.call(Function.prototype)` answer
+  // `[object Function]` (test262 `built-ins/Function/prototype/S15.3.4_A1.js`).
+  ["Function", "Function"],
+  // (#4492, §20.1.3.6 step 13) `%Object.prototype%` is the one entry here whose
+  // tag is the DEFAULT rather than an exotic slot — it is listed because it is
+  // reached as a RECEIVER (`Object.prototype.toString()`, i.e. `this` is
+  // `%Object.prototype%` itself) and, being a `$NativeProto`, it matched no arm
+  // and hit the loud refusal. Measured on this branch's base
+  // (`.tmp/probes/b4.js`, `--target standalone`): `o.getClass()` and
+  // `arr.getClass()` answer `[object Object]` / `[object Array]` while
+  // `Object.prototype.getClass2()` threw `Object.prototype.toString is not yet
+  // implemented`. That is test262 `built-ins/Object/prototype/S15.2.4_A1_T2`'s
+  // FIRST assertion.
+  //
+  // It is added ALONE, and the table's "not a catch-all" rule is why. A blanket
+  // `$NativeProto ⇒ Object` default would be wrong for every brand carrying a
+  // `@@toStringTag` (`Map.prototype` is `[object Map]`, `Set`/`Promise`/
+  // `DataView`/`ArrayBuffer`/… likewise), and the ES5-era-exotic trio
+  // (`Date`/`RegExp`/`Error`.prototype) is `[object Object]` from ES2015 on but
+  // was not measured here — those keep the loud refusal rather than an
+  // unmeasured widening.
+  ["Object", "Object"],
+];
+
+/**
+ * (#4491 wave-7) The mirror image of {@link NATIVE_PROTO_BRAND_TAGS}: builtin
+ * PROTOTYPE objects that are ORDINARY objects — no exotic slot, no own
+ * `@@toStringTag` — so §20.1.3.6 gives them the step-13 default
+ * `[object Object]`.
+ *
+ * Measured on the campaign base, standalone, via the stored-method idiom
+ * (`Error.prototype.getClass = Object.prototype.toString; …getClass()`), which
+ * is what routes a receiver to the runtime classifier rather than to the
+ * compile-time fold:
+ *
+ * ```
+ * Error.prototype   → THREW "Object.prototype.toString is not yet implemented"
+ * Object.prototype  → THREW  (same)
+ * Number.prototype  → "[object Number]"   ← the branded table above already works
+ * ```
+ *
+ * Both throws are `[object Object]` per spec, so the loud refusal is a MISS, not
+ * a protection. `built-ins/Error/prototype/S15.11.4_A2.js` and
+ * `built-ins/Object/prototype/S15.2.4_A1_T2.js` are those two lines verbatim.
+ *
+ * This is an EXPLICIT list, not a default arm on `$NativeProto`, and the
+ * distinction is load-bearing: most of the remaining builtin prototypes carry an
+ * own `@@toStringTag` (§24.1.3.14 `Map.prototype[@@toStringTag]` is `"Map"`,
+ * likewise Set / WeakMap / WeakSet / Promise / Symbol / DataView /
+ * `%TypedArray%` / Generator), so a blanket "any other `$NativeProto` is
+ * Object" would convert today's loud refusal into a silent MIS-tag for every one
+ * of them — the exact trade this module's header rejects. Anything not listed
+ * still falls through to the refusal.
+ *
+ * `Date.prototype` and `RegExp.prototype` are in the list on the ES2015+ rule
+ * (both were exotic in ES5 and became ordinary objects in ES6); the same fact
+ * NATIVE_PROTO_BRAND_TAGS' own comment states as its reason for excluding them
+ * from the exotic five.
+ */
+const NATIVE_PROTO_ORDINARY_BRANDS: readonly string[] = [
+  "Object",
+  "Date",
+  "RegExp",
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "URIError",
+  "EvalError",
+  "ReferenceError",
+];
+
+/** `$NativeProto` field indices — mirrors native-proto.ts / #4248's reader. */
+const NATIVE_PROTO_BRAND_FIELD = 0;
+const NATIVE_PROTO_IS_CLASS_FIELD = 1;
+
+/**
  * Emit the §20.1.3.6 runtime classifier for a reflective
  * `Object.prototype.toString` closure body. `this` is closure param 1 (an
  * externref); the result is the uniform closure-call result type (externref
@@ -115,7 +227,17 @@ const TYPEOF_PREDICATE_TAGS: ReadonlyArray<readonly [string, string]> = [
  * inherits an empty stack — the same shape `fillStandaloneTypeofClosureArms`
  * uses for `__typeof`.
  */
-export function emitObjectProtoToStringClassifier(ctx: CodegenContext, fctx: FunctionContext): boolean {
+export function emitObjectProtoToStringClassifier(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  // (#4491 wave-7) Which local holds the receiver. Defaults to 1 — the
+  // reflective closure's `this` (param 0 is the closure struct). The minted
+  // standalone helper in object-proto-tostring-native.ts passes 0 because its
+  // only parameter IS the receiver. Nothing else about the chain changes, which
+  // is what keeps the two consumers provably one classifier rather than two
+  // copies that can drift.
+  receiverIndex = 1,
+): boolean {
   if (!ctx.nativeStrings || ctx.nativeStrTypeIdx < 0) return false;
 
   // Late-import adders run FIRST and flush, so every funcIdx fetched BY NAME
@@ -132,6 +254,16 @@ export function emitObjectProtoToStringClassifier(ctx: CodegenContext, fctx: Fun
   // types; a module with no arrays cannot receive one, and registering the
   // supertype here purely to emit dead code would churn the type index space.
   const vecBaseTypeIdx = ctx.vecBaseTypeIdx >= 0 ? ctx.vecBaseTypeIdx : -1;
+  // (#4491 wave-7) Reserve #4658's arguments-brand natives HERE rather than
+  // reading whatever `ctx.funcMap` happens to hold. `reserveArgumentsLengthBrand`
+  // is idempotent, append-only (no funcIdx shift) and standalone-only, but it is
+  // driven by arguments-vec CONSTRUCTION — which may not have been compiled yet
+  // when this classifier is emitted. Measured before this call was added: the
+  // brand was correctly applied at run time (`gOPD(args,"length").configurable`
+  // answered `true` while an array answered `false`) and the classifier still
+  // said `[object Array]`, because `__args_is_branded` was simply not in the map
+  // at emit time and the query degraded to its "never branded" empty payload.
+  if (vecBaseTypeIdx >= 0) reserveArgumentsLengthBrand(ctx);
 
   /** `then`-block that materializes a tag string and returns it. */
   const returnTag = (tag: string): Instr[] => {
@@ -148,7 +280,7 @@ export function emitObjectProtoToStringClassifier(ctx: CodegenContext, fctx: Fun
   // and the dedicated predicate is required (the same pairing
   // `emitStringRequireObjectCoercible` uses).
   fctx.body.push(
-    { op: "local.get", index: 1 },
+    { op: "local.get", index: receiverIndex },
     { op: "ref.is_null" },
     { op: "if", blockType: { kind: "empty" }, then: returnTag("Null") },
   );
@@ -157,7 +289,7 @@ export function emitObjectProtoToStringClassifier(ctx: CodegenContext, fctx: Fun
   const undefIdx = ctx.funcMap.get("__typeof_undefined");
   if (undefIdx !== undefined) {
     fctx.body.push(
-      { op: "local.get", index: 1 },
+      { op: "local.get", index: receiverIndex },
       { op: "call", funcIdx: undefIdx },
       { op: "if", blockType: { kind: "empty" }, then: returnTag("Undefined") },
     );
@@ -170,12 +302,34 @@ export function emitObjectProtoToStringClassifier(ctx: CodegenContext, fctx: Fun
   if (vecBaseTypeIdx >= 0) {
     const anyLocal = allocLocal(fctx, `__opts_any_${fctx.locals.length}`, { kind: "anyref" });
     fctx.body.push(
-      { op: "local.get", index: 1 },
+      { op: "local.get", index: receiverIndex },
       { op: "any.convert_extern" },
       { op: "local.set", index: anyLocal },
       { op: "local.get", index: anyLocal },
       { op: "ref.test", typeIdx: vecBaseTypeIdx },
-      { op: "if", blockType: { kind: "empty" }, then: returnTag("Array") },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        // (#4491 wave-7) …but a `$Vec` is not necessarily an Array: an
+        // `arguments` exotic shares the carrier (#4667), and §20.1.3.6 step 12
+        // gives it `[object Arguments]`. #4658 already mints a runtime brand for
+        // exactly this object (`OBJ_FLAG_ARGUMENTS` on the overlay companion),
+        // so the split is one query, not a new representation.
+        //
+        // Order is the whole point: the Arguments test runs FIRST and the Array
+        // answer is the else. An UNBRANDED arguments object (one #4658's
+        // observability proof elided the mark for) still answers `Array` —
+        // unchanged from today, and the honest limit of this arm.
+        then: [
+          ...buildArgumentsIsBrandedCall(ctx, receiverIndex),
+          ...(ctx.funcMap.get("__args_is_branded") === undefined
+            ? returnTag("Array")
+            : ([
+                { op: "if", blockType: { kind: "empty" }, then: returnTag("Arguments") },
+                ...returnTag("Array"),
+              ] as Instr[])),
+        ],
+      },
     );
   }
 
@@ -184,10 +338,63 @@ export function emitObjectProtoToStringClassifier(ctx: CodegenContext, fctx: Fun
     const idx = ctx.funcMap.get(predicate);
     if (idx === undefined) continue;
     fctx.body.push(
-      { op: "local.get", index: 1 },
+      { op: "local.get", index: receiverIndex },
       { op: "call", funcIdx: idx },
       { op: "if", blockType: { kind: "empty" }, then: returnTag(tag) },
     );
+  }
+
+  // ── §21.1.3 / §22.1.3 / §20.3.3 / §23.1.3: a builtin PROTOTYPE object that
+  // carries its instances' exotic slot. See NATIVE_PROTO_BRAND_TAGS for the
+  // four and for why this is not a catch-all. Placed after the primitive
+  // predicates (a `$NativeProto` matches none of them) and before the `$Object`
+  // family (a `$NativeProto` is not a `$Object`, so the order is documentary).
+  // `$isClass != 0` — a user-class façade proto (#2101) — declines: that is an
+  // ordinary object with no exotic slot, and the refusal below is the honest
+  // answer until an `[object Object]` default is measured.
+  const nativeProtoTypeIdx = ctx.nativeProtoTypeIdx;
+  if (nativeProtoTypeIdx !== undefined) {
+    const npAnyLocal = allocLocal(fctx, `__opts_np_${fctx.locals.length}`, { kind: "anyref" });
+    const brandArms: Instr[] = [];
+    const brandArm = (name: string, tag: string): void => {
+      const brand = BUILTIN_BRAND_TABLE[name];
+      if (brand === undefined) return;
+      brandArms.push(
+        { op: "local.get", index: npAnyLocal },
+        { op: "ref.cast", typeIdx: nativeProtoTypeIdx },
+        { op: "struct.get", typeIdx: nativeProtoTypeIdx, fieldIdx: NATIVE_PROTO_BRAND_FIELD },
+        { op: "i32.const", value: brand },
+        { op: "i32.eq" },
+        { op: "if", blockType: { kind: "empty" }, then: returnTag(tag) },
+      );
+    };
+    for (const [name, tag] of NATIVE_PROTO_BRAND_TAGS) brandArm(name, tag);
+    // (#4491 wave-7) …then the ORDINARY builtin prototypes, each answering the
+    // step-13 default. Emitted AFTER the exotic five so the exotic answer always
+    // wins, and one brand-equality arm each rather than a default `else`, for
+    // the reason NATIVE_PROTO_ORDINARY_BRANDS documents: a `$NativeProto` this
+    // list does not name still reaches the loud refusal.
+    for (const name of NATIVE_PROTO_ORDINARY_BRANDS) brandArm(name, "Object");
+    if (brandArms.length > 0) {
+      fctx.body.push(
+        { op: "local.get", index: receiverIndex },
+        { op: "any.convert_extern" },
+        { op: "local.set", index: npAnyLocal },
+        { op: "local.get", index: npAnyLocal },
+        { op: "ref.test", typeIdx: nativeProtoTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: npAnyLocal },
+            { op: "ref.cast", typeIdx: nativeProtoTypeIdx },
+            { op: "struct.get", typeIdx: nativeProtoTypeIdx, fieldIdx: NATIVE_PROTO_IS_CLASS_FIELD },
+            { op: "i32.eqz" },
+            { op: "if", blockType: { kind: "empty" }, then: brandArms },
+          ],
+        },
+      );
+    }
   }
 
   // ── steps 5-8 + 13: the `$Object` family. TWO carriers hide behind a single
@@ -258,7 +465,7 @@ export function emitObjectProtoToStringClassifier(ctx: CodegenContext, fctx: Fun
     ];
 
     fctx.body.push(
-      { op: "local.get", index: 1 },
+      { op: "local.get", index: receiverIndex },
       { op: "any.convert_extern" },
       { op: "local.set", index: objAnyLocal },
       { op: "local.get", index: objAnyLocal },
@@ -390,6 +597,23 @@ function receiverMayBeProxy(ctx: CodegenContext, argExpr: ts.Expression): boolea
 }
 
 /**
+ * The §20.1.3.6 tag for a `<Builtin>.prototype` receiver that carries its
+ * instances' exotic slot, or `undefined` for every other `X.prototype`.
+ *
+ * The receiver must be the AMBIENT builtin: a module that declares its own
+ * `Number` (a module global, a top-level function, a class) means something
+ * else by the identifier, and answering the intrinsic's tag for it would be the
+ * same class of silent wrong answer this helper exists to remove.
+ */
+function nativeProtoTagOf(ctx: CodegenContext, argExpr: ts.PropertyAccessExpression): string | undefined {
+  const base = argExpr.expression;
+  if (!ts.isIdentifier(base)) return undefined;
+  const name = base.text;
+  if (ctx.moduleGlobals.has(name) || ctx.topLevelFunctionNames.has(name) || ctx.classSet.has(name)) return undefined;
+  return NATIVE_PROTO_BRAND_TAGS.find(([builtin]) => builtin === name)?.[1];
+}
+
+/**
  * (#2501) Resolve the §20.1.3.6 `Object.prototype.toString` builtin tag for a
  * statically-known receiver, returning the tag name (e.g. "Array", "Date") or
  * `undefined` when it can't be classified (caller falls back / refuses).
@@ -399,8 +623,30 @@ function receiverMayBeProxy(ctx: CodegenContext, argExpr: ts.Expression): boolea
  *   undefined → Undefined · null → Null · isArray → Array · callable → Function
  *   · Error → Error · Boolean/Number/String primitive → that tag · Date → Date
  *   · RegExp → RegExp · arguments exotic → Arguments · else → Object.
+ *
+ * (#4491 wave-7) `proof` is an optional OUT parameter. The standalone lane ends
+ * this ladder with a `[object Object]` that is a *fallback*, not a
+ * classification: it fires for any receiver whose static type lowers to a
+ * ref/externref, which under `allowJs` is every `any` — a parameter, a `this`
+ * inside a JS callback, an `Object.getPrototypeOf(...)` result. Callers that can
+ * do better at RUN time need to tell the two apart, and only this function
+ * knows. When the returned tag came from one of those two terminal arms it sets
+ * `proof.unprovenDefault = true`; every other return leaves it alone.
+ *
+ * The flag is deliberately NOT set for the `X.prototype` arm or for the
+ * `symName`-driven `deferOrStandalone` arms: those answers rest on a name the
+ * checker resolved, which is a proof.
  */
-export function resolveObjectToStringTag(ctx: CodegenContext, argExpr: ts.Expression | undefined): string | undefined {
+export interface ObjectToStringTagProof {
+  /** The tag is the standalone terminal fallback, not a classification. */
+  unprovenDefault: boolean;
+}
+
+export function resolveObjectToStringTag(
+  ctx: CodegenContext,
+  argExpr: ts.Expression | undefined,
+  proof?: ObjectToStringTagProof,
+): string | undefined {
   if (argExpr === undefined) return "Undefined"; // toString.call() with no arg → this=undefined
   // Literal null / undefined keywords.
   if (argExpr.kind === ts.SyntaxKind.NullKeyword) return "Null";
@@ -455,9 +701,22 @@ export function resolveObjectToStringTag(ctx: CodegenContext, argExpr: ts.Expres
   //     tag (TypeError.prototype → Object, Function.prototype → Function — but
   //     the host resolves both precisely, so defer rather than risk a mis-tag).
   if (ts.isCallExpression(argExpr) && ts.isIdentifier(argExpr.expression) && argExpr.expression.text === "Object") {
-    return argExpr.arguments.length >= 1 ? resolveObjectToStringTag(ctx, argExpr.arguments[0]) : "Object";
+    // `proof` rides the recursion: `Object(x)`'s tag IS `x`'s tag, so if the
+    // inner resolution was the unproven fallback then so is this one.
+    return argExpr.arguments.length >= 1 ? resolveObjectToStringTag(ctx, argExpr.arguments[0], proof) : "Object";
   }
   if (ts.isPropertyAccessExpression(argExpr) && argExpr.name.text === "prototype") {
+    // …with FOUR exceptions, and they are not a nicety: `Number.prototype` IS
+    // a Number object (§21.1.3), `String.prototype` a String object (§22.1.3),
+    // `Boolean.prototype` a Boolean object (§20.3.3) and `Array.prototype` an
+    // Array exotic object (§23.1.3). "an ordinary object with NO exotic slot"
+    // above is true of the OTHER builtin prototypes, not of these. Host mode
+    // defers and the real `Object.prototype.toString` gets them right; the
+    // standalone fallback answered a constant `[object Object]` — a SILENT
+    // wrong answer, which is worse than the refusal it replaced. Same four,
+    // same spec facts, as NATIVE_PROTO_BRAND_TAGS above.
+    const protoTag = nativeProtoTagOf(ctx, argExpr);
+    if (protoTag !== undefined) return protoTag;
     return deferOrStandalone("Object");
   }
 
@@ -497,6 +756,20 @@ export function resolveObjectToStringTag(ctx: CodegenContext, argExpr: ts.Expres
   if (symName === "Boolean") return deferOrStandalone("Boolean");
   if (symName === "String") return deferOrStandalone("String");
 
+  // (#4491 wave-5 T1) The NAMESPACE objects. §21.3.1.9 / §25.5.3 give `Math`
+  // and `JSON` an own `@@toStringTag` of their own name, so §20.1.3.6 step 15
+  // overrides the step-13 "Object" default. Standalone had no @@toStringTag
+  // resolution and fell through to that default, so `Object.prototype.toString
+  // .call(Math)` and `String(Math)` both answered "[object Object]" where the
+  // spec says "[object Math]". The tag is a compile-time constant here — the
+  // receiver is the namespace itself — so no dynamic lookup is needed.
+  //
+  // `deferOrStandalone`, not an unconditional return: in HOST mode the real
+  // `Object.prototype.toString` already gets these right INCLUDING a test that
+  // mutates `Math[Symbol.toStringTag]`, which a baked constant could not follow.
+  if (symName === "Math") return deferOrStandalone("Math");
+  if (symName === "JSON") return deferOrStandalone("JSON");
+
   // Named builtin exotic *instances* the host mis-tags (opaque Wasm receiver):
   // Date / RegExp / Error(+subclasses) / arguments. `.prototype` of these was
   // already filtered above, so a match here is a real instance.
@@ -509,6 +782,33 @@ export function resolveObjectToStringTag(ctx: CodegenContext, argExpr: ts.Expres
   // closure receiver and mis-tags it [object Object].
   const callSigs = nn.getCallSignatures?.();
   if (callSigs && callSigs.length > 0) return "Function";
+
+  // (#4491 wave-5 T7) …and the AMBIENT `Function` interface, which has NO call
+  // signature in lib.d.ts (it declares `apply`/`call`/`bind`, not a signature),
+  // so the arm above misses it. That is exactly the type of everything the
+  // runtime-eval provider hands back as a callable — `Function(src)`,
+  // `new Function(src)`, an eval-returned function — plus any `: Function`
+  // annotation. Measured on base, standalone: `Object.prototype.toString
+  // .call(Function("a", "return a"))` answered `[object Object]` (it fell all
+  // the way to the `resolveWasmType` externref arm's step-13 default), while
+  // `typeof` on the same value already answered `"function"` — so the module
+  // contradicted itself about one value. `built-ins/Function/S15.3.5_A1_T1.js`
+  // and `_T2.js` are that contradiction verbatim.
+  //
+  // `deferOrStandalone`, not an unconditional return: in HOST mode a value of
+  // this type may be a genuine host function the real `Object.prototype
+  // .toString` already tags correctly, and a `Function`-typed binding is the
+  // one shape a test is most likely to point at `Function.prototype` (whose
+  // own §20.2.3 tag the `.prototype` arm above already resolves). Keeping host
+  // on its existing route makes this slice standalone-only by construction.
+  //
+  // The same three symbol names `isFunctionValuedReceiverType`
+  // (function-intrinsic-carrier.ts) accepts, for the same reason: `Function`
+  // is what `new Function(…)` is typed as, and `CallableFunction` /
+  // `NewableFunction` are its `strictBindCallApply` variants.
+  if (symName === "Function" || symName === "CallableFunction" || symName === "NewableFunction") {
+    return deferOrStandalone("Function");
+  }
 
   // Bare primitives (string / number / boolean *types*, not wrapper objects) →
   // §20.1.3.6 boxes them to the matching wrapper tag. Host resolves this
@@ -524,7 +824,13 @@ export function resolveObjectToStringTag(ctx: CodegenContext, argExpr: ts.Expres
   // @@toStringTag resolution exists there yet; still better than a hard CE),
   // else give up (undefined → caller's standalone refuse-loud path).
   const wasm = resolveWasmType(ctx, nn);
-  if (wasm.kind === "ref" || wasm.kind === "ref_null" || wasm.kind === "externref") return deferOrStandalone("Object");
-  if ((nn.flags & ts.TypeFlags.Object) !== 0) return deferOrStandalone("Object");
+  if (wasm.kind === "ref" || wasm.kind === "ref_null" || wasm.kind === "externref") {
+    if (proof) proof.unprovenDefault = true;
+    return deferOrStandalone("Object");
+  }
+  if ((nn.flags & ts.TypeFlags.Object) !== 0) {
+    if (proof) proof.unprovenDefault = true;
+    return deferOrStandalone("Object");
+  }
   return undefined;
 }

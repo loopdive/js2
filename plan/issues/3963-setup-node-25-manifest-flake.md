@@ -3,7 +3,7 @@ id: 3963
 title: "CI: every workflow requested Node 25, which actions/node-versions does not ship — all 27 pins fell back to a direct nodejs.org download, and that fallback parks unrelated PRs when it fails"
 status: done
 created: 2026-07-31
-updated: 2026-08-01
+updated: 2026-08-18
 completed: 2026-08-01
 priority: high
 feasibility: easy
@@ -12,7 +12,7 @@ task_type: infrastructure
 area: ci
 language_feature: n/a
 goal: n/a
-sprint: current
+sprint: 78
 horizon: s
 es_edition: n/a
 related: [2547, 3597, 3986, 3987]

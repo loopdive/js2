@@ -5,6 +5,7 @@
  *
  * Extracted from expressions.ts (#688 step 6).
  */
+import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import { ts } from "../ts-api.js";
 import { isVoidType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
@@ -47,7 +48,7 @@ import {
   tryEmitVecLengthDefineForDefineProperties,
 } from "./array-length-define.js";
 import { emitHasOwnPresence } from "./closed-struct-presence.js"; // (#3920) per-instance own-presence
-import { vecNamedKeyNeedsRuntime } from "./vec-named-key-presence.js"; // (#4062) array expando presence
+import { carrierBagKeyNeedsRuntime } from "./builtin-instance-key-presence.js"; // (#4062) + (#4491 T9) vec/Date/RegExp expando presence
 import { isStaticDescWellFormed, isStaticallyNonObjectDescExpr } from "./descriptor-shape.js";
 // (#4479) the `Properties` MAP half of Object.defineProperties — key naming and
 // `$Object` materialization. Reasoning lives in that module's header.
@@ -765,6 +766,16 @@ function emitMappedArgValueDefine(
   info: NonNullable<FunctionContext["mappedArgsInfo"]>,
   argIndex: number,
   valueExpr: ts.Expression,
+  /**
+   * (#4638) `__defineProperty_value` flag word (bit 0/1/2 = w/e/c, 3/4/5 =
+   * "specified", 7 = has value), or `undefined` when the descriptor states no
+   * attributes. §10.4.4.2 step 4 runs OrdinaryDefineOwnProperty BEFORE the
+   * parameter write, so the attributes must reach the store too — the slot +
+   * param write alone left `getOwnPropertyDescriptor(arguments, "0")` reporting
+   * the pre-define attributes, which is what the 15.2.3.6-4-29x rows check
+   * immediately after the `a === 20` assertion this path already satisfies.
+   */
+  descriptorFlags?: number,
 ): ValType {
   // Compile the value as externref (boxing numbers/refs) for storage in the
   // externref-backed arguments vec.
@@ -801,6 +812,31 @@ function emitMappedArgValueDefine(
   fctx.body.push({ op: "i32.const", value: argIndex });
   fctx.body.push({ op: "local.set", index: idxLocal });
   emitMappedArgReverseSync(ctx, fctx, idxLocal, valLocal);
+
+  // (#4638) Record the stated attributes in the descriptor store so a later
+  // `getOwnPropertyDescriptor(arguments, "<i>")` reports them. The value is
+  // passed from `valLocal`, NOT re-compiled, so the descriptor's value
+  // expression is evaluated exactly once (§10.4.4.2 runs one define).
+  if (descriptorFlags !== undefined) {
+    const dpIdx = ensureLateImport(
+      ctx,
+      "__defineProperty_value",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "f64" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    if (dpIdx !== undefined) {
+      const key = String(argIndex);
+      fctx.body.push({ op: "local.get", index: info.argsLocalIdx });
+      fctx.body.push({ op: "extern.convert_any" });
+      addStringConstantGlobal(ctx, key);
+      for (const instr of stringConstantExternrefInstrs(ctx, key)) fctx.body.push(instr);
+      fctx.body.push({ op: "local.get", index: valLocal });
+      fctx.body.push({ op: "f64.const", value: descriptorFlags });
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__defineProperty_value") ?? dpIdx });
+      fctx.body.push({ op: "drop" });
+    }
+  }
 
   // Result of Object.defineProperty is the object — push arguments as externref.
   fctx.body.push({ op: "local.get", index: info.argsLocalIdx });
@@ -1247,21 +1283,33 @@ export function compileObjectDefineProperty(
       const isAccessor =
         getNode !== undefined || setNode !== undefined || getExpr !== undefined || setExpr !== undefined;
       const breaksLink = isAccessor || descWritable === false;
-      if (breaksLink) {
-        (info.unmappedIndices ??= new Set<number>()).add(argIndex);
-      }
-      // (#2667) Track non-configurable / non-writable attribute state so the
-      // delete + element-write emitters can apply §10.4.4 semantics for the
-      // statically-resolvable case (literal index on the `arguments`
-      // identifier). `configurable:false` makes `delete arguments[i]` return
-      // false (OrdinaryDelete) without severing the map; `writable:false`
-      // freezes the value (writes dropped) and severs the map.
-      if (descConfigurable === false) {
-        (info.nonConfigurableIndices ??= new Set<number>()).add(argIndex);
-      }
-      if (descWritable === false) {
-        (info.nonWritableIndices ??= new Set<number>()).add(argIndex);
-      }
+      // (#4638) §10.4.4.2 is ORDERED, and the order is the whole point of this
+      // block: step 6.b.i writes the mapped parameter from `Desc.[[Value]]`, and
+      // ONLY THEN does step 6.b.ii remove the map entry for a
+      // `[[Writable]]: false` descriptor. Recording the severance up-front (as
+      // this did) made `emitMappedArgValueDefine` — which reads
+      // `unmappedIndices` LIVE — skip the parameter write that the spec performs
+      // BEFORE the severance. `Object.defineProperty(arguments, "0", {value: 20,
+      // writable: false, …})` therefore left the formal `a` at its original
+      // value (`Expected a === 20, actually 0` — the 15.2.3.6-4-29x family, six
+      // rows). Attribute state is now applied AFTER the value define.
+      const applyAttributeState = (): void => {
+        if (breaksLink) {
+          (info.unmappedIndices ??= new Set<number>()).add(argIndex);
+        }
+        // (#2667) Track non-configurable / non-writable attribute state so the
+        // delete + element-write emitters can apply §10.4.4 semantics for the
+        // statically-resolvable case (literal index on the `arguments`
+        // identifier). `configurable:false` makes `delete arguments[i]` return
+        // false (OrdinaryDelete) without severing the map; `writable:false`
+        // freezes the value (writes dropped) and severs the map.
+        if (descConfigurable === false) {
+          (info.nonConfigurableIndices ??= new Set<number>()).add(argIndex);
+        }
+        if (descWritable === false) {
+          (info.nonWritableIndices ??= new Set<number>()).add(argIndex);
+        }
+      };
 
       // (#2667) A pure data-descriptor define carrying a literal `value`, for a
       // mapped arguments index, writes the arguments slot and — when the slot is
@@ -1273,24 +1321,41 @@ export function compileObjectDefineProperty(
       //
       // A value change is permitted whenever the property is still configurable
       // (configurable ⇒ any redefinition is allowed) OR still writable. It is
-      // forbidden only once the slot is BOTH non-configurable AND non-writable
-      // (truly frozen) — that case is left to the runtime so it reports the
-      // spec-mandated TypeError. `nonWritableIndices` severs the param map (set
-      // above + via `unmappedIndices`), so the helper writes only the slot.
-      const isFrozen =
+      // forbidden only once the slot was ALREADY BOTH non-configurable AND
+      // non-writable (truly frozen) BEFORE this define — that case is left to
+      // the runtime so it reports the spec-mandated TypeError.
+      //
+      // (#4638) The pre-state is what decides this. Reading the sets AFTER this
+      // define recorded its own `configurable:false`/`writable:false` made a
+      // FIRST define with both attributes look frozen against itself.
+      const wasFrozen =
         (info.nonConfigurableIndices?.has(argIndex) ?? false) &&
         (info.nonWritableIndices?.has(argIndex) ?? false) &&
         descWritable !== true; // re-enabling writable un-freezes
       const isPureDataValueDefine =
-        !isAccessor &&
-        valueExpr !== undefined &&
-        getExpr === undefined &&
-        setExpr === undefined &&
-        descWritable !== false && // writable:false freezes — handled by the drop path below
-        !isFrozen;
+        !isAccessor && valueExpr !== undefined && getExpr === undefined && setExpr === undefined && !wasFrozen;
       if (isPureDataValueDefine) {
-        return emitMappedArgValueDefine(ctx, fctx, info, argIndex, valueExpr!);
+        // (#4638) `__defineProperty_value` flag word for the stated attributes;
+        // `undefined` when the descriptor states none (keeps the pre-#4638 emit).
+        // Always recorded, even when the descriptor states no attributes: a
+        // value-only REDEFINE (`{value: 20}` after `{value: 10, writable:
+        // false}`) must update the stored `[[Value]]` too, or gOPD keeps
+        // answering with the first define's value while the vec slot holds the
+        // second (`15.2.3.6-4-293-3`: "0 descriptor value should be 20"). The
+        // "specified" bits stay off for an omitted attribute, so §10.1.6.3's
+        // keep-existing rule still applies to w/e/c.
+        let dpFlags = 1 << 7; // has value
+        if (descWritable === true) dpFlags |= 1 << 0;
+        if (descEnumerable === true) dpFlags |= 1 << 1;
+        if (descConfigurable === true) dpFlags |= 1 << 2;
+        if (descWritable !== undefined) dpFlags |= 1 << 3;
+        if (descEnumerable !== undefined) dpFlags |= 1 << 4;
+        if (descConfigurable !== undefined) dpFlags |= 1 << 5;
+        const defined = emitMappedArgValueDefine(ctx, fctx, info, argIndex, valueExpr!, dpFlags);
+        applyAttributeState(); // §10.4.4.2 step 6.b.ii — sever AFTER the write
+        return defined;
       }
+      applyAttributeState();
     }
   }
 
@@ -1375,6 +1440,19 @@ export function compileObjectDefineProperty(
   // on this bit fixes the `const o:any` accessor-get bug without regressing the
   // statically struct-typed (class-instance) accessor path.
   const receiverIsStaticStruct = structName !== undefined;
+  // #4504: `C.prototype` is an inherited-descriptor owner, never the
+  // instance's physical struct.  The historical static-struct accessor path
+  // recorded `${C}_p` in `classAccessorSet`, which later made the closed-field
+  // write ladder suppress a real own slot on `new C()`.  In descriptor-active
+  // standalone modules keep this target on the runtime prototype path instead;
+  // genuine instance-side accessors retain the compiled fast path below.
+  const prototypeDescriptorTarget =
+    ctx.standalone &&
+    inheritedSetAnyDirty(ctx) &&
+    (() => {
+      const unwrapped = unwrapTransparentExpression(objArg);
+      return ts.isPropertyAccessExpression(unwrapped) && unwrapped.name.text === "prototype";
+    })();
 
   // Fallback 1: resolve struct name from the local variable's Wasm type.
   // This handles cases where the TS type is `any` but the local holds a struct ref.
@@ -1492,6 +1570,7 @@ export function compileObjectDefineProperty(
     propName !== undefined && fieldIdx < 0 && _isCanonicalArrayIndexString(propName);
   if (
     receiverIsStaticStruct &&
+    !prototypeDescriptorTarget &&
     (getNode || setNode) &&
     !valueExpr &&
     structName &&
@@ -2427,7 +2506,33 @@ function emitStandaloneDefinePropertyKeyToString(ctx: CodegenContext, fctx: Func
   const toStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   const finalIdx = ctx.funcMap.get("__extern_toString") ?? toStrIdx;
-  if (finalIdx !== undefined) fctx.body.push({ op: "call", funcIdx: finalIdx });
+  if (finalIdx === undefined) return;
+  // (#3505 harness) ToPropertyKey stringifies everything EXCEPT a Symbol. The
+  // $Object runtime keys symbols by their $Symbol carrier (id-compare in
+  // __obj_find / __key_equals), so ToString-ing one here aliased
+  // `Symbol("x")` to the STRING "Symbol(x)" — `Object.defineProperty(o, sym,
+  // …)` stored under a string key that `o[sym]` reads (correctly id-keyed)
+  // could never find, and getOwnPropertyDescriptor(o, sym) answered
+  // undefined. When the module has minted the $Symbol carrier type, test for
+  // it and pass a symbol key through unchanged; a module with no symbols
+  // cannot receive one here and keeps the plain call.
+  if (ctx.symbolTypeIdx >= 0) {
+    const keyLocal = allocLocal(fctx, `__defprop_tokey_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.tee", index: keyLocal });
+    fctx.body.push({ op: "any.convert_extern" });
+    fctx.body.push({ op: "ref.test", typeIdx: ctx.symbolTypeIdx });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [{ op: "local.get", index: keyLocal }],
+      else: [
+        { op: "local.get", index: keyLocal },
+        { op: "call", funcIdx: finalIdx },
+      ],
+    });
+    return;
+  }
+  fctx.body.push({ op: "call", funcIdx: finalIdx });
 }
 
 /**
@@ -3079,6 +3184,19 @@ function emitExternDefinePropertyNoValue(
 // ── Object.defineProperties ───────────────────────────────────────────
 
 /**
+ * (#4491) One entry of a `Properties` map held in a variable, as
+ * `stableDescriptorMapEntries` models it.
+ *
+ * - `literal` — the entry's initializer IS an object literal, so its fields are
+ *   individually known and a later `props.k.field = v` write can be merged in.
+ * - `expr` — anything else (`var props = { "0": descObj }`): the descriptor is
+ *   opaque here and must be handed to the runtime whole.
+ */
+type DescriptorMapEntry =
+  | { kind: "literal"; literal: ts.ObjectLiteralExpression; fields: Map<string, ts.Expression> }
+  | { kind: "expr"; expr: ts.Expression };
+
+/**
  * Compile Object.defineProperties(obj, descriptors).
  *
  * Static path: when descriptors is an object literal, iterate each property
@@ -3183,29 +3301,41 @@ export function compileObjectDefineProperties(
       return undefined;
     }
     const literal = unwrapTransparentExpression(declaration.initializer) as ts.ObjectLiteralExpression;
-    const descriptors = new Map<string, Map<string, ts.Expression>>();
+    // (#4491) An entry is either a LITERAL descriptor — a field map the
+    // stability visitor below may still MERGE later writes into — or a
+    // PASS-THROUGH expression (`var properties = { "0": descObj }`), which the
+    // expansion can only hand to the runtime whole. Before this the second
+    // shape returned `undefined` here and the whole call fell to the native
+    // fallback, where an identifier map is a closed WasmGC struct and refuses
+    // with `[SITE-PROPS-BAG-NOT-AUTHORITATIVE]`.
+    const descriptors = new Map<string, DescriptorMapEntry>();
     for (const property of literal.properties) {
       if (
         !ts.isPropertyAssignment(property) ||
-        (!ts.isIdentifier(property.name) && !ts.isStringLiteral(property.name)) ||
-        !ts.isObjectLiteralExpression(unwrapTransparentExpression(property.initializer))
+        (!ts.isIdentifier(property.name) && !ts.isStringLiteral(property.name))
       ) {
         return undefined;
       }
+      const entryInit = unwrapTransparentExpression(property.initializer);
+      if (!ts.isObjectLiteralExpression(entryInit)) {
+        descriptors.set(property.name.text, { kind: "expr", expr: property.initializer });
+        continue;
+      }
       const fields = new Map<string, ts.Expression>();
-      for (const field of (unwrapTransparentExpression(property.initializer) as ts.ObjectLiteralExpression)
-        .properties) {
+      for (const field of entryInit.properties) {
         if (!ts.isPropertyAssignment(field) || (!ts.isIdentifier(field.name) && !ts.isStringLiteral(field.name))) {
           return undefined;
         }
         fields.set(field.name.text, field.initializer);
       }
-      descriptors.set(property.name.text, fields);
+      descriptors.set(property.name.text, { kind: "literal", literal: entryInit, fields });
     }
     const keys = [...descriptors.keys()];
     if (keys.length === 0 || new Set(keys).size !== keys.length) return undefined;
     const keySet = new Set(keys);
     let stable = true;
+    /** (#4491) Did the visitor merge a later write into a literal entry? */
+    let mergedIntoLiteral = false;
     const visit = (node: ts.Node): void => {
       if (!stable) return;
       if (ts.isIdentifier(node) && ctx.oracle.variableDeclarationOf(node) === declaration) {
@@ -3224,7 +3354,16 @@ export function compileObjectDefineProperties(
         ) {
           // A direct field assignment before the application preserves the
           // descriptor map's key set and can be merged into its literal shape.
-          descriptors.get(node.parent.name.text)!.set(node.parent.parent.name.text, node.parent.parent.parent.right);
+          // (#4491) …but only into a LITERAL entry. A pass-through entry has no
+          // field map to merge into, so the write is unmodelled and the whole
+          // expansion must decline rather than silently drop it.
+          const mergeTarget = descriptors.get(node.parent.name.text)!;
+          if (mergeTarget.kind !== "literal") {
+            stable = false;
+            return;
+          }
+          mergedIntoLiteral = true;
+          mergeTarget.fields.set(node.parent.parent.name.text, node.parent.parent.parent.right);
         } else {
           stable = false;
           return;
@@ -3233,21 +3372,63 @@ export function compileObjectDefineProperties(
       ts.forEachChild(node, visit);
     };
     visit(descsArg.getSourceFile());
-    return stable
-      ? keys.map((key) => ({
+    if (!stable) return undefined;
+    const hasPassThrough = [...descriptors.values()].some((e) => e.kind !== "literal");
+    return {
+      // (#4491) The reify route re-uses the ORIGINAL descriptor nodes, so it is
+      // only offered when the visitor merged nothing (a merged shape exists
+      // only as a synthesized literal, which has no source parents to compile
+      // an entry against). Otherwise the pre-existing per-key expansion runs
+      // unchanged — its emission for an all-literal, unmerged map is unaffected
+      // by this branch.
+      reify: hasPassThrough && !mergedIntoLiteral,
+      entries: keys.map((key) => {
+        const entry = descriptors.get(key)!;
+        return {
           key,
-          descriptor: ts.factory.createObjectLiteralExpression(
-            [...descriptors.get(key)!.entries()].map(([name, initializer]) =>
-              ts.factory.createPropertyAssignment(name, initializer),
-            ),
-          ),
-        }))
-      : undefined;
+          /** The node handed to `Object.defineProperty` / the reified map. */
+          descriptor:
+            entry.kind === "literal"
+              ? ts.factory.createObjectLiteralExpression(
+                  [...entry.fields.entries()].map(([name, initializer]) =>
+                    ts.factory.createPropertyAssignment(name, initializer),
+                  ),
+                )
+              : entry.expr,
+          /** The ORIGINAL source node, when there is one (reify route only). */
+          sourceNode: entry.kind === "literal" ? entry.literal : entry.expr,
+        };
+      }),
+    };
   })();
-  if (stableDescriptorMapEntries) {
+  // (#4491) A map with a pass-through entry goes to the NATIVE plural applier
+  // over a reified `$Object` rather than the per-key expansion: the native is
+  // the only path with ToPropertyDescriptor's conflict/callable checks, and it
+  // preserves §20.1.2.3.1's gather-all-then-define-all order, which a per-key
+  // expansion structurally cannot (see define-properties-map.ts).
+  const reifiedDescsArg: ts.ObjectLiteralExpression | undefined = stableDescriptorMapEntries?.reify
+    ? (() => {
+        const synth = ts.factory.createObjectLiteralExpression(
+          stableDescriptorMapEntries.entries.map(({ key, sourceNode }) =>
+            ts.factory.createPropertyAssignment(ts.factory.createStringLiteral(key), sourceNode),
+          ),
+        );
+        ts.setTextRange(synth, descsArg);
+        (synth as ts.ObjectLiteralExpression & { parent: ts.Node }).parent = expr;
+        for (const p of synth.properties) {
+          ts.setTextRange(p, descsArg);
+          (p as ts.ObjectLiteralElementLike & { parent: ts.Node }).parent = synth;
+          ts.setTextRange(p.name!, descsArg);
+          (p.name as unknown as { parent: ts.Node }).parent = p;
+        }
+        return synth;
+      })()
+    : undefined;
+  if (stableDescriptorMapEntries && !stableDescriptorMapEntries.reify) {
+    const expansion = stableDescriptorMapEntries.entries;
     let resultType: ValType | null = null;
-    for (let index = 0; index < stableDescriptorMapEntries.length; index++) {
-      const { key, descriptor } = stableDescriptorMapEntries[index]!;
+    for (let index = 0; index < expansion.length; index++) {
+      const { key, descriptor } = expansion[index]!;
       const syntheticCall = ts.factory.createCallExpression(
         ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier("Object"), "defineProperty"),
         undefined,
@@ -3255,10 +3436,10 @@ export function compileObjectDefineProperties(
       );
       ts.setTextRange(syntheticCall, expr);
       ts.setTextRange(descriptor, descsArg);
-      (descriptor as ts.ObjectLiteralExpression & { parent: ts.Node }).parent = syntheticCall;
+      (descriptor as ts.Expression & { parent: ts.Node }).parent = syntheticCall;
       (syntheticCall as ts.CallExpression & { parent: ts.Node }).parent = expr.parent;
       resultType = compileObjectDefineProperty(ctx, fctx, syntheticCall);
-      if (resultType && index + 1 < stableDescriptorMapEntries.length) fctx.body.push({ op: "drop" });
+      if (resultType && index + 1 < expansion.length) fctx.body.push({ op: "drop" });
     }
     return resultType;
   }
@@ -3868,8 +4049,11 @@ export function compileObjectDefineProperties(
   // real `$Object`, not the closed struct its `PropertyDescriptorMap` contextual
   // type produces — a struct answers no `__desc_has_own`/`__extern_get`, so every
   // field read missed. Declines (emits nothing) elsewhere: define-properties-map.ts.
+  // (#4491) …and a `Properties` IDENTIFIER whose declaration is a provably
+  // stable map literal reaches it through the same builder, over a synthesized
+  // literal that re-uses the original per-key descriptor nodes.
   const descsType =
-    compileDescriptorMapAsDynamicObject(ctx, fctx, descsArg) ??
+    compileDescriptorMapAsDynamicObject(ctx, fctx, reifiedDescsArg ?? descsArg) ??
     compileExpression(ctx, fctx, descsArg, { kind: "externref" });
   if (!descsType) {
     return { kind: "externref" };
@@ -4469,38 +4653,31 @@ export function compilePropertyIntrospection(
       return { kind: "i32", boolean: true };
     }
     if (elemIsRef && keyArg && staticKey !== null && _isCanonicalArrayIndexString(staticKey)) {
-      const dataArrTypeIdx = vecInfo!.arrTypeIdx;
-      const idxVal = Number(staticKey);
+      // (#4491) The runtime native is now the WHOLE answer. This arm used to
+      // compute `present := index < length AND data[index] != null` inline and OR
+      // it with the native, because at the time `__hasOwnProperty` could not see a
+      // vec's DENSE elements at all and answered `false` for
+      // `Object.keys(o).hasOwnProperty("0")`.
+      //
+      // It can now, and the OR became a one-way ratchet that could only ever turn
+      // `false` into `true`. A DELETED index is exactly the case that breaks:
+      // `delete a[0]` records a `FLAG_DELETED_INDEX` tombstone in the companion
+      // overlay and leaves the vec slot holding its old value, so the inline test
+      // still reported the index present and the tombstone could not veto it —
+      // `a.hasOwnProperty("0")` answered `true` while `0 in a` and
+      // `Object.hasOwn(a, "0")` (the same native, different spelling) both
+      // answered `false`.
+      //
+      // Measured on a string vec before removing the inline half: dense-live
+      // true, deleted false, out-of-range false, `defineProperty`-on-empty true —
+      // the native is correct on all four, including the sidecar case the OR was
+      // originally protecting.
       const recvLocal = allocLocal(fctx, `__hop_arr_${fctx.locals.length}`, receiverWasm);
-      const presentLocal = allocLocal(fctx, `__hop_present_${fctx.locals.length}`, { kind: "i32" });
       const recv = compileExpression(ctx, fctx, propAccess.expression, receiverWasm);
       if (recv && (recv.kind === "ref" || recv.kind === "ref_null")) {
         fctx.body.push({ op: "ref.as_non_null" });
       }
       fctx.body.push({ op: "local.set", index: recvLocal });
-      // present := (index < length) ? (data[index] != null) : 0. The bounds test
-      // gates the element load via an `if` so an out-of-range index never traps.
-      fctx.body.push({ op: "local.get", index: recvLocal });
-      fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 }); // length
-      fctx.body.push({ op: "i32.const", value: idxVal });
-      fctx.body.push({ op: "i32.gt_u" }); // length > index  ⇔  index in bounds
-      fctx.body.push({
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [
-          { op: "local.get", index: recvLocal },
-          { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 }, // data array
-          { op: "i32.const", value: idxVal },
-          { op: "array.get", typeIdx: dataArrTypeIdx }, // element
-          { op: "ref.is_null" },
-          { op: "i32.eqz" }, // present (non-null) → 1
-        ],
-        else: [{ op: "i32.const", value: 0 }],
-      });
-      fctx.body.push({ op: "local.set", index: presentLocal });
-      // result := present OR __hasOwnProperty(arr, key) — the latter catches an
-      // index added to the sidecar (e.g. defineProperty on an array index, where
-      // the vec data length is unchanged). __hasOwnProperty exists in both modes.
       const hopIdx2 = ensureLateImport(
         ctx,
         "__hasOwnProperty",
@@ -4515,13 +4692,51 @@ export function compilePropertyIntrospection(
       if (hopIdx2 !== undefined) {
         fctx.body.push({ op: "call", funcIdx: hopIdx2 });
       } else {
-        // No host helper available — drop the args, sidecar contributes nothing.
+        // No native available — drop the args and answer absent.
         fctx.body.push({ op: "drop" });
         fctx.body.push({ op: "drop" });
         fctx.body.push({ op: "i32.const", value: 0 });
       }
-      fctx.body.push({ op: "local.get", index: presentLocal });
-      fctx.body.push({ op: "i32.or" });
+      return { kind: "i32", boolean: true };
+    }
+    // (#4491) A NON-index static key on an array receiver — "4294967295"
+    // (2^32-1 is a valid NAMED property but not an array index, §6.1.7) or a
+    // named expando — is RUNTIME state: `Object.defineProperty(arr, k, …)`
+    // stores it in the #3251 companion / #3537 bag, which the static
+    // struct-field logic below cannot see (it answered a compile-time false
+    // while gOPD/`in` both found the entry). Route to the native predicate,
+    // whose vec prologue consults gOPD + bag. `length` keeps the static path:
+    // the vec gOPD arm deliberately bails for it.
+    if (
+      vecInfo !== null &&
+      keyArg &&
+      staticKey !== null &&
+      staticKey !== "length" &&
+      !_isCanonicalArrayIndexString(staticKey)
+    ) {
+      const recv = compileExpression(ctx, fctx, propAccess.expression);
+      if (recv === null) return null;
+      if (recv.kind === "ref" || recv.kind === "ref_null") {
+        fctx.body.push({ op: "extern.convert_any" });
+      } else if (recv.kind !== "externref") {
+        coerceType(ctx, fctx, recv, { kind: "externref" });
+      }
+      const keyT = compileExpression(ctx, fctx, keyArg, { kind: "externref" });
+      if (keyT && keyT.kind !== "externref") coerceType(ctx, fctx, keyT, { kind: "externref" });
+      const hopDynIdx = ensureLateImport(
+        ctx,
+        "__hasOwnProperty",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "i32" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (hopDynIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: hopDynIdx });
+        return { kind: "i32", boolean: true };
+      }
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "i32.const", value: 0 });
       return { kind: "i32", boolean: true };
     }
     // else fall through to the generic struct-field path (legacy behaviour).
@@ -4776,7 +4991,7 @@ export function compilePropertyIntrospection(
     // no part of the fold above can see — the vec's field list is
     // `["length","data"]`. Only a folded `0` is routed, so every affirmative
     // answer stays byte-identical. See vec-named-key-presence.ts.
-    if (vecNamedKeyNeedsRuntime(ctx, receiverWasm, staticKey, result)) {
+    if (carrierBagKeyNeedsRuntime(ctx, receiverWasm, staticKey, result)) {
       if (emitRuntimePropertyIntrospection(ctx, fctx, propAccess.expression, arg, isPropertyIsEnumerable)) {
         return { kind: "i32", boolean: true };
       }

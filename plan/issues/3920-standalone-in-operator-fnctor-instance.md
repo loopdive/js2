@@ -4,9 +4,9 @@ title: "standalone: three of five reflective operations answer nothing once a cl
 status: done
 completed: 2026-08-08
 assignee: "ttraenkler/opus-forin, ttraenkler/opus-forin-2"
-sprint: current
+sprint: 78
 created: 2026-07-31
-updated: 2026-08-08
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

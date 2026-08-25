@@ -10,7 +10,7 @@ horizon: m
 task_type: bugfix
 area: ci
 goal: ci-hardening
-sprint: current
+sprint: 78
 assignee: ttraenkler/dev-claim-reliability
 related: [2531, 3079, 3636, 3879]
 ---

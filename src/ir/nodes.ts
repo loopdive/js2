@@ -13,16 +13,58 @@
 // `function f(): number { return <literal>; }`. The union is open —
 // Phase 2 & 3 widen the Instr and Terminator sets.
 
-import type { ValType } from "./types.js";
-import type { IrBindingId, IrClassId, IrFunctionIdentity, IrUnitId } from "./identity.js";
-// #2949 slice 1 — the canonical JS-type tag enum, from the dependency-free
-// leaf `ir/js-tag.ts` (#3113 moved it below the IR layer so IR core files
-// consume it without the IR→codegen import inversion). Type-only:
-// nodes.ts stays free of value imports.
-import type { JsTag } from "./js-tag.js";
-import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
-import type { IntrinsicId, IntrinsicSignatureVersion } from "./intrinsics.js";
 import type { IrAsyncPlan, PreparedIrAsyncRuntime } from "./async-plan.js";
+// #3954 phase 2 — the ECMAScript-specific instruction kinds. This is the ONE
+// sanctioned core->dialect import; `scripts/check-ir-dialect.mjs` fails the
+// build on any other. Type-only, so the core<->dialect cycle has no runtime edge.
+import type {
+  IrInstrAsyncReturn,
+  IrInstrAsyncThrow,
+  IrInstrAwait,
+  IrInstrDynEq,
+  IrInstrDynMemberGet,
+  IrInstrDynMemberSet,
+  IrInstrDynToNumber,
+  IrInstrDynTruthy,
+  IrInstrExternCall,
+  IrInstrExternNew,
+  IrInstrExternProp,
+  IrInstrExternPropSet,
+  IrInstrForOfIter,
+  IrInstrForOfString,
+  IrInstrGenEpilogue,
+  IrInstrGenPush,
+  IrInstrGenSetReturn,
+  IrInstrGenYieldStar,
+  IrInstrIterDone,
+  IrInstrIterNew,
+  IrInstrIterNext,
+  IrInstrIterReturn,
+  IrInstrIterValue,
+  IrInstrRegExpLiteral,
+  IrInstrStringCharAt,
+  IrInstrStringCharCodeAt,
+  IrInstrStringRepeat,
+} from "./dialect/js.js";
+import type { IrBindingId, IrClassId, IrFunctionIdentity, IrUnitId } from "./identity.js";
+import type { IntrinsicId, IntrinsicSignatureVersion } from "./intrinsics.js";
+// #3954 phase 3 (W4) — `js-tag.ts` is no longer imported here at all. The last
+// two references were `unbox.jsTag` / `tag.test.jsTag`; both now carry the
+// neutral `TagId` below, so the IR's core node module names no ECMAScript
+// partition, in a type position or otherwise.
+import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
+import type { IrFnctorShape } from "./fnctor-abi.js";
+// #3954 phase 1 — the tag-domain seam. `IrType`'s dynamic leaf carries an
+// OPAQUE `TagId` resolved against a `TagDomain` (`producer.ts` picks the
+// producer's domain), not a bare ECMAScript `JsTag`. `tag-domain.ts` is itself
+// a ZERO-import leaf, so this adds a graph edge with no back edge and no TDZ
+// exposure — the same property `js-tag.ts`'s header protects.
+import { type TagId, tagRefinementEquals } from "./tag-domain.js";
+import type { ValType } from "./types.js";
+import type { IrDomCallbackAuthority } from "./capability-provenance.js";
+import type { IrCallableBinding, IrFuncRef, IrGlobalBinding, IrGlobalRef } from "./value-references.js";
+export type { IrDomCallbackAuthority } from "./capability-provenance.js";
+export type { IrCallableBinding, IrFuncRef, IrGlobalBinding, IrGlobalRef } from "./value-references.js";
 
 // ---------------------------------------------------------------------------
 // Symbolic references
@@ -36,45 +78,19 @@ import type { IrAsyncPlan, PreparedIrAsyncRuntime } from "./async-plan.js";
 // it to a concrete index AFTER all imports are finalized, making the shift
 // pass a no-op on the IR path. `name` remains only a compatibility/debug label.
 
-/** Closed structural identity for every direct-callable IR target. */
-export type IrCallableBinding =
-  | { readonly kind: "unit"; readonly unitId: IrUnitId }
-  | { readonly kind: "import"; readonly module: string; readonly field: string }
-  | { readonly kind: "runtime"; readonly symbol: string }
-  | { readonly kind: "intrinsic"; readonly symbol: string }
-  | { readonly kind: "support"; readonly bindingId: IrBindingId };
-
-export interface IrFuncRef {
-  readonly kind: "func";
-  /** Compatibility/debug label; never the semantic lookup key. */
-  readonly name: string;
-  readonly binding: IrCallableBinding;
-}
-
-/** Closed structural identity for every IR global target. */
-export type IrGlobalBinding =
-  | { readonly kind: "source"; readonly bindingId: IrBindingId }
-  | {
-      readonly kind: "import";
-      readonly bindingId: IrBindingId;
-      readonly module: string;
-      readonly field: string;
-    }
-  | { readonly kind: "runtime"; readonly bindingId: IrBindingId; readonly symbol: string }
-  | { readonly kind: "support"; readonly bindingId: IrBindingId };
-
-export interface IrGlobalRef {
-  readonly kind: "global";
-  /** Compatibility/debug label; never the semantic lookup key. */
-  readonly name: string;
-  readonly binding: IrGlobalBinding;
-}
-
 /** Closed structural identity for every symbolic IR type target. */
 export type IrTypeBinding =
   | { readonly kind: "source"; readonly bindingId: IrBindingId }
-  | { readonly kind: "class"; readonly bindingId: IrBindingId; readonly classId: IrClassId }
-  | { readonly kind: "runtime"; readonly bindingId: IrBindingId; readonly symbol: string }
+  | {
+      readonly kind: "class";
+      readonly bindingId: IrBindingId;
+      readonly classId: IrClassId;
+    }
+  | {
+      readonly kind: "runtime";
+      readonly bindingId: IrBindingId;
+      readonly symbol: string;
+    }
   | { readonly kind: "support"; readonly bindingId: IrBindingId };
 
 export interface IrTypeRef {
@@ -314,7 +330,19 @@ export type IrType =
   // Default (undefined) is "signed" for backward compat — every existing
   // `val: { kind: "i32" }` callsite preserves its current semantics.
   // Stage 1 only adds the field; producers / consumers come in Stages 2-3.
-  | { readonly kind: "val"; readonly val: ValType; readonly signed?: boolean }
+  | {
+      readonly kind: "val";
+      readonly val: ValType;
+      readonly signed?: boolean;
+      /**
+       * Final Program-ABI identity for a backend-owned `ref` / `ref_null`
+       * carrier. Middle-end producers may still carry the allocator index in
+       * `val` while building the candidate; preparation attaches this ref
+       * before a component may seal. Lowering resolves the symbolic identity,
+       * never the stale candidate index.
+       */
+      readonly typeRef?: IrTypeRef;
+    }
   // Backend-agnostic string marker (#1169a). The actual Wasm representation
   // is decided at lowering time via `IrLowerResolver.resolveString`:
   //   - host-strings backend  → `externref`
@@ -376,6 +404,11 @@ export type IrType =
   // without a TS-checker round trip. See `src/ir/from-ast.ts`'s
   // `lowerExternMethodCall` and the `extern.*` IR instr kinds.
   | { readonly kind: "extern"; readonly className: string }
+  // #3521 — nominal function-style constructor instance. The shape is
+  // source/unit/layout-qualified and remains opaque until the fnctor lowering
+  // resolver proves the reserved ABI. It is deliberately not an object/class
+  // alias: unsupported backends must decline it rather than guess a carrier.
+  | { readonly kind: "fnctor"; readonly shape: IrFnctorShape }
   // #1926 — union members are IrTypes, not raw ValTypes. V1 still only
   // admits scalar (`f64`/`i32`) members upstream (see
   // `passes/tagged-unions.ts`), but typing them as IrType keeps the IR
@@ -398,12 +431,22 @@ export type IrType =
   // any op that requires a concrete kind (see verify.ts #2949 rules).
   //
   // `tag` is an OPTIONAL static refinement: when present, the producer has
-  // proved the runtime `JsTag` partition of the value (e.g. after a
-  // `tag.test` branch), enabling checked unboxes and op selection without a
-  // runtime re-test. Absence means "partition unknown". The refinement is
-  // erased at joins: two dynamics with different (or one missing) tags are
-  // NOT equal under `irTypeEquals` — producers must widen to the bare
+  // proved the runtime partition of the value (e.g. after a `tag.test`
+  // branch), enabling checked unboxes and op selection without a runtime
+  // re-test. Absence means "partition unknown". The refinement is erased at
+  // joins: two dynamics with different (or one missing) tags are NOT equal
+  // under `irTypeEquals` — producers must widen to the bare
   // `{kind:"dynamic"}` before a join point (branch args, slot writes).
+  //
+  // #3954 phase 1 — the tag is an OPAQUE `TagId`, not an ECMAScript `JsTag`.
+  // Which partitions exist, what each one's payload carrier is, how two
+  // refinements join, and how a partition coerces to boolean/number are all
+  // properties of the PRODUCER's `TagDomain` (`tag-domain.ts`), selected in
+  // `producer.ts`. Today `JS_TAG_DOMAIN` is the only implementation and its
+  // ids are numerically the `JsTag` values (they are ABI — the `$AnyValue.tag`
+  // constants the `__any_box_*` helpers write). The IR core deliberately
+  // cannot name a partition: `JS_TAG_IDS.String` is the JavaScript producer's
+  // vocabulary (`from-ast.ts`), not the lattice's.
   //
   // Lowering contract (per the ratified #1852 representation table):
   //   - WasmGC: `resolver.resolveDynamic()` returns the module's canonical
@@ -417,7 +460,7 @@ export type IrType =
   //     throws.
   // The `tag` refinement never changes the carrier — it is compile-time
   // knowledge only.
-  | { readonly kind: "dynamic"; readonly tag?: JsTag };
+  | { readonly kind: "dynamic"; readonly tag?: TagId };
 
 /** Wrap a plain ValType as an IrType — the common path for Phase 1/2 callers. */
 export function irVal(v: ValType): IrType {
@@ -427,6 +470,11 @@ export function irVal(v: ValType): IrType {
 /** Construct a backend-neutral dense-vector type. */
 export function irVec(elementType: IrType, nullable = true): IrType {
   return { kind: "vec", elementType, nullable };
+}
+
+/** Construct a nominal, backend-neutral fnctor instance type. */
+export function irFnctor(shape: IrFnctorShape): IrType {
+  return { kind: "fnctor", shape };
 }
 
 /**
@@ -454,12 +502,17 @@ export function asVal(t: IrType): ValType | null {
 
 /**
  * #2949 slice 1 — construct a dynamic IrType, optionally refined with a
- * statically-proven `JsTag` partition. `irDynamic()` is the lattice top
- * (partition unknown); `irDynamic(JsTag.String)` is a refinement a producer
- * may emit after a `tag.test` proof. See the `dynamic` arm of `IrType` for
- * the full contract (joins erase refinements; carrier is tag-independent).
+ * statically-proven partition. `irDynamic()` is the lattice top (partition
+ * unknown); `irDynamic(JS_TAG_IDS.String)` is a refinement the JavaScript
+ * producer may emit after a `tag.test` proof. See the `dynamic` arm of
+ * `IrType` for the full contract (joins erase refinements; carrier is
+ * tag-independent).
+ *
+ * #3954 phase 1 — `tag` is an opaque {@link TagId} from the producer's
+ * `TagDomain`. A bare number (and therefore a `JsTag` member) is deliberately
+ * NOT assignable: only a domain can mint one.
  */
-export function irDynamic(tag?: JsTag): IrType {
+export function irDynamic(tag?: TagId): IrType {
   return tag === undefined ? { kind: "dynamic" } : { kind: "dynamic", tag };
 }
 
@@ -520,13 +573,58 @@ export function irTypeEquals(a: IrType, b: IrType): boolean {
   if (a.kind === "extern" && b.kind === "extern") {
     return a.className === b.className;
   }
+  if (a.kind === "fnctor" && b.kind === "fnctor") {
+    const refEquals = (
+      left: { readonly kind: string; readonly name: string; readonly binding: unknown },
+      right: { readonly kind: string; readonly name: string; readonly binding: unknown },
+    ) =>
+      left.kind === right.kind &&
+      left.name === right.name &&
+      JSON.stringify(left.binding) === JSON.stringify(right.binding);
+    if (
+      a.shape.sourceId !== b.shape.sourceId ||
+      a.shape.constructorUnitId !== b.shape.constructorUnitId ||
+      a.shape.constructorName !== b.shape.constructorName ||
+      a.shape.constructorIdentity.unitId !== b.shape.constructorIdentity.unitId ||
+      a.shape.constructorIdentity.paramIndex !== b.shape.constructorIdentity.paramIndex ||
+      !refEquals(a.shape.reservedLayout, b.shape.reservedLayout) ||
+      !refEquals(a.shape.constructorTarget, b.shape.constructorTarget) ||
+      a.shape.fields.length !== b.shape.fields.length ||
+      a.shape.captures.length !== b.shape.captures.length ||
+      a.shape.userParamTypes.length !== b.shape.userParamTypes.length
+    ) {
+      return false;
+    }
+    for (let i = 0; i < a.shape.fields.length; i++) {
+      const left = a.shape.fields[i]!;
+      const right = b.shape.fields[i]!;
+      if (left.name !== right.name || left.ordinal !== right.ordinal || !irTypeEquals(left.type, right.type))
+        return false;
+    }
+    for (let i = 0; i < a.shape.captures.length; i++) {
+      const left = a.shape.captures[i]!;
+      const right = b.shape.captures[i]!;
+      if (
+        left.name !== right.name ||
+        left.ordinal !== right.ordinal ||
+        left.hasTdzFlag !== right.hasTdzFlag ||
+        !irTypeEquals(left.type, right.type)
+      ) {
+        return false;
+      }
+    }
+    return a.shape.userParamTypes.every((type, index) => irTypeEquals(type, b.shape.userParamTypes[index]!));
+  }
   // #2949 slice 1 — dynamic equality is EXACT on the `tag` refinement (both
   // absent, or both present and equal). Deliberately strict: silently
   // merging two different refinements at a join would keep whichever tag the
   // first producer wrote, which is provably wrong for the other path.
   // Producers widen to the bare `{kind:"dynamic"}` before joins instead.
   if (a.kind === "dynamic" && b.kind === "dynamic") {
-    return (a.tag ?? null) === (b.tag ?? null);
+    // #3954 — refinement comparison lives in the domain leaf, not here: this
+    // is the rule "a refined dynamic is not the same type as an unrefined
+    // one", and it is domain-independent.
+    return tagRefinementEquals(a.tag, b.tag);
   }
   return false;
 }
@@ -949,62 +1047,6 @@ export interface IrInstrIf extends IrInstrBase {
 }
 
 /**
- * (#1373 Phase B) `await <expr>` — suspend the current async function until
- * `expr`'s Promise settles, then resume with the resolved value. The IR
- * node carries the operand whose evaluation produces a Promise (or a
- * non-Promise value that must be wrapped in `Promise.resolve` before
- * suspension per spec §27.2.1.4).
- *
- * Phase B (this slice) defines the type only — no lowering. Phase C
- * (CPS transform, follow-up #1373b) splits the function at each await
- * point, lifts the post-await tail into a continuation closure, and
- * emits microtask-queue calls (`__promise_then(promise, continuation)`)
- * to schedule resumption.
- *
- * The result IrValueId carries the resolved value. Its IrType must
- * match the surrounding expression context (typically the unwrapped
- * `T` from `Promise<T>`).
- */
-export interface IrInstrAwait extends IrInstrBase {
-  readonly kind: "await";
-  readonly operand: IrValueId;
-}
-
-/**
- * (#1373 Phase B) `return <value>` from an async function body. UNLIKE
- * `IrTerminatorReturn`, which produces the bare value, this wraps the
- * value in `Promise.resolve(value)` per the async function spec
- * §15.8.5.5. The IR node defines the wrap intent; lowering (Phase C)
- * emits the wrap via the existing `Promise_resolve` host import in
- * JS-host mode or via the standalone `$Promise` struct.new in WASI
- * mode (the latter wired in #1326 Phase 1B).
- *
- * Used in tail position only — non-tail `return` inside an async
- * function flows through the IR's normal block terminator, which the
- * Phase C lowerer recognises and routes through the same wrap.
- */
-export interface IrInstrAsyncReturn extends IrInstrBase {
-  readonly kind: "async.return";
-  readonly value: IrValueId;
-}
-
-/**
- * (#1373 Phase B) Synchronous throw inside an async function body.
- * UNLIKE `IrInstrThrow`, which propagates as a Wasm exception, this
- * wraps the thrown value in `Promise.reject(reason)` so the async
- * function's outer Promise settles in the rejected state. Lowering
- * (Phase C) emits the wrap via `Promise_reject` (host) or `$Promise`
- * struct.new with `state = REJECTED` (standalone, #1326 Phase 1B).
- *
- * Currently NOT emitted by from-ast — Phase C wires it from
- * `ts.ThrowStatement` nodes inside async function bodies.
- */
-export interface IrInstrAsyncThrow extends IrInstrBase {
-  readonly kind: "async.throw";
-  readonly reason: IrValueId;
-}
-
-/**
  * Escape hatch: a raw backend instruction sequence with no SSA structure.
  * Phase 1 uses this as a bridge so we can describe any function without
  * re-encoding the whole Wasm opcode set in IR. Phase 2 will narrow uses.
@@ -1048,20 +1090,31 @@ export interface IrInstrBox extends IrInstrBase {
  *
  *   - union operand (V1): `tag` (REQUIRED here) names the member ValType to
  *     extract; lowers to `struct.get $val`.
- *   - dynamic operand (#2949): `jsTag` (REQUIRED here) names the proven JS
- *     partition; it must have a payload (`jsTagUnboxKind(jsTag) !== null` —
- *     Null/Undefined are singleton partitions and cannot be unboxed). `tag`,
- *     when also present, must be consistent with the partition's payload
- *     kind (exact for scalar partitions, ref-shaped for String/Object/
- *     Function). Lowering lands in #2949 slice 3.
+ *   - dynamic operand (#2949): `tagId` (REQUIRED here) names the proven
+ *     partition of the producer's {@link TagId} domain; it must have a payload
+ *     (`domain.carrierKindOf(tagId) !== null` — a SINGLETON partition, e.g.
+ *     ECMAScript's Null/Undefined, cannot be unboxed). `tag`, when also
+ *     present, must be consistent with the partition's payload kind (exact for
+ *     scalar carriers, ref-shaped for reference carriers). Lowering lands in
+ *     #2949 slice 3.
+ *
+ * #3954 phase 3 (W4) — `tagId` is the NEUTRAL `TagId`, not the ECMAScript
+ * `JsTag` enum. It was `jsTag: JsTag` until this slice, which made the field an
+ * ECMAScript declaration sitting on a core-neutral node; worse, the brand is
+ * ONE-DIRECTIONAL (TypeScript assigns a branded `number` straight to a numeric
+ * enum), so a foreign domain's tag flowed in with no cast and failed at run
+ * time in the verifier instead of at compile time. The field is renamed as well
+ * as re-typed: every construction site had to change anyway (the brand blocks
+ * `JsTag → TagId`), and a `js`-prefixed name carrying a neutral id would have
+ * survived the widening as a lie.
  */
 export interface IrInstrUnbox extends IrInstrBase {
   readonly kind: "unbox";
   readonly value: IrValueId;
   /** Target member ValType — REQUIRED for union operands (V1 contract). */
   readonly tag?: ValType;
-  /** Proven JS partition — REQUIRED for dynamic operands (#2949). */
-  readonly jsTag?: JsTag;
+  /** Proven domain partition — REQUIRED for dynamic operands (#2949). */
+  readonly tagId?: TagId;
 }
 
 /**
@@ -1070,154 +1123,22 @@ export interface IrInstrUnbox extends IrInstrBase {
  *
  *   - union operand (V1): `tag` (REQUIRED here) must be a member ValType;
  *     lowers to `struct.get $tag; i32.const <N>; i32.eq`.
- *   - dynamic operand (#2949): `jsTag` (REQUIRED here) names the JS
- *     partition under test — ANY partition, including the payload-less
- *     Null/Undefined (testing for them is the point). Lowering (slice 3)
- *     dispatches on the carrier's runtime tag via the canonical classifier
- *     path (`emitTagLoad`/`emitTagTest` on the backend emitter).
+ *   - dynamic operand (#2949): `tagId` (REQUIRED here) names the domain
+ *     partition under test — ANY partition, including a payload-less singleton
+ *     (ECMAScript's Null/Undefined — testing for them is the point). Lowering
+ *     (slice 3) dispatches on the carrier's runtime tag via the canonical
+ *     classifier path (`emitTagLoad`/`emitTagTest` on the backend emitter).
+ *
+ * #3954 phase 3 (W4) — `tagId` is the NEUTRAL `TagId`; see `IrInstrUnbox` for
+ * why the field was renamed as well as re-typed.
  */
 export interface IrInstrTagTest extends IrInstrBase {
   readonly kind: "tag.test";
   readonly value: IrValueId;
   /** Member ValType under test — REQUIRED for union operands (V1 contract). */
   readonly tag?: ValType;
-  /** JS partition under test — REQUIRED for dynamic operands (#2949). */
-  readonly jsTag?: JsTag;
-}
-
-/**
- * `ToBoolean(value)` on a boxed-any carrier — the dynamic-value truthiness
- * op (#2949 S5.1). `value` MUST be `IrType.dynamic`; result (via
- * `IrInstrBase.result`) is `i32` (1 = truthy, 0 = falsy), suitable directly
- * as an `if` / loop / ternary `condValue`.
- *
- * This is deliberately NOT `unbox{Boolean}`: unboxing reads the Boolean
- * *partition* payload and is only valid on a proven boolean, whereas JS
- * `ToBoolean` (§7.1.2) is defined over EVERY partition — `0`/`NaN`/`""`/
- * `null`/`undefined` are falsy, every other value truthy. Lowering routes
- * through the SAME `coercion-engine.emitToBoolean` legacy uses (`__any_
- * unbox_bool` on the gc `$AnyValue` carrier / `__is_truthy` on the host
- * externref carrier) via `IrDynamicLowering.emitToBoolean` — one ToBoolean
- * engine (June-audit D4), byte-parity with legacy. The known-literal
- * `tag.test`+`unbox` fast path is reserved for producers that statically
- * know the partition; general truthiness is this node.
- */
-export interface IrInstrDynTruthy extends IrInstrBase {
-  readonly kind: "dyn.truthy";
-  readonly value: IrValueId;
-}
-
-/**
- * `dyn.to_number{value}` — `ToNumber(value)` (§7.1.4) on a boxed-any carrier,
- * result `f64` (#2949 S5.3). The single-operand ToNumber primitive that the
- * numeric-abstract relational lowering (`< > <= >=`) uses: from-ast converts a
- * dynamic relational operand to `f64` with this node, then feeds the existing
- * `f64.lt`/`gt`/`le`/`ge` compare path (a concrete numeric operand is used
- * as-is — no node).
- *
- * Lowering routes to the CANONICAL per-backend ToNumber engine via
- * `IrDynamicLowering.emitToNumber` — one ToNumber policy (June-audit D4):
- *   - gc/fast/standalone: `__any_to_f64` (the SAME boxed-any→f64 helper legacy's
- *     `__any_lt`/`__any_gt`/… + the arithmetic helpers use — null→0,
- *     undefined→NaN, boolean→0/1, number→value).
- *   - host: `__unbox_number` (`Number(v)`, §7.1.4 — the canonical host ToNumber
- *     `coercion-engine.emitToNumber` emits for the externref carrier).
- *
- * SCOPE — numeric-abstract only. Legacy `any < any` is a FULL Abstract
- * Relational Comparison (§7.2.11) that is mode-split three ways (host
- * `__host_compare`; standalone a runtime both-strings-lexicographic-else-numeric
- * branch; fast numeric-hint) — NOT a bare ToNumber. This node deliberately
- * implements only the numeric arm; string×string lexicographic relational is
- * DEFERRED. A boxed-string operand ToNumbers (host: `Number("5")=5`; gc:
- * `__any_to_f64` reads the box's f64 slot, matching legacy `__any_lt`), which is
- * spec-correct ONLY when the OTHER operand is a number (ARC never takes the
- * both-strings branch) — hence the S5.P producer admits a dynamic relational
- * operand ONLY against a numeric literal/concrete.
- */
-export interface IrInstrDynToNumber extends IrInstrBase {
-  readonly kind: "dyn.to_number";
-  readonly value: IrValueId;
-}
-
-/**
- * `dyn.eq{lhs, rhs, loose, negate}` — strict/loose equality (§7.2.15 /
- * §7.2.16) between two boxed-any carriers, result `i32` (0/1) (#2949 S5.2).
- *
- * BOTH operands MUST be `dynamic`: the producer boxes any concrete operand
- * into the carrier first (via `box{toType: dynamic}`), leaving the dyn side
- * as-is, so this node always sees two carriers — exactly the `(ref null
- * $AnyValue, ref null $AnyValue)` shape the canonical equality helpers take.
- * Lowering routes through the SAME `__any_strict_eq` (`===`/`!==`, `loose:
- * false`) / `__any_eq` (`==`/`!=`, `loose: true`) helpers legacy's
- * `compileAnyBinaryDispatch` uses — one equality engine, byte-parity with
- * legacy, and the tag-5 field-4 classifier (incl. `NaN === NaN → false` via
- * the helper's `f64.eq`) stays in the helper body, never re-implemented
- * (June-audit D4). `negate` appends `i32.eqz` for the `!==`/`!=` form (the
- * helper always computes the positive `===`/`==`). The payload-less
- * `dyn === null` / `dyn === undefined` STRICT cases are NOT this node — the
- * producer lowers those via the cheaper exact `tag.test{Null|Undefined}`.
- */
-export interface IrInstrDynEq extends IrInstrBase {
-  readonly kind: "dyn.eq";
-  readonly lhs: IrValueId;
-  readonly rhs: IrValueId;
-  /** `true` = loose `==`/`!=` (`__any_eq`); `false` = strict `===`/`!==` (`__any_strict_eq`). */
-  readonly loose: boolean;
-  /** `true` = `!==`/`!=` — append `i32.eqz` to the helper's positive result. */
-  readonly negate: boolean;
-}
-
-/**
- * `dyn.member_get{recv, key}` — a dynamic member read `recv[key]` / `recv.name`
- * on a boxed-any receiver, result `dynamic` (#3053 U1 / #2949 S5.4).
- *
- * BOTH operands are `dynamic` carriers: the producer boxes the receiver (an
- * `any`-typed value already IS the carrier) and the key (a property-name string
- * for `.name`, or a boxed index for `[i]`) into the carrier first, so this node
- * always sees the `(carrier, carrier) -> carrier` shape the unified reader
- * primitive `__dyn_member_get(recv, key)` (#3053 U0) takes and returns.
- *
- * Lowering routes through `IrDynamicLowering.emitMemberGet` (named) /
- * `emitElementGet` (indexed) — both emit a bare `[call __dyn_member_get]` and
- * flip the `ctx.usesDynMemberGet` latch that makes the finalize
- * `ensureDynMemberGet` pass build the helper. The helper closes the
- * externref↔carrier round-trip INSIDE its own frame (U0), so the result is the
- * identity-preserving, tag-honest carrier (object→tag-6, string→tag-5,
- * number→tag-3, …) with NO externref↔$AnyValue impedance at the IR boundary —
- * the S5.4 carrier-impedance blocker is dissolved because the helper takes and
- * returns the carrier directly. `key` is carried dynamic so the helper's own
- * `__any_to_extern(key)` performs `ToPropertyKey` (string as-is, number →
- * decimal) inside its frame.
- *
- * MECHANISM ONLY in U1: the IR selector's move-only scan still REJECTS a dyn
- * receiver in a member read (`select.ts` `dynamicUsesAreMoveOnly`), so no
- * from-ast producer reaches this node in a claimed function until S5.P (U2)
- * opens the scan. The node + lowering are wired but unreached — byte-inert.
- */
-export interface IrInstrDynMemberGet extends IrInstrBase {
-  readonly kind: "dyn.member_get";
-  /** The receiver carrier (`dynamic`). */
-  readonly recv: IrValueId;
-  /** The property key carrier (`dynamic`): a boxed string name or boxed index. */
-  readonly key: IrValueId;
-}
-
-/**
- * `dyn.member_set{recv, key, value}` — a strict, statement-position dynamic
- * member write `recv[key] = value` over the canonical boxed-any carrier
- * (#3795). All three operands are already dynamic carriers; lowering preserves
- * their source evaluation order and delegates the actual `[[Set]]` to the
- * existing strict object-runtime setter. This instruction is deliberately
- * void: assignment-as-value remains outside the IR slice.
- */
-export interface IrInstrDynMemberSet extends IrInstrBase {
-  readonly kind: "dyn.member_set";
-  /** The receiver carrier (`dynamic`). */
-  readonly recv: IrValueId;
-  /** The property key carrier (`dynamic`). */
-  readonly key: IrValueId;
-  /** The assigned value carrier (`dynamic`). */
-  readonly value: IrValueId;
+  /** Domain partition under test — REQUIRED for dynamic operands (#2949). */
+  readonly tagId?: TagId;
 }
 
 // ---------------------------------------------------------------------------
@@ -1317,29 +1238,6 @@ export type IrStringLengthProvider =
       readonly fieldIndex: number;
     };
 
-/** Return one UTF-16 code unit as a string, or the empty string out of bounds. */
-export interface IrInstrStringCharAt extends IrInstrBase {
-  readonly kind: "string.char_at";
-  readonly value: IrValueId;
-  /** Index after ToIntegerOrInfinity-compatible numeric normalization. */
-  readonly index: IrValueId;
-  readonly inputEncoding: IrStringEncoding;
-  readonly encodingEvidence: IrStringEncoding;
-  /** Semantic callable intent bound to the exact backend provider during preparation. */
-  readonly provider?: IrFuncRef;
-}
-
-/** Return one UTF-16 code unit as f64, or NaN out of bounds. */
-export interface IrInstrStringCharCodeAt extends IrInstrBase {
-  readonly kind: "string.char_code_at";
-  readonly value: IrValueId;
-  /** Index after ToIntegerOrInfinity-compatible numeric normalization. */
-  readonly index: IrValueId;
-  readonly inputEncoding: IrStringEncoding;
-  /** Semantic callable intent bound to the exact backend provider during preparation. */
-  readonly provider?: IrFuncRef;
-}
-
 // ---------------------------------------------------------------------------
 // Object operations (#1169b — IR Phase 4 Slice 2)
 // ---------------------------------------------------------------------------
@@ -1414,6 +1312,8 @@ export interface IrInstrClosureNew extends IrInstrBase {
   readonly captures: readonly IrValueId[];
   /** Checker-certified immediate one-shot host-boundary consumption. */
   readonly hostOneShot?: boolean;
+  /** Exact reusable DOM callback authority. */
+  readonly domCallbackAuthority?: IrDomCallbackAuthority;
 }
 
 /**
@@ -1891,250 +1791,6 @@ export interface IrInstrCoerceToExternref extends IrInstrBase {
 // Generator / async ops (#1169f — IR Phase 4 Slice 7)
 // ---------------------------------------------------------------------------
 
-/**
- * Slice 7a (#1169f) — push a yielded value onto the generator function's
- * `__gen_buffer` Wasm-local. The lowerer dispatches on the value's IrType:
- *   - `irVal({ kind: "f64" })` → `__gen_push_f64(buffer, value)`
- *   - (later slices: `i32` → `__gen_push_i32`; `externref` → `__gen_push_ref`)
- *
- * Result is void (`result: null`, `resultType: null`). Only valid inside
- * functions whose `funcKind === "generator"`. The lowerer reads the
- * `IrFunction.generatorBufferSlot` for the `local.get` of the buffer.
- *
- * Lowering pattern (slice 7a — f64 only):
- *   local.get $__gen_buffer
- *   <emit value>
- *   call $__gen_push_f64
- */
-export interface IrInstrGenPush extends IrInstrBase {
-  readonly kind: "gen.push";
-  readonly value: IrValueId;
-  /**
-   * #2951 — the exact typed `__gen_push_*` runtime callable, attached by
-   * `attachIrGeneratorSupport` once value types are final. Prepared-component
-   * sealing proves this same Program ABI callable that lowering consumes.
-   */
-  readonly provider?: IrFuncRef;
-}
-
-/**
- * Slice 6 part 3 (#1182) — opaque iterator handle for the host iterator
- * protocol. Calls `__iterator(iterable)` to obtain the iterator object.
- *
- * Lowering:
- *   <emit iterable>           ;; pushes externref
- *   call $__iterator           ;; -> externref (the iterator)
- *
- * Result type: `irVal({ kind: "externref" })`.
- */
-export interface IrInstrIterNew extends IrInstrBase {
-  readonly kind: "iter.new";
-  readonly iterable: IrValueId;
-  /** True if this is a `for await` loop — calls `__async_iterator` instead. False for slice 6. */
-  readonly async: boolean;
-}
-
-/**
- * Call iter.next() and return the result object handle (externref).
- * The result is later split into `done` / `value` via separate instrs
- * so the optimizer can decide whether to evaluate `value` (skip if done).
- *
- * Lowering: <emit iter>; call $__iterator_next  -> externref
- *
- * Result type: `irVal({ kind: "externref" })`. Side-effecting (advances
- * the iterator) — DCE must not eliminate it.
- */
-export interface IrInstrIterNext extends IrInstrBase {
-  readonly kind: "iter.next";
-  readonly iter: IrValueId;
-}
-
-/**
- * Test whether an iterator-result object's `.done` is true.
- *
- * Lowering: <emit resultObj>; call $__iterator_done -> i32
- *
- * Result type: `irVal({ kind: "i32" })`. The operand field is named
- * `resultObj` (not `result`) to avoid colliding with the SSA-def
- * `result` field inherited from `IrInstrBase`.
- */
-export interface IrInstrIterDone extends IrInstrBase {
-  readonly kind: "iter.done";
-  readonly resultObj: IrValueId;
-}
-
-/**
- * Read the `.value` slot of an iterator-result object.
- *
- * Lowering: <emit resultObj>; call $__iterator_value -> externref
- *
- * Result type: `irVal({ kind: "externref" })`. See `IrInstrIterDone`
- * for the `resultObj` naming rationale.
- */
-export interface IrInstrIterValue extends IrInstrBase {
-  readonly kind: "iter.value";
-  readonly resultObj: IrValueId;
-}
-
-/**
- * Call `iter.return()` if defined. Used by the iterator-close try/finally
- * so abrupt exits notify the iterator (slice 6 step E, deferred to a
- * try/finally-aware follow-up).
- *
- * Lowering: <emit iter>; call $__iterator_return
- *
- * Result type: void (`result: null`). Side-effecting.
- */
-export interface IrInstrIterReturn extends IrInstrBase {
-  readonly kind: "iter.return";
-  readonly iter: IrValueId;
-}
-
-/**
- * Statement-level `for (const <bind> of <iterable>) <body>` loop using
- * the host iterator protocol. The lowerer emits:
- *
- *   <emit iterable>
- *   call $__iterator
- *   local.set <iterSlot>
- *   block
- *     loop
- *       local.get <iterSlot>
- *       call $__iterator_next
- *       local.tee <resultSlot>
- *       call $__iterator_done
- *       br_if 1                  ;; exit loop on done=true
- *       local.get <resultSlot>
- *       call $__iterator_value
- *       local.set <elementSlot>
- *       <body instrs>
- *       br 0                     ;; continue
- *     end
- *   end
- *   local.get <iterSlot>
- *   call $__iterator_return       ;; normal-exit close
- *
- * The iterable must be an IR value of externref type (the from-ast
- * layer inserts a `coerce.to_externref` if the source value isn't
- * already externref). Slot indices are pre-allocated via
- * `IrFunctionBuilder.declareSlot`.
- *
- * Result: void (`result: null`).
- */
-export interface IrInstrForOfIter extends IrInstrBase {
-  readonly kind: "forof.iter";
-  /** SSA value of the iterable as externref (caller pre-coerces). */
-  readonly iterable: IrValueId;
-  /** Pre-allocated externref slot for the iterator handle. */
-  readonly iterSlot: number;
-  /** Pre-allocated externref slot for the iterator-result object. */
-  readonly resultSlot: number;
-  /** Pre-allocated externref slot for the current element value. */
-  readonly elementSlot: number;
-  /** Body instrs emitted inside the loop. */
-  readonly body: readonly IrInstr[];
-  /** #2952 slice 2 — loop identity for `br.label` (see IrInstrWhileLoop). */
-  readonly loopLabel?: IrLabelId;
-}
-
-/**
- * Slice 7a (#1169f) — generator function epilogue. Pushes the buffer + the
- * pending-throw cell (always `ref.null.extern` in slice 7a) and calls
- * `__create_generator(buffer, pendingThrow)` to produce the Generator-like
- * object the function returns.
- *
- * Lowering pattern (slice 7a — synchronous-throw subset):
- *   local.get $__gen_buffer
- *   ref.null.extern                ;; pendingThrow always null in 7a
- *   call $__create_generator
- *   ;; result: externref Generator object — left on stack for the
- *   ;; surrounding `return` terminator.
- *
- * Slice 7a does NOT yet emit the try/catch wrapping that legacy uses for
- * deferred-throw semantics (#928). Throws inside the body propagate
- * immediately (matches V8 generators on the FIRST `.next()` call but
- * differs from spec on subsequent calls). A future slice (7-throw) will
- * add the wrapping by carrying the preceding body instrs in this instr,
- * similar to `forof.vec.body`.
- *
- * Result type: `irVal({ kind: "externref" })` — the Generator object.
- * The function's terminator should be `return [result]`.
- */
-export interface IrInstrGenEpilogue extends IrInstrBase {
-  readonly kind: "gen.epilogue";
-  /** #2951 — exact `__create_generator` runtime callable (see `IrInstrGenPush.provider`). */
-  readonly provider?: IrFuncRef;
-}
-
-/**
- * Slice 7b (#1169f) — `yield* <iterable>` delegation. Drains the inner
- * iterable into the outer generator's `__gen_buffer` by calling the
- * `__gen_yield_star(buf, iterable)` host import (signature
- * `(externref, externref) → void`; the host iterates the inner via
- * `Symbol.iterator` and pushes each value).
- *
- * The `inner` operand MUST already be coerced to externref by the
- * caller (`lowerYield` in `from-ast.ts` inserts a `coerce.to_externref`
- * upstream). The lowerer just emits the buffer-load, value, and call.
- *
- * Result is void. Only valid inside `funcKind === "generator"`. The
- * lowerer reads `IrFunction.generatorBufferSlot` for the buffer
- * `local.get`.
- *
- * Lowering pattern:
- *   local.get $__gen_buffer
- *   <emit inner>          ;; already externref
- *   call $__gen_yield_star
- *
- * Spec divergence note: ECMA-262 §27.5.3.7 says `yield*` evaluates to
- * the inner iterator's `return` value (the `IteratorResult.value` when
- * `done` becomes true). Under the eager-buffer model this is discarded;
- * `yield*` evaluates to `undefined`. Matches the legacy compiler's
- * behaviour (`misc.ts:177-202`).
- */
-export interface IrInstrGenYieldStar extends IrInstrBase {
-  readonly kind: "gen.yieldStar";
-  readonly inner: IrValueId;
-  /** #2951 — exact `__gen_yield_star` runtime callable (see `IrInstrGenPush.provider`). */
-  readonly provider?: IrFuncRef;
-}
-
-/**
- * #2951 — a generator's `return <value>` stash. Mirrors legacy
- * `compileReturnStatement` (`codegen/statements/control-flow.ts:144-170`):
- * the return value belongs ONLY to the terminal `{value, done:true}`
- * IteratorResult — it must NOT enter the eager yield buffer (where
- * spread / for-of / Array.from would surface it as a `done:false`
- * element). The value is stashed on the buffer via
- * `__gen_set_return(buffer, value)` (signature `(externref, externref)
- * → void`), and the host drain emits it once with `done:true`.
- *
- * Same shape as `gen.push` (statement-level, `result: null`,
- * `resultType: null`, one `value` operand). The lowerer BOXES the value
- * to externref before the call — `f64` → `__box_number`, `i32` →
- * `f64.convert_i32_s` then box, `ref`/`ref_null` → `extern.convert_any`,
- * `externref` → pass through. Only valid inside `funcKind ===
- * "generator"`; the lowerer reads `IrFunction.generatorBufferSlot` for
- * the buffer `local.get`.
- *
- * Lowering pattern:
- *   local.get $__gen_buffer
- *   <emit value; box to externref>
- *   call $__gen_set_return
- */
-export interface IrInstrGenSetReturn extends IrInstrBase {
-  readonly kind: "gen.setReturn";
-  readonly value: IrValueId;
-  /** #2951 — exact `__gen_set_return` runtime callable (see `IrInstrGenPush.provider`). */
-  readonly provider?: IrFuncRef;
-  /**
-   * #2951 — exact `__box_number` runtime callable, attached only when the
-   * stashed value is `f64`/`i32` and therefore needs boxing before the
-   * `(externref, externref)` call. Absent for already-externref values.
-   */
-  readonly boxProvider?: IrFuncRef;
-}
-
 // ---------------------------------------------------------------------------
 // Extern class ops (#1169i — IR Phase 4 Slice 10)
 // ---------------------------------------------------------------------------
@@ -2153,177 +1809,6 @@ export interface IrInstrGenSetReturn extends IrInstrBase {
 // `extern.new` / `extern.regex` / method calls is tagged as
 // `IrType.extern { className }` so subsequent receiver lookups can
 // dispatch the same way without a TS-checker round trip.
-
-/**
- * Slice 10 (#1169i) — `new ExternClass(arg1, arg2, ...)` where
- * `ExternClass` is a host-provided builtin (RegExp, Uint8Array, …). The
- * Wasm-level result is opaque externref; downstream code accesses it
- * via `extern.call` / `extern.prop`.
- *
- * Lowering:
- *   <emit each arg>
- *   call $<className>_new
- *
- * Result type: `{ kind: "extern", className }`.
- */
-export interface IrInstrExternNew extends IrInstrBase {
-  readonly kind: "extern.new";
-  /** Semantic result brand used by later member resolution. */
-  readonly className: string;
-  /** Exact host registry prefix used only for provider selection. */
-  readonly importPrefix: string;
-  readonly args: readonly IrValueId[];
-  /** Exact host import chosen during final provider preparation. */
-  readonly provider?: IrFuncRef;
-}
-
-/**
- * Slice 10 (#1169i) — method call on an extern-class value. `receiver`
- * is the externref handle; `method` names a method registered on the
- * class via `ctx.externClasses`.
- *
- * Lowering:
- *   <emit receiver>
- *   <emit each arg>
- *   call $<className>_<method>
- *
- * Result type: matches the registered method's first result. Void
- * methods carry `result: null` and `resultType: null`.
- */
-export interface IrInstrExternCall extends IrInstrBase {
-  readonly kind: "extern.call";
-  readonly className: string;
-  readonly method: string;
-  readonly receiver: IrValueId;
-  readonly args: readonly IrValueId[];
-  /** Exact host import chosen during final provider preparation. */
-  readonly provider?: IrFuncRef;
-}
-
-/**
- * Slice 10 (#1169i) — property read on an extern-class value.
- *
- * Lowering:
- *   <emit receiver>
- *   call $<className>_get_<property>
- *
- * Result type: the property's registered ValType, wrapped as `IrType.val`.
- */
-export interface IrInstrExternProp extends IrInstrBase {
-  readonly kind: "extern.prop";
-  readonly className: string;
-  readonly property: string;
-  readonly receiver: IrValueId;
-  /** Exact host import chosen during final provider preparation. */
-  readonly provider?: IrFuncRef;
-}
-
-/**
- * Slice 10 (#1169i) — property write on an extern-class value (for
- * non-readonly props).
- *
- * Lowering:
- *   <emit receiver>
- *   <emit value>
- *   call $<className>_set_<property>
- */
-export interface IrInstrExternPropSet extends IrInstrBase {
-  readonly kind: "extern.propSet";
-  readonly className: string;
-  readonly property: string;
-  readonly receiver: IrValueId;
-  readonly value: IrValueId;
-  /** Exact host import chosen during final provider preparation. */
-  readonly provider?: IrFuncRef;
-}
-
-/**
- * Slice 10 (#1169i) — RegExp literal `/pattern/flags`. Lowers to
- * `RegExp_new(pattern, flags)`. The pattern + flags are registered as
- * string-literal globals (the legacy `collectStringLiterals` pass
- * already collects RegExp pattern/flags as string literals — see
- * `src/codegen/index.ts:3274-3278` — so by the time the IR emits this
- * instr the corresponding string globals exist).
- *
- * Result type: `{ kind: "extern", className: "RegExp" }`.
- */
-export interface IrInstrRegExpLiteral extends IrInstrBase {
-  readonly kind: "extern.regex";
-  readonly pattern: string;
-  readonly flags: string;
-}
-
-// ---------------------------------------------------------------------------
-// String for-of (#1183 — IR Phase 4 Slice 6 part 4)
-// ---------------------------------------------------------------------------
-//
-// Slice 6 part 4 adds the string fast path. When `iterableType.kind ===
-// "string"` and the compiler is in native-strings mode, the for-of loop
-// iterates code units via `__str_charAt(str, i)` — a counter loop with
-// a `(ref $AnyString, i32) -> (ref $AnyString)` host helper. In host-
-// strings mode the dispatch falls through to `forof.iter` (#1182).
-//
-// `forof.string` is a STATEMENT-level declarative instr that mirrors
-// `forof.vec` and `forof.iter`. Carries the string SSA value, the four
-// slot indices (counter / length / str / element), and the body buffer.
-
-/**
- * Statement-level `for (const c of <string>) <body>` loop using the
- * native-strings counter pattern. Emitted only when the resolver
- * reports `nativeStrings(): true` — host-strings mode falls through
- * to `forof.iter` upstream in `lowerForOfStatement`.
- *
- * The lowerer emits:
- *   <emit str>
- *   local.set <strSlot>
- *   local.get <strSlot>
- *   struct.get $AnyString $len
- *   local.set <lengthSlot>
- *   i32.const 0
- *   local.set <counterSlot>
- *   block
- *     loop
- *       local.get <counterSlot>
- *       local.get <lengthSlot>
- *       i32.ge_s
- *       br_if 1
- *       local.get <strSlot>
- *       local.get <counterSlot>
- *       call $__str_charAt
- *       local.set <elementSlot>
- *       <body instrs>
- *       local.get <counterSlot>
- *       i32.const 1
- *       i32.add
- *       local.set <counterSlot>
- *       br 0
- *     end
- *   end
- *
- * Slot types (set by from-ast):
- *   counterSlot — i32
- *   lengthSlot  — i32
- *   strSlot     — `(ref $AnyString)` (resolver.resolveString())
- *   elementSlot — `(ref $AnyString)` — each iteration produces a
- *                 single-char string
- *
- * Result: void (`result: null`).
- */
-export interface IrInstrForOfString extends IrInstrBase {
-  readonly kind: "forof.string";
-  /** SSA value of the string (IrType.string). */
-  readonly str: IrValueId;
-  readonly counterSlot: number;
-  readonly lengthSlot: number;
-  readonly strSlot: number;
-  readonly elementSlot: number;
-  /** Body instrs emitted inside the loop. */
-  readonly body: readonly IrInstr[];
-  /** Code-point extraction intent bound to the exact native provider during preparation. */
-  readonly provider?: IrFuncRef;
-  /** #2952 slice 2 — loop identity for `br.label` (see IrInstrWhileLoop). */
-  readonly loopLabel?: IrLabelId;
-}
 
 // ---------------------------------------------------------------------------
 // Exception handling — throw / try / catch / finally (#1169h — IR Slice 9)
@@ -2674,6 +2159,47 @@ export interface IrInstrSwitch extends IrInstrBase {
   readonly breakLabel: IrLabelId;
 }
 
+// ---------------------------------------------------------------------------
+// JavaScript dialect (#3954 phase 2)
+// ---------------------------------------------------------------------------
+//
+// The ECMAScript-specific instruction kinds live in `./dialect/js.ts`. They are
+// imported here for the `IrInstr` union and re-exported so every existing
+// importer of `nodes.js` is unaffected. This is the ONE sanctioned core->dialect
+// edge; `scripts/check-ir-dialect.mjs` fails the build on any other.
+//
+// Adding a new ECMAScript-specific kind? Declare it in the dialect, not here.
+
+export type {
+  IrInstrAwait,
+  IrInstrAsyncReturn,
+  IrInstrAsyncThrow,
+  IrInstrDynTruthy,
+  IrInstrDynToNumber,
+  IrInstrDynEq,
+  IrInstrDynMemberGet,
+  IrInstrDynMemberSet,
+  IrInstrGenPush,
+  IrInstrIterNew,
+  IrInstrIterNext,
+  IrInstrIterDone,
+  IrInstrIterValue,
+  IrInstrIterReturn,
+  IrInstrForOfIter,
+  IrInstrGenEpilogue,
+  IrInstrGenYieldStar,
+  IrInstrGenSetReturn,
+  IrInstrExternNew,
+  IrInstrExternCall,
+  IrInstrExternProp,
+  IrInstrExternPropSet,
+  IrInstrRegExpLiteral,
+  IrInstrStringCharAt,
+  IrInstrStringCharCodeAt,
+  IrInstrStringRepeat,
+  IrInstrForOfString,
+} from "./dialect/js.js";
+
 export type IrInstr =
   | IrInstrConst
   | IrInstrCall
@@ -2696,6 +2222,7 @@ export type IrInstr =
   | IrInstrDynMemberSet
   | IrInstrStringConst
   | IrInstrStringConcat
+  | IrInstrStringRepeat
   | IrInstrStringEq
   | IrInstrStringLen
   | IrInstrStringCharAt
@@ -2875,6 +2402,7 @@ export interface IrFunction extends IrFunctionIdentity {
     readonly signature: IrClosureSignature;
     readonly captureFieldTypes: readonly IrType[];
     readonly hostOneShot?: boolean;
+    readonly domCallbackAuthority?: IrDomCallbackAuthority;
   };
   /**
    * Slice 6 (#1169e): Wasm-local slots used for cross-iteration mutable
@@ -2930,10 +2458,35 @@ export interface IrFunction extends IrFunctionIdentity {
 // `integration.ts` accumulates the per-function results into an `IrModule`
 // container between the build phase and the lower phase.
 //
-// The container holds only functions for now. Globals/types/imports remain
-// resolved lazily via the symbolic-ref mechanism.
+// The container holds functions plus the OPTIONAL declared-type tables #4605
+// added. Globals/types/imports are still *resolved* lazily via the symbolic-ref
+// mechanism at lowering; the tables are a declaration record, not a resolver.
+// The rules that read them, and the key function they are keyed by, live in
+// `declared-types.ts` — only the shapes are here, so that module's import edge
+// into `nodes.ts` has no back edge.
 
-export interface IrModule {
+/**
+ * (#4605) The declared shape of one callable, as the module DECLARES it —
+ * independent of any particular call site. `result === null` means "no single
+ * declarable result carrier" (void, or a call-site-dependent one such as an
+ * async body's Promise-vs-awaited split — see `declarableResultType`).
+ */
+export interface IrDeclaredSignature {
+  readonly params: readonly IrType[];
+  readonly result: IrType | null;
+}
+
+/**
+ * (#4605) Module-level declaration tables, keyed by `irBindingKey`. Both are
+ * OPTIONAL and both may be partial: a missing entry means "no declaration in
+ * scope", which consumers must treat as a conservative skip.
+ */
+export interface IrModuleDeclarations {
+  readonly declaredSignatures?: ReadonlyMap<string, IrDeclaredSignature>;
+  readonly declaredGlobals?: ReadonlyMap<string, IrType>;
+}
+
+export interface IrModule extends IrModuleDeclarations {
   readonly functions: readonly IrFunction[];
 }
 
@@ -3025,6 +2578,7 @@ export function forEachNestedBuffer(instr: IrInstr, fn: (buffer: readonly IrInst
     case "dyn.member_set":
     case "string.const":
     case "string.concat":
+    case "string.repeat":
     case "string.eq":
     case "string.len":
     case "string.char_at":
@@ -3191,6 +2745,7 @@ export function mapNestedBuffers(
     case "dyn.member_set":
     case "string.const":
     case "string.concat":
+    case "string.repeat":
     case "string.eq":
     case "string.len":
     case "string.char_at":
@@ -3295,6 +2850,8 @@ export function directUses(instr: IrInstr): readonly IrValueId[] {
     case "string.concat":
     case "string.eq":
       return [instr.lhs, instr.rhs];
+    case "string.repeat":
+      return [instr.value, instr.count];
     case "dyn.member_get":
       return [instr.recv, instr.key];
     case "dyn.member_set":

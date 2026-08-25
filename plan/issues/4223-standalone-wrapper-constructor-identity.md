@@ -3,9 +3,9 @@ id: 4223
 title: "Standalone: `Object(5).constructor === Number` is false — the primitive-wrapper constructors have no carrier and wrappers resolve no `.constructor`"
 status: done
 completed: 2026-08-08
-sprint: current
+sprint: 78
 created: 2026-08-08
-updated: 2026-08-08
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

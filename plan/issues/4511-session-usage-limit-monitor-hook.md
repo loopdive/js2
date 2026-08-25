@@ -3,9 +3,9 @@ id: 4511
 title: "Session-start usage-limit monitor: per-minute window check, suspend sentinel at ≥99%, agent-spawn deny hook"
 status: done
 completed: 2026-08-16
-sprint: current
+sprint: 78
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-18
 assignee: ttraenkler/fable-lead
 priority: high
 horizon: s

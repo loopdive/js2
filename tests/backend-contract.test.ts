@@ -108,7 +108,7 @@ describe("five-part contract surface (#3029-S1)", () => {
 
 describe("IR interchange contract surface (#3030-T1)", () => {
   it("exports the frozen format version", () => {
-    expect(IR_FORMAT_VERSION).toBe("5.1");
+    expect(IR_FORMAT_VERSION).toBe("5.2");
     expect(IR_FORMAT_VERSION).toMatch(/^\d+\.\d+$/);
   });
 
@@ -120,6 +120,15 @@ describe("IR interchange contract surface (#3030-T1)", () => {
     const kinds: string[] = schema.$defs.instrKind.enum;
     // D4: raw.wasm is never serialized.
     expect(kinds).not.toContain("raw.wasm");
+    // v5.2 is additive: string.repeat is appended, never inserted into the
+    // frozen predecessor ordering.
+    expect(kinds.slice(-2)).toEqual(["async.throw", "string.repeat"]);
+    expect(kinds.filter((kind) => kind === "string.repeat")).toHaveLength(1);
+    const repeatRule = schema.$defs.instr.allOf.find(
+      (rule: { if?: { properties?: { kind?: { const?: string } } } }) =>
+        rule.if?.properties?.kind?.const === "string.repeat",
+    );
+    expect(repeatRule.then.required).toEqual(["value", "count", "encodingEvidence", "provider", "alloc"]);
     // Spot-check the dynamic-boundary trio (D3.4 — the AOT payload).
     expect(kinds).toContain("box");
     expect(kinds).toContain("unbox");

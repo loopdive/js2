@@ -38,6 +38,9 @@ import { mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
 import { addFuncType } from "../src/codegen/registry/types.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
 import { JsTag } from "../src/ir/js-tag.js";
+// #3954 phase 1 — `IrType`'s dynamic leaf carries an opaque TagId, so a
+// refinement is named through the JS tag domain, not the enum.
+import { JS_TAG_IDS } from "../src/ir/js-tag-domain.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { repairStructTypeMismatches } from "../src/codegen/fixups.js";
 import { peepholeOptimize } from "../src/codegen/peephole.js";
@@ -189,8 +192,8 @@ function eqNum(name: string, opts: { loose: boolean; negate: boolean }): IrFunct
   const a = b.addParam("a", F64);
   const c = b.addParam("c", F64);
   b.openBlock();
-  const da = b.emitBox(a, irDynamic(JsTag.NumberF64));
-  const dc = b.emitBox(c, irDynamic(JsTag.NumberF64));
+  const da = b.emitBox(a, irDynamic(JS_TAG_IDS.NumberF64));
+  const dc = b.emitBox(c, irDynamic(JS_TAG_IDS.NumberF64));
   const r = b.emitDynEq(da, dc, opts);
   b.terminate({ kind: "return", values: [r] });
   return b.finish();
@@ -206,7 +209,7 @@ function eqI32F64(name: string): IrFunction {
   const c = b.addParam("c", F64);
   b.openBlock();
   const da = b.emitBox(a, DYN); // unrefined i32 → NUMBER box
-  const dc = b.emitBox(c, irDynamic(JsTag.NumberF64));
+  const dc = b.emitBox(c, irDynamic(JS_TAG_IDS.NumberF64));
   const r = b.emitDynEq(da, dc, { loose: false, negate: false });
   b.terminate({ kind: "return", values: [r] });
   return b.finish();
@@ -218,8 +221,8 @@ function eqNumBool(name: string): IrFunction {
   const a = b.addParam("a", F64);
   const c = b.addParam("c", I32);
   b.openBlock();
-  const da = b.emitBox(a, irDynamic(JsTag.NumberF64));
-  const dc = b.emitBox(c, irDynamic(JsTag.Boolean));
+  const da = b.emitBox(a, irDynamic(JS_TAG_IDS.NumberF64));
+  const dc = b.emitBox(c, irDynamic(JS_TAG_IDS.Boolean));
   const r = b.emitDynEq(da, dc, { loose: false, negate: false });
   b.terminate({ kind: "return", values: [r] });
   return b.finish();

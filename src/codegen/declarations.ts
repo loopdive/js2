@@ -26,9 +26,8 @@ import {
 } from "../ir/class-accessor-safety.js";
 import { MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
 import { collectShapes } from "../shape-inference.js";
-// (#3623) Total classification of top-level ExpressionStatements, so the
-// allow-list's fall-through leaves evidence instead of silently dropping an
-// observable statement (the #1268/#2671/#2992/#3366/#3468/#3592/#3615 class).
+// (#3623) Total top-level ExpressionStatement classification: the allow-list's fall-through
+// leaves evidence instead of silently dropping the #1268/#2671/#2992/#3366/#3468/#3592/#3615 class.
 import {
   collectOrRecordUnnamedExpressionStatement,
   createsGlobalObjectBinding,
@@ -36,9 +35,13 @@ import {
 } from "./module-init-collection.js";
 import { emitUndefinedExtern, ensureAnyHelpers, ensureWrapperTypes } from "./any-helpers.js";
 import { emitScriptGlobalFunctionBindings } from "./global-function-bindings.js"; // (#4394) §9.1.1.4.18
+import { emitScriptGlobalVarBindings } from "./global-var-bindings.js"; // (#4491 T4) §9.1.1.4.17
+import { isHoistedTopLevelVarName } from "./top-level-hoisted-var-names.js"; // (#4491 T3) pre-declaration writes
+import { isAssignmentOverTopLevelFunctionName } from "./top-level-assigned-function-names.js"; // (#4491 T12)
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
+import { routeTopLevelClassBodies } from "./prepared-class-body-cutover.js";
 import {
   collectBindingPatternNames,
   collectReferencedIdentifiers,
@@ -46,12 +49,14 @@ import {
   functionBodyReferencesThis,
 } from "./closures.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
-import { addFunctionOwnLocals } from "./binding-info.js"; // (#2103) memoized own-locals oracle
+import { widenMixedUndefinedReturn } from "./mixed-return-widening.js"; // (#4641) `T | undefined` return slots
+import { concatCallYieldsDynamicCarrier } from "./array-concat-carrier.js"; // (#4655) concat result-slot carrier
+import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
-import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./function-body.js";
-import { _hasRuntimeComputedKey } from "./literals.js"; // (#3024) module-global externref routing for runtime-computed-key literals
-import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
+import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
+import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import {
   addArrayIteratorImports,
   addForInImports,
@@ -78,6 +83,11 @@ import {
   unwrapGeneratorYieldType,
 } from "./index.js";
 import { ensureNativePromiseBoundaryBridge, isStandalonePromiseActive } from "./async-scheduler.js";
+import {
+  ensureNativeDynamicBoundaryTag,
+  prepareStandaloneNativePromiseUndefinedBoundary,
+} from "./native-dynamic-boundary-tag.js";
+import { prepareStandaloneNativePromiseNumberBoundary } from "./native-promise-number-boundary.js";
 import { prepareAsyncCallableAbi } from "./async-ir-planning.js";
 import {
   ensureNativeStringBoundaryBridge,
@@ -116,10 +126,14 @@ import {
 } from "./program-abi-source-callable-planning.js";
 import { rebindWidenedArrayVecType } from "./declarations/array-rebind-element-widening.js";
 import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneous-scalar-var-widening.js";
+import { redeclarationWidenedModuleGlobalType } from "./declarations/redeclared-var-widening.js";
 import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
+import { emitModuleVarUndefinedSeeds } from "./declarations/module-var-undefined-seed.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { prepareModuleTdzGlobals, registerModuleGlobal } from "./module-global-registration.js";
 import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
+import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-object-slot.js";
+import { callTargetIsRedeclaredFunction } from "./duplicate-function-declaration.js"; // (#4653)
 import { emitRuntimeEvalAotCallableAdapter } from "./runtime-eval-callable.js";
 import { numericReturnsFlagEnabled } from "../derivation-flags.js";
 
@@ -137,6 +151,7 @@ export {
   collectGrowableObjectLiterals,
 } from "./declarations/object-shape-widening.js";
 export {
+  bindingAwareNumericCallEvidence,
   inferBindingAwareNumericReturnTypes,
   inferImplicitAnyParamType,
   inferNumericReturnTypes,
@@ -153,9 +168,8 @@ import { profileCount, profilePhase } from "../compile-profile.js";
 /**
  * Record source-level boundary classifications for a user-exported function
  * so the JS-host `wrapExports` can marshal native strings and TypedArray
- * params/returns across the JS↔Wasm boundary. The Wasm signature alone is ambiguous —
- * `(input: Uint8Array)` and `(input: number[])` lower to the same
- * `(ref null $Vec[f64])` — so we surface the TS-level distinction here.
+ * params/returns across the JS↔Wasm boundary. The Wasm signature alone is ambiguous:
+ * `Uint8Array` and `number[]` both lower to `(ref null $Vec[f64])`, so retain the TS distinction.
  *
  * No-op when every slot classifies as `"other"` so scalar-only modules
  * accumulate no metadata.
@@ -221,60 +235,7 @@ function ensureNativeDynamicBoundaryBridge(ctx: CodegenContext): void {
     }
   }
 
-  const name = "__dynamic_boundary_tag";
-  let funcIdx = ctx.funcMap.get(name);
-  if (funcIdx === undefined && ctx.anyValueTypeIdx >= 0) {
-    const anyTypeIdx = ctx.anyValueTypeIdx;
-    const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], name);
-    funcIdx = mintDefinedFunc(ctx);
-    pushDefinedFunc(ctx, funcIdx, {
-      name,
-      typeIdx,
-      locals: [
-        { name: "any", type: { kind: "anyref" } },
-        { name: "tag", type: { kind: "i32" } },
-      ],
-      body: [
-        { op: "local.get", index: 0 },
-        { op: "ref.is_null" },
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "i32" } },
-          then: [{ op: "i32.const", value: 1 }],
-          else: [
-            { op: "local.get", index: 0 },
-            { op: "any.convert_extern" },
-            { op: "local.tee", index: 1 },
-            { op: "ref.test", typeIdx: anyTypeIdx },
-            {
-              op: "if",
-              blockType: { kind: "val", type: { kind: "i32" } },
-              then: [
-                { op: "local.get", index: 1 },
-                { op: "ref.cast", typeIdx: anyTypeIdx },
-                { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
-                { op: "local.tee", index: 2 },
-                { op: "i32.const", value: 2 },
-                { op: "i32.lt_u" },
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: { kind: "i32" } },
-                  then: [{ op: "local.get", index: 2 }, { op: "i32.const", value: 1 }, { op: "i32.add" }],
-                  else: [{ op: "i32.const", value: 0 }],
-                },
-              ],
-              else: [{ op: "i32.const", value: 0 }],
-            },
-          ],
-        },
-      ],
-      exported: true,
-    });
-    ctx.funcMap.set(name, funcIdx);
-  }
-  if (funcIdx !== undefined && !ctx.mod.exports.some((entry) => entry.name === name)) {
-    ctx.mod.exports.push({ name, desc: { kind: "func", index: funcIdx } });
-  }
+  ensureNativeDynamicBoundaryTag(ctx);
 }
 
 function recordExportSignature(
@@ -344,7 +305,11 @@ function recordExportSignature(
   if (dynamicHit && ctx.targetProfile.semanticProviders === "native-first") {
     ensureNativeDynamicBoundaryBridge(ctx);
   }
-  if (promiseHit) ensureNativePromiseBoundaryBridge(ctx);
+  if (promiseHit) {
+    prepareStandaloneNativePromiseNumberBoundary(ctx);
+    prepareStandaloneNativePromiseUndefinedBoundary(ctx);
+    ensureNativePromiseBoundaryBridge(ctx);
+  }
 }
 
 // An unannotated binding-pattern parameter — `function f([x, y])` or
@@ -381,12 +346,161 @@ function restBindingOverridesToExternref(p: ts.ParameterDeclaration): boolean {
 
 const dynamicObjectParamsByFunction = new WeakMap<ts.FunctionDeclaration, ReadonlySet<string>>();
 
+// A call-site-inferred JavaScript parameter starts life as one nominal WasmGC
+// object shape. If the function assigns a different object-producing value to
+// that parameter, keeping the narrowed slot emits a guarded ref.cast and turns
+// a valid value into null when the shapes differ. ReactDOM's createRequest is
+// the large real-world instance: its render-state parameter is replaced by a
+// pending-segment object before the value is used. Keep this rule deliberately
+// narrow: only direct assignments to a parameter in this function body whose
+// RHS is proven to produce a reference. Named/native reference carriers retain
+// their ABI; scalar carriers widen only for this mixed-representation case.
+const reassignedReferenceParamsByFunction = new WeakMap<ts.FunctionDeclaration, ReadonlySet<string>>();
+
+const functionReturnsReferenceByDeclaration = new WeakMap<ts.FunctionDeclaration, boolean>();
+
+function expressionProducesReference(
+  ctx: CodegenContext,
+  expression: ts.Expression,
+  visiting: Set<ts.FunctionDeclaration>,
+): boolean {
+  while (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isNonNullExpression(expression)
+  ) {
+    expression = expression.expression;
+  }
+  if (
+    ts.isObjectLiteralExpression(expression) ||
+    ts.isArrayLiteralExpression(expression) ||
+    ts.isFunctionExpression(expression) ||
+    ts.isArrowFunction(expression) ||
+    ts.isClassExpression(expression) ||
+    ts.isNewExpression(expression)
+  ) {
+    return true;
+  }
+  if (ts.isConditionalExpression(expression)) {
+    return (
+      expressionProducesReference(ctx, expression.whenTrue, visiting) ||
+      expressionProducesReference(ctx, expression.whenFalse, visiting)
+    );
+  }
+  if (ts.isBinaryExpression(expression)) {
+    if (expression.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+      return expressionProducesReference(ctx, expression.right, visiting);
+    }
+    if (
+      expression.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+      expression.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+      expression.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken
+    ) {
+      return (
+        expressionProducesReference(ctx, expression.left, visiting) ||
+        expressionProducesReference(ctx, expression.right, visiting)
+      );
+    }
+    return false;
+  }
+  if (ts.isCallExpression(expression)) {
+    // Function.prototype.bind always returns a callable reference, even when
+    // the receiver is an untyped local function value. ReactDOM's event
+    // bridge reuses its numeric `eventSystemFlags` parameter for precisely
+    // this bound listener.
+    if (ts.isPropertyAccessExpression(expression.expression) && expression.expression.name.text === "bind") {
+      return true;
+    }
+    const declaration = ctx.oracle.valueDeclarationOf(expression.expression);
+    if (declaration && ts.isFunctionDeclaration(declaration) && !visiting.has(declaration)) {
+      const cached = functionReturnsReferenceByDeclaration.get(declaration);
+      if (cached !== undefined) return cached;
+      visiting.add(declaration);
+      let result = false;
+      const visit = (node: ts.Node): void => {
+        if (result) return;
+        if (
+          node !== declaration &&
+          (ts.isFunctionDeclaration(node) ||
+            ts.isFunctionExpression(node) ||
+            ts.isArrowFunction(node) ||
+            ts.isMethodDeclaration(node) ||
+            ts.isAccessor(node) ||
+            ts.isConstructorDeclaration(node))
+        ) {
+          return;
+        }
+        if (ts.isReturnStatement(node) && node.expression) {
+          result = expressionProducesReference(ctx, node.expression, visiting);
+          if (result) return;
+        }
+        forEachChild(node, visit);
+      };
+      if (declaration.body) forEachChild(declaration.body, visit);
+      visiting.delete(declaration);
+      functionReturnsReferenceByDeclaration.set(declaration, result);
+      return result;
+    }
+  }
+  return false;
+}
+
+function reassignedReferenceParams(ctx: CodegenContext, stmt: ts.FunctionDeclaration): ReadonlySet<string> {
+  const cached = reassignedReferenceParamsByFunction.get(stmt);
+  if (cached) return cached;
+  const parametersByName = new Map<string, ts.ParameterDeclaration>();
+  for (const parameter of stmt.parameters) {
+    if (ts.isIdentifier(parameter.name)) parametersByName.set(parameter.name.text, parameter);
+  }
+  const names = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (
+      node !== stmt &&
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node) ||
+        ts.isAccessor(node) ||
+        ts.isConstructorDeclaration(node))
+    ) {
+      return;
+    }
+    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
+      let target: ts.Expression = node.left;
+      while (
+        ts.isParenthesizedExpression(target) ||
+        ts.isAsExpression(target) ||
+        ts.isTypeAssertionExpression(target) ||
+        ts.isNonNullExpression(target)
+      ) {
+        target = target.expression;
+      }
+      if (ts.isIdentifier(target)) {
+        const parameter = parametersByName.get(target.text);
+        if (
+          parameter &&
+          ctx.oracle.valueDeclarationOf(target) === parameter &&
+          expressionProducesReference(ctx, node.right, new Set())
+        ) {
+          names.add(target.text);
+        }
+      }
+    }
+    forEachChild(node, visit);
+  };
+  if (stmt.body) forEachChild(stmt.body, visit);
+  reassignedReferenceParamsByFunction.set(stmt, names);
+  return names;
+}
+
 /**
- * An implicit-any parameter used as the receiver of a computed property access
- * may be intentionally polymorphic. Specialising it from one call-site object
- * shape would insert a nominal struct cast at the function boundary, while the
- * body uses a runtime key and must accept every object carrier. Acorn's
- * `getOptions(opts)` is the canonical case (`opts[opt]`).
+ * An implicit-any parameter used as the receiver of a property access may be
+ * intentionally polymorphic. Specialising it from one call-site object shape
+ * would insert a nominal struct cast at the function boundary, while the body
+ * uses runtime fields and must accept every object carrier. This covers both
+ * computed (`opts[opt]`) and ordinary (`root.cancelPendingCommit`) accesses;
+ * ReactDOM's scheduler root is the latter real-world case.
  *
  * Call-site inference may still prove an indexed vec/array carrier. Those
  * carriers must stay concrete: Native Messaging's untyped `buf[start + i]`
@@ -422,6 +536,21 @@ function implicitAnyParamNeedsDynamicObjectCarrier(
       ts.isElementAccessExpression(node) &&
       ts.isIdentifier(node.expression) &&
       parameterNames.has(node.expression.text)
+    ) {
+      dynamicParams.add(node.expression.text);
+    }
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      parameterNames.has(node.expression.text) &&
+      // Read-only property probes can be callback/error carriers whose
+      // concrete ABI is part of the host contract (for example Test262's
+      // `$DONE(error)` path).  Only widen a parameter when the property
+      // itself is mutated; this retains the dynamic carrier needed by
+      // ReactDOM's reassigned root while preserving those callback ABIs.
+      ts.isBinaryExpression(node.parent) &&
+      node.parent.left === node &&
+      isAssignmentOperator(node.parent.operatorToken.kind)
     ) {
       dynamicParams.add(node.expression.text);
     }
@@ -530,6 +659,141 @@ export function functionReturnsDynamicObjectCarrier(stmt: ts.FunctionDeclaration
   return false;
 }
 
+const withScopedReturnByFunction = new WeakMap<ts.FunctionDeclaration, boolean>();
+
+/**
+ * (#3025 / #4206) Detect a function whose RETURN VALUE can come out of a `with`
+ * scope, e.g.
+ *
+ *     var x = 0;
+ *     var myObj = { x: "obj" };
+ *     function f1() { with (myObj) { return x; } }   // must return "obj"
+ *
+ * The TS checker does not model `with`: it resolves the `return x` to the OUTER
+ * `var x = 0` and infers `f1(): number`. Codegen then pins the wasm result to
+ * `f64` and coerces the routed string field to a number — `f1()` yields `NaN`
+ * instead of `"obj"` (test262 S10.2.2_A1_T5..T9). Both `with` tiers are affected:
+ * Tier-1 reads the struct field, Tier-2 reads the object property, and either way
+ * the value's runtime type is whatever the OBJECT holds, not what the checker
+ * guessed from the shadowed outer binding.
+ *
+ * So the return type is not statically knowable here: widen it to `externref`
+ * (the "any" carrier) and let the ordinary boxing/coercion path carry the value.
+ *
+ * Deliberately narrow, so no function that does not actually return through a
+ * `with` pays for it:
+ *   - an EXPLICIT return annotation wins (the author pinned it on purpose);
+ *   - only `return <expr>` statements lexically inside a `with` STATEMENT of
+ *     *this* function count — nested functions have their own signature and are
+ *     scanned when they are registered;
+ *   - the returned expression must mention at least one identifier, since only a
+ *     name can be routed through an object environment record (`return 1` cannot).
+ *
+ * The check is TRANSITIVE through a direct `return callee(...)`, because the
+ * checker's misinference propagates the same way:
+ *
+ *     function f1() { function f2() { with (myObj) { return x; } } return f2(); }
+ *
+ * `f2` widens by the rule above, but the checker still types `f1(): number` from
+ * the shadowed `var x = 0` — so `f1` must widen too (S10.2.2_A1_T5..T8). Only a
+ * bare `return name(...)` whose callee resolves to a function DECLARATION is
+ * followed; anything indirect keeps its inferred type.
+ */
+export function functionReturnsThroughWithScope(
+  ctx: CodegenContext,
+  stmt: ts.FunctionDeclaration,
+  seen: Set<ts.FunctionDeclaration> = new Set(),
+): boolean {
+  if (!stmt.body || stmt.type) return false;
+  const cached = withScopedReturnByFunction.get(stmt);
+  if (cached !== undefined) return cached;
+  if (seen.has(stmt)) return false; // recursive call cycle — not evidence either way
+  seen.add(stmt);
+
+  const isOwnFunctionBoundary = (node: ts.Node): boolean =>
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isAccessor(node) ||
+    ts.isConstructorDeclaration(node);
+
+  let mentionsIdentifier = false;
+  const scanForIdentifier = (node: ts.Node): void => {
+    if (mentionsIdentifier) return;
+    if (ts.isIdentifier(node)) {
+      mentionsIdentifier = true;
+      return;
+    }
+    forEachChild(node, scanForIdentifier);
+  };
+
+  let found = false;
+  // Inside a `with` body: any `return <expr>` naming something is a candidate.
+  const visitWithBody = (node: ts.Node): void => {
+    if (found) return;
+    if (isOwnFunctionBoundary(node)) return;
+    if (ts.isReturnStatement(node) && node.expression) {
+      mentionsIdentifier = false;
+      scanForIdentifier(node.expression);
+      if (mentionsIdentifier) {
+        found = true;
+        return;
+      }
+    }
+    forEachChild(node, visitWithBody);
+  };
+  // Outside a `with`: this function's own `with` statements, plus the
+  // transitive `return callee()` hop described above.
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (isOwnFunctionBoundary(node)) return;
+    if (ts.isWithStatement(node)) {
+      visitWithBody(node.statement);
+      if (found) return;
+    }
+    if (ts.isReturnStatement(node) && node.expression) {
+      let returned: ts.Expression = node.expression;
+      while (ts.isParenthesizedExpression(returned)) returned = returned.expression;
+      if (ts.isCallExpression(returned) && ts.isIdentifier(returned.expression)) {
+        const callee = ctx.oracle.valueDeclarationOf(returned.expression);
+        if (callee && ts.isFunctionDeclaration(callee) && functionReturnsThroughWithScope(ctx, callee, seen)) {
+          found = true;
+          return;
+        }
+      }
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(stmt.body, visit);
+
+  withScopedReturnByFunction.set(stmt, found);
+  return found;
+}
+
+/**
+ * JavaScript's optional-parameter spellings (`x?: T`, `@param {T=} x`, and
+ * `@param {T} [x]`) all admit a call that supplies no value. A native scalar
+ * slot cannot represent that value: the generic missing-argument pad for an
+ * `f64`/`i32`/`i64` is zero, while JavaScript observes `undefined`. This is
+ * especially important for JSDoc declarations imported across a module
+ * boundary, where local call-site inference cannot see the caller.
+ *
+ * Initializers are deliberately excluded. Their existing parameter-default
+ * sentinel path evaluates the initializer in the callee, so widening those
+ * parameters would change a proven numeric default ABI for no semantic gain.
+ */
+function parameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
+  const jsdocType = ts.getJSDocType(param);
+  const jsdocTags = ts.getJSDocParameterTags(param);
+  return (
+    param.initializer === undefined &&
+    (param.questionToken !== undefined ||
+      (jsdocType !== undefined && ts.isJSDocOptionalType(jsdocType)) ||
+      jsdocTags.some((tag) => tag.isBracketed === true))
+  );
+}
+
 /**
  * (#3268) Lower a single non-rest function parameter to its Wasm ValType.
  * Consolidates the four byte-identical per-parameter lowering blocks
@@ -555,6 +819,15 @@ function lowerParamType(
     : restBindingOverridesToExternref(param)
       ? { kind: "externref" }
       : (nativeParam ?? resolveWasmType(ctx, paramType));
+  // A JSDoc/TypeScript optional parameter may be omitted by a caller that is
+  // compiled in another source module. Keep the ABI in the undefined-capable
+  // externref domain unless an explicit native annotation has opted into a
+  // scalar representation. Without this, `@param {number=} size` receives
+  // `0` from pushDefaultValue and `typeof size`/Number.isNaN guards observe
+  // the wrong value (webpack's formatSize is the regression witness).
+  if (nativeParam === null && parameterMayBeOmitted(param)) {
+    wasmType = { kind: "externref" };
+  }
   // If the parameter has a default value and is a non-null ref type, widen to
   // ref_null so callers can pass ref.null as a sentinel for "use default".
   if (param.initializer && wasmType.kind === "ref") {
@@ -579,6 +852,20 @@ function lowerParamType(
         inferredTypeIdx === undefined ? undefined : ctx.typeIdxToStructName.get(inferredTypeIdx);
       const inferredIndexedCarrier =
         inferredStructName?.startsWith("__vec_") || inferredStructName?.startsWith("__arr_");
+      // An ordinary property access is also how an untyped string/number
+      // parameter is observed (`chunk.length`, `chunk.charCodeAt(i)`).  The
+      // dynamic-object guard must not erase that primitive inference: doing so
+      // changes the callback ABI to externref and breaks the standalone WASI
+      // stdin reactor, whose `onData(chunk)` callback receives a native string.
+      // Computed/nominal object accesses still remain on the universal carrier;
+      // only primitive scalars and the compiler's native-string carrier are
+      // safe to keep specialized here.
+      const inferredPrimitiveCarrier =
+        inferred.kind === "f64" ||
+        inferred.kind === "f32" ||
+        inferred.kind === "i32" ||
+        inferred.kind === "i64" ||
+        ((inferred.kind === "ref" || inferred.kind === "ref_null") && inferred.typeIdx === ctx.anyStrTypeIdx);
       const inferredEscapingAnonymousObject =
         inferredStructName?.startsWith("__anon_") === true && functionDeclarationEscapesAsValue(ctx, stmt, sourceFile);
       // A call-site object literal is only one observed shape of an untyped JS
@@ -590,13 +877,31 @@ function lowerParamType(
       // A computed-access parameter likewise stays dynamic unless inference
       // proved the indexed vec/array family rather than one incidental object.
       if (
-        !(needsDynamicObjectCarrier && !inferredIndexedCarrier) &&
+        !(needsDynamicObjectCarrier && !inferredIndexedCarrier && !inferredPrimitiveCarrier) &&
         !(ctx.standalone && inferredStructName?.startsWith("__anon_")) &&
         !inferredEscapingAnonymousObject
       ) {
         wasmType = inferred;
       }
     }
+  }
+  // (#3982) A reference narrowed to an anonymous object shape cannot safely
+  // remain in that nominal slot after a mutable parameter assignment. The
+  // body compiler would otherwise emit a guarded cast from the new shape back
+  // to the old one; a mismatch produces null and the next property read traps.
+  // Preserve JavaScript's dynamic reassignment semantics by using the universal
+  // externref carrier. Named/native carriers (strings, vectors, and class
+  // instances) keep their existing specialized ABI until a dedicated slice
+  // proves the corresponding mutation family safe.
+  const paramStructName =
+    wasmType.kind === "ref" || wasmType.kind === "ref_null" ? ctx.typeIdxToStructName.get(wasmType.typeIdx) : undefined;
+  const hasReferenceReassignment = reassignedReferenceParams(ctx, stmt).has(param.name.getText(sourceFile));
+  const isAnonymousReference =
+    (wasmType.kind === "ref" || wasmType.kind === "ref_null") && paramStructName?.startsWith("__anon_");
+  const isScalar =
+    wasmType.kind === "i32" || wasmType.kind === "i64" || wasmType.kind === "f32" || wasmType.kind === "f64";
+  if (hasReferenceReassignment && (isAnonymousReference || isScalar)) {
+    wasmType = { kind: "externref" };
   }
   // Runtime eval publishes top-level script functions through an externref
   // AOT-callable adapter. Structurally typed object parameters need the same
@@ -796,9 +1101,16 @@ function registerBodylessFunctionDeclaration(
     }
     const rUnwrapped = isAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
     const isImplicitAnyReturn = (rUnwrapped.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    const inferredNumericRet = inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
+    const withScopedReturn = functionReturnsThroughWithScope(ctx, stmt);
+    const inferredNumericRet = withScopedReturn
+      ? null
+      : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
     if (inferredNumericRet) {
       results = [inferredNumericRet];
+    } else if (withScopedReturn) {
+      // The checker's return type came from the SHADOWED outer binding; the real
+      // value is whatever the `with` receiver holds. Carry it as `any`.
+      results = [{ kind: "externref" }];
     } else {
       results = isVoidType(rUnwrapped)
         ? []
@@ -829,7 +1141,7 @@ function registerBodylessFunctionDeclaration(
   if (optionalParams.length > 0) {
     ctx.funcOptionalParams.set(name, optionalParams);
   }
-  if (bodyUsesArguments(stmt.body)) {
+  if (needsImplicitArgumentsObject(stmt)) {
     ctx.funcUsesArguments.add(name);
   }
 
@@ -1125,9 +1437,23 @@ function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, st
 
 function shouldCollectTopLevelAssignment(ctx: CodegenContext, target: ts.Expression, operator: ts.SyntaxKind): boolean {
   const targetName = getAssignmentRootIdentifier(target);
-  const namedGlobal = targetName === "globalThis" || (!!targetName && ctx.moduleGlobals.has(targetName));
+  // (#4491 T3) `ctx.moduleGlobals` is filled by the SAME single pass that asks
+  // this question, so a write that precedes its own `var` declaration
+  // (`x = 1; … var x;`) saw an empty answer and the whole statement was
+  // dropped. The pre-scan supplies the order-independent fact; `var` only —
+  // see top-level-hoisted-var-names.ts for why `let`/`const` stay out.
+  const namedGlobal =
+    targetName === "globalThis" ||
+    (!!targetName && (ctx.moduleGlobals.has(targetName) || isHoistedTopLevelVarName(target, targetName)));
   return (
     namedGlobal ||
+    // (#4491 T12) The FunctionDeclaration half of the same ordering hole: the
+    // module global that backs a reassigned function binding is minted by
+    // `registerReassignedFunctionGlobals` (#2931), which runs AFTER this pass —
+    // so `namedGlobal` is false for EVERY such name under every statement order
+    // and `function g(){}; g = 123;` was dropped outright. Bare-identifier
+    // targets only; see top-level-assigned-function-names.ts.
+    isAssignmentOverTopLevelFunctionName(target) ||
     (operator === ts.SyntaxKind.EqualsToken && isExactTopLevelClassAccessorWrite(ctx, target)) ||
     createsGlobalObjectBinding(target, ctx.sloppyImplicitGlobals)
   );
@@ -1255,9 +1581,43 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       // registration for these shapes. (#1287)
       const isAmbient = hasDeclareModifier(stmt) || stmt.getSourceFile().isDeclarationFile;
       if (ts.isClassDeclaration(stmt) && stmt.name && !isAmbient) {
-        collectClassDeclaration(ctx, stmt);
-        // Register class declaration .name
-        ctx.functionNameMap.set(stmt.name.text, stmt.name.text);
+        // (#4618) A NESTED class declaration whose name is already taken by a
+        // class in ANOTHER scope must get its own identity — collection is
+        // name-keyed and collectClassDeclaration's structMap guard silently
+        // no-ops the duplicate, so react's per-test `class Foo extends
+        // React.Component { … }` re-declarations all bound to the FIRST
+        // test's compiled class (probe: two fns each declaring `class Foo`,
+        // the second's methods answered the first's bodies). Mint the same
+        // per-site synthetic identity class EXPRESSIONS already use; the
+        // statement-position compile binds the scoped VALUE to a local.
+        let nestedDuplicate = false;
+        if (ctx.classSet.has(stmt.name.text) || ctx.structMap.has(stmt.name.text)) {
+          let owner: ts.Node | undefined = stmt.parent;
+          while (owner && !ts.isFunctionLike(owner) && !ts.isSourceFile(owner)) owner = owner.parent;
+          nestedDuplicate = !!owner && !ts.isSourceFile(owner);
+        }
+        if (nestedDuplicate && !ctx.anonClassExprNames.has(stmt)) {
+          const syntheticName = `__anonClass_${stmt.name.text}_${ctx.anonTypeCounter++}`;
+          ctx.anonClassExprNames.set(stmt, syntheticName);
+          collectClassDeclaration(ctx, stmt, syntheticName);
+          // Bodies are compiled at the statement position — without the
+          // deferred flag its structMap-membership early-return would leave
+          // every method a stub returning null.
+          ctx.deferredClassBodies.add(syntheticName);
+          // collectClassDeclaration maps the TS symbol name to the synthetic
+          // GLOBALLY (classExprNameMap) — correct for the one-per-name
+          // `const C = class {}` shape, but for a same-named class in another
+          // scope it would hijack every OTHER scope's reads of that name.
+          // Scoping is provided by the statement-position LOCAL binding.
+          if (ctx.classExprNameMap.get(stmt.name.text) === syntheticName) {
+            ctx.classExprNameMap.delete(stmt.name.text);
+          }
+          ctx.functionNameMap.set(syntheticName, stmt.name.text);
+        } else if (!nestedDuplicate) {
+          collectClassDeclaration(ctx, stmt);
+          // Register class declaration .name
+          ctx.functionNameMap.set(stmt.name.text, stmt.name.text);
+        }
       } else if (ts.isVariableStatement(stmt) && !isAmbient) {
         for (const decl of stmt.declarationList.declarations) {
           if (ts.isIdentifier(decl.name) && decl.initializer && ts.isClassExpression(decl.initializer)) {
@@ -1501,9 +1861,17 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // return type if every param is numeric and the body is a pure
         // numeric kernel (catches e.g. recursive `function fib(n) {...}`).
         const isImplicitAnyReturn = (rUnwrapped.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-        const inferredNumericRet = inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
+        const withScopedReturn = functionReturnsThroughWithScope(ctx, stmt);
+        const inferredNumericRet = withScopedReturn
+          ? null
+          : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
         if (inferredNumericRet) {
           results = [inferredNumericRet];
+        } else if (withScopedReturn) {
+          // See `functionReturnsThroughWithScope`: the checker resolved the
+          // returned name against the SHADOWED outer binding, so the inferred
+          // type describes the wrong value. Carry it as `any`.
+          results = [{ kind: "externref" }];
         } else {
           results = isVoidType(rUnwrapped)
             ? []
@@ -1513,7 +1881,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
                 nativeTypeFromTypeNode(ctx.checker, stmt.type) ??
                   (functionReturnsDynamicObjectCarrier(stmt)
                     ? { kind: "externref" }
-                    : resolveWasmType(ctx, rUnwrapped)),
+                    : // (#4641) `function f(c) { if (c) return; return 5; }` — a
+                      // MIXED-return declaration. `resolveWasmType`'s union arm
+                      // strips the `undefined` member, so the result is `f64` and
+                      // both "no value" emit sites push that type's ZERO — a legal
+                      // JS value, indistinguishable from a returned `0`. Widen the
+                      // RESULT so `emitUndefined` can carry the absent value (the
+                      // externref arm of both sites already does). Deliberately NOT
+                      // the general union-collapse reversal — that is #3580 S3.
+                      widenMixedUndefinedReturn(rUnwrapped, resolveWasmType(ctx, rUnwrapped))),
               ];
         }
       }
@@ -1544,7 +1920,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       // Track functions that read `arguments` (#1053) so callers can
       // populate the __extras_argv global with runtime args beyond the
       // formal param count.
-      if (stmt.body && bodyUsesArguments(stmt.body)) {
+      if (needsImplicitArgumentsObject(stmt)) {
         ctx.funcUsesArguments.add(name);
       }
 
@@ -1924,6 +2300,18 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // (statements/variables.ts `resolveSpillLocalValType`), keeping the module
     // global in lockstep with the same routing predicate.
     if (_hasRuntimeComputedKey(ctx, decl.initializer)) return true;
+    // (#4638) A data-only literal holding the realm GLOBAL OBJECT takes the same
+    // host `$Object` route (`objectLiteralForcesHostPath`); the module global
+    // must match. Nested twin of the #3365 `var t = this` rule just above.
+    if (objectLiteralForcesHostPath(ctx, decl.initializer)) return true;
+    // The consult above ALSO covers #4616's EMPTY-STRING-key arm (`var obj = {
+    // "": 1 }`) — "" cannot be a struct field name, so the value is built as an
+    // `$Object`. #4616 added the value routing and the `let`/`const` local twin
+    // but not this module-global twin, so a top-level `var` kept the struct type
+    // the checker infers: the guarded store missed, wrote `ref.null`, and the
+    // first read (`obj[""]`) did `struct.get` on null — an UNCATCHABLE trap, not
+    // a wrong answer. Sloppy test262 scripts declare with `var`, which is why
+    // `15.2.3.3-2-32` crashed the module.
     for (const p of decl.initializer.properties) {
       if (ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) return true;
       if (ts.isMethodDeclaration(p) && ts.isComputedPropertyName(p.name)) {
@@ -1979,6 +2367,20 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     if (ctx.holeyArrayDeclarations.has(decl)) {
       return { kind: "ref_null", typeIdx: getOrRegisterHoleyArrayType(ctx) };
     }
+    // (#4506 S1) `var x = new F()` at module scope, where the #2660 escape gate
+    // approved the site and the S3a lowering will emit a native `$Object`. The
+    // lowering refuses to return externref into a non-externref slot (its
+    // load-bearing safety check), so a slot derived from the checker's nominal
+    // `(ref null $__fnctor_F)` instance type is what made the reconstruction
+    // decline on 91 of 178 approved sites in the measured ES≤5 corpus — the
+    // single largest blocker, and the dominant test262 shape (a top-level
+    // `var child = new F()` in a script). Both this typer and the lowering ask
+    // ONE site-level predicate so they cannot disagree; see
+    // fnctor-instance-object-slot.ts for why agreement is a correctness
+    // requirement rather than an optimization.
+    if (variableSlotHoldsReconstructedFnctorInstance(ctx, decl)) {
+      return { kind: "externref" };
+    }
     if (moduleInitForcesExternref(decl) && ts.isIdentifier(decl.name)) {
       ctx.externrefAccessorVars.add(decl.name.text);
       return { kind: "externref" };
@@ -2004,6 +2406,66 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     if (ts.isIdentifier(decl.name) && withBodyHoistedModuleVarNames(sourceFile).has(decl.name.text)) {
       return { kind: "externref" };
     }
+    // (#4491 lane) A module global initialized from a PURELY-VOID call
+    // (`var r = voidFn()`) holds the value `undefined`, which a void-derived
+    // f64 slot turns into 0 — `voidFn() === undefined` then answered false
+    // (the propertyHelper harness compares against a void helper's result
+    // constantly). ONLY the call arm — this deliberately does NOT reuse the
+    // full `varBindingNeedsExternrefForUndefined` predicate the function-local
+    // slot typing consults: its `void 0`-initializer and #4206
+    // pre-init-observed arms were tuned for locals, and widening module
+    // globals on those arms regressed Array.prototype.filter's harness shapes
+    // (15.4.4.20-9-2/-3/-4/-6, bisected to exactly this consult).
+    {
+      let init = decl.initializer;
+      while (init && ts.isParenthesizedExpression(init)) init = init.expression;
+      if (init !== undefined && ts.isCallExpression(init)) {
+        const callType = ctx.checker.getTypeAtLocation(init);
+        if ((callType.flags & ~(ts.TypeFlags.Undefined | ts.TypeFlags.Void)) === 0) {
+          return { kind: "externref" };
+        }
+        // (#4653) …and the DUPLICATE-DECLARATION twin of the same defect: the
+        // checker answers the FIRST `function f(){…}`'s signature while the
+        // emitted body is the LAST one's, so no query on this call site reports
+        // what the slot will actually receive. See duplicate-function-declaration.ts.
+        if (callTargetIsRedeclaredFunction(ctx, init)) return { kind: "externref" };
+      }
+      // (#4491 wave-4) `var g = undefined` — the LITERAL undefined identifier.
+      // `resolveWasmType(undefined)` is i32 ("void → no result"), a lowering
+      // convention for a RESULT, not a claim that this binding holds the
+      // number 0. Measured on this base, standalone:
+      //   `var g = undefined; ({get: g}).get === undefined` → FALSE
+      //     (the slot stored `i32.const 0`, boxed to `ref.i31 0`), while
+      //   `var g2;        ({get: g2}).get === undefined` → true.
+      // Two wave-4 rows root here: `Object.defineProperty(o, "foo", {get: getter})`
+      // with `var getter = undefined` threw "Getter/setter must be a function"
+      // (§6.2.5.6 accepts an undefined half), and `var o2 = undefined; o2 =
+      // Object.preventExtensions(o)` read back `0` instead of the object.
+      //
+      // Scoped to the `undefined` IDENTIFIER resolving to the global binding —
+      // NOT the general "declared type is purely undefined/void" rule the
+      // comment above warns about, and NOT the `void 0` arm (which is what
+      // regressed the filter harness shapes). A binding written `= undefined`
+      // states the value at the source; a binding that merely TYPES as
+      // undefined (an optional read, a delete-sentinel) does not, and keeps
+      // its numeric slot.
+      if (
+        init !== undefined &&
+        ts.isIdentifier(init) &&
+        init.text === "undefined" &&
+        ctx.oracle.valueDeclarationOf(init) === undefined
+      ) {
+        return { kind: "externref" };
+      }
+    }
+    // (#4655) `var arr = x.concat(y, z)` — the lowering already yields a
+    // dynamic `$ObjVec` externref for these shapes, but the checker types the
+    // binding from the lib signature `concat(...items): number[]`, so the value
+    // was coerced through the per-vec materializer and every non-numeric
+    // element ToNumber'd to NaN (`concat/S15.4.4.4_A1_T2`, `_A1_T4`). Same
+    // predicate the lowering's dispatcher asks, so slot and value cannot
+    // disagree — see array-concat-carrier.ts.
+    if (concatCallYieldsDynamicCarrier(ctx, decl.initializer)) return { kind: "externref" };
     // #1914 — `var m = re.exec(s)` under standalone gets the precise
     // match-vec ref type so indexed reads stay on the static vec path
     // (externref-widened globals round-trip through __extern_get_idx,
@@ -2015,6 +2477,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     return (
       rebindWidenedArrayVecType(ctx, sourceFile, decl) ??
       heterogeneousWidenedModuleGlobalType(ctx, sourceFile, decl) ??
+      // (#4491 wave-5 T4) `var x = true; … var x = function () {}` is ONE
+      // binding whose slot the checker types from the function declaration; the
+      // boolean initializer is then dropped and the slot holds null. The
+      // declaration-vs-declaration half of #4204's assignment rule.
+      redeclarationWidenedModuleGlobalType(ctx, sourceFile, decl) ??
       inferStandaloneRegExpMatchGlobalType(ctx, decl) ??
       resolveWasmType(ctx, varType)
     );
@@ -2106,6 +2573,27 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   // run before `new Ctor()` captures the prototype, and `obj.prop = v` must run between
   // `var before = ...typeof obj.prop` and `var after = ...obj.prop === v`).
   for (const stmt of sourceFile.statements) {
+    // ESM `export default <expression>` is a live module binding, not merely
+    // metadata. In a linked graph the expression can be the default object
+    // imported by another source file (Stylelint's vendor helper is the
+    // concrete case), so retain it in the shared module initializer and give
+    // it a stable graph-global cell that import aliasing can resolve. Function
+    // declarations are represented as FunctionDeclaration nodes and continue
+    // through the ordinary function collection above.
+    if (ts.isExportAssignment(stmt) && !stmt.isExportEquals) {
+      const bindingName = `__default_expr_${ctx.anonTypeCounter++}`;
+      // Object/function expressions are routinely lowered through the open
+      // host-object/closure carrier even when the checker reports a closed
+      // structural type. An externref cell is the representation-neutral
+      // boundary for every expression default; primitive reads still coerce
+      // normally at their use site.
+      const type: ValType = { kind: "externref" };
+      registerModuleGlobal(ctx, bindingName, type);
+      (ctx.defaultExpressionGlobals ??= new WeakMap()).set(stmt, { bindingName, type });
+      ctx.moduleInitStatements.push(stmt);
+      if (isEntryFile) (ctx.deferredDefaultExpressionExports ??= new Set()).add(bindingName);
+      continue;
+    }
     if (ts.isVariableStatement(stmt)) {
       if (hasDeclareModifier(stmt)) continue;
       // Track let/const for TDZ enforcement
@@ -2310,14 +2798,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           ctx.moduleInitStatements.push(stmt);
           continue;
         }
-        // (#2660 S2) `F.prototype = …` / `F.prototype.p = …` for a user fnctor `F`
-        // (standalone): the root identifier `F` is a function, NOT a module
-        // global, so the generic check below drops the statement and the
-        // prototype write never reaches compilePropertyAssignment (the S2
-        // interception). Keep it in __module_init so the per-fnctor prototype
-        // `$Object` is populated. Host/GC mode is byte-identical (gated, dropped
-        // as before). Mirrors the Array.prototype CPR keep-in-init above.
-        if (ctx.standalone && isFnctorPrototypeAssignTarget(ctx, expr.left)) {
+        // (#2660 S2 / #3982) `F.prototype = …` / `F.prototype.p = …` for a user
+        // fnctor `F`: the root identifier `F` is a function, NOT a module
+        // global, so the generic check below drops the statement. Keep it in
+        // __module_init so the runtime's fnctor sidecar can receive the write
+        // in both standalone and JS-host lanes. Standalone's dedicated `$Object`
+        // interception and the host lane's `_getOrVivifyFnPrototype` path use
+        // the same source-level assignment; dropping it only in the host lane
+        // leaves `new F().method()` with an empty prototype.
+        if (isFnctorPrototypeAssignTarget(ctx, expr.left)) {
           ctx.moduleInitStatements.push(stmt);
           continue;
         }
@@ -2424,6 +2913,34 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           if (ts.isIdentifier(receiver) && ctx.topLevelFunctionNames.has(receiver.text)) {
             ctx.moduleInitStatements.push(stmt);
             continue;
+          }
+          // (#4618) `F.prototype.m = …` — the react shape (the compiled react
+          // source's `Component.prototype.setState = …` /
+          // `Component.prototype.isReactComponent = {}` are top-level
+          // statements). The bare-identifier gate above deliberately excluded
+          // prototype chains, but that exclusion predates the #1712 vivified
+          // fnctor prototype: in host mode the write-arm inside a function
+          // body lands on the identity-stable vivified `F.prototype` object
+          // (measured: probe passes), so keeping the statement is the whole
+          // fix — the same collection-gap family as #2992/#3592/#3615/#3049.
+          if (
+            ts.isPropertyAccessExpression(receiver) &&
+            !ts.isPrivateIdentifier(receiver.name) &&
+            receiver.name.text === "prototype"
+          ) {
+            let protoRecv: ts.Expression = receiver.expression;
+            while (
+              ts.isParenthesizedExpression(protoRecv) ||
+              ts.isAsExpression(protoRecv) ||
+              ts.isNonNullExpression(protoRecv) ||
+              ts.isTypeAssertionExpression(protoRecv)
+            ) {
+              protoRecv = protoRecv.expression;
+            }
+            if (ts.isIdentifier(protoRecv) && ctx.topLevelFunctionNames.has(protoRecv.text)) {
+              ctx.moduleInitStatements.push(stmt);
+              continue;
+            }
           }
           // (#4394) Host/GC counterpart of the standalone #3666 keep above:
           // the receiver is itself a function-valued own property of a
@@ -2585,16 +3102,29 @@ export interface ModuleInitBodyCompileRouting {
  * the IR body in place, so both routes preserve one exact startup handle.
  */
 export function preallocateModuleInitCallable(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
-  if (ctx.programAbiModuleInitCallables?.functionForSource(sourceFile)) return;
-  const initTypeIdx = addFuncType(ctx, [], [], "__module_init_type");
-  const initFuncIdx = mintDefinedFunc(ctx);
-  pushProgramAbiModuleInitCallable(ctx, sourceFile, initFuncIdx, {
-    name: "__module_init",
-    typeIdx: initTypeIdx,
-    locals: [],
-    body: [],
-    exported: false,
-  });
+  let initFunc = ctx.programAbiModuleInitCallables?.functionForSource(sourceFile);
+  let initFuncIdx = ctx.programAbiModuleInitCallables?.handleForSource(sourceFile);
+  if (!initFunc || initFuncIdx === undefined) {
+    const initTypeIdx = addFuncType(ctx, [], [], "__module_init_type");
+    initFuncIdx = mintDefinedFunc(ctx);
+    initFunc = {
+      name: "__module_init",
+      typeIdx: initTypeIdx,
+      locals: [],
+      body: [],
+      exported: false,
+    };
+    pushProgramAbiModuleInitCallable(ctx, sourceFile, initFuncIdx, initFunc);
+  }
+  // Deferred initialization exposes the exact preallocated callable. Publish
+  // that alias before prepared-component sealing so final export planning does
+  // not discover a new alias into an already sealed scope. The later direct
+  // declaration pass replaces this same-name entry with the same handle.
+  if (ctx.deferTopLevelInit && !ctx.wasi) {
+    initFunc.exported = true;
+    ctx.mod.exports = ctx.mod.exports.filter((entry) => entry.name !== "__module_init");
+    ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: initFuncIdx } });
+  }
 }
 
 /** Compile all function bodies (including class constructors and methods) */
@@ -2757,7 +3287,17 @@ export function compileDeclarations(
       // A name bound to a *user* function is a function reference, not a
       // captured variable (but a same-named wasm:js-string builtin import must
       // not block capture — discriminate by index, as promotion does).
-      if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) return false;
+      // (#4618) The check is name-keyed, so a MODULE-level `function test`
+      // used to veto deferral of a try-nested class whose method captures the
+      // enclosing scope's `let test` (react's `componentDidMount(){test=this}`
+      // under the shim's module `function test`) — the class compiled eagerly,
+      // promotion never fired, and the write was a silent no-op. Only a
+      // funcMap entry owned by a nested FunctionDeclaration is a true
+      // function reference here; a module-level function shadowed by the
+      // scope-local declaration (names.has(name) held above) is a capture.
+      if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) {
+        if (ctx.funcMapOwnerDecl.has(name)) return false;
+      }
       return true;
     };
     for (const member of decl.members) {
@@ -2865,7 +3405,7 @@ export function compileDeclarations(
           ctx.deferredClassBodies.add(stmt.name.text);
         } else {
           try {
-            compileClassBodies(ctx, stmt, funcByName, undefined, classBodyRouting);
+            routeTopLevelClassBodies(ctx, stmt, funcByName, classBodyRouting);
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             reportError(ctx, stmt, `Internal error compiling class '${stmt.name.text}': ${msg}`);
@@ -3127,15 +3667,27 @@ export function compileDeclarations(
   }
 
   // (#4195) Both module-init passes record into `ctx.errors`, so every
-  // top-level diagnostic was reported twice. Reconciled after pass 2 by
-  // `dedupeDiagnosticsFrom` — see its doc-comment for why that collapses
-  // duplicates rather than truncating pass 1's range.
+  // top-level diagnostic was reported twice. `dedupeDiagnosticsFrom` reconciles
+  // them after pass 2 without truncating pass 1's range.
   let pass1DiagnosticMark = 0;
 
   function compileModuleInitBody(): FunctionContext {
+    ctx.irBodyRouteAuditSession?.recordRoot("compileModuleInitBody", "__module_init", sourceFile);
     if (process.env.JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY === "1") {
       throw new Error("injected direct module-init body poison");
     }
+    // Captured globals are lexical to the function/module-init body that
+    // promotes them. Module initialization is intentionally compiled more
+    // than once (discovery and final emission); carrying the previous pass's
+    // name-keyed capture map into the next pass makes a later same-named
+    // binding resolve to the earlier pass's global instead of its own. Reset
+    // the short-lived capture indexes while retaining the already-emitted
+    // Wasm globals/functions; the pass being compiled will register fresh
+    // bindings and all emitted instructions retain their concrete indices.
+    ctx.capturedGlobals.clear();
+    ctx.capturedGlobalsWidened.clear();
+    ctx.capturedBoxGlobals?.clear();
+    ctx.capturedGlobalsOwner?.clear();
     const initFctx: FunctionContext = {
       name: "__module_init",
       params: [],
@@ -3151,24 +3703,11 @@ export function compileDeclarations(
     };
     ctx.currentFunc = initFctx;
 
-    // (#4264) §10.2.11: a `var` hoisted out of a `with` body is instantiated at
-    // script entry with the value `undefined`. A module global's constant init
-    // can only be `ref.null.extern`, which the standalone lane does NOT read as
-    // `undefined` — so seed the tag-1 singleton here, exactly as the #4182
-    // Annex B block-function binding below does, and for the same reason. Host
-    // mode is excluded on the same grounds: there `undefined` IS the null
-    // extern, and the singleton would surface to host helpers as an object.
-    if (ctx.standalone || ctx.wasi) {
-      const seededWithVars = new Set<number>();
-      for (const withVarName of withBodyHoistedModuleVarNames(sourceFile)) {
-        const withVarGlobalIdx = ctx.moduleGlobals.get(withVarName);
-        if (withVarGlobalIdx === undefined || seededWithVars.has(withVarGlobalIdx)) continue;
-        if (ctx.mod.globals[localGlobalIdx(ctx, withVarGlobalIdx)]?.type.kind !== "externref") continue;
-        if (!emitUndefinedExtern(ctx, initFctx)) continue;
-        initFctx.body.push({ op: "global.set", index: withVarGlobalIdx });
-        seededWithVars.add(withVarGlobalIdx);
-      }
-    }
+    // (#4489, subsuming the #4264 `with`-body seed) §9.1.1.4.18: every
+    // module-scope `var` reads as `undefined` before its declaration. Must stay
+    // AHEAD of the function-binding seeds below — rationale, scope and the
+    // measured before/after in `declarations/module-var-undefined-seed.ts`.
+    emitModuleVarUndefinedSeeds(ctx, sourceFile, initFctx);
 
     // (#2931) Seed each reassigned-function live-binding global with the
     // function's closure BEFORE any user init statement runs, so a read of the
@@ -3180,6 +3719,10 @@ export function compileDeclarations(
     // properties of the global object. Seeded here, ahead of every user
     // statement, which is what declaration hoisting requires.
     emitScriptGlobalFunctionBindings(ctx, initFctx);
+    // (#4491 T4) §9.1.1.4.17 — and the `var` twin of the same instantiation
+    // step, AFTER the functions so a name declared both ways keeps the function
+    // binding GDI actually initialises. See global-var-bindings.ts.
+    emitScriptGlobalVarBindings(ctx, initFctx);
 
     if (ctx.liveFuncBindingGlobals && ctx.liveFuncBindingGlobals.size > 0) {
       const seededGlobals = new Set<number>();
@@ -3485,17 +4028,34 @@ export function compileDeclarations(
       });
     }
     if (exportModuleInit) {
-      // (#3505) compileMulti calls compileDeclarations once per source file
-      // against one accumulating context. Each pass emits a progressively
-      // more complete graph initializer, so only the newest export may remain:
-      // it contains every dependency seen so far in resolver order. Keeping
-      // the earlier exports gave the final Wasm duplicate `__module_init`
-      // names; selecting an earlier one instead would drop later modules.
-      ctx.mod.exports = ctx.mod.exports.filter((entry) => entry.name !== "__module_init");
-      ctx.mod.exports.push({
-        name: "__module_init",
-        desc: { kind: "func", index: initFuncIdx },
-      });
+      const initExports = ctx.mod.exports.filter((entry) => entry.name === "__module_init");
+      if (skipModuleInitBody) {
+        // Prepared deferred initialization published this alias before the
+        // component seal. Preserve its exact ordinal and handle: removing and
+        // re-appending it here would create a late Program-ABI alias into the
+        // already sealed component, and would make its identity depend on any
+        // unrelated exports appended between preparation and declaration
+        // finalization.
+        if (
+          initExports.length !== 1 ||
+          initExports[0]!.desc.kind !== "func" ||
+          initExports[0]!.desc.index !== initFuncIdx
+        ) {
+          throw new Error("prepared deferred module initializer lost its exact pre-seal export alias");
+        }
+      } else {
+        // (#3505) compileMulti calls compileDeclarations once per source file
+        // against one accumulating context. Each pass emits a progressively
+        // more complete graph initializer, so only the newest export may remain:
+        // it contains every dependency seen so far in resolver order. Keeping
+        // the earlier exports gave the final Wasm duplicate `__module_init`
+        // names; selecting an earlier one instead would drop later modules.
+        ctx.mod.exports = ctx.mod.exports.filter((entry) => entry.name !== "__module_init");
+        ctx.mod.exports.push({
+          name: "__module_init",
+          desc: { kind: "func", index: initFuncIdx },
+        });
+      }
     }
 
     if (!ctx.wasi && !exportModuleInit) {
@@ -3506,6 +4066,35 @@ export function compileDeclarations(
     // `__module_init`, and the host will invoke it explicitly. And under
     // `deferTopLevelInit` (#2796) the JS host calls the exported `__module_init`
     // directly after `setExports`.
+
+    // (#3523 R4 invariant 7) A Prepared module initializer must be reached by
+    // exactly ONE startup adapter. The two non-WASI adapters are mutually
+    // exclusive by construction above, but they are wired from `ctx` flags in
+    // two separate statements, so a future edit could install both (init runs
+    // twice: once during instantiation, once when the host calls the export) or
+    // neither (top-level code never runs, and every read trips its TDZ guard).
+    // Neither failure is visible in the emitted body, so reconcile the actual
+    // wiring against the planned policy here and fail closed. Only the Prepared
+    // route is asserted: the direct route keeps its established behavior until
+    // the typed Unsupported policy is retired.
+    if (skipModuleInitBody && !ctx.wasi) {
+      if (process.env.JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER === "1") {
+        // Anti-vacuity seam: install the adapter the planned policy did NOT
+        // choose, so the reconciliation below has a real violation to catch.
+        if (exportModuleInit) ctx.mod.startFuncIdx = initFuncIdx;
+        else ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: initFuncIdx } });
+      }
+      const startsOnInstantiation = ctx.mod.startFuncIdx === initFuncIdx;
+      const exportedAliases = ctx.mod.exports.filter(
+        (entry) => entry.name === "__module_init" && entry.desc.kind === "func" && entry.desc.index === initFuncIdx,
+      ).length;
+      const adapters = (startsOnInstantiation ? 1 : 0) + exportedAliases;
+      if (adapters !== 1 || exportedAliases !== (exportModuleInit ? 1 : 0)) {
+        throw new Error(
+          `prepared module initializer must have exactly one startup adapter (start=${startsOnInstantiation}, exports=${exportedAliases}, planned=${exportModuleInit ? "deferred-export" : "wasm-start"})`,
+        );
+      }
+    }
   }
 
   // (#2138) Names whose legacy body was skipped under IR-first; undefined on
