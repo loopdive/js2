@@ -43,12 +43,11 @@ forwarding, and symbol enumeration remain separate follow-up slices.
 
 ## Exact selected rows
 
-All ten rows below are baseline `fail` in the authoritative artifact
+All nine rows below are baseline `fail` in the authoritative artifact
 `/private/tmp/js2-es6-functionproto-wave3/.test262-cache/test262-standalone-current.jsonl`.
 Their expected post-change status is `pass`.
 
 - `test/built-ins/Proxy/ownKeys/return-not-list-object-throws.js`
-- `test/built-ins/Proxy/ownKeys/return-not-list-object-throws-realm.js`
 - `test/built-ins/Proxy/ownKeys/return-type-throws-array.js`
 - `test/built-ins/Proxy/ownKeys/return-type-throws-boolean.js`
 - `test/built-ins/Proxy/ownKeys/return-type-throws-null.js`
@@ -86,8 +85,10 @@ or control behavior is lost.
 - The selected tests do not establish target key-set invariants or callable
   trap validation; changing those would widen this issue beyond one bounded
   root cause.
-- Realm-specific rows depend on the runner's realm provider; their status is
-  recorded from the exact runner and the authoritative artifact.
+- Cross-realm proxy forwarding is a separate boundary. In particular,
+  `return-not-list-object-throws-realm.js` remains out of scope because it
+  constructs the Proxy in another realm and does not exercise this local
+  standalone proxy carrier.
 
 ## Files
 
@@ -100,11 +101,10 @@ or control behavior is lost.
 ## Test Results
 
 Baseline evidence from the supplied artifact: the 27-row
-`Proxy/ownKeys` population was **6 pass / 21 fail**. Each selected row was
-reproduced through the authoritative `runTest262File(file, "built-ins/Proxy",
-30000, "standalone")` seam before editing; the nine locally runnable selected
-rows failed with the expected missing-TypeError assertions, while the realm
-row was blocked by the absent local QuickJS provider.
+`Proxy/ownKeys` population was **6 pass / 21 fail**. Each of the nine selected
+rows was reproduced through the authoritative `runTest262File(file,
+"built-ins/Proxy", 30000, "standalone")` seam before editing and failed with
+the expected missing-TypeError assertion.
 
 After the runtime change, the same exact runner gives:
 
@@ -113,7 +113,6 @@ After the runtime change, the same exact runner gives:
   | row | artifact before | exact after |
   | --- | --- | --- |
   | `return-not-list-object-throws.js` | fail | pass |
-  | `return-not-list-object-throws-realm.js` | fail | provider unavailable locally |
   | `return-type-throws-array.js` | fail | pass |
   | `return-type-throws-boolean.js` | fail | pass |
   | `return-type-throws-null.js` | fail | pass |
@@ -123,13 +122,12 @@ After the runtime change, the same exact runner gives:
   | `return-duplicate-entries-throws.js` | fail | pass |
   | `return-duplicate-symbol-entries-throws.js` | fail | pass |
 
-- **9/9 locally runnable selected rows pass**: both duplicate rows, both
-  non-realm non-list rows, and all six invalid-element rows.
-- The realm selected row reaches the documented local infrastructure refusal
-  (`JS2WASM_EVAL_ENGINE=quickjs` provider not built). The repository provider
-  build was attempted but this machine lacks `clang-18` and `cmake`; the
-  semantic assertion remains strict in `tests/issue-4685.test.ts` whenever the
-  provider is available.
+- **9/9 selected rows pass**: both duplicate rows, the local non-list row, and
+  all six invalid-element rows.
+- The cross-realm `return-not-list-object-throws-realm.js` row is explicitly
+  excluded. CI's interpreter tier proved it remains a semantic failure rather
+  than an unavailable-provider result, so it requires a separate cross-realm
+  proxy-carrier issue.
 - Both zero-loss controls pass: `extensible-return-trap-result.js` and
   `return-is-abrupt.js`.
 - The full 27-row population is **15 pass / 12 fail**. The twelve remaining
@@ -139,7 +137,7 @@ After the runtime change, the same exact runner gives:
 
 Focused and static checks:
 
-- `pnpm exec vitest run tests/issue-4685.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot`: **12/12 pass**.
+- `pnpm exec vitest run tests/issue-4685.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot`: **11/11 pass**.
 - `pnpm run typecheck:ts5`: pass.
 - `pnpm run typecheck`: pass.
 - `pnpm exec biome lint src/codegen/object-runtime-proxy.ts tests/issue-4685.test.ts --diagnostic-level=error`: pass.

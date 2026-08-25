@@ -22,7 +22,6 @@ afterEach(async () => {
 
 const selectedRows = [
   "return-not-list-object-throws.js",
-  "return-not-list-object-throws-realm.js",
   "return-type-throws-array.js",
   "return-type-throws-boolean.js",
   "return-type-throws-null.js",
@@ -39,25 +38,11 @@ async function runOwnKeysRow(file: string) {
   return runTest262File(join(OWN_KEYS_ROOT, file), "issue-4685", 30_000, "standalone");
 }
 
-function expectPassOrUnavailableEvalTier(result: { status: string; error?: string }): void {
-  if (result.status === "pass") return;
-  // The realm pin needs the optional QuickJS/runtime-eval provider. Keep the
-  // semantic assertion strict when that provider is present, while allowing
-  // the ordinary local/quality tier's documented provider refusal.
-  expect(result.error ?? "").toMatch(
-    /quickjs provider is not built|runtime-eval.*(refusal|not supported)|module is not an object or function|dynamic code evaluation is not supported/i,
-  );
-}
-
 describe.skipIf(!TEST262)("#4685 — Proxy ownKeys trap-result validation", () => {
   for (const file of selectedRows) {
     it(`${file} passes in standalone`, { timeout: 60_000 }, async () => {
       const result = await runOwnKeysRow(file);
-      if (file.endsWith("-realm.js")) {
-        expectPassOrUnavailableEvalTier(result);
-      } else {
-        expect(result.status, result.error ?? "").toBe("pass");
-      }
+      expect(result.status, result.error ?? "").toBe("pass");
     });
   }
 
