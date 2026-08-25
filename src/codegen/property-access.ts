@@ -914,6 +914,7 @@ export function resolveStructNameForExpr(
   // checked WasmGC private dispatch — the host MOP can never see it), so the L5
   // `__anon`-`this` override is suppressed for private accesses.
   accessedMember?: ts.MemberName,
+  resolvedCarrier?: ValType,
 ): string | undefined {
   // (#1239) Variables initialised by an object literal containing get/set
   // accessor declarations are stored as externref plain JS objects. The
@@ -996,6 +997,9 @@ export function resolveStructNameForExpr(
   }
   if (!typeName && expression.kind === ts.SyntaxKind.ThisKeyword) {
     typeName = resolveThisStructName(ctx, fctx);
+  }
+  if (!typeName && (resolvedCarrier?.kind === "ref" || resolvedCarrier?.kind === "ref_null")) {
+    typeName = ctx.typeIdxToStructName.get(resolvedCarrier.typeIdx);
   }
   return typeName;
 }

@@ -161,7 +161,7 @@ import {
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
-import { resolveStructName } from "./misc.js";
+import { resolveStructName, resolveStructNameForExpr } from "./misc.js";
 import {
   BUILTIN_CLASS_NAMES,
   coerceNumberMethodArgToF64,
@@ -648,6 +648,14 @@ export function compileReceiverMethodCall(
     const recovered = resolveAssignedNominalType(ctx, propAccess.expression);
     if (recovered) receiverType = recovered;
   }
+  // Object literals with runtime computed keys are deliberately represented as
+  // open `$Object` externrefs, even when TypeScript still describes the binding
+  // as its inferred closed shape. Keep calls on those bindings on the dynamic
+  // property path; the closed method arm would cast the open object to the
+  // stale inferred struct and invoke the method with a null receiver.
+  const receiverTagExpr = skipTransparentExpressions(propAccess.expression);
+  const receiverIsExternrefTagged =
+    ts.isIdentifier(receiverTagExpr) && ctx.externrefAccessorVars.has(receiverTagExpr.text);
 
   // TextEncoder/TextDecoder under no-JS-host targets. These are standard
   // Web/Node APIs, but WASI/standalone cannot rely on env.TextEncoder_* host
@@ -1943,11 +1951,9 @@ export function compileReceiverMethodCall(
   // Check if receiver is a struct type (e.g. object literal with methods)
   {
     const resolvedReceiverCarrier = resolveWasmType(ctx, receiverType);
-    const structTypeName =
-      resolveStructName(ctx, receiverType) ??
-      (resolvedReceiverCarrier.kind === "ref" || resolvedReceiverCarrier.kind === "ref_null"
-        ? ctx.typeIdxToStructName.get(resolvedReceiverCarrier.typeIdx)
-        : undefined);
+    const structTypeName = receiverIsExternrefTagged
+      ? undefined
+      : resolveStructNameForExpr(ctx, fctx, propAccess.expression, propAccess.name, resolvedReceiverCarrier);
     if (structTypeName) {
       const methodName = propAccess.name.text;
       const fullName = `${structTypeName}_${methodName}`;
@@ -3308,7 +3314,8 @@ export function compileReceiverMethodCall(
   // A mixed mutable local's physical carrier outranks its stale checker type.
   const recvWasm = effectiveLocalCarrier(fctx, propAccess.expression, resolveWasmType(ctx, recvTsType));
   {
-    const isAnyOrExternref = (recvTsType.flags & ts.TypeFlags.Any) !== 0 || recvWasm.kind === "externref";
+    const isAnyOrExternref =
+      (recvTsType.flags & ts.TypeFlags.Any) !== 0 || recvWasm.kind === "externref" || receiverIsExternrefTagged;
 
     if (isAnyOrExternref) {
       const methodName = propAccess.name.text;
