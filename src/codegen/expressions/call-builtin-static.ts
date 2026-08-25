@@ -120,7 +120,7 @@ import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers
 import { mayStaticallyExpandCreateDescriptor, staticDescriptorTypeError } from "../descriptor-shape.js";
 import { emitUndefined, ensureGetUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
-import { tryCompileEs5GetPrototypeOfEarly, tryCompileEs5GetPrototypeOfValue } from "./object-get-prototype-of.js";
+import * as objectGetPrototypeOf from "./object-get-prototype-of.js";
 import { tryCompileFnctorInstanceGetPrototypeOf } from "../fnctor-instance-prototype.js";
 import {
   BUILTIN_CLASS_NAMES,
@@ -1907,7 +1907,7 @@ export function compileBuiltinStaticCall(
     isGlobalBuiltinIdentifier(ctx, fctx, propAccess.expression) &&
     propAccess.name.text === "getPrototypeOf"
   ) {
-    const es5Early = tryCompileEs5GetPrototypeOfEarly(ctx, fctx, expr);
+    const es5Early = objectGetPrototypeOf.tryCompileEs5GetPrototypeOfEarly(ctx, fctx, expr);
     if (es5Early) return es5Early;
     const arg0 = expr.arguments[0]!;
 
@@ -2037,7 +2037,7 @@ export function compileBuiltinStaticCall(
 
     const argTsType = ctx.checker.getTypeAtLocation(arg0);
 
-    const es5Value = tryCompileEs5GetPrototypeOfValue(ctx, fctx, expr);
+    const es5Value = objectGetPrototypeOf.tryCompileEs5GetPrototypeOfValue(ctx, fctx, expr);
     if (es5Value) return es5Value;
 
     // (#3013) `Object.getPrototypeOf(<array iterator>)` → the shared native
@@ -2088,7 +2088,7 @@ export function compileBuiltinStaticCall(
     }
 
     const className = resolveStructName(ctx, argTsType);
-
+    if (objectGetPrototypeOf.tryNativeCollectionGpo(ctx, fctx, arg0, argTsType)) return { kind: "externref" };
     // For known class instances, return the class prototype singleton
     if (className && ctx.classSet.has(className)) {
       // (#802 Slice C) Marked-hierarchy receiver (standalone): the instance's
