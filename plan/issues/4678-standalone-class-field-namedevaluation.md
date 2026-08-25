@@ -1,10 +1,11 @@
 ---
 id: 4678
 title: "ES2015 standalone: private class-field NamedEvaluation loses the initializer function name"
-status: in-review
+status: done
 sprint: current
 created: 2026-08-25
 updated: 2026-08-25
+completed: 2026-08-25
 priority: medium
 horizon: s
 feasibility: medium
