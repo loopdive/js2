@@ -337,6 +337,7 @@ export interface ClosureInfo {
   hasCaptures?: boolean;
   /** True when the source closure has a `...rest` parameter. */
   hasRestParam?: boolean;
+  nativeProtoVariadic?: boolean;
   /**
    * True only while every concrete allocation of this wrapper/subtype is a
    * checker-certified one-shot host callback. Such values are consumed by

@@ -4,12 +4,20 @@ import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { BFN_ID_FIELD_IDX } from "../builtin-fn-meta.js";
 import { buildClosureResultBoxing } from "./result-boxing.js";
+import { getArrTypeIdxFromVec } from "../registry/types.js";
 
 export interface TransferredNativeReceiverEntry {
   typeIdx: number;
   funcTypeIdx: number;
-  /** Declared USER parameter count (closure params minus the `thisValue` slot). */
+  /** Declared fixed USER parameter count (closure params minus `thisValue`). */
   declaredUserArity: number;
+  /**
+   * Receiver-aware variadic tail. The closure's user signature is
+   * `(thisValue, argsVec)`; the method dispatcher packs every call-site arg
+   * into this canonical vector instead of treating the first arg as a fixed
+   * formal.
+   */
+  variadic?: { vecTypeIdx: number; arrTypeIdx: number };
   /**
    * (#4082) The closure's declared result type, so this arm can lower it to the
    * externref the `__call_fn_method_N` ABI returns. Without it the arm assumed
@@ -95,10 +103,24 @@ export function collectTransferredNativeProtoReceivers(
     // The shared base wrapper is also in the set but has no such field, and
     // dispatching on it would capture every structurally equal closure.
     if (!ctx.builtinFnMetaByTypeIdx?.has(typeIdx)) continue;
+    let variadic: TransferredNativeReceiverEntry["variadic"];
+    let declaredUserArity = info.paramTypes.length - 1;
+    if (info.nativeProtoVariadic === true) {
+      const funcTypeDef = ctx.mod.types[info.funcTypeIdx];
+      const vecParam = funcTypeDef?.kind === "func" ? funcTypeDef.params[2] : undefined;
+      if (!vecParam || (vecParam.kind !== "ref" && vecParam.kind !== "ref_null")) continue;
+      const vecTypeIdx = vecParam.typeIdx;
+      const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+      const arrDef = ctx.mod.types[arrTypeIdx];
+      if (arrDef?.kind !== "array" || arrDef.element.kind !== "externref") continue;
+      declaredUserArity = Math.max(0, info.paramTypes.length - 2);
+      variadic = { vecTypeIdx, arrTypeIdx };
+    }
     entries.push({
       typeIdx,
       funcTypeIdx: info.funcTypeIdx,
-      declaredUserArity: info.paramTypes.length - 1,
+      declaredUserArity,
+      variadic,
       returnType: info.returnType,
     });
   }
@@ -169,6 +191,16 @@ export function buildTransferredNativeProtoCallInstrs(
     for (let k = 0; k < entry.declaredUserArity; k++) {
       userArgs.push(k < arity ? { op: "local.get", index: 2 + k } : { op: "ref.null.extern" });
     }
+    const variadicArgs: Instr[] = [];
+    if (entry.variadic !== undefined) {
+      // The vec struct's fields are length first, then backing array.
+      variadicArgs.push({ op: "i32.const", value: arity });
+      for (let k = 0; k < arity; k++) variadicArgs.push({ op: "local.get", index: 2 + k });
+      variadicArgs.push(
+        { op: "array.new_fixed", typeIdx: entry.variadic.arrTypeIdx, length: arity },
+        { op: "struct.new", typeIdx: entry.variadic.vecTypeIdx },
+      );
+    }
     body.push(
       { op: "local.get", index: anyLocal },
       { op: "ref.test", typeIdx: entry.typeIdx },
@@ -190,8 +222,9 @@ export function buildTransferredNativeProtoCallInstrs(
               { op: "ref.cast", typeIdx: entry.typeIdx },
               // thisValue — the receiver the generic dispatch would have dropped
               { op: "local.get", index: 0 },
-              // user args, shifted one slot right of the generic dispatch
-              ...userArgs,
+              // user args, shifted one slot right of the generic dispatch;
+              // variadic native-proto values receive one exact args vector.
+              ...(entry.variadic !== undefined ? variadicArgs : userArgs),
               { op: "local.get", index: anyLocal },
               { op: "ref.cast", typeIdx: entry.typeIdx },
               { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: 0 },

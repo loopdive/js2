@@ -56,6 +56,7 @@ import { COLLECTION_KIND, MAP_LAYOUT, ensureMapHelpers } from "./map-runtime.js"
 import { emitReceiverBrandCheck } from "./receiver-brand.js"; // (#3171) shared brand preamble
 import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js"; // %TypedArray% carrier is a function
 import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI32 } from "./char-at-transfer.js";
+import { compileArrayConcatNativeSpecFromReceiverAndArgsVec } from "./array-concat-spec.js";
 // (#4119) The shared member-body tail: `Object.prototype.toString`'s real
 // §20.1.3.6 runtime classifier, and the graceful catchable-TypeError refusal for
 // every `(brand, member)` whose native body is not wired yet. Aliased to the
@@ -782,6 +783,10 @@ const ASYNCDISPOSABLESTACK_PROTO_METHOD_LENGTH: Readonly<Record<string, number>>
  * compile refusal). Returns externref (the uniform closure-call result type).
  */
 function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
+  if (member === "concat") {
+    return compileArrayConcatNativeSpecFromReceiverAndArgsVec(ctx, fctx, 1, 2) ?? null;
+  }
+
   // (#4394) The higher-order members already have a native standalone loop —
   // `__hof_<name>`, emitted by `ensureNativeArrayHof` for the DYNAMIC receiver
   // arm. It reads its receiver through `__extern_length` / `__extern_get_idx`,
@@ -1760,6 +1765,7 @@ function makeGlue(
     // families return 0 (= "no override": the slot count falls back to the spec
     // arity), keeping their closure types byte-identical.
     memberParamSlots: (member) => (name === "String" ? (STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0) : 0),
+    memberIsVariadic: (member) => name === "Array" && member === "concat",
     // (#4485) §B.2.4.3 — `Date.prototype.toGMTString` IS `Date.prototype.
     // toUTCString` (one function object, asserted by test262 annexB
     // .../toGMTString/value.js). The Annex B String aliases have the same

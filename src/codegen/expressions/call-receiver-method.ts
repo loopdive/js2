@@ -24,6 +24,7 @@ import {
 } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, resolveArrayInfo } from "../array-methods.js";
+import { compileArrayConcatNativeSpec } from "../array-concat-spec.js";
 import { isWiredTypedArrayViewName } from "../array-object-proto.js";
 import {
   emitStandalonePromiseFinally,
@@ -628,6 +629,18 @@ export function compileReceiverMethodCall(
       expectedType,
     );
     if (__r !== undefined) return __r;
+  }
+
+  if (ctx.standalone && propAccess.name.text === "concat" && ts.isIdentifier(propAccess.expression)) {
+    const text = propAccess.getSourceFile().text;
+    const escaped = propAccess.expression.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const installed = new RegExp(
+      `\\b${escaped}\\s*\\.\\s*concat\\s*=\\s*Array\\s*\\.\\s*prototype\\s*\\.\\s*concat\\b`,
+    ).test(text);
+    if (installed) {
+      const nativeResult = compileArrayConcatNativeSpec(ctx, fctx, propAccess, expr);
+      if (nativeResult !== undefined) return nativeResult;
+    }
   }
 
   // Check if receiver is an externref object

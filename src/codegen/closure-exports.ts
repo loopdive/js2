@@ -501,7 +501,12 @@ function externToClosureI64(
  * `...rest`; the host bridge materializes that vec from the remaining
  * positional arguments instead of counting it as a JavaScript argument.
  */
-function closureHostArity(info: { paramTypes: ValType[]; hasRestParam?: boolean }): number {
+function closureHostArity(info: {
+  paramTypes: ValType[];
+  hasRestParam?: boolean;
+  nativeProtoVariadic?: boolean;
+}): number {
+  if (info.nativeProtoVariadic === true) return Math.max(0, info.paramTypes.length - 2);
   return info.hasRestParam === true ? Math.max(0, info.paramTypes.length - 1) : info.paramTypes.length;
 }
 
@@ -572,6 +577,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
     // compiler-owned -2 wrapper. It cannot be returned, over-applied, or used
     // as a method, so wider generic dispatchers would be dead artifact weight.
     if (info.domCallbackOnly === true || (info.hostOneShotOnly === true && arity !== 0)) continue;
+    if (info.nativeProtoVariadic === true) continue;
     const hostArity = closureHostArity(info);
     if (hostArity > arity) continue;
 
@@ -1087,6 +1093,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
 
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
     if (info.hostOneShotOnly === true || info.domCallbackOnly === true) continue;
+    if (info.nativeProtoVariadic === true) continue;
     const hostArity = closureHostArity(info);
     if (hostArity > arity) continue;
     const typeDef = mod.types[typeIdx];
