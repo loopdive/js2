@@ -255,23 +255,27 @@ The compiler now implements P2a/P2b and the first P2c helper family:
   content-addressed, zero-import provider and canary-verifies its exports and
   ABI metadata. Consumers opt in with `link: ["js2wasm:runtime"]`.
 
-The prerequisite package-link slice is now implemented for the safe ABI subset:
-directly declared named functions with deterministic declaration signatures.
-`compileProject` emits real content-addressed provider binaries and a
-`PackageLinkPlan`, rewrites consumer imports into deterministic
-`js2wasm:npm:<package>:<hash>` namespaces, validates provider/consumer function
-types by engine instantiation, and instantiates package DAGs in dependency
-order. The in-process/disk cache reports `compiledProviders` versus
-`cachedProviders`; `result.importObject` preserves legacy direct-instantiation
-callers while `instantiateLinkedProject` provides fresh provider lifecycles.
+The prerequisite package-link slice now emits real content-addressed provider
+binaries and a `PackageLinkPlan`, rewrites consumer imports into deterministic
+`js2wasm:npm:<package>:<hash>` namespaces, and instantiates package DAGs in
+provider-before-consumer order. Direct function declarations use an exact core
+function ABI. Runtime values, objects, closures, classes, default exports, and
+namespace objects use provider-owned getter adapters, with authority wrapping
+that preserves provider-owned callable identity, mutable state, and fresh
+instantiation lifecycles.
+Relative and cross-package named/default/star barrels are resolved explicitly.
+Every provider embeds its authoritative `js2wasm.provider.v1` manifest; cache
+candidates and convenience metadata are rejected unless they match it.
 
-Runtime value/global/class/object exports, default/re-export/namespace imports,
-host-dependent providers, ambiguous entrypoints, and package cycles remain an
-explicit deterministic monolithic fallback. This is intentional: the current
-ABI cannot safely preserve those boundaries, and `externals` can silently drop
-them. A source-text cache is never treated as separate Wasm compilation. Host
-shims, immutable-global/object/closure ABI slices, and broader package export
-forms remain follow-on work.
+The binary cache reports `compiledProviders` versus `cachedProviders` and may
+reuse a manifest-verified ABI superset for a consumer requesting fewer exports.
+TypeScript-realpathed npm/pnpm symlinks are recognized from the physical
+package's `package.json`. `result.importObject` preserves legacy direct
+instantiation callers while `instantiateLinkedProject` creates fresh provider
+lifecycles. Package cycles, ambiguous multiple entrypoint targets, TypeScript
+type-position identity, and unsupported namespace/re-export ambiguity remain
+explicit deterministic monolithic fallbacks; they are never routed through
+`externals`, which could silently erase a value boundary.
 
 ## Measurement rule for whoever packages the runtime-eval provider (#2928 E7)
 

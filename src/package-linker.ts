@@ -104,6 +104,10 @@ interface ExternalBinding {
   namespace?: boolean;
   typePosition?: boolean;
   typeOnly?: boolean;
+  /** Cross-package `export ... from` edge. `exportName` is the published name. */
+  reexport?: "named" | "star";
+  /** Name looked up in the dependency provider (differs for aliases). */
+  sourceExportName?: string;
 }
 
 function linkedBindingLookupNames(binding: Pick<ExternalBinding, "exportName" | "localName">): string[] {
@@ -180,6 +184,38 @@ function packageRootFor(fileName: string): string | undefined {
     return undefined;
   }
   return path.join(normalized.slice(0, markerIndex + marker.length), ...packageSegments);
+}
+
+/**
+ * Resolve the physical package root behind a node_modules symlink. TypeScript
+ * canonicalizes pnpm/npm-linked sources through realpath, so their physical
+ * filenames no longer contain a `node_modules` segment even though the module
+ * was reached through a bare package specifier.
+ */
+function physicalPackageRootFor(fileName: string): { root: string; name: string } | undefined {
+  const fs = getDefaultEnvironment().fs;
+  if (!fs) return undefined;
+  let directory = path.dirname(normalizePhysical(fileName));
+  for (;;) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(path.join(directory, "package.json"), "utf8")) as {
+        name?: unknown;
+      };
+      if (typeof manifest.name === "string" && manifest.name.length > 0) {
+        return { root: directory, name: manifest.name };
+      }
+    } catch {
+      // Keep walking; most source directories do not contain a manifest.
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) return undefined;
+    directory = parent;
+  }
+}
+
+function fileWithinRoot(fileName: string, root: string): boolean {
+  const relative = path.relative(root, fileName);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
 }
 
 function packageNameForRoot(root: string): string {
@@ -286,8 +322,11 @@ interface PackageExportAnalyzer {
   sourceByPhysical: Map<string, string>;
   physicalByKey: Map<string, string>;
   packageByFile: Map<string, string>;
+  packageNodes: Map<string, PackageNode>;
   fileKeys: Map<string, string>;
   projectResolutions: ProjectModuleResolutions;
+  packageAnalysisCache?: Map<string, PackageExportAnalysis>;
+  packageAnalysisVisiting?: Set<string>;
 }
 
 function unsupportedExport(reason: string): ExportResolution {
@@ -420,7 +459,7 @@ function packageResolvedTarget(
   const targetKey = key ? analyzer.projectResolutions[key]?.[specifier] : undefined;
   if (!targetKey) return undefined;
   const target = analyzer.physicalByKey.get(targetKey);
-  if (!target || analyzer.packageByFile.get(target) !== analyzer.node.root) return undefined;
+  if (!target || !analyzer.packageByFile.has(target)) return undefined;
   return target;
 }
 
@@ -439,6 +478,12 @@ function resolveLocalExport(locals: ReturnType<typeof localDeclarationMaps>, nam
 function analyzePackageExports(analyzer: PackageExportAnalyzer): PackageExportAnalysis {
   const cache = new Map<string, PackageExportAnalysis>();
   const visiting = new Set<string>();
+  const packageCache = analyzer.packageAnalysisCache ?? new Map<string, PackageExportAnalysis>();
+  const packageVisiting = analyzer.packageAnalysisVisiting ?? new Set<string>();
+  const cachedPackage = packageCache.get(analyzer.node.root);
+  if (cachedPackage) return cachedPackage;
+  if (packageVisiting.has(analyzer.node.root)) return { exports: new Map(), cycle: true };
+  packageVisiting.add(analyzer.node.root);
 
   function analyzeFile(fileName: string): PackageExportAnalysis {
     const cached = cache.get(fileName);
@@ -570,7 +615,18 @@ function analyzePackageExports(analyzer: PackageExportAnalyzer): PackageExportAn
         }
         continue;
       }
-      const targetAnalysis = analyzeFile(target);
+      const targetRoot = analyzer.packageByFile.get(target);
+      const targetAnalysis =
+        targetRoot === analyzer.node.root
+          ? analyzeFile(target)
+          : targetRoot
+            ? analyzePackageExports({
+                ...analyzer,
+                node: analyzer.packageNodes.get(targetRoot)!,
+                packageAnalysisCache: packageCache,
+                packageAnalysisVisiting: packageVisiting,
+              })
+            : { exports: new Map<string, ExportResolution>(), cycle: true };
       cycle ||= targetAnalysis.cycle === true;
       if (!clause) {
         for (const [name, resolution] of targetAnalysis.exports) {
@@ -593,6 +649,8 @@ function analyzePackageExports(analyzer: PackageExportAnalyzer): PackageExportAn
     const analysis = { exports, ...(cycle ? { cycle: true } : {}) };
     visiting.delete(fileName);
     cache.set(fileName, analysis);
+    packageVisiting.delete(analyzer.node.root);
+    packageCache.set(analyzer.node.root, analysis);
     return analysis;
   }
 
@@ -657,6 +715,49 @@ function importBindings(
   return { bindings };
 }
 
+interface PackageReexportBinding {
+  /** Name published by the current package. `*` is expanded after analysis. */
+  exportName: string;
+  /** Name requested from the dependency package. */
+  sourceExportName?: string;
+  star?: boolean;
+}
+
+/**
+ * Read only bare-package export declarations. Relative barrels are resolved by
+ * `analyzePackageExports`; these records cover the separate package edge so
+ * the provider DAG and source rewrite can wire the same binding to the
+ * dependency provider instead of asking TypeScript to bundle it.
+ */
+function packageReexportBindings(
+  sourceFile: ts.SourceFile,
+  specifier: string,
+): { bindings: PackageReexportBinding[]; unsupported?: undefined } | { bindings?: undefined; unsupported: string } {
+  const bindings: PackageReexportBinding[] = [];
+  for (const statement of sourceFile.statements) {
+    if (!ts.isExportDeclaration(statement) || statement.isTypeOnly) continue;
+    if (!statement.moduleSpecifier || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    if (statement.moduleSpecifier.text !== specifier) continue;
+    const clause = statement.exportClause;
+    if (!clause) {
+      bindings.push({ exportName: "*", star: true });
+      continue;
+    }
+    if (ts.isNamespaceExport(clause)) {
+      return { unsupported: "namespace re-export across package boundary is not link-safe" };
+    }
+    if (!ts.isNamedExports(clause)) continue;
+    for (const element of clause.elements) {
+      if (element.isTypeOnly) continue;
+      bindings.push({
+        exportName: element.name.text,
+        sourceExportName: element.propertyName?.text ?? element.name.text,
+      });
+    }
+  }
+  return { bindings };
+}
+
 function identifierUsedInTypePosition(sourceFile: ts.SourceFile, localName: string): boolean {
   const isTypeNode = (node: ts.Node): boolean => {
     const predicate = (ts as typeof ts & { isTypeNode?: (candidate: ts.Node) => boolean }).isTypeNode;
@@ -689,12 +790,19 @@ interface LinkedRewriteBinding {
   exportName: string;
   localName: string;
   namespace?: boolean;
+  reexport?: "named" | "star";
+  sourceExportName?: string;
   boundary: ProviderBoundaryManifest;
 }
 
 function getterLocalName(binding: Pick<LinkedRewriteBinding, "specifier" | "exportName" | "localName">): string {
   const safe = binding.exportName === "*" ? "namespace" : binding.exportName.replace(/[^$A-Z_a-z0-9]/g, "_");
   return `__js2wasm_get_${safe}_${hashText([binding.specifier, binding.exportName, binding.localName]).slice(0, 8)}`;
+}
+
+function reexportLocalName(specifier: string, publishedName: string, sourceName: string, importer: string): string {
+  const safe = publishedName.replace(/[^$A-Z_a-z0-9]/g, "_");
+  return `__js2wasm_reexport_${safe}_${hashText([specifier, publishedName, sourceName, importer]).slice(0, 8)}`;
 }
 
 /**
@@ -708,6 +816,46 @@ function rewriteLinkedImports(fileName: string, source: string, linked: readonly
   const sourceFile = parseSource(fileName, source);
   const replacements: Array<{ start: number; end: number; text: string }> = [];
   for (const statement of sourceFile.statements) {
+    if (
+      ts.isExportDeclaration(statement) &&
+      statement.moduleSpecifier &&
+      ts.isStringLiteral(statement.moduleSpecifier)
+    ) {
+      const specifier = statement.moduleSpecifier.text;
+      const statementBindings = linked.filter(
+        (binding) => binding.specifier === specifier && binding.reexport !== undefined,
+      );
+      if (statementBindings.length > 0) {
+        // Keep pure function re-exports in their original ESM form. The
+        // compiler already resolves the export declaration through the
+        // dependency stub, and preserving it lets the normal alias machinery
+        // publish the live provider function without introducing a synthetic
+        // local closure. Getter/value boundaries still need the explicit
+        // import+initializer facade below.
+        if (statementBindings.every((binding) => binding.boundary.kind === "function")) continue;
+        const imports: string[] = [];
+        const initializers: string[] = [];
+        const published: string[] = [];
+        for (const binding of statementBindings) {
+          if (binding.boundary.kind === "function") {
+            imports.push(`${binding.boundary.field} as ${binding.localName}`);
+          } else {
+            const getter = `${binding.localName}_getter`;
+            imports.push(`${binding.boundary.field} as ${getter}`);
+            initializers.push(`const ${binding.localName} = ${getter}();`);
+          }
+          published.push(`${binding.localName} as ${binding.exportName}`);
+        }
+        replacements.push({
+          start: statement.getStart(sourceFile),
+          end: statement.end,
+          text: `import { ${imports.join(", ")} } from ${statement.moduleSpecifier.getText(sourceFile)};${
+            initializers.length > 0 ? `\n${initializers.join("\n")}` : ""
+          }\nexport { ${published.join(", ")} };`,
+        });
+      }
+      continue;
+    }
     if (
       !ts.isImportDeclaration(statement) ||
       !statement.importClause ||
@@ -943,10 +1091,12 @@ interface ProviderCacheExpectation {
 function manifestMatchesExpectation(manifest: ProviderManifestV1, expected: ProviderCacheExpectation): boolean {
   if (manifest.sourceFingerprint !== expected.sourceFingerprint || manifest.packageName !== expected.packageName)
     return false;
-  if (
-    manifest.exports.length !== expected.exports.length ||
-    manifest.exports.some((name, i) => name !== expected.exports[i])
-  ) {
+  // A provider binary may have been compiled for a wider consumer surface
+  // than this compile. Reusing that superset is safe: the root only imports
+  // the requested fields, while the embedded manifest remains authoritative
+  // for the full provider ABI. Requiring exact equality here made a barrel
+  // provider compile again whenever a second consumer imported fewer names.
+  if (expected.exports.some((name) => !manifest.exports.includes(name))) {
     return false;
   }
   if (
@@ -964,18 +1114,13 @@ function manifestMatchesExpectation(manifest: ProviderManifestV1, expected: Prov
     return false;
   }
   const expectedSignatures = expected.exportSignatures;
-  const actualSignatureNames = Object.keys(manifest.exportSignatures);
-  const expectedSignatureNames = Object.keys(expectedSignatures);
-  if (
-    actualSignatureNames.length === expectedSignatureNames.length &&
-    expectedSignatureNames.every((name) => manifest.exportSignatures[name] === expectedSignatures[name])
-  ) {
-    return (
-      canonicalProviderManifestJson(manifest.exportBoundaries) ===
-      canonicalProviderManifestJson(expected.exportBoundaries)
-    );
+  if (Object.entries(expectedSignatures).some(([name, signature]) => manifest.exportSignatures[name] !== signature)) {
+    return false;
   }
-  return false;
+  return Object.entries(expected.exportBoundaries).every(
+    ([name, boundary]) =>
+      canonicalProviderManifestJson(manifest.exportBoundaries[name]) === canonicalProviderManifestJson(boundary),
+  );
 }
 
 function decodeCachedProvider(binary: Uint8Array, fileKey: string): CachedProvider | undefined {
@@ -1244,15 +1389,30 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
   }
   const packageByFile = new Map<string, string>();
   const packages = new Map<string, PackageNode>();
+  const physicalPackageNames = new Map<string, string>();
+  // Discover real package roots from bare resolution edges before grouping
+  // files. This recovers packages whose node_modules entry is a symlink and
+  // whose TypeScript source filenames have already been realpathed.
+  for (const resolution of Object.values(input.projectResolutions)) {
+    for (const [specifier, targetKey] of Object.entries(resolution)) {
+      if (!getBarePackageName(specifier)) continue;
+      const target = physicalByKey.get(targetKey);
+      if (!target || packageRootFor(target)) continue;
+      const physical = physicalPackageRootFor(target);
+      if (!physical || fileWithinRoot(input.resolvedEntry, physical.root)) continue;
+      physicalPackageNames.set(physical.root, physical.name);
+    }
+  }
+  const physicalRoots = [...physicalPackageNames.keys()].sort((left, right) => right.length - left.length);
   for (const physical of sourceByPhysical.keys()) {
-    const root = packageRootFor(physical);
+    const root = packageRootFor(physical) ?? physicalRoots.find((candidate) => fileWithinRoot(physical, candidate));
     if (!root) continue;
     packageByFile.set(physical, root);
     let node = packages.get(root);
     if (!node) {
       node = {
         root,
-        name: packageNameForRoot(root),
+        name: physicalPackageNames.get(root) ?? packageNameForRoot(root),
         files: [],
         entry: physical,
         exports: new Map(),
@@ -1315,11 +1475,44 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
           typeOnly: binding.typeOnly,
         });
       }
+      const reexports = packageReexportBindings(sourceFile, specifier);
+      if (reexports.unsupported) return makeFallback(reexports.unsupported);
+      for (const reexport of reexports.bindings ?? []) {
+        if (reexport.star) {
+          // Expand after every package's export graph is known. This keeps an
+          // unused unsupported export behind the same requested-boundary rule
+          // as ordinary imports.
+          bindings.push({
+            importer,
+            specifier,
+            packageRoot: targetRoot,
+            target,
+            exportName: "*",
+            localName: "",
+            reexport: "star",
+          });
+          continue;
+        }
+        const sourceName = reexport.sourceExportName ?? reexport.exportName;
+        bindings.push({
+          importer,
+          specifier,
+          packageRoot: targetRoot,
+          target,
+          exportName: reexport.exportName,
+          localName: reexportLocalName(specifier, reexport.exportName, sourceName, importer),
+          reexport: "named",
+          sourceExportName: sourceName,
+        });
+      }
     }
   }
-  // Analyze the package's complete relative export graph, then retain only
-  // the names that an actual consumer imports. Unsupported values/classes in
-  // an otherwise useful package are therefore harmless until requested.
+  // Analyze every package's complete export graph first. Cross-package
+  // re-exports recurse through the same cache, so a package barrel can expose
+  // a dependency's binding without making the dependency part of its source
+  // compilation unit.
+  const packageAnalysisCache = new Map<string, PackageExportAnalysis>();
+  const packageAnalysisVisiting = new Set<string>();
   for (const node of packages.values()) {
     if (!sourceByPhysical.has(node.entry)) return makeFallback(`missing source for package ${node.name}`);
     (node as PackageNode & { sourceByFile?: Map<string, string> }).sourceByFile = sourceByPhysical;
@@ -1328,16 +1521,132 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       sourceByPhysical,
       physicalByKey,
       packageByFile,
+      packageNodes: packages,
       fileKeys: input.fileKeys,
       projectResolutions: input.projectResolutions,
+      packageAnalysisCache,
+      packageAnalysisVisiting,
     });
-    if (analysis.cycle) return makeFallback(`${node.name}: cyclic relative export graph`);
-    node.namespaceRequested = bindings.some((binding) => binding.packageRoot === node.root && binding.namespace);
-    const requested = new Set(
-      node.namespaceRequested
-        ? analysis.exports.keys()
-        : bindings.filter((binding) => binding.packageRoot === node.root).map((binding) => binding.exportName),
-    );
+    if (analysis.cycle) return makeFallback(`${node.name}: cyclic package export graph`);
+  }
+
+  const requestedByRoot = new Map<string, Set<string>>();
+  const namespaceRoots = new Set<string>();
+  const addRequested = (root: string, name: string): boolean => {
+    let requested = requestedByRoot.get(root);
+    if (!requested) requestedByRoot.set(root, (requested = new Set()));
+    const size = requested.size;
+    requested.add(name);
+    return requested.size !== size;
+  };
+  for (const binding of bindings) {
+    if (binding.reexport) continue;
+    if (binding.namespace) namespaceRoots.add(binding.packageRoot);
+    else addRequested(binding.packageRoot, binding.exportName);
+  }
+
+  const sameResolution = (left: ExportResolution | undefined, right: ExportResolution | undefined): boolean => {
+    if (!left || !right || left.kind !== right.kind) return false;
+    if (left.kind === "unsupported" && right.kind === "unsupported") return left.reason === right.reason;
+    if (left.kind === "unsupported" || right.kind === "unsupported") return false;
+    if (left.kind === "function" && right.kind === "function") {
+      return (
+        left.exported.sourceFile === right.exported.sourceFile &&
+        left.exported.declaration === right.exported.declaration
+      );
+    }
+    if (left.kind === "value" && right.kind === "value") {
+      return left.exported.sourceFile === right.exported.sourceFile && left.exported.kind === right.exported.kind;
+    }
+    return false;
+  };
+
+  // Propagate only names that an actual consumer requests through named/star
+  // re-exports. This is important for `export *`: an unused unsupported class
+  // in the dependency must not poison a linkable function imported from the
+  // barrel.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const binding of bindings) {
+      if (!binding.reexport) continue;
+      const publisherRoot = packageByFile.get(binding.importer);
+      if (!publisherRoot) continue;
+      const publisherAnalysis = packageAnalysisCache.get(publisherRoot);
+      const dependencyAnalysis = packageAnalysisCache.get(binding.packageRoot);
+      if (!publisherAnalysis || !dependencyAnalysis) return makeFallback("missing package re-export analysis");
+      const publisherRequested =
+        namespaceRoots.has(publisherRoot) ||
+        (binding.reexport === "star"
+          ? (requestedByRoot.get(publisherRoot)?.size ?? 0) > 0
+          : requestedByRoot.get(publisherRoot)?.has(binding.exportName));
+      if (!publisherRequested) continue;
+      if (binding.reexport === "named") {
+        changed = addRequested(binding.packageRoot, binding.sourceExportName ?? binding.exportName) || changed;
+        continue;
+      }
+      for (const name of dependencyAnalysis.exports.keys()) {
+        if (name === "default") continue;
+        const publisherResolution = publisherAnalysis.exports.get(name);
+        const dependencyResolution = dependencyAnalysis.exports.get(name);
+        if (!sameResolution(publisherResolution, dependencyResolution)) continue;
+        changed = addRequested(binding.packageRoot, name) || changed;
+      }
+    }
+  }
+
+  // Replace star markers with concrete provider bindings for the requested
+  // names. The source rewrite uses these records to turn `export * from` into
+  // imports from the dependency namespace plus local exports.
+  const activeBindings: ExternalBinding[] = bindings.filter((binding) => !binding.reexport);
+  for (const binding of bindings) {
+    if (!binding.reexport) continue;
+    const publisherRoot = packageByFile.get(binding.importer);
+    if (!publisherRoot) return makeFallback("root cross-package re-export is not supported");
+    const publisherAnalysis = packageAnalysisCache.get(publisherRoot);
+    const dependencyAnalysis = packageAnalysisCache.get(binding.packageRoot);
+    if (!publisherAnalysis || !dependencyAnalysis) return makeFallback("missing package re-export analysis");
+    const publisherRequested =
+      namespaceRoots.has(publisherRoot) ||
+      (binding.reexport === "star"
+        ? (requestedByRoot.get(publisherRoot)?.size ?? 0) > 0
+        : requestedByRoot.get(publisherRoot)?.has(binding.exportName));
+    if (binding.reexport === "named") {
+      if (!publisherRequested) continue;
+      const sourceName = binding.sourceExportName ?? binding.exportName;
+      if (
+        !sameResolution(publisherAnalysis.exports.get(binding.exportName), dependencyAnalysis.exports.get(sourceName))
+      ) {
+        return makeFallback(`ambiguous package re-export ${binding.exportName}`);
+      }
+      activeBindings.push({ ...binding });
+      continue;
+    }
+    if (!publisherRequested) continue;
+    for (const name of dependencyAnalysis.exports.keys()) {
+      if (name === "default" || (!requestedByRoot.get(publisherRoot)?.has(name) && !namespaceRoots.has(publisherRoot)))
+        continue;
+      if (!sameResolution(publisherAnalysis.exports.get(name), dependencyAnalysis.exports.get(name))) continue;
+      activeBindings.push({
+        ...binding,
+        exportName: name,
+        localName: reexportLocalName(binding.specifier, name, name, binding.importer),
+        sourceExportName: name,
+      });
+    }
+  }
+  bindings.splice(0, bindings.length, ...activeBindings);
+
+  // Retain only the names that an actual consumer (possibly through another
+  // package barrel) requests. Unsupported values/classes remain harmless until
+  // they cross this boundary.
+  for (const node of packages.values()) {
+    const analysis = packageAnalysisCache.get(node.root);
+    if (!analysis) return makeFallback(`missing export analysis for ${node.name}`);
+    node.namespaceRequested = namespaceRoots.has(node.root);
+    const requested = node.namespaceRequested
+      ? new Set(analysis.exports.keys())
+      : new Set(requestedByRoot.get(node.root) ?? []);
     if (requested.size === 0) return makeFallback(`${node.name}: package has no linkable export boundary`);
     node.exports = new Map();
     for (const name of requested) {
@@ -1348,9 +1657,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
         name,
         resolution.kind === "function"
           ? { kind: "function", exported: cloneFunctionExport(resolution.exported, name) }
-          : resolution.exported.callable
-            ? { kind: "function", exported: cloneFunctionExport(resolution.exported.callable, name) }
-            : { kind: "value", exported: cloneValueExport(resolution.exported, name) },
+          : { kind: "value", exported: cloneValueExport(resolution.exported, name) },
       );
     }
     if (
@@ -1359,7 +1666,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     ) {
       return makeFallback(`${node.name}: namespace export surface is not unambiguous`);
     }
-    for (const binding of bindings.filter((candidate) => candidate.packageRoot === node.root)) {
+    for (const binding of bindings.filter((candidate) => candidate.packageRoot === node.root && !candidate.reexport)) {
       if (binding.typeOnly || (binding.typePosition && binding.exportName !== "*")) {
         return makeFallback(`${node.name}: TypeScript type-position package boundary ${binding.exportName}`);
       }
@@ -1387,8 +1694,11 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     const targetNode = packages.get(binding.packageRoot)!;
     if (binding.namespace) {
       if (!targetNode.namespaceRequested) return makeFallback(`${targetNode.name} namespace boundary was not planned`);
-    } else if (!targetNode.exports.has(binding.exportName)) {
-      return makeFallback(`${targetNode.name} does not expose linkable export ${binding.exportName}`);
+    } else {
+      const sourceName = binding.sourceExportName ?? binding.exportName;
+      if (!targetNode.exports.has(sourceName)) {
+        return makeFallback(`${targetNode.name} does not expose linkable export ${sourceName}`);
+      }
     }
   }
 
@@ -1435,8 +1745,6 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       node.name,
       ...sourceParts,
       ...dependencyIdentities.flatMap((dependency) => [dependency.packageName, dependency.cacheKey]),
-      ...exportNames,
-      JSON.stringify(expectedBoundaries),
       String(PROVIDER_FACADE_ABI_VERSION),
       compilerOptionFingerprint(input.options),
     ]);
@@ -1481,7 +1789,8 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       for (const binding of bindings.filter((candidate) => candidate.importer === file)) {
         const dependencyNode = packages.get(binding.packageRoot);
         if (!dependencyNode) return makeFallback(`missing package node for ${binding.specifier}`);
-        const boundary = plannedProviderBoundaries(dependencyNode)[binding.namespace ? "*" : binding.exportName];
+        const boundaryName = binding.namespace ? "*" : (binding.sourceExportName ?? binding.exportName);
+        const boundary = plannedProviderBoundaries(dependencyNode)[boundaryName];
         if (!boundary) return makeFallback(`missing boundary for ${dependencyNode.name}:${binding.exportName}`);
         rewrites.push({ ...binding, boundary });
       }
@@ -1498,15 +1807,35 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       if (!dependencyNamespace) return makeFallback(`missing dependency namespace for ${node.name}`);
       const dependencyNode = packages.get(binding.packageRoot);
       if (!dependencyNode) return makeFallback(`missing package node for ${binding.specifier}`);
-      const boundary = plannedProviderBoundaries(dependencyNode)[binding.namespace ? "*" : binding.exportName];
+      const boundaryName = binding.namespace ? "*" : (binding.sourceExportName ?? binding.exportName);
+      const boundary = plannedProviderBoundaries(dependencyNode)[boundaryName];
       if (!boundary) return makeFallback(`missing dependency boundary for ${binding.exportName}`);
       if (boundary.kind === "function") {
-        for (const lookupName of linkedBindingLookupNames(binding)) {
+        const lookupNames = [
+          ...(binding.reexport ? [binding.localName] : linkedBindingLookupNames(binding)),
+          ...(binding.reexport ? [binding.exportName, binding.sourceExportName ?? binding.exportName] : []),
+          // Declaration stubs spell an imported default function with the
+          // stable private identifier used by the compiler.  A re-export
+          // declaration is resolved through that identifier (rather than the
+          // public `default` name), so map it to the provider's `default`
+          // field as well.  Without this spelling the ordinary export-alias
+          // path falls through to an `env.__js2wasm_default` import.
+          ...(binding.reexport && (binding.sourceExportName ?? binding.exportName) === "default"
+            ? [LINKED_DEFAULT_DECLARATION]
+            : []),
+          // The checker canonicalizes an aliased re-export back to the
+          // dependency's source symbol (`inc`, `default`, ...), while the
+          // rewritten source uses a generated local alias. Register both
+          // spellings so the codegen seam cannot fall back to env.
+          ...(binding.reexport ? [boundary.field] : []),
+        ];
+        for (const lookupName of lookupNames) {
           dependencyBindings.set(lookupName, { module: dependencyNamespace, field: boundary.field });
         }
       } else {
         const getterBinding = { module: dependencyNamespace, field: boundary.field };
-        dependencyBindings.set(getterLocalName(binding), getterBinding);
+        const lookupName = binding.reexport ? `${binding.localName}_getter` : getterLocalName(binding);
+        dependencyBindings.set(lookupName, getterBinding);
         // The checker resolves the imported declaration by its exported field
         // name even when the source alias is synthetic. Keep both spellings
         // in the narrow linked seam so the getter cannot fall back to env.
@@ -1672,7 +2001,8 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       for (const binding of bindings.filter((candidate) => candidate.importer === physical)) {
         const targetNode = packages.get(binding.packageRoot);
         if (!targetNode) return makeFallback(`missing package node for ${binding.specifier}`);
-        const boundary = plannedProviderBoundaries(targetNode)[binding.namespace ? "*" : binding.exportName];
+        const boundaryName = binding.namespace ? "*" : (binding.sourceExportName ?? binding.exportName);
+        const boundary = plannedProviderBoundaries(targetNode)[boundaryName];
         if (!boundary) return makeFallback(`missing root boundary for ${targetNode.name}:${binding.exportName}`);
         rewrites.push({ ...binding, boundary });
       }
@@ -1712,7 +2042,8 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
           localName: binding.localName,
           namespace: binding.namespace,
         };
-        const boundary = plannedProviderBoundaries(targetNode)[binding.namespace ? "*" : binding.exportName];
+        const boundaryName = binding.namespace ? "*" : binding.exportName;
+        const boundary = plannedProviderBoundaries(targetNode)[boundaryName];
         if (!boundary) return makeFallback(`${targetNode.name} does not expose ${binding.exportName}`);
         const lookupNames =
           boundary.kind === "function" ? linkedBindingLookupNames(externalBinding) : [getterLocalName(externalBinding)];

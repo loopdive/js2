@@ -1,7 +1,7 @@
 import { performance } from "node:perf_hooks";
 import { readFileSync } from "node:fs";
 
-import { compile, compileProject } from "../../src/index.ts";
+import { compile, compileProject, instantiateLinkedProject } from "../../src/index.ts";
 import { buildCompiledImports, wrapExports } from "../../src/runtime.ts";
 import { getWebHostConstructors } from "../../src/runtime/web-host-constructors.ts";
 
@@ -150,6 +150,7 @@ async function main() {
       // available after the instance is handed to the runtime. Run the same
       // initializer after that handoff instead of inside WebAssembly.start.
       deferTopLevelInit: true,
+      ...(process.env.DOGFOOD_PACKAGE_CACHE_DIR ? { packageCacheDir: process.env.DOGFOOD_PACKAGE_CACHE_DIR } : {}),
     };
     result =
       mode === "source"
@@ -195,6 +196,7 @@ async function main() {
         validates: false,
         durationMs,
         binaryBytes: result.binary.length,
+        linkPlan: result.linkPlan ?? null,
         errors: [],
         validationError: errorText(error),
       },
@@ -205,7 +207,14 @@ async function main() {
 
   if (mode === "source") {
     emit({
-      compile: { success: true, validates: true, durationMs, binaryBytes: result.binary.length, errors: [] },
+      compile: {
+        success: true,
+        validates: true,
+        durationMs,
+        binaryBytes: result.binary.length,
+        linkPlan: result.linkPlan ?? null,
+        errors: [],
+      },
       wasm: null,
     });
     return;
@@ -218,14 +227,23 @@ async function main() {
         ? await loadNodeHostDependencies()
         : await loadWebHostDependencies(),
     );
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    const { instance } = result.linkedModules?.length
+      ? await instantiateLinkedProject(result, imports)
+      : await WebAssembly.instantiate(result.binary, imports);
     imports.setInstance?.(instance);
     imports.__setInstance?.(instance);
     try {
       instance.exports.__module_init?.();
     } catch (error) {
       emit({
-        compile: { success: true, validates: true, durationMs, binaryBytes: result.binary.length, errors: [] },
+        compile: {
+          success: true,
+          validates: true,
+          durationMs,
+          binaryBytes: result.binary.length,
+          linkPlan: result.linkPlan ?? null,
+          errors: [],
+        },
         wasm: { fatal: `module init: ${errorText(error, instance)}`, count: 0, statuses: [] },
       });
       return;
@@ -289,12 +307,26 @@ async function main() {
     }
     await exports.cleanupUpstreamTestEnvironment?.();
     emit({
-      compile: { success: true, validates: true, durationMs, binaryBytes: result.binary.length, errors: [] },
+      compile: {
+        success: true,
+        validates: true,
+        durationMs,
+        binaryBytes: result.binary.length,
+        linkPlan: result.linkPlan ?? null,
+        errors: [],
+      },
       wasm: { count: Number(exports.upstreamTestCount()), statuses, errors },
     });
   } catch (error) {
     emit({
-      compile: { success: true, validates: true, durationMs, binaryBytes: result.binary.length, errors: [] },
+      compile: {
+        success: true,
+        validates: true,
+        durationMs,
+        binaryBytes: result.binary.length,
+        linkPlan: result.linkPlan ?? null,
+        errors: [],
+      },
       wasm: { fatal: errorText(error), count: 0, statuses: [] },
     });
   }

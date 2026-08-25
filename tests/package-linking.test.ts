@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 // #2527 — separately compiled npm function providers.
 
-import { mkdtempSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -91,6 +91,26 @@ describe("#2527 npm package module linking", () => {
     expect(linked.instance.exports.run?.()).toBe(9);
   });
 
+  it("links a bare package after TypeScript realpaths its node_modules symlink", async () => {
+    const root = project("package-link-symlink");
+    const physicalRoot = join(root, ".store", "linked-pkg");
+    mkdirSync(physicalRoot, { recursive: true });
+    writeFileSync(join(physicalRoot, "package.json"), JSON.stringify({ name: "linked-pkg", main: "index.ts" }));
+    writeFileSync(join(physicalRoot, "index.ts"), "export function answer(): number { return 42; }\n");
+    mkdirSync(join(root, "node_modules"), { recursive: true });
+    symlinkSync(physicalRoot, join(root, "node_modules", "linked-pkg"), "dir");
+    writeFileSync(
+      join(root, "main.ts"),
+      'import { answer } from "linked-pkg"; export function run(): number { return answer(); }\n',
+    );
+
+    const result = await compile(root, "main.ts", join(root, ".cache"));
+    expect(result.linkPlan).toMatchObject({ mode: "separate", compiledProviders: 1 });
+    expect(result.linkedModules?.[0]?.packageName).toBe("linked-pkg");
+    const linked = await instantiateLinkedProject(result);
+    expect(linked.instance.exports.run?.()).toBe(42);
+  });
+
   it("links a package dependency DAG provider-before-consumer", async () => {
     const root = project("package-link-dag");
     writePackage(root, "base-fn", "export function double(x: number): number { return x * 2; }\n");
@@ -112,6 +132,42 @@ describe("#2527 npm package module linking", () => {
     expect(result.linkedModules?.[1]?.dependencies).toContain(result.linkedModules?.[0]?.namespace);
     const linked = await instantiateLinkedProject(result);
     expect(linked.instance.exports.run?.()).toBe(7);
+  });
+
+  it("links cross-package named/default/star re-exports in dependency order and cache", async () => {
+    const root = project("package-link-cross-barrel");
+    writePackage(
+      root,
+      "leaf-fn",
+      "export function inc(x: number): number { return x + 1; }\nexport function double(x: number): number { return x * 2; }\nexport default function triple(x: number): number { return x * 3; }\nexport class Unused {}\n",
+    );
+    writePackage(
+      root,
+      "barrel-fn",
+      'export { inc as plusOne } from "leaf-fn";\nexport { default as timesThree } from "leaf-fn";\nexport * from "leaf-fn";\n',
+    );
+    writeFileSync(
+      join(root, "first.ts"),
+      'import { plusOne, timesThree, double } from "barrel-fn"; export function run(): number { return plusOne(2) + timesThree(2) + double(2); }\n',
+    );
+    writeFileSync(
+      join(root, "second.ts"),
+      'import { double as twice } from "barrel-fn"; export function run(): number { return twice(5); }\n',
+    );
+    const cacheDir = join(root, ".cache");
+    const first = await compile(root, "first.ts", cacheDir);
+    expect(first.linkPlan?.mode).toBe("separate");
+    expect(first.linkedModules?.map((artifact) => artifact.packageName)).toEqual(["leaf-fn", "barrel-fn"]);
+    expect(first.linkedModules?.[1]?.dependencies).toContain(first.linkedModules?.[0]?.namespace);
+    expect(first.linkedModules?.[1]?.exports).toEqual(["double", "plusOne", "timesThree"]);
+    const firstLinked = await instantiateLinkedProject(first);
+    expect(firstLinked.instance.exports.run?.()).toBe(13);
+
+    const second = await compile(root, "second.ts", cacheDir);
+    expect(second.linkPlan).toMatchObject({ mode: "separate", compiledProviders: 0, cachedProviders: 2 });
+    expect(second.linkedModules?.every((artifact) => artifact.cacheHit)).toBe(true);
+    const secondLinked = await instantiateLinkedProject(second);
+    expect(secondLinked.instance.exports.run?.()).toBe(10);
   });
 
   it("defers provider initialization until its own runtime is wired and isolates state", async () => {
@@ -237,7 +293,7 @@ describe("#2527 npm package module linking", () => {
     );
     const result = await compile(root, "main.ts", join(root, ".cache"));
     expect(result.linkPlan?.mode).toBe("separate");
-    expect(result.linkedModules?.[0]?.exportBoundaries?.add).toMatchObject({ kind: "function" });
+    expect(result.linkedModules?.[0]?.exportBoundaries?.add).toMatchObject({ kind: "getter" });
     const linked = await instantiateLinkedProject(result);
     expect(linked.instance.exports.run?.()).toBe(12);
   });

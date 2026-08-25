@@ -72,7 +72,11 @@ and boundary-kind manifest is cached in `.js2wasm-cache/npm-modules` (or
 
 The export analyzer follows exact relative package edges, including named
 aliases, `export { fn } from`, `export * from`, and default function
-re-exports. A generated provider facade gives each requested binding a stable
+re-exports. It also follows named/default/star re-exports across bare package
+edges and preserves provider-before-consumer order in that package DAG.
+TypeScript-realpathed npm/pnpm symlinks recover their physical package identity
+from the nearest authoritative `package.json`; a physical path does not have to
+retain a literal `node_modules` segment. A generated provider facade gives each requested binding a stable
 Wasm field and records whether it is a direct function, value getter, or
 namespace getter. An unused class or value in the same package does not disable
 a function provider. Default values use getter fields; default functions use
@@ -101,7 +105,11 @@ emitted as `__module_init`; the linker wires that provider's `setInstance`
 callback before invoking the initializer. `instantiateLinkedProject` therefore
 creates fresh provider state for every call, which is the lifecycle boundary
 used by repeated benchmark runs. `result.linkPlan` reports `compiledProviders`
-and `cachedProviders` telemetry.
+and `cachedProviders` telemetry. A cached provider whose embedded manifest is a
+strict ABI superset may satisfy a later consumer that requests fewer exports;
+the consumer still imports only its declared fields. This prevents package
+barrels and benchmark batches from recompiling the same provider merely because
+their requested export subsets differ.
 
 The linker still falls back to deterministic monolithic compilation for package
 cycles, ambiguous/multiple entrypoints, re-exports outside the exact relative
