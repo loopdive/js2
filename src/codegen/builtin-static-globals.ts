@@ -428,6 +428,29 @@ function pushJsonNamespaceOwnPropSeed(ctx: CodegenContext, fctx: FunctionContext
   fctx.body.push({ op: "drop" });
 }
 
+/** Seed the ES2015 namespace tags omitted by the generic Math/Reflect carrier. */
+function pushMathReflectNamespaceTagSeed(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  builtinName: string,
+  objLocal: number,
+): void {
+  if ((!ctx.standalone && !ctx.wasi) || (builtinName !== "Math" && builtinName !== "Reflect")) return;
+  const defineIdx = ctx.funcMap.get("__defineProperty_value");
+  if (defineIdx === undefined) return;
+  const boxSymbolIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (boxSymbolIdx === undefined) return;
+  fctx.body.push({ op: "local.get", index: objLocal });
+  fctx.body.push({ op: "i32.const", value: 4 }); // Symbol.toStringTag
+  fctx.body.push({ op: "call", funcIdx: boxSymbolIdx });
+  addStringConstantGlobal(ctx, builtinName);
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, builtinName));
+  fctx.body.push({ op: "f64.const", value: 0x04 });
+  fctx.body.push({ op: "call", funcIdx: defineIdx });
+  fctx.body.push({ op: "drop" });
+}
+
 export function emitBuiltinNamespaceObject(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -495,6 +518,7 @@ export function emitBuiltinNamespaceObject(
     if (builtinName === "JSON") {
       pushJsonNamespaceOwnPropSeed(ctx, fctx, objLocal);
     }
+    pushMathReflectNamespaceTagSeed(ctx, fctx, builtinName, objLocal);
     // (#2984 ctor-carrier own props) The Error-family / `Array` / `Object`
     // carriers are CONSTRUCTOR objects, so they also own `length`/`name`/
     // `prototype`. No-op for the true namespaces (`Math`/`JSON`/`Reflect`),
