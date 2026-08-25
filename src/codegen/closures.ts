@@ -3477,6 +3477,8 @@ export function compileArrowAsCallback(
      * callback creations (per-iteration `let` semantics need fresh cells).
      */
     sharedRefCells?: SharedRefCellMap;
+    /** Preserve arbitrary host values passed to an accessor setter. */
+    forceExternrefParams?: boolean;
   },
 ): ValType | null {
   const cbId = ctx.callbackCounter++;
@@ -3593,7 +3595,7 @@ export function compileArrowAsCallback(
     cbResolvedParams.push(resolved);
     // JS host passes all values as externref for GC ref types — they cannot
     // be passed as (ref N) or (ref null N) directly from JS
-    if (resolved.kind === "ref" || resolved.kind === "ref_null") {
+    if (options?.forceExternrefParams || resolved.kind === "ref" || resolved.kind === "ref_null") {
       cbParams.push({ kind: "externref" });
     } else {
       cbParams.push(resolved);
