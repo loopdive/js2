@@ -537,6 +537,16 @@ function classifyUse(
   // the externref `$Object` runtime — a user call's object-literal argument is
   // untouched.
   if (ts.isPropertyAssignment(parent) && parent.initializer === useNode) {
+    // `{ length: new F() }` feeds the value to LengthOfArrayLike/ToLength once
+    // the containing object is consumed by a borrowed Array method. The field
+    // boundary erases the direct constructor expression, so keeping `F` on its
+    // closed struct would make the later runtime ToPrimitive walk unable to see
+    // methods installed on `F.prototype`. Treat this canonical ES5 array-like
+    // slot as the same dynamic escape as `table.length = inst` above. Clause B
+    // still wins for constructors with typed own-field consumers.
+    const propertyName = ts.isIdentifier(parent.name) || ts.isStringLiteral(parent.name) ? parent.name.text : undefined;
+    if (standalone === true && propertyName === "length") return "dynamic";
+
     const lit = parent.parent;
     if (ts.isObjectLiteralExpression(lit) && ts.isCallExpression(lit.parent) && lit.parent.arguments.includes(lit)) {
       const outerCallee = lit.parent.expression;
