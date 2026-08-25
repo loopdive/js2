@@ -18,6 +18,7 @@ import { noJsHost } from "../js-errors.js";
 import { pushDefaultValue } from "../type-coercion.js";
 import { compileStandaloneRegExpConstructor, isGlobalRegExpIdentifier } from "../regexp-standalone.js";
 import { foreignReturnFunctionNames } from "../fnctor-foreign-return.js"; // (#4637 A2) §10.2.1.3 step 13
+import { isFreshOrdinaryObjectExpression } from "../native-ordinary-instanceof.js";
 
 /**
  * (#4221) Unwrap the transparent wrappers that sit between a call expression
@@ -223,6 +224,7 @@ export function isEvolvingAnyBinding(ctx: CodegenContext, callee: ts.Expression)
     // static fact here or it is nowhere.
     if (!isConst && nullishBindingIsRetargeted(callee)) return true;
   }
+  if (isFreshlyConstructedAlias(ctx, callee)) return false;
   return !NEVER_CALLABLE_FACT_KINDS.has(initFact.kind) && !isFreshlyConstructedNonCallable(ctx, init, initFact.kind);
 }
 
@@ -354,12 +356,33 @@ export function isFreshlyConstructedNonCallable(ctx: CodegenContext, callee: ts.
     // only here), unlike a checker-typed `{}` binding.
     return factKind === "builtin" || factKind === "class" || factKind === "object";
   }
+  // A single-assignment alias preserves the non-callability of a freshly
+  // constructed ordinary object. The checker reports untyped JavaScript
+  // aliases as `any`, so the direct-`new` arm above cannot see them and the
+  // call used to fall through to the silent undefined result. The helper
+  // requires a syntactic object / `new` initializer and a no-value-returning
+  // user constructor, and declines on any binding write; a later assignment
+  // may therefore replace the object with a callable value.
+  if (isFreshlyConstructedAlias(ctx, callee)) return true;
   // A nominal instance type (`new Number(1)` bound to a variable, an `Error`,
   // `IArguments`, a user class instance) carries no [[Call]] — `factOfType`
   // classifies anything with a call/construct signature as `function` before
   // it can reach `builtin`/`class`. `object` (the structural `{}` fact) is
   // deliberately NOT accepted off the `new` path.
   return factKind === "builtin" || factKind === "class";
+}
+
+/**
+ * True for a single-assignment binding whose initializer is a `new` expression
+ * producing an ordinary object. Keep this alias arm narrower than
+ * `isFreshOrdinaryObjectExpression`: object-literal aliases are a separate
+ * call-dispatch question, while this residual is specifically the untyped
+ * `var instance = new Ctor()` form.
+ */
+function isFreshlyConstructedAlias(ctx: CodegenContext, expr: ts.Expression): boolean {
+  if (!ts.isIdentifier(expr)) return false;
+  const initializer = ctx.oracle.variableInitializerOf(expr);
+  return initializer !== undefined && ts.isNewExpression(initializer) && isFreshOrdinaryObjectExpression(ctx, expr);
 }
 
 /**
