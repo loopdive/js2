@@ -21,7 +21,7 @@ import {
   resolvesToAmbientGlobal,
   resolvesToNonConstructableValue,
 } from "./non-constructable.js"; // (#4017)
-import { tryNonConstructableNewTarget } from "./new-non-constructable-value.js"; // (#4246)
+import * as newConstructors from "./new-non-constructable-value.js"; // (#4246)
 import { getOrRegisterTaCtorType } from "../registry/types.js"; // (#4626) runtime $__ta_ctor gate in the ordinary-[[Construct]] arm
 import { tryNewBuiltinStaticAlias } from "./new-builtin-static-alias.js"; // (#4491 wave-5 T6)
 import { reportError } from "../context/errors.js";
@@ -3829,7 +3829,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // before the class-expression / unknown-constructor paths that would
   // otherwise swallow the construction and answer `undefined`.
   {
-    const nonCtorValue = tryNonConstructableNewTarget(ctx, fctx, expr);
+    const nonCtorValue = newConstructors.tryNonConstructableNewTarget(ctx, fctx, expr);
     if (nonCtorValue !== undefined) return nonCtorValue;
   }
 
@@ -3935,7 +3935,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       return emitStaticNotAConstructorThrow(ctx, fctx, []);
     }
   }
-
+  if (newConstructors.tryEmitHostConstructExpression(ctx, fctx, expr)) return { kind: "externref" };
   // (#1519 sub-issue B) Built-in non-constructor namespaces — `Math`, `JSON`,
   // `Reflect`, `Atomics` — have neither call nor construct signatures. Per
   // ECMA-262 §7.2.10 IsConstructor, `new`-on a value lacking `[[Construct]]`
