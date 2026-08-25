@@ -11,13 +11,8 @@ async function runStandalone(source: string): Promise<number> {
     fileName: "issue-4449.ts",
     target: "standalone",
   });
-  expect(
-    result.success,
-    result.errors.map((error) => error.message).join("\n"),
-  ).toBe(true);
-  expect(WebAssembly.validate(result.binary), "module must be valid Wasm").toBe(
-    true,
-  );
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(WebAssembly.validate(result.binary), "module must be valid Wasm").toBe(true);
   const { instance } = await WebAssembly.instantiate(result.binary, {});
   return (instance.exports.test as () => number)();
 }

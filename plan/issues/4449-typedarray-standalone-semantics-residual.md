@@ -13,6 +13,13 @@ area: codegen, conformance
 es_edition: es6
 goal: standalone-mode
 related: [4444, 2159, 2175]
+loc-budget-allow:
+  - src/codegen/array-methods.ts
+  - src/codegen/dataview-native.ts
+  - src/codegen/expressions/call-receiver-method.ts
+func-budget-allow:
+  - src/codegen/array-methods.ts::compileArrayMethodCall
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
 ---
 
 # #4449 — TypedArray.prototype standalone semantics residual

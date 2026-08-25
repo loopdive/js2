@@ -5925,11 +5925,7 @@ export function emitTaViewValidate(
       { op: "local.get", index: bufLenLocal },
       { op: "i32.gt_s" },
     ],
-    else: [
-      { op: "local.get", index: offsetLocal },
-      { op: "local.get", index: bufLenLocal },
-      { op: "i32.gt_s" },
-    ],
+    else: [{ op: "local.get", index: offsetLocal }, { op: "local.get", index: bufLenLocal }, { op: "i32.gt_s" }],
   });
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwArm, else: [] });
 }
