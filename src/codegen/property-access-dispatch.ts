@@ -2541,8 +2541,7 @@ function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): Va
  */
 function returnsAnonymousClassFieldInitializer(ctx: CodegenContext, value: ts.Expression): boolean {
   if (!ts.isCallExpression(value) || !ts.isPropertyAccessExpression(value.expression)) return false;
-  const methodSymbol = ctx.checker.getSymbolAtLocation(value.expression.name);
-  const methodDecl = methodSymbol?.valueDeclaration;
+  const methodDecl = ctx.oracle.valueDeclarationOf(value.expression.name);
   if (!methodDecl || !ts.isMethodDeclaration(methodDecl) || !methodDecl.body) return false;
   const classDecl = methodDecl.parent;
   if (!ts.isClassDeclaration(classDecl) && !ts.isClassExpression(classDecl)) return false;
