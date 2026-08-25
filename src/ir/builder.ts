@@ -36,8 +36,10 @@ import {
   IrUnop,
   IrValueId,
   IrValueIdAllocator,
+  irFnctor,
   irTypeEquals,
 } from "./nodes.js";
+import { irFnctorShapeEquals, validateIrFnctorShape, type IrFnctorShape } from "./fnctor-abi.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import type { Instr, ValType } from "./types.js";
 // #3954 phase 1 — the builder's payload-shape question ("does this partition
@@ -745,6 +747,65 @@ export class IrFunctionBuilder {
       result: null,
       resultType: null,
     });
+  }
+
+  // --- function-style constructor ops (#3521) ---------------------------
+
+  /**
+   * Emit a nominal function-style constructor instance. The flattened
+   * capture ABI includes one optional TDZ flag per capture; user arguments
+   * remain a separate list so a resolver cannot accidentally reorder them.
+   */
+  emitFnctorNew(
+    shape: IrFnctorShape,
+    captureArgs: readonly IrValueId[],
+    args: readonly IrValueId[],
+    constructorIdentity: IrValueId | null,
+  ): IrValueId {
+    const shapeError = validateIrFnctorShape(shape);
+    if (shapeError) throw new Error(`IrFunctionBuilder: invalid fnctor shape: ${shapeError}`);
+    const captureArity = shape.captures.reduce((count, capture) => count + (capture.hasTdzFlag ? 2 : 1), 0);
+    if (captureArgs.length !== captureArity) {
+      throw new Error(
+        `IrFunctionBuilder: fnctor.new capture count ${captureArgs.length} != ABI count ${captureArity} (func ${this.id.name})`,
+      );
+    }
+    if (args.length !== shape.userParamTypes.length) {
+      throw new Error(
+        `IrFunctionBuilder: fnctor.new arg count ${args.length} != constructor arity ${shape.userParamTypes.length} (func ${this.id.name})`,
+      );
+    }
+    const result = this.allocator.fresh();
+    const resultType = irFnctor(shape);
+    this.valueTypes.set(result, resultType);
+    const alloc = this.allocId("object", resultType);
+    this.pushInstr({
+      kind: "fnctor.new",
+      shape,
+      captureArgs: [...captureArgs],
+      args: [...args],
+      constructorIdentity,
+      result,
+      resultType,
+      alloc,
+    });
+    return result;
+  }
+
+  /** Emit a named field read from a nominal function-style constructor. */
+  emitFnctorGet(value: IrValueId, shape: IrFnctorShape, fieldName: string): IrValueId {
+    const shapeError = validateIrFnctorShape(shape);
+    if (shapeError) throw new Error(`IrFunctionBuilder: invalid fnctor shape: ${shapeError}`);
+    const field = shape.fields.find((candidate) => candidate.name === fieldName);
+    if (!field) throw new Error(`IrFunctionBuilder: unknown fnctor field '${fieldName}' (func ${this.id.name})`);
+    const receiverType = this.typeOf(value);
+    if (receiverType.kind !== "fnctor" || !irFnctorShapeEquals(receiverType.shape, shape)) {
+      throw new Error(`IrFunctionBuilder: fnctor.get receiver shape mismatch (func ${this.id.name})`);
+    }
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, field.type);
+    this.pushInstr({ kind: "fnctor.get", shape, value, fieldName, result, resultType: field.type });
+    return result;
   }
 
   // --- closure / ref-cell ops (#1169c) -----------------------------------

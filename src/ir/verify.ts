@@ -42,6 +42,7 @@ import { defaultTagDomain } from "./producer.js";
 import type { TagDomain } from "./tag-domain.js";
 import { verifyIrIntrinsicInstruction } from "./intrinsic-support.js";
 import { verifyIrAsyncPlan } from "./async-plan.js";
+import { irFnctorShapeEquals, validateIrFnctorShape } from "./fnctor-abi.js";
 import { IR_STRING_REPEAT_FN } from "./string-runtime.js";
 // #4418 — shared, cached dominance analysis (formerly a private set-based
 // computation in this file, #1850).
@@ -535,6 +536,11 @@ export function verifyIrFunction(
  * an unambiguous mismatch.
  */
 function returnTypeAssignable(actual: IrType, declared: IrType): boolean {
+  // Fnctor values are nominal source-qualified instances, never arbitrary
+  // reference-shaped carriers. An exact shape match is required in either
+  // return direction; there is no implicit fnctor↔object/class conversion.
+  if (declared.kind === "fnctor") return actual.kind === "fnctor" && irTypeEquals(actual, declared);
+  if (actual.kind === "fnctor") return false;
   // #2949 slice 3 — R6 HARDENING: a `dynamic` declared result accepts ONLY a
   // dynamic value (bare or tag-refined). Before slice 3 this fell through to
   // the lenient both-reference-shaped arm below, which PASSED a bare
@@ -650,6 +656,71 @@ function verifyInstrStructure(
     if (instr.tests.filter((t) => t === null).length > 1) {
       errors.push({
         message: `switch has more than one default clause`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+
+  // #3521 — nominal function-style constructor operations stay structural
+  // until a backend resolver is installed. Never let a malformed shape or
+  // an arity/field mismatch reach lowering, where it could otherwise become
+  // an ambiguous legacy constructor call.
+  if (instr.kind === "fnctor.new") {
+    const shapeError = validateIrFnctorShape(instr.shape);
+    if (shapeError) {
+      errors.push({ message: `fnctor.new invalid shape: ${shapeError}`, func: func.name, block: block.id as number });
+    }
+    const captureArity = instr.shape.captures.reduce((count, capture) => count + (capture.hasTdzFlag ? 2 : 1), 0);
+    if (instr.captureArgs.length !== captureArity) {
+      errors.push({
+        message: `fnctor.new capture count ${instr.captureArgs.length} != ABI count ${captureArity}`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    if (instr.args.length !== instr.shape.userParamTypes.length) {
+      errors.push({
+        message: `fnctor.new arg count ${instr.args.length} != constructor arity ${instr.shape.userParamTypes.length}`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    if (
+      instr.resultType === null ||
+      instr.resultType.kind !== "fnctor" ||
+      !irFnctorShapeEquals(instr.resultType.shape, instr.shape)
+    ) {
+      errors.push({
+        message: "fnctor.new resultType must be the exact nominal fnctor shape",
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+  if (instr.kind === "fnctor.get") {
+    const shapeError = validateIrFnctorShape(instr.shape);
+    if (shapeError) {
+      errors.push({ message: `fnctor.get invalid shape: ${shapeError}`, func: func.name, block: block.id as number });
+    }
+    const field = instr.shape.fields.find((candidate) => candidate.name === instr.fieldName);
+    if (!field) {
+      errors.push({
+        message: `fnctor.get unknown field '${instr.fieldName}'`,
+        func: func.name,
+        block: block.id as number,
+      });
+    } else if (instr.resultType === null || !irTypeEquals(instr.resultType, field.type)) {
+      errors.push({
+        message: `fnctor.get resultType does not match field '${instr.fieldName}'`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    const receiverType = operandIrType(func, block, instr.value, localDefs);
+    if (receiverType && (receiverType.kind !== "fnctor" || !irFnctorShapeEquals(receiverType.shape, instr.shape))) {
+      errors.push({
+        message: "fnctor.get receiver is not the exact nominal fnctor shape",
         func: func.name,
         block: block.id as number,
       });
@@ -1126,6 +1197,14 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
     case "string.char_at":
     case "string.char_code_at":
       return [instr.value, instr.index];
+    case "fnctor.new":
+      return [
+        ...instr.captureArgs,
+        ...instr.args,
+        ...(instr.constructorIdentity === null ? [] : [instr.constructorIdentity]),
+      ];
+    case "fnctor.get":
+      return [instr.value];
     case "object.new":
       return instr.values;
     case "object.get":
@@ -1675,6 +1754,12 @@ export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
   "dyn.member_get": { skip: "checked-elsewhere: recv/key/result all-dynamic rules in verifyInstrStructure (#3053 U1)" },
   "dyn.member_set": {
     skip: "checked-elsewhere: recv/key/value dynamic + void-result rules in verifyInstrStructure (#3795)",
+  },
+  "fnctor.new": {
+    skip: "checked-elsewhere: nominal shape, capture/user arity, and fnctor result type in verifyInstrStructure (#3521)",
+  },
+  "fnctor.get": {
+    skip: "checked-elsewhere: nominal receiver/field/result type in verifyInstrStructure (#3521)",
   },
   "while.loop": { skip: "checked-elsewhere: condValue-must-be-i32 rule in verifyInstrStructure (#1980)" },
   "for.loop": { skip: "checked-elsewhere: condValue-must-be-i32 rule in verifyInstrStructure (#1980)" },
