@@ -2064,8 +2064,6 @@ export function emitStandaloneDynamicFunctionRuntime(
   const repr = nativeStringRepr(ctx);
   if (repr === undefined) return undefined;
   if (!ensureRuntimeEvalCallableCarrier(ctx, fctx)) return undefined;
-  emitRuntimeEvalGlobalBindingSeed(ctx, fctx);
-
   const liveParts: Instr[][] = [];
   const compilePart = (arg: ts.Expression): Instr[] => {
     const part: Instr[] = [];
@@ -2110,6 +2108,12 @@ export function emitStandaloneDynamicFunctionRuntime(
   if (emitGlobalEnvironmentObject(ctx, fctx) === null) {
     fctx.body.push({ op: "ref.null.extern" });
   }
+
+  // Function's parameter/body ToString steps run in the caller realm before
+  // CreateDynamicFunction enters the provider. Seed the provider only after
+  // all user-controlled coercions have completed, so their side effects are
+  // part of the snapshot and a throwing coercion never pulls a stale one.
+  emitRuntimeEvalGlobalBindingSeed(ctx, fctx, true);
 
   const newFnIdx = ensureLateImport(
     ctx,

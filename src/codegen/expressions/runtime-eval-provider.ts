@@ -533,12 +533,12 @@ function ensureRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
  * correctly resolve them through GlobalEnvironmentRecord. Seeding the shared
  * object closes the AOT→interpreter visibility half without exposing compiler
  * helper globals or requiring a second provider-side callable ABI. */
-export function emitRuntimeEvalGlobalBindingSeed(ctx: CodegenContext, fctx: FunctionContext): void {
+export function emitRuntimeEvalGlobalBindingSeed(ctx: CodegenContext, fctx: FunctionContext, activate = true): void {
   if (!ctx.standalone) return;
   ensureRuntimeEvalGlobalBindingSync(ctx);
   const pushIdx = ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS);
   if (pushIdx !== undefined) fctx.body.push({ op: "call", funcIdx: pushIdx });
-  emitRuntimeEvalProviderActive(ctx, fctx, true);
+  if (activate) emitRuntimeEvalProviderActive(ctx, fctx, true);
 }
 
 /** Mark whether carrier calls are executing across the provider boundary. */

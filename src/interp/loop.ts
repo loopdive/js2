@@ -452,6 +452,14 @@ export function __runtime_eval_unwrap_interpreted_callback(callee: JSValue): JSV
   return callee;
 }
 
+/** Test the cross-module AOT callable carrier. Node execution keeps the
+ * carrier opaque; standalone compilation replaces this private intrinsic
+ * with its structural type-and-brand check so an adapter can preserve
+ * [[Call]] when a compiled closure crosses into an evaluated realm. */
+export function __runtime_eval_is_aot_callable(_callee: JSValue): boolean {
+  return false;
+}
+
 /** Return one stable, structurally canonical provider→AOT function marker.
  * Reusing the marker is required for `f === f` and for aliases of one Annex B
  * function that cross the boundary through different binding cells. */

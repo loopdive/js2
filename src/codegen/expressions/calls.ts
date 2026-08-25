@@ -210,6 +210,8 @@ import {
   ensureStandaloneNativeMethodClosure,
   getNativeProtoBuiltinGlue,
 } from "../native-proto.js";
+import { ensureRuntimeEvalAotCallableCarrierTypes } from "../runtime-eval-callable.js";
+import { RUNTIME_EVAL_AOT_CALLABLE_BRAND_A, RUNTIME_EVAL_AOT_CALLABLE_BRAND_B } from "../runtime-eval-boundary.js";
 import { wrapperProtoSyntacticMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
 import { BUILTIN_STATIC_METHOD_ARITY } from "../builtin-fn-meta.js";
 import { pushReflectiveCallReceiver } from "../reflective-call-receiver.js"; // (#3638)
@@ -6294,10 +6296,11 @@ function tryRuntimeEvalInterpretedBoundaryIntrinsic(
   const testsIntrinsic = calleeName === "__runtime_eval_is_intrinsic_callback";
   const wrapsResult = calleeName === "__runtime_eval_wrap_result";
   const unwrapsResult = calleeName === "__runtime_eval_unwrap_result";
+  const testsAotCallable = calleeName === "__runtime_eval_is_aot_callable";
   if (
     (!ctx.standalone && !ctx.wasi) ||
     ctx.runtimeEvalCallableBoundaryEnabled !== true ||
-    (!wraps && !unwraps && !testsIntrinsic && !wrapsResult && !unwrapsResult) ||
+    (!wraps && !unwraps && !testsIntrinsic && !wrapsResult && !unwrapsResult && !testsAotCallable) ||
     (wraps ? expr.arguments.length !== (wrapsFunction ? 3 : 4) : expr.arguments.length !== 1)
   ) {
     return undefined;
@@ -6308,6 +6311,38 @@ function tryRuntimeEvalInterpretedBoundaryIntrinsic(
   if (valueType && valueType.kind !== "externref") coerceType(ctx, fctx, valueType, externref);
   if (wrapsResult) return emitRuntimeEvalResultBoundaryWrap(ctx, fctx, externref);
   if (unwrapsResult) return emitRuntimeEvalResultBoundaryUnwrap(ctx, fctx, externref);
+  if (testsAotCallable) {
+    const carrier = ctx.runtimeEvalAotCallableCarrier ?? ensureRuntimeEvalAotCallableCarrierTypes(ctx);
+    const valueLocal = allocLocal(fctx, `__runtime_eval_aot_predicate_${fctx.locals.length}`, externref);
+    fctx.body.push({ op: "local.set", index: valueLocal });
+    const brandMatch: Instr[] = [
+      { op: "local.get", index: valueLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: carrier.structTypeIdx },
+      { op: "struct.get", typeIdx: carrier.structTypeIdx, fieldIdx: 3 },
+      { op: "i32.const", value: RUNTIME_EVAL_AOT_CALLABLE_BRAND_A },
+      { op: "i32.eq" },
+      { op: "local.get", index: valueLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: carrier.structTypeIdx },
+      { op: "struct.get", typeIdx: carrier.structTypeIdx, fieldIdx: 4 },
+      { op: "i32.const", value: RUNTIME_EVAL_AOT_CALLABLE_BRAND_B },
+      { op: "i32.eq" },
+      { op: "i32.and" },
+    ];
+    fctx.body.push(
+      { op: "local.get", index: valueLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: carrier.structTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: brandMatch,
+        else: [{ op: "i32.const", value: 0 }],
+      },
+    );
+    return { kind: "i32" };
+  }
   const typeIdx = ensureRuntimeEvalInterpretedCallbackType(ctx);
   const valueLocal = allocLocal(fctx, `__runtime_eval_boundary_value_${fctx.locals.length}`, externref);
   const candidateLocal = allocLocal(fctx, `__runtime_eval_boundary_candidate_${fctx.locals.length}`, externref);

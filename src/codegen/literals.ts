@@ -101,6 +101,7 @@ import {
 } from "./struct-accessor-closure.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { registerCountedPushArray } from "./array-indexof-scan.js";
+import { ensureRuntimeEvalCallableWrapHelper } from "./runtime-eval-callable.js";
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -497,6 +498,14 @@ export function compileObjectLiteralAsExternref(
       }
       const valLocal = allocLocal(fctx, `__objlit_v_${fctx.locals.length}`, { kind: "externref" });
       fctx.body.push({ op: "local.set", index: valLocal });
+      if (ctx.standalone && ctx.runtimeEvalCallableBoundaryEnabled === true) {
+        const wrapCallableIdx = ensureRuntimeEvalCallableWrapHelper(ctx);
+        fctx.body.push(
+          { op: "local.get", index: valLocal },
+          { op: "call", funcIdx: wrapCallableIdx },
+          { op: "local.set", index: valLocal },
+        );
+      }
       // __extern_set(obj, "<key>", value)
       fctx.body.push({ op: "local.get", index: objLocal });
       addStringConstantGlobal(ctx, keyText);
@@ -541,6 +550,10 @@ export function compileObjectLiteralAsExternref(
       // rejects — see issue note 2), store `undefined` to keep the stack balanced,
       // matching the sibling arm's `ref.null.extern` fallback.
       if (!ok) fctx.body.push({ op: "ref.null.extern" });
+      if (ok && ctx.standalone && ctx.runtimeEvalCallableBoundaryEnabled === true) {
+        const wrapCallableIdx = ensureRuntimeEvalCallableWrapHelper(ctx);
+        fctx.body.push({ op: "call", funcIdx: wrapCallableIdx });
+      }
       fctx.body.push({ op: "call", funcIdx: setIdx });
     }
   }
@@ -1509,6 +1522,25 @@ export function objectLiteralIsStandaloneAnyObjectCarrier(
 }
 
 /**
+ * Runtime-eval arguments may be read back by the provider through the open
+ * object membrane. A closed object literal stores its function-valued fields
+ * in a module-local closure slot, which a separately compiled provider can
+ * classify but cannot invoke. Promote callable-bearing literals to the open
+ * object representation so construction can install the canonical callable
+ * carrier in each property before the object crosses the seam.
+ */
+function objectLiteralHasCallableProperty(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  if (!ctx.standalone || ctx.runtimeEvalCallableBoundaryEnabled !== true) return false;
+  for (const prop of expr.properties) {
+    if (ts.isMethodDeclaration(prop)) return true;
+    if (!ts.isPropertyAssignment(prop)) continue;
+    const initializer = prop.initializer;
+    if (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)) return true;
+  }
+  return false;
+}
+
+/**
  * (#1901/#2542, extracted for #3128) The standalone open-`$Object` divert
  * decision for a NON-EMPTY object literal: `compileObjectLiteral` builds the
  * literal as an open `$Object` handed back as **externref** (via
@@ -1599,6 +1631,7 @@ export function objectLiteralTakesStandaloneAnyObjectPath(
   // so diverting its literal to `$Object` would mismatch that struct local.
   const strIndex = ctxTypeNonEmpty ? ctx.checker.getIndexInfoOfType(ctxTypeNonEmpty, ts.IndexKind.String) : undefined;
   const isPureStringIndexContext = !!strIndex && !!ctxTypeNonEmpty && ctxTypeNonEmpty.getProperties().length === 0;
+  if (objectLiteralHasCallableProperty(ctx, expr)) return true;
   // #1901's any-context arm stays standalone-only (widening it would change every
   // any-typed literal's lowering under wasi); #2542's index arm covers both.
   return (ctx.standalone && isAnyContextNonEmpty) || isPureStringIndexContext;

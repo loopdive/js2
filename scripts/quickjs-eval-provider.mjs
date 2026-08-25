@@ -1040,7 +1040,8 @@ function qjsWrapOutbound(c: number, value: any): number {
   // The shared closure classifier includes the cross-module AOT callable
   // carrier, so a compiled function pushed through the seam answers "function"
   // here and gets the class whose \`call\` routes back into compiled code.
-  const callable: number = typeof value === "function" ? 1 : 0;
+  const callable: number =
+    typeof value === "function" || __typeof_function(value) !== 0 || __runtime_eval_is_aot_callable(value) ? 1 : 0;
   return qjs_new_wrapper(c, id, callable);
 }
 
