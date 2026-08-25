@@ -10300,10 +10300,10 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
       const isObjectRefLength =
         (cand.lengthFieldType.kind === "ref" || cand.lengthFieldType.kind === "ref_null") &&
         !isStringRefType(cand.lengthFieldType);
-      const objectRefRead: Instr[] =
+      const primitiveNumberRead = (convertAny: boolean): Instr[] =>
         toPrimIdx !== undefined && typeofStringIdx !== undefined && unboxNumIdx !== undefined
           ? [
-              { op: "extern.convert_any" },
+              ...(convertAny ? ([{ op: "extern.convert_any" }] satisfies Instr[]) : []),
               { op: "ref.null.extern" }, // hint: number/default
               { op: "call", funcIdx: toPrimIdx },
               { op: "local.tee", index: L_PRIM },
@@ -10328,19 +10328,19 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
               },
             ]
           : [{ op: "drop" }, { op: "f64.const", value: 0 }];
+      const objectRefRead = primitiveNumberRead(true);
+      const externRefRead = primitiveNumberRead(false);
       const readAsF64: Instr[] =
         cand.lengthFieldType.kind === "i32"
           ? [{ op: "f64.convert_i32_s" }]
           : cand.lengthFieldType.kind === "externref"
-            ? unboxNumIdx !== undefined
-              ? [{ op: "call", funcIdx: unboxNumIdx }]
-              : [{ op: "drop" }, { op: "f64.const", value: 0 }]
+            ? externRefRead
             : isStringRefType(cand.lengthFieldType) && strToNumIdx !== undefined
               ? [{ op: "extern.convert_any" }, { op: "call", funcIdx: strToNumIdx }]
               : isObjectRefLength
                 ? objectRefRead
                 : [];
-      if (isObjectRefLength && !lenPrimLocalAdded && primExtPos < 0) {
+      if ((isObjectRefLength || cand.lengthFieldType.kind === "externref") && !lenPrimLocalAdded && primExtPos < 0) {
         // Scratch externref local for the ToPrimitive result — appended once,
         // and only when the registration did not already provide it (#4556).
         lenFn.locals.push({ name: "primExt", type: { kind: "externref" } });

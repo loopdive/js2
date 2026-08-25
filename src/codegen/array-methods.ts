@@ -307,6 +307,17 @@ function emitCallbackTypeCheck(
   }
   // Known non-callable literal → compile arg for side effects, then throw
   const cbArg = callExpr.arguments[0]!;
+  // ArgumentListEvaluation reads the callback before Array.prototype.forEach
+  // (or its siblings) can perform IsCallable. A genuinely unresolvable bare
+  // identifier therefore throws ReferenceError, and must not fall through to
+  // the generic `__call_*` callback bridge after identifier lowering has
+  // already emitted that throw. Besides choosing the wrong error, that stale
+  // bridge introduces an unsatisfiable host import in standalone output.
+  // Runtime-eval globals remain dynamic and keep the ordinary callback path.
+  if (ts.isIdentifier(cbArg) && ctx.oracle.isUnresolvableIdentifier(cbArg) && !ctx.runtimeEvalGlobalFunctionBindings) {
+    compileExpression(ctx, fctx, cbArg);
+    return true;
+  }
   if (isKnownNonCallable(ctx, cbArg)) {
     const cbType = compileExpression(ctx, fctx, cbArg);
     if (cbType) fctx.body.push({ op: "drop" });
