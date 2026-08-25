@@ -33,6 +33,9 @@ func-budget-allow:
   - src/package-linker.ts::compileLinkedProject
 oracle-ratchet-allow:
   - src/codegen/index.ts
+coercion-sites-allow:
+  - src/codegen/index.ts
+  - src/codegen/number-format-native.ts
 ---
 
 ## Phase 0 spike result (2026-06-20) — GREEN ✅
