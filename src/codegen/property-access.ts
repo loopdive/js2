@@ -232,6 +232,66 @@ export {
   tryEnsureNativeProtoBrand,
 } from "./builtin-value-read.js";
 
+const PROTOTYPE_MUTATION_CACHE = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
+const isAssignmentOperator = (kind: ts.SyntaxKind): boolean =>
+  kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
+
+function prototypeMutationNames(sourceFile: ts.SourceFile): ReadonlySet<string> {
+  const cached = PROTOTYPE_MUTATION_CACHE.get(sourceFile);
+  if (cached !== undefined) return cached;
+  const names = new Set<string>();
+  const isPrototypeAccess = (expr: ts.Expression): boolean => {
+    const inner = skipTransparentExpressions(expr);
+    return (
+      (ts.isPropertyAccessExpression(inner) && inner.name.text === "prototype") ||
+      (ts.isElementAccessExpression(inner) &&
+        ts.isStringLiteral(inner.argumentExpression) &&
+        inner.argumentExpression.text === "prototype")
+    );
+  };
+  const prototypeBaseName = (expr: ts.Expression): string | undefined => {
+    const inner = skipTransparentExpressions(expr);
+    const prototype = isPrototypeAccess(inner)
+      ? inner
+      : (ts.isPropertyAccessExpression(inner) || ts.isElementAccessExpression(inner)) &&
+          isPrototypeAccess(inner.expression)
+        ? inner.expression
+        : undefined;
+    const base =
+      prototype && (ts.isPropertyAccessExpression(prototype) || ts.isElementAccessExpression(prototype))
+        ? prototype.expression
+        : undefined;
+    return base && ts.isIdentifier(base) ? base.text : undefined;
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind) && prototypeBaseName(node.left)) {
+      names.add(prototypeBaseName(node.left)!);
+    } else if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      prototypeBaseName(node.operand)
+    ) {
+      names.add(prototypeBaseName(node.operand)!);
+    } else if (ts.isDeleteExpression(node) && prototypeBaseName(node.expression)) {
+      names.add(prototypeBaseName(node.expression)!);
+    }
+    if (ts.isCallExpression(node) && node.arguments.length > 0 && ts.isPropertyAccessExpression(node.expression)) {
+      const callee = node.expression;
+      if (
+        ts.isIdentifier(callee.expression) &&
+        (callee.expression.text === "Object" || callee.expression.text === "Reflect") &&
+        (callee.name.text === "defineProperty" || callee.name.text === "defineProperties") &&
+        prototypeBaseName(node.arguments[0]!)
+      ) {
+        names.add(prototypeBaseName(node.arguments[0]!)!);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  PROTOTYPE_MUTATION_CACHE.set(sourceFile, names);
+  return names;
+}
+
 /**
  * Standalone computed-read arm for the inherited Function @@hasInstance
  * method. The generic symbol-key path has no `$NativeProto` symbol-cell
@@ -262,18 +322,10 @@ function tryCompileStandaloneFunctionHasInstanceRead(
     return undefined;
   }
 
-  // An own `prototype` write/getter is observable by OrdinaryHasInstance and
-  // must remain on the existing generic path until the native closure edge can
-  // model that own property. The conservative source gate covers both direct
-  // assignments and Object.defineProperty/defineProperties forms while keeping
-  // the common ordinary-function path native.
-  const sourceText = expr.getSourceFile().text;
-  if (
-    sourceText.includes("prototype") &&
-    (sourceText.includes("defineProperty") || /\.prototype\s*=/.test(sourceText))
-  ) {
-    return undefined;
-  }
+  // Syntax-aware guard: Test262 helper defineProperty text must not mask an
+  // untouched Function.prototype intrinsic read.
+  const mutationName = directFunctionProto ? "Function" : ts.isIdentifier(receiver) ? receiver.text : undefined;
+  if (mutationName !== undefined && prototypeMutationNames(expr.getSourceFile()).has(mutationName)) return undefined;
 
   // `__closure_proto_of` is filled from the compile-time fnctor/prototype
   // registry. A method-only read does not otherwise touch `F.prototype`, so
