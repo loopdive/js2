@@ -2276,18 +2276,10 @@ function _maybeWrapCallableUnknownArity(
   return _wrapWasmClosureUnknownArity(val, callbackState) ?? val;
 }
 
-/**
- * Adapt one value crossing a separately compiled provider boundary.  The
- * provider's callback/export view is authoritative: using the consumer view
- * for a provider-owned closure or struct sends dispatch back into the wrong
- * module (and either makes methods non-callable or recurses forever).
- */
 export function wrapLinkedProviderValue(value: any, providerExports: Record<string, Function>): any {
   if (value == null || (typeof value !== "object" && typeof value !== "function")) return value;
-  const callbackState = { getExports: () => providerExports };
-  const callable = _maybeWrapCallableUnknownArity(value, callbackState);
-  if (callable !== value) return callable;
-  return _wrapForHost(value, providerExports);
+  const callable = _maybeWrapCallableUnknownArity(value, { getExports: () => providerExports });
+  return callable !== value ? callable : _wrapForHost(value, providerExports);
 }
 
 function _maybeWrapAccessorGetterCallable(
