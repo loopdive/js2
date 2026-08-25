@@ -19,6 +19,7 @@ import { pushDefaultValue } from "../type-coercion.js";
 import { compileStandaloneRegExpConstructor, isGlobalRegExpIdentifier } from "../regexp-standalone.js";
 import { foreignReturnFunctionNames } from "../fnctor-foreign-return.js"; // (#4637 A2) §10.2.1.3 step 13
 import { isFreshOrdinaryObjectExpression } from "../native-ordinary-instanceof.js";
+import { resolveArrayInfo } from "../array-methods.js";
 
 /**
  * (#4221) Unwrap the transparent wrappers that sit between a call expression
@@ -62,6 +63,25 @@ export const NEVER_CALLABLE_FACT_KINDS = new Set([
   "null",
   "void",
 ]);
+
+/**
+ * A JS array whose Wasm storage is externref can receive a callable after
+ * TypeScript has fixed its element fact to `undefined` (the #4702 shape:
+ * `let f = [undefined]; f[0] = () => 1; f[0]()`).  The element-call tail has a
+ * dynamic closure dispatcher for this representation; do not turn its stale
+ * primitive fact into an unconditional TypeError before that dispatcher runs.
+ * Numeric/typed arrays and non-array structs stay on the static guard.
+ */
+function isDynamicallyCallableExternrefArrayElement(ctx: CodegenContext, callee: ts.Expression): boolean {
+  if (!ts.isElementAccessExpression(callee)) return false;
+  const receiverType = ctx.checker.getTypeAtLocation(callee.expression);
+  const checker = ctx.checker as typeof ctx.checker & {
+    isArrayType?: (type: ts.Type) => boolean;
+    isTupleType?: (type: ts.Type) => boolean;
+  };
+  if (!checker.isArrayType?.(receiverType) && !checker.isTupleType?.(receiverType)) return false;
+  return resolveArrayInfo(ctx, receiverType)?.elemType.kind === "externref";
+}
 
 /**
  * Standalone runtime-eval global pull-sync can replace an AOT binding after
@@ -144,6 +164,12 @@ export function tryNonCallableValueCall(
   // of baking the initializer's primitive fact into an unconditional throw.
   if (runtimeEvalMayReplaceCallee(ctx, fctx, callee)) return undefined;
   if (annexBBlockFunctionBinding(ctx, fctx, callee)) return undefined;
+
+  // #4702 — an externref array element may have been populated with a closure
+  // after the checker recorded the initial `undefined` element fact. Let the
+  // element-call dispatcher inspect the runtime value before applying the
+  // primitive non-callable guard.
+  if (isDynamicallyCallableExternrefArrayElement(ctx, callee)) return undefined;
 
   const fact = ctx.oracle.typeFactOf(callee);
   if (!NEVER_CALLABLE_FACT_KINDS.has(fact.kind) && !isFreshlyConstructedNonCallable(ctx, callee, fact.kind)) {

@@ -1319,7 +1319,14 @@ export function compileTailDispatch(
         const elementFact = ctx.oracle.typeFactOf(elemAccess);
         const elementIsUnresolved =
           elementFact.kind === "any" || elementFact.kind === "unknown" || elementFact.kind === "unresolvable";
-        if (ctx.standalone && elementIsUnresolved && resolveArrayInfo(ctx, receiverType)) {
+        const receiverArrayInfo = resolveArrayInfo(ctx, receiverType);
+        const externrefArrayElement = receiverArrayInfo?.elemType.kind === "externref";
+        const undefinedExternrefElement = elementFact.kind === "undefined" && externrefArrayElement;
+        if (
+          (elementIsUnresolved || undefinedExternrefElement) &&
+          (ctx.standalone || externrefArrayElement) &&
+          receiverArrayInfo
+        ) {
           const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
           if (dyn !== null) return dyn;
         }
