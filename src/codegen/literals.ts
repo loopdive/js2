@@ -2054,6 +2054,26 @@ export function resolveConstantExpression(ctx: CodegenContext, expr: ts.Expressi
     return resolveConstantExpression(ctx, expr.right);
   }
 
+  // A logical-AND assignment whose left hand side is statically falsy has no
+  // observable write and evaluates to the existing value.  Class computed
+  // names are collected before their initializer bodies are emitted, so this
+  // narrow fold lets e.g. `let x = 0; class C { [x &&= 1] = 2 }` use the
+  // canonical property name "0" while preserving the specified `x === 0`.
+  // Do not fold the truthy arm (or ||= / ??=): those forms perform a write and
+  // must remain runtime expressions until a side-effect-aware evaluator exists.
+  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandEqualsToken) {
+    const leftValue = resolveConstantExpression(ctx, expr.left);
+    if (leftValue === undefined) return undefined;
+    const leftType = ctx.checker.getTypeAtLocation(expr.left);
+    const leftIsFalsy =
+      (leftType.flags & ts.TypeFlags.Null) !== 0 ||
+      (leftType.flags & ts.TypeFlags.Undefined) !== 0 ||
+      (leftType.flags & ts.TypeFlags.NumberLike) !== 0
+        ? Number(leftValue) === 0 || Number.isNaN(Number(leftValue))
+        : typeof leftValue === "string" && leftValue.length === 0;
+    return leftIsFalsy ? leftValue : undefined;
+  }
+
   // Binary expression: a + b, a - b, a * b, a / b
   if (ts.isBinaryExpression(expr)) {
     const left = resolveConstantExpression(ctx, expr.left);
@@ -5025,20 +5045,28 @@ export function compileArrayLiteral(
   // so numbers become NaN and native-string casts null-deref. The RTT arm order
   // is not involved: the correct AnyValue vec arm matches.
   //
-  // Re-key only this proven writer/inference mismatch. Both literals must be in
-  // a genuine any context, the inferred element must specifically be a vec of
-  // AnyValue, and neither construction may contain a spread. Typed union
-  // matrices, homogeneous matrices, flat arrays, and the flag-off lane remain
-  // byte-identical.
+  // Re-key only this proven writer/inference mismatch. Both literals normally
+  // must be in a genuine any context, the inferred element must specifically
+  // be a vec of AnyValue, and neither construction may contain a spread.
+  //
+  // A direct for-of subject with a binding default/nested pattern is the one
+  // exception: `compileForOfArray` scopes `_forOfPreserveUndefElem` around that
+  // subject, but the subject has no TypeScript contextual type. The inner
+  // heterogeneous literal still widens to the canonical externref carrier,
+  // so requiring an any contextual fact leaves the outer vec at AnyValue and
+  // copies each element through the wrong representation (#4447).
+  // Typed union matrices, homogeneous matrices, flat arrays, and the flag-off
+  // lane remain byte-identical.
   const inferredInnerVec =
     elemWasm.kind === "ref" || elemWasm.kind === "ref_null" ? getVecInfo(ctx, elemWasm.typeIdx) : null;
+  const forOfDstrCarrierWiden = (ctx as any)._forOfPreserveUndefElem === true;
   if (
     ctx.unionAnyRep &&
     !hasSpread &&
     ts.isArrayLiteralExpression(firstElem) &&
     !firstElem.elements.some(ts.isSpreadElement) &&
-    arrayLiteralHasAnyElementContext(ctx, expr) &&
-    arrayLiteralHasAnyElementContext(ctx, firstElem) &&
+    ((arrayLiteralHasAnyElementContext(ctx, expr) && arrayLiteralHasAnyElementContext(ctx, firstElem)) ||
+      forOfDstrCarrierWiden) &&
     inferredInnerVec &&
     (inferredInnerVec.elemType.kind === "ref" || inferredInnerVec.elemType.kind === "ref_null") &&
     inferredInnerVec.elemType.typeIdx === ctx.anyValueTypeIdx

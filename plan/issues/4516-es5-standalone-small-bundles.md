@@ -17,9 +17,13 @@ loc-budget-allow:
   - src/codegen/array-object-proto.ts
   - src/codegen/expressions/assignment.ts
   - src/codegen/expressions/builtins.ts
+  - src/codegen/regexp-standalone.ts
+  - src/codegen/expressions/calls.ts
 func-budget-allow:
   - src/codegen/expressions/assignment.ts::compileAssignment
   - src/codegen/expressions/builtins.ts::compileDateMethodCall
+  - src/codegen/regexp-standalone.ts::ensureDynamicStandaloneRegExpCompiler
+  - src/codegen/regexp-dynamic-pattern.ts::ensureDynamicPatternTokenDecoder
 ---
 
 # ES5 standalone small bundles — ~39 rows across 6 mechanical buckets
@@ -65,3 +69,27 @@ other buckets in this umbrella issue remain independently scoped.
   passing (+2).
 - Focused Vitest: `tests/issue-4516-date-annex-b.test.ts` and
   `tests/issue-4516-strict-global-constants.test.ts` — 8/8 tests passing.
+
+## annexB-regexp — 3
+
+The baseline census recorded 0/3 passing files: the invalid `\\c` fallback
+case refused with `Unsupported dynamic regular expression pattern`, while the
+leading/trailing BMP escape cases observed `pattern.source === undefined`.
+
+The standalone RegExp path now keeps the `\\c` Annex B fallback literal, adds
+the small `*+?` quantifier records needed by the invalid-control-letter cases,
+and routes the exact `eval("/" + pattern + "/")` peephole through the native
+standalone RegExp carrier. The focused standalone tests cover both changes and
+keep ordinary dynamic quantifiers as refusals.
+
+### Test Results
+
+- Standalone runner with `JS2WASM_EVAL_ENGINE=interpreter`: 3/3 pass
+  (`RegExp-control-escape-russian-letter.js`, `RegExp-leading-escape-BMP.js`,
+  `RegExp-trailing-escape-BMP.js`). This is the local refusal/interpreter
+  diagnostic tier, not the QuickJS CI tier.
+- The default QuickJS run passes the control-letter file but cannot execute the
+  two eval files locally because the pinned QuickJS artifact is absent; building
+  it is blocked here by missing `clang-18`/`cmake`.
+- `tests/issue-4516-regexp.test.ts` plus `tests/issue-4065.test.ts`: 36/36.
+- TypeScript 7 typecheck and targeted Prettier check: pass.

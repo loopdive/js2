@@ -1336,7 +1336,15 @@ function emitAnnexBTypeofFlagBranch(ctx: CodegenContext, fctx: FunctionContext, 
   compileStringLiteral(ctx, fctx, "undefined");
   const undefStrLocal = allocLocal(fctx, `__typeof_undef_${fctx.locals.length}`, strType);
   fctx.body.push({ op: "local.set", index: undefStrLocal });
-  fctx.body.push({ op: "local.get", index: flagLocal });
+  const boxed = fctx.boxedTdzFlags?.get(name);
+  if (boxed) {
+    // Captured Annex-B outer bindings keep the flag in a shared ref cell;
+    // `tdzFlagLocals` points at that cell rather than an i32 local.
+    fctx.body.push({ op: "local.get", index: boxed.localIdx });
+    fctx.body.push({ op: "struct.get", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 });
+  } else {
+    fctx.body.push({ op: "local.get", index: flagLocal });
+  }
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: strType },

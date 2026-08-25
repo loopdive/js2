@@ -75,6 +75,7 @@ import {
   pushParamSentinel,
 } from "../type-coercion.js";
 import { compileAnnexBEscapeCall } from "../annexb-escape-call.js"; // (#3064 / #4556)
+import { annexBDeclaringRange } from "../annexb-cancel.js";
 import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import { ensureWasiWriteFileStringsHelper } from "../wasi.js";
 import { wasiAllocStringData } from "./builtins.js";
@@ -1337,7 +1338,7 @@ export function compileIdentifierCall(
       isOutOfScopeNestedBinding = !visible;
     }
 
-    const isLocallyShadowed = localBindingShadowsCapturingFunction(ctx, fctx, expr.expression);
+    const locallyShadowsFunction = localBindingShadowsCapturingFunction(ctx, fctx, expr.expression);
 
     // (#4133/#4134) `ctx.closureMap` is a THIRD bare-name namespace and it is
     // consulted BEFORE `funcMap`. A visible nested declaration lexically
@@ -1352,6 +1353,18 @@ export function compileIdentifierCall(
     // sibling reached another module's `const equal = function equal(...)` and
     // the enclosing function silently returned 0.
     const nestedBindingVisible = nestedOwnerDecl !== undefined && !isOutOfScopeNestedBinding;
+    // Annex B block functions shadow a same-named parameter/local only while
+    // evaluating their declaring block.  In particular, a function declaration
+    // named `arguments` must win over the enclosing function's implicit
+    // arguments object for `arguments()` inside that block; property reads such
+    // as `arguments.toString()` remain on the ordinary local path.
+    const annexBBlockFunctionCall =
+      nestedBindingVisible &&
+      nestedOwnerDecl !== undefined &&
+      annexBDeclaringRange(nestedOwnerDecl) !== null &&
+      expr.getStart() >= annexBDeclaringRange(nestedOwnerDecl)!.getStart() &&
+      expr.end <= annexBDeclaringRange(nestedOwnerDecl)!.end;
+    const isLocallyShadowed = locallyShadowsFunction && !annexBBlockFunctionCall;
     const hasVisibleClosureStorage =
       fctx.localMap.has(funcName) || ctx.moduleGlobals.has(funcName) || ctx.capturedGlobals.has(funcName);
     // `closureMap` is keyed by a bare identifier across the complete linked
