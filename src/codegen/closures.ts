@@ -1516,6 +1516,16 @@ function unboundClosureReturnsAValue(fn: ts.ArrowFunction | ts.FunctionExpressio
   return found;
 }
 
+function inferUnboundCallbackReturnType(fn: ts.ArrowFunction | ts.FunctionExpression): ValType | null {
+  if (ts.isFunctionDeclaration(fn) || !declarationIsUnbound(fn)) return null;
+  return unboundClosureReturnsAValue(fn) ? { kind: "externref" } : null;
+}
+
+function inheritDirectEvalSloppyThis(fctx: FunctionContext, callback: FunctionContext): FunctionContext {
+  callback.directEvalSloppyThisFallback = fctx.directEvalSloppyThisFallback;
+  return callback;
+}
+
 /**
  * (#2939) Compute the funcref-wrapper signature (user param ValTypes + return
  * ValType) of an arrow / function-expression closure, WITHOUT emitting anything.
@@ -3649,7 +3659,7 @@ export function compileArrowAsCallback(
       }
     }
   } catch {
-    cbReturnType = null;
+    cbReturnType = inferUnboundCallbackReturnType(arrow);
   }
 
   const cbResults: ValType[] = cbReturnType ? [cbReturnType] : [];
@@ -3671,7 +3681,7 @@ export function compileArrowAsCallback(
     });
   }
 
-  const cbFctx: FunctionContext = {
+  const cbFctx: FunctionContext = inheritDirectEvalSloppyThis(fctx, {
     name: cbName,
     params: cbFctxParams,
     locals: [],
@@ -3695,7 +3705,7 @@ export function compileArrowAsCallback(
     // localMap index 1, so the fallback is never reached for that path.)
     readsCurrentThis: true,
     captureExternrefNames: new Set(captures.filter((cap) => cap.type.kind === "externref").map((cap) => cap.name)),
-  };
+  });
 
   // (#1384) Track cbFctx.body in liveBodies BEFORE any emission so addUnionImports
   // / shiftLateImportIndices can shift any `call funcIdx` instructions that get

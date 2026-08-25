@@ -2413,6 +2413,16 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     if (variableSlotHoldsReconstructedFnctorInstance(ctx, decl)) {
       return { kind: "externref" };
     }
+    // (#4249) A constant direct-eval accessor assignment is parsed into a
+    // foreign SourceFile, so its object literal cannot tag the receiving
+    // declaration through the normal initializer walk. The pre-pass records
+    // that binding in externrefAccessorVars before module globals are typed;
+    // converge the global slot with the eval literal's host-object
+    // representation here, otherwise a later `o.foo` read is compiled as a
+    // closed-struct field load and bypasses the installed accessor descriptor.
+    if (ts.isIdentifier(decl.name) && ctx.externrefAccessorVars.has(decl.name.text)) {
+      return { kind: "externref" };
+    }
     if (moduleInitForcesExternref(decl) && ts.isIdentifier(decl.name)) {
       ctx.externrefAccessorVars.add(decl.name.text);
       return { kind: "externref" };

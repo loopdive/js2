@@ -360,8 +360,15 @@ function identifierInsideSwitchCaseBlock(id: ts.Identifier, declaration: ts.Node
  * legitimately resolve cross-file and stay untouched, as do synthetic
  * compiler-minted identifiers (no parent / no source position).
  */
-function moduleGoalReadIsUndeclared(ctx: CodegenContext, id: ts.Identifier): boolean {
+function moduleGoalReadIsUndeclared(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): boolean {
   if (!ctx.sourceIsModule || id.parent === undefined || id.pos < 0) return false;
+  // (#4249) A direct eval body is parsed as a foreign SourceFile, so its
+  // identifiers have no checker symbol and would otherwise look like a
+  // cross-module leak. The eval executes in the caller's module environment;
+  // let the ordinary local/module-global resolution below serve that binding.
+  // `directEvalSloppyThisFallback` is set only while the direct-eval splice is
+  // being compiled (and is propagated to its callback frames).
+  if (fctx.directEvalSloppyThisFallback === true) return false;
   const valSym = identifierValueSymbol(ctx, id);
   if (valSym === undefined) return true;
   const decl = valSym.valueDeclaration ?? valSym.declarations?.[0];
@@ -1122,7 +1129,7 @@ function compileIdentifierCore(
   // (#3505) Graph-wide name-keyed registries (capturedGlobals, moduleGlobals,
   // funcMap, classObjectGlobals, …) must not serve a read that is undeclared
   // for THIS module's environment record — see moduleGoalReadIsUndeclared.
-  const unresolvedInModuleGoal = moduleGoalReadIsUndeclared(ctx, id);
+  const unresolvedInModuleGoal = moduleGoalReadIsUndeclared(ctx, fctx, id);
 
   // Check captured globals (variables promoted from enclosing scope for callbacks)
   const capturedIdx = unresolvedInModuleGoal ? undefined : ctx.capturedGlobals.get(name);

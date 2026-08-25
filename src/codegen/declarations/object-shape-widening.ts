@@ -14,7 +14,7 @@ import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { FieldDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { createDeclaredNestedWriteClassifier } from "./declared-nested-write.js";
-import { collectEvalMutableNames } from "./eval-reachable-object-shape.js"; // (#4206)
+import { collectEvalAccessorObjectNames, collectEvalMutableNames } from "./eval-reachable-object-shape.js"; // (#4206/#4249)
 import { fnctorBodyMayReturnForeignObject } from "../fnctor-foreign-return.js"; // (#2071)
 import {
   bindingHasIrPlannedOpenWithTarget,
@@ -1003,6 +1003,14 @@ export function collectGrowableObjectLiterals(
   const nestedWriteTargetsDeclaredField = createDeclaredNestedWriteClassifier(ctx, sourceFile);
   // (#4206) Names a direct `eval(<literal>)` in this module could mutate.
   const evalMutableNames = collectEvalMutableNames(sourceFile);
+  // (#4249) An accessor-bearing object created by foreign eval syntax must
+  // stay on the dynamic host-object path after the eval assignment as well.
+  // The declaration pass cannot see a variable-declaration parent on that
+  // foreign AST, so seed the same representation guard used by ordinary
+  // accessor literals before shape inference runs.
+  for (const name of collectEvalAccessorObjectNames(sourceFile)) {
+    ctx.externrefAccessorVars.add(name);
+  }
 
   // Does a contextual type at a use site REQUIRE the closed-struct representation?
   // True only for a CONCRETE nominal struct (named own properties, not any/unknown/

@@ -4150,7 +4150,18 @@ export function finalizeStructAndDynamicMemberGet(
   // use __extern_get(obj, key) to dynamically read the property at runtime.
   {
     const objWasmType = resolveWasmType(ctx, objType);
+    // (#4249) A direct-eval accessor assignment can widen a function-local
+    // binding through its eval ref-cell without widening the checker's type of
+    // that binding. `resolveStructNameForExpr` already treats the binding as
+    // dynamic, but the old representation test below only looked at the
+    // checker/local slot and therefore still fell through to the null default
+    // for `o.foo`. The accessor marker is the authoritative convergence fact:
+    // the value is a host object regardless of whether it is held in a module
+    // global, an ordinary local, or a direct-eval cell.
+    const isEvalAccessorReceiver =
+      ts.isIdentifier(expr.expression) && ctx.externrefAccessorVars.has(expr.expression.text);
     const isExternObj =
+      isEvalAccessorReceiver ||
       objWasmType.kind === "externref" ||
       // (#3033 Bug 2b) CHAINED dynamic read: the receiver is itself a purely-
       // undefined-typed member read off an externref receiver (`this.type` in
@@ -4181,7 +4192,7 @@ export function finalizeStructAndDynamicMemberGet(
       // NaN. The dispatch may still use its struct fast arms; only its result
       // representation stays honest.
       const preserveDynamicResultCarrier =
-        (ts.isIdentifier(expr.expression) && ctx.externrefAccessorVars.has(expr.expression.text)) ||
+        isEvalAccessorReceiver ||
         // (#2071) same honesty rule for a foreign-return fnctor instance: a
         // same-named struct field's f64 vote must not re-narrow the read.
         foreignReturnReceiver;
