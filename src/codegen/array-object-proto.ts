@@ -580,6 +580,7 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
     setUTCMinutes: 3,
     setSeconds: 2,
     setUTCSeconds: 2,
+    setYear: 1,
     // Date getters / no-arg conversions are 0-arity (ES2024 §21.4.4); fold their
     // `.length` to 0 so the meta-read path reports the spec arity.
     getDate: 0,

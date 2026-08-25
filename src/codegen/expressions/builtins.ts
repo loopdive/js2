@@ -2335,7 +2335,26 @@ function compileDateMethodCall(
       const unit = unitsForArgs[i]!;
       const local = allocTempLocal(fctx, { kind: "f64" });
       argLocals[unit] = local;
-      compileExpression(ctx, fctx, args[i]!, { kind: "f64" });
+      if (isLegacySetYear) {
+        // setYear performs the full abstract ToNumber operation. Compiling an
+        // object directly with an f64 expected type bypassed its observable
+        // valueOf/toString (and swallowed abrupt completions).
+        const arg = args[i]!;
+        const argType = compileExpression(ctx, fctx, arg);
+        if (ctx.oracle.staticJsTypeOf(arg) === "symbol") {
+          if (argType) fctx.body.push({ op: "drop" });
+          emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a number");
+          // Keep the post-unreachable stack shape valid for the surrounding
+          // generic setter lowering; execution cannot reach this constant.
+          fctx.body.push({ op: "f64.const", value: NaN });
+        } else if (argType) {
+          coerceType(ctx, fctx, argType, { kind: "f64" }, "number");
+        } else {
+          fctx.body.push({ op: "f64.const", value: NaN });
+        }
+      } else {
+        compileExpression(ctx, fctx, args[i]!, { kind: "f64" });
+      }
       fctx.body.push({ op: "local.set", index: local });
       // invalid_i = (x != x) | (f64.abs(x) > 8.64e15)
       fctx.body.push({ op: "local.get", index: local });
@@ -2351,31 +2370,23 @@ function compileDateMethodCall(
       fctx.body.push({ op: "local.set", index: tempAnyInvalid });
     }
 
-    // Legacy setYear: if 0 <= ToIntegerOrInfinity(y) <= 99, yyyy = 1900 + that
-    // INTEGER (§B.2.4.2 steps 5-6); otherwise yyyy = y unchanged.
-    // (#4485) The window test and the +1900 must both use the TRUNCATED value,
-    // not the raw f64. Testing the raw double mis-routes every fractional year
-    // in (-1, 0): `setYear(-0.9999999)` truncates to -0, which IS in [0, 99],
-    // so the spec answer is 1900 — but `-0.9999999 >= 0` is false, so the raw
-    // test fell through to the else arm and later truncation produced year 0
-    // (test262 annexB .../setYear/year-number-relative.js). f64.trunc(-0.9…)
-    // is -0, and both `-0 >= 0` and `-0 + 1900 === 1900` hold in IEEE-754, so
-    // the ToIntegerOrInfinity "-0 → +0" normalisation needs no extra opcode.
+    // Legacy setYear: if 0 <= y <= 99, y += 1900 (§B.2.3.5).
     if (isLegacySetYear && argLocals.y !== undefined) {
       const yLocal = argLocals.y;
-      const yTrunc = allocTempLocal(fctx, { kind: "f64" });
+      // The legacy 0..99 test is over ToInteger(y), not the raw fractional
+      // number. Keep the truncated value as the calendar year too.
       fctx.body.push({ op: "local.get", index: yLocal });
       fctx.body.push({ op: "f64.trunc" });
-      fctx.body.push({ op: "local.set", index: yTrunc });
-      fctx.body.push({ op: "local.get", index: yTrunc });
+      fctx.body.push({ op: "local.set", index: yLocal });
+      fctx.body.push({ op: "local.get", index: yLocal });
       fctx.body.push({ op: "f64.const", value: 0 });
       fctx.body.push({ op: "f64.ge" });
-      fctx.body.push({ op: "local.get", index: yTrunc });
+      fctx.body.push({ op: "local.get", index: yLocal });
       fctx.body.push({ op: "f64.const", value: 99 });
       fctx.body.push({ op: "f64.le" });
       fctx.body.push({ op: "i32.and" });
       const savedY = pushBody(fctx);
-      fctx.body.push({ op: "local.get", index: yTrunc });
+      fctx.body.push({ op: "local.get", index: yLocal });
       fctx.body.push({ op: "f64.const", value: 1900 });
       fctx.body.push({ op: "f64.add" });
       const yThenInstrs = fctx.body;
