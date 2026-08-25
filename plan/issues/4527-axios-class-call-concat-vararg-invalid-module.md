@@ -377,7 +377,6 @@ object-identity mismatches. Across the full 231-test denominator, 81 scored
 failures and the separate asynchronous `composeSignals.test.js` compile-worker
 failure remain. Do not attribute the older combined-tree 135/231 checkpoint to
 this slice; the paired fresh comparison for this mechanism is 127 to 150.
-
 ## 2026-08-25 checkpoint (ordinary data-struct prototype identity)
 
 All seven remaining `mergeConfig` failures came from the same generic

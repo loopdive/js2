@@ -4095,14 +4095,12 @@ export function compileArrowAsCallback(
     const refCellLocals: { refCellLocal: number; outerLocalIdx: number; refCellTypeIdx: number; valType: ValType }[] =
       [];
     for (const cap of captures) {
-      // A host callback is itself a dynamic value use of its captured nested
-      // FunctionDeclarations. Their stable activation-local closure stays in
-      // a preallocated null externref slot until first materialization; copy
-      // the value, not that sentinel. Capture-free declarations already use
-      // the canonical module singleton path and need no eager work here.
-      if ((ctx.nestedFuncCaptures.get(cap.name)?.length ?? 0) > 0) {
-        materializeHoistedFunctionValueBinding(ctx, fctx, cap.name);
-      }
+      // A host callback is itself a dynamic value use of every captured
+      // FunctionDeclaration binding. Fill a hoisted value slot before the
+      // callback snapshots it; this is also required for a capture-free
+      // declaration that is referenced only from inside the callback.
+      // The materializer is a no-op for ordinary captured locals.
+      materializeHoistedFunctionValueBinding(ctx, fctx, cap.name);
       if (cap.mutable && !cap.alreadyBoxed) {
         const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.type);
         // (#2128) Reuse the literal's shared cell when a sibling callback

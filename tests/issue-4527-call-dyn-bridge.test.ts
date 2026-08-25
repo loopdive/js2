@@ -36,6 +36,48 @@ async function run(files: Record<string, string>, entry: string, expectedImports
 }
 
 describe("issue #4527: cross-module dynamic callback invocation", () => {
+  it("materializes a nested fallback captured only by a host callback", async () => {
+    const w = await run(
+      {
+        "./utils.js": `
+          function forEach(values, callback) {
+            for (let index = 0; index < values.length; index++) {
+              callback.call(null, values[index], index, values);
+            }
+          }
+          function hasOwnProp(object, property) {
+            return Object.prototype.hasOwnProperty.call(object, property);
+          }
+          export default { forEach, hasOwnProp };
+        `,
+        "./strategy.js": `
+          import utils from './utils.js';
+          export function select(useTable) {
+            function fallback(value) { return value + 1; }
+            function tableValue(value) { return value + 2; }
+            const mergeMap = { known: tableValue };
+            const prop = useTable ? 'known' : 'other';
+            let result = 0;
+            utils.forEach([prop], function compute(current) {
+              const merge = utils.hasOwnProp(mergeMap, current)
+                ? mergeMap[current]
+                : fallback;
+              result = merge(41);
+            });
+            return result;
+          }
+        `,
+        "./main.js": `
+          import { select } from './strategy.js';
+          export function t(useTable) { return select(useTable); }
+        `,
+      },
+      "./main.js",
+    );
+    expect(w.t(1)).toBe(43);
+    expect(w.t(0)).toBe(42);
+  });
+
   it("keeps static-method this live for computed class-object writes", async () => {
     const w = await run(
       {
