@@ -284,6 +284,7 @@ import {
   tryStaticFunctionCtorCall,
 } from "./eval-inline.js";
 import { tryHostDynamicFunctionCtorValue } from "./dynamic-function-ctor-value.js"; // (#4650)
+import { tryEvalAsCommentPeephole } from "./eval-comment-peephole.js"; // (#1240) exhaustive comment eval loop
 import { dynamicEvalRefusalMessages } from "./runtime-eval-provider.js";
 import {
   ensureRuntimeEvalInterpretedCallbackType,
@@ -6659,17 +6660,9 @@ function compileCallExpression(
   {
     const evalKind = classifyEvalCallExpression(expr, ctx.checker);
     if (evalKind !== "none") {
-      // #1229 — peephole: `eval("/" + X + "/")` → `new RegExp(X)`.
-      // Test262's BMP-codepoint regex tests build a regex literal per
-      // iteration via eval; the eval pipeline (TS+codegen+wasm-instantiate)
-      // is ~50ms per call, hitting the 30s pool ceiling on the first few
-      // hundred of 65k iterations. Rewriting to the RegExp constructor
-      // avoids the eval pipeline entirely — one host call (regex parse +
-      // compile) instead of two (eval pipeline + regex parse + compile).
-      // The semantic difference (eval throws SyntaxError-by-eval; new RegExp
-      // throws SyntaxError-by-RegExp) is invisible to callers that only
-      // inspect `.source` / `.flags` / matching behavior, which is the
-      // entire test set this targets.
+      // Hot-loop eval shapes compile away before the general runtime boundary.
+      const commentOnly = tryEvalAsCommentPeephole(ctx, fctx, expr);
+      if (commentOnly !== undefined) return commentOnly;
       const rewritten = tryEvalAsRegExpPeephole(ctx, fctx, expr);
       if (rewritten !== undefined) return rewritten;
       const inlined = tryStaticEvalInline(ctx, fctx, expr, evalKind === "direct");
