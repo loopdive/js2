@@ -63,7 +63,16 @@ export function unboundThisIsGlobalObject(ctx: CodegenContext, expr: ts.Node): b
  * (`expressions.ts`) does not grow the emission logic.
  */
 export function emitUnboundThis(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Node): void {
-  if (fctx.directEvalSloppyThisFallback || unboundThisIsGlobalObject(ctx, expr)) {
+  // A folded direct-eval body is a foreign AST: its parent chain stops at the
+  // synthetic eval SourceFile, so `isStrictContext(expr)` cannot recover the
+  // caller's strictness.  The eval inliner therefore installs an explicit
+  // tri-state override (`true` = sloppy global, `false` = strict undefined).
+  // Check for `undefined` rather than truthiness so the strict override is
+  // honored before falling back to ordinary source-context inference.
+  if (
+    (fctx.directEvalSloppyThisFallback !== undefined && fctx.directEvalSloppyThisFallback) ||
+    (fctx.directEvalSloppyThisFallback === undefined && unboundThisIsGlobalObject(ctx, expr))
+  ) {
     emitGlobalObjectAsThis(ctx, fctx);
     return;
   }
@@ -85,7 +94,10 @@ export function emitUnboundThis(ctx: CodegenContext, fctx: FunctionContext, expr
  * object, and getting that wrong is the trap this split exists to avoid.
  */
 export function emitExplicitNullThis(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Node): void {
-  if (fctx.directEvalSloppyThisFallback || unboundThisIsGlobalObject(ctx, expr)) {
+  if (
+    (fctx.directEvalSloppyThisFallback !== undefined && fctx.directEvalSloppyThisFallback) ||
+    (fctx.directEvalSloppyThisFallback === undefined && unboundThisIsGlobalObject(ctx, expr))
+  ) {
     emitGlobalObjectAsThis(ctx, fctx);
     return;
   }

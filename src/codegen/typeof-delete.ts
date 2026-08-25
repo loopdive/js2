@@ -1818,6 +1818,14 @@ export function compileTypeofExpression(
   // closure built inside a `for (let x in …)` head's receiver that captures the
   // never-initialized head binding (scope-head/​body-lex-open/close).
   let forceRuntimeTypeof = false;
+  // A folded direct-eval body carries its caller's strictness through the
+  // explicit context flag because the foreign AST has no enclosing function.
+  // TypeScript nevertheless types its `this` as the ordinary global receiver,
+  // so static typeof would turn strict `typeof this` into "object" before the
+  // context-aware ThisKeyword lowering gets a chance to emit undefined.
+  if (operand.kind === ts.SyntaxKind.ThisKeyword && fctx.directEvalSloppyThisFallback !== undefined) {
+    forceRuntimeTypeof = true;
+  }
   {
     let bareTdz: ts.Expression = operand;
     while (
